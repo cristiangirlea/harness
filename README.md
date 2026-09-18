@@ -1,0 +1,171 @@
+# hx — personal agent harness
+
+One Go binary that runs coding tasks on **your own agent loop** (Anthropic API) or on
+**agent CLIs you already pay for** (Claude Code, Codex, Gemini, opencode), and records
+every run in the same format so runs can be replayed, compared and scored later.
+
+It speaks **MCP** both ways: the api loop can use any stdio MCP server's tools, and
+`hx mcp` turns hx into an MCP server so Claude Code (or any host) can delegate tasks to
+any backend, several at a time.
+
+**Zero dependencies.** Standard library only — `go.mod` has no `require` lines. The API
+client (streaming SSE, retries, prompt caching, thinking round-trips) is ~400 lines in
+`internal/agent/messages.go`; MCP (JSON-RPC 2.0 over stdio, client and server) is ~600
+lines in `internal/mcp`. The CLI backends are optional programs hx calls if they're
+installed, not build dependencies.
+
+```
+hx run -b opencode --mode readonly "find the bug in math.go"
+→ glob **/math.go
+  ✓ C:\...\hxdemo\math.go
+→ read C:\...\hxdemo\math.go
+  ✓ <path>...</path> (+8 lines)
+Yes, `add()` has a bug: it subtracts `b` from `a` instead of adding them.
+── ok · opencode · 3 turns · 6.5k in / 87 out (cache 11.9k read) · 8.5s ──
+```
+
+## Why Go
+
+Answer quality comes from the model, not the harness language. What the harness
+language decides is overhead and concurrency: a static ~7 MB binary with low idle memory,
+cheap goroutines for parallel tool calls and (next) many agents at once, and no runtime
+to install. Rust would shave a little memory at a large cost in iteration speed; Python
+costs 3–5× the memory and needs an interpreter.
+
+## Build
+
+```bash
+go build -o hx.exe ./cmd/hx
+go test ./...
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `hx run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
+| `hx backends` | Show which backends are usable and where they were found. |
+| `hx runs [-n N]` | List recent runs. |
+| `hx show [--json] <id>` | Replay a recorded run. |
+| `hx mcp` | Serve hx as an MCP server on stdio (see [MCP](#mcp)). |
+
+Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
+`--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
+`--mcp FILE` (repeatable).
+
+## Backends
+
+| Backend | Billing | How it runs |
+|---|---|---|
+| `api` | per token | The harness's own loop: Messages API (streaming, adaptive thinking, prompt caching, server-side refusal fallbacks on `claude-opus-5`) + client-side tools below + MCP tools. Needs `ANTHROPIC_API_KEY` (or an OAuth `ANTHROPIC_AUTH_TOKEN`); `ANTHROPIC_BASE_URL` overrides the endpoint. |
+| `claude` | your Claude subscription | `claude -p --output-format stream-json`. Found on PATH, `~/.local/bin`, npm, or the Claude desktop app's bundled build (that build needs its own `claude /login` first). |
+| `codex` | your ChatGPT subscription | `codex exec --json`. Not installed on this machine yet — event parsing is written against the documented format but untested. |
+| `gemini` | your Google login | `gemini -o json` (single JSON result, no live stream). Untested end to end. |
+| `opencode` | whatever opencode is configured with | `opencode run --format json`, prompt attached as a file. Verified. |
+
+Default backend: `api` when credentials exist, otherwise `claude`.
+
+### Permission modes
+
+| Mode | api backend | claude | codex | gemini | opencode |
+|---|---|---|---|---|---|
+| `readonly` | read tools only (write tools not offered) | `plan` | `--sandbox read-only` | `default` | its config |
+| `ask` (default) | reads auto; writes + commands prompt y/N | `default` | `--sandbox read-only` | `default` | its config |
+| `auto` | reads + edits auto; commands prompt | `acceptEdits` | `--full-auto` | `auto_edit` | its config |
+| `yolo` | everything | `bypassPermissions` | bypass sandbox | `yolo` | `--auto` |
+
+When the prompt comes from stdin there is no terminal to ask, so anything needing
+approval is denied.
+
+### api tools
+
+`read_file`, `list_files` (glob with `**`), `grep` (RE2), `write_file`, `edit_file`
+(exact unique match, CRLF-aware), `run_command` (Git Bash when present, else PowerShell;
+120s default timeout). All paths are confined to the workspace, symlinks included.
+Read-only calls in one turn run in parallel; writes and commands run in order.
+
+## MCP
+
+### Using MCP servers as tools
+
+`hx run --mcp .mcp.json ...` starts every stdio server in the file, offers its tools to
+the model as `mcp__<server>__<tool>` (Claude Code's naming) and stops the servers when
+the run ends. `~/.hx/mcp.json` (or `$HX_HOME/mcp.json`) is loaded whenever it exists;
+`--mcp` files add to it, and a later file overrides an earlier server of the same name.
+The format is Claude Code's, so existing `.mcp.json` files work unchanged:
+
+```json
+{"mcpServers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+                           "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}}}}
+```
+
+`${VAR}` and `${VAR:-default}` expand from the environment. Entries with a `url` (HTTP
+transports) are skipped: hx speaks stdio only. Servers run with the workspace as their
+working directory and are told it is the root.
+
+Permissions follow the mode table. A tool the server marks `readOnlyHint` is a read:
+auto-approved and run in parallel. Anything else needs approval in `ask` and `auto` and
+is automatic only in `yolo`; in `readonly` mode it is not offered at all. The hint is
+trusted because you chose the server.
+
+Per backend: `api` uses the servers directly; `claude` receives each file as
+`--mcp-config`; codex, gemini and opencode keep their own MCP configuration.
+
+The config paths are recorded in the run's `task.json`, so a run can be replayed with
+the same tool set.
+
+### hx as an MCP server
+
+`hx mcp` serves hx on stdio. Register it once with Claude Code, from the project you
+want it to work in by default:
+
+```bash
+claude mcp add hx -- E:\__Workdir\harness\hx.exe mcp
+```
+
+Tools:
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
+| `runs` | `limit` | Recent runs, newest first. |
+| `show` | `run_id`, `events` | Task, event transcript and result of one run. |
+| `backends` | — | Which backends are usable here. |
+
+Requests are served concurrently, so parallel tool calls from the host become parallel
+agents, each recorded under `~/.hx/runs` like a CLI run. Cancelling the tool call cancels
+the run. There is no terminal behind the server, so `ask` denies every write and
+command: `run` defaults to `readonly`; use `auto` for edits and `yolo` for commands.
+
+## Run records
+
+`~/.hx/runs/<id>/` (or `$HX_HOME/runs`):
+
+- `task.json` — prompt, dir, backend, model, mode, MCP config paths
+- `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped)
+- `result.json` — status (`ok|error|refused|max_turns|canceled`), final answer, turns,
+  tokens, cache, cost (`cost_is_estimate` for the api backend), duration
+
+## Layout
+
+```
+cmd/hx/            CLI + terminal renderer
+internal/agent/    Backend interface, api loop + stdlib Messages client, CLI adapters
+internal/tools/    workspace-confined tool runtime + MCP tool adapter
+internal/mcp/      MCP over stdio: JSON-RPC codec, Client, Server, config loader
+internal/hxmcp/    hx's own MCP server (run, runs, show, backends)
+internal/runlog/   run recording
+```
+
+## Roadmap
+
+The `agent.Backend` contract (Task → Events → Result) is what the next two layers build on.
+`hx mcp` is already a first orchestrator: the host session plans and hx runs the workers.
+
+1. **Orchestrator** — task queue, N agents in parallel, each in its own git worktree,
+   pass/fail gates (build/test commands), retries on another backend.
+2. **Eval** — run a task set × backends × models repeatedly, score results
+   (deterministic checks first, LLM judge only where needed), compare over time from
+   the run records.
+3. **MCP follow-ups** — Streamable HTTP transport for remote servers; MCP elicitation so
+   a host can answer `ask`-mode approvals instead of hx denying them.

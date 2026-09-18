@@ -1,0 +1,247 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// fakeAPI replays scripted SSE turns and records each request body and headers.
+// A turn of nil answers 529 overloaded without consuming a scripted turn.
+type fakeAPI struct {
+	mu       sync.Mutex
+	turns    [][]string
+	requests []map[string]any
+	headers  []http.Header
+	served   int
+}
+
+func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	var req map[string]any
+	_ = json.Unmarshal(body, &req)
+	f.mu.Lock()
+	i := f.served
+	f.served++
+	f.requests = append(f.requests, req)
+	f.headers = append(f.headers, r.Header.Clone())
+	f.mu.Unlock()
+	if i < len(f.turns) && f.turns[i] == nil {
+		w.Header().Set("retry-after", "0.01")
+		http.Error(w, `{"type":"error","error":{"type":"overloaded_error","message":"busy"}}`, 529)
+		return
+	}
+	if i >= len(f.turns) {
+		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"no more turns"}}`, 400)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	for _, ev := range f.turns[i] {
+		var typ struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal([]byte(ev), &typ)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", typ.Type, ev)
+	}
+}
+
+func messageStart(id string) string {
+	return `{"type":"message_start","message":{"id":"` + id + `","type":"message","role":"assistant","model":"claude-opus-5","content":[],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":1}}}`
+}
+
+func messageEnd(stop string) []string {
+	return []string{
+		`{"type":"message_delta","delta":{"stop_reason":"` + stop + `","stop_sequence":null,"stop_details":null},"usage":{"output_tokens":20}}`,
+		`{"type":"message_stop"}`,
+	}
+}
+
+func toolTurn(id, name, input string) []string {
+	enc, _ := json.Marshal(input)
+	return append([]string{
+		messageStart("msg_" + id),
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"` + id + `","name":"` + name + `","input":{}}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":` + string(enc) + `}}`,
+		`{"type":"content_block_stop","index":0}`,
+	}, messageEnd("tool_use")...)
+}
+
+func textTurn(text string) []string {
+	enc, _ := json.Marshal(text)
+	return append([]string{
+		messageStart("msg_final"),
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + string(enc) + `}}`,
+		`{"type":"content_block_stop","index":0}`,
+	}, messageEnd("end_turn")...)
+}
+
+func runFake(t *testing.T, turns [][]string, task Task) (Result, []Event, *fakeAPI) {
+	t.Helper()
+	fake := &fakeAPI{turns: turns}
+	srv := httptest.NewServer(fake)
+	t.Cleanup(srv.Close)
+
+	b := NewAPIBackend()
+	b.BaseURL, b.APIKey = srv.URL, "test"
+	var events []Event
+	var mu sync.Mutex
+	res := b.Run(context.Background(), task, func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !e.Partial {
+			events = append(events, e)
+		}
+	})
+	return res, events, fake
+}
+
+// lastToolResult pulls the tool_result block out of the final request.
+func lastToolResult(t *testing.T, req map[string]any) map[string]any {
+	t.Helper()
+	msgs := req["messages"].([]any)
+	last := msgs[len(msgs)-1].(map[string]any)
+	block := last["content"].([]any)[0].(map[string]any)
+	if block["type"] != "tool_result" {
+		t.Fatalf("expected tool_result, got %v", block)
+	}
+	return block
+}
+
+func TestAPILoopRunsToolsAndFinishes(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("secret-value\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, events, fake := runFake(t, [][]string{
+		toolTurn("toolu_1", "read_file", `{"path":"hello.txt"}`),
+		textTurn("The file says secret-value."),
+	}, Task{Prompt: "what is in hello.txt?", Dir: dir, Mode: ModeAsk})
+
+	if res.Status != StatusOK || res.Final != "The file says secret-value." || res.Turns != 2 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if res.InputTokens != 200 || res.OutputTokens != 40 {
+		t.Errorf("usage not accumulated: in=%d out=%d", res.InputTokens, res.OutputTokens)
+	}
+
+	block := lastToolResult(t, fake.requests[1])
+	if block["tool_use_id"] != "toolu_1" || !strings.Contains(fmt.Sprint(block["content"]), "secret-value") {
+		t.Errorf("tool_result not sent back correctly: %v", block)
+	}
+
+	// First request must carry the harness defaults.
+	first := fake.requests[0]
+	if first["model"] != "claude-opus-5" || first["fallbacks"] != "default" {
+		t.Errorf("model/fallbacks not set: model=%v fallbacks=%v", first["model"], first["fallbacks"])
+	}
+	if th, _ := first["thinking"].(map[string]any); th["type"] != "adaptive" {
+		t.Errorf("thinking not adaptive: %v", first["thinking"])
+	}
+
+	var kinds []EventKind
+	for _, e := range events {
+		kinds = append(kinds, e.Kind)
+	}
+	want := []EventKind{EventToolCall, EventToolResult, EventText}
+	if fmt.Sprint(kinds) != fmt.Sprint(want) {
+		t.Errorf("events = %v, want %v", kinds, want)
+	}
+}
+
+func TestAPILoopDeniesWritesWithoutApproval(t *testing.T) {
+	dir := t.TempDir()
+	res, _, fake := runFake(t, [][]string{
+		toolTurn("toolu_w", "write_file", `{"path":"x.txt","content":"hi"}`),
+		textTurn("I was not allowed to write."),
+	}, Task{Prompt: "write x.txt", Dir: dir, Mode: ModeAsk})
+
+	if res.Status != StatusOK {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "x.txt")); err == nil {
+		t.Fatal("file was written despite no approval")
+	}
+	if block := lastToolResult(t, fake.requests[1]); block["is_error"] != true {
+		t.Errorf("denied call should be an error result: %v", block)
+	}
+}
+
+func TestAPILoopReadOnlyHidesWriteTools(t *testing.T) {
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(), Mode: ModeReadOnly})
+	for _, tl := range fake.requests[0]["tools"].([]any) {
+		name := tl.(map[string]any)["name"]
+		if name == "write_file" || name == "edit_file" || name == "run_command" {
+			t.Errorf("readonly run offered %v", name)
+		}
+	}
+}
+
+func TestAPILoopMaxTurns(t *testing.T) {
+	dir := t.TempDir()
+	loop := toolTurn("toolu_l", "list_files", `{}`)
+	res, _, _ := runFake(t, [][]string{loop, loop, loop}, Task{Prompt: "loop", Dir: dir, Mode: ModeAsk, MaxTurns: 2})
+	if res.Status != StatusMaxTurns {
+		t.Fatalf("status = %s, want max_turns", res.Status)
+	}
+}
+
+func TestAPIRetriesOverloadedThenSucceeds(t *testing.T) {
+	res, _, fake := runFake(t, [][]string{nil, textTurn("done")}, Task{Prompt: "hi", Dir: t.TempDir(), Mode: ModeAsk})
+	if res.Status != StatusOK || res.Final != "done" || len(fake.requests) != 2 {
+		t.Fatalf("status=%s final=%q requests=%d err=%s", res.Status, res.Final, len(fake.requests), res.Error)
+	}
+	h := fake.headers[0]
+	if h.Get("x-api-key") != "test" || h.Get("anthropic-version") != apiVersion || !strings.Contains(h.Get("anthropic-beta"), betaFallback) {
+		t.Errorf("headers wrong: %v", h)
+	}
+}
+
+func TestAPIEchoesThinkingSignature(t *testing.T) {
+	dir := t.TempDir()
+	turn := append([]string{
+		messageStart("msg_th"),
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig123"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_t","name":"list_files","input":{}}}`,
+		`{"type":"content_block_stop","index":1}`,
+	}, messageEnd("tool_use")...)
+	_, _, fake := runFake(t, [][]string{turn, textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk})
+
+	msgs := fake.requests[1]["messages"].([]any)
+	assistant := msgs[1].(map[string]any)["content"].([]any)
+	th := assistant[0].(map[string]any)
+	tu := assistant[1].(map[string]any)
+	if th["thinking"] != "plan" || th["signature"] != "sig123" {
+		t.Errorf("thinking block not echoed intact: %v", th)
+	}
+	if in, ok := tu["input"].(map[string]any); !ok || len(in) != 0 {
+		t.Errorf("empty tool input should echo as {}: %v", tu["input"])
+	}
+}
+
+func TestAPIRejectsInvalidToolJSON(t *testing.T) {
+	_, _, fake := runFake(t, [][]string{
+		append([]string{
+			messageStart("msg_bad"),
+			`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_bad","name":"read_file","input":{}}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"a"}}`,
+			`{"type":"content_block_stop","index":0}`,
+		}, messageEnd("tool_use")...),
+		textTurn("ok"),
+	}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk})
+	block := lastToolResult(t, fake.requests[1])
+	if block["is_error"] != true || !strings.Contains(fmt.Sprint(block["content"]), "not valid JSON") {
+		t.Errorf("invalid input should be reported: %v", block)
+	}
+}
