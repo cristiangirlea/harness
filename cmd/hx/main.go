@@ -22,6 +22,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/hxmcp"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 const usage = `hx — personal agent harness
@@ -157,7 +158,7 @@ func cmdRun(args []string) (int, error) {
 	stdin := bufio.NewReader(os.Stdin)
 	if !promptFromStdin && isTerminal(os.Stdin) {
 		task.Approve = func(req agent.ApprovalRequest) bool {
-			fmt.Fprintf(os.Stderr, "\n\x1b[33mallow %s?\x1b[0m %s [y/N] ", req.Tool, oneLine(req.Summary, 300))
+			fmt.Fprintf(os.Stderr, "\n\x1b[33mallow %s?\x1b[0m %s [y/N] ", req.Tool, tools.OneLine(req.Summary, 300))
 			line, _ := stdin.ReadString('\n')
 			return strings.EqualFold(strings.TrimSpace(line), "y")
 		}
@@ -237,7 +238,7 @@ func cmdRuns(args []string) error {
 			status = "running?"
 		}
 		fmt.Printf("%s  %-8s %-9s %7s  %s\n", rec.ID, rec.Backend, status,
-			rec.Result.Duration.Round(time.Second), oneLine(rec.Task.Prompt, 70))
+			rec.Result.Duration.Round(time.Second), tools.OneLine(rec.Task.Prompt, 70))
 	}
 	return nil
 }
@@ -266,7 +267,7 @@ func cmdShow(args []string) error {
 		return enc.Encode(map[string]any{"record": rec, "events": events})
 	}
 	r := newRenderer(true)
-	fmt.Printf("%s\n%s · %s · mode %s\n\n", r.c(bold, oneLine(rec.Task.Prompt, 200)), rec.Backend, rec.Task.Dir, rec.Task.Mode)
+	fmt.Printf("%s\n%s · %s · mode %s\n\n", r.c(bold, tools.OneLine(rec.Task.Prompt, 200)), rec.Backend, rec.Task.Dir, rec.Task.Mode)
 	for _, e := range events {
 		r.Event(e)
 	}

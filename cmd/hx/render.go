@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 const (
@@ -92,10 +93,10 @@ func (r *renderer) Event(e agent.Event) {
 		if summary == "" && len(e.Input) > 0 {
 			summary = compactJSON(e.Input, 120)
 		}
-		r.write(r.c(cyan, "→ "+e.Tool) + " " + oneLine(summary, 160) + "\n")
+		r.write(r.c(cyan, "→ "+e.Tool) + " " + tools.OneLine(summary, 160) + "\n")
 	case agent.EventToolResult:
 		r.newline()
-		first := oneLine(e.Text, 140)
+		first := tools.OneLine(e.Text, 140)
 		lines := strings.Count(strings.TrimRight(e.Text, "\n"), "\n") + 1
 		if lines > 1 {
 			first += fmt.Sprintf(" (+%d lines)", lines-1)
@@ -107,7 +108,7 @@ func (r *renderer) Event(e agent.Event) {
 		}
 	case agent.EventInfo:
 		r.newline()
-		r.write(r.c(dim, "· "+oneLine(e.Text, 200)) + "\n")
+		r.write(r.c(dim, "· "+tools.OneLine(e.Text, 200)) + "\n")
 	case agent.EventError:
 		r.newline()
 		r.write(r.c(red, "error: "+e.Text) + "\n")
@@ -136,24 +137,13 @@ func (r *renderer) Summary(runID string, res agent.Result) {
 	r.write(r.c(dim, "run "+runID) + "\n")
 }
 
-func oneLine(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	if len([]rune(s)) > n {
-		s = string([]rune(s)[:n]) + "…"
-	}
-	return s
-}
-
 func compactJSON(raw json.RawMessage, n int) string {
 	var v any
 	if json.Unmarshal(raw, &v) != nil {
-		return oneLine(string(raw), n)
+		return tools.OneLine(string(raw), n)
 	}
 	b, _ := json.Marshal(v)
-	return oneLine(string(b), n)
+	return tools.OneLine(string(b), n)
 }
 
 func human(n int64) string {

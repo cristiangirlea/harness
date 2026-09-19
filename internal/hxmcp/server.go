@@ -136,9 +136,9 @@ func runTool(defaultDir string) mcp.Tool {
 				rec.Event(e)
 				switch e.Kind {
 				case agent.EventToolCall:
-					call.Progress(strings.TrimSpace("→ " + e.Tool + " " + oneLine(e.Text, 120)))
+					call.Progress(strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120)))
 				case agent.EventError:
-					call.Progress("error: " + oneLine(e.Text, 200))
+					call.Progress("error: " + tools.OneLine(e.Text, 200))
 				}
 			}
 			res := b.Run(ctx, task, emit)
@@ -190,7 +190,7 @@ func runsTool() mcp.Tool {
 					status = "running?"
 				}
 				fmt.Fprintf(&b, "%s  %-8s %-9s %7s  %s\n", rec.ID, rec.Backend, status,
-					rec.Result.Duration.Round(time.Second), oneLine(rec.Task.Prompt, 70))
+					rec.Result.Duration.Round(time.Second), tools.OneLine(rec.Task.Prompt, 70))
 				list = append(list, map[string]any{"id": rec.ID, "backend": rec.Backend, "status": status,
 					"started": rec.Started, "duration_ns": rec.Result.Duration, "prompt": rec.Task.Prompt, "dir": rec.Task.Dir})
 			}
@@ -229,7 +229,7 @@ func showTool() mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("run %s: %w", args.RunID, err)
 			}
 			var b strings.Builder
-			fmt.Fprintf(&b, "%s\n%s · %s · mode %s\n\n", oneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode)
+			fmt.Fprintf(&b, "%s\n%s · %s · mode %s\n\n", tools.OneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode)
 			var events []agent.Event
 			if args.Events == nil || *args.Events {
 				if events, err = runlog.Events(args.RunID); err != nil {
@@ -240,15 +240,15 @@ func showTool() mcp.Tool {
 					case agent.EventText:
 						b.WriteString(strings.TrimRight(e.Text, "\n") + "\n")
 					case agent.EventToolCall:
-						fmt.Fprintf(&b, "→ %s %s\n", e.Tool, oneLine(e.Text, 160))
+						fmt.Fprintf(&b, "→ %s %s\n", e.Tool, tools.OneLine(e.Text, 160))
 					case agent.EventToolResult:
 						mark := "✓"
 						if e.IsError {
 							mark = "✗"
 						}
-						fmt.Fprintf(&b, "  %s %s\n", mark, oneLine(e.Text, 140))
+						fmt.Fprintf(&b, "  %s %s\n", mark, tools.OneLine(e.Text, 140))
 					case agent.EventInfo:
-						fmt.Fprintf(&b, "· %s\n", oneLine(e.Text, 200))
+						fmt.Fprintf(&b, "· %s\n", tools.OneLine(e.Text, 200))
 					case agent.EventError:
 						fmt.Fprintf(&b, "error: %s\n", e.Text)
 					}
@@ -302,15 +302,4 @@ func summary(runID string, res agent.Result) string {
 	return fmt.Sprintf("── %s · %s · %s · %d turns · %d in / %d out (cache %d read)%s · %s ── run %s",
 		res.Status, res.Backend, res.Model, res.Turns, res.InputTokens, res.OutputTokens, res.CacheRead,
 		cost, res.Duration.Round(100*time.Millisecond), runID)
-}
-
-func oneLine(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	if r := []rune(s); len(r) > n {
-		s = string(r[:n]) + "…"
-	}
-	return s
 }
