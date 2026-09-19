@@ -134,7 +134,8 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusCanceled, ctx.Err())
 	case waitErr != nil:
 		// Prefer what the CLI said over the bare exit status: stderr first,
-		// then a structured error the stream already reported.
+		// then a structured error the stream already reported. A status the
+		// stream set (max_turns, refused) survives the non-zero exit too.
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = res.Error
@@ -142,7 +143,11 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		if msg == "" {
 			msg = waitErr.Error()
 		}
-		return fail(StatusError, errors.New(lastLines(msg, 20)))
+		status := StatusError
+		if res.Status != "" && res.Status != StatusOK {
+			status = res.Status
+		}
+		return fail(status, errors.New(lastLines(msg, 20)))
 	case res.Status == "":
 		res.Status = StatusOK
 	}
