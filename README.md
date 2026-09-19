@@ -8,6 +8,9 @@ It speaks **MCP** both ways: the api loop can use any stdio MCP server's tools, 
 `hx mcp` turns hx into an MCP server so Claude Code (or any host) can delegate tasks to
 any backend, several at a time.
 
+`hx batch` is the orchestrator: N agents in parallel, each in its own git worktree on
+its own branch, with build/test gates and retries on another backend.
+
 **Zero dependencies.** Standard library only — `go.mod` has no `require` lines. The API
 client (streaming SSE, retries, prompt caching, thinking round-trips) is ~400 lines in
 `internal/agent/messages.go`; MCP (JSON-RPC 2.0 over stdio, client and server) is ~600
@@ -48,6 +51,8 @@ go test ./...
 | `hx runs [-n N]` | List recent runs. |
 | `hx show [--json] <id>` | Replay a recorded run. |
 | `hx mcp` | Serve hx as an MCP server on stdio (see [MCP](#mcp)). |
+| `hx batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
+| `hx batch rm <id>` | Remove the worktrees and branches a batch created. |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
@@ -137,6 +142,47 @@ agents, each recorded under `~/.hx/runs` like a CLI run. Cancelling the tool cal
 the run. There is no terminal behind the server, so `ask` denies every write and
 command: `run` defaults to `readonly`; use `auto` for edits and `yolo` for commands.
 
+## Batches
+
+`hx batch tasks.json` runs every task in the file against one repository, `parallel`
+agents at a time, each in its own git worktree on its own branch. After an agent
+finishes, the gate commands run in that worktree; a task whose run or gates fail is
+retried on the next backend in `retry`. Every attempt is an ordinary recorded run.
+
+```json
+{
+  "parallel": 3,
+  "backend": "claude",
+  "mode": "yolo",
+  "gate": ["go build ./...", "go test ./..."],
+  "retry": ["opencode"],
+  "tasks": [
+    {"id": "fix-add", "prompt": "add() in math.go subtracts. Fix it and add a test."},
+    {"prompt": "Make list_files skip .venv directories.", "backend": "api", "gate": ["go test ./internal/tools"]}
+  ]
+}
+```
+
+`dir` (default: the file's directory) is any path inside the repository. Task fields
+override the file's defaults of the same name; `id` defaults to `t1`, `t2`, ….
+
+For each task hx creates branch `hx/<id>` and worktree `.hx/worktrees/<id>` from the
+current `HEAD` (uncommitted changes in the main worktree are not included), runs the
+agent there, then the gates in order, stopping at the first non-zero exit. Whatever the
+agent left is committed on the branch as `<id>: <prompt>`, pass or fail, so a worktree
+can be inspected, merged or removed without losing work. A failed attempt is retried on
+each backend in `retry` in a fresh worktree; the last worktree is kept. hx writes
+`.hx/.gitignore` so the worktrees never show up in the repository's status.
+
+Nothing can answer approval prompts in a batch, so `mode` defaults to `auto` (file edits
+allowed, no commands). Use `yolo` when the agent must build or run tests itself; the
+gates run either way.
+
+The record goes to `~/.hx/batches/<id>.json`; `--json` prints it, `-v` streams every
+agent's tool calls. `hx batch rm <id>` removes the worktrees and branches of a batch;
+the record and the run logs stay. Ctrl+C cancels running agents and skips the rest.
+Exit status is 1 unless every task passed.
+
 ## Run records
 
 `~/.hx/runs/<id>/` (or `$HX_HOME/runs`):
@@ -154,18 +200,20 @@ internal/agent/    Backend interface, api loop + stdlib Messages client, CLI ada
 internal/tools/    workspace-confined tool runtime + MCP tool adapter
 internal/mcp/      MCP over stdio: JSON-RPC codec, Client, Server, config loader
 internal/hxmcp/    hx's own MCP server (run, runs, show, backends)
+internal/batch/    orchestrator: parallel worktrees, gates, retries, batch records
 internal/runlog/   run recording
 ```
 
 ## Roadmap
 
-The `agent.Backend` contract (Task → Events → Result) is what the next two layers build on.
-`hx mcp` is already a first orchestrator: the host session plans and hx runs the workers.
+The `agent.Backend` contract (Task → Events → Result) is what the layers build on.
+`hx mcp` (a host session plans, hx runs) and `hx batch` (parallel worktrees, gates,
+retries) are the orchestrator; the eval layer is what remains.
 
-1. **Orchestrator** — task queue, N agents in parallel, each in its own git worktree,
-   pass/fail gates (build/test commands), retries on another backend.
-2. **Eval** — run a task set × backends × models repeatedly, score results
+1. **Eval** — run a task set × backends × models repeatedly, score results
    (deterministic checks first, LLM judge only where needed), compare over time from
-   the run records.
+   the run and batch records.
+2. **Batch follow-ups** — feed a failed attempt's gate output into the retry prompt;
+   `hx batch merge` for passed branches.
 3. **MCP follow-ups** — Streamable HTTP transport for remote servers; MCP elicitation so
    a host can answer `ask`-mode approvals instead of hx denying them.

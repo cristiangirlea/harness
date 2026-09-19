@@ -170,3 +170,11 @@ func isTerminal(f *os.File) bool {
 	info, err := f.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
+
+// Line prints one whole line, starting fresh if streamed text was mid-line.
+func (r *renderer) Line(s string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.newline()
+	r.write(s + "\n")
+}

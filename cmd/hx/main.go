@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/hxmcp"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -31,6 +32,8 @@ Usage:
   hx runs [-n N]                 list recent runs
   hx show [--json] <run-id>      replay a recorded run
   hx mcp                         serve hx as an MCP server on stdio (for Claude Code and other hosts)
+  hx batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
+  hx batch rm <batch-id>         remove the worktrees and branches a batch created
 
 Run flags:
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
@@ -42,6 +45,11 @@ Run flags:
       --json           print events as JSON lines instead of formatted output
       --thinking       show model thinking summaries
       --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hx/mcp.json is loaded when present
+
+Batch flags:
+      --parallel N     agents at once (default: the file's value, else 2)
+      --json           print the batch record as JSON (progress goes to stderr)
+  -v, --verbose        show each agent's tool calls
 
 Runs are recorded under ~/.hx/runs (override with HX_HOME).
 `
@@ -64,6 +72,8 @@ func main() {
 		err = cmdShow(os.Args[2:])
 	case "mcp":
 		err = cmdMCP()
+	case "batch":
+		code, err = cmdBatch(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -287,3 +297,88 @@ type multiFlag []string
 
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+func cmdBatch(args []string) (int, error) {
+	if len(args) >= 1 && args[0] == "rm" {
+		if len(args) != 2 {
+			return 2, errors.New("usage: hx batch rm <batch-id>")
+		}
+		res, err := batch.LoadResult(args[1])
+		if err != nil {
+			return 1, err
+		}
+		if err := batch.Remove(res); err != nil {
+			return 1, err
+		}
+		fmt.Printf("removed the worktrees and branches of batch %s (%d tasks)\n", res.ID, len(res.Tasks))
+		return 0, nil
+	}
+	fs := flag.NewFlagSet("batch", flag.ContinueOnError)
+	parallel := fs.Int("parallel", 0, "")
+	jsonOut := fs.Bool("json", false, "")
+	var verbose bool
+	for _, name := range []string{"v", "verbose"} {
+		fs.BoolVar(&verbose, name, false, "")
+	}
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(args); err != nil {
+		return 2, nil
+	}
+	if fs.NArg() != 1 {
+		return 2, errors.New("usage: hx batch [flags] <tasks.json>")
+	}
+	spec, err := batch.LoadSpec(fs.Arg(0))
+	if err != nil {
+		return 2, err
+	}
+	if *parallel > 0 {
+		spec.Parallel = *parallel
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	r := newRenderer(false)
+	if *jsonOut {
+		r.out = os.Stderr
+	}
+	res, err := batch.Run(ctx, spec, func(e batch.Event) {
+		if e.Kind == "tool" && !verbose {
+			return
+		}
+		r.Line(fmt.Sprintf("[%s] %s", e.Task, e.Text))
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	passed := 0
+	for _, t := range res.Tasks {
+		if t.Status == batch.StatusPass {
+			passed++
+		}
+	}
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(res)
+	} else {
+		r.Line("")
+		for _, t := range res.Tasks {
+			last := "-"
+			if n := len(t.Attempts); n > 0 {
+				last = t.Attempts[n-1].Backend
+			}
+			status := string(t.Status)
+			if t.Status != batch.StatusPass {
+				status = r.c(red, status)
+			}
+			r.Line(fmt.Sprintf("  %-16s %-9s %-9s %d attempt(s)  %-24s %s", t.ID, status, last, len(t.Attempts), t.Branch, t.Duration.Round(time.Second)))
+		}
+		r.Line(r.c(dim, fmt.Sprintf("── batch %s · %d/%d passed · %s ──", res.ID, passed, len(res.Tasks), res.Duration.Round(time.Second))))
+		r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · remove them with: hx batch rm %s", filepath.Join(res.Dir, ".hx", "worktrees"), res.ID)))
+	}
+	if passed != len(res.Tasks) {
+		return 1, nil
+	}
+	return 0, nil
+}

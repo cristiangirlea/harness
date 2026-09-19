@@ -18,14 +18,17 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
-// Root is ~/.hx/runs unless HX_HOME is set.
-func Root() string {
+// Home is $HX_HOME, or ~/.hx.
+func Home() string {
 	if h := os.Getenv("HX_HOME"); h != "" {
-		return filepath.Join(h, "runs")
+		return h
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".hx", "runs")
+	return filepath.Join(home, ".hx")
 }
+
+// Root is the runs directory under Home.
+func Root() string { return filepath.Join(Home(), "runs") }
 
 type Record struct {
 	ID      string       `json:"id"`
@@ -45,7 +48,7 @@ type Writer struct {
 }
 
 func Create(backend string, task agent.Task) (*Writer, error) {
-	id := newID()
+	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -86,7 +89,8 @@ func (w *Writer) Close(res agent.Result) error {
 	return errors.Join(err, writeJSON(filepath.Join(w.dir, "result.json"), w.rec))
 }
 
-func newID() string {
+// NewID is a sortable timestamp plus random suffix, shared by runs and batches.
+func NewID() string {
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
 	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
