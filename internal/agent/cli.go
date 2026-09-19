@@ -133,7 +133,12 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	case ctx.Err() != nil:
 		return fail(StatusCanceled, ctx.Err())
 	case waitErr != nil:
+		// Prefer what the CLI said over the bare exit status: stderr first,
+		// then a structured error the stream already reported.
 		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = res.Error
+		}
 		if msg == "" {
 			msg = waitErr.Error()
 		}
