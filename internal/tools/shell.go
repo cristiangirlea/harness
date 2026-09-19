@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -62,34 +61,20 @@ func runCommand() Tool {
 			if args.TimeoutSec > 0 {
 				timeout = time.Duration(min(args.TimeoutSec, 600)) * time.Second
 			}
-			ctx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
-			_, argv := Shell()
-			parts := argv(args.Command)
-			cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-			cmd.Dir = ws.Root
-			cmd.Stdin = nil
-			var out bytes.Buffer
-			cmd.Stdout = &out
-			cmd.Stderr = &out
-			err = cmd.Run()
-			code := 0
-			var exitErr *exec.ExitError
-			switch {
-			case errors.Is(ctx.Err(), context.DeadlineExceeded):
-				return Truncate(out.String()) + fmt.Sprintf("\n[timed out after %s]", timeout), errors.New("command timed out")
-			case errors.As(err, &exitErr):
-				code = exitErr.ExitCode()
-			case err != nil:
+			res, err := RunShell(ctx, ws.Root, args.Command, timeout)
+			if err != nil {
 				return "", err
 			}
-			result := Truncate(out.String())
+			if res.TimedOut {
+				return res.Output + fmt.Sprintf("\n[timed out after %s]", timeout), errors.New("command timed out")
+			}
+			result := res.Output
 			if result == "" {
 				result = "(no output)"
 			}
-			result += fmt.Sprintf("\n[exit code %d]", code)
-			if code != 0 {
-				return result, fmt.Errorf("exit code %d", code)
+			result += fmt.Sprintf("\n[exit code %d]", res.ExitCode)
+			if res.ExitCode != 0 {
+				return result, fmt.Errorf("exit code %d", res.ExitCode)
 			}
 			return result, nil
 		},
