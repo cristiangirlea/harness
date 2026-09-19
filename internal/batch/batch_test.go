@@ -74,6 +74,15 @@ func initRepo(t *testing.T) string {
 	return dir
 }
 
+// canon resolves symlinks and Windows 8.3 short names, which git expands.
+func canon(t *testing.T, p string) string {
+	t.Helper()
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
 func run(t *testing.T, spec Spec) (Result, []Event) {
 	t.Helper()
 	var mu sync.Mutex
@@ -96,7 +105,7 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 		Dir: dir, Parallel: 2, Backend: "wb-ok", Gate: []string{"exit 0"},
 		Tasks: []Task{{ID: "one", Prompt: "first task"}, {Prompt: "second task"}},
 	})
-	if res.ID == "" || res.Dir != dir || res.Base != base || len(res.Tasks) != 2 {
+	if res.ID == "" || canon(t, res.Dir) != canon(t, dir) || res.Base != base || len(res.Tasks) != 2 {
 		t.Fatalf("result = %+v", res)
 	}
 	for i, want := range []string{"one", "t2"} {
@@ -122,7 +131,7 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 		t.Error("main worktree must stay untouched")
 	}
 	saved, err := LoadResult(res.ID)
-	if err != nil || saved.ID != res.ID || len(saved.Tasks) != 2 {
+	if err != nil || saved.ID != res.ID || len(saved.Tasks) != 2 || saved.Tasks[0].Status != StatusPass {
 		t.Errorf("record not saved: %+v err=%v", saved, err)
 	}
 	var kinds []string
@@ -199,6 +208,36 @@ func TestCancelStopsEverything(t *testing.T) {
 	}
 }
 
+func TestRecordIsSavedBeforeTasksRun(t *testing.T) {
+	dir := initRepo(t)
+	batches := filepath.Join(os.Getenv("HX_HOME"), "batches")
+	ctx, cancel := context.WithCancel(context.Background())
+	var early Result
+	var earlyErr error
+	go func() {
+		<-blockStarted
+		entries, err := os.ReadDir(batches)
+		if err != nil || len(entries) != 1 {
+			earlyErr = err
+		} else {
+			var data []byte
+			data, earlyErr = os.ReadFile(filepath.Join(batches, entries[0].Name()))
+			_ = json.Unmarshal(data, &early)
+		}
+		cancel()
+	}()
+	res, err := Run(ctx, Spec{Dir: dir, Backend: "wb-block", Tasks: []Task{{ID: "slow", Prompt: "a"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if earlyErr != nil || early.ID != res.ID || len(early.Tasks) != 1 || early.Tasks[0].Status != StatusRunning || early.Tasks[0].Branch != "hx/slow" {
+		t.Fatalf("record while running = %+v err=%v", early, earlyErr)
+	}
+	if saved, err := LoadResult(res.ID); err != nil || saved.Tasks[0].Status != StatusCanceled {
+		t.Errorf("final record = %+v err=%v", saved, err)
+	}
+}
+
 func TestRemoveDeletesWorktreesAndBranches(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{Prompt: "a"}, {Prompt: "b"}}})
@@ -218,6 +257,32 @@ func TestRemoveDeletesWorktreesAndBranches(t *testing.T) {
 	}
 }
 
+func TestCommitFailureIsAnErrorAndRemoveRefuses(t *testing.T) {
+	dir := initRepo(t)
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "hooked", Prompt: "a"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusError || !strings.Contains(tr.Error, "uncommitted") || len(tr.Attempts) != 1 || tr.Commit != "" {
+		t.Fatalf("task = %+v", tr)
+	}
+	if _, err := os.Stat(filepath.Join(tr.Worktree, "out.txt")); err != nil {
+		t.Fatalf("the agent's work must stay in the worktree: %v", err)
+	}
+	err := Remove(res)
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("Remove must refuse a dirty worktree: %v", err)
+	}
+	if _, err := os.Stat(tr.Worktree); err != nil {
+		t.Error("dirty worktree was removed")
+	}
+}
+
 func TestBranchCollisionIsAnError(t *testing.T) {
 	dir := initRepo(t)
 	git(t, dir, "branch", "hx/taken")
@@ -225,6 +290,25 @@ func TestBranchCollisionIsAnError(t *testing.T) {
 	tr := res.Tasks[0]
 	if tr.Status != StatusError || tr.Error == "" || len(tr.Attempts) != 0 {
 		t.Fatalf("existing branch must fail fast without attempts: %+v", tr)
+	}
+}
+
+func TestSpecValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec Spec
+		want string
+	}{
+		{"unknown backend", Spec{Backend: "nope", Tasks: []Task{{Prompt: "a"}}}, "unknown backend"},
+		{"unknown retry", Spec{Backend: "wb-ok", Retry: []string{"nope"}, Tasks: []Task{{Prompt: "a"}}}, "unknown backend"},
+		{"unknown task backend", Spec{Tasks: []Task{{Prompt: "a", Backend: "nope"}}}, "task t1"},
+		{"unknown task retry", Spec{Tasks: []Task{{Prompt: "a", Backend: "wb-ok", Retry: []string{"nope"}}}}, "task t1"},
+		{"blank gate", Spec{Backend: "wb-ok", Gate: []string{"go test", " "}, Tasks: []Task{{Prompt: "a"}}}, "empty gate"},
+		{"blank task gate", Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Gate: []string{""}}}}, "task t1"},
+	} {
+		if _, err := Run(context.Background(), tc.spec, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)
+		}
 	}
 }
 

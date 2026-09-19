@@ -168,20 +168,23 @@ override the file's defaults of the same name; `id` defaults to `t1`, `t2`, ….
 
 For each task hx creates branch `hx/<id>` and worktree `.hx/worktrees/<id>` from the
 current `HEAD` (uncommitted changes in the main worktree are not included), runs the
-agent there, then the gates in order, stopping at the first non-zero exit. Whatever the
-agent left is committed on the branch as `<id>: <prompt>`, pass or fail, so a worktree
-can be inspected, merged or removed without losing work. A failed attempt is retried on
-each backend in `retry` in a fresh worktree; the last worktree is kept. hx writes
-`.hx/.gitignore` so the worktrees never show up in the repository's status.
+agent there, then the gates in order, stopping at the first non-zero exit or after 15
+minutes. Whatever the agent left is committed on the branch as `<id>: <prompt>`, pass or
+fail, so a worktree can be inspected, merged or removed without losing work; if that
+commit fails (no git identity, a pre-commit hook) the task ends as `error` and the work
+stays uncommitted in the worktree. A failed attempt is retried on each backend in
+`retry` in a fresh worktree; the last worktree is kept. hx writes `.hx/.gitignore` so
+the worktrees never show up in the repository's status.
 
 Nothing can answer approval prompts in a batch, so `mode` defaults to `auto` (file edits
 allowed, no commands). Use `yolo` when the agent must build or run tests itself; the
-gates run either way.
+gates run either way. Backend names and gate commands are checked before anything runs.
 
-The record goes to `~/.hx/batches/<id>.json`; `--json` prints it, `-v` streams every
-agent's tool calls. `hx batch rm <id>` removes the worktrees and branches of a batch;
-the record and the run logs stay. Ctrl+C cancels running agents and skips the rest.
-Exit status is 1 unless every task passed.
+The record goes to `~/.hx/batches/<id>.json`, written before the first task starts and
+again at the end; `--json` prints it, `-v` streams every agent's tool calls.
+`hx batch rm <id>` removes the worktrees and branches of a batch (it refuses a worktree
+with uncommitted changes); the record and the run logs stay. Ctrl+C cancels running
+agents and skips the rest. Exit status is 1 unless every task passed.
 
 ## Run records
 

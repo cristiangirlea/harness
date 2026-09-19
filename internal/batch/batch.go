@@ -55,13 +55,15 @@ type Task struct {
 type Status string
 
 const (
+	StatusRunning  Status = "running"  // in the record while the batch is still going
 	StatusPass     Status = "pass"     // the run finished and every gate exited 0
 	StatusFail     Status = "fail"     // every attempt failed its run or a gate
-	StatusError    Status = "error"    // the task could not be set up (branch taken, git failure)
+	StatusError    Status = "error"    // setup or bookkeeping failed (branch taken, git failure, commit refused)
 	StatusCanceled Status = "canceled" // interrupted
 )
 
-// Result is the record of one batch, saved under $HX_HOME/batches.
+// Result is the record of one batch, saved under $HX_HOME/batches before the
+// first task starts and again when the batch ends.
 type Result struct {
 	ID       string        `json:"id"`
 	Started  time.Time     `json:"started"`
@@ -94,13 +96,14 @@ type Attempt struct {
 
 type GateResult struct {
 	Command  string        `json:"command"`
-	ExitCode int           `json:"exit_code"`
-	Output   string        `json:"output"` // last part of combined stdout/stderr
+	ExitCode int           `json:"exit_code"` // -1 when killed (timeout or cancellation)
+	Output   string        `json:"output"`    // last part of combined stdout/stderr
 	Duration time.Duration `json:"duration_ns"`
 }
 
 // Event is progress for a caller to print. Kind is one of start, tool, run,
-// gate, retry, done.
+// gate, retry, done. Run delivers events one at a time, so the callback need
+// not lock.
 type Event struct {
 	Task string
 	Kind string
@@ -135,6 +138,8 @@ func LoadSpec(path string) (Spec, error) {
 	return spec, nil
 }
 
+// normalize fills defaults and rejects anything that would only surface after
+// an agent has already spent minutes: unknown backends, blank gates, bad ids.
 func (s *Spec) normalize() error {
 	if s.Dir == "" {
 		s.Dir = "."
@@ -146,6 +151,12 @@ func (s *Spec) normalize() error {
 		s.Mode = string(agent.ModeAuto)
 	}
 	if _, err := agent.ParseMode(s.Mode); err != nil {
+		return err
+	}
+	if err := checkBackends(s.Backend, s.Retry); err != nil {
+		return err
+	}
+	if err := checkGates(s.Gate); err != nil {
 		return err
 	}
 	if len(s.Tasks) == 0 {
@@ -172,20 +183,59 @@ func (s *Spec) normalize() error {
 				return fmt.Errorf("task %s: %w", t.ID, err)
 			}
 		}
+		if err := checkBackends(t.Backend, t.Retry); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
+		if err := checkGates(t.Gate); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
+	}
+	return nil
+}
+
+func checkBackends(backend string, retry []string) error {
+	for _, name := range append([]string{backend}, retry...) {
+		if name == "" {
+			continue
+		}
+		if _, err := agent.Get(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkGates(gates []string) error {
+	for _, g := range gates {
+		if strings.TrimSpace(g) == "" {
+			return errors.New("empty gate command")
+		}
 	}
 	return nil
 }
 
 // Run executes the batch and saves its record. Tasks run through a pool of
 // Parallel workers; cancelling ctx stops running agents and skips the rest.
+// The record is written before the first task starts, so `hx batch rm` can
+// clean up even after a crash, and again at the end. A failure to write the
+// final record is returned together with the finished Result.
 func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	started := time.Now()
 	if err := spec.normalize(); err != nil {
 		return Result{}, err
 	}
-	if notify == nil {
-		notify = func(Event) {}
+	// Workers and agents report concurrently; callers get one event at a time.
+	report := notify
+	if report == nil {
+		report = func(Event) {}
 	}
+	var notifyMu sync.Mutex
+	notify = func(e Event) {
+		notifyMu.Lock()
+		defer notifyMu.Unlock()
+		report(e)
+	}
+
 	root, err := gitOut(ctx, spec.Dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return Result{}, err
@@ -215,6 +265,14 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	}
 
 	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks))}
+	for i, t := range spec.Tasks {
+		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hx/" + t.ID,
+			Worktree: filepath.Join(wtRoot, t.ID), Attempts: []Attempt{}}
+	}
+	if err := save(res); err != nil {
+		return Result{}, fmt.Errorf("saving batch record: %w", err)
+	}
+
 	idx := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < spec.Parallel; w++ {
@@ -222,7 +280,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				res.Tasks[i] = runTask(ctx, &spec, spec.Tasks[i], root, base, mcpPaths, notify)
+				res.Tasks[i] = runTask(ctx, &spec, spec.Tasks[i], res.Tasks[i], root, base, mcpPaths, notify)
 			}
 		}()
 	}
@@ -232,12 +290,15 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	close(idx)
 	wg.Wait()
 	res.Duration = time.Since(started)
-	return res, save(res)
+	if err := save(res); err != nil {
+		return res, fmt.Errorf("saving batch record: %w", err)
+	}
+	return res, nil
 }
 
-func runTask(ctx context.Context, spec *Spec, t Task, root, base string, mcpPaths []string, notify func(Event)) TaskResult {
+func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base string, mcpPaths []string, notify func(Event)) TaskResult {
 	started := time.Now()
-	tr := TaskResult{ID: t.ID, Prompt: t.Prompt, Branch: "hx/" + t.ID, Worktree: filepath.Join(root, ".hx", "worktrees", t.ID), Attempts: []Attempt{}}
+	tr.Status, tr.Attempts, tr.Commit, tr.Error = "", []Attempt{}, "", ""
 	finish := func(status Status, text string) TaskResult {
 		tr.Status = status
 		tr.Duration = time.Since(started)
@@ -245,6 +306,9 @@ func runTask(ctx context.Context, spec *Spec, t Task, root, base string, mcpPath
 		return tr
 	}
 	fail := func(err error) TaskResult {
+		if ctx.Err() != nil {
+			return finish(StatusCanceled, "canceled")
+		}
 		tr.Error = err.Error()
 		return finish(StatusError, "error: "+err.Error())
 	}
@@ -298,7 +362,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, root, base string, mcpPath
 		att.Result = b.Run(ctx, task, func(e agent.Event) {
 			rec.Event(e)
 			if e.Kind == agent.EventToolCall {
-				notify(Event{Task: t.ID, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + oneLine(e.Text, 120))})
+				notify(Event{Task: t.ID, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
 			}
 		})
 		if err := rec.Close(att.Result); err != nil {
@@ -306,7 +370,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, root, base string, mcpPath
 		}
 		text := fmt.Sprintf("%s · %d turns · run %s", att.Result.Status, att.Result.Turns, att.RunID)
 		if att.Result.Error != "" {
-			text += " · " + oneLine(att.Result.Error, 160)
+			text += " · " + tools.OneLine(att.Result.Error, 160)
 		}
 		notify(Event{Task: t.ID, Kind: "run", Text: text})
 
@@ -325,14 +389,17 @@ func runTask(ctx context.Context, spec *Spec, t Task, root, base string, mcpPath
 		}
 		// The branch holds whatever the agent left, pass or fail, so the
 		// worktree can be inspected or removed without losing work.
-		if sha, err := commitChanges(tr.Worktree, t); err != nil {
-			att.Error = strings.TrimSpace(att.Error + "\ncommit: " + err.Error())
-		} else {
-			tr.Commit = sha
+		sha, commitErr := commitChanges(tr.Worktree, t)
+		if commitErr != nil {
+			att.Error = strings.TrimSpace(att.Error + "\ncommit: " + commitErr.Error())
 		}
+		tr.Commit = sha
 		tr.Attempts = append(tr.Attempts, att)
 
 		switch {
+		case commitErr != nil:
+			// The work exists only in the worktree; say so instead of claiming a pass.
+			return fail(fmt.Errorf("commit failed, changes are uncommitted in %s: %v", tr.Worktree, commitErr))
 		case ok:
 			text := "pass · branch " + tr.Branch
 			if tr.Commit != "" {
@@ -348,25 +415,14 @@ func runTask(ctx context.Context, spec *Spec, t Task, root, base string, mcpPath
 
 func runGate(ctx context.Context, dir, command string) GateResult {
 	started := time.Now()
-	_, argv := tools.Shell()
-	gctx, cancel := context.WithTimeout(ctx, gateTimeout)
-	defer cancel()
-	args := argv(command)
-	cmd := exec.CommandContext(gctx, args[0], args[1:]...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	gr := GateResult{Command: command, Output: tail(string(out), 4000), Duration: time.Since(started)}
-	var exit *exec.ExitError
+	res, err := tools.RunShell(ctx, dir, command, gateTimeout)
+	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}
 	switch {
-	case err == nil:
-	case errors.As(err, &exit):
-		gr.ExitCode = exit.ExitCode()
-	default:
+	case err != nil:
 		gr.ExitCode = -1
 		gr.Output = strings.TrimSpace(gr.Output + "\n" + err.Error())
-	}
-	if gctx.Err() != nil && gr.ExitCode == 0 {
-		gr.ExitCode = -1
+	case res.TimedOut:
+		gr.Output = strings.TrimSpace(gr.Output + fmt.Sprintf("\n[timed out after %s]", gateTimeout))
 	}
 	return gr
 }
@@ -375,27 +431,44 @@ func runGate(ctx context.Context, dir, command string) GateResult {
 // the commit, or "" when nothing changed. It runs after the agent, so it uses
 // its own context: a cancelled batch must still leave a consistent branch.
 func commitChanges(wt string, t Task) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	status, err := gitOut(ctx, wt, "status", "--porcelain")
-	if err != nil || status == "" {
+	dirty, err := hasChanges(wt)
+	if err != nil || !dirty {
 		return "", err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	if _, err := gitOut(ctx, wt, "add", "-A"); err != nil {
 		return "", err
 	}
-	if _, err := gitOut(ctx, wt, "commit", "-q", "-m", t.ID+": "+oneLine(t.Prompt, 60)); err != nil {
+	if _, err := gitOut(ctx, wt, "commit", "-q", "-m", t.ID+": "+tools.OneLine(t.Prompt, 60)); err != nil {
 		return "", err
 	}
 	return gitOut(ctx, wt, "rev-parse", "HEAD")
 }
 
-// Remove deletes the worktrees and branches a batch created. The record and
-// the run logs stay.
+// hasChanges reports whether a worktree holds uncommitted work. A missing
+// worktree holds none.
+func hasChanges(wt string) (bool, error) {
+	if _, err := os.Stat(wt); err != nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	status, err := gitOut(ctx, wt, "status", "--porcelain")
+	return status != "", err
+}
+
+// Remove deletes the worktrees and branches a batch created. A worktree with
+// uncommitted changes is left alone and reported, because the branch would
+// not hold that work. The record and the run logs stay.
 func Remove(res Result) error {
 	var errs []error
 	for _, tr := range res.Tasks {
 		if tr.Worktree == "" {
+			continue
+		}
+		if dirty, err := hasChanges(tr.Worktree); err == nil && dirty {
+			errs = append(errs, fmt.Errorf("%s: %s has uncommitted changes; commit or discard them first", tr.ID, tr.Worktree))
 			continue
 		}
 		if err := removeWorktree(res.Dir, tr); err != nil {
@@ -493,13 +566,4 @@ func tail(s string, n int) string {
 		return s
 	}
 	return "…" + s[len(s)-n:]
-}
-
-// oneLine collapses whitespace (errors are often multi-line JSON) and truncates.
-func oneLine(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > n {
-		s = string(r[:n]) + "…"
-	}
-	return s
 }

@@ -348,8 +348,12 @@ func cmdBatch(args []string) (int, error) {
 		}
 		r.Line(fmt.Sprintf("[%s] %s", e.Task, e.Text))
 	})
-	if err != nil {
+	if err != nil && len(res.Tasks) == 0 {
 		return 1, err
+	}
+	if err != nil {
+		// The batch ran; only its record could not be written.
+		r.Line(r.c(red, "error: "+err.Error()))
 	}
 
 	passed := 0
@@ -376,7 +380,7 @@ func cmdBatch(args []string) (int, error) {
 			r.Line(fmt.Sprintf("  %-16s %-9s %-9s %d attempt(s)  %-24s %s", t.ID, status, last, len(t.Attempts), t.Branch, t.Duration.Round(time.Second)))
 		}
 		r.Line(r.c(dim, fmt.Sprintf("── batch %s · %d/%d passed · %s ──", res.ID, passed, len(res.Tasks), res.Duration.Round(time.Second))))
-		r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · remove them with: hx batch rm %s", filepath.Join(res.Dir, ".hx", "worktrees"), res.ID)))
+		r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · once merged or abandoned, remove them with: hx batch rm %s", filepath.Join(res.Dir, ".hx", "worktrees"), res.ID)))
 	}
 	if passed != len(res.Tasks) {
 		return 1, nil
