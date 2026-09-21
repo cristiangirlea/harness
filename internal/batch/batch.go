@@ -42,15 +42,18 @@ type Spec struct {
 }
 
 type Task struct {
-	ID       string   `json:"id,omitempty"` // branch hx/<id> and worktree .hx/worktrees/<id>; default t1, t2, ...
-	Prompt   string   `json:"prompt"`
-	Backend  string   `json:"backend,omitempty"`
-	Model    string   `json:"model,omitempty"`
-	Mode     string   `json:"mode,omitempty"`
-	MaxTurns int      `json:"max_turns,omitempty"`
-	Effort   string   `json:"effort,omitempty"`
-	Gate     []string `json:"gate,omitempty"`
-	Retry    []string `json:"retry,omitempty"`
+	ID       string `json:"id,omitempty"` // branch hx/<id> and worktree .hx/worktrees/<id>; default t1, t2, ...
+	Prompt   string `json:"prompt"`
+	Backend  string `json:"backend,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	MaxTurns int    `json:"max_turns,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+	// NoInstructions adds to the spec-wide switch; a task can turn the project
+	// instructions off but not back on.
+	NoInstructions bool     `json:"no_instructions,omitempty"`
+	Gate           []string `json:"gate,omitempty"`
+	Retry          []string `json:"retry,omitempty"`
 }
 
 type Status string
@@ -348,7 +351,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 
 		task := agent.Task{
 			Prompt: t.Prompt, Dir: tr.Worktree, Mode: mode, MCP: mcpPaths,
-			NoInstructions: spec.NoInstructions,
+			NoInstructions: t.NoInstructions || spec.NoInstructions,
 			Model:          firstOf(t.Model, spec.Model), Effort: firstOf(t.Effort, spec.Effort),
 			MaxTurns: t.MaxTurns,
 		}

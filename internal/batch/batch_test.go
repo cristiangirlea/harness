@@ -346,11 +346,25 @@ func TestLoadSpec(t *testing.T) {
 	}
 }
 
-func TestSpecNoInstructionsReachesTheTask(t *testing.T) {
+func TestNoInstructionsReachesTheTask(t *testing.T) {
 	dir := initRepo(t)
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", NoInstructions: true, Tasks: []Task{{Prompt: "a"}}})
-	rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID)
-	if err != nil || !rec.Task.NoInstructions {
-		t.Fatalf("no_instructions should reach the task: %+v err=%v", rec.Task, err)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "spec-off", Prompt: "a"},
+		{ID: "task-off", Prompt: "a", NoInstructions: true},
+	}})
+	for _, tc := range []struct {
+		i    int
+		want bool
+	}{{0, false}, {1, true}} {
+		rec, err := runlog.Load(res.Tasks[tc.i].Attempts[0].RunID)
+		if err != nil || rec.Task.NoInstructions != tc.want {
+			t.Errorf("%s: NoInstructions = %v, want %v (err=%v)", res.Tasks[tc.i].ID, rec.Task.NoInstructions, tc.want, err)
+		}
+	}
+
+	dir = initRepo(t)
+	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", NoInstructions: true, Tasks: []Task{{Prompt: "a"}}})
+	if rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID); err != nil || !rec.Task.NoInstructions {
+		t.Errorf("the spec-wide switch should reach every task: %+v err=%v", rec.Task, err)
 	}
 }
