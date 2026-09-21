@@ -188,9 +188,22 @@ agent there, then the gates in order, stopping at the first non-zero exit or aft
 minutes. Whatever the agent left is committed on the branch as `<id>: <prompt>`, pass or
 fail, so a worktree can be inspected, merged or removed without losing work; if that
 commit fails (no git identity, a pre-commit hook) the task ends as `error` and the work
-stays uncommitted in the worktree. A failed attempt is retried on each backend in
-`retry` in a fresh worktree; the last worktree is kept. hx writes `.hx/.gitignore` so
-the worktrees never show up in the repository's status.
+stays uncommitted in the worktree. hx writes `.hx/.gitignore` so the worktrees never
+show up in the repository's status.
+
+A failed attempt is retried on each backend named in `retry`, in order. The same name
+may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common case: a
+second try with the same model, told what went wrong. How the retry starts depends on
+how the attempt failed.
+
+| Previous attempt | Next attempt |
+|---|---|
+| ran to the end, a gate failed | continues in the same worktree, on top of the work already committed, with the failing gate command, its exit code and output appended to the prompt |
+| failed, refused or was cut short | starts in a fresh worktree from the base commit, with one line saying how the previous attempt ended |
+
+A continued attempt commits as `<id>: <prompt> (attempt N)`, so the branch reads as a
+sequence of fixes. Each attempt records the prompt it was actually sent and whether it
+continued, which `hx batch --json` prints.
 
 Nothing can answer approval prompts in a batch, so `mode` defaults to `auto` (file edits
 allowed, no commands). Use `yolo` when the agent must build or run tests itself; the

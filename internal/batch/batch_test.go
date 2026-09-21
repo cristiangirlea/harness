@@ -42,6 +42,10 @@ func init() {
 	agent.Register(stub{"wb-bad", func(context.Context, agent.Task) agent.Result {
 		return agent.Result{Backend: "wb-bad", Status: agent.StatusError, Error: "model exploded", Turns: 1}
 	}})
+	agent.Register(stub{"wb-bad-writes", func(_ context.Context, task agent.Task) agent.Result {
+		_ = os.WriteFile(filepath.Join(task.Dir, "leftover.txt"), []byte("half-done"), 0o644)
+		return agent.Result{Backend: "wb-bad-writes", Status: agent.StatusError, Error: "model exploded", Turns: 1}
+	}})
 	agent.Register(stub{"wb-block", func(ctx context.Context, _ agent.Task) agent.Result {
 		blockStarted <- struct{}{}
 		<-ctx.Done()
@@ -366,5 +370,124 @@ func TestNoInstructionsReachesTheTask(t *testing.T) {
 	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", NoInstructions: true, Tasks: []Task{{Prompt: "a"}}})
 	if rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID); err != nil || !rec.Task.NoInstructions {
 		t.Errorf("the spec-wide switch should reach every task: %+v err=%v", rec.Task, err)
+	}
+}
+
+// The gate fails the first time and passes the second, but only if the flag
+// file it leaves behind survives, which it does only in a kept worktree.
+const flagGate = `test -e passed.flag || { touch passed.flag; echo "flag was missing"; exit 3; }`
+
+func eventTexts(events []Event, kind string) string {
+	var out []string
+	for _, e := range events {
+		if e.Kind == kind {
+			out = append(out, e.Text)
+		}
+	}
+	return strings.Join(out, "|")
+}
+
+func TestGateFailureContinuesInTheSameWorktree(t *testing.T) {
+	dir := initRepo(t)
+	res, events := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok"},
+		Gate: []string{flagGate}, Tasks: []Task{{ID: "keeps", Prompt: "do the thing"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	a1, a2 := tr.Attempts[0], tr.Attempts[1]
+	if a1.Continued || !a2.Continued {
+		t.Errorf("continued: attempt 1 = %v, attempt 2 = %v", a1.Continued, a2.Continued)
+	}
+	if a1.Prompt != "do the thing" {
+		t.Errorf("attempt 1 prompt = %q", a1.Prompt)
+	}
+	for _, want := range []string{"do the thing", "attempt 1 on wb-ok", "exited 3", "flag was missing", "already applied in this workspace"} {
+		if !strings.Contains(a2.Prompt, want) {
+			t.Errorf("attempt 2 prompt is missing %q:\n%s", want, a2.Prompt)
+		}
+	}
+	// Both attempts' work is on the branch, the second on top of the first.
+	if n := git(t, dir, "rev-list", "--count", res.Base+"..hx/keeps"); n != "2" {
+		t.Errorf("commits above base = %s, want 2 (the first attempt's work must survive)", n)
+	}
+	if subject := git(t, dir, "log", "-1", "--format=%s", "hx/keeps"); !strings.HasSuffix(subject, "(attempt 2)") {
+		t.Errorf("last commit subject = %q", subject)
+	}
+	if retries := eventTexts(events, "retry"); !strings.Contains(retries, "continuing in worktree") {
+		t.Errorf("retry events = %q", retries)
+	}
+}
+
+func TestRunFailureRetriesInAFreshWorktree(t *testing.T) {
+	dir := initRepo(t)
+	res, events := run(t, Spec{Dir: dir, Backend: "wb-bad-writes", Retry: []string{"wb-ok"},
+		Tasks: []Task{{ID: "fresh", Prompt: "do it"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 || tr.Attempts[1].Continued {
+		t.Fatalf("task = %+v", tr)
+	}
+	for _, want := range []string{"do it", "ended with error", "model exploded"} {
+		if !strings.Contains(tr.Attempts[1].Prompt, want) {
+			t.Errorf("attempt 2 prompt is missing %q:\n%s", want, tr.Attempts[1].Prompt)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(tr.Worktree, "leftover.txt")); err == nil {
+		t.Error("a fresh attempt must not inherit the failed attempt's changes")
+	}
+	if n := git(t, dir, "rev-list", "--count", res.Base+"..hx/fresh"); n != "1" {
+		t.Errorf("commits above base = %s, want 1", n)
+	}
+	if retries := eventTexts(events, "retry"); !strings.Contains(retries, "fresh worktree") {
+		t.Errorf("retry events = %q", retries)
+	}
+}
+
+func TestFenceOutgrowsBackticksInTheOutput(t *testing.T) {
+	for _, tc := range []struct{ output, want string }{
+		{"plain output", "```"},
+		{"see ``` here", "````"},
+		{"```` and ```", "`````"},
+	} {
+		if got := fence(tc.output); got != tc.want {
+			t.Errorf("fence(%q) = %q, want %q", tc.output, got, tc.want)
+		}
+	}
+}
+
+func TestSecondRetryKnowsAboutTheFirst(t *testing.T) {
+	dir := initRepo(t)
+	// Passes only on the third run, and only if the flags survive, which they
+	// do only in a worktree that is kept between attempts.
+	gate := `test -e two.flag && exit 0; test -e one.flag && { touch two.flag; echo "second miss"; exit 5; }; touch one.flag; echo "first miss"; exit 4`
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok", "wb-ok"},
+		Gate: []string{gate}, Tasks: []Task{{ID: "third", Prompt: "do the thing"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 3 {
+		t.Fatalf("task = %+v", tr)
+	}
+	third := tr.Attempts[2]
+	if !third.Continued {
+		t.Error("the third attempt should continue in the worktree")
+	}
+	// The detail is about attempt 2; attempt 1 is there as history.
+	for _, want := range []string{"attempt 2 on wb-ok", "exited 5", "second miss", "Earlier attempts", "1 on wb-ok (gate "} {
+		if !strings.Contains(third.Prompt, want) {
+			t.Errorf("attempt 3 prompt is missing %q:\n%s", want, third.Prompt)
+		}
+	}
+	// Attempt 1 is a one-line summary: its exit code, and no output block of
+	// its own (the only fenced block is attempt 2's).
+	if !strings.Contains(third.Prompt, "exited 4)") {
+		t.Errorf("the history should carry attempt 1's exit code: %s", third.Prompt)
+	}
+	if n := strings.Count(third.Prompt, "```"); n != 2 {
+		t.Errorf("fenced blocks = %d, want one block (two fences)", n)
+	}
+	if n := git(t, dir, "rev-list", "--count", res.Base+"..hx/third"); n != "3" {
+		t.Errorf("commits above base = %s, want 3", n)
+	}
+	if subject := git(t, dir, "log", "-1", "--format=%s", "hx/third"); !strings.HasSuffix(subject, "(attempt 3)") {
+		t.Errorf("last commit subject = %q", subject)
 	}
 }

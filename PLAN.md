@@ -163,7 +163,9 @@ both, in order; no file → system has two blocks; `NoInstructions` → two bloc
 
 Size: ~120 lines + tests.
 
-### [ ] PR B: retries that keep the work and carry the failure
+### [x] PR B: retries that keep the work and carry the failure
+
+Done: PR #5, 2026-09-21.
 
 **Why.** `batch.runTask` retries by deleting the worktree and starting from scratch on
 the *next* backend. That throws away everything the first attempt did and cannot retry
@@ -551,3 +553,20 @@ Size: mostly moves; ~100 new lines.
   and should add it to the record then, not here; (2) the `--no-instructions` CLI flag has
   no test that it reaches `agent.Task`, because `cmd/hx` has no tests at all and every
   other flag is in the same position - a first test for that package belongs with PR K.
+- 2026-09-21: PR B done (#5). Deviation from the spec: the fresh-retry prompt gets a
+  second line ("This workspace is a fresh copy; nothing from that attempt is in it."),
+  because one line saying how the attempt ended does not tell the agent that its previous
+  changes are gone. Verified with a live agent, not only stubs: a task to write a greeting
+  with a gate demanding the exact line `hx rocks`; attempt 1 wrote a friendly sentence and
+  failed, the retry continued in the same worktree, read the gate output from its prompt
+  and fixed the file, and the branch holds both commits with the second marked
+  "(attempt 2)".
+- 2026-09-21: PR B self-review, 7 findings, all fixed. The retry context now takes every
+  attempt so far and appends a one-line history of the earlier ones, so a third attempt
+  does not repeat what the second already tried; `retryContext` returns the context text
+  and the continued flag instead of a half-built plan the caller had to repair; the
+  previous attempt is read from the end of the slice rather than by loop index; the commit
+  subject is built in the plan so `runAttempt` no longer takes two near-identically named
+  task parameters; the gate output is quoted with a fence longer than any run of backticks
+  in it; and a test covers two retries in a row. A wrong assertion in that test (the gate
+  command text contains the same words as its output) was corrected, not worked around.
