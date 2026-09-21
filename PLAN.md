@@ -163,7 +163,9 @@ both, in order; no file → system has two blocks; `NoInstructions` → two bloc
 
 Size: ~120 lines + tests.
 
-### [ ] PR B: retries that keep the work and carry the failure
+### [x] PR B: retries that keep the work and carry the failure
+
+Done: PR #5, 2026-09-21.
 
 **Why.** `batch.runTask` retries by deleting the worktree and starting from scratch on
 the *next* backend. That throws away everything the first attempt did and cannot retry
