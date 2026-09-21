@@ -162,7 +162,7 @@ func cmdRun(args []string) (int, error) {
 
 	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort, NoInstructions: *noInstructions,
 		Timeout: *timeout, MaxCostUSD: *maxCost, TaskBudget: *taskBudget}
-	if err := agent.ValidateTaskBudget(task.TaskBudget); err != nil {
+	if err := agent.ValidateLimits(task.Timeout, task.MaxCostUSD, task.TaskBudget); err != nil {
 		return 2, err
 	}
 	if task.MCP, err = mcp.ConfigPaths(mcpFiles); err != nil {

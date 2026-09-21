@@ -70,7 +70,9 @@ re-sent every turn. Three ceilings, all optional and all off by default.
 | `--task-budget 64000` | `task_budget` | Tells the api backend's model how many tokens it has for the whole task, so it paces itself and finishes rather than being cut off. Minimum 20000, checked before the run starts. |
 
 The CLI backends cannot enforce a cost or token ceiling, so they say so once and
-carry on; the timeout applies to them all the same.
+carry on; the timeout applies to them all the same. The cost ceiling is checked against
+hx's own estimate, so a model with no price in the table cannot be capped and the run
+says so instead of pretending.
 
 ## Backends
 
@@ -224,9 +226,10 @@ allowed, no commands). Use `yolo` when the agent must build or run tests itself;
 gates run either way. Backend names, gate commands, durations and task budgets are all
 checked before anything runs.
 
-The budgets above are spec fields too (`timeout`, `max_cost_usd`, `task_budget`), each
-overridable per task, and they apply per attempt rather than per task, so a retry gets
-its own allowance.
+The budgets above are spec fields too (`timeout`, `max_cost_usd`, `task_budget`), and
+they apply per attempt rather than per task, so a retry gets its own allowance. A task
+may set its own value or change the spec's, but zero means inherit, so it cannot remove
+a limit the spec set.
 
 The record goes to `~/.hx/batches/<id>.json`, written before the first task starts and
 again at the end; `--json` prints it, `-v` streams every agent's tool calls.

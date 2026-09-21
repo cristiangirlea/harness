@@ -46,6 +46,10 @@ func init() {
 		_ = os.WriteFile(filepath.Join(task.Dir, "leftover.txt"), []byte("half-done"), 0o644)
 		return agent.Result{Backend: "wb-bad-writes", Status: agent.StatusError, Error: "model exploded", Turns: 1}
 	}})
+	agent.Register(stub{"wb-timeout", func(_ context.Context, task agent.Task) agent.Result {
+		_ = os.WriteFile(filepath.Join(task.Dir, "half.txt"), []byte("interrupted"), 0o644)
+		return agent.Result{Backend: "wb-timeout", Status: agent.StatusTimeout, Error: "deadline passed", Turns: 1}
+	}})
 	agent.Register(stub{"wb-block", func(ctx context.Context, _ agent.Task) agent.Result {
 		blockStarted <- struct{}{}
 		<-ctx.Done()
@@ -529,5 +533,24 @@ func TestLimitsReachTheTaskAndAreValidated(t *testing.T) {
 		if _, err := Run(context.Background(), tc.spec, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("err = %v, want it to mention %q", err, tc.want)
 		}
+	}
+}
+
+func TestTimedOutAttemptRetriesFresh(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-timeout", Retry: []string{"wb-ok"},
+		Tasks: []Task{{ID: "slow", Prompt: "a"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if tr.Attempts[1].Continued {
+		t.Error("a timed-out attempt leaves work in an unknown state, so the retry must start fresh")
+	}
+	if !strings.Contains(tr.Attempts[1].Prompt, "ended with timeout") {
+		t.Errorf("the retry prompt should say how the attempt ended:\n%s", tr.Attempts[1].Prompt)
+	}
+	if _, err := os.Stat(filepath.Join(tr.Worktree, "half.txt")); err == nil {
+		t.Error("the fresh worktree must not inherit the timed-out attempt's files")
 	}
 }

@@ -42,6 +42,8 @@ type Spec struct {
 	Gate           []string `json:"gate,omitempty"`            // commands that must exit 0 in the worktree after the agent finishes
 	Retry          []string `json:"retry,omitempty"`           // backends to try, in order, after a failed attempt
 	Tasks          []Task   `json:"tasks"`
+
+	timeout time.Duration // Timeout, parsed by normalize
 }
 
 type Task struct {
@@ -60,6 +62,8 @@ type Task struct {
 	TaskBudget     int      `json:"task_budget,omitempty"`
 	Gate           []string `json:"gate,omitempty"`
 	Retry          []string `json:"retry,omitempty"`
+
+	timeout time.Duration // Timeout, parsed by normalize
 }
 
 type Status string
@@ -173,7 +177,8 @@ func (s *Spec) normalize() error {
 	if err := checkGates(s.Gate); err != nil {
 		return err
 	}
-	if err := checkLimits(s.Timeout, s.TaskBudget); err != nil {
+	var err error
+	if s.timeout, err = checkLimits(s.Timeout, s.MaxCostUSD, s.TaskBudget); err != nil {
 		return err
 	}
 	if len(s.Tasks) == 0 {
@@ -206,7 +211,8 @@ func (s *Spec) normalize() error {
 		if err := checkGates(t.Gate); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
-		if err := checkLimits(t.Timeout, t.TaskBudget); err != nil {
+		var err error
+		if t.timeout, err = checkLimits(t.Timeout, t.MaxCostUSD, t.TaskBudget); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 	}
@@ -225,14 +231,17 @@ func checkBackends(backend string, retry []string) error {
 	return nil
 }
 
-// checkLimits rejects a bad duration or task budget before anything runs.
-func checkLimits(timeout string, taskBudget int) error {
+// checkLimits parses and validates the limits before anything runs, and
+// returns the parsed duration so nothing has to parse the string again.
+func checkLimits(timeout string, maxCostUSD float64, taskBudget int) (time.Duration, error) {
+	var d time.Duration
 	if timeout != "" {
-		if _, err := time.ParseDuration(timeout); err != nil {
-			return fmt.Errorf("timeout %q: %w", timeout, err)
+		var err error
+		if d, err = time.ParseDuration(timeout); err != nil {
+			return 0, fmt.Errorf("timeout %q: %w", timeout, err)
 		}
 	}
-	return agent.ValidateTaskBudget(taskBudget)
+	return d, agent.ValidateLimits(d, maxCostUSD, taskBudget)
 }
 
 func checkGates(gates []string) error {
@@ -440,14 +449,11 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 	task := agent.Task{
 		Dir: tr.Worktree, Mode: mode, MCP: mcpPaths,
 		NoInstructions: t.NoInstructions || spec.NoInstructions,
-		Timeout:        duration(firstOf(t.Timeout, spec.Timeout)),
+		Timeout:        firstDuration(t.timeout, spec.timeout),
 		MaxCostUSD:     firstFloat(t.MaxCostUSD, spec.MaxCostUSD),
 		TaskBudget:     firstInt(t.TaskBudget, spec.TaskBudget),
 		Model:          firstOf(t.Model, spec.Model), Effort: firstOf(t.Effort, spec.Effort),
-		MaxTurns: t.MaxTurns,
-	}
-	if task.MaxTurns == 0 {
-		task.MaxTurns = spec.MaxTurns
+		MaxTurns: firstInt(t.MaxTurns, spec.MaxTurns),
 	}
 
 	for i, name := range backends {
@@ -692,10 +698,13 @@ func firstOf(values ...string) string {
 	return ""
 }
 
-// duration parses a spec duration that normalize has already validated.
-func duration(s string) time.Duration {
-	d, _ := time.ParseDuration(s)
-	return d
+func firstDuration(values ...time.Duration) time.Duration {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 func firstFloat(values ...float64) float64 {

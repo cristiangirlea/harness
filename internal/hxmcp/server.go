@@ -137,7 +137,7 @@ func runTool(defaultDir string) mcp.Tool {
 					return mcp.CallResult{}, fmt.Errorf("timeout %q: %w", args.Timeout, err)
 				}
 			}
-			if err := agent.ValidateTaskBudget(task.TaskBudget); err != nil {
+			if err := agent.ValidateLimits(task.Timeout, task.MaxCostUSD, task.TaskBudget); err != nil {
 				return mcp.CallResult{}, err
 			}
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {

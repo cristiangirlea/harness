@@ -99,7 +99,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(cmd.Args[1:], " "))})
 	if limits := unenforced(task); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
-			Text: fmt.Sprintf("%s is not enforced by the %s backend", strings.Join(limits, " and "), c.name)})
+			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
 	if err := cmd.Start(); err != nil {
 		return fail(StatusError, err)

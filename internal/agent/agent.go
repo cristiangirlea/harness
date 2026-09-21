@@ -172,11 +172,17 @@ func DefaultBackendName() string {
 // MinTaskBudget is the smallest task budget the API accepts.
 const MinTaskBudget = 20000
 
-// ValidateTaskBudget rejects a budget the API would refuse, where the value is
-// typed rather than after an agent has already started.
-func ValidateTaskBudget(n int) error {
-	if n != 0 && n < MinTaskBudget {
-		return fmt.Errorf("task budget %d is below the API minimum of %d tokens", n, MinTaskBudget)
+// ValidateLimits rejects limits the API or hx would refuse, where the values
+// are typed rather than after an agent has already started.
+func ValidateLimits(timeout time.Duration, maxCostUSD float64, taskBudget int) error {
+	if timeout < 0 {
+		return fmt.Errorf("timeout %s is negative", timeout)
+	}
+	if maxCostUSD < 0 {
+		return fmt.Errorf("max cost %.2f is negative", maxCostUSD)
+	}
+	if taskBudget != 0 && taskBudget < MinTaskBudget {
+		return fmt.Errorf("task budget %d is below the API minimum of %d tokens", taskBudget, MinTaskBudget)
 	}
 	return nil
 }

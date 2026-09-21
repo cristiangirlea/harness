@@ -405,14 +405,53 @@ func TestAPISendsTaskBudgetWithEffort(t *testing.T) {
 	}
 }
 
-func TestValidateTaskBudget(t *testing.T) {
-	if err := ValidateTaskBudget(0); err != nil {
+func TestValidateLimits(t *testing.T) {
+	if err := ValidateLimits(0, 0, 0); err != nil {
 		t.Errorf("unset is fine: %v", err)
 	}
-	if err := ValidateTaskBudget(100); err == nil || !strings.Contains(err.Error(), "20000") {
-		t.Errorf("err = %v, want the minimum named", err)
+	if err := ValidateLimits(time.Minute, 2.5, 20000); err != nil {
+		t.Errorf("the minimum budget and positive limits are allowed: %v", err)
 	}
-	if err := ValidateTaskBudget(20000); err != nil {
-		t.Errorf("the minimum itself is allowed: %v", err)
+	for _, tc := range []struct {
+		name       string
+		timeout    time.Duration
+		maxCost    float64
+		taskBudget int
+		want       string
+	}{
+		{"small budget", 0, 0, 100, "20000"},
+		{"negative timeout", -time.Minute, 0, 0, "negative"},
+		{"negative cost", 0, -1, 0, "negative"},
+	} {
+		err := ValidateLimits(tc.timeout, tc.maxCost, tc.taskBudget)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
+	var infos []string
+	b := NewAPIBackend()
+	b.APIKey, b.MaxRetries = "test", 0
+	b.BaseURL = "http://127.0.0.1:1" // never reached: the notice comes first
+	collect := func(e Event) {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	}
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk,
+		Model: "claude-not-in-the-price-table", MaxCostUSD: 1}, collect)
+	if len(infos) != 1 || !strings.Contains(infos[0], "max_cost cannot be enforced") {
+		t.Fatalf("info events = %v", infos)
+	}
+
+	infos = nil
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk,
+		Model: "claude-opus-5", MaxCostUSD: 1}, collect)
+	for _, text := range infos {
+		if strings.Contains(text, "max_cost cannot be enforced") {
+			t.Errorf("a priced model should not warn: %q", text)
+		}
 	}
 }

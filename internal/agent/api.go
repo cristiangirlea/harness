@@ -86,6 +86,10 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		model = DefaultAPIModel
 	}
 	res := Result{Backend: b.Name(), Model: model, CostEstimate: true}
+	if _, priced := prices[model]; task.MaxCostUSD > 0 && !priced {
+		emit(Event{Time: time.Now(), Kind: EventInfo,
+			Text: fmt.Sprintf("max_cost cannot be enforced: no price known for %s", model)})
+	}
 	fail := func(status Status, err error) Result {
 		res.Status = status
 		res.Error = err.Error()
