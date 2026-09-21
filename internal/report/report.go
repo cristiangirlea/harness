@@ -5,6 +5,7 @@ package report
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -246,7 +247,8 @@ func summarize(key string, recs []runlog.Record) Row {
 }
 
 // BatchRow is one line of the batch table: the batches run against one
-// repository. Cost sums every attempt, not only the one that passed.
+// repository. Cost sums every attempt, not only the one that passed; the
+// attempts median is over the tasks that ran at least once.
 type BatchRow struct {
 	Key            string  `json:"key"`
 	Batches        int     `json:"batches"`
@@ -285,7 +287,11 @@ func summarizeBatches(key string, bs []batch.Result) BatchRow {
 			if t.Status == batch.StatusPass {
 				row.Passed++
 			}
-			attempts = append(attempts, float64(len(t.Attempts)))
+			// A task that never ran (canceled while queued, branch taken) says
+			// nothing about how many tries a task needs.
+			if n := len(t.Attempts); n > 0 {
+				attempts = append(attempts, float64(n))
+			}
 			for _, a := range t.Attempts {
 				row.TotalCost += a.Result.CostUSD
 				if a.Result.CostEstimate && a.Result.CostUSD > 0 {
@@ -313,11 +319,19 @@ func Median(xs []float64) float64 {
 }
 
 // Percent renders part of whole as "83%", or "-" when there is no whole.
+// Rounding never claims all or nothing: 199 of 200 is 99%, 1 of 200 is 1%.
 func Percent(part, whole int) string {
 	if whole == 0 {
 		return "-"
 	}
-	return fmt.Sprintf("%.0f%%", 100*float64(part)/float64(whole))
+	p := int(math.Round(100 * float64(part) / float64(whole)))
+	switch {
+	case p == 100 && part < whole:
+		p = 99
+	case p == 0 && part > 0:
+		p = 1
+	}
+	return strconv.Itoa(p) + "%"
 }
 
 // Money renders a dollar amount, "~" first when it is an estimate and "-"

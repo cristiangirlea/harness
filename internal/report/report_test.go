@@ -147,6 +147,11 @@ func TestBatchRows(t *testing.T) {
 	if all.Key != "all" {
 		t.Errorf("all key = %q", all.Key)
 	}
+	b := sampleBatch()
+	b.Tasks = append(b.Tasks, batch.TaskResult{ID: "t4", Status: batch.StatusCanceled})
+	if _, all := Select(nil, []batch.Result{b}, time.Time{}).BatchRows(); all.Tasks != 4 || all.Passed != 2 || !near(all.MedianAttempts, 1) {
+		t.Errorf("a task that never ran counts as a task but not in the attempts median: %+v", all)
+	}
 	if rows, all := Select(nil, nil, time.Time{}).BatchRows(); len(rows) != 0 || all.Tasks != 0 || all.MedianAttempts != 0 {
 		t.Errorf("empty: rows=%v all=%+v", rows, all)
 	}
@@ -191,8 +196,11 @@ func TestParseSince(t *testing.T) {
 }
 
 func TestFormatting(t *testing.T) {
-	if Percent(5, 6) != "83%" || Percent(0, 0) != "-" || Percent(3, 3) != "100%" {
+	if Percent(5, 6) != "83%" || Percent(0, 0) != "-" || Percent(3, 3) != "100%" || Percent(0, 3) != "0%" {
 		t.Error("Percent")
+	}
+	if Percent(199, 200) != "99%" || Percent(1, 200) != "1%" {
+		t.Errorf("Percent must not round to a false all or nothing: %s %s", Percent(199, 200), Percent(1, 200))
 	}
 	if Money(0, true) != "-" || Money(1.034, false) != "$1.03" || Money(1.034, true) != "~$1.03" || Money(0.0042, false) != "$0.0042" {
 		t.Errorf("Money: %q %q %q %q", Money(0, true), Money(1.034, false), Money(1.034, true), Money(0.0042, false))
