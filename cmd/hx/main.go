@@ -47,6 +47,9 @@ Run flags:
       --thinking       show model thinking summaries
       --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hx/mcp.json is loaded when present
       --no-instructions  skip the project instruction files (api backend)
+      --timeout D      stop the run after D (e.g. 20m)
+      --max-cost USD   stop the api loop before a turn that would pass this estimated cost
+      --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
 
 Batch flags:
       --parallel N     agents at once (default: the file's value, else 2)
@@ -111,6 +114,9 @@ func cmdRun(args []string) (int, error) {
 	fs.BoolVar(&jsonOut, "json", false, "")
 	fs.BoolVar(&thinking, "thinking", false, "")
 	noInstructions := fs.Bool("no-instructions", false, "")
+	timeout := fs.Duration("timeout", 0, "")
+	maxCost := fs.Float64("max-cost", 0, "")
+	taskBudget := fs.Int("task-budget", 0, "")
 	var mcpFiles multiFlag
 	fs.Var(&mcpFiles, "mcp", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -154,7 +160,11 @@ func cmdRun(args []string) (int, error) {
 		return 2, err
 	}
 
-	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort, NoInstructions: *noInstructions}
+	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort, NoInstructions: *noInstructions,
+		Timeout: *timeout, MaxCostUSD: *maxCost, TaskBudget: *taskBudget}
+	if err := agent.ValidateTaskBudget(task.TaskBudget); err != nil {
+		return 2, err
+	}
 	if task.MCP, err = mcp.ConfigPaths(mcpFiles); err != nil {
 		return 2, err
 	}

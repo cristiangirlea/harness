@@ -79,6 +79,9 @@ func runTool(defaultDir string) mcp.Tool {
 					"description": "MCP config files (Claude Code .mcp.json format) whose stdio servers the task may use as tools."},
 				"no_instructions": map[string]any{"type": "boolean",
 					"description": "Skip the project instruction files (HX.md, AGENTS.md, CLAUDE.md) the api backend reads from the workspace root."},
+				"timeout":      str("Stop the run after this long, as a Go duration such as \"20m\"."),
+				"max_cost_usd": map[string]any{"type": "number", "description": "api backend only: stop before a turn that would take the estimated cost past this."},
+				"task_budget":  num("api backend only: token ceiling the model paces itself against. Minimum 20000."),
 			},
 			"required": []any{"prompt"},
 		},
@@ -94,6 +97,9 @@ func runTool(defaultDir string) mcp.Tool {
 				Effort         string   `json:"effort"`
 				MCP            []string `json:"mcp"`
 				NoInstructions bool     `json:"no_instructions"`
+				Timeout        string   `json:"timeout"`
+				MaxCostUSD     float64  `json:"max_cost_usd"`
+				TaskBudget     int      `json:"task_budget"`
 			}](call.Arguments)
 			if err != nil {
 				return mcp.CallResult{}, err
@@ -124,7 +130,16 @@ func runTool(defaultDir string) mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
-			task := agent.Task{Prompt: args.Prompt, Dir: dir, Model: args.Model, Mode: mode, MaxTurns: args.MaxTurns, Effort: args.Effort, NoInstructions: args.NoInstructions}
+			task := agent.Task{Prompt: args.Prompt, Dir: dir, Model: args.Model, Mode: mode, MaxTurns: args.MaxTurns,
+				Effort: args.Effort, NoInstructions: args.NoInstructions, MaxCostUSD: args.MaxCostUSD, TaskBudget: args.TaskBudget}
+			if args.Timeout != "" {
+				if task.Timeout, err = time.ParseDuration(args.Timeout); err != nil {
+					return mcp.CallResult{}, fmt.Errorf("timeout %q: %w", args.Timeout, err)
+				}
+			}
+			if err := agent.ValidateTaskBudget(task.TaskBudget); err != nil {
+				return mcp.CallResult{}, err
+			}
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
