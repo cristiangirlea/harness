@@ -319,7 +319,9 @@ backend → error.
 
 Size: ~200 lines + tests.
 
-### [ ] PR F: `hx report`
+### [x] PR F: `hx report`
+
+Done: PR #7, 2026-09-21.
 
 **Why.** The run records exist so runs can be compared. Nothing reads them in
 aggregate yet.
@@ -570,3 +572,12 @@ Size: mostly moves; ~100 new lines.
   task parameters; the gate output is quoted with a fence longer than any run of backticks
   in it; and a test covers two retries in a row. A wrong assertion in that test (the gate
   command text contains the same words as its output) was corrected, not worked around.
+- 2026-09-21: PR F done (#7). Built in a second git worktree (`E:\__Workdir\harness-f`,
+  branch `f-report`) because another session was on PR C in the main checkout at the same
+  time; two agents in one working tree would overwrite each other. Choices the spec left
+  open: batch rows group by repository (the spec named the columns, not the rows); a group
+  with no token counts reports cache share -1 in JSON and `-` in text; `--by` defaults to
+  backend; unfinished runs are counted and listed under the tables, not in them; a cost is
+  marked `~` when any run in the group carries a non-zero estimate. `batch.List` was added
+  for the batch table. The smoke against the real `~/.hx` showed long repository paths cut
+  from the end, which hid the part that differs, so keys are shortened from the left.
