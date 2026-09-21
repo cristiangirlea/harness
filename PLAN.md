@@ -595,3 +595,20 @@ Size: mostly moves; ~100 new lines.
   test asserts that a timed-out attempt retries in a fresh worktree. The per-task rule
   (zero means inherit, so a task can tighten or change a limit but not remove it) is
   documented in the struct and the README rather than given a sentinel.
+- 2026-09-21: PR D done (#8), no deviation from the spec. Self-review, 7 findings, 3 fixed:
+  a 400 that names the beta or the field now drops both and retries the turn once, because
+  a beta hx sends by default must not be able to break every api run; the comment and
+  README no longer claim the request body shrinks (hx still uploads the whole history -
+  what the clearing changes is the context the model is given, so the window and the
+  billed input, not the upload); and the usage block alignment is fixed. Deferred, with
+  reasons: (1) the cache interaction is unmeasured - a clear invalidates the cached prefix
+  from that point, and hx resends full history with two breakpoints, so this could raise
+  cost rather than lower it; the run records already carry cache_read_tokens, so one real
+  long run with and without it settles the question, and until then the README says so.
+  (2) Nothing records whether the server actually cleared anything, because the response
+  shape for it is not documented here and guessing a field that never increments would be
+  a quiet lie; do it when the api backend first runs for real. (3) Every api option is
+  still wired by hand in four places (Task, run flags, batch spec and task, MCP schema and
+  decode) - PR E adds more fields, so one shared options struct belongs with PR K rather
+  than mid-queue. (4) The CLI flag wiring is still untested, the same gap as PR A, now
+  covering two flags and five limits; PR K.

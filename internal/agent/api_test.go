@@ -483,3 +483,58 @@ func TestAPISendsContextManagementByDefault(t *testing.T) {
 		t.Errorf("anthropic-beta = %q, want no context beta", h)
 	}
 }
+
+func TestAPIRetriesWithoutContextManagementWhenRefused(t *testing.T) {
+	var reqs []map[string]any
+	var betas []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		reqs = append(reqs, req)
+		betas = append(betas, r.Header.Get("anthropic-beta"))
+		if _, sent := req["context_management"]; sent {
+			http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"context_management is not supported with this beta"}}`, 400)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, ev := range textTurn("recovered") {
+			var typ struct {
+				Type string `json:"type"`
+			}
+			_ = json.Unmarshal([]byte(ev), &typ)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", typ.Type, ev)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	b := NewAPIBackend()
+	b.BaseURL, b.APIKey, b.MaxRetries = srv.URL, "test", 0
+	var infos []string
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk}, func(e Event) {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	})
+	if res.Status != StatusOK || res.Final != "recovered" {
+		t.Fatalf("the run should survive a refused beta: %+v", res)
+	}
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want the refused one and one retry", len(reqs))
+	}
+	if _, sent := reqs[1]["context_management"]; sent {
+		t.Error("the retry must not send the field again")
+	}
+	if strings.Contains(betas[1], betaContextEdits) {
+		t.Errorf("the retry must drop the beta too: %q", betas[1])
+	}
+	var said bool
+	for _, text := range infos {
+		if strings.Contains(text, "context management refused") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the run should say why: %v", infos)
+	}
+}

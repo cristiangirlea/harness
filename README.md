@@ -107,14 +107,17 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 
 ### Context management
 
-A long run resends every tool result each turn, and the cap is 30 KB per result, so
-requests reach hundreds of thousands of tokens. The api backend therefore asks the
-server to clear old tool results itself (`clear_tool_uses_20250919`). The client history
-stays append-only: what the server clears, it clears on its side, and hx ignores the
-record of it in the response. A clear invalidates the cached prefix from that point,
-which is the trade: fewer tokens sent, one cold turn after each clear.
-`hx run --no-context-edits` turns it off, as do the `no_context_edits` field on a batch
-spec or task and the MCP `run` argument.
+A long run carries every tool result, and the cap is 30 KB per result, so the
+conversation reaches hundreds of thousands of tokens. The api backend therefore asks
+the server to clear old tool results itself (`clear_tool_uses_20250919`). hx still
+uploads its whole history, which stays append-only; what the clearing changes is the
+context the model is given, so it is the context window and the billed input that
+shrink, not the request body. A clear invalidates the cached prefix from that point,
+which is the trade: one cold turn for a smaller context afterwards. That balance has
+not yet been measured against a real long run, so compare `cache_read_tokens` across
+two runs before trusting it. If the API ever refuses the beta, the run says so and
+retries once without it. `hx run --no-context-edits` turns it off for good, as do the
+`no_context_edits` field on a batch spec or task and the MCP `run` argument.
 
 ### Project instructions
 

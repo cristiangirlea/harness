@@ -46,8 +46,10 @@ Run flags:
       --json           print events as JSON lines instead of formatted output
       --thinking       show model thinking summaries
       --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hx/mcp.json is loaded when present
-      --no-instructions  skip the project instruction files (api backend)
-      --no-context-edits  keep every tool result in the request instead of letting the server clear old ones (api backend)
+      --no-instructions
+                       skip the project instruction files (api backend)
+      --no-context-edits
+                       keep every tool result in the request instead of letting the server clear old ones (api backend)
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
