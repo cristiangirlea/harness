@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -51,6 +52,17 @@ type Task struct {
 	// CLAUDE.md) that the api backend otherwise puts in its system prompt.
 	NoInstructions bool `json:"no_instructions,omitempty"`
 
+	// Timeout ends the run when it passes; zero means no deadline.
+	Timeout time.Duration `json:"timeout_ns,omitempty"`
+
+	// MaxCostUSD stops the api loop before a turn that would take the
+	// estimated cost past it. The CLI backends cannot enforce it.
+	MaxCostUSD float64 `json:"max_cost_usd,omitempty"`
+
+	// TaskBudget is the api backend's token ceiling for the whole task: the
+	// model paces itself and finishes rather than being cut off.
+	TaskBudget int `json:"task_budget,omitempty"`
+
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
 }
@@ -87,6 +99,8 @@ const (
 	StatusError    Status = "error"
 	StatusRefused  Status = "refused"
 	StatusMaxTurns Status = "max_turns"
+	StatusTimeout  Status = "timeout" // the task's own deadline passed
+	StatusBudget   Status = "budget"  // a cost or token ceiling was reached
 	StatusCanceled Status = "canceled"
 )
 
@@ -153,4 +167,46 @@ func DefaultBackendName() string {
 		}
 	}
 	return "claude"
+}
+
+// MinTaskBudget is the smallest task budget the API accepts.
+const MinTaskBudget = 20000
+
+// ValidateTaskBudget rejects a budget the API would refuse, where the value is
+// typed rather than after an agent has already started.
+func ValidateTaskBudget(n int) error {
+	if n != 0 && n < MinTaskBudget {
+		return fmt.Errorf("task budget %d is below the API minimum of %d tokens", n, MinTaskBudget)
+	}
+	return nil
+}
+
+// withTimeout applies the task's own deadline. The backends do this rather
+// than their callers, so every caller gets it and every other Task field is
+// honoured in the same place.
+func withTimeout(ctx context.Context, task Task) (context.Context, context.CancelFunc) {
+	if task.Timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, task.Timeout)
+}
+
+// stopStatus reports why a context ended: the task's deadline, or a cancel.
+func stopStatus(ctx context.Context) Status {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return StatusTimeout
+	}
+	return StatusCanceled
+}
+
+// unenforced names the limits a backend cannot apply, for one warning line.
+func unenforced(task Task) []string {
+	var out []string
+	if task.MaxCostUSD > 0 {
+		out = append(out, "max_cost")
+	}
+	if task.TaskBudget > 0 {
+		out = append(out, "task_budget")
+	}
+	return out
 }

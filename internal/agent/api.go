@@ -79,6 +79,8 @@ How to work:
 
 func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Result {
 	started := time.Now()
+	ctx, cancel := withTimeout(ctx, task)
+	defer cancel()
 	model := task.Model
 	if model == "" {
 		model = DefaultAPIModel
@@ -172,6 +174,15 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	if task.Effort != "" {
 		req.OutputConfig = block{"effort": task.Effort}
 	}
+	if task.TaskBudget > 0 {
+		if req.OutputConfig == nil {
+			req.OutputConfig = block{}
+		}
+		// remaining stays unset: hx resends the whole history every turn, so
+		// the server tracks the countdown better than the client could.
+		req.OutputConfig["task_budget"] = block{"type": "tokens", "total": task.TaskBudget}
+		req.betas = append(req.betas, betaTaskBudget)
+	}
 	if supportsDefaultFallbacks(model) {
 		// A refusal is re-served by a fallback model inside the same call.
 		req.Fallbacks = "default"
@@ -201,6 +212,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		if turn > maxTurns {
 			return fail(StatusMaxTurns, fmt.Errorf("stopped after %d turns", maxTurns))
 		}
+		if task.MaxCostUSD > 0 && res.CostUSD >= task.MaxCostUSD {
+			return fail(StatusBudget, fmt.Errorf("cost estimate $%.4f reached the $%.4f limit after turn %d", res.CostUSD, task.MaxCostUSD, res.Turns))
+		}
 		res.Turns = turn
 
 		msg, err := client.stream(ctx, req, onDelta, onBlock)
@@ -213,7 +227,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return fail(StatusCanceled, ctx.Err())
+				return fail(stopStatus(ctx), ctx.Err())
 			}
 			return fail(StatusError, err)
 		}
