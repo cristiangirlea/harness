@@ -235,8 +235,8 @@ all                           1      3   100%             1      ~$1.03
 
 Runs group by backend, or by `--by model` (the model that answered) or `--by dir` (the
 workspace). Columns: runs, how many ended `ok`, median duration, median turns, total and
-median cost, and the cache share (cache-read tokens over all input tokens; `-` when the
-backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
+median cost, and the cache share (cache-read tokens over every input token, cache writes included;
+`-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
 Batches group by repository; their cost sums every attempt, passed or not. Runs without
 a result (still running or killed), batches with a task still running, and records that
 cannot be read are counted under the tables and left out of them.

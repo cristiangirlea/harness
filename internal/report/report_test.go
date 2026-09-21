@@ -103,6 +103,14 @@ func TestModelFallsBackToTheTask(t *testing.T) {
 	}
 }
 
+func TestCacheShareCountsCacheWritesAsInput(t *testing.T) {
+	r := rec("api", "m", "/repo", 0, agent.Result{Status: agent.StatusOK, InputTokens: 100, CacheWrite: 300, CacheRead: 600})
+	rows, _, _ := Select([]runlog.Record{r}, nil, time.Time{}).RunRows(ByBackend)
+	if !near(rows[0].CacheShare, 0.6) {
+		t.Errorf("cache share = %v, want 0.6", rows[0].CacheShare)
+	}
+}
+
 func TestSinceAndUnfinished(t *testing.T) {
 	recs := sample()
 	pending := rec("api", "m", "/repo/a", 4*time.Hour, agent.Result{})

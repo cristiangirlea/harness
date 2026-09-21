@@ -162,9 +162,9 @@ type Row struct {
 	// CostEstimated is set when any run's cost is the api backend's estimate
 	// rather than a figure the backend reported.
 	CostEstimated bool `json:"cost_is_estimate,omitempty"`
-	// CacheShare is the cache-read tokens over all input tokens of the group,
-	// or -1 when it reported no input tokens at all (the CLI backends that do
-	// not count tokens).
+	// CacheShare is the cache-read tokens over every input token the model
+	// saw (uncached input, cache writes and cache reads), or -1 when the group
+	// reported no tokens at all (the CLI backends that do not count them).
 	CacheShare float64 `json:"cache_share"`
 }
 
@@ -230,7 +230,10 @@ func summarize(key string, recs []runlog.Record) Row {
 		if res.CostEstimate && res.CostUSD > 0 {
 			row.CostEstimated = true
 		}
-		input += res.InputTokens
+		// Cache writes are input the model read uncached this turn; leaving
+		// them out would report a full cache hit for a run that cached
+		// everything once and read it once.
+		input += res.InputTokens + res.CacheWrite
 		cached += res.CacheRead
 	}
 	row.MedianDuration = time.Duration(Median(durations))
