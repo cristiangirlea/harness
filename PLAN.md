@@ -323,7 +323,9 @@ backend → error.
 
 Size: ~200 lines + tests.
 
-### [ ] PR F: `hx report`
+### [x] PR F: `hx report`
+
+Done: PR #7, 2026-09-21.
 
 **Why.** The run records exist so runs can be compared. Nothing reads them in
 aggregate yet.
@@ -612,3 +614,24 @@ Size: mostly moves; ~100 new lines.
   decode) - PR E adds more fields, so one shared options struct belongs with PR K rather
   than mid-queue. (4) The CLI flag wiring is still untested, the same gap as PR A, now
   covering two flags and five limits; PR K.
+- 2026-09-21: PR F done (#7). Built in a second git worktree (`E:\__Workdir\harness-f`,
+  branch `f-report`) because another session was on PR C in the main checkout at the same
+  time; two agents in one working tree would overwrite each other. Choices the spec left
+  open: batch rows group by repository (the spec named the columns, not the rows); a group
+  with no token counts reports cache share -1 in JSON and `-` in text; `--by` defaults to
+  backend; unfinished runs are counted and listed under the tables, not in them; a cost is
+  marked `~` when any run in the group carries a non-zero estimate. `batch.List` was added
+  for the batch table. The smoke against the real `~/.hx` showed long repository paths cut
+  from the end, which hid the part that differs, so keys are shortened from the left.
+- 2026-09-21: PR F self-review, 12 findings, all fixed. A `Report` type now owns the
+  `--json` shape (empty tables print `[]`, an empty `--by` means backend, the window is
+  carried in the report instead of a field nothing read). A batch with a task still
+  running and a record that cannot be read are counted under the tables instead of
+  skewing or vanishing from them; that gave `runlog.ListSince`, which skips run
+  directories older than the window by their id prefix (a day of slack) and reports
+  unreadable records, as `batch.List` now does. The cache share counts cache writes as
+  input, on purpose a deviation from the spec's formula: the smoke had shown 100% for
+  claude while cache creation was billed. The attempts median ignores tasks that never
+  ran; `Percent` never rounds to a false 100% or 0%; directory keys are canonical, so one
+  workspace under two spellings is one row; `ParseSince` refuses windows that overflow;
+  and `table` and `shortKey` got the first tests in `cmd/hx`.

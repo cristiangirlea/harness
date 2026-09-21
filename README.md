@@ -53,6 +53,7 @@ go test ./...
 | `hx mcp` | Serve hx as an MCP server on stdio (see [MCP](#mcp)). |
 | `hx batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
 | `hx batch rm <id>` | Remove the worktrees and branches a batch created. |
+| `hx report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
@@ -251,6 +252,33 @@ again at the end; `--json` prints it, `-v` streams every agent's tool calls.
 with uncommitted changes); the record and the run logs stay. Ctrl+C cancels running
 agents and skips the rest. Exit status is 1 unless every task passed.
 
+## Reports
+
+`hx report` reads every run and batch record and prints two tables.
+
+```
+runs by backend, since 2026-09-14 17:40 (7d)
+backend  runs  ok  ok%  med dur  med turns  total cost  med cost  cache
+claude      6   5  83%    1m2s          9      ~$1.03     $0.17    96%
+api         3   3 100%     48s          6       $0.42     $0.14    71%
+all         9   8  89%     55s          8      ~$1.45     $0.15    90%
+
+batches by repository, since 2026-09-14 17:40 (7d)
+repository              batches  tasks  pass%  med attempts  total cost
+E:\__Workdir\JobPilotC        1      3   100%             1      ~$1.03
+all                           1      3   100%             1      ~$1.03
+```
+
+Runs group by backend, or by `--by model` (the model that answered) or `--by dir` (the
+workspace). Columns: runs, how many ended `ok`, median duration, median turns, total and
+median cost, and the cache share (cache-read tokens over every input token, cache writes included;
+`-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
+Batches group by repository; their cost sums every attempt, passed or not. Runs without
+a result (still running or killed), batches with a task still running, and records that
+cannot be read are counted under the tables and left out of them.
+`--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
+JSON for scripts.
+
 ## Run records
 
 `~/.hx/runs/<id>/` (or `$HX_HOME/runs`):
@@ -269,6 +297,7 @@ internal/tools/    workspace-confined tool runtime + MCP tool adapter
 internal/mcp/      MCP over stdio: JSON-RPC codec, Client, Server, config loader
 internal/hxmcp/    hx's own MCP server (run, runs, show, backends)
 internal/batch/    orchestrator: parallel worktrees, gates, retries, batch records
+internal/report/   aggregation over run and batch records (hx report; reused by eval)
 internal/runlog/   run recording
 ```
 
