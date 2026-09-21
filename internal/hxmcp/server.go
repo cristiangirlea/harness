@@ -77,20 +77,23 @@ func runTool(defaultDir string) mcp.Tool {
 				"effort":    str("api backend only: low | medium | high | xhigh | max."),
 				"mcp": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
 					"description": "MCP config files (Claude Code .mcp.json format) whose stdio servers the task may use as tools."},
+				"no_instructions": map[string]any{"type": "boolean",
+					"description": "Skip the project instruction files (HX.md, AGENTS.md, CLAUDE.md) the api backend reads from the workspace root."},
 			},
 			"required": []any{"prompt"},
 		},
 		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(false), OpenWorldHint: mcp.Bool(true)},
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			args, err := decode[struct {
-				Prompt   string   `json:"prompt"`
-				Backend  string   `json:"backend"`
-				Model    string   `json:"model"`
-				Dir      string   `json:"dir"`
-				Mode     string   `json:"mode"`
-				MaxTurns int      `json:"max_turns"`
-				Effort   string   `json:"effort"`
-				MCP      []string `json:"mcp"`
+				Prompt         string   `json:"prompt"`
+				Backend        string   `json:"backend"`
+				Model          string   `json:"model"`
+				Dir            string   `json:"dir"`
+				Mode           string   `json:"mode"`
+				MaxTurns       int      `json:"max_turns"`
+				Effort         string   `json:"effort"`
+				MCP            []string `json:"mcp"`
+				NoInstructions bool     `json:"no_instructions"`
 			}](call.Arguments)
 			if err != nil {
 				return mcp.CallResult{}, err
@@ -121,7 +124,7 @@ func runTool(defaultDir string) mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
-			task := agent.Task{Prompt: args.Prompt, Dir: dir, Model: args.Model, Mode: mode, MaxTurns: args.MaxTurns, Effort: args.Effort}
+			task := agent.Task{Prompt: args.Prompt, Dir: dir, Model: args.Model, Mode: mode, MaxTurns: args.MaxTurns, Effort: args.Effort, NoInstructions: args.NoInstructions}
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}

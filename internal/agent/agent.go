@@ -47,6 +47,10 @@ type Task struct {
 	// as tools by the api backend and passed through to the claude CLI.
 	MCP []string `json:"mcp,omitempty"`
 
+	// NoInstructions skips the project instruction files (HX.md, AGENTS.md,
+	// CLAUDE.md) that the api backend otherwise puts in its system prompt.
+	NoInstructions bool `json:"no_instructions,omitempty"`
+
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
 }

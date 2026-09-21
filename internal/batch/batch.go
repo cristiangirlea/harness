@@ -27,29 +27,33 @@ import (
 // Spec is a batch of tasks to run against one repository. Task fields
 // override the Spec defaults of the same name.
 type Spec struct {
-	Dir      string   `json:"dir,omitempty"`      // any path inside the repository; default: the spec file's directory
-	Parallel int      `json:"parallel,omitempty"` // agents at once; default 2
-	Backend  string   `json:"backend,omitempty"`  // default: api when credentials exist, else claude
-	Model    string   `json:"model,omitempty"`
-	Mode     string   `json:"mode,omitempty"` // default auto; nothing can approve prompts in a batch
-	MaxTurns int      `json:"max_turns,omitempty"`
-	Effort   string   `json:"effort,omitempty"`
-	MCP      []string `json:"mcp,omitempty"`   // MCP config files, relative to Dir
-	Gate     []string `json:"gate,omitempty"`  // commands that must exit 0 in the worktree after the agent finishes
-	Retry    []string `json:"retry,omitempty"` // backends to try, in order, after a failed attempt
-	Tasks    []Task   `json:"tasks"`
+	Dir            string   `json:"dir,omitempty"`      // any path inside the repository; default: the spec file's directory
+	Parallel       int      `json:"parallel,omitempty"` // agents at once; default 2
+	Backend        string   `json:"backend,omitempty"`  // default: api when credentials exist, else claude
+	Model          string   `json:"model,omitempty"`
+	Mode           string   `json:"mode,omitempty"` // default auto; nothing can approve prompts in a batch
+	MaxTurns       int      `json:"max_turns,omitempty"`
+	Effort         string   `json:"effort,omitempty"`
+	MCP            []string `json:"mcp,omitempty"`             // MCP config files, relative to Dir
+	NoInstructions bool     `json:"no_instructions,omitempty"` // skip the project instruction files (api backend)
+	Gate           []string `json:"gate,omitempty"`            // commands that must exit 0 in the worktree after the agent finishes
+	Retry          []string `json:"retry,omitempty"`           // backends to try, in order, after a failed attempt
+	Tasks          []Task   `json:"tasks"`
 }
 
 type Task struct {
-	ID       string   `json:"id,omitempty"` // branch hx/<id> and worktree .hx/worktrees/<id>; default t1, t2, ...
-	Prompt   string   `json:"prompt"`
-	Backend  string   `json:"backend,omitempty"`
-	Model    string   `json:"model,omitempty"`
-	Mode     string   `json:"mode,omitempty"`
-	MaxTurns int      `json:"max_turns,omitempty"`
-	Effort   string   `json:"effort,omitempty"`
-	Gate     []string `json:"gate,omitempty"`
-	Retry    []string `json:"retry,omitempty"`
+	ID       string `json:"id,omitempty"` // branch hx/<id> and worktree .hx/worktrees/<id>; default t1, t2, ...
+	Prompt   string `json:"prompt"`
+	Backend  string `json:"backend,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	MaxTurns int    `json:"max_turns,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+	// NoInstructions adds to the spec-wide switch; a task can turn the project
+	// instructions off but not back on.
+	NoInstructions bool     `json:"no_instructions,omitempty"`
+	Gate           []string `json:"gate,omitempty"`
+	Retry          []string `json:"retry,omitempty"`
 }
 
 type Status string
@@ -347,7 +351,8 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 
 		task := agent.Task{
 			Prompt: t.Prompt, Dir: tr.Worktree, Mode: mode, MCP: mcpPaths,
-			Model: firstOf(t.Model, spec.Model), Effort: firstOf(t.Effort, spec.Effort),
+			NoInstructions: t.NoInstructions || spec.NoInstructions,
+			Model:          firstOf(t.Model, spec.Model), Effort: firstOf(t.Effort, spec.Effort),
 			MaxTurns: t.MaxTurns,
 		}
 		if task.MaxTurns == 0 {

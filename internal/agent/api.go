@@ -137,16 +137,32 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		ws.Root, runtime.GOOS, shell, task.Mode)
 	ephemeral := block{"type": "ephemeral"}
 
+	system := []block{{"type": "text", "text": systemPrompt}}
+	if !task.NoInstructions {
+		if text, names, truncated, err := loadInstructions(ws); err != nil {
+			// Missing files are normal; an unreadable one is worth saying out
+			// loud, but it must not fail the run.
+			emit(Event{Time: time.Now(), Kind: EventError, Text: "project instructions: " + err.Error()})
+		} else if text != "" {
+			system = append(system, block{"type": "text", "text": text})
+			note := ""
+			if truncated {
+				note = ", truncated"
+			}
+			emit(Event{Time: time.Now(), Kind: EventInfo,
+				Text: fmt.Sprintf("instructions: %s (%.1f KB%s)", strings.Join(names, ", "), float64(len(text))/1024, note)})
+		}
+	}
+	// Constant for the whole run, so this breakpoint caches tools, prompt and
+	// instructions together.
+	system = append(system, block{"type": "text", "text": env, "cache_control": ephemeral})
+
 	req := apiRequest{
 		Model:     model,
 		MaxTokens: 64000,
-		System: []block{
-			{"type": "text", "text": systemPrompt},
-			// Constant for the whole run, so this breakpoint caches tools + system.
-			{"type": "text", "text": env, "cache_control": ephemeral},
-		},
-		Tools:    apiTools,
-		Thinking: block{"type": "adaptive", "display": "summarized"},
+		System:    system,
+		Tools:     apiTools,
+		Thinking:  block{"type": "adaptive", "display": "summarized"},
 		// Top-level breakpoint follows the conversation so history is cached too.
 		CacheControl: ephemeral,
 		Messages: []apiMessage{

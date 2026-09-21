@@ -150,3 +150,12 @@ func TestRunErrors(t *testing.T) {
 		t.Error("show must reject path-like ids")
 	}
 }
+
+func TestRunPassesNoInstructions(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub","no_instructions":true}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	if rec, err := runlog.Load(id); err != nil || !rec.Task.NoInstructions {
+		t.Fatalf("no_instructions should reach the task: %+v err=%v", rec.Task, err)
+	}
+}
