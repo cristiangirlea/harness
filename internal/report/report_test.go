@@ -111,6 +111,25 @@ func TestCacheShareCountsCacheWritesAsInput(t *testing.T) {
 	}
 }
 
+func TestDirKeysAreCanonical(t *testing.T) {
+	dir := t.TempDir()
+	recs := []runlog.Record{
+		rec("api", "m", dir, 0, agent.Result{Status: agent.StatusOK}),
+		rec("api", "m", dir+string(filepath.Separator)+".", time.Hour, agent.Result{Status: agent.StatusOK}),
+		rec("api", "m", "/gone/repo/", 2*time.Hour, agent.Result{}),
+		rec("api", "m", "/gone/repo", 3*time.Hour, agent.Result{}),
+	}
+	rows, _, _ := Select(recs, nil, time.Time{}).RunRows(ByDir)
+	if len(rows) != 2 || rows[0].Runs != 2 || rows[1].Runs != 2 {
+		t.Errorf("two spellings of one directory must share a row: %+v", rows)
+	}
+	b, b2 := sampleBatch(), sampleBatch()
+	b2.ID, b2.Dir = "b2", b.Dir+"/"
+	if brows, _ := Select(nil, []batch.Result{b, b2}, time.Time{}).BatchRows(); len(brows) != 1 || brows[0].Batches != 2 {
+		t.Errorf("batch rows = %+v", brows)
+	}
+}
+
 func TestSinceAndUnfinished(t *testing.T) {
 	recs := sample()
 	pending := rec("api", "m", "/repo/a", 4*time.Hour, agent.Result{})
@@ -187,6 +206,7 @@ func TestParseSince(t *testing.T) {
 		{"", 0, true}, {"0", 0, true}, {"7d", 7 * 24 * time.Hour, true}, {"1.5d", 36 * time.Hour, true},
 		{"36h", 36 * time.Hour, true}, {"90m", 90 * time.Minute, true},
 		{"soon", 0, false}, {"-1d", 0, false}, {"-2h", 0, false}, {"d", 0, false},
+		{"Infd", 0, false}, {"NaNd", 0, false}, {"1e12d", 0, false}, {"1e5d", 100000 * 24 * time.Hour, true},
 	} {
 		got, err := ParseSince(tc.in)
 		if (err == nil) != tc.ok || got != tc.want {

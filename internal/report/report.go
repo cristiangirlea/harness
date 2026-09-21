@@ -6,6 +6,7 @@ package report
 import (
 	"fmt"
 	"math"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,8 +34,11 @@ func ParseSince(s string) (time.Duration, error) {
 	var d time.Duration
 	if days, ok := strings.CutSuffix(s, "d"); ok {
 		n, err := strconv.ParseFloat(days, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
 			return 0, fmt.Errorf("invalid window %q (want e.g. 7d, 36h or 90m)", s)
+		}
+		if n > float64(math.MaxInt64)/float64(24*time.Hour) {
+			return 0, fmt.Errorf("invalid window %q: too large", s)
 		}
 		d = time.Duration(n * float64(24*time.Hour))
 	} else {
@@ -210,9 +214,28 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 			return "(unknown)"
 		}, nil
 	case ByDir:
-		return func(r runlog.Record) string { return r.Task.Dir }, nil
+		seen := map[string]string{}
+		return func(r runlog.Record) string {
+			k, ok := seen[r.Task.Dir]
+			if !ok {
+				k = canonDir(r.Task.Dir)
+				seen[r.Task.Dir] = k
+			}
+			return k
+		}, nil
 	}
 	return nil, fmt.Errorf("unknown key %q (want backend, model or dir)", by)
+}
+
+// canonDir names a directory the way the filesystem does, so one workspace
+// recorded under two spellings (a Windows 8.3 short name and its long form, a
+// trailing separator) lands in one group. A path that no longer exists is
+// cleaned and used as recorded.
+func canonDir(p string) string {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return filepath.Clean(p)
 }
 
 func summarize(key string, recs []runlog.Record) Row {
@@ -264,7 +287,8 @@ func (d Data) BatchRows() (rows []BatchRow, all BatchRow) {
 	rows = []BatchRow{}
 	groups := map[string][]batch.Result{}
 	for _, b := range d.Batches {
-		groups[b.Dir] = append(groups[b.Dir], b)
+		k := canonDir(b.Dir)
+		groups[k] = append(groups[k], b)
 	}
 	for k, bs := range groups {
 		rows = append(rows, summarizeBatches(k, bs))
