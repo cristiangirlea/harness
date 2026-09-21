@@ -245,3 +245,93 @@ func TestAPIRejectsInvalidToolJSON(t *testing.T) {
 		t.Errorf("invalid input should be reported: %v", block)
 	}
 }
+
+// systemText returns the text of each system block of a request.
+func systemText(t *testing.T, req map[string]any) []string {
+	t.Helper()
+	var out []string
+	for _, b := range req["system"].([]any) {
+		out = append(out, b.(map[string]any)["text"].(string))
+	}
+	return out
+}
+
+func TestAPILoopSendsProjectInstructions(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "CLAUDE.md", "Always run gofmt before finishing.")
+	writeFile(t, dir, "AGENTS.md", "Prefer table-driven tests.")
+
+	_, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk})
+	sys := systemText(t, fake.requests[0])
+	if len(sys) != 3 {
+		t.Fatalf("want system = [prompt, instructions, env], got %d blocks", len(sys))
+	}
+	if !strings.Contains(sys[1], "## AGENTS.md") || !strings.Contains(sys[1], "Prefer table-driven tests.") ||
+		!strings.Contains(sys[1], "## CLAUDE.md") || !strings.Contains(sys[1], "Always run gofmt before finishing.") {
+		t.Errorf("instructions block = %q", sys[1])
+	}
+	if strings.Index(sys[1], "AGENTS.md") > strings.Index(sys[1], "CLAUDE.md") {
+		t.Error("files must appear in a fixed order")
+	}
+	// The cache breakpoint stays on the last block, so tools, prompt and
+	// instructions are one cached prefix.
+	blocks := fake.requests[0]["system"].([]any)
+	if _, cached := blocks[1].(map[string]any)["cache_control"]; cached {
+		t.Error("the instructions block must not carry the breakpoint")
+	}
+	if _, cached := blocks[2].(map[string]any)["cache_control"]; !cached {
+		t.Error("the env block keeps the breakpoint")
+	}
+
+	var infos []string
+	for _, e := range events {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	}
+	if len(infos) != 1 || !strings.HasPrefix(infos[0], "instructions: AGENTS.md, CLAUDE.md (") {
+		t.Errorf("info events = %v", infos)
+	}
+}
+
+func TestAPILoopWithoutProjectInstructions(t *testing.T) {
+	dir := t.TempDir()
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk})
+	if sys := systemText(t, fake.requests[0]); len(sys) != 2 {
+		t.Errorf("no instruction file: want 2 system blocks, got %d", len(sys))
+	}
+
+	writeFile(t, dir, "CLAUDE.md", "Always run gofmt.")
+	_, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk, NoInstructions: true})
+	if sys := systemText(t, fake.requests[0]); len(sys) != 2 {
+		t.Errorf("NoInstructions: want 2 system blocks, got %d", len(sys))
+	}
+	for _, e := range events {
+		if e.Kind == EventInfo && strings.HasPrefix(e.Text, "instructions:") {
+			t.Error("NoInstructions must not announce instructions")
+		}
+	}
+}
+
+func TestAPILoopReportsUnreadableInstructions(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "CLAUDE.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk})
+	if res.Status != StatusOK {
+		t.Fatalf("an unreadable instruction file must not fail the run: %+v", res)
+	}
+	if sys := systemText(t, fake.requests[0]); len(sys) != 2 {
+		t.Errorf("want 2 system blocks, got %d", len(sys))
+	}
+	var errs int
+	for _, e := range events {
+		if e.Kind == EventError && strings.Contains(e.Text, "project instructions") {
+			errs++
+		}
+	}
+	if errs != 1 {
+		t.Errorf("the failure should be reported once, got %d error events", errs)
+	}
+}
