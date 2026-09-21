@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -53,6 +54,18 @@ func connect(t *testing.T, defaultDir string) *session {
 	return s
 }
 
+func sameDir(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
+}
+
 func (s *session) call(t *testing.T, name, args string) mcp.CallResult {
 	t.Helper()
 	res, err := s.cl.CallTool(context.Background(), name, json.RawMessage(args))
@@ -87,8 +100,13 @@ func TestRunThenInspect(t *testing.T) {
 	}
 
 	rec, err := runlog.Load(id)
-	if err != nil || rec.Task.Dir != dir || rec.Task.Mode != agent.ModeAuto || rec.Result.Status != agent.StatusOK {
+	if err != nil || rec.Task.Mode != agent.ModeAuto || rec.Result.Status != agent.StatusOK {
 		t.Fatalf("record: %+v err=%v", rec, err)
+	}
+	// The workspace is canonicalised, and a Windows temp path arrives as an 8.3
+	// short name, so compare the directories themselves, not the strings.
+	if !sameDir(rec.Task.Dir, dir) {
+		t.Errorf("record dir = %s, want %s", rec.Task.Dir, dir)
 	}
 
 	if text := s.call(t, "runs", `{}`).Text(); !strings.Contains(text, id) || !strings.Contains(text, "stub") {
@@ -109,7 +127,7 @@ func TestRunErrors(t *testing.T) {
 	s := connect(t, t.TempDir())
 	for _, tc := range []struct{ args, want string }{
 		{`{}`, "prompt is required"},
-		{`{"prompt":"x","backend":"stub","dir":"/definitely/not/here"}`, "not a directory"},
+		{`{"prompt":"x","backend":"stub","dir":"/definitely/not/here"}`, "dir /definitely/not/here"},
 		{`{"prompt":"x","backend":"nope"}`, "unknown backend"},
 		{`{"prompt":"x","backend":"stub","mode":"weird"}`, "unknown mode"},
 	} {

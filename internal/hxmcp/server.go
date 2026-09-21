@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -111,12 +109,11 @@ func runTool(defaultDir string) mcp.Tool {
 			if dir == "" {
 				dir = defaultDir
 			}
-			if dir, err = filepath.Abs(dir); err != nil {
-				return mcp.CallResult{}, err
+			ws, err := tools.NewWorkspace(dir)
+			if err != nil {
+				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
-			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-				return mcp.CallResult{}, fmt.Errorf("dir %s is not a directory", dir)
-			}
+			dir = ws.Root
 			if args.Backend == "" {
 				args.Backend = agent.DefaultBackendName()
 			}

@@ -48,3 +48,34 @@ func TestVersionLess(t *testing.T) {
 		t.Error("versionLess compares numerically")
 	}
 }
+
+func TestParseClaudeStreamErrorText(t *testing.T) {
+	var res Result
+	line := `{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"Not logged in · Please run /login"}`
+	if !parseClaudeStream([]byte(line), func(Event) {}, &res) {
+		t.Fatal("result line not parsed")
+	}
+	if res.Status != StatusError || res.Error != "Not logged in · Please run /login" {
+		t.Fatalf("a failure reported with subtype success must carry the result text: %+v", res)
+	}
+	res = Result{}
+	line = `{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":5,"result":"partial answer"}`
+	parseClaudeStream([]byte(line), func(Event) {}, &res)
+	if res.Status != StatusMaxTurns || res.Error != "error_max_turns" || res.Final != "partial answer" {
+		t.Fatalf("a specific subtype stays the error: %+v", res)
+	}
+}
+
+func TestParseClaudeStreamErrorSubtypes(t *testing.T) {
+	for _, tc := range []struct{ line, wantErr string }{
+		{`{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":""}`, "unknown error"},
+		{`{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":2,"result":"Tool Bash was denied"}`, "error_during_execution: Tool Bash was denied"},
+		{`{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":2,"result":""}`, "error_during_execution"},
+	} {
+		var res Result
+		parseClaudeStream([]byte(tc.line), func(Event) {}, &res)
+		if res.Status != StatusError || res.Error != tc.wantErr {
+			t.Errorf("%s: got status=%s error=%q, want %q", tc.line, res.Status, res.Error, tc.wantErr)
+		}
+	}
+}

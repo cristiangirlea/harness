@@ -32,7 +32,7 @@ Usage:
   hx backends                    show which backends are usable
   hx runs [-n N]                 list recent runs
   hx show [--json] <run-id>      replay a recorded run
-  hx mcp                         serve hx as an MCP server on stdio (for Claude Code and other hosts)
+  hx mcp [--dir PATH]            serve hx as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hx batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hx batch rm <batch-id>         remove the worktrees and branches a batch created
 
@@ -72,7 +72,7 @@ func main() {
 	case "show":
 		err = cmdShow(os.Args[2:])
 	case "mcp":
-		err = cmdMCP()
+		err = cmdMCP(os.Args[2:])
 	case "batch":
 		code, err = cmdBatch(os.Args[2:])
 	case "-h", "--help", "help":
@@ -120,10 +120,11 @@ func cmdRun(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	absDir, err := filepath.Abs(dir)
+	ws, err := tools.NewWorkspace(dir)
 	if err != nil {
-		return 2, err
+		return 2, fmt.Errorf("-C %s: %w", dir, err)
 	}
+	absDir := ws.Root
 
 	promptFromStdin := fs.NArg() == 0 || (fs.NArg() == 1 && fs.Arg(0) == "-")
 	var prompt string
@@ -279,15 +280,28 @@ func cmdShow(args []string) error {
 
 // cmdMCP serves hx over stdio until the host closes the pipe. stdout is the
 // protocol channel, so nothing else may print there.
-func cmdMCP() error {
-	dir, err := os.Getwd()
-	if err != nil {
-		return err
+func cmdMCP(args []string) error {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	dir := fs.String("dir", ".", "")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return errors.New("invalid arguments")
 	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected argument %q; the workspace is set with --dir", fs.Arg(0))
+	}
+	ws, err := tools.NewWorkspace(*dir)
+	if err != nil {
+		return fmt.Errorf("--dir %s: %w", *dir, err)
+	}
+	abs := ws.Root
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	fmt.Fprintln(os.Stderr, "hx mcp: serving on stdio, workspace", dir)
-	if err := hxmcp.NewServer(dir).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+	fmt.Fprintln(os.Stderr, "hx mcp: serving on stdio, workspace", abs)
+	if err := hxmcp.NewServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil
