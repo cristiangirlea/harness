@@ -120,10 +120,11 @@ func cmdRun(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	absDir, err := filepath.Abs(dir)
+	ws, err := tools.NewWorkspace(dir)
 	if err != nil {
-		return 2, err
+		return 2, fmt.Errorf("-C %s: %w", dir, err)
 	}
+	absDir := ws.Root
 
 	promptFromStdin := fs.NArg() == 0 || (fs.NArg() == 1 && fs.Arg(0) == "-")
 	var prompt string
@@ -284,15 +285,19 @@ func cmdMCP(args []string) error {
 	dir := fs.String("dir", ".", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
-		return nil
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return errors.New("invalid arguments")
 	}
-	abs, err := filepath.Abs(*dir)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected argument %q; the workspace is set with --dir", fs.Arg(0))
+	}
+	ws, err := tools.NewWorkspace(*dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("--dir %s: %w", *dir, err)
 	}
-	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
-		return fmt.Errorf("--dir %s is not a directory", abs)
-	}
+	abs := ws.Root
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	fmt.Fprintln(os.Stderr, "hx mcp: serving on stdio, workspace", abs)
