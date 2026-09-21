@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestHelperCLIError is not a test: the test binary acts as an agent CLI that
@@ -15,6 +16,9 @@ func TestHelperCLIError(t *testing.T) {
 	case "error":
 		fmt.Println(`{"type":"error","error":{"message":"usage limit reached"}}`)
 		os.Exit(1)
+	case "sleep":
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
 	case "maxturns":
 		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"result":""}`)
 		os.Exit(1)
@@ -43,5 +47,32 @@ func TestCLIKeepsStreamStatusOnNonZeroExit(t *testing.T) {
 	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk}, func(Event) {})
 	if res.Status != StatusMaxTurns || res.Error != "error_max_turns" || res.Turns != 3 {
 		t.Fatalf("a status the stream set should survive a non-zero exit: %+v", res)
+	}
+}
+
+func TestCLISaysWhatItCannotEnforce(t *testing.T) {
+	t.Setenv("HX_CLI_HELPER", "error")
+	var infos []string
+	b := helperCLI(parseOpencodeStream)
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, MaxCostUSD: 5, TaskBudget: 50000},
+		func(e Event) {
+			if e.Kind == EventInfo && strings.Contains(e.Text, "not enforced") {
+				infos = append(infos, e.Text)
+			}
+		})
+	if len(infos) != 1 {
+		t.Fatalf("want one line about unenforced limits, got %v", infos)
+	}
+	if !strings.Contains(infos[0], "max_cost") || !strings.Contains(infos[0], "task_budget") {
+		t.Errorf("info = %q, want both named", infos[0])
+	}
+}
+
+func TestCLIStopsOnTimeout(t *testing.T) {
+	t.Setenv("HX_CLI_HELPER", "sleep")
+	res := helperCLI(parseOpencodeStream).Run(context.Background(),
+		Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, Timeout: 200 * time.Millisecond}, func(Event) {})
+	if res.Status != StatusTimeout {
+		t.Fatalf("status = %s, want timeout (error %q)", res.Status, res.Error)
 	}
 }

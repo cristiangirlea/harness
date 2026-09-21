@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeAPI replays scripted SSE turns and records each request body and headers.
@@ -333,5 +334,207 @@ func TestAPILoopReportsUnreadableInstructions(t *testing.T) {
 	}
 	if errs != 1 {
 		t.Errorf("the failure should be reported once, got %d error events", errs)
+	}
+}
+
+func TestAPIStopsOnTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+	}))
+	t.Cleanup(srv.Close)
+	b := NewAPIBackend()
+	b.BaseURL, b.APIKey, b.MaxRetries = srv.URL, "test", 0
+
+	started := time.Now()
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, Timeout: 200 * time.Millisecond}, func(Event) {})
+	if res.Status != StatusTimeout {
+		t.Fatalf("status = %s, want timeout (error %q)", res.Status, res.Error)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Errorf("took %s; the deadline should have cut it short", elapsed)
+	}
+}
+
+func TestAPIStopsOnCostBudget(t *testing.T) {
+	// One turn costs more than the limit, so the second turn never starts.
+	res, _, fake := runFake(t, [][]string{
+		toolTurn("toolu_1", "list_files", `{}`),
+		textTurn("never reached"),
+	}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, MaxCostUSD: 0.0001})
+	if res.Status != StatusBudget {
+		t.Fatalf("status = %s, want budget (error %q)", res.Status, res.Error)
+	}
+	if !strings.Contains(res.Error, "$0.0001") || !strings.Contains(res.Error, "turn 1") {
+		t.Errorf("error should name the limit and the turn: %q", res.Error)
+	}
+	if len(fake.requests) != 1 {
+		t.Errorf("requests = %d, want 1: the run stops before spending more", len(fake.requests))
+	}
+	if res.CostUSD == 0 {
+		t.Error("the cost so far should still be reported")
+	}
+}
+
+func TestAPISendsTaskBudgetWithEffort(t *testing.T) {
+	_, _, fake := runFake(t, [][]string{textTurn("ok")},
+		Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, Effort: "high", TaskBudget: 64000})
+	out, ok := fake.requests[0]["output_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("no output_config: %v", fake.requests[0])
+	}
+	if out["effort"] != "high" {
+		t.Errorf("task_budget must not overwrite effort: %v", out)
+	}
+	tb, ok := out["task_budget"].(map[string]any)
+	if !ok || tb["type"] != "tokens" || tb["total"] != float64(64000) {
+		t.Fatalf("task_budget = %v", out["task_budget"])
+	}
+	if _, present := tb["remaining"]; present {
+		t.Error("remaining must stay unset: hx resends the whole history, so the server tracks the countdown")
+	}
+	if h := fake.headers[0].Get("anthropic-beta"); !strings.Contains(h, betaTaskBudget) {
+		t.Errorf("anthropic-beta = %q, want it to carry %s", h, betaTaskBudget)
+	}
+
+	_, _, fake = runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk})
+	if _, present := fake.requests[0]["output_config"]; present {
+		t.Errorf("no budget and no effort should mean no output_config: %v", fake.requests[0]["output_config"])
+	}
+	if h := fake.headers[0].Get("anthropic-beta"); strings.Contains(h, betaTaskBudget) {
+		t.Errorf("anthropic-beta = %q, want no task budget beta", h)
+	}
+}
+
+func TestValidateLimits(t *testing.T) {
+	if err := ValidateLimits(0, 0, 0); err != nil {
+		t.Errorf("unset is fine: %v", err)
+	}
+	if err := ValidateLimits(time.Minute, 2.5, 20000); err != nil {
+		t.Errorf("the minimum budget and positive limits are allowed: %v", err)
+	}
+	for _, tc := range []struct {
+		name       string
+		timeout    time.Duration
+		maxCost    float64
+		taskBudget int
+		want       string
+	}{
+		{"small budget", 0, 0, 100, "20000"},
+		{"negative timeout", -time.Minute, 0, 0, "negative"},
+		{"negative cost", 0, -1, 0, "negative"},
+	} {
+		err := ValidateLimits(tc.timeout, tc.maxCost, tc.taskBudget)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
+	var infos []string
+	b := NewAPIBackend()
+	b.APIKey, b.MaxRetries = "test", 0
+	b.BaseURL = "http://127.0.0.1:1" // never reached: the notice comes first
+	collect := func(e Event) {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	}
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk,
+		Model: "claude-not-in-the-price-table", MaxCostUSD: 1}, collect)
+	if len(infos) != 1 || !strings.Contains(infos[0], "max_cost cannot be enforced") {
+		t.Fatalf("info events = %v", infos)
+	}
+
+	infos = nil
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk,
+		Model: "claude-opus-5", MaxCostUSD: 1}, collect)
+	for _, text := range infos {
+		if strings.Contains(text, "max_cost cannot be enforced") {
+			t.Errorf("a priced model should not warn: %q", text)
+		}
+	}
+}
+
+func TestAPISendsContextManagementByDefault(t *testing.T) {
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk})
+	cm, ok := fake.requests[0]["context_management"].(map[string]any)
+	if !ok {
+		t.Fatalf("no context_management: %v", fake.requests[0])
+	}
+	edits, ok := cm["edits"].([]any)
+	if !ok || len(edits) != 1 {
+		t.Fatalf("edits = %v", cm["edits"])
+	}
+	if edits[0].(map[string]any)["type"] != "clear_tool_uses_20250919" {
+		t.Errorf("edit = %v", edits[0])
+	}
+	// The header is a comma-joined list: the fallback beta must survive.
+	h := fake.headers[0].Get("anthropic-beta")
+	if !strings.Contains(h, betaContextEdits) || !strings.Contains(h, betaFallback) {
+		t.Errorf("anthropic-beta = %q, want both betas", h)
+	}
+
+	_, _, fake = runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, NoContextEdits: true})
+	if _, present := fake.requests[0]["context_management"]; present {
+		t.Error("NoContextEdits must drop the field")
+	}
+	if h := fake.headers[0].Get("anthropic-beta"); strings.Contains(h, betaContextEdits) {
+		t.Errorf("anthropic-beta = %q, want no context beta", h)
+	}
+}
+
+func TestAPIRetriesWithoutContextManagementWhenRefused(t *testing.T) {
+	var reqs []map[string]any
+	var betas []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		reqs = append(reqs, req)
+		betas = append(betas, r.Header.Get("anthropic-beta"))
+		if _, sent := req["context_management"]; sent {
+			http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"context_management is not supported with this beta"}}`, 400)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, ev := range textTurn("recovered") {
+			var typ struct {
+				Type string `json:"type"`
+			}
+			_ = json.Unmarshal([]byte(ev), &typ)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", typ.Type, ev)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	b := NewAPIBackend()
+	b.BaseURL, b.APIKey, b.MaxRetries = srv.URL, "test", 0
+	var infos []string
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk}, func(e Event) {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	})
+	if res.Status != StatusOK || res.Final != "recovered" {
+		t.Fatalf("the run should survive a refused beta: %+v", res)
+	}
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want the refused one and one retry", len(reqs))
+	}
+	if _, sent := reqs[1]["context_management"]; sent {
+		t.Error("the retry must not send the field again")
+	}
+	if strings.Contains(betas[1], betaContextEdits) {
+		t.Errorf("the retry must drop the beta too: %q", betas[1])
+	}
+	var said bool
+	for _, text := range infos {
+		if strings.Contains(text, "context management refused") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the run should say why: %v", infos)
 	}
 }

@@ -53,6 +53,8 @@ func (c *CLIBackend) Detect() (string, error) {
 
 func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Result {
 	started := time.Now()
+	ctx, cancel := withTimeout(ctx, task)
+	defer cancel()
 	res := Result{Backend: c.name, Model: task.Model}
 	fail := func(status Status, err error) Result {
 		res.Status = status
@@ -95,6 +97,10 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, err)
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(cmd.Args[1:], " "))})
+	if limits := unenforced(task); len(limits) > 0 {
+		emit(Event{Time: time.Now(), Kind: EventInfo,
+			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
+	}
 	if err := cmd.Start(); err != nil {
 		return fail(StatusError, err)
 	}
@@ -131,7 +137,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	switch {
 	case ctx.Err() != nil:
-		return fail(StatusCanceled, ctx.Err())
+		return fail(stopStatus(ctx), ctx.Err())
 	case waitErr != nil:
 		// Prefer what the CLI said over the bare exit status: stderr first,
 		// then a structured error the stream already reported. A status the
