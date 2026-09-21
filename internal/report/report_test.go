@@ -192,6 +192,28 @@ func TestFormatting(t *testing.T) {
 	}
 }
 
+func TestReportEnvelope(t *testing.T) {
+	rep, err := Select(nil, nil, time.Time{}).Report("")
+	if err != nil || rep.By != ByBackend {
+		t.Fatalf("empty report: %+v err=%v", rep, err)
+	}
+	data, _ := json.Marshal(rep)
+	for _, want := range []string{`"since":null`, `"by":"backend"`, `"runs":[]`, `"runs_all":{`, `"unfinished":0`, `"batches":[]`, `"batches_all":{`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("empty report JSON is missing %s: %s", want, data)
+		}
+	}
+
+	since := t0.Add(90 * time.Minute)
+	rep, err = Select(sample(), []batch.Result{sampleBatch()}, since).Report(ByModel)
+	if err != nil || rep.Since == nil || !rep.Since.Equal(since) || rep.By != ByModel || len(rep.Runs) != 1 || rep.RunsAll.Runs != 2 || len(rep.Batches) != 0 {
+		t.Errorf("windowed report: %+v err=%v", rep, err)
+	}
+	if _, err := Select(nil, nil, time.Time{}).Report("colour"); err == nil {
+		t.Error("an unknown key must be refused")
+	}
+}
+
 func TestRowJSON(t *testing.T) {
 	data, _ := json.Marshal(Row{Key: "api", Runs: 1, CacheShare: -1})
 	for _, key := range []string{`"key":"api"`, `"runs":1`, `"ok":0`, `"median_duration_ns":0`, `"median_turns":0`, `"total_cost_usd":0`, `"median_cost_usd":0`, `"cache_share":-1`} {

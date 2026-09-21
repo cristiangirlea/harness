@@ -94,6 +94,37 @@ func Select(recs []runlog.Record, batches []batch.Result, since time.Time) Data 
 	return d
 }
 
+// Report is everything hx report prints, in the shape --json emits.
+type Report struct {
+	Since *time.Time `json:"since"` // nil when the report covers all time
+	By    string     `json:"by"`
+	// Runs has a row per group, largest first; RunsAll is the row over every run.
+	Runs       []Row `json:"runs"`
+	RunsAll    Row   `json:"runs_all"`
+	Unfinished int   `json:"unfinished"`
+	// Batches has a row per repository; BatchesAll is the row over every batch.
+	Batches    []BatchRow `json:"batches"`
+	BatchesAll BatchRow   `json:"batches_all"`
+}
+
+// Report builds both tables. An empty key groups the runs by backend.
+func (d Data) Report(by string) (Report, error) {
+	if by == "" {
+		by = ByBackend
+	}
+	rows, all, err := d.RunRows(by)
+	if err != nil {
+		return Report{}, err
+	}
+	brows, ball := d.BatchRows()
+	rep := Report{By: by, Runs: rows, RunsAll: all, Unfinished: d.Unfinished, Batches: brows, BatchesAll: ball}
+	if !d.Since.IsZero() {
+		since := d.Since
+		rep.Since = &since
+	}
+	return rep, nil
+}
+
 // Row is one line of the run table: the finished runs that share a key.
 type Row struct {
 	Key            string        `json:"key"`
@@ -119,6 +150,7 @@ func (d Data) RunRows(by string) (rows []Row, all Row, err error) {
 	if err != nil {
 		return nil, Row{}, err
 	}
+	rows = []Row{} // never nil, so --json prints [] for an empty table
 	groups := map[string][]runlog.Record{}
 	for _, r := range d.Runs {
 		k := key(r)
@@ -138,7 +170,7 @@ func (d Data) RunRows(by string) (rows []Row, all Row, err error) {
 
 func keyFunc(by string) (func(runlog.Record) string, error) {
 	switch by {
-	case ByBackend, "":
+	case ByBackend:
 		return func(r runlog.Record) string { return r.Backend }, nil
 	case ByModel:
 		// The result names the model that actually answered (a CLI backend
@@ -199,6 +231,7 @@ type BatchRow struct {
 
 // BatchRows groups the batches by repository, plus an "all" row.
 func (d Data) BatchRows() (rows []BatchRow, all BatchRow) {
+	rows = []BatchRow{}
 	groups := map[string][]batch.Result{}
 	for _, b := range d.Batches {
 		groups[b.Dir] = append(groups[b.Dir], b)

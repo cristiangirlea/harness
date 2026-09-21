@@ -41,49 +41,40 @@ func cmdReport(args []string) error {
 	if err != nil {
 		return err
 	}
-	rows, all, err := data.RunRows(*by)
+	rep, err := data.Report(*by)
 	if err != nil {
 		return err
 	}
-	brows, ball := data.BatchRows()
 
 	if *jsonOut {
-		var sinceJSON *time.Time
-		if window > 0 {
-			sinceJSON = &from
-		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{
-			"since": sinceJSON, "by": *by,
-			"runs": rows, "runs_all": all, "unfinished": data.Unfinished,
-			"batches": brows, "batches_all": ball,
-		})
+		return enc.Encode(rep)
 	}
 
 	scope := "all time"
-	if window > 0 {
-		scope = fmt.Sprintf("since %s (%s)", from.Format("2006-01-02 15:04"), *since)
+	if rep.Since != nil {
+		scope = fmt.Sprintf("since %s (%s)", rep.Since.Format("2006-01-02 15:04"), *since)
 	}
-	if len(data.Runs) == 0 {
+	if len(rep.Runs) == 0 {
 		fmt.Printf("no finished runs, %s\n", scope)
 	} else {
-		fmt.Printf("runs by %s, %s\n", *by, scope)
-		t := [][]string{{*by, "runs", "ok", "ok%", "med dur", "med turns", "total cost", "med cost", "cache"}}
-		for _, r := range append(rows, all) {
+		fmt.Printf("runs by %s, %s\n", rep.By, scope)
+		t := [][]string{{rep.By, "runs", "ok", "ok%", "med dur", "med turns", "total cost", "med cost", "cache"}}
+		for _, r := range append(rep.Runs, rep.RunsAll) {
 			t = append(t, []string{shortKey(r.Key, 48), strconv.Itoa(r.Runs), strconv.Itoa(r.OK), report.Percent(r.OK, r.Runs),
 				r.MedianDuration.Round(time.Second).String(), report.Number(r.MedianTurns),
 				report.Money(r.TotalCost, r.CostEstimated), report.Money(r.MedianCost, r.CostEstimated), report.Share(r.CacheShare)})
 		}
 		fmt.Print(table(t, 1))
 	}
-	if data.Unfinished > 0 {
-		fmt.Printf("%d unfinished run(s) not counted\n", data.Unfinished)
+	if rep.Unfinished > 0 {
+		fmt.Printf("%d unfinished run(s) not counted\n", rep.Unfinished)
 	}
-	if len(data.Batches) > 0 {
+	if len(rep.Batches) > 0 {
 		fmt.Printf("\nbatches by repository, %s\n", scope)
 		t := [][]string{{"repository", "batches", "tasks", "pass%", "med attempts", "total cost"}}
-		for _, r := range append(brows, ball) {
+		for _, r := range append(rep.Batches, rep.BatchesAll) {
 			t = append(t, []string{shortKey(r.Key, 48), strconv.Itoa(r.Batches), strconv.Itoa(r.Tasks), report.Percent(r.Passed, r.Tasks),
 				report.Number(r.MedianAttempts), report.Money(r.TotalCost, r.CostEstimated)})
 		}
