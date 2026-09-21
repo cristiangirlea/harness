@@ -581,3 +581,15 @@ Size: mostly moves; ~100 new lines.
   marked `~` when any run in the group carries a non-zero estimate. `batch.List` was added
   for the batch table. The smoke against the real `~/.hx` showed long repository paths cut
   from the end, which hid the part that differs, so keys are shortened from the left.
+- 2026-09-21: PR F self-review, 12 findings, all fixed. A `Report` type now owns the
+  `--json` shape (empty tables print `[]`, an empty `--by` means backend, the window is
+  carried in the report instead of a field nothing read). A batch with a task still
+  running and a record that cannot be read are counted under the tables instead of
+  skewing or vanishing from them; that gave `runlog.ListSince`, which skips run
+  directories older than the window by their id prefix (a day of slack) and reports
+  unreadable records, as `batch.List` now does. The cache share counts cache writes as
+  input, on purpose a deviation from the spec's formula: the smoke had shown 100% for
+  claude while cache creation was billed. The attempts median ignores tasks that never
+  ran; `Percent` never rounds to a false 100% or 0%; directory keys are canonical, so one
+  workspace under two spellings is one row; `ParseSince` refuses windows that overflow;
+  and `table` and `shortKey` got the first tests in `cmd/hx`.
