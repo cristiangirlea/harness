@@ -109,7 +109,7 @@ func TestRunErrors(t *testing.T) {
 	s := connect(t, t.TempDir())
 	for _, tc := range []struct{ args, want string }{
 		{`{}`, "prompt is required"},
-		{`{"prompt":"x","backend":"stub","dir":"/definitely/not/here"}`, "not a directory"},
+		{`{"prompt":"x","backend":"stub","dir":"/definitely/not/here"}`, "dir /definitely/not/here"},
 		{`{"prompt":"x","backend":"nope"}`, "unknown backend"},
 		{`{"prompt":"x","backend":"stub","mode":"weird"}`, "unknown mode"},
 	} {
