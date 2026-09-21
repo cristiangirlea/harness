@@ -187,6 +187,15 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		req.OutputConfig["task_budget"] = block{"type": "tokens", "total": task.TaskBudget}
 		req.betas = append(req.betas, betaTaskBudget)
 	}
+	if !task.NoContextEdits {
+		// The client history stays append-only and the whole of it is still
+		// uploaded; what the server clears is what the model is given, which
+		// is what fills the context window and what the input is billed on. A
+		// clear invalidates the cached prefix from that point, which is the
+		// trade, and it is unmeasured against a real long run.
+		req.ContextManagement = block{"edits": []block{{"type": "clear_tool_uses_20250919"}}}
+		req.betas = append(req.betas, betaContextEdits)
+	}
 	if supportsDefaultFallbacks(model) {
 		// A refusal is re-served by a fallback model inside the same call.
 		req.Fallbacks = "default"
@@ -222,6 +231,11 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		res.Turns = turn
 
 		msg, err := client.stream(ctx, req, onDelta, onBlock)
+		if err != nil && dropContextEdits(&req, err) {
+			// A beta hx sends by default must never make every run fail.
+			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
+			msg, err = client.stream(ctx, req, onDelta, onBlock)
+		}
 		if msg != nil {
 			res.InputTokens += msg.Usage.InputTokens
 			res.OutputTokens += msg.Usage.OutputTokens
@@ -360,6 +374,27 @@ func allowed(task Task, t tools.Tool, summary string) bool {
 		return false
 	}
 	return task.Approve(ApprovalRequest{Tool: t.Name, Summary: summary})
+}
+
+// dropContextEdits removes the context-management request when the API is the
+// one refusing it, so the run continues instead of failing on every turn.
+func dropContextEdits(req *apiRequest, err error) bool {
+	var apiErr *apiError
+	if req.ContextManagement == nil || !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		return false
+	}
+	if !strings.Contains(apiErr.Message, "context_management") && !strings.Contains(apiErr.Message, betaContextEdits) {
+		return false
+	}
+	req.ContextManagement = nil
+	kept := req.betas[:0]
+	for _, b := range req.betas {
+		if b != betaContextEdits {
+			kept = append(kept, b)
+		}
+	}
+	req.betas = kept
+	return true
 }
 
 func supportsDefaultFallbacks(model string) bool {

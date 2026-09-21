@@ -34,13 +34,14 @@ type Spec struct {
 	Mode           string   `json:"mode,omitempty"` // default auto; nothing can approve prompts in a batch
 	MaxTurns       int      `json:"max_turns,omitempty"`
 	Effort         string   `json:"effort,omitempty"`
-	MCP            []string `json:"mcp,omitempty"`             // MCP config files, relative to Dir
-	NoInstructions bool     `json:"no_instructions,omitempty"` // skip the project instruction files (api backend)
-	Timeout        string   `json:"timeout,omitempty"`         // per attempt, e.g. "20m"
-	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`    // per attempt, api backend only
-	TaskBudget     int      `json:"task_budget,omitempty"`     // tokens, api backend only
-	Gate           []string `json:"gate,omitempty"`            // commands that must exit 0 in the worktree after the agent finishes
-	Retry          []string `json:"retry,omitempty"`           // backends to try, in order, after a failed attempt
+	MCP            []string `json:"mcp,omitempty"`              // MCP config files, relative to Dir
+	NoInstructions bool     `json:"no_instructions,omitempty"`  // skip the project instruction files (api backend)
+	NoContextEdits bool     `json:"no_context_edits,omitempty"` // keep every tool result in the request (api backend)
+	Timeout        string   `json:"timeout,omitempty"`          // per attempt, e.g. "20m"
+	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`     // per attempt, api backend only
+	TaskBudget     int      `json:"task_budget,omitempty"`      // tokens, api backend only
+	Gate           []string `json:"gate,omitempty"`             // commands that must exit 0 in the worktree after the agent finishes
+	Retry          []string `json:"retry,omitempty"`            // backends to try, in order, after a failed attempt
 	Tasks          []Task   `json:"tasks"`
 
 	timeout time.Duration // Timeout, parsed by normalize
@@ -54,9 +55,10 @@ type Task struct {
 	Mode     string `json:"mode,omitempty"`
 	MaxTurns int    `json:"max_turns,omitempty"`
 	Effort   string `json:"effort,omitempty"`
-	// NoInstructions adds to the spec-wide switch; a task can turn the project
-	// instructions off but not back on.
+	// NoInstructions and NoContextEdits add to the spec-wide switches; a task
+	// can turn either off but not back on.
 	NoInstructions bool     `json:"no_instructions,omitempty"`
+	NoContextEdits bool     `json:"no_context_edits,omitempty"`
 	Timeout        string   `json:"timeout,omitempty"`
 	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`
 	TaskBudget     int      `json:"task_budget,omitempty"`
@@ -449,6 +451,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 	task := agent.Task{
 		Dir: tr.Worktree, Mode: mode, MCP: mcpPaths,
 		NoInstructions: t.NoInstructions || spec.NoInstructions,
+		NoContextEdits: t.NoContextEdits || spec.NoContextEdits,
 		Timeout:        firstDuration(t.timeout, spec.timeout),
 		MaxCostUSD:     firstFloat(t.MaxCostUSD, spec.MaxCostUSD),
 		TaskBudget:     firstInt(t.TaskBudget, spec.TaskBudget),

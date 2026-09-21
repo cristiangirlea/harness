@@ -105,6 +105,20 @@ approval is denied.
 120s default timeout). All paths are confined to the workspace, symlinks included.
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
+### Context management
+
+A long run carries every tool result, and the cap is 30 KB per result, so the
+conversation reaches hundreds of thousands of tokens. The api backend therefore asks
+the server to clear old tool results itself (`clear_tool_uses_20250919`). hx still
+uploads its whole history, which stays append-only; what the clearing changes is the
+context the model is given, so it is the context window and the billed input that
+shrink, not the request body. A clear invalidates the cached prefix from that point,
+which is the trade: one cold turn for a smaller context afterwards. That balance has
+not yet been measured against a real long run, so compare `cache_read_tokens` across
+two runs before trusting it. If the API ever refuses the beta, the run says so and
+retries once without it. `hx run --no-context-edits` turns it off for good, as do the
+`no_context_edits` field on a batch spec or task and the MCP `run` argument.
+
 ### Project instructions
 
 The api loop reads `HX.md`, `AGENTS.md` and `CLAUDE.md` from the workspace root and
@@ -164,7 +178,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |

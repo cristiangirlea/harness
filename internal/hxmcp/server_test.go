@@ -178,3 +178,12 @@ func TestRunPassesLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestRunPassesNoContextEdits(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub","no_context_edits":true}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	if rec, err := runlog.Load(id); err != nil || !rec.Task.NoContextEdits {
+		t.Fatalf("no_context_edits should reach the task: %+v err=%v", rec.Task, err)
+	}
+}

@@ -63,6 +63,11 @@ type Task struct {
 	// model paces itself and finishes rather than being cut off.
 	TaskBudget int `json:"task_budget,omitempty"`
 
+	// NoContextEdits turns off server-side context management, which the api
+	// backend asks for by default so old tool results are cleared server-side
+	// instead of being resent every turn.
+	NoContextEdits bool `json:"no_context_edits,omitempty"`
+
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
 }

@@ -554,3 +554,17 @@ func TestTimedOutAttemptRetriesFresh(t *testing.T) {
 		t.Error("the fresh worktree must not inherit the timed-out attempt's files")
 	}
 }
+
+func TestNoContextEditsReachesTheTask(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "default", Prompt: "a"},
+		{ID: "opted-out", Prompt: "a", NoContextEdits: true},
+	}})
+	for i, want := range []bool{false, true} {
+		rec, err := runlog.Load(res.Tasks[i].Attempts[0].RunID)
+		if err != nil || rec.Task.NoContextEdits != want {
+			t.Errorf("%s: NoContextEdits = %v, want %v (err=%v)", res.Tasks[i].ID, rec.Task.NoContextEdits, want, err)
+		}
+	}
+}

@@ -21,10 +21,11 @@ import (
 // markers, future types) is echoed back unchanged in the next request.
 
 const (
-	apiVersion     = "2023-06-01"
-	betaFallback   = "server-side-fallback-2026-07-01"
-	betaOAuth      = "oauth-2025-04-20"
-	betaTaskBudget = "task-budgets-2026-03-13"
+	apiVersion       = "2023-06-01"
+	betaFallback     = "server-side-fallback-2026-07-01"
+	betaOAuth        = "oauth-2025-04-20"
+	betaTaskBudget   = "task-budgets-2026-03-13"
+	betaContextEdits = "context-management-2025-06-27"
 )
 
 type block = map[string]any
@@ -41,17 +42,18 @@ type apiTool struct {
 }
 
 type apiRequest struct {
-	Model        string       `json:"model"`
-	MaxTokens    int          `json:"max_tokens"`
-	Stream       bool         `json:"stream"`
-	System       []block      `json:"system,omitempty"`
-	Tools        []apiTool    `json:"tools,omitempty"`
-	Thinking     block        `json:"thinking,omitempty"`
-	CacheControl block        `json:"cache_control,omitempty"`
-	OutputConfig block        `json:"output_config,omitempty"`
-	Fallbacks    string       `json:"fallbacks,omitempty"`
-	Messages     []apiMessage `json:"messages"`
-	betas        []string     // sent as the anthropic-beta header
+	Model             string       `json:"model"`
+	MaxTokens         int          `json:"max_tokens"`
+	Stream            bool         `json:"stream"`
+	System            []block      `json:"system,omitempty"`
+	Tools             []apiTool    `json:"tools,omitempty"`
+	Thinking          block        `json:"thinking,omitempty"`
+	CacheControl      block        `json:"cache_control,omitempty"`
+	OutputConfig      block        `json:"output_config,omitempty"`
+	ContextManagement block        `json:"context_management,omitempty"`
+	Fallbacks         string       `json:"fallbacks,omitempty"`
+	Messages          []apiMessage `json:"messages"`
+	betas             []string     // sent as the anthropic-beta header
 }
 
 type apiUsage struct {
@@ -317,6 +319,9 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 			}
 			onBlock(b)
 		case "message_delta":
+			// Anything else the server reports here, such as the
+			// context_management record of what it cleared, is ignored on
+			// purpose: the client history stays append-only.
 			resp.StopReason = ev.Delta.StopReason
 			if len(ev.Delta.StopDetails) > 0 && string(ev.Delta.StopDetails) != "null" {
 				_ = json.Unmarshal(ev.Delta.StopDetails, &resp.StopDetails)
