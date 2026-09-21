@@ -35,6 +35,7 @@ Usage:
   hx mcp [--dir PATH]            serve hx as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hx batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hx batch rm <batch-id>         remove the worktrees and branches a batch created
+  hx report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
 
 Run flags:
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
@@ -52,6 +53,11 @@ Batch flags:
       --parallel N     agents at once (default: the file's value, else 2)
       --json           print the batch record as JSON (progress goes to stderr)
   -v, --verbose        show each agent's tool calls
+
+Report flags:
+      --since WINDOW   only runs and batches started within the window, e.g. 7d, 36h, 90m (default: all)
+      --by KEY         group runs by backend (default), model or dir
+      --json           print the tables as JSON
 
 Runs are recorded under ~/.hx/runs (override with HX_HOME).
 `
@@ -76,6 +82,8 @@ func main() {
 		err = cmdMCP(os.Args[2:])
 	case "batch":
 		code, err = cmdBatch(os.Args[2:])
+	case "report":
+		err = cmdReport(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -630,6 +631,32 @@ func save(res Result) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(batchesDir(), res.ID+".json"), data, 0o644)
+}
+
+// List returns every saved batch record, newest first. A record that does
+// not parse is skipped: one bad file must not hide the rest.
+func List() ([]Result, error) {
+	entries, err := os.ReadDir(batchesDir())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []Result
+	for _, e := range entries {
+		id, ok := strings.CutSuffix(e.Name(), ".json")
+		if e.IsDir() || !ok {
+			continue
+		}
+		res, err := LoadResult(id)
+		if err != nil {
+			continue
+		}
+		out = append(out, res)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
+	return out, nil
 }
 
 // LoadResult reads a saved batch record.

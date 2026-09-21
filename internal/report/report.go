@@ -1,0 +1,289 @@
+// Package report aggregates the run and batch records into tables: how often
+// each backend or model passes, what it costs and how long it takes. The
+// functions are pure over the records, so the eval layer can reuse them.
+package report
+
+import (
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/runlog"
+)
+
+// Keys the run table can be grouped by.
+const (
+	ByBackend = "backend"
+	ByModel   = "model"
+	ByDir     = "dir"
+)
+
+// ParseSince reads a window such as "7d", "36h" or "90m". Days are accepted
+// because time.ParseDuration stops at hours. Empty means no window.
+func ParseSince(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	var d time.Duration
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.ParseFloat(days, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid window %q (want e.g. 7d, 36h or 90m)", s)
+		}
+		d = time.Duration(n * float64(24*time.Hour))
+	} else {
+		var err error
+		if d, err = time.ParseDuration(s); err != nil {
+			return 0, fmt.Errorf("invalid window %q (want e.g. 7d, 36h or 90m)", s)
+		}
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid window %q: must not be negative", s)
+	}
+	return d, nil
+}
+
+// Data is what a report is built from: every finished run and every batch
+// started at or after Since (the zero time means all of them).
+type Data struct {
+	Since time.Time
+	Runs  []runlog.Record
+	// Unfinished counts runs without a result: still running or killed. They
+	// are left out of every table.
+	Unfinished int
+	Batches    []batch.Result
+}
+
+// Collect reads every run and batch record under HX_HOME.
+func Collect(since time.Time) (Data, error) {
+	recs, err := runlog.List(0)
+	if err != nil {
+		return Data{}, fmt.Errorf("reading runs: %w", err)
+	}
+	batches, err := batch.List()
+	if err != nil {
+		return Data{}, fmt.Errorf("reading batches: %w", err)
+	}
+	return Select(recs, batches, since), nil
+}
+
+// Select is Collect without the disk: it applies the window and drops the
+// unfinished runs.
+func Select(recs []runlog.Record, batches []batch.Result, since time.Time) Data {
+	d := Data{Since: since}
+	for _, r := range recs {
+		if r.Started.Before(since) {
+			continue
+		}
+		if !r.Done {
+			d.Unfinished++
+			continue
+		}
+		d.Runs = append(d.Runs, r)
+	}
+	for _, b := range batches {
+		if !b.Started.Before(since) {
+			d.Batches = append(d.Batches, b)
+		}
+	}
+	return d
+}
+
+// Row is one line of the run table: the finished runs that share a key.
+type Row struct {
+	Key            string        `json:"key"`
+	Runs           int           `json:"runs"`
+	OK             int           `json:"ok"`
+	MedianDuration time.Duration `json:"median_duration_ns"`
+	MedianTurns    float64       `json:"median_turns"`
+	TotalCost      float64       `json:"total_cost_usd"`
+	MedianCost     float64       `json:"median_cost_usd"`
+	// CostEstimated is set when any run's cost is the api backend's estimate
+	// rather than a figure the backend reported.
+	CostEstimated bool `json:"cost_is_estimate,omitempty"`
+	// CacheShare is the cache-read tokens over all input tokens of the group,
+	// or -1 when it reported no input tokens at all (the CLI backends that do
+	// not count tokens).
+	CacheShare float64 `json:"cache_share"`
+}
+
+// RunRows groups the finished runs by key and summarises each group, plus an
+// "all" row over every run. Rows come largest group first, then by key.
+func (d Data) RunRows(by string) (rows []Row, all Row, err error) {
+	key, err := keyFunc(by)
+	if err != nil {
+		return nil, Row{}, err
+	}
+	groups := map[string][]runlog.Record{}
+	for _, r := range d.Runs {
+		k := key(r)
+		groups[k] = append(groups[k], r)
+	}
+	for k, recs := range groups {
+		rows = append(rows, summarize(k, recs))
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Runs != rows[j].Runs {
+			return rows[i].Runs > rows[j].Runs
+		}
+		return rows[i].Key < rows[j].Key
+	})
+	return rows, summarize("all", d.Runs), nil
+}
+
+func keyFunc(by string) (func(runlog.Record) string, error) {
+	switch by {
+	case ByBackend, "":
+		return func(r runlog.Record) string { return r.Backend }, nil
+	case ByModel:
+		// The result names the model that actually answered (a CLI backend
+		// reports it; the task only holds what was asked for).
+		return func(r runlog.Record) string {
+			for _, m := range []string{r.Result.Model, r.Task.Model} {
+				if m != "" {
+					return m
+				}
+			}
+			return "(unknown)"
+		}, nil
+	case ByDir:
+		return func(r runlog.Record) string { return r.Task.Dir }, nil
+	}
+	return nil, fmt.Errorf("unknown key %q (want backend, model or dir)", by)
+}
+
+func summarize(key string, recs []runlog.Record) Row {
+	row := Row{Key: key, Runs: len(recs), CacheShare: -1}
+	var durations, turns, costs []float64
+	var input, cached int64
+	for _, r := range recs {
+		res := r.Result
+		if res.Status == agent.StatusOK {
+			row.OK++
+		}
+		durations = append(durations, float64(res.Duration))
+		turns = append(turns, float64(res.Turns))
+		costs = append(costs, res.CostUSD)
+		row.TotalCost += res.CostUSD
+		if res.CostEstimate && res.CostUSD > 0 {
+			row.CostEstimated = true
+		}
+		input += res.InputTokens
+		cached += res.CacheRead
+	}
+	row.MedianDuration = time.Duration(Median(durations))
+	row.MedianTurns = Median(turns)
+	row.MedianCost = Median(costs)
+	if input+cached > 0 {
+		row.CacheShare = float64(cached) / float64(input+cached)
+	}
+	return row
+}
+
+// BatchRow is one line of the batch table: the batches run against one
+// repository. Cost sums every attempt, not only the one that passed.
+type BatchRow struct {
+	Key            string  `json:"key"`
+	Batches        int     `json:"batches"`
+	Tasks          int     `json:"tasks"`
+	Passed         int     `json:"passed"`
+	MedianAttempts float64 `json:"median_attempts"`
+	TotalCost      float64 `json:"total_cost_usd"`
+	CostEstimated  bool    `json:"cost_is_estimate,omitempty"`
+}
+
+// BatchRows groups the batches by repository, plus an "all" row.
+func (d Data) BatchRows() (rows []BatchRow, all BatchRow) {
+	groups := map[string][]batch.Result{}
+	for _, b := range d.Batches {
+		groups[b.Dir] = append(groups[b.Dir], b)
+	}
+	for k, bs := range groups {
+		rows = append(rows, summarizeBatches(k, bs))
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Batches != rows[j].Batches {
+			return rows[i].Batches > rows[j].Batches
+		}
+		return rows[i].Key < rows[j].Key
+	})
+	return rows, summarizeBatches("all", d.Batches)
+}
+
+func summarizeBatches(key string, bs []batch.Result) BatchRow {
+	row := BatchRow{Key: key, Batches: len(bs)}
+	var attempts []float64
+	for _, b := range bs {
+		for _, t := range b.Tasks {
+			row.Tasks++
+			if t.Status == batch.StatusPass {
+				row.Passed++
+			}
+			attempts = append(attempts, float64(len(t.Attempts)))
+			for _, a := range t.Attempts {
+				row.TotalCost += a.Result.CostUSD
+				if a.Result.CostEstimate && a.Result.CostUSD > 0 {
+					row.CostEstimated = true
+				}
+			}
+		}
+	}
+	row.MedianAttempts = Median(attempts)
+	return row
+}
+
+// Median of xs, 0 for none. An even count averages the middle two.
+func Median(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	sort.Float64s(s)
+	n := len(s)
+	if n%2 == 1 {
+		return s[n/2]
+	}
+	return (s[n/2-1] + s[n/2]) / 2
+}
+
+// Percent renders part of whole as "83%", or "-" when there is no whole.
+func Percent(part, whole int) string {
+	if whole == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0f%%", 100*float64(part)/float64(whole))
+}
+
+// Money renders a dollar amount, "~" first when it is an estimate and "-"
+// when nothing was recorded. Amounts under a cent keep their digits.
+func Money(v float64, estimated bool) string {
+	if v == 0 {
+		return "-"
+	}
+	prefix := ""
+	if estimated {
+		prefix = "~"
+	}
+	if v < 0.01 {
+		return fmt.Sprintf("%s$%.4f", prefix, v)
+	}
+	return fmt.Sprintf("%s$%.2f", prefix, v)
+}
+
+// Number renders a median without trailing zeros: 9, not 9.0; 6.5 stays.
+func Number(f float64) string {
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// Share renders a ratio as a percentage, or "-" for the unknown value.
+func Share(ratio float64) string {
+	if ratio < 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0f%%", 100*ratio)
+}
