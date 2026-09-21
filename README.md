@@ -94,8 +94,10 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 The api loop reads `HX.md`, `AGENTS.md` and `CLAUDE.md` from the workspace root and
 puts them in its system prompt, so it sees the same house rules the agent CLIs read
 from their own files. Only the root is searched, the files are sent in that order, and
-the total is capped at 32 KiB. `hx run --no-instructions` skips them; so do the batch
-spec field and the MCP `run` argument `no_instructions`.
+the total is capped at 32 KiB; the run says what it loaded and whether the cap cut
+anything. A file that is a symlink out of the workspace is refused, like any other
+path. `hx run --no-instructions` skips them, as do the `no_instructions` field on a
+batch spec or task and the MCP `run` argument of the same name.
 
 ## MCP
 
