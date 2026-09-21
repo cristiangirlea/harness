@@ -306,25 +306,28 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 
 // attemptPlan is how one attempt differs from the one before it.
 type attemptPlan struct {
-	number int // 1-based
-	prompt string
+	number int    // 1-based
+	prompt string // what the agent is sent, failure context included
+	commit string // the commit subject for whatever it leaves behind
 	// continued keeps the worktree and the work already committed on the
 	// branch, so the agent fixes its own output instead of starting over.
 	continued bool
 }
 
 // The prompt a retry gets. A gate failure is recoverable in place, so the next
-// attempt is told what failed and that the work is already there.
+// attempt is told what failed and that the work is already there; anything
+// else starts over and is told only how the previous attempt ended.
 const (
 	gateFailureContext = "\n\n---\n" +
 		"A previous attempt at this task (attempt %d on %s) did not pass. Its changes are\n" +
 		"already applied in this workspace and committed on the current branch. Fix them\n" +
 		"rather than starting over.\n\n" +
 		"The gate command `%s` exited %d. Output (tail):\n" +
-		"```\n%s\n```\n"
+		"%s\n%s\n%s\n"
 	runFailureContext = "\n\n---\n" +
 		"A previous attempt on %s ended with %s: %s\n" +
 		"This workspace is a fresh copy; nothing from that attempt is in it.\n"
+	attemptHistory = "\nEarlier attempts, so they are not tried again: %s.\n"
 )
 
 // failedGate returns the gate that stopped an attempt, or nil when none did.
@@ -337,16 +340,47 @@ func failedGate(att Attempt) *GateResult {
 	return nil
 }
 
-// plan decides what the next attempt looks like, given the one before it.
-func planRetry(number int, prev Attempt) attemptPlan {
-	p := attemptPlan{number: number}
-	if g := failedGate(prev); prev.Result.Status == agent.StatusOK && g != nil {
-		p.continued = true
-		p.prompt = fmt.Sprintf(gateFailureContext, number-1, prev.Backend, g.Command, g.ExitCode, g.Output)
-		return p
+// retryContext is what the next attempt is told, and whether it may continue in
+// the same worktree. It takes every attempt so far, not just the last, so a
+// third attempt knows what the second already tried.
+func retryContext(attempts []Attempt) (text string, continued bool) {
+	last := attempts[len(attempts)-1]
+	if g := failedGate(last); last.Result.Status == agent.StatusOK && g != nil {
+		f := fence(g.Output)
+		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.ExitCode, f, g.Output, f)
+		continued = true
+	} else {
+		text = fmt.Sprintf(runFailureContext, last.Backend, last.Result.Status, last.Result.Error)
 	}
-	p.prompt = fmt.Sprintf(runFailureContext, prev.Backend, prev.Result.Status, prev.Result.Error)
-	return p
+	if earlier := attempts[:len(attempts)-1]; len(earlier) > 0 {
+		summaries := make([]string, 0, len(earlier))
+		for i, att := range earlier {
+			summaries = append(summaries, fmt.Sprintf("%d on %s %s", i+1, att.Backend, outcomeOf(att)))
+		}
+		text += fmt.Sprintf(attemptHistory, strings.Join(summaries, "; "))
+	}
+	return text, continued
+}
+
+// outcomeOf is one attempt's fate in a few words.
+func outcomeOf(att Attempt) string {
+	if g := failedGate(att); g != nil {
+		return fmt.Sprintf("(gate `%s` exited %d)", tools.OneLine(g.Command, 60), g.ExitCode)
+	}
+	if att.Result.Status != agent.StatusOK {
+		return fmt.Sprintf("(%s: %s)", att.Result.Status, tools.OneLine(att.Result.Error, 80))
+	}
+	return "(passed)"
+}
+
+// fence returns a code fence longer than any run of backticks in s, so quoted
+// command output cannot close it early.
+func fence(s string) string {
+	f := "```"
+	for strings.Contains(s, f) {
+		f += "`"
+	}
+	return f
 }
 
 func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base string, mcpPaths []string, notify func(Event)) TaskResult {
@@ -398,14 +432,17 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		}
 		plan := attemptPlan{number: i + 1, prompt: t.Prompt}
 		if i > 0 {
-			retry := planRetry(i+1, tr.Attempts[i-1])
-			plan.continued = retry.continued
-			plan.prompt = t.Prompt + retry.prompt
+			text, continued := retryContext(tr.Attempts)
+			plan.prompt, plan.continued = t.Prompt+text, continued
 			where := "fresh worktree"
-			if plan.continued {
+			if continued {
 				where = "continuing in worktree"
 			}
 			notify(Event{Task: t.ID, Kind: "retry", Text: fmt.Sprintf("retrying on %s (%s)", name, where)})
+		}
+		plan.commit = t.ID + ": " + tools.OneLine(t.Prompt, 60)
+		if plan.continued {
+			plan.commit += fmt.Sprintf(" (attempt %d)", plan.number)
 		}
 		if !plan.continued {
 			if i > 0 {
@@ -420,7 +457,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		}
 		notify(Event{Task: t.ID, Kind: "start", Text: fmt.Sprintf("%s in %s", name, tr.Worktree)})
 
-		out, err := runAttempt(ctx, b, t, task, plan, gates, notify)
+		out, err := runAttempt(ctx, b, t.ID, task, plan, gates, notify)
 		tr.Attempts = append(tr.Attempts, out.att)
 		if out.commit != "" {
 			tr.Commit = out.commit
@@ -450,7 +487,7 @@ type attemptOutcome struct {
 // runAttempt runs the agent in the task's worktree, then the gates, then
 // commits whatever was left behind, pass or fail. A returned error aborts the
 // whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, t Task, task agent.Task, plan attemptPlan, gates []string, notify func(Event)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, gates []string, notify func(Event)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued}
 
@@ -462,7 +499,7 @@ func runAttempt(ctx context.Context, b agent.Backend, t Task, task agent.Task, p
 	att.Result = b.Run(ctx, task, func(e agent.Event) {
 		rec.Event(e)
 		if e.Kind == agent.EventToolCall {
-			notify(Event{Task: t.ID, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
+			notify(Event{Task: id, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
 		}
 	})
 	if err := rec.Close(att.Result); err != nil {
@@ -472,7 +509,7 @@ func runAttempt(ctx context.Context, b agent.Backend, t Task, task agent.Task, p
 	if att.Result.Error != "" {
 		text += " · " + tools.OneLine(att.Result.Error, 160)
 	}
-	notify(Event{Task: t.ID, Kind: "run", Text: text})
+	notify(Event{Task: id, Kind: "run", Text: text})
 
 	pass := att.Result.Status == agent.StatusOK
 	if pass {
@@ -481,20 +518,16 @@ func runAttempt(ctx context.Context, b agent.Backend, t Task, task agent.Task, p
 			att.Gates = append(att.Gates, gr)
 			if gr.ExitCode != 0 {
 				pass = false
-				notify(Event{Task: t.ID, Kind: "gate", Text: fmt.Sprintf("✗ %s (exit %d)", g, gr.ExitCode)})
+				notify(Event{Task: id, Kind: "gate", Text: fmt.Sprintf("✗ %s (exit %d)", g, gr.ExitCode)})
 				break
 			}
-			notify(Event{Task: t.ID, Kind: "gate", Text: "✓ " + g})
+			notify(Event{Task: id, Kind: "gate", Text: "✓ " + g})
 		}
 	}
 
 	// The branch holds whatever the agent left, pass or fail, so the worktree
 	// can be inspected or removed without losing work.
-	message := t.ID + ": " + tools.OneLine(t.Prompt, 60)
-	if plan.continued {
-		message += fmt.Sprintf(" (attempt %d)", plan.number)
-	}
-	sha, commitErr := commitChanges(task.Dir, message)
+	sha, commitErr := commitChanges(task.Dir, plan.commit)
 	if commitErr != nil {
 		att.Error = strings.TrimSpace(att.Error + "\ncommit: " + commitErr.Error())
 		// The work exists only in the worktree; say so instead of claiming a pass.

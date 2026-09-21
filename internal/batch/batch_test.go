@@ -442,3 +442,52 @@ func TestRunFailureRetriesInAFreshWorktree(t *testing.T) {
 		t.Errorf("retry events = %q", retries)
 	}
 }
+
+func TestFenceOutgrowsBackticksInTheOutput(t *testing.T) {
+	for _, tc := range []struct{ output, want string }{
+		{"plain output", "```"},
+		{"see ``` here", "````"},
+		{"```` and ```", "`````"},
+	} {
+		if got := fence(tc.output); got != tc.want {
+			t.Errorf("fence(%q) = %q, want %q", tc.output, got, tc.want)
+		}
+	}
+}
+
+func TestSecondRetryKnowsAboutTheFirst(t *testing.T) {
+	dir := initRepo(t)
+	// Passes only on the third run, and only if the flags survive, which they
+	// do only in a worktree that is kept between attempts.
+	gate := `test -e two.flag && exit 0; test -e one.flag && { touch two.flag; echo "second miss"; exit 5; }; touch one.flag; echo "first miss"; exit 4`
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok", "wb-ok"},
+		Gate: []string{gate}, Tasks: []Task{{ID: "third", Prompt: "do the thing"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 3 {
+		t.Fatalf("task = %+v", tr)
+	}
+	third := tr.Attempts[2]
+	if !third.Continued {
+		t.Error("the third attempt should continue in the worktree")
+	}
+	// The detail is about attempt 2; attempt 1 is there as history.
+	for _, want := range []string{"attempt 2 on wb-ok", "exited 5", "second miss", "Earlier attempts", "1 on wb-ok (gate "} {
+		if !strings.Contains(third.Prompt, want) {
+			t.Errorf("attempt 3 prompt is missing %q:\n%s", want, third.Prompt)
+		}
+	}
+	// Attempt 1 is a one-line summary: its exit code, and no output block of
+	// its own (the only fenced block is attempt 2's).
+	if !strings.Contains(third.Prompt, "exited 4)") {
+		t.Errorf("the history should carry attempt 1's exit code: %s", third.Prompt)
+	}
+	if n := strings.Count(third.Prompt, "```"); n != 2 {
+		t.Errorf("fenced blocks = %d, want one block (two fences)", n)
+	}
+	if n := git(t, dir, "rev-list", "--count", res.Base+"..hx/third"); n != "3" {
+		t.Errorf("commits above base = %s, want 3", n)
+	}
+	if subject := git(t, dir, "log", "-1", "--format=%s", "hx/third"); !strings.HasSuffix(subject, "(attempt 3)") {
+		t.Errorf("last commit subject = %q", subject)
+	}
+}
