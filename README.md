@@ -56,7 +56,23 @@ go test ./...
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
-`--mcp FILE` (repeatable).
+`--mcp FILE` (repeatable), `--no-instructions`, and the budgets below.
+
+### Budgets
+
+Turns are a poor proxy for what a run costs: most of the spend is the context
+re-sent every turn. Three ceilings, all optional and all off by default.
+
+| Flag | Spec / MCP field | What it does |
+|---|---|---|
+| `--timeout 20m` | `timeout` | Ends the run when the deadline passes, on every backend. The result is `timeout`, not `canceled`, so a slow run is distinguishable from an interrupted one. |
+| `--max-cost 2.50` | `max_cost_usd` | The api loop stops before a turn that would take its estimated cost past the limit. The result is `budget`, and the cost so far is still recorded. |
+| `--task-budget 64000` | `task_budget` | Tells the api backend's model how many tokens it has for the whole task, so it paces itself and finishes rather than being cut off. Minimum 20000, checked before the run starts. |
+
+The CLI backends cannot enforce a cost or token ceiling, so they say so once and
+carry on; the timeout applies to them all the same. The cost ceiling is checked against
+hx's own estimate, so a model with no price in the table cannot be capped and the run
+says so instead of pretending.
 
 ## Backends
 
@@ -148,7 +164,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
@@ -207,7 +223,13 @@ continued, which `hx batch --json` prints.
 
 Nothing can answer approval prompts in a batch, so `mode` defaults to `auto` (file edits
 allowed, no commands). Use `yolo` when the agent must build or run tests itself; the
-gates run either way. Backend names and gate commands are checked before anything runs.
+gates run either way. Backend names, gate commands, durations and task budgets are all
+checked before anything runs.
+
+The budgets above are spec fields too (`timeout`, `max_cost_usd`, `task_budget`), and
+they apply per attempt rather than per task, so a retry gets its own allowance. A task
+may set its own value or change the spec's, but zero means inherit, so it cannot remove
+a limit the spec set.
 
 The record goes to `~/.hx/batches/<id>.json`, written before the first task starts and
 again at the end; `--json` prints it, `-v` streams every agent's tool calls.
@@ -221,7 +243,7 @@ agents and skips the rest. Exit status is 1 unless every task passed.
 
 - `task.json` — prompt, dir, backend, model, mode, MCP config paths
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped)
-- `result.json` — status (`ok|error|refused|max_turns|canceled`), final answer, turns,
+- `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration
 
 ## Layout

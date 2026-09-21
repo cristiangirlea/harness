@@ -36,9 +36,14 @@ type Spec struct {
 	Effort         string   `json:"effort,omitempty"`
 	MCP            []string `json:"mcp,omitempty"`             // MCP config files, relative to Dir
 	NoInstructions bool     `json:"no_instructions,omitempty"` // skip the project instruction files (api backend)
+	Timeout        string   `json:"timeout,omitempty"`         // per attempt, e.g. "20m"
+	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`    // per attempt, api backend only
+	TaskBudget     int      `json:"task_budget,omitempty"`     // tokens, api backend only
 	Gate           []string `json:"gate,omitempty"`            // commands that must exit 0 in the worktree after the agent finishes
 	Retry          []string `json:"retry,omitempty"`           // backends to try, in order, after a failed attempt
 	Tasks          []Task   `json:"tasks"`
+
+	timeout time.Duration // Timeout, parsed by normalize
 }
 
 type Task struct {
@@ -52,8 +57,13 @@ type Task struct {
 	// NoInstructions adds to the spec-wide switch; a task can turn the project
 	// instructions off but not back on.
 	NoInstructions bool     `json:"no_instructions,omitempty"`
+	Timeout        string   `json:"timeout,omitempty"`
+	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`
+	TaskBudget     int      `json:"task_budget,omitempty"`
 	Gate           []string `json:"gate,omitempty"`
 	Retry          []string `json:"retry,omitempty"`
+
+	timeout time.Duration // Timeout, parsed by normalize
 }
 
 type Status string
@@ -167,6 +177,10 @@ func (s *Spec) normalize() error {
 	if err := checkGates(s.Gate); err != nil {
 		return err
 	}
+	var err error
+	if s.timeout, err = checkLimits(s.Timeout, s.MaxCostUSD, s.TaskBudget); err != nil {
+		return err
+	}
 	if len(s.Tasks) == 0 {
 		return errors.New("no tasks")
 	}
@@ -197,6 +211,10 @@ func (s *Spec) normalize() error {
 		if err := checkGates(t.Gate); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
+		var err error
+		if t.timeout, err = checkLimits(t.Timeout, t.MaxCostUSD, t.TaskBudget); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
 	}
 	return nil
 }
@@ -211,6 +229,19 @@ func checkBackends(backend string, retry []string) error {
 		}
 	}
 	return nil
+}
+
+// checkLimits parses and validates the limits before anything runs, and
+// returns the parsed duration so nothing has to parse the string again.
+func checkLimits(timeout string, maxCostUSD float64, taskBudget int) (time.Duration, error) {
+	var d time.Duration
+	if timeout != "" {
+		var err error
+		if d, err = time.ParseDuration(timeout); err != nil {
+			return 0, fmt.Errorf("timeout %q: %w", timeout, err)
+		}
+	}
+	return d, agent.ValidateLimits(d, maxCostUSD, taskBudget)
 }
 
 func checkGates(gates []string) error {
@@ -418,11 +449,11 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 	task := agent.Task{
 		Dir: tr.Worktree, Mode: mode, MCP: mcpPaths,
 		NoInstructions: t.NoInstructions || spec.NoInstructions,
+		Timeout:        firstDuration(t.timeout, spec.timeout),
+		MaxCostUSD:     firstFloat(t.MaxCostUSD, spec.MaxCostUSD),
+		TaskBudget:     firstInt(t.TaskBudget, spec.TaskBudget),
 		Model:          firstOf(t.Model, spec.Model), Effort: firstOf(t.Effort, spec.Effort),
-		MaxTurns: t.MaxTurns,
-	}
-	if task.MaxTurns == 0 {
-		task.MaxTurns = spec.MaxTurns
+		MaxTurns: firstInt(t.MaxTurns, spec.MaxTurns),
 	}
 
 	for i, name := range backends {
@@ -665,6 +696,33 @@ func firstOf(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstDuration(values ...time.Duration) time.Duration {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+func firstFloat(values ...float64) float64 {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+func firstInt(values ...int) int {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 func firstList(lists ...[]string) []string {

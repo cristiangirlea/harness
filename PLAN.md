@@ -221,7 +221,9 @@ prompt contains `ended with error`. `TestFailuresRetryOnNextBackend` keeps passi
 
 Size: ~150 lines + tests.
 
-### [ ] PR C: budgets (time, cost, task budget)
+### [x] PR C: budgets (time, cost, task budget)
+
+Done: PR #6, 2026-09-21.
 
 **Why.** `MaxTurns` is the only limit on a run. One Opus 5 / Fable turn can take many
 minutes; a 50-turn run re-sends the whole history every turn. Batches with 10 tasks
@@ -570,3 +572,24 @@ Size: mostly moves; ~100 new lines.
   task parameters; the gate output is quoted with a fence longer than any run of backticks
   in it; and a test covers two retries in a row. A wrong assertion in that test (the gate
   command text contains the same words as its output) was corrected, not worked around.
+- 2026-09-21: PR C done (#6). Deviation: the spec had the callers wrap the context with
+  the timeout; the backends do it instead (`withTimeout` in agent.go), because every
+  other Task field is honoured inside Run and a future caller cannot forget. The error
+  text is neutral ("cost estimate $0.83 reached the $0.80 limit after turn 7") rather
+  than naming --max-cost, since batch and MCP users never type that flag. Checked against
+  the current API docs rather than memory, which caught what the spec did not say:
+  `task_budget.remaining` must stay unset while the client resends full history, because
+  the server tracks the countdown and a client-computed value under-reports it; a test
+  asserts the field is absent. Task budgets are Opus 5 / Fable 5 / Sonnet 5 / Opus 4.8 /
+  4.7 only, so an unsupported model returns a 400 that hx surfaces as a run error.
+- 2026-09-21: PR C self-review, 7 findings, all fixed. The largest: --max-cost was silently
+  inert on any model missing from the hard-coded price table, because the estimate is
+  zero there; the run now says so up front. Also: one ValidateLimits replaces
+  ValidateTaskBudget and rejects negative durations and costs, which were accepted and
+  then ignored; batch parses each timeout once in normalize and carries the duration, so
+  no second parse can turn a typo into "no deadline"; MaxTurns now inherits through the
+  same firstInt helper as the new fields; the CLI warning reads "max_cost, task_budget:
+  not enforced by the claude backend" instead of an ungrammatical singular; and a batch
+  test asserts that a timed-out attempt retries in a fresh worktree. The per-task rule
+  (zero means inherit, so a task can tighten or change a limit but not remove it) is
+  documented in the struct and the README rather than given a sentinel.

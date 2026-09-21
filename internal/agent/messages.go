@@ -21,9 +21,10 @@ import (
 // markers, future types) is echoed back unchanged in the next request.
 
 const (
-	apiVersion   = "2023-06-01"
-	betaFallback = "server-side-fallback-2026-07-01"
-	betaOAuth    = "oauth-2025-04-20"
+	apiVersion     = "2023-06-01"
+	betaFallback   = "server-side-fallback-2026-07-01"
+	betaOAuth      = "oauth-2025-04-20"
+	betaTaskBudget = "task-budgets-2026-03-13"
 )
 
 type block = map[string]any

@@ -46,6 +46,10 @@ func init() {
 		_ = os.WriteFile(filepath.Join(task.Dir, "leftover.txt"), []byte("half-done"), 0o644)
 		return agent.Result{Backend: "wb-bad-writes", Status: agent.StatusError, Error: "model exploded", Turns: 1}
 	}})
+	agent.Register(stub{"wb-timeout", func(_ context.Context, task agent.Task) agent.Result {
+		_ = os.WriteFile(filepath.Join(task.Dir, "half.txt"), []byte("interrupted"), 0o644)
+		return agent.Result{Backend: "wb-timeout", Status: agent.StatusTimeout, Error: "deadline passed", Turns: 1}
+	}})
 	agent.Register(stub{"wb-block", func(ctx context.Context, _ agent.Task) agent.Result {
 		blockStarted <- struct{}{}
 		<-ctx.Done()
@@ -489,5 +493,64 @@ func TestSecondRetryKnowsAboutTheFirst(t *testing.T) {
 	}
 	if subject := git(t, dir, "log", "-1", "--format=%s", "hx/third"); !strings.HasSuffix(subject, "(attempt 3)") {
 		t.Errorf("last commit subject = %q", subject)
+	}
+}
+
+func TestLimitsReachTheTaskAndAreValidated(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Timeout: "5m", MaxCostUSD: 2.5, TaskBudget: 30000,
+		Tasks: []Task{
+			{ID: "from-spec", Prompt: "a"},
+			{ID: "own", Prompt: "a", Timeout: "90s", MaxCostUSD: 1, TaskBudget: 40000},
+		}})
+	for _, tc := range []struct {
+		i       int
+		timeout time.Duration
+		cost    float64
+		budget  int
+	}{
+		{0, 5 * time.Minute, 2.5, 30000},
+		{1, 90 * time.Second, 1, 40000},
+	} {
+		rec, err := runlog.Load(res.Tasks[tc.i].Attempts[0].RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Task.Timeout != tc.timeout || rec.Task.MaxCostUSD != tc.cost || rec.Task.TaskBudget != tc.budget {
+			t.Errorf("%s: timeout=%s cost=%v budget=%d", res.Tasks[tc.i].ID, rec.Task.Timeout, rec.Task.MaxCostUSD, rec.Task.TaskBudget)
+		}
+	}
+
+	for _, tc := range []struct {
+		spec Spec
+		want string
+	}{
+		{Spec{Backend: "wb-ok", Timeout: "5 minutes", Tasks: []Task{{Prompt: "a"}}}, "timeout"},
+		{Spec{Backend: "wb-ok", TaskBudget: 100, Tasks: []Task{{Prompt: "a"}}}, "20000"},
+		{Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Timeout: "soon"}}}, "task t1"},
+		{Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", TaskBudget: 5}}}, "task t1"},
+	} {
+		if _, err := Run(context.Background(), tc.spec, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("err = %v, want it to mention %q", err, tc.want)
+		}
+	}
+}
+
+func TestTimedOutAttemptRetriesFresh(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-timeout", Retry: []string{"wb-ok"},
+		Tasks: []Task{{ID: "slow", Prompt: "a"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if tr.Attempts[1].Continued {
+		t.Error("a timed-out attempt leaves work in an unknown state, so the retry must start fresh")
+	}
+	if !strings.Contains(tr.Attempts[1].Prompt, "ended with timeout") {
+		t.Errorf("the retry prompt should say how the attempt ended:\n%s", tr.Attempts[1].Prompt)
+	}
+	if _, err := os.Stat(filepath.Join(tr.Worktree, "half.txt")); err == nil {
+		t.Error("the fresh worktree must not inherit the timed-out attempt's files")
 	}
 }

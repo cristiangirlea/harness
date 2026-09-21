@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/mcp"
@@ -157,5 +158,23 @@ func TestRunPassesNoInstructions(t *testing.T) {
 	id := res.StructuredContent.(map[string]any)["run_id"].(string)
 	if rec, err := runlog.Load(id); err != nil || !rec.Task.NoInstructions {
 		t.Fatalf("no_instructions should reach the task: %+v err=%v", rec.Task, err)
+	}
+}
+
+func TestRunPassesLimits(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub","timeout":"90s","max_cost_usd":1.5,"task_budget":30000}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(id)
+	if err != nil || rec.Task.Timeout != 90*time.Second || rec.Task.MaxCostUSD != 1.5 || rec.Task.TaskBudget != 30000 {
+		t.Fatalf("limits should reach the task: %+v err=%v", rec.Task, err)
+	}
+	for _, args := range []string{
+		`{"prompt":"x","backend":"stub","timeout":"soon"}`,
+		`{"prompt":"x","backend":"stub","task_budget":100}`,
+	} {
+		if r := s.call(t, "run", args); !r.IsError {
+			t.Errorf("%s should be rejected", args)
+		}
 	}
 }
