@@ -203,7 +203,7 @@ func TestReportEnvelope(t *testing.T) {
 		t.Fatalf("empty report: %+v err=%v", rep, err)
 	}
 	data, _ := json.Marshal(rep)
-	for _, want := range []string{`"since":null`, `"by":"backend"`, `"runs":[]`, `"runs_all":{`, `"unfinished":0`, `"batches":[]`, `"batches_all":{`, `"running_batches":0`} {
+	for _, want := range []string{`"since":null`, `"by":"backend"`, `"runs":[]`, `"runs_all":{`, `"unfinished":0`, `"batches":[]`, `"batches_all":{`, `"running_batches":0`, `"unreadable":0`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("empty report JSON is missing %s: %s", want, data)
 		}
@@ -275,13 +275,20 @@ func TestCollectReadsHome(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bdir, "broken.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	brokenRun := filepath.Join(runlog.Root(), "20990101-000000-broken")
+	if err := os.MkdirAll(brokenRun, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenRun, "result.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := Collect(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Runs) != 2 || d.Unfinished != 1 || len(d.Batches) != 1 || d.Batches[0].ID != "b1" {
-		t.Fatalf("runs=%d unfinished=%d batches=%+v", len(d.Runs), d.Unfinished, d.Batches)
+	if len(d.Runs) != 2 || d.Unfinished != 1 || len(d.Batches) != 1 || d.Batches[0].ID != "b1" || d.Unreadable != 2 {
+		t.Fatalf("runs=%d unfinished=%d batches=%+v unreadable=%d", len(d.Runs), d.Unfinished, d.Batches, d.Unreadable)
 	}
 	rows, all, _ := d.RunRows(ByBackend)
 	if len(rows) != 2 || all.Runs != 2 || all.OK != 1 || !near(all.TotalCost, 0.5) || !all.CostEstimated {

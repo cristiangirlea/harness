@@ -633,17 +633,16 @@ func save(res Result) error {
 	return os.WriteFile(filepath.Join(batchesDir(), res.ID+".json"), data, 0o644)
 }
 
-// List returns every saved batch record, newest first. A record that does
-// not parse is skipped: one bad file must not hide the rest.
-func List() ([]Result, error) {
+// List returns every saved batch record, newest first, and how many files
+// could not be read: one bad record must not hide the rest, nor vanish.
+func List() (results []Result, unreadable int, err error) {
 	entries, err := os.ReadDir(batchesDir())
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	var out []Result
 	for _, e := range entries {
 		id, ok := strings.CutSuffix(e.Name(), ".json")
 		if e.IsDir() || !ok {
@@ -651,12 +650,13 @@ func List() ([]Result, error) {
 		}
 		res, err := LoadResult(id)
 		if err != nil {
+			unreadable++
 			continue
 		}
-		out = append(out, res)
+		results = append(results, res)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
-	return out, nil
+	sort.Slice(results, func(i, j int) bool { return results[i].Started.After(results[j].Started) })
+	return results, unreadable, nil
 }
 
 // LoadResult reads a saved batch record.

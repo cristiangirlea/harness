@@ -83,6 +83,9 @@ func cmdReport(args []string) error {
 	if rep.RunningBatches > 0 {
 		fmt.Printf("%d batch(es) still running not counted\n", rep.RunningBatches)
 	}
+	if rep.Unreadable > 0 {
+		fmt.Printf("%d unreadable record(s) skipped\n", rep.Unreadable)
+	}
 	return nil
 }
 

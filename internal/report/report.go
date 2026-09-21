@@ -60,19 +60,23 @@ type Data struct {
 	// RunningBatches counts batches with a task still in progress; their pass
 	// rate and cost are not settled, so they stay out of the table.
 	RunningBatches int
+	// Unreadable counts run and batch records that could not be read.
+	Unreadable int
 }
 
 // Collect reads every run and batch record under HX_HOME.
 func Collect(since time.Time) (Data, error) {
-	recs, err := runlog.List(0)
+	recs, unreadableRuns, err := runlog.ListSince(since)
 	if err != nil {
 		return Data{}, fmt.Errorf("reading runs: %w", err)
 	}
-	batches, err := batch.List()
+	batches, unreadableBatches, err := batch.List()
 	if err != nil {
 		return Data{}, fmt.Errorf("reading batches: %w", err)
 	}
-	return Select(recs, batches, since), nil
+	d := Select(recs, batches, since)
+	d.Unreadable = unreadableRuns + unreadableBatches
+	return d, nil
 }
 
 // Select is Collect without the disk: it applies the window and drops the
@@ -124,6 +128,7 @@ type Report struct {
 	Batches        []BatchRow `json:"batches"`
 	BatchesAll     BatchRow   `json:"batches_all"`
 	RunningBatches int        `json:"running_batches"`
+	Unreadable     int        `json:"unreadable"`
 }
 
 // Report builds both tables. An empty key groups the runs by backend.
@@ -137,7 +142,7 @@ func (d Data) Report(by string) (Report, error) {
 	}
 	brows, ball := d.BatchRows()
 	rep := Report{By: by, Runs: rows, RunsAll: all, Unfinished: d.Unfinished,
-		Batches: brows, BatchesAll: ball, RunningBatches: d.RunningBatches}
+		Batches: brows, BatchesAll: ball, RunningBatches: d.RunningBatches, Unreadable: d.Unreadable}
 	if !d.Since.IsZero() {
 		since := d.Since
 		rep.Since = &since

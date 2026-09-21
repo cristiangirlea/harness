@@ -93,7 +93,7 @@ func (w *Writer) Close(res agent.Result) error {
 func NewID() string {
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
-	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
+	return time.Now().Format(idTimeLayout) + "-" + hex.EncodeToString(b)
 }
 
 func writeJSON(path string, v any) error {
@@ -104,32 +104,63 @@ func writeJSON(path string, v any) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// List returns runs newest first. Runs without result.json are still running
-// or were killed; they come back with Done=false.
+// List returns runs newest first, at most limit of them when limit is
+// positive. Runs without result.json are still running or were killed; they
+// come back with Done=false.
 func List(limit int) ([]Record, error) {
+	recs, _, err := list(time.Time{}, limit)
+	return recs, err
+}
+
+// ListSince returns the runs started at or after since, newest first, and how
+// many records could not be read. Run ids begin with the local start time, so
+// directories older than the window are skipped without being opened. The
+// cut-off keeps a day of slack because the id is only as exact as the clock
+// that made it; callers filter by the recorded time anyway.
+func ListSince(since time.Time) ([]Record, int, error) {
+	return list(since, 0)
+}
+
+const idTimeLayout = "20060102-150405"
+
+func list(since time.Time, limit int) (recs []Record, unreadable int, err error) {
 	entries, err := os.ReadDir(Root())
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() > entries[j].Name() })
-	var out []Record
+	var cutoff time.Time
+	if !since.IsZero() {
+		cutoff = since.Add(-24 * time.Hour)
+	}
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || idBefore(e.Name(), cutoff) {
 			continue
 		}
 		rec, err := Load(e.Name())
 		if err != nil {
+			unreadable++
 			continue
 		}
-		out = append(out, rec)
-		if limit > 0 && len(out) == limit {
+		recs = append(recs, rec)
+		if limit > 0 && len(recs) == limit {
 			break
 		}
 	}
-	return out, nil
+	return recs, unreadable, nil
+}
+
+// idBefore reports whether a run id's time prefix is before t. The zero t and
+// an id without a readable prefix never match.
+func idBefore(id string, t time.Time) bool {
+	if t.IsZero() || len(id) < len(idTimeLayout) {
+		return false
+	}
+	ts, err := time.ParseInLocation(idTimeLayout, id[:len(idTimeLayout)], time.Local)
+	return err == nil && ts.Before(t)
 }
 
 func Load(id string) (Record, error) {

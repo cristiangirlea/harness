@@ -238,7 +238,8 @@ workspace). Columns: runs, how many ended `ok`, median duration, median turns, t
 median cost, and the cache share (cache-read tokens over all input tokens; `-` when the
 backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
 Batches group by repository; their cost sums every attempt, passed or not. Runs without
-a result (still running or killed) are counted separately and left out of the tables.
+a result (still running or killed), batches with a task still running, and records that
+cannot be read are counted under the tables and left out of them.
 `--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
 JSON for scripts.
 
