@@ -115,7 +115,9 @@ Order matters for A → E (each is small and each later one uses the earlier one
 fields). F, I, J, K are independent. G needs F's aggregation helpers and B's
 `Attempt.Prompt`. H needs nothing but is the most protocol work.
 
-### [ ] PR A: project instructions in the `api` loop
+### [x] PR A: project instructions in the `api` loop
+
+Done: PR #4, 2026-09-21.
 
 **Why.** The system prompt says "match the surrounding code" but the agent never sees
 the project's `CLAUDE.md` / `AGENTS.md`. The CLI backends read their own files
@@ -529,3 +531,10 @@ Size: mostly moves; ~100 new lines.
   and `hx mcp --dir PATH` sets the default workspace for hosts that do not start servers
   in the project folder. Scripting note: give `claude -p` its prompt on stdin, because
   `--allowedTools` is variadic and swallows a trailing prompt argument.
+- 2026-09-21: PR A done (#4). Deviations: none in the spec itself. Additions the spec did
+  not name: an unreadable instruction file is reported as an error event and the run
+  continues (a directory named CLAUDE.md was the test case); truncation trims back to a
+  rune boundary, because a byte-wise cut of multi-byte content would send invalid UTF-8;
+  a file that is empty after trimming is skipped rather than rendered as a bare heading;
+  and the batch and MCP pass-through is asserted through the run record. The info line
+  could not be seen in a real run: the api backend still has no credentials.
