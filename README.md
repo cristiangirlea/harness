@@ -105,6 +105,17 @@ approval is denied.
 120s default timeout). All paths are confined to the workspace, symlinks included.
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
+### Context management
+
+A long run resends every tool result each turn, and the cap is 30 KB per result, so
+requests reach hundreds of thousands of tokens. The api backend therefore asks the
+server to clear old tool results itself (`clear_tool_uses_20250919`). The client history
+stays append-only: what the server clears, it clears on its side, and hx ignores the
+record of it in the response. A clear invalidates the cached prefix from that point,
+which is the trade: fewer tokens sent, one cold turn after each clear.
+`hx run --no-context-edits` turns it off, as do the `no_context_edits` field on a batch
+spec or task and the MCP `run` argument.
+
 ### Project instructions
 
 The api loop reads `HX.md`, `AGENTS.md` and `CLAUDE.md` from the workspace root and
@@ -164,7 +175,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |

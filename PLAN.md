@@ -264,7 +264,9 @@ new statuses.
 
 Size: ~180 lines + tests.
 
-### [ ] PR D: server-side context management
+### [x] PR D: server-side context management
+
+Done: PR #7, 2026-09-21.
 
 **Why.** Tool results are capped at 30 KB each, so a long run reaches hundreds of
 thousands of tokens per request. Prompt caching keeps it affordable, not fast, and

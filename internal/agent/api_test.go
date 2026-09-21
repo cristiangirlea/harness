@@ -455,3 +455,31 @@ func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
 		}
 	}
 }
+
+func TestAPISendsContextManagementByDefault(t *testing.T) {
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk})
+	cm, ok := fake.requests[0]["context_management"].(map[string]any)
+	if !ok {
+		t.Fatalf("no context_management: %v", fake.requests[0])
+	}
+	edits, ok := cm["edits"].([]any)
+	if !ok || len(edits) != 1 {
+		t.Fatalf("edits = %v", cm["edits"])
+	}
+	if edits[0].(map[string]any)["type"] != "clear_tool_uses_20250919" {
+		t.Errorf("edit = %v", edits[0])
+	}
+	// The header is a comma-joined list: the fallback beta must survive.
+	h := fake.headers[0].Get("anthropic-beta")
+	if !strings.Contains(h, betaContextEdits) || !strings.Contains(h, betaFallback) {
+		t.Errorf("anthropic-beta = %q, want both betas", h)
+	}
+
+	_, _, fake = runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, NoContextEdits: true})
+	if _, present := fake.requests[0]["context_management"]; present {
+		t.Error("NoContextEdits must drop the field")
+	}
+	if h := fake.headers[0].Get("anthropic-beta"); strings.Contains(h, betaContextEdits) {
+		t.Errorf("anthropic-beta = %q, want no context beta", h)
+	}
+}

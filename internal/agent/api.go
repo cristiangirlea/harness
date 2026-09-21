@@ -187,6 +187,13 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		req.OutputConfig["task_budget"] = block{"type": "tokens", "total": task.TaskBudget}
 		req.betas = append(req.betas, betaTaskBudget)
 	}
+	if !task.NoContextEdits {
+		// The server clears old tool results itself, so a long run stops
+		// resending hundreds of thousands of tokens every turn. A clear
+		// invalidates the cached prefix from that point, which is the trade.
+		req.ContextManagement = block{"edits": []block{{"type": "clear_tool_uses_20250919"}}}
+		req.betas = append(req.betas, betaContextEdits)
+	}
 	if supportsDefaultFallbacks(model) {
 		// A refusal is re-served by a fallback model inside the same call.
 		req.Fallbacks = "default"
