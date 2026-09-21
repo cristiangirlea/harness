@@ -326,7 +326,15 @@ func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 		res.Status = StatusOK
 		if l.IsError {
 			res.Status = StatusError
+			// A specific subtype names the failure; "success" with is_error
+			// (a login failure, for one) puts the reason in result instead.
 			res.Error = l.Subtype
+			if l.Subtype == "success" {
+				res.Error = l.Result
+				if res.Error == "" {
+					res.Error = "unknown error"
+				}
+			}
 			if l.Subtype == "error_max_turns" {
 				res.Status = StatusMaxTurns
 			}

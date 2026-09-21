@@ -48,3 +48,20 @@ func TestVersionLess(t *testing.T) {
 		t.Error("versionLess compares numerically")
 	}
 }
+
+func TestParseClaudeStreamErrorText(t *testing.T) {
+	var res Result
+	line := `{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"Not logged in · Please run /login"}`
+	if !parseClaudeStream([]byte(line), func(Event) {}, &res) {
+		t.Fatal("result line not parsed")
+	}
+	if res.Status != StatusError || res.Error != "Not logged in · Please run /login" {
+		t.Fatalf("a failure reported with subtype success must carry the result text: %+v", res)
+	}
+	res = Result{}
+	line = `{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":5,"result":"partial answer"}`
+	parseClaudeStream([]byte(line), func(Event) {}, &res)
+	if res.Status != StatusMaxTurns || res.Error != "error_max_turns" || res.Final != "partial answer" {
+		t.Fatalf("a specific subtype stays the error: %+v", res)
+	}
+}
