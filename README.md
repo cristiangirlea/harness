@@ -128,6 +128,10 @@ want it to work in by default:
 claude mcp add hx -- E:\__Workdir\harness\hx.exe mcp
 ```
 
+The default workspace is the server's working directory, or `--dir PATH` for hosts
+that do not start servers in the project folder. Cursor (`.cursor/mcp.json`) and VS
+Code (`.vscode/mcp.json`) take the same command and args.
+
 Tools:
 
 | Tool | Arguments | Returns |

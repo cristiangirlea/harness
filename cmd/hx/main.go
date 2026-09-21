@@ -32,7 +32,7 @@ Usage:
   hx backends                    show which backends are usable
   hx runs [-n N]                 list recent runs
   hx show [--json] <run-id>      replay a recorded run
-  hx mcp                         serve hx as an MCP server on stdio (for Claude Code and other hosts)
+  hx mcp [--dir PATH]            serve hx as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hx batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hx batch rm <batch-id>         remove the worktrees and branches a batch created
 
@@ -72,7 +72,7 @@ func main() {
 	case "show":
 		err = cmdShow(os.Args[2:])
 	case "mcp":
-		err = cmdMCP()
+		err = cmdMCP(os.Args[2:])
 	case "batch":
 		code, err = cmdBatch(os.Args[2:])
 	case "-h", "--help", "help":
@@ -279,15 +279,24 @@ func cmdShow(args []string) error {
 
 // cmdMCP serves hx over stdio until the host closes the pipe. stdout is the
 // protocol channel, so nothing else may print there.
-func cmdMCP() error {
-	dir, err := os.Getwd()
+func cmdMCP(args []string) error {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	dir := fs.String("dir", ".", "")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(args); err != nil {
+		return nil
+	}
+	abs, err := filepath.Abs(*dir)
 	if err != nil {
 		return err
 	}
+	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+		return fmt.Errorf("--dir %s is not a directory", abs)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	fmt.Fprintln(os.Stderr, "hx mcp: serving on stdio, workspace", dir)
-	if err := hxmcp.NewServer(dir).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+	fmt.Fprintln(os.Stderr, "hx mcp: serving on stdio, workspace", abs)
+	if err := hxmcp.NewServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil
