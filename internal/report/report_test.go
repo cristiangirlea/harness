@@ -81,7 +81,7 @@ func TestRunRowsByModelAndDir(t *testing.T) {
 		t.Errorf("by model: rows = %+v err=%v", rows, err)
 	}
 	rows, _, err = d.RunRows(ByDir)
-	if err != nil || len(rows) != 2 || rows[0].Key != "/repo/a" || rows[0].Runs != 3 || rows[1].Key != "/repo/b" || rows[1].Runs != 1 {
+	if err != nil || len(rows) != 2 || rows[0].Key != filepath.Clean("/repo/a") || rows[0].Runs != 3 || rows[1].Key != filepath.Clean("/repo/b") || rows[1].Runs != 1 {
 		t.Errorf("by dir: rows = %+v err=%v", rows, err)
 	}
 	if _, _, err := d.RunRows("colour"); err == nil || !strings.Contains(err.Error(), "backend, model or dir") {
@@ -155,7 +155,7 @@ func TestSinceAndUnfinished(t *testing.T) {
 func TestBatchRows(t *testing.T) {
 	d := Select(nil, []batch.Result{sampleBatch()}, time.Time{})
 	rows, all := d.BatchRows()
-	if len(rows) != 1 || rows[0].Key != "/repo/a" {
+	if len(rows) != 1 || rows[0].Key != filepath.Clean("/repo/a") {
 		t.Fatalf("rows = %+v", rows)
 	}
 	for _, r := range []BatchRow{rows[0], all} {
