@@ -221,7 +221,9 @@ prompt contains `ended with error`. `TestFailuresRetryOnNextBackend` keeps passi
 
 Size: ~150 lines + tests.
 
-### [ ] PR C: budgets (time, cost, task budget)
+### [x] PR C: budgets (time, cost, task budget)
+
+Done: PR #6, 2026-09-21.
 
 **Why.** `MaxTurns` is the only limit on a run. One Opus 5 / Fable turn can take many
 minutes; a 50-turn run re-sends the whole history every turn. Batches with 10 tasks
