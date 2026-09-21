@@ -65,3 +65,17 @@ func TestParseClaudeStreamErrorText(t *testing.T) {
 		t.Fatalf("a specific subtype stays the error: %+v", res)
 	}
 }
+
+func TestParseClaudeStreamErrorSubtypes(t *testing.T) {
+	for _, tc := range []struct{ line, wantErr string }{
+		{`{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":""}`, "unknown error"},
+		{`{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":2,"result":"Tool Bash was denied"}`, "error_during_execution: Tool Bash was denied"},
+		{`{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":2,"result":""}`, "error_during_execution"},
+	} {
+		var res Result
+		parseClaudeStream([]byte(tc.line), func(Event) {}, &res)
+		if res.Status != StatusError || res.Error != tc.wantErr {
+			t.Errorf("%s: got status=%s error=%q, want %q", tc.line, res.Status, res.Error, tc.wantErr)
+		}
+	}
+}
