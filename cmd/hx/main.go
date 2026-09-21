@@ -46,6 +46,7 @@ Run flags:
       --json           print events as JSON lines instead of formatted output
       --thinking       show model thinking summaries
       --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hx/mcp.json is loaded when present
+      --no-instructions  skip the project instruction files (api backend)
 
 Batch flags:
       --parallel N     agents at once (default: the file's value, else 2)
@@ -109,6 +110,7 @@ func cmdRun(args []string) (int, error) {
 	fs.IntVar(&maxTurns, "max-turns", 0, "")
 	fs.BoolVar(&jsonOut, "json", false, "")
 	fs.BoolVar(&thinking, "thinking", false, "")
+	noInstructions := fs.Bool("no-instructions", false, "")
 	var mcpFiles multiFlag
 	fs.Var(&mcpFiles, "mcp", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -152,7 +154,7 @@ func cmdRun(args []string) (int, error) {
 		return 2, err
 	}
 
-	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort}
+	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort, NoInstructions: *noInstructions}
 	if task.MCP, err = mcp.ConfigPaths(mcpFiles); err != nil {
 		return 2, err
 	}

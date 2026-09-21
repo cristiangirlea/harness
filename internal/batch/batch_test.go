@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // stub backends: "wb-ok" writes out.txt into the workspace, "wb-noop" changes
@@ -342,5 +343,14 @@ func TestLoadSpec(t *testing.T) {
 	var r Result
 	if err := json.Unmarshal([]byte(`{"id":"x","tasks":[{"id":"a","status":"pass","duration_ns":1000}]}`), &r); err != nil || r.Tasks[0].Duration != time.Microsecond {
 		t.Errorf("result should round-trip through JSON: %+v err=%v", r, err)
+	}
+}
+
+func TestSpecNoInstructionsReachesTheTask(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", NoInstructions: true, Tasks: []Task{{Prompt: "a"}}})
+	rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID)
+	if err != nil || !rec.Task.NoInstructions {
+		t.Fatalf("no_instructions should reach the task: %+v err=%v", rec.Task, err)
 	}
 }
