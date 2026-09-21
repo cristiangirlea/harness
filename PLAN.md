@@ -572,3 +572,13 @@ Size: mostly moves; ~100 new lines.
   task parameters; the gate output is quoted with a fence longer than any run of backticks
   in it; and a test covers two retries in a row. A wrong assertion in that test (the gate
   command text contains the same words as its output) was corrected, not worked around.
+- 2026-09-21: PR C done (#6). Deviation: the spec had the callers wrap the context with
+  the timeout; the backends do it instead (`withTimeout` in agent.go), because every
+  other Task field is honoured inside Run and a future caller cannot forget. The error
+  text is neutral ("cost estimate $0.83 reached the $0.80 limit after turn 7") rather
+  than naming --max-cost, since batch and MCP users never type that flag. Checked against
+  the current API docs rather than memory, which caught what the spec did not say:
+  `task_budget.remaining` must stay unset while the client resends full history, because
+  the server tracks the countdown and a client-computed value under-reports it; a test
+  asserts the field is absent. Task budgets are Opus 5 / Fable 5 / Sonnet 5 / Opus 4.8 /
+  4.7 only, so an unsupported model returns a 400 that hx surfaces as a run error.
