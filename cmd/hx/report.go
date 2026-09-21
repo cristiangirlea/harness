@@ -80,6 +80,9 @@ func cmdReport(args []string) error {
 		}
 		fmt.Print(table(t, 1))
 	}
+	if rep.RunningBatches > 0 {
+		fmt.Printf("%d batch(es) still running not counted\n", rep.RunningBatches)
+	}
 	return nil
 }
 

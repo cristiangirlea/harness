@@ -57,6 +57,9 @@ type Data struct {
 	// are left out of every table.
 	Unfinished int
 	Batches    []batch.Result
+	// RunningBatches counts batches with a task still in progress; their pass
+	// rate and cost are not settled, so they stay out of the table.
+	RunningBatches int
 }
 
 // Collect reads every run and batch record under HX_HOME.
@@ -87,11 +90,26 @@ func Select(recs []runlog.Record, batches []batch.Result, since time.Time) Data 
 		d.Runs = append(d.Runs, r)
 	}
 	for _, b := range batches {
-		if !b.Started.Before(since) {
+		switch {
+		case b.Started.Before(since):
+		case running(b):
+			d.RunningBatches++
+		default:
 			d.Batches = append(d.Batches, b)
 		}
 	}
 	return d
+}
+
+// running reports whether a batch record still has a task in progress: the
+// record is saved before the first task starts and again at the end.
+func running(b batch.Result) bool {
+	for _, t := range b.Tasks {
+		if t.Status == batch.StatusRunning {
+			return true
+		}
+	}
+	return false
 }
 
 // Report is everything hx report prints, in the shape --json emits.
@@ -103,8 +121,9 @@ type Report struct {
 	RunsAll    Row   `json:"runs_all"`
 	Unfinished int   `json:"unfinished"`
 	// Batches has a row per repository; BatchesAll is the row over every batch.
-	Batches    []BatchRow `json:"batches"`
-	BatchesAll BatchRow   `json:"batches_all"`
+	Batches        []BatchRow `json:"batches"`
+	BatchesAll     BatchRow   `json:"batches_all"`
+	RunningBatches int        `json:"running_batches"`
 }
 
 // Report builds both tables. An empty key groups the runs by backend.
@@ -117,7 +136,8 @@ func (d Data) Report(by string) (Report, error) {
 		return Report{}, err
 	}
 	brows, ball := d.BatchRows()
-	rep := Report{By: by, Runs: rows, RunsAll: all, Unfinished: d.Unfinished, Batches: brows, BatchesAll: ball}
+	rep := Report{By: by, Runs: rows, RunsAll: all, Unfinished: d.Unfinished,
+		Batches: brows, BatchesAll: ball, RunningBatches: d.RunningBatches}
 	if !d.Since.IsZero() {
 		since := d.Since
 		rep.Since = &since

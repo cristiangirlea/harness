@@ -108,15 +108,20 @@ func TestSinceAndUnfinished(t *testing.T) {
 	pending := rec("api", "m", "/repo/a", 4*time.Hour, agent.Result{})
 	pending.Done = false
 	recs = append(recs, pending)
-	batches := []batch.Result{sampleBatch(), {ID: "old", Started: t0.Add(-time.Hour), Dir: "/repo/z"}}
+	batches := []batch.Result{sampleBatch(), {ID: "old", Started: t0.Add(-time.Hour), Dir: "/repo/z"},
+		{ID: "live", Started: t0.Add(2 * time.Hour), Dir: "/repo/a", Tasks: []batch.TaskResult{
+			{ID: "done", Status: batch.StatusPass}, {ID: "going", Status: batch.StatusRunning}}}}
 
 	d := Select(recs, batches, t0.Add(90*time.Minute))
-	if len(d.Runs) != 2 || d.Runs[0].Backend != "claude" || d.Unfinished != 1 || len(d.Batches) != 0 {
-		t.Errorf("window: runs=%d unfinished=%d batches=%d", len(d.Runs), d.Unfinished, len(d.Batches))
+	if len(d.Runs) != 2 || d.Runs[0].Backend != "claude" || d.Unfinished != 1 || len(d.Batches) != 0 || d.RunningBatches != 1 {
+		t.Errorf("window: runs=%d unfinished=%d batches=%d running=%d", len(d.Runs), d.Unfinished, len(d.Batches), d.RunningBatches)
 	}
 	d = Select(recs, batches, time.Time{})
-	if len(d.Runs) != 4 || d.Unfinished != 1 || len(d.Batches) != 2 {
-		t.Errorf("no window: runs=%d unfinished=%d batches=%d", len(d.Runs), d.Unfinished, len(d.Batches))
+	if len(d.Runs) != 4 || d.Unfinished != 1 || len(d.Batches) != 2 || d.RunningBatches != 1 {
+		t.Errorf("no window: runs=%d unfinished=%d batches=%d running=%d", len(d.Runs), d.Unfinished, len(d.Batches), d.RunningBatches)
+	}
+	if rep, _ := d.Report(""); rep.RunningBatches != 1 || rep.BatchesAll.Tasks != 3 {
+		t.Errorf("a running batch must be counted, not tabulated: %+v", rep)
 	}
 }
 
@@ -198,7 +203,7 @@ func TestReportEnvelope(t *testing.T) {
 		t.Fatalf("empty report: %+v err=%v", rep, err)
 	}
 	data, _ := json.Marshal(rep)
-	for _, want := range []string{`"since":null`, `"by":"backend"`, `"runs":[]`, `"runs_all":{`, `"unfinished":0`, `"batches":[]`, `"batches_all":{`} {
+	for _, want := range []string{`"since":null`, `"by":"backend"`, `"runs":[]`, `"runs_all":{`, `"unfinished":0`, `"batches":[]`, `"batches_all":{`, `"running_batches":0`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("empty report JSON is missing %s: %s", want, data)
 		}
