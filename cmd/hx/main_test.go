@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,20 @@ var recorded = make(chan agent.Task, 4)
 
 func init() { agent.Register(recorder{recorded}) }
 
+// drain empties what earlier tests left, so a test never reads their task.
+func drain(t *testing.T) {
+	t.Helper()
+	for {
+		select {
+		case <-recorded:
+		default:
+			return
+		}
+	}
+}
+
 func TestRunFlagsReachTheTask(t *testing.T) {
+	drain(t)
 	t.Setenv("HX_HOME", t.TempDir())
 	dir := t.TempDir()
 	code, err := cmdRun([]string{
@@ -75,6 +89,7 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 }
 
 func TestRunRejectsBadFlagCombinations(t *testing.T) {
+	drain(t)
 	t.Setenv("HX_HOME", t.TempDir())
 	dir := t.TempDir()
 	for _, tc := range []struct {
@@ -92,6 +107,30 @@ func TestRunRejectsBadFlagCombinations(t *testing.T) {
 		code, err := cmdRun(tc.args)
 		if code != 2 || err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: code=%d err=%v, want 2 and a message about %q", tc.name, code, err, tc.want)
+		}
+	}
+}
+
+// The other commands parse their own flags the same way, so the cheap half of
+// that wiring, what they refuse, is worth a test now that the first one exists.
+func TestCommandsRefuseBadArguments(t *testing.T) {
+	t.Setenv("HX_HOME", t.TempDir())
+	missing := filepath.Join(t.TempDir(), "nope.json")
+	for _, tc := range []struct {
+		name string
+		run  func() (int, error)
+		want string
+	}{
+		{"eval without a spec", func() (int, error) { return cmdEval(nil) }, "usage"},
+		{"eval show without an id", func() (int, error) { return cmdEval([]string{"show"}) }, "usage"},
+		{"eval with a missing spec", func() (int, error) { return cmdEval([]string{missing}) }, "nope.json"},
+		{"batch without a spec", func() (int, error) { return cmdBatch(nil) }, "usage"},
+		{"batch rm without an id", func() (int, error) { return cmdBatch([]string{"rm"}) }, "usage"},
+		{"show without an id", func() (int, error) { return 0, cmdShow(nil) }, "usage"},
+	} {
+		code, err := tc.run()
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), tc.want) {
+			t.Errorf("%s: code=%d err=%v, want a message about %q", tc.name, code, err, tc.want)
 		}
 	}
 }

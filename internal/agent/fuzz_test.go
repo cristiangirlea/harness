@@ -17,8 +17,18 @@ func FuzzParseSSE(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, stream string) {
 		// The callbacks are where a malformed block would reach the renderer.
-		_, _, _ = parseSSE(strings.NewReader(stream),
+		resp, _, err := parseSSE(strings.NewReader(stream),
 			func(kind, text string) {},
 			func(bl block) { _ = bl["type"] })
+		if err != nil {
+			return
+		}
+		if resp == nil {
+			t.Fatal("a stream that parsed must return a response")
+		}
+		u := resp.Usage
+		if u.InputTokens < 0 || u.OutputTokens < 0 || u.CacheReadInputTokens < 0 || u.CacheCreationInputTokens < 0 {
+			t.Fatalf("negative usage: %+v", u)
+		}
 	})
 }

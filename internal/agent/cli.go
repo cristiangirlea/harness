@@ -14,6 +14,11 @@ import (
 	"time"
 )
 
+// This file holds the machinery every agent CLI shares: finding the binary,
+// running it, reading its stdout and turning a non-zero exit into a Result.
+// Each backend's arguments and stream format live in its own file, claude.go,
+// codex.go, gemini.go and opencode.go.
+
 // CLIBackend drives an installed agent CLI non-interactively, so the work is
 // billed to that CLI's own subscription login rather than per API token.
 type CLIBackend struct {
