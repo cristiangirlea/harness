@@ -14,13 +14,17 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/hxmcp"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -35,6 +39,8 @@ Usage:
   hx mcp [--dir PATH]            serve hx as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hx batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hx batch rm <batch-id>         remove the worktrees and branches a batch created
+  hx eval [flags] <eval.json>    run a task set across a matrix of backends, models and efforts
+  hx eval show <eval-id>         reprint a saved eval
   hx report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
 
 Run flags:
@@ -57,6 +63,12 @@ Run flags:
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
       --allow-dangerous
                        let run_command run git push, sudo, rm -rf / and the like (api backend)
+
+Eval flags:
+      --parallel N     cells at once (default: the file's value, else 2)
+      --keep           keep the worktrees and branches instead of removing them
+      --json           print the eval record as JSON (progress goes to stderr)
+  -v, --verbose        show each agent's tool calls
 
 Batch flags:
       --parallel N     agents at once (default: the file's value, else 2)
@@ -92,6 +104,8 @@ func main() {
 		err = cmdMCP(os.Args[2:])
 	case "batch":
 		code, err = cmdBatch(os.Args[2:])
+	case "eval":
+		code, err = cmdEval(os.Args[2:])
 	case "report":
 		err = cmdReport(os.Args[2:])
 	case "-h", "--help", "help":
@@ -477,4 +491,157 @@ func cmdBatch(args []string) (int, error) {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+func cmdEval(args []string) (int, error) {
+	if len(args) >= 1 && args[0] == "show" {
+		if len(args) != 2 {
+			return 2, errors.New("usage: hx eval show <eval-id>")
+		}
+		rec, err := eval.LoadRecord(args[1])
+		if err != nil {
+			return 1, err
+		}
+		printEval(newRenderer(false), rec)
+		return 0, nil
+	}
+	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
+	parallel := fs.Int("parallel", 0, "")
+	keep := fs.Bool("keep", false, "")
+	jsonOut := fs.Bool("json", false, "")
+	var verbose bool
+	for _, name := range []string{"v", "verbose"} {
+		fs.BoolVar(&verbose, name, false, "")
+	}
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0, nil
+		}
+		return 2, errors.New("invalid arguments")
+	}
+	if fs.NArg() != 1 {
+		return 2, errors.New("usage: hx eval [flags] <eval.json>")
+	}
+	spec, err := eval.LoadSpec(fs.Arg(0))
+	if err != nil {
+		return 2, err
+	}
+	if *parallel > 0 {
+		spec.Parallel = *parallel
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	r := newRenderer(false)
+	if *jsonOut {
+		r.out = os.Stderr
+	}
+	if len(spec.Judge) > 0 {
+		// Reserved, so a filled-in rubric must not look like it is scoring.
+		r.Line(r.c(red, "judge is reserved and does nothing yet: these scores come from the gates"))
+	}
+	rec, res, err := eval.Run(ctx, spec, func(e batch.Event) {
+		if e.Kind == "tool" && !verbose {
+			return
+		}
+		r.Line(fmt.Sprintf("[%s] %s", e.Task, e.Text))
+	})
+	if err != nil && rec.ID == "" {
+		return 1, err
+	}
+	failed := err != nil
+	if failed {
+		r.Line(r.c(red, "error: "+err.Error()))
+	}
+
+	// The worktrees are the evidence; they go only when the record is safe.
+	if !*keep {
+		if err := batch.Remove(res); err != nil {
+			r.Line(r.c(red, "removing worktrees: "+err.Error()))
+		}
+	}
+
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(rec)
+	} else {
+		printEval(r, rec)
+		if *keep {
+			r.Line(r.c(dim, "worktrees kept; remove them with: hx batch rm "+rec.BatchID))
+		}
+	}
+	// A failing variant is data; a failing eval is not.
+	if failed {
+		return 1, nil
+	}
+	return 0, nil
+}
+
+// printEval writes the two tables: what each variant did, and how each task
+// scored under it.
+func printEval(r *renderer, rec eval.Record) {
+	r.Line("")
+	r.Line(fmt.Sprintf("  %-20s %6s %9s %12s %10s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "context"))
+	for _, v := range rec.Table.Variants {
+		r.Line(fmt.Sprintf("  %-20s %6s %9d %12s %10s %7s %9s",
+			v.Name, report.Share(v.PassRate()), v.Attempts,
+			report.Money(v.MedianCostUSD, v.CostEstimate),
+			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns), report.Number(v.MedianContext)))
+		if len(v.Statuses) > 1 || v.Statuses["ok"] != v.Attempts {
+			r.Line(r.c(dim, "  "+strings.Repeat(" ", 20)+statuses(v.Statuses)))
+		}
+	}
+
+	if len(rec.Table.Tasks) > 0 {
+		var names []string
+		for _, v := range rec.Table.Variants {
+			names = append(names, v.Name)
+		}
+		scores := map[string]string{}
+		var tasks []string
+		for _, row := range rec.Table.Tasks {
+			if _, seen := scores[row.Task+"/"+row.Variant]; !seen {
+				scores[row.Task+"/"+row.Variant] = row.Score()
+			}
+			if !slices.Contains(tasks, row.Task) {
+				tasks = append(tasks, row.Task)
+			}
+		}
+		r.Line("")
+		head := fmt.Sprintf("  %-20s", "task")
+		for _, n := range names {
+			head += fmt.Sprintf(" %10s", n)
+		}
+		r.Line(head)
+		for _, task := range tasks {
+			line := fmt.Sprintf("  %-20s", task)
+			for _, n := range names {
+				line += fmt.Sprintf(" %10s", scores[task+"/"+n])
+			}
+			r.Line(line)
+		}
+	}
+
+	cells := 0
+	for _, v := range rec.Table.Variants {
+		cells += v.Attempts
+	}
+	r.Line(r.c(dim, fmt.Sprintf("── eval %s · batch %s · %d cells · %s ──",
+		rec.ID, rec.BatchID, cells, rec.Duration.Round(time.Second))))
+}
+
+// statuses renders a run-status histogram as "ok 3, timeout 1".
+func statuses(h map[string]int) string {
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s %d", k, h[k]))
+	}
+	return strings.Join(parts, ", ")
 }

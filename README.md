@@ -53,6 +53,8 @@ go test ./...
 | `hx mcp` | Serve hx as an MCP server on stdio (see [MCP](#mcp)). |
 | `hx batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
 | `hx batch rm <id>` | Remove the worktrees and branches a batch created. |
+| `hx eval [flags] <eval.json>` | Run a task set across a matrix of backends, models and efforts (see [Evals](#evals)). |
+| `hx eval show <id>` | Reprint a saved eval. |
 | `hx report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
@@ -339,6 +341,65 @@ a result (still running or killed), batches with a task still running, and recor
 cannot be read are counted under the tables and left out of them.
 `--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
 JSON for scripts.
+
+## Evals
+
+An eval is a batch with two more dimensions: a matrix of variants to compare and a
+number of repeats. Every cell is an ordinary recorded run, scored by the same gates, so
+the question "which backend, model and effort for this kind of task" gets an answer with
+numbers behind it.
+
+```json
+{
+  "parallel": 3, "mode": "yolo",
+  "gate": ["go build ./... && go test ./..."],
+  "matrix": [
+    {"name": "opus-high", "backend": "api", "model": "claude-opus-5", "effort": "high"},
+    {"name": "opus-low",  "backend": "api", "model": "claude-opus-5", "effort": "low"},
+    {"name": "claude",    "backend": "claude"}
+  ],
+  "repeats": 3,
+  "timeout": "20m", "max_cost_usd": 3,
+  "tasks": [{"id": "vet", "prompt": "Run go vet and fix every finding."}]
+}
+```
+
+A variant's `name` defaults to `backend[-model][-effort]`. Each cell becomes a batch
+task with the id `<evalid>.<task>.<variant>.r<n>`, so branches from different evals never
+collide. Retries are off for every cell on purpose: an eval measures what one attempt
+does, and a retried attempt would score the harness rather than the backend. Everything
+else, gates and mode and the budgets, carries through from the spec.
+
+`hx eval eval.json` prints what each variant did and how each task scored under it:
+
+```
+  variant                pass  attempts  median cost median time   turns   context
+  sonnet                   0%         1        $0.15        13s       2    101061
+  haiku                  100%         1        $0.05        14s       2     71814
+
+  task                     sonnet      haiku
+  greet                       0/1        1/1
+── eval cb867 · batch 20260922-164017-1bbd7c · 2 cells · 14s ──
+```
+
+That run is real: asked for a file containing exactly `hx rocks`, Sonnet wrote `hx rocks.`
+and failed the gate while Haiku passed at a third of the cost. The run records are still
+there to say why, which is the point of keeping them.
+
+The record goes to `~/.hx/evals/<id>.json`; `--json` prints it, `hx eval show <id>`
+reprints it, `-v` streams every agent's tool calls. The worktrees are removed once the
+record is safely written, unless `--keep`. A failing variant is data, not an error, so
+the exit status is 0 whenever the eval itself ran.
+
+Task ids and variant names take letters, digits, `_` and `-`: dots separate the parts of
+a cell id. `retry` is refused in an eval spec, because a retried cell would score the
+harness rather than the backend. The `context` column counts prompt tokens and cache
+reads together, which is what the model was given rather than what was billed at full
+rate.
+
+The `judge` key is reserved for scoring a diff against a rubric with a model. Nothing
+reads it yet: gates are the only scorer in this version, which is why a task's gate has
+to express what "done" means, and a spec that fills it in is told so at the start.
 
 ## Run records
 
