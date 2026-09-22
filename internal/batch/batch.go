@@ -136,6 +136,13 @@ type Event struct {
 
 const gateTimeout = 15 * time.Minute
 
+// worktreeMu serialises `git worktree add`, `remove` and `prune` for this
+// process. They all rewrite the repository's shared worktree metadata, and git
+// takes no lock of its own around it, so two workers doing it at once can fail
+// one another's command. Everything else the workers run - the agent, the
+// gates, the commit - stays parallel, which is where the time goes.
+var worktreeMu sync.Mutex
+
 var idRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // LoadSpec reads a spec file. A relative Dir is taken from the file's
@@ -516,7 +523,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 				}
 			}
 			tr.Commit = ""
-			if _, err := gitOut(ctx, root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base); err != nil {
+			if err := addWorktree(ctx, root, tr, base); err != nil {
 				return fail(err)
 			}
 		}
@@ -684,9 +691,19 @@ func Remove(res Result) error {
 	return errors.Join(errs...)
 }
 
+// addWorktree creates the task's worktree and branch from the base commit.
+func addWorktree(ctx context.Context, root string, tr TaskResult, base string) error {
+	worktreeMu.Lock()
+	defer worktreeMu.Unlock()
+	_, err := gitOut(ctx, root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	return err
+}
+
 func removeWorktree(root string, tr TaskResult) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	worktreeMu.Lock()
+	defer worktreeMu.Unlock()
 	if _, err := os.Stat(tr.Worktree); err == nil {
 		if _, err := gitOut(ctx, root, "worktree", "remove", "--force", tr.Worktree); err != nil {
 			return err
