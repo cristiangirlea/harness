@@ -358,9 +358,9 @@ func TestDirtyRepositoryIsRefused(t *testing.T) {
 
 func TestAllowDangerousReachesTheTask(t *testing.T) {
 	dir := initRepo(t)
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", AllowDangerous: true, Tasks: []Task{
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
 		{ID: "spec-wide", Prompt: "a"},
-	}})
+	}, Options: agent.Options{AllowDangerous: true}})
 	if rec := firstRun(t, res.Tasks[0]); !rec.Task.AllowDangerous {
 		t.Fatalf("the spec-wide switch should reach the task: %+v", rec.Task)
 	}
@@ -368,7 +368,7 @@ func TestAllowDangerousReachesTheTask(t *testing.T) {
 	dir = initRepo(t)
 	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
 		{ID: "off", Prompt: "a"},
-		{ID: "on", Prompt: "a", AllowDangerous: true},
+		{ID: "on", Prompt: "a", Options: agent.Options{AllowDangerous: true}},
 	}})
 	for i, want := range []bool{false, true} {
 		if rec := firstRun(t, res.Tasks[i]); rec.Task.AllowDangerous != want {
@@ -417,6 +417,8 @@ func TestLoadSpec(t *testing.T) {
 		`{"tasks":[{"id":"x","prompt":"a"},{"id":"x","prompt":"b"}]}`,
 		`{"tasks":[{"id":"has space","prompt":"a"}]}`,
 		`{"tasks":[{"prompt":"a","mode":"nope"}]}`,
+		`{"timeout":"5 minutes","tasks":[{"prompt":"a"}]}`,
+		`{"tasks":[{"prompt":"a","timeout":"soon"}]}`,
 	} {
 		_ = os.WriteFile(p, []byte(bad), 0o644)
 		if _, err := LoadSpec(p); err == nil {
@@ -433,7 +435,7 @@ func TestNoInstructionsReachesTheTask(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
 		{ID: "spec-off", Prompt: "a"},
-		{ID: "task-off", Prompt: "a", NoInstructions: true},
+		{ID: "task-off", Prompt: "a", Options: agent.Options{NoInstructions: true}},
 	}})
 	for _, tc := range []struct {
 		i    int
@@ -445,7 +447,7 @@ func TestNoInstructionsReachesTheTask(t *testing.T) {
 	}
 
 	dir = initRepo(t)
-	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", NoInstructions: true, Tasks: []Task{{Prompt: "a"}}})
+	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{Prompt: "a"}}, Options: agent.Options{NoInstructions: true}})
 	if rec := firstRun(t, res.Tasks[0]); !rec.Task.NoInstructions {
 		t.Errorf("the spec-wide switch should reach every task: %+v", rec.Task)
 	}
@@ -572,11 +574,10 @@ func TestSecondRetryKnowsAboutTheFirst(t *testing.T) {
 
 func TestLimitsReachTheTaskAndAreValidated(t *testing.T) {
 	dir := initRepo(t)
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Timeout: "5m", MaxCostUSD: 2.5, TaskBudget: 30000,
-		Tasks: []Task{
-			{ID: "from-spec", Prompt: "a"},
-			{ID: "own", Prompt: "a", Timeout: "90s", MaxCostUSD: 1, TaskBudget: 40000},
-		}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "from-spec", Prompt: "a"},
+		{ID: "own", Prompt: "a", Options: agent.Options{Timeout: agent.Duration(90 * time.Second), MaxCostUSD: 1, TaskBudget: 40000}},
+	}, Options: agent.Options{Timeout: agent.Duration(5 * time.Minute), MaxCostUSD: 2.5, TaskBudget: 30000}})
 	for _, tc := range []struct {
 		i       int
 		timeout time.Duration
@@ -587,7 +588,7 @@ func TestLimitsReachTheTaskAndAreValidated(t *testing.T) {
 		{1, 90 * time.Second, 1, 40000},
 	} {
 		rec := firstRun(t, res.Tasks[tc.i])
-		if rec.Task.Timeout != tc.timeout || rec.Task.MaxCostUSD != tc.cost || rec.Task.TaskBudget != tc.budget {
+		if rec.Task.Timeout != agent.Duration(tc.timeout) || rec.Task.MaxCostUSD != tc.cost || rec.Task.TaskBudget != tc.budget {
 			t.Errorf("%s: timeout=%s cost=%v budget=%d", res.Tasks[tc.i].ID, rec.Task.Timeout, rec.Task.MaxCostUSD, rec.Task.TaskBudget)
 		}
 	}
@@ -596,10 +597,8 @@ func TestLimitsReachTheTaskAndAreValidated(t *testing.T) {
 		spec Spec
 		want string
 	}{
-		{Spec{Backend: "wb-ok", Timeout: "5 minutes", Tasks: []Task{{Prompt: "a"}}}, "timeout"},
-		{Spec{Backend: "wb-ok", TaskBudget: 100, Tasks: []Task{{Prompt: "a"}}}, "20000"},
-		{Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Timeout: "soon"}}}, "task t1"},
-		{Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", TaskBudget: 5}}}, "task t1"},
+		{Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a"}}, Options: agent.Options{TaskBudget: 100}}, "20000"},
+		{Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Options: agent.Options{TaskBudget: 5}}}}, "task t1"},
 	} {
 		if _, err := Run(context.Background(), tc.spec, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("err = %v, want it to mention %q", err, tc.want)
@@ -630,7 +629,7 @@ func TestNoContextEditsReachesTheTask(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
 		{ID: "default", Prompt: "a"},
-		{ID: "opted-out", Prompt: "a", NoContextEdits: true},
+		{ID: "opted-out", Prompt: "a", Options: agent.Options{NoContextEdits: true}},
 	}})
 	for i, want := range []bool{false, true} {
 		if rec := firstRun(t, res.Tasks[i]); rec.Task.NoContextEdits != want {

@@ -23,7 +23,7 @@ func write(t *testing.T, dir, name, content string) {
 
 func TestListSinceSkipsOldRunsAndCountsUnreadable(t *testing.T) {
 	t.Setenv("HX_HOME", t.TempDir())
-	task := agent.Task{Prompt: "p", Dir: t.TempDir(), Mode: agent.ModeAsk}
+	task := agent.Task{Prompt: "p", Dir: t.TempDir(), Options: agent.Options{Mode: agent.ModeAsk}}
 	for _, backend := range []string{"api", "claude"} {
 		w, err := Create(backend, task)
 		if err != nil {

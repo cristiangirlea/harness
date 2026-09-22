@@ -125,7 +125,7 @@ func TestAPILoopRunsToolsAndFinishes(t *testing.T) {
 	res, events, fake := runFake(t, [][]string{
 		toolTurn("toolu_1", "read_file", `{"path":"hello.txt"}`),
 		textTurn("The file says secret-value."),
-	}, Task{Prompt: "what is in hello.txt?", Dir: dir, Mode: ModeAsk})
+	}, Task{Prompt: "what is in hello.txt?", Dir: dir, Options: Options{Mode: ModeAsk}})
 
 	if res.Status != StatusOK || res.Final != "The file says secret-value." || res.Turns != 2 {
 		t.Fatalf("unexpected result: %+v", res)
@@ -163,7 +163,7 @@ func TestAPILoopDeniesWritesWithoutApproval(t *testing.T) {
 	res, _, fake := runFake(t, [][]string{
 		toolTurn("toolu_w", "write_file", `{"path":"x.txt","content":"hi"}`),
 		textTurn("I was not allowed to write."),
-	}, Task{Prompt: "write x.txt", Dir: dir, Mode: ModeAsk})
+	}, Task{Prompt: "write x.txt", Dir: dir, Options: Options{Mode: ModeAsk}})
 
 	if res.Status != StatusOK {
 		t.Fatalf("unexpected result: %+v", res)
@@ -181,7 +181,7 @@ func TestAPILoopGuardsCommands(t *testing.T) {
 	_, _, fake := runFake(t, [][]string{
 		toolTurn("toolu_g", "run_command", `{"command":"sudo rm -rf /"}`),
 		textTurn("I was blocked."),
-	}, Task{Prompt: "clean up", Dir: dir, Mode: ModeYolo})
+	}, Task{Prompt: "clean up", Dir: dir, Options: Options{Mode: ModeYolo}})
 	block := lastToolResult(t, fake.requests[1])
 	if block["is_error"] != true || !strings.Contains(fmt.Sprint(block["content"]), "command guard (sudo)") {
 		t.Errorf("a guarded command should come back as an error result: %v", block)
@@ -191,7 +191,7 @@ func TestAPILoopGuardsCommands(t *testing.T) {
 	_, _, fake = runFake(t, [][]string{
 		toolTurn("toolu_a", "run_command", `{"command":"echo \"git push\""}`),
 		textTurn("done"),
-	}, Task{Prompt: "echo it", Dir: dir, Mode: ModeYolo, AllowDangerous: true})
+	}, Task{Prompt: "echo it", Dir: dir, Options: Options{Mode: ModeYolo, AllowDangerous: true}})
 	block = lastToolResult(t, fake.requests[1])
 	if block["is_error"] == true || !strings.Contains(fmt.Sprint(block["content"]), "git push") {
 		t.Errorf("allow_dangerous should let the command run: %v", block)
@@ -207,7 +207,7 @@ func TestAPILoopSaysWhetherTheGuardIsOn(t *testing.T) {
 		{true, "Command guard: off"},
 	} {
 		_, _, fake := runFake(t, [][]string{textTurn("ok")},
-			Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeYolo, AllowDangerous: tc.allow})
+			Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeYolo, AllowDangerous: tc.allow}})
 		sys := systemText(t, fake.requests[0])
 		if env := sys[len(sys)-1]; !strings.Contains(env, tc.want) {
 			t.Errorf("allow_dangerous=%v: environment block is missing %q:\n%s", tc.allow, tc.want, env)
@@ -216,7 +216,7 @@ func TestAPILoopSaysWhetherTheGuardIsOn(t *testing.T) {
 }
 
 func TestAPILoopReadOnlyHidesWriteTools(t *testing.T) {
-	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(), Mode: ModeReadOnly})
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(), Options: Options{Mode: ModeReadOnly}})
 	for _, tl := range fake.requests[0]["tools"].([]any) {
 		name := tl.(map[string]any)["name"]
 		if name == "write_file" || name == "edit_file" || name == "run_command" {
@@ -228,14 +228,14 @@ func TestAPILoopReadOnlyHidesWriteTools(t *testing.T) {
 func TestAPILoopMaxTurns(t *testing.T) {
 	dir := t.TempDir()
 	loop := toolTurn("toolu_l", "list_files", `{}`)
-	res, _, _ := runFake(t, [][]string{loop, loop, loop}, Task{Prompt: "loop", Dir: dir, Mode: ModeAsk, MaxTurns: 2})
+	res, _, _ := runFake(t, [][]string{loop, loop, loop}, Task{Prompt: "loop", Dir: dir, Options: Options{Mode: ModeAsk, MaxTurns: 2}})
 	if res.Status != StatusMaxTurns {
 		t.Fatalf("status = %s, want max_turns", res.Status)
 	}
 }
 
 func TestAPIRetriesOverloadedThenSucceeds(t *testing.T) {
-	res, _, fake := runFake(t, [][]string{nil, textTurn("done")}, Task{Prompt: "hi", Dir: t.TempDir(), Mode: ModeAsk})
+	res, _, fake := runFake(t, [][]string{nil, textTurn("done")}, Task{Prompt: "hi", Dir: t.TempDir(), Options: Options{Mode: ModeAsk}})
 	if res.Status != StatusOK || res.Final != "done" || len(fake.requests) != 2 {
 		t.Fatalf("status=%s final=%q requests=%d err=%s", res.Status, res.Final, len(fake.requests), res.Error)
 	}
@@ -256,7 +256,7 @@ func TestAPIEchoesThinkingSignature(t *testing.T) {
 		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_t","name":"list_files","input":{}}}`,
 		`{"type":"content_block_stop","index":1}`,
 	}, messageEnd("tool_use")...)
-	_, _, fake := runFake(t, [][]string{turn, textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk})
+	_, _, fake := runFake(t, [][]string{turn, textTurn("ok")}, Task{Prompt: "go", Dir: dir, Options: Options{Mode: ModeAsk}})
 
 	msgs := fake.requests[1]["messages"].([]any)
 	assistant := msgs[1].(map[string]any)["content"].([]any)
@@ -279,7 +279,7 @@ func TestAPIRejectsInvalidToolJSON(t *testing.T) {
 			`{"type":"content_block_stop","index":0}`,
 		}, messageEnd("tool_use")...),
 		textTurn("ok"),
-	}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk})
+	}, Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk}})
 	block := lastToolResult(t, fake.requests[1])
 	if block["is_error"] != true || !strings.Contains(fmt.Sprint(block["content"]), "not valid JSON") {
 		t.Errorf("invalid input should be reported: %v", block)
@@ -301,7 +301,7 @@ func TestAPILoopSendsProjectInstructions(t *testing.T) {
 	writeFile(t, dir, "CLAUDE.md", "Always run gofmt before finishing.")
 	writeFile(t, dir, "AGENTS.md", "Prefer table-driven tests.")
 
-	_, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk})
+	_, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Options: Options{Mode: ModeAsk}})
 	sys := systemText(t, fake.requests[0])
 	if len(sys) != 3 {
 		t.Fatalf("want system = [prompt, instructions, env], got %d blocks", len(sys))
@@ -336,13 +336,13 @@ func TestAPILoopSendsProjectInstructions(t *testing.T) {
 
 func TestAPILoopWithoutProjectInstructions(t *testing.T) {
 	dir := t.TempDir()
-	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk})
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Options: Options{Mode: ModeAsk}})
 	if sys := systemText(t, fake.requests[0]); len(sys) != 2 {
 		t.Errorf("no instruction file: want 2 system blocks, got %d", len(sys))
 	}
 
 	writeFile(t, dir, "CLAUDE.md", "Always run gofmt.")
-	_, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk, NoInstructions: true})
+	_, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Options: Options{Mode: ModeAsk, NoInstructions: true}})
 	if sys := systemText(t, fake.requests[0]); len(sys) != 2 {
 		t.Errorf("NoInstructions: want 2 system blocks, got %d", len(sys))
 	}
@@ -358,7 +358,7 @@ func TestAPILoopReportsUnreadableInstructions(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "CLAUDE.md"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	res, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Mode: ModeAsk})
+	res, events, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Options: Options{Mode: ModeAsk}})
 	if res.Status != StatusOK {
 		t.Fatalf("an unreadable instruction file must not fail the run: %+v", res)
 	}
@@ -385,7 +385,7 @@ func TestAPIStopsOnTimeout(t *testing.T) {
 	b.BaseURL, b.APIKey, b.MaxRetries = srv.URL, "test", 0
 
 	started := time.Now()
-	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, Timeout: 200 * time.Millisecond}, func(Event) {})
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Timeout: Duration(200 * time.Millisecond)}}, func(Event) {})
 	if res.Status != StatusTimeout {
 		t.Fatalf("status = %s, want timeout (error %q)", res.Status, res.Error)
 	}
@@ -399,7 +399,7 @@ func TestAPIStopsOnCostBudget(t *testing.T) {
 	res, _, fake := runFake(t, [][]string{
 		toolTurn("toolu_1", "list_files", `{}`),
 		textTurn("never reached"),
-	}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, MaxCostUSD: 0.0001})
+	}, Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MaxCostUSD: 0.0001}})
 	if res.Status != StatusBudget {
 		t.Fatalf("status = %s, want budget (error %q)", res.Status, res.Error)
 	}
@@ -416,7 +416,7 @@ func TestAPIStopsOnCostBudget(t *testing.T) {
 
 func TestAPISendsTaskBudgetWithEffort(t *testing.T) {
 	_, _, fake := runFake(t, [][]string{textTurn("ok")},
-		Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, Effort: "high", TaskBudget: 64000})
+		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Effort: "high", TaskBudget: 64000}})
 	out, ok := fake.requests[0]["output_config"].(map[string]any)
 	if !ok {
 		t.Fatalf("no output_config: %v", fake.requests[0])
@@ -435,7 +435,7 @@ func TestAPISendsTaskBudgetWithEffort(t *testing.T) {
 		t.Errorf("anthropic-beta = %q, want it to carry %s", h, betaTaskBudget)
 	}
 
-	_, _, fake = runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk})
+	_, _, fake = runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk}})
 	if _, present := fake.requests[0]["output_config"]; present {
 		t.Errorf("no budget and no effort should mean no output_config: %v", fake.requests[0]["output_config"])
 	}
@@ -479,15 +479,13 @@ func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
 			infos = append(infos, e.Text)
 		}
 	}
-	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk,
-		Model: "claude-not-in-the-price-table", MaxCostUSD: 1}, collect)
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Model: "claude-not-in-the-price-table", MaxCostUSD: 1}}, collect)
 	if len(infos) != 1 || !strings.Contains(infos[0], "max_cost cannot be enforced") {
 		t.Fatalf("info events = %v", infos)
 	}
 
 	infos = nil
-	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk,
-		Model: "claude-opus-5", MaxCostUSD: 1}, collect)
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Model: "claude-opus-5", MaxCostUSD: 1}}, collect)
 	for _, text := range infos {
 		if strings.Contains(text, "max_cost cannot be enforced") {
 			t.Errorf("a priced model should not warn: %q", text)
@@ -496,7 +494,7 @@ func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
 }
 
 func TestAPISendsContextManagementByDefault(t *testing.T) {
-	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk})
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk}})
 	cm, ok := fake.requests[0]["context_management"].(map[string]any)
 	if !ok {
 		t.Fatalf("no context_management: %v", fake.requests[0])
@@ -514,7 +512,7 @@ func TestAPISendsContextManagementByDefault(t *testing.T) {
 		t.Errorf("anthropic-beta = %q, want both betas", h)
 	}
 
-	_, _, fake = runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, NoContextEdits: true})
+	_, _, fake = runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, NoContextEdits: true}})
 	if _, present := fake.requests[0]["context_management"]; present {
 		t.Error("NoContextEdits must drop the field")
 	}
@@ -550,7 +548,7 @@ func TestAPIRetriesWithoutContextManagementWhenRefused(t *testing.T) {
 	b := NewAPIBackend()
 	b.BaseURL, b.APIKey, b.MaxRetries = srv.URL, "test", 0
 	var infos []string
-	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk}, func(e Event) {
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk}}, func(e Event) {
 		if e.Kind == EventInfo {
 			infos = append(infos, e.Text)
 		}
@@ -587,7 +585,7 @@ func TestAPISavesAndResumesTheConversation(t *testing.T) {
 	res, _, fake := runFake(t, [][]string{
 		toolTurn("toolu_1", "read_file", `{"path":"hello.txt"}`),
 		textTurn("It says first."),
-	}, Task{Prompt: "what is in hello.txt?", Dir: dir, Mode: ModeAsk, RunDir: runDir})
+	}, Task{Prompt: "what is in hello.txt?", Dir: dir, RunDir: runDir, Options: Options{Mode: ModeAsk}})
 	if res.Status != StatusOK {
 		t.Fatalf("res = %+v", res)
 	}
@@ -614,7 +612,7 @@ func TestAPISavesAndResumesTheConversation(t *testing.T) {
 
 	// Resuming sends the saved exchange plus the follow-up, in order.
 	_, _, fake2 := runFake(t, [][]string{textTurn("Still first.")},
-		Task{Prompt: "and now?", Dir: dir, Mode: ModeAsk, Resume: &saved})
+		Task{Prompt: "and now?", Dir: dir, Resume: &saved, Options: Options{Mode: ModeAsk}})
 	msgs := fake2.requests[0]["messages"].([]any)
 	if len(msgs) != 5 {
 		t.Fatalf("resumed request has %d messages, want 5", len(msgs))
@@ -642,7 +640,7 @@ func TestAPIDoesNotSaveADanglingToolCall(t *testing.T) {
 		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_x","name":"list_files","input":{}}}`,
 		`{"type":"content_block_stop","index":0}`,
 	}, messageEnd("max_tokens")...)
-	res, _, _ := runFake(t, [][]string{turn}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, RunDir: runDir})
+	res, _, _ := runFake(t, [][]string{turn}, Task{Prompt: "go", Dir: t.TempDir(), RunDir: runDir, Options: Options{Mode: ModeAsk}})
 	if res.Status != StatusError {
 		t.Fatalf("res = %+v", res)
 	}
@@ -668,7 +666,7 @@ func TestAPISavesNothingWhenTheRunNeverStarted(t *testing.T) {
 	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res := b.Run(context.Background(), Task{Prompt: "go", Dir: notADir, Mode: ModeAsk, RunDir: runDir}, func(Event) {})
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: notADir, RunDir: runDir, Options: Options{Mode: ModeAsk}}, func(Event) {})
 	if res.Status != StatusError {
 		t.Fatalf("res = %+v", res)
 	}

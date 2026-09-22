@@ -285,6 +285,12 @@ retried on the next backend in `retry`. Every attempt is an ordinary recorded ru
 `dir` (default: the file's directory) is any path inside the repository. Task fields
 override the file's defaults of the same name; `id` defaults to `t1`, `t2`, ….
 
+Every option `hx run` takes as a flag is a spec field under the same name with
+underscores (`--max-turns` is `max_turns`, `--max-cost` is `max_cost_usd`), on the spec
+or on a task; the MCP `run` tool takes the same names. They are one struct in the code
+(`agent.Options`), so the three cannot drift apart. A task's value replaces the spec's;
+a switch a task turns on stays on; a task's own `mcp` list replaces the spec's.
+
 For each task hx creates branch `hx/<id>` and worktree `.hx/worktrees/<id>` from the
 current `HEAD` (uncommitted changes in the main worktree are not included), runs the
 agent there, then the gates in order, stopping at the first non-zero exit or after 15
@@ -446,7 +452,9 @@ to express what "done" means, and a spec that fills it in is told so at the star
 
 `~/.hx/runs/<id>/` (or `$HX_HOME/runs`):
 
-- `task.json` — prompt, dir, backend, model, mode, MCP config paths
+- `task.json` — prompt, dir, backend, and the run options by their flag names
+  (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
+  `timeout_ns` and still load)
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped)
 - `messages.json` — the api backend's message history, for `hx run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly

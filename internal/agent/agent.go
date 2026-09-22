@@ -37,40 +37,13 @@ type ApprovalRequest struct {
 }
 
 type Task struct {
-	Prompt   string `json:"prompt"`
-	Dir      string `json:"dir"`
-	Model    string `json:"model,omitempty"`
-	Mode     Mode   `json:"mode"`
-	MaxTurns int    `json:"max_turns,omitempty"`
-	Effort   string `json:"effort,omitempty"`
+	Prompt string `json:"prompt"`
+	Dir    string `json:"dir"`
 
-	// MCP lists config files (absolute paths) whose stdio servers are offered
-	// as tools by the api backend and passed through to the claude CLI.
-	MCP []string `json:"mcp,omitempty"`
-
-	// NoInstructions skips the project instruction files (HX.md, AGENTS.md,
-	// CLAUDE.md) that the api backend otherwise puts in its system prompt.
-	NoInstructions bool `json:"no_instructions,omitempty"`
-
-	// Timeout ends the run when it passes; zero means no deadline.
-	Timeout time.Duration `json:"timeout_ns,omitempty"`
-
-	// MaxCostUSD stops the api loop before a turn that would take the
-	// estimated cost past it. The CLI backends cannot enforce it.
-	MaxCostUSD float64 `json:"max_cost_usd,omitempty"`
-
-	// TaskBudget is the api backend's token ceiling for the whole task: the
-	// model paces itself and finishes rather than being cut off.
-	TaskBudget int `json:"task_budget,omitempty"`
-
-	// NoContextEdits turns off server-side context management, which the api
-	// backend asks for by default so old tool results are cleared server-side
-	// instead of being resent every turn.
-	NoContextEdits bool `json:"no_context_edits,omitempty"`
-
-	// AllowDangerous lifts the api backend's command guard, which otherwise
-	// refuses a few command lines (git push, sudo, rm -rf /, curl | sh).
-	AllowDangerous bool `json:"allow_dangerous,omitempty"`
+	// Options is everything a caller may set besides the prompt and the
+	// workspace: the one struct the run flags, a batch spec and the MCP run
+	// tool all fill in. Its fields are promoted, so task.Mode reads as before.
+	Options
 
 	// RunDir is where the api backend saves the conversation, so the run can be
 	// continued later. Callers that hold a runlog.Writer set it to its Dir.
@@ -149,6 +122,23 @@ type Result struct {
 	Duration     time.Duration `json:"duration_ns"`
 }
 
+// UnmarshalJSON reads a task as written today and as records before 0.3 wrote
+// it, when the timeout was a count of nanoseconds under timeout_ns.
+func (t *Task) UnmarshalJSON(data []byte) error {
+	type plain Task // no methods, so this does not recurse
+	aux := struct {
+		*plain
+		TimeoutNS int64 `json:"timeout_ns"`
+	}{plain: (*plain)(t)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if t.Timeout == 0 && aux.TimeoutNS != 0 {
+		t.Timeout = Duration(aux.TimeoutNS)
+	}
+	return nil
+}
+
 // Backend runs a task. Run never returns a Go error: failures are reported in
 // Result.Status so callers can record and compare every run the same way.
 type Backend interface {
@@ -223,7 +213,7 @@ func withTimeout(ctx context.Context, task Task) (context.Context, context.Cance
 	if task.Timeout <= 0 {
 		return context.WithCancel(ctx)
 	}
-	return context.WithTimeout(ctx, task.Timeout)
+	return context.WithTimeout(ctx, time.Duration(task.Timeout))
 }
 
 // stopStatus reports why a context ended: the task's deadline, or a cancel.

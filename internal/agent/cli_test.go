@@ -35,7 +35,7 @@ func TestParseClaudeStream(t *testing.T) {
 
 func TestClaudeArgsModeMapping(t *testing.T) {
 	b := NewClaudeBackend()
-	args := strings.Join(b.args(Task{Mode: ModeAuto, Model: "sonnet", MaxTurns: 5}, ""), " ")
+	args := strings.Join(b.args(Task{Options: Options{Mode: ModeAuto, Model: "sonnet", MaxTurns: 5}}, ""), " ")
 	for _, want := range []string{"-p", "stream-json", "--permission-mode acceptEdits", "--model sonnet", "--max-turns 5"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args %q missing %q", args, want)
