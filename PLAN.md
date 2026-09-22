@@ -695,3 +695,12 @@ Size: mostly moves; ~100 new lines.
   where uncommitted work is visible to the agent - the hazard is specific to batch
   branching from HEAD; and the CLI flag-to-Task wiring is still untested, the same gap PR A
   and PR D deferred, now waiting on PR K.
+- 2026-09-22: PR I, a flake the ubuntu runner found that the Windows one never did:
+  `TestLimitsReachTheTaskAndAreValidated` panicked on `Attempts[0]` because a task had no
+  attempt at all. The only path to that is a failed `git worktree add`, and two batch
+  workers run one each in the same repository at the same time; git rewrites shared
+  worktree metadata there and takes no lock of its own, so on a fast machine one loses.
+  `worktreeMu` now serialises add, remove and prune - the agent, the gates and the commit
+  stay parallel, which is where a batch spends its time. The tests went through
+  `Attempts[0]` in six places and panicked instead of reporting; `firstRun` now fails with
+  the task's own status and error, so the next occurrence says what happened.

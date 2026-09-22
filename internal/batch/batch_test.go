@@ -107,6 +107,20 @@ func run(t *testing.T, spec Spec) (Result, []Event) {
 	return res, events
 }
 
+// firstRun loads the record of a task's first attempt. A task with none failed
+// before it ever reached a backend, and its own error says why.
+func firstRun(t *testing.T, tr TaskResult) runlog.Record {
+	t.Helper()
+	if len(tr.Attempts) == 0 {
+		t.Fatalf("task %s made no attempt: status=%s error=%s", tr.ID, tr.Status, tr.Error)
+	}
+	rec, err := runlog.Load(tr.Attempts[0].RunID)
+	if err != nil {
+		t.Fatalf("task %s: loading run %s: %v", tr.ID, tr.Attempts[0].RunID, err)
+	}
+	return rec
+}
+
 func TestRunPassesGateAndCommits(t *testing.T) {
 	dir := initRepo(t)
 	base := git(t, dir, "rev-parse", "HEAD")
@@ -342,8 +356,8 @@ func TestAllowDangerousReachesTheTask(t *testing.T) {
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", AllowDangerous: true, Tasks: []Task{
 		{ID: "spec-wide", Prompt: "a"},
 	}})
-	if rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID); err != nil || !rec.Task.AllowDangerous {
-		t.Fatalf("the spec-wide switch should reach the task: %+v err=%v", rec.Task, err)
+	if rec := firstRun(t, res.Tasks[0]); !rec.Task.AllowDangerous {
+		t.Fatalf("the spec-wide switch should reach the task: %+v", rec.Task)
 	}
 
 	dir = initRepo(t)
@@ -352,9 +366,8 @@ func TestAllowDangerousReachesTheTask(t *testing.T) {
 		{ID: "on", Prompt: "a", AllowDangerous: true},
 	}})
 	for i, want := range []bool{false, true} {
-		rec, err := runlog.Load(res.Tasks[i].Attempts[0].RunID)
-		if err != nil || rec.Task.AllowDangerous != want {
-			t.Errorf("%s: AllowDangerous = %v, want %v (err=%v)", res.Tasks[i].ID, rec.Task.AllowDangerous, want, err)
+		if rec := firstRun(t, res.Tasks[i]); rec.Task.AllowDangerous != want {
+			t.Errorf("%s: AllowDangerous = %v, want %v", res.Tasks[i].ID, rec.Task.AllowDangerous, want)
 		}
 	}
 }
@@ -421,16 +434,15 @@ func TestNoInstructionsReachesTheTask(t *testing.T) {
 		i    int
 		want bool
 	}{{0, false}, {1, true}} {
-		rec, err := runlog.Load(res.Tasks[tc.i].Attempts[0].RunID)
-		if err != nil || rec.Task.NoInstructions != tc.want {
-			t.Errorf("%s: NoInstructions = %v, want %v (err=%v)", res.Tasks[tc.i].ID, rec.Task.NoInstructions, tc.want, err)
+		if rec := firstRun(t, res.Tasks[tc.i]); rec.Task.NoInstructions != tc.want {
+			t.Errorf("%s: NoInstructions = %v, want %v", res.Tasks[tc.i].ID, rec.Task.NoInstructions, tc.want)
 		}
 	}
 
 	dir = initRepo(t)
 	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", NoInstructions: true, Tasks: []Task{{Prompt: "a"}}})
-	if rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID); err != nil || !rec.Task.NoInstructions {
-		t.Errorf("the spec-wide switch should reach every task: %+v err=%v", rec.Task, err)
+	if rec := firstRun(t, res.Tasks[0]); !rec.Task.NoInstructions {
+		t.Errorf("the spec-wide switch should reach every task: %+v", rec.Task)
 	}
 }
 
@@ -569,10 +581,7 @@ func TestLimitsReachTheTaskAndAreValidated(t *testing.T) {
 		{0, 5 * time.Minute, 2.5, 30000},
 		{1, 90 * time.Second, 1, 40000},
 	} {
-		rec, err := runlog.Load(res.Tasks[tc.i].Attempts[0].RunID)
-		if err != nil {
-			t.Fatal(err)
-		}
+		rec := firstRun(t, res.Tasks[tc.i])
 		if rec.Task.Timeout != tc.timeout || rec.Task.MaxCostUSD != tc.cost || rec.Task.TaskBudget != tc.budget {
 			t.Errorf("%s: timeout=%s cost=%v budget=%d", res.Tasks[tc.i].ID, rec.Task.Timeout, rec.Task.MaxCostUSD, rec.Task.TaskBudget)
 		}
@@ -619,9 +628,8 @@ func TestNoContextEditsReachesTheTask(t *testing.T) {
 		{ID: "opted-out", Prompt: "a", NoContextEdits: true},
 	}})
 	for i, want := range []bool{false, true} {
-		rec, err := runlog.Load(res.Tasks[i].Attempts[0].RunID)
-		if err != nil || rec.Task.NoContextEdits != want {
-			t.Errorf("%s: NoContextEdits = %v, want %v (err=%v)", res.Tasks[i].ID, rec.Task.NoContextEdits, want, err)
+		if rec := firstRun(t, res.Tasks[i]); rec.Task.NoContextEdits != want {
+			t.Errorf("%s: NoContextEdits = %v, want %v", res.Tasks[i].ID, rec.Task.NoContextEdits, want)
 		}
 	}
 }
