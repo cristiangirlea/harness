@@ -236,6 +236,12 @@ func init() { agent.Register(askingBackend{}) }
 
 // answering connects a session whose client answers every approval the same way.
 func answering(t *testing.T, reply map[string]any) *session {
+	return answeringWith(t, reply, nil)
+}
+
+// answeringWith also hands each elicitation's params to watch, so a test can
+// assert what the person was actually asked.
+func answeringWith(t *testing.T, reply map[string]any, watch func(json.RawMessage)) *session {
 	t.Helper()
 	t.Setenv("HX_HOME", t.TempDir())
 	toServer, clientOut := io.Pipe()
@@ -248,7 +254,12 @@ func answering(t *testing.T, reply map[string]any) *session {
 	s := &session{}
 	s.cl = &mcp.Client{Progress: func(m string) { s.mu.Lock(); s.progress = append(s.progress, m); s.mu.Unlock() }}
 	if reply != nil {
-		s.cl.Elicit = func(context.Context, json.RawMessage) (any, error) { return reply, nil }
+		s.cl.Elicit = func(_ context.Context, params json.RawMessage) (any, error) {
+			if watch != nil {
+				watch(params)
+			}
+			return reply, nil
+		}
 	}
 	if err := s.cl.Connect(ctx, toClient, clientOut); err != nil {
 		t.Fatal(err)
@@ -274,5 +285,25 @@ func TestAskModeGoesThroughTheHost(t *testing.T) {
 				t.Errorf("run said %q, want it to contain %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestApprovalPromptSaysWhatIsBeingApproved(t *testing.T) {
+	var asked string
+	s := answeringWith(t, map[string]any{"action": "accept", "content": map[string]any{"approve": true}},
+		func(params json.RawMessage) { asked = string(params) })
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub-ask","mode":"ask"}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+
+	for _, want := range []string{"write_file", "notes.txt", id, `"approve"`, `"required"`} {
+		if !strings.Contains(asked, want) {
+			t.Errorf("the prompt must carry %q:\n%s", want, asked)
+		}
+	}
+	s.mu.Lock()
+	progress := strings.Join(s.progress, "|")
+	s.mu.Unlock()
+	if !strings.Contains(progress, "allowed write_file") {
+		t.Errorf("the decision should reach the host: %q", progress)
 	}
 }

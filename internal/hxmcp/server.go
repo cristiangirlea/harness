@@ -178,9 +178,6 @@ func runTool(defaultDir string) mcp.Tool {
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
-			if mode == agent.ModeAsk && call.ClientSupports("elicitation") {
-				task.Approve = approver(ctx, call)
-			}
 			rec, err := runlog.CreateContinuing(args.Backend, task, args.ContinueRunID)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
@@ -188,6 +185,10 @@ func runTool(defaultDir string) mcp.Tool {
 			// The api backend saves the conversation here, so a follow-up can
 			// continue this run.
 			task.RunDir = rec.Dir()
+			if mode == agent.ModeAsk && call.ClientSupports("elicitation") {
+				// Named by run, because two runs may be asking at once.
+				task.Approve = approver(ctx, call, rec.ID())
+			}
 			emit := func(e agent.Event) {
 				rec.Event(e)
 				switch e.Kind {
@@ -349,7 +350,7 @@ func backendsTool() mcp.Tool {
 // approver asks the host's user about each call the mode does not decide by
 // itself. One question at a time, so prompts never interleave, and anything
 // other than a clear yes is a no.
-func approver(ctx context.Context, call mcp.Call) func(agent.ApprovalRequest) bool {
+func approver(ctx context.Context, call mcp.Call, runID string) func(agent.ApprovalRequest) bool {
 	var asking sync.Mutex
 	return func(req agent.ApprovalRequest) bool {
 		asking.Lock()
@@ -364,7 +365,9 @@ func approver(ctx context.Context, call mcp.Call) func(agent.ApprovalRequest) bo
 			} `json:"content"`
 		}
 		params := map[string]any{
-			"message": fmt.Sprintf("hx wants to run %s: %s", req.Tool, tools.OneLine(req.Summary, 200)),
+			// The summary is what is being approved, so it goes in whole: a
+			// truncated command can hide the part that matters.
+			"message": fmt.Sprintf("hx run %s wants to run %s:\n%s", runID, req.Tool, tools.Truncate(req.Summary)),
 			"requestedSchema": map[string]any{
 				"type":       "object",
 				"properties": map[string]any{"approve": map[string]any{"type": "boolean", "title": "Allow"}},
@@ -375,7 +378,13 @@ func approver(ctx context.Context, call mcp.Call) func(agent.ApprovalRequest) bo
 			call.Progress("approval request failed, denying: " + err.Error())
 			return false
 		}
-		return answer.Action == "accept" && answer.Content.Approve
+		allowed := answer.Action == "accept" && answer.Content.Approve
+		decision := "denied"
+		if allowed {
+			decision = "allowed"
+		}
+		call.Progress(fmt.Sprintf("%s %s: %s", decision, req.Tool, tools.OneLine(req.Summary, 120)))
+		return allowed
 	}
 }
 

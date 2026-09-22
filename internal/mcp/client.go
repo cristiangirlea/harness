@@ -57,6 +57,9 @@ type Client struct {
 	mu      sync.Mutex
 	nextID  int64
 	pending map[string]chan *message
+	// asking holds the questions this client is putting to its user, so a
+	// request the server withdraws stops waiting for an answer.
+	asking  map[string]context.CancelFunc
 	done    chan struct{} // closed when the read loop exits
 	exitErr error
 
@@ -111,6 +114,7 @@ func (c *Client) Connect(ctx context.Context, r io.Reader, w io.Writer) error {
 	}
 	c.codec = newCodec(r, w)
 	c.pending = map[string]chan *message{}
+	c.asking = map[string]context.CancelFunc{}
 	c.done = make(chan struct{})
 	go c.readLoop()
 
@@ -301,7 +305,17 @@ func (c *Client) handleRequest(m *message) {
 			_ = c.codec.fail(m.ID, CodeMethodNotFound, "this client cannot ask its user")
 			return
 		}
-		answer, err := c.Elicit(context.Background(), m.Params)
+		actx, cancel := context.WithCancel(context.Background())
+		c.mu.Lock()
+		c.asking[string(m.ID)] = cancel
+		c.mu.Unlock()
+		defer func() {
+			c.mu.Lock()
+			delete(c.asking, string(m.ID))
+			c.mu.Unlock()
+			cancel()
+		}()
+		answer, err := c.Elicit(actx, m.Params)
 		if err != nil {
 			_ = c.codec.fail(m.ID, CodeInternalError, err.Error())
 			return
@@ -333,6 +347,16 @@ func (c *Client) handleNotification(m *message) {
 			}
 			c.log(p.Level + ": " + s)
 		}
+	case "notifications/cancelled":
+		var p cancelledParams
+		if json.Unmarshal(m.Params, &p) != nil {
+			return
+		}
+		c.mu.Lock()
+		if stop := c.asking[string(p.RequestID)]; stop != nil {
+			stop()
+		}
+		c.mu.Unlock()
 	case "notifications/progress":
 		if c.Progress == nil {
 			return

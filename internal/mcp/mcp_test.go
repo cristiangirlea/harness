@@ -422,3 +422,37 @@ func TestClientWithoutElicitationIsNotAsked(t *testing.T) {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
 }
+
+func TestServeStopsWhenTheClientLeavesMidQuestion(t *testing.T) {
+	asked := make(chan struct{})
+	srv := NewServer(Implementation{Name: "t", Version: "1"}, "")
+	srv.AddTool(Tool{Name: "ask", Handler: func(ctx context.Context, call Call) (CallResult, error) {
+		close(asked)
+		// No deadline on purpose: only the connection ending can free this.
+		return CallResult{}, call.Request(ctx, "elicitation/create", map[string]any{"message": "?"}, nil)
+	}})
+
+	toServer, clientOut := io.Pipe()
+	toClient, serverOut := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(context.Background(), toServer, serverOut) }()
+
+	cl := &Client{Elicit: func(ctx context.Context, _ json.RawMessage) (any, error) {
+		<-ctx.Done() // never answers
+		return nil, ctx.Err()
+	}}
+	if err := cl.Connect(context.Background(), toClient, clientOut); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _, _ = cl.CallTool(context.Background(), "ask", nil) }()
+	<-asked
+
+	// The client goes away while the question is outstanding.
+	clientOut.Close()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return: it waited for a handler it had not cancelled")
+	}
+	serverOut.Close()
+}

@@ -44,8 +44,11 @@ func (c Call) ClientSupports(capability string) bool {
 
 // Request asks the client something and waits for its answer, which is
 // decoded into out. It is how a tool reaches the person at the other end:
-// elicitation/create is the only method MCP defines for it today. The wait
-// ends with ctx, so a cancelled or timed-out call does not hang the tool.
+// elicitation/create is the only method MCP defines for it today.
+//
+// The wait ends only with ctx or an answer, and a person is on the other side,
+// so give ctx a deadline. Without one the call waits until the client answers
+// or the connection drops.
 func (c Call) Request(ctx context.Context, method string, params, out any) error {
 	if c.conn == nil {
 		return errors.New("this call has no connection to ask on")
@@ -181,7 +184,10 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	inflight := map[string]context.CancelFunc{}
-	defer wg.Wait()
+	// Cancel first, then wait: a handler blocked on an answer from a client that
+	// has gone away is released by the cancel, and waiting first would hold the
+	// shutdown until its own timeout.
+	defer func() { cancel(); wg.Wait() }()
 
 	for {
 		select {
