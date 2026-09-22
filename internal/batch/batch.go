@@ -44,7 +44,7 @@ type Spec struct {
 }
 
 type Task struct {
-	ID      string `json:"id,omitempty"` // branch hx/<id> and worktree .hx/worktrees/<id>; default t1, t2, ...
+	ID      string `json:"id,omitempty"` // branch hrn/<id> and worktree .hrn/worktrees/<id>; default t1, t2, ...
 	Prompt  string `json:"prompt"`
 	Backend string `json:"backend,omitempty"`
 	// Options set here override the spec's, field by field; a switch can be
@@ -64,7 +64,7 @@ const (
 	StatusCanceled Status = "canceled" // interrupted
 )
 
-// Result is the record of one batch, saved under $HX_HOME/batches before the
+// Result is the record of one batch, saved under $HRN_HOME/batches before the
 // first task starts and again when the batch ends.
 type Result struct {
 	ID       string        `json:"id"`
@@ -228,7 +228,7 @@ func checkGates(gates []string) error {
 // checkClean refuses to start when tracked files are modified: every worktree
 // branches from HEAD, so that work would not reach the agents and the batch
 // would quietly be testing something other than what the operator sees.
-// Untracked files are not counted - .hx/worktrees is one of them.
+// Untracked files are not counted - .hrn/worktrees is one of them.
 func checkClean(ctx context.Context, root string) error {
 	lines, err := dirtyPaths(ctx, root, false)
 	if err != nil {
@@ -248,7 +248,7 @@ func checkClean(ctx context.Context, root string) error {
 
 // Run executes the batch and saves its record. Tasks run through a pool of
 // Parallel workers; cancelling ctx stops running agents and skips the rest.
-// The record is written before the first task starts, so `hx batch rm` can
+// The record is written before the first task starts, so `hrn batch rm` can
 // clean up even after a crash, and again at the end. A failure to write the
 // final record is returned together with the finished Result.
 func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
@@ -295,17 +295,17 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 	// Keep the worktrees out of the repository's status.
-	wtRoot := filepath.Join(root, ".hx", "worktrees")
+	wtRoot := filepath.Join(root, ".hrn", "worktrees")
 	if err := os.MkdirAll(wtRoot, 0o755); err != nil {
 		return Result{}, err
 	}
-	if _, err := os.Stat(filepath.Join(root, ".hx", ".gitignore")); err != nil {
-		_ = os.WriteFile(filepath.Join(root, ".hx", ".gitignore"), []byte("*\n"), 0o644)
+	if _, err := os.Stat(filepath.Join(root, ".hrn", ".gitignore")); err != nil {
+		_ = os.WriteFile(filepath.Join(root, ".hrn", ".gitignore"), []byte("*\n"), 0o644)
 	}
 
 	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks))}
 	for i, t := range spec.Tasks {
-		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hx/" + t.ID,
+		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID,
 			Worktree: filepath.Join(wtRoot, t.ID), Attempts: []Attempt{}}
 	}
 	if err := save(res); err != nil {
@@ -605,7 +605,7 @@ func hasChanges(wt string) (bool, error) {
 	defer cancel()
 	// Untracked files count here: a worktree holding work the branch does not
 	// have must not be removed. Starting a batch ignores them instead, because
-	// .hx/worktrees itself is untracked in the root.
+	// .hrn/worktrees itself is untracked in the root.
 	lines, err := dirtyPaths(ctx, wt, true)
 	return len(lines) > 0, err
 }
@@ -682,7 +682,7 @@ func save(res Result) error {
 	if err != nil {
 		return err
 	}
-	// Written beside the record and renamed over it: `hx batch show` reads
+	// Written beside the record and renamed over it: `hrn batch show` reads
 	// this file while the batch is still running, and half a file is not a
 	// record. Rename replaces an existing file on Windows too.
 	path := filepath.Join(batchesDir(), res.ID+".json")
@@ -744,7 +744,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 		return "", nil, err
 	}
 	if tr.Commit != "" {
-		// `hx batch rm` deletes the branch, and the commit goes with it once
+		// `hrn batch rm` deletes the branch, and the commit goes with it once
 		// git collects it; say that rather than passing on "bad object".
 		if _, err := gitOut(ctx, res.Dir, "cat-file", "-e", tr.Commit+"^{commit}"); err != nil {
 			return "", nil, fmt.Errorf("task %s: commit %s is no longer in %s, so its branch was removed",
@@ -972,7 +972,7 @@ func gitStdout(ctx context.Context, dir string, args ...string) (string, error) 
 
 // mcpPathsOf resolves MCP config files against the spec's directory and
 // checks them, so a typo fails before an agent runs. A list that is present
-// but empty means no servers at all, not even ~/.hx/mcp.json; a missing list
+// but empty means no servers at all, not even ~/.hrn/mcp.json; a missing list
 // gets that default like every other entry point.
 func mcpPathsOf(dir string, paths []string) ([]string, error) {
 	if paths != nil && len(paths) == 0 {

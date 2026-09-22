@@ -69,7 +69,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	var promptFile string
 	if !c.promptStdin {
-		f, err := os.CreateTemp("", "hx-prompt-*.md")
+		f, err := os.CreateTemp("", "hrn-prompt-*.md")
 		if err != nil {
 			return fail(StatusError, err)
 		}

@@ -20,13 +20,13 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
-// Home is $HX_HOME, or ~/.hx.
+// Home is $HRN_HOME, or ~/.hrn.
 func Home() string {
-	if h := os.Getenv("HX_HOME"); h != "" {
+	if h := os.Getenv("HRN_HOME"); h != "" {
 		return h
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".hx")
+	return filepath.Join(home, ".hrn")
 }
 
 // Root is the runs directory under Home.
@@ -39,7 +39,7 @@ type Record struct {
 	Task    agent.Task   `json:"task"`
 	Result  agent.Result `json:"result"`
 	// Continues names the run this one follows, when it was started with
-	// hx run --continue.
+	// hrn run --continue.
 	Continues string `json:"continues,omitempty"`
 	Done      bool   `json:"-"`
 }

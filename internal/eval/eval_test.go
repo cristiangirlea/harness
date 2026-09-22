@@ -157,10 +157,10 @@ func TestRunScoresEachVariant(t *testing.T) {
 	}
 }
 
-// initRepo makes a repository with one commit and points HX_HOME at a temp dir.
+// initRepo makes a repository with one commit and points HRN_HOME at a temp dir.
 func initRepo(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()

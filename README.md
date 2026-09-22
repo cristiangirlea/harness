@@ -1,27 +1,27 @@
-# hx — personal agent harness
+# hrn — a small agent harness
 
 One Go binary that runs coding tasks on **your own agent loop** (Anthropic API) or on
 **agent CLIs you already pay for** (Claude Code, Codex, Gemini, opencode), and records
 every run in the same format so runs can be replayed, compared and scored later.
 
 It speaks **MCP** both ways: the api loop can use any stdio MCP server's tools, and
-`hx mcp` turns hx into an MCP server so Claude Code (or any host) can delegate tasks to
+`hrn mcp` turns hrn into an MCP server so Claude Code (or any host) can delegate tasks to
 any backend, several at a time.
 
-`hx batch` is the orchestrator: N agents in parallel, each in its own git worktree on
+`hrn batch` is the orchestrator: N agents in parallel, each in its own git worktree on
 its own branch, with build/test gates and retries on another backend.
 
 **Zero dependencies.** Standard library only — `go.mod` has no `require` lines. The API
 client (streaming SSE, retries, prompt caching, thinking round-trips) is ~400 lines in
 `internal/agent/messages.go`; MCP (JSON-RPC 2.0 over stdio, client and server) is ~600
-lines in `internal/mcp`. The CLI backends are optional programs hx calls if they're
+lines in `internal/mcp`. The CLI backends are optional programs hrn calls if they're
 installed, not build dependencies.
 
 ```
-hx run -b opencode --mode readonly "find the bug in math.go"
+hrn run -b opencode --mode readonly "find the bug in math.go"
 → glob **/math.go
-  ✓ C:\...\hxdemo\math.go
-→ read C:\...\hxdemo\math.go
+  ✓ …/hrndemo/math.go
+→ read …/hrndemo/math.go
   ✓ <path>...</path> (+8 lines)
 Yes, `add()` has a bug: it subtracts `b` from `a` instead of adding them.
 ── ok · opencode · 3 turns · 6.5k in / 87 out (cache 11.9k read) · 8.5s ──
@@ -31,35 +31,39 @@ Yes, `add()` has a bug: it subtracts `b` from `a` instead of adding them.
 
 Answer quality comes from the model, not the harness language. What the harness
 language decides is overhead and concurrency: a static ~7 MB binary with low idle memory,
-cheap goroutines for parallel tool calls and (next) many agents at once, and no runtime
+cheap goroutines for parallel tool calls and for many agents at once, and no runtime
 to install. Rust would shave a little memory at a large cost in iteration speed; Python
 costs 3–5× the memory and needs an interpreter.
 
-## Build
+## Install
+
+Go 1.26 or later, nothing else:
 
 ```bash
-go build -o hx.exe ./cmd/hx
-go test ./...
+go install github.com/cristiangirlea/harness/cmd/hrn@latest
 ```
+
+Or from a checkout: `go build -o hrn ./cmd/hrn` and `go test ./...`. The binary is
+static and runs on Linux, macOS and Windows; CI tests on Ubuntu and Windows.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `hx run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
-| `hx backends` | Show which backends are usable and where they were found. |
-| `hx version` | Print the hx and Go versions. |
-| `hx runs [-n N]` | List recent runs. |
-| `hx show [--json] <id>` | Replay a recorded run. |
-| `hx mcp` | Serve hx as an MCP server on stdio (see [MCP](#mcp)). |
-| `hx batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
-| `hx batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
-| `hx batch diff <id> <task-id>` | What one task changed, as a diff on stdout. |
-| `hx batch merge [--squash] <id> [task-id…]` | Merge the branches of the tasks that passed. |
-| `hx batch rm <id>` | Remove the worktrees and branches a batch created. |
-| `hx eval [flags] <eval.json>` | Run a task set across a matrix of backends, models and efforts (see [Evals](#evals)). |
-| `hx eval show <id>` | Reprint a saved eval. |
-| `hx report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
+| `hrn run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
+| `hrn backends` | Show which backends are usable and where they were found. |
+| `hrn version` | Print the hrn and Go versions. |
+| `hrn runs [-n N]` | List recent runs. |
+| `hrn show [--json] <id>` | Replay a recorded run. |
+| `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](#mcp)). |
+| `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
+| `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
+| `hrn batch diff <id> <task-id>` | What one task changed, as a diff on stdout. |
+| `hrn batch merge [--squash] <id> [task-id…]` | Merge the branches of the tasks that passed. |
+| `hrn batch rm <id>` | Remove the worktrees and branches a batch created. |
+| `hrn eval [flags] <eval.json>` | Run a task set across a matrix of backends, models and efforts (see [Evals](#evals)). |
+| `hrn eval show <id>` | Reprint a saved eval. |
+| `hrn report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
@@ -79,18 +83,22 @@ re-sent every turn. Three ceilings, all optional and all off by default.
 
 The CLI backends cannot enforce a cost or token ceiling, so they say so once and
 carry on; the timeout applies to them all the same. The cost ceiling is checked against
-hx's own estimate, so a model with no price in the table cannot be capped and the run
+hrn's own estimate, so a model with no price in the table cannot be capped and the run
 says so instead of pretending.
 
 ## Backends
 
-| Backend | Billing | How it runs |
-|---|---|---|
-| `api` | per token | The harness's own loop: Messages API (streaming, adaptive thinking, prompt caching, server-side refusal fallbacks on `claude-opus-5`) + client-side tools below + MCP tools. Needs `ANTHROPIC_API_KEY` (or an OAuth `ANTHROPIC_AUTH_TOKEN`); `ANTHROPIC_BASE_URL` overrides the endpoint. |
-| `claude` | your Claude subscription | `claude -p --output-format stream-json`. Found on PATH, `~/.local/bin`, npm, or the Claude desktop app's bundled build (that build needs its own `claude /login` first). |
-| `codex` | your ChatGPT subscription | `codex exec --json`. Not installed on this machine yet — event parsing is written against the documented format but untested. |
-| `gemini` | your Google login | `gemini -o json` (single JSON result, no live stream). Untested end to end. |
-| `opencode` | whatever opencode is configured with | `opencode run --format json`, prompt attached as a file. Verified. |
+| Backend | Billing | How it runs | Status |
+|---|---|---|---|
+| `api` | per token | The harness's own loop: Messages API (streaming, adaptive thinking, prompt caching, server-side refusal fallbacks on `claude-opus-5`) + client-side tools below + MCP tools. Needs `ANTHROPIC_API_KEY` (or an OAuth `ANTHROPIC_AUTH_TOKEN`); `ANTHROPIC_BASE_URL` overrides the endpoint. | Every path is covered by tests against a fake API server; it has not yet run against the real API. |
+| `claude` | your Claude subscription | `claude -p --output-format stream-json`. Found on PATH, `~/.local/bin`, npm, or the Claude desktop app's bundled build (that build needs its own `claude /login` first). | Verified end to end: `run`, `batch`, `eval`, and Claude Code delegating through `hrn mcp`. |
+| `codex` | your ChatGPT subscription | `codex exec --json`. | Parser written against the documented event format; not yet run for real. |
+| `gemini` | your Google login | `gemini -o json` (single JSON result, no live stream). | Not yet run for real. |
+| `opencode` | whatever opencode is configured with | `opencode run --format json`, prompt attached as a file. | `run` verified (the example above); not exercised by the later layers. |
+
+"Verified" means a real agent did real work through that path and the result was checked
+by hand, not that a test passed. Treat the unverified rows as drafts that need one run and
+probably one fix.
 
 Default backend: `api` when credentials exist, otherwise `claude`.
 
@@ -150,14 +158,14 @@ because the operator wrote those.
 
 A long run carries every tool result, and the cap is 30 KB per result, so the
 conversation reaches hundreds of thousands of tokens. The api backend therefore asks
-the server to clear old tool results itself (`clear_tool_uses_20250919`). hx still
+the server to clear old tool results itself (`clear_tool_uses_20250919`). hrn still
 uploads its whole history, which stays append-only; what the clearing changes is the
 context the model is given, so it is the context window and the billed input that
 shrink, not the request body. A clear invalidates the cached prefix from that point,
 which is the trade: one cold turn for a smaller context afterwards. That balance has
 not yet been measured against a real long run, so compare `cache_read_tokens` across
 two runs before trusting it. If the API ever refuses the beta, the run says so and
-retries once without it. `hx run --no-context-edits` turns it off for good, as do the
+retries once without it. `hrn run --no-context-edits` turns it off for good, as do the
 `no_context_edits` field on a batch spec or task and the MCP `run` argument.
 
 ### Continuing a run
@@ -166,7 +174,7 @@ The api backend saves its message history next to the transcript, so a finished 
 be picked up where it stopped:
 
 ```bash
-hx run --continue 20260921-095628-f18a6d "now fix the failing test"
+hrn run --continue 20260921-095628-f18a6d "now fix the failing test"
 ```
 
 The follow-up inherits the earlier run's backend, workspace, mode and model unless you
@@ -184,21 +192,21 @@ thinking.
 
 ### Project instructions
 
-The api loop reads `HX.md`, `AGENTS.md` and `CLAUDE.md` from the workspace root and
+The api loop reads `HRN.md`, `AGENTS.md` and `CLAUDE.md` from the workspace root and
 puts them in its system prompt, so it sees the same house rules the agent CLIs read
 from their own files. Only the root is searched, the files are sent in that order, and
 the total is capped at 32 KiB; the run says what it loaded and whether the cap cut
 anything. A file that is a symlink out of the workspace is refused, like any other
-path. `hx run --no-instructions` skips them, as do the `no_instructions` field on a
+path. `hrn run --no-instructions` skips them, as do the `no_instructions` field on a
 batch spec or task and the MCP `run` argument of the same name.
 
 ## MCP
 
 ### Using MCP servers as tools
 
-`hx run --mcp .mcp.json ...` starts every stdio server in the file, offers its tools to
+`hrn run --mcp .mcp.json ...` starts every stdio server in the file, offers its tools to
 the model as `mcp__<server>__<tool>` (Claude Code's naming) and stops the servers when
-the run ends. `~/.hx/mcp.json` (or `$HX_HOME/mcp.json`) is loaded whenever it exists;
+the run ends. `~/.hrn/mcp.json` (or `$HRN_HOME/mcp.json`) is loaded whenever it exists;
 `--mcp` files add to it, and a later file overrides an earlier server of the same name.
 The format is Claude Code's, so existing `.mcp.json` files work unchanged:
 
@@ -208,7 +216,7 @@ The format is Claude Code's, so existing `.mcp.json` files work unchanged:
 ```
 
 `${VAR}` and `${VAR:-default}` expand from the environment. Entries with a `url` (HTTP
-transports) are skipped: hx speaks stdio only. Servers run with the workspace as their
+transports) are skipped: hrn speaks stdio only. Servers run with the workspace as their
 working directory and are told it is the root.
 
 Permissions follow the mode table. A tool the server marks `readOnlyHint` is a read:
@@ -222,13 +230,13 @@ Per backend: `api` uses the servers directly; `claude` receives each file as
 The config paths are recorded in the run's `task.json`, so a run can be replayed with
 the same tool set.
 
-### hx as an MCP server
+### hrn as an MCP server
 
-`hx mcp` serves hx on stdio. Register it once with Claude Code, from the project you
+`hrn mcp` serves hrn on stdio. Register it once with Claude Code, from the project you
 want it to work in by default:
 
 ```bash
-claude mcp add hx -- E:\__Workdir\harness\hx.exe mcp
+claude mcp add hrn -- hrn mcp
 ```
 
 The default workspace is the server's working directory, or `--dir PATH` (an absolute
@@ -247,7 +255,7 @@ Tools:
 | `backends` | — | Which backends are usable here. |
 
 Requests are served concurrently, so parallel tool calls from the host become parallel
-agents, each recorded under `~/.hx/runs` like a CLI run. Cancelling the tool call cancels
+agents, each recorded under `~/.hrn/runs` like a CLI run. Cancelling the tool call cancels
 the run. `run` defaults to `readonly`; `auto` allows file edits and `yolo` also allows
 commands.
 
@@ -259,11 +267,11 @@ matters, and the decision goes back to the host as progress. Anything other than
 yes is a no, including a declined prompt, a cancelled one, an error, or a host that does
 not support elicitation at all. Two runs in ask mode at the same time ask independently,
 which is why the prompt says which run it is from. That makes `ask` a real mode in the
-place hx runs most.
+place hrn runs most.
 
 ## Batches
 
-`hx batch tasks.json` runs every task in the file against one repository, `parallel`
+`hrn batch tasks.json` runs every task in the file against one repository, `parallel`
 agents at a time, each in its own git worktree on its own branch. After an agent
 finishes, the gate commands run in that worktree; a task whose run or gates fail is
 retried on the next backend in `retry`. Every attempt is an ordinary recorded run.
@@ -285,21 +293,21 @@ retried on the next backend in `retry`. Every attempt is an ordinary recorded ru
 `dir` (default: the file's directory) is any path inside the repository. Task fields
 override the file's defaults of the same name; `id` defaults to `t1`, `t2`, ….
 
-Every option `hx run` takes as a flag is a spec field under the same name with
+Every option `hrn run` takes as a flag is a spec field under the same name with
 underscores (`--max-turns` is `max_turns`, `--max-cost` is `max_cost_usd`), on the spec
 or on a task; the MCP `run` tool takes the same names. They are one struct in the code
 (`agent.Options`), so the three cannot drift apart. A task's value replaces the spec's;
 a switch a task turns on stays on; a task's own `mcp` list replaces the spec's, and an
-empty list (`"mcp": []`) means no servers at all, not even `~/.hx/mcp.json`. Every list
+empty list (`"mcp": []`) means no servers at all, not even `~/.hrn/mcp.json`. Every list
 is checked before the first task starts.
 
-For each task hx creates branch `hx/<id>` and worktree `.hx/worktrees/<id>` from the
+For each task hrn creates branch `hrn/<id>` and worktree `.hrn/worktrees/<id>` from the
 current `HEAD` (uncommitted changes in the main worktree are not included), runs the
 agent there, then the gates in order, stopping at the first non-zero exit or after 15
 minutes. Whatever the agent left is committed on the branch as `<id>: <prompt>`, pass or
 fail, so a worktree can be inspected, merged or removed without losing work; if that
 commit fails (no git identity, a pre-commit hook) the task ends as `error` and the work
-stays uncommitted in the worktree. hx writes `.hx/.gitignore` so the worktrees never
+stays uncommitted in the worktree. hrn writes `.hrn/.gitignore` so the worktrees never
 show up in the repository's status.
 
 A failed attempt is retried on each backend named in `retry`, in order. The same name
@@ -314,9 +322,9 @@ how the attempt failed.
 
 A continued attempt commits as `<id>: <prompt> (attempt N)`, so the branch reads as a
 sequence of fixes. Each attempt records the prompt it was actually sent and whether it
-continued, which `hx batch --json` prints.
+continued, which `hrn batch --json` prints.
 
-`hx batch` refuses to start when tracked files in the repository are modified: every
+`hrn batch` refuses to start when tracked files in the repository are modified: every
 worktree branches from `HEAD`, so that work would not reach the agents and the batch
 would quietly be testing something else. Commit or stash first, or pass `--allow-dirty`
 (spec field `allow_dirty`). Untracked files are not counted.
@@ -331,16 +339,16 @@ they apply per attempt rather than per task, so a retry gets its own allowance. 
 may set its own value or change the spec's, but zero means inherit, so it cannot remove
 a limit the spec set.
 
-The record goes to `~/.hx/batches/<id>.json`, written before the first task starts and
+The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts and
 again at the end; `--json` prints it, `-v` streams every agent's tool calls. Ctrl+C
 cancels running agents and skips the rest. Exit status is 1 unless every task passed.
 
 ### Reading and landing the work
 
 ```
-hx batch show 20260922-164137-1a216b     # the same table, during the run or after it
-hx batch diff 20260922-164137-1a216b alpha
-hx batch merge 20260922-164137-1a216b
+hrn batch show 20260922-164137-1a216b     # the same table, during the run or after it
+hrn batch diff 20260922-164137-1a216b alpha
+hrn batch merge 20260922-164137-1a216b
 ```
 
 `show` reprints the end-of-run table from the record; a batch still going shows its
@@ -361,12 +369,12 @@ which task, and stops — the branches are still there to merge by hand. `--squa
 records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a whole
 run with `git reset --hard ORIG_HEAD`.
 
-`hx batch rm <id>` removes the worktrees and branches of a batch (it refuses a worktree
+`hrn batch rm <id>` removes the worktrees and branches of a batch (it refuses a worktree
 with uncommitted changes); the record and the run logs stay.
 
 ## Reports
 
-`hx report` reads every run and batch record and prints two tables.
+`hrn report` reads every run and batch record and prints two tables.
 
 ```
 runs by backend, since 2026-09-14 17:40 (7d)
@@ -377,7 +385,7 @@ all         9   8  89%     55s          8      ~$1.45     $0.15    90%
 
 batches by repository, since 2026-09-14 17:40 (7d)
 repository              batches  tasks  pass%  med attempts  total cost
-E:\__Workdir\JobPilotC        1      3   100%             1      ~$1.03
+~/src/jobpilot                1      3   100%             1      ~$1.03
 all                           1      3   100%             1      ~$1.03
 ```
 
@@ -419,7 +427,7 @@ collide. Retries are off for every cell on purpose: an eval measures what one at
 does, and a retried attempt would score the harness rather than the backend. Everything
 else, gates and mode and the budgets, carries through from the spec.
 
-`hx eval eval.json` prints what each variant did and how each task scored under it:
+`hrn eval eval.json` prints what each variant did and how each task scored under it:
 
 ```
   variant                pass  attempts  median cost median time   turns   context
@@ -431,11 +439,11 @@ else, gates and mode and the budgets, carries through from the spec.
 ── eval cb867 · batch 20260922-164017-1bbd7c · 2 cells · 14s ──
 ```
 
-That run is real: asked for a file containing exactly `hx rocks`, Sonnet wrote `hx rocks.`
+That run is real: asked for a file containing exactly `hrn rocks`, Sonnet wrote `hrn rocks.`
 and failed the gate while Haiku passed at a third of the cost. The run records are still
 there to say why, which is the point of keeping them.
 
-The record goes to `~/.hx/evals/<id>.json`; `--json` prints it, `hx eval show <id>`
+The record goes to `~/.hrn/evals/<id>.json`; `--json` prints it, `hrn eval show <id>`
 reprints it, `-v` streams every agent's tool calls. The worktrees are removed once the
 record is safely written, unless `--keep`. A failing variant is data, not an error, so
 the exit status is 0 whenever the eval itself ran.
@@ -452,41 +460,63 @@ to express what "done" means, and a spec that fills it in is told so at the star
 
 ## Run records
 
-`~/.hx/runs/<id>/` (or `$HX_HOME/runs`):
+`~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 
 - `task.json` — prompt, dir, backend, and the run options by their flag names
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load)
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped)
-- `messages.json` — the api backend's message history, for `hx run --continue`. It
+- `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
-  twice the disk of its transcript; nothing prunes `~/.hx` yet
+  twice the disk of its transcript; nothing prunes `~/.hrn` yet
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration
 
 ## Layout
 
 ```
-cmd/hx/            CLI + terminal renderer (batch subcommands in batch.go)
+cmd/hrn/           CLI + terminal renderer (batch subcommands in batch.go)
 internal/agent/    Backend interface, api loop + stdlib Messages client, one file per CLI adapter
 internal/tools/    workspace-confined tool runtime + MCP tool adapter
 internal/mcp/      MCP over stdio: JSON-RPC codec, Client, Server, config loader
-internal/hxmcp/    hx's own MCP server (run, runs, show, backends)
+internal/hrnmcp/   hrn's own MCP server (run, runs, show, backends)
 internal/batch/    orchestrator: parallel worktrees, gates, retries, batch records
-internal/report/   aggregation over run and batch records (hx report; reused by eval)
+internal/eval/     a batch across a matrix of variants, scored per variant and per task
+internal/report/   aggregation over run and batch records (hrn report; reused by eval)
 internal/runlog/   run recording
 ```
 
-## Roadmap
+## Status and what is open
 
-The `agent.Backend` contract (Task → Events → Result) is what the layers build on.
-`hx mcp` (a host session plans, hx runs) and `hx batch` (parallel worktrees, gates,
-retries) are the orchestrator; the eval layer is what remains.
+The three layers from the original brief are all here: the agent core (`hrn run`), the
+orchestrator (`hrn batch`, `hrn mcp`) and the scoring layer (`hrn eval`). What remains,
+in the order it is worth taking:
 
-1. **Eval** — run a task set × backends × models repeatedly, score results
-   (deterministic checks first, LLM judge only where needed), compare over time from
-   the run and batch records.
-2. **Batch follow-ups** — feed a failed attempt's gate output into the retry prompt;
-   `hx batch merge` for passed branches.
-3. **MCP follow-ups** — Streamable HTTP transport for remote servers; MCP elicitation so
-   a host can answer `ask`-mode approvals instead of hx denying them.
+1. **A real run of the `api` backend.** It is the only backend that has never spoken to
+   its API; everything in it is covered by a fake server.
+2. **Measure the context-editing default.** Server-side clearing is on by default and its
+   interaction with prompt caching is unmeasured; one long run with and without it,
+   compared on cache reads, settles whether the default is right.
+3. **The eval judge.** The `judge` key is reserved. Gates cannot score a diff against a
+   rubric, which is what "did it do the right thing" needs.
+4. **MCP over HTTP.** Only stdio today, which is enough for every host hrn has met.
+5. **One options struct**, so an api option is declared once instead of being wired by
+   hand through the run flags, the batch spec and the MCP tool.
+
+`PLAN.md` is the work queue and the decisions log: every increment so far, what was
+deferred and why. It still calls the binary by its old name, `hrn`, in entries written
+before the rename.
+
+## Contributing
+
+- **Standard library only.** No third-party Go modules, and Windows syscalls go through
+  `syscall.NewLazyDLL`, not `x/sys`. The CLI backends are external programs, not
+  dependencies.
+- **Tests first, seen failing.** Process-spawning code is tested by re-running the test
+  binary as a helper; the API loop against a fake SSE server; MCP over in-memory pipes.
+- **One pull request per increment**, small enough to review, with the plan updated in
+  the same PR.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

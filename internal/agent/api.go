@@ -105,7 +105,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			return
 		}
 		conv := Conversation{Model: res.Model, Messages: msgs}
-		// Compact: this file is read back by hx, not by people, and it already
+		// Compact: this file is read back by hrn, not by people, and it already
 		// repeats every tool result the transcript holds.
 		if data, err := json.Marshal(conv); err == nil {
 			_ = os.WriteFile(filepath.Join(task.RunDir, "messages.json"), data, 0o644)
@@ -207,7 +207,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		if req.OutputConfig == nil {
 			req.OutputConfig = block{}
 		}
-		// remaining stays unset: hx resends the whole history every turn, so
+		// remaining stays unset: hrn resends the whole history every turn, so
 		// the server tracks the countdown better than the client could.
 		req.OutputConfig["task_budget"] = block{"type": "tokens", "total": task.TaskBudget}
 		req.betas = append(req.betas, betaTaskBudget)
@@ -257,7 +257,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 
 		msg, err := client.stream(ctx, req, onDelta, onBlock)
 		if err != nil && dropContextEdits(&req, err) {
-			// A beta hx sends by default must never make every run fail.
+			// A beta hrn sends by default must never make every run fail.
 			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
 			msg, err = client.stream(ctx, req, onDelta, onBlock)
 		}

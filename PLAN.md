@@ -579,6 +579,23 @@ order they are worth taking:
 
 ## Decisions log
 
+- 2026-09-22: open-source prep (#17). The binary is renamed from hx to hrn: hx is the Helix
+  editor's binary, so nobody with Helix on PATH could have installed this. Every word in
+  the harness vocabulary is already an agent tool on GitHub (harn, bridle, reins, tack, yoke
+  five times over, halter; hame has hames next to it), so the name is the repo's own name
+  shortened, unclaimed as a binary, three keystrokes. Everything spelled with the name moved
+  with it (cmd/hrn, hrnmcp, HRN_HOME, ~/.hrn, .hrn/worktrees, hrn/<id> branches, HRN.md);
+  the module path stays, and this log keeps "hx" in the entries written before today
+  because they describe what happened. LICENSE is MIT. The README gained an install
+  section, a per-backend status column that says which paths a real agent has actually
+  been through, the open list in place of a roadmap everything on which had shipped, and a
+  contributing section with the three rules. Local state to migrate by hand: ~/.hx to
+  ~/.hrn, the Claude Code registration (claude mcp remove hx; claude mcp add hrn -- hrn mcp),
+  and any project HX.md, which is read as HRN.md now. For a branch that predates the rename
+  (PR L is open as this merges): merge main, then on each conflicted file take the branch's
+  side and re-run the substitution, hxmcp to hrnmcp first, then hx/HX/Hx to hrn/HRN/Hrn where
+  no letter or digit touches them. Git's directory-rename detection moves cmd/hx and
+  internal/hxmcp edits to the new paths by itself.
 - 2026-09-22: PR K self-review, 7 findings, all fixed. The fuzz step ran both fuzzers in
   one shell command, so a crash in the first hid the second; they are separate steps now,
   the second with always(), and a failure uploads whatever input the fuzzer saved, which

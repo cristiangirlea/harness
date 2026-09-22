@@ -22,14 +22,14 @@ type ServerConfig struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
-	// Dir is the server's working directory; hx uses the task workspace.
+	// Dir is the server's working directory; hrn uses the task workspace.
 	Dir string `json:"-"`
 }
 
 // Client talks to one MCP server. Zero value fields are optional; call Start
 // (spawn a process) or Connect (existing pipes) before anything else.
 type Client struct {
-	// Info is sent as clientInfo. Defaults to hx.
+	// Info is sent as clientInfo. Defaults to hrn.
 	Info Implementation
 	// Roots are the directories reported to servers that ask (roots/list).
 	Roots []string
@@ -107,7 +107,7 @@ func (c *Client) Start(ctx context.Context, cfg ServerConfig) error {
 // the server's output, w feeds its input) and lists the server's tools.
 func (c *Client) Connect(ctx context.Context, r io.Reader, w io.Writer) error {
 	if c.Info.Name == "" {
-		c.Info = Implementation{Name: "hx", Version: "dev"}
+		c.Info = Implementation{Name: "hrn", Version: "dev"}
 	}
 	if c.StartupTimeout <= 0 {
 		c.StartupTimeout = 60 * time.Second

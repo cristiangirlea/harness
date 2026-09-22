@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-var skipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true, ".hx": true, "dist": true, "build": true, "__pycache__": true, ".venv": true}
+var skipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true, ".hrn": true, "dist": true, "build": true, "__pycache__": true, ".venv": true}
 
 func str(v string) map[string]any { return map[string]any{"type": "string", "description": v} }
 func num(v string) map[string]any { return map[string]any{"type": "integer", "description": v} }

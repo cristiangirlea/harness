@@ -16,7 +16,7 @@ import (
 //	{"mcpServers": {"name": {"command": "npx", "args": ["-y", "pkg"], "env": {"K": "${VAR}"}}}}
 //
 // ${VAR} and ${VAR:-default} expand from the environment. Entries with a
-// "url" (http or sse transports) are skipped: hx speaks stdio only.
+// "url" (http or sse transports) are skipped: hrn speaks stdio only.
 type Config struct {
 	Servers map[string]configEntry `json:"mcpServers"`
 }
@@ -29,13 +29,13 @@ type configEntry struct {
 	URL     string            `json:"url,omitempty"`
 }
 
-// DefaultConfigPath is $HX_HOME/mcp.json, or ~/.hx/mcp.json.
+// DefaultConfigPath is $HRN_HOME/mcp.json, or ~/.hrn/mcp.json.
 func DefaultConfigPath() string {
-	if h := os.Getenv("HX_HOME"); h != "" {
+	if h := os.Getenv("HRN_HOME"); h != "" {
 		return filepath.Join(h, "mcp.json")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".hx", "mcp.json")
+	return filepath.Join(home, ".hrn", "mcp.json")
 }
 
 // ConfigPaths returns the default config when it exists, followed by extra,

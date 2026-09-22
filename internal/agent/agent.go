@@ -175,7 +175,7 @@ func finish(res *Result, started time.Time) Result {
 	return *res
 }
 
-// Version is reported to MCP peers as the hx version.
+// Version is reported to MCP peers as the hrn version.
 const Version = "0.2.0"
 
 // DefaultBackendName is api when API credentials exist, otherwise claude.
@@ -191,7 +191,7 @@ func DefaultBackendName() string {
 // MinTaskBudget is the smallest task budget the API accepts.
 const MinTaskBudget = 20000
 
-// ValidateLimits rejects limits the API or hx would refuse, where the values
+// ValidateLimits rejects limits the API or hrn would refuse, where the values
 // are typed rather than after an agent has already started.
 func ValidateLimits(timeout time.Duration, maxCostUSD float64, taskBudget int) error {
 	if timeout < 0 {

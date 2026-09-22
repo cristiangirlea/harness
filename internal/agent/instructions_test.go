@@ -53,16 +53,16 @@ func TestLoadInstructions(t *testing.T) {
 
 func TestLoadInstructionsSkipsEmptyAndPrefersHX(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "HX.md", "hx first")
+	writeFile(t, dir, "HRN.md", "hrn first")
 	writeFile(t, dir, "AGENTS.md", "   \n\n")
 	text, names, _, err := load(t, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(names, ",") != "HX.md" {
+	if strings.Join(names, ",") != "HRN.md" {
 		t.Errorf("an empty file should be skipped: %v", names)
 	}
-	if !strings.HasPrefix(text, "# Project instructions\n\n## HX.md\n\nhx first") {
+	if !strings.HasPrefix(text, "# Project instructions\n\n## HRN.md\n\nhrn first") {
 		t.Errorf("text = %q", text)
 	}
 }

@@ -58,7 +58,7 @@ func Guard(command string) string {
 // and the setting that lifts it, and says not to retry, because only the
 // operator can change that setting.
 func GuardError(rule string) error {
-	return fmt.Errorf("blocked by the hx command guard (%s): only the operator can allow this, "+
+	return fmt.Errorf("blocked by the hrn command guard (%s): only the operator can allow this, "+
 		"with --allow-dangerous (allow_dangerous in a batch spec or an MCP call). "+
 		"Do not retry the command; say in your answer why it is needed", rule)
 }

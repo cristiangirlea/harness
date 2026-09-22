@@ -12,10 +12,10 @@ import (
 	"github.com/cristiangirlea/harness/internal/mcp"
 )
 
-// TestHelperMCPServer is not a test: with HX_MCP_HELPER=1 the test binary
+// TestHelperMCPServer is not a test: with HRN_MCP_HELPER=1 the test binary
 // serves a two-tool MCP server on stdio for the tests below.
 func TestHelperMCPServer(t *testing.T) {
-	if os.Getenv("HX_MCP_HELPER") != "1" {
+	if os.Getenv("HRN_MCP_HELPER") != "1" {
 		return
 	}
 	s := mcp.NewServer(mcp.Implementation{Name: "fake", Version: "1"}, "")
@@ -46,7 +46,7 @@ func mcpConfigFile(t *testing.T, command string) string {
 	cfg := map[string]any{"mcpServers": map[string]any{"fake": map[string]any{
 		"command": command,
 		"args":    []string{"-test.run=^TestHelperMCPServer$", "--"},
-		"env":     map[string]string{"HX_MCP_HELPER": "1"},
+		"env":     map[string]string{"HRN_MCP_HELPER": "1"},
 	}}}
 	data, _ := json.Marshal(cfg)
 	p := filepath.Join(t.TempDir(), "mcp.json")
@@ -112,7 +112,7 @@ func TestAPILoopMCPModes(t *testing.T) {
 
 func TestAPILoopMCPStartFailureIsReported(t *testing.T) {
 	res, events, fake := runFake(t, [][]string{textTurn("ok")},
-		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MCP: []string{mcpConfigFile(t, "hx-definitely-missing-binary")}}})
+		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MCP: []string{mcpConfigFile(t, "hrn-definitely-missing-binary")}}})
 	if res.Status != StatusOK {
 		t.Fatalf("a broken MCP server must not fail the run: %+v", res)
 	}

@@ -1,4 +1,4 @@
-package hxmcp
+package hrnmcp
 
 import (
 	"context"
@@ -40,7 +40,7 @@ type session struct {
 
 func connect(t *testing.T, defaultDir string) *session {
 	t.Helper()
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	toServer, clientOut := io.Pipe()
 	toClient, serverOut := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -243,7 +243,7 @@ func answering(t *testing.T, reply map[string]any) *session {
 // assert what the person was actually asked.
 func answeringWith(t *testing.T, reply map[string]any, watch func(json.RawMessage)) *session {
 	t.Helper()
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	toServer, clientOut := io.Pipe()
 	toClient, serverOut := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())

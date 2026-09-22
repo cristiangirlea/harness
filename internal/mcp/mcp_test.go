@@ -176,7 +176,7 @@ func TestClientAnswersServerRequests(t *testing.T) {
 	m := read("initialize")
 	var p initializeParams
 	_ = json.Unmarshal(m.Params, &p)
-	if p.ProtocolVersion != ProtocolVersion || p.ClientInfo.Name != "hx" {
+	if p.ProtocolVersion != ProtocolVersion || p.ClientInfo.Name != "hrn" {
 		t.Errorf("initialize params = %+v", p)
 	}
 	_ = srv.respond(m.ID, initializeResult{ProtocolVersion: ProtocolVersion, ServerInfo: Implementation{Name: "fake", Version: "0"}, Capabilities: map[string]any{}})
@@ -220,9 +220,9 @@ func TestClientAnswersServerRequests(t *testing.T) {
 }
 
 // TestHelperMCPServer is not a test: the stdio tests re-run the test binary
-// with HX_MCP_HELPER=1 so it serves echoServer on its own stdin/stdout.
+// with HRN_MCP_HELPER=1 so it serves echoServer on its own stdin/stdout.
 func TestHelperMCPServer(t *testing.T) {
-	switch os.Getenv("HX_MCP_HELPER") {
+	switch os.Getenv("HRN_MCP_HELPER") {
 	case "1":
 		_ = echoServer().Serve(context.Background(), os.Stdin, os.Stdout)
 		os.Exit(0)
@@ -233,7 +233,7 @@ func TestHelperMCPServer(t *testing.T) {
 }
 
 func helperConfig(mode string) ServerConfig {
-	return ServerConfig{Command: os.Args[0], Args: []string{"-test.run=^TestHelperMCPServer$", "--"}, Env: map[string]string{"HX_MCP_HELPER": mode}}
+	return ServerConfig{Command: os.Args[0], Args: []string{"-test.run=^TestHelperMCPServer$", "--"}, Env: map[string]string{"HRN_MCP_HELPER": mode}}
 }
 
 func TestStdioProcess(t *testing.T) {
@@ -260,17 +260,17 @@ func TestStartFailureIncludesStderr(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "helper crashing on purpose") {
 		t.Fatalf("err = %v", err)
 	}
-	if err := (&Client{}).Start(context.Background(), ServerConfig{Command: "hx-definitely-missing-binary"}); err == nil {
+	if err := (&Client{}).Start(context.Background(), ServerConfig{Command: "hrn-definitely-missing-binary"}); err == nil {
 		t.Fatal("missing binary should fail to start")
 	}
 }
 
 func TestLoadConfig(t *testing.T) {
-	t.Setenv("HX_TEST_TOKEN", "tok")
-	t.Setenv("HX_TEST_EMPTY", "")
+	t.Setenv("HRN_TEST_TOKEN", "tok")
+	t.Setenv("HRN_TEST_EMPTY", "")
 	p := filepath.Join(t.TempDir(), "mcp.json")
 	if err := os.WriteFile(p, []byte(`{"mcpServers":{
-		"zeta":{"command":"z","args":["--token","${HX_TEST_TOKEN}","${HX_TEST_EMPTY:-dflt}","${HX_NOPE_UNSET}","literal $x"],"env":{"K":"${HX_TEST_TOKEN}"}},
+		"zeta":{"command":"z","args":["--token","${HRN_TEST_TOKEN}","${HRN_TEST_EMPTY:-dflt}","${HRN_NOPE_UNSET}","literal $x"],"env":{"K":"${HRN_TEST_TOKEN}"}},
 		"alpha":{"command":"a"},
 		"remote":{"type":"http","url":"https://x"},
 		"sse":{"url":"https://y"}}}`), 0o644); err != nil {
@@ -310,7 +310,7 @@ func TestLoadConfigsLaterFileWins(t *testing.T) {
 
 func TestConfigPaths(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HX_HOME", home)
+	t.Setenv("HRN_HOME", home)
 	paths, err := ConfigPaths(nil)
 	if err != nil || len(paths) != 0 {
 		t.Fatalf("paths=%v err=%v", paths, err)

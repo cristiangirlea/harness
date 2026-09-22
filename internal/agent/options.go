@@ -29,9 +29,9 @@ type Options struct {
 	// the claude CLI. Absolute paths once a caller has resolved them.
 	MCP []string `json:"mcp,omitempty" desc:"MCP config files, in Claude Code's .mcp.json format."`
 
-	// NoInstructions skips the project instruction files (HX.md, AGENTS.md,
+	// NoInstructions skips the project instruction files (HRN.md, AGENTS.md,
 	// CLAUDE.md) that the api backend otherwise puts in its system prompt.
-	NoInstructions bool `json:"no_instructions,omitempty" desc:"Skip the project instruction files HX.md, AGENTS.md and CLAUDE.md (api backend)."`
+	NoInstructions bool `json:"no_instructions,omitempty" desc:"Skip the project instruction files HRN.md, AGENTS.md and CLAUDE.md (api backend)."`
 
 	// NoContextEdits turns off server-side context management, which the api
 	// backend asks for by default so old tool results are cleared server-side
@@ -54,7 +54,7 @@ type Options struct {
 	TaskBudget int `json:"task_budget,omitempty" desc:"Token ceiling the api backend gives the model to pace itself (min 20000)."`
 }
 
-// Validate rejects what the API or hx would refuse, where the values are typed
+// Validate rejects what the API or hrn would refuse, where the values are typed
 // rather than after an agent has started. An empty mode passes: each entry
 // point has its own default.
 func (o Options) Validate() error {

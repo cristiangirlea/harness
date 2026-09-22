@@ -39,7 +39,7 @@ func cmdBatch(args []string) (int, error) {
 // run-time failure (1).
 func loadBatch(args []string, want int, form string) (batch.Result, int, error) {
 	if len(args) != want {
-		return batch.Result{}, 2, fmt.Errorf("usage: hx batch %s", form)
+		return batch.Result{}, 2, fmt.Errorf("usage: hrn batch %s", form)
 	}
 	res, err := batch.LoadResult(args[0])
 	if err != nil {
@@ -121,7 +121,7 @@ func cmdBatchMerge(args []string) (int, error) {
 		return 2, nil
 	}
 	if fs.NArg() < 1 {
-		return 2, errors.New("usage: hx batch merge [--squash] <batch-id> [task-id...]")
+		return 2, errors.New("usage: hrn batch merge [--squash] <batch-id> [task-id...]")
 	}
 	res, err := batch.LoadResult(fs.Arg(0))
 	if err != nil {
@@ -155,7 +155,7 @@ func cmdBatchMerge(args []string) (int, error) {
 	}
 	if done > 0 {
 		r.Line(r.c(dim, fmt.Sprintf("%d branch(es) merged into %s · undo with: git reset --hard ORIG_HEAD · "+
-			"remove the worktrees with: hx batch rm %s", done, res.Dir, res.ID)))
+			"remove the worktrees with: hrn batch rm %s", done, res.Dir, res.ID)))
 	}
 	return 0, nil
 }
@@ -184,7 +184,7 @@ func cmdBatchRun(args []string) (int, error) {
 		return 2, nil
 	}
 	if fs.NArg() != 1 {
-		return 2, errors.New("usage: hx batch [flags] <tasks.json>")
+		return 2, errors.New("usage: hrn batch [flags] <tasks.json>")
 	}
 	spec, err := batch.LoadSpec(fs.Arg(0))
 	if err != nil {
@@ -241,7 +241,7 @@ func passed(res batch.Result) int {
 	return n
 }
 
-// printBatch is the end-of-run table, which `hx batch show` reprints later or
+// printBatch is the end-of-run table, which `hrn batch show` reprints later or
 // while the batch is still going.
 func printBatch(r *renderer, res batch.Result) {
 	running := 0
@@ -274,6 +274,6 @@ func printBatch(r *renderer, res batch.Result) {
 	}
 	r.Line(r.c(dim, fmt.Sprintf("── batch %s · %d/%d passed%s · %s ──",
 		res.ID, passed(res), len(res.Tasks), tail, took)))
-	r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · merge them with: hx batch merge %s · remove them with: hx batch rm %s",
-		filepath.Join(res.Dir, ".hx", "worktrees"), res.ID, res.ID)))
+	r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · merge them with: hrn batch merge %s · remove them with: hrn batch rm %s",
+		filepath.Join(res.Dir, ".hrn", "worktrees"), res.ID, res.ID)))
 }

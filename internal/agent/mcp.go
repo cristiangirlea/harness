@@ -37,7 +37,7 @@ func startMCP(ctx context.Context, task Task, root string, emit func(Event)) ([]
 		go func() {
 			defer wg.Done()
 			cfg.Dir = root
-			cl := &mcp.Client{Info: mcp.Implementation{Name: "hx", Version: Version}, Roots: []string{root}}
+			cl := &mcp.Client{Info: mcp.Implementation{Name: "hrn", Version: Version}, Roots: []string{root}}
 			results[i] = started{cl, cl.Start(ctx, cfg)}
 		}()
 	}
