@@ -101,6 +101,12 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
+	if task.Mode == ModeYolo {
+		// The command guard lives in the api backend's own run_command, so a
+		// CLI backend running unattended has only its own permission system.
+		emit(Event{Time: time.Now(), Kind: EventInfo,
+			Text: fmt.Sprintf("command guard: not applied by the %s backend; its own permissions decide", c.name)})
+	}
 	if err := cmd.Start(); err != nil {
 		return fail(StatusError, err)
 	}
