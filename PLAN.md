@@ -859,3 +859,15 @@ order they are worth taking:
   and `--timeout soon`, `hx report` still reads the records written with `timeout_ns`,
   a spec with `"timeout":"5m"` and a task-level `mcp` parses, and the MCP schema lists
   every option with a description.
+- 2026-09-22: PR L self-review, 10 findings, 8 fixed. The one that mattered: `Duration`
+  accepted a bare JSON number as nanoseconds, for records that in fact keep the old
+  value under their own key, so `"timeout": 300` in a spec would have run every task for
+  300ns; numbers are refused now and null means unset. A task's own `mcp` list is
+  resolved and checked in `Run` with the spec's, so a typo in task seven no longer waits
+  for six agents to finish, and an explicit empty list means no servers at all, which
+  the README had claimed and `ConfigPaths` had quietly overridden with the default file.
+  A test in `cmd/hx` now fails when the hand-written usage text omits a flag the struct
+  has. Not fixed: a bad per-task duration is reported by value rather than by task,
+  because encoding/json gives a custom unmarshaler no field path; and the methods of an
+  embedded struct promote, so `spec.Validate()` exists and checks only the options -
+  named in the doc comment, not worth un-embedding.
