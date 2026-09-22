@@ -377,6 +377,37 @@ func TestAllowDangerousReachesTheTask(t *testing.T) {
 	}
 }
 
+func TestTaskMCPListsAreResolvedBeforeAnythingRuns(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "servers.json"), []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "own", Prompt: "a", Options: agent.Options{MCP: []string{"servers.json"}}},
+		{ID: "none", Prompt: "a", Options: agent.Options{MCP: []string{}}},
+	}})
+	own := firstRun(t, res.Tasks[0])
+	if len(own.Task.MCP) == 0 || !filepath.IsAbs(own.Task.MCP[len(own.Task.MCP)-1]) ||
+		filepath.Base(own.Task.MCP[len(own.Task.MCP)-1]) != "servers.json" {
+		t.Errorf("a task's mcp file should reach it resolved against the spec's dir: %v", own.Task.MCP)
+	}
+	if none := firstRun(t, res.Tasks[1]); len(none.Task.MCP) != 0 {
+		t.Errorf("an empty list means no servers, got %v", none.Task.MCP)
+	}
+
+	// A typo in one task's list stops the batch before any task runs.
+	_, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "fine", Prompt: "a"},
+		{ID: "typo", Prompt: "a", Options: agent.Options{MCP: []string{"mpc.json"}}},
+	}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "task typo") || !strings.Contains(err.Error(), "mpc.json") {
+		t.Fatalf("a bad task mcp path must fail the batch up front, by task: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".hx", "worktrees", "fine")); statErr == nil {
+		t.Error("no task should have run")
+	}
+}
+
 func TestSpecValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string

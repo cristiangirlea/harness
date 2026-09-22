@@ -285,6 +285,15 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	if spec.MCP, err = mcpPathsOf(spec.Dir, spec.MCP); err != nil {
 		return Result{}, err
 	}
+	// A task's own list is checked here too, so a typo in task seven does not
+	// surface after six agents have run.
+	for i := range spec.Tasks {
+		if t := &spec.Tasks[i]; t.MCP != nil {
+			if t.MCP, err = mcpPathsOf(spec.Dir, t.MCP); err != nil {
+				return Result{}, fmt.Errorf("task %s: %w", t.ID, err)
+			}
+		}
+	}
 	// Keep the worktrees out of the repository's status.
 	wtRoot := filepath.Join(root, ".hx", "worktrees")
 	if err := os.MkdirAll(wtRoot, 0o755); err != nil {
@@ -428,16 +437,9 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 	backends := []string{firstOf(t.Backend, spec.Backend, agent.DefaultBackendName())}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
-	// The spec's options with whatever the task sets on top. The spec's MCP
-	// files were resolved in Run; a task's own are relative to the spec too.
+	// The spec's options with whatever the task sets on top; Run resolved
+	// both MCP lists already.
 	opts := t.Options.Over(spec.Options)
-	if t.MCP != nil {
-		paths, err := mcpPathsOf(spec.Dir, t.MCP)
-		if err != nil {
-			return fail(err)
-		}
-		opts.MCP = paths
-	}
 
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
 		return fail(fmt.Errorf("branch %s already exists; remove it or pick another task id", tr.Branch))
@@ -969,8 +971,13 @@ func gitStdout(ctx context.Context, dir string, args ...string) (string, error) 
 }
 
 // mcpPathsOf resolves MCP config files against the spec's directory and
-// checks them, so a typo fails before an agent runs.
+// checks them, so a typo fails before an agent runs. A list that is present
+// but empty means no servers at all, not even ~/.hx/mcp.json; a missing list
+// gets that default like every other entry point.
 func mcpPathsOf(dir string, paths []string) ([]string, error) {
+	if paths != nil && len(paths) == 0 {
+		return []string{}, nil
+	}
 	abs := make([]string, 0, len(paths))
 	for _, p := range paths {
 		if !filepath.IsAbs(p) {

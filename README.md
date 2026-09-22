@@ -289,7 +289,9 @@ Every option `hx run` takes as a flag is a spec field under the same name with
 underscores (`--max-turns` is `max_turns`, `--max-cost` is `max_cost_usd`), on the spec
 or on a task; the MCP `run` tool takes the same names. They are one struct in the code
 (`agent.Options`), so the three cannot drift apart. A task's value replaces the spec's;
-a switch a task turns on stays on; a task's own `mcp` list replaces the spec's.
+a switch a task turns on stays on; a task's own `mcp` list replaces the spec's, and an
+empty list (`"mcp": []`) means no servers at all, not even `~/.hx/mcp.json`. Every list
+is checked before the first task starts.
 
 For each task hx creates branch `hx/<id>` and worktree `.hx/worktrees/<id>` from the
 current `HEAD` (uncommitted changes in the main worktree are not included), runs the
