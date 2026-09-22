@@ -25,10 +25,10 @@ func TestEveryOptionHasAFlagAndASchemaEntry(t *testing.T) {
 		if f.Tag.Get("desc") == "" {
 			t.Errorf("%s has no desc tag", f.Name)
 		}
-		if fl := fs.Lookup(FlagName(f)); fl == nil {
-			t.Errorf("%s has no flag --%s", f.Name, FlagName(f))
+		if fl := fs.Lookup(flagName(f)); fl == nil {
+			t.Errorf("%s has no flag --%s", f.Name, flagName(f))
 		} else if fl.Usage != f.Tag.Get("desc") {
-			t.Errorf("--%s help differs from the desc tag", FlagName(f))
+			t.Errorf("--%s help differs from the desc tag", flagName(f))
 		}
 		name := jsonName(f)
 		p, ok := schema[name].(map[string]any)
@@ -131,7 +131,7 @@ func TestDurationJSON(t *testing.T) {
 	}{
 		{`{"timeout":"20m"}`, Duration(20 * time.Minute)},
 		{`{"timeout":"1h30m"}`, Duration(90 * time.Minute)},
-		{`{"timeout":1200000000000}`, Duration(20 * time.Minute)}, // nanoseconds, as older tools send them
+		{`{"timeout":null}`, 0}, // absent, as a generated document spells it
 		{`{}`, 0},
 	} {
 		var d doc
@@ -142,6 +142,10 @@ func TestDurationJSON(t *testing.T) {
 	var d doc
 	if err := json.Unmarshal([]byte(`{"timeout":"soon"}`), &d); err == nil || !strings.Contains(err.Error(), "20m") {
 		t.Errorf("a bad duration should say what it wants: %v", err)
+	}
+	// A bare number is refused: 300 meaning seconds would have run as 300ns.
+	if err := json.Unmarshal([]byte(`{"timeout":300}`), &d); err == nil || !strings.Contains(err.Error(), "20m") {
+		t.Errorf("a number must be refused, not read as nanoseconds: %v", err)
 	}
 	out, _ := json.Marshal(doc{Timeout: Duration(20 * time.Minute)})
 	if string(out) != `{"timeout":"20m0s"}` {

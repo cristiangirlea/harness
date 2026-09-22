@@ -27,7 +27,7 @@ type Options struct {
 	// MCP lists config files (Claude Code .mcp.json format) whose stdio
 	// servers are offered as tools by the api backend and passed through to
 	// the claude CLI. Absolute paths once a caller has resolved them.
-	MCP []string `json:"mcp,omitempty" desc:"MCP config file (Claude Code .mcp.json format); repeatable."`
+	MCP []string `json:"mcp,omitempty" desc:"MCP config files, in Claude Code's .mcp.json format."`
 
 	// NoInstructions skips the project instruction files (HX.md, AGENTS.md,
 	// CLAUDE.md) that the api backend otherwise puts in its system prompt.
@@ -127,7 +127,7 @@ func BindFlags(fs *flag.FlagSet, o *Options) {
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		name, desc := FlagName(f), f.Tag.Get("desc")
+		name, desc := flagName(f), f.Tag.Get("desc")
 		switch p := v.Field(i).Addr().Interface().(type) {
 		case *string:
 			fs.StringVar(p, name, *p, desc)
@@ -147,8 +147,8 @@ func BindFlags(fs *flag.FlagSet, o *Options) {
 	}
 }
 
-// FlagName is the flag an Options field is set with.
-func FlagName(f reflect.StructField) string {
+// flagName is the flag an Options field is set with.
+func flagName(f reflect.StructField) string {
 	if name := f.Tag.Get("flag"); name != "" {
 		return name
 	}
@@ -176,8 +176,9 @@ func (m *Mode) Set(s string) error {
 }
 
 // Duration is a time.Duration that reads as "20m" in a spec, a flag or an MCP
-// call and is written the same way in a run record. A JSON number is accepted
-// too, as nanoseconds: records before 0.3 stored it that way under timeout_ns.
+// call and is written the same way in a run record. A bare number is refused:
+// "timeout": 300 would otherwise be 300 nanoseconds, and the records that
+// stored nanoseconds used their own key, timeout_ns, which Task still reads.
 type Duration time.Duration
 
 func (d Duration) String() string { return time.Duration(d).String() }
@@ -187,16 +188,15 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 func (d *Duration) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		return d.Set(s)
+	if string(data) == "null" {
+		*d = 0 // absent, as a generated spec or call may spell it
+		return nil
 	}
-	var n int64
-	if err := json.Unmarshal(data, &n); err != nil {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
 		return fmt.Errorf("duration %s: want a string like \"20m\"", data)
 	}
-	*d = Duration(n)
-	return nil
+	return d.Set(s)
 }
 
 // Set parses a flag value, so a *Duration is a flag.Value.
