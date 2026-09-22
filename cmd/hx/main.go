@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -33,6 +34,7 @@ const usage = `hx — personal agent harness
 Usage:
   hx run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
   hx backends                    show which backends are usable
+  hx version                     print the hx and Go versions
   hx runs [-n N]                 list recent runs
   hx show [--json] <run-id>      replay a recorded run
   hx mcp [--dir PATH]            serve hx as an MCP server on stdio; --dir is the default workspace (default: current directory)
@@ -112,6 +114,8 @@ func main() {
 		code, err = cmdEval(os.Args[2:])
 	case "report":
 		err = cmdReport(os.Args[2:])
+	case "version", "--version", "-V":
+		fmt.Printf("hx %s (%s)\n", agent.Version, runtime.Version())
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:

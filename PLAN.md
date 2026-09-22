@@ -484,7 +484,9 @@ merges, second aborts cleanly, the tree is clean afterwards.
 
 Size: ~200 lines + tests.
 
-### [ ] PR K: code health
+### [x] PR K: code health
+
+Done: PR #15, 2026-09-22.
 
 - Split `internal/agent/cli.go` into `cli.go` (the `CLIBackend` core and shared
   helpers) plus `claude.go`, `codex.go`, `gemini.go`, `opencode.go`. No behaviour change.
@@ -523,6 +525,18 @@ Size: mostly moves; ~100 new lines.
 
 ## Decisions log
 
+- 2026-09-22: PR K done (#15), the last lettered increment. cli.go is split per backend
+  (cli.go keeps the CLIBackend core and the shared helpers; claude.go, codex.go, gemini.go
+  and opencode.go take one adapter each), with no behaviour change. CI on ubuntu now also
+  runs the race detector and ten seconds each of FuzzParseSSE and FuzzCodec; both fuzzers
+  ran five seconds clean locally first. hx version prints the hx and Go versions. The
+  deferral carried since PR A is closed: cmd/hx has tests, and they cover the real path
+  rather than a refactored stand-in - cmdRun is called with arguments against a stub
+  backend that keeps the task it was handed, so every run flag is asserted to reach
+  agent.Task, plus five rejected flag combinations. Still open, deliberately: the shared
+  options struct that would stop each api option being wired by hand in four places. It
+  changes batch.Spec, batch.Task and the MCP decode struct together, which is its own
+  increment rather than a tail-end refactor.
 - 2026-09-22: PR H done (#14). Deviation: Request and ClientSupports are on mcp.Call, not
   on Server as the spec said, because the connection state belongs to one connection
   while a Server can serve several, and the handler already holds the Call.
