@@ -68,8 +68,24 @@ type Task struct {
 	// instead of being resent every turn.
 	NoContextEdits bool `json:"no_context_edits,omitempty"`
 
+	// RunDir is where the api backend saves the conversation, so the run can be
+	// continued later. Callers that hold a runlog.Writer set it to its Dir.
+	RunDir string `json:"-"`
+
+	// Resume is a conversation from an earlier run that this one continues.
+	// The api backend seeds its history with it, then appends Prompt.
+	Resume *Conversation `json:"-"`
+
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
+}
+
+// Conversation is the message history of a finished run, saved next to its
+// transcript so a follow-up can carry on from it. Thinking blocks are bound to
+// the model that produced them, which is why the model is recorded with them.
+type Conversation struct {
+	Model    string       `json:"model"`
+	Messages []apiMessage `json:"messages"`
 }
 
 type EventKind string

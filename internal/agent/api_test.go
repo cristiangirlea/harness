@@ -538,3 +538,84 @@ func TestAPIRetriesWithoutContextManagementWhenRefused(t *testing.T) {
 		t.Errorf("the run should say why: %v", infos)
 	}
 }
+
+func TestAPISavesAndResumesTheConversation(t *testing.T) {
+	dir := t.TempDir()
+	runDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("first\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _, fake := runFake(t, [][]string{
+		toolTurn("toolu_1", "read_file", `{"path":"hello.txt"}`),
+		textTurn("It says first."),
+	}, Task{Prompt: "what is in hello.txt?", Dir: dir, Mode: ModeAsk, RunDir: runDir})
+	if res.Status != StatusOK {
+		t.Fatalf("res = %+v", res)
+	}
+
+	data, err := os.ReadFile(filepath.Join(runDir, "messages.json"))
+	if err != nil {
+		t.Fatalf("no saved conversation: %v", err)
+	}
+	var saved Conversation
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Model != res.Model {
+		t.Errorf("model = %q, want %q", saved.Model, res.Model)
+	}
+	if len(saved.Messages) != 4 {
+		t.Fatalf("messages = %d, want user, assistant, user(tool_result), assistant", len(saved.Messages))
+	}
+	for i, want := range []string{"user", "assistant", "user", "assistant"} {
+		if saved.Messages[i].Role != want {
+			t.Errorf("message %d role = %q, want %q", i, saved.Messages[i].Role, want)
+		}
+	}
+
+	// Resuming sends the saved exchange plus the follow-up, in order.
+	_, _, fake2 := runFake(t, [][]string{textTurn("Still first.")},
+		Task{Prompt: "and now?", Dir: dir, Mode: ModeAsk, Resume: &saved})
+	msgs := fake2.requests[0]["messages"].([]any)
+	if len(msgs) != 5 {
+		t.Fatalf("resumed request has %d messages, want 5", len(msgs))
+	}
+	last := msgs[4].(map[string]any)
+	if last["role"] != "user" {
+		t.Errorf("the follow-up must come last: %v", last)
+	}
+	if text := fmt.Sprint(last["content"]); !strings.Contains(text, "and now?") {
+		t.Errorf("follow-up content = %v", last["content"])
+	}
+	// The assistant turn goes back exactly as the first run received it.
+	before := fake.requests[1]["messages"].([]any)[1]
+	if fmt.Sprint(msgs[1]) != fmt.Sprint(before) {
+		t.Errorf("assistant turn changed on resume:\n got %v\nwant %v", msgs[1], before)
+	}
+}
+
+func TestAPIDoesNotSaveADanglingToolCall(t *testing.T) {
+	runDir := t.TempDir()
+	// The turn asks for a tool and then hits max_tokens, so its calls are
+	// never answered; resuming from that would be rejected by the API.
+	turn := append([]string{
+		messageStart("msg_trunc"),
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_x","name":"list_files","input":{}}}`,
+		`{"type":"content_block_stop","index":0}`,
+	}, messageEnd("max_tokens")...)
+	res, _, _ := runFake(t, [][]string{turn}, Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, RunDir: runDir})
+	if res.Status != StatusError {
+		t.Fatalf("res = %+v", res)
+	}
+	data, err := os.ReadFile(filepath.Join(runDir, "messages.json"))
+	if err != nil {
+		t.Fatalf("a failed run should still save what can be resumed: %v", err)
+	}
+	var saved Conversation
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Messages) != 1 || saved.Messages[0].Role != "user" {
+		t.Fatalf("the unanswered assistant turn must be dropped: %+v", saved.Messages)
+	}
+}

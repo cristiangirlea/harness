@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -36,7 +37,10 @@ type Record struct {
 	Started time.Time    `json:"started"`
 	Task    agent.Task   `json:"task"`
 	Result  agent.Result `json:"result"`
-	Done    bool         `json:"-"`
+	// Continues names the run this one follows, when it was started with
+	// hx run --continue.
+	Continues string `json:"continues,omitempty"`
+	Done      bool   `json:"-"`
 }
 
 type Writer struct {
@@ -47,13 +51,23 @@ type Writer struct {
 	rec    Record
 }
 
+// Create starts a run record.
 func Create(backend string, task agent.Task) (*Writer, error) {
+	return create(backend, task, "")
+}
+
+// CreateContinuing starts a run record that follows an earlier run.
+func CreateContinuing(backend string, task agent.Task, continues string) (*Writer, error) {
+	return create(backend, task, continues)
+}
+
+func create(backend string, task agent.Task, continues string) (*Writer, error) {
 	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	w := &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task}}
+	w := &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues}}
 	if err := writeJSON(filepath.Join(dir, "task.json"), w.rec); err != nil {
 		return nil, err
 	}
@@ -193,4 +207,19 @@ func Events(id string) ([]agent.Event, error) {
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// LoadConversation returns a run's record together with the message history it
+// saved, for continuing it. Only the api backend saves one.
+func LoadConversation(id string) (Record, agent.Conversation, error) {
+	var conv agent.Conversation
+	rec, err := Load(id)
+	if err != nil {
+		return rec, conv, err
+	}
+	data, err := os.ReadFile(filepath.Join(Root(), id, "messages.json"))
+	if err != nil {
+		return rec, conv, fmt.Errorf("run %s has no saved conversation: only api runs save one", id)
+	}
+	return rec, conv, json.Unmarshal(data, &conv)
 }
