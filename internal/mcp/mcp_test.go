@@ -343,3 +343,82 @@ func TestCallResultText(t *testing.T) {
 		t.Errorf("structured fallback = %q", got)
 	}
 }
+
+// askServer offers a tool that asks the client a question before answering.
+func askServer(t *testing.T) *Server {
+	t.Helper()
+	s := NewServer(Implementation{Name: "asker", Version: "1"}, "")
+	s.AddTool(Tool{
+		Name: "ask",
+		Handler: func(ctx context.Context, call Call) (CallResult, error) {
+			if !call.ClientSupports("elicitation") {
+				return CallResult{Content: []Content{TextContent("no elicitation")}}, nil
+			}
+			var answer struct {
+				Action  string `json:"action"`
+				Content struct {
+					Approve bool `json:"approve"`
+				} `json:"content"`
+			}
+			if err := call.Request(ctx, "elicitation/create", map[string]any{"message": "may I?"}, &answer); err != nil {
+				return CallResult{}, err
+			}
+			return CallResult{Content: []Content{TextContent(fmt.Sprintf("%s:%v", answer.Action, answer.Content.Approve))}}, nil
+		},
+	})
+	return s
+}
+
+// elicitClient answers every elicitation/create with the given reply, or hangs
+// when reply is nil.
+func elicitClient(t *testing.T, srv *Server, reply map[string]any) *Client {
+	t.Helper()
+	toServer, clientOut := io.Pipe()
+	toClient, serverOut := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(ctx, toServer, serverOut) }()
+	t.Cleanup(func() { cancel(); clientOut.Close(); serverOut.Close(); <-done })
+
+	cl := &Client{Capabilities: map[string]any{"elicitation": map[string]any{}}}
+	if reply != nil {
+		cl.Elicit = func(context.Context, json.RawMessage) (any, error) { return reply, nil }
+	}
+	if err := cl.Connect(ctx, toClient, clientOut); err != nil {
+		t.Fatal(err)
+	}
+	return cl
+}
+
+func TestServerAsksTheClient(t *testing.T) {
+	cl := elicitClient(t, askServer(t), map[string]any{"action": "accept", "content": map[string]any{"approve": true}})
+	res, err := cl.CallTool(context.Background(), "ask", nil)
+	if err != nil || res.Text() != "accept:true" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+
+	cl = elicitClient(t, askServer(t), map[string]any{"action": "decline"})
+	res, err = cl.CallTool(context.Background(), "ask", nil)
+	if err != nil || res.Text() != "decline:false" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestServerRequestHonoursTheDeadline(t *testing.T) {
+	// The client never answers, so the tool's own context must end the wait.
+	cl := elicitClient(t, askServer(t), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	res, err := cl.CallTool(ctx, "ask", nil)
+	if err == nil && !res.IsError {
+		t.Fatalf("a request nobody answers must not hang: res=%+v", res)
+	}
+}
+
+func TestClientWithoutElicitationIsNotAsked(t *testing.T) {
+	cl := pipeClient(t, askServer(t), nil) // the plain client declares no elicitation
+	res, err := cl.CallTool(context.Background(), "ask", nil)
+	if err != nil || res.Text() != "no elicitation" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}

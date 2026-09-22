@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
+	"strconv"
 	"sync"
 )
 
@@ -28,6 +29,102 @@ type Call struct {
 	Name      string
 	Arguments json.RawMessage
 	Progress  func(message string)
+
+	conn *conn
+}
+
+// ClientSupports reports whether the client declared a capability, such as
+// "elicitation", when it connected.
+func (c Call) ClientSupports(capability string) bool {
+	if c.conn == nil {
+		return false
+	}
+	return c.conn.supports(capability)
+}
+
+// Request asks the client something and waits for its answer, which is
+// decoded into out. It is how a tool reaches the person at the other end:
+// elicitation/create is the only method MCP defines for it today. The wait
+// ends with ctx, so a cancelled or timed-out call does not hang the tool.
+func (c Call) Request(ctx context.Context, method string, params, out any) error {
+	if c.conn == nil {
+		return errors.New("this call has no connection to ask on")
+	}
+	return c.conn.request(ctx, method, params, out)
+}
+
+// conn is one client connection: the framing, what the client can do, and the
+// requests this server is waiting on answers for.
+type conn struct {
+	codec *codec
+
+	mu      sync.Mutex
+	caps    map[string]any
+	nextID  int64
+	pending map[string]chan *message
+}
+
+func newConn(c *codec) *conn {
+	return &conn{codec: c, pending: map[string]chan *message{}}
+}
+
+func (cn *conn) setCaps(caps map[string]any) {
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+	cn.caps = caps
+}
+
+func (cn *conn) supports(capability string) bool {
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+	_, ok := cn.caps[capability]
+	return ok
+}
+
+// route hands a response to whoever is waiting for it. It reports whether
+// anyone was.
+func (cn *conn) route(m *message) bool {
+	cn.mu.Lock()
+	ch := cn.pending[string(m.ID)]
+	delete(cn.pending, string(m.ID))
+	cn.mu.Unlock()
+	if ch == nil {
+		return false
+	}
+	ch <- m
+	return true
+}
+
+func (cn *conn) request(ctx context.Context, method string, params, out any) error {
+	cn.mu.Lock()
+	cn.nextID++
+	id := json.RawMessage(strconv.FormatInt(cn.nextID, 10))
+	ch := make(chan *message, 1)
+	cn.pending[string(id)] = ch
+	cn.mu.Unlock()
+
+	if err := cn.codec.request(id, method, params); err != nil {
+		cn.mu.Lock()
+		delete(cn.pending, string(id))
+		cn.mu.Unlock()
+		return err
+	}
+	select {
+	case m := <-ch:
+		if m.Error != nil {
+			return m.Error
+		}
+		if out != nil && len(m.Result) > 0 {
+			return json.Unmarshal(m.Result, out)
+		}
+		return nil
+	case <-ctx.Done():
+		cn.mu.Lock()
+		delete(cn.pending, string(id))
+		cn.mu.Unlock()
+		_ = cn.codec.notify("notifications/cancelled", cancelledParams{RequestID: id, Reason: ctx.Err().Error()})
+		return ctx.Err()
+	}
 }
 
 // Server serves tools to one client over a pair of streams.
@@ -55,6 +152,7 @@ func (s *Server) AddTool(t Tool) {
 // concurrently, so a host can dispatch several long tool calls at once.
 func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	c := newCodec(r, w)
+	cn := newConn(c)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -117,7 +215,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 						mu.Unlock()
 						reqCancel()
 					}()
-					s.handle(reqCtx, c, m)
+					s.handle(reqCtx, cn, m)
 				}()
 			case m.isNotification():
 				if m.Method == "notifications/cancelled" {
@@ -131,13 +229,17 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 					}
 				}
 			default:
-				// Responses to requests we never sent: ignore.
+				// An answer to something this server asked the client.
+				if m.isResponse() {
+					cn.route(m)
+				}
 			}
 		}
 	}
 }
 
-func (s *Server) handle(ctx context.Context, c *codec, m *message) {
+func (s *Server) handle(ctx context.Context, cn *conn, m *message) {
+	c := cn.codec
 	defer func() {
 		if r := recover(); r != nil {
 			_ = c.fail(m.ID, CodeInternalError, fmt.Sprintf("%s: panic: %v\n%s", m.Method, r, debug.Stack()))
@@ -154,6 +256,7 @@ func (s *Server) handle(ctx context.Context, c *codec, m *message) {
 		if versionSupported(p.ProtocolVersion) {
 			version = p.ProtocolVersion
 		}
+		cn.setCaps(p.Capabilities)
 		_ = c.respond(m.ID, initializeResult{
 			ProtocolVersion: version,
 			Capabilities:    map[string]any{"tools": map[string]any{"listChanged": false}},
@@ -184,7 +287,7 @@ func (s *Server) handle(ctx context.Context, c *codec, m *message) {
 			_ = c.fail(m.ID, CodeInvalidParams, "unknown tool "+p.Name)
 			return
 		}
-		call := Call{Name: p.Name, Arguments: p.Arguments, Progress: func(string) {}}
+		call := Call{Name: p.Name, Arguments: p.Arguments, Progress: func(string) {}, conn: cn}
 		if len(call.Arguments) == 0 {
 			call.Arguments = json.RawMessage("{}")
 		}
