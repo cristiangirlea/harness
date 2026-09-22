@@ -276,7 +276,7 @@ func TestRowJSON(t *testing.T) {
 // Collect reads what the CLI, the MCP server and batch write, so the test goes
 // through their public writers rather than hand-made files.
 func TestCollectReadsHome(t *testing.T) {
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	task := agent.Task{Prompt: "p", Dir: t.TempDir(), Mode: agent.ModeAsk}
 	for i, res := range []agent.Result{
 		{Backend: "api", Status: agent.StatusOK, Turns: 2, CostUSD: 0.5, CostEstimate: true},
@@ -336,7 +336,7 @@ func TestCollectReadsHome(t *testing.T) {
 }
 
 func TestCollectWithoutHome(t *testing.T) {
-	t.Setenv("HX_HOME", filepath.Join(t.TempDir(), "never-written"))
+	t.Setenv("HRN_HOME", filepath.Join(t.TempDir(), "never-written"))
 	d, err := Collect(time.Time{})
 	if err != nil || len(d.Runs) != 0 || len(d.Batches) != 0 {
 		t.Errorf("a missing home is an empty report, not an error: %+v err=%v", d, err)

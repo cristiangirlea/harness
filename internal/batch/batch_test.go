@@ -72,10 +72,10 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// initRepo makes a repository with one commit and points HX_HOME at a temp dir.
+// initRepo makes a repository with one commit and points HRN_HOME at a temp dir.
 func initRepo(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "-b", "main")
 	git(t, dir, "config", "user.email", "test@example.com")
@@ -138,7 +138,7 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 	}
 	for i, want := range []string{"one", "t2"} {
 		tr := res.Tasks[i]
-		if tr.ID != want || tr.Status != StatusPass || tr.Branch != "hx/"+want || len(tr.Attempts) != 1 {
+		if tr.ID != want || tr.Status != StatusPass || tr.Branch != "hrn/"+want || len(tr.Attempts) != 1 {
 			t.Fatalf("task %d = %+v", i, tr)
 		}
 		a := tr.Attempts[0]
@@ -186,7 +186,7 @@ func TestFailuresRetryOnNextBackend(t *testing.T) {
 	if rec.Status != StatusPass || len(rec.Attempts) != 2 || rec.Attempts[0].Backend != "wb-bad" || rec.Attempts[0].Result.Status != agent.StatusError || rec.Attempts[1].Backend != "wb-ok" {
 		t.Fatalf("recovers = %+v", rec)
 	}
-	if rec.Commit == "" || git(t, dir, "rev-parse", "hx/recovers") != rec.Commit {
+	if rec.Commit == "" || git(t, dir, "rev-parse", "hrn/recovers") != rec.Commit {
 		t.Errorf("retried task should end with its own branch and commit: %+v", rec)
 	}
 
@@ -202,7 +202,7 @@ func TestFailuresRetryOnNextBackend(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(gf.Worktree, "out.txt")); err != nil {
 		t.Errorf("failed task keeps its last worktree for inspection: %v", err)
 	}
-	if branches := git(t, dir, "branch", "--list", "hx/*"); strings.Count(branches, "hx/") != 2 {
+	if branches := git(t, dir, "branch", "--list", "hrn/*"); strings.Count(branches, "hrn/") != 2 {
 		t.Errorf("exactly one branch per task expected:\n%s", branches)
 	}
 }
@@ -238,7 +238,7 @@ func TestCancelStopsEverything(t *testing.T) {
 
 func TestRecordIsSavedBeforeTasksRun(t *testing.T) {
 	dir := initRepo(t)
-	batches := filepath.Join(os.Getenv("HX_HOME"), "batches")
+	batches := filepath.Join(os.Getenv("HRN_HOME"), "batches")
 	ctx, cancel := context.WithCancel(context.Background())
 	var early Result
 	var earlyErr error
@@ -258,7 +258,7 @@ func TestRecordIsSavedBeforeTasksRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if earlyErr != nil || early.ID != res.ID || len(early.Tasks) != 1 || early.Tasks[0].Status != StatusRunning || early.Tasks[0].Branch != "hx/slow" {
+	if earlyErr != nil || early.ID != res.ID || len(early.Tasks) != 1 || early.Tasks[0].Status != StatusRunning || early.Tasks[0].Branch != "hrn/slow" {
 		t.Fatalf("record while running = %+v err=%v", early, earlyErr)
 	}
 	if saved, err := LoadResult(res.ID); err != nil || saved.Tasks[0].Status != StatusCanceled {
@@ -277,7 +277,7 @@ func TestRemoveDeletesWorktreesAndBranches(t *testing.T) {
 			t.Errorf("worktree %s still exists", tr.Worktree)
 		}
 	}
-	if branches := git(t, dir, "branch", "--list", "hx/*"); branches != "" {
+	if branches := git(t, dir, "branch", "--list", "hrn/*"); branches != "" {
 		t.Errorf("branches remain: %s", branches)
 	}
 	if git(t, dir, "worktree", "list") == "" {
@@ -313,7 +313,7 @@ func TestCommitFailureIsAnErrorAndRemoveRefuses(t *testing.T) {
 
 func TestBranchCollisionIsAnError(t *testing.T) {
 	dir := initRepo(t)
-	git(t, dir, "branch", "hx/taken")
+	git(t, dir, "branch", "hrn/taken")
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "taken", Prompt: "a"}}})
 	tr := res.Tasks[0]
 	if tr.Status != StatusError || tr.Error == "" || len(tr.Attempts) != 0 {
@@ -326,7 +326,7 @@ func TestDirtyRepositoryIsRefused(t *testing.T) {
 	spec := func(allowDirty bool) Spec {
 		return Spec{Dir: dir, Backend: "wb-ok", AllowDirty: allowDirty, Tasks: []Task{{ID: "t", Prompt: "a"}}}
 	}
-	// An untracked file is not a reason to stop: .hx/worktrees is one.
+	// An untracked file is not a reason to stop: .hrn/worktrees is one.
 	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("notes\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestDirtyRepositoryIsRefused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") || !strings.Contains(err.Error(), "README.md") {
 		t.Fatalf("a dirty repository must be refused by name: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, ".hx", "worktrees", "t")); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(dir, ".hrn", "worktrees", "t")); statErr == nil {
 		t.Error("nothing should be created when the batch refuses to start")
 	}
 
@@ -486,10 +486,10 @@ func TestGateFailureContinuesInTheSameWorktree(t *testing.T) {
 		}
 	}
 	// Both attempts' work is on the branch, the second on top of the first.
-	if n := git(t, dir, "rev-list", "--count", res.Base+"..hx/keeps"); n != "2" {
+	if n := git(t, dir, "rev-list", "--count", res.Base+"..hrn/keeps"); n != "2" {
 		t.Errorf("commits above base = %s, want 2 (the first attempt's work must survive)", n)
 	}
-	if subject := git(t, dir, "log", "-1", "--format=%s", "hx/keeps"); !strings.HasSuffix(subject, "(attempt 2)") {
+	if subject := git(t, dir, "log", "-1", "--format=%s", "hrn/keeps"); !strings.HasSuffix(subject, "(attempt 2)") {
 		t.Errorf("last commit subject = %q", subject)
 	}
 	if retries := eventTexts(events, "retry"); !strings.Contains(retries, "continuing in worktree") {
@@ -513,7 +513,7 @@ func TestRunFailureRetriesInAFreshWorktree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tr.Worktree, "leftover.txt")); err == nil {
 		t.Error("a fresh attempt must not inherit the failed attempt's changes")
 	}
-	if n := git(t, dir, "rev-list", "--count", res.Base+"..hx/fresh"); n != "1" {
+	if n := git(t, dir, "rev-list", "--count", res.Base+"..hrn/fresh"); n != "1" {
 		t.Errorf("commits above base = %s, want 1", n)
 	}
 	if retries := eventTexts(events, "retry"); !strings.Contains(retries, "fresh worktree") {
@@ -562,10 +562,10 @@ func TestSecondRetryKnowsAboutTheFirst(t *testing.T) {
 	if n := strings.Count(third.Prompt, "```"); n != 2 {
 		t.Errorf("fenced blocks = %d, want one block (two fences)", n)
 	}
-	if n := git(t, dir, "rev-list", "--count", res.Base+"..hx/third"); n != "3" {
+	if n := git(t, dir, "rev-list", "--count", res.Base+"..hrn/third"); n != "3" {
 		t.Errorf("commits above base = %s, want 3", n)
 	}
-	if subject := git(t, dir, "log", "-1", "--format=%s", "hx/third"); !strings.HasSuffix(subject, "(attempt 3)") {
+	if subject := git(t, dir, "log", "-1", "--format=%s", "hrn/third"); !strings.HasSuffix(subject, "(attempt 3)") {
 		t.Errorf("last commit subject = %q", subject)
 	}
 }

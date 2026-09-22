@@ -212,7 +212,7 @@ type Table struct {
 	Tasks    []TaskRow    `json:"tasks"`
 }
 
-// Record is one eval, saved under $HX_HOME/evals.
+// Record is one eval, saved under $HRN_HOME/evals.
 type Record struct {
 	ID       string        `json:"id"`
 	BatchID  string        `json:"batch_id"`

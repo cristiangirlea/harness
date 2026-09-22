@@ -429,7 +429,7 @@ func TestAPISendsTaskBudgetWithEffort(t *testing.T) {
 		t.Fatalf("task_budget = %v", out["task_budget"])
 	}
 	if _, present := tb["remaining"]; present {
-		t.Error("remaining must stay unset: hx resends the whole history, so the server tracks the countdown")
+		t.Error("remaining must stay unset: hrn resends the whole history, so the server tracks the countdown")
 	}
 	if h := fake.headers[0].Get("anthropic-beta"); !strings.Contains(h, betaTaskBudget) {
 		t.Errorf("anthropic-beta = %q, want it to carry %s", h, betaTaskBudget)

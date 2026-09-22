@@ -1,8 +1,8 @@
-// Package hxmcp exposes hx itself as an MCP server, so a Claude Code session
+// Package hrnmcp exposes hrn itself as an MCP server, so a Claude Code session
 // (or any MCP host) can delegate tasks to any backend, several at a time, and
 // read the run records back. Requests are served concurrently, so parallel
 // tool calls from the host become parallel agents.
-package hxmcp
+package hrnmcp
 
 import (
 	"context"
@@ -19,16 +19,16 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-const instructions = `hx runs coding tasks on an agent backend of your choice (its own API loop, or the claude, codex, gemini or opencode CLIs) and records every run.
+const instructions = `hrn runs coding tasks on an agent backend of your choice (its own API loop, or the claude, codex, gemini or opencode CLIs) and records every run.
 
 Use "run" to delegate a task. It blocks until the task finishes and returns the final answer, a summary line and a run id; "show" replays a run, "runs" lists recent ones, "backends" says which backends are usable. Several "run" calls may be in flight at once.
 
 There is no terminal behind this server. Mode "ask" puts each write and command to you through the host, when the host supports elicitation, and denies it otherwise. Use "readonly" for investigation, "auto" to allow file edits without asking, "yolo" to also allow shell commands.`
 
-// NewServer builds the hx MCP server. defaultDir is the workspace used when
+// NewServer builds the hrn MCP server. defaultDir is the workspace used when
 // a run does not name one, normally the host's project directory.
 func NewServer(defaultDir string) *mcp.Server {
-	s := mcp.NewServer(mcp.Implementation{Name: "hx", Version: agent.Version}, instructions)
+	s := mcp.NewServer(mcp.Implementation{Name: "hrn", Version: agent.Version}, instructions)
 	s.AddTool(runTool(defaultDir))
 	s.AddTool(runsTool())
 	s.AddTool(showTool())
@@ -79,7 +79,7 @@ func runTool(defaultDir string) mcp.Tool {
 				"mcp": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
 					"description": "MCP config files (Claude Code .mcp.json format) whose stdio servers the task may use as tools."},
 				"no_instructions": map[string]any{"type": "boolean",
-					"description": "Skip the project instruction files (HX.md, AGENTS.md, CLAUDE.md) the api backend reads from the workspace root."},
+					"description": "Skip the project instruction files (HRN.md, AGENTS.md, CLAUDE.md) the api backend reads from the workspace root."},
 				"allow_dangerous": map[string]any{"type": "boolean",
 					"description": "Let run_command run git push, sudo, rm -rf / and the like. Off by default; the harness refuses those command lines."},
 				"continue_run_id": str("Continue a finished api run: its conversation, workspace, mode and model, unless overridden here."),
@@ -219,7 +219,7 @@ func runsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "runs",
 		Title:       "List recent runs",
-		Description: "List recent hx runs, newest first: id, backend, status, duration and prompt.",
+		Description: "List recent hrn runs, newest first: id, backend, status, duration and prompt.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"limit": num("Maximum runs to return (default 20).")}},
 		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(true)},
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
@@ -367,7 +367,7 @@ func approver(ctx context.Context, call mcp.Call, runID string) func(agent.Appro
 		params := map[string]any{
 			// The summary is what is being approved, so it goes in whole: a
 			// truncated command can hide the part that matters.
-			"message": fmt.Sprintf("hx run %s wants to run %s:\n%s", runID, req.Tool, tools.Truncate(req.Summary)),
+			"message": fmt.Sprintf("hrn run %s wants to run %s:\n%s", runID, req.Tool, tools.Truncate(req.Summary)),
 			"requestedSchema": map[string]any{
 				"type":       "object",
 				"properties": map[string]any{"approve": map[string]any{"type": "boolean", "title": "Allow"}},

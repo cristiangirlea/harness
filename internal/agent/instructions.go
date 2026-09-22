@@ -14,7 +14,7 @@ import (
 // root in this order. The agent CLIs read their own (claude: CLAUDE.md, codex
 // and opencode: AGENTS.md), so this is what gives the api loop the same view.
 // A function, not a package variable, so the order cannot be changed at runtime.
-func instructionFiles() []string { return []string{"HX.md", "AGENTS.md", "CLAUDE.md"} }
+func instructionFiles() []string { return []string{"HRN.md", "AGENTS.md", "CLAUDE.md"} }
 
 const (
 	maxInstructions = 32 * 1024

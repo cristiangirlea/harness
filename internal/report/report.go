@@ -69,7 +69,7 @@ type Data struct {
 	Unreadable int
 }
 
-// Collect reads every run and batch record under HX_HOME.
+// Collect reads every run and batch record under HRN_HOME.
 func Collect(since time.Time) (Data, error) {
 	recs, unreadableRuns, err := runlog.ListSince(since)
 	if err != nil {
@@ -121,7 +121,7 @@ func running(b batch.Result) bool {
 	return false
 }
 
-// Report is everything hx report prints, in the shape --json emits.
+// Report is everything hrn report prints, in the shape --json emits.
 type Report struct {
 	Since *time.Time `json:"since"` // nil when the report covers all time
 	By    string     `json:"by"`

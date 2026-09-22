@@ -22,7 +22,7 @@ func write(t *testing.T, dir, name, content string) {
 }
 
 func TestListSinceSkipsOldRunsAndCountsUnreadable(t *testing.T) {
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	task := agent.Task{Prompt: "p", Dir: t.TempDir(), Mode: agent.ModeAsk}
 	for _, backend := range []string{"api", "claude"} {
 		w, err := Create(backend, task)
@@ -81,7 +81,7 @@ func TestIDBefore(t *testing.T) {
 }
 
 func TestContinuingRecordsWhatItFollows(t *testing.T) {
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	first, err := Create("api", agent.Task{Prompt: "first", Dir: "."})
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestContinuingRecordsWhatItFollows(t *testing.T) {
 }
 
 func TestLoadConversation(t *testing.T) {
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	w, err := Create("api", agent.Task{Prompt: "first", Dir: "."})
 	if err != nil {
 		t.Fatal(err)

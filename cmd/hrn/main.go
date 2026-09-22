@@ -1,4 +1,4 @@
-// Command hx is a personal agent harness: one CLI that runs a coding task on
+// Command hrn is a personal agent harness: one CLI that runs a coding task on
 // the harness's own API agent loop or on an installed agent CLI, and records
 // every run the same way.
 package main
@@ -22,31 +22,31 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
-	"github.com/cristiangirlea/harness/internal/hxmcp"
+	"github.com/cristiangirlea/harness/internal/hrnmcp"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-const usage = `hx — personal agent harness
+const usage = `hrn — personal agent harness
 
 Usage:
-  hx run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
-  hx backends                    show which backends are usable
-  hx version                     print the hx and Go versions
-  hx runs [-n N]                 list recent runs
-  hx show [--json] <run-id>      replay a recorded run
-  hx mcp [--dir PATH]            serve hx as an MCP server on stdio; --dir is the default workspace (default: current directory)
-  hx batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
-  hx batch show [--json] <id>    reprint a batch's table, while it runs or afterwards
-  hx batch diff <id> <task-id>   what one task changed, as a diff on stdout
-  hx batch merge [--squash] <id> [task-id...]
+  hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
+  hrn backends                    show which backends are usable
+  hrn version                     print the hrn and Go versions
+  hrn runs [-n N]                 list recent runs
+  hrn show [--json] <run-id>      replay a recorded run
+  hrn mcp [--dir PATH]            serve hrn as an MCP server on stdio; --dir is the default workspace (default: current directory)
+  hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
+  hrn batch show [--json] <id>    reprint a batch's table, while it runs or afterwards
+  hrn batch diff <id> <task-id>   what one task changed, as a diff on stdout
+  hrn batch merge [--squash] <id> [task-id...]
                                  merge the branches of the tasks that passed into the current branch
-  hx batch rm <batch-id>         remove the worktrees and branches a batch created
-  hx eval [flags] <eval.json>    run a task set across a matrix of backends, models and efforts
-  hx eval show <eval-id>         reprint a saved eval
-  hx report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
+  hrn batch rm <batch-id>         remove the worktrees and branches a batch created
+  hrn eval [flags] <eval.json>    run a task set across a matrix of backends, models and efforts
+  hrn eval show <eval-id>         reprint a saved eval
+  hrn report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
 
 Run flags:
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
@@ -57,7 +57,7 @@ Run flags:
       --effort LEVEL   low | medium | high | xhigh | max (api backend)
       --json           print events as JSON lines instead of formatted output
       --thinking       show model thinking summaries
-      --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hx/mcp.json is loaded when present
+      --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hrn/mcp.json is loaded when present
       --no-instructions
                        skip the project instruction files (api backend)
       --no-context-edits
@@ -87,7 +87,7 @@ Report flags:
       --by KEY         group runs by backend (default), model or dir
       --json           print the tables as JSON
 
-Runs are recorded under ~/.hx/runs (override with HX_HOME).
+Runs are recorded under ~/.hrn/runs (override with HRN_HOME).
 `
 
 func main() {
@@ -115,7 +115,7 @@ func main() {
 	case "report":
 		err = cmdReport(os.Args[2:])
 	case "version", "--version", "-V":
-		fmt.Printf("hx %s (%s)\n", agent.Version, runtime.Version())
+		fmt.Printf("hrn %s (%s)\n", agent.Version, runtime.Version())
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -123,7 +123,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "hx:", err)
+		fmt.Fprintln(os.Stderr, "hrn:", err)
 		if code == 0 {
 			code = 1
 		}
@@ -195,7 +195,7 @@ func cmdRun(args []string) (int, error) {
 		} else if model != conv.Model {
 			// Thinking blocks belong to the model that produced them; another
 			// model is served the conversation without them.
-			fmt.Fprintf(os.Stderr, "hx: continuing %s on %s instead of %s; the API drops the earlier thinking\n", *continueID, model, conv.Model)
+			fmt.Fprintf(os.Stderr, "hrn: continuing %s on %s instead of %s; the API drops the earlier thinking\n", *continueID, model, conv.Model)
 		}
 		resume = &conv
 	}
@@ -284,7 +284,7 @@ func cmdRun(args []string) (int, error) {
 
 	res := b.Run(ctx, task, emit)
 	if err := rec.Close(res); err != nil {
-		fmt.Fprintln(os.Stderr, "hx: saving run:", err)
+		fmt.Fprintln(os.Stderr, "hrn: saving run:", err)
 	}
 	if jsonOut {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"run_id": rec.ID(), "result": res})
@@ -342,7 +342,7 @@ func cmdShow(args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: hx show [--json] <run-id>")
+		return errors.New("usage: hrn show [--json] <run-id>")
 	}
 	id := fs.Arg(0)
 	rec, err := runlog.Load(id)
@@ -373,7 +373,7 @@ func cmdShow(args []string) error {
 	return nil
 }
 
-// cmdMCP serves hx over stdio until the host closes the pipe. stdout is the
+// cmdMCP serves hrn over stdio until the host closes the pipe. stdout is the
 // protocol channel, so nothing else may print there.
 func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
@@ -395,8 +395,8 @@ func cmdMCP(args []string) error {
 	abs := ws.Root
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	fmt.Fprintln(os.Stderr, "hx mcp: serving on stdio, workspace", abs)
-	if err := hxmcp.NewServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+	fmt.Fprintln(os.Stderr, "hrn mcp: serving on stdio, workspace", abs)
+	if err := hrnmcp.NewServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil
@@ -411,7 +411,7 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 func cmdEval(args []string) (int, error) {
 	if len(args) >= 1 && args[0] == "show" {
 		if len(args) != 2 {
-			return 2, errors.New("usage: hx eval show <eval-id>")
+			return 2, errors.New("usage: hrn eval show <eval-id>")
 		}
 		rec, err := eval.LoadRecord(args[1])
 		if err != nil {
@@ -436,7 +436,7 @@ func cmdEval(args []string) (int, error) {
 		return 2, errors.New("invalid arguments")
 	}
 	if fs.NArg() != 1 {
-		return 2, errors.New("usage: hx eval [flags] <eval.json>")
+		return 2, errors.New("usage: hrn eval [flags] <eval.json>")
 	}
 	spec, err := eval.LoadSpec(fs.Arg(0))
 	if err != nil {
@@ -484,7 +484,7 @@ func cmdEval(args []string) (int, error) {
 	} else {
 		printEval(r, rec)
 		if *keep {
-			r.Line(r.c(dim, "worktrees kept; remove them with: hx batch rm "+rec.BatchID))
+			r.Line(r.c(dim, "worktrees kept; remove them with: hrn batch rm "+rec.BatchID))
 		}
 	}
 	// A failing variant is data; a failing eval is not.

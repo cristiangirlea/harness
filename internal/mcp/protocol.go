@@ -2,7 +2,7 @@
 // Protocol over its stdio transport: JSON-RPC 2.0 messages, one per line.
 //
 // Client lets the api backend call tools served by external MCP servers.
-// Server exposes hx itself to MCP hosts such as Claude Code. Only the tools
+// Server exposes hrn itself to MCP hosts such as Claude Code. Only the tools
 // capability is implemented, plus ping, progress, cancellation and roots;
 // resources, prompts and sampling are not.
 package mcp
@@ -17,7 +17,7 @@ import (
 	"sync"
 )
 
-// ProtocolVersion is the spec revision hx asks for. Everything hx uses has
+// ProtocolVersion is the spec revision hrn asks for. Everything hrn uses has
 // been wire-stable since the first revision, so older peers negotiate fine.
 const ProtocolVersion = "2025-06-18"
 

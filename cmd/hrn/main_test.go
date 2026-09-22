@@ -44,7 +44,7 @@ func drain(t *testing.T) {
 
 func TestRunFlagsReachTheTask(t *testing.T) {
 	drain(t)
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	dir := t.TempDir()
 	code, err := cmdRun([]string{
 		"-b", "stub-cmd", "-C", dir, "--mode", "auto", "-m", "some-model",
@@ -90,7 +90,7 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 
 func TestRunRejectsBadFlagCombinations(t *testing.T) {
 	drain(t)
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	dir := t.TempDir()
 	for _, tc := range []struct {
 		name string
@@ -114,7 +114,7 @@ func TestRunRejectsBadFlagCombinations(t *testing.T) {
 // The other commands parse their own flags the same way, so the cheap half of
 // that wiring, what they refuse, is worth a test now that the first one exists.
 func TestCommandsRefuseBadArguments(t *testing.T) {
-	t.Setenv("HX_HOME", t.TempDir())
+	t.Setenv("HRN_HOME", t.TempDir())
 	missing := filepath.Join(t.TempDir(), "nope.json")
 	for _, tc := range []struct {
 		name string
