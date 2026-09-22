@@ -677,3 +677,21 @@ Size: mostly moves; ~100 new lines.
   truncated this file before raising, and `subprocess.run(text=True)` decoded `git show`
   with the console codepage and mangled every arrow. Read bytes, decode UTF-8, and assert
   the file did not shrink.
+- 2026-09-22: PR I self-review, 10 findings: 7 fixed, 3 not. The guard as specced blocked
+  `rm -rf /`, which rm itself refuses without --no-preserve-root, and allowed `rm -rf /*`,
+  `rm -rf "$HOME"` and `rm -rf /c/`, which are the spellings that actually empty a machine;
+  rm-root now reads the arguments instead of matching one pattern, and `git -C dir push`,
+  reversed `dd` operands and multi-stage `curl | tee | bash` are caught too. The ordering
+  bug was worse than any pattern: in `ask` mode hx showed the command, took the operator's
+  yes, and then refused it anyway. Tools now carry a `Refuse` hook the loop asks before it
+  prompts, which also gives MCP tools a place to opt in later. A CLI backend in yolo mode
+  says the guard is not applied, since it never was for four of the five backends; the
+  system prompt now states which way the switch is set, because the tool description is
+  built once and shared; and `dirtyPaths` gives batch one answer to "is this tree dirty"
+  instead of two. Not fixed, with reasons: MCP exec tools stay unguarded (their input
+  shape is the server's, and guessing which field is a command would be a lie in the
+  README - the `Refuse` hook is where that lands when it is worth doing); `hx run` and the
+  MCP run tool get no dirty-tree check because they work in the operator's own checkout,
+  where uncommitted work is visible to the agent - the hazard is specific to batch
+  branching from HEAD; and the CLI flag-to-Task wiring is still untested, the same gap PR A
+  and PR D deferred, now waiting on PR K.

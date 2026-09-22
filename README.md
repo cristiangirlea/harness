@@ -113,23 +113,32 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 
 | Rule | Refuses |
 |---|---|
-| `git-push` | `git push` — a batch commits on its own branch; what leaves the machine is the operator's call |
+| `git-push` | any `git` command mentioning `push`, including `git -C dir push` — a batch commits on its own branch; what leaves the machine is the operator's call |
 | `sudo` | `sudo` — a password prompt hangs a run with no terminal |
-| `rm-root` | `rm -r` against `/`, `~`, `$HOME` or a drive root |
-| `pipe-to-shell` | `curl`/`wget` piped into `sh`, `bash`, `zsh` or `powershell` |
-| `disk` | `mkfs`, `format X:`, `dd if=` |
+| `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
+| `pipe-to-shell` | `curl`/`wget` piped into a shell, however many stages the pipe has |
+| `disk` | `mkfs`, `format X:`, `dd of=/dev/…` |
+
+`rm-root` reads the arguments rather than matching one pattern, because the spelling
+that matters is not the famous one: `rm -rf /` is refused by `rm` itself without
+`--no-preserve-root`, while `rm -rf /*` and `rm -rf "$HOME"` are not.
 
 The refusal comes back to the model as a failed tool call naming the rule, so the run
-continues and the transcript says what was stopped. Matching is textual: `echo "git
-push"` is refused too, which costs a turn and is the trade this makes on purpose.
+continues and the transcript says what was stopped. It is decided before any approval
+prompt, so `ask` mode never asks for a yes it would then ignore. Matching is textual and
+leans towards refusing too much: `echo "git push"` and `git commit -m "push later"` are
+refused as well, which costs a turn and is the trade this makes on purpose.
 
 This is a guard rail, not a sandbox — an agent that wants around a pattern can get
 around it. What decides whether commands run at all is the [permission mode](#permission-modes);
 this stops the plausible accident. `--allow-dangerous` (task field `allow_dangerous`,
-also a batch spec/task field and an MCP `run` argument) lifts it for a whole run; `yolo`
-on its own does not. It applies to the `api` backend's own tool: the agent CLIs run
-their own shells under their own permission systems, and batch gate commands are not
-checked, because the operator wrote those.
+also a batch spec/task field and an MCP `run` argument) lifts it for a whole run, and the
+system prompt tells the model which way it is set; `yolo` on its own does not lift it.
+
+Three things it does not cover, by design: the agent CLIs run their own shells under
+their own permission systems (an unattended CLI run says so in its output), tools from
+an MCP server are the server's business, and batch gate commands are not checked,
+because the operator wrote those.
 
 ### Context management
 
