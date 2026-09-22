@@ -461,7 +461,7 @@ Size: ~120 lines + tests.
 
 ### [x] PR J: `hx batch show`, `diff`, `merge`
 
-Done: PR #12, 2026-09-22.
+Done: PR #13, 2026-09-22.
 
 **Decisions made.**
 - `hx batch show <id>`: prints the record in the end-of-run table format; works while a
@@ -706,7 +706,7 @@ Size: mostly moves; ~100 new lines.
   stay parallel, which is where a batch spends its time. The tests went through
   `Attempts[0]` in six places and panicked instead of reporting; `firstRun` now fails with
   the task's own status and error, so the next occurrence says what happened.
-- 2026-09-22: PR J done (#12). Decisions the spec left open: a named task that did not
+- 2026-09-22: PR J done (#13). Decisions the spec left open: a named task that did not
   pass is skipped rather than merged, because naming a task is not evidence its gates
   passed and a silent merge of unproven work is the one outcome nobody wants; `merge`
   reports "already merged" instead of making an empty commit, by comparing HEAD before
