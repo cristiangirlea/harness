@@ -183,7 +183,7 @@ func TestRunPassesLimits(t *testing.T) {
 	res := s.call(t, "run", `{"prompt":"x","backend":"stub","timeout":"90s","max_cost_usd":1.5,"task_budget":30000}`)
 	id := res.StructuredContent.(map[string]any)["run_id"].(string)
 	rec, err := runlog.Load(id)
-	if err != nil || rec.Task.Timeout != 90*time.Second || rec.Task.MaxCostUSD != 1.5 || rec.Task.TaskBudget != 30000 {
+	if err != nil || rec.Task.Timeout != agent.Duration(90*time.Second) || rec.Task.MaxCostUSD != 1.5 || rec.Task.TaskBudget != 30000 {
 		t.Fatalf("limits should reach the task: %+v err=%v", rec.Task, err)
 	}
 	for _, args := range []string{

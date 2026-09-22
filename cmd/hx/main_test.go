@@ -71,7 +71,7 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 		"max-turns":        task.MaxTurns == 7,
 		"no-instructions":  task.NoInstructions,
 		"no-context-edits": task.NoContextEdits,
-		"timeout":          task.Timeout == 90*time.Second,
+		"timeout":          task.Timeout == agent.Duration(90*time.Second),
 		"max-cost":         task.MaxCostUSD == 1.5,
 		"task-budget":      task.TaskBudget == 30000,
 		"run-dir":          task.RunDir != "",

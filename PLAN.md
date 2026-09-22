@@ -499,6 +499,41 @@ Done: PR #15, 2026-09-22.
 
 Size: mostly moves; ~100 new lines.
 
+### [x] PR L: one options struct
+
+Done: PR #16, 2026-09-22.
+
+**Why.** Every api option (`model`, `mode`, `max_turns`, `effort`, `mcp`, the three
+switches, the three budgets) was wired by hand in four places (`agent.Task`, the run
+flags, `batch.Spec` and `batch.Task`, the MCP decode struct) and described in a fifth
+(the MCP schema). PRs A, C, D and I each added a field to all of them; a field forgotten
+in one was silent. The first thread in *What is open*.
+
+**Decisions made.**
+- `agent.Options` holds the eleven options with `json`, `desc` and (where the flag name
+  differs) `flag` tags. `agent.Task` embeds it, so `task.Mode` and the record's JSON
+  keys are unchanged. `batch.Spec` and `batch.Task` embed it; the MCP decode struct
+  embeds it.
+- Derived, not repeated: `BindFlags` registers one flag per field (`hx run` uses it and
+  adds `-m`), `Schema` generates the MCP properties from the same tags (the run tool adds
+  `prompt`, `backend`, `dir`, `continue_run_id` and an MCP note on `mode`), `Over` merges
+  a task's options over its spec's by reflection (zero inherits, so switches OR and an
+  empty list stays empty), and `Validate` is the one check every entry point calls.
+  `TestEveryOptionHasAFlagAndASchemaEntry` fails on a field that any of them misses.
+- `Timeout` is `agent.Duration`: `"20m"` in a spec, a flag or an MCP call, written the
+  same way in records, a JSON number accepted as nanoseconds. Records written before
+  this (`timeout_ns`) load through `Task.UnmarshalJSON`. The type lives on the field,
+  not on `Options`, because a struct with its own `MarshalJSON` cannot be embedded
+  without hiding the outer type's fields.
+- A task may now set `mcp` itself; `checkLimits`, the per-kind `first*` pickers and
+  `multiFlag` are gone.
+
+**Tests.** `options_test.go`: every field has a flag, a schema entry and a desc; flags
+set every field and refuse a bad mode or duration; `Over` for every kind; `Validate`;
+`Duration` both ways; a legacy `timeout_ns` record. The existing suites cover the
+entry points; two invalid-duration cases moved from Go literals to spec JSON, which is
+where such a typo lives.
+
 ## Definition of done (every PR)
 
 - [ ] `go vet ./...`, `go build ./...`, `go test -count=3 ./...`, `gofmt -l .` empty, locally.
@@ -528,11 +563,7 @@ Size: mostly moves; ~100 new lines.
 Every lettered increment is done. These are the threads the log leaves behind, in the
 order they are worth taking:
 
-1. **One options struct.** Each api option (`no_instructions`, `no_context_edits`, the
-   three budgets) is wired by hand in four places: `agent.Task`, the run flags, the batch
-   spec and task, and the MCP decode struct. A field forgotten in one of them is silent.
-   Collapsing them changes `batch.Spec`, `batch.Task` and the MCP struct together, so it
-   is its own increment.
+1. ~~**One options struct.**~~ Done as PR L (#16).
 2. **Measure the context-editing default.** Server-side clearing is on by default and its
    interaction with the two cache breakpoints is unmeasured; a clear invalidates the
    cached prefix from that point. One long api run with and without it, compared on
@@ -818,3 +849,25 @@ order they are worth taking:
   printing 0s, `hx batch rm` keeps its old exit code for an unknown id, `batch diff` takes
   flags like its siblings, `short` became `tools.ShortSHA`, and a diff of a batch whose
   branches were removed says so instead of passing on "bad object".
+- 2026-09-22: PR L done (#16), the first thread from *What is open*. Sized before starting:
+  fifty test literals name option fields directly, and Go composite literals cannot set a
+  promoted field, so embedding meant rewriting them all; a script did it, the compiler
+  found the four comparisons it missed. The design trap: a type with its own MarshalJSON
+  cannot be embedded, or its method is promoted and the outer struct marshals as just the
+  embedded part - so the duration handling is on `agent.Duration`, the field's type, not
+  on `Options`. Smoked on the built binary: the flag parser itself refuses `--mode weird`
+  and `--timeout soon`, `hx report` still reads the records written with `timeout_ns`,
+  a spec with `"timeout":"5m"` and a task-level `mcp` parses, and the MCP schema lists
+  every option with a description.
+- 2026-09-22: PR L self-review, 10 findings, 8 fixed. The one that mattered: `Duration`
+  accepted a bare JSON number as nanoseconds, for records that in fact keep the old
+  value under their own key, so `"timeout": 300` in a spec would have run every task for
+  300ns; numbers are refused now and null means unset. A task's own `mcp` list is
+  resolved and checked in `Run` with the spec's, so a typo in task seven no longer waits
+  for six agents to finish, and an explicit empty list means no servers at all, which
+  the README had claimed and `ConfigPaths` had quietly overridden with the default file.
+  A test in `cmd/hx` now fails when the hand-written usage text omits a flag the struct
+  has. Not fixed: a bad per-task duration is reported by value rather than by task,
+  because encoding/json gives a custom unmarshaler no field path; and the methods of an
+  embedded struct promote, so `spec.Validate()` exists and checks only the options -
+  named in the doc comment, not worth un-embedding.

@@ -277,7 +277,7 @@ func TestRowJSON(t *testing.T) {
 // through their public writers rather than hand-made files.
 func TestCollectReadsHome(t *testing.T) {
 	t.Setenv("HX_HOME", t.TempDir())
-	task := agent.Task{Prompt: "p", Dir: t.TempDir(), Mode: agent.ModeAsk}
+	task := agent.Task{Prompt: "p", Dir: t.TempDir(), Options: agent.Options{Mode: agent.ModeAsk}}
 	for i, res := range []agent.Result{
 		{Backend: "api", Status: agent.StatusOK, Turns: 2, CostUSD: 0.5, CostEstimate: true},
 		{Backend: "claude", Status: agent.StatusError, Turns: 1},

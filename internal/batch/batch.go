@@ -29,48 +29,29 @@ import (
 // Spec is a batch of tasks to run against one repository. Task fields
 // override the Spec defaults of the same name.
 type Spec struct {
-	Dir            string   `json:"dir,omitempty"`      // any path inside the repository; default: the spec file's directory
-	Parallel       int      `json:"parallel,omitempty"` // agents at once; default 2
-	Backend        string   `json:"backend,omitempty"`  // default: api when credentials exist, else claude
-	Model          string   `json:"model,omitempty"`
-	Mode           string   `json:"mode,omitempty"` // default auto; nothing can approve prompts in a batch
-	MaxTurns       int      `json:"max_turns,omitempty"`
-	Effort         string   `json:"effort,omitempty"`
-	MCP            []string `json:"mcp,omitempty"`              // MCP config files, relative to Dir
-	NoInstructions bool     `json:"no_instructions,omitempty"`  // skip the project instruction files (api backend)
-	NoContextEdits bool     `json:"no_context_edits,omitempty"` // keep every tool result in the request (api backend)
-	AllowDangerous bool     `json:"allow_dangerous,omitempty"`  // lift the command guard (api backend)
-	AllowDirty     bool     `json:"allow_dirty,omitempty"`      // start even though tracked files are modified
-	Timeout        string   `json:"timeout,omitempty"`          // per attempt, e.g. "20m"
-	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`     // per attempt, api backend only
-	TaskBudget     int      `json:"task_budget,omitempty"`      // tokens, api backend only
-	Gate           []string `json:"gate,omitempty"`             // commands that must exit 0 in the worktree after the agent finishes
-	Retry          []string `json:"retry,omitempty"`            // backends to try, in order, after a failed attempt
-	Tasks          []Task   `json:"tasks"`
-
-	timeout time.Duration // Timeout, parsed by normalize
+	Dir      string `json:"dir,omitempty"`      // any path inside the repository; default: the spec file's directory
+	Parallel int    `json:"parallel,omitempty"` // agents at once; default 2
+	Backend  string `json:"backend,omitempty"`  // default: api when credentials exist, else claude
+	// Options are the run options every task starts from: model, mode (default
+	// auto; nothing can approve prompts in a batch), the budgets (per attempt),
+	// MCP files (relative to Dir) and the api switches. A task's own override
+	// them field by field.
+	agent.Options
+	AllowDirty bool     `json:"allow_dirty,omitempty"` // start even though tracked files are modified
+	Gate       []string `json:"gate,omitempty"`        // commands that must exit 0 in the worktree after the agent finishes
+	Retry      []string `json:"retry,omitempty"`       // backends to try, in order, after a failed attempt
+	Tasks      []Task   `json:"tasks"`
 }
 
 type Task struct {
-	ID       string `json:"id,omitempty"` // branch hx/<id> and worktree .hx/worktrees/<id>; default t1, t2, ...
-	Prompt   string `json:"prompt"`
-	Backend  string `json:"backend,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Mode     string `json:"mode,omitempty"`
-	MaxTurns int    `json:"max_turns,omitempty"`
-	Effort   string `json:"effort,omitempty"`
-	// NoInstructions and NoContextEdits add to the spec-wide switches; a task
-	// can turn either off but not back on.
-	NoInstructions bool     `json:"no_instructions,omitempty"`
-	NoContextEdits bool     `json:"no_context_edits,omitempty"`
-	AllowDangerous bool     `json:"allow_dangerous,omitempty"`
-	Timeout        string   `json:"timeout,omitempty"`
-	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`
-	TaskBudget     int      `json:"task_budget,omitempty"`
-	Gate           []string `json:"gate,omitempty"`
-	Retry          []string `json:"retry,omitempty"`
-
-	timeout time.Duration // Timeout, parsed by normalize
+	ID      string `json:"id,omitempty"` // branch hx/<id> and worktree .hx/worktrees/<id>; default t1, t2, ...
+	Prompt  string `json:"prompt"`
+	Backend string `json:"backend,omitempty"`
+	// Options set here override the spec's, field by field; a switch can be
+	// turned on for one task but not back off, and a zero limit inherits.
+	agent.Options
+	Gate  []string `json:"gate,omitempty"`
+	Retry []string `json:"retry,omitempty"`
 }
 
 type Status string
@@ -180,19 +161,15 @@ func (s *Spec) normalize() error {
 		s.Parallel = 2
 	}
 	if s.Mode == "" {
-		s.Mode = string(agent.ModeAuto)
+		s.Mode = agent.ModeAuto
 	}
-	if _, err := agent.ParseMode(s.Mode); err != nil {
+	if err := s.Options.Validate(); err != nil {
 		return err
 	}
 	if err := checkBackends(s.Backend, s.Retry); err != nil {
 		return err
 	}
 	if err := checkGates(s.Gate); err != nil {
-		return err
-	}
-	var err error
-	if s.timeout, err = checkLimits(s.Timeout, s.MaxCostUSD, s.TaskBudget); err != nil {
 		return err
 	}
 	if len(s.Tasks) == 0 {
@@ -214,19 +191,13 @@ func (s *Spec) normalize() error {
 			return fmt.Errorf("duplicate task id %q", t.ID)
 		}
 		seen[t.ID] = true
-		if t.Mode != "" {
-			if _, err := agent.ParseMode(t.Mode); err != nil {
-				return fmt.Errorf("task %s: %w", t.ID, err)
-			}
+		if err := t.Options.Validate(); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkBackends(t.Backend, t.Retry); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkGates(t.Gate); err != nil {
-			return fmt.Errorf("task %s: %w", t.ID, err)
-		}
-		var err error
-		if t.timeout, err = checkLimits(t.Timeout, t.MaxCostUSD, t.TaskBudget); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 	}
@@ -243,19 +214,6 @@ func checkBackends(backend string, retry []string) error {
 		}
 	}
 	return nil
-}
-
-// checkLimits parses and validates the limits before anything runs, and
-// returns the parsed duration so nothing has to parse the string again.
-func checkLimits(timeout string, maxCostUSD float64, taskBudget int) (time.Duration, error) {
-	var d time.Duration
-	if timeout != "" {
-		var err error
-		if d, err = time.ParseDuration(timeout); err != nil {
-			return 0, fmt.Errorf("timeout %q: %w", timeout, err)
-		}
-	}
-	return d, agent.ValidateLimits(d, maxCostUSD, taskBudget)
 }
 
 func checkGates(gates []string) error {
@@ -324,15 +282,17 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 			return Result{}, err
 		}
 	}
-	var mcpPaths []string
-	for _, p := range spec.MCP {
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(spec.Dir, p)
-		}
-		mcpPaths = append(mcpPaths, p)
-	}
-	if mcpPaths, err = mcp.ConfigPaths(mcpPaths); err != nil {
+	if spec.MCP, err = mcpPathsOf(spec.Dir, spec.MCP); err != nil {
 		return Result{}, err
+	}
+	// A task's own list is checked here too, so a typo in task seven does not
+	// surface after six agents have run.
+	for i := range spec.Tasks {
+		if t := &spec.Tasks[i]; t.MCP != nil {
+			if t.MCP, err = mcpPathsOf(spec.Dir, t.MCP); err != nil {
+				return Result{}, fmt.Errorf("task %s: %w", t.ID, err)
+			}
+		}
 	}
 	// Keep the worktrees out of the repository's status.
 	wtRoot := filepath.Join(root, ".hx", "worktrees")
@@ -359,7 +319,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				res.Tasks[i] = runTask(ctx, &spec, spec.Tasks[i], res.Tasks[i], root, base, mcpPaths, notify)
+				res.Tasks[i] = runTask(ctx, &spec, spec.Tasks[i], res.Tasks[i], root, base, notify)
 			}
 		}()
 	}
@@ -454,7 +414,7 @@ func fence(s string) string {
 	return f
 }
 
-func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base string, mcpPaths []string, notify func(Event)) TaskResult {
+func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base string, notify func(Event)) TaskResult {
 	started := time.Now()
 	tr.Status, tr.Attempts, tr.Commit, tr.Error = "", []Attempt{}, "", ""
 	finish := func(status Status, text string) TaskResult {
@@ -477,7 +437,9 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 	backends := []string{firstOf(t.Backend, spec.Backend, agent.DefaultBackendName())}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
-	mode, _ := agent.ParseMode(firstOf(t.Mode, spec.Mode))
+	// The spec's options with whatever the task sets on top; Run resolved
+	// both MCP lists already.
+	opts := t.Options.Over(spec.Options)
 
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
 		return fail(fmt.Errorf("branch %s already exists; remove it or pick another task id", tr.Branch))
@@ -486,17 +448,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		return fail(fmt.Errorf("worktree %s already exists; remove it or pick another task id", tr.Worktree))
 	}
 
-	task := agent.Task{
-		Dir: tr.Worktree, Mode: mode, MCP: mcpPaths,
-		NoInstructions: t.NoInstructions || spec.NoInstructions,
-		NoContextEdits: t.NoContextEdits || spec.NoContextEdits,
-		AllowDangerous: t.AllowDangerous || spec.AllowDangerous,
-		Timeout:        firstDuration(t.timeout, spec.timeout),
-		MaxCostUSD:     firstFloat(t.MaxCostUSD, spec.MaxCostUSD),
-		TaskBudget:     firstInt(t.TaskBudget, spec.TaskBudget),
-		Model:          firstOf(t.Model, spec.Model), Effort: firstOf(t.Effort, spec.Effort),
-		MaxTurns: firstInt(t.MaxTurns, spec.MaxTurns),
-	}
+	task := agent.Task{Dir: tr.Worktree, Options: opts}
 
 	for i, name := range backends {
 		b, err := agent.Get(name)
@@ -1018,6 +970,24 @@ func gitStdout(ctx context.Context, dir string, args ...string) (string, error) 
 	return string(out), nil
 }
 
+// mcpPathsOf resolves MCP config files against the spec's directory and
+// checks them, so a typo fails before an agent runs. A list that is present
+// but empty means no servers at all, not even ~/.hx/mcp.json; a missing list
+// gets that default like every other entry point.
+func mcpPathsOf(dir string, paths []string) ([]string, error) {
+	if paths != nil && len(paths) == 0 {
+		return []string{}, nil
+	}
+	abs := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(dir, p)
+		}
+		abs = append(abs, p)
+	}
+	return mcp.ConfigPaths(abs)
+}
+
 func firstOf(values ...string) string {
 	for _, v := range values {
 		if v != "" {
@@ -1025,33 +995,6 @@ func firstOf(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func firstDuration(values ...time.Duration) time.Duration {
-	for _, v := range values {
-		if v != 0 {
-			return v
-		}
-	}
-	return 0
-}
-
-func firstFloat(values ...float64) float64 {
-	for _, v := range values {
-		if v != 0 {
-			return v
-		}
-	}
-	return 0
-}
-
-func firstInt(values ...int) int {
-	for _, v := range values {
-		if v != 0 {
-			return v
-		}
-	}
-	return 0
 }
 
 func firstList(lists ...[]string) []string {
