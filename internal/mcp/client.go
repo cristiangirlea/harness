@@ -33,6 +33,12 @@ type Client struct {
 	Info Implementation
 	// Roots are the directories reported to servers that ask (roots/list).
 	Roots []string
+	// Capabilities are declared to the server on top of roots, so it knows what
+	// it may ask this client to do.
+	Capabilities map[string]any
+	// Elicit answers a server's elicitation/create. Nil means the client cannot
+	// ask its user anything, and the server is told so.
+	Elicit func(ctx context.Context, params json.RawMessage) (any, error)
 	// Log receives the server's warning/error log notifications. Nil discards.
 	Log func(string)
 	// Progress receives progress messages for in-flight tool calls. When set,
@@ -51,6 +57,9 @@ type Client struct {
 	mu      sync.Mutex
 	nextID  int64
 	pending map[string]chan *message
+	// asking holds the questions this client is putting to its user, so a
+	// request the server withdraws stops waiting for an answer.
+	asking  map[string]context.CancelFunc
 	done    chan struct{} // closed when the read loop exits
 	exitErr error
 
@@ -105,15 +114,23 @@ func (c *Client) Connect(ctx context.Context, r io.Reader, w io.Writer) error {
 	}
 	c.codec = newCodec(r, w)
 	c.pending = map[string]chan *message{}
+	c.asking = map[string]context.CancelFunc{}
 	c.done = make(chan struct{})
 	go c.readLoop()
 
 	hctx, cancel := context.WithTimeout(ctx, c.StartupTimeout)
 	defer cancel()
 	var init initializeResult
+	caps := map[string]any{"roots": map[string]any{"listChanged": false}}
+	for k, v := range c.Capabilities {
+		caps[k] = v
+	}
+	if c.Elicit != nil {
+		caps["elicitation"] = map[string]any{}
+	}
 	err := c.call(hctx, "initialize", initializeParams{
 		ProtocolVersion: ProtocolVersion,
-		Capabilities:    map[string]any{"roots": map[string]any{"listChanged": false}},
+		Capabilities:    caps,
 		ClientInfo:      c.Info,
 	}, &init)
 	if err != nil {
@@ -283,6 +300,27 @@ func (c *Client) handleRequest(m *message) {
 	switch m.Method {
 	case "ping":
 		_ = c.codec.respond(m.ID, struct{}{})
+	case "elicitation/create":
+		if c.Elicit == nil {
+			_ = c.codec.fail(m.ID, CodeMethodNotFound, "this client cannot ask its user")
+			return
+		}
+		actx, cancel := context.WithCancel(context.Background())
+		c.mu.Lock()
+		c.asking[string(m.ID)] = cancel
+		c.mu.Unlock()
+		defer func() {
+			c.mu.Lock()
+			delete(c.asking, string(m.ID))
+			c.mu.Unlock()
+			cancel()
+		}()
+		answer, err := c.Elicit(actx, m.Params)
+		if err != nil {
+			_ = c.codec.fail(m.ID, CodeInternalError, err.Error())
+			return
+		}
+		_ = c.codec.respond(m.ID, answer)
 	case "roots/list":
 		roots := make([]Root, 0, len(c.Roots))
 		for _, r := range c.Roots {
@@ -309,6 +347,16 @@ func (c *Client) handleNotification(m *message) {
 			}
 			c.log(p.Level + ": " + s)
 		}
+	case "notifications/cancelled":
+		var p cancelledParams
+		if json.Unmarshal(m.Params, &p) != nil {
+			return
+		}
+		c.mu.Lock()
+		if stop := c.asking[string(p.RequestID)]; stop != nil {
+			stop()
+		}
+		c.mu.Unlock()
 	case "notifications/progress":
 		if c.Progress == nil {
 			return

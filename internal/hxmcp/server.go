@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -22,7 +23,7 @@ const instructions = `hx runs coding tasks on an agent backend of your choice (i
 
 Use "run" to delegate a task. It blocks until the task finishes and returns the final answer, a summary line and a run id; "show" replays a run, "runs" lists recent ones, "backends" says which backends are usable. Several "run" calls may be in flight at once.
 
-There is no terminal behind this server, so mode "ask" denies every write and command. Use "readonly" for investigation, "auto" to allow file edits, "yolo" to also allow shell commands.`
+There is no terminal behind this server. Mode "ask" puts each write and command to you through the host, when the host supports elicitation, and denies it otherwise. Use "readonly" for investigation, "auto" to allow file edits without asking, "yolo" to also allow shell commands.`
 
 // NewServer builds the hx MCP server. defaultDir is the workspace used when
 // a run does not name one, normally the host's project directory.
@@ -72,7 +73,7 @@ func runTool(defaultDir string) mcp.Tool {
 				"model":   str("Model id for the backend. Optional."),
 				"dir":     str("Workspace directory. Default: " + defaultDir),
 				"mode": map[string]any{"type": "string", "enum": []any{"readonly", "ask", "auto", "yolo"},
-					"description": "Permission mode, default readonly. ask denies all writes here (no terminal); auto allows file edits; yolo also allows commands."},
+					"description": "Permission mode, default readonly. ask puts each write and command to you when this host supports elicitation, and denies it otherwise; auto allows file edits; yolo also allows commands."},
 				"max_turns": num("Stop after this many model turns."),
 				"effort":    str("api backend only: low | medium | high | xhigh | max."),
 				"mcp": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
@@ -184,6 +185,10 @@ func runTool(defaultDir string) mcp.Tool {
 			// The api backend saves the conversation here, so a follow-up can
 			// continue this run.
 			task.RunDir = rec.Dir()
+			if mode == agent.ModeAsk && call.ClientSupports("elicitation") {
+				// Named by run, because two runs may be asking at once.
+				task.Approve = approver(ctx, call, rec.ID())
+			}
 			emit := func(e agent.Event) {
 				rec.Event(e)
 				switch e.Kind {
@@ -341,6 +346,51 @@ func backendsTool() mcp.Tool {
 		},
 	}
 }
+
+// approver asks the host's user about each call the mode does not decide by
+// itself. One question at a time, so prompts never interleave, and anything
+// other than a clear yes is a no.
+func approver(ctx context.Context, call mcp.Call, runID string) func(agent.ApprovalRequest) bool {
+	var asking sync.Mutex
+	return func(req agent.ApprovalRequest) bool {
+		asking.Lock()
+		defer asking.Unlock()
+		actx, cancel := context.WithTimeout(ctx, approvalTimeout)
+		defer cancel()
+
+		var answer struct {
+			Action  string `json:"action"`
+			Content struct {
+				Approve bool `json:"approve"`
+			} `json:"content"`
+		}
+		params := map[string]any{
+			// The summary is what is being approved, so it goes in whole: a
+			// truncated command can hide the part that matters.
+			"message": fmt.Sprintf("hx run %s wants to run %s:\n%s", runID, req.Tool, tools.Truncate(req.Summary)),
+			"requestedSchema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"approve": map[string]any{"type": "boolean", "title": "Allow"}},
+				"required":   []any{"approve"},
+			},
+		}
+		if err := call.Request(actx, "elicitation/create", params, &answer); err != nil {
+			call.Progress("approval request failed, denying: " + err.Error())
+			return false
+		}
+		allowed := answer.Action == "accept" && answer.Content.Approve
+		decision := "denied"
+		if allowed {
+			decision = "allowed"
+		}
+		call.Progress(fmt.Sprintf("%s %s: %s", decision, req.Tool, tools.OneLine(req.Summary, 120)))
+		return allowed
+	}
+}
+
+// approvalTimeout is how long a question may wait for its answer before the
+// call is denied; a host that never answers must not hold a run open.
+const approvalTimeout = 5 * time.Minute
 
 // continues renders what a run followed, for the show header.
 func continues(rec runlog.Record) string {

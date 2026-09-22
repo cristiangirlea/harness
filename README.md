@@ -247,8 +247,18 @@ Tools:
 
 Requests are served concurrently, so parallel tool calls from the host become parallel
 agents, each recorded under `~/.hx/runs` like a CLI run. Cancelling the tool call cancels
-the run. There is no terminal behind the server, so `ask` denies every write and
-command: `run` defaults to `readonly`; use `auto` for edits and `yolo` for commands.
+the run. `run` defaults to `readonly`; `auto` allows file edits and `yolo` also allows
+commands.
+
+There is no terminal behind the server, so `ask` mode asks the host instead: each write
+or command goes back to the person through MCP elicitation, one question at a time, and
+a run waits up to five minutes for each answer. The prompt names the run and carries the
+whole command or path being approved, because a truncated one can hide the part that
+matters, and the decision goes back to the host as progress. Anything other than a clear
+yes is a no, including a declined prompt, a cancelled one, an error, or a host that does
+not support elicitation at all. Two runs in ask mode at the same time ask independently,
+which is why the prompt says which run it is from. That makes `ask` a real mode in the
+place hx runs most.
 
 ## Batches
 

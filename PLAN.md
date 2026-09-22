@@ -400,7 +400,9 @@ always fails its gate) asserting pass rates and that worktrees are gone afterwar
 
 Size: ~400 lines + tests.
 
-### [ ] PR H: approvals under `hx mcp` via elicitation (Fable)
+### [x] PR H: approvals under `hx mcp` via elicitation (Fable)
+
+Done: PR #14, 2026-09-22.
 
 **Why.** Under Claude Code, hx's `ask` mode denies everything because there is no
 terminal. MCP (2025-06-18) lets a server ask the host to ask the user
@@ -521,6 +523,22 @@ Size: mostly moves; ~100 new lines.
 
 ## Decisions log
 
+- 2026-09-22: PR H done (#14). Deviation: Request and ClientSupports are on mcp.Call, not
+  on Server as the spec said, because the connection state belongs to one connection
+  while a Server can serve several, and the handler already holds the Call.
+- 2026-09-22: PR H self-review, 7 findings, all fixed. The worst was mine and pre-existing
+  in shape: Serve registered `defer cancel()` before `defer wg.Wait()`, so on exit it
+  waited for in-flight handlers and only cancelled them afterwards. That never mattered
+  while no handler blocked on the client; with approvals it means a host that disappears
+  mid-prompt hangs the server until the approver's own five-minute timeout. Fixed by
+  cancelling first, and a test that closes the client mid-question fails in exactly the
+  old way (5s timeout, "waited for a handler it had not cancelled") when the fix is
+  reverted. Also: the client now cancels an elicitation the server withdrew, instead of
+  leaving the question on screen; the prompt carries the whole summary rather than 200
+  characters, because a truncated command hides the part that makes it dangerous; the
+  prompt names the run, since two runs can ask at once; each decision goes back as
+  progress; Call.Request documents that it waits on ctx alone; and a test asserts what
+  the person is actually asked rather than only the outcome.
 - 2026-09-22: PR G done (#12). Deviations from the spec: Expand takes the eval id as an
   argument instead of generating one, so Run owns the id and Summarize can rebuild a
   table from a record loaded later; Run returns the batch.Result alongside the record and

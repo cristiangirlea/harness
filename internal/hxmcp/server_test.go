@@ -218,3 +218,92 @@ func TestRunContinueRejectsWhatItCannot(t *testing.T) {
 		t.Errorf("continuing a run without a conversation: %+v", r)
 	}
 }
+
+// askingBackend asks for permission once and reports what it was told.
+type askingBackend struct{}
+
+func (askingBackend) Name() string            { return "stub-ask" }
+func (askingBackend) Detect() (string, error) { return "built-in stub", nil }
+func (askingBackend) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+	answer := "denied"
+	if task.Approve != nil && task.Approve(agent.ApprovalRequest{Tool: "write_file", Summary: "notes.txt"}) {
+		answer = "allowed"
+	}
+	return agent.Result{Backend: "stub-ask", Status: agent.StatusOK, Final: answer, Turns: 1}
+}
+
+func init() { agent.Register(askingBackend{}) }
+
+// answering connects a session whose client answers every approval the same way.
+func answering(t *testing.T, reply map[string]any) *session {
+	return answeringWith(t, reply, nil)
+}
+
+// answeringWith also hands each elicitation's params to watch, so a test can
+// assert what the person was actually asked.
+func answeringWith(t *testing.T, reply map[string]any, watch func(json.RawMessage)) *session {
+	t.Helper()
+	t.Setenv("HX_HOME", t.TempDir())
+	toServer, clientOut := io.Pipe()
+	toClient, serverOut := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- NewServer(t.TempDir()).Serve(ctx, toServer, serverOut) }()
+	t.Cleanup(func() { cancel(); clientOut.Close(); serverOut.Close(); <-done })
+
+	s := &session{}
+	s.cl = &mcp.Client{Progress: func(m string) { s.mu.Lock(); s.progress = append(s.progress, m); s.mu.Unlock() }}
+	if reply != nil {
+		s.cl.Elicit = func(_ context.Context, params json.RawMessage) (any, error) {
+			if watch != nil {
+				watch(params)
+			}
+			return reply, nil
+		}
+	}
+	if err := s.cl.Connect(ctx, toClient, clientOut); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestAskModeGoesThroughTheHost(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reply map[string]any
+		want  string
+	}{
+		{"accepted", map[string]any{"action": "accept", "content": map[string]any{"approve": true}}, "allowed"},
+		{"the box left unticked", map[string]any{"action": "accept", "content": map[string]any{"approve": false}}, "denied"},
+		{"declined", map[string]any{"action": "decline"}, "denied"},
+		{"host cannot ask", nil, "denied"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := answering(t, tc.reply)
+			res := s.call(t, "run", `{"prompt":"x","backend":"stub-ask","mode":"ask"}`)
+			if got := res.Text(); !strings.Contains(got, tc.want) {
+				t.Errorf("run said %q, want it to contain %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApprovalPromptSaysWhatIsBeingApproved(t *testing.T) {
+	var asked string
+	s := answeringWith(t, map[string]any{"action": "accept", "content": map[string]any{"approve": true}},
+		func(params json.RawMessage) { asked = string(params) })
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub-ask","mode":"ask"}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+
+	for _, want := range []string{"write_file", "notes.txt", id, `"approve"`, `"required"`} {
+		if !strings.Contains(asked, want) {
+			t.Errorf("the prompt must carry %q:\n%s", want, asked)
+		}
+	}
+	s.mu.Lock()
+	progress := strings.Join(s.progress, "|")
+	s.mu.Unlock()
+	if !strings.Contains(progress, "allowed write_file") {
+		t.Errorf("the decision should reach the host: %q", progress)
+	}
+}
