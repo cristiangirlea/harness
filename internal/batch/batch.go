@@ -264,14 +264,13 @@ func checkGates(gates []string) error {
 // would quietly be testing something other than what the operator sees.
 // Untracked files are not counted - .hx/worktrees is one of them.
 func checkClean(ctx context.Context, root string) error {
-	status, err := gitOut(ctx, root, "status", "--porcelain", "--untracked-files=no")
+	lines, err := dirtyPaths(ctx, root, false)
 	if err != nil {
 		return err
 	}
-	if status == "" {
+	if len(lines) == 0 {
 		return nil
 	}
-	lines := strings.Split(status, "\n")
 	shown, more := lines, ""
 	if len(shown) > 5 {
 		shown, more = shown[:5], fmt.Sprintf("\n  ... and %d more", len(lines)-5)
@@ -644,8 +643,25 @@ func hasChanges(wt string) (bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	status, err := gitOut(ctx, wt, "status", "--porcelain")
-	return status != "", err
+	// Untracked files count here: a worktree holding work the branch does not
+	// have must not be removed. Starting a batch ignores them instead, because
+	// .hx/worktrees itself is untracked in the root.
+	lines, err := dirtyPaths(ctx, wt, true)
+	return len(lines) > 0, err
+}
+
+// dirtyPaths lists the porcelain status lines of a working tree, with or
+// without untracked files. One place decides what "dirty" means.
+func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, error) {
+	args := []string{"status", "--porcelain"}
+	if !untracked {
+		args = append(args, "--untracked-files=no")
+	}
+	status, err := gitOut(ctx, dir, args...)
+	if err != nil || status == "" {
+		return nil, err
+	}
+	return strings.Split(status, "\n"), nil
 }
 
 // Remove deletes the worktrees and branches a batch created. A worktree with
