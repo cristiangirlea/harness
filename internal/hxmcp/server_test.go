@@ -161,6 +161,23 @@ func TestRunPassesNoInstructions(t *testing.T) {
 	}
 }
 
+func TestRunPassesAllowDangerous(t *testing.T) {
+	s := connect(t, t.TempDir())
+	for _, tc := range []struct {
+		args string
+		want bool
+	}{
+		{`{"prompt":"x","backend":"stub"}`, false},
+		{`{"prompt":"x","backend":"stub","allow_dangerous":true}`, true},
+	} {
+		res := s.call(t, "run", tc.args)
+		id := res.StructuredContent.(map[string]any)["run_id"].(string)
+		if rec, err := runlog.Load(id); err != nil || rec.Task.AllowDangerous != tc.want {
+			t.Errorf("%s: AllowDangerous = %v, want %v (err=%v)", tc.args, rec.Task.AllowDangerous, tc.want, err)
+		}
+	}
+}
+
 func TestRunPassesLimits(t *testing.T) {
 	s := connect(t, t.TempDir())
 	res := s.call(t, "run", `{"prompt":"x","backend":"stub","timeout":"90s","max_cost_usd":1.5,"task_budget":30000}`)

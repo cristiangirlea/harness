@@ -127,6 +127,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	if err != nil {
 		return fail(StatusError, err)
 	}
+	ws.AllowDangerous = task.AllowDangerous
 	maxTurns := task.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 50
@@ -161,8 +162,12 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 
 	shell, _ := tools.Shell()
-	env := fmt.Sprintf("Workspace root: %s\nOS: %s\nShell for run_command: %s\nPermission mode: %s",
-		ws.Root, runtime.GOOS, shell, task.Mode)
+	guard := "on (a few destructive or publishing command lines are refused)"
+	if task.AllowDangerous {
+		guard = "off (the operator passed --allow-dangerous)"
+	}
+	env := fmt.Sprintf("Workspace root: %s\nOS: %s\nShell for run_command: %s\nPermission mode: %s\nCommand guard: %s",
+		ws.Root, runtime.GOOS, shell, task.Mode, guard)
 	ephemeral := block{"type": "ephemeral"}
 
 	system := []block{{"type": "text", "text": systemPrompt}}
@@ -345,6 +350,10 @@ func (b *APIBackend) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 			result(i, name, fmt.Sprintf("unknown tool %q", name), true)
 		case invalid[id] != "":
 			result(i, name, "tool input was not valid JSON: "+invalid[id], true)
+		case refusalOf(t, ws, input) != "":
+			// Asked before the approval below: prompting for a command the
+			// harness will refuse anyway only wastes the operator's yes.
+			result(i, name, tools.GuardError(refusalOf(t, ws, input)).Error(), true)
 		case !allowed(task, t, summary):
 			result(i, name, "Permission denied by the user's harness settings.", true)
 		case t.Effect == tools.EffectRead:
@@ -378,6 +387,14 @@ func (b *APIBackend) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 		run(j)
 	}
 	return results
+}
+
+// refusalOf asks a tool whether it declines this call outright.
+func refusalOf(t tools.Tool, ws *tools.Workspace, input json.RawMessage) string {
+	if t.Refuse == nil {
+		return ""
+	}
+	return t.Refuse(ws, input)
 }
 
 func allowed(task Task, t tools.Tool, summary string) bool {

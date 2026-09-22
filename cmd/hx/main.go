@@ -55,9 +55,12 @@ Run flags:
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
+      --allow-dangerous
+                       let run_command run git push, sudo, rm -rf / and the like (api backend)
 
 Batch flags:
       --parallel N     agents at once (default: the file's value, else 2)
+      --allow-dirty    start even though the repository has uncommitted changes
       --json           print the batch record as JSON (progress goes to stderr)
   -v, --verbose        show each agent's tool calls
 
@@ -127,6 +130,7 @@ func cmdRun(args []string) (int, error) {
 	fs.BoolVar(&thinking, "thinking", false, "")
 	noInstructions := fs.Bool("no-instructions", false, "")
 	noContextEdits := fs.Bool("no-context-edits", false, "")
+	allowDangerous := fs.Bool("allow-dangerous", false, "")
 	timeout := fs.Duration("timeout", 0, "")
 	maxCost := fs.Float64("max-cost", 0, "")
 	taskBudget := fs.Int("task-budget", 0, "")
@@ -210,7 +214,8 @@ func cmdRun(args []string) (int, error) {
 		return 2, err
 	}
 
-	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort, NoInstructions: *noInstructions, NoContextEdits: *noContextEdits,
+	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort,
+		NoInstructions: *noInstructions, NoContextEdits: *noContextEdits, AllowDangerous: *allowDangerous,
 		Timeout: *timeout, MaxCostUSD: *maxCost, TaskBudget: *taskBudget, Resume: resume}
 	if err := agent.ValidateLimits(task.Timeout, task.MaxCostUSD, task.TaskBudget); err != nil {
 		return 2, err
@@ -398,6 +403,7 @@ func cmdBatch(args []string) (int, error) {
 	}
 	fs := flag.NewFlagSet("batch", flag.ContinueOnError)
 	parallel := fs.Int("parallel", 0, "")
+	allowDirty := fs.Bool("allow-dirty", false, "")
 	jsonOut := fs.Bool("json", false, "")
 	var verbose bool
 	for _, name := range []string{"v", "verbose"} {
@@ -416,6 +422,9 @@ func cmdBatch(args []string) (int, error) {
 	}
 	if *parallel > 0 {
 		spec.Parallel = *parallel
+	}
+	if *allowDirty {
+		spec.AllowDirty = true
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

@@ -68,6 +68,10 @@ type Task struct {
 	// instead of being resent every turn.
 	NoContextEdits bool `json:"no_context_edits,omitempty"`
 
+	// AllowDangerous lifts the api backend's command guard, which otherwise
+	// refuses a few command lines (git push, sudo, rm -rf /, curl | sh).
+	AllowDangerous bool `json:"allow_dangerous,omitempty"`
+
 	// RunDir is where the api backend saves the conversation, so the run can be
 	// continued later. Callers that hold a runlog.Writer set it to its Dir.
 	RunDir string `json:"-"`

@@ -68,6 +68,27 @@ func TestCLISaysWhatItCannotEnforce(t *testing.T) {
 	}
 }
 
+func TestCLISaysTheGuardDoesNotApply(t *testing.T) {
+	t.Setenv("HX_CLI_HELPER", "error")
+	guardLines := func(mode Mode) []string {
+		var out []string
+		helperCLI(parseOpencodeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: mode},
+			func(e Event) {
+				if e.Kind == EventInfo && strings.Contains(e.Text, "command guard") {
+					out = append(out, e.Text)
+				}
+			})
+		return out
+	}
+	if lines := guardLines(ModeYolo); len(lines) != 1 || !strings.Contains(lines[0], "not applied") {
+		t.Errorf("an unattended CLI run should say the guard is not applied: %v", lines)
+	}
+	// Any other mode still asks or refuses per call, so the line would be noise.
+	if lines := guardLines(ModeAuto); len(lines) != 0 {
+		t.Errorf("mode auto should not carry the line: %v", lines)
+	}
+}
+
 func TestCLIStopsOnTimeout(t *testing.T) {
 	t.Setenv("HX_CLI_HELPER", "sleep")
 	res := helperCLI(parseOpencodeStream).Run(context.Background(),

@@ -107,6 +107,20 @@ func run(t *testing.T, spec Spec) (Result, []Event) {
 	return res, events
 }
 
+// firstRun loads the record of a task's first attempt. A task with none failed
+// before it ever reached a backend, and its own error says why.
+func firstRun(t *testing.T, tr TaskResult) runlog.Record {
+	t.Helper()
+	if len(tr.Attempts) == 0 {
+		t.Fatalf("task %s made no attempt: status=%s error=%s", tr.ID, tr.Status, tr.Error)
+	}
+	rec, err := runlog.Load(tr.Attempts[0].RunID)
+	if err != nil {
+		t.Fatalf("task %s: loading run %s: %v", tr.ID, tr.Attempts[0].RunID, err)
+	}
+	return rec
+}
+
 func TestRunPassesGateAndCommits(t *testing.T) {
 	dir := initRepo(t)
 	base := git(t, dir, "rev-parse", "HEAD")
@@ -302,6 +316,62 @@ func TestBranchCollisionIsAnError(t *testing.T) {
 	}
 }
 
+func TestDirtyRepositoryIsRefused(t *testing.T) {
+	dir := initRepo(t)
+	spec := func(allowDirty bool) Spec {
+		return Spec{Dir: dir, Backend: "wb-ok", AllowDirty: allowDirty, Tasks: []Task{{ID: "t", Prompt: "a"}}}
+	}
+	// An untracked file is not a reason to stop: .hx/worktrees is one.
+	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, spec(false))
+	if res.Tasks[0].Status != StatusPass {
+		t.Fatalf("an untracked file must not stop a batch: %+v", res.Tasks[0])
+	}
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+
+	// A modified tracked file is, because the agents branch from HEAD.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(context.Background(), spec(false), nil)
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") || !strings.Contains(err.Error(), "README.md") {
+		t.Fatalf("a dirty repository must be refused by name: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".hx", "worktrees", "t")); statErr == nil {
+		t.Error("nothing should be created when the batch refuses to start")
+	}
+
+	res, _ = run(t, spec(true))
+	if res.Tasks[0].Status != StatusPass {
+		t.Fatalf("--allow-dirty must let it run: %+v", res.Tasks[0])
+	}
+}
+
+func TestAllowDangerousReachesTheTask(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", AllowDangerous: true, Tasks: []Task{
+		{ID: "spec-wide", Prompt: "a"},
+	}})
+	if rec := firstRun(t, res.Tasks[0]); !rec.Task.AllowDangerous {
+		t.Fatalf("the spec-wide switch should reach the task: %+v", rec.Task)
+	}
+
+	dir = initRepo(t)
+	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "off", Prompt: "a"},
+		{ID: "on", Prompt: "a", AllowDangerous: true},
+	}})
+	for i, want := range []bool{false, true} {
+		if rec := firstRun(t, res.Tasks[i]); rec.Task.AllowDangerous != want {
+			t.Errorf("%s: AllowDangerous = %v, want %v", res.Tasks[i].ID, rec.Task.AllowDangerous, want)
+		}
+	}
+}
+
 func TestSpecValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -364,16 +434,15 @@ func TestNoInstructionsReachesTheTask(t *testing.T) {
 		i    int
 		want bool
 	}{{0, false}, {1, true}} {
-		rec, err := runlog.Load(res.Tasks[tc.i].Attempts[0].RunID)
-		if err != nil || rec.Task.NoInstructions != tc.want {
-			t.Errorf("%s: NoInstructions = %v, want %v (err=%v)", res.Tasks[tc.i].ID, rec.Task.NoInstructions, tc.want, err)
+		if rec := firstRun(t, res.Tasks[tc.i]); rec.Task.NoInstructions != tc.want {
+			t.Errorf("%s: NoInstructions = %v, want %v", res.Tasks[tc.i].ID, rec.Task.NoInstructions, tc.want)
 		}
 	}
 
 	dir = initRepo(t)
 	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", NoInstructions: true, Tasks: []Task{{Prompt: "a"}}})
-	if rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID); err != nil || !rec.Task.NoInstructions {
-		t.Errorf("the spec-wide switch should reach every task: %+v err=%v", rec.Task, err)
+	if rec := firstRun(t, res.Tasks[0]); !rec.Task.NoInstructions {
+		t.Errorf("the spec-wide switch should reach every task: %+v", rec.Task)
 	}
 }
 
@@ -512,10 +581,7 @@ func TestLimitsReachTheTaskAndAreValidated(t *testing.T) {
 		{0, 5 * time.Minute, 2.5, 30000},
 		{1, 90 * time.Second, 1, 40000},
 	} {
-		rec, err := runlog.Load(res.Tasks[tc.i].Attempts[0].RunID)
-		if err != nil {
-			t.Fatal(err)
-		}
+		rec := firstRun(t, res.Tasks[tc.i])
 		if rec.Task.Timeout != tc.timeout || rec.Task.MaxCostUSD != tc.cost || rec.Task.TaskBudget != tc.budget {
 			t.Errorf("%s: timeout=%s cost=%v budget=%d", res.Tasks[tc.i].ID, rec.Task.Timeout, rec.Task.MaxCostUSD, rec.Task.TaskBudget)
 		}
@@ -562,9 +628,8 @@ func TestNoContextEditsReachesTheTask(t *testing.T) {
 		{ID: "opted-out", Prompt: "a", NoContextEdits: true},
 	}})
 	for i, want := range []bool{false, true} {
-		rec, err := runlog.Load(res.Tasks[i].Attempts[0].RunID)
-		if err != nil || rec.Task.NoContextEdits != want {
-			t.Errorf("%s: NoContextEdits = %v, want %v (err=%v)", res.Tasks[i].ID, rec.Task.NoContextEdits, want, err)
+		if rec := firstRun(t, res.Tasks[i]); rec.Task.NoContextEdits != want {
+			t.Errorf("%s: NoContextEdits = %v, want %v", res.Tasks[i].ID, rec.Task.NoContextEdits, want)
 		}
 	}
 }

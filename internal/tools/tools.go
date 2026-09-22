@@ -32,11 +32,20 @@ type Tool struct {
 	Effect Effect
 	// Summary renders a one-line description of a call for logs and approvals.
 	Summary func(input json.RawMessage) string
-	Run     func(ctx context.Context, ws *Workspace, input json.RawMessage) (string, error)
+	// Refuse reports why the harness will not run this call at all, named so
+	// the caller can say it. It is asked before any approval, so the operator
+	// is never prompted for something that would be refused anyway. Empty
+	// means the tool will attempt the call.
+	Refuse func(ws *Workspace, input json.RawMessage) string
+	Run    func(ctx context.Context, ws *Workspace, input json.RawMessage) (string, error)
 }
 
 type Workspace struct {
 	Root string
+	// AllowDangerous lifts the command guard for this run. It lives here
+	// because the tool set is built once and shared by every run, so per-task
+	// policy has to travel with the workspace.
+	AllowDangerous bool
 }
 
 func NewWorkspace(dir string) (*Workspace, error) {

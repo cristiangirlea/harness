@@ -38,6 +38,8 @@ type Spec struct {
 	MCP            []string `json:"mcp,omitempty"`              // MCP config files, relative to Dir
 	NoInstructions bool     `json:"no_instructions,omitempty"`  // skip the project instruction files (api backend)
 	NoContextEdits bool     `json:"no_context_edits,omitempty"` // keep every tool result in the request (api backend)
+	AllowDangerous bool     `json:"allow_dangerous,omitempty"`  // lift the command guard (api backend)
+	AllowDirty     bool     `json:"allow_dirty,omitempty"`      // start even though tracked files are modified
 	Timeout        string   `json:"timeout,omitempty"`          // per attempt, e.g. "20m"
 	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`     // per attempt, api backend only
 	TaskBudget     int      `json:"task_budget,omitempty"`      // tokens, api backend only
@@ -60,6 +62,7 @@ type Task struct {
 	// can turn either off but not back on.
 	NoInstructions bool     `json:"no_instructions,omitempty"`
 	NoContextEdits bool     `json:"no_context_edits,omitempty"`
+	AllowDangerous bool     `json:"allow_dangerous,omitempty"`
 	Timeout        string   `json:"timeout,omitempty"`
 	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`
 	TaskBudget     int      `json:"task_budget,omitempty"`
@@ -132,6 +135,13 @@ type Event struct {
 }
 
 const gateTimeout = 15 * time.Minute
+
+// worktreeMu serialises `git worktree add`, `remove` and `prune` for this
+// process. They all rewrite the repository's shared worktree metadata, and git
+// takes no lock of its own around it, so two workers doing it at once can fail
+// one another's command. Everything else the workers run - the agent, the
+// gates, the commit - stays parallel, which is where the time goes.
+var worktreeMu sync.Mutex
 
 var idRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -256,6 +266,27 @@ func checkGates(gates []string) error {
 	return nil
 }
 
+// checkClean refuses to start when tracked files are modified: every worktree
+// branches from HEAD, so that work would not reach the agents and the batch
+// would quietly be testing something other than what the operator sees.
+// Untracked files are not counted - .hx/worktrees is one of them.
+func checkClean(ctx context.Context, root string) error {
+	lines, err := dirtyPaths(ctx, root, false)
+	if err != nil {
+		return err
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	shown, more := lines, ""
+	if len(shown) > 5 {
+		shown, more = shown[:5], fmt.Sprintf("\n  ... and %d more", len(lines)-5)
+	}
+	return fmt.Errorf("the repository has uncommitted changes; the agents branch from HEAD and would not see them. "+
+		"Commit or stash them, or pass --allow-dirty (allow_dirty in the spec):\n  %s%s",
+		strings.Join(shown, "\n  "), more)
+}
+
 // Run executes the batch and saves its record. Tasks run through a pool of
 // Parallel workers; cancelling ctx stops running agents and skips the rest.
 // The record is written before the first task starts, so `hx batch rm` can
@@ -286,6 +317,11 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	base, err := gitOut(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return Result{}, err
+	}
+	if !spec.AllowDirty {
+		if err := checkClean(ctx, root); err != nil {
+			return Result{}, err
+		}
 	}
 	var mcpPaths []string
 	for _, p := range spec.MCP {
@@ -453,6 +489,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		Dir: tr.Worktree, Mode: mode, MCP: mcpPaths,
 		NoInstructions: t.NoInstructions || spec.NoInstructions,
 		NoContextEdits: t.NoContextEdits || spec.NoContextEdits,
+		AllowDangerous: t.AllowDangerous || spec.AllowDangerous,
 		Timeout:        firstDuration(t.timeout, spec.timeout),
 		MaxCostUSD:     firstFloat(t.MaxCostUSD, spec.MaxCostUSD),
 		TaskBudget:     firstInt(t.TaskBudget, spec.TaskBudget),
@@ -486,7 +523,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 				}
 			}
 			tr.Commit = ""
-			if _, err := gitOut(ctx, root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base); err != nil {
+			if err := addWorktree(ctx, root, tr, base); err != nil {
 				return fail(err)
 			}
 		}
@@ -613,8 +650,25 @@ func hasChanges(wt string) (bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	status, err := gitOut(ctx, wt, "status", "--porcelain")
-	return status != "", err
+	// Untracked files count here: a worktree holding work the branch does not
+	// have must not be removed. Starting a batch ignores them instead, because
+	// .hx/worktrees itself is untracked in the root.
+	lines, err := dirtyPaths(ctx, wt, true)
+	return len(lines) > 0, err
+}
+
+// dirtyPaths lists the porcelain status lines of a working tree, with or
+// without untracked files. One place decides what "dirty" means.
+func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, error) {
+	args := []string{"status", "--porcelain"}
+	if !untracked {
+		args = append(args, "--untracked-files=no")
+	}
+	status, err := gitOut(ctx, dir, args...)
+	if err != nil || status == "" {
+		return nil, err
+	}
+	return strings.Split(status, "\n"), nil
 }
 
 // Remove deletes the worktrees and branches a batch created. A worktree with
@@ -637,9 +691,19 @@ func Remove(res Result) error {
 	return errors.Join(errs...)
 }
 
+// addWorktree creates the task's worktree and branch from the base commit.
+func addWorktree(ctx context.Context, root string, tr TaskResult, base string) error {
+	worktreeMu.Lock()
+	defer worktreeMu.Unlock()
+	_, err := gitOut(ctx, root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	return err
+}
+
 func removeWorktree(root string, tr TaskResult) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	worktreeMu.Lock()
+	defer worktreeMu.Unlock()
 	if _, err := os.Stat(tr.Worktree); err == nil {
 		if _, err := gitOut(ctx, root, "worktree", "remove", "--force", tr.Worktree); err != nil {
 			return err

@@ -57,7 +57,8 @@ go test ./...
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
-`--mcp FILE` (repeatable), `--no-instructions`, and the budgets below.
+`--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, and the budgets
+below.
 
 ### Budgets
 
@@ -105,6 +106,39 @@ approval is denied.
 (exact unique match, CRLF-aware), `run_command` (Git Bash when present, else PowerShell;
 120s default timeout). All paths are confined to the workspace, symlinks included.
 Read-only calls in one turn run in parallel; writes and commands run in order.
+
+#### The command guard
+
+`run_command` refuses five kinds of command line before the shell sees them:
+
+| Rule | Refuses |
+|---|---|
+| `git-push` | any `git` command mentioning `push`, including `git -C dir push` — a batch commits on its own branch; what leaves the machine is the operator's call |
+| `sudo` | `sudo` — a password prompt hangs a run with no terminal |
+| `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
+| `pipe-to-shell` | `curl`/`wget` piped into a shell, however many stages the pipe has |
+| `disk` | `mkfs`, `format X:`, `dd of=/dev/…` |
+
+`rm-root` reads the arguments rather than matching one pattern, because the spelling
+that matters is not the famous one: `rm -rf /` is refused by `rm` itself without
+`--no-preserve-root`, while `rm -rf /*` and `rm -rf "$HOME"` are not.
+
+The refusal comes back to the model as a failed tool call naming the rule, so the run
+continues and the transcript says what was stopped. It is decided before any approval
+prompt, so `ask` mode never asks for a yes it would then ignore. Matching is textual and
+leans towards refusing too much: `echo "git push"` and `git commit -m "push later"` are
+refused as well, which costs a turn and is the trade this makes on purpose.
+
+This is a guard rail, not a sandbox — an agent that wants around a pattern can get
+around it. What decides whether commands run at all is the [permission mode](#permission-modes);
+this stops the plausible accident. `--allow-dangerous` (task field `allow_dangerous`,
+also a batch spec/task field and an MCP `run` argument) lifts it for a whole run, and the
+system prompt tells the model which way it is set; `yolo` on its own does not lift it.
+
+Three things it does not cover, by design: the agent CLIs run their own shells under
+their own permission systems (an unattended CLI run says so in its output), tools from
+an MCP server are the server's business, and batch gate commands are not checked,
+because the operator wrote those.
 
 ### Context management
 
@@ -201,7 +235,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
@@ -257,6 +291,11 @@ how the attempt failed.
 A continued attempt commits as `<id>: <prompt> (attempt N)`, so the branch reads as a
 sequence of fixes. Each attempt records the prompt it was actually sent and whether it
 continued, which `hx batch --json` prints.
+
+`hx batch` refuses to start when tracked files in the repository are modified: every
+worktree branches from `HEAD`, so that work would not reach the agents and the batch
+would quietly be testing something else. Commit or stash first, or pass `--allow-dirty`
+(spec field `allow_dirty`). Untracked files are not counted.
 
 Nothing can answer approval prompts in a batch, so `mode` defaults to `auto` (file edits
 allowed, no commands). Use `yolo` when the agent must build or run tests itself; the

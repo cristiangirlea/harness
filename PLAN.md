@@ -427,7 +427,9 @@ run with an approving client executes a write; with a declining client it does n
 
 Size: ~300 lines + tests.
 
-### [ ] PR I: command guard and dirty-repo check
+### [x] PR I: command guard and dirty-repo check
+
+Done: PR #11, 2026-09-22.
 
 **Why.** `yolo` mode and batch gates run whatever they are given. A few patterns are
 never what the user meant. And `hx batch` branches worktrees from `HEAD`, so
@@ -660,3 +662,45 @@ Size: mostly moves; ~100 new lines.
   ran; `Percent` never rounds to a false 100% or 0%; directory keys are canonical, so one
   workspace under two spellings is one row; `ParseSince` refuses windows that overflow;
   and `table` and `shortKey` got the first tests in `cmd/hx`.
+- 2026-09-22: PR I done (#11). Built in a worktree (`E:\__Workdir\harness-i`, branch
+  `i-guard`) because another session had the main checkout on PR E. Deviation: the refusal
+  text does not say "rerun with --allow-dangerous". That sentence is read by the model,
+  which cannot rerun anything and does have a shell, so it invited a retry or a recursive
+  hx call; it now names the rule, says only the operator can lift it, and tells the model
+  to explain rather than retry. Design note the spec left open: the guard needs per-run
+  state, but `APIBackend.Tools` is built once in `NewAPIBackend` and shared by every run,
+  so the switch rides on `tools.Workspace` (already the per-run policy object for path
+  confinement) rather than in a tool closure. `pipe-to-shell` also matches `powershell`
+  as written in the spec. The dirty check lists up to five paths so the message is
+  actionable, and runs before any worktree is created. Two self-inflicted lessons for
+  scripted edits, both caught only by merging main: an invalid `open(..., newline=)`
+  truncated this file before raising, and `subprocess.run(text=True)` decoded `git show`
+  with the console codepage and mangled every arrow. Read bytes, decode UTF-8, and assert
+  the file did not shrink.
+- 2026-09-22: PR I self-review, 10 findings: 7 fixed, 3 not. The guard as specced blocked
+  `rm -rf /`, which rm itself refuses without --no-preserve-root, and allowed `rm -rf /*`,
+  `rm -rf "$HOME"` and `rm -rf /c/`, which are the spellings that actually empty a machine;
+  rm-root now reads the arguments instead of matching one pattern, and `git -C dir push`,
+  reversed `dd` operands and multi-stage `curl | tee | bash` are caught too. The ordering
+  bug was worse than any pattern: in `ask` mode hx showed the command, took the operator's
+  yes, and then refused it anyway. Tools now carry a `Refuse` hook the loop asks before it
+  prompts, which also gives MCP tools a place to opt in later. A CLI backend in yolo mode
+  says the guard is not applied, since it never was for four of the five backends; the
+  system prompt now states which way the switch is set, because the tool description is
+  built once and shared; and `dirtyPaths` gives batch one answer to "is this tree dirty"
+  instead of two. Not fixed, with reasons: MCP exec tools stay unguarded (their input
+  shape is the server's, and guessing which field is a command would be a lie in the
+  README - the `Refuse` hook is where that lands when it is worth doing); `hx run` and the
+  MCP run tool get no dirty-tree check because they work in the operator's own checkout,
+  where uncommitted work is visible to the agent - the hazard is specific to batch
+  branching from HEAD; and the CLI flag-to-Task wiring is still untested, the same gap PR A
+  and PR D deferred, now waiting on PR K.
+- 2026-09-22: PR I, a flake the ubuntu runner found that the Windows one never did:
+  `TestLimitsReachTheTaskAndAreValidated` panicked on `Attempts[0]` because a task had no
+  attempt at all. The only path to that is a failed `git worktree add`, and two batch
+  workers run one each in the same repository at the same time; git rewrites shared
+  worktree metadata there and takes no lock of its own, so on a fast machine one loses.
+  `worktreeMu` now serialises add, remove and prune - the agent, the gates and the commit
+  stay parallel, which is where a batch spends its time. The tests went through
+  `Attempts[0]` in six places and panicked instead of reporting; `firstRun` now fails with
+  the task's own status and error, so the next occurrence says what happened.
