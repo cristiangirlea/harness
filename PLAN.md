@@ -292,7 +292,9 @@ betas; `NoContextEdits` → neither the field nor that beta.
 
 Size: ~40 lines + tests.
 
-### [ ] PR E: save the conversation and continue a run
+### [x] PR E: save the conversation and continue a run
+
+Done: PR #9, 2026-09-22.
 
 **Why.** `events.jsonl` is a transcript for humans; the API message list is not saved,
 so a finished run cannot be continued ("now fix the failing test"). MCP hosts and the
@@ -513,6 +515,21 @@ Size: mostly moves; ~100 new lines.
 
 ## Decisions log
 
+- 2026-09-22: PR E done (#9), no deviation from the spec. Two things it did not mention:
+  a history ending on an assistant turn whose tool calls were never answered is dropped
+  before saving, because the API refuses to resume from one (it happens on a max_tokens
+  truncation); and the workspace inherited from the earlier run is validated like any
+  other rather than trusted. Self-review, 7 findings, 6 fixed: an early failure used to
+  write messages.json with a null message list, which made a dead run look continuable;
+  run ids now go through one validID check in runlog (Load, Events, LoadConversation),
+  where only batch and the MCP show tool had one, and the test that "proved" a path-like
+  id was refused had been passing only because no file happened to exist there; a resume
+  takes the model the earlier task asked for rather than the one the API reported, which
+  could be decorated; the conversation is written compact and the README says a run now
+  costs about twice the disk; hx show and the MCP show tool print what a run continues;
+  and agent.Message is an exported alias so another package can build a Conversation.
+  Deferred again: cmd/hx still has no tests, so the --continue inheritance rules are
+  unverified - third increment in a row, and PR K should end it.
 - 2026-09-21: plan written. Step 0 not yet done; PR order may change after it.
 - 2026-09-21: Step 0 done. Prerequisite used: the desktop-bundled `claude.exe` logged in
   interactively (`/login`); hx finds it without PATH changes. Three smaller smokes passed

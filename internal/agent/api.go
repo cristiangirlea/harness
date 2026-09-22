@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -90,10 +91,31 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("max_cost cannot be enforced: no price known for %s", model)})
 	}
+	// req is built below; saveConversation closes over it so every exit path
+	// leaves a resumable history behind.
+	var req apiRequest
+	saveConversation := func() {
+		if task.RunDir == "" {
+			return
+		}
+		msgs := resumable(req.Messages)
+		if len(msgs) == 0 {
+			// A run that failed before it built a request has nothing to
+			// continue from, and an empty file would look like it had.
+			return
+		}
+		conv := Conversation{Model: res.Model, Messages: msgs}
+		// Compact: this file is read back by hx, not by people, and it already
+		// repeats every tool result the transcript holds.
+		if data, err := json.Marshal(conv); err == nil {
+			_ = os.WriteFile(filepath.Join(task.RunDir, "messages.json"), data, 0o644)
+		}
+	}
 	fail := func(status Status, err error) Result {
 		res.Status = status
 		res.Error = err.Error()
 		emit(Event{Time: time.Now(), Kind: EventError, Text: err.Error()})
+		saveConversation()
 		return finish(&res, started)
 	}
 
@@ -163,7 +185,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	// instructions together.
 	system = append(system, block{"type": "text", "text": env, "cache_control": ephemeral})
 
-	req := apiRequest{
+	req = apiRequest{
 		Model:     model,
 		MaxTokens: 64000,
 		System:    system,
@@ -171,9 +193,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		Thinking:  block{"type": "adaptive", "display": "summarized"},
 		// Top-level breakpoint follows the conversation so history is cached too.
 		CacheControl: ephemeral,
-		Messages: []apiMessage{
-			{Role: "user", Content: []block{{"type": "text", "text": task.Prompt}}},
-		},
+		Messages:     resumeMessages(task),
 	}
 	if task.Effort != "" {
 		req.OutputConfig = block{"effort": task.Effort}
@@ -283,6 +303,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		default:
 			res.Status = StatusOK
 			res.Final = strings.TrimSpace(text.String())
+			saveConversation()
 			return finish(&res, started)
 		}
 	}
@@ -374,6 +395,29 @@ func allowed(task Task, t tools.Tool, summary string) bool {
 		return false
 	}
 	return task.Approve(ApprovalRequest{Tool: t.Name, Summary: summary})
+}
+
+// resumeMessages starts the history: an earlier conversation when the task
+// continues one, then this task's prompt as the new user turn.
+func resumeMessages(task Task) []apiMessage {
+	var msgs []apiMessage
+	if task.Resume != nil {
+		msgs = append(msgs, task.Resume.Messages...)
+	}
+	return append(msgs, apiMessage{Role: "user", Content: []block{{"type": "text", "text": task.Prompt}}})
+}
+
+// resumable drops a trailing assistant turn whose tool calls were never
+// answered: the API refuses a history that ends on an unanswered call.
+func resumable(msgs []apiMessage) []apiMessage {
+	if n := len(msgs); n > 0 && msgs[n-1].Role == "assistant" {
+		for _, bl := range msgs[n-1].Content {
+			if bl["type"] == "tool_use" {
+				return msgs[:n-1]
+			}
+		}
+	}
+	return msgs
 }
 
 // dropContextEdits removes the context-management request when the API is the

@@ -51,6 +51,7 @@ Run flags:
                        skip the project instruction files (api backend)
       --no-context-edits
                        keep every tool result in the request instead of letting the server clear old ones (api backend)
+      --continue ID    continue a finished api run: its conversation, workspace, mode and model
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
@@ -129,11 +130,48 @@ func cmdRun(args []string) (int, error) {
 	timeout := fs.Duration("timeout", 0, "")
 	maxCost := fs.Float64("max-cost", 0, "")
 	taskBudget := fs.Int("task-budget", 0, "")
+	continueID := fs.String("continue", "", "")
 	var mcpFiles multiFlag
 	fs.Var(&mcpFiles, "mcp", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
+	}
+
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	// A continued run inherits the earlier run's backend, workspace, mode and
+	// model for anything the user did not type this time.
+	var resume *agent.Conversation
+	if *continueID != "" {
+		rec, conv, err := runlog.LoadConversation(*continueID)
+		if err != nil {
+			return 2, err
+		}
+		if backend == "" {
+			backend = rec.Backend
+		}
+		if backend != "api" {
+			return 2, fmt.Errorf("continue is supported for the api backend only, not %s", backend)
+		}
+		if !set["C"] && !set["dir"] && rec.Task.Dir != "" {
+			dir = rec.Task.Dir
+		}
+		if !set["mode"] && rec.Task.Mode != "" {
+			mode = string(rec.Task.Mode)
+		}
+		if !set["m"] && !set["model"] {
+			// What the earlier run asked for, not what the API reported back.
+			if model = rec.Task.Model; model == "" {
+				model = conv.Model
+			}
+		} else if model != conv.Model {
+			// Thinking blocks belong to the model that produced them; another
+			// model is served the conversation without them.
+			fmt.Fprintf(os.Stderr, "hx: continuing %s on %s instead of %s; the API drops the earlier thinking\n", *continueID, model, conv.Model)
+		}
+		resume = &conv
 	}
 
 	m, err := agent.ParseMode(mode)
@@ -173,7 +211,7 @@ func cmdRun(args []string) (int, error) {
 	}
 
 	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort, NoInstructions: *noInstructions, NoContextEdits: *noContextEdits,
-		Timeout: *timeout, MaxCostUSD: *maxCost, TaskBudget: *taskBudget}
+		Timeout: *timeout, MaxCostUSD: *maxCost, TaskBudget: *taskBudget, Resume: resume}
 	if err := agent.ValidateLimits(task.Timeout, task.MaxCostUSD, task.TaskBudget); err != nil {
 		return 2, err
 	}
@@ -189,10 +227,12 @@ func cmdRun(args []string) (int, error) {
 		}
 	}
 
-	rec, err := runlog.Create(backend, task)
+	rec, err := runlog.CreateContinuing(backend, task, *continueID)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}
+	// The api backend saves the conversation here, so this run can be continued.
+	task.RunDir = rec.Dir()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -292,7 +332,11 @@ func cmdShow(args []string) error {
 		return enc.Encode(map[string]any{"record": rec, "events": events})
 	}
 	r := newRenderer(true)
-	fmt.Printf("%s\n%s · %s · mode %s\n\n", r.c(bold, tools.OneLine(rec.Task.Prompt, 200)), rec.Backend, rec.Task.Dir, rec.Task.Mode)
+	head := fmt.Sprintf("%s · %s · mode %s", rec.Backend, rec.Task.Dir, rec.Task.Mode)
+	if rec.Continues != "" {
+		head += " · continues " + rec.Continues
+	}
+	fmt.Printf("%s\n%s\n\n", r.c(bold, tools.OneLine(rec.Task.Prompt, 200)), head)
 	for _, e := range events {
 		r.Event(e)
 	}

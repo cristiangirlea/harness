@@ -79,6 +79,7 @@ func runTool(defaultDir string) mcp.Tool {
 					"description": "MCP config files (Claude Code .mcp.json format) whose stdio servers the task may use as tools."},
 				"no_instructions": map[string]any{"type": "boolean",
 					"description": "Skip the project instruction files (HX.md, AGENTS.md, CLAUDE.md) the api backend reads from the workspace root."},
+				"continue_run_id": str("Continue a finished api run: its conversation, workspace, mode and model, unless overridden here."),
 				"no_context_edits": map[string]any{"type": "boolean",
 					"description": "api backend only: keep every tool result in the request instead of letting the server clear old ones."},
 				"timeout":      str("Stop the run after this long, as a Go duration such as \"20m\"."),
@@ -100,6 +101,7 @@ func runTool(defaultDir string) mcp.Tool {
 				MCP            []string `json:"mcp"`
 				NoInstructions bool     `json:"no_instructions"`
 				NoContextEdits bool     `json:"no_context_edits"`
+				ContinueRunID  string   `json:"continue_run_id"`
 				Timeout        string   `json:"timeout"`
 				MaxCostUSD     float64  `json:"max_cost_usd"`
 				TaskBudget     int      `json:"task_budget"`
@@ -117,6 +119,30 @@ func runTool(defaultDir string) mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
+			var resume *agent.Conversation
+			if args.ContinueRunID != "" {
+				prev, conv, err := runlog.LoadConversation(args.ContinueRunID)
+				if err != nil {
+					return mcp.CallResult{}, err
+				}
+				if args.Backend == "" {
+					args.Backend = prev.Backend
+				}
+				if args.Backend != "api" {
+					return mcp.CallResult{}, fmt.Errorf("continue is supported for the api backend only, not %s", args.Backend)
+				}
+				if args.Dir == "" && prev.Task.Dir != "" {
+					args.Dir = prev.Task.Dir
+				}
+				if args.Model == "" {
+					// What the earlier run asked for, not what the API reported.
+					if args.Model = prev.Task.Model; args.Model == "" {
+						args.Model = conv.Model
+					}
+				}
+				resume = &conv
+			}
+			// The inherited workspace is checked like any other.
 			dir := args.Dir
 			if dir == "" {
 				dir = defaultDir
@@ -134,7 +160,7 @@ func runTool(defaultDir string) mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			task := agent.Task{Prompt: args.Prompt, Dir: dir, Model: args.Model, Mode: mode, MaxTurns: args.MaxTurns,
-				Effort: args.Effort, NoInstructions: args.NoInstructions, NoContextEdits: args.NoContextEdits,
+				Effort: args.Effort, NoInstructions: args.NoInstructions, NoContextEdits: args.NoContextEdits, Resume: resume,
 				MaxCostUSD: args.MaxCostUSD, TaskBudget: args.TaskBudget}
 			if args.Timeout != "" {
 				if task.Timeout, err = time.ParseDuration(args.Timeout); err != nil {
@@ -147,10 +173,13 @@ func runTool(defaultDir string) mcp.Tool {
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
-			rec, err := runlog.Create(args.Backend, task)
+			rec, err := runlog.CreateContinuing(args.Backend, task, args.ContinueRunID)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 			}
+			// The api backend saves the conversation here, so a follow-up can
+			// continue this run.
+			task.RunDir = rec.Dir()
 			emit := func(e agent.Event) {
 				rec.Event(e)
 				switch e.Kind {
@@ -248,7 +277,7 @@ func showTool() mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("run %s: %w", args.RunID, err)
 			}
 			var b strings.Builder
-			fmt.Fprintf(&b, "%s\n%s · %s · mode %s\n\n", tools.OneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode)
+			fmt.Fprintf(&b, "%s\n%s · %s · mode %s%s\n\n", tools.OneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode, continues(rec))
 			var events []agent.Event
 			if args.Events == nil || *args.Events {
 				if events, err = runlog.Events(args.RunID); err != nil {
@@ -307,6 +336,14 @@ func backendsTool() mcp.Tool {
 			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendName()}, false), nil
 		},
 	}
+}
+
+// continues renders what a run followed, for the show header.
+func continues(rec runlog.Record) string {
+	if rec.Continues == "" {
+		return ""
+	}
+	return " · continues " + rec.Continues
 }
 
 func summary(runID string, res agent.Result) string {
