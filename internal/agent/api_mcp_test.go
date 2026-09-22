@@ -68,7 +68,7 @@ func TestAPILoopUsesMCPTools(t *testing.T) {
 	res, events, fake := runFake(t, [][]string{
 		toolTurn("toolu_m", "mcp__fake__echo", `{"text":"hi"}`),
 		textTurn("done"),
-	}, Task{Prompt: "use mcp", Dir: t.TempDir(), Mode: ModeAsk, MCP: []string{mcpConfigFile(t, os.Args[0])}})
+	}, Task{Prompt: "use mcp", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MCP: []string{mcpConfigFile(t, os.Args[0])}}})
 	if res.Status != StatusOK || res.Final != "done" {
 		t.Fatalf("result: %+v", res)
 	}
@@ -95,7 +95,7 @@ func TestAPILoopUsesMCPTools(t *testing.T) {
 
 func TestAPILoopMCPModes(t *testing.T) {
 	cfg := mcpConfigFile(t, os.Args[0])
-	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(), Mode: ModeReadOnly, MCP: []string{cfg}})
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(), Options: Options{Mode: ModeReadOnly, MCP: []string{cfg}}})
 	names := strings.Join(toolNames(fake.requests[0]), ",")
 	if !strings.Contains(names, "mcp__fake__echo") || strings.Contains(names, "mcp__fake__mutate") {
 		t.Errorf("readonly should offer only read-only MCP tools: %s", names)
@@ -104,7 +104,7 @@ func TestAPILoopMCPModes(t *testing.T) {
 	_, _, fake = runFake(t, [][]string{
 		toolTurn("toolu_x", "mcp__fake__mutate", `{}`),
 		textTurn("ok"),
-	}, Task{Prompt: "change", Dir: t.TempDir(), Mode: ModeAsk, MCP: []string{cfg}})
+	}, Task{Prompt: "change", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MCP: []string{cfg}}})
 	if block := lastToolResult(t, fake.requests[1]); block["is_error"] != true || !strings.Contains(fmt.Sprint(block["content"]), "Permission denied") {
 		t.Errorf("non-read-only MCP tool must need approval in ask mode: %v", block)
 	}
@@ -112,7 +112,7 @@ func TestAPILoopMCPModes(t *testing.T) {
 
 func TestAPILoopMCPStartFailureIsReported(t *testing.T) {
 	res, events, fake := runFake(t, [][]string{textTurn("ok")},
-		Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, MCP: []string{mcpConfigFile(t, "hrn-definitely-missing-binary")}})
+		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MCP: []string{mcpConfigFile(t, "hrn-definitely-missing-binary")}}})
 	if res.Status != StatusOK {
 		t.Fatalf("a broken MCP server must not fail the run: %+v", res)
 	}

@@ -36,7 +36,7 @@ func helperCLI(parse func([]byte, func(Event), *Result) bool) *CLIBackend {
 
 func TestCLIKeepsStreamErrorOnNonZeroExit(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "error")
-	res := helperCLI(parseOpencodeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk}, func(Event) {})
+	res := helperCLI(parseOpencodeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk}}, func(Event) {})
 	if res.Status != StatusError || !strings.Contains(res.Error, "usage limit reached") {
 		t.Fatalf("the stream's error should survive a non-zero exit: %+v", res)
 	}
@@ -44,7 +44,7 @@ func TestCLIKeepsStreamErrorOnNonZeroExit(t *testing.T) {
 
 func TestCLIKeepsStreamStatusOnNonZeroExit(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "maxturns")
-	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk}, func(Event) {})
+	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk}}, func(Event) {})
 	if res.Status != StatusMaxTurns || res.Error != "error_max_turns" || res.Turns != 3 {
 		t.Fatalf("a status the stream set should survive a non-zero exit: %+v", res)
 	}
@@ -54,7 +54,7 @@ func TestCLISaysWhatItCannotEnforce(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "error")
 	var infos []string
 	b := helperCLI(parseOpencodeStream)
-	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, MaxCostUSD: 5, TaskBudget: 50000},
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MaxCostUSD: 5, TaskBudget: 50000}},
 		func(e Event) {
 			if e.Kind == EventInfo && strings.Contains(e.Text, "not enforced") {
 				infos = append(infos, e.Text)
@@ -72,7 +72,7 @@ func TestCLISaysTheGuardDoesNotApply(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "error")
 	guardLines := func(mode Mode) []string {
 		var out []string
-		helperCLI(parseOpencodeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Mode: mode},
+		helperCLI(parseOpencodeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: mode}},
 			func(e Event) {
 				if e.Kind == EventInfo && strings.Contains(e.Text, "command guard") {
 					out = append(out, e.Text)
@@ -92,7 +92,7 @@ func TestCLISaysTheGuardDoesNotApply(t *testing.T) {
 func TestCLIStopsOnTimeout(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "sleep")
 	res := helperCLI(parseOpencodeStream).Run(context.Background(),
-		Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeAsk, Timeout: 200 * time.Millisecond}, func(Event) {})
+		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Timeout: Duration(200 * time.Millisecond)}}, func(Event) {})
 	if res.Status != StatusTimeout {
 		t.Fatalf("status = %s, want timeout (error %q)", res.Status, res.Error)
 	}

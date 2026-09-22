@@ -36,6 +36,20 @@ func NewServer(defaultDir string) *mcp.Server {
 	return s
 }
 
+// runProperties is the run tool's argument schema: the options every entry
+// point shares, generated from agent.Options, plus what only this tool takes.
+func runProperties(backends []any, defaultDir string) map[string]any {
+	props := agent.Options{}.Schema()
+	mode := props["mode"].(map[string]any)
+	mode["description"] = mode["description"].(string) +
+		" Default readonly here. ask puts each write and command to you when this host supports elicitation, and denies it otherwise."
+	props["prompt"] = str("The task, as you would brief an engineer.")
+	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: api when API credentials exist, otherwise claude."}
+	props["dir"] = str("Workspace directory. Default: " + defaultDir)
+	props["continue_run_id"] = str("Continue a finished api run: its conversation, workspace, mode and model, unless overridden here.")
+	return props
+}
+
 func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
 func num(desc string) map[string]any { return map[string]any{"type": "integer", "description": desc} }
 
@@ -66,49 +80,18 @@ func runTool(defaultDir string) mcp.Tool {
 		Description: "Run a coding task with an agent backend in a workspace directory and wait for it to finish. " +
 			"Returns the final answer, a summary line (status, tokens, cost, duration) and the run id.",
 		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"prompt":  str("The task, as you would brief an engineer."),
-				"backend": map[string]any{"type": "string", "enum": enum, "description": "Default: api when API credentials exist, otherwise claude."},
-				"model":   str("Model id for the backend. Optional."),
-				"dir":     str("Workspace directory. Default: " + defaultDir),
-				"mode": map[string]any{"type": "string", "enum": []any{"readonly", "ask", "auto", "yolo"},
-					"description": "Permission mode, default readonly. ask puts each write and command to you when this host supports elicitation, and denies it otherwise; auto allows file edits; yolo also allows commands."},
-				"max_turns": num("Stop after this many model turns."),
-				"effort":    str("api backend only: low | medium | high | xhigh | max."),
-				"mcp": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
-					"description": "MCP config files (Claude Code .mcp.json format) whose stdio servers the task may use as tools."},
-				"no_instructions": map[string]any{"type": "boolean",
-					"description": "Skip the project instruction files (HRN.md, AGENTS.md, CLAUDE.md) the api backend reads from the workspace root."},
-				"allow_dangerous": map[string]any{"type": "boolean",
-					"description": "Let run_command run git push, sudo, rm -rf / and the like. Off by default; the harness refuses those command lines."},
-				"continue_run_id": str("Continue a finished api run: its conversation, workspace, mode and model, unless overridden here."),
-				"no_context_edits": map[string]any{"type": "boolean",
-					"description": "api backend only: keep every tool result in the request instead of letting the server clear old ones."},
-				"timeout":      str("Stop the run after this long, as a Go duration such as \"20m\"."),
-				"max_cost_usd": map[string]any{"type": "number", "description": "api backend only: stop before a turn that would take the estimated cost past this."},
-				"task_budget":  num("api backend only: token ceiling the model paces itself against. Minimum 20000."),
-			},
-			"required": []any{"prompt"},
+			"type":       "object",
+			"properties": runProperties(enum, defaultDir),
+			"required":   []any{"prompt"},
 		},
 		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(false), OpenWorldHint: mcp.Bool(true)},
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			args, err := decode[struct {
-				Prompt         string   `json:"prompt"`
-				Backend        string   `json:"backend"`
-				Model          string   `json:"model"`
-				Dir            string   `json:"dir"`
-				Mode           string   `json:"mode"`
-				MaxTurns       int      `json:"max_turns"`
-				Effort         string   `json:"effort"`
-				MCP            []string `json:"mcp"`
-				NoInstructions bool     `json:"no_instructions"`
-				NoContextEdits bool     `json:"no_context_edits"`
-				AllowDangerous bool     `json:"allow_dangerous"`
-				ContinueRunID  string   `json:"continue_run_id"`
-				Timeout        string   `json:"timeout"`
-				MaxCostUSD     float64  `json:"max_cost_usd"`
-				TaskBudget     int      `json:"task_budget"`
+				Prompt        string `json:"prompt"`
+				Backend       string `json:"backend"`
+				Dir           string `json:"dir"`
+				ContinueRunID string `json:"continue_run_id"`
+				agent.Options
 			}](call.Arguments)
 			if err != nil {
 				return mcp.CallResult{}, err
@@ -117,10 +100,9 @@ func runTool(defaultDir string) mcp.Tool {
 				return mcp.CallResult{}, errors.New("prompt is required")
 			}
 			if args.Mode == "" {
-				args.Mode = string(agent.ModeReadOnly)
+				args.Mode = agent.ModeReadOnly
 			}
-			mode, err := agent.ParseMode(args.Mode)
-			if err != nil {
+			if err := args.Options.Validate(); err != nil {
 				return mcp.CallResult{}, err
 			}
 			var resume *agent.Conversation
@@ -163,18 +145,7 @@ func runTool(defaultDir string) mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
-			task := agent.Task{Prompt: args.Prompt, Dir: dir, Model: args.Model, Mode: mode, MaxTurns: args.MaxTurns,
-				Effort: args.Effort, NoInstructions: args.NoInstructions, NoContextEdits: args.NoContextEdits,
-				AllowDangerous: args.AllowDangerous, Resume: resume,
-				MaxCostUSD: args.MaxCostUSD, TaskBudget: args.TaskBudget}
-			if args.Timeout != "" {
-				if task.Timeout, err = time.ParseDuration(args.Timeout); err != nil {
-					return mcp.CallResult{}, fmt.Errorf("timeout %q: %w", args.Timeout, err)
-				}
-			}
-			if err := agent.ValidateLimits(task.Timeout, task.MaxCostUSD, task.TaskBudget); err != nil {
-				return mcp.CallResult{}, err
-			}
+			task := agent.Task{Prompt: args.Prompt, Dir: dir, Options: args.Options, Resume: resume}
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
@@ -185,7 +156,7 @@ func runTool(defaultDir string) mcp.Tool {
 			// The api backend saves the conversation here, so a follow-up can
 			// continue this run.
 			task.RunDir = rec.Dir()
-			if mode == agent.ModeAsk && call.ClientSupports("elicitation") {
+			if args.Mode == agent.ModeAsk && call.ClientSupports("elicitation") {
 				// Named by run, because two runs may be asking at once.
 				task.Approve = approver(ctx, call, rec.ID())
 			}

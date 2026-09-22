@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -45,7 +46,7 @@ func testSpec(dir string) Spec {
 
 func TestExpand(t *testing.T) {
 	spec := testSpec("somewhere")
-	spec.Timeout = "5m"
+	spec.Timeout = agent.Duration(5 * time.Minute)
 	spec.MaxCostUSD = 2
 	bs, err := Expand(spec, "abc12")
 	if err != nil {
@@ -67,7 +68,7 @@ func TestExpand(t *testing.T) {
 			t.Errorf("missing id %s in %s", want, joined)
 		}
 	}
-	if bs.Timeout != "5m" || bs.MaxCostUSD != 2 || len(bs.Gate) != 1 || bs.Dir != "somewhere" {
+	if bs.Timeout != agent.Duration(5*time.Minute) || bs.MaxCostUSD != 2 || len(bs.Gate) != 1 || bs.Dir != "somewhere" {
 		t.Errorf("spec fields must carry through: %+v", bs)
 	}
 	first := bs.Tasks[0]

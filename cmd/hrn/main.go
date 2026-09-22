@@ -133,32 +133,22 @@ func main() {
 
 func cmdRun(args []string) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	var backend, model, dir, mode, effort string
-	var maxTurns int
+	var backend, dir string
 	var jsonOut, thinking bool
+	// Every option is a flag named after its json name; the struct is the
+	// list. The mode default belongs to this command, not to the struct.
+	opts := agent.Options{Mode: agent.ModeAsk}
+	agent.BindFlags(fs, &opts)
+	fs.StringVar(&opts.Model, "m", "", "")
 	for _, name := range []string{"b", "backend"} {
 		fs.StringVar(&backend, name, "", "")
-	}
-	for _, name := range []string{"m", "model"} {
-		fs.StringVar(&model, name, "", "")
 	}
 	for _, name := range []string{"C", "dir"} {
 		fs.StringVar(&dir, name, ".", "")
 	}
-	fs.StringVar(&mode, "mode", "ask", "")
-	fs.StringVar(&effort, "effort", "", "")
-	fs.IntVar(&maxTurns, "max-turns", 0, "")
 	fs.BoolVar(&jsonOut, "json", false, "")
 	fs.BoolVar(&thinking, "thinking", false, "")
-	noInstructions := fs.Bool("no-instructions", false, "")
-	noContextEdits := fs.Bool("no-context-edits", false, "")
-	allowDangerous := fs.Bool("allow-dangerous", false, "")
-	timeout := fs.Duration("timeout", 0, "")
-	maxCost := fs.Float64("max-cost", 0, "")
-	taskBudget := fs.Int("task-budget", 0, "")
 	continueID := fs.String("continue", "", "")
-	var mcpFiles multiFlag
-	fs.Var(&mcpFiles, "mcp", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
@@ -185,23 +175,22 @@ func cmdRun(args []string) (int, error) {
 			dir = rec.Task.Dir
 		}
 		if !set["mode"] && rec.Task.Mode != "" {
-			mode = string(rec.Task.Mode)
+			opts.Mode = rec.Task.Mode
 		}
 		if !set["m"] && !set["model"] {
 			// What the earlier run asked for, not what the API reported back.
-			if model = rec.Task.Model; model == "" {
-				model = conv.Model
+			if opts.Model = rec.Task.Model; opts.Model == "" {
+				opts.Model = conv.Model
 			}
-		} else if model != conv.Model {
+		} else if opts.Model != conv.Model {
 			// Thinking blocks belong to the model that produced them; another
 			// model is served the conversation without them.
-			fmt.Fprintf(os.Stderr, "hrn: continuing %s on %s instead of %s; the API drops the earlier thinking\n", *continueID, model, conv.Model)
+			fmt.Fprintf(os.Stderr, "hrn: continuing %s on %s instead of %s; the API drops the earlier thinking\n", *continueID, opts.Model, conv.Model)
 		}
 		resume = &conv
 	}
 
-	m, err := agent.ParseMode(mode)
-	if err != nil {
+	if err := opts.Validate(); err != nil {
 		return 2, err
 	}
 	ws, err := tools.NewWorkspace(dir)
@@ -236,13 +225,8 @@ func cmdRun(args []string) (int, error) {
 		return 2, err
 	}
 
-	task := agent.Task{Prompt: prompt, Dir: absDir, Model: model, Mode: m, MaxTurns: maxTurns, Effort: effort,
-		NoInstructions: *noInstructions, NoContextEdits: *noContextEdits, AllowDangerous: *allowDangerous,
-		Timeout: *timeout, MaxCostUSD: *maxCost, TaskBudget: *taskBudget, Resume: resume}
-	if err := agent.ValidateLimits(task.Timeout, task.MaxCostUSD, task.TaskBudget); err != nil {
-		return 2, err
-	}
-	if task.MCP, err = mcp.ConfigPaths(mcpFiles); err != nil {
+	task := agent.Task{Prompt: prompt, Dir: absDir, Options: opts, Resume: resume}
+	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
 	}
 	stdin := bufio.NewReader(os.Stdin)
@@ -401,12 +385,6 @@ func cmdMCP(args []string) error {
 	}
 	return nil
 }
-
-// multiFlag collects a repeatable string flag.
-type multiFlag []string
-
-func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
-func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 func cmdEval(args []string) (int, error) {
 	if len(args) >= 1 && args[0] == "show" {
