@@ -515,6 +515,14 @@ Size: mostly moves; ~100 new lines.
 
 ## Decisions log
 
+- 2026-09-22: PR E overwrote internal/runlog/runlog_test.go instead of adding to it. PR F
+  had created that file in the same increment window and my session wrote it with a shell
+  redirect, so TestListSinceSkipsOldRunsAndCountsUnreadable and TestIDBefore were silently
+  deleted and CI stayed green because what remained still passed. Restored in PR #10, both
+  sets of tests side by side. Rule for parallel sessions: never create a file with `>` or
+  Write without checking whether it exists first, and treat a merge diff that touches a
+  file you thought was new as a red flag - the merge stat showing 94 changed lines in a
+  "new" test file is what caught it.
 - 2026-09-22: PR E done (#9), no deviation from the spec. Two things it did not mention:
   a history ending on an assistant turn whose tool calls were never answered is dropped
   before saving, because the API refuses to resume from one (it happens on a max_tokens
