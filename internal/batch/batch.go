@@ -562,6 +562,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
 	}
 	att.RunID = rec.ID()
+	task.RunDir = rec.Dir() // so a finished attempt can be continued
 	att.Result = b.Run(ctx, task, func(e agent.Event) {
 		rec.Event(e)
 		if e.Kind == agent.EventToolCall {
