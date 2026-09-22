@@ -48,6 +48,7 @@ go test ./...
 |---|---|
 | `hx run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
 | `hx backends` | Show which backends are usable and where they were found. |
+| `hx version` | Print the hx and Go versions. |
 | `hx runs [-n N]` | List recent runs. |
 | `hx show [--json] <id>` | Replay a recorded run. |
 | `hx mcp` | Serve hx as an MCP server on stdio (see [MCP](#mcp)). |
@@ -457,7 +458,7 @@ to express what "done" means, and a spec that fills it in is told so at the star
 
 ```
 cmd/hx/            CLI + terminal renderer (batch subcommands in batch.go)
-internal/agent/    Backend interface, api loop + stdlib Messages client, CLI adapters
+internal/agent/    Backend interface, api loop + stdlib Messages client, one file per CLI adapter
 internal/tools/    workspace-confined tool runtime + MCP tool adapter
 internal/mcp/      MCP over stdio: JSON-RPC codec, Client, Server, config loader
 internal/hxmcp/    hx's own MCP server (run, runs, show, backends)

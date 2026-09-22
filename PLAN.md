@@ -484,7 +484,9 @@ merges, second aborts cleanly, the tree is clean afterwards.
 
 Size: ~200 lines + tests.
 
-### [ ] PR K: code health
+### [x] PR K: code health
+
+Done: PR #15, 2026-09-22.
 
 - Split `internal/agent/cli.go` into `cli.go` (the `CLIBackend` core and shared
   helpers) plus `claude.go`, `codex.go`, `gemini.go`, `opencode.go`. No behaviour change.
@@ -521,8 +523,52 @@ Size: mostly moves; ~100 new lines.
   wrong in the code, note it in the *Decisions log* and do the smallest thing that
   works.
 
+## What is open
+
+Every lettered increment is done. These are the threads the log leaves behind, in the
+order they are worth taking:
+
+1. **One options struct.** Each api option (`no_instructions`, `no_context_edits`, the
+   three budgets) is wired by hand in four places: `agent.Task`, the run flags, the batch
+   spec and task, and the MCP decode struct. A field forgotten in one of them is silent.
+   Collapsing them changes `batch.Spec`, `batch.Task` and the MCP struct together, so it
+   is its own increment.
+2. **Measure the context-editing default.** Server-side clearing is on by default and its
+   interaction with the two cache breakpoints is unmeasured; a clear invalidates the
+   cached prefix from that point. One long api run with and without it, compared on
+   `cache_read_tokens`, settles whether the default is right.
+3. **Record what the server cleared**, so an eval can attribute a token difference. The
+   response shape is not documented in what is available here; do it with the first real
+   api run.
+4. **The eval judge.** The spec key is reserved and nothing reads it. Gates cannot score a
+   diff against a rubric, which is what "did it do the right thing" needs.
+5. **MCP over HTTP.** Only stdio today, which is enough for every host hx has met.
+6. **A real api run.** The backend has never run against the API: no credentials on this
+   machine. Everything in it is covered by a fake server.
+
 ## Decisions log
 
+- 2026-09-22: PR K self-review, 7 findings, all fixed. The fuzz step ran both fuzzers in
+  one shell command, so a crash in the first hid the second; they are separate steps now,
+  the second with always(), and a failure uploads whatever input the fuzzer saved, which
+  the runner would otherwise delete. The recorder channel in the new cmd tests is drained
+  per test, so one test cannot read another's task. The SSE fuzzer asserts invariants (a
+  parsed stream returns a response, usage never goes negative) rather than only the
+  absence of a panic. cli.go says what it now holds and where each backend went. The
+  command tests cover what the other five commands refuse, not only hx run. And the plan
+  has a "what is open" section, because every box being ticked left no queue.
+- 2026-09-22: PR K done (#15), the last lettered increment. cli.go is split per backend
+  (cli.go keeps the CLIBackend core and the shared helpers; claude.go, codex.go, gemini.go
+  and opencode.go take one adapter each), with no behaviour change. CI on ubuntu now also
+  runs the race detector and ten seconds each of FuzzParseSSE and FuzzCodec; both fuzzers
+  ran five seconds clean locally first. hx version prints the hx and Go versions. The
+  deferral carried since PR A is closed: cmd/hx has tests, and they cover the real path
+  rather than a refactored stand-in - cmdRun is called with arguments against a stub
+  backend that keeps the task it was handed, so every run flag is asserted to reach
+  agent.Task, plus five rejected flag combinations. Still open, deliberately: the shared
+  options struct that would stop each api option being wired by hand in four places. It
+  changes batch.Spec, batch.Task and the MCP decode struct together, which is its own
+  increment rather than a tail-end refactor.
 - 2026-09-22: PR H done (#14). Deviation: Request and ClientSupports are on mcp.Call, not
   on Server as the spec said, because the connection state belongs to one connection
   while a Server can serve several, and the handler already holds the Call.
