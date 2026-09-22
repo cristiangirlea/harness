@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -536,6 +537,10 @@ func cmdEval(args []string) (int, error) {
 	if *jsonOut {
 		r.out = os.Stderr
 	}
+	if len(spec.Judge) > 0 {
+		// Reserved, so a filled-in rubric must not look like it is scoring.
+		r.Line(r.c(red, "judge is reserved and does nothing yet: these scores come from the gates"))
+	}
 	rec, res, err := eval.Run(ctx, spec, func(e batch.Event) {
 		if e.Kind == "tool" && !verbose {
 			return
@@ -545,7 +550,8 @@ func cmdEval(args []string) (int, error) {
 	if err != nil && rec.ID == "" {
 		return 1, err
 	}
-	if err != nil {
+	failed := err != nil
+	if failed {
 		r.Line(r.c(red, "error: "+err.Error()))
 	}
 
@@ -566,6 +572,10 @@ func cmdEval(args []string) (int, error) {
 			r.Line(r.c(dim, "worktrees kept; remove them with: hx batch rm "+rec.BatchID))
 		}
 	}
+	// A failing variant is data; a failing eval is not.
+	if failed {
+		return 1, nil
+	}
 	return 0, nil
 }
 
@@ -573,12 +583,12 @@ func cmdEval(args []string) (int, error) {
 // scored under it.
 func printEval(r *renderer, rec eval.Record) {
 	r.Line("")
-	r.Line(fmt.Sprintf("  %-20s %6s %9s %12s %10s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "input"))
+	r.Line(fmt.Sprintf("  %-20s %6s %9s %12s %10s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "context"))
 	for _, v := range rec.Table.Variants {
 		r.Line(fmt.Sprintf("  %-20s %6s %9d %12s %10s %7s %9s",
 			v.Name, report.Share(v.PassRate()), v.Attempts,
 			report.Money(v.MedianCostUSD, v.CostEstimate),
-			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns), report.Number(v.MedianInput)))
+			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns), report.Number(v.MedianContext)))
 		if len(v.Statuses) > 1 || v.Statuses["ok"] != v.Attempts {
 			r.Line(r.c(dim, "  "+strings.Repeat(" ", 20)+statuses(v.Statuses)))
 		}
@@ -595,7 +605,7 @@ func printEval(r *renderer, rec eval.Record) {
 			if _, seen := scores[row.Task+"/"+row.Variant]; !seen {
 				scores[row.Task+"/"+row.Variant] = row.Score()
 			}
-			if !slicesContains(tasks, row.Task) {
+			if !slices.Contains(tasks, row.Task) {
 				tasks = append(tasks, row.Task)
 			}
 		}
@@ -634,13 +644,4 @@ func statuses(h map[string]int) string {
 		parts = append(parts, fmt.Sprintf("%s %d", k, h[k]))
 	}
 	return strings.Join(parts, ", ")
-}
-
-func slicesContains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }

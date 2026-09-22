@@ -519,6 +519,24 @@ Size: mostly moves; ~100 new lines.
 
 ## Decisions log
 
+- 2026-09-22: PR G done (#12). Deviations from the spec: Expand takes the eval id as an
+  argument instead of generating one, so Run owns the id and Summarize can rebuild a
+  table from a record loaded later; Run returns the batch.Result alongside the record and
+  the CLI decides whether to remove the worktrees, which keeps the package free of a
+  --keep flag; and a failing variant exits 0 (data, not an error) while a failing eval
+  exits 1. Verified on a real comparison rather than stubs: one task, sonnet against
+  haiku, gate demanding a file containing exactly "hx rocks". Sonnet wrote "hx rocks."
+  with a trailing period and failed; haiku passed at a third of the cost. The run records
+  still explain it, which is the argument for keeping them.
+- 2026-09-22: PR G self-review, 7 findings, all fixed. The largest: Expand validated
+  neither task ids nor variant names, and Summarize reads a cell id by splitting on dots,
+  so a dotted task id (batch allows them) silently attributed every cell to a row that
+  matches nothing - the table would print a confident zero. Both are now checked where the
+  spec is expanded. Also: retry in an eval spec is refused rather than silently dropped;
+  hx eval exits 1 when the eval itself failed; a drawn eval id that already names a saved
+  record is re-drawn; the judge key says at the start that it does nothing; the input
+  column is named context because it counts cache reads too; and slices.Contains replaces
+  a hand-written helper.
 - 2026-09-22: PR E overwrote internal/runlog/runlog_test.go instead of adding to it. PR F
   had created that file in the same increment window and my session wrote it with a shell
   redirect, so TestListSinceSkipsOldRunsAndCountsUnreadable and TestIDBefore were silently

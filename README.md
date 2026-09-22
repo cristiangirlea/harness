@@ -373,7 +373,7 @@ else, gates and mode and the budgets, carries through from the spec.
 `hx eval eval.json` prints what each variant did and how each task scored under it:
 
 ```
-  variant                pass  attempts  median cost median time   turns     input
+  variant                pass  attempts  median cost median time   turns   context
   sonnet                   0%         1        $0.15        13s       2    101061
   haiku                  100%         1        $0.05        14s       2     71814
 
@@ -391,9 +391,15 @@ reprints it, `-v` streams every agent's tool calls. The worktrees are removed on
 record is safely written, unless `--keep`. A failing variant is data, not an error, so
 the exit status is 0 whenever the eval itself ran.
 
+Task ids and variant names take letters, digits, `_` and `-`: dots separate the parts of
+a cell id. `retry` is refused in an eval spec, because a retried cell would score the
+harness rather than the backend. The `context` column counts prompt tokens and cache
+reads together, which is what the model was given rather than what was billed at full
+rate.
+
 The `judge` key is reserved for scoring a diff against a rubric with a model. Nothing
 reads it yet: gates are the only scorer in this version, which is why a task's gate has
-to express what "done" means.
+to express what "done" means, and a spec that fills it in is told so at the start.
 
 ## Run records
 

@@ -87,6 +87,11 @@ func TestExpandRejectsBadSpecs(t *testing.T) {
 		{"duplicate variant", func(s *Spec) { s.Matrix = []Variant{{Backend: "ev-ok"}, {Backend: "ev-ok"}} }, "duplicate"},
 		{"unknown backend", func(s *Spec) { s.Matrix = []Variant{{Backend: "nope"}} }, "unknown backend"},
 		{"bad repeats", func(s *Spec) { s.Repeats = -1 }, "repeats"},
+		{"dotted task id", func(s *Spec) { s.Tasks[0].ID = "api.vet" }, "no dots"},
+		{"dotted variant", func(s *Spec) { s.Matrix[0].Name = "opus.high" }, "no dots"},
+		{"spaced variant", func(s *Spec) { s.Matrix[0].Name = "opus high" }, "variant"},
+		{"spec retry", func(s *Spec) { s.Retry = []string{"ev-ok"} }, "retry does not belong"},
+		{"task retry", func(s *Spec) { s.Tasks[0].Retry = []string{"ev-ok"} }, "retry does not belong"},
 	} {
 		spec := testSpec("somewhere")
 		tc.edit(&spec)
@@ -115,6 +120,9 @@ func TestRunScoresEachVariant(t *testing.T) {
 	ok, lazy := byName["ev-ok"], byName["lazy"]
 	if ok.Attempts != 4 || ok.Passed != 4 || lazy.Attempts != 4 || lazy.Passed != 0 {
 		t.Errorf("ok = %+v, lazy = %+v", ok, lazy)
+	}
+	if ok.MedianContext != 100 {
+		t.Errorf("context should count prompt tokens and cache reads: %+v", ok)
 	}
 	if ok.MedianCostUSD != 0.25 || !ok.CostEstimate {
 		t.Errorf("cost should come from the attempts: %+v", ok)

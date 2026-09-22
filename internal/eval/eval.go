@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -97,12 +98,23 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	if len(spec.Tasks) == 0 {
 		return batch.Spec{}, fmt.Errorf("no tasks")
 	}
+	if len(spec.Retry) > 0 {
+		return batch.Spec{}, fmt.Errorf("retry does not belong in an eval: a cell measures one attempt, so a retried one would score the harness instead of the backend")
+	}
+	for _, t := range spec.Tasks {
+		if len(t.Retry) > 0 {
+			return batch.Spec{}, fmt.Errorf("task %s: retry does not belong in an eval", t.ID)
+		}
+	}
 
 	seen := map[string]bool{}
 	for i, v := range spec.Matrix {
 		name := v.name()
 		if name == "" {
 			return batch.Spec{}, fmt.Errorf("variant %d has no name and no backend", i+1)
+		}
+		if err := checkPart("variant", name); err != nil {
+			return batch.Spec{}, err
 		}
 		if seen[name] {
 			return batch.Spec{}, fmt.Errorf("duplicate variant %q: give one of them a name", name)
@@ -122,6 +134,9 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 		if t.ID == "" {
 			return batch.Spec{}, fmt.Errorf("every eval task needs an id, so its results can be compared")
 		}
+		if err := checkPart("task id", t.ID); err != nil {
+			return batch.Spec{}, err
+		}
 		for _, v := range spec.Matrix {
 			for r := 1; r <= spec.Repeats; r++ {
 				cell := t
@@ -136,6 +151,17 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	}
 	return bs, nil
 }
+
+// checkPart rejects anything that would break the cell id, which is read back
+// by splitting on dots: <evalid>.<task>.<variant>.r<n>.
+func checkPart(kind, value string) error {
+	if !partRE.MatchString(value) {
+		return fmt.Errorf("%s %q: use letters, digits, '_' and '-' (no dots: they separate the parts of a cell id)", kind, value)
+	}
+	return nil
+}
+
+var partRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 func firstOf(values ...string) string {
 	for _, v := range values {
@@ -157,7 +183,9 @@ type VariantRow struct {
 	CostEstimate   bool           `json:"cost_is_estimate,omitempty"`
 	MedianDuration time.Duration  `json:"median_duration_ns"`
 	MedianTurns    float64        `json:"median_turns"`
-	MedianInput    float64        `json:"median_input_tokens"`
+	// MedianContext counts prompt tokens and cache reads together: what the
+	// model was given, not what was billed at full rate.
+	MedianContext float64 `json:"median_context_tokens"`
 }
 
 // PassRate is the share of cells that passed, as a share of attempts.
@@ -266,7 +294,7 @@ func Summarize(spec Spec, res batch.Result) Table {
 		row.MedianCostUSD = report.Median(costs)
 		row.MedianDuration = time.Duration(report.Median(durations))
 		row.MedianTurns = report.Median(turns)
-		row.MedianInput = report.Median(inputs)
+		row.MedianContext = report.Median(inputs)
 		table.Variants = append(table.Variants, row)
 	}
 
@@ -367,11 +395,19 @@ func List(limit int) ([]Record, error) {
 }
 
 // newID is five hex characters: short enough to read in a branch name, wide
-// enough that two evals in one repository do not collide.
+// enough that two evals in one repository do not collide. A draw that already
+// names a saved eval is thrown back, because reusing one would overwrite its
+// record and collide with its branches.
 func newID() (string, error) {
-	b := make([]byte, 3)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
+	for try := 0; try < 10; try++ {
+		b := make([]byte, 3)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		id := hex.EncodeToString(b)[:5]
+		if _, err := os.Stat(filepath.Join(dir(), id+".json")); os.IsNotExist(err) {
+			return id, nil
+		}
 	}
-	return hex.EncodeToString(b)[:5], nil
+	return "", fmt.Errorf("could not find an unused eval id")
 }
