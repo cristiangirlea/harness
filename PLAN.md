@@ -400,7 +400,9 @@ always fails its gate) asserting pass rates and that worktrees are gone afterwar
 
 Size: ~400 lines + tests.
 
-### [ ] PR H: approvals under `hx mcp` via elicitation (Fable)
+### [x] PR H: approvals under `hx mcp` via elicitation (Fable)
+
+Done: PR #14, 2026-09-22.
 
 **Why.** Under Claude Code, hx's `ask` mode denies everything because there is no
 terminal. MCP (2025-06-18) lets a server ask the host to ask the user
