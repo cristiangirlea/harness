@@ -120,6 +120,28 @@ two runs before trusting it. If the API ever refuses the beta, the run says so a
 retries once without it. `hx run --no-context-edits` turns it off for good, as do the
 `no_context_edits` field on a batch spec or task and the MCP `run` argument.
 
+### Continuing a run
+
+The api backend saves its message history next to the transcript, so a finished run can
+be picked up where it stopped:
+
+```bash
+hx run --continue 20260921-095628-f18a6d "now fix the failing test"
+```
+
+The follow-up inherits the earlier run's backend, workspace, mode and model unless you
+pass those flags; the new run is recorded separately and its `task.json` says which run
+it continues. A history that ends on a tool call the model never got an answer for is
+not saved, because the API refuses to resume from one. Only the api backend saves a
+conversation: the agent CLIs own their own session state, so continuing one of those
+runs is refused with a clear message. The MCP `run` tool takes the same thing as
+`continue_run_id`, and batch attempts save their conversations too, so a failed attempt
+can be picked up by hand.
+
+Thinking blocks belong to the model that produced them. Continuing on a different model
+is allowed and warned about: the API serves the conversation without the earlier
+thinking.
+
 ### Project instructions
 
 The api loop reads `HX.md`, `AGENTS.md` and `CLAUDE.md` from the workspace root and
@@ -179,7 +201,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
@@ -285,6 +307,7 @@ JSON for scripts.
 
 - `task.json` — prompt, dir, backend, model, mode, MCP config paths
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped)
+- `messages.json` — the api backend's message history, for `hx run --continue`
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration
 

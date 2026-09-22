@@ -187,3 +187,17 @@ func TestRunPassesNoContextEdits(t *testing.T) {
 		t.Fatalf("no_context_edits should reach the task: %+v err=%v", rec.Task, err)
 	}
 }
+
+func TestRunContinueRejectsWhatItCannot(t *testing.T) {
+	s := connect(t, t.TempDir())
+	if r := s.call(t, "run", `{"prompt":"x","continue_run_id":"nope"}`); !r.IsError || !strings.Contains(r.Text(), "nope") {
+		t.Errorf("an unknown run id should be reported: %+v", r)
+	}
+	// A stub run saves no conversation, so continuing it is refused clearly.
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub"}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	r := s.call(t, "run", `{"prompt":"and now?","continue_run_id":"`+id+`"}`)
+	if !r.IsError || !strings.Contains(r.Text(), "no saved conversation") {
+		t.Errorf("continuing a run without a conversation: %+v", r)
+	}
+}

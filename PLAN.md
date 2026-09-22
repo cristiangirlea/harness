@@ -292,7 +292,9 @@ betas; `NoContextEdits` → neither the field nor that beta.
 
 Size: ~40 lines + tests.
 
-### [ ] PR E: save the conversation and continue a run
+### [x] PR E: save the conversation and continue a run
+
+Done: PR #9, 2026-09-22.
 
 **Why.** `events.jsonl` is a transcript for humans; the API message list is not saved,
 so a finished run cannot be continued ("now fix the failing test"). MCP hosts and the
