@@ -162,7 +162,10 @@ func cmdRun(args []string) (int, error) {
 			mode = string(rec.Task.Mode)
 		}
 		if !set["m"] && !set["model"] {
-			model = conv.Model
+			// What the earlier run asked for, not what the API reported back.
+			if model = rec.Task.Model; model == "" {
+				model = conv.Model
+			}
 		} else if model != conv.Model {
 			// Thinking blocks belong to the model that produced them; another
 			// model is served the conversation without them.
@@ -329,7 +332,11 @@ func cmdShow(args []string) error {
 		return enc.Encode(map[string]any{"record": rec, "events": events})
 	}
 	r := newRenderer(true)
-	fmt.Printf("%s\n%s · %s · mode %s\n\n", r.c(bold, tools.OneLine(rec.Task.Prompt, 200)), rec.Backend, rec.Task.Dir, rec.Task.Mode)
+	head := fmt.Sprintf("%s · %s · mode %s", rec.Backend, rec.Task.Dir, rec.Task.Mode)
+	if rec.Continues != "" {
+		head += " · continues " + rec.Continues
+	}
+	fmt.Printf("%s\n%s\n\n", r.c(bold, tools.OneLine(rec.Task.Prompt, 200)), head)
 	for _, e := range events {
 		r.Event(e)
 	}

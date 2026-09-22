@@ -619,3 +619,21 @@ func TestAPIDoesNotSaveADanglingToolCall(t *testing.T) {
 		t.Fatalf("the unanswered assistant turn must be dropped: %+v", saved.Messages)
 	}
 }
+
+func TestAPISavesNothingWhenTheRunNeverStarted(t *testing.T) {
+	runDir := t.TempDir()
+	b := NewAPIBackend()
+	b.APIKey, b.MaxRetries = "test", 0
+	// The workspace is a file, so the run fails before it builds a request.
+	notADir := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: notADir, Mode: ModeAsk, RunDir: runDir}, func(Event) {})
+	if res.Status != StatusError {
+		t.Fatalf("res = %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "messages.json")); err == nil {
+		t.Fatal("a run with no conversation must not leave one behind: continuing it would start from nothing")
+	}
+}

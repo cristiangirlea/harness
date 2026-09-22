@@ -135,7 +135,10 @@ func runTool(defaultDir string) mcp.Tool {
 					args.Dir = prev.Task.Dir
 				}
 				if args.Model == "" {
-					args.Model = conv.Model
+					// What the earlier run asked for, not what the API reported.
+					if args.Model = prev.Task.Model; args.Model == "" {
+						args.Model = conv.Model
+					}
 				}
 				resume = &conv
 			}
@@ -274,7 +277,7 @@ func showTool() mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("run %s: %w", args.RunID, err)
 			}
 			var b strings.Builder
-			fmt.Fprintf(&b, "%s\n%s · %s · mode %s\n\n", tools.OneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode)
+			fmt.Fprintf(&b, "%s\n%s · %s · mode %s%s\n\n", tools.OneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode, continues(rec))
 			var events []agent.Event
 			if args.Events == nil || *args.Events {
 				if events, err = runlog.Events(args.RunID); err != nil {
@@ -333,6 +336,14 @@ func backendsTool() mcp.Tool {
 			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendName()}, false), nil
 		},
 	}
+}
+
+// continues renders what a run followed, for the show header.
+func continues(rec runlog.Record) string {
+	if rec.Continues == "" {
+		return ""
+	}
+	return " · continues " + rec.Continues
 }
 
 func summary(runID string, res agent.Result) string {

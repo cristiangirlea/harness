@@ -59,7 +59,9 @@ func TestLoadConversation(t *testing.T) {
 		t.Fatalf("rec=%+v conv=%+v err=%v", rec.Task, conv, err)
 	}
 
-	if _, _, err := LoadConversation("../escape"); err == nil {
-		t.Error("a path-like id must be refused")
+	for _, bad := range []string{"../escape", "a/b", "", "sub" + string(filepath.Separator) + "x"} {
+		if _, _, err := LoadConversation(bad); err == nil || !strings.Contains(err.Error(), "invalid run id") {
+			t.Errorf("LoadConversation(%q) = %v, want it refused by id validation", bad, err)
+		}
 	}
 }

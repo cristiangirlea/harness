@@ -307,7 +307,9 @@ JSON for scripts.
 
 - `task.json` — prompt, dir, backend, model, mode, MCP config paths
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped)
-- `messages.json` — the api backend's message history, for `hx run --continue`
+- `messages.json` — the api backend's message history, for `hx run --continue`. It
+  repeats the tool results the transcript already holds, so an api run costs roughly
+  twice the disk of its transcript; nothing prunes `~/.hx` yet
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration
 

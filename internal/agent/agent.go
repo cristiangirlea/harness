@@ -84,9 +84,13 @@ type Task struct {
 // transcript so a follow-up can carry on from it. Thinking blocks are bound to
 // the model that produced them, which is why the model is recorded with them.
 type Conversation struct {
-	Model    string       `json:"model"`
-	Messages []apiMessage `json:"messages"`
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
 }
+
+// Message is one turn of a Conversation: the role and the content blocks
+// exactly as the API returned them. An alias, so other packages can build one.
+type Message = apiMessage
 
 type EventKind string
 

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -177,7 +178,18 @@ func idBefore(id string, t time.Time) bool {
 	return err == nil && ts.Before(t)
 }
 
+// validID refuses an id that would reach outside the runs directory.
+func validID(id string) error {
+	if id == "" || strings.ContainsAny(id, `/\`) || id == ".." {
+		return fmt.Errorf("invalid run id %q", id)
+	}
+	return nil
+}
+
 func Load(id string) (Record, error) {
+	if err := validID(id); err != nil {
+		return Record{}, err
+	}
 	dir := filepath.Join(Root(), id)
 	var rec Record
 	if data, err := os.ReadFile(filepath.Join(dir, "result.json")); err == nil {
@@ -192,6 +204,9 @@ func Load(id string) (Record, error) {
 }
 
 func Events(id string) ([]agent.Event, error) {
+	if err := validID(id); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(filepath.Join(Root(), id, "events.jsonl"))
 	if err != nil {
 		return nil, err

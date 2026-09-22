@@ -98,8 +98,16 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		if task.RunDir == "" {
 			return
 		}
-		conv := Conversation{Model: res.Model, Messages: resumable(req.Messages)}
-		if data, err := json.MarshalIndent(conv, "", "  "); err == nil {
+		msgs := resumable(req.Messages)
+		if len(msgs) == 0 {
+			// A run that failed before it built a request has nothing to
+			// continue from, and an empty file would look like it had.
+			return
+		}
+		conv := Conversation{Model: res.Model, Messages: msgs}
+		// Compact: this file is read back by hx, not by people, and it already
+		// repeats every tool result the transcript holds.
+		if data, err := json.Marshal(conv); err == nil {
 			_ = os.WriteFile(filepath.Join(task.RunDir, "messages.json"), data, 0o644)
 		}
 	}
