@@ -1,4 +1,4 @@
-# hrn — personal agent harness
+# hrn — a small agent harness
 
 One Go binary that runs coding tasks on **your own agent loop** (Anthropic API) or on
 **agent CLIs you already pay for** (Claude Code, Codex, Gemini, opencode), and records
@@ -20,8 +20,8 @@ installed, not build dependencies.
 ```
 hrn run -b opencode --mode readonly "find the bug in math.go"
 → glob **/math.go
-  ✓ C:\...\hrndemo\math.go
-→ read C:\...\hrndemo\math.go
+  ✓ …/hrndemo/math.go
+→ read …/hrndemo/math.go
   ✓ <path>...</path> (+8 lines)
 Yes, `add()` has a bug: it subtracts `b` from `a` instead of adding them.
 ── ok · opencode · 3 turns · 6.5k in / 87 out (cache 11.9k read) · 8.5s ──
@@ -31,16 +31,20 @@ Yes, `add()` has a bug: it subtracts `b` from `a` instead of adding them.
 
 Answer quality comes from the model, not the harness language. What the harness
 language decides is overhead and concurrency: a static ~7 MB binary with low idle memory,
-cheap goroutines for parallel tool calls and (next) many agents at once, and no runtime
+cheap goroutines for parallel tool calls and for many agents at once, and no runtime
 to install. Rust would shave a little memory at a large cost in iteration speed; Python
 costs 3–5× the memory and needs an interpreter.
 
-## Build
+## Install
+
+Go 1.26 or later, nothing else:
 
 ```bash
-go build -o hrn.exe ./cmd/hrn
-go test ./...
+go install github.com/cristiangirlea/harness/cmd/hrn@latest
 ```
+
+Or from a checkout: `go build -o hrn ./cmd/hrn` and `go test ./...`. The binary is
+static and runs on Linux, macOS and Windows; CI tests on Ubuntu and Windows.
 
 ## Commands
 
@@ -84,13 +88,17 @@ says so instead of pretending.
 
 ## Backends
 
-| Backend | Billing | How it runs |
-|---|---|---|
-| `api` | per token | The harness's own loop: Messages API (streaming, adaptive thinking, prompt caching, server-side refusal fallbacks on `claude-opus-5`) + client-side tools below + MCP tools. Needs `ANTHROPIC_API_KEY` (or an OAuth `ANTHROPIC_AUTH_TOKEN`); `ANTHROPIC_BASE_URL` overrides the endpoint. |
-| `claude` | your Claude subscription | `claude -p --output-format stream-json`. Found on PATH, `~/.local/bin`, npm, or the Claude desktop app's bundled build (that build needs its own `claude /login` first). |
-| `codex` | your ChatGPT subscription | `codex exec --json`. Not installed on this machine yet — event parsing is written against the documented format but untested. |
-| `gemini` | your Google login | `gemini -o json` (single JSON result, no live stream). Untested end to end. |
-| `opencode` | whatever opencode is configured with | `opencode run --format json`, prompt attached as a file. Verified. |
+| Backend | Billing | How it runs | Status |
+|---|---|---|---|
+| `api` | per token | The harness's own loop: Messages API (streaming, adaptive thinking, prompt caching, server-side refusal fallbacks on `claude-opus-5`) + client-side tools below + MCP tools. Needs `ANTHROPIC_API_KEY` (or an OAuth `ANTHROPIC_AUTH_TOKEN`); `ANTHROPIC_BASE_URL` overrides the endpoint. | Every path is covered by tests against a fake API server; it has not yet run against the real API. |
+| `claude` | your Claude subscription | `claude -p --output-format stream-json`. Found on PATH, `~/.local/bin`, npm, or the Claude desktop app's bundled build (that build needs its own `claude /login` first). | Verified end to end: `run`, `batch`, `eval`, and Claude Code delegating through `hrn mcp`. |
+| `codex` | your ChatGPT subscription | `codex exec --json`. | Parser written against the documented event format; not yet run for real. |
+| `gemini` | your Google login | `gemini -o json` (single JSON result, no live stream). | Not yet run for real. |
+| `opencode` | whatever opencode is configured with | `opencode run --format json`, prompt attached as a file. | `run` verified (the example above); not exercised by the later layers. |
+
+"Verified" means a real agent did real work through that path and the result was checked
+by hand, not that a test passed. Treat the unverified rows as drafts that need one run and
+probably one fix.
 
 Default backend: `api` when credentials exist, otherwise `claude`.
 
@@ -228,7 +236,7 @@ the same tool set.
 want it to work in by default:
 
 ```bash
-claude mcp add hrn -- E:\__Workdir\harness\hrn.exe mcp
+claude mcp add hrn -- hrn mcp
 ```
 
 The default workspace is the server's working directory, or `--dir PATH` (an absolute
@@ -369,7 +377,7 @@ all         9   8  89%     55s          8      ~$1.45     $0.15    90%
 
 batches by repository, since 2026-09-14 17:40 (7d)
 repository              batches  tasks  pass%  med attempts  total cost
-E:\__Workdir\JobPilotC        1      3   100%             1      ~$1.03
+~/src/jobpilot                1      3   100%             1      ~$1.03
 all                           1      3   100%             1      ~$1.03
 ```
 
@@ -457,26 +465,48 @@ to express what "done" means, and a spec that fills it in is told so at the star
 ## Layout
 
 ```
-cmd/hrn/            CLI + terminal renderer (batch subcommands in batch.go)
+cmd/hrn/           CLI + terminal renderer (batch subcommands in batch.go)
 internal/agent/    Backend interface, api loop + stdlib Messages client, one file per CLI adapter
 internal/tools/    workspace-confined tool runtime + MCP tool adapter
 internal/mcp/      MCP over stdio: JSON-RPC codec, Client, Server, config loader
-internal/hrnmcp/    hrn's own MCP server (run, runs, show, backends)
+internal/hrnmcp/   hrn's own MCP server (run, runs, show, backends)
 internal/batch/    orchestrator: parallel worktrees, gates, retries, batch records
+internal/eval/     a batch across a matrix of variants, scored per variant and per task
 internal/report/   aggregation over run and batch records (hrn report; reused by eval)
 internal/runlog/   run recording
 ```
 
-## Roadmap
+## Status and what is open
 
-The `agent.Backend` contract (Task → Events → Result) is what the layers build on.
-`hrn mcp` (a host session plans, hrn runs) and `hrn batch` (parallel worktrees, gates,
-retries) are the orchestrator; the eval layer is what remains.
+The three layers from the original brief are all here: the agent core (`hrn run`), the
+orchestrator (`hrn batch`, `hrn mcp`) and the scoring layer (`hrn eval`). What remains,
+in the order it is worth taking:
 
-1. **Eval** — run a task set × backends × models repeatedly, score results
-   (deterministic checks first, LLM judge only where needed), compare over time from
-   the run and batch records.
-2. **Batch follow-ups** — feed a failed attempt's gate output into the retry prompt;
-   `hrn batch merge` for passed branches.
-3. **MCP follow-ups** — Streamable HTTP transport for remote servers; MCP elicitation so
-   a host can answer `ask`-mode approvals instead of hrn denying them.
+1. **A real run of the `api` backend.** It is the only backend that has never spoken to
+   its API; everything in it is covered by a fake server.
+2. **Measure the context-editing default.** Server-side clearing is on by default and its
+   interaction with prompt caching is unmeasured; one long run with and without it,
+   compared on cache reads, settles whether the default is right.
+3. **The eval judge.** The `judge` key is reserved. Gates cannot score a diff against a
+   rubric, which is what "did it do the right thing" needs.
+4. **MCP over HTTP.** Only stdio today, which is enough for every host hrn has met.
+5. **One options struct**, so an api option is declared once instead of being wired by
+   hand through the run flags, the batch spec and the MCP tool.
+
+`PLAN.md` is the work queue and the decisions log: every increment so far, what was
+deferred and why. It still calls the binary by its old name, `hx`, in entries written
+before the rename.
+
+## Contributing
+
+- **Standard library only.** No third-party Go modules, and Windows syscalls go through
+  `syscall.NewLazyDLL`, not `x/sys`. The CLI backends are external programs, not
+  dependencies.
+- **Tests first, seen failing.** Process-spawning code is tested by re-running the test
+  binary as a helper; the API loop against a fake SSE server; MCP over in-memory pipes.
+- **One pull request per increment**, small enough to review, with the plan updated in
+  the same PR.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
