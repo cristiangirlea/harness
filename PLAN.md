@@ -351,7 +351,9 @@ the numbers of the `api` and `claude` rows and the *all* row; `--since` filterin
 
 Size: ~250 lines + tests.
 
-### [ ] PR G: `hx eval` (Fable, or Opus with a Fable review of the design)
+### [x] PR G: `hx eval` (Fable, or Opus with a Fable review of the design)
+
+Done: PR #12, 2026-09-22.
 
 **Why.** This is the third harness from the original brief: run a task set across
 backends, models and efforts, repeatedly, and score with deterministic gates first.
