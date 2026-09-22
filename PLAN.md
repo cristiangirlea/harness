@@ -429,7 +429,7 @@ Size: ~300 lines + tests.
 
 ### [x] PR I: command guard and dirty-repo check
 
-Done: PR #10, 2026-09-22.
+Done: PR #11, 2026-09-22.
 
 **Why.** `yolo` mode and batch gates run whatever they are given. A few patterns are
 never what the user meant. And `hx batch` branches worktrees from `HEAD`, so
@@ -662,7 +662,7 @@ Size: mostly moves; ~100 new lines.
   ran; `Percent` never rounds to a false 100% or 0%; directory keys are canonical, so one
   workspace under two spellings is one row; `ParseSince` refuses windows that overflow;
   and `table` and `shortKey` got the first tests in `cmd/hx`.
-- 2026-09-22: PR I done (#10). Built in a worktree (`E:\__Workdir\harness-i`, branch
+- 2026-09-22: PR I done (#11). Built in a worktree (`E:\__Workdir\harness-i`, branch
   `i-guard`) because another session had the main checkout on PR E. Deviation: the refusal
   text does not say "rerun with --allow-dangerous". That sentence is read by the model,
   which cannot rerun anything and does have a shell, so it invited a retry or a recursive
