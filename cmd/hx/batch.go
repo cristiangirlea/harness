@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 // cmdBatch dispatches the batch subcommands. Anything that is not one of them
@@ -33,18 +34,24 @@ func cmdBatch(args []string) (int, error) {
 	return cmdBatchRun(args)
 }
 
-// load reads a batch record named by exactly one argument.
-func load(args []string, what string) (batch.Result, error) {
-	if len(args) != 1 {
-		return batch.Result{}, fmt.Errorf("usage: hx batch %s", what)
+// loadBatch turns the arguments of a subcommand into a record. A wrong number
+// of arguments is the caller's mistake (2); a record that will not load is a
+// run-time failure (1).
+func loadBatch(args []string, want int, form string) (batch.Result, int, error) {
+	if len(args) != want {
+		return batch.Result{}, 2, fmt.Errorf("usage: hx batch %s", form)
 	}
-	return batch.LoadResult(args[0])
+	res, err := batch.LoadResult(args[0])
+	if err != nil {
+		return batch.Result{}, 1, err
+	}
+	return res, 0, nil
 }
 
 func cmdBatchRemove(args []string) (int, error) {
-	res, err := load(args, "rm <batch-id>")
+	res, code, err := loadBatch(args, 1, "rm <batch-id>")
 	if err != nil {
-		return 2, err
+		return code, err
 	}
 	if err := batch.Remove(res); err != nil {
 		return 1, err
@@ -60,9 +67,9 @@ func cmdBatchShow(args []string) (int, error) {
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
-	res, err := load(fs.Args(), "show [--json] <batch-id>")
+	res, code, err := loadBatch(fs.Args(), 1, "show [--json] <batch-id>")
 	if err != nil {
-		return 2, err
+		return code, err
 	}
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
@@ -76,23 +83,27 @@ func cmdBatchShow(args []string) (int, error) {
 // cmdBatchDiff writes one task's changes to stdout, so the output can be piped
 // into git apply or a pager. Anything else goes to stderr.
 func cmdBatchDiff(args []string) (int, error) {
-	if len(args) != 2 {
-		return 2, errors.New("usage: hx batch diff <batch-id> <task-id>")
+	fs := flag.NewFlagSet("batch diff", flag.ContinueOnError)
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(args); err != nil {
+		return 2, nil
 	}
-	res, err := batch.LoadResult(args[0])
+	res, code, err := loadBatch(fs.Args(), 2, "diff <batch-id> <task-id>")
 	if err != nil {
-		return 2, err
+		return code, err
 	}
-	diff, untracked, err := batch.Diff(context.Background(), res, args[1])
+	task := fs.Arg(1)
+	diff, untracked, err := batch.Diff(context.Background(), res, task)
 	if err != nil {
 		return 1, err
 	}
-	if diff == "" && len(untracked) == 0 {
-		fmt.Fprintf(os.Stderr, "task %s changed nothing\n", args[1])
+	if strings.TrimSpace(diff) == "" && len(untracked) == 0 {
+		fmt.Fprintf(os.Stderr, "task %s changed nothing\n", task)
 		return 0, nil
 	}
 	if diff != "" {
-		fmt.Println(diff)
+		// Printed as git wrote it: this is a patch, not a message.
+		fmt.Print(diff)
 	}
 	if len(untracked) > 0 {
 		// A diff cannot show a file git has never seen, and the agent's new
@@ -114,7 +125,7 @@ func cmdBatchMerge(args []string) (int, error) {
 	}
 	res, err := batch.LoadResult(fs.Arg(0))
 	if err != nil {
-		return 2, err
+		return 1, err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -126,17 +137,19 @@ func cmdBatchMerge(args []string) (int, error) {
 		switch {
 		case m.Conflict:
 			r.Line(r.c(red, fmt.Sprintf("  %-16s conflict merging %s", m.Task, m.Branch)))
+		case m.Error != "":
+			r.Line(r.c(red, fmt.Sprintf("  %-16s could not merge %s", m.Task, m.Branch)))
 		case m.Skipped != "":
 			r.Line(r.c(dim, fmt.Sprintf("  %-16s skipped: %s", m.Task, m.Skipped)))
 		default:
 			done++
-			r.Line(fmt.Sprintf("  %-16s merged %s as %s", m.Task, m.Branch, short(m.Commit)))
+			r.Line(fmt.Sprintf("  %-16s merged %s as %s", m.Task, m.Branch, tools.ShortSHA(m.Commit)))
 		}
 	}
 	if mergeErr != nil {
-		if done > 0 {
-			r.Line(r.c(dim, fmt.Sprintf("%d branch(es) merged before this; the tree is back as it was, so "+
-				"resolve it by hand with: git merge %s", done, mergeConflictBranch(merged))))
+		if branch := mergeConflictBranch(merged); branch != "" {
+			r.Line(r.c(dim, fmt.Sprintf("the tree is back as it was; %d branch(es) merged before this one, "+
+				"and this one is still there to merge by hand: git merge %s", done, branch)))
 		}
 		return 1, mergeErr
 	}
@@ -245,22 +258,22 @@ func printBatch(r *renderer, res batch.Result) {
 		default:
 			status = r.c(red, status)
 		}
+		took := t.Duration.Round(time.Second).String()
+		if t.Status == batch.StatusRunning {
+			took = "-" // the record holds no start time per task
+		}
 		r.Line(fmt.Sprintf("  %-16s %-9s %-9s %d attempt(s)  %-24s %s",
-			t.ID, status, last, len(t.Attempts), t.Branch, t.Duration.Round(time.Second)))
+			t.ID, status, last, len(t.Attempts), t.Branch, took))
 	}
-	tail := ""
+	// A batch still going has no duration in its record; say how long it has
+	// been going instead, which is what the reader wants to know.
+	tail, took := "", res.Duration.Round(time.Second).String()
 	if running > 0 {
 		tail = fmt.Sprintf(" · %d still running", running)
+		took = time.Since(res.Started).Round(time.Second).String() + " so far"
 	}
 	r.Line(r.c(dim, fmt.Sprintf("── batch %s · %d/%d passed%s · %s ──",
-		res.ID, passed(res), len(res.Tasks), tail, res.Duration.Round(time.Second))))
+		res.ID, passed(res), len(res.Tasks), tail, took)))
 	r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · merge them with: hx batch merge %s · remove them with: hx batch rm %s",
 		filepath.Join(res.Dir, ".hx", "worktrees"), res.ID, res.ID)))
-}
-
-func short(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
-	}
-	return sha
 }

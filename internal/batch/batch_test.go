@@ -729,6 +729,80 @@ func TestMergeSquashMakesOneCommit(t *testing.T) {
 	}
 }
 
+func TestMergeSquashTwiceIsNotAConflict(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	if _, err := Merge(context.Background(), res, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := Merge(context.Background(), res, nil, true)
+	if err != nil {
+		t.Fatalf("a second squash must not fail: %v", err)
+	}
+	if len(merged) != 1 || merged[0].Skipped != "already merged" || merged[0].Conflict || merged[0].Commit != "" {
+		t.Fatalf("merged = %+v", merged)
+	}
+	if status := git(t, dir, "status", "--porcelain"); status != "" {
+		t.Errorf("the tree must be left clean:\n%s", status)
+	}
+}
+
+func TestMergeFailureThatIsNotAConflict(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	// The squash commit is refused by a hook: a failure, but nothing conflicts.
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := Merge(context.Background(), res, nil, true)
+	if err == nil {
+		t.Fatal("the refused commit should be an error")
+	}
+	if len(merged) != 1 || merged[0].Conflict || merged[0].Error == "" {
+		t.Fatalf("a refused commit is not a conflict: %+v", merged)
+	}
+	if status := git(t, dir, "status", "--porcelain"); status != "" {
+		t.Errorf("the tree must be put back:\n%s", status)
+	}
+}
+
+func TestDiffSaysWhenTheBranchIsGone(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+	// The commit object survives until git collects it, so make it unreachable
+	// the way a pruned repository would.
+	git(t, dir, "reflog", "expire", "--expire=now", "--all")
+	git(t, dir, "gc", "--prune=now", "--quiet")
+	if _, _, err := Diff(context.Background(), res, "alpha"); err == nil ||
+		!strings.Contains(err.Error(), "branch was removed") {
+		t.Errorf("err = %v, want a word about the removed branch", err)
+	}
+}
+
+func TestDiffIsAPatchAndNothingElse(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	diff, _, err := Diff(context.Background(), res, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// git writes warnings to stderr; the patch must start where git apply
+	// expects it to and end with the newline git wrote.
+	if !strings.HasPrefix(diff, "diff --git ") {
+		t.Errorf("diff does not start with a header:\n%q", diff[:min(120, len(diff))])
+	}
+	if !strings.HasSuffix(diff, "\n") {
+		t.Errorf("diff lost its trailing newline: %q", diff[max(0, len(diff)-40):])
+	}
+}
+
 func TestMergeRefusesAndSkips(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{Dir: dir, Tasks: []Task{

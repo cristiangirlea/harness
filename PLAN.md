@@ -720,3 +720,17 @@ Size: mostly moves; ~100 new lines.
   main.go at 390 lines and puts the four subcommands together. Verified end to end with a
   live claude batch: two tasks, two merge commits, a second merge finding nothing to do,
   then `hx batch rm`.
+- 2026-09-22: PR J self-review, 12 findings, all fixed. Three mattered. Cleanup after a
+  failed merge ran on the context that had just been cancelled, so Ctrl+C left the tree
+  mid-merge and said it could not be restored; `undoMerge` takes its own context now, the
+  way `commitChanges` already did. `Diff` returned `gitOut`, which merges stderr into the
+  result: good for an error message, a corrupt patch for `git apply`, since git writes its
+  CRLF warning there - diffs go through a new `gitStdout` that keeps the bytes as git
+  wrote them, trailing newline included. And a `--squash` re-merge staged nothing, so the
+  commit failed and the task was reported as a conflict; an ancestry check now skips a
+  branch that is already in, and a squash that stages nothing is "already merged" too.
+  The rest: `Conflict` is only set when git actually left unmerged paths (a hook refusing
+  the commit is an `Error` instead), a running batch is timed from `Started` rather than
+  printing 0s, `hx batch rm` keeps its old exit code for an unknown id, `batch diff` takes
+  flags like its siblings, `short` became `tools.ShortSHA`, and a diff of a batch whose
+  branches were removed says so instead of passing on "bad object".

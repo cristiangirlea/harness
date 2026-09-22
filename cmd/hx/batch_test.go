@@ -30,6 +30,21 @@ func TestPrintBatchTable(t *testing.T) {
 	}
 }
 
+func TestPrintBatchTimesARunningBatchFromItsStart(t *testing.T) {
+	var out strings.Builder
+	r := newRenderer(false)
+	r.out, r.color = &out, false
+	printBatch(r, batch.Result{ID: "b3", Started: time.Now().Add(-3 * time.Minute),
+		Tasks: []batch.TaskResult{{ID: "going", Status: batch.StatusRunning, Branch: "hx/going"}}})
+	text := out.String()
+	if !strings.Contains(text, "3m0s so far") {
+		t.Errorf("a running batch should be timed from its start:\n%s", text)
+	}
+	if strings.Contains(text, " 0s") {
+		t.Errorf("a running task has no duration to print:\n%s", text)
+	}
+}
+
 func TestPrintBatchSaysNothingAboutRunningWhenNoneAre(t *testing.T) {
 	var out strings.Builder
 	r := newRenderer(false)
