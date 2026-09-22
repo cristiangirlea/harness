@@ -302,6 +302,63 @@ func TestBranchCollisionIsAnError(t *testing.T) {
 	}
 }
 
+func TestDirtyRepositoryIsRefused(t *testing.T) {
+	dir := initRepo(t)
+	spec := func(allowDirty bool) Spec {
+		return Spec{Dir: dir, Backend: "wb-ok", AllowDirty: allowDirty, Tasks: []Task{{ID: "t", Prompt: "a"}}}
+	}
+	// An untracked file is not a reason to stop: .hx/worktrees is one.
+	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, spec(false))
+	if res.Tasks[0].Status != StatusPass {
+		t.Fatalf("an untracked file must not stop a batch: %+v", res.Tasks[0])
+	}
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+
+	// A modified tracked file is, because the agents branch from HEAD.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(context.Background(), spec(false), nil)
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") || !strings.Contains(err.Error(), "README.md") {
+		t.Fatalf("a dirty repository must be refused by name: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".hx", "worktrees", "t")); statErr == nil {
+		t.Error("nothing should be created when the batch refuses to start")
+	}
+
+	res, _ = run(t, spec(true))
+	if res.Tasks[0].Status != StatusPass {
+		t.Fatalf("--allow-dirty must let it run: %+v", res.Tasks[0])
+	}
+}
+
+func TestAllowDangerousReachesTheTask(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", AllowDangerous: true, Tasks: []Task{
+		{ID: "spec-wide", Prompt: "a"},
+	}})
+	if rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID); err != nil || !rec.Task.AllowDangerous {
+		t.Fatalf("the spec-wide switch should reach the task: %+v err=%v", rec.Task, err)
+	}
+
+	dir = initRepo(t)
+	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "off", Prompt: "a"},
+		{ID: "on", Prompt: "a", AllowDangerous: true},
+	}})
+	for i, want := range []bool{false, true} {
+		rec, err := runlog.Load(res.Tasks[i].Attempts[0].RunID)
+		if err != nil || rec.Task.AllowDangerous != want {
+			t.Errorf("%s: AllowDangerous = %v, want %v (err=%v)", res.Tasks[i].ID, rec.Task.AllowDangerous, want, err)
+		}
+	}
+}
+
 func TestSpecValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string

@@ -79,6 +79,8 @@ func runTool(defaultDir string) mcp.Tool {
 					"description": "MCP config files (Claude Code .mcp.json format) whose stdio servers the task may use as tools."},
 				"no_instructions": map[string]any{"type": "boolean",
 					"description": "Skip the project instruction files (HX.md, AGENTS.md, CLAUDE.md) the api backend reads from the workspace root."},
+				"allow_dangerous": map[string]any{"type": "boolean",
+					"description": "Let run_command run git push, sudo, rm -rf / and the like. Off by default; the harness refuses those command lines."},
 				"no_context_edits": map[string]any{"type": "boolean",
 					"description": "api backend only: keep every tool result in the request instead of letting the server clear old ones."},
 				"timeout":      str("Stop the run after this long, as a Go duration such as \"20m\"."),
@@ -100,6 +102,7 @@ func runTool(defaultDir string) mcp.Tool {
 				MCP            []string `json:"mcp"`
 				NoInstructions bool     `json:"no_instructions"`
 				NoContextEdits bool     `json:"no_context_edits"`
+				AllowDangerous bool     `json:"allow_dangerous"`
 				Timeout        string   `json:"timeout"`
 				MaxCostUSD     float64  `json:"max_cost_usd"`
 				TaskBudget     int      `json:"task_budget"`
@@ -135,7 +138,8 @@ func runTool(defaultDir string) mcp.Tool {
 			}
 			task := agent.Task{Prompt: args.Prompt, Dir: dir, Model: args.Model, Mode: mode, MaxTurns: args.MaxTurns,
 				Effort: args.Effort, NoInstructions: args.NoInstructions, NoContextEdits: args.NoContextEdits,
-				MaxCostUSD: args.MaxCostUSD, TaskBudget: args.TaskBudget}
+				AllowDangerous: args.AllowDangerous,
+				MaxCostUSD:     args.MaxCostUSD, TaskBudget: args.TaskBudget}
 			if args.Timeout != "" {
 				if task.Timeout, err = time.ParseDuration(args.Timeout); err != nil {
 					return mcp.CallResult{}, fmt.Errorf("timeout %q: %w", args.Timeout, err)

@@ -37,6 +37,10 @@ type Tool struct {
 
 type Workspace struct {
 	Root string
+	// AllowDangerous lifts the command guard for this run. It lives here
+	// because the tool set is built once and shared by every run, so per-task
+	// policy has to travel with the workspace.
+	AllowDangerous bool
 }
 
 func NewWorkspace(dir string) (*Workspace, error) {

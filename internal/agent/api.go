@@ -105,6 +105,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	if err != nil {
 		return fail(StatusError, err)
 	}
+	ws.AllowDangerous = task.AllowDangerous
 	maxTurns := task.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 50

@@ -68,6 +68,10 @@ type Task struct {
 	// instead of being resent every turn.
 	NoContextEdits bool `json:"no_context_edits,omitempty"`
 
+	// AllowDangerous lifts the api backend's command guard, which otherwise
+	// refuses a few command lines (git push, sudo, rm -rf /, curl | sh).
+	AllowDangerous bool `json:"allow_dangerous,omitempty"`
+
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
 }

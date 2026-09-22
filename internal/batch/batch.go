@@ -38,6 +38,8 @@ type Spec struct {
 	MCP            []string `json:"mcp,omitempty"`              // MCP config files, relative to Dir
 	NoInstructions bool     `json:"no_instructions,omitempty"`  // skip the project instruction files (api backend)
 	NoContextEdits bool     `json:"no_context_edits,omitempty"` // keep every tool result in the request (api backend)
+	AllowDangerous bool     `json:"allow_dangerous,omitempty"`  // lift the command guard (api backend)
+	AllowDirty     bool     `json:"allow_dirty,omitempty"`      // start even though tracked files are modified
 	Timeout        string   `json:"timeout,omitempty"`          // per attempt, e.g. "20m"
 	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`     // per attempt, api backend only
 	TaskBudget     int      `json:"task_budget,omitempty"`      // tokens, api backend only
@@ -60,6 +62,7 @@ type Task struct {
 	// can turn either off but not back on.
 	NoInstructions bool     `json:"no_instructions,omitempty"`
 	NoContextEdits bool     `json:"no_context_edits,omitempty"`
+	AllowDangerous bool     `json:"allow_dangerous,omitempty"`
 	Timeout        string   `json:"timeout,omitempty"`
 	MaxCostUSD     float64  `json:"max_cost_usd,omitempty"`
 	TaskBudget     int      `json:"task_budget,omitempty"`
@@ -256,6 +259,28 @@ func checkGates(gates []string) error {
 	return nil
 }
 
+// checkClean refuses to start when tracked files are modified: every worktree
+// branches from HEAD, so that work would not reach the agents and the batch
+// would quietly be testing something other than what the operator sees.
+// Untracked files are not counted - .hx/worktrees is one of them.
+func checkClean(ctx context.Context, root string) error {
+	status, err := gitOut(ctx, root, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return err
+	}
+	if status == "" {
+		return nil
+	}
+	lines := strings.Split(status, "\n")
+	shown, more := lines, ""
+	if len(shown) > 5 {
+		shown, more = shown[:5], fmt.Sprintf("\n  ... and %d more", len(lines)-5)
+	}
+	return fmt.Errorf("the repository has uncommitted changes; the agents branch from HEAD and would not see them. "+
+		"Commit or stash them, or pass --allow-dirty (allow_dirty in the spec):\n  %s%s",
+		strings.Join(shown, "\n  "), more)
+}
+
 // Run executes the batch and saves its record. Tasks run through a pool of
 // Parallel workers; cancelling ctx stops running agents and skips the rest.
 // The record is written before the first task starts, so `hx batch rm` can
@@ -286,6 +311,11 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	base, err := gitOut(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return Result{}, err
+	}
+	if !spec.AllowDirty {
+		if err := checkClean(ctx, root); err != nil {
+			return Result{}, err
+		}
 	}
 	var mcpPaths []string
 	for _, p := range spec.MCP {
@@ -453,6 +483,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		Dir: tr.Worktree, Mode: mode, MCP: mcpPaths,
 		NoInstructions: t.NoInstructions || spec.NoInstructions,
 		NoContextEdits: t.NoContextEdits || spec.NoContextEdits,
+		AllowDangerous: t.AllowDangerous || spec.AllowDangerous,
 		Timeout:        firstDuration(t.timeout, spec.timeout),
 		MaxCostUSD:     firstFloat(t.MaxCostUSD, spec.MaxCostUSD),
 		TaskBudget:     firstInt(t.TaskBudget, spec.TaskBudget),

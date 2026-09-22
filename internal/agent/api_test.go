@@ -176,6 +176,28 @@ func TestAPILoopDeniesWritesWithoutApproval(t *testing.T) {
 	}
 }
 
+func TestAPILoopGuardsCommands(t *testing.T) {
+	dir := t.TempDir()
+	_, _, fake := runFake(t, [][]string{
+		toolTurn("toolu_g", "run_command", `{"command":"sudo rm -rf /"}`),
+		textTurn("I was blocked."),
+	}, Task{Prompt: "clean up", Dir: dir, Mode: ModeYolo})
+	block := lastToolResult(t, fake.requests[1])
+	if block["is_error"] != true || !strings.Contains(fmt.Sprint(block["content"]), "command guard (sudo)") {
+		t.Errorf("a guarded command should come back as an error result: %v", block)
+	}
+
+	// With the operator's consent the same line reaches the shell.
+	_, _, fake = runFake(t, [][]string{
+		toolTurn("toolu_a", "run_command", `{"command":"echo \"git push\""}`),
+		textTurn("done"),
+	}, Task{Prompt: "echo it", Dir: dir, Mode: ModeYolo, AllowDangerous: true})
+	block = lastToolResult(t, fake.requests[1])
+	if block["is_error"] == true || !strings.Contains(fmt.Sprint(block["content"]), "git push") {
+		t.Errorf("allow_dangerous should let the command run: %v", block)
+	}
+}
+
 func TestAPILoopReadOnlyHidesWriteTools(t *testing.T) {
 	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(), Mode: ModeReadOnly})
 	for _, tl := range fake.requests[0]["tools"].([]any) {
