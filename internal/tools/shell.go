@@ -52,11 +52,20 @@ func runCommand() Tool {
 		Required: []string{"command"},
 		Effect:   EffectExec,
 		Summary:  summaryOf("command"),
+		Refuse: func(ws *Workspace, raw json.RawMessage) string {
+			args, err := decode[in](raw)
+			if err != nil || ws.AllowDangerous {
+				return "" // a call that cannot be read is the loop's to report
+			}
+			return Guard(args.Command)
+		},
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
 			}
+			// Belt and braces: Refuse already declined this call inside the
+			// loop, and a direct caller gets the same answer here.
 			if !ws.AllowDangerous {
 				if rule := Guard(args.Command); rule != "" {
 					return "", GuardError(rule)

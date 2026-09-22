@@ -198,6 +198,23 @@ func TestAPILoopGuardsCommands(t *testing.T) {
 	}
 }
 
+func TestAPILoopSaysWhetherTheGuardIsOn(t *testing.T) {
+	for _, tc := range []struct {
+		allow bool
+		want  string
+	}{
+		{false, "Command guard: on"},
+		{true, "Command guard: off"},
+	} {
+		_, _, fake := runFake(t, [][]string{textTurn("ok")},
+			Task{Prompt: "go", Dir: t.TempDir(), Mode: ModeYolo, AllowDangerous: tc.allow})
+		sys := systemText(t, fake.requests[0])
+		if env := sys[len(sys)-1]; !strings.Contains(env, tc.want) {
+			t.Errorf("allow_dangerous=%v: environment block is missing %q:\n%s", tc.allow, tc.want, env)
+		}
+	}
+}
+
 func TestAPILoopReadOnlyHidesWriteTools(t *testing.T) {
 	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(), Mode: ModeReadOnly})
 	for _, tl := range fake.requests[0]["tools"].([]any) {
