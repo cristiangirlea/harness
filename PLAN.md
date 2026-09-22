@@ -548,7 +548,7 @@ order they are worth taking:
 
 ## Decisions log
 
-- 2026-09-22: open-source prep (#16). The binary is renamed from hx to hrn: hx is the Helix
+- 2026-09-22: open-source prep (#17). The binary is renamed from hx to hrn: hx is the Helix
   editor's binary, so nobody with Helix on PATH could have installed this. Every word in
   the harness vocabulary is already an agent tool on GitHub (harn, bridle, reins, tack, yoke
   five times over, halter; hame has hames next to it), so the name is the repo's own name
