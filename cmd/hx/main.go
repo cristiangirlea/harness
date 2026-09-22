@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -38,6 +37,10 @@ Usage:
   hx show [--json] <run-id>      replay a recorded run
   hx mcp [--dir PATH]            serve hx as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hx batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
+  hx batch show [--json] <id>    reprint a batch's table, while it runs or afterwards
+  hx batch diff <id> <task-id>   what one task changed, as a diff on stdout
+  hx batch merge [--squash] <id> [task-id...]
+                                 merge the branches of the tasks that passed into the current branch
   hx batch rm <batch-id>         remove the worktrees and branches a batch created
   hx eval [flags] <eval.json>    run a task set across a matrix of backends, models and efforts
   hx eval show <eval-id>         reprint a saved eval
@@ -73,6 +76,7 @@ Eval flags:
 Batch flags:
       --parallel N     agents at once (default: the file's value, else 2)
       --allow-dirty    start even though the repository has uncommitted changes
+      --squash         merge: one commit per task instead of a merge commit
       --json           print the batch record as JSON (progress goes to stderr)
   -v, --verbose        show each agent's tool calls
 
@@ -399,99 +403,6 @@ type multiFlag []string
 
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
-
-func cmdBatch(args []string) (int, error) {
-	if len(args) >= 1 && args[0] == "rm" {
-		if len(args) != 2 {
-			return 2, errors.New("usage: hx batch rm <batch-id>")
-		}
-		res, err := batch.LoadResult(args[1])
-		if err != nil {
-			return 1, err
-		}
-		if err := batch.Remove(res); err != nil {
-			return 1, err
-		}
-		fmt.Printf("removed the worktrees and branches of batch %s (%d tasks)\n", res.ID, len(res.Tasks))
-		return 0, nil
-	}
-	fs := flag.NewFlagSet("batch", flag.ContinueOnError)
-	parallel := fs.Int("parallel", 0, "")
-	allowDirty := fs.Bool("allow-dirty", false, "")
-	jsonOut := fs.Bool("json", false, "")
-	var verbose bool
-	for _, name := range []string{"v", "verbose"} {
-		fs.BoolVar(&verbose, name, false, "")
-	}
-	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	if err := fs.Parse(args); err != nil {
-		return 2, nil
-	}
-	if fs.NArg() != 1 {
-		return 2, errors.New("usage: hx batch [flags] <tasks.json>")
-	}
-	spec, err := batch.LoadSpec(fs.Arg(0))
-	if err != nil {
-		return 2, err
-	}
-	if *parallel > 0 {
-		spec.Parallel = *parallel
-	}
-	if *allowDirty {
-		spec.AllowDirty = true
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	r := newRenderer(false)
-	if *jsonOut {
-		r.out = os.Stderr
-	}
-	res, err := batch.Run(ctx, spec, func(e batch.Event) {
-		if e.Kind == "tool" && !verbose {
-			return
-		}
-		r.Line(fmt.Sprintf("[%s] %s", e.Task, e.Text))
-	})
-	if err != nil && len(res.Tasks) == 0 {
-		return 1, err
-	}
-	if err != nil {
-		// The batch ran; only its record could not be written.
-		r.Line(r.c(red, "error: "+err.Error()))
-	}
-
-	passed := 0
-	for _, t := range res.Tasks {
-		if t.Status == batch.StatusPass {
-			passed++
-		}
-	}
-	if *jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(res)
-	} else {
-		r.Line("")
-		for _, t := range res.Tasks {
-			last := "-"
-			if n := len(t.Attempts); n > 0 {
-				last = t.Attempts[n-1].Backend
-			}
-			status := string(t.Status)
-			if t.Status != batch.StatusPass {
-				status = r.c(red, status)
-			}
-			r.Line(fmt.Sprintf("  %-16s %-9s %-9s %d attempt(s)  %-24s %s", t.ID, status, last, len(t.Attempts), t.Branch, t.Duration.Round(time.Second)))
-		}
-		r.Line(r.c(dim, fmt.Sprintf("── batch %s · %d/%d passed · %s ──", res.ID, passed, len(res.Tasks), res.Duration.Round(time.Second))))
-		r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · once merged or abandoned, remove them with: hx batch rm %s", filepath.Join(res.Dir, ".hx", "worktrees"), res.ID)))
-	}
-	if passed != len(res.Tasks) {
-		return 1, nil
-	}
-	return 0, nil
-}
 
 func cmdEval(args []string) (int, error) {
 	if len(args) >= 1 && args[0] == "show" {

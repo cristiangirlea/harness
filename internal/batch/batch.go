@@ -6,6 +6,7 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -540,7 +541,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		case out.pass:
 			text := "pass · branch " + tr.Branch
 			if tr.Commit != "" {
-				text += " · commit " + short(tr.Commit)
+				text += " · commit " + tools.ShortSHA(tr.Commit)
 			}
 			return finish(StatusPass, text)
 		case ctx.Err() != nil:
@@ -729,7 +730,19 @@ func save(res Result) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(batchesDir(), res.ID+".json"), data, 0o644)
+	// Written beside the record and renamed over it: `hx batch show` reads
+	// this file while the batch is still running, and half a file is not a
+	// record. Rename replaces an existing file on Windows too.
+	path := filepath.Join(batchesDir(), res.ID+".json")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // List returns every saved batch record, newest first, and how many files
@@ -758,6 +771,209 @@ func List() (results []Result, unreadable int, err error) {
 	return results, unreadable, nil
 }
 
+// Find returns the task with this id.
+func (r Result) Find(id string) (TaskResult, error) {
+	ids := make([]string, 0, len(r.Tasks))
+	for _, tr := range r.Tasks {
+		if tr.ID == id {
+			return tr, nil
+		}
+		ids = append(ids, tr.ID)
+	}
+	return TaskResult{}, fmt.Errorf("batch %s has no task %q (it has %s)", r.ID, id, strings.Join(ids, ", "))
+}
+
+// Diff returns what a task changed: its commit against the base the batch
+// started from, or whatever is still uncommitted in its worktree. Untracked
+// paths come back separately, because a diff cannot show them.
+func Diff(ctx context.Context, res Result, taskID string) (diff string, untracked []string, err error) {
+	tr, err := res.Find(taskID)
+	if err != nil {
+		return "", nil, err
+	}
+	if tr.Commit != "" {
+		// `hx batch rm` deletes the branch, and the commit goes with it once
+		// git collects it; say that rather than passing on "bad object".
+		if _, err := gitOut(ctx, res.Dir, "cat-file", "-e", tr.Commit+"^{commit}"); err != nil {
+			return "", nil, fmt.Errorf("task %s: commit %s is no longer in %s, so its branch was removed",
+				taskID, tools.ShortSHA(tr.Commit), res.Dir)
+		}
+		out, err := gitStdout(ctx, res.Dir, "diff", res.Base+".."+tr.Commit)
+		return out, nil, err
+	}
+	if _, err := os.Stat(tr.Worktree); err != nil {
+		return "", nil, fmt.Errorf("task %s committed nothing and its worktree is gone", taskID)
+	}
+	out, err := gitStdout(ctx, tr.Worktree, "diff", "HEAD")
+	if err != nil {
+		return "", nil, err
+	}
+	lines, err := dirtyPaths(ctx, tr.Worktree, true)
+	for _, l := range lines {
+		if rest, ok := strings.CutPrefix(l, "?? "); ok {
+			untracked = append(untracked, rest)
+		}
+	}
+	return out, untracked, err
+}
+
+// MergeResult is what one task's branch did.
+type MergeResult struct {
+	Task     string `json:"task"`
+	Branch   string `json:"branch"`
+	Commit   string `json:"commit,omitempty"`   // the merge or squash commit this run made
+	Skipped  string `json:"skipped,omitempty"`  // why nothing was merged
+	Conflict bool   `json:"conflict,omitempty"` // git reported conflicting paths
+	Error    string `json:"error,omitempty"`    // any other failure, in git's words
+}
+
+// Merge merges the branches of a batch into whatever the repository has
+// checked out, in spec order, and never pushes. With no names it takes every
+// task that passed; named tasks are still only merged if they passed, so
+// nothing that failed its gates arrives by accident. It stops at the first
+// failure and leaves the tree as it found it. The results so far come back
+// with the error.
+func Merge(ctx context.Context, res Result, only []string, squash bool) ([]MergeResult, error) {
+	if res.Dir == "" {
+		return nil, fmt.Errorf("batch %s has no repository recorded", res.ID)
+	}
+	tasks, err := mergeTasks(res, only)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := dirtyPaths(ctx, res.Dir, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(lines) > 0 {
+		return nil, fmt.Errorf("%s has uncommitted changes; merging would mix them with the agents' work. "+
+			"Commit or stash them first:\n  %s", res.Dir, strings.Join(lines, "\n  "))
+	}
+
+	var out []MergeResult
+	for _, tr := range tasks {
+		mr := MergeResult{Task: tr.ID, Branch: tr.Branch}
+		switch {
+		case tr.Status != StatusPass:
+			mr.Skipped = "did not pass (" + string(tr.Status) + ")"
+		case tr.Commit == "":
+			mr.Skipped = "changed nothing"
+		case alreadyIn(ctx, res.Dir, tr.Branch):
+			mr.Skipped = "already merged"
+		}
+		if mr.Skipped != "" {
+			out = append(out, mr)
+			continue
+		}
+		commit, conflicted, err := mergeBranch(ctx, res.Dir, tr, squash)
+		switch {
+		case errors.Is(err, errNothingStaged):
+			// A squash of work that is already in the tree stages nothing.
+			mr.Skipped = "already merged"
+		case err != nil:
+			mr.Conflict, mr.Error = conflicted, err.Error()
+			out = append(out, mr)
+			return out, fmt.Errorf("%s: %w", tr.ID, err)
+		default:
+			mr.Commit = commit
+		}
+		out = append(out, mr)
+	}
+	return out, nil
+}
+
+// alreadyIn reports whether every commit of the branch is in HEAD already.
+func alreadyIn(ctx context.Context, root, branch string) bool {
+	_, err := gitOut(ctx, root, "merge-base", "--is-ancestor", branch, "HEAD")
+	return err == nil
+}
+
+// mergeTasks picks what to merge: the named tasks, or every task that passed.
+func mergeTasks(res Result, only []string) ([]TaskResult, error) {
+	if len(only) == 0 {
+		var out []TaskResult
+		for _, tr := range res.Tasks {
+			if tr.Status == StatusPass {
+				out = append(out, tr)
+			}
+		}
+		if len(out) == 0 {
+			return nil, fmt.Errorf("batch %s has no task that passed", res.ID)
+		}
+		return out, nil
+	}
+	var out []TaskResult
+	for _, id := range only {
+		tr, err := res.Find(id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tr)
+	}
+	return out, nil
+}
+
+// errNothingStaged says a squash merge brought nothing this tree did not have.
+var errNothingStaged = errors.New("nothing to commit")
+
+// mergeBranch merges one branch, reporting whether git left conflicting paths
+// behind, which is a different thing from a merge that failed for any other
+// reason: a hook refusing the commit, a missing identity, a cancelled run.
+func mergeBranch(ctx context.Context, root string, tr TaskResult, squash bool) (commit string, conflicted bool, err error) {
+	args := []string{"merge", "--no-ff", "--no-edit", tr.Branch}
+	if squash {
+		args = []string{"merge", "--squash", tr.Branch}
+	}
+	if _, err := gitOut(ctx, root, args...); err != nil {
+		return "", hasUnmerged(root), undoMerge(root, err)
+	}
+	if squash {
+		if staged, err := hasStagedChanges(ctx, root); err != nil {
+			return "", false, undoMerge(root, err)
+		} else if !staged {
+			return "", false, undoMerge(root, errNothingStaged)
+		}
+		if _, err := gitOut(ctx, root, "commit", "-q", "-m", tr.ID+": "+tools.OneLine(tr.Prompt, 60)); err != nil {
+			return "", hasUnmerged(root), undoMerge(root, err)
+		}
+	}
+	commit, err = gitOut(ctx, root, "rev-parse", "HEAD")
+	return commit, false, err
+}
+
+// hasUnmerged reports whether the index holds conflicting paths. It takes its
+// own context because it runs while a merge is being cleaned up.
+func hasUnmerged(root string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := gitOut(ctx, root, "ls-files", "--unmerged")
+	return err == nil && out != ""
+}
+
+func hasStagedChanges(ctx context.Context, root string) (bool, error) {
+	// --quiet exits 1 when there is a difference, which gitOut reports as an
+	// error, so ask for the names instead and read them.
+	out, err := gitOut(ctx, root, "diff", "--cached", "--name-only")
+	return out != "", err
+}
+
+// undoMerge puts the tree back and returns the failure that got us here. It
+// runs on its own context, because the usual reason a merge failed is that the
+// operator interrupted it, and cleanup on a cancelled context does nothing. A
+// squash merge leaves no MERGE_HEAD to abort, so HEAD is the way back; the
+// tree was clean before the merge, which is what makes that safe.
+func undoMerge(root string, cause error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, err := gitOut(ctx, root, "merge", "--abort"); err == nil {
+		return cause
+	}
+	if _, err := gitOut(ctx, root, "reset", "--hard", "HEAD"); err != nil {
+		return fmt.Errorf("%w; and the tree could not be restored: %v", cause, err)
+	}
+	return cause
+}
+
 // LoadResult reads a saved batch record.
 func LoadResult(id string) (Result, error) {
 	var res Result
@@ -782,6 +998,24 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), text)
 	}
 	return text, nil
+}
+
+// gitStdout runs git and returns its standard output alone, byte for byte.
+// gitOut merges stderr into the result, which makes a good error message and a
+// corrupt patch; a diff is data and goes through here.
+func gitStdout(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		text := strings.TrimSpace(stderr.String())
+		if text == "" {
+			text = err.Error()
+		}
+		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), text)
+	}
+	return string(out), nil
 }
 
 func firstOf(values ...string) string {
@@ -827,13 +1061,6 @@ func firstList(lists ...[]string) []string {
 		}
 	}
 	return nil
-}
-
-func short(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
-	}
-	return sha
 }
 
 func tail(s string, n int) string {

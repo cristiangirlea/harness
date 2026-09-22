@@ -461,7 +461,9 @@ test with a modified tracked file.
 
 Size: ~120 lines + tests.
 
-### [ ] PR J: `hx batch show`, `diff`, `merge`
+### [x] PR J: `hx batch show`, `diff`, `merge`
+
+Done: PR #13, 2026-09-22.
 
 **Decisions made.**
 - `hx batch show <id>`: prints the record in the end-of-run table format; works while a
@@ -724,3 +726,31 @@ Size: mostly moves; ~100 new lines.
   stay parallel, which is where a batch spends its time. The tests went through
   `Attempts[0]` in six places and panicked instead of reporting; `firstRun` now fails with
   the task's own status and error, so the next occurrence says what happened.
+- 2026-09-22: PR J done (#13). Decisions the spec left open: a named task that did not
+  pass is skipped rather than merged, because naming a task is not evidence its gates
+  passed and a silent merge of unproven work is the one outcome nobody wants; `merge`
+  reports "already merged" instead of making an empty commit, by comparing HEAD before
+  and after; `diff` puts the diff on stdout and everything else on stderr so it pipes
+  into `git apply`, and lists untracked files separately because a diff cannot show a
+  file git has never seen; and a conflicting `--squash` merge has no MERGE_HEAD to abort,
+  so the cleanup falls back to `reset --hard HEAD`, which is only safe because the tree
+  was verified clean first. Two changes the spec did not ask for: the batch record is now
+  written to a temp file and renamed, since `show` reads it while the batch is writing it,
+  and half a file is not a record; and `cmdBatch` moved to `cmd/hx/batch.go`, which keeps
+  main.go at 390 lines and puts the four subcommands together. Verified end to end with a
+  live claude batch: two tasks, two merge commits, a second merge finding nothing to do,
+  then `hx batch rm`.
+- 2026-09-22: PR J self-review, 12 findings, all fixed. Three mattered. Cleanup after a
+  failed merge ran on the context that had just been cancelled, so Ctrl+C left the tree
+  mid-merge and said it could not be restored; `undoMerge` takes its own context now, the
+  way `commitChanges` already did. `Diff` returned `gitOut`, which merges stderr into the
+  result: good for an error message, a corrupt patch for `git apply`, since git writes its
+  CRLF warning there - diffs go through a new `gitStdout` that keeps the bytes as git
+  wrote them, trailing newline included. And a `--squash` re-merge staged nothing, so the
+  commit failed and the task was reported as a conflict; an ancestry check now skips a
+  branch that is already in, and a squash that stages nothing is "already merged" too.
+  The rest: `Conflict` is only set when git actually left unmerged paths (a hook refusing
+  the commit is an `Error` instead), a running batch is timed from `Started` rather than
+  printing 0s, `hx batch rm` keeps its old exit code for an unknown id, `batch diff` takes
+  flags like its siblings, `short` became `tools.ShortSHA`, and a diff of a batch whose
+  branches were removed says so instead of passing on "bad object".
