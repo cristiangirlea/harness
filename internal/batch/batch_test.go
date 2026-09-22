@@ -36,6 +36,11 @@ func init() {
 		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt+"\n"), 0o644)
 		return agent.Result{Backend: "wb-ok", Status: agent.StatusOK, Final: "wrote out.txt", Turns: 2}
 	}})
+	agent.Register(stub{"wb-file", func(_ context.Context, task agent.Task) agent.Result {
+		name := strings.Fields(task.Prompt)[0] + ".txt"
+		_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(task.Prompt+"\n"), 0o644)
+		return agent.Result{Backend: "wb-file", Status: agent.StatusOK, Final: "wrote " + name, Turns: 1}
+	}})
 	agent.Register(stub{"wb-noop", func(context.Context, agent.Task) agent.Result {
 		return agent.Result{Backend: "wb-noop", Status: agent.StatusOK, Final: "nothing to do", Turns: 1}
 	}})
@@ -631,5 +636,164 @@ func TestNoContextEditsReachesTheTask(t *testing.T) {
 		if rec := firstRun(t, res.Tasks[i]); rec.Task.NoContextEdits != want {
 			t.Errorf("%s: NoContextEdits = %v, want %v", res.Tasks[i].ID, rec.Task.NoContextEdits, want)
 		}
+	}
+}
+
+func mergeable(t *testing.T, dir string, tasks ...Task) Result {
+	t.Helper()
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-file", Tasks: tasks})
+	for _, tr := range res.Tasks {
+		if tr.Status != StatusPass {
+			t.Fatalf("setup: task %s = %s (%s)", tr.ID, tr.Status, tr.Error)
+		}
+	}
+	return res
+}
+
+func TestMergeBringsTheBranchesIn(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"}, Task{ID: "beta", Prompt: "beta"})
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	merged, err := Merge(context.Background(), res, nil, false)
+	if err != nil || len(merged) != 2 {
+		t.Fatalf("merged = %+v err=%v", merged, err)
+	}
+	for _, m := range merged {
+		if m.Commit == "" || m.Skipped != "" || m.Conflict {
+			t.Errorf("%s: %+v", m.Task, m)
+		}
+	}
+	if n := git(t, dir, "rev-list", "--count", "--merges", base+"..HEAD"); n != "2" {
+		t.Errorf("merge commits = %s, want 2", n)
+	}
+	for _, name := range []string{"alpha.txt", "beta.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s did not arrive: %v", name, err)
+		}
+	}
+	// Merging again finds nothing left to do rather than making empty commits.
+	again, err := Merge(context.Background(), res, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range again {
+		if m.Skipped != "already merged" {
+			t.Errorf("second run: %s = %+v", m.Task, m)
+		}
+	}
+}
+
+func TestMergeStopsAtTheFirstConflict(t *testing.T) {
+	dir := initRepo(t)
+	// Both tasks write out.txt with their own prompt, so the second branch
+	// cannot merge on top of the first.
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "one", Prompt: "first"}, {ID: "two", Prompt: "second"}}})
+	before := git(t, dir, "rev-parse", "HEAD")
+
+	merged, err := Merge(context.Background(), res, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "two") {
+		t.Fatalf("a conflict must be reported by task: %v", err)
+	}
+	if len(merged) != 2 || merged[0].Commit == "" || !merged[1].Conflict {
+		t.Fatalf("merged = %+v", merged)
+	}
+	if status := git(t, dir, "status", "--porcelain"); status != "" {
+		t.Errorf("the tree must be clean after a refused merge:\n%s", status)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "out.txt")); strings.TrimSpace(string(data)) != "first" {
+		t.Errorf("the first merge should stand: %q", data)
+	}
+	if n := git(t, dir, "rev-list", "--count", before+"..HEAD"); n == "0" {
+		t.Error("the first merge should still be in history")
+	}
+}
+
+func TestMergeSquashMakesOneCommit(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha the task"})
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	if _, err := Merge(context.Background(), res, []string{"alpha"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if n := git(t, dir, "rev-list", "--count", base+"..HEAD"); n != "1" {
+		t.Errorf("commits = %s, want 1", n)
+	}
+	if n := git(t, dir, "rev-list", "--count", "--merges", base+"..HEAD"); n != "0" {
+		t.Errorf("a squash must not leave a merge commit, got %s", n)
+	}
+	if subject := git(t, dir, "log", "-1", "--format=%s"); subject != "alpha: alpha the task" {
+		t.Errorf("subject = %q", subject)
+	}
+}
+
+func TestMergeRefusesAndSkips(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Tasks: []Task{
+		{ID: "wrote", Prompt: "wrote", Backend: "wb-file"},
+		{ID: "quiet", Prompt: "quiet", Backend: "wb-noop"},
+		{ID: "broke", Prompt: "broke", Backend: "wb-bad"},
+	}})
+	if _, err := res.Find("nope"); err == nil || !strings.Contains(err.Error(), "wrote") {
+		t.Errorf("an unknown task should list the ids it has: %v", err)
+	}
+
+	// A task that changed nothing and a task that failed are both skipped.
+	merged, err := Merge(context.Background(), res, []string{"quiet", "broke"}, false)
+	if err != nil || len(merged) != 2 {
+		t.Fatalf("merged = %+v err=%v", merged, err)
+	}
+	if merged[0].Skipped != "changed nothing" || !strings.HasPrefix(merged[1].Skipped, "did not pass") {
+		t.Errorf("skips = %+v", merged)
+	}
+
+	// An unclean repository is refused before anything is merged.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Merge(context.Background(), res, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") || !strings.Contains(err.Error(), "README.md") {
+		t.Fatalf("a dirty repository must be refused by name: %v", err)
+	}
+}
+
+func TestDiffShowsWhatATaskChanged(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+
+	diff, untracked, err := Diff(context.Background(), res, "alpha")
+	if err != nil || len(untracked) != 0 {
+		t.Fatalf("diff err=%v untracked=%v", err, untracked)
+	}
+	for _, want := range []string{"alpha.txt", "+alpha"} {
+		if !strings.Contains(diff, want) {
+			t.Errorf("diff is missing %q:\n%s", want, diff)
+		}
+	}
+	if _, _, err := Diff(context.Background(), res, "nope"); err == nil {
+		t.Error("an unknown task must be an error")
+	}
+}
+
+func TestDiffFallsBackToTheWorktree(t *testing.T) {
+	dir := initRepo(t)
+	// A pre-commit hook that fails leaves the work in the worktree, staged but
+	// never committed, which is the case the fallback is for.
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-file", Tasks: []Task{{ID: "alpha", Prompt: "alpha"}}})
+	if res.Tasks[0].Commit != "" {
+		t.Fatalf("setup: the commit should have failed: %+v", res.Tasks[0])
+	}
+	diff, _, err := Diff(context.Background(), res, "alpha")
+	if err != nil || !strings.Contains(diff, "alpha.txt") {
+		t.Fatalf("worktree diff = %q err=%v", diff, err)
 	}
 }

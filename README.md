@@ -52,6 +52,9 @@ go test ./...
 | `hx show [--json] <id>` | Replay a recorded run. |
 | `hx mcp` | Serve hx as an MCP server on stdio (see [MCP](#mcp)). |
 | `hx batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
+| `hx batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
+| `hx batch diff <id> <task-id>` | What one task changed, as a diff on stdout. |
+| `hx batch merge [--squash] <id> [task-id…]` | Merge the branches of the tasks that passed. |
 | `hx batch rm <id>` | Remove the worktrees and branches a batch created. |
 | `hx report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
 
@@ -308,10 +311,37 @@ may set its own value or change the spec's, but zero means inherit, so it cannot
 a limit the spec set.
 
 The record goes to `~/.hx/batches/<id>.json`, written before the first task starts and
-again at the end; `--json` prints it, `-v` streams every agent's tool calls.
+again at the end; `--json` prints it, `-v` streams every agent's tool calls. Ctrl+C
+cancels running agents and skips the rest. Exit status is 1 unless every task passed.
+
+### Reading and landing the work
+
+```
+hx batch show 20260922-164137-1a216b     # the same table, during the run or after it
+hx batch diff 20260922-164137-1a216b alpha
+hx batch merge 20260922-164137-1a216b
+```
+
+`show` reprints the end-of-run table from the record; a batch still going shows its
+tasks as `running` and says how many. The record is written before the first task and
+renamed into place, so reading it mid-run gets a whole file, never half of one.
+
+`diff` writes one task's changes to stdout and nothing else, so it pipes into `git
+apply` or a pager: the commit against the base the batch branched from, or whatever is
+still uncommitted in the worktree when the task never committed. Files git has never
+seen cannot appear in a diff, so they are listed on stderr instead.
+
+`merge` merges the branches into whatever the repository has checked out, in spec
+order, and never pushes. It takes every task that passed, or the ones you name; a task
+that failed its gates is skipped even when named, so nothing unproven arrives by
+accident. The tree must be clean first, since the merge would otherwise mix your work
+with the agents'. At the first conflict it puts the tree back as it found it, says
+which task, and stops — the branches are still there to merge by hand. `--squash`
+records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a whole
+run with `git reset --hard ORIG_HEAD`.
+
 `hx batch rm <id>` removes the worktrees and branches of a batch (it refuses a worktree
-with uncommitted changes); the record and the run logs stay. Ctrl+C cancels running
-agents and skips the rest. Exit status is 1 unless every task passed.
+with uncommitted changes); the record and the run logs stay.
 
 ## Reports
 
@@ -355,7 +385,7 @@ JSON for scripts.
 ## Layout
 
 ```
-cmd/hx/            CLI + terminal renderer
+cmd/hx/            CLI + terminal renderer (batch subcommands in batch.go)
 internal/agent/    Backend interface, api loop + stdlib Messages client, CLI adapters
 internal/tools/    workspace-confined tool runtime + MCP tool adapter
 internal/mcp/      MCP over stdio: JSON-RPC codec, Client, Server, config loader
