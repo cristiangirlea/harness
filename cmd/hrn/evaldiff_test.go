@@ -99,10 +99,54 @@ func TestEvalListShowsTheNewestFirst(t *testing.T) {
 
 func TestEvalDiffAndListRefuseBadArguments(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	for _, args := range [][]string{{"diff"}, {"diff", "aaaaa"}, {"diff", "aaaaa", "../bbbbb"}, {"diff", "a", "b", "c"}, {"list", "extra"}} {
+	a, _ := diffPair()
+	savedEval(t, a) // so a bad second id is what fails, not a missing first one
+	for _, args := range [][]string{{"diff"}, {"diff", "aaaaa"}, {"diff", "aaaaa", "../bbbbb"}, {"diff", "aaaaa", `..\bbbbb`}, {"diff", "a", "b", "c"}, {"list", "extra"}} {
 		code, err := cmdEval(args)
 		if err == nil || code == 0 {
 			t.Errorf("%v: code=%d err=%v, want a refusal", args, code, err)
 		}
+	}
+}
+
+func TestEvalDiffColumnsLineUp(t *testing.T) {
+	a, b := diffPair()
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEvalDiff(r, eval.Compare(a, b))
+	var head, row string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "variant ") {
+			head = line
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "sonnet ") {
+			row = line
+		}
+	}
+	col := func(s, sub string) int { return len([]rune(s[:strings.Index(s, sub)])) }
+	for _, pair := range [][2]string{{"median cost", "$0.15"}, {"median time", "13s"}, {"score", "6.0"}} {
+		if !strings.Contains(head, pair[0]) || !strings.Contains(row, pair[1]) {
+			t.Fatalf("missing %v:\n%s\n%s", pair, head, row)
+		}
+		if h, r := col(head, pair[0]), col(row, pair[1]); h != r {
+			t.Errorf("%q starts at column %d but its value at %d:\n%s\n%s", pair[0], h, r, head, row)
+		}
+	}
+}
+
+func TestEvalListSaysWhatItCouldNotRead(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	a, _ := diffPair()
+	savedEval(t, a)
+	broken := filepath.Join(runlog.Home(), "evals", "ccccc.json")
+	writeJSONFile(t, broken, "not a record")
+
+	var buf bytes.Buffer
+	if err := listEvals(&buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "aaaaa") || !strings.Contains(out, "1 eval record could not be read") {
+		t.Errorf("the list should name what it skipped:\n%s", out)
 	}
 }

@@ -578,10 +578,7 @@ func printEval(r *renderer, rec eval.Record) {
 		}
 	}
 
-	cells := 0
-	for _, v := range rec.Table.Variants {
-		cells += v.Attempts
-	}
+	cells, _, _, _ := rec.Totals()
 	if judged {
 		failed, estimate := 0, false
 		for _, j := range rec.Judgements {

@@ -150,3 +150,14 @@ func TestCompareNotesWhatElseChanged(t *testing.T) {
 		t.Errorf("an eval against itself changed nothing: %+v", same)
 	}
 }
+
+func TestRecordTotals(t *testing.T) {
+	a, _ := twoEvals()
+	a.Table.Variants[0].TotalCostUSD, a.Table.Variants[1].TotalCostUSD = 0.3, 0.1
+	a.Table.Variants[1].CostEstimate = true
+	a.JudgeCostUSD = 0.05
+	cells, passed, cost, estimate := a.Totals()
+	if cells != 8 || passed != 6 || cost < 0.4499 || cost > 0.4501 || !estimate {
+		t.Errorf("totals = %d %d %v %v", cells, passed, cost, estimate)
+	}
+}

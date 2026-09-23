@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/report"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // printEvalDiff sets two evals side by side, variant by variant and then task
@@ -54,6 +56,15 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 	for _, id := range d.PromptChanged {
 		r.Line(r.c(dim, fmt.Sprintf("  note: the prompt differs for task %s, so its rows compare different tasks", id)))
 	}
+	for _, id := range d.GateChanged {
+		r.Line(r.c(dim, fmt.Sprintf("  note: the gates or expect differ for task %s, so passing means something else on each side", id)))
+	}
+	for _, name := range d.VariantChanged {
+		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s runs a different backend, model or effort in %s", name, d.B)))
+	}
+	if d.JudgeChanged {
+		r.Line(r.c(dim, "  note: the judge or its rubric differs, so the scores are not on one scale"))
+	}
 }
 
 func arrow(before, after string) string { return before + " → " + after }
@@ -68,26 +79,29 @@ func score(judged int, mean float64) string {
 
 // listEvals prints the saved evals, newest first; n limits how many, 0 is all.
 func listEvals(w io.Writer, n int) error {
-	recs, err := eval.List(n)
+	recs, unreadable, err := eval.ListAll()
 	if err != nil {
 		return err
 	}
+	if n > 0 && len(recs) > n {
+		recs = recs[:n]
+	}
 	if len(recs) == 0 {
 		fmt.Fprintln(w, "no evals yet")
-		return nil
+	} else {
+		fmt.Fprintf(w, "%-6s %-16s %6s %6s %9s  %s\n", "id", "started", "cells", "pass", "cost", "batch")
 	}
-	fmt.Fprintf(w, "%-6s %-16s %6s %6s %9s  %s\n", "id", "started", "cells", "pass", "cost", "batch")
 	for _, rec := range recs {
-		cells, passed := 0, 0
-		cost, estimate := rec.JudgeCostUSD, false
-		for _, v := range rec.Table.Variants {
-			cells += v.Attempts
-			passed += v.Passed
-			cost += v.TotalCostUSD
-			estimate = estimate || v.CostEstimate
-		}
+		cells, passed, cost, estimate := rec.Totals()
 		fmt.Fprintf(w, "%-6s %-16s %6d %6s %9s  %s\n", rec.ID, rec.Started.Local().Format("2006-01-02 15:04"),
 			cells, report.Percent(passed, cells), report.Money(cost, estimate), rec.BatchID)
+	}
+	if unreadable > 0 {
+		noun := "record"
+		if unreadable > 1 {
+			noun = "records"
+		}
+		fmt.Fprintf(w, "%d eval %s could not be read (in %s)\n", unreadable, noun, filepath.Join(runlog.Home(), "evals"))
 	}
 	return nil
 }
