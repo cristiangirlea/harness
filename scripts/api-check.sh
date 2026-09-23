@@ -64,10 +64,12 @@ echo "== 3. context editing on and off, on $model (at most \$$cap each)"
 long="Read every non-test Go file under internal/agent and internal/batch, one file at a time, \
 then list each exported function with a one-line description of what it does."
 for edits in on off; do
-	flag=()
-	[ "$edits" = off ] && flag=(--no-context-edits)
+	# A plain string, not an array: an empty array is "unbound" under set -u
+	# in bash before 4.4, which is the bash macOS ships.
+	flag=""
+	[ "$edits" = off ] && flag="--no-context-edits"
 	echo "-- context editing $edits"
-	run -b api -m "$model" --mode readonly --max-turns 40 --max-cost "$cap" "${flag[@]}" "$long"
+	run -b api -m "$model" --mode readonly --max-turns 40 --max-cost "$cap" ${flag:+"$flag"} "$long"
 	echo "   server reports of cleared context: $(reports "$id")"
 done
 

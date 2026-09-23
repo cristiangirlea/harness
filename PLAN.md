@@ -606,6 +606,11 @@ the questions).
   instead of the summary, and "the newest run" was chosen by directory name, which picks
   the wrong one when two runs start in the same second. The run id now comes from hrn's
   own output. CI checks that both shell scripts parse.
+- 2026-09-23: PR R self-review, 1 finding, fixed: step 3 expanded a possibly empty array
+  under `set -u`, which bash before 4.4 (the one macOS ships) treats as unbound, so the
+  "on" run would have stopped the script on a Mac. It is a plain string with
+  `${flag:+"$flag"}` now. Checked and sound: no report leaks across retries or turns, the
+  run id extraction matches what hrn run prints, and `--continue` inherits model and mode.
 - 2026-09-23: PR P done: `.github/workflows/release.yml` and `.github/release.sh`. A `v*`
   tag runs vet and the tests, builds static binaries for linux, darwin and windows on
   amd64 and arm64 (`CGO_ENABLED=0 -trimpath -s -w`) with SHA256SUMS, and publishes them
