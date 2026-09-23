@@ -36,8 +36,7 @@ Usage:
   hrn backends                    show which backends are usable
   hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
-  hrn runs prune --older-than AGE [--keep N] [--dry-run]
-                                  remove old runs, batch and eval records (AGE: 30d, 36h)
+  hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
   hrn mcp [--dir PATH]            serve hrn as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries

@@ -904,7 +904,6 @@ func TestDiffFallsBackToTheWorktree(t *testing.T) {
 
 func TestGateTimeoutIsPerTask(t *testing.T) {
 	dir := initRepo(t)
-	started := time.Now()
 	res, _ := run(t, Spec{
 		Dir: dir, Parallel: 2, Backend: "wb-ok", Gate: []string{"sleep 5"},
 		GateTimeout: agent.Duration(20 * time.Second),
@@ -913,14 +912,11 @@ func TestGateTimeoutIsPerTask(t *testing.T) {
 			{ID: "patient", Prompt: "task", Gate: []string{"exit 0"}},
 		},
 	})
-	if took := time.Since(started); took > 4*time.Second {
-		t.Errorf("a 1s gate timeout took %s", took)
-	}
 	quick := res.Tasks[0]
 	if quick.Status == StatusPass || len(quick.Attempts) != 1 || len(quick.Attempts[0].Gates) != 1 {
 		t.Fatalf("quick = %+v", quick)
 	}
-	if g := quick.Attempts[0].Gates[0]; g.ExitCode == 0 || !strings.Contains(g.Output, "timed out after 1s") {
+	if g := quick.Attempts[0].Gates[0]; g.ExitCode == 0 || !strings.Contains(g.Output, "timed out after 1s") || g.Duration > 3*time.Second {
 		t.Errorf("gate = %+v, want it killed after the task's 1s, not the spec's 20s", g)
 	}
 	if res.Tasks[1].Status != StatusPass {
