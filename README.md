@@ -310,6 +310,11 @@ commit fails (no git identity, a pre-commit hook) the task ends as `error` and t
 stays uncommitted in the worktree. hrn writes `.hrn/.gitignore` so the worktrees never
 show up in the repository's status.
 
+A task can also set `expect`, a regular expression (Go RE2) its final answer must match.
+It is checked before the gates and reported as one, `expect /pattern/`, so a task whose
+answer is the deliverable can fail on what it said: `"expect": "(?i)^no\\b"` for "is
+there a race here? answer yes or no". A retry after a miss is shown the answer it gave.
+
 A failed attempt is retried on each backend named in `retry`, in order. The same name
 may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common case: a
 second try with the same model, told what went wrong. How the retry starts depends on
@@ -430,9 +435,9 @@ else, gates and mode and the budgets, carries through from the spec.
 `hrn eval eval.json` prints what each variant did and how each task scored under it:
 
 ```
-  variant                pass  attempts  median cost median time   turns   context
-  sonnet                   0%         1        $0.15        13s       2    101061
-  haiku                  100%         1        $0.05        14s       2     71814
+  variant                pass  attempts  median cost median time   turns   tools   context
+  sonnet                   0%         1        $0.15        13s       2       1    101061
+  haiku                  100%         1        $0.05        14s       2       1     71814
 
   task                     sonnet      haiku
   greet                       0/1        1/1
@@ -442,6 +447,12 @@ else, gates and mode and the budgets, carries through from the spec.
 That run is real: asked for a file containing exactly `hrn rocks`, Sonnet wrote `hrn rocks.`
 and failed the gate while Haiku passed at a third of the cost. The run records are still
 there to say why, which is the point of keeping them.
+
+`tools` is the median number of tool calls, counted the same way on every backend; a run
+that takes eight greps to read one file shows up here and not in `turns`. Under a variant,
+a dim line gives the run statuses when any cell did not finish `ok`, and how many passes
+changed nothing: right for "find the bug, if there is one", suspicious for "fix the
+typos".
 
 The record goes to `~/.hrn/evals/<id>.json`; `--json` prints it, `hrn eval show <id>`
 reprints it, `-v` streams every agent's tool calls. The worktrees are removed once the
@@ -454,9 +465,35 @@ harness rather than the backend. The `context` column counts prompt tokens and c
 reads together, which is what the model was given rather than what was billed at full
 rate.
 
-The `judge` key is reserved for scoring a diff against a rubric with a model. Nothing
-reads it yet: gates are the only scorer in this version, which is why a task's gate has
-to express what "done" means, and a spec that fills it in is told so at the start.
+### The judge
+
+Gates prove the build and `expect` proves an answer; neither can tell a typo fix from a
+spelling change. A `judge` reads each passing cell's diff against a rubric and scores it
+from 0 to 10:
+
+```json
+"judge": {
+  "backend": "claude", "model": "haiku",
+  "rubric": "Only real misspellings are fixed. British spellings such as colour stay.",
+  "rubrics": {"notes": "The answer is correct and the repository is unchanged."}
+}
+```
+
+`rubric` applies to every task and `rubrics` replaces it for the tasks it names; every
+task needs one or the other, and both are checked before any agent starts. The judge is
+shown the task, the rubric, the agent's final answer and the diff (the first 60 KB, and
+the names of untracked files), and runs read-only in the cell's worktree so it can open
+a file the diff only touches. `backend` defaults to the default backend, `timeout` to 5
+minutes per verdict. Cells that failed are not judged: they already scored where it
+counts, and judging them would only spend money.
+
+The scores join the table as a `judge` column per variant (the mean) and after each
+task's pass count (`1/1 10.0`). Every verdict is in the record under `judgements`, with
+its reason and the run id of the judge's own recorded run; a judge that fails or answers
+without a `{"score": ...}` object is recorded as an error rather than a zero, and the
+footer counts those. On the `claude` backend the first verdicts cost more than the
+answer: Claude Code writes its own system prompt to the cache in the read-only mode the
+judge uses, about 64k tokens, once per judge that starts before the cache exists.
 
 ## Run records
 
@@ -497,14 +534,13 @@ in the order it is worth taking:
 2. **Measure the context-editing default.** Server-side clearing is on by default and its
    interaction with prompt caching is unmeasured; one long run with and without it,
    compared on cache reads, settles whether the default is right.
-3. **The eval judge.** The `judge` key is reserved. Gates cannot score a diff against a
-   rubric, which is what "did it do the right thing" needs.
-4. **MCP over HTTP.** Only stdio today, which is enough for every host hrn has met.
-5. **One options struct**, so an api option is declared once instead of being wired by
-   hand through the run flags, the batch spec and the MCP tool.
+3. **A `batch` tool in `hrn mcp`**, so a Claude Code session can fan work out into
+   worktrees and not only delegate one task at a time.
+4. **Release binaries**: a tagged build for Linux, Windows and macOS.
+5. **`hrn eval diff <a> <b>`**, comparing two saved evals of the same task set.
 
 `PLAN.md` is the work queue and the decisions log: every increment so far, what was
-deferred and why. It still calls the binary by its old name, `hrn`, in entries written
+deferred and why. It still calls the binary by its old name, `hx`, in entries written
 before the rename.
 
 ## Contributing

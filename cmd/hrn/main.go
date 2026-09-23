@@ -266,7 +266,7 @@ func cmdRun(args []string) (int, error) {
 		emit = func(e agent.Event) { rec.Event(e); r.Event(e) }
 	}
 
-	res := b.Run(ctx, task, emit)
+	res := agent.Run(ctx, b, task, emit)
 	if err := rec.Close(res); err != nil {
 		fmt.Fprintln(os.Stderr, "hrn: saving run:", err)
 	}
@@ -430,10 +430,6 @@ func cmdEval(args []string) (int, error) {
 	if *jsonOut {
 		r.out = os.Stderr
 	}
-	if len(spec.Judge) > 0 {
-		// Reserved, so a filled-in rubric must not look like it is scoring.
-		r.Line(r.c(red, "judge is reserved and does nothing yet: these scores come from the gates"))
-	}
 	rec, res, err := eval.Run(ctx, spec, func(e batch.Event) {
 		if e.Kind == "tool" && !verbose {
 			return
@@ -476,14 +472,35 @@ func cmdEval(args []string) (int, error) {
 // scored under it.
 func printEval(r *renderer, rec eval.Record) {
 	r.Line("")
-	r.Line(fmt.Sprintf("  %-20s %6s %9s %12s %10s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "context"))
+	judged := rec.Spec.Judge != nil
+	head := fmt.Sprintf("  %-20s %6s %9s %12s %10s %7s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "tools", "context")
+	if judged {
+		head += fmt.Sprintf(" %6s", "judge")
+	}
+	r.Line(head)
 	for _, v := range rec.Table.Variants {
-		r.Line(fmt.Sprintf("  %-20s %6s %9d %12s %10s %7s %9s",
+		line := fmt.Sprintf("  %-20s %6s %9d %12s %10s %7s %7s %9s",
 			v.Name, report.Share(v.PassRate()), v.Attempts,
 			report.Money(v.MedianCostUSD, v.CostEstimate),
-			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns), report.Number(v.MedianContext)))
+			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns),
+			report.Number(v.MedianTools), report.Number(v.MedianContext))
+		if judged {
+			score := "-"
+			if v.Judged > 0 {
+				score = fmt.Sprintf("%.1f", v.MeanScore)
+			}
+			line += fmt.Sprintf(" %6s", score)
+		}
+		r.Line(line)
+		var notes []string
 		if len(v.Statuses) > 1 || v.Statuses["ok"] != v.Attempts {
-			r.Line(r.c(dim, "  "+strings.Repeat(" ", 20)+statuses(v.Statuses)))
+			notes = append(notes, statuses(v.Statuses))
+		}
+		if v.Unchanged > 0 {
+			notes = append(notes, fmt.Sprintf("%d of %d passes changed nothing", v.Unchanged, v.Passed))
+		}
+		if len(notes) > 0 {
+			r.Line(r.c(dim, "  "+strings.Repeat(" ", 20)+strings.Join(notes, " · ")))
 		}
 	}
 
@@ -520,6 +537,20 @@ func printEval(r *renderer, rec eval.Record) {
 	cells := 0
 	for _, v := range rec.Table.Variants {
 		cells += v.Attempts
+	}
+	if judged {
+		failed, estimate := 0, false
+		for _, j := range rec.Judgements {
+			if !j.Scored() {
+				failed++
+			}
+			estimate = estimate || j.CostEstimate
+		}
+		note := fmt.Sprintf("judge: %d verdicts, %s", len(rec.Judgements), report.Money(rec.JudgeCostUSD, estimate))
+		if failed > 0 {
+			note += fmt.Sprintf(", %d could not score; see --json", failed)
+		}
+		r.Line(r.c(dim, note))
 	}
 	r.Line(r.c(dim, fmt.Sprintf("── eval %s · batch %s · %d cells · %s ──",
 		rec.ID, rec.BatchID, cells, rec.Duration.Round(time.Second))))

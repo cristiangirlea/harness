@@ -901,3 +901,40 @@ func TestDiffFallsBackToTheWorktree(t *testing.T) {
 		t.Fatalf("worktree diff = %q err=%v", diff, err)
 	}
 }
+
+func TestExpectChecksTheFinalAnswerBeforeTheGates(t *testing.T) {
+	dir := initRepo(t)
+	// wb-noop answers "nothing to do", so the first attempt misses the
+	// pattern; wb-ok answers "wrote out.txt" and passes.
+	res, events := run(t, Spec{Dir: dir, Backend: "wb-noop", Retry: []string{"wb-ok"},
+		Gate: []string{"test -f out.txt"}, Tasks: []Task{{ID: "exp", Prompt: "write it", Expect: `^wrote\b`}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	a1 := tr.Attempts[0]
+	if len(a1.Gates) != 1 || a1.Gates[0].Command != `expect /^wrote\b/` || a1.Gates[0].ExitCode != 1 {
+		t.Fatalf("attempt 1 gates = %+v: a missed expect is reported as a failed gate and stops the rest", a1.Gates)
+	}
+	if a1.Result.ToolCalls != 1 {
+		t.Errorf("attempt 1 tool calls = %d, want the stub's one", a1.Result.ToolCalls)
+	}
+	for _, want := range []string{`expect /^wrote\b/`, "nothing to do"} {
+		if !strings.Contains(tr.Attempts[1].Prompt, want) {
+			t.Errorf("the retry must be told what the answer missed; prompt lacks %q:\n%s", want, tr.Attempts[1].Prompt)
+		}
+	}
+	if g := tr.Attempts[1].Gates; len(g) != 2 || g[0].ExitCode != 0 || g[1].Command != "test -f out.txt" {
+		t.Errorf("attempt 2 gates = %+v, want expect then the gate", g)
+	}
+	if gates := eventTexts(events, "gate"); !strings.Contains(gates, "✗ expect") || !strings.Contains(gates, "✓ expect") {
+		t.Errorf("gate events = %q", gates)
+	}
+}
+
+func TestExpectMustCompile(t *testing.T) {
+	spec := Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Expect: "(unclosed"}}}
+	if _, err := Run(context.Background(), spec, nil); err == nil || !strings.Contains(err.Error(), "task t1: expect") {
+		t.Errorf("err = %v, want the bad pattern refused before anything runs", err)
+	}
+}
