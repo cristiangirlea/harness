@@ -13,7 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"runtime"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strings"
@@ -34,8 +34,9 @@ const usage = `hrn — personal agent harness
 Usage:
   hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
   hrn backends                    show which backends are usable
-  hrn version                     print the hrn and Go versions
+  hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
+  hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
   hrn mcp [--dir PATH]            serve hrn as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
@@ -115,7 +116,8 @@ func main() {
 	case "report":
 		err = cmdReport(os.Args[2:])
 	case "version", "--version", "-V":
-		fmt.Printf("hrn %s (%s)\n", agent.Version, runtime.Version())
+		info, _ := debug.ReadBuildInfo()
+		fmt.Println(versionLine(info))
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -295,6 +297,9 @@ func cmdBackends() error {
 }
 
 func cmdRuns(args []string) error {
+	if len(args) > 0 && args[0] == "prune" {
+		return cmdPrune(args[1:])
+	}
 	fs := flag.NewFlagSet("runs", flag.ContinueOnError)
 	n := fs.Int("n", 20, "")
 	if err := fs.Parse(args); err != nil {

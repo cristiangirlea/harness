@@ -902,6 +902,43 @@ func TestDiffFallsBackToTheWorktree(t *testing.T) {
 	}
 }
 
+func TestGateTimeoutIsPerTask(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{
+		Dir: dir, Parallel: 2, Backend: "wb-ok", Gate: []string{"sleep 5"},
+		GateTimeout: agent.Duration(20 * time.Second),
+		Tasks: []Task{
+			{ID: "quick", Prompt: "task", GateTimeout: agent.Duration(time.Second)},
+			{ID: "patient", Prompt: "task", Gate: []string{"exit 0"}},
+		},
+	})
+	quick := res.Tasks[0]
+	if quick.Status == StatusPass || len(quick.Attempts) != 1 || len(quick.Attempts[0].Gates) != 1 {
+		t.Fatalf("quick = %+v", quick)
+	}
+	if g := quick.Attempts[0].Gates[0]; g.ExitCode == 0 || !strings.Contains(g.Output, "timed out after 1s") || g.Duration > 3*time.Second {
+		t.Errorf("gate = %+v, want it killed after the task's 1s, not the spec's 20s", g)
+	}
+	if res.Tasks[1].Status != StatusPass {
+		t.Errorf("patient = %+v", res.Tasks[1])
+	}
+}
+
+func TestGateTimeoutIsChecked(t *testing.T) {
+	dir := initRepo(t)
+	for _, tc := range []struct {
+		name string
+		spec Spec
+	}{
+		{"negative on the spec", Spec{Dir: dir, Backend: "wb-ok", GateTimeout: agent.Duration(-time.Second), Tasks: []Task{{Prompt: "x"}}}},
+		{"over a day on a task", Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{Prompt: "x", GateTimeout: agent.Duration(25 * time.Hour)}}}},
+	} {
+		if err := tc.spec.normalize(); err == nil || !strings.Contains(err.Error(), "gate_timeout") {
+			t.Errorf("%s: err = %v, want one naming gate_timeout", tc.name, err)
+		}
+	}
+}
+
 func TestExpectChecksTheFinalAnswerBeforeTheGates(t *testing.T) {
 	dir := initRepo(t)
 	// wb-noop answers "nothing to do", so the first attempt misses the

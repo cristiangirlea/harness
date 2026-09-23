@@ -379,6 +379,19 @@ func Number(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
+// Bytes renders a size in the largest unit that keeps it above one.
+func Bytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d bytes", n)
+}
+
 // Share renders a ratio as a percentage, or "-" for the unknown value.
 func Share(ratio float64) string {
 	if ratio < 0 {

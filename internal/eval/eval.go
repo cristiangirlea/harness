@@ -427,12 +427,20 @@ func LoadRecord(id string) (Record, error) {
 
 // List returns saved evals, newest first.
 func List(limit int) ([]Record, error) {
+	recs, _, err := list(limit)
+	return recs, err
+}
+
+// ListAll returns every saved eval and how many records could not be read.
+func ListAll() ([]Record, int, error) { return list(0) }
+
+func list(limit int) (out []Record, unreadable int, err error) {
 	entries, err := os.ReadDir(dir())
 	if os.IsNotExist(err) {
-		return nil, nil
+		return nil, 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -440,11 +448,11 @@ func List(limit int) ([]Record, error) {
 			names = append(names, strings.TrimSuffix(e.Name(), ".json"))
 		}
 	}
-	var out []Record
 	sort.Slice(names, func(i, j int) bool { return names[i] > names[j] })
 	for _, name := range names {
 		rec, err := LoadRecord(name)
 		if err != nil {
+			unreadable++
 			continue
 		}
 		out = append(out, rec)
@@ -452,7 +460,7 @@ func List(limit int) ([]Record, error) {
 			break
 		}
 	}
-	return out, nil
+	return out, unreadable, nil
 }
 
 // newID is five hex characters: short enough to read in a branch name, wide

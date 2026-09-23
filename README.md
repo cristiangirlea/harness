@@ -52,8 +52,9 @@ static and runs on Linux, macOS and Windows; CI tests on Ubuntu and Windows.
 |---|---|
 | `hrn run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
 | `hrn backends` | Show which backends are usable and where they were found. |
-| `hrn version` | Print the hrn and Go versions. |
+| `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn runs [-n N]` | List recent runs. |
+| `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](#run-records)). |
 | `hrn show [--json] <id>` | Replay a recorded run. |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
@@ -355,6 +356,11 @@ they apply per attempt rather than per task, so a retry gets its own allowance. 
 may set its own value or change the spec's, but zero means inherit, so it cannot remove
 a limit the spec set.
 
+Each gate command gets 15 minutes before it is killed with its whole process tree;
+`gate_timeout` (e.g. `"90s"`, `"45m"`, at most `24h`) changes that on the spec or on one
+task, so a slow integration suite and a quick lint can share a batch. A killed gate fails
+with `[timed out after …]` in its output, which a retry then sees.
+
 The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts and
 again at the end; `--json` prints it, `-v` streams every agent's tool calls. Ctrl+C
 cancels running agents and skips the rest. Exit status is 1 unless every task passed.
@@ -516,9 +522,22 @@ judge uses, about 64k tokens, once per judge that starts before the cache exists
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped)
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
-  twice the disk of its transcript; nothing prunes `~/.hrn` yet
+  twice the disk of its transcript
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration
+
+`hrn runs prune --older-than 30d` removes runs, batch records and eval records that
+started before the cutoff, and prints what it freed; `--dry-run` lists them instead and
+removes nothing, and `--keep N` spares the newest N runs whatever their age. It refuses to
+run without `--older-than`. Records cite each other, so it works from the top down and
+never breaks a reference: an eval it keeps keeps its batch and its judge's runs, a batch it keeps keeps every
+run it made, a run it keeps keeps the run it `--continue`d from, and a batch whose
+worktrees are still on disk stays with its runs, because `hrn batch rm` needs that record
+to remove them (it says so, and names the command). A run with no result that wrote in
+the last hour is taken to be still running and stays; a directory in `runs/` that is not
+a run id is never touched. If any batch or eval record cannot be read, prune refuses:
+that record may cite anything. Records go before the runs they cite, so a failure partway
+never leaves a record pointing at nothing.
 
 ## Layout
 

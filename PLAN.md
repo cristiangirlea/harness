@@ -631,6 +631,31 @@ the questions).
   reverted. Checked and sound: cancellation (a cancelled verdict is an error, never a
   zero), the verdict parser's backward scan, rune-safe clipping, and that every caller
   goes through `agent.Run`.
+- 2026-09-23: housekeeping PR (PR O in the quality-layer plan): `hrn runs prune`,
+  per-task `gate_timeout`, and `hrn version` with the commit. Prune decides from the top
+  down so it never breaks a reference: a kept eval keeps its batch, a kept batch keeps its
+  runs, and an old batch whose worktrees are still on disk is kept with its runs because
+  `hrn batch rm` needs the record (on this machine that was five of the old batches). It
+  refuses to run without `--older-than`, and a directory under runs/ that is not a run id
+  is never touched. Each package owns its own file layout (runlog.Prune,
+  batch.RemoveRecord, eval.RemoveRecord); only cmd/hrn knows how records cite each other,
+  so runlog still imports neither batch nor eval. gate_timeout travels on attemptPlan
+  rather than through runAttempt's signature, because PR M (#18, another session) changes
+  that signature at the same time. Found while verifying: Go does not stamp the commit
+  into a binary built inside a `git worktree` (`.git` is a file there), so `hrn version`
+  shows the commit only for builds from the main checkout; the README says so. After
+  merging PR M, a kept eval also keeps the runs its judge made (Record.Judgements[].RunID).
+- 2026-09-23: housekeeping PR (#19) self-review, 7 findings, all fixed. The serious three
+  were all "prune breaks a reference after all": an unreadable batch or eval record was
+  skipped, so the runs it cited lost their protection (prune now refuses while any record
+  cannot be read); runs were removed before the records citing them, so a failure partway
+  left records pointing at nothing (now records first, runs last); and a run started with
+  --continue did not keep the run it continued (now the whole chain stays). Also: a run
+  with no result that wrote within the last hour is left alone, since it is probably still
+  running and removing it pulls the directory from under its writer; the gate-timeout test
+  asserts the killed gate's own duration instead of the whole batch's wall clock, which
+  would have flaked on the Windows runner; the byte formatter moved to report.Bytes beside
+  the other formatters; and the prune usage line fits the table.
 - 2026-09-22: open-source prep (#17). The binary is renamed from hx to hrn: hx is the Helix
   editor's binary, so nobody with Helix on PATH could have installed this. Every word in
   the harness vocabulary is already an agent tool on GitHub (harn, bridle, reins, tack, yoke

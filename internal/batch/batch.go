@@ -39,8 +39,10 @@ type Spec struct {
 	agent.Options
 	AllowDirty bool     `json:"allow_dirty,omitempty"` // start even though tracked files are modified
 	Gate       []string `json:"gate,omitempty"`        // commands that must exit 0 in the worktree after the agent finishes
-	Retry      []string `json:"retry,omitempty"`       // backends to try, in order, after a failed attempt
-	Tasks      []Task   `json:"tasks"`
+	// GateTimeout bounds each gate command; default 15m. A task's own wins.
+	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
+	Retry       []string       `json:"retry,omitempty"` // backends to try, in order, after a failed attempt
+	Tasks       []Task         `json:"tasks"`
 }
 
 // DefaultParallel is how many agents run at once when a spec does not say.
@@ -53,8 +55,9 @@ type Task struct {
 	// Options set here override the spec's, field by field; a switch can be
 	// turned on for one task but not back off, and a zero limit inherits.
 	agent.Options
-	Gate  []string `json:"gate,omitempty"`
-	Retry []string `json:"retry,omitempty"`
+	Gate        []string       `json:"gate,omitempty"`
+	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
+	Retry       []string       `json:"retry,omitempty"`
 	// Expect is a regular expression the agent's final answer must match. It
 	// is checked before the gates and reported as one, so a task whose answer
 	// is the deliverable ("is there a bug?") can fail on what it said.
@@ -123,7 +126,10 @@ type Event struct {
 	Text string
 }
 
-const gateTimeout = 15 * time.Minute
+const defaultGateTimeout = 15 * time.Minute
+
+// maxGateTimeout is where a gate stops being a check and becomes a job.
+const maxGateTimeout = 24 * time.Hour
 
 // worktreeMu serialises `git worktree add`, `remove` and `prune` for this
 // process. They all rewrite the repository's shared worktree metadata, and git
@@ -179,6 +185,9 @@ func (s *Spec) normalize() error {
 	if err := checkGates(s.Gate); err != nil {
 		return err
 	}
+	if err := checkGateTimeout(s.GateTimeout); err != nil {
+		return err
+	}
 	if len(s.Tasks) == 0 {
 		return errors.New("no tasks")
 	}
@@ -205,6 +214,9 @@ func (s *Spec) normalize() error {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkGates(t.Gate); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
+		if err := checkGateTimeout(t.GateTimeout); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if _, err := compileExpect(t.Expect); err != nil {
@@ -246,6 +258,13 @@ func checkGates(gates []string) error {
 		if strings.TrimSpace(g) == "" {
 			return errors.New("empty gate command")
 		}
+	}
+	return nil
+}
+
+func checkGateTimeout(d agent.Duration) error {
+	if d < 0 || time.Duration(d) > maxGateTimeout {
+		return fmt.Errorf("gate_timeout %s: must be positive and at most %s (leave it out for the 15m default)", d, maxGateTimeout)
 	}
 	return nil
 }
@@ -368,6 +387,8 @@ type attemptPlan struct {
 	// continued keeps the worktree and the work already committed on the
 	// branch, so the agent fixes its own output instead of starting over.
 	continued bool
+	// gateTimeout bounds each gate command of this attempt.
+	gateTimeout time.Duration
 }
 
 // The prompt a retry gets. A gate failure is recoverable in place, so the next
@@ -462,6 +483,10 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 	backends := []string{firstOf(t.Backend, spec.Backend, agent.DefaultBackendName())}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
+	gateTimeout := defaultGateTimeout
+	if d := firstNonZero(t.GateTimeout, spec.GateTimeout); d > 0 {
+		gateTimeout = time.Duration(d)
+	}
 	// The spec's options with whatever the task sets on top; Run resolved
 	// both MCP lists already.
 	opts := t.Options.Over(spec.Options)
@@ -484,7 +509,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		if err != nil {
 			return fail(err)
 		}
-		plan := attemptPlan{number: i + 1, prompt: t.Prompt}
+		plan := attemptPlan{number: i + 1, prompt: t.Prompt, gateTimeout: gateTimeout}
 		if i > 0 {
 			text, continued := retryContext(tr.Attempts)
 			plan.prompt, plan.continued = t.Prompt+text, continued
@@ -579,7 +604,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 	if pass {
 		for _, g := range gates {
-			gr := runGate(ctx, task.Dir, g)
+			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
 			att.Gates = append(att.Gates, gr)
 			if gr.ExitCode != 0 {
 				pass = false
@@ -614,16 +639,16 @@ func checkExpect(re *regexp.Regexp, final string) GateResult {
 	return gr
 }
 
-func runGate(ctx context.Context, dir, command string) GateResult {
+func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
 	started := time.Now()
-	res, err := tools.RunShell(ctx, dir, command, gateTimeout)
+	res, err := tools.RunShell(ctx, dir, command, timeout)
 	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}
 	switch {
 	case err != nil:
 		gr.ExitCode = -1
 		gr.Output = strings.TrimSpace(gr.Output + "\n" + err.Error())
 	case res.TimedOut:
-		gr.Output = strings.TrimSpace(gr.Output + fmt.Sprintf("\n[timed out after %s]", gateTimeout))
+		gr.Output = strings.TrimSpace(gr.Output + fmt.Sprintf("\n[timed out after %s]", timeout))
 	}
 	return gr
 }
@@ -1047,6 +1072,15 @@ func firstOf(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonZero(ds ...agent.Duration) agent.Duration {
+	for _, d := range ds {
+		if d != 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 func firstList(lists ...[]string) []string {
