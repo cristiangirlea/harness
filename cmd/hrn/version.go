@@ -31,14 +31,17 @@ func versionLine(info *debug.BuildInfo) string {
 				modified = s.Value == "true"
 			}
 		}
-		if rev != "" {
-			if len(rev) > 12 {
-				rev = rev[:12]
-			}
-			if modified {
-				rev += ", modified"
-			}
+		if len(rev) > 12 {
+			rev = rev[:12]
+		}
+		// Go 1.24+ gives a checkout build a pseudo-version that already ends in
+		// the commit, with +dirty for edits, so neither is said twice.
+		named := rev != "" && strings.Contains(info.Main.Version, rev)
+		if rev != "" && !named {
 			parts = append(parts, rev)
+		}
+		if modified && !strings.Contains(info.Main.Version, "+dirty") {
+			parts = append(parts, "modified")
 		}
 	}
 	return fmt.Sprintf("hrn %s (%s)", agent.Version, strings.Join(parts, ", "))
