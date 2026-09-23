@@ -602,6 +602,15 @@ the questions).
   sorts by start time now, and the list test fails the old way when that is reverted. Also
   `hrn version` named the commit twice on a checkout build, because Go 1.24+ already puts
   it in the pseudo-version (and `+dirty` for edits); it says each once now.
+- 2026-09-23: PR Q self-review, 6 findings, 5 fixed and 1 wrong. The real one: variants
+  were matched by name alone, so a variant renamed onto another model, a gate made easier
+  or a changed rubric moved the numbers with nothing said; the diff now notes each, as it
+  already did a changed prompt. Also: `hrn eval list` says how many records it could not
+  read (prune refuses over those same records); `eval.List` is gone in favour of ListAll,
+  whose comment says why it reads every record; the totals moved to `Record.Totals`; and
+  the path-like id test now reaches the id check. The wrong finding was mine: I thought the
+  arrows misaligned the columns because `%-16s` pads by bytes, but Go pads by code points;
+  the alignment test written to prove it passed, and stays as a guard.
 - 2026-09-23: PR N done: `batch`, `batch_show` and `batch_merge` in `hrn mcp`, so a host
   can plan, fan out, read diffs and merge in one conversation. The spec is the batch-file
   JSON with two differences: a relative `dir` resolves against the server's workspace, and
