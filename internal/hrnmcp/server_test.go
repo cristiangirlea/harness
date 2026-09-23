@@ -79,7 +79,7 @@ func (s *session) call(t *testing.T, name, args string) mcp.CallResult {
 func TestRunThenInspect(t *testing.T) {
 	dir := t.TempDir()
 	s := connect(t, dir)
-	if names := s.cl.Tools(); len(names) != 4 || names[0].Name != "run" || !names[1].Annotations.ReadOnly() {
+	if names := s.cl.Tools(); len(names) != 7 || names[0].Name != "run" || !names[1].Annotations.ReadOnly() {
 		t.Fatalf("tools = %+v", names)
 	}
 

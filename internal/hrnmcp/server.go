@@ -1,6 +1,6 @@
 // Package hrnmcp exposes hrn itself as an MCP server, so a Claude Code session
-// (or any MCP host) can delegate tasks to any backend, several at a time, and
-// read the run records back. Requests are served concurrently, so parallel
+// (or any MCP host) can delegate tasks to any backend, several at a time, fan
+// a set of tasks out into worktrees with batch, and read the records back. Requests are served concurrently, so parallel
 // tool calls from the host become parallel agents.
 package hrnmcp
 
@@ -23,6 +23,8 @@ const instructions = `hrn runs coding tasks on an agent backend of your choice (
 
 Use "run" to delegate a task. It blocks until the task finishes and returns the final answer, a summary line and a run id; "show" replays a run, "runs" lists recent ones, "backends" says which backends are usable. Several "run" calls may be in flight at once.
 
+Use "batch" to fan out: several tasks at once, each on its own branch and git worktree, checked by gate commands, all in one call. "batch_show" reads a batch's results and each task's diff; "batch_merge" merges the passing branches into the current branch.
+
 There is no terminal behind this server. Mode "ask" puts each write and command to you through the host, when the host supports elicitation, and denies it otherwise. Use "readonly" for investigation, "auto" to allow file edits without asking, "yolo" to also allow shell commands.`
 
 // NewServer builds the hrn MCP server. defaultDir is the workspace used when
@@ -33,6 +35,9 @@ func NewServer(defaultDir string) *mcp.Server {
 	s.AddTool(runsTool())
 	s.AddTool(showTool())
 	s.AddTool(backendsTool())
+	s.AddTool(batchTool(defaultDir))
+	s.AddTool(batchShowTool())
+	s.AddTool(batchMergeTool())
 	return s
 }
 
