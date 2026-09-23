@@ -27,13 +27,11 @@ func writeJSONFile(t *testing.T, path string, v any) {
 	}
 }
 
-// agedRun makes a run directory whose id is days old.
+// agedRun makes a finished run whose id is days old.
 func agedRun(t *testing.T, days int, suffix string) string {
 	t.Helper()
 	id := time.Now().AddDate(0, 0, -days).Format("20060102-150405") + "-" + suffix
-	if err := os.MkdirAll(filepath.Join(runlog.Root(), id), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeJSONFile(t, filepath.Join(runlog.Root(), id, "result.json"), map[string]string{"id": id})
 	return id
 }
 
@@ -123,5 +121,26 @@ func TestParseAge(t *testing.T) {
 		if got, err := parseAge(in); err != nil || got != want {
 			t.Errorf("parseAge(%q) = %v, %v; want %v", in, got, err, want)
 		}
+	}
+}
+
+func TestPruneRefusesWhileARecordCannotBeRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	run := agedRun(t, 40, "aaaaaa")
+	// A record that cannot be read may cite that run; prune cannot know.
+	broken := filepath.Join(home, "batches", "20260801-000000-b1b1b1.json")
+	if err := os.MkdirAll(filepath.Dir(broken), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(broken, []byte("{half a rec"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := cmdPrune([]string{"--older-than", "30d"})
+	if err == nil || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("err = %v, want a refusal naming the unreadable record", err)
+	}
+	if !pathExists(filepath.Join(runlog.Root(), run)) {
+		t.Error("nothing may be removed while a record cannot be read")
 	}
 }

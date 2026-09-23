@@ -10,6 +10,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -44,7 +45,7 @@ func cmdPrune(args []string) error {
 	cutoff := time.Now().Add(-age)
 
 	// Evals first: one that stays keeps its batch.
-	evals, err := eval.List(0)
+	evals, badEvals, err := eval.ListAll()
 	if err != nil {
 		return err
 	}
@@ -59,9 +60,14 @@ func cmdPrune(args []string) error {
 	}
 
 	// Then batches: one that stays keeps its runs.
-	batches, _, err := batch.List()
+	batches, badBatches, err := batch.List()
 	if err != nil {
 		return err
+	}
+	// A record that cannot be read may cite anything, so nothing is safe to go.
+	if badEvals+badBatches > 0 {
+		return fmt.Errorf("%d eval and %d batch records could not be read, and what they cite cannot be protected; "+
+			"fix or remove them under %s, then prune again", badEvals, badBatches, runlog.Home())
 	}
 	keptRuns := map[string]bool{}
 	var oldBatches, live []string
@@ -83,18 +89,9 @@ func cmdPrune(args []string) error {
 		}
 	}
 
-	runs, err := runlog.Prune(cutoff, *keep, keptRuns, *dryRun)
-	if err != nil {
-		return err
-	}
-	bytes := runs.Bytes
-	for _, id := range oldBatches {
-		n, err := batch.RemoveRecord(id, *dryRun)
-		if err != nil {
-			return fmt.Errorf("batch record %s: %w", id, err)
-		}
-		bytes += n
-	}
+	// Top down, records before what they cite: if a removal fails partway, what
+	// is left can be unreferenced but never a record pointing at nothing.
+	var bytes int64
 	for _, id := range oldEvals {
 		n, err := eval.RemoveRecord(id, *dryRun)
 		if err != nil {
@@ -102,6 +99,18 @@ func cmdPrune(args []string) error {
 		}
 		bytes += n
 	}
+	for _, id := range oldBatches {
+		n, err := batch.RemoveRecord(id, *dryRun)
+		if err != nil {
+			return fmt.Errorf("batch record %s: %w", id, err)
+		}
+		bytes += n
+	}
+	runs, err := runlog.Prune(cutoff, *keep, keptRuns, *dryRun)
+	if err != nil {
+		return err
+	}
+	bytes += runs.Bytes
 
 	verb := "removed"
 	if *dryRun {
@@ -117,7 +126,7 @@ func cmdPrune(args []string) error {
 		}
 	}
 	fmt.Printf("%s %d runs, %d batch records and %d eval records older than %s (%s)\n",
-		verb, len(runs.Removed), len(oldBatches), len(oldEvals), *olderThan, humanBytes(bytes))
+		verb, len(runs.Removed), len(oldBatches), len(oldEvals), *olderThan, report.Bytes(bytes))
 	for _, id := range live {
 		fmt.Printf("kept batch %s: its worktrees are still on disk; hrn batch rm %s removes them\n", id, id)
 	}
@@ -143,16 +152,4 @@ func parseAge(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("--older-than %q must be positive", s)
 	}
 	return d, nil
-}
-
-func humanBytes(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
-	}
-	return fmt.Sprintf("%d bytes", n)
 }
