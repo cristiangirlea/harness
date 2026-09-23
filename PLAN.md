@@ -578,8 +578,8 @@ order they are worth taking:
    should come before anything else that touches the api backend.
 6. ~~**A `batch` tool in `hrn mcp`.**~~ Done as PR N: `batch`, `batch_show` and
    `batch_merge`.
-7. **Release binaries.** A workflow that builds hrn for linux, windows and darwin on a
-   `v*` tag and attaches them to the release, so installing is not `go build`.
+7. ~~**Release binaries.**~~ Done as PR P. No release has been cut: that, and making the
+   repository public, are Cristian's to do.
 8. ~~**`hrn eval diff <a> <b>`.**~~ Done as PR Q, with `hrn eval list`.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
@@ -589,6 +589,22 @@ the questions).
 
 ## Decisions log
 
+- 2026-09-23: PR P done: `.github/workflows/release.yml` and `.github/release.sh`. A `v*`
+  tag runs vet and the tests, builds static binaries for linux, darwin and windows on
+  amd64 and arm64 (`CGO_ENABLED=0 -trimpath -s -w`) with SHA256SUMS, and publishes them
+  with `gh release create --generate-notes --verify-tag`. Plain binaries rather than
+  archives, so the script needs nothing beyond Go and coreutils and runs the same way
+  locally. The tag must equal agent.Version or the script stops, so a release and
+  `hrn version` cannot disagree. No ldflags for the commit: go build stamps it from the
+  checkout and #19's `hrn version` reads it from the build info. Verified by a local dry
+  run: a mismatched tag was refused, all six targets built, the windows binary ran and
+  the linux arm64 one is a static aarch64 ELF. The workflow itself has not run, because
+  that needs a tag push, which publishes a release. Self-review, 1 finding, fixed: the
+  script had never run on Linux, where the release job runs, so CI now dry-runs it on the
+  Ubuntu runner on every push (about a minute); with no tag it builds the declared
+  version. The first attempt at that step lost its sed backreference on the way into the
+  file and would have passed an empty version, which is why the script reads the version
+  itself now.
 - 2026-09-23: PR Q: `hrn eval diff` and `hrn eval list` (open item 8; lettered Q because
   another session used N and P meanwhile). `eval.Compare` matches variants by name and
   tasks by (task, variant), keeps one-sided rows with a nil side instead of dropping them,

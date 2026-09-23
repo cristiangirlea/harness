@@ -37,6 +37,10 @@ jobs:
           name: fuzz-crashers
           path: "**/testdata/fuzz/**"
           if-no-files-found: ignore
+      - name: release dry run
+        # The release job only runs on a tag, so its script is exercised here.
+        if: matrix.os == 'ubuntu-latest'
+        run: bash .github/release.sh
       - name: gofmt
         shell: bash
         run: test -z "$(gofmt -l .)"
