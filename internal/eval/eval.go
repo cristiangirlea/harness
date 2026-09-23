@@ -448,7 +448,6 @@ func list(limit int) (out []Record, unreadable int, err error) {
 			names = append(names, strings.TrimSuffix(e.Name(), ".json"))
 		}
 	}
-	sort.Slice(names, func(i, j int) bool { return names[i] > names[j] })
 	for _, name := range names {
 		rec, err := LoadRecord(name)
 		if err != nil {
@@ -456,9 +455,11 @@ func list(limit int) (out []Record, unreadable int, err error) {
 			continue
 		}
 		out = append(out, rec)
-		if limit > 0 && len(out) == limit {
-			break
-		}
+	}
+	// Eval ids are random, not timestamps, so the order comes from the records.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, unreadable, nil
 }
