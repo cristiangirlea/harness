@@ -600,7 +600,12 @@ the questions).
   checkout and #19's `hrn version` reads it from the build info. Verified by a local dry
   run: a mismatched tag was refused, all six targets built, the windows binary ran and
   the linux arm64 one is a static aarch64 ELF. The workflow itself has not run, because
-  that needs a tag push, which publishes a release; the first tag is its test.
+  that needs a tag push, which publishes a release. Self-review, 1 finding, fixed: the
+  script had never run on Linux, where the release job runs, so CI now dry-runs it on the
+  Ubuntu runner on every push (about a minute); with no tag it builds the declared
+  version. The first attempt at that step lost its sed backreference on the way into the
+  file and would have passed an empty version, which is why the script reads the version
+  itself now.
 - 2026-09-23: PR N done: `batch`, `batch_show` and `batch_merge` in `hrn mcp`, so a host
   can plan, fan out, read diffs and merge in one conversation. The spec is the batch-file
   JSON with two differences: a relative `dir` resolves against the server's workspace, and
