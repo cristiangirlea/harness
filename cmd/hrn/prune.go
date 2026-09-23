@@ -18,7 +18,8 @@ const pruneUsage = "usage: hrn runs prune --older-than AGE [--keep N] [--dry-run
 
 // cmdPrune removes old runs, batch records and eval records from HRN_HOME.
 // Records reference each other, so it decides from the top down: an eval that
-// stays keeps the batch it ran as, and a batch that stays keeps its runs. A
+// stays keeps the batch it ran as and its judge's runs, and a batch that stays
+// keeps its runs. A
 // batch whose worktrees are still on disk also stays, because hrn batch rm
 // needs its record to remove them.
 func cmdPrune(args []string) error {
@@ -44,18 +45,23 @@ func cmdPrune(args []string) error {
 	}
 	cutoff := time.Now().Add(-age)
 
-	// Evals first: one that stays keeps its batch.
+	// Evals first: one that stays keeps its batch and the runs its judge made.
 	evals, badEvals, err := eval.ListAll()
 	if err != nil {
 		return err
 	}
-	keptBatches := map[string]bool{}
+	keptBatches, keptRuns := map[string]bool{}, map[string]bool{}
 	var oldEvals []string
 	for _, rec := range evals {
 		if rec.Started.Before(cutoff) {
 			oldEvals = append(oldEvals, rec.ID)
-		} else {
-			keptBatches[rec.BatchID] = true
+			continue
+		}
+		keptBatches[rec.BatchID] = true
+		for _, j := range rec.Judgements {
+			if j.RunID != "" {
+				keptRuns[j.RunID] = true
+			}
 		}
 	}
 
@@ -69,7 +75,6 @@ func cmdPrune(args []string) error {
 		return fmt.Errorf("%d eval and %d batch records could not be read, and what they cite cannot be protected; "+
 			"fix or remove them under %s, then prune again", badEvals, badBatches, runlog.Home())
 	}
-	keptRuns := map[string]bool{}
 	var oldBatches, live []string
 	for _, res := range batches {
 		old := res.Started.Before(cutoff) && !keptBatches[res.ID]

@@ -519,7 +519,7 @@ judge uses, about 64k tokens, once per judge that starts before the cache exists
 started before the cutoff, and prints what it freed; `--dry-run` lists them instead and
 removes nothing, and `--keep N` spares the newest N runs whatever their age. It refuses to
 run without `--older-than`. Records cite each other, so it works from the top down and
-never breaks a reference: an eval it keeps keeps its batch, a batch it keeps keeps every
+never breaks a reference: an eval it keeps keeps its batch and its judge's runs, a batch it keeps keeps every
 run it made, a run it keeps keeps the run it `--continue`d from, and a batch whose
 worktrees are still on disk stays with its runs, because `hrn batch rm` needs that record
 to remove them (it says so, and names the command). A run with no result that wrote in

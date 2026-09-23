@@ -144,3 +144,24 @@ func TestPruneRefusesWhileARecordCannotBeRead(t *testing.T) {
 		t.Error("nothing may be removed while a record cannot be read")
 	}
 }
+
+func TestPruneKeepsTheJudgeRunsOfAKeptEval(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	keptJudge := agedRun(t, 40, "aaaaaa")
+	oldJudge := agedRun(t, 40, "bbbbbb")
+	writeJSONFile(t, filepath.Join(home, "evals", "e1new.json"), eval.Record{ID: "e1new", Started: time.Now(),
+		Judgements: []eval.Judgement{{Cell: "c1", RunID: keptJudge}}})
+	writeJSONFile(t, filepath.Join(home, "evals", "e2old.json"), eval.Record{ID: "e2old", Started: time.Now().AddDate(0, 0, -40),
+		Judgements: []eval.Judgement{{Cell: "c1", RunID: oldJudge}}})
+
+	if err := cmdPrune([]string{"--older-than", "30d"}); err != nil {
+		t.Fatal(err)
+	}
+	if !pathExists(filepath.Join(runlog.Root(), keptJudge)) {
+		t.Error("a kept eval's judge run must stay: its verdict cites it")
+	}
+	if pathExists(filepath.Join(runlog.Root(), oldJudge)) {
+		t.Error("the judge run of a removed eval should go with it")
+	}
+}
