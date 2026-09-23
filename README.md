@@ -178,6 +178,11 @@ two runs before trusting it. If the API ever refuses the beta, the run says so a
 retries once without it. `hrn run --no-context-edits` turns it off for good, as do the
 `no_context_edits` field on a batch spec or task and the MCP `run` argument.
 
+Whatever the server reports about the edits it applied is recorded as an info event,
+`server context management, turn N: {...}`, with the JSON exactly as it arrived: its
+shape was not documented where this was written, so hrn keeps it rather than guessing at
+it. Nothing about it goes back into the history.
+
 ### Continuing a run
 
 The api backend saves its message history next to the transcript, so a finished run can
@@ -596,12 +601,12 @@ The three layers from the original brief are all here: the agent core (`hrn run`
 orchestrator (`hrn batch`, `hrn mcp`) and the scoring layer (`hrn eval`). What remains,
 in the order it is worth taking:
 
-1. **A real run of the `api` backend.** It is the only backend that has never spoken to
-   its API; everything in it is covered by a fake server.
-2. **Measure the context-editing default.** Server-side clearing is on by default and its
-   interaction with prompt caching is unmeasured; one long run with and without it,
-   compared on cache reads, settles whether the default is right.
-3. **`hrn eval diff <a> <b>`**, comparing two saved evals of the same task set.
+1. **A real run of the `api` backend**, and with it **the context-editing measurement**.
+   It is the only backend that has never spoken to its API. `scripts/api-check.sh` does
+   both in one command once `ANTHROPIC_API_KEY` is set: a read-only run, a `--continue`
+   of it, and one long task with context editing on and off, printed side by side with
+   the server's reports of what it cleared. It costs a few dollars at most and records
+   into a temporary `HRN_HOME`.
 
 `PLAN.md` is the work queue and the decisions log: every increment so far, what was
 deferred and why. It still calls the binary by its old name, `hx`, in entries written

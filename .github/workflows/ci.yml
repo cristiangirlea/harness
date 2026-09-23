@@ -37,6 +37,9 @@ jobs:
           name: fuzz-crashers
           path: "**/testdata/fuzz/**"
           if-no-files-found: ignore
+      - name: shell scripts parse
+        if: matrix.os == 'ubuntu-latest'
+        run: bash -n .github/release.sh && bash -n scripts/api-check.sh
       - name: release dry run
         # The release job only runs on a tag, so its script is exercised here.
         if: matrix.os == 'ubuntu-latest'
