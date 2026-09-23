@@ -5,14 +5,19 @@
 #
 #   .github/release.sh v0.2.0
 #
-# The tag must match agent.Version, so `hrn version` and the release agree. The
-# commit is not passed in: go build stamps it from the checkout, and hrn
+# The tag must match agent.Version, so `hrn version` and the release agree.
+# Without a tag it builds the declared version, which is how CI dry-runs it.
+# The commit is not passed in: go build stamps it from the checkout, and hrn
 # version reads it back from the build info.
 set -euo pipefail
 
-tag="${1:?usage: release.sh vX.Y.Z}"
-version="${tag#v}"
 declared="$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/agent/agent.go)"
+if [ -z "$declared" ]; then
+	echo "could not read agent.Version from internal/agent/agent.go" >&2
+	exit 1
+fi
+tag="${1:-v$declared}"
+version="${tag#v}"
 if [ "$version" != "$declared" ]; then
 	echo "tag $tag does not match agent.Version $declared; bump internal/agent/agent.go first" >&2
 	exit 1
