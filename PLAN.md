@@ -580,8 +580,7 @@ order they are worth taking:
    `batch_merge`.
 7. **Release binaries.** A workflow that builds hrn for linux, windows and darwin on a
    `v*` tag and attaches them to the release, so installing is not `go build`.
-8. **`hrn eval diff <a> <b>`.** Two saved evals of the same task set, side by side per
-   variant and task, for "did this model or prompt change help".
+8. ~~**`hrn eval diff <a> <b>`.**~~ Done as PR Q, with `hrn eval list`.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), MCP over HTTP
@@ -590,6 +589,19 @@ the questions).
 
 ## Decisions log
 
+- 2026-09-23: PR Q: `hrn eval diff` and `hrn eval list` (open item 8; lettered Q because
+  another session used N and P meanwhile). `eval.Compare` matches variants by name and
+  tasks by (task, variant), keeps one-sided rows with a nil side instead of dropping them,
+  and flags a task id whose prompt differs, since that is usually the change being
+  measured but its rows no longer compare like with like. Verified on real records: the
+  greeting eval from 2026-09-22 (sonnet 0%, haiku 100%) re-run with the target line fenced
+  in backticks went to 100% for both; the diff shows it and names the changed prompt. The
+  first prompt's "the line: hx rocks. Do not run git." had put a sentence's full stop right
+  after the target text. Found on the way: `eval.List` sorted by id as if ids were
+  timestamps, but eval ids are random hex, so "newest first" and `-n` were arbitrary; it
+  sorts by start time now, and the list test fails the old way when that is reverted. Also
+  `hrn version` named the commit twice on a checkout build, because Go 1.24+ already puts
+  it in the pseudo-version (and `+dirty` for edits); it says each once now.
 - 2026-09-23: PR N done: `batch`, `batch_show` and `batch_merge` in `hrn mcp`, so a host
   can plan, fan out, read diffs and merge in one conversation. The spec is the batch-file
   JSON with two differences: a relative `dir` resolves against the server's workspace, and
