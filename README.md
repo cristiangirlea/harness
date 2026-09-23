@@ -607,7 +607,6 @@ in the order it is worth taking:
    of it, and one long task with context editing on and off, printed side by side with
    the server's reports of what it cleared. It costs a few dollars at most and records
    into a temporary `HRN_HOME`.
-2. **`hrn eval diff <a> <b>`**, comparing two saved evals of the same task set.
 
 `PLAN.md` is the work queue and the decisions log: every increment so far, what was
 deferred and why. It still calls the binary by its old name, `hx`, in entries written
