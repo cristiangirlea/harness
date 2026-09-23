@@ -609,6 +609,13 @@ the questions).
   prompt for plan mode and both judges started before the cache existed. Documented, not
   worked around; a larger eval amortises it. Also fixed on the way: the README's open list
   still named the options struct (done in L) and called the old binary `hrn`.
+- 2026-09-23: PR M self-review, 1 finding, fixed. An eval spec is loaded without batch's
+  normalisation, so an unset `parallel` reached the judge as 0 and it judged one cell at a
+  time while the batch had run two. The default is `batch.DefaultParallel` now, and a test
+  with a judge that waits for a second verdict fails in the old way when the fix is
+  reverted. Checked and sound: cancellation (a cancelled verdict is an error, never a
+  zero), the verdict parser's backward scan, rune-safe clipping, and that every caller
+  goes through `agent.Run`.
 - 2026-09-22: open-source prep (#17). The binary is renamed from hx to hrn: hx is the Helix
   editor's binary, so nobody with Helix on PATH could have installed this. Every word in
   the harness vocabulary is already an agent tool on GitHub (harn, bridle, reins, tack, yoke
