@@ -579,6 +579,20 @@ order they are worth taking:
 
 ## Decisions log
 
+- 2026-09-23: housekeeping PR (PR O in the quality-layer plan): `hrn runs prune`,
+  per-task `gate_timeout`, and `hrn version` with the commit. Prune decides from the top
+  down so it never breaks a reference: a kept eval keeps its batch, a kept batch keeps its
+  runs, and an old batch whose worktrees are still on disk is kept with its runs because
+  `hrn batch rm` needs the record (on this machine that was five of the old batches). It
+  refuses to run without `--older-than`, and a directory under runs/ that is not a run id
+  is never touched. Each package owns its own file layout (runlog.Prune,
+  batch.RemoveRecord, eval.RemoveRecord); only cmd/hrn knows how records cite each other,
+  so runlog still imports neither batch nor eval. gate_timeout travels on attemptPlan
+  rather than through runAttempt's signature, because PR M (#18, another session) changes
+  that signature at the same time. Found while verifying: Go does not stamp the commit
+  into a binary built inside a `git worktree` (`.git` is a file there), so `hrn version`
+  shows the commit only for builds from the main checkout; the README says so. Judge runs
+  from PR M are not yet protected by a kept eval: add that when #18 has merged.
 - 2026-09-22: open-source prep (#17). The binary is renamed from hx to hrn: hx is the Helix
   editor's binary, so nobody with Helix on PATH could have installed this. Every word in
   the harness vocabulary is already an agent tool on GitHub (harn, bridle, reins, tack, yoke
