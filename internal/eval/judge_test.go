@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -221,5 +222,56 @@ func TestSummarizeCountsUnchangedPassesAndToolCalls(t *testing.T) {
 	}
 	if row.MedianTools != 5 {
 		t.Errorf("median tool calls = %v, want 5", row.MedianTools)
+	}
+}
+
+// slowJudge holds each verdict until a second one is running, or gives up
+// after a while, and records the most it saw at once.
+type slowJudge struct {
+	mu      *sync.Mutex
+	running *int
+	peak    *int
+}
+
+func (slowJudge) Name() string            { return "ev-judge-slow" }
+func (slowJudge) Detect() (string, error) { return "stub", nil }
+func (j slowJudge) Run(_ context.Context, _ agent.Task, _ func(agent.Event)) agent.Result {
+	j.mu.Lock()
+	*j.running++
+	*j.peak = max(*j.peak, *j.running)
+	j.mu.Unlock()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		j.mu.Lock()
+		done := *j.peak >= 2
+		j.mu.Unlock()
+		if done {
+			break
+		}
+	}
+	j.mu.Lock()
+	*j.running--
+	j.mu.Unlock()
+	return agent.Result{Status: agent.StatusOK, Final: `{"score": 5, "reason": "ok"}`}
+}
+
+var slow = slowJudge{mu: &sync.Mutex{}, running: new(int), peak: new(int)}
+
+func init() { agent.Register(slow) }
+
+func TestJudgeUsesTheBatchDefaultParallelism(t *testing.T) {
+	dir := initRepo(t)
+	spec := testSpec(dir) // parallel unset, as in most spec files
+	spec.Parallel = 0
+	spec.Judge = &Judge{Backend: "ev-judge-slow", Rubric: "x"}
+	_, res, err := Run(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer batch.Remove(res)
+	slow.mu.Lock()
+	peak := *slow.peak
+	slow.mu.Unlock()
+	if peak < 2 {
+		t.Errorf("at most %d verdict(s) ran at once; an unset parallel must mean the batch default, %d", peak, batch.DefaultParallel)
 	}
 }

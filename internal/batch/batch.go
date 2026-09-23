@@ -43,6 +43,9 @@ type Spec struct {
 	Tasks      []Task   `json:"tasks"`
 }
 
+// DefaultParallel is how many agents run at once when a spec does not say.
+const DefaultParallel = 2
+
 type Task struct {
 	ID      string `json:"id,omitempty"` // branch hrn/<id> and worktree .hrn/worktrees/<id>; default t1, t2, ...
 	Prompt  string `json:"prompt"`
@@ -162,7 +165,7 @@ func (s *Spec) normalize() error {
 		s.Dir = "."
 	}
 	if s.Parallel <= 0 {
-		s.Parallel = 2
+		s.Parallel = DefaultParallel
 	}
 	if s.Mode == "" {
 		s.Mode = agent.ModeAuto

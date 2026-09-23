@@ -117,7 +117,12 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 		}
 	}
 	out := make([]Judgement, len(cells))
-	parallel := max(spec.Parallel, 1)
+	// The spec as loaded, not as batch.Run normalised it: an unset parallel
+	// is 0 here, and must mean the batch default rather than one at a time.
+	parallel := spec.Parallel
+	if parallel <= 0 {
+		parallel = batch.DefaultParallel
+	}
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
 	for i, tr := range cells {
