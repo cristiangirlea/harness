@@ -169,7 +169,7 @@ func runTool(defaultDir string) mcp.Tool {
 					call.Progress("error: " + tools.OneLine(e.Text, 200))
 				}
 			}
-			res := b.Run(ctx, task, emit)
+			res := agent.Run(ctx, b, task, emit)
 			if err := rec.Close(res); err != nil {
 				call.Progress("saving run: " + err.Error())
 			}

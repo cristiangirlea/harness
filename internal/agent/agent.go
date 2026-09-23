@@ -107,16 +107,19 @@ const (
 )
 
 type Result struct {
-	Backend      string        `json:"backend"`
-	Model        string        `json:"model,omitempty"`
-	Status       Status        `json:"status"`
-	Final        string        `json:"final,omitempty"`
-	Error        string        `json:"error,omitempty"`
-	Turns        int           `json:"turns"`
-	InputTokens  int64         `json:"input_tokens,omitempty"`
-	OutputTokens int64         `json:"output_tokens,omitempty"`
-	CacheRead    int64         `json:"cache_read_tokens,omitempty"`
-	CacheWrite   int64         `json:"cache_write_tokens,omitempty"`
+	Backend      string `json:"backend"`
+	Model        string `json:"model,omitempty"`
+	Status       Status `json:"status"`
+	Final        string `json:"final,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Turns        int    `json:"turns"`
+	InputTokens  int64  `json:"input_tokens,omitempty"`
+	OutputTokens int64  `json:"output_tokens,omitempty"`
+	CacheRead    int64  `json:"cache_read_tokens,omitempty"`
+	CacheWrite   int64  `json:"cache_write_tokens,omitempty"`
+	// ToolCalls counts the tool calls the agent made. Set by Run, so it is the
+	// same count on every backend.
+	ToolCalls    int           `json:"tool_calls,omitempty"`
 	CostUSD      float64       `json:"cost_usd,omitempty"`
 	CostEstimate bool          `json:"cost_is_estimate,omitempty"`
 	Duration     time.Duration `json:"duration_ns"`
@@ -168,6 +171,21 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Run runs a task on a backend and counts the tool calls it makes. Callers use
+// it rather than Backend.Run so the count does not depend on each adapter
+// remembering to keep one.
+func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
+	calls := 0
+	res := b.Run(ctx, task, func(e Event) {
+		if e.Kind == EventToolCall && !e.Partial {
+			calls++
+		}
+		emit(e)
+	})
+	res.ToolCalls = calls
+	return res
 }
 
 func finish(res *Result, started time.Time) Result {
