@@ -72,6 +72,10 @@ type apiResponse struct {
 		Explanation string `json:"explanation"`
 	} `json:"stop_details"`
 	Usage apiUsage `json:"usage"`
+	// ContextManagement is the server's report of the context edits it
+	// applied, kept verbatim: its shape is not documented where this was
+	// written, so it is recorded rather than interpreted.
+	ContextManagement json.RawMessage `json:"context_management"`
 	// invalidInput holds tool inputs that were not valid JSON, by tool_use id.
 	invalidInput map[string]string
 }
@@ -227,12 +231,23 @@ type sseEvent struct {
 		Citation    json.RawMessage `json:"citation"`
 		StopReason  string          `json:"stop_reason"`
 		StopDetails json.RawMessage `json:"stop_details"`
+		// Where the server reports context edits is not documented here, so
+		// both places a message_delta could carry it are read.
+		ContextManagement json.RawMessage `json:"context_management"`
 	} `json:"delta"`
-	Usage *apiUsage `json:"usage"`
-	Error struct {
+	ContextManagement json.RawMessage `json:"context_management"`
+	Usage             *apiUsage       `json:"usage"`
+	Error             struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// present reports whether a raw JSON value holds something: not missing, not
+// null, not an empty object or list.
+func present(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s != "" && s != "null" && s != "{}" && s != "[]"
 }
 
 func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block)) (*apiResponse, bool, error) {
@@ -319,9 +334,14 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 			}
 			onBlock(b)
 		case "message_delta":
-			// Anything else the server reports here, such as the
-			// context_management record of what it cleared, is ignored on
-			// purpose: the client history stays append-only.
+			// The context_management record of what the server cleared is
+			// kept for the run record; it never changes the client history,
+			// which stays append-only.
+			for _, cm := range []json.RawMessage{ev.ContextManagement, ev.Delta.ContextManagement} {
+				if present(cm) {
+					resp.ContextManagement = cm
+				}
+			}
 			resp.StopReason = ev.Delta.StopReason
 			if len(ev.Delta.StopDetails) > 0 && string(ev.Delta.StopDetails) != "null" {
 				_ = json.Unmarshal(ev.Delta.StopDetails, &resp.StopDetails)

@@ -568,14 +568,16 @@ order they are worth taking:
    interaction with the two cache breakpoints is unmeasured; a clear invalidates the
    cached prefix from that point. One long api run with and without it, compared on
    `cache_read_tokens`, settles whether the default is right.
-3. **Record what the server cleared**, so an eval can attribute a token difference. The
-   response shape is not documented in what is available here; do it with the first real
-   api run.
+3. ~~**Record what the server cleared.**~~ Done as PR R, verbatim, since the shape is
+   undocumented here. Read the first real reports and decide whether to parse them.
 4. ~~**The eval judge.**~~ Done as PR M, with `expect`, a tool-call column and the count
    of passes that changed nothing.
 5. **A real api run.** The backend has never run against the API: no credentials on this
-   machine. Everything in it is covered by a fake server. Items 2 and 3 wait on it, and it
-   should come before anything else that touches the api backend.
+   machine. Everything in it is covered by a fake server. `scripts/api-check.sh` (PR R)
+   does this and item 2 in one command once a key is set. Also check then: the price
+   table has no entry for the newest models (Opus 5.5, Fable 5.1 is there), and a dated
+   model id such as claude-haiku-4-5-20251001 misses the table, so `--max-cost` cannot be
+   enforced for either until they are added.
 6. ~~**A `batch` tool in `hrn mcp`.**~~ Done as PR N: `batch`, `batch_show` and
    `batch_merge`.
 7. ~~**Release binaries.**~~ Done as PR P. No release has been cut: that, and making the
@@ -590,6 +592,20 @@ the questions).
 
 ## Decisions log
 
+- 2026-09-23: PR R done: getting the api backend ready for its first real run, since no key
+  exists here. (1) The server's context-management report is recorded verbatim as an info
+  event per turn. Its location in the stream is not documented here either, so the parser
+  reads it from the message, from the top level of message_delta and from inside its delta,
+  and keeps any value that is not null or empty. The history stays append-only, and a test
+  asserts the report never goes back up. (2) `scripts/api-check.sh` is the first real run
+  as one command: a read-only haiku run, a `--continue` of it, then one long sonnet task
+  with context editing on and off under a cost cap, each with its summary line and the
+  count of server reports. It refuses to start without credentials. It was dry-run
+  end to end against a stand-in API (ANTHROPIC_BASE_URL at a 30-line fake server), and
+  that dry run found two bugs in the script itself: step 3 printed the run id line
+  instead of the summary, and "the newest run" was chosen by directory name, which picks
+  the wrong one when two runs start in the same second. The run id now comes from hrn's
+  own output. CI checks that both shell scripts parse.
 - 2026-09-23: PR P done: `.github/workflows/release.yml` and `.github/release.sh`. A `v*`
   tag runs vet and the tests, builds static binaries for linux, darwin and windows on
   amd64 and arm64 (`CGO_ENABLED=0 -trimpath -s -w`) with SHA256SUMS, and publishes them

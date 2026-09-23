@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -276,6 +278,16 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		if msg.Model != "" {
 			res.Model = msg.Model
+		}
+		if present(msg.ContextManagement) {
+			// Verbatim, so a comparison of two runs can attribute a token
+			// difference to what the server cleared.
+			var compact bytes.Buffer
+			if json.Compact(&compact, msg.ContextManagement) != nil {
+				compact.Reset()
+				compact.Write(msg.ContextManagement)
+			}
+			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "server context management, turn " + strconv.Itoa(turn) + ": " + compact.String()})
 		}
 		// History is append-only: the assistant turn goes back exactly as received.
 		req.Messages = append(req.Messages, apiMessage{Role: "assistant", Content: msg.Content})
