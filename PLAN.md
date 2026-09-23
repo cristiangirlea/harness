@@ -601,6 +601,11 @@ the questions).
   of the text, so the whole batch record (worktree paths, echoed prompts, token counts)
   went to the model and the "what next" text did not. The structured result is now a
   brief with the same facts and a `next` field, and a test fails if the record leaks back.
+- 2026-09-23: PR N self-review, no findings. Checked: unknown-field refusal reaches through
+  the embedded options into every task; batch ids with a path separator are refused on
+  both show and merge; progress arrives one event at a time; the brief is right for pass,
+  fail, error and canceled tasks. A spec's `dir` is not confined, the same as `run`'s: the
+  server trusts its host with the machine's paths.
 - 2026-09-23: PR M done: the eval judge, and the three eval columns Step 0 asked for.
   `judge` is a struct now (backend, model, effort, rubric, rubrics per task, timeout),
   checked in Expand so a task without a rubric fails before any agent starts. Only
