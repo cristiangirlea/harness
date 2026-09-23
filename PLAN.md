@@ -576,9 +576,8 @@ order they are worth taking:
 5. **A real api run.** The backend has never run against the API: no credentials on this
    machine. Everything in it is covered by a fake server. Items 2 and 3 wait on it, and it
    should come before anything else that touches the api backend.
-6. **A `batch` tool in `hrn mcp`.** Claude Code can delegate one task through `run` but
-   cannot fan out; the batch package is done, so this is plumbing: the tool takes a spec
-   as JSON, runs it with progress notifications, and returns the batch record.
+6. ~~**A `batch` tool in `hrn mcp`.**~~ Done as PR N: `batch`, `batch_show` and
+   `batch_merge`.
 7. **Release binaries.** A workflow that builds hrn for linux, windows and darwin on a
    `v*` tag and attaches them to the release, so installing is not `go build`.
 8. **`hrn eval diff <a> <b>`.** Two saved evals of the same task set, side by side per
@@ -591,6 +590,17 @@ the questions).
 
 ## Decisions log
 
+- 2026-09-23: PR N done: `batch`, `batch_show` and `batch_merge` in `hrn mcp`, so a host
+  can plan, fan out, read diffs and merge in one conversation. The spec is the batch-file
+  JSON with two differences: a relative `dir` resolves against the server's workspace, and
+  unknown fields are refused, because a model-written `gates` would otherwise run with no
+  gate. `batch rm` is left out on purpose: it deletes branches, and the host can run the
+  CLI for that. Verified through a real Claude Code session (`claude -p` with only the
+  two tools allowed): two haiku tasks passed their gate and both branches merged in task
+  order. Found by that run: Claude Code showed the model the structured content instead
+  of the text, so the whole batch record (worktree paths, echoed prompts, token counts)
+  went to the model and the "what next" text did not. The structured result is now a
+  brief with the same facts and a `next` field, and a test fails if the record leaks back.
 - 2026-09-23: PR M done: the eval judge, and the three eval columns Step 0 asked for.
   `judge` is a struct now (backend, model, effort, rubric, rubrics per task, timeout),
   checked in Expand so a task without a rubric fails before any agent starts. Only

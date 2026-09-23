@@ -253,6 +253,9 @@ Tools:
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
+| `batch` | `spec` | Runs a batch spec, the same JSON as a batch file, and blocks until every task is done: one line per task (status, backend, attempts, the gate that failed, branch and commit) and the batch id. Task outcomes stream back as progress. |
+| `batch_show` | `batch_id`, `task`, `limit` | No id: recent batches. An id: its tasks. An id and a task: that task's diff and its untracked files. |
+| `batch_merge` | `batch_id`, `tasks`, `squash` | Merges the passing branches into the repository's current branch, stopping at the first conflict with the tree put back. |
 
 Requests are served concurrently, so parallel tool calls from the host become parallel
 agents, each recorded under `~/.hrn/runs` like a CLI run. Cancelling the tool call cancels
@@ -268,6 +271,14 @@ yes is a no, including a declined prompt, a cancelled one, an error, or a host t
 not support elicitation at all. Two runs in ask mode at the same time ask independently,
 which is why the prompt says which run it is from. That makes `ask` a real mode in the
 place hrn runs most.
+
+The batch tools let a host fan work out without leaving the conversation: write a spec,
+call `batch`, read the diffs with `batch_show`, and land what passed with `batch_merge`.
+A spec's relative `dir` is taken from the server's workspace. Unknown fields are refused
+rather than ignored, because the spec is written by a model and a misspelt `gates` would
+otherwise run with no gate. The structured result is a short summary rather than the
+whole record, since some hosts, Claude Code among them, show it to the model in place of
+the text. Worktrees stay after a merge; `hrn batch rm <id>` removes them.
 
 ## Batches
 
@@ -534,10 +545,8 @@ in the order it is worth taking:
 2. **Measure the context-editing default.** Server-side clearing is on by default and its
    interaction with prompt caching is unmeasured; one long run with and without it,
    compared on cache reads, settles whether the default is right.
-3. **A `batch` tool in `hrn mcp`**, so a Claude Code session can fan work out into
-   worktrees and not only delegate one task at a time.
-4. **Release binaries**: a tagged build for Linux, Windows and macOS.
-5. **`hrn eval diff <a> <b>`**, comparing two saved evals of the same task set.
+3. **Release binaries**: a tagged build for Linux, Windows and macOS.
+4. **`hrn eval diff <a> <b>`**, comparing two saved evals of the same task set.
 
 `PLAN.md` is the work queue and the decisions log: every increment so far, what was
 deferred and why. It still calls the binary by its old name, `hx`, in entries written
