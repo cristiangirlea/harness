@@ -71,6 +71,8 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | `hrn batch rm <id>` | Remove the worktrees and branches a batch created. |
 | `hrn eval [flags] <eval.json>` | Run a task set across a matrix of backends, models and efforts (see [Evals](#evals)). |
 | `hrn eval show <id>` | Reprint a saved eval. |
+| `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge. |
+| `hrn eval diff [--json] <a> <b>` | Two evals side by side, variant by variant and task by task. |
 | `hrn report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
@@ -479,7 +481,7 @@ changed nothing: right for "find the bug, if there is one", suspicious for "fix 
 typos".
 
 The record goes to `~/.hrn/evals/<id>.json`; `--json` prints it, `hrn eval show <id>`
-reprints it, `-v` streams every agent's tool calls. The worktrees are removed once the
+reprints it, `hrn eval list` finds it, `-v` streams every agent's tool calls. The worktrees are removed once the
 record is safely written, unless `--keep`. A failing variant is data, not an error, so
 the exit status is 0 whenever the eval itself ran.
 
@@ -518,6 +520,34 @@ without a `{"score": ...}` object is recorded as an error rather than a zero, an
 footer counts those. On the `claude` backend the first verdicts cost more than the
 answer: Claude Code writes its own system prompt to the cache in the read-only mode the
 judge uses, about 64k tokens, once per judge that starts before the cache exists.
+
+### Comparing evals
+
+The records are kept so a change can be scored: run the same task set before and after
+a new model, a reworded prompt or a harness change, then `hrn eval diff <before> <after>`.
+Variants are matched by name and tasks by id; every cell reads before → after, and a
+variant only one side ran gets its own row instead of disappearing. When a task's prompt
+differs between the two specs, a note says so: often that is the change being measured,
+but those rows do not compare like with like.
+
+```
+  eval cb867 → 847f6
+
+  variant              pass             median cost        median time
+  sonnet               0% → 100%        $0.15 → $0.14      13s → 13s
+  haiku                100% → 100%      $0.05 → $0.05      14s → 16s
+
+  task                 variant              passed
+  greet                sonnet               0/1 → 1/1
+  greet                haiku                1/1 → 1/1
+  note: the prompt differs for task greet, so its rows compare different tasks
+```
+
+That is the greeting eval from above, run again with the target line fenced in
+backticks. The first prompt ended "containing exactly the line: hx rocks. Do not run
+git.", and Sonnet took the sentence's full stop as part of the line; with the text fenced
+it passed. A judge score column appears when either eval was judged; `--json` prints the
+pairs as data.
 
 ## Run records
 

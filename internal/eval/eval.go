@@ -232,6 +232,22 @@ type Table struct {
 	Tasks    []TaskRow    `json:"tasks"`
 }
 
+// Totals sums the whole eval: cells run, cells passed, and what it cost,
+// judge included, with whether any of that cost is an estimate.
+func (r Record) Totals() (cells, passed int, costUSD float64, estimate bool) {
+	costUSD = r.JudgeCostUSD
+	for _, v := range r.Table.Variants {
+		cells += v.Attempts
+		passed += v.Passed
+		costUSD += v.TotalCostUSD
+		estimate = estimate || v.CostEstimate
+	}
+	for _, j := range r.Judgements {
+		estimate = estimate || j.CostEstimate
+	}
+	return cells, passed, costUSD, estimate
+}
+
 // Record is one eval, saved under $HRN_HOME/evals.
 type Record struct {
 	ID       string        `json:"id"`
@@ -426,15 +442,10 @@ func LoadRecord(id string) (Record, error) {
 }
 
 // List returns saved evals, newest first.
-func List(limit int) ([]Record, error) {
-	recs, _, err := list(limit)
-	return recs, err
-}
-
-// ListAll returns every saved eval and how many records could not be read.
-func ListAll() ([]Record, int, error) { return list(0) }
-
-func list(limit int) (out []Record, unreadable int, err error) {
+// ListAll returns every saved eval, newest first, and how many records could
+// not be read. It reads them all: eval ids are random, so only the records
+// themselves say which are newest.
+func ListAll() (out []Record, unreadable int, err error) {
 	entries, err := os.ReadDir(dir())
 	if os.IsNotExist(err) {
 		return nil, 0, nil
@@ -448,7 +459,6 @@ func list(limit int) (out []Record, unreadable int, err error) {
 			names = append(names, strings.TrimSuffix(e.Name(), ".json"))
 		}
 	}
-	sort.Slice(names, func(i, j int) bool { return names[i] > names[j] })
 	for _, name := range names {
 		rec, err := LoadRecord(name)
 		if err != nil {
@@ -456,10 +466,9 @@ func list(limit int) (out []Record, unreadable int, err error) {
 			continue
 		}
 		out = append(out, rec)
-		if limit > 0 && len(out) == limit {
-			break
-		}
 	}
+	// Eval ids are random, not timestamps, so the order comes from the records.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
 	return out, unreadable, nil
 }
 
