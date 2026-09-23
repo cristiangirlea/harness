@@ -47,6 +47,8 @@ Usage:
   hrn batch rm <batch-id>         remove the worktrees and branches a batch created
   hrn eval [flags] <eval.json>    run a task set across a matrix of backends, models and efforts
   hrn eval show <eval-id>         reprint a saved eval
+  hrn eval list [-n N]            list saved evals, newest first
+  hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
   hrn report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
 
 Run flags:
@@ -392,6 +394,43 @@ func cmdMCP(args []string) error {
 }
 
 func cmdEval(args []string) (int, error) {
+	if len(args) >= 1 && args[0] == "list" {
+		fs := flag.NewFlagSet("eval list", flag.ContinueOnError)
+		n := fs.Int("n", 20, "")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2, err
+		}
+		if fs.NArg() > 0 {
+			return 2, errors.New("usage: hrn eval list [-n N]")
+		}
+		return 0, listEvals(os.Stdout, *n)
+	}
+	if len(args) >= 1 && args[0] == "diff" {
+		fs := flag.NewFlagSet("eval diff", flag.ContinueOnError)
+		jsonOut := fs.Bool("json", false, "")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2, err
+		}
+		if fs.NArg() != 2 {
+			return 2, errors.New("usage: hrn eval diff [--json] <eval-id> <eval-id>")
+		}
+		a, err := eval.LoadRecord(fs.Arg(0))
+		if err != nil {
+			return 1, err
+		}
+		b, err := eval.LoadRecord(fs.Arg(1))
+		if err != nil {
+			return 1, err
+		}
+		d := eval.Compare(a, b)
+		if *jsonOut {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return 0, enc.Encode(d)
+		}
+		printEvalDiff(newRenderer(false), d)
+		return 0, nil
+	}
 	if len(args) >= 1 && args[0] == "show" {
 		if len(args) != 2 {
 			return 2, errors.New("usage: hrn eval show <eval-id>")
