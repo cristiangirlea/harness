@@ -1,5 +1,10 @@
 package eval
 
+import (
+	"encoding/json"
+	"slices"
+)
+
 // Diff sets two evals side by side: the question it answers is "did this
 // model, prompt or harness change help". Rows are matched by name, and a row
 // present on one side only is kept with the other side nil rather than
@@ -15,6 +20,14 @@ type Diff struct {
 	// specs: often the change being measured, but those rows do not compare
 	// like with like.
 	PromptChanged []string `json:"prompt_changed,omitempty"`
+	// VariantChanged lists the variant names that run something else in b:
+	// another backend, model or effort under the same name.
+	VariantChanged []string `json:"variant_changed,omitempty"`
+	// GateChanged lists the task ids whose gates or expect pattern differ, so
+	// passing means something else on each side.
+	GateChanged []string `json:"gate_changed,omitempty"`
+	// JudgeChanged is true when the judge or its rubric differs.
+	JudgeChanged bool `json:"judge_changed,omitempty"`
 	// Judged is true when either eval has judge scores to compare.
 	Judged bool `json:"judged,omitempty"`
 }
@@ -73,14 +86,48 @@ func Compare(a, b Record) Diff {
 		}
 	}
 
-	prompts := map[string]string{}
+	// What else differs between the specs, so a moved number is not credited
+	// to the wrong change.
+	type check struct {
+		prompt string
+		gates  []string
+		expect string
+	}
+	before := map[string]check{}
 	for _, t := range a.Spec.Tasks {
-		prompts[t.ID] = t.Prompt
+		before[t.ID] = check{t.Prompt, firstOfList(t.Gate, a.Spec.Gate), t.Expect}
 	}
 	for _, t := range b.Spec.Tasks {
-		if p, ok := prompts[t.ID]; ok && p != t.Prompt {
+		was, ok := before[t.ID]
+		if !ok {
+			continue
+		}
+		if was.prompt != t.Prompt {
 			d.PromptChanged = append(d.PromptChanged, t.ID)
 		}
+		if !slices.Equal(was.gates, firstOfList(t.Gate, b.Spec.Gate)) || was.expect != t.Expect {
+			d.GateChanged = append(d.GateChanged, t.ID)
+		}
 	}
+	defs := map[string]Variant{}
+	for _, v := range a.Spec.Matrix {
+		defs[v.name()] = v
+	}
+	for _, v := range b.Spec.Matrix {
+		if was, ok := defs[v.name()]; ok && (was.Backend != v.Backend || was.Model != v.Model || was.Effort != v.Effort) {
+			d.VariantChanged = append(d.VariantChanged, v.name())
+		}
+	}
+	ja, _ := json.Marshal(a.Spec.Judge)
+	jb, _ := json.Marshal(b.Spec.Judge)
+	d.JudgeChanged = string(ja) != string(jb)
 	return d
+}
+
+// firstOfList is a task's own list when it has one, else the spec's.
+func firstOfList(own, spec []string) []string {
+	if len(own) > 0 {
+		return own
+	}
+	return spec
 }

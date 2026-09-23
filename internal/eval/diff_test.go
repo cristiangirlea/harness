@@ -122,3 +122,31 @@ func join(xs []string) string {
 	}
 	return out
 }
+
+func TestCompareNotesWhatElseChanged(t *testing.T) {
+	a, b := twoEvals()
+	a.Spec.Matrix = []Variant{{Name: "sonnet", Backend: "claude", Model: "sonnet"}, {Name: "haiku", Backend: "claude", Model: "haiku"}}
+	// Same name, different model: not the same variant any more.
+	b.Spec.Matrix = []Variant{{Name: "opus", Backend: "claude", Model: "opus"}, {Name: "sonnet", Backend: "api", Model: "claude-sonnet-5"}}
+	a.Spec.Gate = []string{"go test ./..."}
+	b.Spec.Gate = []string{"go test ./..."}
+	b.Spec.Tasks[1].Gate = []string{"true"} // vet's gate got easier
+	a.Spec.Judge = &Judge{Rubric: "strict"}
+	b.Spec.Judge = &Judge{Rubric: "lenient"}
+
+	d := Compare(a, b)
+	if got := join(d.VariantChanged); got != "sonnet" {
+		t.Errorf("variant changed = %q, want sonnet", got)
+	}
+	if got := join(d.GateChanged); got != "vet" {
+		t.Errorf("gate changed = %q, want vet", got)
+	}
+	if !d.JudgeChanged {
+		t.Error("the rubric changed")
+	}
+
+	same := Compare(a, a)
+	if len(same.VariantChanged)+len(same.GateChanged) != 0 || same.JudgeChanged {
+		t.Errorf("an eval against itself changed nothing: %+v", same)
+	}
+}
