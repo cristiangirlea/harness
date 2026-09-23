@@ -571,14 +571,51 @@ order they are worth taking:
 3. **Record what the server cleared**, so an eval can attribute a token difference. The
    response shape is not documented in what is available here; do it with the first real
    api run.
-4. **The eval judge.** The spec key is reserved and nothing reads it. Gates cannot score a
-   diff against a rubric, which is what "did it do the right thing" needs.
-5. **MCP over HTTP.** Only stdio today, which is enough for every host hx has met.
-6. **A real api run.** The backend has never run against the API: no credentials on this
-   machine. Everything in it is covered by a fake server.
+4. ~~**The eval judge.**~~ Done as PR M, with `expect`, a tool-call column and the count
+   of passes that changed nothing.
+5. **A real api run.** The backend has never run against the API: no credentials on this
+   machine. Everything in it is covered by a fake server. Items 2 and 3 wait on it, and it
+   should come before anything else that touches the api backend.
+6. **A `batch` tool in `hrn mcp`.** Claude Code can delegate one task through `run` but
+   cannot fan out; the batch package is done, so this is plumbing: the tool takes a spec
+   as JSON, runs it with progress notifications, and returns the batch record.
+7. **Release binaries.** A workflow that builds hrn for linux, windows and darwin on a
+   `v*` tag and attaches them to the release, so installing is not `go build`.
+8. **`hrn eval diff <a> <b>`.** Two saved evals of the same task set, side by side per
+   variant and task, for "did this model or prompt change help".
+
+Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
+guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), MCP over HTTP
+(every host met so far speaks stdio), and a web dashboard (report and batch show answer
+the questions).
 
 ## Decisions log
 
+- 2026-09-23: PR M done: the eval judge, and the three eval columns Step 0 asked for.
+  `judge` is a struct now (backend, model, effort, rubric, rubrics per task, timeout),
+  checked in Expand so a task without a rubric fails before any agent starts. Only
+  passing cells are judged; a verdict that cannot be read is an error in the record, never
+  a zero, so a flaky judge cannot drag a mean down. The judge runs read-only in the cell's
+  worktree with the diff, the answer and the rubric in its prompt, and is recorded as an
+  ordinary run. `expect` went into batch rather than eval: it is a gate on the answer, is
+  reported as `expect /re/` in the gate list, and so reaches retries through the existing
+  retry context with no new branches. Tool calls are counted by a new `agent.Run` wrapper
+  that every caller uses (run, batch, MCP), not by each adapter, so the count is the same
+  on every backend. Verified on a real eval, claude backend with haiku as agent and
+  judge: a typo task (with British spellings as bait) and a yes/no task with expect. Both
+  passed and scored 10, the "1 of 2 passes changed nothing" note named the yes/no task,
+  and the judge kept to one line of JSON. Found by that run: the two verdicts cost $0.53
+  against $0.05 for the agents, because Claude Code cache-writes a 64k-token system
+  prompt for plan mode and both judges started before the cache existed. Documented, not
+  worked around; a larger eval amortises it. Also fixed on the way: the README's open list
+  still named the options struct (done in L) and called the old binary `hrn`.
+- 2026-09-23: PR M self-review, 1 finding, fixed. An eval spec is loaded without batch's
+  normalisation, so an unset `parallel` reached the judge as 0 and it judged one cell at a
+  time while the batch had run two. The default is `batch.DefaultParallel` now, and a test
+  with a judge that waits for a second verdict fails in the old way when the fix is
+  reverted. Checked and sound: cancellation (a cancelled verdict is an error, never a
+  zero), the verdict parser's backward scan, rune-safe clipping, and that every caller
+  goes through `agent.Run`.
 - 2026-09-23: housekeeping PR (PR O in the quality-layer plan): `hrn runs prune`,
   per-task `gate_timeout`, and `hrn version` with the commit. Prune decides from the top
   down so it never breaks a reference: a kept eval keeps its batch, a kept batch keeps its
@@ -591,8 +628,8 @@ order they are worth taking:
   rather than through runAttempt's signature, because PR M (#18, another session) changes
   that signature at the same time. Found while verifying: Go does not stamp the commit
   into a binary built inside a `git worktree` (`.git` is a file there), so `hrn version`
-  shows the commit only for builds from the main checkout; the README says so. Judge runs
-  from PR M are not yet protected by a kept eval: add that when #18 has merged.
+  shows the commit only for builds from the main checkout; the README says so. After
+  merging PR M, a kept eval also keeps the runs its judge made (Record.Judgements[].RunID).
 - 2026-09-23: housekeeping PR (#19) self-review, 7 findings, all fixed. The serious three
   were all "prune breaks a reference after all": an unreadable batch or eval record was
   skipped, so the runs it cited lost their protection (prune now refuses while any record

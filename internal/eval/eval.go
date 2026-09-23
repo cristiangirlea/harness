@@ -1,6 +1,6 @@
 // Package eval is the scoring layer: one task set run across a matrix of
 // backends, models and efforts, repeated, and judged by the same gates a batch
-// uses. It answers "which backend, model and effort for this kind of task"
+// uses and, optionally, by a model reading each diff against a rubric. It answers "which backend, model and effort for this kind of task"
 // with numbers instead of impressions.
 //
 // An eval is a batch with two extra dimensions, so it expands into a
@@ -33,9 +33,8 @@ type Spec struct {
 	batch.Spec
 	Matrix  []Variant `json:"matrix"`
 	Repeats int       `json:"repeats,omitempty"` // default 1
-	// Judge is reserved for scoring a diff against a rubric with a model.
-	// Nothing reads it yet; gates are the only scorer in this version.
-	Judge json.RawMessage `json:"judge,omitempty"`
+	// Judge, when set, scores every passing cell's diff against a rubric.
+	Judge *Judge `json:"judge,omitempty"`
 }
 
 // Variant is one cell of the matrix: what to run the task set with.
@@ -106,6 +105,11 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 			return batch.Spec{}, fmt.Errorf("task %s: retry does not belong in an eval", t.ID)
 		}
 	}
+	if spec.Judge != nil {
+		if err := spec.Judge.check(spec.Tasks); err != nil {
+			return batch.Spec{}, err
+		}
+	}
 
 	seen := map[string]bool{}
 	for i, v := range spec.Matrix {
@@ -174,18 +178,25 @@ func firstOf(values ...string) string {
 
 // VariantRow is what one variant did across every task and repeat.
 type VariantRow struct {
-	Name           string         `json:"name"`
-	Attempts       int            `json:"attempts"`
-	Passed         int            `json:"passed"`
+	Name     string `json:"name"`
+	Attempts int    `json:"attempts"`
+	Passed   int    `json:"passed"`
+	// Unchanged counts the passes that committed nothing: right for "find
+	// the bug, if any", suspicious for "fix the typos".
+	Unchanged      int            `json:"passed_unchanged,omitempty"`
 	Statuses       map[string]int `json:"statuses"` // run status histogram
 	MedianCostUSD  float64        `json:"median_cost_usd"`
 	TotalCostUSD   float64        `json:"total_cost_usd"`
 	CostEstimate   bool           `json:"cost_is_estimate,omitempty"`
 	MedianDuration time.Duration  `json:"median_duration_ns"`
 	MedianTurns    float64        `json:"median_turns"`
+	MedianTools    float64        `json:"median_tool_calls"`
 	// MedianContext counts prompt tokens and cache reads together: what the
 	// model was given, not what was billed at full rate.
 	MedianContext float64 `json:"median_context_tokens"`
+	// Judged counts the cells the judge scored; MeanScore is their mean, 0-10.
+	Judged    int     `json:"judged,omitempty"`
+	MeanScore float64 `json:"mean_score,omitempty"`
 }
 
 // PassRate is the share of cells that passed, as a share of attempts.
@@ -202,10 +213,19 @@ type TaskRow struct {
 	Variant string `json:"variant"`
 	Passed  int    `json:"passed"`
 	Total   int    `json:"total"`
+	// Judged and MeanScore are as in VariantRow, for this task alone.
+	Judged    int     `json:"judged,omitempty"`
+	MeanScore float64 `json:"mean_score,omitempty"`
 }
 
-// Score reads as "2/3".
-func (r TaskRow) Score() string { return fmt.Sprintf("%d/%d", r.Passed, r.Total) }
+// Score reads as "2/3", or "2/3 7.5" with the judge's mean score.
+func (r TaskRow) Score() string {
+	s := fmt.Sprintf("%d/%d", r.Passed, r.Total)
+	if r.Judged > 0 {
+		s += fmt.Sprintf(" %.1f", r.MeanScore)
+	}
+	return s
+}
 
 type Table struct {
 	Variants []VariantRow `json:"variants"`
@@ -220,6 +240,9 @@ type Record struct {
 	Duration time.Duration `json:"duration_ns"`
 	Spec     Spec          `json:"spec"`
 	Table    Table         `json:"table"`
+	// Judgements are the judge's verdicts, one per passing cell.
+	Judgements   []Judgement `json:"judgements,omitempty"`
+	JudgeCostUSD float64     `json:"judge_cost_usd,omitempty"`
 }
 
 // Run expands the spec, runs it as a batch and scores the result. The batch
@@ -239,21 +262,37 @@ func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batc
 	if runErr != nil && len(res.Tasks) == 0 {
 		return Record{}, res, runErr
 	}
-	rec := Record{ID: id, BatchID: res.ID, Started: started, Spec: spec,
-		Table: Summarize(spec, res), Duration: time.Since(started)}
+	var verdicts []Judgement
+	if spec.Judge != nil && ctx.Err() == nil {
+		verdicts = judgeAll(ctx, spec, res, notify)
+	}
+	rec := Record{ID: id, BatchID: res.ID, Started: started, Spec: spec, Judgements: verdicts,
+		Table: Summarize(spec, res, verdicts), Duration: time.Since(started)}
+	for _, v := range verdicts {
+		rec.JudgeCostUSD += v.CostUSD
+	}
 	if err := save(rec); err != nil {
 		return rec, res, err
 	}
 	return rec, res, runErr
 }
 
-// Summarize scores a finished batch against the eval that produced it. It
-// reads the ids the expansion wrote, so it works on a record loaded later.
-func Summarize(spec Spec, res batch.Result) Table {
+// Summarize scores a finished batch against the eval that produced it, with
+// the judge's verdicts when there are any. It reads the ids the expansion
+// wrote, so it works on a record loaded later.
+func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	type cell struct {
 		task, variant string
 		passed        bool
 		tr            batch.TaskResult
+		score         int
+		judged        bool
+	}
+	scores := map[string]Judgement{}
+	for _, v := range verdicts {
+		if v.Scored() {
+			scores[v.Cell] = v
+		}
 	}
 	var cells []cell
 	for _, tr := range res.Tasks {
@@ -261,7 +300,8 @@ func Summarize(spec Spec, res batch.Result) Table {
 		if !ok {
 			continue
 		}
-		cells = append(cells, cell{task, variant, tr.Status == batch.StatusPass, tr})
+		v, judged := scores[tr.ID]
+		cells = append(cells, cell{task, variant, tr.Status == batch.StatusPass, tr, v.Score, judged})
 	}
 
 	// Variant order follows the matrix, so the table reads like the spec.
@@ -269,7 +309,8 @@ func Summarize(spec Spec, res batch.Result) Table {
 	for _, v := range spec.Matrix {
 		name := v.name()
 		row := VariantRow{Name: name, Statuses: map[string]int{}}
-		var costs, durations, turns, inputs []float64
+		var costs, durations, turns, calls, inputs []float64
+		total := 0
 		for _, c := range cells {
 			if c.variant != name {
 				continue
@@ -277,6 +318,13 @@ func Summarize(spec Spec, res batch.Result) Table {
 			row.Attempts++
 			if c.passed {
 				row.Passed++
+				if c.tr.Commit == "" {
+					row.Unchanged++
+				}
+			}
+			if c.judged {
+				row.Judged++
+				total += c.score
 			}
 			status := "no-attempt"
 			if n := len(c.tr.Attempts); n > 0 {
@@ -284,6 +332,7 @@ func Summarize(spec Spec, res batch.Result) Table {
 				status = string(a.Result.Status)
 				costs = append(costs, a.Result.CostUSD)
 				turns = append(turns, float64(a.Result.Turns))
+				calls = append(calls, float64(a.Result.ToolCalls))
 				inputs = append(inputs, float64(a.Result.InputTokens+a.Result.CacheRead))
 				row.TotalCostUSD += a.Result.CostUSD
 				row.CostEstimate = row.CostEstimate || a.Result.CostEstimate
@@ -294,6 +343,10 @@ func Summarize(spec Spec, res batch.Result) Table {
 		row.MedianCostUSD = report.Median(costs)
 		row.MedianDuration = time.Duration(report.Median(durations))
 		row.MedianTurns = report.Median(turns)
+		row.MedianTools = report.Median(calls)
+		if row.Judged > 0 {
+			row.MeanScore = float64(total) / float64(row.Judged)
+		}
 		row.MedianContext = report.Median(inputs)
 		table.Variants = append(table.Variants, row)
 	}
@@ -303,6 +356,7 @@ func Summarize(spec Spec, res batch.Result) Table {
 		for _, v := range spec.Matrix {
 			name := v.name()
 			row := TaskRow{Task: t.ID, Variant: name}
+			total := 0
 			for _, c := range cells {
 				if c.task != t.ID || c.variant != name {
 					continue
@@ -311,6 +365,13 @@ func Summarize(spec Spec, res batch.Result) Table {
 				if c.passed {
 					row.Passed++
 				}
+				if c.judged {
+					row.Judged++
+					total += c.score
+				}
+			}
+			if row.Judged > 0 {
+				row.MeanScore = float64(total) / float64(row.Judged)
 			}
 			if row.Total > 0 {
 				table.Tasks = append(table.Tasks, row)

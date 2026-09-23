@@ -45,6 +45,9 @@ type Spec struct {
 	Tasks       []Task         `json:"tasks"`
 }
 
+// DefaultParallel is how many agents run at once when a spec does not say.
+const DefaultParallel = 2
+
 type Task struct {
 	ID      string `json:"id,omitempty"` // branch hrn/<id> and worktree .hrn/worktrees/<id>; default t1, t2, ...
 	Prompt  string `json:"prompt"`
@@ -55,6 +58,10 @@ type Task struct {
 	Gate        []string       `json:"gate,omitempty"`
 	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
 	Retry       []string       `json:"retry,omitempty"`
+	// Expect is a regular expression the agent's final answer must match. It
+	// is checked before the gates and reported as one, so a task whose answer
+	// is the deliverable ("is there a bug?") can fail on what it said.
+	Expect string `json:"expect,omitempty"`
 }
 
 type Status string
@@ -164,7 +171,7 @@ func (s *Spec) normalize() error {
 		s.Dir = "."
 	}
 	if s.Parallel <= 0 {
-		s.Parallel = 2
+		s.Parallel = DefaultParallel
 	}
 	if s.Mode == "" {
 		s.Mode = agent.ModeAuto
@@ -212,9 +219,27 @@ func (s *Spec) normalize() error {
 		if err := checkGateTimeout(t.GateTimeout); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
+		if _, err := compileExpect(t.Expect); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
 	}
 	return nil
 }
+
+// compileExpect compiles a task's expect pattern; nil when there is none.
+func compileExpect(expr string) (*regexp.Regexp, error) {
+	if expr == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		return nil, fmt.Errorf("expect: %w", err)
+	}
+	return re, nil
+}
+
+// expectCommand is how an expect check is named where a gate command would be.
+func expectCommand(expr string) string { return "expect /" + expr + "/" }
 
 func checkBackends(backend string, retry []string) error {
 	for _, name := range append([]string{backend}, retry...) {
@@ -474,6 +499,10 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 	}
 
 	task := agent.Task{Dir: tr.Worktree, Options: opts}
+	expect, err := compileExpect(t.Expect)
+	if err != nil {
+		return fail(err)
+	}
 
 	for i, name := range backends {
 		b, err := agent.Get(name)
@@ -507,7 +536,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		}
 		notify(Event{Task: t.ID, Kind: "start", Text: fmt.Sprintf("%s in %s", name, tr.Worktree)})
 
-		out, err := runAttempt(ctx, b, t.ID, task, plan, gates, notify)
+		out, err := runAttempt(ctx, b, t.ID, task, plan, expect, gates, notify)
 		tr.Attempts = append(tr.Attempts, out.att)
 		if out.commit != "" {
 			tr.Commit = out.commit
@@ -537,7 +566,7 @@ type attemptOutcome struct {
 // runAttempt runs the agent in the task's worktree, then the gates, then
 // commits whatever was left behind, pass or fail. A returned error aborts the
 // whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, gates []string, notify func(Event)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, gates []string, notify func(Event)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued}
 
@@ -547,7 +576,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 	att.RunID = rec.ID()
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
-	att.Result = b.Run(ctx, task, func(e agent.Event) {
+	att.Result = agent.Run(ctx, b, task, func(e agent.Event) {
 		rec.Event(e)
 		if e.Kind == agent.EventToolCall {
 			notify(Event{Task: id, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
@@ -563,6 +592,16 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	notify(Event{Task: id, Kind: "run", Text: text})
 
 	pass := att.Result.Status == agent.StatusOK
+	if pass && expect != nil {
+		gr := checkExpect(expect, att.Result.Final)
+		att.Gates = append(att.Gates, gr)
+		if gr.ExitCode != 0 {
+			pass = false
+			notify(Event{Task: id, Kind: "gate", Text: "✗ " + gr.Command})
+		} else {
+			notify(Event{Task: id, Kind: "gate", Text: "✓ " + gr.Command})
+		}
+	}
 	if pass {
 		for _, g := range gates {
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
@@ -585,6 +624,19 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		return attemptOutcome{att: att}, fmt.Errorf("commit failed, changes are uncommitted in %s: %v", task.Dir, commitErr)
 	}
 	return attemptOutcome{att: att, commit: sha, pass: pass}, nil
+}
+
+// checkExpect is the expect pattern run as a gate: exit 0 on a match, 1
+// otherwise, with the tail of the answer as the output a retry is shown.
+func checkExpect(re *regexp.Regexp, final string) GateResult {
+	gr := GateResult{Command: expectCommand(re.String()), Output: tail(final, 4000)}
+	if !re.MatchString(final) {
+		gr.ExitCode = 1
+		if strings.TrimSpace(final) == "" {
+			gr.Output = "(the agent gave no final answer)"
+		}
+	}
+	return gr
 }
 
 func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
