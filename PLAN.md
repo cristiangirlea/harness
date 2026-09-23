@@ -582,8 +582,7 @@ order they are worth taking:
    `batch_merge`.
 7. ~~**Release binaries.**~~ Done as PR P. No release has been cut: that, and making the
    repository public, are Cristian's to do.
-8. **`hrn eval diff <a> <b>`.** Two saved evals of the same task set, side by side per
-   variant and task, for "did this model or prompt change help".
+8. ~~**`hrn eval diff <a> <b>`.**~~ Done as PR Q, with `hrn eval list`.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), MCP over HTTP
@@ -627,6 +626,28 @@ the questions).
   version. The first attempt at that step lost its sed backreference on the way into the
   file and would have passed an empty version, which is why the script reads the version
   itself now.
+- 2026-09-23: PR Q: `hrn eval diff` and `hrn eval list` (open item 8; lettered Q because
+  another session used N and P meanwhile). `eval.Compare` matches variants by name and
+  tasks by (task, variant), keeps one-sided rows with a nil side instead of dropping them,
+  and flags a task id whose prompt differs, since that is usually the change being
+  measured but its rows no longer compare like with like. Verified on real records: the
+  greeting eval from 2026-09-22 (sonnet 0%, haiku 100%) re-run with the target line fenced
+  in backticks went to 100% for both; the diff shows it and names the changed prompt. The
+  first prompt's "the line: hx rocks. Do not run git." had put a sentence's full stop right
+  after the target text. Found on the way: `eval.List` sorted by id as if ids were
+  timestamps, but eval ids are random hex, so "newest first" and `-n` were arbitrary; it
+  sorts by start time now, and the list test fails the old way when that is reverted. Also
+  `hrn version` named the commit twice on a checkout build, because Go 1.24+ already puts
+  it in the pseudo-version (and `+dirty` for edits); it says each once now.
+- 2026-09-23: PR Q self-review, 6 findings, 5 fixed and 1 wrong. The real one: variants
+  were matched by name alone, so a variant renamed onto another model, a gate made easier
+  or a changed rubric moved the numbers with nothing said; the diff now notes each, as it
+  already did a changed prompt. Also: `hrn eval list` says how many records it could not
+  read (prune refuses over those same records); `eval.List` is gone in favour of ListAll,
+  whose comment says why it reads every record; the totals moved to `Record.Totals`; and
+  the path-like id test now reaches the id check. The wrong finding was mine: I thought the
+  arrows misaligned the columns because `%-16s` pads by bytes, but Go pads by code points;
+  the alignment test written to prove it passed, and stays as a guard.
 - 2026-09-23: PR N done: `batch`, `batch_show` and `batch_merge` in `hrn mcp`, so a host
   can plan, fan out, read diffs and merge in one conversation. The spec is the batch-file
   JSON with two differences: a relative `dir` resolves against the server's workspace, and

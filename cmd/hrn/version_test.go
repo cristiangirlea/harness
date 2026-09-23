@@ -41,3 +41,22 @@ func TestVersionLineSaysWhichBuildThisIs(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionLineNamesTheCommitOnce(t *testing.T) {
+	// Go 1.24+ builds from a checkout carry a pseudo-version that already ends
+	// in the commit.
+	info := &debug.BuildInfo{GoVersion: "go1.26.4", Main: debug.Module{Version: "v0.0.0-20260923070935-6fe88a3546b8"}, Settings: []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "6fe88a3546b8f00dfeed"},
+		{Key: "vcs.modified", Value: "false"},
+	}}
+	if got := versionLine(info); strings.Count(got, "6fe88a3546b8") != 1 {
+		t.Errorf("%q names the commit more than once", got)
+	}
+	dirty := &debug.BuildInfo{GoVersion: "go1.26.4", Main: debug.Module{Version: "v0.0.0-20260923070935-6fe88a3546b8+dirty"}, Settings: []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "6fe88a3546b8f00dfeed"},
+		{Key: "vcs.modified", Value: "true"},
+	}}
+	if got := versionLine(dirty); strings.Count(got, "6fe88a3546b8") != 1 || strings.Contains(got, "modified") {
+		t.Errorf("%q: the +dirty suffix already says it", got)
+	}
+}
