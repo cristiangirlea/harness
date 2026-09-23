@@ -43,8 +43,15 @@ Go 1.26 or later, nothing else:
 go install github.com/cristiangirlea/harness/cmd/hrn@latest
 ```
 
-Or from a checkout: `go build -o hrn ./cmd/hrn` and `go test ./...`. The binary is
-static and runs on Linux, macOS and Windows; CI tests on Ubuntu and Windows.
+Or download a binary from the repository's releases: one static file per platform
+(Linux, macOS and Windows, each on amd64 and arm64), named
+`hrn_<version>_<os>_<arch>`, with a `SHA256SUMS` file beside them. Or from a checkout:
+`go build -o hrn ./cmd/hrn` and `go test ./...`. CI tests on Ubuntu and Windows.
+
+Releases are cut by pushing a `v*` tag that matches `agent.Version` in
+`internal/agent/agent.go`: the release workflow runs the tests, builds with
+`.github/release.sh`, and publishes. Run the script by hand first to check a release,
+`bash .github/release.sh v0.2.0`, which writes the same files to `dist/`.
 
 ## Commands
 
@@ -564,8 +571,7 @@ in the order it is worth taking:
 2. **Measure the context-editing default.** Server-side clearing is on by default and its
    interaction with prompt caching is unmeasured; one long run with and without it,
    compared on cache reads, settles whether the default is right.
-3. **Release binaries**: a tagged build for Linux, Windows and macOS.
-4. **`hrn eval diff <a> <b>`**, comparing two saved evals of the same task set.
+3. **`hrn eval diff <a> <b>`**, comparing two saved evals of the same task set.
 
 `PLAN.md` is the work queue and the decisions log: every increment so far, what was
 deferred and why. It still calls the binary by its old name, `hx`, in entries written
