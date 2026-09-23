@@ -593,6 +593,17 @@ order they are worth taking:
   into a binary built inside a `git worktree` (`.git` is a file there), so `hrn version`
   shows the commit only for builds from the main checkout; the README says so. Judge runs
   from PR M are not yet protected by a kept eval: add that when #18 has merged.
+- 2026-09-23: housekeeping PR (#19) self-review, 7 findings, all fixed. The serious three
+  were all "prune breaks a reference after all": an unreadable batch or eval record was
+  skipped, so the runs it cited lost their protection (prune now refuses while any record
+  cannot be read); runs were removed before the records citing them, so a failure partway
+  left records pointing at nothing (now records first, runs last); and a run started with
+  --continue did not keep the run it continued (now the whole chain stays). Also: a run
+  with no result that wrote within the last hour is left alone, since it is probably still
+  running and removing it pulls the directory from under its writer; the gate-timeout test
+  asserts the killed gate's own duration instead of the whole batch's wall clock, which
+  would have flaked on the Windows runner; the byte formatter moved to report.Bytes beside
+  the other formatters; and the prune usage line fits the table.
 - 2026-09-22: open-source prep (#17). The binary is renamed from hx to hrn: hx is the Helix
   editor's binary, so nobody with Helix on PATH could have installed this. Every word in
   the harness vocabulary is already an agent tool on GitHub (harn, bridle, reins, tack, yoke

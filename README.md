@@ -483,9 +483,13 @@ started before the cutoff, and prints what it freed; `--dry-run` lists them inst
 removes nothing, and `--keep N` spares the newest N runs whatever their age. It refuses to
 run without `--older-than`. Records cite each other, so it works from the top down and
 never breaks a reference: an eval it keeps keeps its batch, a batch it keeps keeps every
-run it made, and a batch whose worktrees are still on disk stays with its runs, because
-`hrn batch rm` needs that record to remove them (it says so, and names the command). A
-directory in `runs/` that is not a run id is never touched.
+run it made, a run it keeps keeps the run it `--continue`d from, and a batch whose
+worktrees are still on disk stays with its runs, because `hrn batch rm` needs that record
+to remove them (it says so, and names the command). A run with no result that wrote in
+the last hour is taken to be still running and stays; a directory in `runs/` that is not
+a run id is never touched. If any batch or eval record cannot be read, prune refuses:
+that record may cite anything. Records go before the runs they cite, so a failure partway
+never leaves a record pointing at nothing.
 
 ## Layout
 
