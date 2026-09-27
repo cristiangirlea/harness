@@ -598,6 +598,13 @@ the questions).
   as its model, so `claude-haiku-4-5-20251001` no longer reads as unpriced. And a model
   with no price now says so at the start of every run, not only when `--max-cost` is set,
   because a cost of zero otherwise looks like free.
+- 2026-09-27: PR S self-review, 1 finding, fixed: the cost was priced at the requested
+  model for the whole run, but with server-side fallbacks on (Opus 5 and Fable 5.1) a
+  refused turn can be served by another model at another price, and that estimate is
+  also what `--max-cost` checks. Each turn is now priced at the model its response names,
+  falling back to the requested model when the table has no price for it. A three-turn
+  fake run served by Opus, Sonnet and an unlisted model fails in the old way when the fix
+  is reverted. How the API bills the refused part of such a turn is not modelled.
 - 2026-09-23: PR R done: getting the api backend ready for its first real run, since no key
   exists here. (1) The server's context-management report is recorded verbatim as an info
   event per turn. Its location in the stream is not documented here either, so the parser
