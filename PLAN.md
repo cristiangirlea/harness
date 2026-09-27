@@ -574,10 +574,8 @@ order they are worth taking:
    of passes that changed nothing.
 5. **A real api run.** The backend has never run against the API: no credentials on this
    machine. Everything in it is covered by a fake server. `scripts/api-check.sh` (PR R)
-   does this and item 2 in one command once a key is set. Also check then: the price
-   table has no entry for the newest models (Opus 5.5, Fable 5.1 is there), and a dated
-   model id such as claude-haiku-4-5-20251001 misses the table, so `--max-cost` cannot be
-   enforced for either until they are added.
+   does this and item 2 in one command once a key is set. The price table is current as
+   of PR S; compare the first real runs' estimates with the console's bill.
 6. ~~**A `batch` tool in `hrn mcp`.**~~ Done as PR N: `batch`, `batch_show` and
    `batch_merge`.
 7. ~~**Release binaries.**~~ Done as PR P. No release has been cut: that, and making the
@@ -591,6 +589,15 @@ the questions).
 
 ## Decisions log
 
+- 2026-09-27: PR S done: the api backend's price table. Prices come from Anthropic's
+  published first-party list (dated 2026-06-24 in the reference used). Three changes. The
+  newest models are in it: Opus 5.5 ($4/$20), Mythos 5.1, and the Opus 4.6/4.7 and
+  Sonnet 4.6 generation. Cache reads are per model where they are not 0.1x input: Fable
+  5.1 at $0.25 and Opus 5.5 at $0.20, where the old flat 0.1x put Fable 5.1's at $1.00,
+  four times too high. A dated snapshot (`-20251001`, or Vertex's `@20251001`) is priced
+  as its model, so `claude-haiku-4-5-20251001` no longer reads as unpriced. And a model
+  with no price now says so at the start of every run, not only when `--max-cost` is set,
+  because a cost of zero otherwise looks like free.
 - 2026-09-23: PR R done: getting the api backend ready for its first real run, since no key
   exists here. (1) The server's context-management report is recorded verbatim as an info
   event per turn. Its location in the stream is not documented here either, so the parser

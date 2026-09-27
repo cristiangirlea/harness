@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -89,9 +90,13 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		model = DefaultAPIModel
 	}
 	res := Result{Backend: b.Name(), Model: model, CostEstimate: true}
-	if _, priced := prices[model]; task.MaxCostUSD > 0 && !priced {
-		emit(Event{Time: time.Now(), Kind: EventInfo,
-			Text: fmt.Sprintf("max_cost cannot be enforced: no price known for %s", model)})
+	if _, priced := priceOf(model); !priced {
+		// Without a price the cost reads as zero, which looks like free.
+		text := fmt.Sprintf("no price known for %s: its cost is not estimated", model)
+		if task.MaxCostUSD > 0 {
+			text = fmt.Sprintf("max_cost cannot be enforced: no price known for %s", model)
+		}
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text})
 	}
 	// req is built below; saveConversation closes over it so every exit path
 	// leaves a resumable history behind.
@@ -474,22 +479,54 @@ func supportsDefaultFallbacks(model string) bool {
 	return model == "claude-opus-5" || model == "claude-fable-5-1"
 }
 
-// price per million tokens: input, output. Cache reads bill at 0.1x input and
-// 5-minute cache writes at 1.25x input.
-var prices = map[string][2]float64{
-	"claude-fable-5-1": {10, 50},
-	"claude-fable-5":   {10, 50},
-	"claude-opus-5":    {5, 25},
-	"claude-opus-4-8":  {5, 25},
-	"claude-sonnet-5":  {2, 10},
-	"claude-haiku-4-5": {1, 5},
+// price is USD per million tokens. The API returns token counts, never money,
+// so every cost hrn shows for the api backend comes from this table.
+type price struct {
+	in, out float64
+	// cacheRead is set where it is not the usual 0.1x input: the newest
+	// models price cache reads on their own. 5-minute cache writes are 1.25x
+	// input on every model.
+	cacheRead float64
+}
+
+// prices are Anthropic's first-party list prices, as published on 2026-06-24.
+// Bedrock and Vertex price separately; their costs here are estimates at best.
+var prices = map[string]price{
+	"claude-fable-5-1":  {in: 10, out: 50, cacheRead: 0.25},
+	"claude-mythos-5-1": {in: 10, out: 50},
+	"claude-fable-5":    {in: 10, out: 50},
+	"claude-opus-5-5":   {in: 4, out: 20, cacheRead: 0.20},
+	"claude-opus-5":     {in: 5, out: 25},
+	"claude-opus-4-8":   {in: 5, out: 25},
+	"claude-opus-4-7":   {in: 5, out: 25},
+	"claude-opus-4-6":   {in: 5, out: 25},
+	"claude-sonnet-5":   {in: 2, out: 10},
+	"claude-sonnet-4-6": {in: 3, out: 15},
+	"claude-haiku-4-5":  {in: 1, out: 5},
+}
+
+// datedSuffix is a snapshot date on a model id: -20251001, or @20251001 on
+// Vertex. The snapshot bills as its model.
+var datedSuffix = regexp.MustCompile(`[-@]\d{8}$`)
+
+// priceOf finds a model's price, looking a dated snapshot id up by its model.
+func priceOf(model string) (price, bool) {
+	if p, ok := prices[model]; ok {
+		return p, true
+	}
+	p, ok := prices[datedSuffix.ReplaceAllString(model, "")]
+	return p, ok
 }
 
 func estimateCost(model string, r Result) float64 {
-	p, ok := prices[model]
+	p, ok := priceOf(model)
 	if !ok {
 		return 0
 	}
-	in := float64(r.InputTokens) + 0.1*float64(r.CacheRead) + 1.25*float64(r.CacheWrite)
-	return (in*p[0] + float64(r.OutputTokens)*p[1]) / 1e6
+	cacheRead := p.cacheRead
+	if cacheRead == 0 {
+		cacheRead = 0.1 * p.in
+	}
+	return (float64(r.InputTokens)*p.in + float64(r.CacheRead)*cacheRead +
+		1.25*float64(r.CacheWrite)*p.in + float64(r.OutputTokens)*p.out) / 1e6
 }
