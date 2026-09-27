@@ -269,11 +269,15 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			msg, err = client.stream(ctx, req, onDelta, onBlock)
 		}
 		if msg != nil {
-			res.InputTokens += msg.Usage.InputTokens
-			res.OutputTokens += msg.Usage.OutputTokens
-			res.CacheRead += msg.Usage.CacheReadInputTokens
-			res.CacheWrite += msg.Usage.CacheCreationInputTokens
-			res.CostUSD = estimateCost(model, res)
+			turn := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens,
+				CacheRead: msg.Usage.CacheReadInputTokens, CacheWrite: msg.Usage.CacheCreationInputTokens}
+			res.InputTokens += turn.InputTokens
+			res.OutputTokens += turn.OutputTokens
+			res.CacheRead += turn.CacheRead
+			res.CacheWrite += turn.CacheWrite
+			// Each turn at the price of the model that served it: a server-side
+			// fallback can answer a refused turn with another model.
+			res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
 		}
 		if err != nil {
 			if ctx.Err() != nil {
@@ -516,6 +520,15 @@ func priceOf(model string) (price, bool) {
 	}
 	p, ok := prices[datedSuffix.ReplaceAllString(model, "")]
 	return p, ok
+}
+
+// servedModel is the model to price a turn at: the one the response names when
+// the table knows it, otherwise the one the run asked for.
+func servedModel(reported, requested string) string {
+	if _, ok := priceOf(reported); ok {
+		return reported
+	}
+	return requested
 }
 
 func estimateCost(model string, r Result) float64 {

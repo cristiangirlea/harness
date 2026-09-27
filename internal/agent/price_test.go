@@ -31,6 +31,35 @@ func TestEstimateCost(t *testing.T) {
 	}
 }
 
+// servedBy rewrites the model a turn's message_start reports.
+func servedBy(turn []string, model string) []string {
+	out := append([]string(nil), turn...)
+	out[0] = strings.Replace(out[0], `"model":"claude-opus-5"`, `"model":"`+model+`"`, 1)
+	return out
+}
+
+func TestAPIPricesEachTurnAtTheModelThatServedIt(t *testing.T) {
+	dir := t.TempDir()
+	// Asked for Opus 5; the second turn comes back from Sonnet 5, as a
+	// server-side fallback can do, and the third from a model hrn cannot price.
+	turns := [][]string{
+		toolTurn("t1", "list_files", `{}`),
+		servedBy(toolTurn("t2", "list_files", `{}`), "claude-sonnet-5"),
+		servedBy(textTurn("done"), "claude-unlisted-x"),
+	}
+	res, _, _ := runFake(t, turns, Task{Prompt: "go", Dir: dir, Options: Options{Mode: ModeReadOnly, Model: "claude-opus-5"}})
+	if res.Status != StatusOK {
+		t.Fatalf("result = %+v", res)
+	}
+	// Every turn is 100 input and 20 output tokens.
+	opus := (100*5.0 + 20*25.0) / 1e6
+	sonnet := (100*2.0 + 20*10.0) / 1e6
+	want := opus + sonnet + opus // the unpriced model falls back to the one asked for
+	if math.Abs(res.CostUSD-want) > 1e-12 {
+		t.Errorf("cost = %v, want %v: each turn at the price of the model that served it", res.CostUSD, want)
+	}
+}
+
 func TestAPISaysWhenCostIsNotEstimated(t *testing.T) {
 	var infos []string
 	b := NewAPIBackend()
