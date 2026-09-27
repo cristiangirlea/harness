@@ -96,6 +96,15 @@ carry on; the timeout applies to them all the same. The cost ceiling is checked 
 hrn's own estimate, so a model with no price in the table cannot be capped and the run
 says so instead of pretending.
 
+Where a cost comes from depends on the backend. The claude and opencode CLIs report one
+themselves; on a subscription that figure is what the run would cost at API list
+prices, not a charge. codex and gemini report none. The API returns token counts only,
+so the api backend prices them from a table in `internal/agent/api.go`: Anthropic's
+first-party list prices per model, including the newer models' own cache-read prices,
+with cache writes at 1.25x input. A dated snapshot id such as
+`claude-haiku-4-5-20251001` is priced as its model. A model missing from the table has
+no estimate, and the run says so at the start rather than showing a cost of zero.
+
 ## Backends
 
 | Backend | Billing | How it runs | Status |
