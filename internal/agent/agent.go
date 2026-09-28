@@ -53,6 +53,11 @@ type Task struct {
 	// The api backend seeds its history with it, then appends Prompt.
 	Resume *Conversation `json:"-"`
 
+	// ForkSession is the session id an earlier claude or codex run reported.
+	// The CLI starts from a copy of that session, so the earlier run's own
+	// session stays as it was and the same run can be continued twice.
+	ForkSession string `json:"-"`
+
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
 }
@@ -123,6 +128,9 @@ type Result struct {
 	CostUSD      float64       `json:"cost_usd,omitempty"`
 	CostEstimate bool          `json:"cost_is_estimate,omitempty"`
 	Duration     time.Duration `json:"duration_ns"`
+	// Session is the CLI's own session id (claude, codex), so a follow-up run
+	// can fork it, and a person can open it in that CLI.
+	Session string `json:"session,omitempty"`
 }
 
 // UnmarshalJSON reads a task as written today and as records before 0.3 wrote
