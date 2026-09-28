@@ -111,7 +111,7 @@ no estimate, and the run says so at the start rather than showing a cost of zero
 |---|---|---|---|
 | `api` | per token | The harness's own loop: Messages API (streaming, adaptive thinking, prompt caching, server-side refusal fallbacks on `claude-opus-5`) + client-side tools below + MCP tools. Needs `ANTHROPIC_API_KEY` (or an OAuth `ANTHROPIC_AUTH_TOKEN`); `ANTHROPIC_BASE_URL` overrides the endpoint. | Every path is covered by tests against a fake API server; it has not yet run against the real API. |
 | `claude` | your Claude subscription | `claude -p --output-format stream-json`. Found on PATH, `~/.local/bin`, npm, or the Claude desktop app's bundled build (that build needs its own `claude /login` first). | Verified end to end: `run`, `batch`, `eval`, and Claude Code delegating through `hrn mcp`. |
-| `codex` | your ChatGPT subscription | `codex exec --json`. | Parser written against the documented event format; not yet run for real. |
+| `codex` | your ChatGPT subscription | `codex exec --json`. Found on PATH, npm, or the Codex desktop app's bundled build. | `run` and `--continue` (fork, and handing a claude run over) verified on codex-cli 0.155; not exercised by `batch` or `eval`. |
 | `gemini` | your Google login | `gemini -o json` (single JSON result, no live stream). | Not yet run for real. |
 | `opencode` | whatever opencode is configured with | `opencode run --format json`, prompt attached as a file. | `run` verified (the example above); not exercised by the later layers. |
 
@@ -127,7 +127,7 @@ Default backend: `api` when credentials exist, otherwise `claude`.
 |---|---|---|---|---|---|
 | `readonly` | read tools only (write tools not offered) | `plan` | `--sandbox read-only` | `default` | its config |
 | `ask` (default) | reads auto; writes + commands prompt y/N | `default` | `--sandbox read-only` | `default` | its config |
-| `auto` | reads + edits auto; commands prompt | `acceptEdits` | `--full-auto` | `auto_edit` | its config |
+| `auto` | reads + edits auto; commands prompt | `acceptEdits` | `--sandbox workspace-write` | `auto_edit` | its config |
 | `yolo` | everything | `bypassPermissions` | bypass sandbox | `yolo` | `--auto` |
 
 When the prompt comes from stdin there is no terminal to ask, so anything needing
@@ -194,24 +194,53 @@ it. Nothing about it goes back into the history.
 
 ### Continuing a run
 
-The api backend saves its message history next to the transcript, so a finished run can
-be picked up where it stopped:
+A finished run can be picked up where it stopped, on the backend that ran it or on
+another one:
 
 ```bash
 hrn run --continue 20260921-095628-f18a6d "now fix the failing test"
+hrn run --continue 20260921-095628-f18a6d -b codex "review what claude just did"
 ```
 
-The follow-up inherits the earlier run's backend, workspace, mode and model unless you
-pass those flags; the new run is recorded separately and its `task.json` says which run
-it continues. A history that ends on a tool call the model never got an answer for is
-not saved, because the API refuses to resume from one. Only the api backend saves a
-conversation: the agent CLIs own their own session state, so continuing one of those
-runs is refused with a clear message. The MCP `run` tool takes the same thing as
-`continue_run_id`, and batch attempts save their conversations too, so a failed attempt
+The follow-up is a new run whose `task.json` says which run it continues, so a
+conversation is a chain of runs. It inherits the earlier run's backend, workspace and
+mode unless you pass those flags, and its model only from runs on the same backend: a
+claude model name means nothing to codex. The MCP `run` tool takes the same thing as
+`continue_run_id`.
+
+What the backend carries on from:
+
+| Backend | Saves | A follow-up on it |
+|---|---|---|
+| `api` | its message history, `messages.json` | resumes that conversation |
+| `claude` | the session id the CLI reports | `--resume <id> --fork-session` |
+| `codex` | the thread id the CLI reports | `codex exec … fork <id>` |
+| `gemini`, `opencode` | nothing yet | starts a new session |
+
+A follow-up looks back along the chain for the latest run on its own backend that saved
+something, carries on from that, and is handed the turns after it as a transcript at the
+top of its prompt: each turn's request and final answer, not the tool calls or the
+reasoning, oldest turns left out first past 32 KiB. With nothing saved in the chain it
+starts fresh and gets the whole chain that way. So claude → codex → claude works: codex
+starts fresh with claude's turn, and claude then forks its own session and is told only
+what codex did. The run records the prompt as you typed it; what went before it is saved
+beside the run as `handoff.md`, and the run's first info lines say what was picked up.
+
+A session is forked, never resumed in place, so every run keeps a session of its own
+that nothing appends to later, and continuing the same run twice gives two separate
+branches, the way api runs do. `hrn show` prints the session id, so a run can also be
+opened by hand: `claude --resume <id>` from the run's workspace, or `codex resume <id>`.
+A session is only forked in the workspace it ran in: claude finds a session from the
+directory it started in, and the session refers to that workspace's files.
+
+Continuing on the same backend refuses rather than quietly starting over when that
+backend saved nothing: a run from before session ids were recorded, a gemini run, or an
+api history that ended on a tool call the model never got an answer for, which the API
+refuses to resume from. Batch attempts save their conversations too, so a failed attempt
 can be picked up by hand.
 
-Thinking blocks belong to the model that produced them. Continuing on a different model
-is allowed and warned about: the API serves the conversation without the earlier
+Thinking blocks belong to the model that produced them. Continuing an api conversation
+on a different model is allowed and warned about: the API serves it without the earlier
 thinking.
 
 ### Project instructions
@@ -574,8 +603,11 @@ pairs as data.
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
+- `handoff.md` — for a follow-up, the transcript of earlier turns its backend was
+  given before the prompt (see [Continuing a run](#continuing-a-run))
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
-  tokens, cache, cost (`cost_is_estimate` for the api backend), duration
+  tokens, cache, cost (`cost_is_estimate` for the api backend), duration, and the
+  claude or codex `session` id
 
 `hrn runs prune --older-than 30d` removes runs, batch records and eval records that
 started before the cutoff, and prints what it freed; `--dry-run` lists them instead and
@@ -602,6 +634,7 @@ internal/batch/    orchestrator: parallel worktrees, gates, retries, batch recor
 internal/eval/     a batch across a matrix of variants, scored per variant and per task
 internal/report/   aggregation over run and batch records (hrn report; reused by eval)
 internal/runlog/   run recording
+internal/followup/ continuing a run: what the backend picks up, what it is handed
 ```
 
 ## Status and what is open
