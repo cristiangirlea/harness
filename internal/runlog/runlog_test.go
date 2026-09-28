@@ -135,3 +135,59 @@ func TestLoadConversation(t *testing.T) {
 		}
 	}
 }
+
+func TestChainFollowsContinuesOldestFirst(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	task := agent.Task{Prompt: "p", Dir: t.TempDir()}
+	var ids []string
+	prev := ""
+	for _, backend := range []string{"claude", "codex", "claude"} {
+		w, err := CreateContinuing(backend, task, prev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(agent.Result{Backend: backend, Status: agent.StatusOK}); err != nil {
+			t.Fatal(err)
+		}
+		prev = w.ID()
+		ids = append(ids, prev)
+	}
+	chain, missing, err := Chain(ids[2])
+	if err != nil || missing != "" || len(chain) != 3 {
+		t.Fatalf("chain = %+v, missing = %q, err = %v", chain, missing, err)
+	}
+	for i, rec := range chain {
+		if rec.ID != ids[i] {
+			t.Errorf("chain[%d] = %s, want %s", i, rec.ID, ids[i])
+		}
+	}
+	if chain, _, err := Chain(ids[0]); err != nil || len(chain) != 1 {
+		t.Errorf("a run that continues nothing is a chain of one: %+v err=%v", chain, err)
+	}
+}
+
+func TestChainStopsAtAMissingRunAndRefusesALoop(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := CreateContinuing("codex", agent.Task{Prompt: "p"}, "20200101-000000-gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	chain, missing, err := Chain(w.ID())
+	if err != nil || len(chain) != 1 || missing != "20200101-000000-gone" {
+		t.Errorf("chain = %+v, missing = %q, err = %v", chain, missing, err)
+	}
+
+	// Records are written by hand here: hrn itself never makes a loop.
+	a, b := "20260101-000000-aaaaaa", "20260101-000001-bbbbbb"
+	write(t, filepath.Join(Root(), a), "result.json", `{"id":"`+a+`","continues":"`+b+`"}`)
+	write(t, filepath.Join(Root(), b), "result.json", `{"id":"`+b+`","continues":"`+a+`"}`)
+	if _, _, err := Chain(b); err == nil || !strings.Contains(err.Error(), "loops") {
+		t.Errorf("a loop should be refused, got %v", err)
+	}
+	if _, _, err := Chain("20200101-000000-nope"); err == nil || !strings.Contains(err.Error(), "20200101-000000-nope") {
+		t.Errorf("an unknown run should be named, got %v", err)
+	}
+}
