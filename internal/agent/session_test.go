@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -130,5 +131,15 @@ func TestNewestFilePrefersTheLatestBuild(t *testing.T) {
 	}
 	if got := newestFile(filepath.Join(root, "nope"), "codex.exe"); got != nil {
 		t.Errorf("a missing root lists nothing, got %q", got)
+	}
+}
+
+func TestTheForkedSessionIsRecorded(t *testing.T) {
+	data, err := json.Marshal(Task{Prompt: "p", ForkSession: "0199aaaa-bbbb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"fork_session":"0199aaaa-bbbb"`) {
+		t.Errorf("task.json should say which session a run started from: %s", data)
 	}
 }

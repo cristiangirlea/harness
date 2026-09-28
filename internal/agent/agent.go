@@ -56,7 +56,7 @@ type Task struct {
 	// ForkSession is the session id an earlier claude or codex run reported.
 	// The CLI starts from a copy of that session, so the earlier run's own
 	// session stays as it was and the same run can be continued twice.
-	ForkSession string `json:"-"`
+	ForkSession string `json:"fork_session,omitempty"`
 
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
