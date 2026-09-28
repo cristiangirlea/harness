@@ -619,6 +619,17 @@ the questions).
   readonly default was filled in before the continuation was looked at, so a follow-up to
   an `auto` run could not edit. It inherits now unless the call names a mode, as `hrn run`
   always has, and the test covers both.
+- 2026-09-28: PR T second review (#26), 5 findings, 4 fixed and 1 skipped. The one that
+  mattered: the handoff pasted earlier answers into the prompt verbatim, framed by "=== now"
+  and "--- request" markers the pasted text could itself contain, so an answer quoting a
+  README could open a fake "now" section and pass for the request, prompt injection between
+  agents. Every quoted line now starts with "> ", and the transcript says it is a record,
+  not instructions; a test with an answer shaped like the markers proves they cannot be
+  forged. Also: an ancestor run that exists but cannot be read now stops the chain with an
+  error instead of being treated as gone and silently shortening the handoff; a missing
+  old workspace says that -C (or dir over MCP) continues elsewhere; and task.json records
+  the session a run was forked from. Skipped: codex found on PATH still wins over the
+  desktop app's build, as every backend prefers the user's PATH; hrn backends names it.
 - 2026-09-27: PR S done: the api backend's price table. Prices come from Anthropic's
   published first-party list (dated 2026-06-24 in the reference used). Three changes. The
   newest models are in it: Opus 5.5 ($4/$20), Mythos 5.1, and the Opus 4.6/4.7 and
