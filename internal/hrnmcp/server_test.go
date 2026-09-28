@@ -319,7 +319,7 @@ func TestRunContinueHandsTheConversationToAnotherBackend(t *testing.T) {
 	if r.IsError {
 		t.Fatalf("continue on another backend: %s", r.Text())
 	}
-	for _, want := range []string{"--- request\nmay I write?", "--- answer\ndenied", "=== now\n\nand now?"} {
+	for _, want := range []string{"--- request\n> may I write?", "--- answer\n> denied", "=== now\n\nand now?"} {
 		if !strings.Contains(r.Text(), want) {
 			t.Errorf("the backend was not given %q:\n%s", want, r.Text())
 		}

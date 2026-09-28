@@ -165,7 +165,7 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	if task.Mode != agent.ModeAuto || task.Model != "" || task.Dir != recs[0].Task.Dir {
 		t.Errorf("mode=%s model=%q dir=%q", task.Mode, task.Model, task.Dir)
 	}
-	if !strings.Contains(task.Prompt, "--- request\nfirst\n--- answer\ndone") || !strings.HasSuffix(task.Prompt, "second") {
+	if !strings.Contains(task.Prompt, "--- request\n> first\n--- answer\n> done") || !strings.HasSuffix(task.Prompt, "second") {
 		t.Errorf("prompt:\n%s", task.Prompt)
 	}
 
