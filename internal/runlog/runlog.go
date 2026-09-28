@@ -255,6 +255,11 @@ func Chain(id string) (chain []Record, missing string, err error) {
 			if next == id {
 				return nil, "", err
 			}
+			if !errors.Is(err, os.ErrNotExist) {
+				// Handing over less history than exists, silently, is worse
+				// than asking for the record to be fixed or removed.
+				return nil, "", fmt.Errorf("run %s continues %s, which cannot be read: %w", id, next, err)
+			}
 			missing = next
 			break
 		}

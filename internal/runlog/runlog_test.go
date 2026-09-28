@@ -191,3 +191,29 @@ func TestChainStopsAtAMissingRunAndRefusesALoop(t *testing.T) {
 		t.Errorf("an unknown run should be named, got %v", err)
 	}
 }
+
+func TestChainRefusesAnUnreadableAncestor(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	first, err := Create("codex", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := CreateContinuing("claude", agent.Task{Prompt: "q"}, first.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	// The first run is there, but its record is half-written.
+	if err := os.WriteFile(filepath.Join(first.Dir(), "result.json"), []byte("{half"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chain, missing, err := Chain(second.ID())
+	if err == nil || !strings.Contains(err.Error(), "cannot be read") {
+		t.Errorf("chain = %d runs, missing = %q, err = %v: an unreadable run is not a gone one", len(chain), missing, err)
+	}
+}
