@@ -13,7 +13,10 @@ jobs:
         # Windows runners bill at twice the Linux rate on a private repo, so pull
         # requests test on Linux only; every push to main still tests both.
         os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
-    runs-on: ${{ matrix.os }}
+    # The Linux leg runs on the local cluster's runners when the repository variable CI_RUNNER
+    # names them (infra, P2), and on GitHub's otherwise; matrix.os keeps its value either way,
+    # so the steps' conditions below do not change.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && (vars.CI_RUNNER || 'ubuntu-latest') || matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
