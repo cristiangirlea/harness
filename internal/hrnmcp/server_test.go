@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -305,5 +306,38 @@ func TestApprovalPromptSaysWhatIsBeingApproved(t *testing.T) {
 	s.mu.Unlock()
 	if !strings.Contains(progress, "allowed write_file") {
 		t.Errorf("the decision should reach the host: %q", progress)
+	}
+}
+
+func TestRunContinueHandsTheConversationToAnotherBackend(t *testing.T) {
+	s := connect(t, t.TempDir())
+	first := s.call(t, "run", `{"prompt":"may I write?","backend":"stub-ask","mode":"auto"}`)
+	id := first.StructuredContent.(map[string]any)["run_id"].(string)
+
+	// stub echoes its prompt, so the answer shows what the backend was given.
+	r := s.call(t, "run", `{"prompt":"and now?","backend":"stub","continue_run_id":"`+id+`"}`)
+	if r.IsError {
+		t.Fatalf("continue on another backend: %s", r.Text())
+	}
+	for _, want := range []string{"--- request\n> may I write?", "--- answer\n> denied", "=== now\n\nand now?"} {
+		if !strings.Contains(r.Text(), want) {
+			t.Errorf("the backend was not given %q:\n%s", want, r.Text())
+		}
+	}
+	next := r.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(next)
+	if err != nil || rec.Continues != id || rec.Task.Prompt != "and now?" {
+		t.Errorf("the record should keep the prompt as sent by the caller and link the chain: %+v err=%v", rec, err)
+	}
+	if rec.Task.Mode != agent.ModeAuto {
+		t.Errorf("mode = %s, want auto inherited from the earlier run rather than the readonly default", rec.Task.Mode)
+	}
+	if _, err := os.Stat(filepath.Join(runlog.Root(), next, "handoff.md")); err != nil {
+		t.Errorf("handoff.md: %v", err)
+	}
+	// A mode named in the call still wins.
+	r = s.call(t, "run", `{"prompt":"look only","backend":"stub","mode":"readonly","continue_run_id":"`+id+`"}`)
+	if rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string)); err != nil || rec.Task.Mode != agent.ModeReadOnly {
+		t.Errorf("an explicit mode should override the inherited one: %+v err=%v", rec.Task, err)
 	}
 }

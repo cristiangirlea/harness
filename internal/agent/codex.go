@@ -2,16 +2,28 @@ package agent
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"time"
 )
 
 // ---- codex ----------------------------------------------------------------
 func NewCodexBackend() *CLIBackend {
 	return &CLIBackend{
-		name:        "codex",
-		candidates:  func() []string { return npmShim("codex") },
+		name: "codex",
+		candidates: func() []string {
+			c := npmShim("codex")
+			// The Codex desktop app ships its own CLI, in one directory per build.
+			if runtime.GOOS == "windows" {
+				c = append(c, newestFile(filepath.Join(os.Getenv("LOCALAPPDATA"), "OpenAI", "Codex", "bin"), "codex.exe")...)
+			}
+			return c
+		},
 		promptStdin: true,
 		args: func(t Task, _ string) []string {
+			// exec's own options go before a fork subcommand, which applies them.
 			a := []string{"exec", "--json", "--skip-git-repo-check", "-C", t.Dir}
 			if t.Model != "" {
 				a = append(a, "-m", t.Model)
@@ -20,19 +32,57 @@ func NewCodexBackend() *CLIBackend {
 			case ModeReadOnly, ModeAsk:
 				a = append(a, "--sandbox", "read-only")
 			case ModeAuto:
-				a = append(a, "--full-auto")
+				// What --full-auto meant before codex 0.155 dropped it: exec never
+				// asks, so the sandbox is the whole policy.
+				a = append(a, "--sandbox", "workspace-write")
 			case ModeYolo:
 				a = append(a, "--dangerously-bypass-approvals-and-sandbox")
+			}
+			if t.ForkSession != "" {
+				a = append(a, "fork", t.ForkSession)
 			}
 			return append(a, "-")
 		},
 		parse: parseCodexStream,
+		forks: true,
 	}
 }
+
+// newestFile lists root/<dir>/name for every subdirectory that has one, most
+// recently modified first. The Codex app names its build directories by hash,
+// so their names say nothing about which is current.
+func newestFile(root, name string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	type found struct {
+		path string
+		mod  time.Time
+	}
+	var files []found
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		p := filepath.Join(root, e.Name(), name)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			files = append(files, found{p, info.ModTime()})
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = f.path
+	}
+	return out
+}
+
 func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 	var l struct {
-		Type string `json:"type"`
-		Item struct {
+		Type     string `json:"type"`
+		ThreadID string `json:"thread_id"`
+		Item     struct {
 			Type             string `json:"type"`
 			Text             string `json:"text"`
 			Command          string `json:"command"`
@@ -51,6 +101,9 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 	}
 	now := time.Now()
 	switch l.Type {
+	case "thread.started":
+		// A fork reports its new thread here, not the one it copied.
+		res.Session = l.ThreadID
 	case "item.started":
 		if l.Item.Type == "command_execution" {
 			emit(Event{Time: now, Kind: EventToolCall, Tool: "shell", Text: l.Item.Command})

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -51,7 +52,10 @@ func runProperties(backends []any, defaultDir string) map[string]any {
 	props["prompt"] = str("The task, as you would brief an engineer.")
 	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: api when API credentials exist, otherwise claude."}
 	props["dir"] = str("Workspace directory. Default: " + defaultDir)
-	props["continue_run_id"] = str("Continue a finished api run: its conversation, workspace, mode and model, unless overridden here.")
+	props["continue_run_id"] = str("Continue a finished run, in its workspace and mode unless dir or mode say otherwise. " +
+		"On the same backend it carries on from that run's conversation (api) or a fork of its session (claude, codex). " +
+		"On another backend the earlier turns are handed over as a transcript, so one conversation can move between agents. " +
+		"The model is inherited only from runs on the same backend.")
 	return props
 }
 
@@ -104,34 +108,24 @@ func runTool(defaultDir string) mcp.Tool {
 			if strings.TrimSpace(args.Prompt) == "" {
 				return mcp.CallResult{}, errors.New("prompt is required")
 			}
-			if args.Mode == "" {
+			modeGiven := args.Mode != ""
+			if !modeGiven {
 				args.Mode = agent.ModeReadOnly
 			}
 			if err := args.Options.Validate(); err != nil {
 				return mcp.CallResult{}, err
 			}
-			var resume *agent.Conversation
+			var plan followup.Plan
 			if args.ContinueRunID != "" {
-				prev, conv, err := runlog.LoadConversation(args.ContinueRunID)
+				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model})
 				if err != nil {
 					return mcp.CallResult{}, err
 				}
-				if args.Backend == "" {
-					args.Backend = prev.Backend
+				args.Backend, args.Dir, args.Model = plan.Backend, plan.Dir, plan.Model
+				// As hrn run does: the earlier run's mode, unless this call names one.
+				if !modeGiven && plan.Prev.Task.Mode != "" {
+					args.Mode = plan.Prev.Task.Mode
 				}
-				if args.Backend != "api" {
-					return mcp.CallResult{}, fmt.Errorf("continue is supported for the api backend only, not %s", args.Backend)
-				}
-				if args.Dir == "" && prev.Task.Dir != "" {
-					args.Dir = prev.Task.Dir
-				}
-				if args.Model == "" {
-					// What the earlier run asked for, not what the API reported.
-					if args.Model = prev.Task.Model; args.Model == "" {
-						args.Model = conv.Model
-					}
-				}
-				resume = &conv
 			}
 			// The inherited workspace is checked like any other.
 			dir := args.Dir
@@ -150,7 +144,7 @@ func runTool(defaultDir string) mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
-			task := agent.Task{Prompt: args.Prompt, Dir: dir, Options: args.Options, Resume: resume}
+			task := agent.Task{Prompt: args.Prompt, Dir: dir, Options: args.Options}
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
@@ -174,6 +168,7 @@ func runTool(defaultDir string) mcp.Tool {
 					call.Progress("error: " + tools.OneLine(e.Text, 200))
 				}
 			}
+			plan.Apply(&task, rec.Dir(), emit)
 			res := agent.Run(ctx, b, task, emit)
 			if err := rec.Close(res); err != nil {
 				call.Progress("saving run: " + err.Error())
@@ -368,12 +363,17 @@ func approver(ctx context.Context, call mcp.Call, runID string) func(agent.Appro
 // call is denied; a host that never answers must not hold a run open.
 const approvalTimeout = 5 * time.Minute
 
-// continues renders what a run followed, for the show header.
+// continues renders what a run followed and the session it left, for the
+// show header.
 func continues(rec runlog.Record) string {
-	if rec.Continues == "" {
-		return ""
+	s := ""
+	if rec.Continues != "" {
+		s += " · continues " + rec.Continues
 	}
-	return " · continues " + rec.Continues
+	if rec.Result.Session != "" {
+		s += " · session " + rec.Result.Session
+	}
+	return s
 }
 
 func summary(runID string, res agent.Result) string {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -33,9 +34,24 @@ type CLIBackend struct {
 	parse func(line []byte, emit func(Event), res *Result) bool
 	// finalize runs after exit with all of stdout, for single-JSON outputs.
 	finalize func(stdout []byte, emit func(Event), res *Result)
+	// forks is set when args honours Task.ForkSession and parse records
+	// Result.Session.
+	forks bool
 }
 
 func (c *CLIBackend) Name() string { return c.name }
+
+// ForksSessions reports whether the CLI can start from a copy of an earlier
+// run's session.
+func (c *CLIBackend) ForksSessions() bool { return c.forks }
+
+var sessionID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
+
+// ForksSessions reports whether b honours Task.ForkSession.
+func ForksSessions(b Backend) bool {
+	f, ok := b.(interface{ ForksSessions() bool })
+	return ok && f.ForksSessions()
+}
 
 func (c *CLIBackend) Detect() (string, error) {
 	if p, err := exec.LookPath(c.name); err == nil {
@@ -61,6 +77,14 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		res.Error = err.Error()
 		emit(Event{Time: time.Now(), Kind: EventError, Text: err.Error()})
 		return finish(&res, started)
+	}
+	if task.ForkSession != "" && !c.forks {
+		return fail(StatusError, fmt.Errorf("the %s backend cannot resume a session", c.name))
+	}
+	// The id comes from a record on disk and becomes an argument, where one
+	// starting with a dash would be read as a flag. Both CLIs issue UUIDs.
+	if task.ForkSession != "" && !sessionID.MatchString(task.ForkSession) {
+		return fail(StatusError, fmt.Errorf("session id %q is not one the %s CLI issues", task.ForkSession, c.name))
 	}
 
 	bin, err := c.Detect()

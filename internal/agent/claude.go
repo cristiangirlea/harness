@@ -47,9 +47,13 @@ func NewClaudeBackend() *CLIBackend {
 			for _, p := range t.MCP {
 				a = append(a, "--mcp-config", p)
 			}
+			if t.ForkSession != "" {
+				a = append(a, "--resume", t.ForkSession, "--fork-session")
+			}
 			return a
 		},
 		parse: parseClaudeStream,
+		forks: true,
 	}
 }
 func newestVersionDir(root, exe string) []string {
@@ -88,10 +92,11 @@ func versionLess(a, b string) bool {
 }
 
 type claudeLine struct {
-	Type    string `json:"type"`
-	Subtype string `json:"subtype"`
-	Model   string `json:"model"`
-	Message struct {
+	Type      string `json:"type"`
+	Subtype   string `json:"subtype"`
+	Model     string `json:"model"`
+	SessionID string `json:"session_id"`
+	Message   struct {
 		Model   string `json:"model"`
 		Content []struct {
 			Type      string          `json:"type"`
@@ -120,6 +125,10 @@ func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 	var l claudeLine
 	if json.Unmarshal(line, &l) != nil || l.Type == "" {
 		return false
+	}
+	// Every line carries the session id; with --fork-session it is the new one.
+	if l.SessionID != "" {
+		res.Session = l.SessionID
 	}
 	now := time.Now()
 	switch l.Type {

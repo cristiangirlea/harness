@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -237,4 +238,34 @@ func LoadConversation(id string) (Record, agent.Conversation, error) {
 		return rec, conv, fmt.Errorf("run %s has no saved conversation: only api runs save one", id)
 	}
 	return rec, conv, json.Unmarshal(data, &conv)
+}
+
+// Chain returns run id and every run before it that it continues, oldest
+// first. A run that continues one that is gone starts the chain; missing
+// names the one that is gone.
+func Chain(id string) (chain []Record, missing string, err error) {
+	seen := map[string]bool{}
+	for next := id; next != ""; {
+		if seen[next] {
+			return nil, "", fmt.Errorf("run %s: its continue chain loops at %s", id, next)
+		}
+		seen[next] = true
+		rec, err := Load(next)
+		if err != nil {
+			if next == id {
+				return nil, "", err
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				// Handing over less history than exists, silently, is worse
+				// than asking for the record to be fixed or removed.
+				return nil, "", fmt.Errorf("run %s continues %s, which cannot be read: %w", id, next, err)
+			}
+			missing = next
+			break
+		}
+		chain = append(chain, rec)
+		next = rec.Continues
+	}
+	slices.Reverse(chain)
+	return chain, missing, nil
 }

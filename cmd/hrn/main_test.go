@@ -14,21 +14,28 @@ import (
 
 // recorder answers immediately and keeps the task it was given, so a test can
 // see what the flags actually produced.
-type recorder struct{ last chan agent.Task }
+type recorder struct {
+	name string
+	last chan agent.Task
+}
 
-func (r recorder) Name() string            { return "stub-cmd" }
+func (r recorder) Name() string            { return r.name }
 func (r recorder) Detect() (string, error) { return "built-in stub", nil }
 func (r recorder) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
 	select {
 	case r.last <- task:
 	default:
 	}
-	return agent.Result{Backend: "stub-cmd", Status: agent.StatusOK, Final: "done", Turns: 1}
+	return agent.Result{Backend: r.name, Status: agent.StatusOK, Final: "done", Turns: 1}
 }
 
 var recorded = make(chan agent.Task, 4)
 
-func init() { agent.Register(recorder{recorded}) }
+// A second backend, for continuing a run somewhere else.
+func init() {
+	agent.Register(recorder{"stub-cmd", recorded})
+	agent.Register(recorder{"stub-cmd-b", recorded})
+}
 
 // drain empties what earlier tests left, so a test never reads their task.
 func drain(t *testing.T) {
@@ -132,5 +139,38 @@ func TestCommandsRefuseBadArguments(t *testing.T) {
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), tc.want) {
 			t.Errorf("%s: code=%d err=%v, want a message about %q", tc.name, code, err, tc.want)
 		}
+	}
+}
+
+func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := t.TempDir()
+	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", dir, "--mode", "auto", "-m", "stub-model", "first"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	first := recs[0].ID
+
+	// Nothing typed but the backend: workspace and mode carry over, the model
+	// does not, and the backend is told what the first run did.
+	if code, err := cmdRun([]string{"--continue", first, "-b", "stub-cmd-b", "second"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	task := <-recorded
+	if task.Mode != agent.ModeAuto || task.Model != "" || task.Dir != recs[0].Task.Dir {
+		t.Errorf("mode=%s model=%q dir=%q", task.Mode, task.Model, task.Dir)
+	}
+	if !strings.Contains(task.Prompt, "--- request\n> first\n--- answer\n> done") || !strings.HasSuffix(task.Prompt, "second") {
+		t.Errorf("prompt:\n%s", task.Prompt)
+	}
+
+	// The stub saves no session, so the same backend has nothing to resume.
+	if code, err := cmdRun([]string{"--continue", first, "x"}); code != 2 || err == nil || !strings.Contains(err.Error(), "no saved conversation") {
+		t.Errorf("code=%d err=%v", code, err)
 	}
 }

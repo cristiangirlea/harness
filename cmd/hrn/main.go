@@ -22,6 +22,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/hrnmcp"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/report"
@@ -65,7 +66,7 @@ Run flags:
                        skip the project instruction files (api backend)
       --no-context-edits
                        keep every tool result in the request instead of letting the server clear old ones (api backend)
-      --continue ID    continue a finished api run: its conversation, workspace, mode and model
+      --continue ID    continue a finished run, on its backend or, with -b, on another one
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
@@ -162,36 +163,25 @@ func cmdRun(args []string) (int, error) {
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
 	// A continued run inherits the earlier run's backend, workspace, mode and
-	// model for anything the user did not type this time.
-	var resume *agent.Conversation
+	// model for anything the user did not type this time; the plan says what
+	// the backend picks up and what it is handed as a transcript.
+	var plan followup.Plan
 	if *continueID != "" {
-		rec, conv, err := runlog.LoadConversation(*continueID)
-		if err != nil {
+		req := followup.Request{RunID: *continueID, Backend: backend}
+		if set["C"] || set["dir"] {
+			req.Dir = dir
+		}
+		if set["m"] || set["model"] {
+			req.Model = opts.Model
+		}
+		var err error
+		if plan, err = followup.Make(req); err != nil {
 			return 2, err
 		}
-		if backend == "" {
-			backend = rec.Backend
+		backend, dir, opts.Model = plan.Backend, plan.Dir, plan.Model
+		if !set["mode"] && plan.Prev.Task.Mode != "" {
+			opts.Mode = plan.Prev.Task.Mode
 		}
-		if backend != "api" {
-			return 2, fmt.Errorf("continue is supported for the api backend only, not %s", backend)
-		}
-		if !set["C"] && !set["dir"] && rec.Task.Dir != "" {
-			dir = rec.Task.Dir
-		}
-		if !set["mode"] && rec.Task.Mode != "" {
-			opts.Mode = rec.Task.Mode
-		}
-		if !set["m"] && !set["model"] {
-			// What the earlier run asked for, not what the API reported back.
-			if opts.Model = rec.Task.Model; opts.Model == "" {
-				opts.Model = conv.Model
-			}
-		} else if opts.Model != conv.Model {
-			// Thinking blocks belong to the model that produced them; another
-			// model is served the conversation without them.
-			fmt.Fprintf(os.Stderr, "hrn: continuing %s on %s instead of %s; the API drops the earlier thinking\n", *continueID, opts.Model, conv.Model)
-		}
-		resume = &conv
 	}
 
 	if err := opts.Validate(); err != nil {
@@ -229,7 +219,7 @@ func cmdRun(args []string) (int, error) {
 		return 2, err
 	}
 
-	task := agent.Task{Prompt: prompt, Dir: absDir, Options: opts, Resume: resume}
+	task := agent.Task{Prompt: prompt, Dir: absDir, Options: opts}
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
 	}
@@ -270,6 +260,7 @@ func cmdRun(args []string) (int, error) {
 		emit = func(e agent.Event) { rec.Event(e); r.Event(e) }
 	}
 
+	plan.Apply(&task, rec.Dir(), emit)
 	res := agent.Run(ctx, b, task, emit)
 	if err := rec.Close(res); err != nil {
 		fmt.Fprintln(os.Stderr, "hrn: saving run:", err)
@@ -353,6 +344,9 @@ func cmdShow(args []string) error {
 	head := fmt.Sprintf("%s · %s · mode %s", rec.Backend, rec.Task.Dir, rec.Task.Mode)
 	if rec.Continues != "" {
 		head += " · continues " + rec.Continues
+	}
+	if rec.Result.Session != "" {
+		head += " · session " + rec.Result.Session
 	}
 	fmt.Printf("%s\n%s\n\n", r.c(bold, tools.OneLine(rec.Task.Prompt, 200)), head)
 	for _, e := range events {
