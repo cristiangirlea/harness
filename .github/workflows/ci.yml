@@ -19,6 +19,13 @@ jobs:
     # runner on this PC (CI_RUNNER_WINDOWS, infra P2b). matrix.os keeps its value either way,
     # so the steps' conditions below do not change.
     runs-on: ${{ matrix.os == 'ubuntu-latest' && (vars.CI_RUNNER || 'ubuntu-latest') || (vars.CI_RUNNER_WINDOWS || matrix.os) }}
+    # bash on every OS. Without it a Windows step runs in PowerShell: GitHub's images have
+    # PowerShell 7, but a self-hosted Windows runner may only have Windows PowerShell 5.1, whose
+    # default execution policy refuses the script file the runner writes for each step. Git Bash
+    # is on our Windows runner's PATH ahead of System32 (infra P2b) and is GitHub's bash too.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
