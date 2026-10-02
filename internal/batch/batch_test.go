@@ -285,6 +285,70 @@ func TestRemoveDeletesWorktreesAndBranches(t *testing.T) {
 	}
 }
 
+// deregister leaves tr's worktree the way a file lock on Windows can: git no longer lists it,
+// its directory is still there (empty, or holding what remains), and its branch still exists.
+func deregister(t *testing.T, root string, tr TaskResult, leftover string) {
+	t.Helper()
+	if err := os.RemoveAll(tr.Worktree); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "worktree", "prune")
+	if err := os.MkdirAll(tr.Worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if leftover != "" {
+		if err := os.WriteFile(filepath.Join(tr.Worktree, leftover), []byte("left behind\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if list := git(t, root, "worktree", "list"); strings.Contains(filepath.ToSlash(list), filepath.Base(tr.Worktree)) {
+		t.Fatalf("setup: %s is still registered:\n%s", tr.Worktree, list)
+	}
+}
+
+func TestRemoveFinishesDeregisteredWorktree(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{ID: "gone", Prompt: "a"}, {ID: "kept", Prompt: "b"}}})
+	deregister(t, dir, res.Tasks[0], "")
+	// A modified file in the repository itself must not count against the leftover directory:
+	// it has no .git of its own, so a status inside it would describe the repository.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(res); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	for _, tr := range res.Tasks {
+		if _, err := os.Stat(tr.Worktree); err == nil {
+			t.Errorf("%s still exists", tr.Worktree)
+		}
+	}
+	if branches := git(t, dir, "branch", "--list", "hrn/*"); branches != "" {
+		t.Errorf("branches remain: %s", branches)
+	}
+}
+
+func TestRemoveKeepsAndReportsANonEmptyLeftover(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{ID: "gone", Prompt: "a"}, {ID: "kept", Prompt: "b"}}})
+	tr := res.Tasks[0]
+	deregister(t, dir, tr, "notes.txt")
+	err := Remove(res)
+	if err == nil || !strings.Contains(err.Error(), "gone") || !strings.Contains(err.Error(), "not a git worktree") {
+		t.Fatalf("Remove must report the leftover it could not remove: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tr.Worktree, "notes.txt")); err != nil {
+		t.Errorf("files no branch holds must stay: %v", err)
+	}
+	// Everything else is still cleaned: the leftover's branch and the other task entirely.
+	if branches := git(t, dir, "branch", "--list", "hrn/*"); branches != "" {
+		t.Errorf("branches remain: %s", branches)
+	}
+	if _, err := os.Stat(res.Tasks[1].Worktree); err == nil {
+		t.Errorf("the other task's worktree %s still exists", res.Tasks[1].Worktree)
+	}
+}
+
 func TestCommitFailureIsAnErrorAndRemoveRefuses(t *testing.T) {
 	dir := initRepo(t)
 	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")

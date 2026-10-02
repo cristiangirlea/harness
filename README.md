@@ -444,7 +444,10 @@ records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a
 run with `git reset --hard ORIG_HEAD`.
 
 `hrn batch rm <id>` removes the worktrees and branches of a batch (it refuses a worktree
-with uncommitted changes); the record and the run logs stay.
+with uncommitted changes); the record and the run logs stay. A directory git no longer counts
+as a worktree (on Windows a file lock can leave one behind) is removed when it is empty and
+reported when it is not, and its branch is deleted either way. One task that cannot be cleaned
+does not stop the others.
 
 ## Reports
 

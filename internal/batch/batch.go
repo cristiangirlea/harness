@@ -11,10 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -710,15 +712,53 @@ func Remove(res Result) error {
 		if tr.Worktree == "" {
 			continue
 		}
-		if dirty, err := hasChanges(tr.Worktree); err == nil && dirty {
-			errs = append(errs, fmt.Errorf("%s: %s has uncommitted changes; commit or discard them first", tr.ID, tr.Worktree))
+		// Only a directory git still lists is a worktree whose status means
+		// anything: a leftover one has no .git of its own, and a status taken
+		// inside it would describe the repository around it.
+		if registered, err := isWorktree(res.Dir, tr.Worktree); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
 			continue
+		} else if registered {
+			if dirty, err := hasChanges(tr.Worktree); err == nil && dirty {
+				errs = append(errs, fmt.Errorf("%s: %s has uncommitted changes; commit or discard them first", tr.ID, tr.Worktree))
+				continue
+			}
 		}
 		if err := removeWorktree(res.Dir, tr); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// isWorktree reports whether git lists path as one of root's worktrees.
+func isWorktree(root, path string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := gitOut(ctx, root, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	want := comparablePath(path)
+	for _, line := range strings.Split(out, "\n") {
+		if p, ok := strings.CutPrefix(line, "worktree "); ok && comparablePath(p) == want {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// comparablePath normalises a path for equality: git prints forward slashes
+// and long names on Windows, where paths are also case-insensitive.
+func comparablePath(p string) string {
+	p = filepath.Clean(filepath.FromSlash(p))
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	if runtime.GOOS == "windows" {
+		p = strings.ToLower(p)
+	}
+	return p
 }
 
 // addWorktree creates the task's worktree and branch from the base commit.
@@ -734,19 +774,44 @@ func removeWorktree(root string, tr TaskResult) error {
 	defer cancel()
 	worktreeMu.Lock()
 	defer worktreeMu.Unlock()
-	if _, err := os.Stat(tr.Worktree); err == nil {
+	var leftover error
+	registered, err := isWorktree(root, tr.Worktree)
+	switch {
+	case err != nil:
+		return err
+	case registered:
 		if _, err := gitOut(ctx, root, "worktree", "remove", "--force", tr.Worktree); err != nil {
 			return err
 		}
-	} else {
+	default:
+		// Gone, or no longer a worktree to git: on Windows a file lock can leave
+		// the directory behind after git has dropped it. Clear git's stale entry,
+		// remove the directory if nothing is in it, and still delete the branch,
+		// which is all the batch committed.
 		_, _ = gitOut(ctx, root, "worktree", "prune")
+		leftover = removeEmptyDir(tr.Worktree)
 	}
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
 		if _, err := gitOut(ctx, root, "branch", "-D", tr.Branch); err != nil {
-			return err
+			return errors.Join(leftover, err)
 		}
 	}
-	return nil
+	return leftover
+}
+
+// removeEmptyDir removes dir if it is empty and reports it if it is not: files
+// in a directory git no longer tracks are in no branch, so they are not deleted.
+func removeEmptyDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case len(entries) > 0:
+		return fmt.Errorf("%s is not a git worktree any more but still holds %d entries; look at them, then delete the directory", dir, len(entries))
+	}
+	return os.Remove(dir)
 }
 
 func batchesDir() string { return filepath.Join(runlog.Home(), "batches") }
