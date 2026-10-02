@@ -809,7 +809,11 @@ func removeEmptyDir(dir string) error {
 	case err != nil:
 		return err
 	case len(entries) > 0:
-		return fmt.Errorf("%s is not a git worktree any more but still holds %d entries; look at them, then delete the directory", dir, len(entries))
+		what := fmt.Sprintf("%d entries", len(entries))
+		if len(entries) == 1 {
+			what = entries[0].Name()
+		}
+		return fmt.Errorf("%s is not a git worktree any more but still holds %s; look at it, then delete the directory", dir, what)
 	}
 	return os.Remove(dir)
 }
