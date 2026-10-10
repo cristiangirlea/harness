@@ -256,8 +256,11 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 	started := false
 	done := false
 
+	// The buffer starts at the scanner's 4 KiB and doubles as a line needs,
+	// up to 64 MiB for one huge tool input. Starting it at 1 MiB cost that
+	// much for every response, however short.
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
+	sc.Buffer(nil, 64*1024*1024)
 	var data strings.Builder
 	dispatch := func() error {
 		if data.Len() == 0 {
