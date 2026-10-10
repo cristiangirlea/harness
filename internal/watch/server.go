@@ -187,6 +187,8 @@ func Serve(ctx context.Context, opt Options, lns ...net.Listener) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		// No WriteTimeout: streams stay open. Each write sets its own deadline.
+		// "OPTIONS *" goes to the handler, and so through the door, too.
+		DisableGeneralOptionsHandler: true,
 	}
 	errs := make(chan error, len(lns))
 	for _, ln := range lns {

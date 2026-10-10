@@ -170,7 +170,6 @@ func TestRequestsFromOutsideAreRefused(t *testing.T) {
 			t.Errorf("--lan, Host %s: status %d, want %d", host, rec.Code, want)
 		}
 	}
-
 }
 
 // Anything but GET and HEAD would act on hrn. It must carry hrn watch's key,
@@ -197,6 +196,68 @@ func TestAnythingThatWouldActNeedsTheKey(t *testing.T) {
 		if rec.Code != tc.want {
 			t.Errorf("%s: status %d, want %d", tc.name, rec.Code, tc.want)
 		}
+	}
+}
+
+// The door by method, origin and where the request comes from: viewing passes
+// without a key, everything else needs it, and the key does not lift the
+// other checks.
+func TestTheDoorLetsViewingThroughAndHoldsEverythingElse(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	h := New(context.Background(), Options{Key: "k3y", LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	for _, tc := range []struct {
+		name, method, host, remote, key string
+		header                          map[string]string
+		want                            int
+	}{
+		{"GET, no key", "GET", "127.0.0.1:8089", "127.0.0.1:5000", "", nil, 200},
+		{"HEAD, no key", "HEAD", "127.0.0.1:8089", "127.0.0.1:5000", "", nil, 200},
+		{"GET from the network, no key", "GET", "192.168.1.20:8089", "192.168.1.50:6000", "", nil, 200},
+		{"OPTIONS, no key", "OPTIONS", "127.0.0.1:8089", "127.0.0.1:5000", "", nil, 403},
+		{"POST from the network, no key", "POST", "192.168.1.20:8089", "192.168.1.50:6000", "", nil, 403},
+		{"POST from the network, key", "POST", "192.168.1.20:8089", "192.168.1.50:6000", "k3y", nil, http.StatusMethodNotAllowed},
+		{"POST cross-site with the key", "POST", "127.0.0.1:8089", "127.0.0.1:5000", "k3y", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
+		{"POST from a foreign origin with the key", "POST", "127.0.0.1:8089", "127.0.0.1:5000", "k3y", map[string]string{"Origin": "http://evil.example"}, 403},
+	} {
+		req := httptest.NewRequest(tc.method, "/", nil)
+		req.Host, req.RemoteAddr = tc.host, tc.remote
+		if tc.key != "" {
+			req.Header.Set("X-Hrn-Watch-Key", tc.key)
+		}
+		for k, v := range tc.header {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status %d, want %d", tc.name, rec.Code, tc.want)
+		}
+	}
+}
+
+// net/http answers "OPTIONS *" itself unless told not to, before any handler
+// and so before the door.
+func TestOptionsStarGoesThroughTheDoorToo(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go Serve(ctx, Options{}, ln)
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(conn, "OPTIONS * HTTP/1.1\r\nHost: "+ln.Addr().String()+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil || !strings.Contains(status, " 403 ") {
+		t.Fatalf("OPTIONS * answered %q, %v; want 403 from the door", status, err)
 	}
 }
 
