@@ -37,7 +37,7 @@ func TestParsingASmallStreamAllocatesLittle(t *testing.T) {
 	per := (after.TotalAlloc - before.TotalAlloc) / n
 	t.Logf("parsing a %d-byte stream allocates %d bytes", len(stream), per)
 	if per > 128<<10 {
-		t.Fatalf("parsing a %d-byte stream allocated %d bytes each time; want well under 1 MiB", len(stream), per)
+		t.Fatalf("parsing a %d-byte stream allocated %d bytes each time; want under 128 KiB", len(stream), per)
 	}
 }
 
