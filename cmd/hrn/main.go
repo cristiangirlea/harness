@@ -378,7 +378,7 @@ func showHeader(r *renderer, rec runlog.Record) {
 	if rec.Result.Session != "" {
 		head += " · session " + rec.Result.Session
 	}
-	r.Line(r.c(bold, tools.OneLine(rec.Task.Prompt, 200)))
+	r.Line(r.c(bold, printable(tools.OneLine(rec.Task.Prompt, 200))))
 	r.Line(head)
 	r.Line("")
 }

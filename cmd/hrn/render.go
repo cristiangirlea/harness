@@ -59,6 +59,7 @@ func (r *renderer) newline() {
 func (r *renderer) Event(e agent.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	e.Text, e.Tool = printable(e.Text), printable(e.Tool)
 	if e.Kind != agent.EventThinking && r.inThought {
 		r.newline()
 		r.inThought = false
@@ -167,4 +168,25 @@ func (r *renderer) Line(s string) {
 	defer r.mu.Unlock()
 	r.newline()
 	r.write(s + "\n")
+}
+
+// printable is record text made safe for a terminal. Records hold whatever an
+// agent read, and a terminal acts on control characters: escape sequences set
+// the title, write the clipboard, clear the screen or move the cursor, and a
+// lone carriage return lets a line be overwritten. Each one becomes U+FFFD;
+// newlines and tabs stay, and a CRLF line ending is a newline.
+func printable(s string) string {
+	if s == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			return '�'
+		}
+		return r
+	}, s)
 }
