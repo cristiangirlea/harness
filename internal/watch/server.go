@@ -45,9 +45,9 @@ type Endpoint struct {
 // VPN tunnels. Never 0.0.0.0, which would take in a public address too. A VPN
 // that shows up as an ordinary adapter with a private address is still taken:
 // the caller lists every endpoint so the person running it sees each network.
-// The page is read-only: anything that acts on hrn from the network needs a
-// key first (see PLAN.md).
-func ListenLAN(port string) ([]net.Listener, []Endpoint, error) {
+// only, when set, keeps one adapter: its name (any case) or its address.
+// The page is read-only: anything that acts on hrn needs a key (see guard).
+func ListenLAN(port, only string) ([]net.Listener, []Endpoint, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, nil, err
@@ -60,9 +60,13 @@ func ListenLAN(port string) ([]net.Listener, []Endpoint, error) {
 		}
 		adapters = append(adapters, adapter{ifc.Name, ifc.Flags, addrs})
 	}
+	picked, err := pickLAN(lanAddrs(adapters), only)
+	if err != nil {
+		return nil, nil, err
+	}
 	var lns []net.Listener
 	var eps []Endpoint
-	for _, a := range lanAddrs(adapters) {
+	for _, a := range picked {
 		ln, err := net.Listen("tcp", net.JoinHostPort(a.ip, port))
 		if err != nil {
 			for _, l := range lns {
@@ -101,6 +105,28 @@ func lanAddrs(adapters []adapter) []lanAddr {
 		}
 	}
 	return out
+}
+
+// pickLAN keeps the address or the adapter --lan=NAME names; with no name,
+// all of them. A name that matches nothing is an error naming the choices.
+func pickLAN(all []lanAddr, only string) ([]lanAddr, error) {
+	if only == "" {
+		return all, nil
+	}
+	var out []lanAddr
+	for _, a := range all {
+		if a.ip == only || strings.EqualFold(a.name, only) {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 {
+		var choices []string
+		for _, a := range all {
+			choices = append(choices, fmt.Sprintf("%s (%s)", a.name, a.ip))
+		}
+		return nil, fmt.Errorf("--lan=%s: no network adapter with a private address by that name or address; there are: %s", only, strings.Join(choices, ", "))
+	}
+	return out, nil
 }
 
 // privateAddrs keeps the private IPv4 addresses (RFC 1918) of an adapter.

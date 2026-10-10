@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -19,7 +20,8 @@ import (
 func cmdWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	addr := fs.String("addr", watch.DefaultAddr, "")
-	lan := fs.Bool("lan", false, "")
+	var lan lanFlag
+	fs.Var(&lan, "lan", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -39,10 +41,10 @@ func cmdWatch(args []string) error {
 		return err
 	}
 	lns, opt := []net.Listener{ln}, watch.Options{}
-	if *lan {
+	if lan.on {
 		// The same port on the network as on this computer, when it was named.
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
-		more, eps, err := watch.ListenLAN(port)
+		more, eps, err := watch.ListenLAN(port, lan.only)
 		if err != nil {
 			ln.Close()
 			return err
@@ -51,7 +53,7 @@ func cmdWatch(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if *lan {
+	if lan.on {
 		fmt.Printf("hrn watch: http://%s (Ctrl+C stops it)\n", ln.Addr())
 		for _, ep := range opt.LAN {
 			fmt.Printf("  on your network: %s (%s)\n", ep.URL, ep.Interface)
@@ -62,6 +64,37 @@ func cmdWatch(args []string) error {
 		fmt.Printf("hrn watch: http://%s (this computer only; --lan for a phone; Ctrl+C stops it)\n", ln.Addr())
 	}
 	return watch.Serve(ctx, opt, lns...)
+}
+
+// lanFlag is --lan (every private network address) or --lan=NAME (one
+// adapter, by name or address); --lan=false turns it off again.
+type lanFlag struct {
+	on   bool
+	only string
+}
+
+func (f *lanFlag) IsBoolFlag() bool { return true }
+
+func (f *lanFlag) String() string {
+	if f == nil || !f.on {
+		return "false"
+	}
+	if f.only == "" {
+		return "true"
+	}
+	return f.only
+}
+
+func (f *lanFlag) Set(s string) error {
+	switch strings.ToLower(s) {
+	case "true":
+		f.on, f.only = true, ""
+	case "false":
+		f.on, f.only = false, ""
+	default:
+		f.on, f.only = true, s
+	}
+	return nil
 }
 
 // followRun prints a run as it is recorded, until its result is saved: the

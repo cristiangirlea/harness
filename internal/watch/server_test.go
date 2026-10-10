@@ -656,3 +656,31 @@ func TestTheRunPageStreamsOnlyWhatItDidNotShow(t *testing.T) {
 		t.Fatalf("the stream began with %+v, %v; want the step written after the page", m, ok)
 	}
 }
+
+// --lan=NAME serves one network: the adapter named (any case) or the address
+// given. A name that matches nothing says which there are.
+func TestLanCanBeNarrowedToOneAdapter(t *testing.T) {
+	all := []lanAddr{{"192.168.1.218", "Ethernet 3"}, {"172.22.176.1", "vEthernet (WSL)"}, {"192.168.28.1", "VMware Network Adapter VMnet1"}}
+	for _, tc := range []struct {
+		only string
+		want string
+	}{
+		{"", "192.168.1.218,172.22.176.1,192.168.28.1"},
+		{"Ethernet 3", "192.168.1.218"},
+		{"ethernet 3", "192.168.1.218"},
+		{"172.22.176.1", "172.22.176.1"},
+	} {
+		got, err := pickLAN(all, tc.only)
+		var ips []string
+		for _, a := range got {
+			ips = append(ips, a.ip)
+		}
+		if err != nil || strings.Join(ips, ",") != tc.want {
+			t.Errorf("pickLAN(%q) = %v, %v; want %s", tc.only, ips, err, tc.want)
+		}
+	}
+	_, err := pickLAN(all, "Wi-Fi")
+	if err == nil || !strings.Contains(err.Error(), "Ethernet 3 (192.168.1.218)") {
+		t.Errorf("an unknown adapter: %v; want the ones there are", err)
+	}
+}
