@@ -631,6 +631,20 @@ neither of them follows a run while it happens.
   address of the adapters that are up, never 0.0.0.0, and the Host check admits exactly
   those `ip:port` strings. (3) A cost column on the index, since the owner asked whether
   the harness has the cost: it is the backend's own figure, so codex and gemini show none.
+- 2026-10-10: PR V review (an independent read-only reviewer), 11 findings, 8 fixed, each
+  as its own commit. The ones that mattered: a page loaded while `Close` wrote
+  `result.json` showed an empty "Finished" and a stream URL with no id, since
+  `runlog.Load` marks a run done before the file parses (the follower now reads
+  `task.json` then); `--lan` took VPN tunnels' 10.x addresses (point-to-point adapters
+  are left out, and every network served is listed, since a VPN that looks like an
+  ordinary adapter cannot be told apart); ids from a request were only checked for
+  separators, so `CON` reached the disk, a device on Windows 10 (they must now look like
+  `YYYYMMDD-HHMMSS-xxxxxx`); and the traversal tests passed on a missing file instead of
+  the check. Also fixed: a portless Host under `--lan` on port 80, a blank batch page for
+  a read caught mid-rename, a test calling `t` from a goroutine, stale text. Left: the
+  rename retry has no test (it needs an injectable rename); on Windows `runs prune` can
+  meet a batch record mid-save and refuse once, which running it again settles; and
+  AGENTS.md (#31) needs an `internal/watch/` row once both are merged.
 - 2026-09-27: PR T: continuing claude and codex runs, and moving one conversation between
   backends (no PR yet; branch `t-cli-sessions`). The CLI adapters record the session id
   their stream reports (`Result.Session`: claude's `session_id`, codex's `thread.started`
