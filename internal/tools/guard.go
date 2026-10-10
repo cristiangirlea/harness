@@ -34,6 +34,13 @@ var guardRules = []struct {
 	{"pipe-to-shell", matches(`\b(?:curl|wget)\b.*\|\s*(?:sudo\s+)?(?:sh|bash|zsh|powershell|pwsh)\b`)},
 	// Formatting a filesystem, or writing over a device rather than a file.
 	{"disk", matches(`\bmkfs|\bformat\s+[A-Za-z]:|\bdd\b[^|&;]*\bof=\s*(?:/dev/|\\\\\.\\)`)},
+	// GitHub's side of publishing: merging, releasing, changing who can see a
+	// repository or removing it, and the API calls that change things.
+	// Opening a pull request stays allowed: that is how work is handed over.
+	{"gh-publish", matches(`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s=]*(?:PUT|PATCH|DELETE)\b`)},
+	// Shipping somewhere: Cloudflare, package registries, image registries,
+	// clusters and hosting platforms, and this owner's deploy script.
+	{"deploy", matches(`\bwrangler\b[^|&;]*\bdeploy\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bdeploy/push\.sh\b|\bkubectl\b[^|&;]*\b(?:apply|delete|replace|patch|rollout)\b|\bdocker\s+push\b|\bvercel\b[^|&;]*--prod\b|\b(?:fly|flyctl|netlify)\s+deploy\b`)},
 }
 
 func matches(pattern string) func(string) bool {

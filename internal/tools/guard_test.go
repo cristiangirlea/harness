@@ -35,6 +35,23 @@ func TestGuardBlocks(t *testing.T) {
 		"mkfs.ext4 /dev/sda1":                    "disk",
 		"dd if=/dev/zero of=/dev/sda":            "disk",
 		"format C: /q":                           "disk",
+		"gh pr merge 34 --merge":                 "gh-publish",
+		"gh pr merge --auto --squash":            "gh-publish",
+		"gh release create v1.0.0 dist/*":        "gh-publish",
+		"gh release upload v1 a.zip":             "gh-publish",
+		"gh repo edit --visibility public":       "gh-publish",
+		"gh repo delete owner/x --yes":           "gh-publish",
+		"gh api -X PUT repos/o/r/pulls/1/merge":  "gh-publish",
+		"gh api --method DELETE repos/o/r":       "gh-publish",
+		"cd site && npx wrangler deploy":         "deploy",
+		"wrangler pages deploy dist":             "deploy",
+		"npm publish":                            "deploy",
+		"cargo publish --dry-run=false":          "deploy",
+		"bash deploy/push.sh":                    "deploy",
+		"kubectl apply -f prod.yaml":             "deploy",
+		"docker push ghcr.io/o/i:latest":         "deploy",
+		"vercel --prod":                          "deploy",
+		"fly deploy":                             "deploy",
 	} {
 		if got := Guard(command); got != want {
 			t.Errorf("Guard(%q) = %q, want %q", command, got, want)
@@ -58,6 +75,15 @@ func TestGuardAllows(t *testing.T) {
 		"curl -o data.json https://example.com/api",
 		"dd bs=1M count=1 if=/dev/zero of=zero.bin", // a file, not a device
 		"npm run format",
+		"gh pr view 34 --json state",
+		"gh pr list --state open",
+		"gh pr create --title t --body b", // opening a pull request is how work is handed over
+		"gh release list",
+		"gh api repos/o/r/pulls/1",
+		"npx wrangler dev",
+		"kubectl get pods",
+		"docker build -t app .",
+		"npm run deploy-docs-preview --dry-run", // the guard reads deploy as a command, not a word in a name
 	} {
 		if got := Guard(command); got != "" {
 			t.Errorf("Guard(%q) = %q, want allowed", command, got)
