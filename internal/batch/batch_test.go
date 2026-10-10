@@ -60,7 +60,14 @@ func init() {
 		<-ctx.Done()
 		return agent.Result{Backend: "wb-block", Status: agent.StatusCanceled, Error: ctx.Err().Error()}
 	}})
+	agent.Register(stub{"wb-peek", func(context.Context, agent.Task) agent.Result {
+		peek()
+		return agent.Result{Backend: "wb-peek", Status: agent.StatusOK, Final: "looked", Turns: 1}
+	}})
 }
+
+// peek is what wb-peek does while it "works"; a test sets it.
+var peek = func() {}
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -1037,5 +1044,57 @@ func TestExpectMustCompile(t *testing.T) {
 	spec := Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Expect: "(unclosed"}}}
 	if _, err := Run(context.Background(), spec, nil); err == nil || !strings.Contains(err.Error(), "task t1: expect") {
 		t.Errorf("err = %v, want the bad pattern refused before anything runs", err)
+	}
+}
+
+// A reader of the record, such as hrn watch, follows the batch while it goes:
+// the attempt names its run while the agent works, the run's result is there
+// once it ends, and each gate appears as it finishes.
+func TestTheRecordFollowsTheBatchWhileItGoes(t *testing.T) {
+	dir := initRepo(t)
+	onDisk := func() TaskResult {
+		t.Helper()
+		results, _, err := List()
+		if err != nil || len(results) != 1 {
+			t.Fatalf("batch records = %d, %v; want the one this test runs", len(results), err)
+		}
+		return results[0].Tasks[0]
+	}
+	var whileRunning TaskResult
+	peek = func() { whileRunning = onDisk() }
+	t.Cleanup(func() { peek = func() {} })
+
+	var afterRun TaskResult
+	var gatesSeen []int
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-peek", Gate: []string{"exit 0", "exit 0"},
+		Tasks: []Task{{ID: "peek", Prompt: "look"}}}, func(e Event) {
+		switch e.Kind {
+		case "run":
+			afterRun = onDisk()
+		case "gate":
+			tr := onDisk()
+			if n := len(tr.Attempts); n > 0 {
+				gatesSeen = append(gatesSeen, len(tr.Attempts[n-1].Gates))
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := res.Tasks[0].Attempts[0].RunID
+	if whileRunning.Status != StatusRunning || len(whileRunning.Attempts) != 1 || whileRunning.Attempts[0].RunID != runID {
+		t.Errorf("while the agent worked the record held %+v; want the task running with its attempt naming run %s", whileRunning, runID)
+	}
+	if len(whileRunning.Attempts) == 1 && whileRunning.Attempts[0].Result.Status != "" {
+		t.Errorf("an attempt still working has no result yet, got %q", whileRunning.Attempts[0].Result.Status)
+	}
+	if len(afterRun.Attempts) != 1 || afterRun.Attempts[0].Result.Status != agent.StatusOK {
+		t.Errorf("after the run the record held %+v; want the run's result", afterRun.Attempts)
+	}
+	if len(gatesSeen) != 2 || gatesSeen[0] != 1 || gatesSeen[1] != 2 {
+		t.Errorf("gates on disk as each one finished = %v, want [1 2]", gatesSeen)
+	}
+	if final := onDisk(); final.Status != StatusPass || len(final.Attempts[0].Gates) != 2 {
+		t.Errorf("final record = %+v", final)
 	}
 }

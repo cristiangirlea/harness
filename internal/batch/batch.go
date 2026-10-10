@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -358,6 +359,18 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		return Result{}, fmt.Errorf("saving batch record: %w", err)
 	}
 
+	// The record is saved again each time a task moves on (a run starts or
+	// ends, a gate finishes, the task ends), so a reader such as hrn watch
+	// sees the batch as it goes. A save that fails here only leaves that view
+	// stale; the save at the end reports its error.
+	var recordMu sync.Mutex
+	update := func(i int, tr TaskResult) {
+		recordMu.Lock()
+		defer recordMu.Unlock()
+		res.Tasks[i] = tr
+		_ = save(res)
+	}
+
 	idx := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < spec.Parallel; w++ {
@@ -365,7 +378,8 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				res.Tasks[i] = runTask(ctx, &spec, spec.Tasks[i], res.Tasks[i], root, base, notify)
+				update(i, runTask(ctx, &spec, spec.Tasks[i], res.Tasks[i], root, base, notify,
+					func(tr TaskResult) { update(i, tr) }))
 			}
 		}()
 	}
@@ -462,7 +476,7 @@ func fence(s string) string {
 	return f
 }
 
-func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base string, notify func(Event)) TaskResult {
+func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult)) TaskResult {
 	started := time.Now()
 	tr.Status, tr.Attempts, tr.Commit, tr.Error = "", []Attempt{}, "", ""
 	finish := func(status Status, text string) TaskResult {
@@ -538,7 +552,16 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		}
 		notify(Event{Task: t.ID, Kind: "start", Text: fmt.Sprintf("%s in %s", name, tr.Worktree)})
 
-		out, err := runAttempt(ctx, b, t.ID, task, plan, expect, gates, notify)
+		// The attempt so far, on the task as it stands. Copies, because the
+		// record is written while this worker goes on appending.
+		report := func(att Attempt) {
+			cur := tr
+			cur.Status = StatusRunning
+			att.Gates = slices.Clone(att.Gates)
+			cur.Attempts = append(slices.Clone(tr.Attempts), att)
+			progress(cur)
+		}
+		out, err := runAttempt(ctx, b, t.ID, task, plan, expect, gates, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
 		if out.commit != "" {
 			tr.Commit = out.commit
@@ -568,7 +591,7 @@ type attemptOutcome struct {
 // runAttempt runs the agent in the task's worktree, then the gates, then
 // commits whatever was left behind, pass or fail. A returned error aborts the
 // whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, gates []string, notify func(Event)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, gates []string, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued}
 
@@ -578,6 +601,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 	att.RunID = rec.ID()
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
+	report(att)
 	att.Result = agent.Run(ctx, b, task, func(e agent.Event) {
 		rec.Event(e)
 		if e.Kind == agent.EventToolCall {
@@ -591,12 +615,14 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	if att.Result.Error != "" {
 		text += " · " + tools.OneLine(att.Result.Error, 160)
 	}
+	report(att)
 	notify(Event{Task: id, Kind: "run", Text: text})
 
 	pass := att.Result.Status == agent.StatusOK
 	if pass && expect != nil {
 		gr := checkExpect(expect, att.Result.Final)
 		att.Gates = append(att.Gates, gr)
+		report(att)
 		if gr.ExitCode != 0 {
 			pass = false
 			notify(Event{Task: id, Kind: "gate", Text: "✗ " + gr.Command})
@@ -608,6 +634,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		for _, g := range gates {
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
 			att.Gates = append(att.Gates, gr)
+			report(att)
 			if gr.ExitCode != 0 {
 				pass = false
 				notify(Event{Task: id, Kind: "gate", Text: fmt.Sprintf("✗ %s (exit %d)", g, gr.ExitCode)})
@@ -830,17 +857,25 @@ func save(res Result) error {
 	}
 	// Written beside the record and renamed over it: `hrn batch show` reads
 	// this file while the batch is still running, and half a file is not a
-	// record. Rename replaces an existing file on Windows too.
+	// record. Rename replaces an existing file on Windows too, but not while a
+	// reader has it open (Go opens files without FILE_SHARE_DELETE), and hrn
+	// watch reads it every second: try again for a moment before giving up.
 	path := filepath.Join(batchesDir(), res.ID+".json")
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
+	for try := 1; ; try++ {
+		err = os.Rename(tmp, path)
+		if err == nil {
+			return nil
+		}
+		if try == 20 {
+			_ = os.Remove(tmp)
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	return nil
 }
 
 // List returns every saved batch record, newest first, and how many files
