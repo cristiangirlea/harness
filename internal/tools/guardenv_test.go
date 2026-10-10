@@ -1,4 +1,4 @@
-package agent
+package tools
 
 import (
 	"os"
@@ -26,7 +26,7 @@ func TestTheGuardedEnvironmentTakesAwayPublishing(t *testing.T) {
 		"NPM_TOKEN=npm", "SSH_AUTH_SOCK=/tmp/agent.sock",
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.autocrlf", "GIT_CONFIG_VALUE_0=false",
 	}
-	got := envMap(guardEnv(in, "/tmp/hrn-gh"))
+	got := envMap(GuardEnv(in, "/tmp/hrn-gh"))
 	for _, gone := range []string{"GH_TOKEN", "GITHUB_TOKEN", "CLOUDFLARE_API_TOKEN", "AWS_SECRET_ACCESS_KEY", "NPM_TOKEN", "SSH_AUTH_SOCK"} {
 		if _, ok := got[gone]; ok {
 			t.Errorf("%s is still in the agent's environment", gone)
@@ -75,7 +75,7 @@ func TestGitCannotPushUnderTheGuard(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	guarded := guardEnv(plain, filepath.Join(dir, "gh"))
+	guarded := GuardEnv(plain, filepath.Join(dir, "gh"))
 	for _, target := range []string{"origin", "scp", "ssh://git@github.com/example/none.git", "https://github.com/example/other.git"} {
 		out, err := run(guarded, "push", target, "main")
 		if err == nil || !strings.Contains(out, "push-refused-by-hrn") {

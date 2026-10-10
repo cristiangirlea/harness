@@ -44,6 +44,9 @@ func NewClaudeBackend() *CLIBackend {
 			if mode != "" {
 				a = append(a, "--permission-mode", mode)
 			}
+			if !t.AllowDangerous {
+				a = append(append(a, "--disallowedTools"), claudeDenyRules()...)
+			}
 			for _, p := range t.MCP {
 				a = append(a, "--mcp-config", p)
 			}

@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 // This file holds the machinery every agent CLI shares: finding the binary,
@@ -119,7 +121,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			return fail(StatusError, err)
 		}
 		defer os.RemoveAll(ghDir)
-		cmd.Env = guardEnv(cmd.Env, ghDir)
+		cmd.Env = tools.GuardEnv(cmd.Env, ghDir)
 	}
 	if c.promptStdin {
 		cmd.Stdin = strings.NewReader(task.Prompt)
@@ -137,7 +139,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	if guarded {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
-			Text: "guard: git cannot push, gh has no login and deploy credentials are withheld (--allow-dangerous lifts it)"})
+			Text: "guard: git cannot push, gh has no login, deploy credentials and API keys are withheld (--allow-dangerous lifts it)"})
 	} else {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the operator's credentials", c.name)})

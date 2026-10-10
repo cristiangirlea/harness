@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,33 @@ func TestClaudeArgsModeMapping(t *testing.T) {
 		if !strings.Contains(args, want) {
 			t.Errorf("args %q missing %q", args, want)
 		}
+	}
+}
+
+// Claude Code's deny rules hold in every permission mode, bypassPermissions
+// included, so the guard hands them over in every mode: publishing commands
+// in both its shells, and the secret files. --allow-dangerous drops them.
+func TestClaudeCarriesTheGuardsDenyRules(t *testing.T) {
+	b := NewClaudeBackend()
+	for _, mode := range []Mode{ModeYolo, ModeAuto, ModeReadOnly} {
+		args := b.args(Task{Options: Options{Mode: mode}}, "")
+		i := slices.Index(args, "--disallowedTools")
+		if i < 0 {
+			t.Fatalf("mode %s: no --disallowedTools in %q", mode, args)
+		}
+		rules := args[i+1:]
+		if j := slices.IndexFunc(rules, func(s string) bool { return strings.HasPrefix(s, "-") }); j >= 0 {
+			rules = rules[:j]
+		}
+		for _, want := range []string{"Bash(git push *)", "PowerShell(git push *)", "Bash(gh pr merge *)", "Bash(gh release create *)",
+			"Bash(npx wrangler deploy *)", "Bash(npm publish *)", "Read(//**/.env)", "Read(//**/*.pem)", "Read(~/.ssh/**)", "Read(//**/.private/**)"} {
+			if !slices.Contains(rules, want) {
+				t.Errorf("mode %s: deny rules %q lack %q", mode, rules, want)
+			}
+		}
+	}
+	if args := b.args(Task{Options: Options{Mode: ModeYolo, AllowDangerous: true}}, ""); slices.Contains(args, "--disallowedTools") {
+		t.Errorf("--allow-dangerous still hands over deny rules: %q", args)
 	}
 }
 

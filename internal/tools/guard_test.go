@@ -134,3 +134,25 @@ func TestRefuseIgnoresUnreadableInput(t *testing.T) {
 		t.Errorf("Refuse on broken JSON = %q, want none", rule)
 	}
 }
+
+// A command the agent runs gets the guarded environment too: no model key to
+// print into the run, no token to push or merge with. A finding of the PR W
+// security review, which saw an env command put the API key into a run.
+func TestRunCommandRunsUnderTheGuardedEnvironment(t *testing.T) {
+	if name, _ := Shell(); name == "powershell" {
+		t.Skip("the command below is for a POSIX shell")
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-leak")
+	t.Setenv("GH_TOKEN", "ghp_should_not_leak")
+	ws, tl := setup(t)
+	run := tl["run_command"]
+	show := map[string]any{"command": `echo "key=[$ANTHROPIC_API_KEY] gh=[$GH_TOKEN] cfg=[$GIT_CONFIG_COUNT]"`}
+	out, err := call(t, ws, run, show)
+	if err != nil || !strings.Contains(out, "key=[] gh=[]") || strings.Contains(out, "cfg=[]") {
+		t.Fatalf("under the guard the command saw %q (%v); want no key, no token, git's push guard", out, err)
+	}
+	ws.AllowDangerous = true
+	if out, err := call(t, ws, run, show); err != nil || !strings.Contains(out, "key=[sk-ant-should-not-leak] gh=[ghp_should_not_leak]") {
+		t.Fatalf("with allow_dangerous the command saw %q (%v); want the operator's environment", out, err)
+	}
+}
