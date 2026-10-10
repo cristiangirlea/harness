@@ -40,7 +40,7 @@ type Options struct {
 
 	// AllowDangerous lifts the guard: the api backend's command guard, which
 	// otherwise refuses a few command lines (git push, sudo, rm -rf /, curl |
-	// sh), and the CLI backends' guarded environment (see guardEnv).
+	// sh), and the guarded environment every backend runs in (tools.GuardEnv).
 	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Lift the guard: let agents push, merge and deploy with your credentials, and let run_command run sudo, rm -rf / and the like."`
 
 	// Timeout ends the run when it passes; zero means no deadline.

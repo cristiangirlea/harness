@@ -84,7 +84,7 @@ func TestGuardAllows(t *testing.T) {
 		"npm run format",
 		"gh pr view 34 --json state",
 		"gh pr list --state open",
-		"gh pr create --title t --body b", // opening a pull request is how work is handed over
+		"gh pr create --title t --body b", // not this rule's; the guarded environment has no gh login
 		"gh release list",
 		"gh api repos/o/r/pulls/1",
 		"npx wrangler dev",

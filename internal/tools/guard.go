@@ -36,7 +36,8 @@ var guardRules = []struct {
 	{"disk", matches(`\bmkfs|\bformat\s+[A-Za-z]:|\bdd\b[^|&;]*\bof=\s*(?:/dev/|\\\\\.\\)`)},
 	// GitHub's side of publishing: merging, releasing, changing who can see a
 	// repository or removing it, and the API calls that change things.
-	// Opening a pull request stays allowed: that is how work is handed over.
+	// gh pr create is left to the guarded environment, where gh has no login:
+	// handing work over is hrn's (a branch per batch task) or the operator's.
 	{"gh-publish", matches(`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s=]*(?:PUT|PATCH|DELETE)\b`)},
 	// Shipping somewhere: Cloudflare, package registries, image registries,
 	// clusters, infrastructure and hosting platforms, a project's own deploy
