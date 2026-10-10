@@ -608,3 +608,30 @@ func TestARunPageCaughtWhileTheResultIsWrittenKeepsStreaming(t *testing.T) {
 		t.Fatalf("status %d; want a running page that streams the rest:\n%s", code, body)
 	}
 }
+
+// --lan is for the network a phone is on: adapters that are down, loopback
+// and point-to-point links (VPN tunnels) are left out.
+func TestLanPicksThePrivateAddressesOfAdaptersThatAreUp(t *testing.T) {
+	addr := func(cidr string) net.Addr {
+		ip, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n.IP = ip
+		return n
+	}
+	got := lanAddrs([]adapter{
+		{"Wi-Fi", net.FlagUp, []net.Addr{addr("192.168.1.20/24"), addr("fe80::1/64")}},
+		{"Ethernet", 0, []net.Addr{addr("192.168.2.5/24")}},
+		{"Loopback", net.FlagUp | net.FlagLoopback, []net.Addr{addr("127.0.0.1/8")}},
+		{"WireGuard", net.FlagUp | net.FlagPointToPoint, []net.Addr{addr("10.8.0.2/24")}},
+		{"vEthernet (WSL)", net.FlagUp, []net.Addr{addr("172.20.1.1/20")}},
+	})
+	var names []string
+	for _, a := range got {
+		names = append(names, a.ip+" "+a.name)
+	}
+	if strings.Join(names, ", ") != "192.168.1.20 Wi-Fi, 172.20.1.1 vEthernet (WSL)" {
+		t.Fatalf("lanAddrs = %v", names)
+	}
+}

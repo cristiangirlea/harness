@@ -41,40 +41,66 @@ type Endpoint struct {
 }
 
 // ListenLAN listens on port at each private IPv4 address of this computer's
-// network adapters that are up. Never 0.0.0.0, which would also take in a
-// public or VPN address. The page is read-only: anything that acts on hrn
-// from the network needs a key first (see PLAN.md).
+// network adapters that are up, leaving out point-to-point links such as most
+// VPN tunnels. Never 0.0.0.0, which would take in a public address too. A VPN
+// that shows up as an ordinary adapter with a private address is still taken:
+// the caller lists every endpoint so the person running it sees each network.
+// The page is read-only: anything that acts on hrn from the network needs a
+// key first (see PLAN.md).
 func ListenLAN(port string) ([]net.Listener, []Endpoint, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, nil, err
 	}
-	var lns []net.Listener
-	var eps []Endpoint
+	var adapters []adapter
 	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
 		addrs, err := ifc.Addrs()
 		if err != nil {
 			continue
 		}
-		for _, ip := range privateAddrs(addrs) {
-			ln, err := net.Listen("tcp", net.JoinHostPort(ip, port))
-			if err != nil {
-				for _, l := range lns {
-					l.Close()
-				}
-				return nil, nil, fmt.Errorf("--lan: %w", err)
+		adapters = append(adapters, adapter{ifc.Name, ifc.Flags, addrs})
+	}
+	var lns []net.Listener
+	var eps []Endpoint
+	for _, a := range lanAddrs(adapters) {
+		ln, err := net.Listen("tcp", net.JoinHostPort(a.ip, port))
+		if err != nil {
+			for _, l := range lns {
+				l.Close()
 			}
-			lns = append(lns, ln)
-			eps = append(eps, Endpoint{Addr: ln.Addr().String(), Interface: ifc.Name, URL: "http://" + ln.Addr().String() + "/"})
+			return nil, nil, fmt.Errorf("--lan: %w", err)
 		}
+		lns = append(lns, ln)
+		eps = append(eps, Endpoint{Addr: ln.Addr().String(), Interface: a.name, URL: "http://" + ln.Addr().String() + "/"})
 	}
 	if len(lns) == 0 {
 		return nil, nil, errors.New("--lan: this computer has no private network address (192.168.x, 10.x or 172.16-31.x) on an adapter that is up")
 	}
 	return lns, eps, nil
+}
+
+// adapter is what ListenLAN needs to know of a network interface.
+type adapter struct {
+	name  string
+	flags net.Flags
+	addrs []net.Addr
+}
+
+type lanAddr struct{ ip, name string }
+
+// lanAddrs picks the addresses --lan serves on: the private IPv4 addresses
+// of adapters that are up and are neither loopback nor point-to-point.
+func lanAddrs(adapters []adapter) []lanAddr {
+	var out []lanAddr
+	for _, a := range adapters {
+		if a.flags&net.FlagUp == 0 || a.flags&(net.FlagLoopback|net.FlagPointToPoint) != 0 {
+			continue
+		}
+		for _, ip := range privateAddrs(a.addrs) {
+			out = append(out, lanAddr{ip, a.name})
+		}
+	}
+	return out
 }
 
 // privateAddrs keeps the private IPv4 addresses (RFC 1918) of an adapter.

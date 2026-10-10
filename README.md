@@ -482,8 +482,10 @@ It listens on a loopback address and refuses any other `--addr`, and it answers 
 requests whose Host header names it, so a DNS name rebound to 127.0.0.1 cannot read it
 through a browser. `--lan` also serves it on each private IPv4 address (192.168.x, 10.x,
 172.16-31.x) of this computer's network adapters that are up, never on 0.0.0.0 or a public
-address, and the index lists those links; on Wi-Fi, use the one on the Wi-Fi adapter.
-There is no login yet: while `--lan` runs, anyone on those networks can read the runs.
+address, and the terminal and the index list those links; on Wi-Fi, use the one on the
+Wi-Fi adapter. Point-to-point links (most VPN tunnels) are left out, but a VPN that shows
+up as an ordinary adapter with a private address is served too, and listed. There is no
+login yet: while `--lan` runs, anyone on each listed network can read the runs.
 Windows Firewall asks once whether hrn may listen; allowing Private networks is enough.
 An access key and a QR code are next ([#33](https://github.com/cristiangirlea/harness/issues/33)),
 and anything that acts on hrn from the network will need the key.

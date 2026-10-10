@@ -17,7 +17,7 @@
 {{end}}
 
 {{define "foot"}}
-<footer>Local only · reads <span class="mono">{{.Home}}</span> · nothing on this page comes from or goes to another computer</footer>
+<footer>Reads <span class="mono">{{.Home}}</span> · loads nothing from other sites</footer>
 </main>
 </body>
 </html>
@@ -31,9 +31,9 @@
 <p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps.</p>
 {{if .LAN}}<section class="card reach" aria-labelledby="reach-h">
 <h2 id="reach-h">On your phone</h2>
-<p>Open one of these on a device on the same network. On Wi-Fi it is the one on your Wi-Fi adapter; the others are usually virtual adapters (WSL, Hyper-V, Docker).</p>
+<p>Open one of these on a device on the same network. On Wi-Fi it is the one on your Wi-Fi adapter; the others are usually virtual adapters (WSL, Hyper-V, Docker), or a VPN that looks like an ordinary adapter.</p>
 <ul class="urls">{{range .LAN}}<li><a class="mono" href="{{.URL}}">{{.URL}}</a> <span class="muted">{{.Interface}}</span></li>{{end}}</ul>
-<p class="notice warn">No login yet: while hrn watch --lan runs, anyone on these networks can read your runs. The page only shows; it cannot start, stop or merge anything.</p>
+<p class="notice warn">No login yet: while hrn watch --lan runs, anyone on each of these networks can read your runs. The page only shows; it cannot start, stop or merge anything.</p>
 </section>
 {{else}}<p class="muted small">Only this computer can open this page. Run <code>hrn watch --lan</code> to open it from a phone on the same network.</p>{{end}}
 <div id="live" data-stream="/stream/index" data-replace>{{template "lists" .Lists}}</div>

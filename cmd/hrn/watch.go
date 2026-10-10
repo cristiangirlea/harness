@@ -56,7 +56,8 @@ func cmdWatch(args []string) error {
 		for _, ep := range opt.LAN {
 			fmt.Printf("  on your network: %s (%s)\n", ep.URL, ep.Interface)
 		}
-		fmt.Println("  no login yet: anyone on these networks can read your runs while this runs")
+		fmt.Println("  no login yet: anyone on each of these networks can read your runs while this runs;")
+		fmt.Println("  a VPN listed here shares them with its network too")
 	} else {
 		fmt.Printf("hrn watch: http://%s (this computer only; --lan for a phone; Ctrl+C stops it)\n", ln.Addr())
 	}
