@@ -1120,3 +1120,49 @@ func TestTheRecordShowsARetryWhileItRuns(t *testing.T) {
 		t.Fatalf("during the retry the record held %+v", whileRetrying)
 	}
 }
+
+// hrn watch reads batch records over and over while a batch saves them. On
+// Windows a reader used to block the save's rename for as long as it held the
+// file, so enough readers (anyone on the network, with --lan) made saves fail.
+func TestSavesSucceedWhileManyReadersReadTheRecord(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	res := Result{ID: "20261011-120000-abcdef", Started: time.Now(), Tasks: []TaskResult{{ID: "t1", Status: StatusRunning}}}
+	if err := save(res); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_, _ = LoadResult(res.ID)
+				}
+			}
+		}()
+	}
+	var failed int
+	for i := 0; i < 50; i++ {
+		res.Tasks[0].Error = strings.Repeat("x", i)
+		if err := save(res); err != nil {
+			if failed == 0 {
+				t.Logf("first failure: %v", err)
+			}
+			failed++
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if failed > 0 {
+		t.Fatalf("%d of 50 saves failed while the record was being read", failed)
+	}
+	got, err := LoadResult(res.ID)
+	if err != nil || len(got.Tasks[0].Error) != 49 {
+		t.Fatalf("the last save is not the record: %v", err)
+	}
+}

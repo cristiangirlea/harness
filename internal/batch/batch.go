@@ -857,21 +857,28 @@ func save(res Result) error {
 	}
 	// Written beside the record and renamed over it: `hrn batch show` reads
 	// this file while the batch is still running, and half a file is not a
-	// record. Rename replaces an existing file on Windows too, but not while a
-	// reader has it open (Go opens files without FILE_SHARE_DELETE), and hrn
-	// watch reads it every second: try again for a moment before giving up.
-	path := filepath.Join(batchesDir(), res.ID+".json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// record. hrn watch reads it all the time, for every page and stream open
+	// on it, and on Windows os.Rename (MoveFileEx) refuses to replace a file
+	// that anyone has open. os.Root's Rename replaces it with POSIX semantics
+	// (Windows 10 and later, falling back by itself where the file system
+	// lacks them), which readRecord's FILE_SHARE_DELETE readers allow. The
+	// retries cover any other reader for a moment.
+	root, err := os.OpenRoot(batchesDir())
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	name := res.ID + ".json"
+	if err := root.WriteFile(name+".tmp", data, 0o644); err != nil {
 		return err
 	}
 	for try := 1; ; try++ {
-		err = os.Rename(tmp, path)
+		err = root.Rename(name+".tmp", name)
 		if err == nil {
 			return nil
 		}
 		if try == 20 {
-			_ = os.Remove(tmp)
+			_ = root.Remove(name + ".tmp")
 			return err
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1113,7 +1120,7 @@ func LoadResult(id string) (Result, error) {
 	if id == "" || strings.ContainsAny(id, `/\`) {
 		return res, fmt.Errorf("invalid batch id %q", id)
 	}
-	data, err := os.ReadFile(filepath.Join(batchesDir(), id+".json"))
+	data, err := readRecord(filepath.Join(batchesDir(), id+".json"))
 	if err != nil {
 		return res, err
 	}
