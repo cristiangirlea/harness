@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +32,10 @@ type Options struct {
 	// private network addresses. Requests naming one of them are let in, and
 	// the index shows them as links for a phone.
 	LAN []Endpoint
+	// Key is what a request that would act on hrn (anything but GET and
+	// HEAD) must send in X-Hrn-Watch-Key, from this computer or the network
+	// alike. Viewing needs none. Empty refuses every action; none exists yet.
+	Key string
 }
 
 // Endpoint is one private network address the page is served on.
@@ -247,7 +252,7 @@ func New(ctx context.Context, opt Options) http.Handler {
 	for _, ep := range opt.LAN {
 		lan[ep.Addr] = true
 	}
-	return guard(mux, lan)
+	return guard(mux, lan, opt.Key)
 }
 
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
@@ -257,7 +262,12 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 // the page to itself. lan holds the ip:port addresses hrn watch --lan serves
 // on; a Host naming one exactly is let in too. A rebinding attack needs a DNS
 // name, so IP literals keep that defence.
-func guard(next http.Handler, lan map[string]bool) http.Handler {
+//
+// Anything but GET and HEAD would act on hrn, so it must also carry key in
+// X-Hrn-Watch-Key. A custom header is also the CSRF check: a form on another
+// site cannot set one, and a script elsewhere cannot send one here without a
+// CORS answer this server never gives.
+func guard(next http.Handler, lan map[string]bool, key string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
@@ -270,6 +280,13 @@ func guard(next http.Handler, lan map[string]bool) http.Handler {
 		if !(isLoopbackHost(r.Host) || lan[withPort(r.Host)]) || strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || !isSameOrigin(r) {
 			http.Error(w, "Local requests only", http.StatusForbidden)
 			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			sent := r.Header.Get("X-Hrn-Watch-Key")
+			if key == "" || subtle.ConstantTimeCompare([]byte(sent), []byte(key)) != 1 {
+				http.Error(w, "Acting on hrn needs hrn watch's key", http.StatusForbidden)
+				return
+			}
 		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
 		next.ServeHTTP(w, r)
@@ -376,7 +393,25 @@ func (s *server) lists() lists {
 }
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
-	s.page(w, http.StatusOK, "index", indexPage{page: page{Title: "Runs and batches", Home: runlog.Home()}, Lists: s.lists(), LAN: s.opt.LAN})
+	p := indexPage{page: page{Title: "Runs and batches", Home: runlog.Home()}, Lists: s.lists()}
+	// The phone links and the hints about --lan are for the person at this
+	// computer; a phone that came in over the network needs neither.
+	if fromThisComputer(r) {
+		p.Local = true
+		p.Phone = phoneLinks(s.opt.LAN)
+	}
+	s.page(w, http.StatusOK, "index", p)
+}
+
+// fromThisComputer: the connection came from a loopback address. A request
+// to this computer's network address comes from that address, not loopback.
+func fromThisComputer(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Unmap().IsLoopback()
 }
 
 // run renders the run as it stands; a run still going streams the rest from

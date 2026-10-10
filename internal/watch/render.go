@@ -13,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/qr"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -313,7 +314,28 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time) runPage {
 type indexPage struct {
 	page
 	Lists lists
-	LAN   []Endpoint // where a phone opens it, with hrn watch --lan
+	Local bool        // seen from this computer, not a phone on the network
+	Phone []phoneLink // where a phone opens it, with hrn watch --lan
+}
+
+// phoneLink is one network address of the page, with a QR code of it to scan.
+type phoneLink struct {
+	Endpoint
+	QRView int    // the code's side in modules, its quiet zone included
+	QRPath string // the dark modules, an SVG path
+}
+
+func phoneLinks(eps []Endpoint) []phoneLink {
+	const quiet = 4
+	var out []phoneLink
+	for _, ep := range eps {
+		l := phoneLink{Endpoint: ep}
+		if c, err := qr.Encode(ep.URL); err == nil {
+			l.QRView, l.QRPath = c.Size+2*quiet, c.SVGPath(quiet)
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 type lists struct {

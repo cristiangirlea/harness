@@ -171,12 +171,32 @@ func TestRequestsFromOutsideAreRefused(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest("POST", "/", nil)
-	req.Host = "127.0.0.1:8089"
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST: status %d, want 405", rec.Code)
+}
+
+// Anything but GET and HEAD would act on hrn. It must carry hrn watch's key,
+// from this computer or the network alike; there is no action yet, so a keyed
+// request gets as far as the router and is refused there.
+func TestAnythingThatWouldActNeedsTheKey(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, tc := range []struct {
+		name, key, sent string
+		want            int
+	}{
+		{"no key set", "", "", 403},
+		{"no key sent", "k3y", "", 403},
+		{"wrong key", "k3y", "nope", 403},
+		{"right key", "k3y", "k3y", http.StatusMethodNotAllowed},
+	} {
+		req := httptest.NewRequest("POST", "/", nil)
+		req.Host, req.RemoteAddr = "127.0.0.1:8089", "127.0.0.1:5000"
+		if tc.sent != "" {
+			req.Header.Set("X-Hrn-Watch-Key", tc.sent)
+		}
+		rec := httptest.NewRecorder()
+		New(context.Background(), Options{Key: tc.key}).ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status %d, want %d", tc.name, rec.Code, tc.want)
+		}
 	}
 }
 
@@ -534,17 +554,33 @@ func TestTheIndexSaysWhereAPhoneCanOpenIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	ctx := context.Background()
 	rec := httptest.NewRecorder()
-	New(ctx, Options{}).ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8089/", nil))
+	local := httptest.NewRequest("GET", "http://127.0.0.1:8089/", nil)
+	local.RemoteAddr = "127.0.0.1:5000"
+	New(ctx, Options{}).ServeHTTP(rec, local)
 	if body := rec.Body.String(); !strings.Contains(body, "hrn watch --lan") {
 		t.Errorf("without --lan the index says how to reach it from the network:\n%s", body)
 	}
+	// With --lan, the PC's own view lists each phone link with its QR code.
+	lan := New(ctx, Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089", Interface: "Wi-Fi", URL: "http://192.168.1.20:8089/"}}})
+	req := httptest.NewRequest("GET", "http://127.0.0.1:8089/", nil)
+	req.RemoteAddr = "127.0.0.1:5000"
 	rec = httptest.NewRecorder()
-	New(ctx, Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089", Interface: "Wi-Fi", URL: "http://192.168.1.20:8089/"}}}).
-		ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8089/", nil))
+	lan.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`href="http://192.168.1.20:8089/"`, "Wi-Fi", "anyone on"} {
+	for _, want := range []string{`href="http://192.168.1.20:8089/"`, "Wi-Fi", "anyone on", `<svg class="qr"`, `<path d="M`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("with --lan the index lacks %q", want)
+			t.Errorf("with --lan the PC's index lacks %q", want)
+		}
+	}
+	// The phone itself needs neither the links nor the PC's instructions.
+	req = httptest.NewRequest("GET", "http://192.168.1.20:8089/", nil)
+	req.RemoteAddr = "192.168.1.50:6000"
+	rec = httptest.NewRecorder()
+	lan.ServeHTTP(rec, req)
+	body = rec.Body.String()
+	for _, unwanted := range []string{`<svg class="qr"`, "Only this computer", "hrn watch --lan"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("a phone's view of the index shows %q", unwanted)
 		}
 	}
 }

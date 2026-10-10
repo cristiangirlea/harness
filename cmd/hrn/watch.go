@@ -5,12 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/qr"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/watch"
 )
@@ -53,17 +55,31 @@ func cmdWatch(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if lan.on {
-		fmt.Printf("hrn watch: http://%s (Ctrl+C stops it)\n", ln.Addr())
-		for _, ep := range opt.LAN {
-			fmt.Printf("  on your network: %s (%s)\n", ep.URL, ep.Interface)
-		}
-		fmt.Println("  no login yet: anyone on each of these networks can read your runs while this runs;")
-		fmt.Println("  a VPN listed here shares them with its network too")
-	} else {
-		fmt.Printf("hrn watch: http://%s (this computer only; --lan for a phone; Ctrl+C stops it)\n", ln.Addr())
-	}
+	printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN)
 	return watch.Serve(ctx, opt, lns...)
+}
+
+// printWatchStart says where the page is. With one network address it also
+// draws that link's QR code, for a phone to scan; with several, the codes
+// are on the page itself.
+func printWatchStart(w io.Writer, local string, lan bool, eps []watch.Endpoint) {
+	if !lan {
+		fmt.Fprintf(w, "hrn watch: http://%s (this computer only; --lan for a phone; Ctrl+C stops it)\n", local)
+		return
+	}
+	fmt.Fprintf(w, "hrn watch: http://%s (Ctrl+C stops it)\n", local)
+	for _, ep := range eps {
+		fmt.Fprintf(w, "  on your network: %s (%s)\n", ep.URL, ep.Interface)
+	}
+	fmt.Fprintln(w, "  viewing needs no login: anyone on each of these networks can read your runs while this runs;")
+	fmt.Fprintln(w, "  a VPN listed here shares them with its network too")
+	if len(eps) != 1 {
+		fmt.Fprintf(w, "  QR codes for each are on http://%s/ (or name one network with --lan=NAME)\n", local)
+		return
+	}
+	if c, err := qr.Encode(eps[0].URL); err == nil {
+		fmt.Fprintf(w, "\nscan with your phone (%s):\n%s", eps[0].Interface, c.Terminal())
+	}
 }
 
 // lanFlag is --lan (every private network address) or --lan=NAME (one
