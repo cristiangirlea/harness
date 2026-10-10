@@ -583,7 +583,7 @@ order they are worth taking:
 8. ~~**`hrn eval diff <a> <b>`.**~~ Done as PR Q, with `hrn eval list`.
 9. ~~**A live view.**~~ Done as PR V (#34): `hrn watch`, `hrn show -f`, and `--lan` for a
    phone, read-only and without a login for now.
-10. ~~**An access key for `hrn watch --lan`**~~ Done as PR W (#36, closes #33): `--lan=NAME`,
+10. ~~**An access key for `hrn watch --lan`**~~ Done as PR W (#39, closes #33): `--lan=NAME`,
     a QR code of the phone link, phone-sized lists, and the key at the door for anything
     that would act. Viewing stays keyless (the owner's choice, 2026-10-11).
 11. **A status bot** (the owner's idea, 2026-10-10): something on screen that says what hrn
@@ -595,6 +595,14 @@ order they are worth taking:
     approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
     nothing else can answer it. Its actions go through hrn watch's door: they must send
     `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
+12. **Guard rails** (the owner, 2026-10-11), in this order:
+    - [#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do. The
+      command guard checks only the api loop; a CLI backend in `yolo` can push, merge or
+      deploy. One refused list, enforced per backend.
+    - [#37](https://github.com/cristiangirlea/harness/issues/37): spending. A daily and weekly
+      budget across all runs, refused when reached, shown on hrn watch.
+    - [#38](https://github.com/cristiangirlea/harness/issues/38): control. Confirmations,
+      an allow-list and an audit log for the bot's and the phone's actions, before item 11.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -604,7 +612,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-11: PR W done (#36, closes #33): hrn watch for a phone. Issue #33 asked for a key
+- 2026-10-11: PR W done (#39, closes #33): hrn watch for a phone. Issue #33 asked for a key
   that other devices need even to view. The owner had said "we can see it on LAN, but we can
   only control it with a key", then picked "a key for viewing too" by an accidental tap
   (their words) and settled on control only: viewing stays keyless. So the PR has (1)
