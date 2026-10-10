@@ -612,6 +612,17 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: PR W review (an independent read-only reviewer), nothing blocking, 5 findings
+  fixed, each as its own commit. The reviewer wrote its own decoder and found the encoder
+  exact at every length 0 to 213 under every mask; since jsQR forgives a few wrong
+  modules, the same kind of decode now runs in CI. Fixed: an empty `--lan=` served every
+  adapter (now refused); `--lan NAME` with a space got a misleading hint; the terminal
+  code was inverted on a light theme (now forced white on black on a terminal); net/http
+  answered `OPTIONS *` itself, before the door (now `DisableGeneralOptionsHandler`); and
+  tests for the door by method, origin and source. Left for the bot (#38): every acting
+  route must be registered as POST, since the door goes by method; the key must never
+  appear in a GET response; and on plain HTTP it is a replayable bearer token, so an HMAC
+  over method, path and time, or HTTPS, comes before it carries power.
 - 2026-10-11: PR W done (#39, closes #33): hrn watch for a phone. Issue #33 asked for a key
   that other devices need even to view. The owner had said "we can see it on LAN, but we can
   only control it with a key", then picked "a key for viewing too" by an accidental tap
