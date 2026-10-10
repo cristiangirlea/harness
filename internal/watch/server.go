@@ -328,6 +328,12 @@ func (s *server) lists() lists {
 		l.Runs = append(l.Runs, runRow(rec))
 	}
 	batches, unreadable, err := batch.List()
+	if unreadable > 0 {
+		// Most likely one caught mid-save: on Windows a read can land on
+		// the rename. Look again before calling it unreadable.
+		time.Sleep(50 * time.Millisecond)
+		batches, unreadable, err = batch.List()
+	}
 	if err != nil {
 		l.Problems = append(l.Problems, "Batches could not be listed: "+err.Error())
 	}
@@ -541,12 +547,12 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
 	}
-	if _, err := batch.LoadResult(id); err != nil {
+	last, err := batch.LoadResult(id)
+	if err != nil {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
 	}
 	st := s.startStream(w)
-	var last batch.Result
 	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, bool, error) {
 		res, err := batch.LoadResult(id)
 		switch {
