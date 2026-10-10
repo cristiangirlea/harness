@@ -74,6 +74,8 @@ which tests, builds with `release.sh` and publishes the release.
 
 - One branch per change (short name, as in `fix-batch-rm-deregistered`), one PR; the owner
   merges. Never `gh pr merge`, never push to `main`, never tag or release: hand over the command.
+  PLAN.md's merge step (merge commit, delete the branch) is now the owner's: hand over
+  `gh pr merge N --merge --delete-branch`.
 - Commit messages: the area first, lower case, then a plain sentence (`batch rm: name a single
   leftover file instead of counting it`). No emoji, no AI attribution anywhere (no `Co-Authored-By`,
   `Assisted-by` or "Generated with", in commits, PR text, comments or docs). Commits are

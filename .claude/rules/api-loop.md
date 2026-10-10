@@ -11,7 +11,7 @@ paths:
   models that sign their thinking. Context is reduced server-side (context editing), not here.
 - The client is hand-written on `net/http` (streaming SSE, retries, prompt caching). Keep it
   stdlib; a change to SSE parsing keeps `FuzzParseSSE` passing.
-- The price table (`price`, `priceOf`) is USD per million tokens. A model without a price gets
+- The price table (`prices`, read through `priceOf`) is USD per million tokens. A model without a price gets
   no cost estimate and a warning, and `max_cost` cannot be enforced for it; add new models to the
   table with their published prices.
 - The backend has never run against the real API (see README "Status"). Don't treat fake-server

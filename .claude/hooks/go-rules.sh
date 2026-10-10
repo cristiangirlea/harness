@@ -4,7 +4,9 @@
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 msg=""
 if command -v gofmt >/dev/null 2>&1; then
-  unformatted=$(gofmt -l . 2>/dev/null)
+  # Tracked and new files only: gofmt -l . would also walk .hrn/worktrees, where kept batch
+  # attempts may hold unformatted code that is not this edit's.
+  unformatted=$(git ls-files -co --exclude-standard -- '*.go' | xargs -r gofmt -l 2>/dev/null)
   if [ -n "$unformatted" ]; then
     msg=$(printf 'gofmt would change these files (run gofmt -w on them):\n%s\n' "$unformatted")
   fi
