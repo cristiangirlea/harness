@@ -107,3 +107,21 @@ func TestParseClaudeStreamErrorSubtypes(t *testing.T) {
 		}
 	}
 }
+
+// Claude Code reports a call its deny rules refused as a system line whose
+// message is a string, unlike the messages hrn decodes. It must not come out
+// as raw JSON: the tool result after it already says the call was refused.
+func TestAStreamLineOfAnUnmodelledShapeIsNotPrintedRaw(t *testing.T) {
+	line := `{"type":"system","subtype":"permission_denied","tool_name":"Bash","message":"Permission to use Bash with command git push origin main has been denied.","session_id":"c1d19a4a"}`
+	var events []Event
+	var res Result
+	if !parseClaudeStream([]byte(line), func(e Event) { events = append(events, e) }, &res) {
+		t.Fatal("a claude stream line was handed back as plain text")
+	}
+	if len(events) != 0 {
+		t.Errorf("events = %+v; the refusal is reported by the tool result that follows", events)
+	}
+	if res.Session != "c1d19a4a" {
+		t.Errorf("session = %q; every line carries it", res.Session)
+	}
+}

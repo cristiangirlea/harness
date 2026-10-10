@@ -126,8 +126,21 @@ type claudeLine struct {
 
 func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 	var l claudeLine
-	if json.Unmarshal(line, &l) != nil || l.Type == "" {
-		return false
+	if err := json.Unmarshal(line, &l); err != nil || l.Type == "" {
+		// A stream line of a shape hrn does not model (a permission_denied
+		// system line carries its message as a string) is still a stream line,
+		// not text to print: keep its session id and let it go.
+		var head struct {
+			Type      string `json:"type"`
+			SessionID string `json:"session_id"`
+		}
+		if json.Unmarshal(line, &head) != nil || head.Type == "" {
+			return false
+		}
+		if head.SessionID != "" {
+			res.Session = head.SessionID
+		}
+		return true
 	}
 	// Every line carries the session id; with --fork-session it is the new one.
 	if l.SessionID != "" {
