@@ -612,6 +612,21 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
+  means including security"), by an independent agent with loopback-only proof tests in a
+  scratch copy. Nothing critical or high; four findings, three fixed here, each as its own
+  commit. (1) Record text reached the terminal raw in hrn run, show and show -f, so a file an
+  agent read could set the window title, write the clipboard (OSC 52) or forge a check mark:
+  control characters now become U+FFFD. (2) On Windows a reader of a batch record blocked
+  save's rename, so 64 readers on the network failed 14% of saves (a test with 32 saw 10 to
+  15 of 50): records are read with FILE_SHARE_DELETE and replaced with os.Root's Rename,
+  which uses POSIX rename semantics; none fail now. (4) A key that reached a run (an agent
+  running env) would show on the LAN page: watch blanks the values of its environment's
+  secret-looking variables on every page and fragment; the run_command side belongs to #36.
+  Also the footer's home path and read errors' paths are shown to this computer only.
+  Left, low: (3) one client can make watch read a whole large events.jsonl per request and
+  open many streams, each re-reading the lists every 2 s; real runs are under 1 MB today.
+  A shared poller, a cap on streams per address and a bounded run page are the fix, with #38.
 - 2026-10-11: PR W review (an independent read-only reviewer), nothing blocking, 5 findings
   fixed, each as its own commit. The reviewer wrote its own decoder and found the encoder
   exact at every length 0 to 213 under every mask; since jsQR forgives a few wrong
