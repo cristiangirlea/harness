@@ -841,3 +841,56 @@ func TestThePhoneIsNotToldTheHomePath(t *testing.T) {
 		}
 	}
 }
+
+// A key cut in two by a page's length cap must not show either half: secrets
+// are blanked in what a record says before anything is cut, as well as in
+// what the page says.
+func TestASecretCutByACapDoesNotShowEitherHalf(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const key = "sk-ant-api03-Q9w8E7r6T5y4U3i2O1p0-abcdefghijklmnop"
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	w, err := runlog.Create("fake", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(agent.Result{})
+	head := strings.Repeat("a", resultHead-20)
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: head + key + strings.Repeat("b", 30<<10)})
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: strings.Repeat("c", 30<<10) + key[:30] + key[30:] + strings.Repeat("d", resultTail-25)})
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: strings.Repeat("e", 100) + key})                        // the one-line summary's cut
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Input: []byte(`{"command":"echo ` + key + `"}`)}) // JSON form
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/run/"+w.ID())
+	for i := 0; i+16 <= len(key); i += 4 {
+		if strings.Contains(page, key[i:i+16]) {
+			t.Fatalf("the page shows part of the key: %q", key[i:i+16])
+		}
+	}
+}
+
+// A stream that fails names files in its error; a phone is told only that it
+// failed.
+func TestAStreamErrorDoesNotTellThePhoneThePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	w, err := runlog.Create("fake", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(agent.Result{})
+	h := New(context.Background(), Options{Poll: 5 * time.Millisecond, LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	for _, remote := range []string{"192.168.1.50:6000", "127.0.0.1:5000"} {
+		req := httptest.NewRequest("GET", "http://192.168.1.20:8089/stream/run/"+w.ID()+"?after=999999.0", nil)
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if !strings.Contains(body, "event: problem") {
+			t.Fatalf("%s: no problem event in %q", remote, body)
+		}
+		if remote != "127.0.0.1:5000" && strings.Contains(body, filepath.Base(home)) {
+			t.Errorf("the phone was told the path: %q", body)
+		}
+	}
+}

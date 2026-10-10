@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // Record text is whatever an agent read, so it reaches the terminal without
@@ -33,5 +34,24 @@ func TestRecordTextCannotDriveTheTerminal(t *testing.T) {
 	}
 	if !strings.Contains(out, "\nsecond line\tafter a tab") {
 		t.Errorf("a CRLF line ending and a tab should survive as a line and a tab:\n%q", out)
+	}
+}
+
+// The rest of what the terminal shows of a run, from the backend or the model
+// rather than from files: the header, the summary line, and a tool call shown
+// by its JSON input.
+func TestRunFieldsCannotDriveTheTerminalEither(t *testing.T) {
+	var b strings.Builder
+	r := &renderer{out: &b}
+	rec := runlog.Record{ID: "r1", Backend: "claude\x1b[2J", Continues: "x\x1b]0;t\x07",
+		Task:   agent.Task{Prompt: "p", Dir: "/repo\x1b[1A"},
+		Result: agent.Result{Session: "s\x9b31m", Model: "m\x1b]52;c;eA==\x07", Backend: "b\x07", Status: agent.StatusOK}}
+	showHeader(r, rec)
+	r.Event(agent.Event{Kind: agent.EventToolCall, Tool: "mcp", Input: []byte("{\"q\":\"\u009b31m\u007f\"}")})
+	r.Summary(rec.ID, rec.Result)
+	for _, bad := range []string{"\x1b", "\x07", "\u009b", "\x7f"} {
+		if strings.Contains(b.String(), bad) {
+			t.Errorf("the terminal got %q:\n%q", bad, b.String())
+		}
 	}
 }

@@ -21,6 +21,11 @@ func readRecord(path string) ([]byte, error) {
 		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
 		nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
+		// A path CreateFile cannot take as it is (one past MAX_PATH, which
+		// os handles for us) is still readable the ordinary way.
+		if data, rerr := os.ReadFile(path); rerr == nil {
+			return data, nil
+		}
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
 	f := os.NewFile(uintptr(h), path)

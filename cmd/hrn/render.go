@@ -92,7 +92,7 @@ func (r *renderer) Event(e agent.Event) {
 		r.newline()
 		summary := e.Text
 		if summary == "" && len(e.Input) > 0 {
-			summary = compactJSON(e.Input, 120)
+			summary = printable(compactJSON(e.Input, 120))
 		}
 		r.write(r.c(cyan, "→ "+e.Tool) + " " + tools.OneLine(summary, 160) + "\n")
 	case agent.EventToolResult:
@@ -119,6 +119,7 @@ func (r *renderer) Event(e agent.Event) {
 func (r *renderer) Summary(runID string, res agent.Result) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	res.Backend, res.Model = printable(res.Backend), printable(res.Model)
 	r.newline()
 	cost := ""
 	if res.CostUSD > 0 {

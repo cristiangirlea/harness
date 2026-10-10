@@ -319,8 +319,8 @@ func cmdRuns(args []string) error {
 		if !rec.Done {
 			status = "running?"
 		}
-		fmt.Printf("%s  %-8s %-9s %7s  %s\n", rec.ID, rec.Backend, status,
-			rec.Result.Duration.Round(time.Second), tools.OneLine(rec.Task.Prompt, 70))
+		fmt.Printf("%s  %-8s %-9s %7s  %s\n", rec.ID, printable(rec.Backend), status,
+			rec.Result.Duration.Round(time.Second), printable(tools.OneLine(rec.Task.Prompt, 70)))
 	}
 	return nil
 }
@@ -378,6 +378,7 @@ func showHeader(r *renderer, rec runlog.Record) {
 	if rec.Result.Session != "" {
 		head += " · session " + rec.Result.Session
 	}
+	head = printable(head)
 	r.Line(r.c(bold, printable(tools.OneLine(rec.Task.Prompt, 200))))
 	r.Line(head)
 	r.Line("")
@@ -497,7 +498,7 @@ func cmdEval(args []string) (int, error) {
 		if e.Kind == "tool" && !verbose {
 			return
 		}
-		r.Line(fmt.Sprintf("[%s] %s", e.Task, e.Text))
+		r.Line(printable(fmt.Sprintf("[%s] %s", e.Task, e.Text)))
 	})
 	if err != nil && rec.ID == "" {
 		return 1, err

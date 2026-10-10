@@ -1,9 +1,14 @@
 package watch
 
 import (
+	"encoding/json"
 	"html"
 	"sort"
 	"strings"
+
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // secretReplacer blanks the values of secret-looking variables in env (names
@@ -21,7 +26,9 @@ func secretReplacer(env []string) *strings.Replacer {
 		if !ok || len(value) < 12 || !secretName(name) {
 			continue
 		}
-		for _, v := range []string{value, html.EscapeString(value), strings.ReplaceAll(html.EscapeString(value), "+", "&#43;")} {
+		quoted, _ := json.Marshal(value) // the form a tool's JSON input holds it in
+		inJSON := strings.TrimSuffix(strings.TrimPrefix(string(quoted), `"`), `"`)
+		for _, v := range []string{value, inJSON, html.EscapeString(value), strings.ReplaceAll(html.EscapeString(value), "+", "&#43;")} {
 			if !seen[v] {
 				seen[v] = true
 				values = append(values, v)
@@ -48,4 +55,54 @@ func secretName(name string) bool {
 		}
 	}
 	return false
+}
+
+// The page cuts long text (capText, a summary's first line) before it is
+// rendered, and a key cut in two is no longer the value the rendered page is
+// checked for. So records are cleaned where they come in, before any cut;
+// server.render's pass over the finished page stays as a backstop.
+
+func (s *server) clean(text string) string {
+	if s.redact == nil || text == "" {
+		return text
+	}
+	return s.redact.Replace(text)
+}
+
+func (s *server) cleanEvent(e agent.Event) agent.Event {
+	e.Text = s.clean(e.Text)
+	if len(e.Input) > 0 {
+		e.Input = json.RawMessage(s.clean(string(e.Input)))
+	}
+	return e
+}
+
+func (s *server) cleanRecord(rec runlog.Record) runlog.Record {
+	rec.Task.Prompt = s.clean(rec.Task.Prompt)
+	rec.Result.Final = s.clean(rec.Result.Final)
+	rec.Result.Error = s.clean(rec.Result.Error)
+	return rec
+}
+
+func (s *server) cleanBatch(res batch.Result) batch.Result {
+	tasks := make([]batch.TaskResult, len(res.Tasks))
+	for i, t := range res.Tasks {
+		t.Prompt, t.Error = s.clean(t.Prompt), s.clean(t.Error)
+		attempts := make([]batch.Attempt, len(t.Attempts))
+		for j, a := range t.Attempts {
+			a.Prompt, a.Error = s.clean(a.Prompt), s.clean(a.Error)
+			a.Result.Final, a.Result.Error = s.clean(a.Result.Final), s.clean(a.Result.Error)
+			gates := make([]batch.GateResult, len(a.Gates))
+			for k, g := range a.Gates {
+				g.Command, g.Output = s.clean(g.Command), s.clean(g.Output)
+				gates[k] = g
+			}
+			a.Gates = gates
+			attempts[j] = a
+		}
+		t.Attempts = attempts
+		tasks[i] = t
+	}
+	res.Tasks = tasks
+	return res
 }

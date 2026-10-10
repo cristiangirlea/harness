@@ -394,7 +394,7 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, "Runs could not be listed: "+err.Error())
 	}
 	for _, rec := range runs {
-		l.Runs = append(l.Runs, runRow(rec))
+		l.Runs = append(l.Runs, runRow(s.cleanRecord(rec)))
 	}
 	batches, unreadable, err := batch.List()
 	if unreadable > 0 {
@@ -413,7 +413,7 @@ func (s *server) lists() lists {
 		if i == 20 {
 			break
 		}
-		l.Batches = append(l.Batches, batchRow(res))
+		l.Batches = append(l.Batches, batchRow(s.cleanBatch(res)))
 	}
 	return l
 }
@@ -461,10 +461,11 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	events := make([]eventView, 0, len(lines))
 	for _, l := range lines {
 		var v eventView
+		l.Event = s.cleanEvent(l.Event)
 		v, prev = eventOf(l, prev)
 		events = append(events, v)
 	}
-	p := runPageOf(rec, events, prev)
+	p := runPageOf(s.cleanRecord(rec), events, prev)
 	p.Home = homeFor(r)
 	if !done {
 		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
@@ -482,7 +483,7 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Batch "+r.PathValue("id"), err)
 		return
 	}
-	p := batchPageOf(res)
+	p := batchPageOf(s.cleanBatch(res))
 	p.Home = homeFor(r)
 	s.page(w, http.StatusOK, "batch", p)
 }
@@ -601,11 +602,11 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 	s.loop(r, st, every, func() (bool, error) {
 		data, final, err := next()
 		if err != nil {
-			return true, s.problem(st, err)
+			return true, s.problem(r, st, err)
 		}
 		html, err := s.render(name, data)
 		if err != nil {
-			return true, s.problem(st, err)
+			return true, s.problem(r, st, err)
 		}
 		if html != last {
 			last = html
@@ -620,8 +621,12 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 	})
 }
 
-func (s *server) problem(st *stream, err error) error {
-	html, _ := s.render("problem", err.Error())
+func (s *server) problem(r *http.Request, st *stream, err error) error {
+	msg := "The stream stopped: the record could not be read."
+	if fromThisComputer(r) { // the error names paths
+		msg = err.Error()
+	}
+	html, _ := s.render("problem", msg)
 	_ = st.send("problem", "", html)
 	return err
 }
@@ -653,7 +658,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 			res = last
 		}
 		last = res
-		return batchBodyOf(res), !batchGoing(res), nil
+		return batchBodyOf(s.cleanBatch(res)), !batchGoing(res), nil
 	}, "batchbody")
 }
 
@@ -688,24 +693,25 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		lines, rec, done, err := f.Poll()
 		for _, l := range lines {
 			var v eventView
+			l.Event = s.cleanEvent(l.Event)
 			v, prev = eventOf(l, prev)
 			html, rerr := s.render("event", v)
 			if rerr != nil {
-				return true, s.problem(st, rerr)
+				return true, s.problem(r, st, rerr)
 			}
 			if werr := st.send("item", cursor{l.End, prev}.String(), html); werr != nil {
 				return true, werr
 			}
 		}
 		if err != nil {
-			return true, s.problem(st, err)
+			return true, s.problem(r, st, err)
 		}
 		if !done {
 			return false, nil
 		}
-		html, err := s.render("result", resultOf(rec.Result))
+		html, err := s.render("result", resultOf(s.cleanRecord(rec).Result))
 		if err != nil {
-			return true, s.problem(st, err)
+			return true, s.problem(r, st, err)
 		}
 		if err := st.send("result", "", html); err != nil {
 			return true, err
