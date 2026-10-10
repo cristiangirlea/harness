@@ -630,6 +630,16 @@ the questions).
   old workspace says that -C (or dir over MCP) continues elsewhere; and task.json records
   the session a run was forked from. Skipped: codex found on PATH still wins over the
   desktop app's build, as every backend prefers the user's PATH; hrn backends names it.
+- 2026-10-10: the SSE parser's scanner buffer starts small. `FuzzParseSSE` failed CI on #34
+  with "context deadline exceeded" while its rate fell to 0 execs/s, with no crasher and a
+  package that PR did not touch; a rerun passed. `parseSSE` gave every response a 1 MiB
+  buffer up front, so 24 fuzz workers allocated on the order of 25 GB/s, more than a
+  memory-limited runner pod can collect. It starts at the scanner's 4 KiB now and doubles
+  as a line needs, up to the same 64 MiB: a 598-byte stream went from 1,055,404 to 10,704
+  bytes per parse, and under `GOMEMLIMIT=256MiB` the fuzzer ran 1,094,491 inputs in 15 s
+  where it ran 308,242. A test holds the cost of a small parse under 128 KiB and another
+  parses a 3 MiB line whole. The CI step still runs one worker per core; if the cluster
+  stalls it again, `-parallel` on the fuzz steps is the next lever (ci.yml is #32's now).
 - 2026-09-27: PR S done: the api backend's price table. Prices come from Anthropic's
   published first-party list (dated 2026-06-24 in the reference used). Three changes. The
   newest models are in it: Opus 5.5 ($4/$20), Mythos 5.1, and the Opus 4.6/4.7 and
