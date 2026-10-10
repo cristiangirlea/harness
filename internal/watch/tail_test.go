@@ -175,9 +175,19 @@ func TestFollowStopsWhenItsContextEnds(t *testing.T) {
 }
 
 func TestFollowRefusesARunThatDoesNotExist(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
 	if _, err := Follow(context.Background(), "nope", 0, time.Millisecond, func(Line) {}); err == nil {
 		t.Fatal("want an error for a run that is not there")
+	}
+	// A finished run planted where ../escape leads: only the id check stops it.
+	w, err := runlog.Create("fake", agent.Task{Prompt: "planted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(agent.Result{Status: agent.StatusOK})
+	if err := os.Rename(w.Dir(), filepath.Join(home, "escape")); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := Follow(context.Background(), "../escape", 0, time.Millisecond, func(Line) {}); err == nil {
 		t.Fatal("want an error for an id that leaves the runs directory")

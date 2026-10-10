@@ -382,11 +382,45 @@ func TestTheRunStreamRefusesABadCursorAndAMissingRun(t *testing.T) {
 	if code, _ := get(t, srv.URL+"/stream/run/"+w.ID()+"?after=nonsense"); code != 400 {
 		t.Errorf("bad cursor: %d, want 400", code)
 	}
-	if code, _ := get(t, srv.URL+"/stream/run/no-such-run"); code != 404 {
+	if code, _ := get(t, srv.URL+"/stream/run/20991231-235959-abcdef"); code != 404 {
 		t.Errorf("missing run: %d, want 404", code)
 	}
-	if code, _ := get(t, srv.URL+"/run/..%5Cescape"); code != 404 {
-		t.Errorf("an id leaving the runs directory: %d, want 404", code)
+}
+
+// Ids from a request become file names. Records planted where an unchecked id
+// would lead show that the check, not a missing file, refuses them; CON is a
+// device on Windows, and reading it would wait on hrn's console.
+func TestIdsThatAreNotHrnsOwnAreRefused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	w, err := runlog.Create("fake", agent.Task{Prompt: "planted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(agent.Result{Status: agent.StatusOK})
+	if err := os.Rename(w.Dir(), filepath.Join(home, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	saveBatch(t, batch.Result{ID: "planted", Duration: time.Second})
+	if err := os.Rename(filepath.Join(home, "batches", "planted.json"), filepath.Join(home, "escape.json")); err != nil {
+		t.Fatal(err)
+	}
+	saveBatch(t, batch.Result{ID: "nonstandard", Duration: time.Second})
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, path := range []string{"/run/..%5Cescape", "/stream/run/..%5Cescape", "/batch/..%5Cescape", "/stream/batch/..%5Cescape",
+		"/batch/nonstandard", "/batch/CON", "/stream/batch/CON", "/run/CON", "/run/NUL"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Errorf("%s: %v", path, err)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 404 {
+			t.Errorf("%s: status %d, want 404", path, resp.StatusCode)
+		}
 	}
 }
 

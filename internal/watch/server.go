@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -162,6 +163,11 @@ func checkListener(a net.Addr, lan []Endpoint) error {
 	return fmt.Errorf("hrn watch serves on a loopback address, and with --lan on this computer's private network addresses; not on %s", a)
 }
 
+// idRE is the shape of every run and batch id hrn makes (runlog.NewID). An id
+// from a request must have it before it is used as a file name: on Windows 10
+// a name such as CON opens a device.
+var idRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`)
+
 type server struct {
 	ctx context.Context // ends every stream when the server stops
 	opt Options
@@ -310,6 +316,10 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 // run renders the run as it stands; a run still going streams the rest from
 // where this left off.
 func (s *server) run(w http.ResponseWriter, r *http.Request) {
+	if !idRE.MatchString(r.PathValue("id")) {
+		s.missing(w, "Run "+r.PathValue("id"), os.ErrNotExist)
+		return
+	}
 	f, _, err := NewFollower(r.PathValue("id"), 0)
 	if err != nil {
 		s.missing(w, "Run "+r.PathValue("id"), err)
@@ -335,6 +345,10 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) batch(w http.ResponseWriter, r *http.Request) {
+	if !idRE.MatchString(r.PathValue("id")) {
+		s.missing(w, "Batch "+r.PathValue("id"), os.ErrNotExist)
+		return
+	}
 	res, err := batch.LoadResult(r.PathValue("id"))
 	if err != nil {
 		s.missing(w, "Batch "+r.PathValue("id"), err)
@@ -489,6 +503,10 @@ func (s *server) streamIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !idRE.MatchString(id) {
+		http.Error(w, "batch not found", http.StatusNotFound)
+		return
+	}
 	if _, err := batch.LoadResult(id); err != nil {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
@@ -511,6 +529,10 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !idRE.MatchString(id) {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
 	var cur cursor
 	var err error
 	if last := r.Header.Get("Last-Event-ID"); last != "" {
