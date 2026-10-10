@@ -40,10 +40,11 @@ Usage:
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
   hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
-  hrn watch [--addr HOST:PORT] [--lan]
+  hrn watch [--addr HOST:PORT] [--lan[=NAME]]
                                  a local page that follows runs and batches live (default 127.0.0.1:8089,
                                  loopback only); --lan also serves it, read-only and without a login,
-                                 on this computer's private network addresses, for a phone
+                                 on this computer's private network addresses, for a phone, with a QR
+                                 code; --lan=NAME only on one adapter (its name or address)
   hrn mcp [--dir PATH]            serve hrn as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hrn batch show [--json] <id>    reprint a batch's table, while it runs or afterwards

@@ -583,10 +583,9 @@ order they are worth taking:
 8. ~~**`hrn eval diff <a> <b>`.**~~ Done as PR Q, with `hrn eval list`.
 9. ~~**A live view.**~~ Done as PR V (#34): `hrn watch`, `hrn show -f`, and `--lan` for a
    phone, read-only and without a login for now.
-10. **An access key for `hrn watch --lan`** ([#33](https://github.com/cristiangirlea/harness/issues/33)):
-    a key per start that other devices need, a QR code for the phone link. The owner's rule
-    (2026-10-10): the network may see the page, but anything that acts on hrn from it needs
-    the key, plus a CSRF check.
+10. ~~**An access key for `hrn watch --lan`**~~ Done as PR W (#36, closes #33): `--lan=NAME`,
+    a QR code of the phone link, phone-sized lists, and the key at the door for anything
+    that would act. Viewing stays keyless (the owner's choice, 2026-10-11).
 11. **A status bot** (the owner's idea, 2026-10-10): something on screen that says what hrn
     is doing and asks for the decisions it waits on (an approval, a failed gate: retry or
     stop, merging the branches that passed), and acts on the answer. Its eyes are `hrn
@@ -594,7 +593,8 @@ order they are worth taking:
     `hrn mcp`'s tools (run, batch, batch_show, batch_merge; approvals already reach an MCP
     host by elicitation). The missing piece is a place where pending decisions wait: today an
     approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
-    nothing else can answer it. Control from the network waits for item 10's key.
+    nothing else can answer it. Its actions go through hrn watch's door: they must send
+    `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -604,6 +604,24 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: PR W done (#36, closes #33): hrn watch for a phone. Issue #33 asked for a key
+  that other devices need even to view. The owner had said "we can see it on LAN, but we can
+  only control it with a key", then picked "a key for viewing too" by an accidental tap
+  (their words) and settled on control only: viewing stays keyless. So the PR has (1)
+  `--lan=NAME`, one adapter by name (any case) or address, since plain `--lan` on the
+  owner's PC also served WSL, Hyper-V and two VMware networks; (2) a QR code of each phone
+  link on the PC's own view of the index, and in the terminal when there is one network,
+  from a new `internal/qr` (byte mode, level M, versions 1 to 10; tests pin the standard's
+  HELLO WORLD codewords, format and version strings; jsQR 1.4.0 in a browser read back codes
+  of versions 1, 2, 5, 8 and 10 and the served code itself); (3) on a narrow screen, runs and
+  batches as cards, since the owner found the first page poor on a phone (the tables ran off
+  the side and broke words); (4) the door: anything but GET and HEAD must send
+  `Options.Key` in `X-Hrn-Watch-Key`, from loopback too, a custom header doubling as the
+  CSRF check. No action exists and hrn watch sets no key, so all are refused until the bot
+  brings one; no client side was written for an action that does not exist. Not done from
+  #33: HTTPS (a key on plain HTTP can be sniffed on the Wi-Fi; worth it when the key
+  matters) and a key per start for viewing (declined). A phone that came in over the network
+  sees neither the codes nor the PC's hints, decided by the connection's address, not Host.
 - 2026-10-10: PR V done (#34): a live view. The owner ran `hrn batch` on the claude backend
   and asked for a way to see what is going on. `hrn watch` serves a page of the newest runs
   and batches, a timeline per run streamed over Server-Sent Events that tail

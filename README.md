@@ -64,7 +64,7 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](#run-records)). |
 | `hrn show [--json] <id>` | Replay a recorded run. |
 | `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](#watching-runs-live)). |
-| `hrn watch [--addr HOST:PORT] [--lan]` | A local page that follows runs and batches live (see [Watching runs live](#watching-runs-live)). |
+| `hrn watch [--addr HOST:PORT] [--lan[=NAME]]` | A local page that follows runs and batches live (see [Watching runs live](#watching-runs-live)). |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
@@ -458,6 +458,7 @@ does not stop the others.
 ```
 hrn watch                  # http://127.0.0.1:8089, this computer only
 hrn watch --lan            # also on this computer's private network addresses, for a phone
+hrn watch --lan="Ethernet 3"   # only that adapter's network (a name or an address)
 hrn show -f <run-id>       # the same timeline in the terminal
 ```
 
@@ -476,20 +477,30 @@ figures, nothing for codex and gemini, and only once the run has ended.
 
 Everything from a record is escaped as text, since tool results hold whatever the agent
 read. The page loads nothing from anywhere else (one stylesheet and one script, both
-served by hrn, no fonts), follows the system's light or dark theme, and answers GET only:
-it cannot start, stop or merge anything.
+served by hrn, no fonts), follows the system's light or dark theme, and on a phone shows
+each run and batch as a small card instead of a table. It cannot start, stop or merge
+anything: a request other than GET or HEAD must carry hrn watch's key in
+`X-Hrn-Watch-Key`, from this computer or the network alike (a custom header is also the
+CSRF check), and as no action exists yet, hrn watch sets no key and refuses them all.
 
 It listens on a loopback address and refuses any other `--addr`, and it answers only
 requests whose Host header names it, so a DNS name rebound to 127.0.0.1 cannot read it
 through a browser. `--lan` also serves it on each private IPv4 address (192.168.x, 10.x,
 172.16-31.x) of this computer's network adapters that are up, never on 0.0.0.0 or a public
 address, and the terminal and the index list those links; on Wi-Fi, use the one on the
-Wi-Fi adapter. Point-to-point links (most VPN tunnels) are left out, but a VPN that shows
-up as an ordinary adapter with a private address is served too, and listed. There is no
-login yet: while `--lan` runs, anyone on each listed network can read the runs.
-Windows Firewall asks once whether hrn may listen; allowing Private networks is enough.
-An access key and a QR code are next ([#33](https://github.com/cristiangirlea/harness/issues/33)),
-and anything that acts on hrn from the network will need the key.
+Wi-Fi adapter. `--lan=NAME` keeps one adapter, by its name in any case or by its address,
+and a name that matches nothing is refused with the adapters there are. Point-to-point
+links (most VPN tunnels) are left out, but a VPN that shows up as an ordinary adapter
+with a private address is served too, and listed. Viewing needs no login: while `--lan`
+runs, anyone on each listed network can read the runs. Windows Firewall asks once
+whether hrn may listen; allowing Private networks is enough when the network is marked
+Private.
+
+For the phone, the index as seen from this computer shows each link with its QR code,
+and with one network (`--lan=NAME`, or only one adapter) the terminal draws that code
+too. The codes come from hrn's own encoder (`internal/qr`: byte mode, level M, versions
+1 to 10), standard library only. A phone that came in over the network sees neither the
+codes nor the hints meant for this computer.
 
 `hrn show -f` prints the same steps in the terminal, with a line for each wait of a
 second or more, and ends with the summary line once the run's result is saved. Ctrl+C
@@ -686,6 +697,7 @@ internal/eval/     a batch across a matrix of variants, scored per variant and p
 internal/report/   aggregation over run and batch records (hrn report; reused by eval)
 internal/runlog/   run recording
 internal/watch/    following records as they are written: hrn show -f, and hrn watch's page
+internal/qr/       QR codes for hrn watch's phone links (byte mode, level M, versions 1-10)
 internal/followup/ continuing a run: what the backend picks up, what it is handed
 ```
 
