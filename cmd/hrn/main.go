@@ -39,6 +39,11 @@ Usage:
   hrn runs [-n N]                 list recent runs
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
+  hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
+  hrn watch [--addr HOST:PORT] [--lan]
+                                 a local page that follows runs and batches live (default 127.0.0.1:8089,
+                                 loopback only); --lan also serves it, read-only and without a login,
+                                 on this computer's private network addresses, for a phone
   hrn mcp [--dir PATH]            serve hrn as an MCP server on stdio; --dir is the default workspace (default: current directory)
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hrn batch show [--json] <id>    reprint a batch's table, while it runs or afterwards
@@ -118,6 +123,8 @@ func main() {
 		code, err = cmdEval(os.Args[2:])
 	case "report":
 		err = cmdReport(os.Args[2:])
+	case "watch":
+		err = cmdWatch(os.Args[2:])
 	case "version", "--version", "-V":
 		info, _ := debug.ReadBuildInfo()
 		fmt.Println(versionLine(info))
@@ -320,13 +327,23 @@ func cmdRuns(args []string) error {
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "")
+	follow := fs.Bool("follow", false, "")
+	fs.BoolVar(follow, "f", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *jsonOut && *follow {
+		return errors.New("--follow prints the run as it happens and does not combine with --json")
+	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: hrn show [--json] <run-id>")
+		return errors.New("usage: hrn show [--json | -f] <run-id>")
 	}
 	id := fs.Arg(0)
+	if *follow {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		return followRun(ctx, newRenderer(true), id, 250*time.Millisecond)
+	}
 	rec, err := runlog.Load(id)
 	if err != nil {
 		return err
@@ -341,14 +358,7 @@ func cmdShow(args []string) error {
 		return enc.Encode(map[string]any{"record": rec, "events": events})
 	}
 	r := newRenderer(true)
-	head := fmt.Sprintf("%s · %s · mode %s", rec.Backend, rec.Task.Dir, rec.Task.Mode)
-	if rec.Continues != "" {
-		head += " · continues " + rec.Continues
-	}
-	if rec.Result.Session != "" {
-		head += " · session " + rec.Result.Session
-	}
-	fmt.Printf("%s\n%s\n\n", r.c(bold, tools.OneLine(rec.Task.Prompt, 200)), head)
+	showHeader(r, rec)
 	for _, e := range events {
 		r.Event(e)
 	}
@@ -356,6 +366,20 @@ func cmdShow(args []string) error {
 		r.Summary(rec.ID, rec.Result)
 	}
 	return nil
+}
+
+// showHeader is what hrn show prints above a run's events.
+func showHeader(r *renderer, rec runlog.Record) {
+	head := fmt.Sprintf("%s · %s · mode %s", rec.Backend, rec.Task.Dir, rec.Task.Mode)
+	if rec.Continues != "" {
+		head += " · continues " + rec.Continues
+	}
+	if rec.Result.Session != "" {
+		head += " · session " + rec.Result.Session
+	}
+	r.Line(r.c(bold, tools.OneLine(rec.Task.Prompt, 200)))
+	r.Line(head)
+	r.Line("")
 }
 
 // cmdMCP serves hrn over stdio until the host closes the pipe. stdout is the

@@ -63,6 +63,8 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | `hrn runs [-n N]` | List recent runs. |
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](#run-records)). |
 | `hrn show [--json] <id>` | Replay a recorded run. |
+| `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](#watching-runs-live)). |
+| `hrn watch [--addr HOST:PORT] [--lan]` | A local page that follows runs and batches live (see [Watching runs live](#watching-runs-live)). |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
@@ -413,8 +415,10 @@ Each gate command gets 15 minutes before it is killed with its whole process tre
 task, so a slow integration suite and a quick lint can share a batch. A killed gate fails
 with `[timed out after …]` in its output, which a retry then sees.
 
-The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts and
-again at the end; `--json` prints it, `-v` streams every agent's tool calls. Ctrl+C
+The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts,
+again each time a task moves on (an attempt's run starts or ends, a gate finishes, a task
+ends) and at the end, so `hrn watch` and `hrn batch show` can follow it; `--json` prints
+it, `-v` streams every agent's tool calls. Ctrl+C
 cancels running agents and skips the rest. Exit status is 1 unless every task passed.
 
 ### Reading and landing the work
@@ -448,6 +452,49 @@ with uncommitted changes); the record and the run logs stay. A directory git no 
 as a worktree (on Windows a file lock can leave one behind) is removed when it is empty and
 reported when it is not, and its branch is deleted either way. One task that cannot be cleaned
 does not stop the others.
+
+## Watching runs live
+
+```
+hrn watch                  # http://127.0.0.1:8089, this computer only
+hrn watch --lan            # also on this computer's private network addresses, for a phone
+hrn show -f <run-id>       # the same timeline in the terminal
+```
+
+`hrn watch` serves a page that lists the newest runs and batches (id, backend, status,
+duration, cost, the prompt's first line) and keeps itself current. A run's page is its
+timeline as it happens: the assistant's text, each tool call with its input in one line
+(the input itself folded under it, its first 6 KB and last 2 KB), each result folded and
+capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each
+step waited, and, once the
+run ends, its status, tokens, cost and final answer. A batch's page shows each task with
+a link to each attempt's run, and its gates (command, exit code, folded output) as they
+finish. Steps arrive over Server-Sent Events that check the run's `events.jsonl` twice a
+second; a browser that loses the connection picks up where it left off. Cost is whatever
+the backend reports: the api backend's estimate (`~`), the claude and opencode CLIs' own
+figures, nothing for codex and gemini, and only once the run has ended.
+
+Everything from a record is escaped as text, since tool results hold whatever the agent
+read. The page loads nothing from anywhere else (one stylesheet and one script, both
+served by hrn, no fonts), follows the system's light or dark theme, and answers GET only:
+it cannot start, stop or merge anything.
+
+It listens on a loopback address and refuses any other `--addr`, and it answers only
+requests whose Host header names it, so a DNS name rebound to 127.0.0.1 cannot read it
+through a browser. `--lan` also serves it on each private IPv4 address (192.168.x, 10.x,
+172.16-31.x) of this computer's network adapters that are up, never on 0.0.0.0 or a public
+address, and the terminal and the index list those links; on Wi-Fi, use the one on the
+Wi-Fi adapter. Point-to-point links (most VPN tunnels) are left out, but a VPN that shows
+up as an ordinary adapter with a private address is served too, and listed. There is no
+login yet: while `--lan` runs, anyone on each listed network can read the runs.
+Windows Firewall asks once whether hrn may listen; allowing Private networks is enough.
+An access key and a QR code are next ([#33](https://github.com/cristiangirlea/harness/issues/33)),
+and anything that acts on hrn from the network will need the key.
+
+`hrn show -f` prints the same steps in the terminal, with a line for each wait of a
+second or more, and ends with the summary line once the run's result is saved. Ctrl+C
+stops following and leaves the run alone. A run killed before it saved its result never
+ends, on the page or in the terminal: hrn cannot tell it from a long step.
 
 ## Reports
 
@@ -602,7 +649,8 @@ pairs as data.
 - `task.json` — prompt, dir, backend, and the run options by their flag names
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load)
-- `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped)
+- `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped),
+  one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
@@ -637,6 +685,7 @@ internal/batch/    orchestrator: parallel worktrees, gates, retries, batch recor
 internal/eval/     a batch across a matrix of variants, scored per variant and per task
 internal/report/   aggregation over run and batch records (hrn report; reused by eval)
 internal/runlog/   run recording
+internal/watch/    following records as they are written: hrn show -f, and hrn watch's page
 internal/followup/ continuing a run: what the backend picks up, what it is handed
 ```
 

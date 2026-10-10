@@ -1,0 +1,75 @@
+// hrn watch: follow the page's stream. Fragments arrive as HTML the server
+// rendered and escaped; this script only places them.
+'use strict';
+(function () {
+  const state = document.getElementById('state');
+  const setState = (text, cls) => {
+    if (!state) return;
+    state.textContent = text;
+    state.className = 'state ' + (cls || '');
+  };
+
+  // Elapsed clocks, so the server's HTML stays the same while time passes.
+  const span = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
+    return Math.floor(s / 3600) + 'h' + String(Math.floor(s / 60) % 60).padStart(2, '0') + 'm';
+  };
+  const tick = () => {
+    const now = Date.now();
+    for (const el of document.querySelectorAll('[data-since]')) {
+      const t = Date.parse(el.dataset.since);
+      if (!Number.isNaN(t)) el.textContent = span(now - t);
+    }
+    for (const el of document.querySelectorAll('[data-ago]')) {
+      const t = Date.parse(el.dataset.ago);
+      if (!Number.isNaN(t)) el.textContent = span(now - t);
+    }
+  };
+  tick();
+  setInterval(tick, 1000);
+
+  const box = document.querySelector('[data-stream]');
+  if (!box || !window.EventSource) return;
+
+  // Which <details> a reader opened, so replacing the part keeps them open.
+  const openKeys = () => new Set([...box.querySelectorAll('details[open][data-key]')].map((d) => d.dataset.key));
+  const reopen = (keys) => {
+    for (const d of box.querySelectorAll('details[data-key]')) if (keys.has(d.dataset.key)) d.open = true;
+  };
+  const nearBottom = () => window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
+
+  const es = new EventSource(box.dataset.stream);
+  es.onopen = () => setState('live', 'live');
+  es.onerror = () => { if (es.readyState !== EventSource.CLOSED) setState('reconnecting…', 'lost'); };
+
+  es.addEventListener('item', (m) => {
+    const follow = nearBottom();
+    box.insertAdjacentHTML('beforeend', m.data);
+    const last = box.lastElementChild;
+    const ago = document.querySelector('[data-ago]');
+    if (ago && last && last.dataset.at) ago.dataset.ago = last.dataset.at;
+    if (follow) window.scrollTo(0, document.body.scrollHeight);
+  });
+  es.addEventListener('result', (m) => {
+    const result = document.getElementById('result');
+    if (result) result.innerHTML = m.data;
+    for (const el of document.querySelectorAll('.clock')) el.hidden = true;
+  });
+  es.addEventListener('replace', (m) => {
+    const keys = openKeys();
+    box.innerHTML = m.data;
+    reopen(keys);
+    tick();
+  });
+  es.addEventListener('problem', (m) => {
+    box.insertAdjacentHTML('afterend', m.data);
+    es.close();
+    setState('stopped', 'lost');
+  });
+  es.addEventListener('end', () => {
+    es.close();
+    setState('finished');
+  });
+})();
