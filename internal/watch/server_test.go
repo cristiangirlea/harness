@@ -559,3 +559,18 @@ func TestStreamsEndWhenTheServerStops(t *testing.T) {
 		t.Fatal("the stream outlived the server")
 	}
 }
+
+func TestARunPageCaughtWhileTheResultIsWrittenKeepsStreaming(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w := hostileRun(t)
+	defer w.Close(agent.Result{})
+	if err := os.WriteFile(filepath.Join(w.Dir(), "result.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	code, body := get(t, srv.URL+"/run/"+w.ID())
+	if code != 200 || strings.Contains(body, "Finished") || !strings.Contains(body, `data-stream="/stream/run/`+w.ID()+"?after=") {
+		t.Fatalf("status %d; want a running page that streams the rest:\n%s", code, body)
+	}
+}

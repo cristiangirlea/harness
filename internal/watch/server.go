@@ -329,7 +329,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	}
 	p := runPageOf(rec, events, prev)
 	if !done {
-		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(rec.ID), cursor{f.Offset(), prev})
+		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
 	}
 	s.page(w, http.StatusOK, "run", p)
 }

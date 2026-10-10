@@ -183,3 +183,25 @@ func TestFollowRefusesARunThatDoesNotExist(t *testing.T) {
 		t.Fatal("want an error for an id that leaves the runs directory")
 	}
 }
+
+// Close writes result.json in place, so a reader can catch it half written:
+// that is a run not finished yet, with its record from task.json.
+func TestAResultStillBeingWrittenIsNotTheEnd(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("fake", agent.Task{Prompt: "half"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(agent.Result{})
+	if err := os.WriteFile(filepath.Join(w.Dir(), "result.json"), []byte(`{"id":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, rec, err := NewFollower(w.ID(), 0)
+	if err != nil || rec.ID != w.ID() || rec.Done {
+		t.Fatalf("NewFollower = %+v, %v; want the running record from task.json", rec, err)
+	}
+	_, rec, done, err := f.Poll()
+	if err != nil || done || rec.ID != w.ID() || rec.Task.Prompt != "half" {
+		t.Fatalf("Poll = %+v, done %v, %v; want not done, with the record from task.json", rec, done, err)
+	}
+}

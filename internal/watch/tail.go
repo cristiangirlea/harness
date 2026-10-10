@@ -101,13 +101,35 @@ type Follower struct {
 // NewFollower starts reading run id's events at byte offset from, which is 0
 // or the End of a line read before. It returns the run's record as it stands.
 func NewFollower(id string, from int64) (*Follower, runlog.Record, error) {
-	rec, err := runlog.Load(id) // also refuses an id that leaves the runs directory
+	rec, err := load(id)
 	if err != nil {
 		return nil, rec, err
 	}
 	f := &Follower{id: id, tail: Tail{Path: filepath.Join(runlog.Root(), id, "events.jsonl"), Offset: from}}
 	return f, rec, nil
 }
+
+// load is runlog.Load for a run that may be finishing. Close writes
+// result.json in place, so a reader can catch it half written (on Windows,
+// empty): that run has not finished yet, and its record is in task.json.
+func load(id string) (runlog.Record, error) {
+	rec, err := runlog.Load(id) // also refuses an id that leaves the runs directory
+	if err == nil || !rec.Done {
+		return rec, err
+	}
+	data, terr := os.ReadFile(filepath.Join(runlog.Root(), id, "task.json"))
+	if terr != nil {
+		return runlog.Record{}, err
+	}
+	var running runlog.Record
+	if json.Unmarshal(data, &running) != nil {
+		return runlog.Record{}, err
+	}
+	return running, nil
+}
+
+// ID is the run being followed.
+func (f *Follower) ID() string { return f.id }
 
 // Offset is where the next Poll starts reading.
 func (f *Follower) Offset() int64 { return f.tail.Offset }
@@ -119,7 +141,7 @@ func (f *Follower) Poll() (lines []Line, rec runlog.Record, done bool, err error
 	// Checked before reading: a run closes its events file before it writes
 	// result.json, so a run seen done has every line on disk. A result.json
 	// still being written does not parse, and counts as not done yet.
-	rec, err = runlog.Load(f.id)
+	rec, err = load(f.id)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, rec, false, fmt.Errorf("run %s was removed", f.id)
 	}
