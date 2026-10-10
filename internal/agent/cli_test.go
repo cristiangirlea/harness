@@ -125,3 +125,18 @@ func TestAStreamLineOfAnUnmodelledShapeIsNotPrintedRaw(t *testing.T) {
 		t.Errorf("session = %q; every line carries it", res.Session)
 	}
 }
+
+// The deny rules are a list of values after one flag: a flag after them ends
+// the list, so MCP configs and a resumed session still reach the CLI as such.
+func TestTheDenyRulesEndBeforeTheNextFlag(t *testing.T) {
+	args := NewClaudeBackend().args(Task{Options: Options{Mode: ModeYolo, MCP: []string{"servers.json"}}, ForkSession: "0b1c2d3e-0000-4000-8000-000000000000"}, "")
+	i := slices.Index(args, "--disallowedTools")
+	for _, flag := range []string{"--mcp-config", "--resume", "--fork-session"} {
+		if j := slices.Index(args, flag); j < i {
+			t.Errorf("%s comes before the deny rules or is missing: %q", flag, args)
+		}
+	}
+	if shown := strings.Join(shownArgs(args), " "); strings.Contains(shown, "Bash(") || !strings.Contains(shown, "guard rules> --mcp-config servers.json") {
+		t.Errorf("the run's info line should count the rules and keep the flags after them: %s", shown)
+	}
+}

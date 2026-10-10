@@ -25,8 +25,8 @@ func TestHelperCLIError(t *testing.T) {
 		os.Exit(1)
 	case "env":
 		// What the CLI was started with, as its final answer.
-		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s",
-			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"))
+		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s",
+			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"))
 		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
 		fmt.Println(string(out))
 		os.Exit(0)
@@ -39,13 +39,14 @@ func TestHelperCLIError(t *testing.T) {
 func TestACLIRunsUnderTheGuard(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "env")
 	t.Setenv("GH_TOKEN", "ghp_secret")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-metered")
 	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeYolo}}, func(Event) {})
 	got := map[string]string{}
 	for _, kv := range strings.Split(res.Final, ";") {
 		k, v, _ := strings.Cut(kv, "=")
 		got[k] = v
 	}
-	if got["GH_TOKEN"] != "" || got["GH_CONFIG_DIR"] == "" || got["GIT_CONFIG_COUNT"] == "" {
+	if got["GH_TOKEN"] != "" || got["ANTHROPIC_API_KEY"] != "" || got["GH_CONFIG_DIR"] == "" || got["GIT_CONFIG_COUNT"] == "" {
 		t.Fatalf("the CLI saw %q; want no GH_TOKEN, an empty gh config dir and git's push guard", res.Final)
 	}
 	if _, err := os.Stat(got["GH_CONFIG_DIR"]); !os.IsNotExist(err) {

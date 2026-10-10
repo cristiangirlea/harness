@@ -79,12 +79,12 @@ func runCommand() Tool {
 			// does: no model key to print into the run, no token to publish with.
 			var env []string
 			if !ws.AllowDangerous {
-				ghDir, err := os.MkdirTemp("", "hrn-gh-*")
+				guardDir, err := os.MkdirTemp("", "hrn-guard-*")
 				if err != nil {
 					return "", err
 				}
-				defer os.RemoveAll(ghDir)
-				env = GuardEnv(os.Environ(), ghDir)
+				defer os.RemoveAll(guardDir)
+				env, _ = GuardEnv(os.Environ(), guardDir)
 			}
 			res, err := RunShell(ctx, ws.Root, args.Command, timeout, env)
 			if err != nil {

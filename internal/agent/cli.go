@@ -114,14 +114,16 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	// inside another one.
 	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
 	guarded := !task.AllowDangerous
+	var withheld []string
 	if guarded {
-		// gh finds no login in an empty directory of its own.
-		ghDir, err := os.MkdirTemp("", "hrn-gh-*")
+		// The logins tools keep on disk are looked for in an empty directory
+		// of the run's own.
+		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
 		if err != nil {
 			return fail(StatusError, err)
 		}
-		defer os.RemoveAll(ghDir)
-		cmd.Env = tools.GuardEnv(cmd.Env, ghDir)
+		defer os.RemoveAll(guardDir)
+		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir)
 	}
 	if c.promptStdin {
 		cmd.Stdin = strings.NewReader(task.Prompt)
@@ -132,14 +134,19 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	if err != nil {
 		return fail(StatusError, err)
 	}
-	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(cmd.Args[1:], " "))})
+	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(shownArgs(cmd.Args[1:]), " "))})
 	if limits := unenforced(task); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
 	if guarded {
-		emit(Event{Time: time.Now(), Kind: EventInfo,
-			Text: "guard: git cannot push, gh has no login, deploy credentials and API keys are withheld (--allow-dangerous lifts it)"})
+		text := "guard: git cannot push; gh, cloud and container logins are out of reach; tokens and keys are withheld"
+		if len(withheld) > 0 {
+			// A CLI that logs in with one of these fails under the guard;
+			// this line says why.
+			text += " (" + strings.Join(withheld, ", ") + ")"
+		}
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text + "; --allow-dangerous lifts it"})
 	} else {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the operator's credentials", c.name)})
@@ -238,4 +245,23 @@ func init() {
 	Register(NewCodexBackend())
 	Register(NewGeminiBackend())
 	Register(NewOpencodeBackend())
+}
+
+// shownArgs is a command line as a run's info line shows it: the guard's
+// deny rules, dozens of them, are counted rather than listed.
+func shownArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		out = append(out, args[i])
+		if args[i] != "--disallowedTools" {
+			continue
+		}
+		n := 0
+		for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			i++
+			n++
+		}
+		out = append(out, fmt.Sprintf("<%d guard rules>", n))
+	}
+	return out
 }
