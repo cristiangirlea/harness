@@ -39,8 +39,10 @@ var guardRules = []struct {
 	// Opening a pull request stays allowed: that is how work is handed over.
 	{"gh-publish", matches(`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s=]*(?:PUT|PATCH|DELETE)\b`)},
 	// Shipping somewhere: Cloudflare, package registries, image registries,
-	// clusters and hosting platforms, and this owner's deploy script.
-	{"deploy", matches(`\bwrangler\b[^|&;]*\bdeploy\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\bdeploy/push\.sh\b|\bkubectl\b[^|&;]*\b(?:apply|delete|replace|patch|rollout)\b|\bdocker\s+push\b|\bvercel\b[^|&;]*--prod\b|\b(?:fly|flyctl|netlify)\s+deploy\b`)},
+	// clusters, infrastructure and hosting platforms, a project's own deploy
+	// script (npm run deploy, the token itself, not deploy-docs-preview), and
+	// this owner's deploy script.
+	{"deploy", matches(`\bwrangler\b[^|&;]*\bdeploy\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?deploy(?:$|[\s;&|])|\bdeploy/push\.sh\b|\bkubectl\b[^|&;]*\b(?:apply|delete|replace|patch|rollout)\b|\b(?:terraform|tofu)\b[^|&;]*\b(?:apply|destroy)\b|\bhelm\b[^|&;]*\b(?:install|upgrade|uninstall|delete)\b|\bdocker\s+push\b|\bvercel\b[^|&;]*--prod\b|\b(?:fly|flyctl|netlify)\s+deploy\b`)},
 }
 
 func matches(pattern string) func(string) bool {

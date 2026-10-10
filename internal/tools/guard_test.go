@@ -52,6 +52,13 @@ func TestGuardBlocks(t *testing.T) {
 		"docker push ghcr.io/o/i:latest":         "deploy",
 		"vercel --prod":                          "deploy",
 		"fly deploy":                             "deploy",
+		"npm run deploy":                         "deploy",
+		"pnpm run deploy --prod":                 "deploy",
+		"yarn deploy":                            "deploy",
+		"terraform apply -auto-approve":          "deploy",
+		"tofu destroy":                           "deploy",
+		"helm upgrade --install app ./chart":     "deploy",
+		"helm uninstall app":                     "deploy",
 	} {
 		if got := Guard(command); got != want {
 			t.Errorf("Guard(%q) = %q, want %q", command, got, want)
@@ -84,6 +91,9 @@ func TestGuardAllows(t *testing.T) {
 		"kubectl get pods",
 		"docker build -t app .",
 		"npm run deploy-docs-preview --dry-run", // the guard reads deploy as a command, not a word in a name
+		"terraform plan",
+		"tofu validate",
+		"helm template ./chart",
 	} {
 		if got := Guard(command); got != "" {
 			t.Errorf("Guard(%q) = %q, want allowed", command, got)

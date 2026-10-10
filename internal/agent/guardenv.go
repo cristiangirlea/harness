@@ -14,7 +14,10 @@ func claudeDenyRules() []string {
 		"gh repo delete *", "gh repo edit *", "gh repo archive *", "gh repo rename *",
 		"wrangler deploy *", "npx wrangler deploy *", "wrangler pages deploy *", "npx wrangler pages deploy *",
 		"npm publish *", "pnpm publish *", "yarn publish *", "cargo publish *",
+		"npm run deploy *", "pnpm run deploy *", "yarn deploy *", "yarn run deploy *",
 		"docker push *", "kubectl apply *", "kubectl delete *",
+		"terraform apply *", "terraform destroy *", "tofu apply *", "tofu destroy *",
+		"helm install *", "helm upgrade *", "helm uninstall *",
 		"bash deploy/push.sh *", "./deploy/push.sh *",
 	}
 	var rules []string
@@ -26,7 +29,11 @@ func claudeDenyRules() []string {
 	for _, path := range []string{
 		"//**/.env", "//**/.env.local", "//**/.env.*.local", "//**/.env.production",
 		"//**/*.pem", "//**/.git-credentials", "//**/.private/**",
-		"~/.ssh/**", "~/.aws/**", "~/.config/gh/**", "~/.npmrc", "~/.wrangler/**",
+		"~/.ssh/**", "~/.aws/**", "~/.config/gh/**", "~/.npmrc", "~/.kube/**", "~/.docker/config.json",
+		"~/.azure/**", "~/.config/gcloud/**",
+		// wrangler's login (~/.wrangler, or %APPDATA%\xdg.config\.wrangler on
+		// Windows) and gh's on Windows (%APPDATA%\GitHub CLI).
+		"//**/.wrangler/**", "//**/GitHub CLI/**",
 	} {
 		rules = append(rules, "Read("+path+")")
 	}

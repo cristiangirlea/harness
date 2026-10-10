@@ -60,7 +60,8 @@ func TestClaudeCarriesTheGuardsDenyRules(t *testing.T) {
 			rules = rules[:j]
 		}
 		for _, want := range []string{"Bash(git push *)", "PowerShell(git push *)", "Bash(gh pr merge *)", "Bash(gh release create *)",
-			"Bash(npx wrangler deploy *)", "Bash(npm publish *)", "Read(//**/.env)", "Read(//**/*.pem)", "Read(~/.ssh/**)", "Read(//**/.private/**)"} {
+			"Bash(npx wrangler deploy *)", "Bash(npm publish *)", "Bash(npm run deploy *)", "Bash(terraform apply *)", "Bash(helm upgrade *)",
+			"Read(//**/.env)", "Read(//**/*.pem)", "Read(~/.ssh/**)", "Read(//**/.private/**)", "Read(~/.kube/**)", "Read(//**/.wrangler/**)"} {
 			if !slices.Contains(rules, want) {
 				t.Errorf("mode %s: deny rules %q lack %q", mode, rules, want)
 			}
