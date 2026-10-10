@@ -144,7 +144,7 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 
 #### The command guard
 
-`run_command` refuses five kinds of command line before the shell sees them:
+`run_command` refuses seven kinds of command line before the shell sees them:
 
 | Rule | Refuses |
 |---|---|
@@ -153,6 +153,8 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
 | `pipe-to-shell` | `curl`/`wget` piped into a shell, however many stages the pipe has |
 | `disk` | `mkfs`, `format X:`, `dd of=/dev/…` |
+| `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`, and `gh api` with PUT, PATCH or DELETE; opening a pull request stays allowed |
+| `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`cargo publish`, `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `vercel --prod`, `fly`/`netlify deploy` |
 
 `rm-root` reads the arguments rather than matching one pattern, because the spelling
 that matters is not the famous one: `rm -rf /` is refused by `rm` itself without
@@ -170,10 +172,42 @@ this stops the plausible accident. `--allow-dangerous` (task field `allow_danger
 also a batch spec/task field and an MCP `run` argument) lifts it for a whole run, and the
 system prompt tells the model which way it is set; `yolo` on its own does not lift it.
 
-Three things it does not cover, by design: the agent CLIs run their own shells under
-their own permission systems (an unattended CLI run says so in its output), tools from
-an MCP server are the server's business, and batch gate commands are not checked,
-because the operator wrote those.
+Two things it does not cover, by design: tools from an MCP server are the server's
+business, and batch gate commands are not checked, because the operator wrote those.
+The agent CLIs run their own shells; the next section is their guard.
+
+#### The guard for every backend
+
+A command line can be spelled many ways, so every backend also runs under a guarded
+environment, which holds however a command is written. A CLI backend (claude, codex,
+gemini, opencode) inherits it, and so does every command the api backend's
+`run_command` runs:
+
+- the credentials that publish or deploy are left out (`GH_TOKEN`, `GITHUB_TOKEN`,
+  `CLOUDFLARE_*`, `AWS_*`, `NPM_TOKEN`, `DOCKER_PASSWORD`, `VERCEL_TOKEN` and the like,
+  and the ssh agent), and so are the model API keys (`ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`): a
+  command has no use for them, and a CLI that finds one bills per token instead of
+  using its own login;
+- git rewrites every push address (`https://`, `http://`, `ssh://`, `git://`, `git@`) to
+  `push-refused-by-hrn://`, which it cannot reach, through `GIT_CONFIG_*` (your own
+  `GIT_CONFIG_*` entries stay), so `git push`, `git -C dir push` and `bash -c "git push"`
+  all fail at once, without touching the network; fetching keeps its address;
+- gh starts with an empty configuration directory of its own, so it has no login
+  (`gh pr merge`, `gh release` fail), removed when the run ends.
+
+The claude backend also gets the guard as Claude Code's own deny rules
+(`--disallowedTools`), which hold in every permission mode, `bypassPermissions`
+included: the publishing commands above in both its Bash and PowerShell tools, and
+reading or editing secret files (`.env`, `.env.local`, `.env.production`, `*.pem`,
+`.git-credentials`, any `.private/` directory, `~/.ssh`, `~/.aws`, `~/.config/gh`,
+`~/.npmrc`, `~/.wrangler`). They match command text, so the environment is what stops
+the other spellings; what they add is an early, plain refusal and the secret files,
+which an environment cannot hide. Checked live: a claude run in `yolo` told to
+`git push`, `gh pr merge` and `cat .env` had all three refused. codex, gemini and
+opencode get the environment only: secret files in their workspace stay readable.
+
+Every run says whether the guard is on. `--allow-dangerous` lifts all of it.
 
 ### Context management
 
