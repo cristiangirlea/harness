@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -126,21 +127,13 @@ type claudeLine struct {
 
 func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 	var l claudeLine
-	if err := json.Unmarshal(line, &l); err != nil || l.Type == "" {
-		// A stream line of a shape hrn does not model (a permission_denied
-		// system line carries its message as a string) is still a stream line,
-		// not text to print: keep its session id and let it go.
-		var head struct {
-			Type      string `json:"type"`
-			SessionID string `json:"session_id"`
-		}
-		if json.Unmarshal(line, &head) != nil || head.Type == "" {
-			return false
-		}
-		if head.SessionID != "" {
-			res.Session = head.SessionID
-		}
-		return true
+	// A field of an unexpected type (a permission_denied system line carries
+	// its message as a string, not an object) leaves the rest of the line
+	// decoded, so it is read like any other; anything else that is not JSON
+	// with a type is plain text.
+	var mistyped *json.UnmarshalTypeError
+	if err := json.Unmarshal(line, &l); (err != nil && !errors.As(err, &mistyped)) || l.Type == "" {
+		return false
 	}
 	// Every line carries the session id; with --fork-session it is the new one.
 	if l.SessionID != "" {

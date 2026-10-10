@@ -141,3 +141,16 @@ func TestTheDenyRulesEndBeforeTheNextFlag(t *testing.T) {
 		t.Errorf("the run's info line should count the rules and keep the flags after them: %s", shown)
 	}
 }
+
+// A line with one field of an unexpected type is still read for the rest: a
+// result whose turn count came as a string keeps its answer and its status.
+func TestAMistypedFieldDoesNotLoseTheRestOfTheLine(t *testing.T) {
+	line := `{"type":"result","subtype":"success","is_error":false,"num_turns":"3","result":"the answer","session_id":"s1"}`
+	var res Result
+	if !parseClaudeStream([]byte(line), func(Event) {}, &res) {
+		t.Fatal("the line was not taken as a stream line")
+	}
+	if res.Final != "the answer" || res.Status != StatusOK || res.Session != "s1" {
+		t.Fatalf("result = %+v; want the answer, ok and the session despite the mistyped num_turns", res)
+	}
+}
