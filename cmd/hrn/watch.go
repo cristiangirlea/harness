@@ -32,6 +32,9 @@ func cmdWatch(args []string) error {
 		return errors.New("invalid arguments")
 	}
 	if fs.NArg() != 0 {
+		if lan.on && lan.only == "" {
+			return fmt.Errorf("--lan takes its adapter after an equals sign: --lan=%q", strings.Join(fs.Args(), " "))
+		}
 		return fmt.Errorf("unexpected argument %q; the address is set with --addr", fs.Arg(0))
 	}
 	bind, err := watch.LoopbackAddr(*addr)
@@ -55,14 +58,15 @@ func cmdWatch(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN)
+	printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
 	return watch.Serve(ctx, opt, lns...)
 }
 
 // printWatchStart says where the page is. With one network address it also
 // draws that link's QR code, for a phone to scan; with several, the codes
-// are on the page itself.
-func printWatchStart(w io.Writer, local string, lan bool, eps []watch.Endpoint) {
+// are on the page itself. color forces the code white on black: on a
+// terminal with a light theme it would otherwise come out inverted.
+func printWatchStart(w io.Writer, local string, lan bool, eps []watch.Endpoint, color bool) {
 	if !lan {
 		fmt.Fprintf(w, "hrn watch: http://%s (this computer only; --lan for a phone; Ctrl+C stops it)\n", local)
 		return
@@ -77,8 +81,16 @@ func printWatchStart(w io.Writer, local string, lan bool, eps []watch.Endpoint) 
 		fmt.Fprintf(w, "  QR codes for each are on http://%s/ (or name one network with --lan=NAME)\n", local)
 		return
 	}
-	if c, err := qr.Encode(eps[0].URL); err == nil {
-		fmt.Fprintf(w, "\nscan with your phone (%s):\n%s", eps[0].Interface, c.Terminal())
+	c, err := qr.Encode(eps[0].URL)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "\nscan with your phone (%s):\n", eps[0].Interface)
+	for _, line := range strings.Split(strings.TrimSuffix(c.Terminal(), "\n"), "\n") {
+		if color {
+			line = "\x1b[97;40m" + line + "\x1b[0m"
+		}
+		fmt.Fprintln(w, line)
 	}
 }
 
@@ -102,6 +114,10 @@ func (f *lanFlag) String() string {
 }
 
 func (f *lanFlag) Set(s string) error {
+	if strings.TrimSpace(s) == "" {
+		// An unset variable in --lan="$ADAPTER" must not widen to every adapter.
+		return errors.New("--lan= needs an adapter's name or address; plain --lan serves them all")
+	}
 	switch strings.ToLower(s) {
 	case "true":
 		f.on, f.only = true, ""
