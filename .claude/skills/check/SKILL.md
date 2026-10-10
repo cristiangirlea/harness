@@ -20,3 +20,5 @@ CI also runs `go test -race -count=1 ./...` on Linux. It needs cgo: run it only 
 `go env CGO_ENABLED` prints 1 and a C compiler is present; on the owner's Windows PC report it as
 "left to CI" and run `go test -count=3 ./...` instead. The release dry run writes `dist/`
 (ignored). Nothing here may call a model API: never run `scripts/api-check.sh` or `hrn run`.
+
+This skill does not merge: merging is through the PR, under AGENTS.md's conditions.

@@ -72,10 +72,15 @@ which tests, builds with `release.sh` and publishes the release.
 
 ## Working rules
 
-- One branch per change (short name, as in `fix-batch-rm-deregistered`), one PR; the owner
-  merges. Never `gh pr merge`, never push to `main`, never tag or release: hand over the command.
-  PLAN.md's merge step (merge commit, delete the branch) is now the owner's: hand over
-  `gh pr merge N --merge --delete-branch`.
+- One branch per change (short name, as in `fix-batch-rm-deregistered`), one PR. **Everything
+  is tested before a merge**: the full local checks (`/check`), tests for every behaviour the
+  change adds or alters, and CI green on the owner's runner. Only then may an agent merge its PR,
+  and only through the PR (`gh pr merge <n> --merge --delete-branch --match-head-commit <sha>`),
+  when an independent review ran and its findings are fixed, a security read of the diff has
+  nothing open, and the head being merged is the commit all of that ran on. What could not be
+  tested is said in the PR and waits for the owner. Never auto-merge (`--auto`) or `--admin`,
+  never push to `main`, never tag or release: hand over the command. PLAN.md's merge step
+  (merge commit, delete the branch) is done through the PR under these conditions.
 - Commit messages: the area first, lower case, then a plain sentence (`batch rm: name a single
   leftover file instead of counting it`). No emoji, no AI attribution anywhere (no `Co-Authored-By`,
   `Assisted-by` or "Generated with", in commits, PR text, comments or docs). Commits are
