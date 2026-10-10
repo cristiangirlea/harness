@@ -580,14 +580,10 @@ func TestStreamsEndWhenTheServerStops(t *testing.T) {
 		t.Fatalf("first message = %+v, %v", m, ok)
 	}
 	cancel()
-	done := make(chan bool)
+	done := make(chan bool, 1)
 	go func() {
-		for {
-			if _, ok := s.next(t); !ok {
-				done <- true
-				return
-			}
-		}
+		_, _ = io.Copy(io.Discard, s.r) // until the server ends the stream
+		done <- true
 	}()
 	select {
 	case <-done:
@@ -635,5 +631,28 @@ func TestLanPicksThePrivateAddressesOfAdaptersThatAreUp(t *testing.T) {
 	}
 	if strings.Join(names, ", ") != "192.168.1.20 Wi-Fi, 172.20.1.1 vEthernet (WSL)" {
 		t.Fatalf("lanAddrs = %v", names)
+	}
+}
+
+// The page shows the steps written so far and streams from where it stopped:
+// a step is never shown twice, nor skipped.
+func TestTheRunPageStreamsOnlyWhatItDidNotShow(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w := hostileRun(t)
+	defer w.Close(agent.Result{})
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/run/"+w.ID())
+	_, rest, ok := strings.Cut(page, `data-stream="`)
+	if !ok {
+		t.Fatal("the page of a running run has no stream")
+	}
+	url, _, _ := strings.Cut(rest, `"`)
+	w.Event(agent.Event{Kind: agent.EventInfo, Text: "the fourth step"})
+	s, stop := openStream(t, srv.URL+url, "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "item" || !strings.Contains(m.data, "the fourth step") {
+		t.Fatalf("the stream began with %+v, %v; want the step written after the page", m, ok)
 	}
 }

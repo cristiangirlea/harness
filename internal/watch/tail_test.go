@@ -215,3 +215,18 @@ func TestAResultStillBeingWrittenIsNotTheEnd(t *testing.T) {
 		t.Fatalf("Poll = %+v, done %v, %v; want not done, with the record from task.json", rec, done, err)
 	}
 }
+
+func TestTailSaysWhenItsFileShrank(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	appendFile(t, path, `{"kind":"text","text":"a"}`+"\n")
+	tail := &Tail{Path: path}
+	if _, err := tail.Read(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tail.Read(); err == nil || !strings.Contains(err.Error(), "shorter") {
+		t.Fatalf("err = %v; want the file named as shorter than what was read", err)
+	}
+}
