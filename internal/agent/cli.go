@@ -111,6 +111,16 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	// A nested Claude Code session refuses to start when it thinks it is
 	// inside another one.
 	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
+	guarded := !task.AllowDangerous
+	if guarded {
+		// gh finds no login in an empty directory of its own.
+		ghDir, err := os.MkdirTemp("", "hrn-gh-*")
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		defer os.RemoveAll(ghDir)
+		cmd.Env = guardEnv(cmd.Env, ghDir)
+	}
 	if c.promptStdin {
 		cmd.Stdin = strings.NewReader(task.Prompt)
 	}
@@ -125,11 +135,12 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
-	if task.Mode == ModeYolo {
-		// The command guard lives in the api backend's own run_command, so a
-		// CLI backend running unattended has only its own permission system.
+	if guarded {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
-			Text: fmt.Sprintf("command guard: not applied by the %s backend; its own permissions decide", c.name)})
+			Text: "guard: git cannot push, gh has no login and deploy credentials are withheld (--allow-dangerous lifts it)"})
+	} else {
+		emit(Event{Time: time.Now(), Kind: EventInfo,
+			Text: fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the operator's credentials", c.name)})
 	}
 	if err := cmd.Start(); err != nil {
 		return fail(StatusError, err)

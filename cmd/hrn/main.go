@@ -76,7 +76,8 @@ Run flags:
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
       --allow-dangerous
-                       let run_command run git push, sudo, rm -rf / and the like (api backend)
+                       lift the guard: agents may push, merge and deploy with your credentials
+                       (every backend), and run_command may run sudo, rm -rf / and the like
 
 Eval flags:
       --parallel N     cells at once (default: the file's value, else 2)

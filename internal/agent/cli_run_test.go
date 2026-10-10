@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -22,6 +23,38 @@ func TestHelperCLIError(t *testing.T) {
 	case "maxturns":
 		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"result":""}`)
 		os.Exit(1)
+	case "env":
+		// What the CLI was started with, as its final answer.
+		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s",
+			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"))
+		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
+		fmt.Println(string(out))
+		os.Exit(0)
+	}
+}
+
+// Every CLI backend runs under the guard: the publishing credentials are not
+// in its environment, git cannot push and gh has an empty login of its own,
+// removed when the run ends. --allow-dangerous lifts it.
+func TestACLIRunsUnderTheGuard(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "env")
+	t.Setenv("GH_TOKEN", "ghp_secret")
+	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeYolo}}, func(Event) {})
+	got := map[string]string{}
+	for _, kv := range strings.Split(res.Final, ";") {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	if got["GH_TOKEN"] != "" || got["GH_CONFIG_DIR"] == "" || got["GIT_CONFIG_COUNT"] == "" {
+		t.Fatalf("the CLI saw %q; want no GH_TOKEN, an empty gh config dir and git's push guard", res.Final)
+	}
+	if _, err := os.Stat(got["GH_CONFIG_DIR"]); !os.IsNotExist(err) {
+		t.Errorf("gh's empty config dir %s outlived the run: %v", got["GH_CONFIG_DIR"], err)
+	}
+
+	res = helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeYolo, AllowDangerous: true}}, func(Event) {})
+	if !strings.Contains(res.Final, "GH_TOKEN=ghp_secret") || strings.Contains(res.Final, "hrn-gh") {
+		t.Fatalf("with --allow-dangerous the CLI saw %q; want the operator's environment as it is", res.Final)
 	}
 }
 
@@ -68,24 +101,27 @@ func TestCLISaysWhatItCannotEnforce(t *testing.T) {
 	}
 }
 
-func TestCLISaysTheGuardDoesNotApply(t *testing.T) {
+// Every CLI run says whether the guard is on, in any mode: a run in auto can
+// still run commands the CLI itself allows.
+func TestCLISaysWhetherTheGuardApplies(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "error")
-	guardLines := func(mode Mode) []string {
+	guardLines := func(opts Options) []string {
 		var out []string
-		helperCLI(parseOpencodeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: mode}},
+		helperCLI(parseOpencodeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: opts},
 			func(e Event) {
-				if e.Kind == EventInfo && strings.Contains(e.Text, "command guard") {
+				if e.Kind == EventInfo && strings.HasPrefix(e.Text, "guard:") {
 					out = append(out, e.Text)
 				}
 			})
 		return out
 	}
-	if lines := guardLines(ModeYolo); len(lines) != 1 || !strings.Contains(lines[0], "not applied") {
-		t.Errorf("an unattended CLI run should say the guard is not applied: %v", lines)
+	for _, mode := range []Mode{ModeYolo, ModeAuto, ModeReadOnly} {
+		if lines := guardLines(Options{Mode: mode}); len(lines) != 1 || !strings.Contains(lines[0], "git cannot push") {
+			t.Errorf("mode %s: %v; want one line saying the guard is on", mode, lines)
+		}
 	}
-	// Any other mode still asks or refuses per call, so the line would be noise.
-	if lines := guardLines(ModeAuto); len(lines) != 0 {
-		t.Errorf("mode auto should not carry the line: %v", lines)
+	if lines := guardLines(Options{Mode: ModeYolo, AllowDangerous: true}); len(lines) != 1 || !strings.Contains(lines[0], "lifted") {
+		t.Errorf("--allow-dangerous: %v; want one line saying the guard is lifted", lines)
 	}
 }
 

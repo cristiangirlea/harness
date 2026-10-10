@@ -38,9 +38,10 @@ type Options struct {
 	// instead of being resent every turn.
 	NoContextEdits bool `json:"no_context_edits,omitempty" desc:"Keep every tool result in the request instead of letting the server clear old ones (api backend)."`
 
-	// AllowDangerous lifts the api backend's command guard, which otherwise
-	// refuses a few command lines (git push, sudo, rm -rf /, curl | sh).
-	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Let run_command run git push, sudo, rm -rf / and the like (api backend)."`
+	// AllowDangerous lifts the guard: the api backend's command guard, which
+	// otherwise refuses a few command lines (git push, sudo, rm -rf /, curl |
+	// sh), and the CLI backends' guarded environment (see guardEnv).
+	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Lift the guard: let agents push, merge and deploy with your credentials, and let run_command run sudo, rm -rf / and the like."`
 
 	// Timeout ends the run when it passes; zero means no deadline.
 	Timeout Duration `json:"timeout,omitempty" desc:"Stop the run after this long, e.g. 20m."`
