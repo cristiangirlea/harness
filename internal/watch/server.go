@@ -228,8 +228,9 @@ func checkListener(a net.Addr, lan []Endpoint) error {
 var idRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`)
 
 type server struct {
-	ctx context.Context // ends every stream when the server stops
-	opt Options
+	ctx    context.Context // ends every stream when the server stops
+	opt    Options
+	redact *strings.Replacer // blanks secret values; see secretReplacer
 }
 
 // New is the watch page's handler. Streams end when ctx does, so a server
@@ -241,7 +242,7 @@ func New(ctx context.Context, opt Options) http.Handler {
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt}
+	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ())}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /run/{id}", s.run)
@@ -341,8 +342,28 @@ func isSameOrigin(r *http.Request) bool {
 	return u.Scheme == "http" && strings.EqualFold(u.Host, r.Host)
 }
 
+// render runs a template and blanks any secret value in what it made: a key
+// or token in hrn watch's environment may have reached a run (an agent that
+// ran env), and the page may be open to the network.
+func (s *server) render(name string, data any) (string, error) {
+	out, err := render(name, data)
+	if err == nil && s.redact != nil {
+		out = s.redact.Replace(out)
+	}
+	return out, err
+}
+
+// homeFor is the hrn home to show: to this computer only, as it names the
+// user's account.
+func homeFor(r *http.Request) string {
+	if fromThisComputer(r) {
+		return runlog.Home()
+	}
+	return ""
+}
+
 func (s *server) page(w http.ResponseWriter, status int, name string, data any) {
-	body, err := render(name, data)
+	body, err := s.render(name, data)
 	if err != nil {
 		http.Error(w, "the page could not be rendered: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -352,15 +373,18 @@ func (s *server) page(w http.ResponseWriter, status int, name string, data any) 
 	_, _ = io.WriteString(w, body)
 }
 
-func (s *server) missing(w http.ResponseWriter, what string, err error) {
+func (s *server) missing(w http.ResponseWriter, r *http.Request, what string, err error) {
 	msg := what + " not found"
 	if !errors.Is(err, os.ErrNotExist) {
-		msg = fmt.Sprintf("%s could not be read: %v", what, err)
+		msg = what + " could not be read"
+		if fromThisComputer(r) { // the error names paths
+			msg = fmt.Sprintf("%s could not be read: %v", what, err)
+		}
 	}
 	s.page(w, http.StatusNotFound, "missing", struct {
 		page
 		Message string
-	}{page{Title: "Not found", Home: runlog.Home()}, msg})
+	}{page{Title: "Not found", Home: homeFor(r)}, msg})
 }
 
 func (s *server) lists() lists {
@@ -395,7 +419,7 @@ func (s *server) lists() lists {
 }
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
-	p := indexPage{page: page{Title: "Runs and batches", Home: runlog.Home()}, Lists: s.lists()}
+	p := indexPage{page: page{Title: "Runs and batches", Home: homeFor(r)}, Lists: s.lists()}
 	// The phone links and the hints about --lan are for the person at this
 	// computer; a phone that came in over the network needs neither.
 	if fromThisComputer(r) {
@@ -420,17 +444,17 @@ func fromThisComputer(r *http.Request) bool {
 // where this left off.
 func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	if !idRE.MatchString(r.PathValue("id")) {
-		s.missing(w, "Run "+r.PathValue("id"), os.ErrNotExist)
+		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
 	f, _, err := NewFollower(r.PathValue("id"), 0)
 	if err != nil {
-		s.missing(w, "Run "+r.PathValue("id"), err)
+		s.missing(w, r, "Run "+r.PathValue("id"), err)
 		return
 	}
 	lines, rec, done, err := f.Poll()
 	if err != nil {
-		s.missing(w, "Run "+rec.ID, err)
+		s.missing(w, r, "Run "+rec.ID, err)
 		return
 	}
 	prev := rec.Started
@@ -441,6 +465,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		events = append(events, v)
 	}
 	p := runPageOf(rec, events, prev)
+	p.Home = homeFor(r)
 	if !done {
 		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
 	}
@@ -449,15 +474,17 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 	if !idRE.MatchString(r.PathValue("id")) {
-		s.missing(w, "Batch "+r.PathValue("id"), os.ErrNotExist)
+		s.missing(w, r, "Batch "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
 	res, err := batch.LoadResult(r.PathValue("id"))
 	if err != nil {
-		s.missing(w, "Batch "+r.PathValue("id"), err)
+		s.missing(w, r, "Batch "+r.PathValue("id"), err)
 		return
 	}
-	s.page(w, http.StatusOK, "batch", batchPageOf(res))
+	p := batchPageOf(res)
+	p.Home = homeFor(r)
+	s.page(w, http.StatusOK, "batch", p)
 }
 
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
@@ -576,7 +603,7 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 		if err != nil {
 			return true, s.problem(st, err)
 		}
-		html, err := render(name, data)
+		html, err := s.render(name, data)
 		if err != nil {
 			return true, s.problem(st, err)
 		}
@@ -594,7 +621,7 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 }
 
 func (s *server) problem(st *stream, err error) error {
-	html, _ := render("problem", err.Error())
+	html, _ := s.render("problem", err.Error())
 	_ = st.send("problem", "", html)
 	return err
 }
@@ -662,7 +689,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		for _, l := range lines {
 			var v eventView
 			v, prev = eventOf(l, prev)
-			html, rerr := render("event", v)
+			html, rerr := s.render("event", v)
 			if rerr != nil {
 				return true, s.problem(st, rerr)
 			}
@@ -676,7 +703,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		if !done {
 			return false, nil
 		}
-		html, err := render("result", resultOf(rec.Result))
+		html, err := s.render("result", resultOf(rec.Result))
 		if err != nil {
 			return true, s.problem(st, err)
 		}

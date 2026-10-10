@@ -17,7 +17,7 @@
 {{end}}
 
 {{define "foot"}}
-<footer>Reads <span class="mono">{{.Home}}</span> · loads nothing from other sites</footer>
+<footer>{{with .Home}}Reads <span class="mono">{{.}}</span> · {{end}}Loads nothing from other sites</footer>
 </main>
 </body>
 </html>

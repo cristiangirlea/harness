@@ -781,3 +781,63 @@ func TestLanCanBeNarrowedToOneAdapter(t *testing.T) {
 		t.Errorf("an unknown adapter: %v; want the ones there are", err)
 	}
 }
+
+// A token or key that ended up in a run (an agent ran env, say) is not shown
+// to anyone: watch knows the values in its own environment and blanks them.
+func TestSecretValuesFromTheEnvironmentAreRedacted(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const key = "sk-ant-api03-test-0123456789abcdefXYZ"
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	t.Setenv("SHORT_TOKEN", "abc") // too short to be worth hiding, and would blank common text
+	w, err := runlog.Create("fake", agent.Task{Prompt: "show env"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: "PATH=/bin\nANTHROPIC_API_KEY=" + key + "\nabc"})
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/run/"+w.ID())
+	if strings.Contains(page, key) || !strings.Contains(page, "ANTHROPIC_API_KEY=[redacted]") {
+		t.Errorf("the run page shows the key, or no redaction:\n%s", page)
+	}
+	s, stop := openStream(t, srv.URL+"/stream/run/"+w.ID(), "")
+	defer stop()
+	w.Event(agent.Event{Kind: agent.EventText, Text: "the key is " + key})
+	for {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("stream ended")
+		}
+		if strings.Contains(m.data, "the key is") {
+			if strings.Contains(m.data, key) {
+				t.Errorf("the stream shows the key: %s", m.data)
+			}
+			break
+		}
+	}
+	_ = w.Close(agent.Result{})
+}
+
+// The footer names this computer's hrn home, and with it the user name; a
+// phone on the network is not told it, nor the paths in an error.
+func TestThePhoneIsNotToldTheHomePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	h := New(context.Background(), Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	for _, path := range []string{"/", "/run/20991231-235959-abcdef"} {
+		req := httptest.NewRequest("GET", "http://192.168.1.20:8089"+path, nil)
+		req.RemoteAddr = "192.168.1.50:6000"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if strings.Contains(rec.Body.String(), home) {
+			t.Errorf("%s shows the phone the hrn home %s", path, home)
+		}
+		local := httptest.NewRequest("GET", "http://127.0.0.1:8089"+path, nil)
+		local.RemoteAddr = "127.0.0.1:5000"
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, local)
+		if path == "/" && !strings.Contains(rec.Body.String(), home) {
+			t.Errorf("this computer's view of / should still name the hrn home")
+		}
+	}
+}
