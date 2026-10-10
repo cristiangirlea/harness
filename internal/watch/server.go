@@ -241,7 +241,7 @@ func guard(next http.Handler, lan map[string]bool) http.Handler {
 		h.Set("Content-Security-Policy", csp)
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
-		if !(isLoopbackHost(r.Host) || lan[r.Host]) || strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || !isSameOrigin(r) {
+		if !(isLoopbackHost(r.Host) || lan[withPort(r.Host)]) || strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || !isSameOrigin(r) {
 			http.Error(w, "Local requests only", http.StatusForbidden)
 			return
 		}
@@ -272,6 +272,14 @@ func isLoopbackHost(authority string) bool {
 	}
 	ip, err := netip.ParseAddr(host)
 	return err == nil && ip.Zone() == "" && ip.Unmap().IsLoopback()
+}
+
+// withPort is a Host header with the port a browser leaves out of it.
+func withPort(host string) string {
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return host
+	}
+	return net.JoinHostPort(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"), "80")
 }
 
 // isSameOrigin: Origin is absent on navigation and most same-origin GETs;

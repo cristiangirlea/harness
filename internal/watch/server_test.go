@@ -158,8 +158,10 @@ func TestRequestsFromOutsideAreRefused(t *testing.T) {
 		}
 	}
 	// With --lan, the page's own private addresses are let in, and only those.
-	lan := New(context.Background(), Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
-	for host, want := range map[string]int{"192.168.1.20:8089": 200, "192.168.1.20:9999": 403, "192.168.1.21:8089": 403, "127.0.0.1:8089": 200, "evil.example:8089": 403} {
+	// A browser leaves port 80 out of Host.
+	lan := New(context.Background(), Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089"}, {Addr: "192.168.1.30:80"}}})
+	for host, want := range map[string]int{"192.168.1.20:8089": 200, "192.168.1.20:9999": 403, "192.168.1.21:8089": 403, "127.0.0.1:8089": 200, "evil.example:8089": 403,
+		"192.168.1.30": 200, "192.168.1.30:80": 200, "192.168.1.20": 403} {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Host = host
 		rec := httptest.NewRecorder()
