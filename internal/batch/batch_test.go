@@ -1098,3 +1098,25 @@ func TestTheRecordFollowsTheBatchWhileItGoes(t *testing.T) {
 		t.Errorf("final record = %+v", final)
 	}
 }
+
+// A retry is visible too: the first attempt with its result, the second
+// still working, under the task that is still running.
+func TestTheRecordShowsARetryWhileItRuns(t *testing.T) {
+	dir := initRepo(t)
+	var whileRetrying TaskResult
+	peek = func() {
+		results, _, err := List()
+		if err != nil || len(results) != 1 {
+			t.Errorf("batch records = %d, %v", len(results), err)
+			return
+		}
+		whileRetrying = results[0].Tasks[0]
+	}
+	t.Cleanup(func() { peek = func() {} })
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-bad", Retry: []string{"wb-peek"}, Tasks: []Task{{ID: "again", Prompt: "p"}}})
+	a := whileRetrying.Attempts
+	if whileRetrying.Status != StatusRunning || len(a) != 2 || a[0].Result.Status != agent.StatusError ||
+		a[1].RunID != res.Tasks[0].Attempts[1].RunID || a[1].Result.Status != "" {
+		t.Fatalf("during the retry the record held %+v", whileRetrying)
+	}
+}

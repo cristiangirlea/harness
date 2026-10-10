@@ -78,7 +78,7 @@ const (
 )
 
 // Result is the record of one batch, saved under $HRN_HOME/batches before the
-// first task starts and again when the batch ends.
+// first task starts, again each time a task moves on, and when the batch ends.
 type Result struct {
 	ID       string        `json:"id"`
 	Started  time.Time     `json:"started"`

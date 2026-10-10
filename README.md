@@ -464,8 +464,9 @@ hrn show -f <run-id>       # the same timeline in the terminal
 `hrn watch` serves a page that lists the newest runs and batches (id, backend, status,
 duration, cost, the prompt's first line) and keeps itself current. A run's page is its
 timeline as it happens: the assistant's text, each tool call with its input in one line
-(the whole input folded under it), each result folded and capped (its first 12 KB and
-last 4 KB; the rest stays in `events.jsonl`), how long each step waited, and, once the
+(the input itself folded under it, its first 6 KB and last 2 KB), each result folded and
+capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each
+step waited, and, once the
 run ends, its status, tokens, cost and final answer. A batch's page shows each task with
 a link to each attempt's run, and its gates (command, exit code, folded output) as they
 finish. Steps arrive over Server-Sent Events that check the run's `events.jsonl` twice a
