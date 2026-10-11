@@ -161,14 +161,22 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 The api backend's file tools refuse the secret files as well (rule `secret-file`):
 `read_file`, `write_file`, `edit_file` and `grep` on a `.env*` file, `.dev.vars`,
 `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `.git-credentials`,
-`.netrc`/`_netrc`, `.pypirc`, or anything inside a `.private`, `.ssh`, `.aws`, `.kube`,
-`.azure` or `.wrangler` directory. A path is judged inside the workspace, both as
-written and where its links lead (`notes.txt -> .env` is `.env`), with Windows' other
-spellings of a name (`.env.`, `.env::$DATA`, a short `8.3` name) read as the name;
-`grep` over a directory passes over secret files, and never follows a link out of the
-workspace. `.env.example` is refused too: a template costs the agent one turn, and
-`.env.staging` or `.envrc` are what the pattern is for. The command rule reads words,
-so `echo "*.pem" >> .gitignore` is refused as well (`edit_file` on `.gitignore` is not).
+`.netrc`/`_netrc`, `.npmrc`, `.pypirc`, anything inside a `.private`, `.ssh`, `.aws`,
+`.kube` or `.azure` directory, and the logins that are secret only where they sit: gh's
+(`.config/gh/`, `GitHub CLI/` on Windows), gcloud's, `.docker/config.json`,
+`.cargo/credentials*`, wrangler's `.wrangler/config/` (a worker project's own `.wrangler`
+holds local state and stays open), and the agent CLIs' plan logins
+(`.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`). A path is
+judged inside the workspace, both as written and where its symbolic links lead
+(`notes.txt -> .env` is `.env`), with Windows' other spellings of a name (`.env.`,
+`.env::$DATA`, a short `8.3` name) read as the name; `grep` over a directory passes over
+secret files, and does not follow a symbolic link out of the workspace. (A Windows
+directory junction is not a symbolic link to Go since 1.23, so a junction inside the
+workspace is not seen through, by these checks or by the workspace's own boundary.)
+`.env.example` is refused too: a template costs the agent one turn, and `.env.staging`
+or `.envrc` are what the pattern is for. The command rule reads words (and quoted paths,
+and git's `REV:path`), so `echo "*.pem" >> .gitignore` is refused as well (`edit_file` on
+`.gitignore` is not), and so is a `jq '.key'` filter.
 
 `rm-root` reads the arguments rather than matching one pattern, because the spelling
 that matters is not the famous one: `rm -rf /` is refused by `rm` itself without
@@ -201,7 +209,9 @@ every command the api backend's `run_command` runs:
   (`*_TOKEN`, `*_KEY`, `*_PAT`, `*_AUTH`, `*SECRET*`, `*PASSWORD*`, `*CREDENTIAL*`,
   `*PRIVATE_KEY*`, Terraform's `TF_TOKEN_*`, 1Password's `OP_SESSION_*`,
   `BW_SESSION`), model API keys among them: a command has no use for them, and a CLI
-  that finds one bills per token instead of using its own login. git's askpass helpers
+  that finds one bills per token instead of using its own login. Git Credential
+  Manager's `GCM_*` settings stay: they say where its store is, not what is in it, and a
+  private fetch needs them. git's askpass helpers
   go too (`GIT_ASKPASS`, `SSH_ASKPASS`, VS Code's `VSCODE_GIT_*`), since they hand out
   a login when git asks for one. `CLAUDE_CODE_OAUTH_TOKEN`, claude's plan login,
   reaches the claude CLI and no other;
@@ -226,12 +236,9 @@ included:
   (`git config …push…`, `git -c …push…`, `git remote set-url --push`, `unset
   GIT_CONFIG…`, `env -u`); a test keeps the two lists refusing the same commands;
 - the secret files, with a `Read` rule and an `Edit` rule each, since a Read rule does
-  not stop a Write that creates the file: the same names and directories as the api
-  backend's file tools, anywhere on the disk, plus the logins kept in your home (gh's,
-  also under `%APPDATA%\GitHub CLI`, `~/.npmrc`, `~/.docker/config.json`,
-  `~/.config/gcloud`, `~/.cargo/credentials`) and the agent CLIs' own plan logins
-  (`~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`),
-  which the CLIs read with their own code, not through these tools.
+  not stop a Write that creates the file: the same list as the api backend's, anywhere
+  on the disk, the agent CLIs' plan logins among them (the CLIs read those with their
+  own code, not through these tools).
 
 The command rules match command text, so the environment is what stops the other
 spellings; what they add is an early, plain refusal and the secret files. Checked live
