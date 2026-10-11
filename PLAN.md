@@ -612,6 +612,24 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: Junctions (#45), found while reviewing the guard for #36. Since Go 1.23 a
+  Windows mount point (a directory junction, which needs no privilege to make) is an
+  irregular file to `os.Lstat`, not a symbolic link, so `filepath.EvalSymlinks` stopped
+  resolving it: worse, it fails on a path that goes on past one, and the workspace check's
+  fall-back to the longest prefix that resolves then judged `out/secret.txt` by its name.
+  Tests with real junctions saw `read_file`, `write_file`, `edit_file` and `grep` reach
+  outside. Now `realPath` reads each irregular component with `os.Readlink` on Windows
+  (it answers only for links, so OneDrive's reparse points are passed over) and follows
+  the target, up to 255 times; paths are compared with the root resolved the same way, so a
+  workspace reached through a junction still works while `Root` keeps the spelling it was
+  given for commands. Refusing every junction was not taken: pnpm fills `node_modules` with
+  junctions that stay in the project, and `os.Root`, which would also close the race
+  between the check and the open, refuses those too. `grep`'s walk judged no file it found
+  on main, so a file symlink out of the workspace was searched on Linux too; it now judges
+  each one (the guard branch does the same, and also passes over secret files). A walk
+  still does not descend into a link it is started on, as before (`grep` with `path` set
+  to a junction finds nothing). Windows CI runs only after a merge: the junction tests ran
+  on the owner's PC, the symlink test on Linux.
 - 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
   means including security"), by an independent agent with loopback-only proof tests in a
   scratch copy. Nothing critical or high; four findings, three fixed here, each as its own

@@ -139,7 +139,10 @@ approval is denied.
 
 `read_file`, `list_files` (glob with `**`), `grep` (RE2), `write_file`, `edit_file`
 (exact unique match, CRLF-aware), `run_command` (Git Bash when present, else PowerShell;
-120s default timeout). All paths are confined to the workspace, symlinks included.
+120s default timeout). All paths are confined to the workspace and judged where their links
+lead: symbolic links, and on Windows directory junctions too (Go has not counted a junction
+as a link since 1.23, so hrn reads its target itself). A link out of the workspace is
+refused, `grep` over a directory passes over one, and a link that stays inside works.
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
 #### The command guard
