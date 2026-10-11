@@ -253,7 +253,12 @@
       await save(name, wav(chunks, ctx.sampleRate));
       $('voice-talk-note').textContent = 'Saved ' + name + '.';
     } catch (e) {
-      warn('A part could not be saved: ' + e.message);
+      // Put the audio back: the next part, or Save again, carries it.
+      if (talking) {
+        talking.chunks = chunks.concat(talking.chunks);
+        talking.part -= 1;
+      }
+      warn('A part could not be saved (' + e.message + '); its audio is kept, and saving it is tried again.');
     }
   };
   const talkStart = async () => {
@@ -287,6 +292,10 @@
     clearInterval(clock);
     $('voice-talk-meter').value = 0;
     await flush();
+    if (talking && talking.chunks.length) {
+      $('voice-talk-rec').textContent = 'Save again'; // the last part is still only in memory
+      return;
+    }
     talking = null;
     $('voice-talk-rec').textContent = 'Start';
     show();
