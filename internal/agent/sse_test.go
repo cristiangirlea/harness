@@ -42,6 +42,30 @@ func TestParsingASmallStreamAllocatesLittle(t *testing.T) {
 	}
 }
 
+// "content_block":null decodes to a nil block; a delta for it then wrote into
+// a nil map and panicked the api loop mid-run.
+func TestANullContentBlockIsAnErrorNotAPanic(t *testing.T) {
+	for _, delta := range []string{
+		`{"type":"text_delta","text":"hi"}`,
+		`{"type":"thinking_delta","thinking":"hm"}`,
+		`{"type":"signature_delta","signature":"s"}`,
+		`{"type":"citations_delta","citation":{"type":"x"}}`,
+		`{"type":"input_json_delta","partial_json":"{}"}`,
+	} {
+		stream := sse([]string{
+			`{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[]}}`,
+			`{"type":"content_block_start","index":0,"content_block":null}`,
+			`{"type":"content_block_delta","index":0,"delta":` + delta + `}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"message_stop"}`,
+		})
+		_, _, err := parseSSE(strings.NewReader(stream), func(string, string) {}, func(block) {})
+		if err == nil || !strings.Contains(err.Error(), "content block 0") {
+			t.Errorf("delta %s after a null block: err = %v; want an error naming content block 0", delta, err)
+		}
+	}
+}
+
 // manyDeltas is a thinking block and a text block, each streamed as n small
 // deltas, as a long response arrives.
 func manyDeltas(n int) string {

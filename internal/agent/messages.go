@@ -323,6 +323,9 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 			if err := json.Unmarshal(ev.ContentBlock, &b); err != nil {
 				return err
 			}
+			if b == nil { // "content_block":null decodes without an error
+				return fmt.Errorf("content block %d started with no block", ev.Index)
+			}
 			resp.Content = append(resp.Content, b)
 			started = true
 		case "content_block_delta":
