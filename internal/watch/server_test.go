@@ -43,13 +43,29 @@ func TestLoopbackAddrAcceptsOnlyLoopback(t *testing.T) {
 	}
 }
 
+// addrListener is a listener that reports another address than the one it
+// listens on.
+type addrListener struct {
+	net.Listener
+	addr net.Addr
+}
+
+func (l addrListener) Addr() net.Addr { return l.addr }
+
 func TestServeRefusesAListenerThatIsNotLoopback(t *testing.T) {
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	// Serve judges a listener by its address. Listening on every interface for
+	// real would make Windows ask about the firewall on each run, since the
+	// test binary's path changes every build; a loopback listener that says
+	// it is on every interface is judged the same way.
+	lo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skip("cannot listen on every interface here:", err)
+		t.Fatal(err)
 	}
-	defer ln.Close()
-	if err := Serve(context.Background(), Options{}, ln); err == nil || !strings.Contains(err.Error(), "loopback") {
+	defer lo.Close()
+	ln := addrListener{lo, &net.TCPAddr{IP: net.IPv4zero, Port: lo.Addr().(*net.TCPAddr).Port}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := Serve(ctx, Options{}, ln); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("Serve on %s = %v; want it refused", ln.Addr(), err)
 	}
 }
