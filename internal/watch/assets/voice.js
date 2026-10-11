@@ -55,6 +55,7 @@
     [[...kept].sort((a, b) => a[0] - b[0]).map(([n, t]) => pad(n) + '|' + t + '\n').join('')],
     { type: 'text/csv' }));
   $('voice-folder').addEventListener('click', async () => {
+    if (saving) return;
     try {
       dir = await window.showDirectoryPicker({ id: 'ada-voice', mode: 'readwrite' });
     } catch (e) {
@@ -170,6 +171,10 @@
   let at = 0; // index into lines
   let take = null; // { chunks, rate, peak }
   let recording = false;
+  // A take being written: until it is, the line, the take and the folder stay
+  // as they are, or it would be filed under another line or split between
+  // two folders.
+  let saving = false;
   const firstOpen = (from) => {
     for (let k = 0; k < lines.length; k++) {
       const i = (from + k) % lines.length;
@@ -184,7 +189,7 @@
       (kept.has(l.n) ? ' · this one is kept already: keeping a new take replaces it' : '');
     $('voice-rec').textContent = recording ? 'Stop (Space)' : 'Record (Space)';
     $('voice-play').disabled = !take || recording;
-    $('voice-keep').disabled = !take || recording;
+    $('voice-keep').disabled = !take || recording || saving;
     $('voice-retake').disabled = !take || recording;
     document.body.classList.toggle('recording', recording || !!talking);
   };
@@ -197,7 +202,7 @@
     return 'Sounds good: Keep (Enter), or Play back (P) first.';
   };
   const startTake = async () => {
-    if (!(await ready())) return;
+    if (saving || !(await ready())) return;
     take ={ chunks: [], rate: ctx.sampleRate, peak: 0 };
     const t = take;
     onBlock = (b) => {
@@ -218,8 +223,10 @@
     show();
   };
   const keep = async () => {
-    if (!take || recording) return;
+    if (!take || recording || saving) return;
     const l = lines[at];
+    saving = true;
+    show();
     try {
       await save(pad(l.n) + '.wav', wav(take.chunks, take.rate));
       kept.set(l.n, l.text);
@@ -227,6 +234,9 @@
     } catch (e) {
       warn('The take could not be saved: ' + e.message);
       return;
+    } finally {
+      saving = false;
+      show();
     }
     take = null;
     $('voice-note').textContent = 'Kept line ' + l.n + '.';
@@ -248,6 +258,7 @@
     src.start();
   };
   const move = (d) => {
+    if (saving) return;
     if (recording) stopTake();
     take = null;
     $('voice-note').textContent = '';
