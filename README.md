@@ -701,7 +701,9 @@ The listing puts the removals first, with the size each one frees and the pull r
 which is the record once the folder is gone. `--apply` checks each one again just before it goes
 (its `HEAD`, branch, lock and files, ignored ones included) and leaves one that changed since the
 scan, or that holds a worktree that stays, then removes it with `git worktree remove` (never
-`--force`) and deletes the branch if it still points at the commit that was checked. A batch's record stays (`hrn runs prune` can drop
+`--force`) and deletes the branch if it still points at the commit that was checked. git's
+removal is not all-or-nothing: one that fails (a file held open on Windows) can leave part of the
+folder deleted. Only merged, clean worktrees get that far, and the branch then stays. A batch's record stays (`hrn runs prune` can drop
 it once its worktrees are gone). Open pull requests are read on their own, so a long history
 cannot hide one; with 1000 or more open, no worktree on a branch is removed. Up to 1000 pull
 requests of every state are read besides; a branch whose pull request is older stays.
