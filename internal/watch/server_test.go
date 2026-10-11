@@ -635,6 +635,7 @@ func TestARunABatchStartedLinksToItsBatch(t *testing.T) {
 		return w.ID()
 	}
 	x, oldX, y := newRun("batch work"), newRun("old batch work"), newRun("plain run")
+	retry, second := newRun("batch work, again"), newRun("second task")
 	const id, oldID = "20261010-140000-aaaaaa", "20261001-090000-bbbbbb"
 	start := time.Now()
 	saveBatch(t, batch.Result{ID: id, Started: start, Tasks: []batch.TaskResult{
@@ -642,7 +643,9 @@ func TestARunABatchStartedLinksToItsBatch(t *testing.T) {
 			{Backend: "fake", RunID: x, Result: agent.Result{Status: agent.StatusOK}},
 			// An attempt naming a run that has no record: nothing to link, nothing wrong.
 			{Backend: "fake", RunID: "20261010-140001-999999", Result: agent.Result{Status: agent.StatusOK}},
+			{Backend: "fake", RunID: retry, Result: agent.Result{Status: agent.StatusOK}},
 		}},
+		{ID: "t2", Prompt: "second task", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "fake", RunID: second}}},
 	}})
 	// The oldest batch is past the 20 the index lists; its run still links to it.
 	saveBatch(t, batch.Result{ID: oldID, Started: start.Add(-time.Hour), Tasks: []batch.TaskResult{
@@ -661,15 +664,23 @@ func TestARunABatchStartedLinksToItsBatch(t *testing.T) {
 	if strings.Contains(body, `href="/batch/`+oldID+`">`+oldID+`</a></td>`) {
 		t.Fatal("the old batch is in the batches table; the test needs it past the 20 listed")
 	}
-	if row := runRowOf(t, body, x); !strings.Contains(row, `href="/batch/`+id+`"`) || !strings.Contains(row, "batch "+id) {
-		t.Errorf("run %s, a batch's attempt, does not link to its batch:\n%s", x, row)
+	// links checks the runs' rows in one rendering of the lists.
+	links := func(where, html string) {
+		t.Helper()
+		// The first attempt, a later attempt of the same task, and another task's.
+		for _, run := range []string{x, retry, second} {
+			if row := runRowOf(t, html, run); !strings.Contains(row, `href="/batch/`+id+`"`) || !strings.Contains(row, "batch "+id) {
+				t.Errorf("%s: run %s, a batch's attempt, does not link to its batch:\n%s", where, run, row)
+			}
+		}
+		if row := runRowOf(t, html, oldX); !strings.Contains(row, `href="/batch/`+oldID+`"`) {
+			t.Errorf("%s: run %s of a batch older than the 20 listed does not link to it:\n%s", where, oldX, row)
+		}
+		if row := runRowOf(t, html, y); strings.Contains(row, "/batch/") {
+			t.Errorf("%s: plain run %s links to a batch:\n%s", where, y, row)
+		}
 	}
-	if row := runRowOf(t, body, oldX); !strings.Contains(row, `href="/batch/`+oldID+`"`) {
-		t.Errorf("run %s of a batch older than the 20 listed does not link to it:\n%s", oldX, row)
-	}
-	if row := runRowOf(t, body, y); strings.Contains(row, "/batch/") {
-		t.Errorf("plain run %s links to a batch:\n%s", y, row)
-	}
+	links("the index", body)
 	if strings.Contains(body, "20261010-140001-999999") || strings.Contains(body, `class="notice bad"`) {
 		t.Error("an attempt's run with no record shows up on the index or adds a problem")
 	}
@@ -683,9 +694,7 @@ func TestARunABatchStartedLinksToItsBatch(t *testing.T) {
 	if !ok || m.event != "replace" {
 		t.Fatalf("first message = %+v, %v", m, ok)
 	}
-	if row := runRowOf(t, m.data, x); !strings.Contains(row, `href="/batch/`+id+`"`) {
-		t.Errorf("the streamed index does not link run %s to its batch:\n%s", x, row)
-	}
+	links("the streamed index", m.data)
 }
 
 func TestTheIndexSaysWhereAPhoneCanOpenIt(t *testing.T) {
