@@ -44,8 +44,9 @@ jobs:
         # container sees the node's 24 within a 3 GiB memory limit (GitHub's runner had 2-4).
         # Counts, not durations (#70): with -fuzztime=10s Go's coordinator can report its
         # own deadline as a failure (a race between closing the deadline and cancelling
-        # the workers), and minimization had no bound, so all four workers could spend the
-        # run minimizing. Each count is about 10 s on the lab runner.
+        # the workers), and minimization could take 60 s per input, longer than the run, so
+        # all four workers could spend it minimizing. Each count is about 10 s on the lab
+        # runner.
         # A count is the only bound left, and Go has no per-input hang detection, so a
         # hanging input would hold a runner slot: each step stops at 5 minutes, and fails,
         # so the next step and the crasher upload still run.
