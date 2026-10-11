@@ -7,7 +7,8 @@
 <title>{{.Title}} · hrn watch</title>
 <link rel="stylesheet" href="/static/watch.css">
 <script src="/static/watch.js" defer></script>
-</head>
+{{with .Script}}<script src="/static/{{.}}" defer></script>
+{{end}}</head>
 <body>
 <main>
 <header class="top">
@@ -28,7 +29,7 @@
 {{define "index"}}{{template "head" .}}
 <p class="eyebrow">Harness / live view</p>
 <h1>Runs and batches</h1>
-<p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps. A batch's tasks also appear as runs, linked to their batch.</p>
+<p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps. A batch's tasks also appear as runs, linked to their batch. <a href="/bot">Ada</a>, the bot, tells you what hrn is doing, out loud if you like.</p>
 {{if .Phone}}<section class="card reach" aria-labelledby="reach-h">
 <h2 id="reach-h">On your phone</h2>
 <p>Scan the code of the network your phone is on, or open its link. On Wi-Fi it is the one on your Wi-Fi adapter; the others are usually virtual adapters (WSL, Hyper-V, Docker), or a VPN that looks like an ordinary adapter. <code>hrn watch --lan=NAME</code> serves just one.</p>
@@ -137,3 +138,39 @@
 <p class="notice bad">{{.Message}}</p>
 <p><a href="/">Back to the runs and batches</a></p>
 {{template "foot" .}}{{end}}
+
+{{define "bot"}}{{template "head" .}}
+<section class="card bot" aria-labelledby="bot-h">
+<div class="bot-head">
+<svg class="bot-face" viewBox="0 0 64 64" aria-hidden="true"><path class="hair" d="M10 38 C8 16 20 6 32 6 C44 6 56 16 54 38 L54 56 C50 60 46 60 43 57 L43 38 L21 38 L21 57 C18 60 14 60 10 56 Z"/><circle class="skin" cx="32" cy="33" r="15"/><path class="hair" d="M17 31 C17 19 25 14 32 14 C40 14 47 19 47 29 C42 23 36 21 29 22 C24 23 20 26 17 31 Z"/><circle class="eye" cx="26.5" cy="34" r="2.2"/><circle class="eye" cx="37.5" cy="34" r="2.2"/><path class="mouth" d="M27.5 41 q4.5 4 9 0"/></svg>
+<div>
+<h1 id="bot-h">Ada</h1>
+<p id="bot-line" class="bot-line" aria-live="polite">I'm Ada. I'll tell you what hrn is doing.</p>
+</div>
+</div>
+<p class="bot-buttons">
+<button type="button" id="bot-wake" class="primary">Let me talk</button>
+<button type="button" id="bot-skip" title="Esc">Skip</button>
+<button type="button" id="bot-listen" hidden>Talk to me</button>
+<label>Snooze <select id="bot-snooze"><option value="0">off</option><option value="15">15 minutes</option><option value="60">an hour</option><option value="-1">until I unmute</option></select></label>
+</p>
+<p id="bot-quiet" class="muted small" hidden></p>
+</section>
+<div id="live" data-stream="/stream/bot" data-replace>{{template "botnow" .Now}}</div>
+<section class="card" aria-labelledby="said-h"><h2 id="said-h">What I've said</h2><ol id="bot-log" class="bot-log"><li class="muted">Nothing yet.</li></ol></section>
+<details class="card" id="bot-settings"><summary>Settings</summary>
+<div class="table-wrap"><table><thead><tr><th>When</th><th>Say it</th><th>Notify</th></tr></thead><tbody>
+{{range .Kinds}}<tr><td>{{.Label}}</td><td><input type="checkbox" data-kind="{{.Name}}" data-how="speak"{{if .Speak}} checked{{end}} aria-label="Say it: {{.Label}}"></td><td><input type="checkbox" data-kind="{{.Name}}" data-how="notify"{{if .Notify}} checked{{end}} aria-label="Notify: {{.Label}}"></td></tr>
+{{end}}</tbody></table></div>
+<p class="bot-controls"><label>Voice <select id="bot-voice"></select></label> <label>Speed <input id="bot-rate" type="range" min="0.6" max="1.6" step="0.1" value="1"></label> <button type="button" id="bot-test">Try it</button></p>
+<p id="bot-no-uk" class="notice warn" hidden>No British voice is installed on this computer, so I speak British English in another accent. On Windows, the English (United Kingdom) speech pack adds three (Settings, Time and language, Speech, Add voices); or choose an online British voice above, which sends what I say to its maker.</p>
+<p><button type="button" id="bot-notify-ask" hidden>Allow notifications</button> <span id="bot-notify-state" class="muted small"></span></p>
+<p class="muted small">A voice marked online sends what it says to its maker to be spoken; the ones on this computer do not. Talk to me uses the browser's speech recogniser, which may send what the microphone hears to its maker (Microsoft for Edge, Google for Chrome) while it listens; it listens for one sentence each time you press it. You can say: status, skip, quiet (for an hour, or until I unmute), unmute, repeat. Nothing said here acts on hrn. Settings stay in this browser.</p>
+<p id="bot-net" class="notice warn" hidden>Opened over the network: the browser allows neither notifications nor the microphone on this address. Speaking still works.</p>
+</details>
+{{template "foot" .}}{{end}}
+
+{{define "botnow"}}<section class="card" aria-labelledby="now-h"><h2 id="now-h">Going now</h2>
+{{if .Going}}<ul class="bot-now">{{range .Going}}<li data-ref="{{.ID}}"><span class="badge run">{{.Kind}}</span> <a href="{{.URL}}">{{.Who}}{{with .Where}} in {{.}}{{end}}</a> <span class="muted small" data-since="{{.Since}}"></span>{{with .What}}<br><span>{{.}}</span>{{end}}{{with .Doing}}<br><span class="muted">{{.}}</span>{{end}} <button type="button" class="quiet" data-mute="{{.ID}}">Mute this</button></li>
+{{end}}</ul>{{else}}<p class="muted">Nothing is running.</p>{{end}}
+</section>{{end}}

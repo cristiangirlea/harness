@@ -62,7 +62,10 @@
     box.innerHTML = m.data;
     reopen(keys);
     tick();
+    document.dispatchEvent(new Event('hrn:replaced'));
   });
+  // What the bot's stream says is the bot page's own script's business.
+  es.addEventListener('say', (m) => document.dispatchEvent(new CustomEvent('hrn:say', { detail: m.data })));
   es.addEventListener('problem', (m) => {
     box.insertAdjacentHTML('afterend', m.data);
     es.close();
