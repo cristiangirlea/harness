@@ -77,6 +77,7 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge. |
 | `hrn eval diff [--json] <a> <b>` | Two evals side by side, variant by variant and task by task. |
 | `hrn report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
+| `hrn gc [--apply] [--grace 1h] [PATH…]` | Remove worktrees whose work is merged, with their build output (see [Clearing merged worktrees](#clearing-merged-worktrees)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api, codex and claude: low, medium, high, xhigh, max; unset uses the
@@ -664,6 +665,49 @@ as a worktree (on Windows a file lock can leave one behind) is removed when it i
 reported when it is not, and its branch is deleted either way. One task that cannot be cleaned
 does not stop the others.
 
+## Clearing merged worktrees
+
+```
+hrn gc E:\work            # what would go, and why each worktree stays or goes
+hrn gc --apply E:\work    # remove them
+```
+
+Worktrees outlive their pull requests: the session that made one rarely comes back, and with
+a Rust `target/` or a `node_modules` inside, each can hold gigabytes. `hrn gc` looks at every
+linked worktree of the repositories at PATH (a repository, any folder inside one, or a folder
+whose repositories are found two levels down; the current directory by default) and removes a
+worktree only on proof that its work is merged:
+
+- **On a branch:** GitHub (`gh pr list`) reports no open pull request for the branch, and one
+  merged at the worktree's commit, or at a later commit that contains it, more than `--grace`
+  ago (default 1h, so a session finishing up after its merge keeps its folder).
+- **Made by an hrn batch** (a batch record names the folder): the batch has no task still
+  running, and the worktree's commit is on the branch origin names as its default
+  (`git ls-remote --symref`), fetched by name just before.
+
+And only when nothing would be lost with it: the tree is clean (untracked files count), its
+ignored files are build output (`target`, `node_modules`, `dist`, `.venv` and the like, or any
+folder carrying `CACHEDIR.TAG`, with no repository and no link out of the worktree inside, since
+git on Windows deletes through a junction; an ignored `.env` or notes keep it, because `git
+worktree remove` deletes ignored files; its `.hrn/` may hold only the worktrees git lists there), it is
+not locked, it holds no worktree that stays and no repository, and the current directory is
+not inside it. Everything else stays and the listing says why: an open or
+closed pull request, none at all, commits after the merged one, a detached `HEAD`, uncommitted
+files. When `gh` fails (not installed, not logged in) or the fetch does, the worktrees that
+needed it stay, and while any batch record cannot be read every worktree stays (it may be the
+record of a batch still running). Main checkouts are never touched.
+
+The listing puts the removals first, with the size each one frees and the pull request's URL,
+which is the record once the folder is gone. `--apply` checks each one again just before it goes
+(its `HEAD`, branch, lock and files, ignored ones included) and leaves one that changed since the
+scan, or that holds a worktree that stays, then removes it with `git worktree remove` (never
+`--force`) and deletes the branch if it still points at the commit that was checked. git's
+removal is not all-or-nothing: one that fails (a file held open on Windows) can leave part of the
+folder deleted. Only merged, clean worktrees get that far, and the branch then stays. A batch's record stays (`hrn runs prune` can drop
+it once its worktrees are gone). Open pull requests are read on their own, so a long history
+cannot hide one; with 1000 or more open, no worktree on a branch is removed. Up to 1000 pull
+requests of every state are read besides; a branch whose pull request is older stays.
+
 ## Watching runs live
 
 ```
@@ -1008,6 +1052,7 @@ internal/watch/    following records as they are written: hrn show -f, and hrn w
 internal/qr/       QR codes for hrn watch's phone links (byte mode, level M, versions 1-10)
 internal/followup/ continuing a run: what the backend picks up, what it is handed
 internal/limits/   plan usage limits: which backend takes over, the reset times in limits.json
+internal/gc/       hrn gc: which worktrees are proven merged, and removing them
 ```
 
 ## Status and what is open

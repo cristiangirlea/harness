@@ -644,6 +644,14 @@ order they are worth taking:
     - [ ] hrn watch: what the listed runs were for and what they cost, as a lower bound
       ([#63](https://github.com/cristiangirlea/harness/issues/63)); a first, budget-free step
       towards #37.
+16. **Disk: clear what merged work leaves behind** (the owner, 2026-10-11, after both work
+    drives filled with worktrees and Rust build folders). Deterministic, no model involved, and
+    nothing local goes before its merge is proven. Three PRs, in this order:
+    - [x] `hrn gc`: worktrees whose pull request is proven merged
+      ([#78](https://github.com/cristiangirlea/harness/issues/78)). Done: PR #95, 2026-10-12.
+    - [ ] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
+      ([#79](https://github.com/cristiangirlea/harness/issues/79)).
+    - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -653,6 +661,30 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: `hrn gc` (#78). Proof of a merge is GitHub's word on the exact commit: a merged
+  pull request whose head is the worktree's `HEAD` or contains it, and no open one for the
+  branch. Ancestry of the default branch alone was not enough for a branch: a worktree made
+  from `main` a minute ago has nothing of its own yet and would pass. It is enough for a
+  batch's worktree, whose record says when the batch has finished. A detached `HEAD` has no
+  pull request and stays. Failing closed: when `gh` or the fetch fails, the worktrees that
+  needed them stay. Two rules came from how `git worktree remove` behaves: it deletes ignored
+  files, so a worktree whose ignored files are not build output (a `.env`, notes) stays, and
+  a worktree holding another that stays (`.hrn/worktrees` is ignored) stays too. `--force`
+  would not check the files at all, and without it git checks only for changes, so `--apply`
+  checks each worktree again just before removing it (`HEAD`, branch, lock, files). A one-hour grace
+  after the merge spares the session that merged it. CLI only: tools that delete branches
+  stay out of `hrn mcp`, as recorded for `batch rm`. An independent review (codex, read-only)
+  found seven ways it could still delete unproven work, each fixed with a test seen failing:
+  a parent removed after its child's removal failed, no second look before removing, a
+  check-then-delete race on the branch (now one `update-ref -d`), `.hrn/` taken whole as build
+  output, a stale or guessed default branch (now asked of origin), an open pull request lost
+  past the list's limit (now a query of its own), and unreadable batch records skipped (now
+  everything stays). Four more rounds and a security read found the ways around build output
+  (a file named like a build folder, a signed-looking tag in a tracked folder, a repository,
+  bare repository or link inside it, a junction above it), a worktree made inside a parent
+  after the scan, a local ref shadowing origin's, git pointed elsewhere by `GIT_DIR` or
+  passed-down config, assume-unchanged files, and replace refs; each was fixed the same way.
+  Batch work that landed squashed is #85; a tracked folder swapped for a junction is #94.
 - 2026-10-11: PR #93 (closes #91), recording Ada's voice, the first slice of #83. The voice
   will be the owner's wife's, recorded by her with her agreement; the recordings stay on this
   computer, never in a repository. Decided: the page records in the browser and saves into a
