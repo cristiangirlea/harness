@@ -422,6 +422,16 @@ func TestGCRemovesAFinishedBatchWorktreeOnlyWhenItsCommitIsOnTheDefaultBranch(t 
 	wantVerdict(t, find(t, wts, running), Keep, "still running")
 }
 
+func TestGCKeepsEveryWorktreeWhileABatchRecordCannotBeRead(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	saveBatch(t, "20261011-100000-aaaaaa", f.repo) // a readable one beside it
+	f.write(filepath.Join(runlog.Home(), "batches"), "20261011-120000-cccccc.json", "{ half a record")
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "could not be read")
+}
+
 func TestGCJudgesBatchWorktreesAgainstTheBranchOriginNamesNow(t *testing.T) {
 	f := newFixture(t)
 	git(t, f.repo, "push", "-q", "origin", "main:develop")

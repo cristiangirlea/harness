@@ -693,7 +693,8 @@ not locked, it holds no worktree that stays and no repository, and the current d
 not inside it. Everything else stays and the listing says why: an open or
 closed pull request, none at all, commits after the merged one, a detached `HEAD`, uncommitted
 files. When `gh` fails (not installed, not logged in) or the fetch does, the worktrees that
-needed it stay. Main checkouts are never touched.
+needed it stay, and while any batch record cannot be read every worktree stays (it may be the
+record of a batch still running). Main checkouts are never touched.
 
 The listing puts the removals first, with the size each one frees and the pull request's URL,
 which is the record once the folder is gone. `--apply` checks each one again just before it goes

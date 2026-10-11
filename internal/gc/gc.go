@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 type Verdict string
@@ -75,11 +76,11 @@ func Scan(ctx context.Context, paths []string, opt Options) ([]Worktree, error) 
 	if err != nil {
 		return nil, err
 	}
-	owners := batchOwners()
+	owners, ownersErr := batchOwners()
 	cwd, _ := os.Getwd()
 	var all []Worktree
 	for _, repo := range repos {
-		wts, err := scanRepo(ctx, repo, owners, cwd, opt)
+		wts, err := scanRepo(ctx, repo, owners, ownersErr, cwd, opt)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", repo, err)
 		}
@@ -257,12 +258,16 @@ type owner struct {
 }
 
 // batchOwners maps each worktree an hrn batch record names to its batch,
-// the newest record first.
-func batchOwners() map[string]owner {
-	results, _, err := batch.List()
+// the newest record first. A record that cannot be read may be the one that
+// says a batch is still running in some folder, so it is an error.
+func batchOwners() (map[string]owner, error) {
+	results, unreadable, err := batch.List()
 	owners := map[string]owner{}
 	if err != nil {
-		return owners
+		return owners, fmt.Errorf("batch records could not be read: %w", err)
+	}
+	if unreadable > 0 {
+		return owners, fmt.Errorf("%d batch records under %s could not be read; fix or remove them", unreadable, runlog.Home())
 	}
 	for _, res := range results {
 		running := false
@@ -275,7 +280,7 @@ func batchOwners() map[string]owner {
 			}
 		}
 	}
-	return owners
+	return owners, nil
 }
 
 type entry struct {
@@ -325,6 +330,7 @@ type repoFacts struct {
 	repo      string
 	worktrees []string // every path git lists as one of its worktrees
 	prLimit   int
+	ownersErr error // the batch records could not all be read
 	fetchErr  error
 	def       string // like origin/main; empty when origin names none
 	gh        []string
@@ -341,7 +347,7 @@ func (r *repoFacts) pullRequests(ctx context.Context) ([]PR, error) {
 	return r.prs, r.ghErr
 }
 
-func scanRepo(ctx context.Context, repo string, owners map[string]owner, cwd string, opt Options) ([]Worktree, error) {
+func scanRepo(ctx context.Context, repo string, owners map[string]owner, ownersErr error, cwd string, opt Options) ([]Worktree, error) {
 	out, err := gitOut(ctx, repo, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
@@ -350,7 +356,7 @@ func scanRepo(ctx context.Context, repo string, owners map[string]owner, cwd str
 	if len(entries) < 2 {
 		return nil, nil // the first entry is the main checkout
 	}
-	facts := &repoFacts{repo: repo, gh: opt.GH, prLimit: opt.PRLimit, worktrees: entryPaths(entries)}
+	facts := &repoFacts{repo: repo, gh: opt.GH, prLimit: opt.PRLimit, worktrees: entryPaths(entries), ownersErr: ownersErr}
 	facts.def, facts.fetchErr = originDefault(ctx, repo)
 
 	var wts []Worktree
@@ -378,6 +384,9 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 	}
 	if why := unsaved(ctx, w.Path, facts.worktrees); why != "" {
 		return Keep, why
+	}
+	if facts.ownersErr != nil {
+		return Keep, firstLine(facts.ownersErr.Error())
 	}
 
 	if o, ok := owners[samePath(w.Path)]; ok {
