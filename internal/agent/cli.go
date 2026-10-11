@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 // This file holds the machinery every agent CLI shares: finding the binary,
@@ -118,6 +120,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = 5 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fail(StatusError, err)
@@ -133,9 +136,33 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("command guard: not applied by the %s backend; its own permissions decide", c.name)})
 	}
-	if err := cmd.Start(); err != nil {
+	tree, err := tools.StartTree(cmd)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fail(stopStatus(ctx), ctx.Err())
+		}
 		return fail(StatusError, err)
 	}
+	defer tree.Close()
+	emitCLITreeStartInfo(tree, emit)
+	// A surviving descendant can hold StdoutPipe open before Wait is reached.
+	// Bound that read on cancellation as well as exec's stderr copy in Wait.
+	readDone := make(chan struct{})
+	defer close(readDone)
+	go func() {
+		select {
+		case <-readDone:
+			return
+		case <-ctx.Done():
+		}
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-readDone:
+		case <-timer.C:
+			_ = stdout.Close()
+		}
+	}()
 
 	var all []byte
 	sc := bufio.NewScanner(stdout)
@@ -169,7 +196,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	switch {
 	case ctx.Err() != nil:
-		return fail(stopStatus(ctx), ctx.Err())
+		return fail(stopStatus(ctx), stopCLITree(tree, ctx.Err()))
 	case waitErr != nil:
 		// Prefer what the CLI said over the bare exit status: stderr first,
 		// then a structured error the stream already reported. A status the
@@ -190,6 +217,34 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		res.Status = StatusOK
 	}
 	return finish(&res, started)
+}
+
+func emitCLITreeStartInfo(tree interface {
+	Contained() bool
+	StartWarnings() []string
+}, emit func(Event)) {
+	if !tree.Contained() {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "process tree is not contained; cancellation may leave child processes running"})
+	}
+	for _, warning := range tree.StartWarnings() {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "process tree startup: " + warning})
+	}
+}
+
+func stopCLITree(tree *tools.Tree, err error) error {
+	// exec may have reaped a CLI that exited just before cancellation
+	// and stopped its watcher without ever invoking cmd.Cancel.
+	// Without containment, cmd.Cancel owns the best-effort fallback. WaitGone
+	// supplies the single explanation that cleanup could not be verified.
+	if tree.Contained() {
+		if killErr := tree.Kill(); killErr != nil {
+			err = fmt.Errorf("%w; kill process tree: %v", err, killErr)
+		}
+	}
+	if goneErr := tree.WaitGone(5 * time.Second); goneErr != nil {
+		err = fmt.Errorf("%w; %v", err, goneErr)
+	}
+	return err
 }
 
 func withoutEnv(env []string, key string) []string {

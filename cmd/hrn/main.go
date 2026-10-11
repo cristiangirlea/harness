@@ -17,6 +17,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -247,7 +248,7 @@ func cmdRun(args []string) (int, error) {
 	// The api backend saves the conversation here, so this run can be continued.
 	task.RunDir = rec.Dir()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	var emit func(agent.Event)
@@ -341,7 +342,7 @@ func cmdShow(args []string) error {
 	}
 	id := fs.Arg(0)
 	if *follow {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
 		return followRun(ctx, newRenderer(true), id, 250*time.Millisecond)
 	}
@@ -407,7 +408,7 @@ func cmdMCP(args []string) error {
 		return fmt.Errorf("--dir %s: %w", *dir, err)
 	}
 	abs := ws.Root
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	fmt.Fprintln(os.Stderr, "hrn mcp: serving on stdio, workspace", abs)
 	if err := hrnmcp.NewServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
@@ -491,7 +492,7 @@ func cmdEval(args []string) (int, error) {
 		spec.Parallel = *parallel
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	r := newRenderer(false)
 	if *jsonOut {
