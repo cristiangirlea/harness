@@ -168,8 +168,11 @@ func TestAWorkspaceReachedThroughAJunctionStillWorks(t *testing.T) {
 	junction(t, link, real.Root)
 	ws, err := NewWorkspace(link)
 	must(t, err)
-	// Root keeps the junction: commands run where the user said.
-	if !strings.EqualFold(ws.Root, link) {
+	// Root keeps the junction: commands run where the user said. Its folder
+	// may be spelt with long names where the temp dir has short ones.
+	parent, err := filepath.EvalSymlinks(filepath.Dir(link))
+	must(t, err)
+	if filepath.Base(ws.Root) != "link" || !strings.EqualFold(filepath.Dir(ws.Root), parent) {
 		t.Errorf("Root = %s, want the junction's own path %s", ws.Root, link)
 	}
 	byName := map[string]Tool{}
