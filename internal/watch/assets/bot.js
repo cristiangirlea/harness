@@ -60,14 +60,13 @@
   };
   voiceSel.addEventListener('change', () => store.set('voice', voiceSel.value));
 
-  // The face shows talking while any sentence is queued or spoken: a count,
-  // since speechSynthesis.speaking can still be true when the last one ends.
+  // The face shows talking while any sentence is queued or spoken: the set
+  // of utterances not yet ended, since speechSynthesis.speaking can still be
+  // true when the last one ends. Holding them also keeps Chrome from dropping
+  // a long one before its end event. Skip starts a new set, so the late end
+  // events of what it cancelled cannot end the next sentence's talking.
   let lastSpoken = '';
-  let inFlight = 0;
-  const talking = (d) => {
-    inFlight = Math.max(0, inFlight + d);
-    card.classList.toggle('talking', inFlight > 0);
-  };
+  let inFlight = new Set();
   const speak = (text) => {
     if (!synth || !text) return;
     const u = new SpeechSynthesisUtterance(text);
@@ -75,19 +74,20 @@
     const v = synth.getVoices().find((x) => x.voiceURI === voiceSel.value);
     if (v) u.voice = v;
     u.rate = Number(rate.value) || 1;
-    let ended = false;
+    const mine = inFlight;
     u.onend = u.onerror = () => {
-      if (!ended) talking(-1);
-      ended = true;
+      mine.delete(u);
+      card.classList.toggle('talking', inFlight.size > 0);
     };
-    talking(+1);
+    mine.add(u);
+    card.classList.add('talking');
     synth.speak(u);
     lastSpoken = text;
   };
   const skip = () => {
+    inFlight = new Set();
+    card.classList.remove('talking');
     if (synth) synth.cancel();
-    inFlight = 0;
-    talking(0);
   };
 
   // Snoozing: until a time, or until unmuted (-1). Muting: one run or batch.
@@ -115,7 +115,8 @@
   showQuiet();
   setInterval(showQuiet, 30000);
 
-  let muted = new Set(store.get('muted', []));
+  const savedMuted = store.get('muted', []);
+  let muted = new Set(Array.isArray(savedMuted) ? savedMuted.filter((id) => typeof id === 'string') : []);
   const markMuted = () => {
     for (const b of document.querySelectorAll('[data-mute]')) b.textContent = muted.has(b.dataset.mute) ? 'Unmute this' : 'Mute this';
   };
