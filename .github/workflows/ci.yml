@@ -46,11 +46,16 @@ jobs:
         # own deadline as a failure (a race between closing the deadline and cancelling
         # the workers), and minimization had no bound, so all four workers could spend the
         # run minimizing. Each count is about 10 s on the lab runner.
+        # A count is the only bound left, and Go has no per-input hang detection, so a
+        # hanging input would hold a runner slot: each step stops at 5 minutes, and fails,
+        # so the next step and the crasher upload still run.
         if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 5
         run: go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -parallel=4 ./internal/agent
       - name: fuzz the MCP codec
         # always(), so a crash in the parser fuzzer does not hide this one.
         if: always() && matrix.os == 'ubuntu-latest'
+        timeout-minutes: 5
         run: go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
       - name: keep any input a fuzzer crashed on
         if: failure() && matrix.os == 'ubuntu-latest'
