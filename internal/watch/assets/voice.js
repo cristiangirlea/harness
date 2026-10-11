@@ -205,7 +205,7 @@
   };
   const startTake = async () => {
     if (saving || !(await ready())) return;
-    take ={ chunks: [], rate: ctx.sampleRate, peak: 0 };
+    take = { chunks: [], rate: ctx.sampleRate, peak: 0 };
     const t = take;
     onBlock = (b) => {
       t.chunks.push(b);
@@ -301,7 +301,7 @@
   const flush = () => (flushing = flushing.then(savePart));
   const talkStart = async () => {
     if (!(await ready())) return;
-    talking ={ chunks: [], part: 1, stamp: stamp(), started: Date.now() };
+    talking = { chunks: [], part: 1, stamp: stamp(), started: Date.now() };
     const limit = ctx.sampleRate * 300;
     let held = 0;
     onBlock = (b) => {
