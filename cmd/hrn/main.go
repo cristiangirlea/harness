@@ -35,6 +35,7 @@ const usage = `hrn — personal agent harness
 
 Usage:
   hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
+  hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
   hrn backends                    show which backends are usable
   hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
@@ -111,6 +112,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		code, err = cmdRun(os.Args[2:])
+	case "exec":
+		code, err = cmdExec(os.Args[2:])
 	case "backends":
 		err = cmdBackends()
 	case "runs":

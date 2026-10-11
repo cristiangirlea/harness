@@ -287,6 +287,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		if msg.Model != "" {
 			res.Model = msg.Model
+			res.ModelReported = true
 		}
 		if present(msg.ContextManagement) {
 			// Verbatim, so a comparison of two runs can attribute a token

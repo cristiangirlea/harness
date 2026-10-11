@@ -41,9 +41,40 @@ type CLIBackend struct {
 	forks bool
 	// mapsEffort is set when args passes Options.Effort to the CLI.
 	mapsEffort bool
+	// These fields are opt-in: advertise only explicit adapter mappings.
+	mapsModes    []Mode
+	mapsModel    bool
+	mapsMaxTurns bool
+	mapsMCP      bool
 }
 
 func (c *CLIBackend) Name() string { return c.name }
+
+func (c *CLIBackend) Capabilities() Capabilities {
+	caps := Capabilities{Modes: append([]Mode{}, c.mapsModes...), Efforts: []string{}, Sessions: "none", Options: []string{}}
+	if c.mapsModel {
+		caps.Options = append(caps.Options, "model")
+	}
+	if len(c.mapsModes) > 0 {
+		caps.Options = append(caps.Options, "mode")
+	}
+	if c.mapsEffort {
+		caps.Efforts = append(caps.Efforts, EffortLevels...)
+		caps.Options = append(caps.Options, "effort")
+	}
+	// Run itself enforces timeout for every CLI adapter.
+	caps.Options = append(caps.Options, "timeout")
+	if c.mapsMaxTurns {
+		caps.Options = append(caps.Options, "max_turns")
+	}
+	if c.mapsMCP {
+		caps.Options = append(caps.Options, "mcp")
+	}
+	if c.forks {
+		caps.Sessions = "fork"
+	}
+	return caps
+}
 
 // ForksSessions reports whether the CLI can start from a copy of an earlier
 // run's session.
@@ -168,14 +199,22 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	var plain strings.Builder
+	var session string
 	for sc.Scan() {
 		line := sc.Bytes()
 		if c.finalize != nil {
 			all = append(append(all, line...), '\n')
 			continue
 		}
-		if c.parse != nil && c.parse(line, emit, &res) {
-			continue
+		if c.parse != nil {
+			parsed := c.parse(line, emit, &res)
+			if res.Session != "" && res.Session != session {
+				session = res.Session
+				emit(Event{Time: time.Now(), Kind: EventSession, Text: session})
+			}
+			if parsed {
+				continue
+			}
 		}
 		// Unparsed output is shown as text so nothing is silently lost.
 		text := string(line) + "\n"

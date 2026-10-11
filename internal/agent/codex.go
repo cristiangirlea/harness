@@ -49,6 +49,8 @@ func NewCodexBackend() *CLIBackend {
 		parse:      parseCodexStream,
 		forks:      true,
 		mapsEffort: true,
+		mapsModes:  []Mode{ModeReadOnly, ModeAuto, ModeYolo},
+		mapsModel:  true,
 	}
 }
 

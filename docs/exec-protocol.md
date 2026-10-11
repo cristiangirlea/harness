@@ -54,8 +54,8 @@ hrn       -> result                (always the last line after accepted; then ex
 - `efforts` is empty for a backend that cannot apply a reasoning effort.
 - `sessions` is `fork` (a continuation copies the native session), `resume` (it continues the
   same session in place), or `none`.
-- `options` lists the task fields the backend honours. A task that sets any other optional field
-  is rejected as `unsupported`.
+- `options` includes the required `mode` field and lists the optional task fields the backend
+  honours. A task that sets any other optional field is rejected as `unsupported`.
 
 ### `start` (caller, exactly one, the first line)
 
@@ -87,9 +87,12 @@ hrn       -> result                (always the last line after accepted; then ex
 ```
 
 A rejected start creates no run record. Codes: `bad_request` (malformed line, missing or unknown
-field, bad attempt id, a second start), `unsupported` (a mode, effort or option the backend cannot
-honour, or an unknown protocol version), `unavailable` (the backend's CLI or credentials are not
+field or bad attempt id), `unsupported` (a mode, effort or option the backend cannot
+honour), `unavailable` (the backend's CLI or credentials are not
 found), `storage` (the run record could not be created). hrn exits 2 after `rejected`.
+
+A second `start` after `accepted` receives a non-fatal `error` with code `bad_request`.
+It creates no additional record, and the accepted run continues to its final `result`.
 
 ### `event` (hrn)
 
@@ -142,6 +145,9 @@ for; `resolved_model` is what the backend reported running (empty when it did no
 task's own status: the status is in the line.
 
 ## Exit status
+
+Missing `--protocol`, any value other than `v1`, or extra command-line arguments are a usage
+error on stderr: hrn exits 2 without writing `hello` or any other protocol line.
 
 | Code | Meaning |
 |---|---|
