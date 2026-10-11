@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,5 +189,51 @@ func TestAWorkspaceReachedThroughAJunctionStillWorks(t *testing.T) {
 		if _, err := ws.Resolve(p); err == nil {
 			t.Errorf("Resolve(%q) should fail", p)
 		}
+	}
+}
+
+// A secret directory reached through a junction inside the workspace is
+// secret where the junction leads, for the file tools and for grep.
+func TestASecretDirectoryBehindAJunctionIsSecret(t *testing.T) {
+	ws, tl := setup(t)
+	must(t, os.MkdirAll(filepath.Join(ws.Root, ".private"), 0o755))
+	must(t, os.WriteFile(filepath.Join(ws.Root, ".private", "key.txt"), []byte("hunter2-private\n"), 0o644))
+	junction(t, filepath.Join(ws.Root, "notes"), filepath.Join(ws.Root, ".private"))
+
+	raw, _ := json.Marshal(map[string]any{"path": "notes/key.txt"})
+	if rule := tl["read_file"].Refuse(ws, raw); rule != "secret-file" {
+		t.Errorf("read_file notes/key.txt, notes -> .private: Refuse = %q, want secret-file", rule)
+	}
+	// Over the root the secret directory is passed over; on the junction
+	// itself the search is refused. Either way nothing in it is shown.
+	for _, path := range []string{"", "notes"} {
+		if out, err := call(t, ws, tl["grep"], map[string]any{"pattern": "hunter2", "path": path}); strings.Contains(out, "hunter2-private") {
+			t.Errorf("grep in %q = %q, %v; want nothing from the secret directory", path, out, err)
+		}
+	}
+}
+
+// A workspace reached through a junction is judged from where it really is:
+// from the junction's side, the folders above the real workspace would read as
+// part of every path, and a parent named .private would make all of it secret.
+func TestAWorkspaceReachedThroughAJunctionIsJudgedFromItsRealRoot(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".private", "repo")
+	must(t, os.MkdirAll(dir, 0o755))
+	must(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main // hunter2-ok\n"), 0o644))
+	link := filepath.Join(t.TempDir(), "link")
+	junction(t, link, dir)
+	ws, err := NewWorkspace(link)
+	must(t, err)
+	byName := map[string]Tool{}
+	for _, tl := range All() {
+		byName[tl.Name] = tl
+	}
+
+	raw, _ := json.Marshal(map[string]any{"path": "main.go"})
+	if rule := byName["read_file"].Refuse(ws, raw); rule != "" {
+		t.Errorf("main.go in a workspace reached through a junction into .private: Refuse = %q, want none", rule)
+	}
+	if out, err := call(t, ws, byName["read_file"], map[string]any{"path": "main.go"}); err != nil || !strings.Contains(out, "hunter2-ok") {
+		t.Errorf("read_file = %q, %v; want main.go read", out, err)
 	}
 }
