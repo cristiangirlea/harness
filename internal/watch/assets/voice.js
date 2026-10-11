@@ -276,7 +276,7 @@
   let talking = null; // { chunks, part, stamp, started }
   let clock = null;
   const stamp = () => new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-  const flush = async () => {
+  const savePart = async () => {
     if (!talking || !talking.chunks.length) return;
     const chunks = talking.chunks;
     talking.chunks = [];
@@ -293,6 +293,10 @@
       warn('A part could not be saved (' + e.message + '); its audio is kept, and saving it is tried again.');
     }
   };
+  // One part after another: a part that fails puts its audio and its number
+  // back before the next is named, and Stop waits for every part before it.
+  let flushing = Promise.resolve();
+  const flush = () => (flushing = flushing.then(savePart));
   const talkStart = async () => {
     if (!(await ready())) return;
     talking ={ chunks: [], part: 1, stamp: stamp(), started: Date.now() };
