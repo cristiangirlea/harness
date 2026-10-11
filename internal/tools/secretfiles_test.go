@@ -27,6 +27,16 @@ func TestSecretFile(t *testing.T) {
 		".aws/credentials":          true,
 		".kube/config":              true,
 		".wrangler/config/default":  true,
+		".env.":                     true, // Windows drops trailing dots and spaces
+		"certs/x.pem ":              true,
+		".env::$DATA":               true, // and reads a stream name as the file
+		`C:\Users\me\.ssh\config`:   true,
+		"release/upload.keystore":   true,
+		"certs/client.p12":          true,
+		".netrc":                    true,
+		"_netrc":                    true,
+		".pypirc":                   true,
+		"../outside/.env":           true,
 		"src/env.go":                false,
 		"src/key.go":                false,
 		"docs/keys.md":              false,
@@ -59,6 +69,8 @@ func TestTheFileToolsRefuseSecretFiles(t *testing.T) {
 		{"write_file", map[string]any{"path": "certs/new.pem", "content": "-----BEGIN"}},
 		{"edit_file", map[string]any{"path": ".env", "old_string": "hunter2", "new_string": "x"}},
 		{"grep", map[string]any{"pattern": "hunter2", "path": ".private"}},
+		{"grep", map[string]any{"pattern": "hunter2", "path": ".env"}}, // one file, not a walk
+		{"read_file", map[string]any{"path": ".env."}},                 // Windows' other spelling
 	}
 	for _, c := range calls {
 		raw, _ := json.Marshal(c.in)
@@ -78,9 +90,12 @@ func TestTheFileToolsRefuseSecretFiles(t *testing.T) {
 	if err != nil || out != "(no matches)" {
 		t.Errorf("grep over the workspace = %q, %v; want the secret files passed over", out, err)
 	}
-	// Ordinary files are untouched by the rule.
+	// Ordinary files are untouched by the rule, one file or a directory.
 	if out, err := call(t, ws, tl["read_file"], map[string]any{"path": "src/a.go"}); err != nil || !strings.Contains(out, "Hello") {
 		t.Errorf("read_file src/a.go = %q, %v", out, err)
+	}
+	if out, err := call(t, ws, tl["grep"], map[string]any{"pattern": "Hello", "path": "src/a.go"}); err != nil || !strings.Contains(out, "a.go:3:") {
+		t.Errorf("grep src/a.go = %q, %v", out, err)
 	}
 
 	ws.AllowDangerous = true
@@ -92,6 +107,33 @@ func TestTheFileToolsRefuseSecretFiles(t *testing.T) {
 	}
 	if out, err := call(t, ws, tl["grep"], map[string]any{"pattern": "hunter2"}); err != nil || !strings.Contains(out, ".env:1:") {
 		t.Errorf("allow_dangerous: grep = %q, %v; want the .env match", out, err)
+	}
+}
+
+// A link is judged by where it leads: notes.txt -> .env is the .env file, to
+// the file tools and to grep's walk, and a link out of the workspace is not
+// followed by the walk even with the guard lifted.
+func TestALinkToASecretFileIsTheSecretFile(t *testing.T) {
+	ws, tl := setup(t)
+	must(t, os.WriteFile(filepath.Join(ws.Root, ".env"), []byte("hunter2-linked\n"), 0o644))
+	outside := filepath.Join(t.TempDir(), "elsewhere.txt")
+	must(t, os.WriteFile(outside, []byte("hunter2-outside\n"), 0o644))
+	if err := os.Symlink(filepath.Join(ws.Root, ".env"), filepath.Join(ws.Root, "notes.txt")); err != nil {
+		t.Skipf("cannot make a symlink here: %v", err) // Windows without the privilege
+	}
+	must(t, os.Symlink(outside, filepath.Join(ws.Root, "src", "away.txt")))
+
+	raw, _ := json.Marshal(map[string]any{"path": "notes.txt"})
+	if rule := tl["read_file"].Refuse(ws, raw); rule != "secret-file" {
+		t.Errorf("read_file notes.txt -> .env: Refuse = %q, want secret-file", rule)
+	}
+	if out, err := call(t, ws, tl["grep"], map[string]any{"pattern": "hunter2"}); err != nil || out != "(no matches)" {
+		t.Errorf("grep = %q, %v; want the link to .env and the link out both passed over", out, err)
+	}
+	ws.AllowDangerous = true
+	out, err := call(t, ws, tl["grep"], map[string]any{"pattern": "hunter2"})
+	if err != nil || !strings.Contains(out, "hunter2-linked") || strings.Contains(out, "hunter2-outside") {
+		t.Errorf("allow_dangerous: grep = %q, %v; want the .env match and still nothing from outside", out, err)
 	}
 }
 

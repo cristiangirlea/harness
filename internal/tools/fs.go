@@ -326,9 +326,10 @@ func grep() Tool {
 				search(base)
 			} else {
 				err = walk(ctx, base, func(p, rel string) bool {
-					// A search of a directory passes over the secret files in it
-					// rather than refusing the whole search.
-					if !ws.AllowDangerous && SecretFile(ws.Rel(p)) {
+					// A link out of the workspace is not followed, as Resolve
+					// refuses one; and a search of a directory passes over the
+					// secret files in it rather than refusing the whole search.
+					if !ws.inside(realPath(p)) || (!ws.AllowDangerous && ws.secretPath(p)) {
 						return true
 					}
 					if globRe == nil || globRe.MatchString(rel) {

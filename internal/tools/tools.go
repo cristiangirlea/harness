@@ -75,25 +75,41 @@ func (w *Workspace) Resolve(p string) (string, error) {
 		p = filepath.Join(w.Root, p)
 	}
 	p = filepath.Clean(p)
-	// Resolve symlinks on the longest existing prefix so a link can't escape.
+	// Judge where the path really is, so a link can't escape.
+	if !w.inside(realPath(p)) {
+		return "", fmt.Errorf("path %q is outside the workspace %s", p, w.Root)
+	}
+	return p, nil
+}
+
+// realPath is p with the symlinks on its longest existing prefix resolved:
+// where p is, or would be once created. On Windows it also turns short
+// 8.3 names into long ones.
+func realPath(p string) string {
 	check := p
 	for {
 		if real, err := filepath.EvalSymlinks(check); err == nil {
 			rest, _ := filepath.Rel(check, p)
-			check = filepath.Join(real, rest)
-			break
+			return filepath.Join(real, rest)
 		}
 		parent := filepath.Dir(check)
 		if parent == check {
-			break
+			return check
 		}
 		check = parent
 	}
-	rel, err := filepath.Rel(w.Root, check)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q is outside the workspace %s", p, w.Root)
-	}
-	return p, nil
+}
+
+// inside reports whether an absolute, resolved path lies in the workspace.
+func (w *Workspace) inside(real string) bool {
+	rel, err := filepath.Rel(w.Root, real)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// secretPath reports whether an absolute path names a secret file, as
+// written or where its links lead.
+func (w *Workspace) secretPath(p string) bool {
+	return SecretFile(w.Rel(p)) || SecretFile(w.Rel(realPath(p)))
 }
 
 // Rel renders an absolute workspace path for display.
