@@ -29,6 +29,7 @@ var guardRules = []struct {
 	{"git-push", matches(`(?i)\bgit\b[^|&;]*\bpush(?:url|insteadof)?\b`)},
 	// The guarded environment itself: a command that unsets or overrides
 	// git's push rewrite or points a tool back at the operator's login.
+	// Reading a variable or naming it in a search is fine.
 	{"guard-env", matches(guardEnvPattern())},
 	// A password prompt hangs a run that has no terminal, and anything worth
 	// running as root is worth a human typing it.
@@ -49,6 +50,9 @@ var guardRules = []struct {
 	// clusters, infrastructure and hosting platforms, a project's own deploy
 	// scripts (npm run deploy, deploy:prod, deploy-docs and the like), and
 	// this owner's deploy script.
+	// The secret files the file tools refuse, reached through the shell
+	// instead: cat .env, echo x > .env, cp .env.example .env.
+	{"secret-file", namesSecretFile},
 	{"deploy", matches(`\bwrangler\b[^|&;]*\bdeploy\b|\b(?:npm|pnpm|yarn|bun|cargo)\s+publish\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?deploy\b|\bdeploy/push\.sh\b|\bkubectl\b[^|&;]*\b(?:apply|delete|replace|patch|rollout)\b|\b(?:terraform|tofu)\b[^|&;]*\b(?:apply|destroy)\b|\bhelm\b[^|&;]*\b(?:install|upgrade|uninstall|delete)\b|\bdocker\s+push\b|\bvercel\b[^|&;]*--prod\b|\b(?:fly|flyctl|netlify)\s+deploy\b`)},
 }
 
@@ -79,17 +83,30 @@ func GuardError(rule string) error {
 		"Do not retry it; say in your answer why it is needed", rule)
 }
 
-// guardEnvPattern matches a mention of a variable the guarded environment
-// sets: git's numbered config entries (and the -c channel, which outranks
-// them) and the variables that point tools at an empty login. Case is
-// ignored, for PowerShell's $env:gh_config_dir.
+// guardEnvPattern matches a command that changes a variable the guarded
+// environment sets: git's numbered config entries (and the -c channel, which
+// outranks them), the ssh agent, and the variables that point tools at an
+// empty login. Changing is setting one (NAME=, export, $env:NAME =), unsetting
+// one (unset, env -u, Remove-Item env:, SetEnvironmentVariable) or starting
+// with an empty environment (env -i). Case is ignored, for PowerShell. A
+// flag of the same name (--kubeconfig=k.yaml) is not a variable.
 func guardEnvPattern() string {
-	names := make([]string, 0, 16)
+	names := []string{`GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)`, "SSH_AUTH_SOCK"}
 	for name := range redirects("") {
-		names = append(names, regexp.QuoteMeta(name))
+		if name != "SSH_AUTH_SOCK" {
+			names = append(names, regexp.QuoteMeta(name))
+		}
 	}
-	sort.Strings(names)
-	return `(?i)\bGIT_CONFIG_(?:COUNT|KEY_|VALUE_|PARAMETERS)|\b(?:` + strings.Join(names, "|") + `)\b`
+	sort.Strings(names[2:])
+	n := `(?:` + strings.Join(names, "|") + `)`
+	return `(?i)` + strings.Join([]string{
+		`(?:^|[^\w-])` + n + `\s*=`,
+		`\bunset\b[^|&;]*\b` + n + `\b`,
+		`\benv\b[^|&;]*(?:-u\s*|--unset[=\s]\s*)` + n + `\b`,
+		`\benv\s+(?:-i|--ignore-environment|-)(?:\s|$)`,
+		`\b(?:remove-item|clear-item)\b[^|&;]*\benv:\\?` + n + `\b`,
+		`setenvironmentvariable\(\s*['"]` + n + `['"]`,
+	}, "|")
 }
 
 // rmCallRE isolates what follows an rm up to the end of its command segment.

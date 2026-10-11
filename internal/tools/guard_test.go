@@ -63,16 +63,34 @@ func TestGuardBlocks(t *testing.T) {
 		"npm run deploy-docs-preview --dry-run":  "deploy", // a project's deploy-something is a deploy too
 		"bun run deploy":                         "deploy",
 		// Steering a push around the guarded environment's dead end.
-		"git config remote.origin.pushurl https://github.com/o/r": "git-push",
-		"git config --global url.https://x/.pushInsteadOf y":      "git-push",
-		"git -c url.a.PushInsteadOf=b fetch":                      "git-push",
-		"unset GIT_CONFIG_COUNT && git fetch":                     "guard-env",
-		`echo "$GIT_CONFIG_KEY_0"`:                                "guard-env",
-		"GIT_CONFIG_PARAMETERS= git status":                       "guard-env",
-		"env -u GH_CONFIG_DIR gh pr view 1":                       "guard-env",
-		"$env:gh_config_dir = ''":                                 "guard-env", // PowerShell, any case
-		"export NPM_CONFIG_USERCONFIG=~/.npmrc":                   "guard-env",
-		"KUBECONFIG=~/.kube/config kubectl get pods":              "guard-env",
+		"git config remote.origin.pushurl https://github.com/o/r":       "git-push",
+		"git config --global url.https://x/.pushInsteadOf y":            "git-push",
+		"git -c url.a.PushInsteadOf=b fetch":                            "git-push",
+		"unset GIT_CONFIG_COUNT && git fetch":                           "guard-env",
+		"GIT_CONFIG_PARAMETERS= git status":                             "guard-env",
+		"GIT_CONFIG_KEY_6=x git status":                                 "guard-env",
+		"env -u GH_CONFIG_DIR gh pr view 1":                             "guard-env",
+		"env --unset=GH_CONFIG_DIR gh pr view 1":                        "guard-env",
+		"env -i bash -c 'gh pr view 1'":                                 "guard-env", // an empty environment drops the guard's too
+		"$env:gh_config_dir = ''":                                       "guard-env", // PowerShell, any case
+		"Remove-Item Env:GIT_CONFIG_COUNT":                              "guard-env",
+		"[Environment]::SetEnvironmentVariable('GH_CONFIG_DIR', $null)": "guard-env",
+		"export NPM_CONFIG_USERCONFIG=~/.npmrc":                         "guard-env",
+		"KUBECONFIG=/home/me/kube/config kubectl get pods":              "guard-env",
+		"SSH_AUTH_SOCK=/tmp/agent.sock ssh -T git@github.com":           "guard-env",
+		// The secret files, reached through the shell.
+		"cat .env":                               "secret-file",
+		"echo X=1 > .env":                        "secret-file",
+		"echo X=1 >.env.local":                   "secret-file",
+		"cp .env.example .env":                   "secret-file",
+		"Get-Content .\\.env":                    "secret-file",
+		"type config\\.ENV":                      "secret-file",
+		"cat ~/.ssh/id_ed25519":                  "secret-file",
+		"cat $HOME/.aws/credentials":             "secret-file",
+		"openssl x509 -in certs/server.pem":      "secret-file",
+		"docker compose --env-file=.env.prod up": "secret-file",
+		"cat .private/notes.md | head":           "secret-file",
+		"cat ~/.netrc":                           "secret-file",
 	} {
 		if got := Guard(command); got != want {
 			t.Errorf("Guard(%q) = %q, want %q", command, got, want)
@@ -109,6 +127,20 @@ func TestGuardAllows(t *testing.T) {
 		"git config user.name hrn",
 		"git config --get remote.origin.url",
 		"GIT_TERMINAL_PROMPT=0 git fetch origin", // the prompt switches are not logins
+		// Reading or naming the guard's variables changes nothing.
+		`echo "$GIT_CONFIG_KEY_0"`,
+		"echo $SSH_AUTH_SOCK",
+		"rg GIT_CONFIG_COUNT internal/",
+		"k3d kubeconfig get lab",
+		"kind get kubeconfig",
+		"kubectl --kubeconfig k.yaml get pods",
+		"kubectl --kubeconfig=k.yaml get pods", // a flag, not a variable
+		"cat docker_config.go",
+		"env | sort",
+		// Files whose names only resemble the secret ones.
+		"cat src/env.go internal/private/key.go",
+		"source .venv/bin/activate",
+		"go test ./internal/tools -run TestSecretFile",
 		"terraform plan",
 		"tofu validate",
 		"helm template ./chart",
