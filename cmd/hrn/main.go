@@ -322,6 +322,10 @@ func cmdRun(args []string) (int, error) {
 		if err := nrec.Close(res); err != nil {
 			fmt.Fprintln(os.Stderr, "hrn: saving run:", err)
 		}
+		// Limited too: remembered, so the next run does not try it first.
+		if err := limits.Note(next.To, res); err != nil {
+			fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
+		}
 		finished(nrec.ID(), res)
 	}
 	if res.Status != agent.StatusOK {

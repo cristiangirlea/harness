@@ -119,3 +119,22 @@ func TestBackendsToolShowsARememberedLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestRunToolRemembersBothLimits(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	orig, _ := agent.Get("claude")
+	agent.Register(scripted{"claude", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusLimited, Error: "You've hit your session limit.", LimitResets: time.Now().Add(2 * time.Hour)}
+	}})
+	t.Cleanup(func() { agent.Register(orig) })
+
+	if res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto"}`); !res.IsError {
+		t.Errorf("both ended limited, yet: %s", res.Text())
+	}
+	for _, name := range []string{"codex", "claude"} {
+		if limits.Until(name, time.Now()).IsZero() {
+			t.Errorf("%s's limit was not remembered", name)
+		}
+	}
+}

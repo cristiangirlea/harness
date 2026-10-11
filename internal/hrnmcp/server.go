@@ -220,6 +220,10 @@ func runTool(defaultDir string) mcp.Tool {
 					call.Progress("saving run: " + err.Error())
 				}
 				notes = append(notes, next.Why)
+				// Limited too: remembered, so the next run does not try it first.
+				if err := limits.Note(next.To, res); err != nil {
+					notes = append(notes, "the limit was not remembered: "+err.Error())
+				}
 				structured = map[string]any{"run_id": nrec.ID(), "result": res, "limited_run_id": limitedID}
 			}
 

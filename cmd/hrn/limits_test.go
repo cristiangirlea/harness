@@ -142,3 +142,25 @@ func TestContinuingALimitedBackendGoesToTheOtherOne(t *testing.T) {
 		t.Errorf("follow-up on %s continuing %q, want codex continuing %s", follow.Backend, follow.Continues, first)
 	}
 }
+
+func TestWhenBothReachTheirLimitBothAreRemembered(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	orig, _ := agent.Get("claude")
+	agent.Register(scripted{"claude", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusLimited, Error: "You've hit your session limit.", LimitResets: time.Now().Add(2 * time.Hour)}
+	}})
+	t.Cleanup(func() { agent.Register(orig) })
+
+	if code, _ := cmdRun([]string{"-b", "codex", "-C", t.TempDir(), "fix", "it"}); code != 1 {
+		t.Errorf("code = %d, want 1: both ended limited", code)
+	}
+	if recs, _ := runlog.List(5); len(recs) != 2 {
+		t.Errorf("runs = %d, want the limited run and one carry-on, no third", len(recs))
+	}
+	for _, name := range []string{"codex", "claude"} {
+		if limits.Until(name, time.Now()).IsZero() {
+			t.Errorf("%s's limit was not remembered", name)
+		}
+	}
+}
