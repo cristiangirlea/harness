@@ -609,7 +609,7 @@ order they are worth taking:
     instead of terminal output. Four PRs, in this order:
     - [x] Reasoning effort for codex and claude. Done: PR #50, 2026-10-11.
     - [x] Run records surface write failures. Done: PR #51, 2026-10-11.
-    - [ ] Agent CLIs run in a contained process tree.
+    - [x] Agent CLIs run in a contained process tree. Done: PR #52, 2026-10-11.
     - [ ] `hrn exec --protocol v1`, documented in `docs/exec-protocol.md`.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
@@ -1226,3 +1226,14 @@ neither of them follows a run while it happens.
   Opus) found the short-write corruption; fixed. Left as is: if a broken line and a failed
   result.json happen in one run, no record_error is saved and hrn show refuses the run; that
   means the disk is failing.
+- 2026-10-11: PR #52, contained process trees. Windows starts the process suspended, joins
+  it to a kill-on-close job, then resumes every thread; the job does not allow breakaway, so a
+  descendant using CREATE_BREAKAWAY_FROM_JOB fails (strict containment over compatibility, the
+  owner's to revisit). A CLI's leftovers end with the run on Windows even after a normal exit;
+  on Unix only on cancel or timeout. Tree.Kill makes "canceled" mean killed even when Go never
+  called Cancel. On Linux WaitGone counts live members from /proc so an unreaped zombie is not a
+  survivor, skips entries it may not read, and falls back to the kill(-pgid, 0) probe when the
+  scan fails; hidepid=2 can hide a member owned by another user. hrn stops on SIGTERM and SIGHUP
+  as well. Reviews (Claude Opus, twice) asked for the zombie handling, the explicit kill, the
+  signals and the /proc fallback; all done. The live test cannot separate this from Codex's own
+  sandbox cleanup; the fake-CLI tests show the change.
