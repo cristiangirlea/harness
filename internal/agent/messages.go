@@ -256,6 +256,37 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 	started := false
 	done := false
 
+	// Text, thinking and signature deltas are gathered per block and written
+	// into it once, at its stop or when the parse ends however it ends. Adding
+	// each delta to the block's string copied the whole text every time, so a
+	// long response took time quadratic in its length.
+	grown := map[int]map[string]*strings.Builder{}
+	grow := func(i int, b block, field, s string) {
+		fields := grown[i]
+		if fields == nil {
+			fields = map[string]*strings.Builder{}
+			grown[i] = fields
+		}
+		sb := fields[field]
+		if sb == nil {
+			sb = &strings.Builder{}
+			sb.WriteString(str(b[field]))
+			fields[field] = sb
+		}
+		sb.WriteString(s)
+	}
+	settle := func(i int) {
+		for field, sb := range grown[i] {
+			resp.Content[i][field] = sb.String()
+		}
+		delete(grown, i)
+	}
+	defer func() {
+		for i := range grown {
+			settle(i)
+		}
+	}()
+
 	// The buffer starts at the scanner's 4 KiB and doubles as a line needs,
 	// up to 64 MiB for one huge tool input. Starting it at 1 MiB cost that
 	// much for every response, however short.
@@ -274,6 +305,12 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 		}
 		switch ev.Type {
 		case "message_start":
+			// What the earlier blocks gathered goes into them first: the
+			// decode below can replace or shrink the content even when it
+			// then fails.
+			for i := range grown {
+				settle(i)
+			}
 			if err := json.Unmarshal(ev.Message, resp); err != nil {
 				return err
 			}
@@ -298,13 +335,13 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 			b := resp.Content[ev.Index]
 			switch ev.Delta.Type {
 			case "text_delta":
-				b["text"] = str(b["text"]) + ev.Delta.Text
+				grow(ev.Index, b, "text", ev.Delta.Text)
 				onDelta("text", ev.Delta.Text)
 			case "thinking_delta":
-				b["thinking"] = str(b["thinking"]) + ev.Delta.Thinking
+				grow(ev.Index, b, "thinking", ev.Delta.Thinking)
 				onDelta("thinking", ev.Delta.Thinking)
 			case "signature_delta":
-				b["signature"] = str(b["signature"]) + ev.Delta.Signature
+				grow(ev.Index, b, "signature", ev.Delta.Signature)
 			case "input_json_delta":
 				if partial[ev.Index] == nil {
 					partial[ev.Index] = &strings.Builder{}
@@ -321,6 +358,7 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 			if ev.Index < 0 || ev.Index >= len(resp.Content) {
 				return fmt.Errorf("stop for unknown content block %d", ev.Index)
 			}
+			settle(ev.Index)
 			b := resp.Content[ev.Index]
 			if p, ok := partial[ev.Index]; ok {
 				input := json.RawMessage("{}")
