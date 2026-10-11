@@ -305,7 +305,11 @@
   $('voice-mode-read').addEventListener('click', () => setMode(true));
   $('voice-mode-talk').addEventListener('click', () => setMode(false));
   document.addEventListener('keydown', (e) => {
-    if ($('voice-read').hidden || e.ctrlKey || e.metaKey || e.altKey) return;
+    // A held key repeats: it must not start and stop a take over and over.
+    if ($('voice-read').hidden || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    // A control outside the reading card (the folder, the modes, the help)
+    // keeps its own Space and Enter.
+    if (e.target.closest && e.target.closest('button, summary, a, input, select, textarea') && !e.target.closest('#voice-read')) return;
     const k = e.key.toLowerCase();
     const act = { ' ': () => (recording ? stopTake() : startTake()), enter: keep, r: startTake, p: play, s: () => move(1), arrowright: () => move(1), arrowleft: () => move(-1) }[k];
     if (act) {
