@@ -42,12 +42,16 @@ jobs:
       - name: fuzz the SSE parser
         # -parallel=4: the fuzzer starts one worker per CPU it sees, and the lab runner's
         # container sees the node's 24 within a 3 GiB memory limit (GitHub's runner had 2-4).
+        # Counts, not durations (#70): with -fuzztime=10s Go's coordinator can report its
+        # own deadline as a failure (a race between closing the deadline and cancelling
+        # the workers), and minimization had no bound, so all four workers could spend the
+        # run minimizing. Each count is about 10 s on the lab runner.
         if: matrix.os == 'ubuntu-latest'
-        run: go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=10s -parallel=4 ./internal/agent
+        run: go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -parallel=4 ./internal/agent
       - name: fuzz the MCP codec
         # always(), so a crash in the parser fuzzer does not hide this one.
         if: always() && matrix.os == 'ubuntu-latest'
-        run: go test -run='^$' -fuzz=FuzzCodec -fuzztime=10s -parallel=4 ./internal/mcp
+        run: go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
       - name: keep any input a fuzzer crashed on
         if: failure() && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4

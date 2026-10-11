@@ -9,8 +9,8 @@ step's result in one line; on a failure, show the error text and fix it before r
 go vet ./...
 go build ./...
 go test -count=1 ./...
-go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=10s -parallel=4 ./internal/agent
-go test -run='^$' -fuzz=FuzzCodec -fuzztime=10s -parallel=4 ./internal/mcp
+go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -parallel=4 ./internal/agent
+go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
 bash -n .github/release.sh && bash -n scripts/api-check.sh
 bash .github/release.sh
 test -z "$(git ls-files -co --exclude-standard -- '*.go' | xargs -r gofmt -l)"

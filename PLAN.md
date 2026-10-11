@@ -628,6 +628,25 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: Fuzzing by count (#70). FuzzCodec failed PR #60's job with `context deadline
+  exceeded` at exactly 10 s and no input saved, as it had once before (the PR X entry
+  below). The cause is in Go's coordinator (`internal/fuzz/fuzz.go`):
+  - with `-fuzztime=10s` it closes the deadline context before it cancels the workers'
+    child context;
+  - `stop` drops the deadline error only if it equals the child's, which is not set yet;
+  - the canceller has to take the child's lock, which the worker-pipe readers take on
+    every read.
+
+  It never happened in 288 runs on the owner's PC, so it is a loaded-runner race; reading
+  the source, not a repro, is the evidence. With a count (`-fuzztime=Nx`) Go makes no
+  deadline context and stops through `stop(nil)`.
+
+  FuzzParseSSE also did no executions after a few seconds in every run looked at.
+  `GODEBUG=fuzzdebug=1` showed all four workers minimizing "interesting" inputs, which Go
+  allows 60 s each, so minimization is now bounded too (`-fuzzminimizetime=200x`; a count
+  ends it gracefully, where a duration kills the worker). The counts (500000x for the
+  codec, 150000x for SSE) keep each step at about 10 s on the lab runner. Part of why
+  minimization was slow is the parser's own cost, quadratic in its deltas: #71.
 - 2026-10-11: #45 reviews (PR #48): an independent read-only reviewer, and an adversarial security
   read in a scratch copy, which found nothing it could get out through (junction chains and
   loops, dangling junctions, 8.3 aliases, `\\?\` targets, a junction to `C:\Windows`; no
