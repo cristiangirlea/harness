@@ -599,3 +599,21 @@ func TestCloseMessageTellsAnIncompleteRecordFromAnUnsavedOne(t *testing.T) {
 		t.Error("ResultNotSaved must be true only when result.json was not written")
 	}
 }
+
+func TestCreateLeavesNoRecordWhenItFailsHalfway(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	old := createEventsFile
+	createEventsFile = func(string) (io.WriteCloser, error) { return nil, errors.New("disk full") }
+	t.Cleanup(func() { createEventsFile = old })
+
+	if _, err := Create("stub", agent.Task{Prompt: "p"}); err == nil {
+		t.Fatal("Create succeeded although the events file could not be created")
+	}
+	entries, err := os.ReadDir(Root())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a failed Create left %d run directories behind", len(entries))
+	}
+}

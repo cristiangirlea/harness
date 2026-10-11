@@ -107,8 +107,11 @@ func (r *renderer) Event(e agent.Event) {
 		} else {
 			r.write(r.c(dim, "  ✓ "+first) + "\n")
 		}
-	case agent.EventInfo:
+	case agent.EventInfo, agent.EventSession:
 		r.newline()
+		if e.Kind == agent.EventSession {
+			e.Text = "session: " + e.Text
+		}
 		r.write(r.c(dim, "· "+tools.OneLine(e.Text, 200)) + "\n")
 	case agent.EventError:
 		r.newline()

@@ -610,7 +610,7 @@ order they are worth taking:
     - [x] Reasoning effort for codex and claude. Done: PR #50, 2026-10-11.
     - [x] Run records surface write failures. Done: PR #51, 2026-10-11.
     - [x] Agent CLIs run in a contained process tree. Done: PR #52, 2026-10-11.
-    - [ ] `hrn exec --protocol v1`, documented in `docs/exec-protocol.md`.
+    - [x] `hrn exec --protocol v1`, documented in `docs/exec-protocol.md`. Done: PR #53, 2026-10-11.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -1237,3 +1237,13 @@ neither of them follows a run while it happens.
   as well. Reviews (Claude Opus, twice) asked for the zombie handling, the explicit kill, the
   signals and the /proc fallback; all done. The live test cannot separate this from Codex's own
   sandbox cleanup; the fake-CLI tests show the change.
+- 2026-10-11: PR #53, hrn exec --protocol v1. The document came first and the code follows
+  it. The capability report is conservative: a mode is listed only where the adapter enforces
+  it (gemini auto and yolo, opencode yolo only), and a start that names an option the backend
+  does not honour is rejected, presence counting even as zero. Field names must match exactly
+  and once, since encoding/json matches case-insensitively and merges duplicates. resolved_model
+  needs the additive model_reported, set where a backend reports its model (api, claude,
+  gemini). After start, a bad line or a wrong cancel is a non-fatal error and the run goes on;
+  end of stdin cancels, because the supervisor is gone. Review (Claude Opus) found the case
+  and oversized-line holes; fixed. An api-backend run through exec has not been tried (it costs
+  money).

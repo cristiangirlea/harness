@@ -10,6 +10,8 @@ import (
 func NewGeminiBackend() *CLIBackend {
 	return &CLIBackend{
 		name:        "gemini",
+		mapsModes:   []Mode{ModeAuto, ModeYolo},
+		mapsModel:   true,
 		candidates:  func() []string { return npmShim("gemini") },
 		promptStdin: true,
 		args: func(t Task, _ string) []string {
@@ -48,6 +50,7 @@ func NewGeminiBackend() *CLIBackend {
 			}
 			for name, m := range doc.Stats.Models {
 				res.Model = name
+				res.ModelReported = true
 				res.InputTokens += m.Tokens.Prompt
 				res.OutputTokens += m.Tokens.Candidates
 				res.CacheRead += m.Tokens.Cached

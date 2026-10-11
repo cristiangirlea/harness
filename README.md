@@ -58,6 +58,7 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | Command | What it does |
 |---|---|
 | `hrn run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
+| `hrn exec --protocol v1` | Run one recorded task over the supervisor JSONL protocol (see [hrn exec](#hrn-exec)). |
 | `hrn backends` | Show which backends are usable and where they were found. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn runs [-n N]` | List recent runs. |
@@ -83,6 +84,14 @@ backend default; gemini and opencode report it as not enforced),
 `--json` (JSONL event stream for scripts), `--thinking`,
 `--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, and the budgets
 below.
+
+### hrn exec
+
+`hrn exec --protocol v1` lets a supervising program start, follow, cancel and record
+one run per process without parsing terminal output. stdin and stdout carry JSON
+lines: hrn sends `hello` first, then accepts one `start`, streams complete events,
+and ends with `result`. Closing stdin or interrupting hrn cancels the run. See
+[the v1 protocol](docs/exec-protocol.md) for messages, capabilities, limits and exit codes.
 
 ### Budgets
 
@@ -680,7 +689,8 @@ pairs as data.
 - `task.json` — prompt, dir, backend, and the run options by their flag names
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load)
-- `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped),
+  and, for exec runs, the supervisor's `attempt_id`
+- `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
@@ -690,6 +700,12 @@ pairs as data.
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration, and the
   claude or codex `session` id
+
+`result.json` includes `model_reported: true` only when the backend reports its
+model: api responses, claude init lines and gemini model stats. A requested/default
+model alone does not set it; codex and opencode do not report one. The field is
+omitted when false, and older records without it still load. Exec uses it to send
+an empty `resolved_model` when the backend did not report its model.
 
 When complete events fail to write or `events.jsonl` fails to close, `result.json`
 includes `record_error` with the number of events not recorded, the first event error
