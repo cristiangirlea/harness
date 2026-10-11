@@ -641,8 +641,8 @@ order they are worth taking:
 16. **Disk: clear what merged work leaves behind** (the owner, 2026-10-11, after both work
     drives filled with worktrees and Rust build folders). Deterministic, no model involved, and
     nothing local goes before its merge is proven. Three PRs, in this order:
-    - [ ] `hrn gc`: worktrees whose pull request is proven merged
-      ([#78](https://github.com/cristiangirlea/harness/issues/78)).
+    - [x] `hrn gc`: worktrees whose pull request is proven merged
+      ([#78](https://github.com/cristiangirlea/harness/issues/78)). Done: PR #95, 2026-10-12.
     - [ ] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
       ([#79](https://github.com/cristiangirlea/harness/issues/79)).
     - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
@@ -673,7 +673,12 @@ neither of them follows a run while it happens.
   check-then-delete race on the branch (now one `update-ref -d`), `.hrn/` taken whole as build
   output, a stale or guessed default branch (now asked of origin), an open pull request lost
   past the list's limit (now a query of its own), and unreadable batch records skipped (now
-  everything stays). Batch work that landed squashed is #85.
+  everything stays). Four more rounds and a security read found the ways around build output
+  (a file named like a build folder, a signed-looking tag in a tracked folder, a repository,
+  bare repository or link inside it, a junction above it), a worktree made inside a parent
+  after the scan, a local ref shadowing origin's, git pointed elsewhere by `GIT_DIR` or
+  passed-down config, assume-unchanged files, and replace refs; each was fixed the same way.
+  Batch work that landed squashed is #85; a tracked folder swapped for a junction is #94.
 - 2026-10-11: PR #89 (closes #59), Ada, part 1 of item 11. Decided: the sentences are made in
   Go (`internal/watch/bot.go`), not in the page, so they are tested and pass the same
   redaction as every page; one stream per page, the visible card as escaped HTML and the
