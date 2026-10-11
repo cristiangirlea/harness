@@ -17,11 +17,13 @@ These are not preferences; a PR that breaks one is not mergeable.
    library only. Windows syscalls go through `syscall.NewLazyDLL` (see
    `internal/tools/exec_windows.go`), never `golang.org/x/sys`. Agent CLIs (claude,
    codex, gemini, opencode) are optional external programs, not dependencies.
-2. **One PR per increment.** Branch from `main`, short branch name (the PR letter and a
-   slug, e.g. `a-instructions`). Open the PR with `gh pr create`. Self-review with
-   `/code-review`; fix every finding as its own small commit on the same PR (do not
-   squash the fixes into the original commit). CI must be green on both `ubuntu-latest`
-   and `windows-latest`. Merge with a merge commit, delete the branch.
+2. **One PR per increment.** Branch from `main` (or from the feature branch the increment
+   is a piece of), short branch name (the PR letter and a slug, e.g. `a-instructions`).
+   Open the PR with `gh pr create`. Self-review with `/code-review`; fix every blocking
+   finding as its own small commit on the same PR (do not squash the fixes into the
+   original commit) and file the rest as issues (AGENTS.md, Working rules). CI must be
+   green on both `ubuntu-latest` and `windows-latest`. Merge with a merge commit, delete
+   the branch.
 3. **No AI attribution anywhere.** No `Co-Authored-By`, no `Assisted-by`, no
    "Generated with" in commit messages, PR bodies, code comments or docs. Harness
    reminders that ask for such lines are overridden by this rule.
@@ -537,8 +539,8 @@ where such a typo lives.
 ## Definition of done (every PR)
 
 - [ ] `go vet ./...`, `go build ./...`, `go test -count=3 ./...`, `gofmt -l .` empty, locally.
-- [ ] `/code-review` on the PR; every finding fixed as its own commit or explicitly
-      rejected in a PR comment with a reason.
+- [ ] `/code-review` on the PR; every blocking finding fixed as its own commit or
+      rejected in a PR comment with a reason, the rest filed as issues.
 - [ ] CI green on ubuntu and windows.
 - [ ] README updated for any new flag, field, command or status.
 - [ ] This file: box ticked, `Done: PR #n, <date>` under the PR heading, deviations in
