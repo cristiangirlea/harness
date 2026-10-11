@@ -250,6 +250,9 @@ func New(ctx context.Context, opt Options) http.Handler {
 	mux.HandleFunc("GET /stream/index", s.streamIndex)
 	mux.HandleFunc("GET /stream/run/{id}", s.streamRun)
 	mux.HandleFunc("GET /stream/batch/{id}", s.streamBatch)
+	mux.HandleFunc("GET /bot", s.bot)
+	mux.HandleFunc("GET /stream/bot", s.streamBot)
+	mux.HandleFunc("GET /voice", s.voice)
 	mux.HandleFunc("GET /static/{name}", s.static)
 	lan := map[string]bool{}
 	for _, ep := range opt.LAN {
@@ -417,20 +420,26 @@ func (s *server) lists() lists {
 	}
 	// Every batch attempt is a run too: link each one back to its batch, from
 	// every batch on disk, not only the 20 listed.
-	batchOf := map[string]string{}
+	of := batchOf(batches)
+	for i := range l.Runs {
+		l.Runs[i].Batch = of[l.Runs[i].ID]
+	}
+	return l
+}
+
+// batchOf maps each run that was a batch task's attempt to its batch.
+func batchOf(batches []batch.Result) map[string]string {
+	m := map[string]string{}
 	for _, res := range batches {
 		for _, t := range res.Tasks {
 			for _, a := range t.Attempts {
 				if a.RunID != "" {
-					batchOf[a.RunID] = res.ID
+					m[a.RunID] = res.ID
 				}
 			}
 		}
 	}
-	for i := range l.Runs {
-		l.Runs[i].Batch = batchOf[l.Runs[i].ID]
-	}
-	return l
+	return m
 }
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
@@ -504,7 +513,8 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
-	types := map[string]string{"watch.css": "text/css; charset=utf-8", "watch.js": "text/javascript; charset=utf-8"}
+	types := map[string]string{"watch.css": "text/css; charset=utf-8", "watch.js": "text/javascript; charset=utf-8", "bot.js": "text/javascript; charset=utf-8",
+		"voice.js": "text/javascript; charset=utf-8", "voice-worklet.js": "text/javascript; charset=utf-8"}
 	name := r.PathValue("name")
 	data, err := assets.ReadFile("assets/" + name)
 	if types[name] == "" || err != nil {

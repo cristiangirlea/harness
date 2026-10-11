@@ -597,6 +597,21 @@ order they are worth taking:
     approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
     nothing else can answer it. Its actions go through hrn watch's door: they must send
     `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
+    - ~~Part 1, her eyes and voice.~~ Done: PR #89, 2026-10-11 (closes #59). The bot is **Ada**, a
+      female robot scarlet macaw (the owner's choices, 2026-10-11): `hrn bot`, `/bot`,
+      sentences in plain UK English made in Go, speech, notifications, skip, snooze, mute,
+      push-to-talk for commands that steer her only.
+    - Her purpose, in the owner's word, is super intelligence. In this order: her own voice
+      (#83, the owner's wife's, recorded with her agreement); a live map of where the work
+      is across the entire workflow, every repository and every stage from idea to release
+      (#90); then decisions and actions, behind #38; then planning and improving hrn
+      itself (the self-improvement loop).
+    - [x] Recording her voice ([#91](https://github.com/cristiangirlea/harness/issues/91), the
+      first slice of #83). Done: PR #93, 2026-10-11. `/voice`, for this computer only: 523
+      lines to read (everyday ones mixed with Ada's own, made by her wording functions) and a
+      mode that records talk, saved as WAV with `metadata.csv` into a folder the speaker picks.
+      Next in #83, each download with the owner's yes: a taste with Chatterbox, transcribing
+      talk with Whisper, training with Piper, and Ada speaking with the voice.
 12. **Guard rails** (the owner, 2026-10-11), in this order:
     - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
       Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
@@ -629,6 +644,14 @@ order they are worth taking:
     - [ ] hrn watch: what the listed runs were for and what they cost, as a lower bound
       ([#63](https://github.com/cristiangirlea/harness/issues/63)); a first, budget-free step
       towards #37.
+16. **Disk: clear what merged work leaves behind** (the owner, 2026-10-11, after both work
+    drives filled with worktrees and Rust build folders). Deterministic, no model involved, and
+    nothing local goes before its merge is proven. Three PRs, in this order:
+    - [x] `hrn gc`: worktrees whose pull request is proven merged
+      ([#78](https://github.com/cristiangirlea/harness/issues/78)). Done: PR #95, 2026-10-12.
+    - [ ] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
+      ([#79](https://github.com/cristiangirlea/harness/issues/79)).
+    - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -638,6 +661,58 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: `hrn gc` (#78). Proof of a merge is GitHub's word on the exact commit: a merged
+  pull request whose head is the worktree's `HEAD` or contains it, and no open one for the
+  branch. Ancestry of the default branch alone was not enough for a branch: a worktree made
+  from `main` a minute ago has nothing of its own yet and would pass. It is enough for a
+  batch's worktree, whose record says when the batch has finished. A detached `HEAD` has no
+  pull request and stays. Failing closed: when `gh` or the fetch fails, the worktrees that
+  needed them stay. Two rules came from how `git worktree remove` behaves: it deletes ignored
+  files, so a worktree whose ignored files are not build output (a `.env`, notes) stays, and
+  a worktree holding another that stays (`.hrn/worktrees` is ignored) stays too. `--force`
+  would not check the files at all, and without it git checks only for changes, so `--apply`
+  checks each worktree again just before removing it (`HEAD`, branch, lock, files). A one-hour grace
+  after the merge spares the session that merged it. CLI only: tools that delete branches
+  stay out of `hrn mcp`, as recorded for `batch rm`. An independent review (codex, read-only)
+  found seven ways it could still delete unproven work, each fixed with a test seen failing:
+  a parent removed after its child's removal failed, no second look before removing, a
+  check-then-delete race on the branch (now one `update-ref -d`), `.hrn/` taken whole as build
+  output, a stale or guessed default branch (now asked of origin), an open pull request lost
+  past the list's limit (now a query of its own), and unreadable batch records skipped (now
+  everything stays). Four more rounds and a security read found the ways around build output
+  (a file named like a build folder, a signed-looking tag in a tracked folder, a repository,
+  bare repository or link inside it, a junction above it), a worktree made inside a parent
+  after the scan, a local ref shadowing origin's, git pointed elsewhere by `GIT_DIR` or
+  passed-down config, assume-unchanged files, and replace refs; each was fixed the same way.
+  Batch work that landed squashed is #85; a tracked folder swapped for a junction is #94.
+- 2026-10-11: PR #93 (closes #91), recording Ada's voice, the first slice of #83. The voice
+  will be the owner's wife's, recorded by her with her agreement; the recordings stay on this
+  computer, never in a repository. Decided: the page records in the browser and saves into a
+  folder the speaker picks (File System Access, downloads otherwise), so hrn watch stays
+  read-only and keeps no one's voice; it is refused from the network. The microphone is taken
+  as it is (no echo cancellation, noise suppression or auto gain) and saved as 16-bit WAV
+  with `id|text` rows, the layout Piper and most trainers read. Ada's lines come from her own
+  wording functions, so the voice is trained on what she says; their numbers are a contract
+  (`testdata/voice-lines.golden`), since a take finds its text by its number. Training will
+  use only models under MIT or Apache licences, and from ChatGPT conversations only her side
+  is recorded, through a shared microphone with headphones. Rounds of independent review
+  through hrn (claude; codex at its limit) found four blocking defects and smaller races this
+  branch brought in, each fixed and checked in the browser; the rest is #92. Every handler
+  on the page awaits, so each says what may happen while it waits: one microphone setup at a
+  time, nothing moves while a take is saved, Keep and Retake never overlap, and a talk's
+  parts save in order.
+- 2026-10-11: PR #89 (closes #59), Ada, part 1 of item 11. Decided: the sentences are made in
+  Go (`internal/watch/bot.go`), not in the page, so they are tested and pass the same
+  redaction as every page; one stream per page, the visible card as escaped HTML and the
+  sentences as JSON. Read-only: her commands steer her alone, decisions wait for #38. Speech
+  is the browser's, with voices on this computer first, since an online voice sends prompts
+  to its maker; a nicer voice of her own is #83. The owner named her Ada and chose an animal
+  over a human, then a parrot over an owl; she is an inline SVG with CSS animation, as the
+  page loads nothing from elsewhere and allows no inline style. Kept out of this branch under
+  the one-purpose rule: naming a batch's runs by their task on the index (#82, the owner's
+  question about four look-alike runs). Three independent reviews through hrn (claude; codex
+  at its limit) found four blocking defects, each fixed with a test seen failing; the rest
+  is #88.
 - 2026-10-11: Streamed text in linear time (#71). `parseSSE` added each text, thinking and
   signature delta to its block's string, which copied the whole text every time:
   - a stream of 64,000 small deltas (about one maximum-length response) parsed in 2.75 s;
@@ -1473,3 +1548,11 @@ neither of them follows a run while it happens.
   (#50 to #53) needed: the carry-on's record error is the one the MCP answer reports, the
   effort test accepts `limited` from codex, and exec's protocol lists the statuses and that
   exec never switches.
+- 2026-10-11: WSL's launcher spelt in lower case (#72, PR #87). `isWSLLauncher` compared the
+  folder name to `System32` exactly, but `exec.LookPath` returns it as PATH spells it
+  (`C:\WINDOWS\system32\bash.exe` on the owner's PC), so gates and `run_command` ran in WSL,
+  and a batch's gates all timed out starting it. The folder name is now compared in any case,
+  by a helper that reads both separators so its test runs on the Linux runner. Left for their
+  own items: other WSL launchers, such as the WindowsApps alias and SysWOW64 (#86), and a gate
+  whose shell cannot start being retried as a code failure, with WSL's UTF-16 output shown
+  undecoded (#84).
