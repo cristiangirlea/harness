@@ -617,6 +617,15 @@ order they are worth taking:
     Done as PR #46, 2026-10-11: a `limited` status, claude and codex carrying on each
     other's runs, reset times remembered in `limits.json`, `no_switch`. See the Decisions
     log, 2026-10-11.
+15. **What a run was for, and what it costs** (from classify-sessions, the owner's session
+    analytics): its purpose rules and its honest cost ("unknown cost is never zero"), brought
+    into hrn. The work goes through `hrn batch`, so hrn watch shows it as batches. Three PRs,
+    in this order:
+    - [ ] A batch's runs link to their batch on hrn watch ([#61](https://github.com/cristiangirlea/harness/issues/61)).
+    - [ ] `internal/purpose` and `hrn report --by purpose` ([#62](https://github.com/cristiangirlea/harness/issues/62)).
+    - [ ] hrn watch: what the listed runs were for and what they cost, as a lower bound
+      ([#63](https://github.com/cristiangirlea/harness/issues/63)); a first, budget-free step
+      towards #37.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
