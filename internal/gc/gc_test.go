@@ -354,7 +354,7 @@ func TestGCKeepsAWorktreeHoldingARepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantVerdict(t, find(t, wts, wt), Keep, "holds the repository")
+	wantVerdict(t, find(t, wts, wt), Keep, "repository")
 }
 
 func TestGCSeesUntrackedFilesWhateverStatusShows(t *testing.T) {
@@ -396,6 +396,15 @@ func TestGCTakesOnlyFoldersByTheirBuildNames(t *testing.T) {
 	f.pr(1, "done", "MERGED", head, 2*time.Hour)
 
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "not build output: build")
+}
+
+func TestGCFindsARepositoryInsideBuildOutputOnItsOwn(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	git(t, f.root, "init", "-q", "-b", "main", filepath.Join(wt, "target", "deps", "clone"))
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a repository inside build output: target/deps/clone")
 }
 
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {

@@ -547,6 +547,11 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 			hrn = true
 		case !isBuildOutput(dir, path):
 			kept = append(kept, strings.TrimSuffix(path, "/"))
+		default:
+			if repo := repoInside(filepath.Join(dir, path)); repo != "" {
+				rel, _ := filepath.Rel(dir, repo)
+				return "a repository inside build output: " + filepath.ToSlash(rel)
+			}
 		}
 	}
 	if hrn {
@@ -605,6 +610,27 @@ func listed(p string, paths []string) bool {
 		}
 	}
 	return false
+}
+
+// repoInside returns the first folder under dir that holds a .git (a clone or
+// a worktree), or "": build output is deleted whole, and a repository in it
+// would go with its history. A folder it cannot read counts as one.
+func repoInside(dir string) string {
+	found := ""
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Name() == ".git" {
+			found = filepath.Dir(p)
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if err != nil && found == "" {
+		return dir
+	}
+	return found
 }
 
 // isCacheDir reports a folder tagged as a cache (the Cache Directory Tagging
