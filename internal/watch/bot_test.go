@@ -51,11 +51,12 @@ func TestTheBotNamesBackendsAndPlacesAsPeopleSayThem(t *testing.T) {
 		}
 	}
 	for in, want := range map[string]string{
-		"Add the budget guard.\nDetails follow":                                   "add the budget guard",
-		"# Fix the flaky test":                                                    "fix the flaky test",
-		"API keys must never reach a run":                                         "API keys must never reach a run",
-		"I want the guard on every backend":                                       "I want the guard on every backend",
-		"I'm adding the budget":                                                   "I'm adding the budget",
+		"Add the budget guard.\nDetails follow": "add the budget guard",
+		"# Fix the flaky test":                  "fix the flaky test",
+		"API keys must never reach a run":       "API keys must never reach a run",
+		"I want the guard on every backend":     "I want the guard on every backend",
+		"I'm adding the budget":                 "I'm adding the budget",
+		"A flag for prune":                      "a flag for prune",
 		"one two three four five six seven eight nine ten eleven twelve thirteen": "one two three four five six seven eight nine ten eleven twelve…",
 		"   ": "",
 	} {

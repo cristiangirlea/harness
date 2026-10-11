@@ -412,7 +412,7 @@ func topic(prompt string) string {
 	line = strings.TrimLeft(line, "#*->` \t")
 	line = strings.TrimRight(words(line, 12), ".!:; ")
 	r, size := utf8.DecodeRuneInString(line)
-	if next, _ := utf8.DecodeRuneInString(line[size:]); size > 0 && unicode.IsUpper(r) && unicode.IsLower(next) {
+	if next, _ := utf8.DecodeRuneInString(line[size:]); size > 0 && unicode.IsUpper(r) && !unicode.IsUpper(next) && !(r == 'I' && !unicode.IsLetter(next)) {
 		line = string(unicode.ToLower(r)) + line[size:]
 	}
 	return line
