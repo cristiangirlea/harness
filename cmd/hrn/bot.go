@@ -72,10 +72,16 @@ func servesBot(url string) bool {
 	return resp.StatusCode == http.StatusOK && strings.Contains(string(body), `data-stream="/stream/bot"`)
 }
 
-// openWindow starts the browser and does not wait for it.
+// openWindow starts the browser and does not wait for it, but reaps it when
+// it exits, so it leaves no zombie on Linux while hrn bot serves.
 func openWindow(url string) error {
 	argv := windowCommand(runtime.GOOS, os.Getenv, fileExists, exec.LookPath, url)
-	return exec.Command(argv[0], argv[1:]...).Start()
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 func fileExists(p string) bool {
