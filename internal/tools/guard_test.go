@@ -78,6 +78,15 @@ func TestGuardBlocks(t *testing.T) {
 		"export NPM_CONFIG_USERCONFIG=~/.npmrc":                         "guard-env",
 		"KUBECONFIG=/home/me/kube/config kubectl get pods":              "guard-env",
 		"SSH_AUTH_SOCK=/tmp/agent.sock ssh -T git@github.com":           "guard-env",
+		"export KUBECONFIG+=:/home/me/kube/config":                      "guard-env", // appending
+		"$env:KUBECONFIG += ';x'":                                       "guard-env",
+		"${env:GH_CONFIG_DIR} = 'x'":                                    "guard-env", // braced PowerShell name
+		"Set-Item env:GH_CONFIG_DIR x":                                  "guard-env",
+		"New-Item env:KUBECONFIG -Value x":                              "guard-env",
+		"rm env:KUBECONFIG":                                             "guard-env", // PowerShell's aliases
+		"del Env:\\GIT_CONFIG_COUNT":                                    "guard-env",
+		"si env:NPM_CONFIG_USERCONFIG x":                                "guard-env",
+		"for i in 0 1; do export GIT_CONFIG_KEY_$i=x; done":             "guard-env",
 		// The secret files, reached through the shell.
 		"cat .env":                               "secret-file",
 		"echo X=1 > .env":                        "secret-file",
@@ -91,6 +100,20 @@ func TestGuardBlocks(t *testing.T) {
 		"docker compose --env-file=.env.prod up": "secret-file",
 		"cat .private/notes.md | head":           "secret-file",
 		"cat ~/.netrc":                           "secret-file",
+		"git show HEAD:.env":                     "secret-file", // git's REV:path
+		"git cat-file -p :.env.local":            "secret-file",
+		"cat {.env,README.md}":                   "secret-file",
+		// The agent CLIs' plan logins and the tools' logins in the home folder.
+		"cat ~/.claude/.credentials.json":                     "secret-file",
+		"type %USERPROFILE%\\.codex\\auth.json":               "secret-file",
+		"cat ~/.gemini/oauth_creds.json":                      "secret-file",
+		"cat ~/.config/gh/hosts.yml":                          "secret-file",
+		"Get-Content \"$env:APPDATA\\GitHub CLI\\hosts.yml\"": "secret-file",
+		"cat ~/.npmrc":                                              "secret-file",
+		"cat ~/.docker/config.json":                                 "secret-file",
+		"cat ~/.cargo/credentials.toml":                             "secret-file",
+		"cat ~/.config/.wrangler/config/default.toml":               "secret-file",
+		"cat \"$APPDATA/xdg.config/.wrangler/config/default.toml\"": "secret-file",
 	} {
 		if got := Guard(command); got != want {
 			t.Errorf("Guard(%q) = %q, want %q", command, got, want)
@@ -140,6 +163,10 @@ func TestGuardAllows(t *testing.T) {
 		// Files whose names only resemble the secret ones.
 		"cat src/env.go internal/private/key.go",
 		"source .venv/bin/activate",
+		"jq -r .version package.json",
+		"rm -rf .wrangler/state .wrangler/tmp", // a worker's local state, not wrangler's login
+		"npx wrangler dev --persist-to .wrangler/state",
+		"cat docker-compose.yml config.json",
 		"go test ./internal/tools -run TestSecretFile",
 		"terraform plan",
 		"tofu validate",
@@ -206,8 +233,8 @@ func TestRunCommandRunsUnderTheGuardedEnvironment(t *testing.T) {
 	t.Setenv("GH_TOKEN", "ghp_should_not_leak")
 	ws, tl := setup(t)
 	run := tl["run_command"]
-	// The guard-env rule refuses a command that names the guard's variables,
-	// so the prefixes here stop short of them.
+	// env prints what the command was started with; the prefixes keep the
+	// output to the three variables that matter.
 	show := map[string]any{"command": `env | grep -E '^(ANTHROPIC_API|GH_TOK|GIT_CONFIG_C)'`}
 	out, err := call(t, ws, run, show)
 	if err != nil || strings.Contains(out, "should-not-leak") || strings.Contains(out, "should_not_leak") || !strings.Contains(out, "GIT_CONFIG_COUNT=") {

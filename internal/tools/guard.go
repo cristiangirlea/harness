@@ -46,13 +46,13 @@ var guardRules = []struct {
 	// gh pr create is left to the guarded environment, where gh has no login:
 	// handing work over is hrn's (a branch per batch task) or the operator's.
 	{"gh-publish", matches(`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s=]*(?:PUT|PATCH|DELETE)\b`)},
+	// The secret files the file tools refuse, reached through the shell
+	// instead: cat .env, echo x > .env, cp .env.example .env.
+	{"secret-file", namesSecretFile},
 	// Shipping somewhere: Cloudflare, package registries, image registries,
 	// clusters, infrastructure and hosting platforms, a project's own deploy
 	// scripts (npm run deploy, deploy:prod, deploy-docs and the like), and
 	// this owner's deploy script.
-	// The secret files the file tools refuse, reached through the shell
-	// instead: cat .env, echo x > .env, cp .env.example .env.
-	{"secret-file", namesSecretFile},
 	{"deploy", matches(`\bwrangler\b[^|&;]*\bdeploy\b|\b(?:npm|pnpm|yarn|bun|cargo)\s+publish\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?deploy\b|\bdeploy/push\.sh\b|\bkubectl\b[^|&;]*\b(?:apply|delete|replace|patch|rollout)\b|\b(?:terraform|tofu)\b[^|&;]*\b(?:apply|destroy)\b|\bhelm\b[^|&;]*\b(?:install|upgrade|uninstall|delete)\b|\bdocker\s+push\b|\bvercel\b[^|&;]*--prod\b|\b(?:fly|flyctl|netlify)\s+deploy\b`)},
 }
 
@@ -91,7 +91,8 @@ func GuardError(rule string) error {
 // with an empty environment (env -i). Case is ignored, for PowerShell. A
 // flag of the same name (--kubeconfig=k.yaml) is not a variable.
 func guardEnvPattern() string {
-	names := []string{`GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)`, "SSH_AUTH_SOCK"}
+	// KEY_$i: a loop that writes the numbered entries.
+	names := []string{`GIT_CONFIG_(?:COUNT|KEY_(?:\d+|\$\{?\w+\}?)|VALUE_(?:\d+|\$\{?\w+\}?)|PARAMETERS)`, "SSH_AUTH_SOCK"}
 	for name := range redirects("") {
 		if name != "SSH_AUTH_SOCK" {
 			names = append(names, regexp.QuoteMeta(name))
@@ -100,11 +101,13 @@ func guardEnvPattern() string {
 	sort.Strings(names[2:])
 	n := `(?:` + strings.Join(names, "|") + `)`
 	return `(?i)` + strings.Join([]string{
-		`(?:^|[^\w-])` + n + `\s*=`,
+		// NAME=, NAME+=, export, declare, $env:NAME = and ${env:NAME} =.
+		`(?:^|[^\w-])` + n + `\}?\s*\+?=`,
 		`\bunset\b[^|&;]*\b` + n + `\b`,
 		`\benv\b[^|&;]*(?:-u\s*|--unset[=\s]\s*)` + n + `\b`,
 		`\benv\s+(?:-i|--ignore-environment|-)(?:\s|$)`,
-		`\b(?:remove-item|clear-item)\b[^|&;]*\benv:\\?` + n + `\b`,
+		// PowerShell's env: drive, by cmdlet or alias.
+		`(?:^|[\s;&|(])(?:remove-item|clear-item|set-item|new-item|rm|del|ri|erase|si|ni)\b[^|&;]*\benv:\\?` + n + `\b`,
 		`setenvironmentvariable\(\s*['"]` + n + `['"]`,
 	}, "|")
 }
