@@ -131,6 +131,9 @@ type Result struct {
 	OutputTokens  int64  `json:"output_tokens,omitempty"`
 	CacheRead     int64  `json:"cache_read_tokens,omitempty"`
 	CacheWrite    int64  `json:"cache_write_tokens,omitempty"`
+	// ContextTokens is the last model call's input, including cache reads and
+	// writes. Absent when the backend reports only run totals or no usage.
+	ContextTokens int64 `json:"context_tokens,omitempty"`
 	// ToolCalls counts the tool calls the agent made. Set by Run, so it is the
 	// same count on every backend.
 	ToolCalls    int           `json:"tool_calls,omitempty"`

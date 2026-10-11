@@ -112,7 +112,8 @@ type claudeLine struct {
 	Model     string `json:"model"`
 	SessionID string `json:"session_id"`
 	Message   struct {
-		Model   string `json:"model"`
+		Usage   apiUsage `json:"usage"`
+		Model   string   `json:"model"`
 		Content []struct {
 			Type      string          `json:"type"`
 			Text      string          `json:"text"`
@@ -158,6 +159,10 @@ func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 			res.ModelReported = true
 		}
 	case "assistant", "user":
+		if l.Type == "assistant" {
+			u := l.Message.Usage
+			res.ContextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+		}
 		for _, c := range l.Message.Content {
 			switch c.Type {
 			case "text":

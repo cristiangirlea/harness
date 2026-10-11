@@ -734,6 +734,10 @@ second; a browser that loses the connection picks up where it left off. Cost is 
 the backend reports: the api backend's estimate (`~`), the claude and opencode CLIs' own
 figures, nothing for codex and gemini, and only once the run has ended.
 
+When the backend reports the last turn's context size, the run page also shows
+`Context: 285.0k tokens at the end`. This includes input served from or written to
+the cache. It is absent when that size is unknown, including on older records.
+
 Everything from a record is escaped as text, since tool results hold whatever the agent
 read. The page loads nothing from anywhere else (one stylesheet and a script or two, all
 served by hrn, no fonts), follows the system's light or dark theme, and on a phone shows
@@ -1007,6 +1011,14 @@ pairs as data.
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration, the
   claude or codex `session` id, and for a `limited` run `limit_resets`, when its plan's
   limit lifts
+
+`result.json` also includes `context_tokens` when known: the last model call's input
+tokens, including cache reads and writes, rather than the sum across the run. The
+api backend records its last message's usage; claude records the last assistant
+message's usage; opencode records the last step's usage. Codex's `turn.completed`
+usage totals the model calls in its agent turn, and gemini's final stats total the
+run, so neither supplies a last model call's context size. A backend with no usage
+leaves it unset too. The field is omitted when zero; older records still load.
 
 Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
 force, which every run consults before it starts. Deleting it forgets them.

@@ -262,6 +262,9 @@ func resultOf(res agent.Result) resultView {
 	add("Backend", backend)
 	add("Turns", fmt.Sprint(res.Turns))
 	add("Tool calls", fmt.Sprint(res.ToolCalls))
+	if res.ContextTokens > 0 {
+		add("Context", tokens(res.ContextTokens)+" tokens at the end")
+	}
 	add("Tokens", fmt.Sprintf("%s in · %s out · %s cache read · %s cache write",
 		tokens(res.InputTokens), tokens(res.OutputTokens), tokens(res.CacheRead), tokens(res.CacheWrite)))
 	add("Cost", cost(res.CostUSD, res.CostEstimate))

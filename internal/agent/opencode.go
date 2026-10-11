@@ -75,6 +75,7 @@ func parseOpencodeStream(line []byte, emit func(Event), res *Result) bool {
 			emit(Event{Time: now, Kind: EventToolResult, Tool: l.Part.Tool, Text: out, IsError: l.Part.State.Status == "error"})
 		}
 	case "step_finish":
+		res.ContextTokens = l.Part.Tokens.Input + l.Part.Tokens.Cache.Read + l.Part.Tokens.Cache.Write
 		res.Turns++
 		res.InputTokens += l.Part.Tokens.Input
 		res.OutputTokens += l.Part.Tokens.Output
