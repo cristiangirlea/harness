@@ -37,6 +37,15 @@ func startMCP(ctx context.Context, task Task, root string, emit func(Event)) ([]
 		go func() {
 			defer wg.Done()
 			cfg.Dir = root
+			// A server keeps hrn's environment, which its tools may need;
+			// under the guard it is told so, and an hrn among them then
+			// refuses to lift the guard.
+			if !task.AllowDangerous {
+				if cfg.Env == nil {
+					cfg.Env = map[string]string{}
+				}
+				cfg.Env[tools.GuardedVar] = "1"
+			}
 			cl := &mcp.Client{Info: mcp.Implementation{Name: "hrn", Version: Version}, Roots: []string{root}}
 			results[i] = started{cl, cl.Start(ctx, cfg)}
 		}()

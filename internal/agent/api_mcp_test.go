@@ -28,7 +28,8 @@ func TestHelperMCPServer(t *testing.T) {
 				Text string `json:"text"`
 			}
 			_ = json.Unmarshal(call.Arguments, &a)
-			return mcp.CallResult{Content: []mcp.Content{mcp.TextContent("echo: " + a.Text)}}, nil
+			// The guard's marker too, as the server sees it.
+			return mcp.CallResult{Content: []mcp.Content{mcp.TextContent("echo: " + a.Text + " [HRN_GUARDED=" + os.Getenv("HRN_GUARDED") + "]")}}, nil
 		},
 	})
 	s.AddTool(mcp.Tool{
@@ -127,5 +128,23 @@ func TestAPILoopMCPStartFailureIsReported(t *testing.T) {
 	}
 	if names := strings.Join(toolNames(fake.requests[0]), ","); strings.Contains(names, "mcp__") {
 		t.Errorf("no MCP tools expected: %s", names)
+	}
+}
+
+// The api loop's MCP servers keep hrn's environment, which their tools may
+// need, but under the guard they are told so: an hrn among them then refuses
+// to lift the guard.
+func TestAPILoopTellsItsMCPServersTheRunIsGuarded(t *testing.T) {
+	for _, c := range []struct {
+		allow bool
+		want  string
+	}{{false, "[HRN_GUARDED=1]"}, {true, "[HRN_GUARDED=]"}} {
+		_, _, fake := runFake(t, [][]string{
+			toolTurn("toolu_g", "mcp__fake__echo", `{"text":"x"}`),
+			textTurn("done"),
+		}, Task{Prompt: "p", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, AllowDangerous: c.allow, MCP: []string{mcpConfigFile(t, os.Args[0])}}})
+		if block := lastToolResult(t, fake.requests[1]); !strings.Contains(fmt.Sprint(block["content"]), c.want) {
+			t.Errorf("allow_dangerous %v: the server answered %v, want %s", c.allow, block["content"], c.want)
+		}
 	}
 }

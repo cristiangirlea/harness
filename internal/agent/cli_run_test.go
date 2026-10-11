@@ -37,8 +37,9 @@ func TestHelperCLIError(t *testing.T) {
 		os.Exit(1)
 	case "env":
 		// What the CLI was started with, as its final answer.
-		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s",
-			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"))
+		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s",
+			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
+			os.Getenv("HRN_GUARDED"))
 		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
 		fmt.Println(string(out))
 		os.Exit(0)
@@ -64,9 +65,11 @@ func TestACLIRunsUnderTheGuard(t *testing.T) {
 		return got
 	}
 	got := saw(helperCLI(parseClaudeStream), Options{Mode: ModeYolo})
-	if got["GH_TOKEN"] != "" || got["ANTHROPIC_API_KEY"] != "" || got["GIT_CONFIG_COUNT"] == "" ||
-		got["GH_CONFIG_DIR"] == "" || got["GH_CONFIG_DIR"] == "operator-gh" {
-		t.Fatalf("the CLI saw %v; want no GH_TOKEN, an empty gh config dir of the run's own and git's push guard", got)
+	// gh gets a token that is not one, so it does not ask the system's
+	// credential store for the operator's.
+	if got["GH_TOKEN"] == "ghp_secret" || got["GH_TOKEN"] == "" || got["ANTHROPIC_API_KEY"] != "" || got["GIT_CONFIG_COUNT"] == "" ||
+		got["GH_CONFIG_DIR"] == "" || got["GH_CONFIG_DIR"] == "operator-gh" || got["HRN_GUARDED"] != "1" {
+		t.Fatalf("the CLI saw %v; want gh's stand-in token, an empty gh config dir of the run's own, git's push guard and the guard's marker", got)
 	}
 	if _, err := os.Stat(got["GH_CONFIG_DIR"]); !os.IsNotExist(err) {
 		t.Errorf("gh's empty config dir %s outlived the run: %v", got["GH_CONFIG_DIR"], err)
@@ -82,7 +85,7 @@ func TestACLIRunsUnderTheGuard(t *testing.T) {
 	}
 
 	got = saw(helperCLI(parseClaudeStream), Options{Mode: ModeYolo, AllowDangerous: true})
-	if got["GH_TOKEN"] != "ghp_secret" || got["GH_CONFIG_DIR"] != "operator-gh" {
+	if got["GH_TOKEN"] != "ghp_secret" || got["GH_CONFIG_DIR"] != "operator-gh" || got["HRN_GUARDED"] != "" {
 		t.Fatalf("with --allow-dangerous the CLI saw %v; want the operator's environment as it is", got)
 	}
 }

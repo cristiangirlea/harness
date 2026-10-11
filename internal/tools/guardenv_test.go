@@ -45,12 +45,18 @@ func TestTheGuardedEnvironmentTakesAwayPublishing(t *testing.T) {
 		"GH_PAT", "AZURE_DEVOPS_EXT_PAT", "STRIPE_KEY", "SIGNING_PRIVATE_KEY_PEM", "TF_TOKEN_APP_TERRAFORM_IO", "OP_SESSION_MY", "BW_SESSION",
 		"GIT_ASKPASS", "SSH_ASKPASS", "VSCODE_GIT_IPC_HANDLE", "VSCODE_GIT_ASKPASS_MAIN",
 		"CLAUDE_CODE_OAUTH_TOKEN"} {
-		if _, ok := got[gone]; ok {
+		if v, ok := got[gone]; ok && v != fixedEnv()[gone] {
 			t.Errorf("%s is still in the agent's environment", gone)
 		}
 		if !slices.Contains(withheld, gone) {
 			t.Errorf("%s was withheld but is not named among %v", gone, withheld)
 		}
+	}
+	// gh gets a token that is not one, or it would ask the system's
+	// credential store for the operator's; and the run is marked guarded.
+	if got["GH_TOKEN"] != ghNoToken || got["GH_ENTERPRISE_TOKEN"] != ghNoToken || got[GuardedVar] != "1" {
+		t.Errorf("GH_TOKEN = %q, GH_ENTERPRISE_TOKEN = %q, %s = %q; want gh's stand-in and the marker",
+			got["GH_TOKEN"], got["GH_ENTERPRISE_TOKEN"], GuardedVar, got[GuardedVar])
 	}
 	// A CLI's own plan login reaches that CLI, and only when it is asked for.
 	kept, withheld := GuardEnv(in, "/tmp/hrn-guard", "CLAUDE_CODE_OAUTH_TOKEN")

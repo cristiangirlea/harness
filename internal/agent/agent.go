@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 // Mode controls what an agent may do without asking.
@@ -232,6 +234,12 @@ func Names() []string {
 // it rather than Backend.Run so the count does not depend on each adapter
 // remembering to keep one.
 func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
+	// Every entry point validates options first; this holds for one that
+	// does not.
+	if task.AllowDangerous && tools.Guarded() {
+		emit(Event{Time: time.Now(), Kind: EventError, Text: ErrGuardedRun.Error()})
+		return Result{Backend: b.Name(), Status: StatusRefused, Error: ErrGuardedRun.Error()}
+	}
 	calls := 0
 	res := b.Run(ctx, task, func(e Event) {
 		if e.Kind == EventToolCall && !e.Partial {

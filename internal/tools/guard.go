@@ -46,6 +46,9 @@ var guardRules = []struct {
 	// gh pr create is left to the guarded environment, where gh has no login:
 	// handing work over is hrn's (a branch per batch task) or the operator's.
 	{"gh-publish", matches(`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s=]*(?:PUT|PATCH|DELETE)\b`)},
+	// gh's login in the system's credential store, which no variable hides:
+	// printing it, or handing it to git as a credential helper.
+	{"gh-token", matches(`(?i)\bgh\b[^|&;]*\bauth\s+(?:token|git-credential)\b|\bgh\b[^|&;]*\bauth\s+status\b[^|&;]*(?:--show-token\b|\s-[a-z]*t\b)`)},
 	// The secret files the file tools refuse, reached through the shell
 	// instead: cat .env, echo x > .env, cp .env.example .env.
 	{"secret-file", namesSecretFile},
@@ -75,11 +78,11 @@ func Guard(command string) string {
 }
 
 // GuardError is what a refused command returns to the model. It names the rule
-// and the setting that lifts it, and says not to retry, because only the
-// operator can change that setting.
+// and says only the operator can lift it, and not to retry. It names no way
+// for the model to lift it itself: an hrn MCP server can be one of its tools.
 func GuardError(rule string) error {
 	return fmt.Errorf("blocked by the hrn guard (%s): only the operator can allow this, "+
-		"with --allow-dangerous (allow_dangerous in a batch spec or an MCP call). "+
+		"by starting the run with --allow-dangerous. "+
 		"Do not retry it; say in your answer why it is needed", rule)
 }
 
@@ -97,6 +100,9 @@ func guardEnvPattern() string {
 		if name != "SSH_AUTH_SOCK" {
 			names = append(names, regexp.QuoteMeta(name))
 		}
+	}
+	for name := range fixedEnv() {
+		names = append(names, regexp.QuoteMeta(name))
 	}
 	sort.Strings(names[2:])
 	n := `(?:` + strings.Join(names, "|") + `)`

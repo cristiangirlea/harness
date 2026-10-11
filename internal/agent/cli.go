@@ -370,7 +370,7 @@ func (c *CLIBackend) guardLine(withheld []string) string {
 	if c.fileRules {
 		text += "; the CLI's own rules refuse publishing commands and secret files"
 	} else {
-		text += fmt.Sprintf("; unguarded on the %s backend: reading and writing secret files (.env, keys, .private), and the wrangler and cargo logins", c.name)
+		text += fmt.Sprintf("; unguarded on the %s backend: reading and writing secret files (.env, keys, .private), the wrangler and cargo logins, and gh's login in the system's credential store (gh auth token --user)", c.name)
 	}
 	return text + "; --allow-dangerous lifts it"
 }

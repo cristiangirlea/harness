@@ -119,6 +119,8 @@ func TestTheApiGuardAndClaudesRulesRefuseTheSameCommands(t *testing.T) {
 		"docker push ghcr.io/o/i", "kubectl apply -f x.yaml", "kubectl delete pod x", "kubectl rollout restart deploy/x",
 		"terraform apply", "tofu destroy", "helm upgrade app ./c", "helm uninstall app",
 		"vercel deploy --prod", "fly deploy", "netlify deploy --prod", "bash deploy/push.sh", "./deploy/push.sh",
+		"gh auth token", "gh auth token --user me", "gh auth status --show-token", "gh auth status -t", "gh auth git-credential get",
+		"unset GH_TOKEN", "unset HRN_GUARDED",
 	} {
 		if tools.Guard(command) == "" {
 			t.Errorf("%q: the api loop's guard lets it through", command)

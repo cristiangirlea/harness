@@ -186,13 +186,14 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 | Rule | Refuses |
 |---|---|
 | `git-push` | any `git` command mentioning `push`, including `git -C dir push`, or setting a `pushurl` or `pushInsteadOf` — a batch commits on its own branch; what leaves the machine is the operator's call |
-| `guard-env` | a command that changes a variable of the guarded environment below (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`): setting it (`NAME=`, `NAME+=`, `export`, `$env:NAME =`, `${env:NAME} =`, `read`, `printf -v`, `GIT_CONFIG_KEY_$i=` in a loop), unsetting it or hiding it from child processes (`unset`, `export -n`, `declare +x`, `typeset +x`, `env -u`, `SetEnvironmentVariable`), `env -i`, and any use of PowerShell's `env:` drive (or `Environment::`) as a path on one of them or with a wildcard (`Remove-Item env:X`, `rm env:X`, `& {Set-Item env:X …}`), whatever the cmdlet, reads through that path (`Test-Path env:X`) included; any case. Reading one as a variable (`$X`, `$env:X`, `${env:X}`), searching for it, or a flag like `--kubeconfig` or `--read-only` is fine |
+| `guard-env` | a command that changes a variable of the guarded environment below (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`, gh's stand-in `GH_TOKEN` and `GH_ENTERPRISE_TOKEN`, the `HRN_GUARDED` marker): setting it (`NAME=`, `NAME+=`, `export`, `$env:NAME =`, `${env:NAME} =`, `read`, `printf -v`, `GIT_CONFIG_KEY_$i=` in a loop), unsetting it or hiding it from child processes (`unset`, `export -n`, `declare +x`, `typeset +x`, `env -u`, `SetEnvironmentVariable`), `env -i`, and any use of PowerShell's `env:` drive (or `Environment::`) as a path on one of them or with a wildcard (`Remove-Item env:X`, `rm env:X`, `& {Set-Item env:X …}`), whatever the cmdlet, reads through that path (`Test-Path env:X`) included; any case. Reading one as a variable (`$X`, `$env:X`, `${env:X}`), searching for it, or a flag like `--kubeconfig` or `--read-only` is fine |
 | `secret-file` | a command line naming a secret file (the list below) as an argument, a redirect's target or a flag's value: `cat .env`, `echo x > .env`, `cp .env.example .env`, `Get-Content .\.env`, `cat ~/.ssh/id_ed25519` |
 | `sudo` | `sudo` — a password prompt hangs a run with no terminal |
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
 | `pipe-to-shell` | `curl`/`wget` piped into a shell, however many stages the pipe has |
 | `disk` | `mkfs`, `format X:`, `dd of=/dev/…` |
 | `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`, and `gh api` with PUT, PATCH or DELETE; opening a pull request stays allowed |
+| `gh-token` | `gh auth token` (with `--user` too), `gh auth git-credential` and `gh auth status --show-token`/`-t`: gh keeps its login in the system's credential store, which no variable hides, and these hand it out |
 | `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`bun`/`cargo publish`, a project's deploy script (`npm run deploy`, `deploy:prod`, `deploy-docs`, with `pnpm`, `yarn` or `bun` too), `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `terraform`/`tofu apply/destroy`, `helm install/upgrade/uninstall`, `vercel --prod`, `fly`/`netlify deploy` |
 
 The api backend's file tools refuse the secret files as well (rule `secret-file`):
@@ -228,6 +229,10 @@ around it. What decides whether commands run at all is the [permission mode](#pe
 this stops the plausible accident. `--allow-dangerous` (task field `allow_dangerous`,
 also a batch spec/task field and an MCP `run` argument) lifts it for a whole run, and the
 system prompt tells the model which way it is set; `yolo` on its own does not lift it.
+An hrn started inside a guarded run refuses it, whether from the agent's shell or as an
+MCP server the agent's CLI loaded (the claude CLI loads your user-scope servers, hrn's
+among them): the guarded environment sets `HRN_GUARDED`, and the api loop sets it for its
+own MCP servers too. A refused command tells the model only that the operator can lift it.
 
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.
@@ -253,7 +258,10 @@ every command the api backend's `run_command` runs:
 - the logins tools keep on disk are looked for in an empty directory of the run's own:
   gh (`GH_CONFIG_DIR`), npm (`NPM_CONFIG_USERCONFIG`), kubectl (`KUBECONFIG`), docker
   (`DOCKER_CONFIG`), aws (`AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`), gcloud
-  (`CLOUDSDK_CONFIG`) and az (`AZURE_CONFIG_DIR`); the directory goes when the run ends;
+  (`CLOUDSDK_CONFIG`) and az (`AZURE_CONFIG_DIR`); the directory goes when the run ends.
+  gh also keeps its login in the system's credential store (Windows Credential Manager,
+  the macOS Keychain) and asks it when no token is set, so `GH_TOKEN` and
+  `GH_ENTERPRISE_TOKEN` are set to a token that is not one;
 - the ssh agent is out of reach (on Windows `SSH_AUTH_SOCK` names a pipe nobody
   listens on, since Windows' ssh otherwise falls back to its agent's own pipe);
 - git points every push at `push-refused-by-hrn://`, which it cannot reach, through
@@ -303,6 +311,9 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
 - logins kept where no variable moves them: wrangler's and cargo's, so under codex,
   gemini or opencode a `npx wrangler deploy` or `npm run deploy` would still deploy;
   claude and the api backend refuse those commands, the others get the environment only;
+- gh's login in the system's credential store: `gh auth token --user NAME` reads it
+  whatever `GH_TOKEN` says. Claude and the api backend refuse `gh auth token`; under
+  codex, gemini or opencode an agent that runs it gets your GitHub token;
 - secret files stay readable and writable under codex, gemini and opencode; under the
   api backend and claude, a command that opens one without naming it (a recursive
   `grep -r` from the shell, a tool that loads `.env` itself) is not seen, and nor is a
@@ -316,8 +327,9 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   over is hrn's (batch keeps a branch per task) or the operator's.
 
 Every run says whether the guard is on, names the variables it withheld, and says what
-its backend leaves open: on codex, gemini and opencode, the secret files and the
-wrangler and cargo logins. `--allow-dangerous` lifts all of it.
+its backend leaves open: on codex, gemini and opencode, the secret files, the wrangler
+and cargo logins, and gh's login in the credential store. `--allow-dangerous` lifts all
+of it.
 
 ### Context management
 

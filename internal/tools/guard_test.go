@@ -209,9 +209,16 @@ func TestGuardAllows(t *testing.T) {
 
 func TestGuardErrorNamesTheRuleAndTheSetting(t *testing.T) {
 	err := GuardError("git-push")
-	for _, want := range []string{"git-push", "--allow-dangerous", "allow_dangerous", "Do not retry"} {
+	for _, want := range []string{"git-push", "--allow-dangerous", "operator", "Do not retry"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("GuardError text is missing %q: %v", want, err)
+		}
+	}
+	// The model is not shown a lever of its own: an hrn MCP server can be one
+	// of its tools.
+	for _, not := range []string{"MCP", "allow_dangerous", "batch spec"} {
+		if strings.Contains(err.Error(), not) {
+			t.Errorf("GuardError names %q to the model: %v", not, err)
 		}
 	}
 }
@@ -272,5 +279,34 @@ func TestRunCommandRunsUnderTheGuardedEnvironment(t *testing.T) {
 	ws.AllowDangerous = true
 	if out, err := call(t, ws, run, show); err != nil || !strings.Contains(out, "ANTHROPIC_API_KEY=sk-ant-should-not-leak") || !strings.Contains(out, "GH_TOKEN=ghp_should_not_leak") {
 		t.Fatalf("with allow_dangerous the command saw %q (%v); want the operator's environment", out, err)
+	}
+}
+
+// gh keeps its login in the system's credential store, where no variable
+// reaches: the commands that hand it out are refused, and so is changing gh's
+// stand-in token or the guard's marker.
+func TestGuardRefusesGhsStoredLogin(t *testing.T) {
+	for command, want := range map[string]string{
+		"gh auth token":                 "gh-token",
+		"gh auth token --user cristian": "gh-token",
+		"gh auth token -h github.com":   "gh-token",
+		"gh auth status --show-token":   "gh-token",
+		"gh auth status -t":             "gh-token",
+		"gh auth git-credential get":    "gh-token",
+		`curl -X PUT -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/pulls/1/merge`: "gh-token",
+		"GH_TOKEN=$(cat t) gh pr view 1": "guard-env",
+		"export GH_TOKEN=x":              "guard-env",
+		"unset HRN_GUARDED":              "guard-env",
+		"env -u HRN_GUARDED hrn run x":   "guard-env",
+		"$env:HRN_GUARDED = ''":          "guard-env",
+	} {
+		if got := Guard(command); got != want {
+			t.Errorf("Guard(%q) = %q, want %q", command, got, want)
+		}
+	}
+	for _, command := range []string{"gh auth status", "gh auth status --hostname github.com", "gh pr view 1", "echo $GH_TOKEN"} {
+		if got := Guard(command); got != "" {
+			t.Errorf("Guard(%q) = %q, want it allowed", command, got)
+		}
 	}
 }

@@ -2,6 +2,8 @@ package tools
 
 import (
 	"fmt"
+	"maps"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -23,8 +25,9 @@ import (
 // Like the command guard it stops the plausible accident, not an agent set on
 // getting around it: a remote with its own pushurl, a longer pushInsteadOf in
 // the repository, an unset GIT_CONFIG_COUNT, an ssh key file on disk and the
-// logins kept elsewhere (wrangler's, cargo's, git's credential helper) are
-// still there. --allow-dangerous (Options.AllowDangerous) lifts it.
+// logins kept elsewhere (wrangler's, cargo's, git's credential helper, gh's
+// in the system's credential store) are still there. --allow-dangerous
+// (Options.AllowDangerous) lifts it, and an hrn run inside it cannot.
 
 // withheldEnv names variables left out besides the patterns in secretEnv:
 // credentials whose names say nothing, the ssh agent, and git's askpass
@@ -92,6 +95,31 @@ func redirects(dir string) map[string]string {
 // it, so a push fails at once, and its error names who refused it.
 const refusedPushScheme = "push-refused-by-hrn://"
 
+// GuardedVar is set in every guarded environment. An hrn started inside a
+// guarded run sees it and refuses to lift the guard: --allow-dangerous is the
+// operator's to give, not an agent's, through the shell or an MCP server.
+const GuardedVar = "HRN_GUARDED"
+
+// Guarded reports whether this process runs inside a guarded run.
+func Guarded() bool { return os.Getenv(GuardedVar) != "" }
+
+// ghNoToken is the token gh gets under the guard. gh keeps its login in the
+// system's credential store as well as under GH_CONFIG_DIR, and asks the
+// store when no token is set; a token that is not one stops it there.
+// `gh auth token --user NAME` still reads the store: the command rules refuse
+// it, and codex, gemini and opencode have none.
+const ghNoToken = "hrn-guard-no-token"
+
+// fixedEnv are the variables the guard sets whatever the operator's
+// environment says.
+func fixedEnv() map[string]string {
+	return map[string]string{
+		GuardedVar:            "1",
+		"GH_TOKEN":            ghNoToken,
+		"GH_ENTERPRISE_TOKEN": ghNoToken,
+	}
+}
+
 // GuardEnv returns env for an agent CLI, or a command an agent runs, under
 // the guard, and the names of the variables it withheld that were set (for
 // the run to say: a CLI that logs in with a key cannot, under the guard).
@@ -100,6 +128,7 @@ const refusedPushScheme = "push-refused-by-hrn://"
 // all the same: the plan login of the CLI being started, which needs it.
 func GuardEnv(env []string, dir string, keep ...string) (out []string, withheld []string) {
 	set := redirects(dir)
+	maps.Copy(set, fixedEnv())
 	set["GH_PROMPT_DISABLED"] = "1"
 	set["GIT_TERMINAL_PROMPT"] = "0"
 	set["GCM_INTERACTIVE"] = "never"

@@ -14,7 +14,9 @@ var guardCommands = []string{
 	// Steering a push around the guarded environment's dead end; the rules
 	// match case, git's keys do not.
 	"git config *push*", "git config *Push*", "git -c *push*", "git -c *Push*", "git remote set-url --push *",
-	"unset GIT_CONFIG*", "unset GH_CONFIG_DIR*", "env -u *",
+	"unset GIT_CONFIG*", "unset GH_CONFIG_DIR*", "unset GH_TOKEN*", "unset HRN_GUARDED*", "env -u *",
+	// gh's login in the system's credential store, which no variable hides.
+	"gh auth token", "gh auth token *", "gh auth git-credential *", "gh auth status *--show-token*", "gh auth status *-t*",
 	"gh pr merge *", "gh release create *", "gh release upload *", "gh release edit *", "gh release delete *",
 	"gh repo delete *", "gh repo edit *", "gh repo archive *", "gh repo rename *",
 	"gh api *-X *", "gh api *--method*",

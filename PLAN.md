@@ -730,6 +730,29 @@ neither of them follows a run while it happens.
   One FuzzCodec run failed once in a container while the Windows suite loaded the same
   machine; no input was saved, and three 10 s runs and a 2 min run (7.4M executions) after
   it passed.
+- 2026-10-11: PR X merged with main (#46, #48, #50 to #53), then a security review of the
+  whole PR as it would merge (Claude, read-only): 2 blocking. (1) The merge kept #48's grep
+  walk, which judges only links by where they lead; a regular file was judged by its
+  spelling under the search path, so `grep` with `path` set to `.codex`'s short 8.3 name
+  (`CODEX~1`) printed `auth.json`: the secret paths of two parts never matched. Now each
+  file is also judged at the search path's real place plus its relative name, which costs
+  no call per file. A Windows test with a real short name (the test skips on a volume
+  without them, E: here; it ran on C:). (2) gh keeps its login in the system's credential
+  store and asks it when no token is set, so the empty `GH_CONFIG_DIR` did not keep
+  `gh auth token` from printing it; checked on the owner's PC without printing it. Now
+  `GH_TOKEN` and `GH_ENTERPRISE_TOKEN` are a token that is not one, and a `gh-token` rule
+  (and claude's rules) refuse `gh auth token`, `gh auth git-credential` and `gh auth status
+  --show-token`; `gh auth token --user NAME` still reads the store, so under codex, gemini
+  and opencode it is open, and the README and each run say so. Also taken from its notes: an
+  hrn started inside a guarded run (from the shell, or as the hrn MCP server the claude CLI
+  loads from the owner's user scope) could lift the guard with `allow_dangerous`, and the
+  refusal message even named that lever. The guarded environment now sets `HRN_GUARDED`,
+  the api loop sets it for its own MCP servers, `Validate` and `agent.Run` refuse
+  `allow_dangerous` under it, and the message names no lever. The test packages that lift
+  the guard clear the marker in `TestMain` (helper processes keep it), so the suite still
+  passes when an agent under the guard runs it. Its other notes are an issue of their own.
+  Live, codex in `yolo` under the guard on a scratch repo: fake `GH_TOKEN` and `NPM_TOKEN`
+  empty, `git push` at the dead end, the bare remote empty.
 
 - 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
   means including security"), by an independent agent with loopback-only proof tests in a
