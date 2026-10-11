@@ -387,6 +387,17 @@ func TestGCReadsPathsGitWouldQuote(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Remove, "merged")
 }
 
+func TestGCTakesOnlyFoldersByTheirBuildNames(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\nbuild\n")
+	git(t, f.repo, "commit", "-q", "-am", "ignore build")
+	wt, head := f.worktree("wt", "done")
+	f.write(wt, "build", "#!/bin/sh\n# a script of mine, not a build folder\n")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "not build output: build")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

@@ -492,10 +492,18 @@ var buildOutput = map[string]bool{
 	"test-results": true, "playwright-report": true,
 }
 
-// isBuildOutput reports an ignored path gc may delete with its worktree.
+// isBuildOutput reports an ignored path gc may delete with its worktree. The
+// names are folders' (git status ends a folder with /): a file called build
+// is someone's.
 func isBuildOutput(dir, path string) bool {
+	folder := strings.HasSuffix(path, "/")
 	name := filepath.Base(strings.TrimSuffix(path, "/"))
-	return buildOutput[name] || strings.HasSuffix(name, ".tsbuildinfo") || isCacheDir(filepath.Join(dir, path))
+	switch {
+	case folder:
+		return buildOutput[name] || isCacheDir(filepath.Join(dir, path))
+	default:
+		return strings.HasSuffix(name, ".tsbuildinfo")
+	}
 }
 
 // unsaved says why a worktree holds something no branch has: tracked changes,
