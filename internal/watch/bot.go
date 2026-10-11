@@ -511,17 +511,42 @@ type botWatcher struct {
 	s         *server
 	followers map[string]*Follower
 	doing     map[string]string
+	batches   []batch.Result // the last look's, cleaned
 }
 
 func (s *server) newBotWatcher() *botWatcher {
 	return &botWatcher{s: s, followers: map[string]*Follower{}, doing: map[string]string{}}
 }
 
+// keepUnread keeps the last look's batches that this look could not read. A
+// running batch rewrites its record as each task moves on, and on Windows a
+// read can land on the rename: the batch would vanish for one look, then it
+// and its runs would be announced again as new. A batch removed for good is
+// not kept, as then every record reads.
+func keepUnread(prev, cur []batch.Result, unreadable int) []batch.Result {
+	if unreadable == 0 {
+		return cur
+	}
+	have := map[string]bool{}
+	for _, b := range cur {
+		have[b.ID] = true
+	}
+	for _, b := range prev {
+		if !have[b.ID] {
+			cur = append(cur, b)
+		}
+	}
+	return cur
+}
+
 func (b *botWatcher) look() botSnapshot {
 	runs, _ := runlog.List(b.s.opt.Runs)
-	batches, _, _ := batch.List()
-	if len(batches) > 20 {
-		batches = batches[:20]
+	// Every batch on disk: an attempt of an old batch is still its run.
+	batches, unreadable, _ := batch.List()
+	if unreadable > 0 {
+		// As the index does: most likely one caught mid-save. Look again.
+		time.Sleep(50 * time.Millisecond)
+		batches, unreadable, _ = batch.List()
 	}
 	going := map[string]bool{}
 	for i, rec := range runs {
@@ -555,7 +580,8 @@ func (b *botWatcher) look() botSnapshot {
 	for i, res := range batches {
 		batches[i] = b.s.cleanBatch(res)
 	}
-	return botLook(runs, batches, b.doing, time.Now())
+	b.batches = keepUnread(b.batches, batches, unreadable)
+	return botLook(runs, b.batches, b.doing, time.Now())
 }
 
 func (s *server) bot(w http.ResponseWriter, r *http.Request) {

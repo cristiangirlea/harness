@@ -176,6 +176,26 @@ func TestAJustStartedRunWaitsALookAndABatchsRunsAreNotItsOwn(t *testing.T) {
 	}
 }
 
+// A running batch rewrites its record as each task moves on, and on Windows
+// a read can land on the rename: for that look the record cannot be read.
+// The batch is kept from the look before, or it and its runs would be
+// announced again as new.
+func TestABatchCaughtMidSaveIsNotAnnouncedAgain(t *testing.T) {
+	runID := "20261011-115000-aaaaaa"
+	b := batch.Result{ID: "20261011-114959-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/repo/harness", Tasks: []batch.TaskResult{
+		{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning, Attempts: []batch.Attempt{{Backend: "claude", RunID: runID}}}}}
+	run := runRec(runID, noon.Add(-time.Minute), false, agent.Result{})
+	prev := lookAt([]runlog.Record{run}, []batch.Result{b}, nil)
+	caught := lookAt([]runlog.Record{run}, keepUnread([]batch.Result{b}, nil, 1), nil)
+	if says := announce(prev, caught, false); len(says) != 0 {
+		t.Fatalf("a batch that could not be read for one look was announced again: %+v", says)
+	}
+	// Removed for good (hrn batch rm): every record reads, and it is not kept.
+	if got := keepUnread([]batch.Result{b}, nil, 0); len(got) != 0 {
+		t.Errorf("a batch gone for good was kept: %+v", got)
+	}
+}
+
 func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
 	id := "20261011-110000-cccccc"
 	mk := func(s1, s2 batch.Status, d time.Duration) batch.Result {
