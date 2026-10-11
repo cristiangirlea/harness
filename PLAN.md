@@ -655,7 +655,14 @@ neither of them follows a run while it happens.
   local state, when wrangler's login is `.wrangler/config`. Left as said in the README:
   `jq '.key'` is refused (the rule reads words), and a Windows directory junction is not
   seen through by the workspace boundary since Go 1.23 stopped resolving mount points; that
-  one predates this PR and is a task of its own.
+  one predates this PR and is a task of its own. A fourth, short pass over those commits
+  found one regression of them: anchoring the env: cmdlets to a space dropped `{`, so
+  `& {Remove-Item env:KUBECONFIG}` got through again. guard-env now refuses any use of the
+  env: drive as a path on a guarded name, or with a wildcard, whatever the cmdlet, alias or
+  scriptblock, since a list of cmdlets is never whole; `$env:X` and `${env:X}` stay
+  readable. It also takes `export -n`, `declare +x`, `read` and `printf -v`. Decided:
+  `.npmrc` is a secret name anywhere, a project's own included: one often carries an
+  `_authToken` line, and refusing a pnpm setting costs the agent a turn.
   One FuzzCodec run failed once in a container while the Windows suite loaded the same
   machine; no input was saved, and three 10 s runs and a 2 min run (7.4M executions) after
   it passed.

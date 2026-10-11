@@ -149,7 +149,7 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 | Rule | Refuses |
 |---|---|
 | `git-push` | any `git` command mentioning `push`, including `git -C dir push`, or setting a `pushurl` or `pushInsteadOf` — a batch commits on its own branch; what leaves the machine is the operator's call |
-| `guard-env` | a command that changes a variable of the guarded environment below (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`): setting it (`NAME=`, `export`, `$env:NAME =`), unsetting it (`unset`, `env -u`, `Remove-Item env:`, `SetEnvironmentVariable`) or `env -i`; any case, for PowerShell. Reading one, searching for it or a flag like `--kubeconfig` is fine |
+| `guard-env` | a command that changes a variable of the guarded environment below (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`): setting it (`NAME=`, `NAME+=`, `export`, `$env:NAME =`, `${env:NAME} =`, `read`, `printf -v`, `GIT_CONFIG_KEY_$i=` in a loop), unsetting it or hiding it from child processes (`unset`, `export -n`, `declare +x`, `env -u`, `SetEnvironmentVariable`), `env -i`, and any use of PowerShell's `env:` drive as a path on one of them or with a wildcard (`Remove-Item env:X`, `rm env:X`, `& {Set-Item env:X …}`), whatever the cmdlet; any case. Reading one (`$X`, `$env:X`, `${env:X}`), searching for it or a flag like `--kubeconfig` is fine |
 | `secret-file` | a command line naming a secret file (the list below) as an argument, a redirect's target or a flag's value: `cat .env`, `echo x > .env`, `cp .env.example .env`, `Get-Content .\.env`, `cat ~/.ssh/id_ed25519` |
 | `sudo` | `sudo` — a password prompt hangs a run with no terminal |
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
@@ -267,7 +267,9 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   claude and the api backend refuse those commands, the others get the environment only;
 - secret files stay readable and writable under codex, gemini and opencode; under the
   api backend and claude, a command that opens one without naming it (a recursive
-  `grep -r` from the shell, a tool that loads `.env` itself) is not seen;
+  `grep -r` from the shell, a tool that loads `.env` itself) is not seen, and nor is a
+  login named by a relative path after a `cd` (`cd ~/.codex && cat auth.json`), since
+  the logins that are secret only with their folder are matched in the command's text;
 - secrets inside ordinary variables stay: a `DATABASE_URL` with a password in it, since
   local tests need it;
 - a CLI that logs in with an API key (opencode or gemini with a key, claude on Bedrock or
