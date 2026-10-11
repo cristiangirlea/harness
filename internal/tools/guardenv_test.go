@@ -33,6 +33,7 @@ func TestTheGuardedEnvironmentTakesAwayPublishing(t *testing.T) {
 		"TF_TOKEN_app_terraform_io=tf", "OP_SESSION_my=op", "BW_SESSION=bw",
 		"GIT_ASKPASS=/usr/lib/askpass", "SSH_ASKPASS=/usr/lib/ssh-askpass", "VSCODE_GIT_IPC_HANDLE=/tmp/vscode-git.sock",
 		"VSCODE_GIT_ASKPASS_MAIN=/vscode/askpass-main.js",
+		"GCM_CREDENTIAL_STORE=secretservice", // where GCM's store is, which a private fetch needs
 		"CLAUDE_CODE_OAUTH_TOKEN=claude-plan-login",
 		"KUBECONFIG=/home/me/.kube/config", "DOCKER_CONFIG=/home/me/.docker", "npm_config_userconfig=/home/me/.npmrc",
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.autocrlf", "GIT_CONFIG_VALUE_0=false",
@@ -56,7 +57,7 @@ func TestTheGuardedEnvironmentTakesAwayPublishing(t *testing.T) {
 	if envMap(kept)["CLAUDE_CODE_OAUTH_TOKEN"] != "claude-plan-login" || slices.Contains(withheld, "CLAUDE_CODE_OAUTH_TOKEN") {
 		t.Error("claude's plan login was withheld from the claude CLI; it could not use the plan")
 	}
-	for k, want := range map[string]string{"PATH": "/bin", "HOME": "/home/me",
+	for k, want := range map[string]string{"PATH": "/bin", "HOME": "/home/me", "GCM_CREDENTIAL_STORE": "secretservice",
 		"GH_PROMPT_DISABLED": "1", "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
 		"GIT_CONFIG_KEY_0": "core.autocrlf", "GIT_CONFIG_VALUE_0": "false"} {
 		if got[k] != want {

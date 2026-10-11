@@ -42,6 +42,11 @@ func secretEnv(name string) bool {
 	if slices.Contains(withheldEnv, n) {
 		return true
 	}
+	// Git Credential Manager's settings say where its store is, not what is
+	// in it (GCM_CREDENTIAL_STORE); without them a private fetch fails.
+	if strings.HasPrefix(n, "GCM_") {
+		return false
+	}
 	for _, suffix := range []string{"_TOKEN", "_KEY", "_PAT", "_AUTH"} {
 		if strings.HasSuffix(n, suffix) {
 			return true
