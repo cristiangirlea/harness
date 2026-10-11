@@ -329,7 +329,8 @@ func grep() Tool {
 					// A link out of the workspace is not followed, as Resolve
 					// refuses one; and a search of a directory passes over the
 					// secret files in it rather than refusing the whole search.
-					if !ws.inside(realPath(p)) || (!ws.AllowDangerous && ws.secretPath(p)) {
+					real := realPath(p)
+					if !ws.inside(real) || (!ws.AllowDangerous && (SecretFile(ws.Rel(p)) || SecretFile(ws.Rel(real)))) {
 						return true
 					}
 					if globRe == nil || globRe.MatchString(rel) {
