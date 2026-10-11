@@ -142,7 +142,7 @@
 {{define "bot"}}{{template "head" .}}
 <section class="card bot" aria-labelledby="bot-h">
 <div class="bot-head">
-<svg class="bot-face" viewBox="0 0 64 64" aria-hidden="true"><path class="tuft" d="M13 20 L15 5 L26 14 Z"/><path class="tuft" d="M51 20 L49 5 L38 14 Z"/><rect class="shell" x="9" y="12" width="46" height="46" rx="20"/><path class="seam" d="M17 50 h30"/><circle class="rivet" cx="21" cy="54" r="1.2"/><circle class="rivet" cx="43" cy="54" r="1.2"/><circle class="ring" cx="23" cy="31" r="9"/><circle class="ring" cx="41" cy="31" r="9"/><circle class="eye" cx="23" cy="31" r="3.6"/><circle class="eye" cx="41" cy="31" r="3.6"/><path class="lash" d="M15 23 l-3 -3 M18.5 21 l-1.5 -4 M23 20.5 v-4"/><path class="lash" d="M49 23 l3 -3 M45.5 21 l1.5 -4 M41 20.5 v-4"/><path class="mouth beak" d="M28.5 40 h7 l-3.5 5 Z"/></svg>
+{{template "ada"}}
 <div>
 <h1 id="bot-h">Ada</h1>
 <p id="bot-line" class="bot-line" aria-live="polite">I'm Ada. I'll tell you what hrn is doing.</p>
@@ -174,3 +174,67 @@
 {{if .Going}}<ul class="bot-now">{{range .Going}}<li data-ref="{{.ID}}"><span class="badge run">{{.Kind}}</span> <a href="{{.URL}}">{{.Who}}{{with .Where}} in {{.}}{{end}}</a> <span class="muted small" data-since="{{.Since}}"></span>{{with .What}}<br><span>{{.}}</span>{{end}}{{with .Doing}}<br><span class="muted">{{.}}</span>{{end}} <button type="button" class="quiet" data-mute="{{.ID}}">Mute this</button></li>
 {{end}}</ul>{{else}}<p class="muted">Nothing is running.</p>{{end}}
 </section>{{end}}
+
+{{/* Ada, a robot scarlet macaw, drawn with gradients for a lit, rounded
+     look. Colours are attributes, not style, as the page's policy allows no
+     inline style; watch.css moves her: the lower beak while she talks, a
+     blink, a slow bob of the head, and the glow of her lights. */}}
+{{define "ada"}}<svg class="bot-face ada" viewBox="0 0 240 240" role="img" aria-label="Ada, a robot parrot">
+<defs>
+<radialGradient id="ada-head" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#ff8273"/><stop offset=".42" stop-color="#ea3540"/><stop offset=".85" stop-color="#b3192c"/><stop offset="1" stop-color="#851021"/></radialGradient>
+<radialGradient id="ada-body" cx=".42" cy=".28" r=".85"><stop offset="0" stop-color="#f4504a"/><stop offset=".55" stop-color="#cc2131"/><stop offset="1" stop-color="#7a0e1c"/></radialGradient>
+<linearGradient id="ada-wing" x1="0" y1="0" x2=".25" y2="1"><stop offset="0" stop-color="#ffe066"/><stop offset=".26" stop-color="#ffb703"/><stop offset=".42" stop-color="#46a0f5"/><stop offset=".72" stop-color="#1f5bc4"/><stop offset="1" stop-color="#132f78"/></linearGradient>
+<linearGradient id="ada-blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3d93f2"/><stop offset="1" stop-color="#143785"/></linearGradient>
+<linearGradient id="ada-red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e6343d"/><stop offset="1" stop-color="#6d0c19"/></linearGradient>
+<linearGradient id="ada-metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6f9fb"/><stop offset=".45" stop-color="#c6cfd9"/><stop offset=".56" stop-color="#97a3b1"/><stop offset="1" stop-color="#e3e9ef"/></linearGradient>
+<linearGradient id="ada-horn" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fdf8f0"/><stop offset=".6" stop-color="#e6d9c6"/><stop offset="1" stop-color="#b9a78d"/></linearGradient>
+<linearGradient id="ada-dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4c4c57"/><stop offset="1" stop-color="#131317"/></linearGradient>
+<radialGradient id="ada-face" cx=".42" cy=".36" r=".75"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#ece3d7"/></radialGradient>
+<radialGradient id="ada-iris" cx=".45" cy=".4" r=".7"><stop offset="0" stop-color="#ffe390"/><stop offset=".55" stop-color="#f2b705"/><stop offset="1" stop-color="#a86d00"/></radialGradient>
+<radialGradient id="ada-led" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#f0fffb"/><stop offset=".45" stop-color="#46e8c9"/><stop offset="1" stop-color="#0c8f78"/></radialGradient>
+<filter id="ada-shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity=".28"/></filter>
+<filter id="ada-glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<ellipse cx="122" cy="230" rx="64" ry="7" fill="#000" opacity=".16"/>
+<g filter="url(#ada-shadow)">
+<path d="M112 204 C108 218 104 228 97 238 L112 237 C116 226 120 215 123 206 Z" fill="url(#ada-blue)"/>
+<path d="M123 206 C128 218 133 228 141 238 L128 238 C126 228 124 218 119 208 Z" fill="url(#ada-red)"/>
+<rect x="68" y="212" width="124" height="10" rx="5" fill="url(#ada-metal)" stroke="#7d8896" stroke-width="1"/>
+<path d="M88 112 C75 132 73 168 91 196 C101 210 120 216 137 210 C160 201 171 168 165 132 C161 118 151 110 138 108 Z" fill="url(#ada-body)"/>
+<path d="M140 120 C154 132 158 160 150 184" fill="none" stroke="#fff" stroke-opacity=".18" stroke-width="5" stroke-linecap="round"/>
+<path d="M96 118 C78 130 70 160 78 196 C82 210 96 222 106 226 C104 206 106 182 116 160 C122 146 120 128 110 118 Z" fill="url(#ada-wing)"/>
+<path d="M82 152 C92 158 104 158 114 150 M80 170 C90 177 103 177 112 168 M80 188 C90 195 101 195 108 187 M84 205 C92 212 99 214 104 208" fill="none" stroke="#000" stroke-opacity=".22" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M82 154.5 C92 160.5 104 160.5 114 152.5 M80 172.5 C90 179.5 103 179.5 112 170.5 M80 190.5 C90 197.5 101 197.5 108 189.5" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M88 126 C96 122 104 123 110 128" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="2" stroke-linecap="round"/>
+<path d="M108 210 q4 6 0 11 M114 211 q4 6 0 11 M130 211 q-4 6 0 11 M136 210 q-4 6 0 11" fill="none" stroke="#3a3f47" stroke-width="3.2" stroke-linecap="round"/>
+<path d="M91 115 C108 126 141 128 161 117 L163 128 C141 141 106 139 89 126 Z" fill="url(#ada-metal)" stroke="#7d8896" stroke-width="1"/>
+<circle cx="103" cy="128" r="2.2" fill="#7d8794"/><circle cx="148" cy="128" r="2.2" fill="#7d8794"/>
+<circle class="led" cx="126" cy="132" r="3.6" fill="url(#ada-led)" filter="url(#ada-glow)"/>
+<g class="ada-head">
+<path d="M126 40 C120 24 112 13 100 9" fill="none" stroke="url(#ada-metal)" stroke-width="4" stroke-linecap="round"/>
+<circle class="led" cx="99" cy="9" r="6" fill="url(#ada-led)" filter="url(#ada-glow)"/>
+<path d="M118 40 C110 22 96 12 80 11 C92 18 100 28 106 45 Z" fill="url(#ada-head)"/>
+<path d="M109 45 C97 31 82 27 67 29 C81 33 91 41 99 51 Z" fill="url(#ada-head)"/>
+<path d="M104 52 C93 43 81 41 70 44 C81 47 89 53 95 60 Z" fill="#b3192c"/>
+<circle cx="126" cy="84" r="48" fill="url(#ada-head)"/>
+<ellipse cx="108" cy="58" rx="18" ry="10" fill="#fff" opacity=".24" transform="rotate(-28 108 58)"/>
+<path d="M96 104 C100 74 120 52 148 49" fill="none" stroke="#5a0010" stroke-opacity=".28" stroke-width="1.5"/>
+<circle cx="98" cy="102" r="2.4" fill="#cfd6de" stroke="#6b7480" stroke-width=".8"/>
+<ellipse cx="146" cy="84" rx="24" ry="21" fill="url(#ada-face)"/>
+<path d="M134 92 C141 96 150 97 158 94 M136 99 C143 102 150 103 156 101 M139 105 C144 107 149 107 153 106" fill="none" stroke="#c9bdaf" stroke-width="1.2" stroke-linecap="round"/>
+<circle cx="148" cy="78" r="10.5" fill="none" stroke="#e2d8cb" stroke-width="1.2"/>
+<circle cx="148" cy="78" r="8.5" fill="url(#ada-iris)"/>
+<circle cx="148.5" cy="78.5" r="4.2" fill="#111"/>
+<circle cx="145.5" cy="75.3" r="2.3" fill="#fff"/>
+<circle cx="151.2" cy="81" r="1" fill="#fff" opacity=".85"/>
+<ellipse class="lid" cx="148" cy="78" rx="11" ry="11" fill="#f2ebe1"/>
+<path d="M150 67.5 C151 63.5 152 61 154.5 59 M154 68.5 C156.5 65 158.5 63 161.5 62 M157 72 C160 69.5 162.5 68.5 165.5 68.5" fill="none" stroke="#2a1c1c" stroke-width="2" stroke-linecap="round"/>
+<ellipse cx="153" cy="96" rx="6" ry="3.4" fill="#ff8fb3" opacity=".55"/>
+<path class="jaw" d="M163 99 C176 98 188 100 192 108 C188 116 176 118 166 112 Z" fill="url(#ada-dark)"/>
+<path d="M164 70 C182 62 206 66 210 86 C212 100 204 112 194 114 C198 104 194 96 184 94 C176 93 168 96 162 98 Z" fill="url(#ada-horn)"/>
+<path d="M205 95 C210 101 204 112 194 114 C198 106 199 100 205 95 Z" fill="url(#ada-dark)"/>
+<path d="M170 69 C182 64 198 66 205 76" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="2" stroke-linecap="round"/>
+<ellipse cx="171" cy="75" rx="2.6" ry="1.6" fill="#8a7b6a"/>
+</g>
+</g>
+</svg>{{end}}
