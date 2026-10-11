@@ -58,6 +58,9 @@ func TestThroughLinkFollowsTheLinksEvalSymlinksLeaves(t *testing.T) {
 		`C:\ws\rooted`:   {mode: fs.ModeSymlink, target: `\top`},
 		`C:\ws\onedrive`: {mode: fs.ModeIrregular},
 		`C:\ws\folder`:   {mode: fs.ModeDir | fs.ModeIrregular},
+		`C:\ws\drive`:    {mode: fs.ModeSymlink, target: `D:x`},
+		`C:\ws\unread`:   {mode: fs.ModeSymlink},
+		`C:\ws\denied`:   {err: fs.ErrPermission},
 	})
 	cases := []struct {
 		path, want string
@@ -77,6 +80,15 @@ func TestThroughLinkFollowsTheLinksEvalSymlinksLeaves(t *testing.T) {
 		{`C:\ws\plain\x`, "", false},
 		{`C:\ws\onedrive`, "", false},
 		{`C:\ws\folder\x`, "", false},
+		// What cannot be judged is refused ("", true) rather than judged by
+		// its name: a reparse point gone on past that is not a link Readlink
+		// reads, a link it cannot read, a target relative to another drive's
+		// working directory, and an Lstat error other than "not there".
+		{`C:\ws\onedrive\x`, "", true},
+		{`C:\ws\unread\x`, "", true},
+		{`C:\ws\unread`, "", true},
+		{`C:\ws\drive\a`, "", true},
+		{`C:\ws\denied\x`, "", true},
 	}
 	for _, c := range cases {
 		got, ok := throughLinkWith(c.path, lstat, readlink)

@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,7 +19,9 @@ import (
 // too: EvalSymlinks fails when its target does not exist yet or goes on past
 // a junction, and realPath falls back to a prefix before the link. Other
 // reparse points are irregular as well (OneDrive's files and folders, for
-// one) but are not links: os.Readlink refuses them and they are passed over.
+// one) but are not links: os.Readlink refuses them and they are passed over,
+// unless the path goes on past one. The result is "" with true when a
+// component cannot be judged, and realPath then refuses the path.
 func throughLink(p string) (string, bool) {
 	return throughLinkWith(p, os.Lstat, os.Readlink)
 }
@@ -35,18 +38,27 @@ func throughLinkWith(p string, lstat func(string) (fs.FileInfo, error), readlink
 		}
 		cur = filepath.Join(cur, part)
 		fi, err := lstat(cur)
-		if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return "", false
 		}
-		if typ := fi.Mode().Type(); typ != fs.ModeIrregular && typ != fs.ModeSymlink {
+		if err != nil {
+			return "", true
+		}
+		typ := fi.Mode().Type()
+		if typ != fs.ModeIrregular && typ != fs.ModeSymlink {
 			continue
 		}
 		target, err := readlink(cur)
 		if err != nil {
-			continue
+			if typ == fs.ModeIrregular && i == len(parts)-1 {
+				continue
+			}
+			return "", true
 		}
 		switch {
 		case filepath.IsAbs(target):
+		case filepath.VolumeName(target) != "":
+			return "", true // C:x, relative to that drive's working directory
 		case strings.HasPrefix(target, `\`):
 			target = vol + target // rooted: on the link's own volume
 		default:
