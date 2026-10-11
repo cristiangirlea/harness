@@ -612,7 +612,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-11: #45 reviews: an independent read-only reviewer, and an adversarial security
+- 2026-10-11: #45 reviews (PR #48): an independent read-only reviewer, and an adversarial security
   read in a scratch copy, which found nothing it could get out through (junction chains and
   loops, dangling junctions, 8.3 aliases, `\\?\` targets, a junction to `C:\Windows`; no
   hang). The reviewer's blocking point, fixed: a symbolic link whose target goes on past a
@@ -645,7 +645,7 @@ neither of them follows a run while it happens.
   rights, a share with access-based enumeration) refuses every path for the file tools,
   since a component that cannot be read could be a junction; `NewWorkspace` does not fail
   there, because it also checks the directory for the CLI backends, which do not use it.
-- 2026-10-11: Junctions (#45), found while reviewing the guard for #36. Since Go 1.23 a
+- 2026-10-11: Junctions (#45, PR #48), found while reviewing the guard for #36. Since Go 1.23 a
   Windows mount point (a directory junction, which needs no privilege to make) is an
   irregular file to `os.Lstat`, not a symbolic link, so `filepath.EvalSymlinks` stopped
   resolving it: worse, it fails on a path that goes on past one, and the workspace check's
