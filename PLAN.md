@@ -665,13 +665,15 @@ neither of them follows a run while it happens.
   non-Windows `throughLink` now reads a link `EvalSymlinks` left unresolved and judges the
   path by its target, as Windows' did since #45. It is its own short walk in `links_other.go`,
   not Windows' `throughLinkWith` shared: that one's mount-point and volume rules have no
-  meaning here, and a component that cannot be looked at ends the walk instead of refusing
-  the path, as before (nothing can be followed past it either). Found while writing the
-  test: a target joined as text loses a `..` the system takes after following a link
-  (`s -> evil/../x`, `evil` a link out, read as `x` in the workspace and written outside), so
-  a target with a `..` after a name is refused. A leading `..` is taken from the link's own
-  directory, which is real, and still works. Checked on Linux in a container (the PC's WSL
-  would not start); macOS only by `GOOS=darwin go vet`.
+  meaning here. Found while writing the test: a target joined as text loses a `..` the
+  system takes after following a link (`s -> evil/../x`, `evil` a link out, read as `x` in
+  the workspace and written outside), so a target with a `..` after a name is refused. A
+  leading `..` is taken from the link's own directory, which is real, and still works. Found
+  in review: the walk first ended on any `Lstat` error, but a chain of links whose whole path
+  passes `PATH_MAX` makes every look fail with `ENAMETOOLONG` while the system, following
+  each target on its own, still reaches the end; only a missing component or one under a
+  file ends the walk now, and any other error refuses. Checked on Linux in a container (the
+  PC's WSL would not start); macOS only by `GOOS=darwin go vet`.
 - 2026-10-11: `hrn gc` (#78). Proof of a merge is GitHub's word on the exact commit: a merged
   pull request whose head is the worktree's `HEAD` or contains it, and no open one for the
   branch. Ancestry of the default branch alone was not enough for a branch: a worktree made

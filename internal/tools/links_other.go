@@ -3,10 +3,12 @@
 package tools
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // throughLink finds the first existing component of p that is a symbolic
@@ -19,8 +21,9 @@ import (
 // that .. after following the name, which may be a link too, so the target
 // cannot be judged as text. A leading .. is taken from the link's own
 // directory, which is real. realPath then refuses the path. A component that
-// cannot be looked at (a missing or unsearchable directory) ends the walk:
-// no link past it can be followed either.
+// does not exist, or sits under a file, ends the walk: nothing past it can be
+// followed either. Any other error refuses: a path too long to look at may
+// still be reached, since the system follows each link's target on its own.
 func throughLink(p string) (string, bool) {
 	cur := string(filepath.Separator)
 	parts := strings.Split(strings.Trim(p, string(filepath.Separator)), string(filepath.Separator))
@@ -30,8 +33,11 @@ func throughLink(p string) (string, bool) {
 		}
 		cur = filepath.Join(cur, part)
 		fi, err := os.Lstat(cur)
-		if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			return "", false
+		}
+		if err != nil {
+			return "", true
 		}
 		if fi.Mode().Type() != fs.ModeSymlink {
 			continue
