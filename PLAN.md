@@ -632,7 +632,9 @@ neither of them follows a run while it happens.
   failed on the Windows runner since #53. They seeded the earlier run with a raw
   `t.TempDir()`, which the runner spells in 8.3 short names (`C:\WINDOWS\SERVIC~1\...`), and
   continued from the long spelling, so `followup`'s `samePath` saw two folders. Real runs
-  record the long one: `hrn run`, MCP `run` and `execproto` all go through `NewWorkspace`.
+  record the long one: `hrn run`, MCP `run` and `execproto` go through `NewWorkspace`, and
+  batch and the eval judge record the worktree under `git rev-parse --show-toplevel`, which
+  Git for Windows prints in long names.
   So the tests now seed it the same way (`filepath.EvalSymlinks`, as `followup`'s tests
   do), and `samePath` stays strict, since claude finds a session by the exact folder it was
   started in. The whole suite was run with `TEMP` set to the short spelling of a
