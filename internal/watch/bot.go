@@ -96,7 +96,7 @@ func botLook(runs []runlog.Record, batches []batch.Result, doing map[string]stri
 			if t.Status == batch.StatusRunning && len(t.Attempts) > 0 {
 				last := t.Attempts[len(t.Attempts)-1]
 				if d := doing[last.RunID]; d != "" {
-					it.Doing = backendName(last.Backend) + " " + d
+					it.Doing = backendName(last.Backend) + " is " + d
 				}
 			}
 		}

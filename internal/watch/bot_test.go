@@ -176,6 +176,26 @@ func TestAJustStartedRunWaitsALookAndABatchsRunsAreNotItsOwn(t *testing.T) {
 	}
 }
 
+// What a batch's agent is doing is told as the batch's, in a whole sentence.
+func TestTheBotSaysWhatABatchsAgentIsDoing(t *testing.T) {
+	runID := "20261011-115000-aaaaaa"
+	b := batch.Result{ID: "20261011-114959-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/repo/harness", Tasks: []batch.TaskResult{
+		{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning, Attempts: []batch.Attempt{{Backend: "codex", RunID: runID}}},
+		{ID: "budget", Prompt: "Add the budget", Status: batch.StatusRunning}}}
+	before := lookAt(nil, []batch.Result{b}, nil)
+	after := lookAt(nil, []batch.Result{b}, map[string]string{runID: "reading main.go"})
+	says := announce(before, after, false)
+	if strings.Join(kinds(says), ",") != "working,status" {
+		t.Fatalf("says: %+v", says)
+	}
+	if says[0].Text != "In the batch in harness, Codex is reading main.go." {
+		t.Errorf("working = %q", says[0].Text)
+	}
+	if says[1].Text != "One thing is going: a batch of two tasks in harness, Codex is reading main.go." {
+		t.Errorf("status = %q", says[1].Text)
+	}
+}
+
 // A running batch rewrites its record as each task moves on, and on Windows
 // a read can land on the rename: for that look the record cannot be read.
 // The batch is kept from the look before, or it and its runs would be
