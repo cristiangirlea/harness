@@ -636,9 +636,11 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 			// The partner carries the attempt on in this worktree, as one
 			// more attempt that does not use up a retry.
 			if other := limits.Partner(att.Backend); other != "" && !opts.NoSwitch {
-				if ok, _ := limits.Ready(other, time.Now(), spent); ok {
+				if ok, why := limits.Ready(other, time.Now(), spent); ok {
 					backends = slices.Insert(backends, i+1, other)
 					carry = &att
+				} else {
+					notify(Event{Task: t.ID, Kind: "switch", Text: "not carried on: " + why})
 				}
 			}
 		}

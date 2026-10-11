@@ -31,6 +31,10 @@ func (s scripted) Run(_ context.Context, task agent.Task, _ func(agent.Event)) a
 // so no real CLI can run. codex reaches its limit; claude finishes.
 func standIn(t *testing.T) {
 	t.Helper()
+	// A key in the environment would keep the partner from standing in.
+	for _, name := range append(limits.MeteredEnv("claude"), limits.MeteredEnv("codex")...) {
+		t.Setenv(name, "")
+	}
 	for _, s := range []scripted{
 		{"codex", func(agent.Task) agent.Result {
 			return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}

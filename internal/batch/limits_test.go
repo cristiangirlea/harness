@@ -18,6 +18,10 @@ import (
 // rest and finishes.
 func standIn(t *testing.T) {
 	t.Helper()
+	// A key in the environment would keep the partner from standing in.
+	for _, name := range append(limits.MeteredEnv("claude"), limits.MeteredEnv("codex")...) {
+		t.Setenv(name, "")
+	}
 	for _, s := range []stub{
 		{"codex", func(_ context.Context, task agent.Task) agent.Result {
 			_ = os.WriteFile(filepath.Join(task.Dir, "half.txt"), []byte("first half\n"), 0o644)
@@ -180,5 +184,25 @@ func TestWhenBothRunOutInATaskNothingStartsAThirdTime(t *testing.T) {
 	}
 	if tr.Status != StatusFail || strings.Join(got, ",") != "codex,claude" {
 		t.Fatalf("status %s, attempts %v: after both ran out, the retries are skipped", tr.Status, got)
+	}
+}
+
+// With claude set to bill per token, a limited attempt on codex is not carried
+// on there, and the batch says why.
+func TestALimitedAttemptIsNotCarriedOnToAPartnerThatBillsPerToken(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+	res, events := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "kept", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusFail || len(tr.Attempts) != 1 || tr.Attempts[0].Backend != "codex" {
+		t.Fatalf("task = %+v, want one limited attempt on codex and nothing on claude", tr)
+	}
+	switches := eventTexts(events, "switch")
+	if !strings.Contains(switches, "not carried on") || !strings.Contains(switches, "ANTHROPIC_API_KEY") {
+		t.Errorf("switch events = %q, want the reason", switches)
+	}
+	if strings.Contains(switches, "fake-secret-value") {
+		t.Errorf("an event shows the key's value: %q", switches)
 	}
 }

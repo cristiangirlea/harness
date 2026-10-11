@@ -302,11 +302,22 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
   deleting the file forgets it.
 - Nothing moves to `api`, which is billed per token, or to gemini or opencode. If the
   other CLI is not installed, or is limited too, the run stays `limited` and says so.
+- Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
+  or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
+  the plan, and so does codex with `CODEX_API_KEY` or `OPENAI_API_KEY`; that CLI does not
+  stand in, and the run says which variable stopped it. hrn cannot see a CLI logged in with
+  an API key in its own files (`codex login --with-api-key`, claude's `apiKeyHelper`): use
+  `--no-switch` there.
 
-`--no-switch` (field `no_switch`) keeps a run on its backend. `hrn eval` always sets it:
-a cell measures its own backend. Limits are recognised by the CLIs' wording, which is
-matched in `internal/agent/limit.go` against messages seen in real runs; a new wording is
-an `error` until it is added there.
+The same mode is not the same permissions on both: `auto` lets codex run commands in its
+sandbox but claude only edit files, and codex's `readonly` reads the whole disk (see the
+table above). A carried-on run's `--timeout` starts again, so the two runs together can
+take twice as long. `--no-switch` (field `no_switch`) keeps a run on its backend, and on the
+vendor it was meant for. `hrn eval` always sets it: a cell measures its own backend. `hrn
+exec` never switches; its supervisor decides. Limits are recognised by the CLIs' wording,
+which is matched in `internal/agent/limit.go` against messages seen in real runs; a new
+wording is an `error` until it is added there. A remembered time more than eight days ahead
+is ignored, as a CLI's would be.
 
 ### Project instructions
 

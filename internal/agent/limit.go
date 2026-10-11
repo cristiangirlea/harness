@@ -30,9 +30,9 @@ var (
 	resetClock = regexp.MustCompile(`(?i)resets (?:on )?(?:` + monthName + ` (?:at )?)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m(?:\s*\(([^)]+)\))?`)
 )
 
-// maxLimitWindow is the furthest ahead a reset time is believed. The longest
+// MaxLimitWindow is the furthest ahead a reset time is believed. The longest
 // window either plan has is a week; a time beyond that is a misread.
-const maxLimitWindow = 8 * 24 * time.Hour
+const MaxLimitWindow = 8 * 24 * time.Hour
 
 // usageLimit reports whether msg is a CLI saying its plan's usage limit was
 // reached, and when the limit lifts. resets is zero when the message gives no
@@ -44,7 +44,7 @@ func usageLimit(msg string, now time.Time) (limited bool, resets time.Time) {
 	}
 	t := resetTime(msg, now)
 	// A minute's grace: the CLI works the time out a moment before hrn reads it.
-	if t.Before(now.Add(-time.Minute)) || t.After(now.Add(maxLimitWindow)) {
+	if t.Before(now.Add(-time.Minute)) || t.After(now.Add(MaxLimitWindow)) {
 		return true, time.Time{}
 	}
 	return true, t

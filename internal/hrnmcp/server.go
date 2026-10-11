@@ -88,7 +88,9 @@ func runTool(defaultDir string) mcp.Tool {
 		Name:  "run",
 		Title: "Run a task",
 		Description: "Run a coding task with an agent backend in a workspace directory and wait for it to finish. " +
-			"Returns the final answer, a summary line (status, tokens, cost, duration) and the run id.",
+			"Returns the final answer, a summary line (status, tokens, cost, duration) and the run id. " +
+			"A claude or codex run that reaches its plan's usage limit is carried on by the other one, " +
+			"which then sees the workspace, unless no_switch is set.",
 		InputSchema: map[string]any{
 			"type":       "object",
 			"properties": runProperties(enum, defaultDir),

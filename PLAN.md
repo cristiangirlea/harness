@@ -1330,3 +1330,16 @@ neither of them follows a run while it happens.
   panicked the next note. Not changed: switching back to a backend earlier in the chain
   runs the model the chain chose for it, as `--continue -b` does; the reviewer wanted it
   cleared. The README says so.
+- 2026-10-11: #46 security review (Claude, read-only), 1 blocking. The switch could start
+  a partner that bills per token: claude prefers `ANTHROPIC_API_KEY` (and the other API and
+  cloud variables) to the plan, codex `CODEX_API_KEY`, and nobody chose that backend. Now
+  such a partner does not stand in and the run names the variable, never its value; a CLI
+  logged in with a key in its own files cannot be seen, so the README says to use
+  `--no-switch` there. Also from it: a remembered time more than eight days ahead is
+  ignored, as one from a CLI is; a batch says why it does not carry an attempt on; the MCP
+  `run` tool says a run can move to the other vendor. Left as notes in the README: the same
+  mode is not the same permissions on both, and a carried-on run's timeout starts again. A
+  limit read from stderr alone is still believed (bounded by the eight days). Merging main
+  (#50 to #53) needed: the carry-on's record error is the one the MCP answer reports, the
+  effort test accepts `limited` from codex, and exec's protocol lists the statuses and that
+  exec never switches.

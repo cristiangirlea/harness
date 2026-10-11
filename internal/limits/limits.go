@@ -13,6 +13,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,11 +124,13 @@ func writeFile(name string, data []byte) error {
 }
 
 // Until is when backend's remembered limit lifts, or zero when none holds at now.
+// A time further ahead than a CLI's reset time is believed is not one hrn
+// wrote; it would move the backend's runs for as long as the file says.
 func Until(backend string, now time.Time) time.Time {
 	mu.RLock()
 	m := load()
 	mu.RUnlock()
-	if e, ok := m[backend]; ok && e.Until.After(now) {
+	if e, ok := m[backend]; ok && e.Until.After(now) && !e.Until.After(now.Add(agent.MaxLimitWindow)) {
 		return e.Until
 	}
 	return time.Time{}
@@ -159,7 +163,33 @@ func (s Spent) out(backend string, now time.Time) string {
 	return ""
 }
 
-// Ready reports whether backend can take work over at now, or why not.
+// metered lists, for each partner, the variables under which its CLI bills
+// something other than the owner's plan: an API key, which the CLI prefers to
+// the plan's login, or a cloud account. codex exec reads CODEX_API_KEY, and
+// older releases OPENAI_API_KEY.
+var metered = map[string][]string{
+	"claude": {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"},
+	"codex":  {"CODEX_API_KEY", "OPENAI_API_KEY"},
+}
+
+// MeteredEnv names the variables that keep backend from standing in for its
+// partner: with one of them set, its CLI would bill per token, not to a plan.
+func MeteredEnv(backend string) []string { return slices.Clone(metered[backend]) }
+
+// meteredBy names the first of backend's metered variables that is set, or "".
+// Only its name is ever shown.
+func meteredBy(backend string) string {
+	for _, name := range metered[backend] {
+		if v := os.Getenv(name); v != "" && v != "0" && !strings.EqualFold(v, "false") {
+			return name
+		}
+	}
+	return ""
+}
+
+// Ready reports whether backend can take work over at now, or why not. Nobody
+// chose the backend that takes over, so it must bill to a plan as the one it
+// stands in for does.
 func Ready(backend string, now time.Time, spent Spent) (bool, string) {
 	b, err := agent.Get(backend)
 	if err != nil {
@@ -167,6 +197,9 @@ func Ready(backend string, now time.Time, spent Spent) (bool, string) {
 	}
 	if _, err := b.Detect(); err != nil {
 		return false, backend + " is not installed"
+	}
+	if name := meteredBy(backend); name != "" {
+		return false, fmt.Sprintf("%s would bill per token, not to a plan, since %s is set", backend, name)
 	}
 	if why := spent.out(backend, now); why != "" {
 		return false, why

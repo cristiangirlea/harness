@@ -36,6 +36,10 @@ func (s stub) Run(context.Context, agent.Task, func(agent.Event)) agent.Result {
 // can reach a real CLI, and puts the real ones back afterwards.
 func standIn(t *testing.T, claudeInstalled, codexInstalled bool) {
 	t.Helper()
+	// A key in the environment would keep the partner from standing in.
+	for _, name := range append(MeteredEnv("claude"), MeteredEnv("codex")...) {
+		t.Setenv(name, "")
+	}
 	for _, s := range []stub{{"claude", claudeInstalled}, {"codex", codexInstalled}} {
 		orig, err := agent.Get(s.name)
 		if err != nil {
@@ -356,5 +360,74 @@ func TestNotesFromOtherProcessesDoNotFail(t *testing.T) {
 		if err := cmd.Wait(); err != nil {
 			t.Errorf("a process noting a limit failed: %v", err)
 		}
+	}
+}
+
+// A partner whose CLI would bill per token is no stand-in: nobody chose it, and
+// the switch is for the plans. Only the variable's name is ever shown.
+func TestAPartnerThatWouldBillPerTokenDoesNotStandIn(t *testing.T) {
+	for _, c := range []struct{ limited, partner, key string }{
+		{"codex", "claude", "ANTHROPIC_API_KEY"},
+		{"codex", "claude", "CLAUDE_CODE_USE_BEDROCK"},
+		{"claude", "codex", "CODEX_API_KEY"},
+	} {
+		t.Run(c.key, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, true, true)
+			t.Setenv(c.key, "fake-secret-value")
+			now := time.Now()
+
+			ok, why := Ready(c.partner, now, nil)
+			if ok || !strings.Contains(why, c.key) || !strings.Contains(why, "per token") {
+				t.Fatalf("Ready(%s) = %v, %q; want refused, naming %s", c.partner, ok, why, c.key)
+			}
+			if strings.Contains(why, "fake-secret-value") {
+				t.Fatalf("the reason shows the variable's value: %q", why)
+			}
+
+			_ = Note(c.limited, agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)})
+			if pick, _, both := Pick(c.limited, now, nil); pick != c.limited || both {
+				t.Errorf("Pick(%s) = %q (both out %v); want it to stay", c.limited, pick, both)
+			}
+
+			prev := agent.Task{Prompt: "p", Dir: t.TempDir()}
+			rec, err := runlog.Create(c.limited, prev)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := agent.Result{Backend: c.limited, Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}
+			if err := rec.Close(res); err != nil {
+				t.Fatal(err)
+			}
+			next, why, err := After(rec.ID(), c.limited, prev, res)
+			if err != nil || next != nil || !strings.Contains(why, "per token") {
+				t.Errorf("After = %v, %q, %v; want no carry-on and the reason", next, why, err)
+			}
+		})
+	}
+	// Set to 0 or false, the switch is off, and so is the refusal.
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	t.Setenv("CLAUDE_CODE_USE_VERTEX", "0")
+	if ok, why := Ready("claude", time.Now(), nil); !ok {
+		t.Errorf("CLAUDE_CODE_USE_VERTEX=0 refused claude: %s", why)
+	}
+}
+
+// A time hrn would not have believed from a CLI is not believed from the file.
+func TestARememberedLimitFurtherAheadThanACLICouldSayIsIgnored(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	now := time.Now()
+	data := fmt.Sprintf(`{"codex":{"until":%q},"claude":{"until":%q}}`,
+		now.Add(agent.MaxLimitWindow+time.Hour).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339))
+	if err := writeFile(home+"/limits.json", []byte(data)); err != nil {
+		t.Fatal(err)
+	}
+	if got := Until("codex", now); !got.IsZero() {
+		t.Errorf("codex Until = %v, from a time beyond %v ahead", got, agent.MaxLimitWindow)
+	}
+	if Until("claude", now).IsZero() {
+		t.Error("claude's ordinary limit was dropped with it")
 	}
 }
