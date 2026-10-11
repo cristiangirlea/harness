@@ -117,7 +117,7 @@ func TestResumingThreadsSkipsOneThatCannotBeResumed(t *testing.T) {
 			return errors.New("thread exited before it could be opened or resumed")
 		}
 		return nil
-	})
+	}, nil)
 	if err != nil || attempts < 2 {
 		t.Fatalf("want later threads resumed after one failure: attempts=%d err=%v", attempts, err)
 	}
@@ -126,8 +126,23 @@ func TestResumingThreadsSkipsOneThatCannotBeResumed(t *testing.T) {
 func TestResumingThreadsFailsWhenNoneCanBeResumed(t *testing.T) {
 	err := resumeInitialThreadWith(uint32(os.Getpid()), func(uint32) error {
 		return errors.New("unreadable thread")
-	})
+	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "unreadable thread") {
 		t.Fatalf("want the failure when no thread could be resumed: %v", err)
+	}
+}
+
+func TestResumingThreadsReportsFailuresEvenWhenAnotherThreadSucceeds(t *testing.T) {
+	attempts := 0
+	var warnings []string
+	err := resumeInitialThreadWith(uint32(os.Getpid()), func(uint32) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("access denied opening the initial thread")
+		}
+		return nil
+	}, func(err error) { warnings = append(warnings, err.Error()) })
+	if err != nil || attempts < 2 || len(warnings) != 1 || !strings.Contains(warnings[0], "thread") || !strings.Contains(warnings[0], "access denied") {
+		t.Fatalf("successful partial resume must retain its diagnostic: attempts=%d warnings=%v err=%v", attempts, warnings, err)
 	}
 }

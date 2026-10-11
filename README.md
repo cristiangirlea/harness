@@ -112,6 +112,12 @@ On Unix, Ctrl+C, SIGTERM and SIGHUP cancel runs. A process in the tree that read
 terminal (such as a credential or host-key prompt) stops because the tree is not the
 terminal's foreground process group.
 
+On Windows, closing the console, logging off or shutting down reaches hrn as
+SIGTERM. It has a few seconds to save the cancelled record while the job ends the
+process tree. On Linux with procfs mounted with hidepid=2, a tree member owned by
+another user (sudo or a setuid helper) is invisible to the check, so "gone" can be
+optimistic.
+
 Where a cost comes from depends on the backend. The claude and opencode CLIs report one
 themselves; on a subscription that figure is what the run would cost at API list
 prices, not a charge. codex and gemini report none. The API returns token counts only,

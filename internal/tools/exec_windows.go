@@ -68,9 +68,10 @@ type jobObjectExtendedLimitInformation struct {
 
 // Tree holds the Job Object containing a command and its descendants.
 type Tree struct {
-	mu        sync.Mutex
-	job       syscall.Handle
-	contained bool
+	mu            sync.Mutex
+	job           syscall.Handle
+	contained     bool
+	startWarnings []string
 }
 
 // StartTree starts cmd suspended, assigns it to a kill-on-close job, then
@@ -128,7 +129,9 @@ func startTree(cmd *exec.Cmd, t *Tree) (*Tree, error) {
 			t.close()
 		}
 	}
-	if err := resumeInitialThread(uint32(cmd.Process.Pid)); err != nil {
+	if err := resumeInitialThread(uint32(cmd.Process.Pid), func(err error) {
+		t.startWarnings = append(t.startWarnings, err.Error())
+	}); err != nil {
 		// Never leave a suspended process behind on a failed start.
 		t.close()
 		_ = cmd.Process.Kill()
@@ -152,11 +155,11 @@ type threadEntry32 struct {
 // debugger) may have added one before this runs, and the snapshot does not say
 // which is the initial thread. So every thread of the process is resumed:
 // resuming a thread that was not suspended changes nothing.
-func resumeInitialThread(pid uint32) error {
-	return resumeInitialThreadWith(pid, resumeThread)
+func resumeInitialThread(pid uint32, warning func(error)) error {
+	return resumeInitialThreadWith(pid, resumeThread, warning)
 }
 
-func resumeInitialThreadWith(pid uint32, resume func(uint32) error) error {
+func resumeInitialThreadWith(pid uint32, resume func(uint32) error, warning func(error)) error {
 	snapshot, _, err := procCreateToolhelp32Snapshot.Call(snapThread, 0)
 	if snapshot == ^uintptr(0) {
 		return fmt.Errorf("snapshot threads for process %d: %w", pid, err)
@@ -172,6 +175,9 @@ func resumeInitialThreadWith(pid uint32, resume func(uint32) error) error {
 				// An injected thread may exit after the snapshot or deny
 				// access. Keep trying the other threads of the process.
 				resumeErr = err
+				if warning != nil {
+					warning(fmt.Errorf("resume process %d thread %d: %w", pid, entry.ThreadID, err))
+				}
 			} else {
 				resumed++
 			}
@@ -220,6 +226,14 @@ func (t *Tree) Contained() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.contained
+}
+
+// StartWarnings reports per-thread failures even when another thread resumed.
+// These explain a possible suspended initial thread without failing the start.
+func (t *Tree) StartWarnings() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.startWarnings...)
 }
 
 // Kill terminates every process in the job, even after the command has exited.

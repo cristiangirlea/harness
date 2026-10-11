@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,80 @@ func TestProcStatParserHandlesSpacesParenthesesAndZombies(t *testing.T) {
 		if _, _, err := parseProcStat(line); err == nil {
 			t.Errorf("accepted malformed stat: %q", line)
 		}
+	}
+}
+
+func TestProcScanSkipsEntriesDeniedByPermissions(t *testing.T) {
+	root := t.TempDir()
+	for _, pid := range []string{"1", "2"} {
+		if err := os.Mkdir(filepath.Join(root, pid), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, denied := range []error{syscall.EACCES, syscall.EPERM, os.ErrPermission} {
+		t.Run(denied.Error(), func(t *testing.T) {
+			read := func(path string) ([]byte, error) {
+				if filepath.Base(filepath.Dir(path)) == "2" {
+					return nil, &os.PathError{Op: "open", Path: path, Err: denied}
+				}
+				return []byte("1 (our command) S 0 42 0"), nil
+			}
+			n, err := countRunningGroupWith(root, 42, read)
+			if err != nil || n != 1 {
+				t.Fatalf("an unreadable unrelated entry must be skipped: n=%d err=%v", n, err)
+			}
+		})
+	}
+}
+
+func TestWaitGoneFallsBackToTheProbeWhenTheScanFails(t *testing.T) {
+	for _, scanErr := range []error{syscall.EACCES, errors.New("unavailable procfs"), errors.New("malformed stat")} {
+		t.Run(scanErr.Error(), func(t *testing.T) {
+			calls := 0
+			started := time.Now()
+			err := waitGroupGone(42, 30*time.Millisecond, func() error { return nil }, func() (int, error) {
+				calls++
+				return 0, scanErr
+			})
+			if err == nil || !strings.Contains(err.Error(), "at least 1 process still alive") || strings.Contains(err.Error(), "query live members") || calls < 2 || time.Since(started) < 30*time.Millisecond {
+				t.Fatalf("an unavailable count must use bounded probe-based polling: calls=%d err=%v", calls, err)
+			}
+		})
+	}
+}
+
+func TestWaitGoneKeepsPollingWhenProcFixturesAreUnreadable(t *testing.T) {
+	root := t.TempDir()
+	for _, pid := range []string{"1", "2"} {
+		if err := os.Mkdir(filepath.Join(root, pid), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := 0
+	read := func(path string) ([]byte, error) {
+		if filepath.Base(filepath.Dir(path)) == "1" {
+			// An unrelated user's listed entry is unreadable under hidepid=1.
+			return nil, &os.PathError{Op: "open", Path: path, Err: syscall.EACCES}
+		}
+		// If the remaining scan also fails, no exact count is available.
+		return nil, &os.PathError{Op: "read", Path: path, Err: syscall.EIO}
+	}
+	started := time.Now()
+	err := waitGroupGone(42, 30*time.Millisecond, func() error { return nil }, func() (int, error) {
+		calls++
+		return countRunningGroupWith(root, 42, read)
+	})
+	if err == nil || !strings.Contains(err.Error(), "at least 1 process still alive") || strings.Contains(err.Error(), "query") || calls < 2 || time.Since(started) < 30*time.Millisecond {
+		t.Fatalf("unreadable fixtures must keep polling with the probe's lower bound: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestWaitGoneBacksOffDuringLongWaits(t *testing.T) {
+	calls := 0
+	started := time.Now()
+	err := waitGroupGone(42, 350*time.Millisecond, func() error { calls++; return nil }, func() (int, error) { return 1, nil })
+	if err == nil || calls < 2 || calls > 12 || time.Since(started) < 350*time.Millisecond {
+		t.Fatalf("want fast initial polls followed by fewer scans: calls=%d elapsed=%s err=%v", calls, time.Since(started), err)
 	}
 }
 

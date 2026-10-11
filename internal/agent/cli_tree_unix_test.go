@@ -79,6 +79,16 @@ func TestCLICancellationBoundsReadsWhenAnEscapedChildKeepsStdoutOpen(t *testing.
 	done := make(chan Result, 1)
 	go func() { done <- backend.Run(ctx, Task{Dir: t.TempDir()}, func(Event) {}) }()
 	id := readTreeIdentity(t, file)
+	// This child deliberately leaves the managed group; own its cleanup
+	// explicitly even if the bounded-read assertion fails.
+	t.Cleanup(func() {
+		born, alive, err := treeProcessState(id.PID)
+		if err == nil && alive && born == id.Born {
+			if err := syscall.Kill(id.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				t.Errorf("kill escaped child %d: %v", id.PID, err)
+			}
+		}
+	})
 	cancel()
 	select {
 	case res := <-done:

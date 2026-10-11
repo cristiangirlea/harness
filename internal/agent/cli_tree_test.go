@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -157,4 +158,17 @@ func TestCLICancellationKillsChildrenAfterTheCLIHasExited(t *testing.T) {
 		t.Fatalf("want canceled with verified cleanup, got %+v", res)
 	}
 	assertTreeProcessGone(t, id)
+}
+
+type startupInfoTree struct{ warnings []string }
+
+func (startupInfoTree) Contained() bool           { return true }
+func (s startupInfoTree) StartWarnings() []string { return s.warnings }
+
+func TestCLIReportsPartialThreadResumeAsStartupInfo(t *testing.T) {
+	var events []Event
+	emitCLITreeStartInfo(startupInfoTree{warnings: []string{"resume process 10 thread 41: access denied"}}, func(e Event) { events = append(events, e) })
+	if len(events) != 1 || events[0].Kind != EventInfo || events[0].Time.IsZero() || !strings.Contains(events[0].Text, "thread 41: access denied") {
+		t.Fatalf("want the startup failure as an info event: %+v", events)
+	}
 }

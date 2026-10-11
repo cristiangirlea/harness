@@ -42,6 +42,9 @@ func StartTree(cmd *exec.Cmd) (*Tree, error) {
 // Contained reports whether the command was placed in a process group.
 func (t *Tree) Contained() bool { return true }
 
+// StartWarnings has no thread-resume diagnostics on Unix.
+func (t *Tree) StartWarnings() []string { return nil }
+
 // Close has no group handle to release on Unix.
 func (t *Tree) Close() {}
 

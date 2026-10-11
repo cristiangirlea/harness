@@ -29,10 +29,14 @@ func parseProcStat(line string) (pgid int, state byte, err error) {
 	return pgid, fields[0][0], nil
 }
 
-// countRunningGroup scans Linux procfs. A vanished entry is harmless, but an
-// unreadable or malformed entry cannot prove that all members have stopped.
+// countRunningGroup scans Linux procfs. Vanished and permission-denied entries
+// are skipped; other failures make the caller fall back to the group probe.
 // Taking a root argument also lets tests use fixtures on Windows.
 func countRunningGroup(root string, pgid int) (int, error) {
+	return countRunningGroupWith(root, pgid, os.ReadFile)
+}
+
+func countRunningGroupWith(root string, pgid int, read func(string) ([]byte, error)) (int, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return 0, err
@@ -42,8 +46,9 @@ func countRunningGroup(root string, pgid int) (int, error) {
 		if _, err := strconv.Atoi(entry.Name()); err != nil {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(root, entry.Name(), "stat"))
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		data, err := read(filepath.Join(root, entry.Name(), "stat"))
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) ||
+			errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
 			continue
 		}
 		if err != nil {

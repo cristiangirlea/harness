@@ -3,9 +3,15 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"syscall"
+	"testing"
 	"unsafe"
+
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 var treeTestKernel = syscall.NewLazyDLL("kernel32.dll")
@@ -30,4 +36,11 @@ func treeProcessState(pid int) (string, bool, error) {
 		return "", false, err
 	}
 	return fmt.Sprintf("%d:%d", created.HighDateTime, created.LowDateTime), code == 259, nil
+}
+
+func TestCLIStopReportsUnavailableContainmentOnce(t *testing.T) {
+	err := stopCLITree(&tools.Tree{}, context.Canceled)
+	if err == nil || strings.Count(err.Error(), "not contained") != 1 || strings.Contains(err.Error(), "kill process tree") || !errors.Is(err, context.Canceled) {
+		t.Fatalf("want one missing-containment explanation preserving cancellation: %v", err)
+	}
 }

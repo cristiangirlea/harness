@@ -11,6 +11,8 @@ import (
 // Windows. Linux supplies a live-member count; other Unix systems only probe.
 func waitGroupGone(pgid int, timeout time.Duration, probe func() error, countLive func() (int, error)) error {
 	deadline := time.Now().Add(timeout)
+	delay := 10 * time.Millisecond
+	polls := 0
 	for {
 		err := probe()
 		if errors.Is(err, syscall.ESRCH) {
@@ -26,9 +28,12 @@ func waitGroupGone(pgid int, timeout time.Duration, probe func() error, countLiv
 			var countErr error
 			live, countErr = countLive()
 			if countErr != nil {
-				return fmt.Errorf("query live members of process group %d: %w", pgid, countErr)
+				// Procfs can be restricted or unavailable. Its failure says
+				// nothing about the group's lifetime; retain the probe's
+				// lower bound and keep waiting to the same deadline.
+				exact, live = false, 1
 			}
-			if live == 0 {
+			if exact && live == 0 {
 				return nil
 			}
 		}
@@ -41,6 +46,10 @@ func waitGroupGone(pgid int, timeout time.Duration, probe func() error, countLiv
 			}
 			return fmt.Errorf("process group %d: at least 1 process still alive after %s", pgid, timeout)
 		}
-		time.Sleep(min(10*time.Millisecond, time.Until(deadline)))
+		time.Sleep(min(delay, time.Until(deadline)))
+		polls++
+		if polls >= 3 {
+			delay = min(2*delay, 100*time.Millisecond)
+		}
 	}
 }
