@@ -9,12 +9,15 @@ step's result in one line; on a failure, show the error text and fix it before r
 go vet ./...
 go build ./...
 go test -count=1 ./...
-go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=10s ./internal/agent
-go test -run='^$' -fuzz=FuzzCodec -fuzztime=10s ./internal/mcp
+go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=10s -parallel=4 ./internal/agent
+go test -run='^$' -fuzz=FuzzCodec -fuzztime=10s -parallel=4 ./internal/mcp
 bash -n .github/release.sh && bash -n scripts/api-check.sh
 bash .github/release.sh
-test -z "$(gofmt -l .)"
+test -z "$(git ls-files -co --exclude-standard -- '*.go' | xargs -r gofmt -l)"
 ```
+
+The gofmt step lists the repository's own Go files, so it does not walk batch worktrees under
+`.hrn/worktrees`; CI's `gofmt -l .` sees the same files on a clean checkout.
 
 CI also runs `go test -race -count=1 ./...` on Linux. It needs cgo: run it only where
 `go env CGO_ENABLED` prints 1 and a C compiler is present; on the owner's Windows PC report it as

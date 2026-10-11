@@ -77,13 +77,11 @@
       "PowerShell(go env)"
     ],
     "ask": [
-      "Bash(git tag *)",
       "Bash(gh pr create *)",
       "Bash(hrn run *)",
       "Bash(hrn batch *)",
       "Bash(hrn eval *)",
       "Bash(go run ./cmd/hrn *)",
-      "PowerShell(git tag *)",
       "PowerShell(gh pr create *)",
       "PowerShell(hrn run *)",
       "PowerShell(hrn batch *)",
@@ -153,7 +151,11 @@
       "Bash(gh pr merge *--auto*)",
       "Bash(gh pr merge *--admin*)",
       "PowerShell(gh pr merge *--auto*)",
-      "PowerShell(gh pr merge *--admin*)"
+      "PowerShell(gh pr merge *--admin*)",
+      "Bash(git tag *)",
+      "PowerShell(git tag *)",
+      "Bash(git push *--follow-tags*)",
+      "PowerShell(git push *--follow-tags*)"
     ]
   },
   "hooks": {

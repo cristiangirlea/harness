@@ -35,19 +35,21 @@ go vet ./...
 go build ./...
 go test -count=1 ./...
 go test -race -count=1 ./...                                  # Linux only in CI
-go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=10s ./internal/agent
-go test -run='^$' -fuzz=FuzzCodec -fuzztime=10s ./internal/mcp
+go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=10s -parallel=4 ./internal/agent
+go test -run='^$' -fuzz=FuzzCodec -fuzztime=10s -parallel=4 ./internal/mcp
 bash -n .github/release.sh && bash -n scripts/api-check.sh
 bash .github/release.sh                                       # release dry run, writes dist/
-test -z "$(gofmt -l .)"
+test -z "$(gofmt -l .)"                                       # /check: tracked files only
 ```
 
 `-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 ./...` there and leave
-`-race` to CI. Pull requests test on Linux only (`vars.CI_RUNNER`, the cluster); pushes to `main`
-also run the Windows leg (`vars.CI_RUNNER_WINDOWS`, a runner on the owner's desktop with no container,
-so only merged code reaches it). Both variables are set; the hosted fallbacks in `runs-on` only
-apply if one is removed. Don't add hosted jobs. A `v*` tag runs `release.yml` (GitHub-hosted),
-which tests, builds with `release.sh` and publishes the release.
+`-race` to CI. CI runs only on the owner's runners: pull requests test on Linux only
+(`vars.CI_RUNNER`, the cluster's scale set); pushes to `main` also run the Windows leg
+(`vars.CI_RUNNER_WINDOWS`, a runner on the owner's desktop with no container, so only merged code
+reaches it). `ubuntu-latest`/`windows-latest` in the matrix are leg names mapped to those runners;
+without `CI_RUNNER` the job is skipped. A `v*` tag runs `release.yml` on `CI_RUNNER` too (skipped
+without it): vet, tests, `release.sh`, then `gh release create`. Never add a GitHub-hosted runner
+or a fallback to one.
 
 ## Rules of this repository
 
