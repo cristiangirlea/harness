@@ -59,6 +59,20 @@ func TestGuardBlocks(t *testing.T) {
 		"tofu destroy":                           "deploy",
 		"helm upgrade --install app ./chart":     "deploy",
 		"helm uninstall app":                     "deploy",
+		"npm run deploy:prod":                    "deploy",
+		"npm run deploy-docs-preview --dry-run":  "deploy", // a project's deploy-something is a deploy too
+		"bun run deploy":                         "deploy",
+		// Steering a push around the guarded environment's dead end.
+		"git config remote.origin.pushurl https://github.com/o/r": "git-push",
+		"git config --global url.https://x/.pushInsteadOf y":      "git-push",
+		"git -c url.a.PushInsteadOf=b fetch":                      "git-push",
+		"unset GIT_CONFIG_COUNT && git fetch":                     "guard-env",
+		`echo "$GIT_CONFIG_KEY_0"`:                                "guard-env",
+		"GIT_CONFIG_PARAMETERS= git status":                       "guard-env",
+		"env -u GH_CONFIG_DIR gh pr view 1":                       "guard-env",
+		"$env:gh_config_dir = ''":                                 "guard-env", // PowerShell, any case
+		"export NPM_CONFIG_USERCONFIG=~/.npmrc":                   "guard-env",
+		"KUBECONFIG=~/.kube/config kubectl get pods":              "guard-env",
 	} {
 		if got := Guard(command); got != want {
 			t.Errorf("Guard(%q) = %q, want %q", command, got, want)
@@ -90,7 +104,11 @@ func TestGuardAllows(t *testing.T) {
 		"npx wrangler dev",
 		"kubectl get pods",
 		"docker build -t app .",
-		"npm run deploy-docs-preview --dry-run", // the guard reads deploy as a command, not a word in a name
+		"npm run build",
+		"npm run predeploy-check", // deploy inside a word is not the script's name
+		"git config user.name hrn",
+		"git config --get remote.origin.url",
+		"GIT_TERMINAL_PROMPT=0 git fetch origin", // the prompt switches are not logins
 		"terraform plan",
 		"tofu validate",
 		"helm template ./chart",
@@ -120,7 +138,7 @@ func TestRunCommandGuard(t *testing.T) {
 		t.Errorf("Refuse = %q, want sudo", rule)
 	}
 	out, err := call(t, ws, run, map[string]any{"command": "touch marker.txt; sudo true"})
-	if err == nil || !strings.Contains(err.Error(), "command guard (sudo)") {
+	if err == nil || !strings.Contains(err.Error(), "hrn guard (sudo)") {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
 	if _, statErr := os.Stat(filepath.Join(ws.Root, "marker.txt")); statErr == nil {
@@ -156,13 +174,15 @@ func TestRunCommandRunsUnderTheGuardedEnvironment(t *testing.T) {
 	t.Setenv("GH_TOKEN", "ghp_should_not_leak")
 	ws, tl := setup(t)
 	run := tl["run_command"]
-	show := map[string]any{"command": `echo "key=[$ANTHROPIC_API_KEY] gh=[$GH_TOKEN] cfg=[$GIT_CONFIG_COUNT]"`}
+	// The guard-env rule refuses a command that names the guard's variables,
+	// so the prefixes here stop short of them.
+	show := map[string]any{"command": `env | grep -E '^(ANTHROPIC_API|GH_TOK|GIT_CONFIG_C)'`}
 	out, err := call(t, ws, run, show)
-	if err != nil || !strings.Contains(out, "key=[] gh=[]") || strings.Contains(out, "cfg=[]") {
+	if err != nil || strings.Contains(out, "should-not-leak") || strings.Contains(out, "should_not_leak") || !strings.Contains(out, "GIT_CONFIG_COUNT=") {
 		t.Fatalf("under the guard the command saw %q (%v); want no key, no token, git's push guard", out, err)
 	}
 	ws.AllowDangerous = true
-	if out, err := call(t, ws, run, show); err != nil || !strings.Contains(out, "key=[sk-ant-should-not-leak] gh=[ghp_should_not_leak]") {
+	if out, err := call(t, ws, run, show); err != nil || !strings.Contains(out, "ANTHROPIC_API_KEY=sk-ant-should-not-leak") || !strings.Contains(out, "GH_TOKEN=ghp_should_not_leak") {
 		t.Fatalf("with allow_dangerous the command saw %q (%v); want the operator's environment", out, err)
 	}
 }

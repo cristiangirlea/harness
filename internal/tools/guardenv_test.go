@@ -29,14 +29,21 @@ func TestTheGuardedEnvironmentTakesAwayPublishing(t *testing.T) {
 		"GH_TOKEN=ghp_x", "github_token=ghp_y", "CLOUDFLARE_API_TOKEN=cf", "AWS_SECRET_ACCESS_KEY=aws",
 		"NPM_TOKEN=npm", "SSH_AUTH_SOCK=/tmp/agent.sock", "ANTHROPIC_API_KEY=sk", "GEMINI_API_KEY=g",
 		"OPENROUTER_API_KEY=or", "GITLAB_TOKEN=gl", "MY_SERVICE_SECRET=s", "DB_PASSWORD=p",
-		"CLAUDE_CODE_OAUTH_TOKEN=claude-plan-login", // claude's own plan login stays
-		"KUBECONFIG=/home/me/.kube/config", "DOCKER_CONFIG=/home/me/.docker",
+		"GH_PAT=pat", "AZURE_DEVOPS_EXT_PAT=ado", "STRIPE_KEY=sk_live", "SIGNING_PRIVATE_KEY_PEM=pem",
+		"TF_TOKEN_app_terraform_io=tf", "OP_SESSION_my=op", "BW_SESSION=bw",
+		"GIT_ASKPASS=/usr/lib/askpass", "SSH_ASKPASS=/usr/lib/ssh-askpass", "VSCODE_GIT_IPC_HANDLE=/tmp/vscode-git.sock",
+		"VSCODE_GIT_ASKPASS_MAIN=/vscode/askpass-main.js",
+		"CLAUDE_CODE_OAUTH_TOKEN=claude-plan-login",
+		"KUBECONFIG=/home/me/.kube/config", "DOCKER_CONFIG=/home/me/.docker", "npm_config_userconfig=/home/me/.npmrc",
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.autocrlf", "GIT_CONFIG_VALUE_0=false",
 	}
 	out, withheld := GuardEnv(in, "/tmp/hrn-guard")
 	got := envMap(out)
 	for _, gone := range []string{"GH_TOKEN", "GITHUB_TOKEN", "CLOUDFLARE_API_TOKEN", "AWS_SECRET_ACCESS_KEY", "NPM_TOKEN",
-		"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "GITLAB_TOKEN", "MY_SERVICE_SECRET", "DB_PASSWORD"} {
+		"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "GITLAB_TOKEN", "MY_SERVICE_SECRET", "DB_PASSWORD",
+		"GH_PAT", "AZURE_DEVOPS_EXT_PAT", "STRIPE_KEY", "SIGNING_PRIVATE_KEY_PEM", "TF_TOKEN_APP_TERRAFORM_IO", "OP_SESSION_MY", "BW_SESSION",
+		"GIT_ASKPASS", "SSH_ASKPASS", "VSCODE_GIT_IPC_HANDLE", "VSCODE_GIT_ASKPASS_MAIN",
+		"CLAUDE_CODE_OAUTH_TOKEN"} {
 		if _, ok := got[gone]; ok {
 			t.Errorf("%s is still in the agent's environment", gone)
 		}
@@ -44,8 +51,10 @@ func TestTheGuardedEnvironmentTakesAwayPublishing(t *testing.T) {
 			t.Errorf("%s was withheld but is not named among %v", gone, withheld)
 		}
 	}
-	if got["CLAUDE_CODE_OAUTH_TOKEN"] != "claude-plan-login" {
-		t.Error("claude's plan login was withheld; the CLI could not use the plan")
+	// A CLI's own plan login reaches that CLI, and only when it is asked for.
+	kept, withheld := GuardEnv(in, "/tmp/hrn-guard", "CLAUDE_CODE_OAUTH_TOKEN")
+	if envMap(kept)["CLAUDE_CODE_OAUTH_TOKEN"] != "claude-plan-login" || slices.Contains(withheld, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Error("claude's plan login was withheld from the claude CLI; it could not use the plan")
 	}
 	for k, want := range map[string]string{"PATH": "/bin", "HOME": "/home/me",
 		"GH_PROMPT_DISABLED": "1", "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
@@ -55,7 +64,17 @@ func TestTheGuardedEnvironmentTakesAwayPublishing(t *testing.T) {
 		}
 	}
 	// Logins kept on disk are looked for in the guard's empty directory.
-	for _, k := range []string{"GH_CONFIG_DIR", "KUBECONFIG", "DOCKER_CONFIG", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "CLOUDSDK_CONFIG", "AZURE_CONFIG_DIR"} {
+	// npm reads its settings case-insensitively, so the operator's lower-case
+	// npm_config_userconfig must be gone, not merely outnumbered.
+	if v, ok := got["NPM_CONFIG_USERCONFIG"]; !ok || !strings.HasPrefix(filepath.ToSlash(v), "/tmp/hrn-guard") {
+		t.Errorf("NPM_CONFIG_USERCONFIG = %q; want the guard's empty place", v)
+	}
+	for _, kv := range out {
+		if strings.HasPrefix(kv, "npm_config_userconfig=") {
+			t.Errorf("the operator's %s is still there", kv)
+		}
+	}
+	for _, k := range []string{"GH_CONFIG_DIR", "NPM_CONFIG_USERCONFIG", "KUBECONFIG", "DOCKER_CONFIG", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "CLOUDSDK_CONFIG", "AZURE_CONFIG_DIR"} {
 		if !strings.HasPrefix(filepath.ToSlash(got[k]), "/tmp/hrn-guard") {
 			t.Errorf("%s = %q; want a place under the guard's empty directory", k, got[k])
 		}

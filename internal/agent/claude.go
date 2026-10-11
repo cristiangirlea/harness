@@ -56,8 +56,10 @@ func NewClaudeBackend() *CLIBackend {
 			}
 			return a
 		},
-		parse: parseClaudeStream,
-		forks: true,
+		parse:     parseClaudeStream,
+		forks:     true,
+		loginEnv:  []string{"CLAUDE_CODE_OAUTH_TOKEN"},
+		fileRules: true,
 	}
 }
 func newestVersionDir(root, exe string) []string {

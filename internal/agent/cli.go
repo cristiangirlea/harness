@@ -39,6 +39,12 @@ type CLIBackend struct {
 	// forks is set when args honours Task.ForkSession and parse records
 	// Result.Session.
 	forks bool
+	// loginEnv names the secret-looking variables the CLI logs in with on a
+	// plan; the guard passes them on to this CLI and no other.
+	loginEnv []string
+	// fileRules is set when args hands the guard's secret files to the CLI's
+	// own permission rules; the other CLIs can read and write them.
+	fileRules bool
 }
 
 func (c *CLIBackend) Name() string { return c.name }
@@ -123,7 +129,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			return fail(StatusError, err)
 		}
 		defer os.RemoveAll(guardDir)
-		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir)
+		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
 	}
 	if c.promptStdin {
 		cmd.Stdin = strings.NewReader(task.Prompt)
@@ -140,13 +146,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
 	if guarded {
-		text := "guard: git cannot push; gh, cloud and container logins are out of reach; tokens and keys are withheld"
-		if len(withheld) > 0 {
-			// A CLI that logs in with one of these fails under the guard;
-			// this line says why.
-			text += " (" + strings.Join(withheld, ", ") + ")"
-		}
-		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text + "; --allow-dangerous lifts it"})
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: c.guardLine(withheld)})
 	} else {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the operator's credentials", c.name)})
@@ -245,6 +245,24 @@ func init() {
 	Register(NewCodexBackend())
 	Register(NewGeminiBackend())
 	Register(NewOpencodeBackend())
+}
+
+// guardLine is what a guarded run says about the guard, with what this CLI
+// leaves open. It says "pointed", not "cannot": an agent set on undoing the
+// guarded environment can, and the README says how.
+func (c *CLIBackend) guardLine(withheld []string) string {
+	text := "guard: git pushes are pointed at a dead end; gh, npm, cloud and container logins are out of reach; tokens and keys are withheld"
+	if len(withheld) > 0 {
+		// A CLI that logs in with one of these fails under the guard; this
+		// line says why.
+		text += " (" + strings.Join(withheld, ", ") + ")"
+	}
+	if c.fileRules {
+		text += "; the CLI's own rules refuse publishing commands and secret files"
+	} else {
+		text += fmt.Sprintf("; unguarded on the %s backend: reading and writing secret files (.env, keys, .private), and the wrangler and cargo logins", c.name)
+	}
+	return text + "; --allow-dangerous lifts it"
 }
 
 // shownArgs is a command line as a run's info line shows it: the guard's

@@ -46,10 +46,14 @@ func readFile() Tool {
 		Required: []string{"path"},
 		Effect:   EffectRead,
 		Summary:  summaryOf("path"),
+		Refuse:   refuseSecretFile,
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
+			}
+			if rule := refuseSecretFile(ws, raw); rule != "" {
+				return "", GuardError(rule)
 			}
 			p, err := ws.Resolve(args.Path)
 			if err != nil {
@@ -97,10 +101,14 @@ func writeFile() Tool {
 		Required: []string{"path", "content"},
 		Effect:   EffectWrite,
 		Summary:  summaryOf("path"),
+		Refuse:   refuseSecretFile,
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
+			}
+			if rule := refuseSecretFile(ws, raw); rule != "" {
+				return "", GuardError(rule)
 			}
 			p, err := ws.Resolve(args.Path)
 			if err != nil {
@@ -136,10 +144,14 @@ func editFile() Tool {
 		Required: []string{"path", "old_string", "new_string"},
 		Effect:   EffectWrite,
 		Summary:  summaryOf("path"),
+		Refuse:   refuseSecretFile,
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
+			}
+			if rule := refuseSecretFile(ws, raw); rule != "" {
+				return "", GuardError(rule)
 			}
 			if args.OldString == "" {
 				return "", errors.New("old_string must not be empty; use write_file to create files")
@@ -256,10 +268,14 @@ func grep() Tool {
 		Required: []string{"pattern"},
 		Effect:   EffectRead,
 		Summary:  summaryOf("pattern"),
+		Refuse:   refuseSecretFile,
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
+			}
+			if rule := refuseSecretFile(ws, raw); rule != "" {
+				return "", GuardError(rule)
 			}
 			expr := args.Pattern
 			if args.CaseInsensitive {
@@ -310,6 +326,11 @@ func grep() Tool {
 				search(base)
 			} else {
 				err = walk(ctx, base, func(p, rel string) bool {
+					// A search of a directory passes over the secret files in it
+					// rather than refusing the whole search.
+					if !ws.AllowDangerous && SecretFile(ws.Rel(p)) {
+						return true
+					}
 					if globRe == nil || globRe.MatchString(rel) {
 						search(p)
 					}

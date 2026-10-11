@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -22,8 +23,13 @@ var guardRules = []struct {
 	// Publishing is the operator's call: a batch commits on its own branch and
 	// the operator decides what leaves the machine. Any git segment that
 	// mentions push counts, so `git -C dir push` is caught along with the
-	// false positive `git commit -m "push later"`.
-	{"git-push", matches(`\bgit\b[^|&;]*\bpush\b`)},
+	// false positive `git commit -m "push later"`, and so is setting a pushurl
+	// or a pushInsteadOf, which would steer a push around the guarded
+	// environment's dead end.
+	{"git-push", matches(`(?i)\bgit\b[^|&;]*\bpush(?:url|insteadof)?\b`)},
+	// The guarded environment itself: a command that unsets or overrides
+	// git's push rewrite or points a tool back at the operator's login.
+	{"guard-env", matches(guardEnvPattern())},
 	// A password prompt hangs a run that has no terminal, and anything worth
 	// running as root is worth a human typing it.
 	{"sudo", matches(`\bsudo\b`)},
@@ -41,9 +47,9 @@ var guardRules = []struct {
 	{"gh-publish", matches(`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s=]*(?:PUT|PATCH|DELETE)\b`)},
 	// Shipping somewhere: Cloudflare, package registries, image registries,
 	// clusters, infrastructure and hosting platforms, a project's own deploy
-	// script (npm run deploy, the token itself, not deploy-docs-preview), and
+	// scripts (npm run deploy, deploy:prod, deploy-docs and the like), and
 	// this owner's deploy script.
-	{"deploy", matches(`\bwrangler\b[^|&;]*\bdeploy\b|\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?deploy(?:$|[\s;&|])|\bdeploy/push\.sh\b|\bkubectl\b[^|&;]*\b(?:apply|delete|replace|patch|rollout)\b|\b(?:terraform|tofu)\b[^|&;]*\b(?:apply|destroy)\b|\bhelm\b[^|&;]*\b(?:install|upgrade|uninstall|delete)\b|\bdocker\s+push\b|\bvercel\b[^|&;]*--prod\b|\b(?:fly|flyctl|netlify)\s+deploy\b`)},
+	{"deploy", matches(`\bwrangler\b[^|&;]*\bdeploy\b|\b(?:npm|pnpm|yarn|bun|cargo)\s+publish\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?deploy\b|\bdeploy/push\.sh\b|\bkubectl\b[^|&;]*\b(?:apply|delete|replace|patch|rollout)\b|\b(?:terraform|tofu)\b[^|&;]*\b(?:apply|destroy)\b|\bhelm\b[^|&;]*\b(?:install|upgrade|uninstall|delete)\b|\bdocker\s+push\b|\bvercel\b[^|&;]*--prod\b|\b(?:fly|flyctl|netlify)\s+deploy\b`)},
 }
 
 func matches(pattern string) func(string) bool {
@@ -68,9 +74,22 @@ func Guard(command string) string {
 // and the setting that lifts it, and says not to retry, because only the
 // operator can change that setting.
 func GuardError(rule string) error {
-	return fmt.Errorf("blocked by the hrn command guard (%s): only the operator can allow this, "+
+	return fmt.Errorf("blocked by the hrn guard (%s): only the operator can allow this, "+
 		"with --allow-dangerous (allow_dangerous in a batch spec or an MCP call). "+
-		"Do not retry the command; say in your answer why it is needed", rule)
+		"Do not retry it; say in your answer why it is needed", rule)
+}
+
+// guardEnvPattern matches a mention of a variable the guarded environment
+// sets: git's numbered config entries (and the -c channel, which outranks
+// them) and the variables that point tools at an empty login. Case is
+// ignored, for PowerShell's $env:gh_config_dir.
+func guardEnvPattern() string {
+	names := make([]string, 0, 16)
+	for name := range redirects("") {
+		names = append(names, regexp.QuoteMeta(name))
+	}
+	sort.Strings(names)
+	return `(?i)\bGIT_CONFIG_(?:COUNT|KEY_|VALUE_|PARAMETERS)|\b(?:` + strings.Join(names, "|") + `)\b`
 }
 
 // rmCallRE isolates what follows an rm up to the end of its command segment.

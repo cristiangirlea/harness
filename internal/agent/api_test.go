@@ -183,7 +183,7 @@ func TestAPILoopGuardsCommands(t *testing.T) {
 		textTurn("I was blocked."),
 	}, Task{Prompt: "clean up", Dir: dir, Options: Options{Mode: ModeYolo}})
 	block := lastToolResult(t, fake.requests[1])
-	if block["is_error"] != true || !strings.Contains(fmt.Sprint(block["content"]), "command guard (sudo)") {
+	if block["is_error"] != true || !strings.Contains(fmt.Sprint(block["content"]), "hrn guard (sudo)") {
 		t.Errorf("a guarded command should come back as an error result: %v", block)
 	}
 

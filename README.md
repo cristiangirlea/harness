@@ -148,13 +148,21 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 
 | Rule | Refuses |
 |---|---|
-| `git-push` | any `git` command mentioning `push`, including `git -C dir push` — a batch commits on its own branch; what leaves the machine is the operator's call |
+| `git-push` | any `git` command mentioning `push`, including `git -C dir push`, or setting a `pushurl` or `pushInsteadOf` — a batch commits on its own branch; what leaves the machine is the operator's call |
+| `guard-env` | a command naming a variable of the guarded environment below: `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`; any case, for PowerShell |
 | `sudo` | `sudo` — a password prompt hangs a run with no terminal |
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
 | `pipe-to-shell` | `curl`/`wget` piped into a shell, however many stages the pipe has |
 | `disk` | `mkfs`, `format X:`, `dd of=/dev/…` |
 | `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`, and `gh api` with PUT, PATCH or DELETE; opening a pull request stays allowed |
-| `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`cargo publish`, `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `vercel --prod`, `fly`/`netlify deploy` |
+| `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`bun`/`cargo publish`, a project's deploy script (`npm run deploy`, `deploy:prod`, `deploy-docs`, with `pnpm`, `yarn` or `bun` too), `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `terraform`/`tofu apply/destroy`, `helm install/upgrade/uninstall`, `vercel --prod`, `fly`/`netlify deploy` |
+
+The api backend's file tools refuse the secret files as well (rule `secret-file`):
+`read_file`, `write_file` and `edit_file` on a `.env*` file, `.dev.vars`, `*.pem`,
+`*.key`, `.git-credentials`, or anything inside a `.private`, `.ssh`, `.aws`, `.kube`,
+`.azure` or `.wrangler` directory, judged by the path inside the workspace; `grep` over
+a directory passes over them. `.env.example` is refused too: a template costs the agent
+one turn, and `.env.staging` or `.envrc` are what the pattern is for.
 
 `rm-root` reads the arguments rather than matching one pattern, because the spelling
 that matters is not the famous one: `rm -rf /` is refused by `rm` itself without
@@ -184,50 +192,73 @@ every command the api backend's `run_command` runs:
 
 - tokens, keys, secrets and passwords are left out, by name (`GH_TOKEN`,
   `CLOUDFLARE_API_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `NPM_TOKEN` …) and by pattern
-  (`*_TOKEN`, `*_API_KEY`, `*_ACCESS_KEY`, `*_AUTH`, `*SECRET*`, `*PASSWORD*`,
-  `*CREDENTIAL*`), model API keys among them: a command has no use for them, and a
-  CLI that finds one bills per token instead of using its own login.
-  `CLAUDE_CODE_OAUTH_TOKEN`, claude's plan login, stays;
+  (`*_TOKEN`, `*_KEY`, `*_PAT`, `*_AUTH`, `*SECRET*`, `*PASSWORD*`, `*CREDENTIAL*`,
+  `*PRIVATE_KEY*`, Terraform's `TF_TOKEN_*`, 1Password's `OP_SESSION_*`,
+  `BW_SESSION`), model API keys among them: a command has no use for them, and a CLI
+  that finds one bills per token instead of using its own login. git's askpass helpers
+  go too (`GIT_ASKPASS`, `SSH_ASKPASS`, VS Code's `VSCODE_GIT_*`), since they hand out
+  a login when git asks for one. `CLAUDE_CODE_OAUTH_TOKEN`, claude's plan login,
+  reaches the claude CLI and no other;
 - the logins tools keep on disk are looked for in an empty directory of the run's own:
-  gh (`GH_CONFIG_DIR`), kubectl (`KUBECONFIG`), docker (`DOCKER_CONFIG`), aws
-  (`AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`), gcloud (`CLOUDSDK_CONFIG`) and
-  az (`AZURE_CONFIG_DIR`); the directory goes when the run ends;
+  gh (`GH_CONFIG_DIR`), npm (`NPM_CONFIG_USERCONFIG`), kubectl (`KUBECONFIG`), docker
+  (`DOCKER_CONFIG`), aws (`AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`), gcloud
+  (`CLOUDSDK_CONFIG`) and az (`AZURE_CONFIG_DIR`); the directory goes when the run ends;
 - the ssh agent is out of reach (on Windows `SSH_AUTH_SOCK` names a pipe nobody
   listens on, since Windows' ssh otherwise falls back to its agent's own pipe);
-- git rewrites every push address to `push-refused-by-hrn://`, which it cannot reach,
-  through `GIT_CONFIG_*` (your own `GIT_CONFIG_*` entries stay): the usual prefixes
-  and an empty one that catches the rest (scp-style aliases, shorthands, upper case,
-  local paths), so `git push`, `git -C dir push` and `bash -c "git push"` fail at once
-  without touching the network. Fetching keeps its address.
+- git points every push at `push-refused-by-hrn://`, which it cannot reach, through
+  `GIT_CONFIG_*` (your own `GIT_CONFIG_*` entries stay): the usual prefixes and an empty
+  one that catches the rest (scp-style aliases, shorthands, upper case, local paths),
+  so `git push`, `git -C dir push` and `bash -c "git push"` fail at once without
+  touching the network. Fetching keeps its address.
 
 The claude backend also gets the guard as Claude Code's own deny rules
 (`--disallowedTools`), which hold in every permission mode, `bypassPermissions`
-included: the publishing and deploying commands above (`npm run deploy`, `terraform`
-and `tofu apply`/`destroy`, `helm install`/`upgrade`/`uninstall` among them) in both its
-Bash and PowerShell tools, and reading secret files (`.env`, `.env.local`,
-`.env.production`, `*.pem`, `.git-credentials`, any `.private/` directory, `~/.ssh`,
-`~/.aws`, `~/.kube`, `~/.docker/config.json`, `~/.azure`, `~/.config/gcloud`,
-`~/.config/gh`, `~/.npmrc`, wrangler's login and gh's on Windows); Claude Code's docs
-say a Read rule covers editing the path too. The rules match command text, so the
-environment is what stops the other spellings; what they add is an early, plain
-refusal and the secret files. Checked live: a claude run in `yolo` told to `git push`,
-`gh pr merge` and `cat .env` had all three refused.
+included:
+
+- the publishing and deploying commands of the table above, in both its Bash and
+  PowerShell tools, and the commands that would steer a push around the environment
+  (`git config …push…`, `git -c …push…`, `git remote set-url --push`, `unset
+  GIT_CONFIG…`, `env -u`); a test keeps the two lists refusing the same commands;
+- the secret files, with a `Read` rule and an `Edit` rule each, since a Read rule does
+  not stop a Write that creates the file: the same names and directories as the api
+  backend's file tools, anywhere on the disk, plus the logins kept in your home (gh's,
+  also under `%APPDATA%\GitHub CLI`, `~/.npmrc`, `~/.docker/config.json`,
+  `~/.config/gcloud`, `~/.cargo/credentials`) and the agent CLIs' own plan logins
+  (`~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`),
+  which the CLIs read with their own code, not through these tools.
+
+The command rules match command text, so the environment is what stops the other
+spellings; what they add is an early, plain refusal and the secret files. Checked live
+against the claude CLI in `yolo`: `git push` with and without arguments, setting a
+`pushurl`, `npm run deploy:prod`, `gh api … -X DELETE`, creating `.env.production`, and
+reading `.env` and gh's `hosts.yml` (with the Read tool and with `cat`) were all refused
+by the rules, and `git -C . push`, which no rule matches, failed at the environment's
+dead end; the remote stayed empty.
 
 What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
 
-- a remote with its own `pushurl` in `.git/config`, or an operator's longer
-  `pushInsteadOf`, keeps its address (git prefers both to the guard's);
+- an agent that sets out to undo the environment can: a `pushurl` or a longer
+  `pushInsteadOf` in the repository's own config, a `git -c`, or an unset
+  `GIT_CONFIG_COUNT` gives git its address back, and git's credential helper then signs
+  the push in (Git Credential Manager keeps its login in the system's credential store,
+  where no variable reaches). Both guards refuse the plain spellings of those commands.
+  The credential helper itself is left alone, because fetching private repositories and
+  Go modules needs it;
 - an ssh key file on disk without a passphrase still works for an ssh remote;
-- logins kept where no variable moves them: wrangler's above all, so under codex,
+- logins kept where no variable moves them: wrangler's and cargo's, so under codex,
   gemini or opencode a `npx wrangler deploy` or `npm run deploy` would still deploy;
   claude and the api backend refuse those commands, the others get the environment only;
-- secret files in the workspace stay readable under codex, gemini and opencode;
+- secret files stay readable and writable under codex, gemini and opencode;
+- secrets inside ordinary variables stay: a `DATABASE_URL` with a password in it, since
+  local tests need it;
+- a CLI that logs in with an API key (opencode or gemini with a key, claude on Bedrock or
+  Vertex) needs `--allow-dangerous`, which lifts the push guard as well;
 - under the guard no backend can push or open a pull request itself: handing work
   over is hrn's (batch keeps a branch per task) or the operator's.
 
-Every run says whether the guard is on and names the variables it withheld, since a
-CLI that logs in with one of them (opencode or gemini with a key, claude on Bedrock or
-Vertex) fails under the guard. `--allow-dangerous` lifts all of it.
+Every run says whether the guard is on, names the variables it withheld, and says what
+its backend leaves open: on codex, gemini and opencode, the secret files and the
+wrangler and cargo logins. `--allow-dangerous` lifts all of it.
 
 ### Context management
 

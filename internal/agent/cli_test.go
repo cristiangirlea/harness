@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 func TestParseClaudeStream(t *testing.T) {
@@ -59,16 +62,68 @@ func TestClaudeCarriesTheGuardsDenyRules(t *testing.T) {
 		if j := slices.IndexFunc(rules, func(s string) bool { return strings.HasPrefix(s, "-") }); j >= 0 {
 			rules = rules[:j]
 		}
-		for _, want := range []string{"Bash(git push *)", "PowerShell(git push *)", "Bash(gh pr merge *)", "Bash(gh release create *)",
-			"Bash(npx wrangler deploy *)", "Bash(npm publish *)", "Bash(npm run deploy *)", "Bash(terraform apply *)", "Bash(helm upgrade *)",
-			"Read(//**/.env)", "Read(//**/*.pem)", "Read(~/.ssh/**)", "Read(//**/.private/**)", "Read(~/.kube/**)", "Read(//**/.wrangler/**)"} {
+		for _, want := range []string{"Bash(git push)", "Bash(git push *)", "PowerShell(git push *)", "Bash(gh pr merge *)", "Bash(gh release create *)",
+			"Bash(npx wrangler deploy *)", "Bash(npm publish *)", "Bash(npm run deploy*)", "Bash(terraform apply *)", "Bash(helm upgrade *)",
+			"Bash(git config *push*)", "PowerShell(git remote set-url --push *)",
+			"Read(//**/.env*)", "Edit(//**/.env*)", "Read(//**/*.pem)", "Edit(//**/*.key)", "Read(//**/.dev.vars)",
+			"Read(//**/.ssh/**)", "Edit(//**/.private/**)", "Read(//**/.kube/**)", "Read(//**/.wrangler/**)",
+			"Read(~/.npmrc)", "Read(~/.cargo/credentials*)", "Read(~/.claude/.credentials.json)", "Read(//**/GitHub CLI/**)"} {
 			if !slices.Contains(rules, want) {
 				t.Errorf("mode %s: deny rules %q lack %q", mode, rules, want)
+			}
+		}
+		// A file the agent may not read it may not write either: a Read rule
+		// does not cover a Write that creates the file.
+		for _, r := range rules {
+			if p, ok := strings.CutPrefix(r, "Read("); ok && !slices.Contains(rules, "Edit("+p) {
+				t.Errorf("mode %s: %s has no Edit twin", mode, r)
 			}
 		}
 	}
 	if args := b.args(Task{Options: Options{Mode: ModeYolo, AllowDangerous: true}}, ""); slices.Contains(args, "--disallowedTools") {
 		t.Errorf("--allow-dangerous still hands over deny rules: %q", args)
+	}
+}
+
+// The guard is two lists, the api loop's command rules and claude's deny
+// rules; the issue asks for one. This keeps them from drifting apart: every
+// publishing command here is refused by both. Claude Code reads a trailing
+// " *" as "with arguments or without" and any other "*" as any text.
+func TestTheApiGuardAndClaudesRulesRefuseTheSameCommands(t *testing.T) {
+	matches := func(rule, command string) bool {
+		body, ok := strings.CutPrefix(rule, "Bash(")
+		if !ok {
+			return false
+		}
+		body = strings.TrimSuffix(body, ")")
+		tail := "$"
+		if b, ok := strings.CutSuffix(body, " *"); ok {
+			body, tail = b, "(?: .*)?$"
+		}
+		parts := strings.Split(body, "*")
+		for i := range parts {
+			parts[i] = regexp.QuoteMeta(parts[i])
+		}
+		return regexp.MustCompile("^" + strings.Join(parts, ".*") + tail).MatchString(command)
+	}
+	rules := claudeDenyRules()
+	for _, command := range []string{
+		"git push", "git push origin main", "git config remote.origin.pushurl https://x", "git remote set-url --push origin x",
+		"unset GIT_CONFIG_COUNT", "env -u GH_CONFIG_DIR gh pr merge 1",
+		"gh pr merge 39 --merge", "gh release create v1", "gh release upload v1 a.zip", "gh repo edit --visibility public",
+		"gh repo delete o/r --yes", "gh api repos/o/r -X DELETE", "gh api repos/o/r/merge --method PUT",
+		"npx wrangler deploy", "wrangler pages deploy dist", "npm publish", "cargo publish", "bun publish",
+		"npm run deploy", "npm run deploy:prod", "pnpm run deploy", "yarn deploy", "bun run deploy",
+		"docker push ghcr.io/o/i", "kubectl apply -f x.yaml", "kubectl delete pod x", "kubectl rollout restart deploy/x",
+		"terraform apply", "tofu destroy", "helm upgrade app ./c", "helm uninstall app",
+		"vercel deploy --prod", "fly deploy", "netlify deploy --prod", "bash deploy/push.sh", "./deploy/push.sh",
+	} {
+		if tools.Guard(command) == "" {
+			t.Errorf("%q: the api loop's guard lets it through", command)
+		}
+		if !slices.ContainsFunc(rules, func(r string) bool { return matches(r, command) }) {
+			t.Errorf("%q: no claude deny rule refuses it", command)
+		}
 	}
 }
 
