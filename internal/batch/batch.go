@@ -33,7 +33,7 @@ import (
 // override the Spec defaults of the same name.
 type Spec struct {
 	Dir      string `json:"dir,omitempty"`      // any path inside the repository; default: the spec file's directory
-	Parallel int    `json:"parallel,omitempty"` // agents at once; default 2
+	Parallel int    `json:"parallel,omitempty"` // agents at once; default DefaultParallel
 	Backend  string `json:"backend,omitempty"`  // default: api when credentials exist, else claude
 	// Options are the run options every task starts from: model, mode (default
 	// auto; nothing can approve prompts in a batch), the budgets (per attempt),
@@ -49,7 +49,10 @@ type Spec struct {
 }
 
 // DefaultParallel is how many agents run at once when a spec does not say.
-const DefaultParallel = 2
+// Four: the owner's PC has 32 threads, and an agent spends most of its time
+// waiting on its model; a gate that builds already takes every core, so more
+// than a few at once mostly compete for memory and disk.
+const DefaultParallel = 4
 
 type Task struct {
 	ID      string `json:"id,omitempty"` // branch hrn/<id> and worktree .hrn/worktrees/<id>; default t1, t2, ...

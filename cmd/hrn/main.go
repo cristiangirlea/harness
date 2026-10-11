@@ -79,13 +79,13 @@ Run flags:
                        let run_command run git push, sudo, rm -rf / and the like (api backend)
 
 Eval flags:
-      --parallel N     cells at once (default: the file's value, else 2)
+      --parallel N     cells at once (default: the file's value, else 4)
       --keep           keep the worktrees and branches instead of removing them
       --json           print the eval record as JSON (progress goes to stderr)
   -v, --verbose        show each agent's tool calls
 
 Batch flags:
-      --parallel N     agents at once (default: the file's value, else 2)
+      --parallel N     agents at once (default: the file's value, else 4)
       --allow-dirty    start even though the repository has uncommitted changes
       --squash         merge: one commit per task instead of a merge commit
       --json           print the batch record as JSON (progress goes to stderr)

@@ -498,6 +498,25 @@ func TestSpecValidation(t *testing.T) {
 	}
 }
 
+// A spec that does not say how many agents run at once gets the default: four,
+// as the help text and the MCP tool's description say.
+func TestASpecWithoutParallelGetsTheDefault(t *testing.T) {
+	if DefaultParallel != 4 {
+		t.Fatalf("DefaultParallel = %d, but the help and the MCP description say 4", DefaultParallel)
+	}
+	p := filepath.Join(t.TempDir(), "tasks.json")
+	if err := os.WriteFile(p, []byte(`{"tasks":[{"prompt":"a"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := LoadSpec(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Parallel != DefaultParallel {
+		t.Errorf("parallel = %d, want the default %d", spec.Parallel, DefaultParallel)
+	}
+}
+
 func TestLoadSpec(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "tasks.json")
 	if err := os.WriteFile(p, []byte(`{"parallel":3,"gate":["go test ./..."],"tasks":[{"prompt":"a"},{"id":"b","prompt":"b","mode":"yolo"}]}`), 0o644); err != nil {
