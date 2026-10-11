@@ -583,10 +583,9 @@ order they are worth taking:
 8. ~~**`hrn eval diff <a> <b>`.**~~ Done as PR Q, with `hrn eval list`.
 9. ~~**A live view.**~~ Done as PR V (#34): `hrn watch`, `hrn show -f`, and `--lan` for a
    phone, read-only and without a login for now.
-10. **An access key for `hrn watch --lan`** ([#33](https://github.com/cristiangirlea/harness/issues/33)):
-    a key per start that other devices need, a QR code for the phone link. The owner's rule
-    (2026-10-10): the network may see the page, but anything that acts on hrn from it needs
-    the key, plus a CSRF check.
+10. ~~**An access key for `hrn watch --lan`**~~ Done as PR W (#39, closes #33): `--lan=NAME`,
+    a QR code of the phone link, phone-sized lists, and the key at the door for anything
+    that would act. Viewing stays keyless (the owner's choice, 2026-10-11).
 11. **A status bot** (the owner's idea, 2026-10-10): something on screen that says what hrn
     is doing and asks for the decisions it waits on (an approval, a failed gate: retry or
     stop, merging the branches that passed), and acts on the answer. Its eyes are `hrn
@@ -594,9 +593,18 @@ order they are worth taking:
     `hrn mcp`'s tools (run, batch, batch_show, batch_merge; approvals already reach an MCP
     host by elicitation). The missing piece is a place where pending decisions wait: today an
     approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
-    nothing else can answer it. Control from the network waits for item 10's key.
+    nothing else can answer it. Its actions go through hrn watch's door: they must send
+    `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
+12. **Guard rails** (the owner, 2026-10-11), in this order:
+    - [#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do. The
+      command guard checks only the api loop; a CLI backend in `yolo` can push, merge or
+      deploy. One refused list, enforced per backend.
+    - [#37](https://github.com/cristiangirlea/harness/issues/37): spending. A daily and weekly
+      budget across all runs, refused when reached, shown on hrn watch.
+    - [#38](https://github.com/cristiangirlea/harness/issues/38): control. Confirmations,
+      an allow-list and an audit log for the bot's and the phone's actions, before item 11.
 
-12. ~~**Carry on at a plan's usage limit**~~ ([#43](https://github.com/cristiangirlea/harness/issues/43)).
+13. ~~**Carry on at a plan's usage limit**~~ ([#43](https://github.com/cristiangirlea/harness/issues/43)).
     Done as PR #46, 2026-10-11: a `limited` status, claude and codex carrying on each
     other's runs, reset times remembered in `limits.json`, `no_switch`. See the Decisions
     log, 2026-10-11.
@@ -609,6 +617,50 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
+  means including security"), by an independent agent with loopback-only proof tests in a
+  scratch copy. Nothing critical or high; four findings, three fixed here, each as its own
+  commit. (1) Record text reached the terminal raw in hrn run, show and show -f, so a file an
+  agent read could set the window title, write the clipboard (OSC 52) or forge a check mark:
+  control characters now become U+FFFD. (2) On Windows a reader of a batch record blocked
+  save's rename, so 64 readers on the network failed 14% of saves (a test with 32 saw 10 to
+  15 of 50): records are read with FILE_SHARE_DELETE and replaced with os.Root's Rename,
+  which uses POSIX rename semantics; none fail now. (4) A key that reached a run (an agent
+  running env) would show on the LAN page: watch blanks the values of its environment's
+  secret-looking variables on every page and fragment; the run_command side belongs to #36.
+  Also the footer's home path and read errors' paths are shown to this computer only.
+  Left, low: (3) one client can make watch read a whole large events.jsonl per request and
+  open many streams, each re-reading the lists every 2 s; real runs are under 1 MB today.
+  A shared poller, a cap on streams per address and a bounded run page are the fix, with #38.
+- 2026-10-11: PR W review (an independent read-only reviewer), nothing blocking, 5 findings
+  fixed, each as its own commit. The reviewer wrote its own decoder and found the encoder
+  exact at every length 0 to 213 under every mask; since jsQR forgives a few wrong
+  modules, the same kind of decode now runs in CI. Fixed: an empty `--lan=` served every
+  adapter (now refused); `--lan NAME` with a space got a misleading hint; the terminal
+  code was inverted on a light theme (now forced white on black on a terminal); net/http
+  answered `OPTIONS *` itself, before the door (now `DisableGeneralOptionsHandler`); and
+  tests for the door by method, origin and source. Left for the bot (#38): every acting
+  route must be registered as POST, since the door goes by method; the key must never
+  appear in a GET response; and on plain HTTP it is a replayable bearer token, so an HMAC
+  over method, path and time, or HTTPS, comes before it carries power.
+- 2026-10-11: PR W done (#39, closes #33): hrn watch for a phone. Issue #33 asked for a key
+  that other devices need even to view. The owner had said "we can see it on LAN, but we can
+  only control it with a key", then picked "a key for viewing too" by an accidental tap
+  (their words) and settled on control only: viewing stays keyless. So the PR has (1)
+  `--lan=NAME`, one adapter by name (any case) or address, since plain `--lan` on the
+  owner's PC also served WSL, Hyper-V and two VMware networks; (2) a QR code of each phone
+  link on the PC's own view of the index, and in the terminal when there is one network,
+  from a new `internal/qr` (byte mode, level M, versions 1 to 10; tests pin the standard's
+  HELLO WORLD codewords, format and version strings; jsQR 1.4.0 in a browser read back codes
+  of versions 1, 2, 5, 8 and 10 and the served code itself); (3) on a narrow screen, runs and
+  batches as cards, since the owner found the first page poor on a phone (the tables ran off
+  the side and broke words); (4) the door: anything but GET and HEAD must send
+  `Options.Key` in `X-Hrn-Watch-Key`, from loopback too, a custom header doubling as the
+  CSRF check. No action exists and hrn watch sets no key, so all are refused until the bot
+  brings one; no client side was written for an action that does not exist. Not done from
+  #33: HTTPS (a key on plain HTTP can be sniffed on the Wi-Fi; worth it when the key
+  matters) and a key per start for viewing (declined). A phone that came in over the network
+  sees neither the codes nor the PC's hints, decided by the connection's address, not Host.
 - 2026-10-10: PR V done (#34): a live view. The owner ran `hrn batch` on the claude backend
   and asked for a way to see what is going on. `hrn watch` serves a page of the newest runs
   and batches, a timeline per run streamed over Server-Sent Events that tail

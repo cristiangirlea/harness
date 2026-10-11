@@ -17,7 +17,7 @@
 {{end}}
 
 {{define "foot"}}
-<footer>Reads <span class="mono">{{.Home}}</span> · loads nothing from other sites</footer>
+<footer>{{with .Home}}Reads <span class="mono">{{.}}</span> · {{end}}Loads nothing from other sites</footer>
 </main>
 </body>
 </html>
@@ -29,13 +29,13 @@
 <p class="eyebrow">Harness / live view</p>
 <h1>Runs and batches</h1>
 <p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps.</p>
-{{if .LAN}}<section class="card reach" aria-labelledby="reach-h">
+{{if .Phone}}<section class="card reach" aria-labelledby="reach-h">
 <h2 id="reach-h">On your phone</h2>
-<p>Open one of these on a device on the same network. On Wi-Fi it is the one on your Wi-Fi adapter; the others are usually virtual adapters (WSL, Hyper-V, Docker), or a VPN that looks like an ordinary adapter.</p>
-<ul class="urls">{{range .LAN}}<li><a class="mono" href="{{.URL}}">{{.URL}}</a> <span class="muted">{{.Interface}}</span></li>{{end}}</ul>
-<p class="notice warn">No login yet: while hrn watch --lan runs, anyone on each of these networks can read your runs. The page only shows; it cannot start, stop or merge anything.</p>
+<p>Scan the code of the network your phone is on, or open its link. On Wi-Fi it is the one on your Wi-Fi adapter; the others are usually virtual adapters (WSL, Hyper-V, Docker), or a VPN that looks like an ordinary adapter. <code>hrn watch --lan=NAME</code> serves just one.</p>
+<ul class="phones">{{range .Phone}}<li>{{if .QRPath}}<svg class="qr" viewBox="0 0 {{.QRView}} {{.QRView}}" role="img" aria-label="QR code of {{.URL}}"><rect width="{{.QRView}}" height="{{.QRView}}" fill="#fff"/><path d="{{.QRPath}}" fill="#000"/></svg>{{end}}<span><a class="mono" href="{{.URL}}">{{.URL}}</a><br><span class="muted">{{.Interface}}</span></span></li>{{end}}</ul>
+<p class="notice warn">Viewing needs no login: while hrn watch --lan runs, anyone on each of these networks can read your runs. Nothing here can start, stop or merge anything; acting on hrn will need hrn watch's key.</p>
 </section>
-{{else}}<p class="muted small">Only this computer can open this page. Run <code>hrn watch --lan</code> to open it from a phone on the same network.</p>{{end}}
+{{else if .Local}}<p class="muted small">Only this computer can open this page. Run <code>hrn watch --lan</code> to open it from a phone on the same network.</p>{{end}}
 <div id="live" data-stream="/stream/index" data-replace>{{template "lists" .Lists}}</div>
 {{template "foot" .}}{{end}}
 
@@ -43,29 +43,29 @@
 {{range .Problems}}<p class="notice bad">{{.}}</p>{{end}}
 <section class="card" aria-labelledby="batches-h">
 <h2 id="batches-h">Batches</h2>
-{{if .Batches}}<div class="table-wrap" tabindex="0" role="region" aria-label="Batches"><table>
+{{if .Batches}}<div class="table-wrap" tabindex="0" role="region" aria-label="Batches"><table class="list">
 <thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Tasks</th><th scope="col">Backends</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">First task</th></tr></thead>
 <tbody>{{range .Batches}}<tr>
 <td class="mono"><a href="/batch/{{.ID}}">{{.ID}}</a></td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
-<td>{{.Tasks}}</td>
-<td>{{.Backend}}</td>
-<td class="num">{{template "took" .}}</td>
-<td class="num">{{.Cost}}</td>
+<td class="meta">{{.Tasks}}</td>
+<td class="meta">{{.Backend}}</td>
+<td class="num meta">{{template "took" .}}</td>
+<td class="num meta">{{.Cost}}</td>
 <td class="prompt">{{.Prompt}}</td>
 </tr>{{end}}</tbody></table></div>
 {{else}}<p class="muted">No batches yet.</p>{{end}}
 </section>
 <section class="card" aria-labelledby="runs-h">
 <h2 id="runs-h">Runs</h2>
-{{if .Runs}}<div class="table-wrap" tabindex="0" role="region" aria-label="Runs"><table>
+{{if .Runs}}<div class="table-wrap" tabindex="0" role="region" aria-label="Runs"><table class="list">
 <thead><tr><th scope="col">Run</th><th scope="col">Backend</th><th scope="col">Status</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">Prompt</th></tr></thead>
 <tbody>{{range .Runs}}<tr>
 <td class="mono"><a href="/run/{{.ID}}">{{.ID}}</a></td>
-<td>{{.Backend}}</td>
+<td class="meta">{{.Backend}}</td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
-<td class="num">{{template "took" .}}</td>
-<td class="num">{{.Cost}}</td>
+<td class="num meta">{{template "took" .}}</td>
+<td class="num meta">{{.Cost}}</td>
 <td class="prompt">{{.Prompt}}</td>
 </tr>{{end}}</tbody></table></div>
 {{else}}<p class="muted">No runs yet.</p>{{end}}

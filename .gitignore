@@ -2,3 +2,7 @@
 /hrn.exe
 .hrn/
 /dist/
+
+# Personal AI notes and settings
+CLAUDE.local.md
+.claude/settings.local.json
