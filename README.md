@@ -790,7 +790,7 @@ the microphone, and the recordings are that person's voice.
 
 The page asks for the microphone as it is (echo cancellation, noise suppression and
 automatic gain off, one channel) and says so if the browser filters it anyway, as it may
-while another tab uses the microphone. Takes are 16-bit mono WAV at the device's rate.
+while another tab uses the microphone. Takes are 16-bit mono WAV at the browser's audio rate (usually 48 kHz).
 They are saved by the browser into a folder the person picks (`0001.wav`, … with
 `metadata.csv` as `id|text`, and `talk-<time>-<part>.wav`), never sent to hrn watch, which
 only serves the page; picking the same folder again carries on at the first line not kept.
