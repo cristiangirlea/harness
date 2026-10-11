@@ -58,6 +58,27 @@ func TestWriteFileOnADanglingLinkInsideCreatesItsTarget(t *testing.T) {
 	}
 }
 
+func TestAPathUnderAFileIsJudgedWhereItIs(t *testing.T) {
+	ws, _ := setup(t)
+	if _, err := ws.Resolve("src/a.go/x"); err != nil {
+		t.Errorf("Resolve under a file was refused: %v", err)
+	}
+}
+
+func TestAPathUnderADirectoryThatCannotBeSearchedIsRefused(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches any directory")
+	}
+	ws, _ := setup(t)
+	locked := filepath.Join(ws.Root, "locked")
+	must(t, os.Mkdir(locked, 0o755))
+	must(t, os.Chmod(locked, 0))
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	if _, err := ws.Resolve("locked/x"); err == nil {
+		t.Error("Resolve under a directory hrn cannot search was not refused")
+	}
+}
+
 func TestADanglingLinkLoopIsRefused(t *testing.T) {
 	ws, tl := setup(t)
 	must(t, os.Symlink("b", filepath.Join(ws.Root, "a")))
