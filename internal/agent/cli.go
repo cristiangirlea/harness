@@ -199,6 +199,11 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	switch {
 	case ctx.Err() != nil:
 		err := ctx.Err()
+		// exec may have reaped a CLI that exited just before cancellation
+		// and stopped its watcher without ever invoking cmd.Cancel.
+		if killErr := tree.Kill(); killErr != nil {
+			err = fmt.Errorf("%w; kill process tree: %v", err, killErr)
+		}
 		if goneErr := tree.WaitGone(5 * time.Second); goneErr != nil {
 			err = fmt.Errorf("%w; %v", err, goneErr)
 		}

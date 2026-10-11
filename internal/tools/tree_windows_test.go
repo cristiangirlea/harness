@@ -4,6 +4,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -105,5 +106,28 @@ func TestTreeWithoutAJobReportsUnverifiedCleanup(t *testing.T) {
 	}
 	if alive && born == id.Born {
 		t.Log("fallback left the grandchild running; cleanup is correctly unverified")
+	}
+}
+
+func TestResumingThreadsSkipsOneThatCannotBeResumed(t *testing.T) {
+	attempts := 0
+	err := resumeInitialThreadWith(uint32(os.Getpid()), func(uint32) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("thread exited before it could be opened or resumed")
+		}
+		return nil
+	})
+	if err != nil || attempts < 2 {
+		t.Fatalf("want later threads resumed after one failure: attempts=%d err=%v", attempts, err)
+	}
+}
+
+func TestResumingThreadsFailsWhenNoneCanBeResumed(t *testing.T) {
+	err := resumeInitialThreadWith(uint32(os.Getpid()), func(uint32) error {
+		return errors.New("unreadable thread")
+	})
+	if err == nil || !strings.Contains(err.Error(), "unreadable thread") {
+		t.Fatalf("want the failure when no thread could be resumed: %v", err)
 	}
 }

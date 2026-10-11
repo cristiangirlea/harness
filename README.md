@@ -100,9 +100,17 @@ carry on; the timeout applies to them all the same. The cost ceiling is checked 
 hrn's own estimate, so a model with no price in the table cannot be capped and the run
 says so instead of pretending.
 
-Agent CLIs and shell commands start in a Windows Job Object or a Unix process group;
-cancellation kills that tree, and CLI runs wait up to five seconds to verify it is gone
-(survivors or unavailable Windows containment are reported; Unix children can escape with setsid).
+Agent CLIs and shell commands start in a Windows Job Object or a Unix process group.
+Cancel or timeout kills that tree; CLI cleanup can take up to about 15 seconds while
+stdout/stderr reads are bounded and remaining processes are checked (survivors or
+unavailable Windows containment are reported). On Windows, a CLI's leftover background
+processes end when the run ends, including after a normal exit, because the job is
+closed. On Unix, background processes survive a normal exit and are killed only on
+cancel or timeout; children can escape the group with setsid.
+
+On Unix, Ctrl+C, SIGTERM and SIGHUP cancel runs. A process in the tree that reads the
+terminal (such as a credential or host-key prompt) stops because the tree is not the
+terminal's foreground process group.
 
 Where a cost comes from depends on the backend. The claude and opencode CLIs report one
 themselves; on a subscription that figure is what the run would cost at API list

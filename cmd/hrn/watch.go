@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/qr"
@@ -56,7 +57,7 @@ func cmdWatch(args []string) error {
 		}
 		lns, opt.LAN = append(lns, more...), eps
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
 	return watch.Serve(ctx, opt, lns...)

@@ -100,12 +100,8 @@ func startTree(cmd *exec.Cmd, t *Tree) (*Tree, error) {
 	defer t.mu.Unlock()
 	if cmd.Cancel != nil {
 		cmd.Cancel = func() error {
-			t.mu.Lock()
-			defer t.mu.Unlock()
-			if t.job != 0 {
-				if ok, _, _ := procTerminateJobObject.Call(uintptr(t.job), 1); ok != 0 {
-					return nil
-				}
+			if err := t.Kill(); err == nil {
+				return nil
 			}
 			if err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err == nil {
 				return nil
@@ -157,25 +153,36 @@ type threadEntry32 struct {
 // which is the initial thread. So every thread of the process is resumed:
 // resuming a thread that was not suspended changes nothing.
 func resumeInitialThread(pid uint32) error {
+	return resumeInitialThreadWith(pid, resumeThread)
+}
+
+func resumeInitialThreadWith(pid uint32, resume func(uint32) error) error {
 	snapshot, _, err := procCreateToolhelp32Snapshot.Call(snapThread, 0)
 	if snapshot == ^uintptr(0) {
 		return fmt.Errorf("snapshot threads for process %d: %w", pid, err)
 	}
 	defer syscall.CloseHandle(syscall.Handle(snapshot))
 	resumed := 0
+	var resumeErr error
 	entry := threadEntry32{Size: uint32(unsafe.Sizeof(threadEntry32{}))}
 	ok, _, err := procThread32First.Call(snapshot, uintptr(unsafe.Pointer(&entry)))
 	for ok != 0 {
 		if entry.OwnerProcessID == pid {
-			if err := resumeThread(entry.ThreadID); err != nil {
-				return fmt.Errorf("resume process %d: %w", pid, err)
+			if err := resume(entry.ThreadID); err != nil {
+				// An injected thread may exit after the snapshot or deny
+				// access. Keep trying the other threads of the process.
+				resumeErr = err
+			} else {
+				resumed++
 			}
-			resumed++
 		}
 		entry.Size = uint32(unsafe.Sizeof(entry))
 		ok, _, err = procThread32Next.Call(snapshot, uintptr(unsafe.Pointer(&entry)))
 	}
 	if resumed == 0 {
+		if resumeErr != nil {
+			return fmt.Errorf("resume process %d: %w", pid, resumeErr)
+		}
 		return fmt.Errorf("find the initial thread of process %d: %w", pid, err)
 	}
 	return nil
@@ -213,6 +220,21 @@ func (t *Tree) Contained() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.contained
+}
+
+// Kill terminates every process in the job, even after the command has exited.
+// Without a job the tree cannot be killed reliably; context cancellation still
+// attempts the taskkill fallback.
+func (t *Tree) Kill() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.job == 0 {
+		return fmt.Errorf("process tree is not contained or its job is closed; cannot kill the tree reliably")
+	}
+	if ok, _, err := procTerminateJobObject.Call(uintptr(t.job), 1); ok == 0 {
+		return fmt.Errorf("terminate process tree: %w", err)
+	}
+	return nil
 }
 
 type jobObjectBasicAccountingInformation struct {

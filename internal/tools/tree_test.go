@@ -154,3 +154,26 @@ func TestTreeHandlesCancellationDuringStartup(t *testing.T) {
 		}
 	}
 }
+
+func TestTreeKillStopsChildrenWithoutContextCancellation(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "child.json")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcessTree$")
+	cmd.Env = append(os.Environ(), "HRN_TREE_HELPER=parent", "HRN_TREE_PID_FILE="+file)
+	tree, err := StartTree(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Close()
+	id := readTreeIdentity(t, file)
+	if err := tree.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	if err := tree.WaitGone(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := tree.Kill(); err != nil {
+		t.Fatalf("killing an already gone tree: %v", err)
+	}
+	assertTreeProcessGone(t, id)
+}

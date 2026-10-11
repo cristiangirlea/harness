@@ -19,10 +19,12 @@ type treeIdentity struct {
 // TestHelperProcessTree starts its child before doing any other work.
 func TestHelperProcessTree(t *testing.T) {
 	switch os.Getenv("HRN_TREE_HELPER") {
-	case "parent":
+	case "parent", "parent-exit":
 		child := exec.Command(os.Args[0], "-test.run=^TestHelperProcessTree$")
 		child.Env = append(os.Environ(), "HRN_TREE_HELPER=sleep")
-		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		if os.Getenv("HRN_TREE_HELPER") != "parent-exit" {
+			child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		}
 		if err := child.Start(); err != nil {
 			panic(err)
 		}
@@ -33,6 +35,9 @@ func TestHelperProcessTree(t *testing.T) {
 		data, _ := json.Marshal(treeIdentity{child.Process.Pid, born})
 		if err := os.WriteFile(os.Getenv("HRN_TREE_PID_FILE"), data, 0600); err != nil {
 			panic(err)
+		}
+		if os.Getenv("HRN_TREE_HELPER") == "parent-exit" {
+			os.Exit(0)
 		}
 		time.Sleep(time.Minute)
 		os.Exit(0)
@@ -128,4 +133,28 @@ func TestCLIAlreadyCanceledReturnsCanceled(t *testing.T) {
 	if res.Status != StatusCanceled {
 		t.Fatalf("status=%s error=%s", res.Status, res.Error)
 	}
+}
+
+func TestCLICancellationKillsChildrenAfterTheCLIHasExited(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "child.json")
+	t.Setenv("HRN_TREE_HELPER", "parent-exit")
+	t.Setenv("HRN_TREE_PID_FILE", file)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var id treeIdentity
+	backend := &CLIBackend{
+		name: os.Args[0], promptStdin: true,
+		args: func(Task, string) []string { return []string{"-test.run=^TestHelperProcessTree$"} },
+		finalize: func([]byte, func(Event), *Result) {
+			// finalize runs after cmd.Wait: exec's cancellation watcher has
+			// already stopped, so cancelling cannot invoke cmd.Cancel.
+			id = readTreeIdentity(t, file)
+			cancel()
+		},
+	}
+	res := backend.Run(ctx, Task{Dir: t.TempDir()}, func(Event) {})
+	if res.Status != StatusCanceled || res.Error != context.Canceled.Error() {
+		t.Fatalf("want canceled with verified cleanup, got %+v", res)
+	}
+	assertTreeProcessGone(t, id)
 }

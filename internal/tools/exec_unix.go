@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -26,7 +27,7 @@ func StartTree(cmd *exec.Cmd) (*Tree, error) {
 	cmd.SysProcAttr.Pgid = 0
 	if cmd.Cancel != nil {
 		cmd.Cancel = func() error {
-			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			if err := (&Tree{pgid: cmd.Process.Pid}).Kill(); err != nil {
 				return cmd.Process.Kill()
 			}
 			return nil
@@ -44,21 +45,25 @@ func (t *Tree) Contained() bool { return true }
 // Close has no group handle to release on Unix.
 func (t *Tree) Close() {}
 
-// WaitGone waits until the process group no longer exists. Unix's kill probe
-// does not expose a member count, so a timeout reports the lower bound of one.
-func (t *Tree) WaitGone(timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		err := syscall.Kill(-t.pgid, 0)
-		if errors.Is(err, syscall.ESRCH) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("query process group %d: %w", t.pgid, err)
-		}
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("process group %d: at least 1 process still alive after %s", t.pgid, timeout)
-		}
-		time.Sleep(min(10*time.Millisecond, time.Until(deadline)))
+// Kill terminates the process group, including children left by an exited
+// command. It succeeds if the group is already gone.
+func (t *Tree) Kill() error {
+	if t.pgid <= 0 {
+		return fmt.Errorf("process tree has no process group")
 	}
+	err := syscall.Kill(-t.pgid, syscall.SIGKILL)
+	if err == nil || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return fmt.Errorf("kill process group %d: %w", t.pgid, err)
+}
+
+// WaitGone waits until no group member is running. Linux scans procfs to
+// exclude unreaped zombies; elsewhere the group probe supplies a lower bound.
+func (t *Tree) WaitGone(timeout time.Duration) error {
+	var countLive func() (int, error)
+	if runtime.GOOS == "linux" {
+		countLive = func() (int, error) { return countRunningGroup("/proc", t.pgid) }
+	}
+	return waitGroupGone(t.pgid, timeout, func() error { return syscall.Kill(-t.pgid, 0) }, countLive)
 }
