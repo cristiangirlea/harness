@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"maps"
 	"runtime"
 	"strings"
 	"testing"
@@ -104,7 +105,9 @@ func TestDeltasBuildTheSameBlocksAndCallbacks(t *testing.T) {
 	var stopped []block
 	resp, _, err := parseSSE(strings.NewReader(stream),
 		func(kind, text string) { deltas = append(deltas, kind+":"+text) },
-		func(b block) { stopped = append(stopped, b) })
+		// A copy: the block itself is filled in again when the parse ends, which
+		// would hide a block that reached onBlock without its text.
+		func(b block) { stopped = append(stopped, maps.Clone(b)) })
 	if err != nil {
 		t.Fatal(err)
 	}
