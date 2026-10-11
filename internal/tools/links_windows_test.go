@@ -61,6 +61,7 @@ func TestThroughLinkFollowsTheLinksEvalSymlinksLeaves(t *testing.T) {
 		`C:\ws\drive`:    {mode: fs.ModeSymlink, target: `D:x`},
 		`C:\ws\unread`:   {mode: fs.ModeSymlink},
 		`C:\ws\denied`:   {err: fs.ErrPermission},
+		`C:\ws\nt`:       {mode: fs.ModeIrregular, target: `\Device\HarddiskVolume3\x`},
 	})
 	cases := []struct {
 		path, want string
@@ -89,6 +90,9 @@ func TestThroughLinkFollowsTheLinksEvalSymlinksLeaves(t *testing.T) {
 		{`C:\ws\unread`, "", true},
 		{`C:\ws\drive\a`, "", true},
 		{`C:\ws\denied\x`, "", true},
+		// A mount point's target is always absolute; one that is not was
+		// made by hand (an NT name Readlink passes on as it is).
+		{`C:\ws\nt\y`, "", true},
 	}
 	for _, c := range cases {
 		got, ok := throughLinkWith(c.path, lstat, readlink)

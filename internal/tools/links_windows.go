@@ -57,8 +57,10 @@ func throughLinkWith(p string, lstat func(string) (fs.FileInfo, error), readlink
 		}
 		switch {
 		case filepath.IsAbs(target):
-		case filepath.VolumeName(target) != "":
-			return "", true // C:x, relative to that drive's working directory
+		case typ == fs.ModeIrregular, filepath.VolumeName(target) != "":
+			// A mount point's target is absolute unless made by hand, and
+			// C:x is relative to that drive's working directory.
+			return "", true
 		case strings.HasPrefix(target, `\`):
 			target = vol + target // rooted: on the link's own volume
 		default:
