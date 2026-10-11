@@ -656,6 +656,8 @@ func buildRisk(wt, folder string) string {
 		switch {
 		case d.Name() == ".git":
 			why = "a repository inside build output: " + rel(filepath.Dir(p))
+		case d.IsDir() && d.Name() == "objects" && isBare(filepath.Dir(p)):
+			why = "a repository inside build output: " + rel(filepath.Dir(p))
 		case !d.IsDir() && !d.Type().IsRegular(): // a symlink, or a junction (irregular)
 			if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), wt) {
 				why = "a link out of the worktree inside build output: " + rel(p)
@@ -670,6 +672,14 @@ func buildRisk(wt, folder string) string {
 		return "build output that cannot be read: " + rel(folder)
 	}
 	return why
+}
+
+// isBare reports a folder laid out as a bare repository (HEAD, objects, refs),
+// which has no .git to find.
+func isBare(dir string) bool {
+	head, err1 := os.Lstat(filepath.Join(dir, "HEAD"))
+	refs, err2 := os.Lstat(filepath.Join(dir, "refs"))
+	return err1 == nil && err2 == nil && head.Mode().IsRegular() && refs.IsDir()
 }
 
 // linkTarget makes a link's target absolute: a relative one is relative to the

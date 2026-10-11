@@ -481,6 +481,15 @@ func TestGCKeepsAWorktreeWhoseBuildOutputLinksOutOfIt(t *testing.T) {
 	wantVerdict(t, find(t, wts, inner), Remove, "merged") // a link to its own folder goes with it
 }
 
+func TestGCFindsABareRepositoryInsideBuildOutput(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	git(t, f.root, "init", "-q", "--bare", filepath.Join(wt, "target", "backup.git"))
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a repository inside build output: target/backup.git")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")
