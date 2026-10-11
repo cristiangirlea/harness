@@ -700,8 +700,9 @@ which is the record once the folder is gone. `--apply` checks each one again jus
 (its `HEAD`, branch, lock and files, ignored ones included) and leaves one that changed since the
 scan, or that holds a worktree that stays, then removes it with `git worktree remove` (never
 `--force`) and deletes the branch if it still points at the commit that was checked. A batch's record stays (`hrn runs prune` can drop
-it once its worktrees are gone). Up to 1000 pull requests are read per repository; a branch
-whose pull request is older than that stays.
+it once its worktrees are gone). Open pull requests are read on their own, so a long history
+cannot hide one; with 1000 or more open, no worktree on a branch is removed. Up to 1000 pull
+requests of every state are read besides; a branch whose pull request is older stays.
 
 ## Watching runs live
 

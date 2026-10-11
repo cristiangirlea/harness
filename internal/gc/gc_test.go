@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -15,24 +16,47 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// TestHelperGH stands in for gh: it prints the JSON file HRN_GH_HELPER names,
-// or fails as gh does when it is not logged in.
+// TestHelperGH stands in for `gh pr list`: it answers from the JSON file
+// HRN_GH_HELPER names as gh does, newest first, filtered by --state and cut at
+// --limit, or fails as gh does when it is not logged in.
 func TestHelperGH(t *testing.T) {
-	switch v := os.Getenv("HRN_GH_HELPER"); v {
+	v := os.Getenv("HRN_GH_HELPER")
+	switch v {
 	case "":
 		return
 	case "fail":
 		fmt.Fprintln(os.Stderr, "To get started with GitHub CLI, please run:  gh auth login")
 		os.Exit(4)
-	default:
-		data, err := os.ReadFile(v)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
-		}
-		os.Stdout.Write(data)
-		os.Exit(0)
 	}
+	data, err := os.ReadFile(v)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	var prs []PR
+	if err := json.Unmarshal(data, &prs); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	state, limit := "open", 30 // gh's own defaults
+	args := os.Args
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "--state":
+			state = args[i+1]
+		case "--limit":
+			fmt.Sscan(args[i+1], &limit)
+		}
+	}
+	sort.Slice(prs, func(i, j int) bool { return prs[i].Number > prs[j].Number })
+	var out []PR
+	for _, p := range prs {
+		if (state == "all" || strings.EqualFold(p.State, state)) && len(out) < limit {
+			out = append(out, p)
+		}
+	}
+	json.NewEncoder(os.Stdout).Encode(out)
+	os.Exit(0)
 }
 
 var fakeGH = []string{os.Args[0], "-test.run=^TestHelperGH$", "--"}
@@ -137,7 +161,12 @@ func (f *fixture) serve() {
 
 func (f *fixture) scan() []Worktree {
 	f.t.Helper()
-	wts, err := Scan(context.Background(), []string{f.repo}, Options{Grace: time.Hour, GH: fakeGH})
+	return f.scanWith(Options{Grace: time.Hour, GH: fakeGH})
+}
+
+func (f *fixture) scanWith(opt Options) []Worktree {
+	f.t.Helper()
+	wts, err := Scan(context.Background(), []string{f.repo}, opt)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -217,6 +246,27 @@ func TestGCKeepsWorktreesWithoutAPullRequestMergedAtTheirHead(t *testing.T) {
 	wantVerdict(t, find(t, wts, after), Keep, "commits after merged PR #2")
 	wantVerdict(t, find(t, wts, elsewhere), Keep, "commits after merged PR #3")
 	wantVerdict(t, find(t, wts, reopened), Keep, "PR #5 is open")
+}
+
+func TestGCFindsAnOpenPullRequestTheFullListCutOff(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "b")
+	f.pr(1, "b", "OPEN", head, 0)
+	f.pr(2, "other", "MERGED", strings.Repeat("b", 40), 2*time.Hour)
+	f.pr(3, "b", "MERGED", head, 2*time.Hour)
+
+	// Two pull requests at a time: the full list stops at #3 and #2.
+	wantVerdict(t, find(t, f.scanWith(Options{Grace: time.Hour, GH: fakeGH, PRLimit: 2}), wt), Keep, "PR #1 is open")
+}
+
+func TestGCKeepsBranchWorktreesWhenTheOpenListMayBeCutShort(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "b")
+	f.pr(1, "x", "OPEN", strings.Repeat("a", 40), 0)
+	f.pr(2, "y", "OPEN", strings.Repeat("c", 40), 0)
+	f.pr(3, "b", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scanWith(Options{Grace: time.Hour, GH: fakeGH, PRLimit: 2}), wt), Keep, "GitHub unavailable")
 }
 
 func TestGCRemovesAWorktreeWhoseHeadIsInsideTheMergedHead(t *testing.T) {

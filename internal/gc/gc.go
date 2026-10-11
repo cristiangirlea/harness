@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,9 +45,9 @@ type PR struct {
 
 const prFields = "number,state,headRefName,headRefOid,url,mergedAt,isCrossRepository"
 
-// prLimit is how many pull requests one repository is read for. A branch
-// whose pull request is older than that finds none, and its worktree stays.
-const prLimit = "1000"
+// defaultPRLimit is how many pull requests one query reads. A branch whose
+// pull request is older than that finds none, and its worktree stays.
+const defaultPRLimit = 1000
 
 // Worktree is one linked worktree and what Scan decided about it.
 type Worktree struct {
@@ -61,8 +62,9 @@ type Worktree struct {
 }
 
 type Options struct {
-	Grace time.Duration // a pull request merged more recently than this keeps its worktree
-	GH    []string      // the gh command and leading arguments; empty means gh on PATH
+	Grace   time.Duration // a pull request merged more recently than this keeps its worktree
+	GH      []string      // the gh command and leading arguments; empty means gh on PATH
+	PRLimit int           // pull requests read per query; 0 means 1000
 }
 
 // Scan lists the linked worktrees of every repository at paths, each with a
@@ -322,6 +324,7 @@ func entryPaths(entries []entry) []string {
 type repoFacts struct {
 	repo      string
 	worktrees []string // every path git lists as one of its worktrees
+	prLimit   int
 	fetchErr  error
 	def       string // like origin/main; empty when origin names none
 	gh        []string
@@ -333,7 +336,7 @@ type repoFacts struct {
 func (r *repoFacts) pullRequests(ctx context.Context) ([]PR, error) {
 	if !r.ghDone {
 		r.ghDone = true
-		r.prs, r.ghErr = listPRs(ctx, r.repo, r.gh)
+		r.prs, r.ghErr = listPRs(ctx, r.repo, r.gh, r.prLimit)
 	}
 	return r.prs, r.ghErr
 }
@@ -347,7 +350,7 @@ func scanRepo(ctx context.Context, repo string, owners map[string]owner, cwd str
 	if len(entries) < 2 {
 		return nil, nil // the first entry is the main checkout
 	}
-	facts := &repoFacts{repo: repo, gh: opt.GH, worktrees: entryPaths(entries)}
+	facts := &repoFacts{repo: repo, gh: opt.GH, prLimit: opt.PRLimit, worktrees: entryPaths(entries)}
 	facts.def, facts.fetchErr = originDefault(ctx, repo)
 
 	var wts []Worktree
@@ -609,7 +612,11 @@ func isAncestor(ctx context.Context, repo, a, b string) bool {
 	return err == nil
 }
 
-func listPRs(ctx context.Context, repo string, gh []string) ([]PR, error) {
+// listPRs reads the repository's pull requests: the open ones on their own,
+// because a merged one proves nothing while an open one exists and a list of
+// everything cut at the limit could leave the open one out; then the rest.
+// When the open list fills the limit, none can be ruled out, and it fails.
+func listPRs(ctx context.Context, repo string, gh []string, limit int) ([]PR, error) {
 	url, err := gitOut(ctx, repo, "remote", "get-url", "origin")
 	if err != nil {
 		return nil, errors.New("the repository has no origin remote")
@@ -617,9 +624,36 @@ func listPRs(ctx context.Context, repo string, gh []string) ([]PR, error) {
 	if len(gh) == 0 {
 		gh = []string{"gh"}
 	}
+	if limit <= 0 {
+		limit = defaultPRLimit
+	}
+	open, err := ghPRs(ctx, repo, gh, url, "open", limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(open) >= limit {
+		return nil, fmt.Errorf("%d open pull requests or more, so gh's list may be cut short", limit)
+	}
+	all, err := ghPRs(ctx, repo, gh, url, "all", limit)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[int]bool{}
+	for _, p := range open {
+		seen[p.Number] = true
+	}
+	for _, p := range all {
+		if !seen[p.Number] {
+			open = append(open, p)
+		}
+	}
+	return open, nil
+}
+
+func ghPRs(ctx context.Context, repo string, gh []string, url, state string, limit int) ([]PR, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	args := append(append([]string{}, gh[1:]...), "pr", "list", "-R", url, "--state", "all", "--limit", prLimit, "--json", prFields)
+	args := append(append([]string{}, gh[1:]...), "pr", "list", "-R", url, "--state", state, "--limit", strconv.Itoa(limit), "--json", prFields)
 	cmd := exec.CommandContext(ctx, gh[0], args...)
 	cmd.Dir = repo
 	var stderr bytes.Buffer
