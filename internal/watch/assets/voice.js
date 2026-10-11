@@ -74,6 +74,8 @@
     warn(changed ? changed + ' kept line(s) in this folder no longer match the text shown for their number: record them again, or keep the old folder for the old text.' : '');
     at = firstOpen(0);
     show();
+    // Off the folder button, whose Space would open the picker again.
+    $('voice-rec').focus();
   });
 
   // ---- The microphone, as it is: the browser's echo cancellation, noise
