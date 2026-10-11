@@ -647,6 +647,15 @@ neither of them follows a run while it happens.
   Windows' other names for a file (`.env.`, `::$DATA`, 8.3), `.netrc`, `.pypirc` and key
   stores missing, and `PushInsteadOf` in another case. All fixed, each as its own commit;
   grep's walk no longer follows a link out of the workspace, which it did before this PR.
+  A third pass found nothing blocking; its points were taken too: guard-env missed `+=`,
+  `${env:NAME} =`, the env: drive's other cmdlets and aliases (`rm env:X`) and
+  `GIT_CONFIG_KEY_$i`; secret-file missed git's `REV:path`, braces and quoted paths with
+  spaces; run_command could read the agent CLIs' plan logins, which only claude's rules
+  listed (now `tools.SecretPaths`, one list for both); and `.wrangler` refused a worker's
+  local state, when wrangler's login is `.wrangler/config`. Left as said in the README:
+  `jq '.key'` is refused (the rule reads words), and a Windows directory junction is not
+  seen through by the workspace boundary since Go 1.23 stopped resolving mount points; that
+  one predates this PR and is a task of its own.
   One FuzzCodec run failed once in a container while the Windows suite loaded the same
   machine; no input was saved, and three 10 s runs and a 2 min run (7.4M executions) after
   it passed.
