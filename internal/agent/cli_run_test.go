@@ -127,9 +127,13 @@ func TestCodexReportsItsUsageLimitAsLimited(t *testing.T) {
 }
 
 // claudeLimitIn sets the fake claude's limit message to reset d from now, in
-// the computer's zone as the CLI writes it.
+// the computer's zone as the CLI writes it. The zone is pinned to one without
+// summer time, where a clock time names one moment even the night it changes.
 func claudeLimitIn(t *testing.T, d time.Duration) time.Time {
-	at := time.Now().Add(d).Truncate(time.Minute)
+	saved := time.Local
+	time.Local = time.FixedZone("EET", 2*3600)
+	t.Cleanup(func() { time.Local = saved })
+	at := time.Now().In(time.Local).Add(d).Truncate(time.Minute)
 	t.Setenv("HRN_CLI_HELPER", "claudelimit")
 	t.Setenv("HRN_CLI_LIMIT_MSG", "You've hit your session limit · resets "+at.Format("3:04pm"))
 	return at
