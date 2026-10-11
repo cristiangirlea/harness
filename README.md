@@ -168,7 +168,14 @@ approval is denied.
 
 `read_file`, `list_files` (glob with `**`), `grep` (RE2), `write_file`, `edit_file`
 (exact unique match, CRLF-aware), `run_command` (Git Bash when present, else PowerShell;
-120s default timeout). All paths are confined to the workspace, symlinks included.
+120s default timeout). All paths are confined to the workspace and judged where their links
+lead: symbolic links, and on Windows directory junctions too (Go has not counted a junction
+as a link since 1.23, so hrn reads its target itself). A path through a link out of the
+workspace is refused, and so is one through a link hrn cannot read; a path through a link
+that stays inside works. `grep` over a directory goes into no link or junction and passes
+over a file link that leads out. Not yet on Linux and macOS: a symbolic link to a file that
+does not exist yet is judged by its own name, so `write_file` on it creates that file where
+the link leads ([#47](https://github.com/cristiangirlea/harness/issues/47)).
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
 #### The command guard

@@ -102,6 +102,28 @@ func TestListFilesAndGrepSkipVendorDirs(t *testing.T) {
 	}
 }
 
+func TestGrepDoesNotFollowASymlinkOutOfTheWorkspace(t *testing.T) {
+	ws, tl := setup(t)
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	must(t, os.WriteFile(outside, []byte("outside TODO\n"), 0o644))
+	if err := os.Symlink(outside, filepath.Join(ws.Root, "src", "link.txt")); err != nil {
+		t.Skipf("symbolic links need a privilege here: %v", err)
+	}
+	out, err := call(t, ws, tl["grep"], map[string]any{"pattern": "TODO"})
+	must(t, err)
+	if strings.Contains(out, "outside") {
+		t.Errorf("grep followed a symbolic link out of the workspace: %q", out)
+	}
+	if !strings.Contains(out, "src/deep/b.go:2:// TODO fix") {
+		t.Errorf("grep lost the workspace's own match: %q", out)
+	}
+	out, err = call(t, ws, tl["grep"], map[string]any{"pattern": "TODO", "glob": "**/*.txt"})
+	must(t, err)
+	if out != "(no matches)" {
+		t.Errorf("grep with a glob followed a symbolic link out of the workspace: %q", out)
+	}
+}
+
 func TestGlobRegexp(t *testing.T) {
 	cases := []struct {
 		glob, path string

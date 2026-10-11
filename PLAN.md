@@ -620,6 +620,58 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: #45 reviews (PR #48): an independent read-only reviewer, and an adversarial security
+  read in a scratch copy, which found nothing it could get out through (junction chains and
+  loops, dangling junctions, 8.3 aliases, `\\?\` targets, a junction to `C:\Windows`; no
+  hang). The reviewer's blocking point, fixed: a symbolic link whose target goes on past a
+  junction (`s -> out\sub`, or to `C:\Documents and Settings\<user>`, a junction Windows
+  ships) still got out, because `EvalSymlinks` follows the link inside its own walk, fails
+  at the junction, and the fall-back to a shorter prefix kept `s` unresolved. `throughLink`
+  now reads symbolic links too, with relative and rooted targets; this PC cannot make them,
+  so its logic is tested on a fake file system and the real-link test skips here. Also
+  fixed: what cannot be judged (an Lstat error other than "not there", a link Readlink
+  cannot read, a reparse point the path goes on past that is not a link, a `C:x` target)
+  is refused rather than judged by its name; and realPath for every file cost about ten
+  times grep's search, so the walk judges only links and irregular entries, after the glob
+  (a warm grep over `GOROOT/src`: 7 to 8 s, now 1.2 s). Moved to #47: on Linux and macOS a
+  symbolic link to a file not there yet still lets `write_file` create it where it leads
+  (on main too; the same walk on every platform fixes it, but changes Linux, so it is its
+  own item). Refused now, allowed before: a volume mounted on a folder in the workspace
+  (its target is a `\\?\Volume{...}\` path, never under a drive-letter root), a junction
+  target spelt through another mapping (a `subst` drive, a mapped drive against its UNC
+  path), and a junction on an SMB share (its target is the server's path, judged here).
+  For the guard branch's merge: keep `inside` against `w.real`, and judge secret names
+  relative to `w.real` too (relative to `Root`, a workspace reached through a junction
+  sees its parents' names); its README sentence on junctions no longer holds. The
+  reviewer's second pass found nothing blocking and three low points, fixed: a path that
+  cannot be judged said "outside the workspace" (now "cannot tell where it leads"); a loop
+  of links ran all 255 rounds, each with `EvalSymlinks` following up to 255 links of its
+  own (now refused at the first path met again: a two-junction loop went from 157 ms to
+  3 ms); and a mount point made by hand with an NT target (`\Device\...`) read as a folder
+  on its own volume (refused now). Left, fail-closed on purpose: a workspace under a folder
+  that can be passed through but not read (another account's profile with traverse-only
+  rights, a share with access-based enumeration) refuses every path for the file tools,
+  since a component that cannot be read could be a junction; `NewWorkspace` does not fail
+  there, because it also checks the directory for the CLI backends, which do not use it.
+- 2026-10-11: Junctions (#45, PR #48), found while reviewing the guard for #36. Since Go 1.23 a
+  Windows mount point (a directory junction, which needs no privilege to make) is an
+  irregular file to `os.Lstat`, not a symbolic link, so `filepath.EvalSymlinks` stopped
+  resolving it: worse, it fails on a path that goes on past one, and the workspace check's
+  fall-back to the longest prefix that resolves then judged `out/secret.txt` by its name.
+  Tests with real junctions saw `read_file`, `write_file`, `edit_file` and `grep` reach
+  outside. Now `realPath` reads each irregular component with `os.Readlink` on Windows
+  (it answers only for links, so OneDrive's reparse points are passed over) and follows
+  the target, up to 255 times; paths are compared with the root resolved the same way, so a
+  workspace reached through a junction still works while `Root` keeps the spelling it was
+  given for commands. Refusing every junction was not taken: pnpm fills `node_modules` with
+  junctions that stay in the project, and `os.Root`, which would also close the race
+  between the check and the open, refuses those too. `grep`'s walk judged no file it found
+  on main, so a file symlink out of the workspace was searched on Linux too; it now judges
+  each link it finds (the guard branch judges every file, and also passes over secret
+  files). A walk still goes into no link or junction, as before: `grep` over the root, or
+  with `path` set to a junction, does not search the files behind one; a path through it
+  does. Windows CI runs only after a merge: the junction tests ran on the owner's PC, the
+  symlink tests on Linux.
 - 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
   means including security"), by an independent agent with loopback-only proof tests in a
   scratch copy. Nothing critical or high; four findings, three fixed here, each as its own
