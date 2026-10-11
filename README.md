@@ -687,8 +687,9 @@ worktree only on proof that its work is merged:
 And only when nothing would be lost with it: the tree is clean (untracked files count), its
 ignored files are build output (`target`, `node_modules`, `dist`, `.venv` and the like, or any
 folder carrying `CACHEDIR.TAG`; an ignored `.env` or notes keep it, because `git worktree
-remove` deletes ignored files), it is not locked, it holds no worktree that stays, and the
-current directory is not inside it. Everything else stays and the listing says why: an open or
+remove` deletes ignored files; its `.hrn/` may hold only the worktrees git lists there), it is
+not locked, it holds no worktree that stays and no repository, and the current directory is
+not inside it. Everything else stays and the listing says why: an open or
 closed pull request, none at all, commits after the merged one, a detached `HEAD`, uncommitted
 files. When `gh` fails (not installed, not logged in) or the fetch does, the worktrees that
 needed it stay. Main checkouts are never touched.

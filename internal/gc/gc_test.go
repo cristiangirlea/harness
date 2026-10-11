@@ -278,6 +278,34 @@ func TestGCKeepsAWorktreeHoldingIgnoredFilesThatAreNotBuildOutput(t *testing.T) 
 	wantVerdict(t, find(t, wts, built), Remove, "PR #2 merged")
 }
 
+func TestGCKeepsAWorktreeWhoseHrnFolderHoldsMoreThanWorktrees(t *testing.T) {
+	f := newFixture(t)
+	notes, h1 := f.worktree("wt-notes", "notes")
+	f.write(notes, filepath.Join(".hrn", "notes.txt"), "mine\n")
+	leftover, h2 := f.worktree("wt-leftover", "leftover")
+	f.write(leftover, filepath.Join(".hrn", "worktrees", "old-task", "half.txt"), "a task git no longer lists\n")
+	f.pr(1, "notes", "MERGED", h1, 2*time.Hour)
+	f.pr(2, "leftover", "MERGED", h2, 2*time.Hour)
+
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, notes), Keep, ".hrn/notes.txt")
+	wantVerdict(t, find(t, wts, leftover), Keep, ".hrn/worktrees/old-task")
+}
+
+func TestGCKeepsAWorktreeHoldingARepository(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	clone := filepath.Join(wt, "target", "clone")
+	git(t, f.root, "init", "-q", "-b", "main", clone)
+
+	wts, err := Scan(context.Background(), []string{f.repo, clone}, Options{Grace: time.Hour, GH: fakeGH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantVerdict(t, find(t, wts, wt), Keep, "holds the repository")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

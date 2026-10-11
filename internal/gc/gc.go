@@ -83,7 +83,7 @@ func Scan(ctx context.Context, paths []string, opt Options) ([]Worktree, error) 
 		}
 		all = append(all, wts...)
 	}
-	keepHolders(all)
+	keepHolders(all, repos)
 	return all, nil
 }
 
@@ -100,6 +100,7 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 		} else {
 			stays = append(stays, w.Path)
 		}
+		stays = append(stays, w.Repo)
 	}
 	sort.SliceStable(todo, func(i, j int) bool { return len(todo[i].Path) > len(todo[j].Path) })
 	for _, w := range todo {
@@ -145,7 +146,8 @@ func recheck(ctx context.Context, w Worktree) string {
 	if err != nil {
 		return "the worktrees could not be listed again: " + firstLine(err.Error())
 	}
-	for _, e := range parseWorktrees(out) {
+	entries := parseWorktrees(out)
+	for _, e := range entries {
 		if samePath(e.path) != samePath(w.Path) {
 			continue
 		}
@@ -155,7 +157,7 @@ func recheck(ctx context.Context, w Worktree) string {
 		case e.head != w.Head || e.branch != w.Branch:
 			return "its HEAD moved since the scan"
 		}
-		if why := unsaved(ctx, w.Path); why != "" {
+		if why := unsaved(ctx, w.Path, entryPaths(entries)); why != "" {
 			return why + " since the scan"
 		}
 		return ""
@@ -307,16 +309,25 @@ func parseWorktrees(out string) []entry {
 	return list
 }
 
+func entryPaths(entries []entry) []string {
+	paths := make([]string, len(entries))
+	for i, e := range entries {
+		paths[i] = e.path
+	}
+	return paths
+}
+
 // repoFacts is what one repository's worktrees are judged against, gathered
 // once: the fetch, the default branch, and GitHub's pull requests.
 type repoFacts struct {
-	repo     string
-	fetchErr error
-	def      string // like origin/main; empty when origin names none
-	gh       []string
-	prs      []PR
-	ghErr    error
-	ghDone   bool
+	repo      string
+	worktrees []string // every path git lists as one of its worktrees
+	fetchErr  error
+	def       string // like origin/main; empty when origin names none
+	gh        []string
+	prs       []PR
+	ghErr     error
+	ghDone    bool
 }
 
 func (r *repoFacts) pullRequests(ctx context.Context) ([]PR, error) {
@@ -336,7 +347,7 @@ func scanRepo(ctx context.Context, repo string, owners map[string]owner, cwd str
 	if len(entries) < 2 {
 		return nil, nil // the first entry is the main checkout
 	}
-	facts := &repoFacts{repo: repo, gh: opt.GH}
+	facts := &repoFacts{repo: repo, gh: opt.GH, worktrees: entryPaths(entries)}
 	if _, err := gitOut(ctx, repo, "fetch", "--quiet", "origin"); err != nil {
 		facts.fetchErr = err
 	}
@@ -365,7 +376,7 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 	case cwd != "" && inside(cwd, w.Path):
 		return Keep, "the current directory is inside it"
 	}
-	if why := unsaved(ctx, w.Path); why != "" {
+	if why := unsaved(ctx, w.Path, facts.worktrees); why != "" {
 		return Keep, why
 	}
 
@@ -437,7 +448,7 @@ var buildOutput = map[string]bool{
 	".next": true, ".nuxt": true, ".turbo": true, ".parcel-cache": true, ".svelte-kit": true,
 	".venv": true, "venv": true, "__pycache__": true, ".pytest_cache": true, ".ruff_cache": true,
 	".mypy_cache": true, ".tox": true, ".gradle": true, "bin": true, "obj": true, "coverage": true,
-	"test-results": true, "playwright-report": true, ".hrn": true,
+	"test-results": true, "playwright-report": true,
 }
 
 // isBuildOutput reports an ignored path gc may delete with its worktree.
@@ -447,9 +458,10 @@ func isBuildOutput(dir, path string) bool {
 }
 
 // unsaved says why a worktree holds something no branch has: tracked changes,
-// untracked files, or ignored files that are not build output. Empty means
-// nothing.
-func unsaved(ctx context.Context, dir string) string {
+// untracked files, or ignored files that are not build output. registered are
+// the paths git lists as worktrees, which may sit in .hrn/worktrees. Empty
+// means nothing.
+func unsaved(ctx context.Context, dir string, registered []string) string {
 	// "matching" lists the paths an ignore pattern matched; the default mode
 	// shows a folder of nothing but ignored files as the folder, which hides
 	// what is in it.
@@ -459,6 +471,7 @@ func unsaved(ctx context.Context, dir string) string {
 	}
 	changed := 0
 	var kept []string
+	hrn := false
 	for _, line := range strings.Split(out, "\n") {
 		if line == "" {
 			continue
@@ -469,10 +482,15 @@ func unsaved(ctx context.Context, dir string) string {
 			continue
 		}
 		path = strings.Trim(strings.TrimSpace(path), `"`)
-		if isBuildOutput(dir, path) {
-			continue
+		switch {
+		case path == ".hrn/" || strings.HasPrefix(path, ".hrn/"):
+			hrn = true
+		case !isBuildOutput(dir, path):
+			kept = append(kept, strings.TrimSuffix(path, "/"))
 		}
-		kept = append(kept, strings.TrimSuffix(path, "/"))
+	}
+	if hrn {
+		kept = append(kept, hrnLeftovers(dir, registered)...)
 	}
 	switch {
 	case changed == 1:
@@ -488,6 +506,47 @@ func unsaved(ctx context.Context, dir string) string {
 	return ""
 }
 
+// hrnLeftovers lists what a worktree's .hrn/ holds besides what hrn batch puts
+// there: its .gitignore, and worktrees git lists under .hrn/worktrees (those
+// stay or go on their own verdicts). Anything else is someone's, a task folder
+// git no longer lists included.
+func hrnLeftovers(dir string, registered []string) []string {
+	root := filepath.Join(dir, ".hrn")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return []string{".hrn (unreadable)"}
+	}
+	var out []string
+	for _, e := range entries {
+		switch {
+		case e.Name() == ".gitignore" && e.Type().IsRegular():
+		case e.Name() == "worktrees" && e.IsDir():
+			tasks, err := os.ReadDir(filepath.Join(root, "worktrees"))
+			if err != nil {
+				out = append(out, ".hrn/worktrees (unreadable)")
+			}
+			for _, t := range tasks {
+				p := filepath.Join(root, "worktrees", t.Name())
+				if !t.IsDir() || !listed(p, registered) {
+					out = append(out, ".hrn/worktrees/"+t.Name())
+				}
+			}
+		default:
+			out = append(out, ".hrn/"+e.Name())
+		}
+	}
+	return out
+}
+
+func listed(p string, paths []string) bool {
+	for _, q := range paths {
+		if samePath(q) == samePath(p) {
+			return true
+		}
+	}
+	return false
+}
+
 // isCacheDir reports a folder tagged as a cache (the Cache Directory Tagging
 // convention; Cargo writes the tag into every target folder).
 func isCacheDir(dir string) bool {
@@ -495,13 +554,19 @@ func isCacheDir(dir string) bool {
 	return err == nil
 }
 
-// keepHolders keeps any worktree that holds one that stays: removing it would
-// delete the inner one with it (.hrn/ is ignored, so git would not stop it).
-func keepHolders(all []Worktree) {
+// keepHolders keeps any worktree that holds one that stays, or a repository's
+// main checkout: removing it would delete the inner one with it (.hrn/ is
+// ignored, so git would not stop it).
+func keepHolders(all []Worktree, repos []string) {
 	for changed := true; changed; {
 		changed = false
 		for i := range all {
 			if all[i].Verdict != Remove {
+				continue
+			}
+			if held := holding(all[i].Path, repos); held != "" {
+				all[i].Verdict, all[i].Reason = Keep, "holds the repository "+held
+				changed = true
 				continue
 			}
 			for j := range all {
