@@ -428,6 +428,40 @@ func TestGCFindsARepositoryInsideBuildOutputOnItsOwn(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "a repository inside build output: target/deps/clone")
 }
 
+// link makes a directory link the way the platform's tools do: a junction on
+// Windows (npm and pnpm make these in node_modules), a symlink elsewhere.
+func link(t *testing.T, at, to string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(at), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", at, to).CombinedOutput(); err != nil {
+			t.Fatalf("mklink /J: %v\n%s", err, out)
+		}
+		return
+	}
+	if err := os.Symlink(to, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGCKeepsAWorktreeWhoseBuildOutputLinksOutOfIt(t *testing.T) {
+	f := newFixture(t)
+	outside := filepath.Join(f.root, "store")
+	f.write(outside, "package.json", "{}\n")
+	wt, head := f.worktree("wt", "done")
+	link(t, filepath.Join(wt, "target", "dep"), outside)
+	inner, head2 := f.worktree("wt-inner", "inner")
+	link(t, filepath.Join(inner, "target", "self"), filepath.Join(inner, "src"))
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	f.pr(2, "inner", "MERGED", head2, 2*time.Hour)
+
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, wt), Keep, "a link out of the worktree inside build output: target/dep")
+	wantVerdict(t, find(t, wts, inner), Remove, "merged") // a link to its own folder goes with it
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

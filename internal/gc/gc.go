@@ -573,9 +573,8 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 			kept = append(kept, strings.TrimSuffix(path, "/"))
 		case folder != "" && !walked[folder]:
 			walked[folder] = true
-			if repo := repoInside(filepath.Join(dir, filepath.FromSlash(folder))); repo != "" {
-				rel, _ := filepath.Rel(dir, repo)
-				return "a repository inside build output: " + filepath.ToSlash(rel)
+			if why := buildRisk(dir, filepath.Join(dir, filepath.FromSlash(folder))); why != "" {
+				return why
 			}
 		}
 	}
@@ -637,25 +636,47 @@ func listed(p string, paths []string) bool {
 	return false
 }
 
-// repoInside returns the first folder under dir that holds a .git (a clone or
-// a worktree), or "": build output is deleted whole, and a repository in it
-// would go with its history. A folder it cannot read counts as one.
-func repoInside(dir string) string {
-	found := ""
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+// buildRisk says why a build folder of worktree wt cannot be deleted with it,
+// or "". Build output goes whole, so it must hold no repository (a .git: a
+// clone or a worktree) and no link out of the worktree: git on Windows
+// deletes through a junction (npm and pnpm make them in node_modules), and a
+// link it cannot read counts as one out. A folder it cannot read keeps it too.
+func buildRisk(wt, folder string) string {
+	rel := func(p string) string {
+		r, _ := filepath.Rel(wt, p)
+		return filepath.ToSlash(r)
+	}
+	why := ""
+	err := filepath.WalkDir(folder, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.Name() == ".git" {
-			found = filepath.Dir(p)
+		switch {
+		case d.Name() == ".git":
+			why = "a repository inside build output: " + rel(filepath.Dir(p))
+		case !d.IsDir() && !d.Type().IsRegular(): // a symlink, or a junction (irregular)
+			if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), wt) {
+				why = "a link out of the worktree inside build output: " + rel(p)
+			}
+		}
+		if why != "" {
 			return fs.SkipAll
 		}
 		return nil
 	})
-	if err != nil && found == "" {
-		return dir
+	if err != nil && why == "" {
+		return "build output that cannot be read: " + rel(folder)
 	}
-	return found
+	return why
+}
+
+// linkTarget makes a link's target absolute: a relative one is relative to the
+// folder holding the link.
+func linkTarget(link, to string) string {
+	if filepath.IsAbs(to) {
+		return to
+	}
+	return filepath.Join(filepath.Dir(link), to)
 }
 
 // isCacheDir reports a folder tagged as a cache (the Cache Directory Tagging
