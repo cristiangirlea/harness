@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"regexp"
@@ -147,7 +148,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	w.attempt, w.runID = req.AttemptID, rec.ID()
 	notes := append([]string{}, plan.Notes...)
 	if !w.write("accepted", map[string]any{
-		"requested": map[string]any{"backend": t.Backend, "model": t.Model, "mode": t.Mode, "effort": t.Effort},
+		"requested": map[string]any{"backend": t.Backend, "model": task.Model, "mode": t.Mode, "effort": t.Effort},
 		"continues": t.ContinueRunID, "notes": notes,
 	}) {
 		_ = rec.Close(agent.Result{Backend: t.Backend, Status: agent.StatusCanceled, Error: "stdout failed before backend started"})
@@ -179,6 +180,10 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 			}
 			e.Text = e.Text[:end]
 		}
+		if len(e.Input) > MaxEventText {
+			e.Input = nil
+			truncated = true
+		}
 		w.write("event", map[string]any{"event": struct {
 			agent.Event
 			Truncated bool `json:"truncated"`
@@ -206,13 +211,17 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 				resolvedModel = res.Model
 			}
 			if !w.write("result", map[string]any{
-				"result": res, "requested_model": t.Model, "resolved_model": resolvedModel, "record_error": recordError,
+				"result": res, "requested_model": task.Model, "resolved_model": resolvedModel, "record_error": recordError,
 			}) {
 				return 1
 			}
 			return 0
 		case line := <-input:
 			if line.err != nil {
+				if errors.Is(line.err, errInputTooLong) {
+					w.failure("bad_request", line.err.Error(), false)
+					continue
+				}
 				if !errors.Is(line.err, io.EOF) {
 					w.failure("bad_request", line.err.Error(), false)
 				}
@@ -226,7 +235,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 				continue
 			}
 			if c.Type != "cancel" {
-				w.failure("bad_request", "only cancel is allowed after start", false)
+				w.failure("bad_request", "only cancel is accepted after start", false)
 				continue
 			}
 			if c.AttemptID != req.AttemptID {
@@ -271,6 +280,30 @@ func decode(data []byte, value any) error {
 	if !utf8.Valid(data) {
 		return errors.New("input must be UTF-8")
 	}
+	// encoding/json matches struct fields without regard to case and merges
+	// repeated objects. Validate names and uniqueness before decoding so the
+	// presence-based option gate sees exactly the fields that reach the task.
+	fields, err := objectFields(data, "type", "attempt_id", "task")
+	if err != nil {
+		return err
+	}
+	var kind string
+	// Classify without reporting value errors until all keys have been checked.
+	// The typed decoder below still rejects an invalid type value.
+	_ = json.Unmarshal(fields["type"], &kind)
+	_, isCancel := value.(*cancelRequest)
+	if kind == "cancel" || (isCancel && kind != "start") {
+		if _, set := fields["task"]; set {
+			return fmt.Errorf("unknown field %q", "task")
+		}
+	} else {
+		if err := checkTaskKeys(fields["task"]); err != nil {
+			return err
+		}
+	}
+	if isCancel && kind == "start" {
+		return errors.New("only cancel is accepted after start")
+	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(value); err != nil {
@@ -282,6 +315,52 @@ func decode(data []byte, value any) error {
 	return nil
 }
 
+func checkTaskKeys(data json.RawMessage) error {
+	if len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return nil
+	}
+	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id")
+	return err
+}
+
+// objectFields retains raw values but checks every key, including repetitions.
+func objectFields(data []byte, names ...string) (map[string]json.RawMessage, error) {
+	d := json.NewDecoder(bytes.NewReader(data))
+	first, err := d.Token()
+	if err != nil {
+		return nil, err
+	}
+	if first != json.Delim('{') {
+		return nil, errors.New("each line must contain one JSON object")
+	}
+	fields := make(map[string]json.RawMessage)
+	for d.More() {
+		token, err := d.Token()
+		if err != nil {
+			return nil, err
+		}
+		key := token.(string)
+		if !slices.Contains(names, key) {
+			return nil, fmt.Errorf("unknown field %q", key)
+		}
+		if _, set := fields[key]; set {
+			return nil, fmt.Errorf("duplicate field %q", key)
+		}
+		var raw json.RawMessage
+		if err := d.Decode(&raw); err != nil {
+			return nil, err
+		}
+		fields[key] = raw
+	}
+	if _, err := d.Token(); err != nil {
+		return nil, err
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		return nil, errors.New("each line must contain one JSON object")
+	}
+	return fields, nil
+}
+
 type inputLine struct {
 	data []byte
 	err  error
@@ -291,36 +370,54 @@ func readInput(in io.Reader, done <-chan struct{}) <-chan inputLine {
 	ch := make(chan inputLine)
 	go func() {
 		r := bufio.NewReader(in)
+		first := true
 		for {
-			data, err := readLine(r)
+			data, err := readLine(r, !first)
 			select {
 			case ch <- inputLine{data, err}:
 			case <-done:
 				return
 			}
-			if err != nil {
+			if err != nil && (first || !errors.Is(err, errInputTooLong)) {
 				return
 			}
+			first = false
 		}
 	}()
 	return ch
 }
 
+var errInputTooLong = errors.New("input line exceeds 4 MiB")
+
 // readLine bounds allocation even when a peer never sends a newline. The
-// limit counts the JSON bytes, excluding the framing newline.
-func readLine(r *bufio.Reader) ([]byte, error) {
+// limit counts the JSON bytes, excluding the framing newline. Later frames
+// discard the entire oversized line, allowing the next control message through.
+func readLine(r *bufio.Reader, discardOverLimit bool) ([]byte, error) {
 	var line []byte
+	overLimit := false
 	for {
 		part, err := r.ReadSlice('\n')
 		if len(part) > 0 && part[len(part)-1] == '\n' {
 			part = part[:len(part)-1]
 		}
 		if len(line)+len(part) > MaxInputLine {
-			return nil, errors.New("input line exceeds 4 MiB")
+			if !discardOverLimit {
+				return nil, errInputTooLong
+			}
+			overLimit = true
+			line = nil
 		}
-		line = append(line, part...)
+		if !overLimit {
+			line = append(line, part...)
+		}
 		if err == bufio.ErrBufferFull {
 			continue
+		}
+		if overLimit {
+			if err != nil {
+				return nil, err
+			}
+			return nil, errInputTooLong
 		}
 		if err == io.EOF && len(line) != 0 {
 			return nil, errors.New("input line must end with a newline")

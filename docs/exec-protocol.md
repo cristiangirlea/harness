@@ -11,13 +11,17 @@ cancelled.
 
 - stdin and stdout carry UTF-8 JSON, one object per line, ended by `\n`. stderr carries human
   diagnostics only and is not part of the protocol.
-- An input line longer than 4 MiB is refused (`bad_request`).
+- An input line longer than 4 MiB is refused (`bad_request`). Before `start` it is a rejection;
+  after `accepted` hrn discards through the next newline, reports a non-fatal error and keeps
+  reading. An unterminated line at end of stdin still cancels the accepted run.
 - Every output line has `v` (always `1`), `seq`, `type` and `time` (RFC 3339 with nanoseconds).
   `seq` is 1 on the first line and increases by exactly one on every line hrn writes, so a gap or
   a repeat means lines were lost or duplicated.
 - An event's text longer than 256 KiB is cut to its first 256 KiB on a UTF-8 boundary and marked
-  `"truncated": true`. The run record keeps the full text.
-- Unknown fields in a caller's message are refused, so a misspelt field cannot be ignored.
+  `"truncated": true`. An event's `input` larger than 256 KiB is omitted and also marks the event
+  `"truncated": true`. The run record keeps the full text and input.
+- Field names are case-sensitive. Unknown or duplicate fields in a caller's message are refused,
+  so a misspelt field cannot be ignored.
 
 ## Sequence
 
@@ -73,6 +77,7 @@ hrn       -> result                (always the last line after accepted; then ex
   mode: a supervisor states both.
 - `continue_run_id` continues a finished run, as `hrn run --continue` does; `accepted` says how
   (`notes`).
+  It is accepted for every backend independently of `options` and is not listed there.
 
 ### `accepted` or `rejected` (hrn)
 
@@ -140,8 +145,9 @@ not stop the run.
  "requested_model":"gpt-6.1-sol","resolved_model":"","record_error":""}
 ```
 
-`result` is the same `agent.Result` a run record holds. `requested_model` is what the start asked
-for; `resolved_model` is what the backend reported running (empty when it did not say).
+`result` is the same `agent.Result` a run record holds. `requested_model` is the task's requested
+model after applying the continuation plan, including any inherited model; `accepted.requested.model`
+reports the same value. `resolved_model` is what the backend reported running (empty when it did not say).
 `record_error` is set when the run record is incomplete. hrn exits 0 after `result`, whatever the
 task's own status: the status is in the line.
 
