@@ -37,8 +37,9 @@ type ApprovalRequest struct {
 }
 
 type Task struct {
-	Prompt string `json:"prompt"`
-	Dir    string `json:"dir"`
+	Prompt    string `json:"prompt"`
+	Dir       string `json:"dir"`
+	AttemptID string `json:"attempt_id,omitempty"`
 
 	// Options is everything a caller may set besides the prompt and the
 	// workspace: the one struct the run flags, a batch spec and the MCP run
@@ -83,6 +84,7 @@ const (
 	EventToolResult EventKind = "tool_result"
 	EventInfo       EventKind = "info"
 	EventError      EventKind = "error"
+	EventSession    EventKind = "session"
 )
 
 type Event struct {
@@ -115,16 +117,18 @@ const (
 )
 
 type Result struct {
-	Backend      string `json:"backend"`
-	Model        string `json:"model,omitempty"`
-	Status       Status `json:"status"`
-	Final        string `json:"final,omitempty"`
-	Error        string `json:"error,omitempty"`
-	Turns        int    `json:"turns"`
-	InputTokens  int64  `json:"input_tokens,omitempty"`
-	OutputTokens int64  `json:"output_tokens,omitempty"`
-	CacheRead    int64  `json:"cache_read_tokens,omitempty"`
-	CacheWrite   int64  `json:"cache_write_tokens,omitempty"`
+	Backend string `json:"backend"`
+	Model   string `json:"model,omitempty"`
+	// ModelReported distinguishes a backend report from a requested/default model.
+	ModelReported bool   `json:"model_reported,omitempty"`
+	Status        Status `json:"status"`
+	Final         string `json:"final,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Turns         int    `json:"turns"`
+	InputTokens   int64  `json:"input_tokens,omitempty"`
+	OutputTokens  int64  `json:"output_tokens,omitempty"`
+	CacheRead     int64  `json:"cache_read_tokens,omitempty"`
+	CacheWrite    int64  `json:"cache_write_tokens,omitempty"`
 	// ToolCalls counts the tool calls the agent made. Set by Run, so it is the
 	// same count on every backend.
 	ToolCalls    int           `json:"tool_calls,omitempty"`
@@ -164,6 +168,43 @@ type Backend interface {
 	// or why it cannot run.
 	Detect() (string, error)
 	Run(ctx context.Context, task Task, emit func(Event)) Result
+}
+
+// Capabilities describes the task fields a backend can enforce for a supervisor.
+type Capabilities struct {
+	Modes     []Mode   `json:"modes"`
+	Efforts   []string `json:"efforts"`
+	Sessions  string   `json:"sessions"`
+	Options   []string `json:"options"`
+	Approvals bool     `json:"approvals"`
+}
+
+func BackendCapabilities(b Backend) Capabilities {
+	c := Capabilities{Modes: []Mode{}, Efforts: []string{}, Sessions: "none", Options: []string{}}
+	if provider, ok := b.(interface{ Capabilities() Capabilities }); ok {
+		c = provider.Capabilities()
+	}
+	if c.Modes == nil {
+		c.Modes = []Mode{}
+	}
+	if c.Efforts == nil {
+		c.Efforts = []string{}
+	}
+	if c.Options == nil {
+		c.Options = []string{}
+	}
+	if c.Sessions == "" {
+		c.Sessions = "none"
+	}
+	return c
+}
+
+func (b *APIBackend) Capabilities() Capabilities {
+	return Capabilities{
+		Modes:   []Mode{ModeReadOnly, ModeAuto, ModeYolo},
+		Efforts: append([]string{}, EffortLevels...), Sessions: "fork",
+		Options: []string{"model", "mode", "effort", "timeout", "max_turns", "mcp"},
+	}
 }
 
 var registry = map[string]Backend{}
@@ -256,14 +297,17 @@ func stopStatus(ctx context.Context) Status {
 	return StatusCanceled
 }
 
-// unenforced names the limits a backend cannot apply, for one warning line.
-func unenforced(task Task) []string {
+// unenforced names the options a CLI backend cannot apply, for one warning line.
+func unenforced(task Task, mapsEffort bool) []string {
 	var out []string
 	if task.MaxCostUSD > 0 {
 		out = append(out, "max_cost")
 	}
 	if task.TaskBudget > 0 {
 		out = append(out, "task_budget")
+	}
+	if task.Effort != "" && !mapsEffort {
+		out = append(out, "effort")
 	}
 	return out
 }

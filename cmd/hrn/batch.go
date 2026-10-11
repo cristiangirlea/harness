@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -127,7 +128,7 @@ func cmdBatchMerge(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	merged, mergeErr := batch.Merge(ctx, res, fs.Args()[1:], *squash)
@@ -197,7 +198,7 @@ func cmdBatchRun(args []string) (int, error) {
 		spec.AllowDirty = true
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	r := newRenderer(false)
 	if *jsonOut {

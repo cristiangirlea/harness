@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 // This file holds the machinery every agent CLI shares: finding the binary,
@@ -37,6 +39,13 @@ type CLIBackend struct {
 	// forks is set when args honours Task.ForkSession and parse records
 	// Result.Session.
 	forks bool
+	// mapsEffort is set when args passes Options.Effort to the CLI.
+	mapsEffort bool
+	// These fields are opt-in: advertise only explicit adapter mappings.
+	mapsModes    []Mode
+	mapsModel    bool
+	mapsMaxTurns bool
+	mapsMCP      bool
 	// limits is set when the CLI bills to a plan and says in words that its
 	// usage limit was reached (usageLimit knows the words): such a run ends
 	// limited rather than in an error.
@@ -44,6 +53,32 @@ type CLIBackend struct {
 }
 
 func (c *CLIBackend) Name() string { return c.name }
+
+func (c *CLIBackend) Capabilities() Capabilities {
+	caps := Capabilities{Modes: append([]Mode{}, c.mapsModes...), Efforts: []string{}, Sessions: "none", Options: []string{}}
+	if c.mapsModel {
+		caps.Options = append(caps.Options, "model")
+	}
+	if len(c.mapsModes) > 0 {
+		caps.Options = append(caps.Options, "mode")
+	}
+	if c.mapsEffort {
+		caps.Efforts = append(caps.Efforts, EffortLevels...)
+		caps.Options = append(caps.Options, "effort")
+	}
+	// Run itself enforces timeout for every CLI adapter.
+	caps.Options = append(caps.Options, "timeout")
+	if c.mapsMaxTurns {
+		caps.Options = append(caps.Options, "max_turns")
+	}
+	if c.mapsMCP {
+		caps.Options = append(caps.Options, "mcp")
+	}
+	if c.forks {
+		caps.Sessions = "fork"
+	}
+	return caps
+}
 
 // ForksSessions reports whether the CLI can start from a copy of an earlier
 // run's session.
@@ -130,12 +165,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = 5 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fail(StatusError, err)
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(cmd.Args[1:], " "))})
-	if limits := unenforced(task); len(limits) > 0 {
+	if limits := unenforced(task, c.mapsEffort); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
@@ -145,22 +181,54 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("command guard: not applied by the %s backend; its own permissions decide", c.name)})
 	}
-	if err := cmd.Start(); err != nil {
+	tree, err := tools.StartTree(cmd)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fail(stopStatus(ctx), ctx.Err())
+		}
 		return fail(StatusError, err)
 	}
+	defer tree.Close()
+	emitCLITreeStartInfo(tree, emit)
+	// A surviving descendant can hold StdoutPipe open before Wait is reached.
+	// Bound that read on cancellation as well as exec's stderr copy in Wait.
+	readDone := make(chan struct{})
+	defer close(readDone)
+	go func() {
+		select {
+		case <-readDone:
+			return
+		case <-ctx.Done():
+		}
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-readDone:
+		case <-timer.C:
+			_ = stdout.Close()
+		}
+	}()
 
 	var all []byte
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	var plain strings.Builder
+	var session string
 	for sc.Scan() {
 		line := sc.Bytes()
 		if c.finalize != nil {
 			all = append(append(all, line...), '\n')
 			continue
 		}
-		if c.parse != nil && c.parse(line, emit, &res) {
-			continue
+		if c.parse != nil {
+			parsed := c.parse(line, emit, &res)
+			if res.Session != "" && res.Session != session {
+				session = res.Session
+				emit(Event{Time: time.Now(), Kind: EventSession, Text: session})
+			}
+			if parsed {
+				continue
+			}
 		}
 		// Unparsed output is shown as text so nothing is silently lost.
 		text := string(line) + "\n"
@@ -181,7 +249,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	switch {
 	case ctx.Err() != nil:
-		return fail(stopStatus(ctx), ctx.Err())
+		return fail(stopStatus(ctx), stopCLITree(tree, ctx.Err()))
 	case waitErr != nil:
 		// Prefer what the CLI said over the bare exit status: stderr first,
 		// then a structured error the stream already reported. A status the
@@ -204,6 +272,34 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		res.Status = StatusOK
 	}
 	return finish(&res, started)
+}
+
+func emitCLITreeStartInfo(tree interface {
+	Contained() bool
+	StartWarnings() []string
+}, emit func(Event)) {
+	if !tree.Contained() {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "process tree is not contained; cancellation may leave child processes running"})
+	}
+	for _, warning := range tree.StartWarnings() {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "process tree startup: " + warning})
+	}
+}
+
+func stopCLITree(tree *tools.Tree, err error) error {
+	// exec may have reaped a CLI that exited just before cancellation
+	// and stopped its watcher without ever invoking cmd.Cancel.
+	// Without containment, cmd.Cancel owns the best-effort fallback. WaitGone
+	// supplies the single explanation that cleanup could not be verified.
+	if tree.Contained() {
+		if killErr := tree.Kill(); killErr != nil {
+			err = fmt.Errorf("%w; kill process tree: %v", err, killErr)
+		}
+	}
+	if goneErr := tree.WaitGone(5 * time.Second); goneErr != nil {
+		err = fmt.Errorf("%w; %v", err, goneErr)
+	}
+	return err
 }
 
 func withoutEnv(env []string, key string) []string {

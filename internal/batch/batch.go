@@ -681,11 +681,14 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		}
 	})
 	if err := rec.Close(att.Result); err != nil {
-		att.Error = "saving run: " + err.Error()
+		att.Error = runlog.CloseMessage(err)
 	}
 	text := fmt.Sprintf("%s · %d turns · run %s", att.Result.Status, att.Result.Turns, att.RunID)
 	if att.Result.Error != "" {
 		text += " · " + tools.OneLine(att.Result.Error, 160)
+	}
+	if att.Error != "" {
+		text += " · " + tools.OneLine(att.Error, 160)
 	}
 	report(att)
 	notify(Event{Task: id, Kind: "run", Text: text})

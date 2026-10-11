@@ -46,6 +46,10 @@ type Workspace struct {
 	// because the tool set is built once and shared by every run, so per-task
 	// policy has to travel with the workspace.
 	AllowDangerous bool
+	// real is Root where its links lead, which a path's own real location is
+	// judged against. Root keeps the spelling it was given, a junction
+	// included, since commands run there.
+	real string
 }
 
 func NewWorkspace(dir string) (*Workspace, error) {
@@ -63,7 +67,7 @@ func NewWorkspace(dir string) (*Workspace, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%s is not a directory", abs)
 	}
-	return &Workspace{Root: abs}, nil
+	return &Workspace{Root: abs, real: realPath(abs)}, nil
 }
 
 // Resolve maps a model-supplied path to an absolute path inside the workspace.
@@ -75,25 +79,69 @@ func (w *Workspace) Resolve(p string) (string, error) {
 		p = filepath.Join(w.Root, p)
 	}
 	p = filepath.Clean(p)
-	// Resolve symlinks on the longest existing prefix so a link can't escape.
+	// Judge where the path really is, so a link can't escape.
+	real := realPath(p)
+	if real == "" || w.real == "" {
+		return "", fmt.Errorf("path %q is refused: hrn cannot tell where it leads (a link that loops or cannot be read, or a name the system refuses)", p)
+	}
+	if !w.inside(real) {
+		return "", fmt.Errorf("path %q is outside the workspace %s", p, w.Root)
+	}
+	return p, nil
+}
+
+// maxLinks bounds the links realPath follows itself, so a loop of them ends.
+const maxLinks = 255
+
+// realPath is p with the links on its longest existing prefix resolved:
+// where p is, or would be once created. On Windows that includes directory
+// junctions, which filepath.EvalSymlinks has not followed since Go 1.23
+// (links_windows.go), and short 8.3 names become long ones. It is "" when
+// the links lead round in a loop or more than maxLinks times, or one cannot
+// be read.
+func realPath(p string) string {
+	// A path met again is a loop: stop there, since each round runs
+	// EvalSymlinks, which follows up to 255 links of its own.
+	seen := map[string]bool{}
+	for range maxLinks {
+		seen[p] = true
+		r := evalSymlinksPrefix(p)
+		next, ok := throughLink(r)
+		switch {
+		case !ok:
+			return r
+		case next == "" || seen[next]:
+			return ""
+		}
+		p = next
+	}
+	return ""
+}
+
+// evalSymlinksPrefix is p with filepath.EvalSymlinks applied to its longest
+// prefix that resolves.
+func evalSymlinksPrefix(p string) string {
 	check := p
 	for {
 		if real, err := filepath.EvalSymlinks(check); err == nil {
 			rest, _ := filepath.Rel(check, p)
-			check = filepath.Join(real, rest)
-			break
+			return filepath.Join(real, rest)
 		}
 		parent := filepath.Dir(check)
 		if parent == check {
-			break
+			return check
 		}
 		check = parent
 	}
-	rel, err := filepath.Rel(w.Root, check)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q is outside the workspace %s", p, w.Root)
+}
+
+// inside reports whether a path from realPath lies in the workspace.
+func (w *Workspace) inside(real string) bool {
+	if real == "" {
+		return false
 	}
-	return p, nil
+	rel, err := filepath.Rel(w.real, real)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Rel renders an absolute workspace path for display.

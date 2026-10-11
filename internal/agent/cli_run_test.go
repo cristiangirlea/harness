@@ -81,6 +81,61 @@ func TestCLISaysWhatItCannotEnforce(t *testing.T) {
 	}
 }
 
+func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "error")
+	for _, adapter := range []struct {
+		newBackend func() *CLIBackend
+		mapsEffort bool
+	}{
+		{NewCodexBackend, true},
+		{NewClaudeBackend, true},
+		{NewGeminiBackend, false},
+		{NewOpencodeBackend, false},
+	} {
+		b := adapter.newBackend()
+		t.Run(b.Name(), func(t *testing.T) {
+			// Keep the adapter's capabilities, but run only the test binary.
+			b.name = os.Args[0]
+			b.candidates = nil
+			b.args = helperCLI(nil).args
+			for _, options := range []Options{
+				{},
+				{Effort: "high"},
+				{Effort: "high", MaxCostUSD: 5, TaskBudget: 50000},
+			} {
+				var infos []string
+				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
+					if e.Kind == EventInfo && strings.Contains(e.Text, "not enforced") {
+						infos = append(infos, e.Text)
+					}
+				})
+				// The fake says "usage limit reached", which codex reads as its
+				// plan's limit: limited or error, it ran and exited non-zero.
+				if res.Status != StatusError && res.Status != StatusLimited {
+					t.Fatalf("the fake CLI must run and exit non-zero: %+v", res)
+				}
+				var want []string
+				if options.MaxCostUSD > 0 {
+					want = append(want, "max_cost", "task_budget")
+				}
+				if options.Effort != "" && !adapter.mapsEffort {
+					want = append(want, "effort")
+				}
+				if len(want) == 0 {
+					if len(infos) != 0 {
+						t.Errorf("options %+v: unexpected warning %v", options, infos)
+					}
+					continue
+				}
+				line := fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(want, ", "), b.Name())
+				if len(infos) != 1 || infos[0] != line {
+					t.Errorf("options %+v: info = %v, want one line %q", options, infos, line)
+				}
+			}
+		})
+	}
+}
+
 func TestCLISaysTheGuardDoesNotApply(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "error")
 	guardLines := func(mode Mode) []string {

@@ -58,6 +58,7 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | Command | What it does |
 |---|---|
 | `hrn run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
+| `hrn exec --protocol v1` | Run one recorded task over the supervisor JSONL protocol (see [hrn exec](#hrn-exec)). |
 | `hrn backends` | Show which backends are usable and where they were found. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn runs [-n N]` | List recent runs. |
@@ -78,10 +79,20 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | `hrn report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
-`--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
+`--effort` (api, codex and claude: low, medium, high, xhigh, max; unset uses the
+backend default; gemini and opencode report it as not enforced),
+`--json` (JSONL event stream for scripts), `--thinking`,
 `--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, `--no-switch` (see
 [When a plan's usage limit is reached](#when-a-plans-usage-limit-is-reached)), and the
 budgets below.
+
+### hrn exec
+
+`hrn exec --protocol v1` lets a supervising program start, follow, cancel and record
+one run per process without parsing terminal output. stdin and stdout carry JSON
+lines: hrn sends `hello` first, then accepts one `start`, streams complete events,
+and ends with `result`. Closing stdin or interrupting hrn cancels the run. See
+[the v1 protocol](docs/exec-protocol.md) for messages, capabilities, limits and exit codes.
 
 ### Budgets
 
@@ -98,6 +109,24 @@ The CLI backends cannot enforce a cost or token ceiling, so they say so once and
 carry on; the timeout applies to them all the same. The cost ceiling is checked against
 hrn's own estimate, so a model with no price in the table cannot be capped and the run
 says so instead of pretending.
+
+Agent CLIs and shell commands start in a Windows Job Object or a Unix process group.
+Cancel or timeout kills that tree; CLI cleanup can take up to about 15 seconds while
+stdout/stderr reads are bounded and remaining processes are checked (survivors or
+unavailable Windows containment are reported). On Windows, a CLI's leftover background
+processes end when the run ends, including after a normal exit, because the job is
+closed. On Unix, background processes survive a normal exit and are killed only on
+cancel or timeout; children can escape the group with setsid.
+
+On Unix, Ctrl+C, SIGTERM and SIGHUP cancel runs. A process in the tree that reads the
+terminal (such as a credential or host-key prompt) stops because the tree is not the
+terminal's foreground process group.
+
+On Windows, closing the console, logging off or shutting down reaches hrn as
+SIGTERM. It has a few seconds to save the cancelled record while the job ends the
+process tree. On Linux with procfs mounted with hidepid=2, a tree member owned by
+another user (sudo or a setuid helper) is invisible to the check, so "gone" can be
+optimistic.
 
 Where a cost comes from depends on the backend. The claude and opencode CLIs report one
 themselves; on a subscription that figure is what the run would cost at API list
@@ -140,7 +169,14 @@ approval is denied.
 
 `read_file`, `list_files` (glob with `**`), `grep` (RE2), `write_file`, `edit_file`
 (exact unique match, CRLF-aware), `run_command` (Git Bash when present, else PowerShell;
-120s default timeout). All paths are confined to the workspace, symlinks included.
+120s default timeout). All paths are confined to the workspace and judged where their links
+lead: symbolic links, and on Windows directory junctions too (Go has not counted a junction
+as a link since 1.23, so hrn reads its target itself). A path through a link out of the
+workspace is refused, and so is one through a link hrn cannot read; a path through a link
+that stays inside works. `grep` over a directory goes into no link or junction and passes
+over a file link that leads out. Not yet on Linux and macOS: a symbolic link to a file that
+does not exist yet is judged by its own name, so `write_file` on it creates that file where
+the link leads ([#47](https://github.com/cristiangirlea/harness/issues/47)).
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
 #### The command guard
@@ -698,7 +734,8 @@ pairs as data.
 - `task.json` — prompt, dir, backend, and the run options by their flag names
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load)
-- `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped),
+  and, for exec runs, the supervisor's `attempt_id`
+- `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
@@ -712,6 +749,18 @@ pairs as data.
 
 Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
 force, which every run consults before it starts. Deleting it forgets them.
+
+`result.json` includes `model_reported: true` only when the backend reports its
+model: api responses, claude init lines and gemini model stats. A requested/default
+model alone does not set it; codex and opencode do not report one. The field is
+omitted when false, and older records without it still load. Exec uses it to send
+an empty `resolved_model` when the backend did not report its model.
+
+When complete events fail to write or `events.jsonl` fails to close, `result.json`
+includes `record_error` with the number of events not recorded, the first event error
+and any close error; `hrn show` and MCP `show` report it and recover intact events
+after broken lines. The result is still saved to mark the run finished, the field is
+omitted on success, and older records still load.
 
 `hrn runs prune --older-than 30d` removes runs, batch records and eval records that
 started before the cutoff, and prints what it freed; `--dry-run` lists them instead and

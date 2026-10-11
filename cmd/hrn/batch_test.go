@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 func TestPrintBatchTable(t *testing.T) {
@@ -52,5 +53,24 @@ func TestPrintBatchSaysNothingAboutRunningWhenNoneAre(t *testing.T) {
 	printBatch(r, batch.Result{ID: "b2", Tasks: []batch.TaskResult{{ID: "one", Status: batch.StatusPass}}})
 	if text := out.String(); strings.Contains(text, "still running") || !strings.Contains(text, "1/1 passed") {
 		t.Errorf("table = %s", text)
+	}
+}
+
+func TestShowHeaderSaysWhenTheRunRecordIsIncomplete(t *testing.T) {
+	for _, tc := range []struct {
+		recordError string
+		want        bool
+	}{
+		{"2 events were not recorded: write events.jsonl: no space left on device", true},
+		{"", false},
+	} {
+		var out strings.Builder
+		r := newRenderer(false)
+		r.out, r.color = &out, false
+		showHeader(r, runlog.Record{ID: "r1", Backend: "codex", RecordError: tc.recordError})
+		got := strings.Contains(out.String(), "run record incomplete: 2 events were not recorded")
+		if got != tc.want {
+			t.Errorf("record_error %q: header mentions it = %v, want %v:\n%s", tc.recordError, got, tc.want, out.String())
+		}
 	}
 }

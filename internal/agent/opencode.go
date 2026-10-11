@@ -11,6 +11,8 @@ import (
 func NewOpencodeBackend() *CLIBackend {
 	return &CLIBackend{
 		name:       "opencode",
+		mapsModes:  []Mode{ModeYolo},
+		mapsModel:  true,
 		candidates: func() []string { return npmShim("opencode") },
 		// Windows .cmd shims mangle multi-line arguments, so the prompt travels
 		// as an attached file.

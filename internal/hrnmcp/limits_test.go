@@ -2,6 +2,8 @@ package hrnmcp
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -136,5 +138,36 @@ func TestRunToolRemembersBothLimits(t *testing.T) {
 		if limits.Until(name, time.Now()).IsZero() {
 			t.Errorf("%s's limit was not remembered", name)
 		}
+	}
+}
+
+// The answer is the carry-on's, so its record error is the one reported, and
+// an unsaved result.json on it makes the call an error as for any run.
+func TestRunToolReportsTheCarryOnsRecordError(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	orig, _ := agent.Get("claude")
+	agent.Register(scripted{"claude", func(task agent.Task) agent.Result {
+		if err := os.Mkdir(filepath.Join(task.RunDir, "result.json"), 0o755); err != nil {
+			return agent.Result{Status: agent.StatusError, Error: err.Error()}
+		}
+		return agent.Result{Status: agent.StatusOK, Final: "finished it", Turns: 1}
+	}})
+	t.Cleanup(func() { agent.Register(orig) })
+
+	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto"}`)
+	if !res.IsError {
+		t.Errorf("the carry-on's result.json was not saved, yet no error: %s", res.Text())
+	}
+	sc := res.StructuredContent.(map[string]any)
+	recordError, _ := sc["record_error"].(string)
+	if !strings.Contains(recordError, "result.json") || !strings.Contains(res.Text(), "saving run: ") {
+		t.Errorf("record_error = %q, text = %q: want the carry-on's record error", recordError, res.Text())
+	}
+	if sc["limited_run_id"] == nil || sc["run_id"] == sc["limited_run_id"] {
+		t.Errorf("structured = %v: want the carry-on's run and the limited one", sc)
+	}
+	if result := sc["result"].(map[string]any); result["status"] != "ok" || result["backend"] != "claude" {
+		t.Errorf("result = %v: want claude's ok result kept", result)
 	}
 }

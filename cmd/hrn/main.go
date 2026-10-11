@@ -17,6 +17,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -35,6 +36,7 @@ const usage = `hrn — personal agent harness
 
 Usage:
   hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
+  hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
   hrn backends                    show which backends are usable
   hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
@@ -65,7 +67,7 @@ Run flags:
   -C, --dir PATH       workspace directory (default: current directory)
       --mode MODE      readonly | ask | auto | yolo (default: ask)
       --max-turns N    stop after N model turns (default 50 for api)
-      --effort LEVEL   low | medium | high | xhigh | max (api backend)
+      --effort LEVEL   low | medium | high | xhigh | max (api, codex and claude; unset uses backend default)
       --json           print events as JSON lines instead of formatted output
       --thinking       show model thinking summaries
       --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hrn/mcp.json is loaded when present
@@ -113,6 +115,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		code, err = cmdRun(os.Args[2:])
+	case "exec":
+		code, err = cmdExec(os.Args[2:])
 	case "backends":
 		err = cmdBackends()
 	case "runs":
@@ -260,7 +264,7 @@ func cmdRun(args []string) (int, error) {
 	// The api backend saves the conversation here, so this run can be continued.
 	task.RunDir = rec.Dir()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	var emit func(agent.Event)
@@ -287,7 +291,7 @@ func cmdRun(args []string) (int, error) {
 	plan.Apply(&task, rec.Dir(), emit)
 	res := agent.Run(ctx, b, task, emit)
 	if err := rec.Close(res); err != nil {
-		fmt.Fprintln(os.Stderr, "hrn: saving run:", err)
+		fmt.Fprintln(os.Stderr, "hrn: "+runlog.CloseMessage(err))
 	}
 	finished := func(id string, res agent.Result) {
 		if jsonOut {
@@ -321,7 +325,7 @@ func cmdRun(args []string) (int, error) {
 		next.Plan.Apply(&next.Task, nrec.Dir(), emit)
 		res = agent.Run(ctx, nb, next.Task, emit)
 		if err := nrec.Close(res); err != nil {
-			fmt.Fprintln(os.Stderr, "hrn: saving run:", err)
+			fmt.Fprintln(os.Stderr, "hrn: "+runlog.CloseMessage(err))
 		}
 		// Limited too: remembered, so the next run does not try it first.
 		if err := limits.Note(next.To, res); err != nil {
@@ -396,7 +400,7 @@ func cmdShow(args []string) error {
 	}
 	id := fs.Arg(0)
 	if *follow {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
 		return followRun(ctx, newRenderer(true), id, 250*time.Millisecond)
 	}
@@ -436,6 +440,9 @@ func showHeader(r *renderer, rec runlog.Record) {
 	head = printable(head)
 	r.Line(r.c(bold, printable(tools.OneLine(rec.Task.Prompt, 200))))
 	r.Line(head)
+	if rec.RecordError != "" {
+		r.Line("run record incomplete: " + printable(strings.Join(strings.Fields(rec.RecordError), " ")))
+	}
 	r.Line("")
 }
 
@@ -459,7 +466,7 @@ func cmdMCP(args []string) error {
 		return fmt.Errorf("--dir %s: %w", *dir, err)
 	}
 	abs := ws.Root
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	fmt.Fprintln(os.Stderr, "hrn mcp: serving on stdio, workspace", abs)
 	if err := hrnmcp.NewServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
@@ -543,7 +550,7 @@ func cmdEval(args []string) (int, error) {
 		spec.Parallel = *parallel
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	r := newRenderer(false)
 	if *jsonOut {

@@ -604,7 +604,14 @@ order they are worth taking:
     - [#38](https://github.com/cristiangirlea/harness/issues/38): control. Confirmations,
       an allow-list and an audit log for the bot's and the phone's actions, before item 11.
 
-13. ~~**Carry on at a plan's usage limit**~~ ([#43](https://github.com/cristiangirlea/harness/issues/43)).
+13. **Ada OS's engine interface** ([#49](https://github.com/cristiangirlea/harness/issues/49)):
+    Ada, a separate private repository, runs hrn as its engine and needs a versioned interface
+    instead of terminal output. Four PRs, in this order:
+    - [x] Reasoning effort for codex and claude. Done: PR #50, 2026-10-11.
+    - [x] Run records surface write failures. Done: PR #51, 2026-10-11.
+    - [x] Agent CLIs run in a contained process tree. Done: PR #52, 2026-10-11.
+    - [x] `hrn exec --protocol v1`, documented in `docs/exec-protocol.md`. Done: PR #53, 2026-10-11.
+14. ~~**Carry on at a plan's usage limit**~~ ([#43](https://github.com/cristiangirlea/harness/issues/43)).
     Done as PR #46, 2026-10-11: a `limited` status, claude and codex carrying on each
     other's runs, reset times remembered in `limits.json`, `no_switch`. See the Decisions
     log, 2026-10-11.
@@ -617,6 +624,58 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: #45 reviews (PR #48): an independent read-only reviewer, and an adversarial security
+  read in a scratch copy, which found nothing it could get out through (junction chains and
+  loops, dangling junctions, 8.3 aliases, `\\?\` targets, a junction to `C:\Windows`; no
+  hang). The reviewer's blocking point, fixed: a symbolic link whose target goes on past a
+  junction (`s -> out\sub`, or to `C:\Documents and Settings\<user>`, a junction Windows
+  ships) still got out, because `EvalSymlinks` follows the link inside its own walk, fails
+  at the junction, and the fall-back to a shorter prefix kept `s` unresolved. `throughLink`
+  now reads symbolic links too, with relative and rooted targets; this PC cannot make them,
+  so its logic is tested on a fake file system and the real-link test skips here. Also
+  fixed: what cannot be judged (an Lstat error other than "not there", a link Readlink
+  cannot read, a reparse point the path goes on past that is not a link, a `C:x` target)
+  is refused rather than judged by its name; and realPath for every file cost about ten
+  times grep's search, so the walk judges only links and irregular entries, after the glob
+  (a warm grep over `GOROOT/src`: 7 to 8 s, now 1.2 s). Moved to #47: on Linux and macOS a
+  symbolic link to a file not there yet still lets `write_file` create it where it leads
+  (on main too; the same walk on every platform fixes it, but changes Linux, so it is its
+  own item). Refused now, allowed before: a volume mounted on a folder in the workspace
+  (its target is a `\\?\Volume{...}\` path, never under a drive-letter root), a junction
+  target spelt through another mapping (a `subst` drive, a mapped drive against its UNC
+  path), and a junction on an SMB share (its target is the server's path, judged here).
+  For the guard branch's merge: keep `inside` against `w.real`, and judge secret names
+  relative to `w.real` too (relative to `Root`, a workspace reached through a junction
+  sees its parents' names); its README sentence on junctions no longer holds. The
+  reviewer's second pass found nothing blocking and three low points, fixed: a path that
+  cannot be judged said "outside the workspace" (now "cannot tell where it leads"); a loop
+  of links ran all 255 rounds, each with `EvalSymlinks` following up to 255 links of its
+  own (now refused at the first path met again: a two-junction loop went from 157 ms to
+  3 ms); and a mount point made by hand with an NT target (`\Device\...`) read as a folder
+  on its own volume (refused now). Left, fail-closed on purpose: a workspace under a folder
+  that can be passed through but not read (another account's profile with traverse-only
+  rights, a share with access-based enumeration) refuses every path for the file tools,
+  since a component that cannot be read could be a junction; `NewWorkspace` does not fail
+  there, because it also checks the directory for the CLI backends, which do not use it.
+- 2026-10-11: Junctions (#45, PR #48), found while reviewing the guard for #36. Since Go 1.23 a
+  Windows mount point (a directory junction, which needs no privilege to make) is an
+  irregular file to `os.Lstat`, not a symbolic link, so `filepath.EvalSymlinks` stopped
+  resolving it: worse, it fails on a path that goes on past one, and the workspace check's
+  fall-back to the longest prefix that resolves then judged `out/secret.txt` by its name.
+  Tests with real junctions saw `read_file`, `write_file`, `edit_file` and `grep` reach
+  outside. Now `realPath` reads each irregular component with `os.Readlink` on Windows
+  (it answers only for links, so OneDrive's reparse points are passed over) and follows
+  the target, up to 255 times; paths are compared with the root resolved the same way, so a
+  workspace reached through a junction still works while `Root` keeps the spelling it was
+  given for commands. Refusing every junction was not taken: pnpm fills `node_modules` with
+  junctions that stay in the project, and `os.Root`, which would also close the race
+  between the check and the open, refuses those too. `grep`'s walk judged no file it found
+  on main, so a file symlink out of the workspace was searched on Linux too; it now judges
+  each link it finds (the guard branch judges every file, and also passes over secret
+  files). A walk still goes into no link or junction, as before: `grep` over the root, or
+  with `path` set to a junction, does not search the files behind one; a path through it
+  does. Windows CI runs only after a merge: the junction tests ran on the owner's PC, the
+  symlink tests on Linux.
 - 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
   means including security"), by an independent agent with loopback-only proof tests in a
   scratch copy. Nothing critical or high; four findings, three fixed here, each as its own
@@ -1203,6 +1262,47 @@ neither of them follows a run while it happens.
   because encoding/json gives a custom unmarshaler no field path; and the methods of an
   embedded struct promote, so `spec.Validate()` exists and checks only the options -
   named in the doc comment, not worth un-embedding.
+- 2026-10-11: PR #50, reasoning effort for the CLIs. One list of levels
+  (`agent.EffortLevels`), exact names (`HIGH` is refused), checked on the way in only: a
+  spec with another level now fails to load, while stored records still load and a
+  follow-up does not inherit effort. Codex takes it as `-c model_reasoning_effort=<level>`
+  (it has no dedicated flag), claude as `--effort`; gemini and opencode report it as not
+  enforced through the `mapsEffort` adapter capability, so a new adapter warns by default.
+  The review (Claude Opus) found the eval judge skipped the check, which would have failed
+  only after every cell ran; fixed. The CLIs accept every level but do not report the
+  effective one back.
+- 2026-10-11: PR #51, run records surface write failures. Every complete event is still
+  attempted, one write each; after a write cut short mid-line the next event starts on a
+  new line, so one failure costs one event and the count stays exact. `record_error` is
+  additive and also carries a failure to close events.jsonl; `runlog.Events` skips broken
+  lines only in a record that says it is incomplete. The MCP run tool reports a record
+  failure without flagging an ok run as an error, because a host may retry a tool error and
+  spend the plan again; a result.json that could not be saved is still an error, since the
+  run then never reads as finished. The eval judge still ignores Close's error. Review (Claude
+  Opus) found the short-write corruption; fixed. Left as is: if a broken line and a failed
+  result.json happen in one run, no record_error is saved and hrn show refuses the run; that
+  means the disk is failing.
+- 2026-10-11: PR #52, contained process trees. Windows starts the process suspended, joins
+  it to a kill-on-close job, then resumes every thread; the job does not allow breakaway, so a
+  descendant using CREATE_BREAKAWAY_FROM_JOB fails (strict containment over compatibility, the
+  owner's to revisit). A CLI's leftovers end with the run on Windows even after a normal exit;
+  on Unix only on cancel or timeout. Tree.Kill makes "canceled" mean killed even when Go never
+  called Cancel. On Linux WaitGone counts live members from /proc so an unreaped zombie is not a
+  survivor, skips entries it may not read, and falls back to the kill(-pgid, 0) probe when the
+  scan fails; hidepid=2 can hide a member owned by another user. hrn stops on SIGTERM and SIGHUP
+  as well. Reviews (Claude Opus, twice) asked for the zombie handling, the explicit kill, the
+  signals and the /proc fallback; all done. The live test cannot separate this from Codex's own
+  sandbox cleanup; the fake-CLI tests show the change.
+- 2026-10-11: PR #53, hrn exec --protocol v1. The document came first and the code follows
+  it. The capability report is conservative: a mode is listed only where the adapter enforces
+  it (gemini auto and yolo, opencode yolo only), and a start that names an option the backend
+  does not honour is rejected, presence counting even as zero. Field names must match exactly
+  and once, since encoding/json matches case-insensitively and merges duplicates. resolved_model
+  needs the additive model_reported, set where a backend reports its model (api, claude,
+  gemini). After start, a bad line or a wrong cancel is a non-fatal error and the run goes on;
+  end of stdin cancels, because the supervisor is gone. Review (Claude Opus) found the case
+  and oversized-line holes; fixed. An api-backend run through exec has not been tried (it costs
+  money).
 - 2026-10-11: carrying on at a usage limit (#43). Cause: eight codex attempts in the owner's
   batches that night ended at codex's usage limit, and their records said only
   `exit status 1`, because codex's `turn.failed` keeps its text under `error.message` and

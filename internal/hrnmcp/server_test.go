@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -21,6 +22,17 @@ type stubBackend struct{}
 func (stubBackend) Name() string            { return "stub" }
 func (stubBackend) Detect() (string, error) { return "built-in stub", nil }
 func (stubBackend) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	if task.Prompt == "record-write-failure" {
+		// Invalid tool input forces event encoding to fail without a real backend.
+		for range 2 {
+			emit(agent.Event{Kind: agent.EventToolCall, Input: json.RawMessage(`{`)})
+		}
+	}
+	if task.Prompt == "result-write-failure" {
+		if err := os.Mkdir(filepath.Join(task.RunDir, "result.json"), 0o755); err != nil {
+			return agent.Result{Backend: "stub", Status: agent.StatusError, Error: err.Error()}
+		}
+	}
 	emit(agent.Event{Kind: agent.EventToolCall, Tool: "read_file", Text: "main.go"})
 	emit(agent.Event{Kind: agent.EventToolResult, Tool: "read_file", Text: "package main"})
 	if task.Prompt == "fail" {
@@ -90,6 +102,9 @@ func TestRunThenInspect(t *testing.T) {
 		t.Fatalf("run result: %+v", res)
 	}
 	sc := res.StructuredContent.(map[string]any)
+	if _, ok := sc["record_error"]; ok {
+		t.Errorf("successful run must omit record_error: %v", sc)
+	}
 	id, _ := sc["run_id"].(string)
 	if id == "" {
 		t.Fatalf("no run_id: %v", sc)
@@ -125,6 +140,90 @@ func TestRunThenInspect(t *testing.T) {
 	}
 }
 
+func TestRunReturnsRecordErrorsToTheHost(t *testing.T) {
+	for _, tc := range []struct {
+		prompt, prefix, want string
+		isError              bool
+	}{
+		{"record-write-failure", "run record incomplete: ", "2 events were not recorded", false},
+		{"result-write-failure", "saving run: ", "result.json", true},
+	} {
+		t.Run(tc.prompt, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			s := connect(t, t.TempDir())
+			res := s.call(t, "run", `{"prompt":"`+tc.prompt+`","backend":"stub"}`)
+			if res.IsError != tc.isError {
+				t.Errorf("isError = %v, want %v: lost events leave an ok run ok, an unsaved result does not", res.IsError, tc.isError)
+			}
+			if !strings.Contains(res.Text(), tc.prefix) || !strings.Contains(res.Text(), tc.want) || !strings.Contains(res.Text(), "stub says: "+tc.prompt) {
+				t.Errorf("run must return its answer and record error: %+v", res)
+			}
+			sc := res.StructuredContent.(map[string]any)
+			recordError, _ := sc["record_error"].(string)
+			if !strings.Contains(recordError, tc.want) {
+				t.Errorf("structured result must carry the record error: %v", sc)
+			}
+			if result := sc["result"].(map[string]any); result["status"] != "ok" {
+				t.Errorf("record failure must preserve the backend's result: %v", result)
+			}
+			if tc.prompt == "record-write-failure" {
+				if rec, err := runlog.Load(sc["run_id"].(string)); err != nil || !rec.Done {
+					t.Errorf("failed event recording must still finish the record: %+v, err=%v", rec, err)
+				}
+			}
+		})
+	}
+}
+
+func TestBatchIncludesRecordErrorsInTheRunResultLine(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := gitRepo(t)
+	var lines []string
+	res, err := batch.Run(context.Background(), batch.Spec{
+		Dir: dir, Backend: "stub", Tasks: []batch.Task{{ID: "record", Prompt: "record-write-failure"}},
+	}, func(e batch.Event) {
+		if e.Kind == "run" {
+			lines = append(lines, e.Text)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "run record incomplete: 2 events were not recorded") {
+		t.Errorf("run result line must carry Close's error: %q", lines)
+	}
+	if len(res.Tasks) != 1 || len(res.Tasks[0].Attempts) != 1 || !strings.Contains(res.Tasks[0].Attempts[0].Error, "2 events were not recorded") {
+		t.Errorf("attempt must retain Close's error: %+v", res.Tasks)
+	}
+	if len(res.Tasks) != 1 || res.Tasks[0].Status != batch.StatusPass {
+		t.Errorf("an ok agent must still pass when its record fails: %+v", res.Tasks)
+	}
+}
+
+func TestShowIncludesTheSavedRecordError(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"record-write-failure","backend":"stub"}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A marked incomplete record must remain inspectable despite a broken line.
+	if err := os.WriteFile(filepath.Join(runlog.Root(), id, "events.jsonl"), []byte("{broken\n{\"kind\":\"text\",\"text\":\"recovered\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, events := range []string{"true", "false"} {
+		shown := s.call(t, "show", `{"run_id":"`+id+`","events":`+events+`}`)
+		if shown.IsError || !strings.Contains(shown.Text(), "run record incomplete: "+rec.RecordError) {
+			t.Errorf("show must report the saved error, events=%s: %+v", events, shown)
+		}
+		if events == "true" && !strings.Contains(shown.Text(), "recovered") {
+			t.Errorf("show must include intact events after a broken line: %+v", shown)
+		}
+	}
+}
+
 func TestRunErrors(t *testing.T) {
 	s := connect(t, t.TempDir())
 	for _, tc := range []struct{ args, want string }{
@@ -132,6 +231,7 @@ func TestRunErrors(t *testing.T) {
 		{`{"prompt":"x","backend":"stub","dir":"/definitely/not/here"}`, "dir /definitely/not/here"},
 		{`{"prompt":"x","backend":"nope"}`, "unknown backend"},
 		{`{"prompt":"x","backend":"stub","mode":"weird"}`, "unknown mode"},
+		{`{"prompt":"x","backend":"stub","effort":"turbo"}`, `unknown effort "turbo"`},
 	} {
 		res := s.call(t, "run", tc.args)
 		if !res.IsError || !strings.Contains(res.Text(), tc.want) {

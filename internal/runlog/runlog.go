@@ -5,11 +5,14 @@
 package runlog
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,16 +44,20 @@ type Record struct {
 	Result  agent.Result `json:"result"`
 	// Continues names the run this one follows, when it was started with
 	// hrn run --continue.
-	Continues string `json:"continues,omitempty"`
-	Done      bool   `json:"-"`
+	Continues   string `json:"continues,omitempty"`
+	RecordError string `json:"record_error,omitempty"`
+	Done        bool   `json:"-"`
 }
 
 type Writer struct {
-	dir    string
-	mu     sync.Mutex
-	events *os.File
-	enc    *json.Encoder
-	rec    Record
+	dir        string
+	mu         sync.Mutex
+	events     io.WriteCloser
+	firstError error
+	closeError error
+	lostEvents int
+	brokenLine bool
+	rec        Record
 }
 
 // Create starts a run record.
@@ -63,21 +70,32 @@ func CreateContinuing(backend string, task agent.Task, continues string) (*Write
 	return create(backend, task, continues)
 }
 
-func create(backend string, task agent.Task, continues string) (*Writer, error) {
+// createEventsFile opens a new run's events.jsonl; tests replace it to make the open fail.
+var createEventsFile = func(path string) (io.WriteCloser, error) { return os.Create(path) }
+
+// create starts a run record. If it fails after making the run's directory, it removes the
+// directory again, so a run that never started leaves no half record behind (hrn exec promises a
+// rejected start creates none).
+func create(backend string, task agent.Task, continues string) (w *Writer, err error) {
 	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	w := &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues}}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues}}
 	if err := writeJSON(filepath.Join(dir, "task.json"), w.rec); err != nil {
 		return nil, err
 	}
-	f, err := os.Create(filepath.Join(dir, "events.jsonl"))
+	f, err := createEventsFile(filepath.Join(dir, "events.jsonl"))
 	if err != nil {
 		return nil, err
 	}
-	w.events, w.enc = f, json.NewEncoder(f)
+	w.events = f
 	return w, nil
 }
 
@@ -94,15 +112,93 @@ func (w *Writer) Event(e agent.Event) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	_ = w.enc.Encode(e)
+	data, err := json.Marshal(e)
+	if err == nil {
+		data = append(data, '\n')
+		if w.brokenLine {
+			// Isolate the fragment so it cannot consume the next complete event.
+			data = append([]byte{'\n'}, data...)
+		}
+		var n int
+		n, err = w.events.Write(data)
+		if err == nil && n < len(data) {
+			err = io.ErrShortWrite
+		}
+		if n > 0 {
+			w.brokenLine = data[n-1] != '\n'
+		}
+	}
+	if err != nil {
+		if w.firstError == nil {
+			w.firstError = err
+		}
+		w.lostEvents++
+	}
+}
+
+// Err reports how many complete events could not be recorded, wrapping the
+// first error, along with any events-file close error. It is safe to call
+// concurrently with Event and Close.
+func (w *Writer) Err() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.errLocked()
+}
+
+// errLocked requires w.mu to be held.
+func (w *Writer) errLocked() error {
+	var eventErr error
+	if w.firstError != nil {
+		if w.lostEvents == 1 {
+			eventErr = fmt.Errorf("1 event was not recorded: %w", w.firstError)
+		} else {
+			eventErr = fmt.Errorf("%d events were not recorded: %w", w.lostEvents, w.firstError)
+		}
+	}
+	return errors.Join(eventErr, w.closeError)
+}
+
+// ResultWriteError distinguishes a failure to save result.json from an
+// incomplete event record whose result was saved. It wraps the write error.
+type ResultWriteError struct {
+	Err error
+}
+
+func (e *ResultWriteError) Error() string { return e.Err.Error() }
+func (e *ResultWriteError) Unwrap() error { return e.Err }
+
+// ResultNotSaved reports whether err, from Writer.Close, includes a failure to
+// write result.json. Such a run is never marked done and reads as still
+// running, which is worse than lost events.
+func ResultNotSaved(err error) bool {
+	var saveErr *ResultWriteError
+	return errors.As(err, &saveErr)
+}
+
+// CloseMessage is the one line callers show for an error from Writer.Close:
+// "saving run:" when result.json was not written, "run record incomplete:"
+// when only events were lost.
+func CloseMessage(err error) string {
+	if ResultNotSaved(err) {
+		return "saving run: " + err.Error()
+	}
+	return "run record incomplete: " + err.Error()
 }
 
 func (w *Writer) Close(res agent.Result) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.closeError = w.events.Close()
 	w.rec.Result = res
-	err := w.events.Close()
-	return errors.Join(err, writeJSON(filepath.Join(w.dir, "result.json"), w.rec))
+	recordErr := w.errLocked()
+	if recordErr != nil {
+		w.rec.RecordError = recordErr.Error()
+	}
+	err := writeJSON(filepath.Join(w.dir, "result.json"), w.rec)
+	if err != nil {
+		err = &ResultWriteError{Err: err}
+	}
+	return errors.Join(recordErr, err)
 }
 
 // NewID is a sortable timestamp plus random suffix, shared by runs and batches.
@@ -214,15 +310,32 @@ func Events(id string) ([]agent.Event, error) {
 	}
 	defer f.Close()
 	var out []agent.Event
-	dec := json.NewDecoder(f)
-	for dec.More() {
-		var e agent.Event
-		if err := dec.Decode(&e); err != nil {
-			return out, err
+	r := bufio.NewReader(f)
+	checked, recoverBroken := false, false
+	for {
+		line, readErr := r.ReadBytes('\n')
+		if readErr != nil && readErr != io.EOF {
+			return out, readErr
 		}
-		out = append(out, e)
+		if line = bytes.TrimSpace(line); len(line) != 0 {
+			var e agent.Event
+			if err := json.Unmarshal(line, &e); err != nil {
+				if !checked {
+					// Only a saved recording failure permits skipping broken lines.
+					rec, loadErr := Load(id)
+					recoverBroken, checked = loadErr == nil && rec.RecordError != "", true
+				}
+				if !recoverBroken {
+					return out, err
+				}
+			} else {
+				out = append(out, e)
+			}
+		}
+		if readErr == io.EOF {
+			return out, nil
+		}
 	}
-	return out, nil
 }
 
 // LoadConversation returns a run's record together with the message history it
