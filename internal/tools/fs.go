@@ -216,7 +216,7 @@ func listFiles() Tool {
 			}
 			var out []string
 			const limit = 500
-			err = walk(ctx, base, func(p, rel string) bool {
+			err = walk(ctx, base, func(p, rel string, _ bool) bool {
 				if re.MatchString(rel) {
 					out = append(out, ws.Rel(p))
 				}
@@ -309,15 +309,17 @@ func grep() Tool {
 			if info, err := os.Stat(base); err == nil && !info.IsDir() {
 				search(base)
 			} else {
-				err = walk(ctx, base, func(p, rel string) bool {
-					// A link out of the workspace is not followed, as Resolve
-					// refuses one.
-					if !ws.inside(realPath(p)) {
+				err = walk(ctx, base, func(p, rel string, regular bool) bool {
+					if globRe != nil && !globRe.MatchString(rel) {
 						return true
 					}
-					if globRe == nil || globRe.MatchString(rel) {
-						search(p)
+					// A link out of the workspace is not followed, as Resolve
+					// refuses one. A regular file needs no judging: the walk
+					// goes into no link, and base is inside.
+					if !regular && !ws.inside(realPath(p)) {
+						return true
 					}
+					search(p)
 					return count < limit
 				})
 				if err != nil {
@@ -337,9 +339,11 @@ func grep() Tool {
 
 var errStop = errors.New("stop")
 
-// walk visits regular files under base, passing the slash-separated path
-// relative to base. visit returns false to stop.
-func walk(ctx context.Context, base string, visit func(path, rel string) bool) error {
+// walk visits what is not a directory under base, passing the slash-separated
+// path relative to base and whether it is a regular file rather than a link,
+// a junction or another irregular entry. It goes into no link or junction
+// (filepath.WalkDir does not). visit returns false to stop.
+func walk(ctx context.Context, base string, visit func(path, rel string, regular bool) bool) error {
 	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -354,7 +358,7 @@ func walk(ctx context.Context, base string, visit func(path, rel string) bool) e
 			return nil
 		}
 		rel, _ := filepath.Rel(base, p)
-		if !visit(p, filepath.ToSlash(rel)) {
+		if !visit(p, filepath.ToSlash(rel), d.Type().IsRegular()) {
 			return errStop
 		}
 		return nil

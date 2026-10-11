@@ -117,6 +117,11 @@ func TestGrepDoesNotFollowASymlinkOutOfTheWorkspace(t *testing.T) {
 	if !strings.Contains(out, "src/deep/b.go:2:// TODO fix") {
 		t.Errorf("grep lost the workspace's own match: %q", out)
 	}
+	out, err = call(t, ws, tl["grep"], map[string]any{"pattern": "TODO", "glob": "**/*.txt"})
+	must(t, err)
+	if out != "(no matches)" {
+		t.Errorf("grep with a glob followed a symbolic link out of the workspace: %q", out)
+	}
 }
 
 func TestGlobRegexp(t *testing.T) {
