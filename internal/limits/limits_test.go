@@ -3,7 +3,11 @@ package limits
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -275,5 +279,82 @@ func TestStatusSaysWhatIsRememberedAndHowToForgetIt(t *testing.T) {
 	s := Status("codex", now)
 	if !strings.Contains(s, "usage limit until") || !strings.Contains(s, "limits.json") {
 		t.Errorf("Status = %q, want the time and the file to delete", s)
+	}
+}
+
+func TestNotesFromParallelWorkersAreAllKept(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	now := time.Now()
+	// A batch's workers note and read limits at once; on Windows a read can
+	// also hold the file a rename wants to replace.
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(2)
+		name := []string{"codex", "claude"}[i%2]
+		go func() {
+			defer wg.Done()
+			if err := Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}); err != nil {
+				t.Errorf("note: %v", err)
+			}
+		}()
+		go func() { defer wg.Done(); Until(name, now) }()
+	}
+	wg.Wait()
+	for _, name := range []string{"codex", "claude"} {
+		if Until(name, now).IsZero() {
+			t.Errorf("%s's note was lost", name)
+		}
+	}
+}
+
+func TestANullFileIsNoLimit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := writeFile(home+"/limits.json", []byte("null")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if Until("codex", time.Now()).IsZero() {
+		t.Error("the note after a null file was not kept")
+	}
+}
+
+// TestHelperNote is not a test: the test binary, run as a second hrn process,
+// notes a limit over and over.
+func TestHelperNote(t *testing.T) {
+	name := os.Getenv("HRN_LIMITS_HELPER")
+	if name == "" {
+		return
+	}
+	for i := 0; i < 30; i++ {
+		if err := Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(3)
+		}
+	}
+	os.Exit(0)
+}
+
+func TestNotesFromOtherProcessesDoNotFail(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	var cmds []*exec.Cmd
+	for _, name := range []string{"codex", "claude"} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperNote$")
+		cmd.Env = append(os.Environ(), "HRN_LIMITS_HELPER="+name)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		cmds = append(cmds, cmd)
+	}
+	// Reading meanwhile is what makes Windows refuse a rename.
+	for i := 0; i < 100; i++ {
+		Until("codex", time.Now())
+	}
+	for _, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Errorf("a process noting a limit failed: %v", err)
+		}
 	}
 }

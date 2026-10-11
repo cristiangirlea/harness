@@ -8,9 +8,12 @@ package limits
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -31,9 +34,14 @@ func Partner(backend string) string {
 }
 
 // The file is small and read on every run; a write replaces it whole, so a
-// reader never sees half of one. Two runs noting a limit at the same moment
-// can lose one note, which costs one more limited run, not a wrong answer.
+// reader never sees half of one. Within a process, mu orders the readers and
+// writers (a batch's workers all reach a limit together). Across processes,
+// Windows refuses to replace a file another one is reading, so both sides try
+// again for a moment; two processes noting at the same instant can still lose
+// one note, which costs one more limited start, not a wrong answer.
 const fileName = "limits.json"
+
+var mu sync.RWMutex
 
 type entry struct {
 	Until  time.Time `json:"until"`
@@ -42,13 +50,29 @@ type entry struct {
 
 func path() string { return filepath.Join(runlog.Home(), fileName) }
 
+// retry runs f until it succeeds or a short while has passed, for the moment
+// another process holds the file.
+func retry(f func() error) error {
+	var err error
+	for i := 0; i < 20; i++ {
+		if err = f(); err == nil || errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return err
+}
+
 // load reads the remembered limits. A missing or unreadable file is no limits:
-// the worst it costs is one more run that ends limited.
+// the worst it costs is one more run that ends limited. The caller holds mu.
 func load() map[string]entry {
-	m := map[string]entry{}
-	data, err := os.ReadFile(path())
-	if err == nil {
-		_ = json.Unmarshal(data, &m)
+	var data []byte
+	if retry(func() (err error) { data, err = os.ReadFile(path()); return err }) != nil {
+		return map[string]entry{}
+	}
+	var m map[string]entry
+	if json.Unmarshal(data, &m) != nil || m == nil {
+		return map[string]entry{}
 	}
 	return m
 }
@@ -59,6 +83,8 @@ func Note(backend string, res agent.Result) error {
 	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() || Partner(backend) == "" {
 		return nil
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	m := load()
 	now := time.Now()
 	for name, e := range m {
@@ -87,7 +113,7 @@ func writeFile(name string, data []byte) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(f.Name(), name)
+		err = retry(func() error { return os.Rename(f.Name(), name) })
 	}
 	if err != nil {
 		os.Remove(f.Name())
@@ -97,7 +123,10 @@ func writeFile(name string, data []byte) error {
 
 // Until is when backend's remembered limit lifts, or zero when none holds at now.
 func Until(backend string, now time.Time) time.Time {
-	if e, ok := load()[backend]; ok && e.Until.After(now) {
+	mu.RLock()
+	m := load()
+	mu.RUnlock()
+	if e, ok := m[backend]; ok && e.Until.After(now) {
 		return e.Until
 	}
 	return time.Time{}
