@@ -1501,3 +1501,11 @@ neither of them follows a run while it happens.
   (#50 to #53) needed: the carry-on's record error is the one the MCP answer reports, the
   effort test accepts `limited` from codex, and exec's protocol lists the statuses and that
   exec never switches.
+- 2026-10-11: WSL's launcher spelt in lower case (#72, PR #87). `isWSLLauncher` compared the
+  folder name to `System32` exactly, but `exec.LookPath` returns it as PATH spells it
+  (`C:\WINDOWS\system32\bash.exe` on the owner's PC), so gates and `run_command` ran in WSL,
+  and a batch's gates all timed out starting it. The folder name is now compared in any case,
+  by a helper that reads both separators so its test runs on the Linux runner. Left for their
+  own items: other WSL launchers, such as the WindowsApps alias and SysWOW64 (#86), and a gate
+  whose shell cannot start being retried as a code failure, with WSL's UTF-16 output shown
+  undecoded (#84).
