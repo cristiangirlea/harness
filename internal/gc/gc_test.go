@@ -461,6 +461,27 @@ func TestGCApplyKeepsAParentWhenTheWorktreeInsideItCannotGo(t *testing.T) {
 	}
 }
 
+func TestDeleteBranchOnlyWhileItPointsAtTheCheckedCommit(t *testing.T) {
+	f := newFixture(t)
+	checked := git(t, f.repo, "rev-parse", "HEAD")
+	git(t, f.repo, "branch", "moved", checked)
+	later := git(t, f.repo, "commit-tree", checked+"^{tree}", "-p", checked, "-m", "moved on")
+	git(t, f.repo, "update-ref", "refs/heads/moved", later)
+
+	if err := deleteBranch(context.Background(), f.repo, "moved", checked); err == nil {
+		t.Error("a branch that moved on was deleted")
+	}
+	if git(t, f.repo, "rev-parse", "refs/heads/moved") != later {
+		t.Fatal("the branch that moved on changed")
+	}
+	if err := deleteBranch(context.Background(), f.repo, "moved", later); err != nil {
+		t.Fatalf("deleting at its own tip: %v", err)
+	}
+	if out := git(t, f.repo, "branch", "--list", "moved"); out != "" {
+		t.Errorf("the branch is still there: %q", out)
+	}
+}
+
 func TestSizeAddsUpTheFilesUnderAFolder(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "a", "b"), 0o755); err != nil {

@@ -122,13 +122,19 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 		if w.Branch == "" {
 			continue
 		}
-		if tip, err := gitOut(ctx, w.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+w.Branch); err == nil && tip == w.Head {
-			if _, err := gitOut(ctx, w.Repo, "branch", "-D", w.Branch); err != nil {
-				errs = append(errs, fmt.Errorf("%s: worktree removed, branch kept: %w", w.Path, err))
-			}
+		if err := deleteBranch(ctx, w.Repo, w.Branch, w.Head); err != nil {
+			errs = append(errs, fmt.Errorf("%s: worktree removed, branch %s kept: %w", w.Path, w.Branch, err))
 		}
 	}
 	return removed, errs
+}
+
+// deleteBranch deletes a branch only if it still points at the commit that
+// was proven merged: update-ref compares and deletes in one step, so a branch
+// that moves on meanwhile is left alone.
+func deleteBranch(ctx context.Context, repo, branch, oid string) error {
+	_, err := gitOut(ctx, repo, "update-ref", "-d", "refs/heads/"+branch, oid)
+	return err
 }
 
 // recheck says why a worktree marked for removal must stay after all, because
