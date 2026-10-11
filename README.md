@@ -78,7 +78,9 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | `hrn report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
-`--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
+`--effort` (api, codex and claude: low, medium, high, xhigh, max; unset uses the
+backend default; gemini and opencode report it as not enforced),
+`--json` (JSONL event stream for scripts), `--thinking`,
 `--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, and the budgets
 below.
 

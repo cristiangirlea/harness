@@ -49,6 +49,23 @@ func drain(t *testing.T) {
 	}
 }
 
+func TestRunRefusesAnUnknownEffortBeforeTheBackendStarts(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "--effort", "turbo", "do it"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), `unknown effort "turbo"`) {
+		t.Fatalf("code=%d err=%v, want 2 and an unknown effort error", code, err)
+	}
+	select {
+	case task := <-recorded:
+		t.Fatalf("the backend ran with %+v", task)
+	default:
+	}
+	if recs, err := runlog.List(0); err != nil || len(recs) != 0 {
+		t.Fatalf("a refused run left records: %v err=%v", recs, err)
+	}
+}
+
 func TestRunFlagsReachTheTask(t *testing.T) {
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())

@@ -64,7 +64,7 @@ Run flags:
   -C, --dir PATH       workspace directory (default: current directory)
       --mode MODE      readonly | ask | auto | yolo (default: ask)
       --max-turns N    stop after N model turns (default 50 for api)
-      --effort LEVEL   low | medium | high | xhigh | max (api backend)
+      --effort LEVEL   low | medium | high | xhigh | max (api, codex and claude; unset uses backend default)
       --json           print events as JSON lines instead of formatted output
       --thinking       show model thinking summaries
       --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hrn/mcp.json is loaded when present

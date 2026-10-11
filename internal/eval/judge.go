@@ -68,6 +68,11 @@ func (j *Judge) check(tasks []batch.Task) error {
 	if j.Timeout < 0 {
 		return fmt.Errorf("judge: timeout %s is negative", time.Duration(j.Timeout))
 	}
+	// The judge runs after every cell has, so a level its CLI would refuse must be
+	// caught here, not once the agents have been paid for.
+	if err := (agent.Options{Effort: j.Effort}).Validate(); err != nil {
+		return fmt.Errorf("judge: %w", err)
+	}
 	ids := map[string]bool{}
 	for _, t := range tasks {
 		ids[t.ID] = true

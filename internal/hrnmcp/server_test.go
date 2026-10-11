@@ -132,6 +132,7 @@ func TestRunErrors(t *testing.T) {
 		{`{"prompt":"x","backend":"stub","dir":"/definitely/not/here"}`, "dir /definitely/not/here"},
 		{`{"prompt":"x","backend":"nope"}`, "unknown backend"},
 		{`{"prompt":"x","backend":"stub","mode":"weird"}`, "unknown mode"},
+		{`{"prompt":"x","backend":"stub","effort":"turbo"}`, `unknown effort "turbo"`},
 	} {
 		res := s.call(t, "run", tc.args)
 		if !res.IsError || !strings.Contains(res.Text(), tc.want) {

@@ -37,6 +37,9 @@ func NewClaudeBackend() *CLIBackend {
 			if t.Model != "" {
 				a = append(a, "--model", t.Model)
 			}
+			if t.Effort != "" {
+				a = append(a, "--effort", t.Effort)
+			}
 			if t.MaxTurns > 0 {
 				a = append(a, "--max-turns", strconv.Itoa(t.MaxTurns))
 			}
@@ -52,8 +55,9 @@ func NewClaudeBackend() *CLIBackend {
 			}
 			return a
 		},
-		parse: parseClaudeStream,
-		forks: true,
+		parse:      parseClaudeStream,
+		forks:      true,
+		mapsEffort: true,
 	}
 }
 func newestVersionDir(root, exe string) []string {
