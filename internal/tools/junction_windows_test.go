@@ -57,6 +57,34 @@ func TestFileToolsDoNotFollowAJunctionOutOfTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestJunctionsThatLoopLeadNowhereOrTakeTwoHopsAreJudged(t *testing.T) {
+	ws, tl := setup(t)
+	outside := outsideWithJunction(t, ws)
+	// Two junctions that lead to each other: the path is refused, and the
+	// call returns.
+	a, b := filepath.Join(ws.Root, "a"), filepath.Join(ws.Root, "b")
+	junction(t, a, b) // a junction's target need not exist
+	junction(t, b, a)
+	if _, err := ws.Resolve("a/x.txt"); err == nil {
+		t.Error("Resolve went round a loop of junctions and let the path through")
+	}
+	// A junction to a folder outside that does not exist yet.
+	junction(t, filepath.Join(ws.Root, "later"), filepath.Join(outside, "later"))
+	if _, err := call(t, ws, tl["write_file"], map[string]any{"path": "later/new.txt", "content": "x"}); err == nil {
+		t.Error("write_file went through a junction to a folder not there yet")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "later")); err == nil {
+		t.Error("write_file created a folder outside the workspace")
+	}
+	// A junction that stays inside, to a folder holding the junction out.
+	must(t, os.MkdirAll(filepath.Join(ws.Root, "hop"), 0o755))
+	junction(t, filepath.Join(ws.Root, "hop", "out"), outside)
+	junction(t, filepath.Join(ws.Root, "first"), filepath.Join(ws.Root, "hop"))
+	if out, err := call(t, ws, tl["read_file"], map[string]any{"path": "first/out/secret.txt"}); err == nil {
+		t.Errorf("read_file went out in two hops: %q", out)
+	}
+}
+
 func TestASymlinkThroughAJunctionOutIsRefused(t *testing.T) {
 	ws, tl := setup(t)
 	outside := outsideWithJunction(t, ws)
@@ -111,9 +139,9 @@ func TestAJunctionThatStaysInTheWorkspaceIsFollowed(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(ws.Root, "src", "new.go")); err != nil {
 		t.Fatalf("write_file through the junction: %v", err)
 	}
-	// grep's walk judges each file where it really is, so a file reached
-	// through the junction is searched. (A walk does not descend into a
-	// junction or link it is given as its own start, as before.)
+	// A path through the junction is searched. (A walk goes into no link or
+	// junction, as before, so grep over the root or over "alias" itself does
+	// not reach the files behind it.)
 	out, err = call(t, ws, tl["grep"], map[string]any{"pattern": "TODO", "path": "alias/deep"})
 	must(t, err)
 	if !strings.Contains(out, "TODO fix") {
@@ -127,6 +155,10 @@ func TestAWorkspaceReachedThroughAJunctionStillWorks(t *testing.T) {
 	junction(t, link, real.Root)
 	ws, err := NewWorkspace(link)
 	must(t, err)
+	// Root keeps the junction: commands run where the user said.
+	if !strings.EqualFold(ws.Root, link) {
+		t.Errorf("Root = %s, want the junction's own path %s", ws.Root, link)
+	}
 	byName := map[string]Tool{}
 	for _, tl := range All() {
 		byName[tl.Name] = tl
