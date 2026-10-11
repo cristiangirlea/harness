@@ -581,14 +581,70 @@ order they are worth taking:
 7. ~~**Release binaries.**~~ Done as PR P. No release has been cut: that, and making the
    repository public, are Cristian's to do.
 8. ~~**`hrn eval diff <a> <b>`.**~~ Done as PR Q, with `hrn eval list`.
+9. ~~**A live view.**~~ Done as PR V (#34): `hrn watch`, `hrn show -f`, and `--lan` for a
+   phone, read-only and without a login for now.
+10. **An access key for `hrn watch --lan`** ([#33](https://github.com/cristiangirlea/harness/issues/33)):
+    a key per start that other devices need, a QR code for the phone link. The owner's rule
+    (2026-10-10): the network may see the page, but anything that acts on hrn from it needs
+    the key, plus a CSRF check.
+11. **A status bot** (the owner's idea, 2026-10-10): something on screen that says what hrn
+    is doing and asks for the decisions it waits on (an approval, a failed gate: retry or
+    stop, merging the branches that passed), and acts on the answer. Its eyes are `hrn
+    watch`'s streams (`/stream/index`, `/stream/run/<id>`, `/stream/batch/<id>`), its hands
+    `hrn mcp`'s tools (run, batch, batch_show, batch_merge; approvals already reach an MCP
+    host by elicitation). The missing piece is a place where pending decisions wait: today an
+    approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
+    nothing else can answer it. Control from the network waits for item 10's key.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
-guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), MCP over HTTP
-(every host met so far speaks stdio), and a web dashboard (report and batch show answer
-the questions).
+guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
+HTTP (every host met so far speaks stdio). A web dashboard was on this list ("report and
+batch show answer the questions") until the owner asked for a live view on 2026-10-10:
+neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-10: PR V done (#34): a live view. The owner ran `hrn batch` on the claude backend
+  and asked for a way to see what is going on. `hrn watch` serves a page of the newest runs
+  and batches, a timeline per run streamed over Server-Sent Events that tail
+  `events.jsonl`, and a page per batch with each task's runs and gates; `hrn show -f`
+  prints the same timeline in the terminal until the run saves its result. New package
+  `internal/watch`, standard library only. Choices: fragments are rendered and escaped on
+  the server by `html/template` and the script only places them, so the escaping is tested
+  in Go; the SSE writer splits data on `\r`, `\n` and `\r\n`, because a lone `\r` in a tool
+  result would otherwise end a data line and forge a field; each message's id is the byte
+  offset after its line plus that event's time, so a reconnecting browser resumes exactly
+  and the wait before the next step stays right; the file is opened for each read, since an
+  open handle on Windows would stop `runs prune` and `batch rm`. A run killed before it
+  saved its result never ends in either view (it cannot be told from a long step). The
+  guard (loopback Host, Origin, Sec-Fetch-Site, CSP, no-store) is a copy of `hrn sessions'`
+  in `internal/sessionweb`, which is not on main yet; once both are, they can share it.
+  Deviations: (1) the batch record was saved at the start and the end only, so mid-batch
+  nothing tied a task to its run or showed a finished gate. It is now saved when an
+  attempt's run starts and ends, after each gate and when a task ends (best effort; the
+  end's save still reports errors), and `save` retries its rename for up to 200 ms, since
+  a reader holding the file open makes it fail on Windows (Go opens files without
+  `FILE_SHARE_DELETE`). The format is unchanged; an attempt still running has an empty
+  result status. (2) The brief said loopback only; the owner then asked for a phone on the
+  same network, and chose (asked twice, since it widens who can read the runs) to have
+  `--lan` now without a login and the key later (#33). `--lan` binds each private IPv4
+  address of the adapters that are up, never 0.0.0.0, and the Host check admits exactly
+  those `ip:port` strings. (3) A cost column on the index, since the owner asked whether
+  the harness has the cost: it is the backend's own figure, so codex and gemini show none.
+- 2026-10-10: PR V review (an independent read-only reviewer), 11 findings, 8 fixed, each
+  as its own commit. The ones that mattered: a page loaded while `Close` wrote
+  `result.json` showed an empty "Finished" and a stream URL with no id, since
+  `runlog.Load` marks a run done before the file parses (the follower now reads
+  `task.json` then); `--lan` took VPN tunnels' 10.x addresses (point-to-point adapters
+  are left out, and every network served is listed, since a VPN that looks like an
+  ordinary adapter cannot be told apart); ids from a request were only checked for
+  separators, so `CON` reached the disk, a device on Windows 10 (they must now look like
+  `YYYYMMDD-HHMMSS-xxxxxx`); and the traversal tests passed on a missing file instead of
+  the check. Also fixed: a portless Host under `--lan` on port 80, a blank batch page for
+  a read caught mid-rename, a test calling `t` from a goroutine, stale text. Left: the
+  rename retry has no test (it needs an injectable rename); on Windows `runs prune` can
+  meet a batch record mid-save and refuse once, which running it again settles; and
+  AGENTS.md (#31) needs an `internal/watch/` row once both are merged.
 - 2026-09-27: PR T: continuing claude and codex runs, and moving one conversation between
   backends (no PR yet; branch `t-cli-sessions`). The CLI adapters record the session id
   their stream reports (`Result.Session`: claude's `session_id`, codex's `thread.started`
@@ -630,6 +686,18 @@ the questions).
   old workspace says that -C (or dir over MCP) continues elsewhere; and task.json records
   the session a run was forked from. Skipped: codex found on PATH still wins over the
   desktop app's build, as every backend prefers the user's PATH; hrn backends names it.
+- 2026-10-10: the SSE parser's scanner buffer starts small. `FuzzParseSSE` failed CI on #34
+  with "context deadline exceeded" while its rate fell to 0 execs/s, with no crasher and a
+  package that PR did not touch; a rerun passed. The likely cause, not reproduced: the lab
+  runner's container sees the node's 24 CPUs within 3 GiB, the fuzzer starts a worker per
+  CPU, and `parseSSE` gave every response a 1 MiB buffer up front, on the order of 25 GB/s
+  of garbage. #32 caps the fuzz steps at `-parallel=4`; this change removes the per-parse
+  megabyte. The buffer starts at the scanner's 4 KiB and doubles as a line needs, up to
+  the same 64 MiB: a 598-byte stream went from about 1 MiB (1,055,404 bytes) to 10,704
+  bytes per parse, and locally the fuzzer ran 1,094,491 inputs in 15 s where it ran
+  308,242. A test holds the cost of a small parse under 128 KiB and another parses a 3 MiB
+  line whole. This entry is not at the top of the log on purpose: #34 adds its own there,
+  and two insertions at one place would conflict.
 - 2026-09-27: PR S done: the api backend's price table. Prices come from Anthropic's
   published first-party list (dated 2026-06-24 in the reference used). Three changes. The
   newest models are in it: Opus 5.5 ($4/$20), Mythos 5.1, and the Opus 4.6/4.7 and

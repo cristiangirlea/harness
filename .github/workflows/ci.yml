@@ -13,12 +13,14 @@ jobs:
         # Pull requests test on Linux only; every push to main tests both. The Windows
         # leg runs on a runner on a desktop with no container around the job, so only
         # merged code may reach it; pull requests include branches written by agents.
-        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
-    # Each leg runs on our own runners when its repository variable names them, and on GitHub's
-    # otherwise: Linux on the local cluster's scale set (CI_RUNNER, infra P2), Windows on the
-    # runner on this PC (CI_RUNNER_WINDOWS, infra P2b). matrix.os keeps its value either way,
-    # so the steps' conditions below do not change.
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && (vars.CI_RUNNER || 'ubuntu-latest') || (vars.CI_RUNNER_WINDOWS || matrix.os) }}
+        # Without CI_RUNNER_WINDOWS there is no Windows leg.
+        os: ${{ github.event_name == 'push' && vars.CI_RUNNER_WINDOWS != '' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
+    # Only our own runners, never GitHub's: Linux on the local cluster's scale set (CI_RUNNER,
+    # infra P2), Windows on the runner on this PC (CI_RUNNER_WINDOWS, infra P2b). Without
+    # CI_RUNNER the job is skipped. matrix.os only picks the leg, so the steps' conditions
+    # below do not change.
+    if: ${{ vars.CI_RUNNER != '' }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.CI_RUNNER || vars.CI_RUNNER_WINDOWS }}
     # bash on every OS. Without it a Windows step runs in PowerShell: GitHub's images have
     # PowerShell 7, but a self-hosted Windows runner may only have Windows PowerShell 5.1, whose
     # default execution policy refuses the script file the runner writes for each step. Git Bash
@@ -38,12 +40,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: go test -race -count=1 ./...
       - name: fuzz the SSE parser
+        # -parallel=4: the fuzzer starts one worker per CPU it sees, and the lab runner's
+        # container sees the node's 24 within a 3 GiB memory limit (GitHub's runner had 2-4).
         if: matrix.os == 'ubuntu-latest'
-        run: go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=10s ./internal/agent
+        run: go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=10s -parallel=4 ./internal/agent
       - name: fuzz the MCP codec
         # always(), so a crash in the parser fuzzer does not hide this one.
         if: always() && matrix.os == 'ubuntu-latest'
-        run: go test -run='^$' -fuzz=FuzzCodec -fuzztime=10s ./internal/mcp
+        run: go test -run='^$' -fuzz=FuzzCodec -fuzztime=10s -parallel=4 ./internal/mcp
       - name: keep any input a fuzzer crashed on
         if: failure() && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
