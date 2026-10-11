@@ -109,6 +109,9 @@ const (
 	StatusTimeout  Status = "timeout" // the task's own deadline passed
 	StatusBudget   Status = "budget"  // a cost or token ceiling was reached
 	StatusCanceled Status = "canceled"
+	// StatusLimited is a claude or codex run stopped by the plan the CLI bills
+	// to: its usage limit was reached. Result.LimitResets says when it lifts.
+	StatusLimited Status = "limited"
 )
 
 type Result struct {
@@ -131,6 +134,9 @@ type Result struct {
 	// Session is the CLI's own session id (claude, codex), so a follow-up run
 	// can fork it, and a person can open it in that CLI.
 	Session string `json:"session,omitempty"`
+	// LimitResets is when a limited run's plan limit lifts, as the CLI said.
+	// Absent when the message gave no time.
+	LimitResets time.Time `json:"limit_resets,omitzero"`
 }
 
 // UnmarshalJSON reads a task as written today and as records before 0.3 wrote

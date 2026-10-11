@@ -143,3 +143,27 @@ func TestTheForkedSessionIsRecorded(t *testing.T) {
 		t.Errorf("task.json should say which session a run started from: %s", data)
 	}
 }
+
+func TestCodexTurnFailedKeepsTheErrorBeforeIt(t *testing.T) {
+	var res Result
+	var errs []string
+	emit := func(e Event) {
+		if e.Kind == EventError {
+			errs = append(errs, e.Text)
+		}
+	}
+	parseCodexStream([]byte(`{"type":"error","message":"You've hit your usage limit."}`), emit, &res)
+	parseCodexStream([]byte(`{"type":"turn.failed","error":{"message":""}}`), emit, &res)
+	if res.Error != "You've hit your usage limit." {
+		t.Errorf("error = %q: an empty turn.failed must not wipe the message before it", res.Error)
+	}
+	if len(errs) != 1 {
+		t.Errorf("error events = %q, want the one with text", errs)
+	}
+
+	res = Result{}
+	parseCodexStream([]byte(`{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}`), emit, &res)
+	if res.Status != StatusError || res.Error != "stream disconnected before completion" {
+		t.Errorf("turn.failed's own text is under error.message: %+v", res)
+	}
+}

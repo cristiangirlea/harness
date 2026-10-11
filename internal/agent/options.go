@@ -52,6 +52,11 @@ type Options struct {
 	// TaskBudget is the api backend's token ceiling for the whole task: the
 	// model paces itself and finishes rather than being cut off.
 	TaskBudget int `json:"task_budget,omitempty" desc:"Token ceiling the api backend gives the model to pace itself (min 20000)."`
+
+	// NoSwitch keeps a run on its backend when that backend has reached its
+	// plan's usage limit. Otherwise claude and codex carry on each other's
+	// work (internal/limits).
+	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its plan's usage limit, instead of carrying on on the other of claude and codex."`
 }
 
 // Validate rejects what the API or hrn would refuse, where the values are typed

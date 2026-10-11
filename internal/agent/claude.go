@@ -52,8 +52,9 @@ func NewClaudeBackend() *CLIBackend {
 			}
 			return a
 		},
-		parse: parseClaudeStream,
-		forks: true,
+		parse:  parseClaudeStream,
+		forks:  true,
+		limits: true,
 	}
 }
 func newestVersionDir(root, exe string) []string {
