@@ -604,6 +604,14 @@ order they are worth taking:
     - [#38](https://github.com/cristiangirlea/harness/issues/38): control. Confirmations,
       an allow-list and an audit log for the bot's and the phone's actions, before item 11.
 
+13. **Ada OS's engine interface** ([#49](https://github.com/cristiangirlea/harness/issues/49)):
+    Ada, a separate private repository, runs hrn as its engine and needs a versioned interface
+    instead of terminal output. Four PRs, in this order:
+    - [x] Reasoning effort for codex and claude. Done: PR #50, 2026-10-11.
+    - [ ] Run records surface write failures.
+    - [ ] Agent CLIs run in a contained process tree.
+    - [ ] `hrn exec --protocol v1`, documented in `docs/exec-protocol.md`.
+
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
 HTTP (every host met so far speaks stdio). A web dashboard was on this list ("report and
@@ -1198,3 +1206,12 @@ neither of them follows a run while it happens.
   because encoding/json gives a custom unmarshaler no field path; and the methods of an
   embedded struct promote, so `spec.Validate()` exists and checks only the options -
   named in the doc comment, not worth un-embedding.
+- 2026-10-11: PR #50, reasoning effort for the CLIs. One list of levels
+  (`agent.EffortLevels`), exact names (`HIGH` is refused), checked on the way in only: a
+  spec with another level now fails to load, while stored records still load and a
+  follow-up does not inherit effort. Codex takes it as `-c model_reasoning_effort=<level>`
+  (it has no dedicated flag), claude as `--effort`; gemini and opencode report it as not
+  enforced through the `mapsEffort` adapter capability, so a new adapter warns by default.
+  The review (Claude Opus) found the eval judge skipped the check, which would have failed
+  only after every cell ran; fixed. The CLIs accept every level but do not report the
+  effective one back.
