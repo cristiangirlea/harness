@@ -159,6 +159,11 @@ func recheck(ctx context.Context, w Worktree) string {
 		case e.head != w.Head || e.branch != w.Branch:
 			return "its HEAD moved since the scan"
 		}
+		// Inner worktrees Scan approved are gone by now (inner first), so any
+		// still listed inside it is one nobody judged: it came after the scan.
+		if held := holding(w.Path, entryPaths(entries)); held != "" {
+			return "it holds the worktree " + held + ", which nothing judged"
+		}
 		if why := unsaved(ctx, w.Path, entryPaths(entries)); why != "" {
 			return why + " since the scan"
 		}

@@ -647,6 +647,24 @@ func TestGCApplyLeavesAWorktreeThatMovedOnSinceTheScan(t *testing.T) {
 	}
 }
 
+func TestGCApplyKeepsAParentThatGainedAWorktreeSinceTheScan(t *testing.T) {
+	f := newFixture(t)
+	outer, head := f.worktree("wt-outer", "outer")
+	f.pr(1, "outer", "MERGED", head, 2*time.Hour)
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, outer), Remove, "merged")
+
+	inner, _ := f.worktree(filepath.Join(outer, ".hrn", "worktrees", "new"), "hrn/new")
+	f.write(inner, "work.txt", "an agent's work in progress\n")
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 1 {
+		t.Fatalf("removed %d, errors %v; want the outer worktree kept", len(removed), errs)
+	}
+	if !exists(filepath.Join(inner, "work.txt")) {
+		t.Error("the new worktree's work is gone")
+	}
+}
+
 func TestGCApplyKeepsAParentWhenTheWorktreeInsideItCannotGo(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")
