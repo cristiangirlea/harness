@@ -529,8 +529,22 @@ func TestGCFindsABareRepositoryWhoseHeadIsALink(t *testing.T) {
 	if err := os.Symlink(filepath.Join("refs", "heads", "main"), filepath.Join(bare, "HEAD")); err != nil {
 		t.Fatal(err)
 	}
-
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "a repository inside build output: target/backup.git")
+
+	// A HEAD linking to a branch with no commits yet dangles, and is still one.
+	unborn := filepath.Join(wt, "target", "unborn.git")
+	git(t, f.root, "init", "-q", "--bare", unborn)
+	f.write(unborn, filepath.Join("refs", "heads", "saved"), head+"\n")
+	if err := os.Remove(filepath.Join(unborn, "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("refs", "heads", "new"), filepath.Join(unborn, "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(bare); err != nil {
+		t.Fatal(err)
+	}
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a repository inside build output: target/unborn.git")
 }
 
 func TestGCKeepsAWorktreeWithAJunctionAboveItsBuildOutput(t *testing.T) {
