@@ -146,6 +146,7 @@ func TestJudgeIsCheckedBeforeAnythingRuns(t *testing.T) {
 		{"rubric for no task", Judge{Rubric: "x", Rubrics: map[string]string{"gamma": "y"}}, `"gamma", which is not a task`},
 		{"unknown backend", Judge{Rubric: "x", Backend: "nope"}, "judge: unknown backend"},
 		{"negative timeout", Judge{Rubric: "x", Timeout: -1}, "negative"},
+		{"unknown effort", Judge{Rubric: "x", Effort: "turbo"}, `judge: unknown effort "turbo"`},
 	} {
 		spec := testSpec("somewhere")
 		j := tc.judge

@@ -58,6 +58,7 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | Command | What it does |
 |---|---|
 | `hrn run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
+| `hrn exec --protocol v1` | Run one recorded task over the supervisor JSONL protocol (see [hrn exec](#hrn-exec)). |
 | `hrn backends` | Show which backends are usable and where they were found. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn runs [-n N]` | List recent runs. |
@@ -78,9 +79,20 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 | `hrn report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](#reports)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
-`--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
-`--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, and the budgets
-below.
+`--effort` (api, codex and claude: low, medium, high, xhigh, max; unset uses the
+backend default; gemini and opencode report it as not enforced),
+`--json` (JSONL event stream for scripts), `--thinking`,
+`--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, `--no-switch` (see
+[When a plan's usage limit is reached](#when-a-plans-usage-limit-is-reached)), and the
+budgets below.
+
+### hrn exec
+
+`hrn exec --protocol v1` lets a supervising program start, follow, cancel and record
+one run per process without parsing terminal output. stdin and stdout carry JSON
+lines: hrn sends `hello` first, then accepts one `start`, streams complete events,
+and ends with `result`. Closing stdin or interrupting hrn cancels the run. See
+[the v1 protocol](docs/exec-protocol.md) for messages, capabilities, limits and exit codes.
 
 ### Budgets
 
@@ -97,6 +109,24 @@ The CLI backends cannot enforce a cost or token ceiling, so they say so once and
 carry on; the timeout applies to them all the same. The cost ceiling is checked against
 hrn's own estimate, so a model with no price in the table cannot be capped and the run
 says so instead of pretending.
+
+Agent CLIs and shell commands start in a Windows Job Object or a Unix process group.
+Cancel or timeout kills that tree; CLI cleanup can take up to about 15 seconds while
+stdout/stderr reads are bounded and remaining processes are checked (survivors or
+unavailable Windows containment are reported). On Windows, a CLI's leftover background
+processes end when the run ends, including after a normal exit, because the job is
+closed. On Unix, background processes survive a normal exit and are killed only on
+cancel or timeout; children can escape the group with setsid.
+
+On Unix, Ctrl+C, SIGTERM and SIGHUP cancel runs. A process in the tree that reads the
+terminal (such as a credential or host-key prompt) stops because the tree is not the
+terminal's foreground process group.
+
+On Windows, closing the console, logging off or shutting down reaches hrn as
+SIGTERM. It has a few seconds to save the cancelled record while the job ends the
+process tree. On Linux with procfs mounted with hidepid=2, a tree member owned by
+another user (sudo or a setuid helper) is invisible to the check, so "gone" can be
+optimistic.
 
 Where a cost comes from depends on the backend. The claude and opencode CLIs report one
 themselves; on a subscription that figure is what the run would cost at API list
@@ -139,7 +169,14 @@ approval is denied.
 
 `read_file`, `list_files` (glob with `**`), `grep` (RE2), `write_file`, `edit_file`
 (exact unique match, CRLF-aware), `run_command` (Git Bash when present, else PowerShell;
-120s default timeout). All paths are confined to the workspace, symlinks included.
+120s default timeout). All paths are confined to the workspace and judged where their links
+lead: symbolic links, and on Windows directory junctions too (Go has not counted a junction
+as a link since 1.23, so hrn reads its target itself). A path through a link out of the
+workspace is refused, and so is one through a link hrn cannot read; a path through a link
+that stays inside works. `grep` over a directory goes into no link or junction and passes
+over a file link that leads out. Not yet on Linux and macOS: a symbolic link to a file that
+does not exist yet is judged by its own name, so `write_file` on it creates that file where
+the link leads ([#47](https://github.com/cristiangirlea/harness/issues/47)).
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
 #### The command guard
@@ -167,12 +204,10 @@ The api backend's file tools refuse the secret files as well (rule `secret-file`
 `.cargo/credentials*`, wrangler's `.wrangler/config/` (a worker project's own `.wrangler`
 holds local state and stays open), and the agent CLIs' plan logins
 (`.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`). A path is
-judged inside the workspace, both as written and where its symbolic links lead
-(`notes.txt -> .env` is `.env`), with Windows' other spellings of a name (`.env.`,
-`.env::$DATA`, a short `8.3` name) read as the name; `grep` over a directory passes over
-secret files, and does not follow a symbolic link out of the workspace. (A Windows
-directory junction is not a symbolic link to Go since 1.23, so a junction inside the
-workspace is not seen through, by these checks or by the workspace's own boundary.)
+judged inside the workspace, both as written and where its links lead, Windows directory
+junctions included (`notes.txt -> .env` is `.env`), with Windows' other spellings of a
+name (`.env.`, `.env::$DATA`, a short `8.3` name) read as the name; `grep` over a
+directory passes over secret files, and a link among them that leads to one.
 `.env.example` is refused too: a template costs the agent one turn, and `.env.staging`
 or `.envrc` are what the pattern is for. The command rule reads words (and quoted paths,
 and git's `REV:path`), so `echo "*.pem" >> .gitignore` is refused as well (`edit_file` on
@@ -354,6 +389,43 @@ Thinking blocks belong to the model that produced them. Continuing an api conver
 on a different model is allowed and warned about: the API serves it without the earlier
 thinking.
 
+### When a plan's usage limit is reached
+
+The claude and codex CLIs bill to subscriptions with usage limits, and each stands in for
+the other. A run that ends because its CLI said the limit was reached ("You've hit your
+session limit · resets 10:10pm (Europe/Bucharest)", "You've hit your usage limit ... try
+again at Oct 16th, 2026 3:29 PM") is `limited`, not `error`, and its result keeps the
+time the limit lifts as `limit_resets` when the message gives one. Then:
+
+- The other CLI carries it on, once, as a follow-up run (see above): a new record that
+  continues the limited one, with the transcript handed over, the same workspace and
+  mode. A model is never carried from one backend to the other: the new backend runs the
+  model chosen for it earlier in the same chain, as any follow-up does, or its default. `hrn run` and the MCP `run` tool answer
+  with that run; the MCP result names the limited one as `limited_run_id`.
+- The reset time is kept in `~/.hrn/limits.json`. Until it passes, a run, a batch
+  attempt or a retry meant for that backend starts on the other one, and its transcript
+  says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
+  tool) shows each limit it remembers. A limit can lift early (codex sells credits);
+  deleting the file forgets it.
+- Nothing moves to `api`, which is billed per token, or to gemini or opencode. If the
+  other CLI is not installed, or is limited too, the run stays `limited` and says so.
+- Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
+  or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
+  the plan, and so does codex with `CODEX_API_KEY` or `OPENAI_API_KEY`; that CLI does not
+  stand in, and the run says which variable stopped it. hrn cannot see a CLI logged in with
+  an API key in its own files (`codex login --with-api-key`, claude's `apiKeyHelper`): use
+  `--no-switch` there.
+
+The same mode is not the same permissions on both: `auto` lets codex run commands in its
+sandbox but claude only edit files, and codex's `readonly` reads the whole disk (see the
+table above). A carried-on run's `--timeout` starts again, so the two runs together can
+take twice as long. `--no-switch` (field `no_switch`) keeps a run on its backend, and on the
+vendor it was meant for. `hrn eval` always sets it: a cell measures its own backend. `hrn
+exec` never switches; its supervisor decides. Limits are recognised by the CLIs' wording,
+which is matched in `internal/agent/limit.go` against messages seen in real runs; a new
+wording is an `error` until it is added there. A remembered time more than eight days ahead
+is ignored, as a CLI's would be.
+
 ### Project instructions
 
 The api loop reads `HRN.md`, `AGENTS.md` and `CLAUDE.md` from the workspace root and
@@ -413,7 +485,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
@@ -498,11 +570,20 @@ how the attempt failed.
 | Previous attempt | Next attempt |
 |---|---|
 | ran to the end, a gate failed | continues in the same worktree, on top of the work already committed, with the failing gate command, its exit code and output appended to the prompt |
+| stopped at its plan's usage limit | continues in the same worktree, told that the limit stopped it and shown its last message |
 | failed, refused or was cut short | starts in a fresh worktree from the base commit, with one line saying how the previous attempt ended |
 
+An attempt that ends `limited` on claude or codex is carried on by the other one first, as
+an extra attempt that does not use up a `retry` entry, and an attempt meant for a backend
+whose limit is remembered starts on the other one (see [When a plan's usage limit is
+reached](#when-a-plans-usage-limit-is-reached)). When both are limited, the attempt is
+skipped, and a task with nothing left to run fails without starting an agent, its error
+saying why. `no_switch` turns this off.
+
 A continued attempt commits as `<id>: <prompt> (attempt N)`, so the branch reads as a
-sequence of fixes. Each attempt records the prompt it was actually sent and whether it
-continued, which `hrn batch --json` prints.
+sequence of fixes. Each attempt records the prompt it was actually sent, whether it
+continued, and `switched_from`, the backend a usage limit moved it from, which `hrn batch
+--json` prints.
 
 `hrn batch` refuses to start when tracked files in the repository are modified: every
 worktree branches from `HEAD`, so that work would not reach the agents and the batch
@@ -577,9 +658,10 @@ timeline as it happens: the assistant's text, each tool call with its input in o
 (the input itself folded under it, its first 6 KB and last 2 KB), each result folded and
 capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each
 step waited, and, once the
-run ends, its status, tokens, cost and final answer. A batch's page shows each task with
-a link to each attempt's run, and its gates (command, exit code, folded output) as they
-finish. Steps arrive over Server-Sent Events that check the run's `events.jsonl` twice a
+run ends, its status, tokens, cost and final answer (and, for a `limited` run, when the
+limit lifts). A batch's page shows each task with a link to each attempt's run, the
+backend a usage limit moved it from, and its gates (command, exit code, folded output) as
+they finish. Steps arrive over Server-Sent Events that check the run's `events.jsonl` twice a
 second; a browser that loses the connection picks up where it left off. Cost is whatever
 the backend reports: the api backend's estimate (`~`), the claude and opencode CLIs' own
 figures, nothing for codex and gemini, and only once the run has ended.
@@ -700,7 +782,8 @@ the exit status is 0 whenever the eval itself ran.
 
 Task ids and variant names take letters, digits, `_` and `-`: dots separate the parts of
 a cell id. `retry` is refused in an eval spec, because a retried cell would score the
-harness rather than the backend. The `context` column counts prompt tokens and cache
+harness rather than the backend, and for the same reason an eval sets `no_switch`: a cell
+whose backend reaches its usage limit ends `limited`. The `context` column counts prompt tokens and cache
 reads together, which is what the model was given rather than what was billed at full
 rate.
 
@@ -769,16 +852,33 @@ pairs as data.
 - `task.json` — prompt, dir, backend, and the run options by their flag names
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load)
-- `events.jsonl` — text, thinking, tool calls, tool results, info, errors (timestamped),
+  and, for exec runs, the supervisor's `attempt_id`
+- `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
 - `handoff.md` — for a follow-up, the transcript of earlier turns its backend was
   given before the prompt (see [Continuing a run](#continuing-a-run))
-- `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
-  tokens, cache, cost (`cost_is_estimate` for the api backend), duration, and the
-  claude or codex `session` id
+- `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled|limited`), final answer, turns,
+  tokens, cache, cost (`cost_is_estimate` for the api backend), duration, the
+  claude or codex `session` id, and for a `limited` run `limit_resets`, when its plan's
+  limit lifts
+
+Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
+force, which every run consults before it starts. Deleting it forgets them.
+
+`result.json` includes `model_reported: true` only when the backend reports its
+model: api responses, claude init lines and gemini model stats. A requested/default
+model alone does not set it; codex and opencode do not report one. The field is
+omitted when false, and older records without it still load. Exec uses it to send
+an empty `resolved_model` when the backend did not report its model.
+
+When complete events fail to write or `events.jsonl` fails to close, `result.json`
+includes `record_error` with the number of events not recorded, the first event error
+and any close error; `hrn show` and MCP `show` report it and recover intact events
+after broken lines. The result is still saved to mark the run finished, the field is
+omitted on success, and older records still load.
 
 `hrn runs prune --older-than 30d` removes runs, batch records and eval records that
 started before the cutoff, and prints what it freed; `--dry-run` lists them instead and
@@ -808,6 +908,7 @@ internal/runlog/   run recording
 internal/watch/    following records as they are written: hrn show -f, and hrn watch's page
 internal/qr/       QR codes for hrn watch's phone links (byte mode, level M, versions 1-10)
 internal/followup/ continuing a run: what the backend picks up, what it is handed
+internal/limits/   plan usage limits: which backend takes over, the reset times in limits.json
 ```
 
 ## Status and what is open

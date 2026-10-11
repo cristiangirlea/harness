@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -114,6 +115,9 @@ type Attempt struct {
 	// previous failure. Continued means it reused the worktree.
 	Prompt    string `json:"prompt,omitempty"`
 	Continued bool   `json:"continued,omitempty"`
+	// SwitchedFrom is the backend this attempt was meant for, or whose
+	// limited attempt it carries on, when a usage limit moved it here.
+	SwitchedFrom string `json:"switched_from,omitempty"`
 }
 
 type GateResult struct {
@@ -408,12 +412,21 @@ type attemptPlan struct {
 	continued bool
 	// gateTimeout bounds each gate command of this attempt.
 	gateTimeout time.Duration
+	// switchedFrom is the backend a usage limit moved this attempt from;
+	// continues is the run of the limited attempt it carries on, if any.
+	switchedFrom, continues string
 }
 
 // The prompt a retry gets. A gate failure is recoverable in place, so the next
-// attempt is told what failed and that the work is already there; anything
-// else starts over and is told only how the previous attempt ended.
+// attempt is told what failed and that the work is already there, and so is
+// an attempt the backend's usage limit cut short; anything else starts over
+// and is told only how the previous attempt ended.
 const (
+	limitContext = "\n\n---\n" +
+		"A previous attempt at this task (attempt %d on %s) stopped before it finished: %[2]s\n" +
+		"reached its plan's usage limit. Its changes so far are committed on the current branch\n" +
+		"in this workspace. Carry on from where it stopped rather than starting over.\n"
+	limitLastMessage   = "\nIts last message:\n%s\n%s\n%s\n"
 	gateFailureContext = "\n\n---\n" +
 		"A previous attempt at this task (attempt %d on %s) did not pass. Its changes are\n" +
 		"already applied in this workspace and committed on the current branch. Fix them\n" +
@@ -441,11 +454,19 @@ func failedGate(att Attempt) *GateResult {
 // third attempt knows what the second already tried.
 func retryContext(attempts []Attempt) (text string, continued bool) {
 	last := attempts[len(attempts)-1]
-	if g := failedGate(last); last.Result.Status == agent.StatusOK && g != nil {
+	switch g := failedGate(last); {
+	case last.Result.Status == agent.StatusOK && g != nil:
 		f := fence(g.Output)
 		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.ExitCode, f, g.Output, f)
 		continued = true
-	} else {
+	case last.Result.Status == agent.StatusLimited:
+		text = fmt.Sprintf(limitContext, len(attempts), last.Backend)
+		if final := strings.TrimSpace(last.Result.Final); final != "" {
+			f := fence(final)
+			text += fmt.Sprintf(limitLastMessage, f, tail(final, 4000), f)
+		}
+		continued = true
+	default:
 		text = fmt.Sprintf(runFailureContext, last.Backend, last.Result.Status, last.Result.Error)
 	}
 	if earlier := attempts[:len(attempts)-1]; len(earlier) > 0 {
@@ -523,27 +544,53 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		return fail(err)
 	}
 
-	for i, name := range backends {
+	// Backends whose usage limit this task reached: they do not start again
+	// here, even when the limit gave no time to remember.
+	spent := limits.Spent{}
+	var outOfPlans string // why an attempt was skipped: claude and codex both limited
+	var carry *Attempt    // the limited attempt the next one carries on
+	for i := 0; i < len(backends); i++ {
+		name := backends[i]
+		plan := attemptPlan{number: len(tr.Attempts) + 1, prompt: t.Prompt, gateTimeout: gateTimeout}
+		if carry != nil {
+			plan.switchedFrom, plan.continues = carry.Backend, carry.RunID
+			carry = nil
+		}
+		if !opts.NoSwitch {
+			pick, why, bothOut := limits.Pick(name, time.Now(), spent)
+			if bothOut {
+				outOfPlans = why
+				notify(Event{Task: t.ID, Kind: "switch", Text: "skipping an attempt on " + name + ": " + why})
+				continue
+			}
+			if pick != name {
+				notify(Event{Task: t.ID, Kind: "switch", Text: why})
+				plan.switchedFrom, name = name, pick
+			}
+		}
 		b, err := agent.Get(name)
 		if err != nil {
 			return fail(err)
 		}
-		plan := attemptPlan{number: i + 1, prompt: t.Prompt, gateTimeout: gateTimeout}
-		if i > 0 {
+		if len(tr.Attempts) > 0 {
 			text, continued := retryContext(tr.Attempts)
 			plan.prompt, plan.continued = t.Prompt+text, continued
 			where := "fresh worktree"
 			if continued {
 				where = "continuing in worktree"
 			}
-			notify(Event{Task: t.ID, Kind: "retry", Text: fmt.Sprintf("retrying on %s (%s)", name, where)})
+			verb := "retrying on " + name
+			if plan.continues != "" {
+				verb = fmt.Sprintf("%s reached its usage limit; carrying on on %s", plan.switchedFrom, name)
+			}
+			notify(Event{Task: t.ID, Kind: "retry", Text: fmt.Sprintf("%s (%s)", verb, where)})
 		}
 		plan.commit = t.ID + ": " + tools.OneLine(t.Prompt, 60)
 		if plan.continued {
 			plan.commit += fmt.Sprintf(" (attempt %d)", plan.number)
 		}
 		if !plan.continued {
-			if i > 0 {
+			if len(tr.Attempts) > 0 {
 				if err := removeWorktree(root, tr); err != nil {
 					return fail(err)
 				}
@@ -581,6 +628,26 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		case ctx.Err() != nil:
 			return finish(StatusCanceled, "canceled")
 		}
+		if att := out.att; att.Result.Status == agent.StatusLimited {
+			spent[att.Backend] = true
+			if err := limits.Note(att.Backend, att.Result); err != nil {
+				notify(Event{Task: t.ID, Kind: "switch", Text: "the limit was not remembered: " + err.Error()})
+			}
+			// The partner carries the attempt on in this worktree, as one
+			// more attempt that does not use up a retry.
+			if other := limits.Partner(att.Backend); other != "" && !opts.NoSwitch {
+				if ok, why := limits.Ready(other, time.Now(), spent); ok {
+					backends = slices.Insert(backends, i+1, other)
+					carry = &att
+				} else {
+					notify(Event{Task: t.ID, Kind: "switch", Text: "not carried on: " + why})
+				}
+			}
+		}
+	}
+	if len(tr.Attempts) == 0 && outOfPlans != "" {
+		tr.Error = outOfPlans
+		return finish(StatusFail, "not started: "+outOfPlans)
 	}
 	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · worktree kept at %s", len(tr.Attempts), tr.Worktree))
 }
@@ -596,9 +663,13 @@ type attemptOutcome struct {
 // whole task; a failed run or gate is reported in the outcome instead.
 func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, gates []string, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
-	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued}
+	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
+	if plan.switchedFrom != "" {
+		task.Model = "" // the model named for the other backend means nothing here
+	}
 
-	rec, err := runlog.Create(b.Name(), task)
+	// A carry-on's record continues the limited run, so the chain shows.
+	rec, err := runlog.CreateContinuing(b.Name(), task, plan.continues)
 	if err != nil {
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
 	}
@@ -612,11 +683,14 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		}
 	})
 	if err := rec.Close(att.Result); err != nil {
-		att.Error = "saving run: " + err.Error()
+		att.Error = runlog.CloseMessage(err)
 	}
 	text := fmt.Sprintf("%s · %d turns · run %s", att.Result.Status, att.Result.Turns, att.RunID)
 	if att.Result.Error != "" {
 		text += " · " + tools.OneLine(att.Result.Error, 160)
+	}
+	if att.Error != "" {
+		text += " · " + tools.OneLine(att.Error, 160)
 	}
 	report(att)
 	notify(Event{Task: id, Kind: "run", Text: text})

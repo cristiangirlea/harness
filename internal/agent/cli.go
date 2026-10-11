@@ -45,9 +45,46 @@ type CLIBackend struct {
 	// fileRules is set when args hands the guard's secret files to the CLI's
 	// own permission rules; the other CLIs can read and write them.
 	fileRules bool
+	// mapsEffort is set when args passes Options.Effort to the CLI.
+	mapsEffort bool
+	// These fields are opt-in: advertise only explicit adapter mappings.
+	mapsModes    []Mode
+	mapsModel    bool
+	mapsMaxTurns bool
+	mapsMCP      bool
+	// limits is set when the CLI bills to a plan and says in words that its
+	// usage limit was reached (usageLimit knows the words): such a run ends
+	// limited rather than in an error.
+	limits bool
 }
 
 func (c *CLIBackend) Name() string { return c.name }
+
+func (c *CLIBackend) Capabilities() Capabilities {
+	caps := Capabilities{Modes: append([]Mode{}, c.mapsModes...), Efforts: []string{}, Sessions: "none", Options: []string{}}
+	if c.mapsModel {
+		caps.Options = append(caps.Options, "model")
+	}
+	if len(c.mapsModes) > 0 {
+		caps.Options = append(caps.Options, "mode")
+	}
+	if c.mapsEffort {
+		caps.Efforts = append(caps.Efforts, EffortLevels...)
+		caps.Options = append(caps.Options, "effort")
+	}
+	// Run itself enforces timeout for every CLI adapter.
+	caps.Options = append(caps.Options, "timeout")
+	if c.mapsMaxTurns {
+		caps.Options = append(caps.Options, "max_turns")
+	}
+	if c.mapsMCP {
+		caps.Options = append(caps.Options, "mcp")
+	}
+	if c.forks {
+		caps.Sessions = "fork"
+	}
+	return caps
+}
 
 // ForksSessions reports whether the CLI can start from a copy of an earlier
 // run's session.
@@ -76,6 +113,16 @@ func (c *CLIBackend) Detect() (string, error) {
 }
 
 func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Result {
+	res := c.run(ctx, task, emit)
+	if c.limits && res.Status == StatusError {
+		if limited, resets := usageLimit(res.Error, time.Now()); limited {
+			res.Status, res.LimitResets = StatusLimited, resets
+		}
+	}
+	return res
+}
+
+func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Result {
 	started := time.Now()
 	ctx, cancel := withTimeout(ctx, task)
 	defer cancel()
@@ -136,12 +183,13 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = 5 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fail(StatusError, err)
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(shownArgs(cmd.Args[1:]), " "))})
-	if limits := unenforced(task); len(limits) > 0 {
+	if limits := unenforced(task, c.mapsEffort); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
@@ -151,22 +199,54 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the operator's credentials", c.name)})
 	}
-	if err := cmd.Start(); err != nil {
+	tree, err := tools.StartTree(cmd)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fail(stopStatus(ctx), ctx.Err())
+		}
 		return fail(StatusError, err)
 	}
+	defer tree.Close()
+	emitCLITreeStartInfo(tree, emit)
+	// A surviving descendant can hold StdoutPipe open before Wait is reached.
+	// Bound that read on cancellation as well as exec's stderr copy in Wait.
+	readDone := make(chan struct{})
+	defer close(readDone)
+	go func() {
+		select {
+		case <-readDone:
+			return
+		case <-ctx.Done():
+		}
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-readDone:
+		case <-timer.C:
+			_ = stdout.Close()
+		}
+	}()
 
 	var all []byte
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	var plain strings.Builder
+	var session string
 	for sc.Scan() {
 		line := sc.Bytes()
 		if c.finalize != nil {
 			all = append(append(all, line...), '\n')
 			continue
 		}
-		if c.parse != nil && c.parse(line, emit, &res) {
-			continue
+		if c.parse != nil {
+			parsed := c.parse(line, emit, &res)
+			if res.Session != "" && res.Session != session {
+				session = res.Session
+				emit(Event{Time: time.Now(), Kind: EventSession, Text: session})
+			}
+			if parsed {
+				continue
+			}
 		}
 		// Unparsed output is shown as text so nothing is silently lost.
 		text := string(line) + "\n"
@@ -187,13 +267,15 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	switch {
 	case ctx.Err() != nil:
-		return fail(stopStatus(ctx), ctx.Err())
+		return fail(stopStatus(ctx), stopCLITree(tree, ctx.Err()))
 	case waitErr != nil:
 		// Prefer what the CLI said over the bare exit status: stderr first,
 		// then a structured error the stream already reported. A status the
-		// stream set (max_turns, refused) survives the non-zero exit too.
+		// stream set (max_turns, refused) survives the non-zero exit too. A
+		// usage limit the stream reported wins over stderr, which then holds
+		// only the CLI's chatter around it.
 		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
+		if limited, _ := usageLimit(res.Error, time.Now()); msg == "" || c.limits && limited {
 			msg = res.Error
 		}
 		if msg == "" {
@@ -208,6 +290,34 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		res.Status = StatusOK
 	}
 	return finish(&res, started)
+}
+
+func emitCLITreeStartInfo(tree interface {
+	Contained() bool
+	StartWarnings() []string
+}, emit func(Event)) {
+	if !tree.Contained() {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "process tree is not contained; cancellation may leave child processes running"})
+	}
+	for _, warning := range tree.StartWarnings() {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "process tree startup: " + warning})
+	}
+}
+
+func stopCLITree(tree *tools.Tree, err error) error {
+	// exec may have reaped a CLI that exited just before cancellation
+	// and stopped its watcher without ever invoking cmd.Cancel.
+	// Without containment, cmd.Cancel owns the best-effort fallback. WaitGone
+	// supplies the single explanation that cleanup could not be verified.
+	if tree.Contained() {
+		if killErr := tree.Kill(); killErr != nil {
+			err = fmt.Errorf("%w; kill process tree: %v", err, killErr)
+		}
+	}
+	if goneErr := tree.WaitGone(5 * time.Second); goneErr != nil {
+		err = fmt.Errorf("%w; %v", err, goneErr)
+	}
+	return err
 }
 
 func withoutEnv(env []string, key string) []string {

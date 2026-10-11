@@ -894,3 +894,36 @@ func TestAStreamErrorDoesNotTellThePhoneThePath(t *testing.T) {
 		}
 	}
 }
+
+func TestALimitedRunIsAWarningWithItsResetTime(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("codex", agent.Task{Prompt: "fix it", Dir: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resets := time.Date(2026, 10, 16, 15, 29, 0, 0, time.Local)
+	if err := w.Close(agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: resets}); err != nil {
+		t.Fatal(err)
+	}
+	res := batch.Result{ID: "20261011-120000-abcdef", Started: time.Now().Add(-time.Minute), Dir: "/repo", Base: "0123456789abcdef", Parallel: 1,
+		Duration: time.Minute,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: "fix it", Status: batch.StatusPass, Branch: "hrn/t1", Attempts: []batch.Attempt{
+			{Backend: "codex", RunID: w.ID(), Result: agent.Result{Status: agent.StatusLimited}},
+			{Backend: "claude", RunID: "20261011-120001-111111", Result: agent.Result{Status: agent.StatusOK}, Continued: true, SwitchedFrom: "codex"},
+		}}}}
+	saveBatch(t, res)
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+
+	_, body := get(t, srv.URL+"/run/"+w.ID())
+	if !strings.Contains(body, `badge warn">limited<`) {
+		t.Error("a limited run should carry the warning badge, not the failure one")
+	}
+	if !strings.Contains(body, "Limit lifts") || !strings.Contains(body, "2026-10-16 15:29") {
+		t.Error("the run page does not say when the limit lifts")
+	}
+	_, body = get(t, srv.URL+"/batch/"+res.ID)
+	if !strings.Contains(body, "moved from codex at its usage limit") {
+		t.Error("the batch page does not say the attempt was moved from codex")
+	}
+}

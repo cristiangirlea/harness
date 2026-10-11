@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 )
@@ -22,7 +23,7 @@ type Options struct {
 	Model    string `json:"model,omitempty" desc:"Model id for the backend (api default: claude-opus-5)."`
 	Mode     Mode   `json:"mode,omitempty" desc:"Permission mode: readonly | ask | auto | yolo."`
 	MaxTurns int    `json:"max_turns,omitempty" flag:"max-turns" desc:"Stop after this many model turns (api default 50)."`
-	Effort   string `json:"effort,omitempty" desc:"api backend only: low | medium | high | xhigh | max."`
+	Effort   string `json:"effort,omitempty" desc:"Reasoning effort for api, codex and claude: low | medium | high | xhigh | max; empty uses the backend default."`
 
 	// MCP lists config files (Claude Code .mcp.json format) whose stdio
 	// servers are offered as tools by the api backend and passed through to
@@ -53,6 +54,11 @@ type Options struct {
 	// TaskBudget is the api backend's token ceiling for the whole task: the
 	// model paces itself and finishes rather than being cut off.
 	TaskBudget int `json:"task_budget,omitempty" desc:"Token ceiling the api backend gives the model to pace itself (min 20000)."`
+
+	// NoSwitch keeps a run on its backend when that backend has reached its
+	// plan's usage limit. Otherwise claude and codex carry on each other's
+	// work (internal/limits).
+	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its plan's usage limit, instead of carrying on on the other of claude and codex."`
 }
 
 // Validate rejects what the API or hrn would refuse, where the values are typed
@@ -63,6 +69,9 @@ func (o Options) Validate() error {
 		if _, err := ParseMode(string(o.Mode)); err != nil {
 			return err
 		}
+	}
+	if o.Effort != "" && !slices.Contains(EffortLevels, o.Effort) {
+		return fmt.Errorf("unknown effort %q (want %s)", o.Effort, strings.Join(EffortLevels, ", "))
 	}
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }
@@ -159,6 +168,11 @@ func flagName(f reflect.StructField) string {
 func jsonName(f reflect.StructField) string {
 	return strings.Split(f.Tag.Get("json"), ",")[0]
 }
+
+// EffortLevels are the reasoning efforts a caller may ask for. The api backend
+// sends the level as is, codex and claude pass it to their CLIs, and the other
+// backends report it as not enforced. The names are exact: "HIGH" is refused.
+var EffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
 
 // Modes lists the permission modes, for the MCP schema and the flag help.
 var Modes = []Mode{ModeReadOnly, ModeAsk, ModeAuto, ModeYolo}

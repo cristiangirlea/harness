@@ -37,14 +37,13 @@ func RunShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	// Stop waiting on the pipes if something survived the kill or was left
 	// running in the background.
 	cmd.WaitDelay = 5 * time.Second
-	tree := newProcessTree(cmd)
-	defer tree.Close()
-	if err := cmd.Start(); err != nil {
+	tree, err := StartTree(cmd)
+	if err != nil {
 		return ShellResult{}, err
 	}
-	tree.Attach(cmd)
+	defer tree.Close()
 
-	err := cmd.Wait()
+	err = cmd.Wait()
 	res := ShellResult{Output: out.String(), TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded)}
 	var exitErr *exec.ExitError
 	switch {

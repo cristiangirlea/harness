@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -28,6 +29,9 @@ func NewCodexBackend() *CLIBackend {
 			if t.Model != "" {
 				a = append(a, "-m", t.Model)
 			}
+			if t.Effort != "" {
+				a = append(a, "-c", "model_reasoning_effort="+t.Effort)
+			}
 			switch t.Mode {
 			case ModeReadOnly, ModeAsk:
 				a = append(a, "--sandbox", "read-only")
@@ -43,8 +47,12 @@ func NewCodexBackend() *CLIBackend {
 			}
 			return append(a, "-")
 		},
-		parse: parseCodexStream,
-		forks: true,
+		parse:      parseCodexStream,
+		forks:      true,
+		mapsEffort: true,
+		mapsModes:  []Mode{ModeReadOnly, ModeAuto, ModeYolo},
+		mapsModel:  true,
+		limits:     true,
 	}
 }
 
@@ -95,6 +103,10 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			OutputTokens      int64 `json:"output_tokens"`
 		} `json:"usage"`
 		Message string `json:"message"`
+		// turn.failed carries its text here rather than in Message.
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if json.Unmarshal(line, &l) != nil || l.Type == "" {
 		return false
@@ -125,8 +137,17 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 		res.CacheRead += l.Usage.CachedInputTokens
 		res.OutputTokens += l.Usage.OutputTokens
 	case "error", "turn.failed":
-		emit(Event{Time: now, Kind: EventError, Text: l.Message})
-		res.Status, res.Error = StatusError, l.Message
+		msg := cmp.Or(l.Message, l.Error.Message)
+		if msg == "" || msg == res.Error {
+			// A turn.failed after the error line that said why: keep that text,
+			// which is what a reader and the limit check need.
+			if res.Error != "" {
+				break
+			}
+			msg = l.Type
+		}
+		emit(Event{Time: now, Kind: EventError, Text: msg})
+		res.Status, res.Error = StatusError, msg
 	}
 	return true
 }

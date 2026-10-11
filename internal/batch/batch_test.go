@@ -491,6 +491,8 @@ func TestSpecValidation(t *testing.T) {
 		{"unknown task retry", Spec{Tasks: []Task{{Prompt: "a", Backend: "wb-ok", Retry: []string{"nope"}}}}, "task t1"},
 		{"blank gate", Spec{Backend: "wb-ok", Gate: []string{"go test", " "}, Tasks: []Task{{Prompt: "a"}}}, "empty gate"},
 		{"blank task gate", Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Gate: []string{""}}}}, "task t1"},
+		{"unknown effort", Spec{Backend: "wb-ok", Options: agent.Options{Effort: "turbo"}, Tasks: []Task{{Prompt: "a"}}}, `unknown effort "turbo"`},
+		{"unknown task effort", Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Options: agent.Options{Effort: "HIGH"}}}}, "task t1"},
 	} {
 		if _, err := Run(context.Background(), tc.spec, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)

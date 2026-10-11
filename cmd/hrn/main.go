@@ -17,6 +17,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -24,6 +25,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/hrnmcp"
+	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -34,6 +36,7 @@ const usage = `hrn — personal agent harness
 
 Usage:
   hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
+  hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
   hrn backends                    show which backends are usable
   hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
@@ -64,7 +67,7 @@ Run flags:
   -C, --dir PATH       workspace directory (default: current directory)
       --mode MODE      readonly | ask | auto | yolo (default: ask)
       --max-turns N    stop after N model turns (default 50 for api)
-      --effort LEVEL   low | medium | high | xhigh | max (api backend)
+      --effort LEVEL   low | medium | high | xhigh | max (api, codex and claude; unset uses backend default)
       --json           print events as JSON lines instead of formatted output
       --thinking       show model thinking summaries
       --mcp FILE       MCP config (Claude Code .mcp.json format); repeatable. ~/.hrn/mcp.json is loaded when present
@@ -79,6 +82,8 @@ Run flags:
       --allow-dangerous
                        lift the guard: agents may push, merge and deploy with your credentials
                        (every backend), and run_command may run sudo, rm -rf / and the like
+      --no-switch      stay on claude or codex when it reaches its plan's usage limit, instead of
+                       carrying on on the other one
 
 Eval flags:
       --parallel N     cells at once (default: the file's value, else 4)
@@ -111,6 +116,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		code, err = cmdRun(os.Args[2:])
+	case "exec":
+		code, err = cmdExec(os.Args[2:])
 	case "backends":
 		err = cmdBackends()
 	case "runs":
@@ -171,6 +178,16 @@ func cmdRun(args []string) (int, error) {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
+	// A backend whose plan limit is remembered hands the run to its partner
+	// from the start, a continued one too, so this is settled before the
+	// plan. A model typed for it means nothing to the partner.
+	var routed string
+	if !opts.NoSwitch {
+		if backend, routed = limits.Choose(backend, *continueID); routed != "" {
+			opts.Model = ""
+		}
+	}
+
 	// A continued run inherits the earlier run's backend, workspace, mode and
 	// model for anything the user did not type this time; the plan says what
 	// the backend picks up and what it is handed as a transcript.
@@ -180,7 +197,7 @@ func cmdRun(args []string) (int, error) {
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}
-		if set["m"] || set["model"] {
+		if (set["m"] || set["model"]) && routed == "" {
 			req.Model = opts.Model
 		}
 		var err error
@@ -248,7 +265,7 @@ func cmdRun(args []string) (int, error) {
 	// The api backend saves the conversation here, so this run can be continued.
 	task.RunDir = rec.Dir()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	var emit func(agent.Event)
@@ -269,15 +286,53 @@ func cmdRun(args []string) (int, error) {
 		emit = func(e agent.Event) { rec.Event(e); r.Event(e) }
 	}
 
+	if routed != "" {
+		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
+	}
 	plan.Apply(&task, rec.Dir(), emit)
 	res := agent.Run(ctx, b, task, emit)
 	if err := rec.Close(res); err != nil {
-		fmt.Fprintln(os.Stderr, "hrn: saving run:", err)
+		fmt.Fprintln(os.Stderr, "hrn: "+runlog.CloseMessage(err))
 	}
-	if jsonOut {
-		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"run_id": rec.ID(), "result": res})
-	} else {
-		r.Summary(rec.ID(), res)
+	finished := func(id string, res agent.Result) {
+		if jsonOut {
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"run_id": id, "result": res})
+		} else {
+			r.Summary(id, res)
+		}
+	}
+	finished(rec.ID(), res)
+
+	// A run stopped by its plan's limit is carried on by the partner backend,
+	// once: a partner that is limited too would only hand it back.
+	next, why, err := limits.After(rec.ID(), backend, task, res)
+	switch {
+	case err != nil:
+		fmt.Fprintln(os.Stderr, "hrn:", err)
+	case next == nil && why != "":
+		fmt.Fprintln(os.Stderr, "hrn:", why)
+	case next != nil:
+		nb, err := agent.Get(next.To)
+		if err != nil {
+			return 1, err
+		}
+		nrec, err := runlog.CreateContinuing(next.To, next.Task, rec.ID())
+		if err != nil {
+			return 1, fmt.Errorf("creating run record: %w", err)
+		}
+		next.Task.RunDir = nrec.Dir()
+		rec = nrec // the renderer and the encoder write to the new record now
+		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Why})
+		next.Plan.Apply(&next.Task, nrec.Dir(), emit)
+		res = agent.Run(ctx, nb, next.Task, emit)
+		if err := nrec.Close(res); err != nil {
+			fmt.Fprintln(os.Stderr, "hrn: "+runlog.CloseMessage(err))
+		}
+		// Limited too: remembered, so the next run does not try it first.
+		if err := limits.Note(next.To, res); err != nil {
+			fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
+		}
+		finished(nrec.ID(), res)
 	}
 	if res.Status != agent.StatusOK {
 		return 1, nil
@@ -286,6 +341,7 @@ func cmdRun(args []string) (int, error) {
 }
 
 func cmdBackends() error {
+	now := time.Now()
 	for _, name := range agent.Names() {
 		b, _ := agent.Get(name)
 		src, err := b.Detect()
@@ -293,6 +349,9 @@ func cmdBackends() error {
 			fmt.Printf("  ✗ %-9s %s\n", name, err)
 		} else {
 			fmt.Printf("  ✓ %-9s %s\n", name, src)
+		}
+		if s := limits.Status(name, now); s != "" {
+			fmt.Printf("    %-9s %s\n", "", s)
 		}
 	}
 	return nil
@@ -342,7 +401,7 @@ func cmdShow(args []string) error {
 	}
 	id := fs.Arg(0)
 	if *follow {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
 		return followRun(ctx, newRenderer(true), id, 250*time.Millisecond)
 	}
@@ -382,6 +441,9 @@ func showHeader(r *renderer, rec runlog.Record) {
 	head = printable(head)
 	r.Line(r.c(bold, printable(tools.OneLine(rec.Task.Prompt, 200))))
 	r.Line(head)
+	if rec.RecordError != "" {
+		r.Line("run record incomplete: " + printable(strings.Join(strings.Fields(rec.RecordError), " ")))
+	}
 	r.Line("")
 }
 
@@ -405,7 +467,7 @@ func cmdMCP(args []string) error {
 		return fmt.Errorf("--dir %s: %w", *dir, err)
 	}
 	abs := ws.Root
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	fmt.Fprintln(os.Stderr, "hrn mcp: serving on stdio, workspace", abs)
 	if err := hrnmcp.NewServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
@@ -489,7 +551,7 @@ func cmdEval(args []string) (int, error) {
 		spec.Parallel = *parallel
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	r := newRenderer(false)
 	if *jsonOut {

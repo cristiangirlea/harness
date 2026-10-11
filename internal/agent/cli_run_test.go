@@ -23,6 +23,18 @@ func TestHelperCLIError(t *testing.T) {
 	case "maxturns":
 		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"result":""}`)
 		os.Exit(1)
+	case "codexlimit":
+		// What codex 0.155 printed on 2026-10-11: the message on an error
+		// line, then a turn.failed whose text sits under error.message.
+		fmt.Println(`{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000001"}`)
+		fmt.Println(`{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 16th, 2099 3:29 PM."}`)
+		fmt.Println(`{"type":"turn.failed","error":{"message":""}}`)
+		os.Exit(1)
+	case "claudelimit":
+		// The test picks the reset time, so the run does not depend on the hour.
+		msg, _ := json.Marshal(os.Getenv("HRN_CLI_LIMIT_MSG"))
+		fmt.Printf(`{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":%s}`+"\n", msg)
+		os.Exit(1)
 	case "env":
 		// What the CLI was started with, as its final answer.
 		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s",
@@ -118,6 +130,61 @@ func TestCLISaysWhatItCannotEnforce(t *testing.T) {
 	}
 }
 
+func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "error")
+	for _, adapter := range []struct {
+		newBackend func() *CLIBackend
+		mapsEffort bool
+	}{
+		{NewCodexBackend, true},
+		{NewClaudeBackend, true},
+		{NewGeminiBackend, false},
+		{NewOpencodeBackend, false},
+	} {
+		b := adapter.newBackend()
+		t.Run(b.Name(), func(t *testing.T) {
+			// Keep the adapter's capabilities, but run only the test binary.
+			b.name = os.Args[0]
+			b.candidates = nil
+			b.args = helperCLI(nil).args
+			for _, options := range []Options{
+				{},
+				{Effort: "high"},
+				{Effort: "high", MaxCostUSD: 5, TaskBudget: 50000},
+			} {
+				var infos []string
+				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
+					if e.Kind == EventInfo && strings.Contains(e.Text, "not enforced") {
+						infos = append(infos, e.Text)
+					}
+				})
+				// The fake says "usage limit reached", which codex reads as its
+				// plan's limit: limited or error, it ran and exited non-zero.
+				if res.Status != StatusError && res.Status != StatusLimited {
+					t.Fatalf("the fake CLI must run and exit non-zero: %+v", res)
+				}
+				var want []string
+				if options.MaxCostUSD > 0 {
+					want = append(want, "max_cost", "task_budget")
+				}
+				if options.Effort != "" && !adapter.mapsEffort {
+					want = append(want, "effort")
+				}
+				if len(want) == 0 {
+					if len(infos) != 0 {
+						t.Errorf("options %+v: unexpected warning %v", options, infos)
+					}
+					continue
+				}
+				line := fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(want, ", "), b.Name())
+				if len(infos) != 1 || infos[0] != line {
+					t.Errorf("options %+v: info = %v, want one line %q", options, infos, line)
+				}
+			}
+		})
+	}
+}
+
 // Every CLI run says whether the guard is on, in any mode: a run in auto can
 // still run commands the CLI itself allows.
 func TestCLISaysWhetherTheGuardApplies(t *testing.T) {
@@ -179,5 +246,62 @@ func TestCLIStopsOnTimeout(t *testing.T) {
 		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Timeout: Duration(200 * time.Millisecond)}}, func(Event) {})
 	if res.Status != StatusTimeout {
 		t.Fatalf("status = %s, want timeout (error %q)", res.Status, res.Error)
+	}
+}
+
+func TestCodexReportsItsUsageLimitAsLimited(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "codexlimit")
+	b := helperCLI(parseCodexStream)
+	b.limits = true
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
+	if res.Status != StatusLimited {
+		t.Fatalf("status = %s, want limited (error %q)", res.Status, res.Error)
+	}
+	// The year is far off so the test does not age; past the plan window, so
+	// the time is not believed, but the message itself is kept.
+	if !strings.Contains(res.Error, "hit your usage limit") {
+		t.Errorf("error = %q, want codex's own message rather than the exit status", res.Error)
+	}
+}
+
+// claudeLimitIn sets the fake claude's limit message to reset d from now, in
+// the computer's zone as the CLI writes it. The zone is pinned to one without
+// summer time, where a clock time names one moment even the night it changes.
+func claudeLimitIn(t *testing.T, d time.Duration) time.Time {
+	saved := time.Local
+	time.Local = time.FixedZone("EET", 2*3600)
+	t.Cleanup(func() { time.Local = saved })
+	at := time.Now().In(time.Local).Add(d).Truncate(time.Minute)
+	t.Setenv("HRN_CLI_HELPER", "claudelimit")
+	t.Setenv("HRN_CLI_LIMIT_MSG", "You've hit your session limit · resets "+at.Format("3:04pm"))
+	return at
+}
+
+func TestClaudeReportsItsUsageLimitAsLimited(t *testing.T) {
+	at := claudeLimitIn(t, 2*time.Hour)
+	b := helperCLI(parseClaudeStream)
+	b.limits = true
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
+	if res.Status != StatusLimited || !res.LimitResets.Equal(at) {
+		t.Fatalf("want limited, resetting at %v: status %s, resets %v, error %q", at, res.Status, res.LimitResets, res.Error)
+	}
+}
+
+func TestOnlyTheClaudeAndCodexAdaptersReadLimits(t *testing.T) {
+	for _, c := range []struct {
+		b    *CLIBackend
+		want bool
+	}{{NewClaudeBackend(), true}, {NewCodexBackend(), true}, {NewGeminiBackend(), false}, {NewOpencodeBackend(), false}} {
+		if c.b.limits != c.want {
+			t.Errorf("%s reads limits = %v, want %v", c.b.name, c.b.limits, c.want)
+		}
+	}
+}
+
+func TestAnAdapterWithoutLimitWordsKeepsTheError(t *testing.T) {
+	claudeLimitIn(t, 2*time.Hour)
+	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
+	if res.Status != StatusError {
+		t.Fatalf("status = %s: only claude and codex are read for limits", res.Status)
 	}
 }
