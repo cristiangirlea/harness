@@ -5,11 +5,14 @@
 package runlog
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -49,9 +52,11 @@ type Record struct {
 type Writer struct {
 	dir        string
 	mu         sync.Mutex
-	events     *os.File
+	events     io.WriteCloser
 	firstError error
+	closeError error
 	lostEvents int
+	brokenLine bool
 	rec        Record
 }
 
@@ -96,8 +101,23 @@ func (w *Writer) Event(e agent.Event) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	// An encoder retains write errors; a fresh one tries every event again.
-	if err := json.NewEncoder(w.events).Encode(e); err != nil {
+	data, err := json.Marshal(e)
+	if err == nil {
+		data = append(data, '\n')
+		if w.brokenLine {
+			// Isolate the fragment so it cannot consume the next complete event.
+			data = append([]byte{'\n'}, data...)
+		}
+		var n int
+		n, err = w.events.Write(data)
+		if err == nil && n < len(data) {
+			err = io.ErrShortWrite
+		}
+		if n > 0 {
+			w.brokenLine = data[n-1] != '\n'
+		}
+	}
+	if err != nil {
 		if w.firstError == nil {
 			w.firstError = err
 		}
@@ -106,7 +126,8 @@ func (w *Writer) Event(e agent.Event) {
 }
 
 // Err reports how many complete events could not be recorded, wrapping the
-// first error. It is safe to call concurrently with Event.
+// first error, along with any events-file close error. It is safe to call
+// concurrently with Event and Close.
 func (w *Writer) Err() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -115,22 +136,40 @@ func (w *Writer) Err() error {
 
 // errLocked requires w.mu to be held.
 func (w *Writer) errLocked() error {
-	if w.firstError == nil {
-		return nil
+	var eventErr error
+	if w.firstError != nil {
+		if w.lostEvents == 1 {
+			eventErr = fmt.Errorf("1 event was not recorded: %w", w.firstError)
+		} else {
+			eventErr = fmt.Errorf("%d events were not recorded: %w", w.lostEvents, w.firstError)
+		}
 	}
-	return fmt.Errorf("%d events were not recorded: %w", w.lostEvents, w.firstError)
+	return errors.Join(eventErr, w.closeError)
 }
+
+// ResultWriteError distinguishes a failure to save result.json from an
+// incomplete event record whose result was saved. It wraps the write error.
+type ResultWriteError struct {
+	Err error
+}
+
+func (e *ResultWriteError) Error() string { return e.Err.Error() }
+func (e *ResultWriteError) Unwrap() error { return e.Err }
 
 func (w *Writer) Close(res agent.Result) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.closeError = w.events.Close()
 	w.rec.Result = res
 	recordErr := w.errLocked()
 	if recordErr != nil {
 		w.rec.RecordError = recordErr.Error()
 	}
-	err := w.events.Close()
-	return errors.Join(recordErr, err, writeJSON(filepath.Join(w.dir, "result.json"), w.rec))
+	err := writeJSON(filepath.Join(w.dir, "result.json"), w.rec)
+	if err != nil {
+		err = &ResultWriteError{Err: err}
+	}
+	return errors.Join(recordErr, err)
 }
 
 // NewID is a sortable timestamp plus random suffix, shared by runs and batches.
@@ -242,15 +281,32 @@ func Events(id string) ([]agent.Event, error) {
 	}
 	defer f.Close()
 	var out []agent.Event
-	dec := json.NewDecoder(f)
-	for dec.More() {
-		var e agent.Event
-		if err := dec.Decode(&e); err != nil {
-			return out, err
+	r := bufio.NewReader(f)
+	checked, recoverBroken := false, false
+	for {
+		line, readErr := r.ReadBytes('\n')
+		if readErr != nil && readErr != io.EOF {
+			return out, readErr
 		}
-		out = append(out, e)
+		if line = bytes.TrimSpace(line); len(line) != 0 {
+			var e agent.Event
+			if err := json.Unmarshal(line, &e); err != nil {
+				if !checked {
+					// Only a saved recording failure permits skipping broken lines.
+					rec, loadErr := Load(id)
+					recoverBroken, checked = loadErr == nil && rec.RecordError != "", true
+				}
+				if !recoverBroken {
+					return out, err
+				}
+			} else {
+				out = append(out, e)
+			}
+		}
+		if readErr == io.EOF {
+			return out, nil
+		}
 	}
-	return out, nil
 }
 
 // LoadConversation returns a run's record together with the message history it

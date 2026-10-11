@@ -171,8 +171,15 @@ func runTool(defaultDir string) mcp.Tool {
 			plan.Apply(&task, rec.Dir(), emit)
 			res := agent.Run(ctx, b, task, emit)
 			recordErr := rec.Close(res)
+			recordMessage := ""
 			if recordErr != nil {
-				call.Progress("saving run: " + recordErr.Error())
+				prefix := "run record incomplete: "
+				var saveErr *runlog.ResultWriteError
+				if errors.As(recordErr, &saveErr) {
+					prefix = "saving run: "
+				}
+				recordMessage = prefix + recordErr.Error()
+				call.Progress(recordMessage)
 			}
 			body := res.Final
 			if res.Status != agent.StatusOK {
@@ -183,11 +190,11 @@ func runTool(defaultDir string) mcp.Tool {
 			}
 			structured := map[string]any{"run_id": rec.ID(), "result": res}
 			if recordErr != nil {
-				body = "saving run: " + recordErr.Error() + "\n\n" + body
+				body = recordMessage + "\n\n" + body
 				structured["record_error"] = recordErr.Error()
 			}
 			return text(body+"\n\n"+summary(rec.ID(), res),
-				structured, res.Status != agent.StatusOK || recordErr != nil), nil
+				structured, res.Status != agent.StatusOK), nil
 		},
 	}
 }
@@ -264,6 +271,9 @@ func showTool() mcp.Tool {
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "%s\n%s · %s · mode %s%s\n\n", tools.OneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode, continues(rec))
+			if rec.RecordError != "" {
+				fmt.Fprintf(&b, "run record incomplete: %s\n\n", rec.RecordError)
+			}
 			var events []agent.Event
 			if args.Events == nil || *args.Events {
 				if events, err = runlog.Events(args.RunID); err != nil {

@@ -381,6 +381,9 @@ func showHeader(r *renderer, rec runlog.Record) {
 	head = printable(head)
 	r.Line(r.c(bold, printable(tools.OneLine(rec.Task.Prompt, 200))))
 	r.Line(head)
+	if rec.RecordError != "" {
+		r.Line("run record incomplete: " + printable(strings.Join(strings.Fields(rec.RecordError), " ")))
+	}
 	r.Line("")
 }
 

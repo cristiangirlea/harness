@@ -3,6 +3,8 @@ package runlog
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +37,7 @@ func TestWriterCountsFailedEventsAndSavesRecordError(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, err := Load(w.ID())
-	if err != nil || !rec.Done || rec.RecordError != recordErr.Error() || rec.Result.Status != agent.StatusOK {
+	if err != nil || !rec.Done || !strings.Contains(rec.RecordError, recordErr.Error()) || !strings.Contains(rec.RecordError, "close ") || rec.Result.Status != agent.StatusOK {
 		t.Fatalf("saved record = %+v, err = %v", rec, err)
 	}
 }
@@ -85,7 +87,7 @@ func TestWriterDoesNotCountPartialEventsAsLost(t *testing.T) {
 	}
 	w.Event(agent.Event{Kind: agent.EventText, Text: "complete"})
 	w.Event(agent.Event{Kind: agent.EventText, Text: "fragment", Partial: true})
-	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 events were not recorded") {
+	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") {
 		t.Fatalf("Err = %v, want only the complete event counted", err)
 	}
 	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
@@ -110,7 +112,7 @@ func TestWriterRetriesWritesAndKeepsTheFirstError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = w.events.Close() })
 	w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
-	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 events were not recorded") {
+	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") {
 		t.Fatalf("successful retry must not count as lost: %v", err)
 	}
 	// A later, different encoding error must not replace the first write error.
@@ -145,10 +147,133 @@ func TestWriterCloseJoinsEventFileAndResultErrors(t *testing.T) {
 	if err == nil || !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("Close = %v, want joined errors wrapping os.ErrClosed", err)
 	}
-	for _, want := range []string{"1 events were not recorded", "close ", resultPath} {
+	for _, want := range []string{"1 event was not recorded", "close ", resultPath} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Close = %v, missing %q", err, want)
 		}
+	}
+}
+
+// shortWriter leaves a fragment of its first event on disk, then recovers.
+type shortWriter struct {
+	io.WriteCloser
+	failed bool
+	err    error
+}
+
+func (w *shortWriter) Write(p []byte) (int, error) {
+	if !w.failed {
+		w.failed = true
+		n, err := w.WriteCloser.Write(p[:len(p)/2])
+		if err != nil {
+			return n, err
+		}
+		return n, w.err
+	}
+	return w.WriteCloser.Write(p)
+}
+
+func TestWriterKeepsTheNextEventReadableAfterAShortWrite(t *testing.T) {
+	for _, cause := range []error{errors.New("disk full"), nil} {
+		t.Run(fmt.Sprint(cause), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			w, err := Create("stub", agent.Task{Prompt: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.events = &shortWriter{WriteCloser: w.events, err: cause}
+			t.Cleanup(func() { _ = w.events.Close() })
+			w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
+			w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+			wantCause := cause
+			if wantCause == nil {
+				wantCause = io.ErrShortWrite
+			}
+			if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") || !errors.Is(err, wantCause) {
+				t.Errorf("Err = %v, want exactly one loss wrapping %v", err, wantCause)
+			}
+			if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+				t.Error("Close must report the lost event")
+			}
+			events, err := Events(w.ID())
+			if err != nil || len(events) != 1 || events[0].Text != "saved" {
+				t.Fatalf("second event must remain readable: events=%+v err=%v", events, err)
+			}
+		})
+	}
+}
+
+func TestWriterCountsEventsAfterCloseWithoutChangingTheSavedRecord(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(w.Dir(), "result.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "late"})
+	w.Event(agent.Event{Kind: agent.EventText, Text: "later"})
+	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "2 events were not recorded") || !errors.Is(err, os.ErrClosed) {
+		t.Errorf("late events must count as lost: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("late events changed the saved record: err=%v", err)
+	}
+}
+
+func TestWriterErrCanRaceCloseAndReportsTheCloseError(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.events.Close(); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			<-start
+			for range 100 {
+				if err := w.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
+					t.Errorf("Err = %v, want nil or os.ErrClosed", err)
+				}
+			}
+		})
+	}
+	close(start)
+	closeErr := w.Close(agent.Result{Status: agent.StatusOK})
+	wg.Wait()
+	if !errors.Is(closeErr, os.ErrClosed) || !errors.Is(w.Err(), os.ErrClosed) {
+		t.Errorf("Close = %v, Err = %v, want the close error in both", closeErr, w.Err())
+	}
+	rec, err := Load(w.ID())
+	if err != nil || !rec.Done || !strings.Contains(rec.RecordError, "close ") || strings.Contains(rec.RecordError, "not recorded") {
+		t.Fatalf("close-only failure must be saved without inventing lost events: %+v err=%v", rec, err)
+	}
+}
+
+func TestEventsStillRejectsMalformedUnmarkedRecords(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	write(t, w.Dir(), "events.jsonl", "{broken\n{\"kind\":\"text\",\"text\":\"saved\"}\n")
+	if _, err := Events(w.ID()); err == nil {
+		t.Fatal("unmarked corruption must still return an error")
 	}
 }
 

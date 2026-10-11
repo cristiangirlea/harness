@@ -141,15 +141,15 @@ func TestRunThenInspect(t *testing.T) {
 }
 
 func TestRunReturnsRecordErrorsToTheHost(t *testing.T) {
-	for _, tc := range []struct{ prompt, want string }{
-		{"record-write-failure", "2 events were not recorded"},
-		{"result-write-failure", "result.json"},
+	for _, tc := range []struct{ prompt, prefix, want string }{
+		{"record-write-failure", "run record incomplete: ", "2 events were not recorded"},
+		{"result-write-failure", "saving run: ", "result.json"},
 	} {
 		t.Run(tc.prompt, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			s := connect(t, t.TempDir())
 			res := s.call(t, "run", `{"prompt":"`+tc.prompt+`","backend":"stub"}`)
-			if !res.IsError || !strings.Contains(res.Text(), "saving run: ") || !strings.Contains(res.Text(), tc.want) || !strings.Contains(res.Text(), "stub says: "+tc.prompt) {
+			if res.IsError || !strings.Contains(res.Text(), tc.prefix) || !strings.Contains(res.Text(), tc.want) || !strings.Contains(res.Text(), "stub says: "+tc.prompt) {
 				t.Errorf("run must return its answer and record error: %+v", res)
 			}
 			sc := res.StructuredContent.(map[string]any)
@@ -183,11 +183,38 @@ func TestBatchIncludesRecordErrorsInTheRunResultLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(lines) != 1 || !strings.Contains(lines[0], "saving run: 2 events were not recorded") {
+	if len(lines) != 1 || !strings.Contains(lines[0], "run record incomplete: 2 events were not recorded") {
 		t.Errorf("run result line must carry Close's error: %q", lines)
 	}
 	if len(res.Tasks) != 1 || len(res.Tasks[0].Attempts) != 1 || !strings.Contains(res.Tasks[0].Attempts[0].Error, "2 events were not recorded") {
 		t.Errorf("attempt must retain Close's error: %+v", res.Tasks)
+	}
+	if len(res.Tasks) != 1 || res.Tasks[0].Status != batch.StatusPass {
+		t.Errorf("an ok agent must still pass when its record fails: %+v", res.Tasks)
+	}
+}
+
+func TestShowIncludesTheSavedRecordError(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"record-write-failure","backend":"stub"}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A marked incomplete record must remain inspectable despite a broken line.
+	if err := os.WriteFile(filepath.Join(runlog.Root(), id, "events.jsonl"), []byte("{broken\n{\"kind\":\"text\",\"text\":\"recovered\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, events := range []string{"true", "false"} {
+		shown := s.call(t, "show", `{"run_id":"`+id+`","events":`+events+`}`)
+		if shown.IsError || !strings.Contains(shown.Text(), "run record incomplete: "+rec.RecordError) {
+			t.Errorf("show must report the saved error, events=%s: %+v", events, shown)
+		}
+		if events == "true" && !strings.Contains(shown.Text(), "recovered") {
+			t.Errorf("show must include intact events after a broken line: %+v", shown)
+		}
 	}
 }
 

@@ -673,9 +673,11 @@ pairs as data.
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration, and the
   claude or codex `session` id
 
-When complete events fail to write, `result.json` includes `record_error` with the
-number of events not recorded and the first error; the result is still saved to mark
-the run finished. The field is omitted on success, and older records still load.
+When complete events fail to write or `events.jsonl` fails to close, `result.json`
+includes `record_error` with the number of events not recorded, the first event error
+and any close error; `hrn show` and MCP `show` report it and recover intact events
+after broken lines. The result is still saved to mark the run finished, the field is
+omitted on success, and older records still load.
 
 `hrn runs prune --older-than 30d` removes runs, batch records and eval records that
 started before the cutoff, and prints what it freed; `--dry-run` lists them instead and
