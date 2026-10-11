@@ -628,6 +628,19 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: Streamed text in linear time (#71). `parseSSE` added each text, thinking and
+  signature delta to its block's string, which copied the whole text every time:
+  - a stream of 64,000 small deltas (about one maximum-length response) parsed in 2.75 s;
+  - 32,000 deltas in a 3 MB stream allocated 1.27 GB, about 410 times the stream.
+
+  It also slowed FuzzParseSSE's minimization of large inputs (#70). Each block's deltas
+  now go into a `strings.Builder`, written into the block at its `content_block_stop`, or
+  by a `defer` when the parse ends any other way. The partial response of a cut-off
+  stream keeps what arrived (the api loop reads only its usage today), and `message_start`
+  clears the builders with the blocks. The blocks and the `onDelta` calls are the same
+  byte for byte, so the history stays append-only. 64,000 deltas now parse in 59 ms.
+  The test checks bytes allocated (under 32 times the stream; about 10 now), not time,
+  so a busy runner cannot make it flaky.
 - 2026-10-11: #45 reviews (PR #48): an independent read-only reviewer, and an adversarial security
   read in a scratch copy, which found nothing it could get out through (junction chains and
   loops, dangling junctions, 8.3 aliases, `\\?\` targets, a junction to `C:\Windows`; no
