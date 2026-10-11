@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +32,10 @@ type Options struct {
 	// private network addresses. Requests naming one of them are let in, and
 	// the index shows them as links for a phone.
 	LAN []Endpoint
+	// Key is what a request that would act on hrn (anything but GET and
+	// HEAD) must send in X-Hrn-Watch-Key, from this computer or the network
+	// alike. Viewing needs none. Empty refuses every action; none exists yet.
+	Key string
 }
 
 // Endpoint is one private network address the page is served on.
@@ -45,9 +50,9 @@ type Endpoint struct {
 // VPN tunnels. Never 0.0.0.0, which would take in a public address too. A VPN
 // that shows up as an ordinary adapter with a private address is still taken:
 // the caller lists every endpoint so the person running it sees each network.
-// The page is read-only: anything that acts on hrn from the network needs a
-// key first (see PLAN.md).
-func ListenLAN(port string) ([]net.Listener, []Endpoint, error) {
+// only, when set, keeps one adapter: its name (any case) or its address.
+// The page is read-only: anything that acts on hrn needs a key (see guard).
+func ListenLAN(port, only string) ([]net.Listener, []Endpoint, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, nil, err
@@ -60,9 +65,13 @@ func ListenLAN(port string) ([]net.Listener, []Endpoint, error) {
 		}
 		adapters = append(adapters, adapter{ifc.Name, ifc.Flags, addrs})
 	}
+	picked, err := pickLAN(lanAddrs(adapters), only)
+	if err != nil {
+		return nil, nil, err
+	}
 	var lns []net.Listener
 	var eps []Endpoint
-	for _, a := range lanAddrs(adapters) {
+	for _, a := range picked {
 		ln, err := net.Listen("tcp", net.JoinHostPort(a.ip, port))
 		if err != nil {
 			for _, l := range lns {
@@ -101,6 +110,28 @@ func lanAddrs(adapters []adapter) []lanAddr {
 		}
 	}
 	return out
+}
+
+// pickLAN keeps the address or the adapter --lan=NAME names; with no name,
+// all of them. A name that matches nothing is an error naming the choices.
+func pickLAN(all []lanAddr, only string) ([]lanAddr, error) {
+	if only == "" {
+		return all, nil
+	}
+	var out []lanAddr
+	for _, a := range all {
+		if a.ip == only || strings.EqualFold(a.name, only) {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 {
+		var choices []string
+		for _, a := range all {
+			choices = append(choices, fmt.Sprintf("%s (%s)", a.name, a.ip))
+		}
+		return nil, fmt.Errorf("--lan=%s: no network adapter with a private address by that name or address; there are: %s", only, strings.Join(choices, ", "))
+	}
+	return out, nil
 }
 
 // privateAddrs keeps the private IPv4 addresses (RFC 1918) of an adapter.
@@ -156,6 +187,8 @@ func Serve(ctx context.Context, opt Options, lns ...net.Listener) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		// No WriteTimeout: streams stay open. Each write sets its own deadline.
+		// "OPTIONS *" goes to the handler, and so through the door, too.
+		DisableGeneralOptionsHandler: true,
 	}
 	errs := make(chan error, len(lns))
 	for _, ln := range lns {
@@ -195,8 +228,9 @@ func checkListener(a net.Addr, lan []Endpoint) error {
 var idRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`)
 
 type server struct {
-	ctx context.Context // ends every stream when the server stops
-	opt Options
+	ctx    context.Context // ends every stream when the server stops
+	opt    Options
+	redact *strings.Replacer // blanks secret values; see secretReplacer
 }
 
 // New is the watch page's handler. Streams end when ctx does, so a server
@@ -208,7 +242,7 @@ func New(ctx context.Context, opt Options) http.Handler {
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt}
+	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ())}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /run/{id}", s.run)
@@ -221,7 +255,7 @@ func New(ctx context.Context, opt Options) http.Handler {
 	for _, ep := range opt.LAN {
 		lan[ep.Addr] = true
 	}
-	return guard(mux, lan)
+	return guard(mux, lan, opt.Key)
 }
 
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
@@ -231,7 +265,12 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 // the page to itself. lan holds the ip:port addresses hrn watch --lan serves
 // on; a Host naming one exactly is let in too. A rebinding attack needs a DNS
 // name, so IP literals keep that defence.
-func guard(next http.Handler, lan map[string]bool) http.Handler {
+//
+// Anything but GET and HEAD would act on hrn, so it must also carry key in
+// X-Hrn-Watch-Key. A custom header is also the CSRF check: a form on another
+// site cannot set one, and a script elsewhere cannot send one here without a
+// CORS answer this server never gives.
+func guard(next http.Handler, lan map[string]bool, key string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
@@ -244,6 +283,13 @@ func guard(next http.Handler, lan map[string]bool) http.Handler {
 		if !(isLoopbackHost(r.Host) || lan[withPort(r.Host)]) || strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || !isSameOrigin(r) {
 			http.Error(w, "Local requests only", http.StatusForbidden)
 			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			sent := r.Header.Get("X-Hrn-Watch-Key")
+			if key == "" || subtle.ConstantTimeCompare([]byte(sent), []byte(key)) != 1 {
+				http.Error(w, "Acting on hrn needs hrn watch's key", http.StatusForbidden)
+				return
+			}
 		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
 		next.ServeHTTP(w, r)
@@ -296,8 +342,28 @@ func isSameOrigin(r *http.Request) bool {
 	return u.Scheme == "http" && strings.EqualFold(u.Host, r.Host)
 }
 
+// render runs a template and blanks any secret value in what it made: a key
+// or token in hrn watch's environment may have reached a run (an agent that
+// ran env), and the page may be open to the network.
+func (s *server) render(name string, data any) (string, error) {
+	out, err := render(name, data)
+	if err == nil && s.redact != nil {
+		out = s.redact.Replace(out)
+	}
+	return out, err
+}
+
+// homeFor is the hrn home to show: to this computer only, as it names the
+// user's account.
+func homeFor(r *http.Request) string {
+	if fromThisComputer(r) {
+		return runlog.Home()
+	}
+	return ""
+}
+
 func (s *server) page(w http.ResponseWriter, status int, name string, data any) {
-	body, err := render(name, data)
+	body, err := s.render(name, data)
 	if err != nil {
 		http.Error(w, "the page could not be rendered: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -307,15 +373,18 @@ func (s *server) page(w http.ResponseWriter, status int, name string, data any) 
 	_, _ = io.WriteString(w, body)
 }
 
-func (s *server) missing(w http.ResponseWriter, what string, err error) {
+func (s *server) missing(w http.ResponseWriter, r *http.Request, what string, err error) {
 	msg := what + " not found"
 	if !errors.Is(err, os.ErrNotExist) {
-		msg = fmt.Sprintf("%s could not be read: %v", what, err)
+		msg = what + " could not be read"
+		if fromThisComputer(r) { // the error names paths
+			msg = fmt.Sprintf("%s could not be read: %v", what, err)
+		}
 	}
 	s.page(w, http.StatusNotFound, "missing", struct {
 		page
 		Message string
-	}{page{Title: "Not found", Home: runlog.Home()}, msg})
+	}{page{Title: "Not found", Home: homeFor(r)}, msg})
 }
 
 func (s *server) lists() lists {
@@ -325,7 +394,7 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, "Runs could not be listed: "+err.Error())
 	}
 	for _, rec := range runs {
-		l.Runs = append(l.Runs, runRow(rec))
+		l.Runs = append(l.Runs, runRow(s.cleanRecord(rec)))
 	}
 	batches, unreadable, err := batch.List()
 	if unreadable > 0 {
@@ -344,40 +413,60 @@ func (s *server) lists() lists {
 		if i == 20 {
 			break
 		}
-		l.Batches = append(l.Batches, batchRow(res))
+		l.Batches = append(l.Batches, batchRow(s.cleanBatch(res)))
 	}
 	return l
 }
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
-	s.page(w, http.StatusOK, "index", indexPage{page: page{Title: "Runs and batches", Home: runlog.Home()}, Lists: s.lists(), LAN: s.opt.LAN})
+	p := indexPage{page: page{Title: "Runs and batches", Home: homeFor(r)}, Lists: s.lists()}
+	// The phone links and the hints about --lan are for the person at this
+	// computer; a phone that came in over the network needs neither.
+	if fromThisComputer(r) {
+		p.Local = true
+		p.Phone = phoneLinks(s.opt.LAN)
+	}
+	s.page(w, http.StatusOK, "index", p)
+}
+
+// fromThisComputer: the connection came from a loopback address. A request
+// to this computer's network address comes from that address, not loopback.
+func fromThisComputer(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Unmap().IsLoopback()
 }
 
 // run renders the run as it stands; a run still going streams the rest from
 // where this left off.
 func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	if !idRE.MatchString(r.PathValue("id")) {
-		s.missing(w, "Run "+r.PathValue("id"), os.ErrNotExist)
+		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
 	f, _, err := NewFollower(r.PathValue("id"), 0)
 	if err != nil {
-		s.missing(w, "Run "+r.PathValue("id"), err)
+		s.missing(w, r, "Run "+r.PathValue("id"), err)
 		return
 	}
 	lines, rec, done, err := f.Poll()
 	if err != nil {
-		s.missing(w, "Run "+rec.ID, err)
+		s.missing(w, r, "Run "+rec.ID, err)
 		return
 	}
 	prev := rec.Started
 	events := make([]eventView, 0, len(lines))
 	for _, l := range lines {
 		var v eventView
+		l.Event = s.cleanEvent(l.Event)
 		v, prev = eventOf(l, prev)
 		events = append(events, v)
 	}
-	p := runPageOf(rec, events, prev)
+	p := runPageOf(s.cleanRecord(rec), events, prev)
+	p.Home = homeFor(r)
 	if !done {
 		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
 	}
@@ -386,15 +475,17 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 	if !idRE.MatchString(r.PathValue("id")) {
-		s.missing(w, "Batch "+r.PathValue("id"), os.ErrNotExist)
+		s.missing(w, r, "Batch "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
 	res, err := batch.LoadResult(r.PathValue("id"))
 	if err != nil {
-		s.missing(w, "Batch "+r.PathValue("id"), err)
+		s.missing(w, r, "Batch "+r.PathValue("id"), err)
 		return
 	}
-	s.page(w, http.StatusOK, "batch", batchPageOf(res))
+	p := batchPageOf(s.cleanBatch(res))
+	p.Home = homeFor(r)
+	s.page(w, http.StatusOK, "batch", p)
 }
 
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
@@ -511,11 +602,11 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 	s.loop(r, st, every, func() (bool, error) {
 		data, final, err := next()
 		if err != nil {
-			return true, s.problem(st, err)
+			return true, s.problem(r, st, err)
 		}
-		html, err := render(name, data)
+		html, err := s.render(name, data)
 		if err != nil {
-			return true, s.problem(st, err)
+			return true, s.problem(r, st, err)
 		}
 		if html != last {
 			last = html
@@ -530,8 +621,12 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 	})
 }
 
-func (s *server) problem(st *stream, err error) error {
-	html, _ := render("problem", err.Error())
+func (s *server) problem(r *http.Request, st *stream, err error) error {
+	msg := "The stream stopped: the record could not be read."
+	if fromThisComputer(r) { // the error names paths
+		msg = err.Error()
+	}
+	html, _ := s.render("problem", msg)
 	_ = st.send("problem", "", html)
 	return err
 }
@@ -563,7 +658,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 			res = last
 		}
 		last = res
-		return batchBodyOf(res), !batchGoing(res), nil
+		return batchBodyOf(s.cleanBatch(res)), !batchGoing(res), nil
 	}, "batchbody")
 }
 
@@ -598,24 +693,25 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		lines, rec, done, err := f.Poll()
 		for _, l := range lines {
 			var v eventView
+			l.Event = s.cleanEvent(l.Event)
 			v, prev = eventOf(l, prev)
-			html, rerr := render("event", v)
+			html, rerr := s.render("event", v)
 			if rerr != nil {
-				return true, s.problem(st, rerr)
+				return true, s.problem(r, st, rerr)
 			}
 			if werr := st.send("item", cursor{l.End, prev}.String(), html); werr != nil {
 				return true, werr
 			}
 		}
 		if err != nil {
-			return true, s.problem(st, err)
+			return true, s.problem(r, st, err)
 		}
 		if !done {
 			return false, nil
 		}
-		html, err := render("result", resultOf(rec.Result))
+		html, err := s.render("result", resultOf(s.cleanRecord(rec).Result))
 		if err != nil {
-			return true, s.problem(st, err)
+			return true, s.problem(r, st, err)
 		}
 		if err := st.send("result", "", html); err != nil {
 			return true, err

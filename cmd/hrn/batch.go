@@ -207,7 +207,7 @@ func cmdBatchRun(args []string) (int, error) {
 		if e.Kind == "tool" && !verbose {
 			return
 		}
-		r.Line(fmt.Sprintf("[%s] %s", e.Task, e.Text))
+		r.Line(printable(fmt.Sprintf("[%s] %s", e.Task, e.Text)))
 	})
 	if err != nil && len(res.Tasks) == 0 {
 		return 1, err

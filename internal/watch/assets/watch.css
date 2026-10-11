@@ -93,4 +93,19 @@ footer { margin-top: 30px; font-size: .8rem; overflow-wrap: anywhere; }
   .card { padding: 16px; }
   .ev { grid-template-columns: minmax(0, 1fr); }
   .when { padding-top: 0; }
+  /* On a phone each row of a list is a small card: the id and its status,
+     the prompt under them, then the rest on one muted line. */
+  table.list thead { display: none; }
+  table.list, table.list tbody { display: block; }
+  table.list tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  table.list tbody tr:last-child { border-bottom: 0; }
+  table.list td { display: block; padding: 0; border: 0; text-align: left; white-space: normal; }
+  table.list td.prompt { order: 1; flex-basis: 100%; }
+  table.list td.meta { order: 2; font-size: .82rem; color: var(--muted); }
+  table.list td.meta:empty { display: none; }
+  table.list td.meta ~ td.meta::before { content: "· "; }
 }
+.phones { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 16px 28px; }
+.phones li { display: flex; align-items: center; gap: 14px; overflow-wrap: anywhere; }
+/* Dark on white whatever the theme: that is what a camera reads best. */
+.qr { width: 148px; height: 148px; flex: none; border-radius: 6px; }
