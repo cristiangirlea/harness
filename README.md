@@ -726,8 +726,10 @@ ends, on the page or in the terminal: hrn cannot tell it from a long step.
 
 `hrn bot` opens Ada, hrn watch's bot (`/bot`), in a small window of her own: Edge's or Chrome's
 app window where one is installed, else the default browser. It serves hrn watch on
-loopback for it until Ctrl+C, or, when an hrn watch already serves that address, just
-opens its bot. The index links to it too.
+loopback for her until Ctrl+C, or, when an hrn watch already serves that address, just
+opens her there. The index links to her too. Ada is a robot scarlet macaw: she blinks,
+bobs her head and moves her beak while she talks, and keeps still for anyone whose system
+asks for less motion.
 
 Ada says what hrn is doing in plain UK English, in a line at the top, a log, out loud
 and as desktop notifications:
