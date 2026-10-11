@@ -612,12 +612,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		}
 	})
 	if err := rec.Close(att.Result); err != nil {
-		prefix := "run record incomplete: "
-		var saveErr *runlog.ResultWriteError
-		if errors.As(err, &saveErr) {
-			prefix = "saving run: "
-		}
-		att.Error = prefix + err.Error()
+		att.Error = runlog.CloseMessage(err)
 	}
 	text := fmt.Sprintf("%s · %d turns · run %s", att.Result.Status, att.Result.Turns, att.RunID)
 	if att.Result.Error != "" {

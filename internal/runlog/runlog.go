@@ -156,6 +156,24 @@ type ResultWriteError struct {
 func (e *ResultWriteError) Error() string { return e.Err.Error() }
 func (e *ResultWriteError) Unwrap() error { return e.Err }
 
+// ResultNotSaved reports whether err, from Writer.Close, includes a failure to
+// write result.json. Such a run is never marked done and reads as still
+// running, which is worse than lost events.
+func ResultNotSaved(err error) bool {
+	var saveErr *ResultWriteError
+	return errors.As(err, &saveErr)
+}
+
+// CloseMessage is the one line callers show for an error from Writer.Close:
+// "saving run:" when result.json was not written, "run record incomplete:"
+// when only events were lost.
+func CloseMessage(err error) string {
+	if ResultNotSaved(err) {
+		return "saving run: " + err.Error()
+	}
+	return "run record incomplete: " + err.Error()
+}
+
 func (w *Writer) Close(res agent.Result) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

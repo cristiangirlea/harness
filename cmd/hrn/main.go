@@ -271,7 +271,7 @@ func cmdRun(args []string) (int, error) {
 	plan.Apply(&task, rec.Dir(), emit)
 	res := agent.Run(ctx, b, task, emit)
 	if err := rec.Close(res); err != nil {
-		fmt.Fprintln(os.Stderr, "hrn: saving run:", err)
+		fmt.Fprintln(os.Stderr, "hrn: "+runlog.CloseMessage(err))
 	}
 	if jsonOut {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"run_id": rec.ID(), "result": res})

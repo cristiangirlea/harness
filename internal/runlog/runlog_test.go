@@ -523,3 +523,79 @@ func TestChainRefusesAnUnreadableAncestor(t *testing.T) {
 		t.Errorf("chain = %d runs, missing = %q, err = %v: an unreadable run is not a gone one", len(chain), missing, err)
 	}
 }
+
+// scriptedWriter answers each Write with the next step: how many bytes of it reach the file and
+// which error comes back. After the script it writes normally.
+type scriptedWriter struct {
+	io.WriteCloser
+	steps []writeStep
+}
+
+type writeStep struct {
+	n   int // bytes written; -1 means all but the last byte
+	err error
+}
+
+func (w *scriptedWriter) Write(p []byte) (int, error) {
+	if len(w.steps) == 0 {
+		return w.WriteCloser.Write(p)
+	}
+	step := w.steps[0]
+	w.steps = w.steps[1:]
+	n := step.n
+	if n < 0 {
+		n = len(p) - 1
+	}
+	written, err := w.WriteCloser.Write(p[:n])
+	if err != nil {
+		return written, err
+	}
+	return written, step.err
+}
+
+func TestWriterKeepsEventsApartAcrossConsecutiveFailures(t *testing.T) {
+	full := errors.New("disk full")
+	for _, tc := range []struct {
+		name  string
+		steps []writeStep
+	}{
+		// After a short write, only the separating newline gets out before the next failure.
+		{"separator only", []writeStep{{n: 3, err: full}, {n: 1, err: full}}},
+		// After a short write, the next write gets nothing out; the one after must still separate.
+		{"nothing written", []writeStep{{n: 3, err: full}, {n: 0, err: full}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			w, err := Create("stub", agent.Task{Prompt: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.events = &scriptedWriter{WriteCloser: w.events, steps: tc.steps}
+			w.Event(agent.Event{Kind: agent.EventText, Text: "lost one"})
+			w.Event(agent.Event{Kind: agent.EventText, Text: "lost two"})
+			w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+			if err := w.Err(); err == nil || !strings.Contains(err.Error(), "2 events were not recorded") {
+				t.Errorf("Err = %v, want two losses", err)
+			}
+			_ = w.Close(agent.Result{Status: agent.StatusOK})
+			events, err := Events(w.ID())
+			if err != nil || len(events) != 1 || events[0].Text != "saved" {
+				t.Fatalf("only the third event must read back, intact: events=%+v err=%v", events, err)
+			}
+		})
+	}
+}
+
+func TestCloseMessageTellsAnIncompleteRecordFromAnUnsavedOne(t *testing.T) {
+	incomplete := errors.New("1 event was not recorded: disk full")
+	unsaved := errors.Join(incomplete, &ResultWriteError{Err: errors.New("write result.json: disk full")})
+	if got := CloseMessage(incomplete); !strings.HasPrefix(got, "run record incomplete: ") {
+		t.Errorf("CloseMessage(incomplete) = %q", got)
+	}
+	if got := CloseMessage(unsaved); !strings.HasPrefix(got, "saving run: ") || !strings.Contains(got, "result.json") {
+		t.Errorf("CloseMessage(unsaved) = %q", got)
+	}
+	if ResultNotSaved(incomplete) || !ResultNotSaved(unsaved) || ResultNotSaved(nil) {
+		t.Error("ResultNotSaved must be true only when result.json was not written")
+	}
+}

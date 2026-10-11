@@ -141,15 +141,21 @@ func TestRunThenInspect(t *testing.T) {
 }
 
 func TestRunReturnsRecordErrorsToTheHost(t *testing.T) {
-	for _, tc := range []struct{ prompt, prefix, want string }{
-		{"record-write-failure", "run record incomplete: ", "2 events were not recorded"},
-		{"result-write-failure", "saving run: ", "result.json"},
+	for _, tc := range []struct {
+		prompt, prefix, want string
+		isError              bool
+	}{
+		{"record-write-failure", "run record incomplete: ", "2 events were not recorded", false},
+		{"result-write-failure", "saving run: ", "result.json", true},
 	} {
 		t.Run(tc.prompt, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			s := connect(t, t.TempDir())
 			res := s.call(t, "run", `{"prompt":"`+tc.prompt+`","backend":"stub"}`)
-			if res.IsError || !strings.Contains(res.Text(), tc.prefix) || !strings.Contains(res.Text(), tc.want) || !strings.Contains(res.Text(), "stub says: "+tc.prompt) {
+			if res.IsError != tc.isError {
+				t.Errorf("isError = %v, want %v: lost events leave an ok run ok, an unsaved result does not", res.IsError, tc.isError)
+			}
+			if !strings.Contains(res.Text(), tc.prefix) || !strings.Contains(res.Text(), tc.want) || !strings.Contains(res.Text(), "stub says: "+tc.prompt) {
 				t.Errorf("run must return its answer and record error: %+v", res)
 			}
 			sc := res.StructuredContent.(map[string]any)

@@ -173,12 +173,7 @@ func runTool(defaultDir string) mcp.Tool {
 			recordErr := rec.Close(res)
 			recordMessage := ""
 			if recordErr != nil {
-				prefix := "run record incomplete: "
-				var saveErr *runlog.ResultWriteError
-				if errors.As(recordErr, &saveErr) {
-					prefix = "saving run: "
-				}
-				recordMessage = prefix + recordErr.Error()
+				recordMessage = runlog.CloseMessage(recordErr)
 				call.Progress(recordMessage)
 			}
 			body := res.Final
@@ -193,8 +188,11 @@ func runTool(defaultDir string) mcp.Tool {
 				body = recordMessage + "\n\n" + body
 				structured["record_error"] = recordErr.Error()
 			}
+			// Lost events leave an ok run ok: a host may retry a tool error and spend the
+			// plan again. A result.json that was not saved leaves the run looking unfinished,
+			// so that one is an error.
 			return text(body+"\n\n"+summary(rec.ID(), res),
-				structured, res.Status != agent.StatusOK), nil
+				structured, res.Status != agent.StatusOK || runlog.ResultNotSaved(recordErr)), nil
 		},
 	}
 }
