@@ -673,6 +673,10 @@ pairs as data.
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration, and the
   claude or codex `session` id
 
+When complete events fail to write, `result.json` includes `record_error` with the
+number of events not recorded and the first error; the result is still saved to mark
+the run finished. The field is omitted on success, and older records still load.
+
 `hrn runs prune --older-than 30d` removes runs, batch records and eval records that
 started before the cutoff, and prints what it freed; `--dry-run` lists them instead and
 removes nothing, and `--keep N` spares the newest N runs whatever their age. It refuses to

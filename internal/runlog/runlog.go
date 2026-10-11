@@ -41,16 +41,18 @@ type Record struct {
 	Result  agent.Result `json:"result"`
 	// Continues names the run this one follows, when it was started with
 	// hrn run --continue.
-	Continues string `json:"continues,omitempty"`
-	Done      bool   `json:"-"`
+	Continues   string `json:"continues,omitempty"`
+	RecordError string `json:"record_error,omitempty"`
+	Done        bool   `json:"-"`
 }
 
 type Writer struct {
-	dir    string
-	mu     sync.Mutex
-	events *os.File
-	enc    *json.Encoder
-	rec    Record
+	dir        string
+	mu         sync.Mutex
+	events     *os.File
+	firstError error
+	lostEvents int
+	rec        Record
 }
 
 // Create starts a run record.
@@ -77,7 +79,7 @@ func create(backend string, task agent.Task, continues string) (*Writer, error) 
 	if err != nil {
 		return nil, err
 	}
-	w.events, w.enc = f, json.NewEncoder(f)
+	w.events = f
 	return w, nil
 }
 
@@ -94,15 +96,41 @@ func (w *Writer) Event(e agent.Event) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	_ = w.enc.Encode(e)
+	// An encoder retains write errors; a fresh one tries every event again.
+	if err := json.NewEncoder(w.events).Encode(e); err != nil {
+		if w.firstError == nil {
+			w.firstError = err
+		}
+		w.lostEvents++
+	}
+}
+
+// Err reports how many complete events could not be recorded, wrapping the
+// first error. It is safe to call concurrently with Event.
+func (w *Writer) Err() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.errLocked()
+}
+
+// errLocked requires w.mu to be held.
+func (w *Writer) errLocked() error {
+	if w.firstError == nil {
+		return nil
+	}
+	return fmt.Errorf("%d events were not recorded: %w", w.lostEvents, w.firstError)
 }
 
 func (w *Writer) Close(res agent.Result) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.rec.Result = res
+	recordErr := w.errLocked()
+	if recordErr != nil {
+		w.rec.RecordError = recordErr.Error()
+	}
 	err := w.events.Close()
-	return errors.Join(err, writeJSON(filepath.Join(w.dir, "result.json"), w.rec))
+	return errors.Join(recordErr, err, writeJSON(filepath.Join(w.dir, "result.json"), w.rec))
 }
 
 // NewID is a sortable timestamp plus random suffix, shared by runs and batches.

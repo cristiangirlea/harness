@@ -618,6 +618,9 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	if att.Result.Error != "" {
 		text += " · " + tools.OneLine(att.Result.Error, 160)
 	}
+	if att.Error != "" {
+		text += " · " + tools.OneLine(att.Error, 160)
+	}
 	report(att)
 	notify(Event{Task: id, Kind: "run", Text: text})
 

@@ -170,8 +170,9 @@ func runTool(defaultDir string) mcp.Tool {
 			}
 			plan.Apply(&task, rec.Dir(), emit)
 			res := agent.Run(ctx, b, task, emit)
-			if err := rec.Close(res); err != nil {
-				call.Progress("saving run: " + err.Error())
+			recordErr := rec.Close(res)
+			if recordErr != nil {
+				call.Progress("saving run: " + recordErr.Error())
 			}
 			body := res.Final
 			if res.Status != agent.StatusOK {
@@ -180,8 +181,13 @@ func runTool(defaultDir string) mcp.Tool {
 					body += "\n\n" + res.Final
 				}
 			}
+			structured := map[string]any{"run_id": rec.ID(), "result": res}
+			if recordErr != nil {
+				body = "saving run: " + recordErr.Error() + "\n\n" + body
+				structured["record_error"] = recordErr.Error()
+			}
 			return text(body+"\n\n"+summary(rec.ID(), res),
-				map[string]any{"run_id": rec.ID(), "result": res}, res.Status != agent.StatusOK), nil
+				structured, res.Status != agent.StatusOK || recordErr != nil), nil
 		},
 	}
 }
