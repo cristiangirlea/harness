@@ -671,7 +671,7 @@ hrn watch                  # http://127.0.0.1:8089, this computer only
 hrn watch --lan            # also on this computer's private network addresses, for a phone
 hrn watch --lan="Ethernet 3"   # only that adapter's network (a name or an address)
 hrn show -f <run-id>       # the same timeline in the terminal
-hrn bot                    # the bot, in a small window: what hrn is doing, out loud
+hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
 
 `hrn watch` serves a page that lists the newest runs and batches (id, backend, status,
@@ -722,14 +722,14 @@ second or more, and ends with the summary line once the run's result is saved. C
 stops following and leaves the run alone. A run killed before it saved its result never
 ends, on the page or in the terminal: hrn cannot tell it from a long step.
 
-### The bot
+### Ada, the bot
 
-`hrn bot` opens hrn watch's bot (`/bot`) in a small window of its own: Edge's or Chrome's
+`hrn bot` opens Ada, hrn watch's bot (`/bot`), in a small window of her own: Edge's or Chrome's
 app window where one is installed, else the default browser. It serves hrn watch on
 loopback for it until Ctrl+C, or, when an hrn watch already serves that address, just
 opens its bot. The index links to it too.
 
-The bot says what hrn is doing in plain UK English, in a line at the top, a log, out loud
+Ada says what hrn is doing in plain UK English, in a line at the top, a log, out loud
 and as desktop notifications:
 
 | Kind | For example | Says it | Notifies |
@@ -746,7 +746,7 @@ are kept in that browser. A done or failed notification stays until it is dismis
 clicking one opens its run or batch. Skip (or Esc) stops talking; Snooze keeps it quiet for
 15 minutes, an hour, or until unmuted; each run or batch going has a Mute this. "What an
 agent is doing" comes from its latest tool call (reading, editing, searching, running a
-command and the like), across the backends' different tool names. The bot opens quietly:
+command and the like), across the backends' different tool names. Ada opens quietly:
 what ended before it was opened is not news, and the first thing it says is what is going.
 A batch's own runs are told as the batch's, not twice.
 
@@ -757,15 +757,18 @@ confirmations and audit log of #38.
 
 The sentences are made by hrn (`internal/watch/bot.go`, where they are tested) and pass
 through the same blanking of secret values as every page; the page only chooses which to
-say. It speaks with the browser's own speech synthesis, which needs one click on the page
+say. She speaks with the browser's own speech synthesis, which needs one click on the page
 first ("Let me talk"). Voices on this computer come before online ones, since an online
-voice sends what it says (prompts included) to its maker; among them British ones come
-first. Windows has British voices only with the English (United Kingdom) speech pack
-(Settings, Time and language, Speech); without it the page says so and speaks British
-English in the voice there is. Talk to me uses the browser's speech recogniser, which in
-Edge and Chrome sends what the microphone hears to Microsoft or Google while it listens.
-The microphone is allowed on the bot's page only. Opened over `--lan`, the bot speaks, but
-the browser allows neither notifications nor the microphone on a plain network address.
+voice sends what it says (prompts included) to its maker; among them British ones, then
+a woman's, come first. Windows has British voices only with the English (United Kingdom)
+speech pack (Settings, Time and language, Speech); without it the page says so and speaks
+British English in the voice there is. Edge's online Natural voices (Sonia, Libby and
+Maisie are British women's) sound far better and can be chosen in the settings, knowing
+that each sentence then goes to Microsoft. Talk to me uses the browser's speech
+recogniser, which in Edge and Chrome sends what the microphone hears to Microsoft or Google
+while it listens. The microphone is allowed on the bot's page only. Opened over `--lan`,
+Ada speaks, but the browser allows neither notifications nor the microphone on a plain
+network address.
 
 ## Reports
 
