@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 )
@@ -63,10 +64,8 @@ func (o Options) Validate() error {
 			return err
 		}
 	}
-	switch o.Effort {
-	case "", "low", "medium", "high", "xhigh", "max":
-	default:
-		return fmt.Errorf("unknown effort %q (want low, medium, high, xhigh, max)", o.Effort)
+	if o.Effort != "" && !slices.Contains(EffortLevels, o.Effort) {
+		return fmt.Errorf("unknown effort %q (want %s)", o.Effort, strings.Join(EffortLevels, ", "))
 	}
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }
@@ -163,6 +162,11 @@ func flagName(f reflect.StructField) string {
 func jsonName(f reflect.StructField) string {
 	return strings.Split(f.Tag.Get("json"), ",")[0]
 }
+
+// EffortLevels are the reasoning efforts a caller may ask for. The api backend
+// sends the level as is, codex and claude pass it to their CLIs, and the other
+// backends report it as not enforced. The names are exact: "HIGH" is refused.
+var EffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
 
 // Modes lists the permission modes, for the MCP schema and the flag help.
 var Modes = []Mode{ModeReadOnly, ModeAsk, ModeAuto, ModeYolo}
