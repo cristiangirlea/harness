@@ -275,10 +275,11 @@ func batchEnding(b batch.Result) (kind, text string) {
 // (t1, t2, ... for a spec that gave none), then the start of its prompt. A
 // batch's prompts often open with the same paragraph; their ids differ.
 func taskName(t batch.TaskResult) string {
-	if n, err := strconv.Atoi(strings.TrimPrefix(t.ID, "t")); t.ID != "" && !(strings.HasPrefix(t.ID, "t") && err == nil && n > 0) {
-		return t.ID
+	rest, made := strings.CutPrefix(t.ID, "t")
+	if n, err := strconv.Atoi(rest); made && err == nil && n > 0 && strconv.Itoa(n) == rest || t.ID == "" {
+		return topic(t.Prompt)
 	}
-	return topic(t.Prompt)
+	return t.ID
 }
 
 // activity is what a tool call shows an agent doing, in a few words. The

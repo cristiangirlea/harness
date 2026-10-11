@@ -184,6 +184,21 @@ func TestAJustStartedRunWaitsALookAndABatchsRunsAreNotItsOwn(t *testing.T) {
 	}
 }
 
+// A batch first seen already over (it ran between two looks) is told by its
+// ending alone, not task by task.
+func TestABatchFirstSeenOverIsToldByItsEnding(t *testing.T) {
+	b := batch.Result{ID: "20261011-115959-cccccc", Started: noon.Add(-5 * time.Second), Dir: "/repo/harness", Duration: 4 * time.Second, Tasks: []batch.TaskResult{
+		{ID: "t1", Prompt: "Add the guard", Status: batch.StatusPass}, {ID: "t2", Prompt: "Add the budget", Status: batch.StatusPass}}}
+	says := announce(lookAt(nil, nil, nil), lookAt(nil, []batch.Result{b}, nil), false)
+	if len(says) != 1 || says[0].Kind != "done" || says[0].Text != "The batch in harness is done: both tasks passed. It took four seconds." {
+		t.Fatalf("says: %+v", says)
+	}
+	// And a cancelled run with no workspace still reads.
+	if _, text := runEnding("Claude", "", agent.Result{Status: agent.StatusCanceled, Duration: time.Minute}); text != "Claude's run was cancelled after a minute." {
+		t.Errorf("cancelled, no place: %q", text)
+	}
+}
+
 // What a batch's agent is doing is told as the batch's, in a whole sentence.
 func TestTheBotSaysWhatABatchsAgentIsDoing(t *testing.T) {
 	runID := "20261011-115000-aaaaaa"
@@ -387,8 +402,10 @@ func TestTheBotNamesABatchsTasksByTheirNames(t *testing.T) {
 	if len(says) != 1 || says[0].Text != "Task one of two in jobpilot passed: employer-link-lookups." {
 		t.Fatalf("task: %+v", says)
 	}
-	// A task whose id hrn made up is named by its prompt instead.
-	for id, want := range map[string]string{"t1": "fix the parser", "t12": "fix the parser", "": "fix the parser", "tidy": "tidy", "fix-add": "fix-add"} {
+	// A task whose id hrn made up (t1, t2, ...) is named by its prompt instead;
+	// t0 and t01 are not ids hrn makes, so a spec gave them.
+	for id, want := range map[string]string{"t1": "fix the parser", "t12": "fix the parser", "": "fix the parser",
+		"tidy": "tidy", "fix-add": "fix-add", "t0": "t0", "t01": "t01", "t-1": "t-1"} {
 		if got := taskName(batch.TaskResult{ID: id, Prompt: "Fix the parser.\nMore"}); got != want {
 			t.Errorf("taskName(%q) = %q, want %q", id, got, want)
 		}
