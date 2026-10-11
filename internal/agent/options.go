@@ -22,7 +22,7 @@ type Options struct {
 	Model    string `json:"model,omitempty" desc:"Model id for the backend (api default: claude-opus-5)."`
 	Mode     Mode   `json:"mode,omitempty" desc:"Permission mode: readonly | ask | auto | yolo."`
 	MaxTurns int    `json:"max_turns,omitempty" flag:"max-turns" desc:"Stop after this many model turns (api default 50)."`
-	Effort   string `json:"effort,omitempty" desc:"api backend only: low | medium | high | xhigh | max."`
+	Effort   string `json:"effort,omitempty" desc:"Reasoning effort for api, codex and claude: low | medium | high | xhigh | max; empty uses the backend default."`
 
 	// MCP lists config files (Claude Code .mcp.json format) whose stdio
 	// servers are offered as tools by the api backend and passed through to
@@ -62,6 +62,11 @@ func (o Options) Validate() error {
 		if _, err := ParseMode(string(o.Mode)); err != nil {
 			return err
 		}
+	}
+	switch o.Effort {
+	case "", "low", "medium", "high", "xhigh", "max":
+	default:
+		return fmt.Errorf("unknown effort %q (want low, medium, high, xhigh, max)", o.Effort)
 	}
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }

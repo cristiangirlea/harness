@@ -121,6 +121,24 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsOnlyKnownEffortLevels(t *testing.T) {
+	for _, effort := range []string{"", "low", "medium", "high", "xhigh", "max"} {
+		if err := (Options{Effort: effort}).Validate(); err != nil {
+			t.Errorf("effort %q should be accepted: %v", effort, err)
+		}
+	}
+	for _, effort := range []string{"turbo", "HIGH"} {
+		err := (Options{Effort: effort}).Validate()
+		if err == nil {
+			t.Errorf("effort %q should be refused", effort)
+			continue
+		}
+		if !strings.Contains(err.Error(), `"`+effort+`"`) || !strings.Contains(err.Error(), "low, medium, high, xhigh, max") {
+			t.Errorf("error must name the rejected effort and allowed levels: %v", err)
+		}
+	}
+}
+
 func TestDurationJSON(t *testing.T) {
 	type doc struct {
 		Timeout Duration `json:"timeout,omitempty"`

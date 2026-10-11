@@ -37,6 +37,8 @@ type CLIBackend struct {
 	// forks is set when args honours Task.ForkSession and parse records
 	// Result.Session.
 	forks bool
+	// mapsEffort is set when args passes Options.Effort to the CLI.
+	mapsEffort bool
 }
 
 func (c *CLIBackend) Name() string { return c.name }
@@ -121,7 +123,7 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, err)
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(cmd.Args[1:], " "))})
-	if limits := unenforced(task); len(limits) > 0 {
+	if limits := unenforced(task, c.mapsEffort); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
