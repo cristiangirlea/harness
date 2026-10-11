@@ -43,31 +43,25 @@ func cmdGC(args []string) (int, error) {
 		return 1, err
 	}
 	sizes := map[string]int64{}
-	var count int
-	var total int64
+	var going []gc.Worktree
 	for _, w := range wts {
 		if w.Verdict == gc.Remove {
 			sizes[w.Path] = gc.Size(w.Path)
-			count++
-			total += sizes[w.Path]
+			going = append(going, w)
 		}
 	}
 	printGC(os.Stdout, wts, sizes)
 
 	if !*apply {
-		if count == 0 {
+		if len(going) == 0 {
 			fmt.Printf("nothing to remove; %d worktrees stay\n", len(wts))
 		} else {
-			fmt.Printf("would remove %d of %d worktrees, freeing %s; hrn gc --apply removes them\n", count, len(wts), report.Bytes(total))
+			fmt.Printf("would remove %d of %d worktrees, freeing %s; hrn gc --apply removes them\n", len(going), len(wts), report.Bytes(gc.Total(going, sizes)))
 		}
 		return 0, nil
 	}
 	removed, errs := gc.Apply(ctx, wts)
-	var freed int64
-	for _, w := range removed {
-		freed += sizes[w.Path]
-	}
-	fmt.Printf("removed %d worktrees, freeing %s\n", len(removed), report.Bytes(freed))
+	fmt.Printf("removed %d worktrees, freeing %s\n", len(removed), report.Bytes(gc.Total(removed, sizes)))
 	if len(errs) > 0 {
 		return 1, errors.Join(errs...)
 	}

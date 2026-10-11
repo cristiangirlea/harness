@@ -613,6 +613,16 @@ func TestDeleteBranchOnlyWhileItPointsAtTheCheckedCommit(t *testing.T) {
 	}
 }
 
+func TestTotalCountsAWorktreeInsideAnotherOnce(t *testing.T) {
+	root := t.TempDir()
+	outer, inner, other := filepath.Join(root, "a"), filepath.Join(root, "a", ".hrn", "worktrees", "t"), filepath.Join(root, "b")
+	wts := []Worktree{{Path: outer}, {Path: inner}, {Path: other}}
+	sizes := map[string]int64{outer: 10, inner: 4, other: 1} // outer's 10 holds inner's 4
+	if got := Total(wts, sizes); got != 11 {
+		t.Errorf("Total = %d, want 11", got)
+	}
+}
+
 func TestSizeAddsUpTheFilesUnderAFolder(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "a", "b"), 0o755); err != nil {

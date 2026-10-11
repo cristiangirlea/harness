@@ -167,6 +167,32 @@ func recheck(ctx context.Context, w Worktree) string {
 	return "git no longer lists it as a worktree"
 }
 
+// Total adds up the sizes of the given worktrees, counting one that lies inside
+// another of them once: the outer folder's size already holds it.
+func Total(wts []Worktree, sizes map[string]int64) int64 {
+	paths := make([]string, len(wts))
+	for i, w := range wts {
+		paths[i] = w.Path
+	}
+	var n int64
+	for _, w := range wts {
+		if !nested(w.Path, paths) {
+			n += sizes[w.Path]
+		}
+	}
+	return n
+}
+
+// nested reports whether p lies inside another of paths.
+func nested(p string, paths []string) bool {
+	for _, q := range paths {
+		if samePath(q) != samePath(p) && inside(p, q) {
+			return true
+		}
+	}
+	return false
+}
+
 // Size adds up the regular files under dir, without following links.
 func Size(dir string) int64 {
 	var n int64
