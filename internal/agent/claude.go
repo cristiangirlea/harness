@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -47,6 +48,9 @@ func NewClaudeBackend() *CLIBackend {
 			if mode != "" {
 				a = append(a, "--permission-mode", mode)
 			}
+			if !t.AllowDangerous {
+				a = append(append(a, "--disallowedTools"), claudeDenyRules()...)
+			}
 			for _, p := range t.MCP {
 				a = append(a, "--mcp-config", p)
 			}
@@ -63,6 +67,8 @@ func NewClaudeBackend() *CLIBackend {
 		mapsMaxTurns: true,
 		mapsMCP:      true,
 		limits:       true,
+		loginEnv:     []string{"CLAUDE_CODE_OAUTH_TOKEN"},
+		fileRules:    true,
 	}
 }
 func newestVersionDir(root, exe string) []string {
@@ -132,7 +138,12 @@ type claudeLine struct {
 
 func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 	var l claudeLine
-	if json.Unmarshal(line, &l) != nil || l.Type == "" {
+	// A field of an unexpected type (a permission_denied system line carries
+	// its message as a string, not an object) leaves the rest of the line
+	// decoded, so it is read like any other; anything else that is not JSON
+	// with a type is plain text.
+	var mistyped *json.UnmarshalTypeError
+	if err := json.Unmarshal(line, &l); (err != nil && !errors.As(err, &mistyped)) || l.Type == "" {
 		return false
 	}
 	// Every line carries the session id; with --fork-session it is the new one.

@@ -53,12 +53,24 @@ type session struct {
 
 func connect(t *testing.T, defaultDir string) *session {
 	t.Helper()
+	return connectTo(t, NewServer(defaultDir))
+}
+
+// connectDangerous is connect to a server the operator started with
+// --allow-dangerous-runs.
+func connectDangerous(t *testing.T, defaultDir string) *session {
+	t.Helper()
+	return connectTo(t, NewDangerousServer(defaultDir))
+}
+
+func connectTo(t *testing.T, srv *mcp.Server) *session {
+	t.Helper()
 	t.Setenv("HRN_HOME", t.TempDir())
 	toServer, clientOut := io.Pipe()
 	toClient, serverOut := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- NewServer(defaultDir).Serve(ctx, toServer, serverOut) }()
+	go func() { done <- srv.Serve(ctx, toServer, serverOut) }()
 	t.Cleanup(func() { cancel(); clientOut.Close(); serverOut.Close(); <-done })
 	s := &session{}
 	s.cl = &mcp.Client{Progress: func(m string) { s.mu.Lock(); s.progress = append(s.progress, m); s.mu.Unlock() }}
@@ -263,7 +275,7 @@ func TestRunPassesNoInstructions(t *testing.T) {
 }
 
 func TestRunPassesAllowDangerous(t *testing.T) {
-	s := connect(t, t.TempDir())
+	s := connectDangerous(t, t.TempDir())
 	for _, tc := range []struct {
 		args string
 		want bool

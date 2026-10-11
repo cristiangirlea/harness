@@ -46,10 +46,14 @@ func readFile() Tool {
 		Required: []string{"path"},
 		Effect:   EffectRead,
 		Summary:  summaryOf("path"),
+		Refuse:   refuseSecretFile,
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
+			}
+			if rule := refuseSecretFile(ws, raw); rule != "" {
+				return "", GuardError(rule)
 			}
 			p, err := ws.Resolve(args.Path)
 			if err != nil {
@@ -97,10 +101,14 @@ func writeFile() Tool {
 		Required: []string{"path", "content"},
 		Effect:   EffectWrite,
 		Summary:  summaryOf("path"),
+		Refuse:   refuseSecretFile,
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
+			}
+			if rule := refuseSecretFile(ws, raw); rule != "" {
+				return "", GuardError(rule)
 			}
 			p, err := ws.Resolve(args.Path)
 			if err != nil {
@@ -136,10 +144,14 @@ func editFile() Tool {
 		Required: []string{"path", "old_string", "new_string"},
 		Effect:   EffectWrite,
 		Summary:  summaryOf("path"),
+		Refuse:   refuseSecretFile,
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
+			}
+			if rule := refuseSecretFile(ws, raw); rule != "" {
+				return "", GuardError(rule)
 			}
 			if args.OldString == "" {
 				return "", errors.New("old_string must not be empty; use write_file to create files")
@@ -256,10 +268,14 @@ func grep() Tool {
 		Required: []string{"pattern"},
 		Effect:   EffectRead,
 		Summary:  summaryOf("pattern"),
+		Refuse:   refuseSecretFile,
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
+			}
+			if rule := refuseSecretFile(ws, raw); rule != "" {
+				return "", GuardError(rule)
 			}
 			expr := args.Pattern
 			if args.CaseInsensitive {
@@ -309,14 +325,31 @@ func grep() Tool {
 			if info, err := os.Stat(base); err == nil && !info.IsDir() {
 				search(base)
 			} else {
+				// base as it really is, once: the walk goes into no link, so a
+				// regular file below it really is base's real path and rel. It
+				// is judged there too, since base can be spelt otherwise (a
+				// short 8.3 name: CODEX~1/auth.json is .codex/auth.json).
+				realBase := realPath(base)
+				if realBase == "" {
+					// Resolve judged it a moment ago; it changed since.
+					return "", fmt.Errorf("path %q is refused: hrn cannot tell where it leads", args.Path)
+				}
 				err = walk(ctx, base, func(p, rel string, regular bool) bool {
 					if globRe != nil && !globRe.MatchString(rel) {
 						return true
 					}
 					// A link out of the workspace is not followed, as Resolve
-					// refuses one. A regular file needs no judging: the walk
-					// goes into no link, and base is inside.
-					if !regular && !ws.inside(realPath(p)) {
+					// refuses one, and a search of a directory passes over the
+					// secret files in it rather than refusing the whole search,
+					// judged as written and where they really are.
+					real := filepath.Join(realBase, filepath.FromSlash(rel))
+					if !regular {
+						real = realPath(p)
+						if !ws.inside(real) {
+							return true
+						}
+					}
+					if !ws.AllowDangerous && (SecretFile(ws.Rel(p)) || ws.secretReal(real)) {
 						return true
 					}
 					search(p)

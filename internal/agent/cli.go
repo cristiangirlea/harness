@@ -39,6 +39,12 @@ type CLIBackend struct {
 	// forks is set when args honours Task.ForkSession and parse records
 	// Result.Session.
 	forks bool
+	// loginEnv names the secret-looking variables the CLI logs in with on a
+	// plan; the guard passes them on to this CLI and no other.
+	loginEnv []string
+	// fileRules is set when args hands the guard's secret files to the CLI's
+	// own permission rules; the other CLIs can read and write them.
+	fileRules bool
 	// mapsEffort is set when args passes Options.Effort to the CLI.
 	mapsEffort bool
 	// These fields are opt-in: advertise only explicit adapter mappings.
@@ -160,6 +166,18 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	// A nested Claude Code session refuses to start when it thinks it is
 	// inside another one.
 	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
+	guarded := !task.AllowDangerous
+	var withheld []string
+	if guarded {
+		// The logins tools keep on disk are looked for in an empty directory
+		// of the run's own.
+		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		defer os.RemoveAll(guardDir)
+		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
+	}
 	if c.promptStdin {
 		cmd.Stdin = strings.NewReader(task.Prompt)
 	}
@@ -170,16 +188,16 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if err != nil {
 		return fail(StatusError, err)
 	}
-	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(cmd.Args[1:], " "))})
+	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(shownArgs(cmd.Args[1:]), " "))})
 	if limits := unenforced(task, c.mapsEffort); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
-	if task.Mode == ModeYolo {
-		// The command guard lives in the api backend's own run_command, so a
-		// CLI backend running unattended has only its own permission system.
+	if guarded {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: c.guardLine(withheld)})
+	} else {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
-			Text: fmt.Sprintf("command guard: not applied by the %s backend; its own permissions decide", c.name)})
+			Text: fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the operator's credentials", c.name)})
 	}
 	tree, err := tools.StartTree(cmd)
 	if err != nil {
@@ -337,4 +355,41 @@ func init() {
 	Register(NewCodexBackend())
 	Register(NewGeminiBackend())
 	Register(NewOpencodeBackend())
+}
+
+// guardLine is what a guarded run says about the guard, with what this CLI
+// leaves open. It says "pointed", not "cannot": an agent set on undoing the
+// guarded environment can, and the README says how.
+func (c *CLIBackend) guardLine(withheld []string) string {
+	text := "guard: git pushes are pointed at a dead end; gh, npm, cloud and container logins are out of reach; tokens and keys are withheld"
+	if len(withheld) > 0 {
+		// A CLI that logs in with one of these fails under the guard; this
+		// line says why.
+		text += " (" + strings.Join(withheld, ", ") + ")"
+	}
+	if c.fileRules {
+		text += "; the CLI's own rules refuse publishing commands and secret files"
+	} else {
+		text += fmt.Sprintf("; unguarded on the %s backend: reading and writing secret files (.env, keys, .private), the wrangler and cargo logins, and gh's login in the system's credential store (gh auth token --user)", c.name)
+	}
+	return text + "; --allow-dangerous lifts it"
+}
+
+// shownArgs is a command line as a run's info line shows it: the guard's
+// deny rules, dozens of them, are counted rather than listed.
+func shownArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		out = append(out, args[i])
+		if args[i] != "--disallowedTools" {
+			continue
+		}
+		n := 0
+		for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			i++
+			n++
+		}
+		out = append(out, fmt.Sprintf("<%d guard rules>", n))
+	}
+	return out
 }

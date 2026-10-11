@@ -75,7 +75,18 @@ func runCommand() Tool {
 			if args.TimeoutSec > 0 {
 				timeout = time.Duration(min(args.TimeoutSec, 600)) * time.Second
 			}
-			res, err := RunShell(ctx, ws.Root, args.Command, timeout)
+			// The command runs under the guarded environment, as an agent CLI
+			// does: no model key to print into the run, no token to publish with.
+			var env []string
+			if !ws.AllowDangerous {
+				guardDir, err := os.MkdirTemp("", "hrn-guard-*")
+				if err != nil {
+					return "", err
+				}
+				defer os.RemoveAll(guardDir)
+				env, _ = GuardEnv(os.Environ(), guardDir)
+			}
+			res, err := RunShell(ctx, ws.Root, args.Command, timeout, env)
 			if err != nil {
 				return "", err
 			}

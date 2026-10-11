@@ -596,9 +596,11 @@ order they are worth taking:
     nothing else can answer it. Its actions go through hrn watch's door: they must send
     `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
 12. **Guard rails** (the owner, 2026-10-11), in this order:
-    - [#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do. The
-      command guard checks only the api loop; a CLI backend in `yolo` can push, merge or
-      deploy. One refused list, enforced per backend.
+    - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
+      Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
+      deny rules, and the api loop's guard extended to secret files and the guard's own
+      variables. Left: codex's own sandbox under the guard, and per-CLI rules for gemini
+      and opencode (their runs say what is unguarded).
     - [#37](https://github.com/cristiangirlea/harness/issues/37): spending. A daily and weekly
       budget across all runs, refused when reached, shown on hrn watch.
     - [#38](https://github.com/cristiangirlea/harness/issues/38): control. Confirmations,
@@ -676,6 +678,94 @@ neither of them follows a run while it happens.
   with `path` set to a junction, does not search the files behind one; a path through it
   does. Windows CI runs only after a merge: the junction tests ran on the owner's PC, the
   symlink tests on Linux.
+- 2026-10-11: PR X done (#44, closes #36): one guard for every backend. Issue #36 asked for
+  each CLI's own policy file; the PR puts the guard in what every backend inherits instead,
+  so one mechanism covers all four CLIs and the api loop's run_command: tokens and keys
+  withheld by name and pattern (git's askpass helpers too; claude's plan login reaches the
+  claude CLI only), the logins tools keep on disk (gh, npm, kubectl, docker, aws, gcloud, az)
+  looked for in an empty directory of the run's own, the ssh agent out of reach, and git
+  pointing every push at `push-refused-by-hrn://`. Claude also gets `--disallowedTools`:
+  the publishing commands in Bash and PowerShell, and a Read and an Edit rule per secret
+  file. The api loop's guard gains `gh-publish`, `deploy`, `guard-env` and `secret-file`,
+  and its file tools refuse secret files. One list of secret files (`tools.SecretNames`,
+  `SecretDirs`) feeds both, and a test keeps the two command lists refusing the same
+  commands. Codex, gemini and opencode get the environment only: each run's guard line
+  says what that leaves open (secret files, wrangler's and cargo's logins), which is the
+  issue's "say so on every run". Not done on purpose: clearing git's credential helper
+  (private fetches need it; an agent set on undoing the push guard can, and the README says
+  how), and withholding `DATABASE_URL` (local tests need it). Checked live with the claude
+  CLI in `yolo` (two runs on a scratch repo, scratch `HRN_HOME`): every refused command and
+  file was refused by the rules, shell writes to `.env` files included, and `git -C . push`
+  failed at the dead end; a PowerShell `Set-Content` was refused by Claude Code's
+  working-directory check instead, so that one is not shown to hold by the rules alone.
+  Codex could not review or be checked live: its plan reached its usage limit until
+  2026-10-16 (#43 is about carrying a run to the other CLI when that happens).
+- 2026-10-11: PR X reviews, both by an independent read-only claude run through hrn (codex
+  was at its limit). The first found four blocking gaps: secret files could be written
+  (claude had Read rules only, the api file tools none), `.env.*`, `*.key` and `.dev.vars`
+  were missing, codex, gemini and opencode runs did not say what was unguarded, and "git
+  cannot push" claimed more than the mechanism holds. The second found run_command could
+  still reach secret files (`echo x > .env`), and that guard-env refused any mention of a
+  variable, `kubectl --kubeconfig` and a search of hrn's own source included; also
+  `GCM_CREDENTIAL_STORE` withheld as a credential, a link to `.env` read as its own name,
+  Windows' other names for a file (`.env.`, `::$DATA`, 8.3), `.netrc`, `.pypirc` and key
+  stores missing, and `PushInsteadOf` in another case. All fixed, each as its own commit;
+  grep's walk no longer follows a link out of the workspace, which it did before this PR.
+  A third pass found nothing blocking; its points were taken too: guard-env missed `+=`,
+  `${env:NAME} =`, the env: drive's other cmdlets and aliases (`rm env:X`) and
+  `GIT_CONFIG_KEY_$i`; secret-file missed git's `REV:path`, braces and quoted paths with
+  spaces; run_command could read the agent CLIs' plan logins, which only claude's rules
+  listed (now `tools.SecretPaths`, one list for both); and `.wrangler` refused a worker's
+  local state, when wrangler's login is `.wrangler/config`. Left as said in the README:
+  `jq '.key'` is refused (the rule reads words), and a Windows directory junction is not
+  seen through by the workspace boundary since Go 1.23 stopped resolving mount points; that
+  one predates this PR and is a task of its own. A fourth, short pass over those commits
+  found one regression of them: anchoring the env: cmdlets to a space dropped `{`, so
+  `& {Remove-Item env:KUBECONFIG}` got through again. guard-env now refuses any use of the
+  env: drive as a path on a guarded name, or with a wildcard, whatever the cmdlet, alias or
+  scriptblock, since a list of cmdlets is never whole; `$env:X` and `${env:X}` stay
+  readable. It also takes `export -n`, `declare +x`, `read` and `printf -v`. Decided:
+  `.npmrc` is a secret name anywhere, a project's own included: one often carries an
+  `_authToken` line, and refusing a pnpm setting costs the agent a turn.
+  One FuzzCodec run failed once in a container while the Windows suite loaded the same
+  machine; no input was saved, and three 10 s runs and a 2 min run (7.4M executions) after
+  it passed.
+- 2026-10-11: PR X merged with main (#46, #48, #50 to #53), then a security review of the
+  whole PR as it would merge (Claude, read-only): 2 blocking. (1) The merge kept #48's grep
+  walk, which judges only links by where they lead; a regular file was judged by its
+  spelling under the search path, so `grep` with `path` set to `.codex`'s short 8.3 name
+  (`CODEX~1`) printed `auth.json`: the secret paths of two parts never matched. Now each
+  file is also judged at the search path's real place plus its relative name, which costs
+  no call per file. A Windows test with a real short name (the test skips on a volume
+  without them, E: here; it ran on C:). (2) gh keeps its login in the system's credential
+  store and asks it when no token is set, so the empty `GH_CONFIG_DIR` did not keep
+  `gh auth token` from printing it; checked on the owner's PC without printing it. Now
+  `GH_TOKEN` and `GH_ENTERPRISE_TOKEN` are a token that is not one, and a `gh-token` rule
+  (and claude's rules) refuse `gh auth token`, `gh auth git-credential` and `gh auth status
+  --show-token`; `gh auth token --user NAME` still reads the store, so under codex, gemini
+  and opencode it is open, and the README and each run say so. Also taken from its notes: an
+  hrn started inside a guarded run (from the shell, or as the hrn MCP server the claude CLI
+  loads from the owner's user scope) could lift the guard with `allow_dangerous`, and the
+  refusal message even named that lever. The guarded environment now sets `HRN_GUARDED`,
+  the api loop sets it for its own MCP servers, `Validate` and `agent.Run` refuse
+  `allow_dangerous` under it, and the message names no lever. The test packages that lift
+  the guard clear the marker in `TestMain` (helper processes keep it), so the suite still
+  passes when an agent under the guard runs it. Its other notes are #56.
+  Live, codex in `yolo` under the guard on a scratch repo: fake `GH_TOKEN` and `NPM_TOKEN`
+  empty, `git push` at the dead end, the bare remote empty.
+- 2026-10-11: PR X, the review's second pass over those fixes: B1 and B2 closed, 1
+  blocking. The marker reaches an hrn MCP server only if the agent's CLI passes its
+  environment on to the servers it starts, which the reviewer believed codex does not
+  (it starts them with a cleared environment); there the nested run would be wholly
+  unguarded. Decided: the server itself refuses `allow_dangerous` on `run` and `batch`,
+  and leaves it out of `run`'s schema, unless the operator started it with `hrn mcp
+  --allow-dangerous-runs`; the host calling it is an agent, so a tool call cannot be the
+  operator's decision. The marker stays as the second layer. Also: grep refuses a search
+  path whose real place it can no longer tell, and the guarded-run refusal names no
+  variable. Live, codex in `yolo` on 26bef1e's build: its commands see gh's stand-in token,
+  `HRN_GUARDED=1` and the empty gh config dir, so under codex plain `gh auth token` gets the
+  stand-in and only `--user NAME` reaches the store.
+
 - 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
   means including security"), by an independent agent with loopback-only proof tests in a
   scratch copy. Nothing critical or high; four findings, three fixed here, each as its own

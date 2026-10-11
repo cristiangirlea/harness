@@ -25,7 +25,7 @@ func TestBoundedBufferKeepsHeadAndTail(t *testing.T) {
 }
 
 func TestRunShellExitCodeAndOutput(t *testing.T) {
-	res, err := RunShell(context.Background(), t.TempDir(), "echo hi && exit 3", 0)
+	res, err := RunShell(context.Background(), t.TempDir(), "echo hi && exit 3", 0, nil)
 	if err != nil || res.ExitCode != 3 || res.TimedOut || !strings.Contains(res.Output, "hi") {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
@@ -35,7 +35,7 @@ func TestRunShellTimeoutKillsTheTree(t *testing.T) {
 	started := time.Now()
 	// sleep is a grandchild of the shell; without a tree kill it would keep
 	// the output pipe open and Run would block for the full 30s.
-	res, err := RunShell(context.Background(), t.TempDir(), "echo started; sleep 30; echo late", 500*time.Millisecond)
+	res, err := RunShell(context.Background(), t.TempDir(), "echo started; sleep 30; echo late", 500*time.Millisecond, nil)
 	if err != nil || !res.TimedOut || res.ExitCode != -1 {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}

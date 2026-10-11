@@ -19,8 +19,9 @@ type ShellResult struct {
 // RunShell runs one command line through Shell() in dir. A zero timeout means
 // none. On timeout or cancellation the whole process tree is killed, not just
 // the shell, so a hung test cannot keep running and hold the directory. Only
-// a failure to start is an error; a non-zero exit is a result.
-func RunShell(ctx context.Context, dir, command string, timeout time.Duration) (ShellResult, error) {
+// a failure to start is an error; a non-zero exit is a result. env is the
+// command's environment; nil is hrn's own.
+func RunShell(ctx context.Context, dir, command string, timeout time.Duration, env []string) (ShellResult, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -30,6 +31,7 @@ func RunShell(ctx context.Context, dir, command string, timeout time.Duration) (
 	parts := argv(command)
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
 	cmd.Dir = dir
+	cmd.Env = env
 	out := &boundedBuffer{keepHead: maxOutput * 2 / 3, keepTail: maxOutput / 3}
 	cmd.Stdout, cmd.Stderr = out, out
 	// Stop waiting on the pipes if something survived the kill or was left

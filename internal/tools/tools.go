@@ -144,6 +144,26 @@ func (w *Workspace) inside(real string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+// secretPath reports whether an absolute path names a secret file, as
+// written or where its links lead.
+func (w *Workspace) secretPath(p string) bool {
+	return SecretFile(w.Rel(p)) || w.secretReal(realPath(p))
+}
+
+// secretReal reports whether a path from realPath names a secret file. It is
+// judged from the workspace's real root, as inside is: from Root, a workspace
+// reached through a junction would see its parents' names.
+func (w *Workspace) secretReal(real string) bool {
+	if real == "" {
+		return false // Resolve refuses a path hrn cannot judge
+	}
+	rel, err := filepath.Rel(w.real, real)
+	if err != nil {
+		rel = real
+	}
+	return SecretFile(rel)
+}
+
 // Rel renders an absolute workspace path for display.
 func (w *Workspace) Rel(p string) string {
 	if rel, err := filepath.Rel(w.Root, p); err == nil {

@@ -747,7 +747,8 @@ func checkExpect(re *regexp.Regexp, final string) GateResult {
 
 func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
 	started := time.Now()
-	res, err := tools.RunShell(ctx, dir, command, timeout)
+	// A gate is the operator's own command: it keeps hrn's environment.
+	res, err := tools.RunShell(ctx, dir, command, timeout, nil)
 	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}
 	switch {
 	case err != nil:

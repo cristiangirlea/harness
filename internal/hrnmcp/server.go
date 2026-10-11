@@ -30,14 +30,25 @@ Use "batch" to fan out: several tasks at once, each on its own branch and git wo
 There is no terminal behind this server. Mode "ask" puts each write and command to you through the host, when the host supports elicitation, and denies it otherwise. Use "readonly" for investigation, "auto" to allow file edits without asking, "yolo" to also allow shell commands.`
 
 // NewServer builds the hrn MCP server. defaultDir is the workspace used when
-// a run does not name one, normally the host's project directory.
-func NewServer(defaultDir string) *mcp.Server {
+// a run does not name one, normally the host's project directory. It refuses
+// allow_dangerous: its caller is an agent, perhaps one under the guard whose
+// CLI loaded this server, and lifting the guard is the operator's call.
+func NewServer(defaultDir string) *mcp.Server { return newServer(defaultDir, false) }
+
+// NewDangerousServer is NewServer for an operator who means its runs and
+// batches to lift the guard when asked: hrn mcp --allow-dangerous-runs.
+func NewDangerousServer(defaultDir string) *mcp.Server { return newServer(defaultDir, true) }
+
+// errDangerousRefused names no way around it: the model reads it.
+var errDangerousRefused = errors.New("allow_dangerous is refused by this hrn MCP server: only the operator can lift the guard")
+
+func newServer(defaultDir string, allowDangerous bool) *mcp.Server {
 	s := mcp.NewServer(mcp.Implementation{Name: "hrn", Version: agent.Version}, instructions)
-	s.AddTool(runTool(defaultDir))
+	s.AddTool(runTool(defaultDir, allowDangerous))
 	s.AddTool(runsTool())
 	s.AddTool(showTool())
 	s.AddTool(backendsTool())
-	s.AddTool(batchTool(defaultDir))
+	s.AddTool(batchTool(defaultDir, allowDangerous))
 	s.AddTool(batchShowTool())
 	s.AddTool(batchMergeTool())
 	return s
@@ -78,11 +89,15 @@ func text(s string, structured any, isError bool) mcp.CallResult {
 	return mcp.CallResult{Content: []mcp.Content{mcp.TextContent(tools.Truncate(s))}, StructuredContent: structured, IsError: isError}
 }
 
-func runTool(defaultDir string) mcp.Tool {
+func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	names := agent.Names()
 	enum := make([]any, len(names))
 	for i, n := range names {
 		enum[i] = n
+	}
+	props := runProperties(enum, defaultDir)
+	if !allowDangerous {
+		delete(props, "allow_dangerous") // not offered where it is refused
 	}
 	return mcp.Tool{
 		Name:  "run",
@@ -93,7 +108,7 @@ func runTool(defaultDir string) mcp.Tool {
 			"which then sees the workspace, unless no_switch is set.",
 		InputSchema: map[string]any{
 			"type":       "object",
-			"properties": runProperties(enum, defaultDir),
+			"properties": props,
 			"required":   []any{"prompt"},
 		},
 		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(false), OpenWorldHint: mcp.Bool(true)},
@@ -110,6 +125,9 @@ func runTool(defaultDir string) mcp.Tool {
 			}
 			if strings.TrimSpace(args.Prompt) == "" {
 				return mcp.CallResult{}, errors.New("prompt is required")
+			}
+			if args.AllowDangerous && !allowDangerous {
+				return mcp.CallResult{}, errDangerousRefused
 			}
 			modeGiven := args.Mode != ""
 			if !modeGiven {
