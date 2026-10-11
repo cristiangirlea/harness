@@ -220,16 +220,17 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') skip(); });
 
   // Listening: one sentence each time the button is pressed, for commands
-  // that steer the bot. Unmute is tried before quiet, so "unmute" is not heard
-  // as "mute".
+  // that steer the bot. Quiet is tried before unmute, so "quiet until I
+  // unmute" keeps her quiet; a plain "unmute" is not heard as quiet, as
+  // \bmute\b does not match inside it.
   const commands = [
     [/\b(status|what are you doing|what'?s (going on|happening|running)|anything running)\b/, () => reply(lastStatus)],
-    [/\b(unmute|carry on|wake up|speak again|resume)\b/, () => { snooze(0); reply("Right, I'll tell you again."); }],
     [/\b(quiet|snooze|mute|silence|hush)\b/, (said) => {
       const minutes = /hour/.test(said) ? 60 : /until|unmute/.test(said) ? -1 : 15;
       snooze(minutes);
       reply(minutes === -1 ? "I'll keep quiet until you unmute me." : minutes === 60 ? 'Quiet for an hour.' : 'Quiet for 15 minutes.');
     }],
+    [/\b(unmute|carry on|wake up|speak again|resume)\b/, () => { snooze(0); reply("Right, I'll tell you again."); }],
     [/\b(skip|stop|shush|enough)\b/, () => skip()],
     [/\b(repeat|again|what did you say)\b/, () => reply(lastSpoken || lastStatus)],
   ];
