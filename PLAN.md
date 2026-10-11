@@ -621,7 +621,8 @@ order they are worth taking:
     analytics): its purpose rules and its honest cost ("unknown cost is never zero"), brought
     into hrn. The work goes through `hrn batch`, so hrn watch shows it as batches. Three PRs,
     in this order:
-    - [ ] A batch's runs link to their batch on hrn watch ([#61](https://github.com/cristiangirlea/harness/issues/61)).
+    - [x] A batch's runs link to their batch on hrn watch ([#61](https://github.com/cristiangirlea/harness/issues/61)).
+      Done: PR #67, 2026-10-11.
     - [ ] `internal/purpose` and `hrn report --by purpose` ([#62](https://github.com/cristiangirlea/harness/issues/62)).
     - [ ] hrn watch: what the listed runs were for and what they cost, as a lower bound
       ([#63](https://github.com/cristiangirlea/harness/issues/63)); a first, budget-free step
