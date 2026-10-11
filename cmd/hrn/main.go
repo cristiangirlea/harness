@@ -48,7 +48,9 @@ Usage:
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR
                                  code; --lan=NAME only on one adapter (its name or address)
-  hrn mcp [--dir PATH]            serve hrn as an MCP server on stdio; --dir is the default workspace (default: current directory)
+  hrn mcp [--dir PATH] [--allow-dangerous-runs]
+                                 serve hrn as an MCP server on stdio; --dir is the default workspace (default: current
+                                 directory); allow_dangerous is refused unless --allow-dangerous-runs is given
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hrn batch show [--json] <id>    reprint a batch's table, while it runs or afterwards
   hrn batch diff <id> <task-id>   what one task changed, as a diff on stdout
@@ -452,6 +454,9 @@ func showHeader(r *renderer, rec runlog.Record) {
 func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "")
+	// The server's caller is an agent; lifting the guard for its runs is the
+	// operator's decision, taken here and not in a tool call.
+	dangerous := fs.Bool("allow-dangerous-runs", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -462,6 +467,10 @@ func cmdMCP(args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected argument %q; the workspace is set with --dir", fs.Arg(0))
 	}
+	newServer := hrnmcp.NewServer
+	if *dangerous {
+		newServer = hrnmcp.NewDangerousServer
+	}
 	ws, err := tools.NewWorkspace(*dir)
 	if err != nil {
 		return fmt.Errorf("--dir %s: %w", *dir, err)
@@ -470,7 +479,7 @@ func cmdMCP(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	fmt.Fprintln(os.Stderr, "hrn mcp: serving on stdio, workspace", abs)
-	if err := hrnmcp.NewServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+	if err := newServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil

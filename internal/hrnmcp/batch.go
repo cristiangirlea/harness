@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 
 const specDescription = `A batch spec, the same JSON as an hrn batch file. Fields: tasks (required; each has prompt, and optionally id, backend, gate, retry, expect and any run option), and on the spec: dir, parallel (default 4), backend, gate (commands that must exit 0 in each worktree), retry (backends to try after a failed attempt), allow_dirty, and the run options (model, mode, max_turns, effort, timeout, max_cost_usd, ...) every task starts from. mode defaults to auto here too, because nothing can approve a prompt inside a batch; use yolo when a task must build or test. Unknown fields are refused, so a misspelt one cannot be silently ignored.`
 
-func batchTool(defaultDir string) mcp.Tool {
+func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	return mcp.Tool{
 		Name:  "batch",
 		Title: "Run tasks in parallel worktrees",
@@ -48,6 +49,9 @@ func batchTool(defaultDir string) mcp.Tool {
 			spec, err := decodeSpec(args.Spec, defaultDir)
 			if err != nil {
 				return mcp.CallResult{}, err
+			}
+			if !allowDangerous && (spec.Options.AllowDangerous || slices.ContainsFunc(spec.Tasks, func(t batch.Task) bool { return t.AllowDangerous })) {
+				return mcp.CallResult{}, errDangerousRefused
 			}
 			res, runErr := batch.Run(ctx, spec, func(e batch.Event) {
 				if e.Kind == "tool" {

@@ -229,10 +229,14 @@ around it. What decides whether commands run at all is the [permission mode](#pe
 this stops the plausible accident. `--allow-dangerous` (task field `allow_dangerous`,
 also a batch spec/task field and an MCP `run` argument) lifts it for a whole run, and the
 system prompt tells the model which way it is set; `yolo` on its own does not lift it.
-An hrn started inside a guarded run refuses it, whether from the agent's shell or as an
-MCP server the agent's CLI loaded (the claude CLI loads your user-scope servers, hrn's
-among them): the guarded environment sets `HRN_GUARDED`, and the api loop sets it for its
-own MCP servers too. A refused command tells the model only that the operator can lift it.
+The hrn MCP server refuses `allow_dangerous`, and does not offer it, unless you started it
+with `hrn mcp --allow-dangerous-runs`: its caller is an agent, perhaps one under the guard
+whose CLI loaded it (the claude CLI loads your user-scope servers, hrn's among them), and
+whether a CLI passes its environment on to the servers it starts is that CLI's business.
+An hrn that does see the guard refuses it too: the guarded environment sets `HRN_GUARDED`
+(it reaches codex's commands, checked live), the api loop sets it for its own MCP servers,
+and `hrn run --allow-dangerous` from an agent's shell is refused. A refused command tells
+the model only that the operator can lift the guard.
 
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.
@@ -313,7 +317,8 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   claude and the api backend refuse those commands, the others get the environment only;
 - gh's login in the system's credential store: `gh auth token --user NAME` reads it
   whatever `GH_TOKEN` says. Claude and the api backend refuse `gh auth token`; under
-  codex, gemini or opencode an agent that runs it gets your GitHub token;
+  codex, gemini or opencode an agent that runs `gh auth token --user NAME` gets your
+  GitHub token (plain `gh auth token` gets the stand-in, which reaches codex's commands);
 - secret files stay readable and writable under codex, gemini and opencode; under the
   api backend and claude, a command that opens one without naming it (a recursive
   `grep -r` from the shell, a tool that loads `.env` itself) is not seen, and nor is a
@@ -493,11 +498,15 @@ thing the flag avoids) for hosts that do not start servers in the project folder
 Cursor (`.cursor/mcp.json`) and VS Code (`.vscode/mcp.json`) take the same command
 and args.
 
+The server refuses `allow_dangerous` on `run` and `batch`, and leaves it out of `run`'s
+arguments, unless it was started with `--allow-dangerous-runs`: the host that calls it is
+an agent, and lifting [the guard](#the-guard-for-every-backend) is yours to decide.
+
 Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |

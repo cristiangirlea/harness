@@ -330,6 +330,10 @@ func grep() Tool {
 				// is judged there too, since base can be spelt otherwise (a
 				// short 8.3 name: CODEX~1/auth.json is .codex/auth.json).
 				realBase := realPath(base)
+				if realBase == "" {
+					// Resolve judged it a moment ago; it changed since.
+					return "", fmt.Errorf("path %q is refused: hrn cannot tell where it leads", args.Path)
+				}
 				err = walk(ctx, base, func(p, rel string, regular bool) bool {
 					if globRe != nil && !globRe.MatchString(rel) {
 						return true

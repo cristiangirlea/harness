@@ -750,9 +750,21 @@ neither of them follows a run while it happens.
   the api loop sets it for its own MCP servers, `Validate` and `agent.Run` refuse
   `allow_dangerous` under it, and the message names no lever. The test packages that lift
   the guard clear the marker in `TestMain` (helper processes keep it), so the suite still
-  passes when an agent under the guard runs it. Its other notes are an issue of their own.
+  passes when an agent under the guard runs it. Its other notes are #56.
   Live, codex in `yolo` under the guard on a scratch repo: fake `GH_TOKEN` and `NPM_TOKEN`
   empty, `git push` at the dead end, the bare remote empty.
+- 2026-10-11: PR X, the review's second pass over those fixes: B1 and B2 closed, 1
+  blocking. The marker reaches an hrn MCP server only if the agent's CLI passes its
+  environment on to the servers it starts, which the reviewer believed codex does not
+  (it starts them with a cleared environment); there the nested run would be wholly
+  unguarded. Decided: the server itself refuses `allow_dangerous` on `run` and `batch`,
+  and leaves it out of `run`'s schema, unless the operator started it with `hrn mcp
+  --allow-dangerous-runs`; the host calling it is an agent, so a tool call cannot be the
+  operator's decision. The marker stays as the second layer. Also: grep refuses a search
+  path whose real place it can no longer tell, and the guarded-run refusal names no
+  variable. Live, codex in `yolo` on 26bef1e's build: its commands see gh's stand-in token,
+  `HRN_GUARDED=1` and the empty gh config dir, so under codex plain `gh auth token` gets the
+  stand-in and only `--user NAME` reaches the store.
 
 - 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
   means including security"), by an independent agent with loopback-only proof tests in a

@@ -83,10 +83,10 @@ func (o Options) Validate() error {
 }
 
 // ErrGuardedRun refuses allow_dangerous to an hrn started inside a guarded
-// run: from an agent's shell, or from an MCP server its CLI started. Lifting
-// the guard is the operator's call.
-var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run (" + tools.GuardedVar +
-	" is set): only the operator can lift the guard")
+// run (tools.GuardedVar is set): from an agent's shell, or from an MCP server
+// its CLI started with its environment. Lifting the guard is the operator's
+// call. The text names no variable: the model reads it.
+var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run: only the operator can lift the guard")
 
 // Over returns o with every unset field taken from base: a task's options over
 // its spec's. A switch left off inherits the spec's, so a task can turn one on
