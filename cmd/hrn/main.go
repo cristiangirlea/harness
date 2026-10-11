@@ -48,6 +48,9 @@ Usage:
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR
                                  code; --lan=NAME only on one adapter (its name or address)
+  hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
+                                 English, out loud and as notifications, with skip, snooze and a few
+                                 spoken commands; serves hrn watch on loopback unless one already does
   hrn mcp [--dir PATH] [--allow-dangerous-runs]
                                  serve hrn as an MCP server on stdio; --dir is the default workspace (default: current
                                  directory); allow_dangerous is refused unless --allow-dangerous-runs is given
@@ -140,6 +143,8 @@ func main() {
 		err = cmdReport(os.Args[2:])
 	case "watch":
 		err = cmdWatch(os.Args[2:])
+	case "bot":
+		err = cmdBot(os.Args[2:])
 	case "gc":
 		code, err = cmdGC(os.Args[2:])
 	case "version", "--version", "-V":

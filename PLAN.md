@@ -597,6 +597,15 @@ order they are worth taking:
     approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
     nothing else can answer it. Its actions go through hrn watch's door: they must send
     `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
+    - ~~Part 1, her eyes and voice.~~ Done: PR #89, 2026-10-11 (closes #59). The bot is **Ada**, a
+      female robot scarlet macaw (the owner's choices, 2026-10-11): `hrn bot`, `/bot`,
+      sentences in plain UK English made in Go, speech, notifications, skip, snooze, mute,
+      push-to-talk for commands that steer her only.
+    - Her purpose, in the owner's word, is super intelligence. In this order: her own voice
+      (#83, the owner's wife's, recorded with her agreement); a live map of where the work
+      is across the entire workflow, every repository and every stage from idea to release
+      (#90); then decisions and actions, behind #38; then planning and improving hrn
+      itself (the self-improvement loop).
 12. **Guard rails** (the owner, 2026-10-11), in this order:
     - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
       Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
@@ -658,7 +667,25 @@ neither of them follows a run while it happens.
   would not check the files at all, and without it git checks only for changes, so `--apply`
   checks each worktree again just before removing it (`HEAD`, branch, lock, files). A one-hour grace
   after the merge spares the session that merged it. CLI only: tools that delete branches
-  stay out of `hrn mcp`, as recorded for `batch rm`.
+  stay out of `hrn mcp`, as recorded for `batch rm`. An independent review (codex, read-only)
+  found seven ways it could still delete unproven work, each fixed with a test seen failing:
+  a parent removed after its child's removal failed, no second look before removing, a
+  check-then-delete race on the branch (now one `update-ref -d`), `.hrn/` taken whole as build
+  output, a stale or guessed default branch (now asked of origin), an open pull request lost
+  past the list's limit (now a query of its own), and unreadable batch records skipped (now
+  everything stays). Batch work that landed squashed is #85.
+- 2026-10-11: PR #89 (closes #59), Ada, part 1 of item 11. Decided: the sentences are made in
+  Go (`internal/watch/bot.go`), not in the page, so they are tested and pass the same
+  redaction as every page; one stream per page, the visible card as escaped HTML and the
+  sentences as JSON. Read-only: her commands steer her alone, decisions wait for #38. Speech
+  is the browser's, with voices on this computer first, since an online voice sends prompts
+  to its maker; a nicer voice of her own is #83. The owner named her Ada and chose an animal
+  over a human, then a parrot over an owl; she is an inline SVG with CSS animation, as the
+  page loads nothing from elsewhere and allows no inline style. Kept out of this branch under
+  the one-purpose rule: naming a batch's runs by their task on the index (#82, the owner's
+  question about four look-alike runs). Three independent reviews through hrn (claude; codex
+  at its limit) found four blocking defects, each fixed with a test seen failing; the rest
+  is #88.
 - 2026-10-11: Short-name temp dirs in execproto's tests (#57). Two continuation tests have
   failed on the Windows runner since #53. They seeded the earlier run with a raw
   `t.TempDir()`, which the runner spells in 8.3 short names (`C:\WINDOWS\SERVIC~1\...`), and
