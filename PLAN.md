@@ -661,6 +661,17 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-12: A dangling symbolic link out of the workspace on Linux and macOS (#47). The
+  non-Windows `throughLink` now reads a link `EvalSymlinks` left unresolved and judges the
+  path by its target, as Windows' did since #45. It is its own short walk in `links_other.go`,
+  not Windows' `throughLinkWith` shared: that one's mount-point and volume rules have no
+  meaning here, and a component that cannot be looked at ends the walk instead of refusing
+  the path, as before (nothing can be followed past it either). Found while writing the
+  test: a target joined as text loses a `..` the system takes after following a link
+  (`s -> evil/../x`, `evil` a link out, read as `x` in the workspace and written outside), so
+  a target with a `..` after a name is refused. A leading `..` is taken from the link's own
+  directory, which is real, and still works. Checked on Linux in a container (the PC's WSL
+  would not start); macOS only by `GOOS=darwin go vet`.
 - 2026-10-11: `hrn gc` (#78). Proof of a merge is GitHub's word on the exact commit: a merged
   pull request whose head is the worktree's `HEAD` or contains it, and no open one for the
   branch. Ancestry of the default branch alone was not enough for a branch: a worktree made
