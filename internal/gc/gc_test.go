@@ -490,6 +490,16 @@ func TestGCFindsABareRepositoryInsideBuildOutput(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "a repository inside build output: target/backup.git")
 }
 
+func TestGCKeepsAWorktreeWithFilesGitIsToldNotToLookAt(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	git(t, wt, "update-index", "--assume-unchanged", "README.md")
+	f.write(wt, "README.md", "local edits git status will not show\n")
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "assume-unchanged")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

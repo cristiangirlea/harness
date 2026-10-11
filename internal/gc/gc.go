@@ -583,6 +583,13 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 	if hrn {
 		kept = append(kept, hrnLeftovers(dir, registered)...)
 	}
+	if changed == 0 {
+		if n, err := hiddenFromStatus(ctx, dir); err != nil {
+			return "git ls-files failed: " + firstLine(err.Error())
+		} else if n > 0 {
+			return fmt.Sprintf("%d files marked assume-unchanged or skip-worktree, whose edits git status does not show", n)
+		}
+	}
 	switch {
 	case changed == 1:
 		return "1 uncommitted file"
@@ -595,6 +602,27 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 		return "ignored files that are not build output: " + strings.Join(kept, ", ")
 	}
 	return ""
+}
+
+// hiddenFromStatus counts the tracked files git status skips: marked
+// assume-unchanged (ls-files -v prints their tag in lower case) or
+// skip-worktree (S). Edits to them are in no branch and git worktree remove
+// would not notice them either.
+func hiddenFromStatus(ctx context.Context, dir string) (int, error) {
+	out, err := gitStdout(ctx, dir, "ls-files", "-v", "-z")
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, rec := range strings.Split(out, "\x00") {
+		if rec == "" {
+			continue
+		}
+		if tag := rec[0]; tag >= 'a' && tag <= 'z' || tag == 'S' {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // hrnLeftovers lists what a worktree's .hrn/ holds besides what hrn batch puts
