@@ -1586,10 +1586,10 @@ neither of them follows a run while it happens.
   panicked the api loop. `content_block_start` now refuses it with an
   error, like the other malformed events; a unit test covers each delta kind and
   FuzzParseSSE has the stream as a seed.
-- 2026-10-12: Last-turn context and continuation warnings (#97, PR #?)
+- 2026-10-12: Last-turn context and continuation warnings (#97, PR #105).
   `context_tokens` is additive and omitted when unknown. The api loop uses its last
   message's input plus cache reads and writes, claude its last assistant message,
-  and opencode its last step. Codex's agent-turn totals and gemini's run totals
+  and opencode its last step; a claude sub-agent's lines are ignored. Codex's agent-turn totals and gemini's run totals
   cannot identify the last model call, so neither sets it. The run page shows the
   reported size. Above 150,000 tokens, one shared threshold, the CLI warns on stderr
   before starting and MCP includes the warning in its answer; neither refuses the
