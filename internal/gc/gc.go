@@ -715,6 +715,7 @@ func ghPRs(ctx context.Context, repo string, gh []string, url, state string, lim
 	args := append(append([]string{}, gh[1:]...), "pr", "list", "-R", url, "--state", state, "--limit", strconv.Itoa(limit), "--json", prFields)
 	cmd := exec.CommandContext(ctx, gh[0], args...)
 	cmd.Dir = repo
+	cmd.Env = cleanEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -732,10 +733,40 @@ func ghPRs(ctx context.Context, repo string, gh []string, url, state string, lim
 	return prs, nil
 }
 
+// repoVars are the variables that point git at a repository, index or object
+// store other than the one -C finds. gc names its repositories by path, so
+// none of them may come in from its own environment (a git hook sets some).
+var repoVars = []string{
+	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+	"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+}
+
+// cleanEnv is this process's environment without repoVars, for git and gh.
+func cleanEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		drop := false
+		for _, v := range repoVars {
+			drop = drop || strings.EqualFold(name, v)
+		}
+		if !drop {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = cleanEnv()
+	return cmd
+}
+
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := gitCommand(ctx, dir, args...).CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		if text == "" {
@@ -761,7 +792,7 @@ func holding(dir string, paths []string) string {
 func gitStdout(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := gitCommand(ctx, dir, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

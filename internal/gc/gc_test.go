@@ -552,6 +552,24 @@ func TestPathsCompareAlikeHoweverWindowsSpellsThem(t *testing.T) {
 	}
 }
 
+func TestGCScansTheRepositoryItIsGivenWhateverGitDirSays(t *testing.T) {
+	f := newFixture(t)
+	mine, head := f.worktree("wt-mine", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	other := filepath.Join(f.root, "other")
+	git(t, f.root, "init", "-q", "-b", "main", other)
+	git(t, other, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "init")
+	theirs := filepath.Join(f.root, "wt-theirs")
+	git(t, other, "worktree", "add", "-q", "-b", "x", theirs)
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_WORK_TREE", other)
+
+	wts := f.scan()
+	if len(wts) != 1 || samePath(wts[0].Path) != samePath(mine) {
+		t.Fatalf("scanning %s found %+v; want only its own worktree", f.repo, wts)
+	}
+}
+
 func TestGCNeverListsTheMainCheckout(t *testing.T) {
 	f := newFixture(t)
 	f.worktree("wt", "branch")
