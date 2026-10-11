@@ -51,6 +51,21 @@ func TestSameBackendForksItsSession(t *testing.T) {
 	}
 }
 
+func TestLongContextStillForksItsSessionAndSuggestsAFreshRun(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: workspace(t)},
+		agent.Result{Backend: "claude", Session: "s1", ContextTokens: 285000})
+	p, err := Make(Request{RunID: id})
+	if err != nil || p.ForkSession != "s1" {
+		t.Fatalf("long context prevented the fork: %+v, %v", p, err)
+	}
+	for _, want := range []string{id, "285000 tokens", "fresh run", "short hand-over"} {
+		if !strings.Contains(p.ContextWarning(), want) {
+			t.Errorf("warning lacks %q: %s", want, p.ContextWarning())
+		}
+	}
+}
+
 func TestNothingToPickUpOnTheSameBackendIsRefused(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)

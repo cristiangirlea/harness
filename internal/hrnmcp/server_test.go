@@ -3,6 +3,7 @@ package hrnmcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -451,5 +452,34 @@ func TestRunContinueHandsTheConversationToAnotherBackend(t *testing.T) {
 	r = s.call(t, "run", `{"prompt":"look only","backend":"stub","mode":"readonly","continue_run_id":"`+id+`"}`)
 	if rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string)); err != nil || rec.Task.Mode != agent.ModeReadOnly {
 		t.Errorf("an explicit mode should override the inherited one: %+v err=%v", rec.Task, err)
+	}
+}
+
+func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T) {
+	for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			dir := t.TempDir()
+			s := connect(t, dir)
+			w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, ContextTokens: n}); err != nil {
+				t.Fatal(err)
+			}
+			r := s.call(t, "run", `{"prompt":"again","backend":"stub","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)
+			if r.IsError {
+				t.Fatalf("continuation refused: %s", r.Text())
+			}
+			if n > 150000 {
+				for _, want := range []string{"warning:", w.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
+					if !strings.Contains(r.Text(), want) {
+						t.Errorf("answer lacks %q: %s", want, r.Text())
+					}
+				}
+			} else if strings.Contains(r.Text(), "short hand-over") {
+				t.Errorf("unneeded warning: %s", r.Text())
+			}
+		})
 	}
 }

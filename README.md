@@ -372,6 +372,12 @@ mode unless you pass those flags, and its model only from runs on the same backe
 claude model name means nothing to codex. The MCP `run` tool takes the same thing as
 `continue_run_id`.
 
+If that run recorded more than 150,000 tokens of context at its last turn, hrn warns
+with its run id and context size and suggests a fresh run with a short hand-over.
+The CLI prints the warning to stderr before starting, including with `--json`;
+the MCP tool includes it in its answer. Continuing is still allowed. Unknown
+context sizes and sizes at or below the threshold produce no warning.
+
 What the backend carries on from:
 
 | Backend | Saves | A follow-up on it |
