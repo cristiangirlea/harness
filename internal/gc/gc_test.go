@@ -500,6 +500,19 @@ func TestGCKeepsAWorktreeWithFilesGitIsToldNotToLookAt(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "assume-unchanged")
 }
 
+func TestGCIgnoresReplaceRefsWhenItChecksAncestry(t *testing.T) {
+	f := newFixture(t)
+	task, taskHead := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	saveBatch(t, "20261011-100000-aaaaaa", f.repo,
+		batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.worktree("wt-other", "other")
+	f.land("other")
+	tip := git(t, f.repo, "rev-parse", "main")
+	git(t, f.repo, "replace", "--graft", tip, taskHead) // pretend main's tip descends from the task
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

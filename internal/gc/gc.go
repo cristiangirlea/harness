@@ -891,7 +891,9 @@ func cleanEnv() []string {
 			env = append(env, kv)
 		}
 	}
-	return env
+	// A local replace ref (git replace --graft) could make a commit look like
+	// an ancestor of origin's branch; gc reads history as it was written.
+	return append(env, "GIT_NO_REPLACE_OBJECTS=1")
 }
 
 func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
