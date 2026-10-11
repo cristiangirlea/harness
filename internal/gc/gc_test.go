@@ -656,6 +656,44 @@ func TestGCApplyLeavesAWorktreeThatMovedOnSinceTheScan(t *testing.T) {
 	}
 }
 
+func TestGCApplyLeavesAWorktreeThatSwitchedBranchAtTheSameCommit(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, wt), Remove, "merged")
+
+	git(t, wt, "switch", "-q", "-c", "next-piece")
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 1 || !exists(wt) {
+		t.Fatalf("removed %d, errors %v; want the worktree on its new branch kept", len(removed), errs)
+	}
+}
+
+func TestGCKeepsAWorktreeWhoseHrnWorktreesIsAFile(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.write(wt, filepath.Join(".hrn", "worktrees"), "not what hrn writes\n")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, ".hrn/worktrees")
+}
+
+func TestGCReadsAWorktreePathWithANewline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows paths cannot hold a newline")
+	}
+	f := newFixture(t)
+	odd, head := f.worktree("wt\nHEAD 0000000000000000000000000000000000000000", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wts := f.scan()
+	if len(wts) != 1 {
+		t.Fatalf("want one worktree, got %+v", wts)
+	}
+	wantVerdict(t, find(t, wts, odd), Remove, "merged")
+}
+
 func TestGCApplyKeepsAParentThatGainedAWorktreeSinceTheScan(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")
