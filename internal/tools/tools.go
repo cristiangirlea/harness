@@ -97,15 +97,20 @@ const maxLinks = 255
 // where p is, or would be once created. On Windows that includes directory
 // junctions, which filepath.EvalSymlinks has not followed since Go 1.23
 // (links_windows.go), and short 8.3 names become long ones. It is "" when
-// the links lead round more than maxLinks times, or one cannot be read.
+// the links lead round in a loop or more than maxLinks times, or one cannot
+// be read.
 func realPath(p string) string {
+	// A path met again is a loop: stop there, since each round runs
+	// EvalSymlinks, which follows up to 255 links of its own.
+	seen := map[string]bool{}
 	for range maxLinks {
+		seen[p] = true
 		r := evalSymlinksPrefix(p)
 		next, ok := throughLink(r)
 		switch {
 		case !ok:
 			return r
-		case next == "":
+		case next == "" || seen[next]:
 			return ""
 		}
 		p = next
