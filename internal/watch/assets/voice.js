@@ -108,6 +108,23 @@
     }
     ctx = c;
   };
+  // Starting a recording, once however fast Record is pressed: a second press
+  // while the first is still opening the microphone would build a second
+  // graph, and every take after would hold both streams' blocks.
+  let starting = false;
+  const ready = async () => {
+    if (starting) return false;
+    starting = true;
+    try {
+      await open();
+      return true;
+    } catch (e) {
+      warn('The microphone could not be opened: ' + e.message);
+      return false;
+    } finally {
+      starting = false;
+    }
+  };
   const levelOf = (block) => {
     let peak = 0;
     let sum = 0;
@@ -180,13 +197,8 @@
     return 'Sounds good: Keep (Enter), or Play back (P) first.';
   };
   const startTake = async () => {
-    try {
-      await open();
-    } catch (e) {
-      warn('The microphone could not be opened: ' + e.message);
-      return;
-    }
-    take = { chunks: [], rate: ctx.sampleRate, peak: 0 };
+    if (!(await ready())) return;
+    take ={ chunks: [], rate: ctx.sampleRate, peak: 0 };
     const t = take;
     onBlock = (b) => {
       t.chunks.push(b);
@@ -271,13 +283,8 @@
     }
   };
   const talkStart = async () => {
-    try {
-      await open();
-    } catch (e) {
-      warn('The microphone could not be opened: ' + e.message);
-      return;
-    }
-    talking = { chunks: [], part: 1, stamp: stamp(), started: Date.now() };
+    if (!(await ready())) return;
+    talking ={ chunks: [], part: 1, stamp: stamp(), started: Date.now() };
     const limit = ctx.sampleRate * 300;
     let held = 0;
     onBlock = (b) => {
