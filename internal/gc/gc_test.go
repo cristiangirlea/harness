@@ -513,6 +513,26 @@ func TestGCIgnoresReplaceRefsWhenItChecksAncestry(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
 }
 
+func TestGCFindsABareRepositoryWhoseHeadIsALink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symbolic links need a privilege here")
+	}
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	bare := filepath.Join(wt, "target", "backup.git")
+	git(t, f.root, "init", "-q", "--bare", bare)
+	f.write(bare, filepath.Join("refs", "heads", "main"), head+"\n")
+	if err := os.Remove(filepath.Join(bare, "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("refs", "heads", "main"), filepath.Join(bare, "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a repository inside build output: target/backup.git")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

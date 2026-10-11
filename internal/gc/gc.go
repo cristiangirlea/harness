@@ -703,9 +703,9 @@ func buildRisk(wt, folder string) string {
 }
 
 // isBare reports a folder laid out as a bare repository (HEAD, objects, refs),
-// which has no .git to find.
+// which has no .git to find. HEAD may be a link to a ref (core.preferSymlinkRefs).
 func isBare(dir string) bool {
-	head, err1 := os.Lstat(filepath.Join(dir, "HEAD"))
+	head, err1 := os.Stat(filepath.Join(dir, "HEAD"))
 	refs, err2 := os.Lstat(filepath.Join(dir, "refs"))
 	return err1 == nil && err2 == nil && head.Mode().IsRegular() && refs.IsDir()
 }
