@@ -1566,7 +1566,8 @@ neither of them follows a run while it happens.
   whose shell cannot start being retried as a code failure, with WSL's UTF-16 output shown
   undecoded (#84).
 - 2026-10-12: A null content block (#77, PR #99). `json.Unmarshal` decodes
-  `"content_block":null` into a nil map without an error, and the block's first delta then
-  wrote into it and panicked the api loop. `content_block_start` now refuses it with an
+  `"content_block":null` into a nil map without an error, and the block's first text,
+  thinking, signature or citations delta (an input delta: its stop) then wrote into it and
+  panicked the api loop. `content_block_start` now refuses it with an
   error, like the other malformed events; a unit test covers each delta kind and
   FuzzParseSSE has the stream as a seed.
