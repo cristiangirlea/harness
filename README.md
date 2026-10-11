@@ -149,7 +149,7 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 | Rule | Refuses |
 |---|---|
 | `git-push` | any `git` command mentioning `push`, including `git -C dir push`, or setting a `pushurl` or `pushInsteadOf` — a batch commits on its own branch; what leaves the machine is the operator's call |
-| `guard-env` | a command that changes a variable of the guarded environment below (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`): setting it (`NAME=`, `NAME+=`, `export`, `$env:NAME =`, `${env:NAME} =`, `read`, `printf -v`, `GIT_CONFIG_KEY_$i=` in a loop), unsetting it or hiding it from child processes (`unset`, `export -n`, `declare +x`, `env -u`, `SetEnvironmentVariable`), `env -i`, and any use of PowerShell's `env:` drive as a path on one of them or with a wildcard (`Remove-Item env:X`, `rm env:X`, `& {Set-Item env:X …}`), whatever the cmdlet; any case. Reading one (`$X`, `$env:X`, `${env:X}`), searching for it or a flag like `--kubeconfig` is fine |
+| `guard-env` | a command that changes a variable of the guarded environment below (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`): setting it (`NAME=`, `NAME+=`, `export`, `$env:NAME =`, `${env:NAME} =`, `read`, `printf -v`, `GIT_CONFIG_KEY_$i=` in a loop), unsetting it or hiding it from child processes (`unset`, `export -n`, `declare +x`, `typeset +x`, `env -u`, `SetEnvironmentVariable`), `env -i`, and any use of PowerShell's `env:` drive (or `Environment::`) as a path on one of them or with a wildcard (`Remove-Item env:X`, `rm env:X`, `& {Set-Item env:X …}`), whatever the cmdlet, reads through that path (`Test-Path env:X`) included; any case. Reading one as a variable (`$X`, `$env:X`, `${env:X}`), searching for it, or a flag like `--kubeconfig` or `--read-only` is fine |
 | `secret-file` | a command line naming a secret file (the list below) as an argument, a redirect's target or a flag's value: `cat .env`, `echo x > .env`, `cp .env.example .env`, `Get-Content .\.env`, `cat ~/.ssh/id_ed25519` |
 | `sudo` | `sudo` — a password prompt hangs a run with no terminal |
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
@@ -258,7 +258,10 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   `pushInsteadOf` in the repository's own config, a `git -c`, or an unset
   `GIT_CONFIG_COUNT` gives git its address back, and git's credential helper then signs
   the push in (Git Credential Manager keeps its login in the system's credential store,
-  where no variable reaches). Both guards refuse the plain spellings of those commands.
+  where no variable reaches). Both guards refuse the plain spellings of those commands;
+  the api backend's `guard-env` reads text, so a spelling it has no pattern for gets past
+  it (a relative name after `Set-Location env:`, `GIT_CONFIG_KEY_"$i"=` with the index
+  quoted, `declare -g +x`).
   The credential helper itself is left alone, because fetching private repositories and
   Go modules needs it;
 - an ssh key file on disk without a passphrase still works for an ssh remote;
