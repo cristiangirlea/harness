@@ -629,6 +629,14 @@ order they are worth taking:
     - [ ] hrn watch: what the listed runs were for and what they cost, as a lower bound
       ([#63](https://github.com/cristiangirlea/harness/issues/63)); a first, budget-free step
       towards #37.
+16. **Disk: clear what merged work leaves behind** (the owner, 2026-10-11, after both work
+    drives filled with worktrees and Rust build folders). Deterministic, no model involved, and
+    nothing local goes before its merge is proven. Three PRs, in this order:
+    - [ ] `hrn gc`: worktrees whose pull request is proven merged
+      ([#78](https://github.com/cristiangirlea/harness/issues/78)).
+    - [ ] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
+      ([#79](https://github.com/cristiangirlea/harness/issues/79)).
+    - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -638,6 +646,18 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: `hrn gc` (#78). Proof of a merge is GitHub's word on the exact commit: a merged
+  pull request whose head is the worktree's `HEAD` or contains it, and no open one for the
+  branch. Ancestry of the default branch alone was not enough for a branch: a worktree made
+  from `main` a minute ago has nothing of its own yet and would pass. It is enough for a
+  batch's worktree, whose record says when the batch has finished. A detached `HEAD` has no
+  pull request and stays. Failing closed: when `gh` or the fetch fails, the worktrees that
+  needed them stay. Two rules came from how `git worktree remove` behaves: it deletes ignored
+  files, so a worktree whose ignored files are not build output (a `.env`, notes) stays, and
+  a worktree holding another that stays (`.hrn/worktrees` is ignored) stays too. Removal never
+  uses `--force`, so git refuses a worktree that changed after the scan. A one-hour grace
+  after the merge spares the session that merged it. CLI only: tools that delete branches
+  stay out of `hrn mcp`, as recorded for `batch rm`.
 - 2026-10-11: Short-name temp dirs in execproto's tests (#57). Two continuation tests have
   failed on the Windows runner since #53. They seeded the earlier run with a raw
   `t.TempDir()`, which the runner spells in 8.3 short names (`C:\WINDOWS\SERVIC~1\...`), and
