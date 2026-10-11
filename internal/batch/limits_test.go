@@ -1,0 +1,147 @@
+package batch
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/runlog"
+)
+
+// standIn puts stubs in place of claude and codex for one test, so no real CLI
+// can run. codex writes half the work and reaches its limit; claude writes the
+// rest and finishes.
+func standIn(t *testing.T) {
+	t.Helper()
+	for _, s := range []stub{
+		{"codex", func(_ context.Context, task agent.Task) agent.Result {
+			_ = os.WriteFile(filepath.Join(task.Dir, "half.txt"), []byte("first half\n"), 0o644)
+			return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.",
+				Final: "Wrote the first half.", LimitResets: time.Now().Add(time.Hour)}
+		}},
+		{"claude", func(_ context.Context, task agent.Task) agent.Result {
+			_ = os.WriteFile(filepath.Join(task.Dir, "done.txt"), []byte("second half\n"), 0o644)
+			return agent.Result{Backend: "claude", Status: agent.StatusOK, Final: "finished", Turns: 1}
+		}},
+	} {
+		orig, err := agent.Get(s.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent.Register(s)
+		t.Cleanup(func() { agent.Register(orig) })
+	}
+}
+
+func TestALimitedAttemptIsCarriedOnInTheSameWorktree(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	res, events := run(t, Spec{Dir: dir, Backend: "codex", Options: agent.Options{Model: "gpt-5.5"},
+		Gate:  []string{"test -f half.txt && test -f done.txt"},
+		Tasks: []Task{{ID: "halves", Prompt: "write both halves"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	a1, a2 := tr.Attempts[0], tr.Attempts[1]
+	if a1.Backend != "codex" || a1.Result.Status != agent.StatusLimited || len(a1.Gates) != 0 {
+		t.Errorf("attempt 1: %s %s, %d gates", a1.Backend, a1.Result.Status, len(a1.Gates))
+	}
+	if a2.Backend != "claude" || !a2.Continued || a2.SwitchedFrom != "codex" {
+		t.Errorf("attempt 2: %s, continued %v, switched from %q", a2.Backend, a2.Continued, a2.SwitchedFrom)
+	}
+	for _, want := range []string{"write both halves", "attempt 1 on codex", "usage limit", "committed on the current branch", "Wrote the first half."} {
+		if !strings.Contains(a2.Prompt, want) {
+			t.Errorf("attempt 2 prompt is missing %q:\n%s", want, a2.Prompt)
+		}
+	}
+	rec, err := runlog.Load(a2.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Continues != a1.RunID {
+		t.Errorf("run %s continues %q, want the limited run %s", a2.RunID, rec.Continues, a1.RunID)
+	}
+	if rec.Task.Model != "" {
+		t.Errorf("model = %q: codex's model means nothing to claude", rec.Task.Model)
+	}
+	if n := git(t, dir, "rev-list", "--count", res.Base+"..hrn/halves"); n != "2" {
+		t.Errorf("commits above base = %s, want both attempts' work", n)
+	}
+	if retries := eventTexts(events, "retry"); !strings.Contains(retries, "claude") || !strings.Contains(retries, "usage limit") {
+		t.Errorf("retry events = %q, want the switch named", retries)
+	}
+	if limits.Until("codex", time.Now()).IsZero() {
+		t.Error("codex's limit was not remembered")
+	}
+}
+
+func TestACarryOnDoesNotUseUpARetry(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	// claude's half does not pass the gate; wb-ok, the one retry, writes it.
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Retry: []string{"wb-ok"},
+		Gate:  []string{"test -f out.txt"},
+		Tasks: []Task{{ID: "three", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	var got []string
+	for _, a := range tr.Attempts {
+		got = append(got, a.Backend)
+	}
+	if tr.Status != StatusPass || strings.Join(got, ",") != "codex,claude,wb-ok" {
+		t.Fatalf("status %s, attempts %v, want codex, its carry-on on claude, then the retry", tr.Status, got)
+	}
+}
+
+func TestAnAttemptMeantForALimitedBackendStartsOnItsPartner(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	_ = limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	res, events := run(t, Spec{Dir: dir, Backend: "codex", Options: agent.Options{Model: "gpt-5.5"},
+		Tasks: []Task{{ID: "moved", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 1 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if a := tr.Attempts[0]; a.Backend != "claude" || a.SwitchedFrom != "codex" {
+		t.Errorf("attempt on %s switched from %q", a.Backend, a.SwitchedFrom)
+	}
+	if rec := firstRun(t, tr); rec.Task.Model != "" {
+		t.Errorf("model = %q, want none for claude", rec.Task.Model)
+	}
+	if s := eventTexts(events, "switch"); !strings.Contains(s, "codex is at its usage limit") {
+		t.Errorf("switch events = %q", s)
+	}
+}
+
+func TestATaskStopsWhenBothAreLimited(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	for _, name := range []string{"codex", "claude"} {
+		_ = limits.Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	}
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "none", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusFail || len(tr.Attempts) != 0 {
+		t.Fatalf("task = %+v, want it stopped before any agent ran", tr)
+	}
+	if !strings.Contains(tr.Error, "claude") || !strings.Contains(tr.Error, "codex") {
+		t.Errorf("error = %q, want both named", tr.Error)
+	}
+}
+
+func TestNoSwitchKeepsABatchOnItsBackend(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Options: agent.Options{NoSwitch: true},
+		Tasks: []Task{{ID: "stays", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusFail || len(tr.Attempts) != 1 || tr.Attempts[0].Backend != "codex" {
+		t.Fatalf("task = %+v, want one limited attempt on codex", tr)
+	}
+}

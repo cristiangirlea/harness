@@ -115,7 +115,7 @@
 {{with .Error}}<p class="notice bad">{{.}}</p>{{end}}
 {{if .Waiting}}<p class="muted">Waiting for a free worker.</p>{{end}}
 {{range .Attempts}}<div class="attempt">
-<h3>Attempt {{.N}} · {{.Backend}}{{if .Continued}} · continued in the same worktree{{end}}</h3>
+<h3>Attempt {{.N}} · {{.Backend}}{{if .SwitchedFrom}} · moved from {{.SwitchedFrom}} at its usage limit{{end}}{{if .Continued}} · continued in the same worktree{{end}}</h3>
 <p>{{if .RunID}}<a class="mono" href="/run/{{.RunID}}">run {{.RunID}}</a> {{end}}<span class="badge {{.Class}}">{{.Status}}</span>{{with .Detail}} · {{.}}{{end}}</p>
 {{with .Error}}<p class="notice bad">{{.}}</p>{{end}}
 {{if .Gates}}<div class="table-wrap"><table class="gates">

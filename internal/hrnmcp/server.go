@@ -15,6 +15,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/followup"
+	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -115,6 +116,14 @@ func runTool(defaultDir string) mcp.Tool {
 			if err := args.Options.Validate(); err != nil {
 				return mcp.CallResult{}, err
 			}
+			// As hrn run does: a backend whose limit is remembered hands
+			// the run to its partner before anything is planned.
+			var routed string
+			if !args.NoSwitch {
+				if args.Backend, routed = limits.Choose(args.Backend, args.ContinueRunID); routed != "" {
+					args.Model = ""
+				}
+			}
 			var plan followup.Plan
 			if args.ContinueRunID != "" {
 				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model})
@@ -168,11 +177,52 @@ func runTool(defaultDir string) mcp.Tool {
 					call.Progress("error: " + tools.OneLine(e.Text, 200))
 				}
 			}
+			var notes []string
+			if routed != "" {
+				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
+				notes = append(notes, routed)
+			}
 			plan.Apply(&task, rec.Dir(), emit)
 			res := agent.Run(ctx, b, task, emit)
 			if err := rec.Close(res); err != nil {
 				call.Progress("saving run: " + err.Error())
 			}
+			structured := map[string]any{"run_id": rec.ID(), "result": res}
+
+			// A run stopped by its plan's limit is carried on by the partner
+			// backend, once, and the call answers with that run.
+			next, why, err := limits.After(rec.ID(), args.Backend, task, res)
+			switch {
+			case err != nil:
+				notes = append(notes, err.Error())
+			case next == nil && why != "":
+				notes = append(notes, why)
+			case next != nil:
+				nb, err := agent.Get(next.To)
+				if err != nil {
+					return mcp.CallResult{}, err
+				}
+				nrec, err := runlog.CreateContinuing(next.To, next.Task, rec.ID())
+				if err != nil {
+					return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
+				}
+				next.Task.RunDir = nrec.Dir()
+				if next.Task.Approve != nil {
+					next.Task.Approve = approver(ctx, call, nrec.ID())
+				}
+				limitedID := rec.ID()
+				rec = nrec // emit writes to the new record now
+				call.Progress(next.Why)
+				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Why})
+				next.Plan.Apply(&next.Task, nrec.Dir(), emit)
+				res = agent.Run(ctx, nb, next.Task, emit)
+				if err := nrec.Close(res); err != nil {
+					call.Progress("saving run: " + err.Error())
+				}
+				notes = append(notes, next.Why)
+				structured = map[string]any{"run_id": nrec.ID(), "result": res, "limited_run_id": limitedID}
+			}
+
 			body := res.Final
 			if res.Status != agent.StatusOK {
 				body = fmt.Sprintf("status: %s\n%s", res.Status, res.Error)
@@ -180,8 +230,10 @@ func runTool(defaultDir string) mcp.Tool {
 					body += "\n\n" + res.Final
 				}
 			}
-			return text(body+"\n\n"+summary(rec.ID(), res),
-				map[string]any{"run_id": rec.ID(), "result": res}, res.Status != agent.StatusOK), nil
+			if len(notes) > 0 {
+				body = strings.Join(notes, "\n") + "\n\n" + body
+			}
+			return text(body+"\n\n"+summary(rec.ID(), res), structured, res.Status != agent.StatusOK), nil
 		},
 	}
 }
@@ -302,16 +354,23 @@ func backendsTool() mcp.Tool {
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			var b strings.Builder
 			var list []map[string]any
+			now := time.Now()
 			for _, name := range agent.Names() {
 				be, _ := agent.Get(name)
 				src, err := be.Detect()
+				var entry map[string]any
 				if err != nil {
 					fmt.Fprintf(&b, "✗ %-9s %s\n", name, err)
-					list = append(list, map[string]any{"name": name, "available": false, "detail": err.Error()})
+					entry = map[string]any{"name": name, "available": false, "detail": err.Error()}
 				} else {
 					fmt.Fprintf(&b, "✓ %-9s %s\n", name, src)
-					list = append(list, map[string]any{"name": name, "available": true, "detail": src})
+					entry = map[string]any{"name": name, "available": true, "detail": src}
 				}
+				if s := limits.Status(name, now); s != "" {
+					fmt.Fprintf(&b, "  %-9s %s\n", "", s)
+					entry["limited_until"] = limits.Until(name, now)
+				}
+				list = append(list, entry)
 			}
 			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendName()}, false), nil
 		},

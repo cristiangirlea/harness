@@ -81,9 +81,9 @@ func LoadSpec(path string) (Spec, error) {
 }
 
 // Expand turns an eval spec into the batch that runs it: one task per task,
-// variant and repeat. Retry is deliberately nil, because an eval measures what
-// a single attempt does; a retried attempt would score the harness, not the
-// backend.
+// variant and repeat. Retry is deliberately nil, and no_switch set, because an
+// eval measures what a single attempt does; a retried attempt would score the
+// harness, not the backend, and a switched one the other backend.
 func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	if len(spec.Matrix) == 0 {
 		return batch.Spec{}, fmt.Errorf("matrix is empty: an eval needs at least one variant to compare")
@@ -133,6 +133,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 
 	bs := spec.Spec // the batch fields carry through unchanged
 	bs.Retry = nil
+	bs.NoSwitch = true
 	bs.Tasks = nil
 	for _, t := range spec.Tasks {
 		if t.ID == "" {

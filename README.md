@@ -79,8 +79,9 @@ Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api), `--json` (JSONL event stream for scripts), `--thinking`,
-`--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, and the budgets
-below.
+`--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, `--no-switch` (see
+[When a plan's usage limit is reached](#when-a-plans-usage-limit-is-reached)), and the
+budgets below.
 
 ### Budgets
 
@@ -245,6 +246,31 @@ Thinking blocks belong to the model that produced them. Continuing an api conver
 on a different model is allowed and warned about: the API serves it without the earlier
 thinking.
 
+### When a plan's usage limit is reached
+
+The claude and codex CLIs bill to subscriptions with usage limits, and each stands in for
+the other. A run that ends because its CLI said the limit was reached ("You've hit your
+session limit · resets 10:10pm (Europe/Bucharest)", "You've hit your usage limit ... try
+again at Oct 16th, 2026 3:29 PM") is `limited`, not `error`, and its result keeps the
+time the limit lifts as `limit_resets` when the message gives one. Then:
+
+- The other CLI carries it on, once, as a follow-up run (see above): a new record that
+  continues the limited one, with the transcript handed over, the same workspace and
+  mode, and the model left to the new backend. `hrn run` and the MCP `run` tool answer
+  with that run; the MCP result names the limited one as `limited_run_id`.
+- The reset time is kept in `~/.hrn/limits.json`. Until it passes, a run, a batch
+  attempt or a retry meant for that backend starts on the other one, and its transcript
+  says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
+  tool) shows each limit it remembers. A limit can lift early (codex sells credits);
+  deleting the file forgets it.
+- Nothing moves to `api`, which is billed per token, or to gemini or opencode. If the
+  other CLI is not installed, or is limited too, the run stays `limited` and says so.
+
+`--no-switch` (field `no_switch`) keeps a run on its backend. `hrn eval` always sets it:
+a cell measures its own backend. Limits are recognised by the CLIs' wording, which is
+matched in `internal/agent/limit.go` against messages seen in real runs; a new wording is
+an `error` until it is added there.
+
 ### Project instructions
 
 The api loop reads `HRN.md`, `AGENTS.md` and `CLAUDE.md` from the workspace root and
@@ -304,7 +330,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
@@ -389,11 +415,20 @@ how the attempt failed.
 | Previous attempt | Next attempt |
 |---|---|
 | ran to the end, a gate failed | continues in the same worktree, on top of the work already committed, with the failing gate command, its exit code and output appended to the prompt |
+| stopped at its plan's usage limit | continues in the same worktree, told that the limit stopped it and shown its last message |
 | failed, refused or was cut short | starts in a fresh worktree from the base commit, with one line saying how the previous attempt ended |
 
+An attempt that ends `limited` on claude or codex is carried on by the other one first, as
+an extra attempt that does not use up a `retry` entry, and an attempt meant for a backend
+whose limit is remembered starts on the other one (see [When a plan's usage limit is
+reached](#when-a-plans-usage-limit-is-reached)). When both are limited, the attempt is
+skipped, and a task with nothing left to run fails without starting an agent, its error
+saying why. `no_switch` turns this off.
+
 A continued attempt commits as `<id>: <prompt> (attempt N)`, so the branch reads as a
-sequence of fixes. Each attempt records the prompt it was actually sent and whether it
-continued, which `hrn batch --json` prints.
+sequence of fixes. Each attempt records the prompt it was actually sent, whether it
+continued, and `switched_from`, the backend a usage limit moved it from, which `hrn batch
+--json` prints.
 
 `hrn batch` refuses to start when tracked files in the repository are modified: every
 worktree branches from `HEAD`, so that work would not reach the agents and the batch
@@ -467,9 +502,10 @@ timeline as it happens: the assistant's text, each tool call with its input in o
 (the input itself folded under it, its first 6 KB and last 2 KB), each result folded and
 capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each
 step waited, and, once the
-run ends, its status, tokens, cost and final answer. A batch's page shows each task with
-a link to each attempt's run, and its gates (command, exit code, folded output) as they
-finish. Steps arrive over Server-Sent Events that check the run's `events.jsonl` twice a
+run ends, its status, tokens, cost and final answer (and, for a `limited` run, when the
+limit lifts). A batch's page shows each task with a link to each attempt's run, the
+backend a usage limit moved it from, and its gates (command, exit code, folded output) as
+they finish. Steps arrive over Server-Sent Events that check the run's `events.jsonl` twice a
 second; a browser that loses the connection picks up where it left off. Cost is whatever
 the backend reports: the api backend's estimate (`~`), the claude and opencode CLIs' own
 figures, nothing for codex and gemini, and only once the run has ended.
@@ -580,7 +616,8 @@ the exit status is 0 whenever the eval itself ran.
 
 Task ids and variant names take letters, digits, `_` and `-`: dots separate the parts of
 a cell id. `retry` is refused in an eval spec, because a retried cell would score the
-harness rather than the backend. The `context` column counts prompt tokens and cache
+harness rather than the backend, and for the same reason an eval sets `no_switch`: a cell
+whose backend reaches its usage limit ends `limited`. The `context` column counts prompt tokens and cache
 reads together, which is what the model was given rather than what was billed at full
 rate.
 
@@ -656,9 +693,13 @@ pairs as data.
   twice the disk of its transcript
 - `handoff.md` — for a follow-up, the transcript of earlier turns its backend was
   given before the prompt (see [Continuing a run](#continuing-a-run))
-- `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled`), final answer, turns,
-  tokens, cache, cost (`cost_is_estimate` for the api backend), duration, and the
-  claude or codex `session` id
+- `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled|limited`), final answer, turns,
+  tokens, cache, cost (`cost_is_estimate` for the api backend), duration, the
+  claude or codex `session` id, and for a `limited` run `limit_resets`, when its plan's
+  limit lifts
+
+Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
+force, which every run consults before it starts. Deleting it forgets them.
 
 `hrn runs prune --older-than 30d` removes runs, batch records and eval records that
 started before the cutoff, and prints what it freed; `--dry-run` lists them instead and
@@ -687,6 +728,7 @@ internal/report/   aggregation over run and batch records (hrn report; reused by
 internal/runlog/   run recording
 internal/watch/    following records as they are written: hrn show -f, and hrn watch's page
 internal/followup/ continuing a run: what the backend picks up, what it is handed
+internal/limits/   plan usage limits: which backend takes over, the reset times in limits.json
 ```
 
 ## Status and what is open

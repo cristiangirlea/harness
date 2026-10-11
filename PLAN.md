@@ -596,6 +596,10 @@ order they are worth taking:
     approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
     nothing else can answer it. Control from the network waits for item 10's key.
 
+12. ~~**Carry on at a plan's usage limit**~~ ([#43](https://github.com/cristiangirlea/harness/issues/43)).
+    Done: a `limited` status, claude and codex carrying on each other's runs, reset times
+    remembered in `limits.json`, `no_switch`. See the Decisions log, 2026-10-11.
+
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
 HTTP (every host met so far speaks stdio). A web dashboard was on this list ("report and
@@ -1146,3 +1150,21 @@ neither of them follows a run while it happens.
   because encoding/json gives a custom unmarshaler no field path; and the methods of an
   embedded struct promote, so `spec.Validate()` exists and checks only the options -
   named in the doc comment, not worth un-embedding.
+- 2026-10-11: carrying on at a usage limit (#43). Cause: eight codex attempts in the owner's
+  batches that night ended at codex's usage limit, and their records said only
+  `exit status 1`, because codex's `turn.failed` keeps its text under `error.message` and
+  its empty `message` overwrote the limit message; now read from there and never
+  overwriting. The same records show the limit was rarely the whole story: in every one of
+  those tasks the first attempt, on claude, had already failed a gate (a screen test that
+  needs a live desktop, a base with long dashes, gates run in WSL's bash), so the switch
+  saves the retry, not the task. Decisions: only claude and codex stand in for each other,
+  never api (billed per token) or gemini/opencode; a limited run is carried on once, since
+  a partner that is limited too would only hand it back; the reset time is believed only
+  up to 8 days ahead and from a minute in the past; a time without a date is the next one;
+  a zone the CLI names is loaded when Go has the zone database and is the computer's own
+  otherwise (Windows ships none to Go, and the CLI names the computer's zone anyway). In a
+  batch the carry-on is an extra attempt in the same worktree that does not use up a
+  `retry` entry, its record `continues` the limited run, and the model named for the
+  other backend is dropped. Two processes noting a limit at once can lose one note, which
+  costs one more limited start, so the file has no lock. An eval sets `no_switch`, for the
+  reason retry is refused there. `hrn report` counts `limited` as not ok, which it is.
