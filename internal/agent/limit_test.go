@@ -104,3 +104,15 @@ func TestUsageLimitDropsAResetTimeItCannotTrust(t *testing.T) {
 		}
 	}
 }
+
+func TestAClockTimeJustPassedIsNotTomorrow(t *testing.T) {
+	now := time.Date(2026, 10, 11, 22, 15, 0, 0, time.Local)
+	limited, resets := usageLimit("You've hit your session limit · resets 10:10pm", now)
+	if !limited || !resets.IsZero() {
+		t.Errorf("five minutes after the reset: limited %v, resets %v; want limited with no time to remember", limited, resets)
+	}
+	_, resets = usageLimit("You've hit your session limit · resets 10:00pm", now)
+	if want := time.Date(2026, 10, 12, 22, 0, 0, 0, time.Local); !resets.Equal(want) {
+		t.Errorf("a quarter of an hour after: resets %v, want tomorrow %v", resets, want)
+	}
+}

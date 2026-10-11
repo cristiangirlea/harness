@@ -99,7 +99,9 @@ func clockTime(now time.Time, loc *time.Location, monthText, dayText string, yea
 	local := now.In(loc)
 	if monthText == "" {
 		t := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, loc)
-		// Within the grace of now is now: the limit has lifted, not moved a day.
+		// A time that passed in the last ten minutes is today's: the limit has
+		// just lifted rather than moved a day, and usageLimit, finding it in
+		// the past, keeps no reset time. Earlier than that it is tomorrow's.
 		if t.Before(now.Add(-10 * time.Minute)) {
 			t = t.AddDate(0, 0, 1)
 		}

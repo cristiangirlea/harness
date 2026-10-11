@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -30,7 +31,9 @@ func TestHelperCLIError(t *testing.T) {
 		fmt.Println(`{"type":"turn.failed","error":{"message":""}}`)
 		os.Exit(1)
 	case "claudelimit":
-		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"You've hit your session limit · resets 10:10pm (Europe/Bucharest)"}`)
+		// The test picks the reset time, so the run does not depend on the hour.
+		msg, _ := json.Marshal(os.Getenv("HRN_CLI_LIMIT_MSG"))
+		fmt.Printf(`{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":%s}`+"\n", msg)
 		os.Exit(1)
 	}
 }
@@ -123,21 +126,38 @@ func TestCodexReportsItsUsageLimitAsLimited(t *testing.T) {
 	}
 }
 
-func TestClaudeReportsItsUsageLimitAsLimited(t *testing.T) {
+// claudeLimitIn sets the fake claude's limit message to reset d from now, in
+// the computer's zone as the CLI writes it.
+func claudeLimitIn(t *testing.T, d time.Duration) time.Time {
+	at := time.Now().Add(d).Truncate(time.Minute)
 	t.Setenv("HRN_CLI_HELPER", "claudelimit")
+	t.Setenv("HRN_CLI_LIMIT_MSG", "You've hit your session limit · resets "+at.Format("3:04pm"))
+	return at
+}
+
+func TestClaudeReportsItsUsageLimitAsLimited(t *testing.T) {
+	at := claudeLimitIn(t, 2*time.Hour)
 	b := helperCLI(parseClaudeStream)
 	b.limits = true
 	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
-	if res.Status != StatusLimited || res.LimitResets.IsZero() {
-		t.Fatalf("want limited with a reset time: status %s, resets %v, error %q", res.Status, res.LimitResets, res.Error)
+	if res.Status != StatusLimited || !res.LimitResets.Equal(at) {
+		t.Fatalf("want limited, resetting at %v: status %s, resets %v, error %q", at, res.Status, res.LimitResets, res.Error)
 	}
-	if until := time.Until(res.LimitResets); until <= 0 || until > 24*time.Hour+time.Minute {
-		t.Errorf("a session limit resetting at 10:10pm is within a day, got %v", until)
+}
+
+func TestOnlyTheClaudeAndCodexAdaptersReadLimits(t *testing.T) {
+	for _, c := range []struct {
+		b    *CLIBackend
+		want bool
+	}{{NewClaudeBackend(), true}, {NewCodexBackend(), true}, {NewGeminiBackend(), false}, {NewOpencodeBackend(), false}} {
+		if c.b.limits != c.want {
+			t.Errorf("%s reads limits = %v, want %v", c.b.name, c.b.limits, c.want)
+		}
 	}
 }
 
 func TestAnAdapterWithoutLimitWordsKeepsTheError(t *testing.T) {
-	t.Setenv("HRN_CLI_HELPER", "claudelimit")
+	claudeLimitIn(t, 2*time.Hour)
 	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
 	if res.Status != StatusError {
 		t.Fatalf("status = %s: only claude and codex are read for limits", res.Status)
