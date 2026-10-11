@@ -75,6 +75,10 @@ func TestUsageLimitLeavesOtherErrorsAlone(t *testing.T) {
 		"api 429 rate_limit_error: Number of request tokens has exceeded your per-minute rate limit",
 		"Prompt is too long",
 		"You've reached your maximum context limit for this conversation",
+		// A request rate, not a plan: it passes in a minute and switching
+		// backends for it would be noise.
+		"429: You've hit your rate limit. Try again in 1 minute.",
+		"You've reached your per-minute request limit.",
 		"error_max_turns",
 	} {
 		if limited, _ := usageLimit(msg, now); limited {

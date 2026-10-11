@@ -14,8 +14,9 @@ import (
 
 var (
 	limitWords = regexp.MustCompile(`(?i)hit your (?:[\w-]+ )?limit|reached your (?:[\w.-]+ ){1,3}limit|usage limit reached|requires usage credits|limit reached\W+resets`)
-	// "reached your ... limit" is also how a context window could be worded.
-	notPlanWords = regexp.MustCompile(`(?i)context|token|request size`)
+	// The same phrases word a context window or a request rate, which are not
+	// a plan running out: a rate passes in a minute.
+	notPlanWords = regexp.MustCompile(`(?i)context|token|request|\brate\b|per-minute`)
 
 	// claude before its current wording: "Claude AI usage limit reached|1760184000".
 	resetUnix = regexp.MustCompile(`(?i)usage limit reached\|(\d{9,11})`)
