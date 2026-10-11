@@ -648,9 +648,10 @@ neither of them follows a run while it happens.
   FuzzParseSSE also did no executions after a few seconds in every run looked at.
   `GODEBUG=fuzzdebug=1` showed all four workers minimizing "interesting" inputs, which Go
   allows 60 s each, so minimization is now bounded too (`-fuzzminimizetime=200x`; a count
-  ends it gracefully, where a duration kills the worker). The counts (500000x for the
-  codec, 150000x for SSE) keep each step at about 10 s on the lab runner. Part of why
-  minimization was slow is the parser's own cost, quadratic in its deltas: #71.
+  ends it gracefully, where a duration stops and restarts the worker and throws the
+  minimization away). The counts (500000x for the codec, 150000x for SSE) keep each step
+  at about 10 s on the lab runner. Part of why minimization was slow is the parser's own
+  cost, quadratic in its deltas: #71.
 - 2026-10-11: #45 reviews (PR #48): an independent read-only reviewer, and an adversarial security
   read in a scratch copy, which found nothing it could get out through (junction chains and
   loops, dangling junctions, 8.3 aliases, `\\?\` targets, a junction to `C:\Windows`; no
