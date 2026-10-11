@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -494,6 +495,40 @@ func TestGCFailsClosedWhenGitHubOrTheFetchIsUnavailable(t *testing.T) {
 	wantVerdict(t, find(t, wts, landed), Keep, "fetch failed")
 	// GitHub's word on the exact head needs no fetch.
 	wantVerdict(t, find(t, wts, merged), Remove, "PR #1 merged")
+}
+
+func TestGCKeepsTheWorktreeItRunsIn(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	t.Chdir(wt)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "the current directory is inside it")
+}
+
+func TestGCTakesNoProofFromAForkWithTheSameBranchName(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "patch-1")
+	f.prs = append(f.prs, PR{Number: 1, State: "MERGED", HeadName: "patch-1", HeadOID: head,
+		URL: "https://github.com/o/r/pull/1", MergedAt: time.Now().Add(-2 * time.Hour), CrossRepo: true})
+	f.serve()
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "no pull request")
+}
+
+func TestPathsCompareAlikeHoweverWindowsSpellsThem(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case and separators only differ on Windows")
+	}
+	if !inside(`C:/Work/Repo/.hrn/worktrees/t`, `c:\work\repo`) {
+		t.Error("a forward-slash, mixed-case path under the folder was not seen inside it")
+	}
+	if inside(`C:\Work\Repo-2`, `C:\Work\Repo`) {
+		t.Error("a sibling sharing the folder's name as a prefix was seen inside it")
+	}
+	if samePath(`C:\Work\Repo\`) != samePath(`c:/work/repo`) {
+		t.Error("the same folder spelt two ways compared different")
+	}
 }
 
 func TestGCNeverListsTheMainCheckout(t *testing.T) {
