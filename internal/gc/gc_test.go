@@ -487,6 +487,16 @@ func TestGCJudgesBatchWorktreesAgainstTheBranchOriginNamesNow(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), landed), Keep, "not on origin/develop")
 }
 
+func TestGCIsNotFooledByALocalBranchNamedLikeOrigins(t *testing.T) {
+	f := newFixture(t)
+	task, head := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	saveBatch(t, "20261011-100000-aaaaaa", f.repo,
+		batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	git(t, f.repo, "branch", "origin/main", head) // refs/heads/origin/main, which git reads before refs/remotes
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
 func TestGCFailsClosedWhenGitHubOrTheFetchIsUnavailable(t *testing.T) {
 	f := newFixture(t)
 	merged, head := f.worktree("wt-merged", "done")

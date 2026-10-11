@@ -367,7 +367,7 @@ type repoFacts struct {
 	prLimit   int
 	ownersErr error // the batch records could not all be read
 	fetchErr  error
-	def       string // like origin/main; empty when origin names none
+	def       string // in full, like refs/remotes/origin/main
 	gh        []string
 	prs       []PR
 	ghErr     error
@@ -430,9 +430,9 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		case facts.fetchErr != nil:
 			return Keep, "fetch failed: " + firstLine(facts.fetchErr.Error())
 		case !isAncestor(ctx, facts.repo, w.Head, facts.def):
-			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, facts.def)
+			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
 		}
-		return Remove, fmt.Sprintf("batch %s finished and its commit is on %s", o.id, facts.def)
+		return Remove, fmt.Sprintf("batch %s finished and its commit is on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
 	}
 
 	if e.detached || w.Branch == "" {
@@ -637,7 +637,9 @@ func keepHolders(all []Worktree, repos []string) {
 
 // originDefault asks origin which branch its HEAD names now and fetches that
 // branch by name, so neither a stale origin/HEAD nor a narrow fetch refspec
-// can stand in for it. It returns the tracking ref, like origin/main.
+// can stand in for it. It returns the tracking ref in full, like
+// refs/remotes/origin/main: git reads a short origin/main as a local branch
+// or tag of that name first.
 func originDefault(ctx context.Context, repo string) (string, error) {
 	out, err := gitOut(ctx, repo, "ls-remote", "--symref", "origin", "HEAD")
 	if err != nil {
@@ -656,7 +658,7 @@ func originDefault(ctx context.Context, repo string) (string, error) {
 	if _, err := gitOut(ctx, repo, "fetch", "--quiet", "origin", "+refs/heads/"+name+":refs/remotes/origin/"+name); err != nil {
 		return "", err
 	}
-	return "origin/" + name, nil
+	return "refs/remotes/origin/" + name, nil
 }
 
 // isAncestor reports whether commit a is reachable from b. A commit git does
