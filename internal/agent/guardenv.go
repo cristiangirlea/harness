@@ -1,6 +1,10 @@
 package agent
 
-import "github.com/cristiangirlea/harness/internal/tools"
+import (
+	"strings"
+
+	"github.com/cristiangirlea/harness/internal/tools"
+)
 
 // guardCommands are the command lines claude's deny rules refuse, in both of
 // its shells. Claude Code reads " *" as "followed by arguments, or nothing"
@@ -25,16 +29,6 @@ var guardCommands = []string{
 	"bash deploy/push.sh *", "./deploy/push.sh *",
 }
 
-// guardHomeFiles are logins kept in the operator's home, besides the secret
-// files and directories tools lists for any place: gh's (on Windows under
-// %APPDATA%\GitHub CLI), npm's, docker's, gcloud's, cargo's, and the plan
-// logins of the agent CLIs themselves, which the CLIs read with their own
-// code rather than through these tools.
-var guardHomeFiles = []string{
-	"~/.config/gh/**", "//**/GitHub CLI/**", "~/.npmrc", "~/.docker/config.json", "~/.config/gcloud/**",
-	"~/.cargo/credentials*", "~/.claude/.credentials.json", "~/.codex/auth.json", "~/.gemini/oauth_creds.json",
-}
-
 // claudeDenyRules is the guard as Claude Code's own deny rules, which its
 // documentation says hold in every permission mode, bypassPermissions too.
 // The command rules match command text, so `git -C dir push` or `bash -c
@@ -57,7 +51,12 @@ func claudeDenyRules() []string {
 	for _, dir := range tools.SecretDirs {
 		paths = append(paths, "//**/"+dir+"/**")
 	}
-	paths = append(paths, guardHomeFiles...)
+	for _, p := range tools.SecretPaths {
+		if strings.HasSuffix(p, "/") {
+			p += "**"
+		}
+		paths = append(paths, "//**/"+p)
+	}
 	for _, p := range paths {
 		rules = append(rules, "Read("+p+")", "Edit("+p+")")
 	}

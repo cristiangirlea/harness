@@ -66,8 +66,9 @@ func TestClaudeCarriesTheGuardsDenyRules(t *testing.T) {
 			"Bash(npx wrangler deploy *)", "Bash(npm publish *)", "Bash(npm run deploy*)", "Bash(terraform apply *)", "Bash(helm upgrade *)",
 			"Bash(git config *push*)", "PowerShell(git remote set-url --push *)",
 			"Read(//**/.env*)", "Edit(//**/.env*)", "Read(//**/*.pem)", "Edit(//**/*.key)", "Read(//**/.dev.vars)",
-			"Read(//**/.ssh/**)", "Edit(//**/.private/**)", "Read(//**/.kube/**)", "Read(//**/.wrangler/**)",
-			"Read(~/.npmrc)", "Read(~/.cargo/credentials*)", "Read(~/.claude/.credentials.json)", "Read(//**/GitHub CLI/**)"} {
+			"Read(//**/.ssh/**)", "Edit(//**/.private/**)", "Read(//**/.kube/**)", "Read(//**/.wrangler/config/**)",
+			"Read(//**/.npmrc)", "Read(//**/.cargo/credentials*)", "Read(//**/.claude/.credentials.json)", "Read(//**/GitHub CLI/**)",
+			"Edit(//**/.codex/auth.json)", "Read(//**/.config/gh/**)"} {
 			if !slices.Contains(rules, want) {
 				t.Errorf("mode %s: deny rules %q lack %q", mode, rules, want)
 			}
