@@ -46,6 +46,10 @@ type CLIBackend struct {
 	mapsModel    bool
 	mapsMaxTurns bool
 	mapsMCP      bool
+	// limits is set when the CLI bills to a plan and says in words that its
+	// usage limit was reached (usageLimit knows the words): such a run ends
+	// limited rather than in an error.
+	limits bool
 }
 
 func (c *CLIBackend) Name() string { return c.name }
@@ -103,6 +107,16 @@ func (c *CLIBackend) Detect() (string, error) {
 }
 
 func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Result {
+	res := c.run(ctx, task, emit)
+	if c.limits && res.Status == StatusError {
+		if limited, resets := usageLimit(res.Error, time.Now()); limited {
+			res.Status, res.LimitResets = StatusLimited, resets
+		}
+	}
+	return res
+}
+
+func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Result {
 	started := time.Now()
 	ctx, cancel := withTimeout(ctx, task)
 	defer cancel()
@@ -239,9 +253,11 @@ func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	case waitErr != nil:
 		// Prefer what the CLI said over the bare exit status: stderr first,
 		// then a structured error the stream already reported. A status the
-		// stream set (max_turns, refused) survives the non-zero exit too.
+		// stream set (max_turns, refused) survives the non-zero exit too. A
+		// usage limit the stream reported wins over stderr, which then holds
+		// only the CLI's chatter around it.
 		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
+		if limited, _ := usageLimit(res.Error, time.Now()); msg == "" || c.limits && limited {
 			msg = res.Error
 		}
 		if msg == "" {

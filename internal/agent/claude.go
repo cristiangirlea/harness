@@ -62,6 +62,7 @@ func NewClaudeBackend() *CLIBackend {
 		mapsModel:    true,
 		mapsMaxTurns: true,
 		mapsMCP:      true,
+		limits:       true,
 	}
 }
 func newestVersionDir(root, exe string) []string {

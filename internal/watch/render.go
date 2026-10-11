@@ -268,6 +268,9 @@ func resultOf(res agent.Result) resultView {
 	if res.Session != "" {
 		add("Session", res.Session)
 	}
+	if !res.LimitResets.IsZero() {
+		add("Limit lifts", res.LimitResets.Local().Format("2006-01-02 15:04"))
+	}
 	v.Final, v.FinalMore = capText(res.Final, textHead, textTail)
 	return v
 }
@@ -464,6 +467,7 @@ type attemptView struct {
 	Status, Class, Detail string
 	Error                 string
 	Continued, Running    bool
+	SwitchedFrom          string
 	Gates                 []gateView
 }
 
@@ -496,7 +500,7 @@ func batchBodyOf(res batch.Result) batchBody {
 		}
 		for i, a := range t.Attempts {
 			av := attemptView{N: i + 1, Backend: a.Backend, RunID: a.RunID, Error: a.Error, Continued: a.Continued,
-				Running: a.Result.Status == "" && t.Status == batch.StatusRunning}
+				SwitchedFrom: a.SwitchedFrom, Running: a.Result.Status == "" && t.Status == batch.StatusRunning}
 			av.Status = string(a.Result.Status)
 			switch {
 			case av.Running:

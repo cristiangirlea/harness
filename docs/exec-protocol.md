@@ -148,6 +148,10 @@ not stop the run.
 `result` is the same `agent.Result` a run record holds. `requested_model` is the task's requested
 model after applying the continuation plan, including any inherited model; `accepted.requested.model`
 reports the same value. `resolved_model` is what the backend reported running (empty when it did not say).
+`status` is one of `ok`, `error`, `refused`, `max_turns`, `timeout`, `budget`, `canceled` and
+`limited`. `limited` means a claude or codex plan reached its usage limit; `limit_resets` says
+when it lifts, when the CLI said so. exec does not carry a limited run on to another backend, as
+`hrn run` does: the supervisor decides. A caller treats a status it does not know as not ok.
 `record_error` is set when the run record is incomplete. hrn exits 0 after `result`, whatever the
 task's own status: the status is in the line.
 

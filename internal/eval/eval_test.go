@@ -179,3 +179,15 @@ func initRepo(t *testing.T) string {
 	run("commit", "-q", "-m", "init")
 	return dir
 }
+
+func TestAnEvalNeverSwitchesBackends(t *testing.T) {
+	bs, err := Expand(testSpec("somewhere"), "abc12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A cell measures its own backend; one carried on elsewhere would score
+	// the other one under its name.
+	if !bs.NoSwitch {
+		t.Error("the batch an eval runs must set no_switch")
+	}
+}

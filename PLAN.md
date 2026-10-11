@@ -611,6 +611,10 @@ order they are worth taking:
     - [x] Run records surface write failures. Done: PR #51, 2026-10-11.
     - [x] Agent CLIs run in a contained process tree. Done: PR #52, 2026-10-11.
     - [x] `hrn exec --protocol v1`, documented in `docs/exec-protocol.md`. Done: PR #53, 2026-10-11.
+14. ~~**Carry on at a plan's usage limit**~~ ([#43](https://github.com/cristiangirlea/harness/issues/43)).
+    Done as PR #46, 2026-10-11: a `limited` status, claude and codex carrying on each
+    other's runs, reset times remembered in `limits.json`, `no_switch`. See the Decisions
+    log, 2026-10-11.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -1299,3 +1303,43 @@ neither of them follows a run while it happens.
   end of stdin cancels, because the supervisor is gone. Review (Claude Opus) found the case
   and oversized-line holes; fixed. An api-backend run through exec has not been tried (it costs
   money).
+- 2026-10-11: carrying on at a usage limit (#43). Cause: eight codex attempts in the owner's
+  batches that night ended at codex's usage limit, and their records said only
+  `exit status 1`, because codex's `turn.failed` keeps its text under `error.message` and
+  its empty `message` overwrote the limit message; now read from there and never
+  overwriting. The same records show the limit was rarely the whole story: in every one of
+  those tasks the first attempt, on claude, had already failed a gate (a screen test that
+  needs a live desktop, a base with long dashes, gates run in WSL's bash), so the switch
+  saves the retry, not the task. Decisions: only claude and codex stand in for each other,
+  never api (billed per token) or gemini/opencode; a limited run is carried on once, since
+  a partner that is limited too would only hand it back; the reset time is believed only
+  up to 8 days ahead and from a minute in the past; a time without a date is the next one;
+  a zone the CLI names is loaded when Go has the zone database and is the computer's own
+  otherwise (Windows ships none to Go, and the CLI names the computer's zone anyway). In a
+  batch the carry-on is an extra attempt in the same worktree that does not use up a
+  `retry` entry, its record `continues` the limited run, and the model named for the
+  other backend is dropped. Two processes noting a limit at once can lose one note, which
+  costs one more limited start, so the file has no lock. An eval sets `no_switch`, for the
+  reason retry is refused there. `hrn report` counts `limited` as not ok, which it is.
+- 2026-10-11: #43 review (codex, read-only), 6 findings, 5 fixed. A carry-on that ended
+  limited too was not remembered. Notes from a batch's parallel workers failed on Windows
+  ("Access is denied": a rename cannot replace a file another reader holds) and could
+  overwrite each other: a lock in the process and a short retry across processes, with a
+  test that runs two processes. "You've hit your rate limit" read as a plan limit. The fake
+  claude's fixed reset time failed its test ten minutes a night. A null limits.json
+  panicked the next note. Not changed: switching back to a backend earlier in the chain
+  runs the model the chain chose for it, as `--continue -b` does; the reviewer wanted it
+  cleared. The README says so.
+- 2026-10-11: #46 security review (Claude, read-only), 1 blocking. The switch could start
+  a partner that bills per token: claude prefers `ANTHROPIC_API_KEY` (and the other API and
+  cloud variables) to the plan, codex `CODEX_API_KEY`, and nobody chose that backend. Now
+  such a partner does not stand in and the run names the variable, never its value; a CLI
+  logged in with a key in its own files cannot be seen, so the README says to use
+  `--no-switch` there. Also from it: a remembered time more than eight days ahead is
+  ignored, as one from a CLI is; a batch says why it does not carry an attempt on; the MCP
+  `run` tool says a run can move to the other vendor. Left as notes in the README: the same
+  mode is not the same permissions on both, and a carried-on run's timeout starts again. A
+  limit read from stderr alone is still believed (bounded by the eight days). Merging main
+  (#50 to #53) needed: the carry-on's record error is the one the MCP answer reports, the
+  effort test accepts `limited` from codex, and exec's protocol lists the statuses and that
+  exec never switches.
