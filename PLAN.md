@@ -654,8 +654,9 @@ neither of them follows a run while it happens.
   pull request and stays. Failing closed: when `gh` or the fetch fails, the worktrees that
   needed them stay. Two rules came from how `git worktree remove` behaves: it deletes ignored
   files, so a worktree whose ignored files are not build output (a `.env`, notes) stays, and
-  a worktree holding another that stays (`.hrn/worktrees` is ignored) stays too. Removal never
-  uses `--force`, so git refuses a worktree that changed after the scan. A one-hour grace
+  a worktree holding another that stays (`.hrn/worktrees` is ignored) stays too. `--force`
+  would not check the files at all, and without it git checks only for changes, so `--apply`
+  checks each worktree again just before removing it (`HEAD`, branch, lock, files). A one-hour grace
   after the merge spares the session that merged it. CLI only: tools that delete branches
   stay out of `hrn mcp`, as recorded for `batch rm`.
 - 2026-10-11: Short-name temp dirs in execproto's tests (#57). Two continuation tests have

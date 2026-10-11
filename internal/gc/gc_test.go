@@ -411,6 +411,37 @@ func TestGCApplyLeavesAWorktreeThatChangedSinceTheScan(t *testing.T) {
 	}
 }
 
+func TestGCApplyLeavesAWorktreeThatMovedOnSinceTheScan(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\n.env\n")
+	git(t, f.repo, "commit", "-q", "-am", "ignore .env")
+	committed, h1 := f.worktree("wt-committed", "committed")
+	secret, h2 := f.worktree("wt-secret", "secret")
+	locked, h3 := f.worktree("wt-locked", "locked")
+	f.pr(1, "committed", "MERGED", h1, 2*time.Hour)
+	f.pr(2, "secret", "MERGED", h2, 2*time.Hour)
+	f.pr(3, "locked", "MERGED", h3, 2*time.Hour)
+	wts := f.scan()
+	for _, p := range []string{committed, secret, locked} {
+		wantVerdict(t, find(t, wts, p), Remove, "merged")
+	}
+
+	f.write(committed, "more.txt", "a commit no pull request has\n")
+	git(t, committed, "add", ".")
+	git(t, committed, "commit", "-q", "-m", "after the scan")
+	f.write(secret, ".env", "LOCAL=1\n")
+	git(t, f.repo, "worktree", "lock", locked)
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 3 {
+		t.Fatalf("removed %d, errors %v; want all three to stay", len(removed), errs)
+	}
+	for _, p := range []string{filepath.Join(committed, "more.txt"), filepath.Join(secret, ".env"), locked} {
+		if !exists(p) {
+			t.Errorf("%s is gone", p)
+		}
+	}
+}
+
 func TestGCApplyKeepsAParentWhenTheWorktreeInsideItCannotGo(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

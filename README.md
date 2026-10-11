@@ -694,9 +694,10 @@ files. When `gh` fails (not installed, not logged in) or the fetch does, the wor
 needed it stay. Main checkouts are never touched.
 
 The listing puts the removals first, with the size each one frees and the pull request's URL,
-which is the record once the folder is gone. `--apply` removes them with `git worktree remove`
-without `--force`, so git refuses one that changed since the scan, then deletes the branch if it
-still points at the commit that was checked. A batch's record stays (`hrn runs prune` can drop
+which is the record once the folder is gone. `--apply` checks each one again just before it goes
+(its `HEAD`, branch, lock and files, ignored ones included) and leaves one that changed since the
+scan, or that holds a worktree that stays, then removes it with `git worktree remove` (never
+`--force`) and deletes the branch if it still points at the commit that was checked. A batch's record stays (`hrn runs prune` can drop
 it once its worktrees are gone). Up to 1000 pull requests are read per repository; a branch
 whose pull request is older than that stays.
 

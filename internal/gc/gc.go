@@ -88,8 +88,9 @@ func Scan(ctx context.Context, paths []string, opt Options) ([]Worktree, error) 
 }
 
 // Apply removes the worktrees Scan marked Remove, inner ones first, then each
-// one's branch if it still points at the commit Scan checked. git worktree
-// remove runs without --force, so git refuses a worktree that changed since.
+// one's branch if it still points at the commit Scan checked. Each worktree is
+// checked again just before it goes, and one that changed since the scan, or
+// holds one that stays, stays too.
 func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []error) {
 	var todo []Worktree
 	var stays []string // everything that is not going, including removals that failed
@@ -104,6 +105,11 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 	for _, w := range todo {
 		if held := holding(w.Path, stays); held != "" {
 			errs = append(errs, fmt.Errorf("%s: kept, it holds %s, which stays", w.Path, held))
+			stays = append(stays, w.Path)
+			continue
+		}
+		if why := recheck(ctx, w); why != "" {
+			errs = append(errs, fmt.Errorf("%s: kept, %s", w.Path, why))
 			stays = append(stays, w.Path)
 			continue
 		}
@@ -123,6 +129,32 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 		}
 	}
 	return removed, errs
+}
+
+// recheck says why a worktree marked for removal must stay after all, because
+// it changed since the scan: locked, a new HEAD or branch, or new files that
+// no branch holds, ignored ones included (git worktree remove deletes those).
+func recheck(ctx context.Context, w Worktree) string {
+	out, err := gitOut(ctx, w.Repo, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "the worktrees could not be listed again: " + firstLine(err.Error())
+	}
+	for _, e := range parseWorktrees(out) {
+		if samePath(e.path) != samePath(w.Path) {
+			continue
+		}
+		switch {
+		case e.locked:
+			return "locked since the scan"
+		case e.head != w.Head || e.branch != w.Branch:
+			return "its HEAD moved since the scan"
+		}
+		if why := unsaved(ctx, w.Path); why != "" {
+			return why + " since the scan"
+		}
+		return ""
+	}
+	return "git no longer lists it as a worktree"
 }
 
 // Size adds up the regular files under dir, without following links.
