@@ -387,15 +387,36 @@ func TestGCReadsPathsGitWouldQuote(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Remove, "merged")
 }
 
-func TestGCTakesOnlyFoldersByTheirBuildNames(t *testing.T) {
+func TestGCTakesFilesInsideABuildFolderAsBuildOutput(t *testing.T) {
+	// pytest ignores its cache with a .gitignore of its own, so git lists the
+	// files in it one by one rather than the folder.
 	f := newFixture(t)
-	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\nbuild\n")
-	git(t, f.repo, "commit", "-q", "-am", "ignore build")
 	wt, head := f.worktree("wt", "done")
-	f.write(wt, "build", "#!/bin/sh\n# a script of mine, not a build folder\n")
+	f.write(wt, filepath.Join(".pytest_cache", ".gitignore"), "*\n")
+	f.write(wt, filepath.Join(".pytest_cache", "v", "cache", "nodeids"), "[]\n")
+	f.write(wt, filepath.Join("src", ".cache-x", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n")
+	f.write(wt, filepath.Join("src", ".cache-x", ".gitignore"), "*\n")
 	f.pr(1, "done", "MERGED", head, 2*time.Hour)
 
-	wantVerdict(t, find(t, f.scan(), wt), Keep, "not build output: build")
+	wantVerdict(t, find(t, f.scan(), wt), Remove, "merged")
+}
+
+func TestGCTakesOnlyFoldersByTheirBuildNames(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\nbuild\nbin/local.sh\n")
+	f.write(f.repo, filepath.Join("bin", "run.sh"), "#!/bin/sh\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "ignore build, track bin")
+	wt, head := f.worktree("wt", "done")
+	f.write(wt, "build", "#!/bin/sh\n# a script of mine, not a build folder\n")
+	tracked, head2 := f.worktree("wt-bin", "bin")
+	f.write(tracked, filepath.Join("bin", "local.sh"), "#!/bin/sh\n# mine, beside the tracked run.sh\n")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	f.pr(2, "bin", "MERGED", head2, 2*time.Hour)
+
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, wt), Keep, "not build output: build")
+	wantVerdict(t, find(t, wts, tracked), Keep, "not build output: bin/local.sh")
 }
 
 func TestGCFindsARepositoryInsideBuildOutputOnItsOwn(t *testing.T) {

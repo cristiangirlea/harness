@@ -497,18 +497,29 @@ var buildOutput = map[string]bool{
 	"test-results": true, "playwright-report": true,
 }
 
-// isBuildOutput reports an ignored path gc may delete with its worktree. The
-// names are folders' (git status ends a folder with /): a file called build
-// is someone's.
-func isBuildOutput(dir, path string) bool {
-	folder := strings.HasSuffix(path, "/")
-	name := filepath.Base(strings.TrimSuffix(path, "/"))
-	switch {
-	case folder:
-		return buildOutput[name] || isCacheDir(filepath.Join(dir, path))
-	default:
-		return strings.HasSuffix(name, ".tsbuildinfo")
+// buildFolder reports whether an ignored path is build output gc may delete
+// with its worktree, and the build folder it is or lies in ("" for a lone
+// generated file). The names are folders' (git status ends a folder with /),
+// so a file called build is someone's; a file inside a build folder is the
+// folder's, as git lists them when the folder ignores itself (pytest's cache).
+// A folder counts by its name only when git tracks nothing in it: an ignored
+// file in a tracked bin/ is someone's. A CACHEDIR.TAG says so on its own.
+func buildFolder(dir, path string, tracksNothing func(prefix string) bool) (string, bool) {
+	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
+	isFolder := strings.HasSuffix(path, "/")
+	for i, name := range parts {
+		if i == len(parts)-1 && !isFolder {
+			break // the last part is a file
+		}
+		prefix := strings.Join(parts[:i+1], "/")
+		if isCacheDir(filepath.Join(dir, filepath.FromSlash(prefix))) || buildOutput[name] && tracksNothing(prefix) {
+			return prefix, true
+		}
 	}
+	if !isFolder && strings.HasSuffix(parts[len(parts)-1], ".tsbuildinfo") {
+		return "", true
+	}
+	return "", false
 }
 
 // unsaved says why a worktree holds something no branch has: tracked changes,
@@ -528,6 +539,16 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 	changed := 0
 	var kept []string
 	hrn := false
+	walked := map[string]bool{} // build folders already searched for a repository
+	untracked := map[string]bool{}
+	tracksNothing := func(prefix string) bool {
+		if v, ok := untracked[prefix]; ok {
+			return v
+		}
+		files, err := gitStdout(ctx, dir, "ls-files", "-z", "--", prefix)
+		untracked[prefix] = err == nil && files == ""
+		return untracked[prefix]
+	}
 	records := strings.Split(out, "\x00")
 	for i := 0; i < len(records); i++ {
 		rec := records[i]
@@ -542,13 +563,17 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 			}
 			continue
 		}
-		switch {
-		case path == ".hrn/" || strings.HasPrefix(path, ".hrn/"):
+		if path == ".hrn/" || strings.HasPrefix(path, ".hrn/") {
 			hrn = true
-		case !isBuildOutput(dir, path):
+			continue
+		}
+		folder, ok := buildFolder(dir, path, tracksNothing)
+		switch {
+		case !ok:
 			kept = append(kept, strings.TrimSuffix(path, "/"))
-		default:
-			if repo := repoInside(filepath.Join(dir, path)); repo != "" {
+		case folder != "" && !walked[folder]:
+			walked[folder] = true
+			if repo := repoInside(filepath.Join(dir, filepath.FromSlash(folder))); repo != "" {
 				rel, _ := filepath.Rel(dir, repo)
 				return "a repository inside build output: " + filepath.ToSlash(rel)
 			}
