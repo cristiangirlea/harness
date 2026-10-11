@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -502,8 +503,9 @@ var buildOutput = map[string]bool{
 // generated file). The names are folders' (git status ends a folder with /),
 // so a file called build is someone's; a file inside a build folder is the
 // folder's, as git lists them when the folder ignores itself (pytest's cache).
-// A folder counts by its name only when git tracks nothing in it: an ignored
-// file in a tracked bin/ is someone's. A CACHEDIR.TAG says so on its own.
+// A folder counts, by its name or its CACHEDIR.TAG, only when git tracks
+// nothing in it: an ignored file in a tracked bin/ or a tracked test fixture
+// that happens to be tagged is someone's.
 func buildFolder(dir, path string, tracksNothing func(prefix string) bool) (string, bool) {
 	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
 	isFolder := strings.HasSuffix(path, "/")
@@ -512,7 +514,7 @@ func buildFolder(dir, path string, tracksNothing func(prefix string) bool) (stri
 			break // the last part is a file
 		}
 		prefix := strings.Join(parts[:i+1], "/")
-		if isCacheDir(filepath.Join(dir, filepath.FromSlash(prefix))) || buildOutput[name] && tracksNothing(prefix) {
+		if (buildOutput[name] || isCacheDir(filepath.Join(dir, filepath.FromSlash(prefix)))) && tracksNothing(prefix) {
 			return prefix, true
 		}
 	}
@@ -679,11 +681,25 @@ func linkTarget(link, to string) string {
 	return filepath.Join(filepath.Dir(link), to)
 }
 
-// isCacheDir reports a folder tagged as a cache (the Cache Directory Tagging
-// convention; Cargo writes the tag into every target folder).
+// cacheTagSignature opens every CACHEDIR.TAG (the Cache Directory Tagging
+// convention; Cargo writes one into every target folder).
+const cacheTagSignature = "Signature: 8a477f597d28d172789f06886806bc55"
+
+// isCacheDir reports a folder tagged as a cache: CACHEDIR.TAG is a file that
+// starts with the convention's signature, not merely a name.
 func isCacheDir(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "CACHEDIR.TAG"))
-	return err == nil
+	tag := filepath.Join(dir, "CACHEDIR.TAG")
+	if info, err := os.Lstat(tag); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(tag)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, len(cacheTagSignature))
+	_, err = io.ReadFull(f, head)
+	return err == nil && string(head) == cacheTagSignature
 }
 
 // keepHolders keeps any worktree that holds one that stays, or a repository's

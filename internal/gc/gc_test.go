@@ -401,6 +401,25 @@ func TestGCTakesFilesInsideABuildFolderAsBuildOutput(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Remove, "merged")
 }
 
+func TestGCTrustsACacheTagOnlyInAnUntrackedFolderWithTheSignature(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\nfixtures/notes.txt\nmydata/\n")
+	f.write(f.repo, filepath.Join("fixtures", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "a test fixture that is a tagged cache")
+	tracked, h1 := f.worktree("wt-fixture", "fixture")
+	f.write(tracked, filepath.Join("fixtures", "notes.txt"), "mine\n")
+	unsigned, h2 := f.worktree("wt-unsigned", "unsigned")
+	f.write(unsigned, filepath.Join("mydata", "CACHEDIR.TAG"), "not the signature\n")
+	f.write(unsigned, filepath.Join("mydata", "results.csv"), "1,2\n")
+	f.pr(1, "fixture", "MERGED", h1, 2*time.Hour)
+	f.pr(2, "unsigned", "MERGED", h2, 2*time.Hour)
+
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, tracked), Keep, "not build output: fixtures/notes.txt")
+	wantVerdict(t, find(t, wts, unsigned), Keep, "not build output: mydata")
+}
+
 func TestGCTakesOnlyFoldersByTheirBuildNames(t *testing.T) {
 	f := newFixture(t)
 	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\nbuild\nbin/local.sh\n")
