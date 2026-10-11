@@ -671,6 +671,7 @@ hrn watch                  # http://127.0.0.1:8089, this computer only
 hrn watch --lan            # also on this computer's private network addresses, for a phone
 hrn watch --lan="Ethernet 3"   # only that adapter's network (a name or an address)
 hrn show -f <run-id>       # the same timeline in the terminal
+hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
 
 `hrn watch` serves a page that lists the newest runs and batches (id, backend, status,
@@ -690,7 +691,7 @@ the backend reports: the api backend's estimate (`~`), the claude and opencode C
 figures, nothing for codex and gemini, and only once the run has ended.
 
 Everything from a record is escaped as text, since tool results hold whatever the agent
-read. The page loads nothing from anywhere else (one stylesheet and one script, both
+read. The page loads nothing from anywhere else (one stylesheet and a script or two, all
 served by hrn, no fonts), follows the system's light or dark theme, and on a phone shows
 each run and batch as a small card instead of a table. It cannot start, stop or merge
 anything: a request other than GET or HEAD must carry hrn watch's key in
@@ -720,6 +721,56 @@ codes nor the hints meant for this computer.
 second or more, and ends with the summary line once the run's result is saved. Ctrl+C
 stops following and leaves the run alone. A run killed before it saved its result never
 ends, on the page or in the terminal: hrn cannot tell it from a long step.
+
+### Ada, the bot
+
+`hrn bot` opens Ada, hrn watch's bot (`/bot`), in a small window of her own: Edge's or Chrome's
+app window where one is installed, else the default browser. It serves hrn watch on
+loopback for her until Ctrl+C, or, when an hrn watch already serves that address, just
+opens her there. The index links to her too. Ada is a robot scarlet macaw: she blinks,
+bobs her head and moves her beak while she talks, and keeps still for anyone whose system
+asks for less motion.
+
+Ada says what hrn is doing in plain UK English, in a line at the top, a log, out loud
+and as desktop notifications:
+
+| Kind | For example | Says it | Notifies |
+|---|---|---|---|
+| started | Claude has started in harness: add the budget guard. | yes | no |
+| working | Claude is editing bot.go in harness. | no | no |
+| task | Task two of four in tidedesk passed: fix the flaky test. | yes | no |
+| done | Claude has finished in harness. It took four minutes. | yes | yes |
+| failed | The batch in tidedesk is done: three of four tasks passed. It took twelve minutes. | yes | yes |
+| status | Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in tidedesk. | no | no |
+
+Those are the defaults; the settings change each one, pick the voice and the speed, and
+are kept in that browser. A done or failed notification stays until it is dismissed;
+clicking one opens its run or batch. Skip (or Esc) stops talking; Snooze keeps it quiet for
+15 minutes, an hour, or until unmuted; each run or batch going has a Mute this. "What an
+agent is doing" comes from its latest tool call (reading, editing, searching, running a
+command and the like), across the backends' different tool names. Ada opens quietly:
+what ended before it was opened is not news, and the first thing it says is what is going.
+A batch's own runs are told as the batch's, not twice.
+
+Talk to me listens for one sentence each time it is pressed: "status" (or "what are you
+doing?"), "skip", "quiet" ("for an hour", "until I unmute"), "unmute" and "repeat". These
+steer the bot only; nothing it hears or shows acts on hrn, which waits for the
+confirmations and audit log of #38.
+
+The sentences are made by hrn (`internal/watch/bot.go`, where they are tested) and pass
+through the same blanking of secret values as every page; the page only chooses which to
+say. She speaks with the browser's own speech synthesis, which needs one click on the page
+first ("Let me talk"). Voices on this computer come before online ones, since an online
+voice sends what it says (prompts included) to its maker; among them British ones, then
+a woman's, come first. Windows has British voices only with the English (United Kingdom)
+speech pack (Settings, Time and language, Speech); without it the page says so and speaks
+British English in the voice there is. Edge's online Natural voices (Sonia, Libby and
+Maisie are British women's) sound far better and can be chosen in the settings, knowing
+that each sentence then goes to Microsoft. Talk to me uses the browser's speech
+recogniser, which in Edge and Chrome sends what the microphone hears to Microsoft or Google
+while it listens. The microphone is allowed on the bot's page only. Opened over `--lan`,
+Ada speaks, but the browser allows neither notifications nor the microphone on a plain
+network address.
 
 ## Reports
 

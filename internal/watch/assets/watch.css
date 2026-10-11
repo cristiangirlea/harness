@@ -110,3 +110,43 @@ footer { margin-top: 30px; font-size: .8rem; overflow-wrap: anywhere; }
 .phones li { display: flex; align-items: center; gap: 14px; overflow-wrap: anywhere; }
 /* Dark on white whatever the theme: that is what a camera reads best. */
 .qr { width: 148px; height: 148px; flex: none; border-radius: 6px; }
+/* The bot: a small window's worth, in the same palette. */
+button { font: inherit; font-size: .9rem; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--link); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+button.primary { background: var(--link); border-color: var(--link); color: var(--card); font-weight: 650; }
+button.quiet { font-size: .8rem; padding: 2px 8px; color: var(--muted); }
+button:disabled { opacity: .6; cursor: default; }
+select, input[type="range"] { font: inherit; font-size: .9rem; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 100%; }
+input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--link); }
+.bot-head { display: flex; align-items: center; gap: 16px; }
+.bot-head h1 { font-size: 1.4rem; margin: 0; }
+/* Ada, a robot scarlet macaw (her drawing is the "ada" template). Origins
+   are in the drawing's own units: the lower beak turns on its hinge, the
+   eyelid closes from the top of the eye. */
+.bot-face { width: 120px; height: 120px; flex: none; overflow: visible; }
+.ada .jaw { transform-box: view-box; transform-origin: 165px 101px; }
+.ada .lid { transform-box: view-box; transform-origin: 148px 67px; transform: scaleY(0); animation: ada-blink 6s infinite; }
+.ada .ada-head { transform-box: view-box; transform-origin: 126px 130px; animation: ada-bob 4.5s ease-in-out infinite; }
+.ada .led { opacity: .75; }
+.bot.talking .ada .jaw { animation: ada-talk .17s ease-in-out infinite alternate; }
+.bot.talking .ada .led { animation: ada-glow .45s ease-in-out infinite alternate; }
+@keyframes ada-talk { to { transform: rotate(17deg); } }
+@keyframes ada-blink { 0%, 95%, 100% { transform: scaleY(0); } 97% { transform: scaleY(1); } }
+@keyframes ada-bob { 50% { transform: translateY(-2px) rotate(-1.5deg); } }
+@keyframes ada-glow { from { opacity: .55; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ada .lid, .ada .ada-head, .bot.talking .ada .jaw, .bot.talking .ada .led { animation: none; } }
+@media (max-width: 480px) { .bot-face { width: 96px; height: 96px; } }
+.bot-line { font-size: 1.05rem; margin: 4px 0 0; overflow-wrap: anywhere; }
+.bot-buttons, .bot-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 14px 0 4px; }
+.bot-now, .bot-log { padding-left: 0; list-style: none; margin: 0; }
+.bot-now li { padding: 8px 0; border-bottom: 1px solid var(--rule); overflow-wrap: anywhere; }
+.bot-now li:last-child { border-bottom: 0; }
+.bot-log li { padding: 5px 0; border-bottom: 1px solid var(--rule); overflow-wrap: anywhere; font-size: .92rem; }
+.bot-log li:last-child { border-bottom: 0; }
+.bot-log time { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; margin-right: 8px; }
+.bot-log .failed, .bot-log .failed a { color: var(--bad-fg); }
+.bot-log .done { color: var(--ok-fg); }
+/* A long voice name must not widen a narrow window: the list takes the room there is. */
+.bot-controls label { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.bot-controls select { min-width: 0; flex: 1 1 auto; }
