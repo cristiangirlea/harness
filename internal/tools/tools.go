@@ -86,18 +86,18 @@ func (w *Workspace) Resolve(p string) (string, error) {
 	return p, nil
 }
 
-// maxLinks bounds the junctions realPath follows, so a loop of them ends.
+// maxLinks bounds the links realPath follows itself, so a loop of them ends.
 const maxLinks = 255
 
 // realPath is p with the links on its longest existing prefix resolved:
 // where p is, or would be once created. On Windows that includes directory
-// junctions, which filepath.EvalSymlinks has stepped over since Go 1.23
+// junctions, which filepath.EvalSymlinks has not followed since Go 1.23
 // (links_windows.go), and short 8.3 names become long ones. It is "" when
-// the junctions lead round more than maxLinks times.
+// the links lead round more than maxLinks times.
 func realPath(p string) string {
 	for range maxLinks {
 		r := evalSymlinksPrefix(p)
-		next, ok := throughMountPoint(r)
+		next, ok := throughLink(r)
 		if !ok {
 			return r
 		}

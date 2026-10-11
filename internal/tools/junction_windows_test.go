@@ -57,6 +57,28 @@ func TestFileToolsDoNotFollowAJunctionOutOfTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestASymlinkThroughAJunctionOutIsRefused(t *testing.T) {
+	ws, tl := setup(t)
+	outside := outsideWithJunction(t, ws)
+	// filepath.EvalSymlinks follows s, fails at the junction past it, and a
+	// shorter prefix would leave s unresolved. links_windows_test.go shows
+	// the same without the privilege this needs.
+	if err := os.Symlink(filepath.Join(ws.Root, "out", "sub"), filepath.Join(ws.Root, "s")); err != nil {
+		t.Skipf("symbolic links need a privilege here: %v", err)
+	}
+	must(t, os.Symlink(filepath.Join(outside, "new.txt"), filepath.Join(ws.Root, "dangling")))
+
+	if out, err := call(t, ws, tl["read_file"], map[string]any{"path": "s/deeper.txt"}); err == nil {
+		t.Errorf("read_file read outside the workspace: %q", out)
+	}
+	if _, err := call(t, ws, tl["write_file"], map[string]any{"path": "dangling", "content": "x"}); err == nil {
+		t.Error("write_file wrote through a symbolic link to a file not there yet")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new.txt")); err == nil {
+		t.Error("write_file created a file outside the workspace")
+	}
+}
+
 func TestGrepDoesNotSearchThroughAJunctionOutOfTheWorkspace(t *testing.T) {
 	ws, tl := setup(t)
 	outsideWithJunction(t, ws)
