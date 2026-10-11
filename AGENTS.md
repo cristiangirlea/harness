@@ -74,29 +74,31 @@ or a fallback to one.
 
 ## Working rules
 
-- One branch per change (short name, as in `fix-batch-rm-deregistered`), one PR. **Everything
-  is tested before a merge**: the full local checks (`/check`), tests for every behaviour the
-  change adds or alters, and CI green on the owner's runner. Only then may an agent merge its PR,
-  and only through the PR (`gh pr merge <n> --merge --delete-branch --match-head-commit <sha>`),
-  when an independent review ran and its findings are fixed, a security read of the diff has
-  nothing open, and the head being merged is the commit all of that ran on. What could not be
-  tested is said in the PR and waits for the owner. Never auto-merge (`--auto`) or `--admin`,
-  never push to `main`, never tag or release: hand over the command. PLAN.md's merge step
-  (merge commit, delete the branch) is done through the PR under these conditions.
-- **Scope: a branch delivers what it is for, nothing else.** One purpose (one issue) per branch;
-  larger work is a feature branch whose pieces are branches merged into it. Plan the files the
-  change touches; one outside that list needs a reason in the PR. Something found on the way is
-  fixed here only if this branch caused it or it blocks the change; otherwise it gets an issue and
-  a branch of its own. No refactors, renames or extras the issue did not ask for. Merge `main` in
-  only for a conflict or once right before merging (then `/check` again).
+- **A branch delivers what it is for, nothing else.** One purpose per branch (one issue or PLAN.md
+  item; short name, as in `fix-batch-rm-deregistered`) and one PR, whose description lists the
+  files it touches and why. Larger work is a feature branch: each piece is a branch whose PR targets
+  the feature branch under every condition below, and the feature branch reaches `main` through one
+  PR reviewed for how the pieces fit. A problem found on the way is fixed here only if this branch
+  caused it or it stops the change meeting its acceptance criteria; otherwise it gets an issue and
+  a branch of its own. No refactors, renames or extras the item did not ask for.
+- **Everything is tested before a merge**: the full local checks (`/check`), tests for every
+  behaviour the change adds or alters, and CI green on the owner's runner. Only then may an agent
+  merge its PR, and only through the PR (`gh pr merge <n> --merge --delete-branch
+  --match-head-commit <sha>`), when an independent review ran and its blocking findings are fixed,
+  a security read of the diff has nothing open, and the head being merged is the commit all of
+  that ran on. Merge `main` in only for a conflict, or once before those final checks and review.
+  What could not be tested is said in the PR and waits for the owner. Never auto-merge (`--auto`)
+  or `--admin`, never push to `main`, never tag or release: hand over the command. PLAN.md's merge
+  step (merge commit, delete the branch) is done through the PR under these conditions.
 - Commit messages: the area first, lower case, then a plain sentence (`batch rm: name a single
   leftover file instead of counting it`), one logical change per commit. No emoji, no AI
   attribution anywhere (no `Co-Authored-By`, `Assisted-by` or "Generated with", in commits, PR
   text, comments or docs). Commits are `Cristian Girlea <cristiangirlea@gmail.com>`: check
   `git config user.email` first.
-- Self-review with `/code-review`. Fix each blocking finding as its own commit on the PR, with the
-  smallest change that closes it, and don't squash; non-blocking findings become issues linked
-  from the PR, not changes to it.
+- Self-review with `/code-review`. A finding is blocking when it is a defect this branch brings in,
+  a missing test for what it changes, a broken rule of this file, or a security hole: fix each as
+  its own commit, with the smallest change that closes it, and don't squash. Everything else
+  (problems already on `main`, improvements, style) becomes an issue linked from the PR.
 - Tests first, seen failing. On Windows the temp dir has 8.3 short names: compare paths after
   `filepath.EvalSymlinks`. Files are LF (`.gitattributes`).
 - Secrets are never read, printed or committed. Small diffs: don't restyle what you didn't change.
