@@ -60,6 +60,11 @@
     } catch (e) {
       return; // cancelled
     }
+    // The page moves to another line now: a take held for this one must not
+    // be kept under that one.
+    if (recording) stopTake();
+    take = null;
+    $('voice-note').textContent = '';
     await loadKept();
     folderName.textContent = 'Saving into "' + dir.name + '": ' + kept.size + ' of ' + lines.length + ' lines kept so far.';
     // A take finds its text by its number: if the lines have changed since,
