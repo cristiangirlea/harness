@@ -641,6 +641,9 @@ neither of them follows a run while it happens.
   It never happened in 288 runs on the owner's PC, so it is a loaded-runner race; reading
   the source, not a repro, is the evidence. With a count (`-fuzztime=Nx`) Go makes no
   deadline context and stops through `stop(nil)`.
+  The 2026-10-10 entry's FuzzParseSSE failure on #34 (`context deadline exceeded` at
+  0 execs/s, put down there to garbage from a 1 MiB buffer) fits this race after the
+  minimization stall below better; that entry stays as recorded.
 
   FuzzParseSSE also did no executions after a few seconds in every run looked at.
   `GODEBUG=fuzzdebug=1` showed all four workers minimizing "interesting" inputs, which Go
