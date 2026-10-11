@@ -48,7 +48,7 @@ Usage:
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR
                                  code; --lan=NAME only on one adapter (its name or address)
-  hrn bot [--addr HOST:PORT]      hrn watch's bot in a small window: says what hrn is doing in plain UK
+  hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
                                  English, out loud and as notifications, with skip, snooze and a few
                                  spoken commands; serves hrn watch on loopback unless one already does
   hrn mcp [--dir PATH] [--allow-dangerous-runs]
