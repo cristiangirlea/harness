@@ -533,6 +533,20 @@ func TestGCFindsABareRepositoryWhoseHeadIsALink(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "a repository inside build output: target/backup.git")
 }
 
+func TestGCKeepsAWorktreeWithAJunctionAboveItsBuildOutput(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows junctions on Windows; elsewhere a link is an untracked file")
+	}
+	f := newFixture(t)
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, filepath.Join("target", "precious.txt"), "not this worktree's\n")
+	wt, head := f.worktree("wt", "done")
+	link(t, filepath.Join(wt, "x"), outside) // git status sees only !! x/target/
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree above build output: x")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

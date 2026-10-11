@@ -575,6 +575,9 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 			kept = append(kept, strings.TrimSuffix(path, "/"))
 		case folder != "" && !walked[folder]:
 			walked[folder] = true
+			if why := linkAbove(dir, folder); why != "" {
+				return why
+			}
 			if why := buildRisk(dir, filepath.Join(dir, filepath.FromSlash(folder))); why != "" {
 				return why
 			}
@@ -700,6 +703,29 @@ func buildRisk(wt, folder string) string {
 		return "build output that cannot be read: " + rel(folder)
 	}
 	return why
+}
+
+// linkAbove checks the folders between worktree wt and a build folder in it
+// (folder, slash-separated): git on Windows looks and deletes through a
+// junction, so a build folder reached through one may lie anywhere. Each step
+// must be a plain folder or a link that stays inside wt.
+func linkAbove(wt, folder string) string {
+	p := wt
+	for _, part := range strings.Split(folder, "/") {
+		p = filepath.Join(p, part)
+		info, err := os.Lstat(p)
+		if err != nil {
+			return "a folder above build output cannot be read: " + part
+		}
+		if info.IsDir() || info.Mode().IsRegular() {
+			continue
+		}
+		if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), wt) {
+			r, _ := filepath.Rel(wt, p)
+			return "a link out of the worktree above build output: " + filepath.ToSlash(r)
+		}
+	}
+	return ""
 }
 
 // isBare reports a folder laid out as a bare repository (HEAD, objects, refs),
