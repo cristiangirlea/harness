@@ -44,8 +44,9 @@ const (
 type fact struct{ Label, Value string }
 
 type page struct {
-	Title string
-	Home  string
+	Title  string
+	Home   string
+	Script string // a page's own script besides watch.js, under /static
 }
 
 type eventView struct {

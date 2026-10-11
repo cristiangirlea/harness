@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -33,7 +33,14 @@ func Shell() (name string, argv func(cmd string) []string) {
 
 // System32\bash.exe starts WSL, which is a different filesystem view.
 func isWSLLauncher(path string) bool {
-	return runtime.GOOS == "windows" && filepath.Base(filepath.Dir(path)) == "System32"
+	return runtime.GOOS == "windows" && inSystem32(path)
+}
+
+// inSystem32 reports whether path's folder is System32 in any case: PATH often
+// spells it C:\WINDOWS\system32. Both separators count, so it tests anywhere.
+func inSystem32(path string) bool {
+	dir := path[:max(strings.LastIndexAny(path, `\/`), 0)]
+	return strings.EqualFold(dir[strings.LastIndexAny(dir, `\/`)+1:], "System32")
 }
 
 func runCommand() Tool {

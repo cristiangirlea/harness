@@ -48,6 +48,9 @@ Usage:
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR
                                  code; --lan=NAME only on one adapter (its name or address)
+  hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
+                                 English, out loud and as notifications, with skip, snooze and a few
+                                 spoken commands; serves hrn watch on loopback unless one already does
   hrn mcp [--dir PATH] [--allow-dangerous-runs]
                                  serve hrn as an MCP server on stdio; --dir is the default workspace (default: current
                                  directory); allow_dangerous is refused unless --allow-dangerous-runs is given
@@ -62,6 +65,10 @@ Usage:
   hrn eval list [-n N]            list saved evals, newest first
   hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
   hrn report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
+  hrn gc [--apply] [--grace D] [PATH...]
+                                 list worktrees whose work is merged (pull request merged at their commit, or a
+                                 finished batch's commit on origin's default branch); --apply removes them and
+                                 their branches. PATH is a repository or a folder of them (default: the current one)
 
 Run flags:
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
@@ -136,6 +143,10 @@ func main() {
 		err = cmdReport(os.Args[2:])
 	case "watch":
 		err = cmdWatch(os.Args[2:])
+	case "bot":
+		err = cmdBot(os.Args[2:])
+	case "gc":
+		code, err = cmdGC(os.Args[2:])
 	case "version", "--version", "-V":
 		info, _ := debug.ReadBuildInfo()
 		fmt.Println(versionLine(info))

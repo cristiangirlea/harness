@@ -1,0 +1,135 @@
+# Ada's voice: everyday lines. Original sentences, written for this script.
+# One line each; read naturally, with a short pause before and after.
+Good morning. The kettle's on, and the post has just arrived.
+I'll tell you as soon as the build has finished.
+The lorry turned left at the roundabout and stopped by the bakery.
+She measured the garden twice before ordering the new fence.
+Could you pass me the blue notebook on the kitchen table?
+It rained all through the autumn, so the river was high in November.
+Three thousand, four hundred and twelve tests passed this afternoon.
+Whether or not it works, we'll know by half past six.
+The thrush sang loudly on the thatched roof at dawn.
+He thought the theatre was through the archway on the left.
+Please queue at the second window, behind the yellow line.
+A fortnight's holiday in Cornwall sounds rather lovely.
+Is anything still running, or can I switch off for the night?
+Brilliant! That's exactly what we hoped for.
+Oh dear, the gate failed again on the same test.
+The sixth strength of the bridge was tested with heavy weights.
+Usually, the vision is clearer after a good night's sleep.
+The treasure was hidden beneath the garage, in a leisure chest.
+Judge the jam by its colour, not by the label on the jar.
+Charlotte chose cheese and chutney for the church picnic.
+Which witch wished for a wristwatch on Wednesday?
+The old oak tree stood alone on the hill above the village.
+Our new neighbours have a noisy dog called Biscuit.
+I'm afraid the connection dropped twice in the last hour.
+Shall I read the results again, more slowly this time?
+The quick brown fox is far too predictable for a test.
+Every evening, the ferry leaves the harbour at seven forty-five.
+Yes, you're quite right; I should have said so sooner.
+No, that isn't what I meant at all.
+Hmm, let me think about that for a moment.
+The parcel weighs two kilos and costs four pounds fifty to send.
+Fifteen, sixteen, seventeen, eighteen, nineteen, twenty.
+Thirty, forty, fifty, sixty, seventy, eighty, ninety, a hundred.
+One, two, three, four, five, six, seven, eight, nine, ten.
+Eleven, twelve, thirteen, fourteen.
+First, second, third, fourth, fifth.
+It's a quarter to nine on Thursday the twelfth of October.
+The meeting moved from Monday to Tuesday, then to Friday.
+January, February, March, April, May, June.
+July, August, September, October, November, December.
+The weather in Scotland changes four times a day.
+A cup of tea fixes almost anything, my gran used to say.
+Turn the volume down a little, please; it's rather loud.
+The hedgehog crept under the shed when the fireworks began.
+Have you seen my glasses? I had them a minute ago.
+That was quicker than I expected, which is a nice surprise.
+The library closes early on bank holidays.
+Squirrels buried acorns all over the lawn last autumn.
+Bright yellow daffodils lined the path to the cottage.
+The orchestra tuned up while the audience found their seats.
+Would you like me to remind you again in ten minutes?
+I can hear you clearly now; go ahead.
+Sorry, I didn't quite catch that. Could you say it again?
+That sounds like a job for tomorrow morning.
+The train to Edinburgh is delayed by twenty-five minutes.
+A choir of children sang carols outside the station.
+The jigsaw had a thousand pieces and three were missing.
+She zipped her jacket and stepped out into the drizzle.
+Thick fog rolled in from the sea and covered the pier.
+Plenty of people prefer porridge with a pinch of salt.
+The vet said the cat was perfectly healthy, if a little plump.
+Grab your umbrella; it's bucketing down out there.
+We watched the boats bobbing gently in the bay.
+The recipe calls for flour, butter, sugar and three eggs.
+A gentle breeze carried the smell of fresh bread down the street.
+Lunch is at one, unless the meeting runs over.
+The bus was so full that we decided to walk instead.
+It's not ideal, but it'll do for now.
+Honestly, I'm rather pleased with how that turned out.
+Careful on the stairs; they're a bit slippery.
+The shop round the corner sells the best crumpets in town.
+Visitors must sign in at reception before going upstairs.
+He whistled a cheerful tune while washing the dishes.
+The robin perched on the handle of the garden fork.
+Afterwards, they strolled along the canal towpath.
+The museum's newest exhibit is a vast whale skeleton.
+Don't worry; there's plenty of time before the deadline.
+Exactly how many biscuits did you eat?
+The north wind whipped across the moor all night.
+A yawning puppy curled up in the basket by the fire.
+Ice cream on a cold day is still a good idea.
+The bookshelf groaned under the weight of the encyclopaedias.
+Everything's ready. Shall we begin?
+Well done! That was the hardest part.
+Right, let's try that one more time.
+I'll keep quiet until you need me.
+Here's a summary of what happened while you were away.
+Nothing has changed since I last told you.
+Something has gone wrong, and I think I know why.
+Good news: everything passed on the first try.
+Bad news, I'm afraid: two tasks failed.
+The work is waiting for your review.
+I've paused the alerts for an hour.
+Welcome back. Shall I tell you what you missed?
+The rain finally stopped and a rainbow appeared over the hills.
+They argued for hours about the best way to cook a roast potato.
+Rather than guess, let's measure it properly.
+The firework display lit up the whole of the river.
+My favourite season is spring, when the evenings get longer.
+He jogged round the park twice and then sat on a bench.
+Zebras, giraffes and elephants live in the safari park.
+The postman always whistles as he walks up the drive.
+A thin layer of frost glittered on the car windscreen.
+The candle flickered and nearly went out.
+Our flight lands at Heathrow just after midnight.
+Grey clouds gathered over the castle as the tourists left.
+The children built an enormous sandcastle with a moat.
+You'll find the instructions in the second drawer down.
+The kitchen smells wonderful; what are you baking?
+Thank you, that's very kind of you.
+Not at all; it was my pleasure.
+Goodnight, and sleep well.
+# Hard sounds and clusters.
+The sixth sheikh's sixth sheep is sick.
+She sells seashells on the seashore, surely.
+Red lorry, yellow lorry, red lorry, yellow lorry.
+Thirty-three thousand thoughtful thinkers thought things through.
+Unique New York, you know you need unique New York.
+A proper copper coffee pot.
+Rural jurors rarely agree quickly.
+Strengths, lengths, widths and depths.
+The months, the clothes, the paths, the truths.
+Asked, risked, texts, glimpsed, sculpts.
+# Questions, statements and exclamations with the same words.
+The batch is done.
+The batch is done?
+The batch is done!
+You want me to stop.
+You want me to stop?
+Stop!
+It worked.
+It worked?
+It worked!
