@@ -170,13 +170,94 @@ func TestRequestsFromOutsideAreRefused(t *testing.T) {
 			t.Errorf("--lan, Host %s: status %d, want %d", host, rec.Code, want)
 		}
 	}
+}
 
-	req := httptest.NewRequest("POST", "/", nil)
-	req.Host = "127.0.0.1:8089"
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST: status %d, want 405", rec.Code)
+// Anything but GET and HEAD would act on hrn. It must carry hrn watch's key,
+// from this computer or the network alike; there is no action yet, so a keyed
+// request gets as far as the router and is refused there.
+func TestAnythingThatWouldActNeedsTheKey(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, tc := range []struct {
+		name, key, sent string
+		want            int
+	}{
+		{"no key set", "", "", 403},
+		{"no key sent", "k3y", "", 403},
+		{"wrong key", "k3y", "nope", 403},
+		{"right key", "k3y", "k3y", http.StatusMethodNotAllowed},
+	} {
+		req := httptest.NewRequest("POST", "/", nil)
+		req.Host, req.RemoteAddr = "127.0.0.1:8089", "127.0.0.1:5000"
+		if tc.sent != "" {
+			req.Header.Set("X-Hrn-Watch-Key", tc.sent)
+		}
+		rec := httptest.NewRecorder()
+		New(context.Background(), Options{Key: tc.key}).ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status %d, want %d", tc.name, rec.Code, tc.want)
+		}
+	}
+}
+
+// The door by method, origin and where the request comes from: viewing passes
+// without a key, everything else needs it, and the key does not lift the
+// other checks.
+func TestTheDoorLetsViewingThroughAndHoldsEverythingElse(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	h := New(context.Background(), Options{Key: "k3y", LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	for _, tc := range []struct {
+		name, method, host, remote, key string
+		header                          map[string]string
+		want                            int
+	}{
+		{"GET, no key", "GET", "127.0.0.1:8089", "127.0.0.1:5000", "", nil, 200},
+		{"HEAD, no key", "HEAD", "127.0.0.1:8089", "127.0.0.1:5000", "", nil, 200},
+		{"GET from the network, no key", "GET", "192.168.1.20:8089", "192.168.1.50:6000", "", nil, 200},
+		{"OPTIONS, no key", "OPTIONS", "127.0.0.1:8089", "127.0.0.1:5000", "", nil, 403},
+		{"POST from the network, no key", "POST", "192.168.1.20:8089", "192.168.1.50:6000", "", nil, 403},
+		{"POST from the network, key", "POST", "192.168.1.20:8089", "192.168.1.50:6000", "k3y", nil, http.StatusMethodNotAllowed},
+		{"POST cross-site with the key", "POST", "127.0.0.1:8089", "127.0.0.1:5000", "k3y", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
+		{"POST from a foreign origin with the key", "POST", "127.0.0.1:8089", "127.0.0.1:5000", "k3y", map[string]string{"Origin": "http://evil.example"}, 403},
+	} {
+		req := httptest.NewRequest(tc.method, "/", nil)
+		req.Host, req.RemoteAddr = tc.host, tc.remote
+		if tc.key != "" {
+			req.Header.Set("X-Hrn-Watch-Key", tc.key)
+		}
+		for k, v := range tc.header {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status %d, want %d", tc.name, rec.Code, tc.want)
+		}
+	}
+}
+
+// net/http answers "OPTIONS *" itself unless told not to, before any handler
+// and so before the door.
+func TestOptionsStarGoesThroughTheDoorToo(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go Serve(ctx, Options{}, ln)
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(conn, "OPTIONS * HTTP/1.1\r\nHost: "+ln.Addr().String()+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil || !strings.Contains(status, " 403 ") {
+		t.Fatalf("OPTIONS * answered %q, %v; want 403 from the door", status, err)
 	}
 }
 
@@ -534,17 +615,33 @@ func TestTheIndexSaysWhereAPhoneCanOpenIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	ctx := context.Background()
 	rec := httptest.NewRecorder()
-	New(ctx, Options{}).ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8089/", nil))
+	local := httptest.NewRequest("GET", "http://127.0.0.1:8089/", nil)
+	local.RemoteAddr = "127.0.0.1:5000"
+	New(ctx, Options{}).ServeHTTP(rec, local)
 	if body := rec.Body.String(); !strings.Contains(body, "hrn watch --lan") {
 		t.Errorf("without --lan the index says how to reach it from the network:\n%s", body)
 	}
+	// With --lan, the PC's own view lists each phone link with its QR code.
+	lan := New(ctx, Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089", Interface: "Wi-Fi", URL: "http://192.168.1.20:8089/"}}})
+	req := httptest.NewRequest("GET", "http://127.0.0.1:8089/", nil)
+	req.RemoteAddr = "127.0.0.1:5000"
 	rec = httptest.NewRecorder()
-	New(ctx, Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089", Interface: "Wi-Fi", URL: "http://192.168.1.20:8089/"}}}).
-		ServeHTTP(rec, httptest.NewRequest("GET", "http://127.0.0.1:8089/", nil))
+	lan.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`href="http://192.168.1.20:8089/"`, "Wi-Fi", "anyone on"} {
+	for _, want := range []string{`href="http://192.168.1.20:8089/"`, "Wi-Fi", "anyone on", `<svg class="qr"`, `<path d="M`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("with --lan the index lacks %q", want)
+			t.Errorf("with --lan the PC's index lacks %q", want)
+		}
+	}
+	// The phone itself needs neither the links nor the PC's instructions.
+	req = httptest.NewRequest("GET", "http://192.168.1.20:8089/", nil)
+	req.RemoteAddr = "192.168.1.50:6000"
+	rec = httptest.NewRecorder()
+	lan.ServeHTTP(rec, req)
+	body = rec.Body.String()
+	for _, unwanted := range []string{`<svg class="qr"`, "Only this computer", "hrn watch --lan"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("a phone's view of the index shows %q", unwanted)
 		}
 	}
 }
@@ -654,5 +751,146 @@ func TestTheRunPageStreamsOnlyWhatItDidNotShow(t *testing.T) {
 	m, ok := s.next(t)
 	if !ok || m.event != "item" || !strings.Contains(m.data, "the fourth step") {
 		t.Fatalf("the stream began with %+v, %v; want the step written after the page", m, ok)
+	}
+}
+
+// --lan=NAME serves one network: the adapter named (any case) or the address
+// given. A name that matches nothing says which there are.
+func TestLanCanBeNarrowedToOneAdapter(t *testing.T) {
+	all := []lanAddr{{"192.168.1.218", "Ethernet 3"}, {"172.22.176.1", "vEthernet (WSL)"}, {"192.168.28.1", "VMware Network Adapter VMnet1"}}
+	for _, tc := range []struct {
+		only string
+		want string
+	}{
+		{"", "192.168.1.218,172.22.176.1,192.168.28.1"},
+		{"Ethernet 3", "192.168.1.218"},
+		{"ethernet 3", "192.168.1.218"},
+		{"172.22.176.1", "172.22.176.1"},
+	} {
+		got, err := pickLAN(all, tc.only)
+		var ips []string
+		for _, a := range got {
+			ips = append(ips, a.ip)
+		}
+		if err != nil || strings.Join(ips, ",") != tc.want {
+			t.Errorf("pickLAN(%q) = %v, %v; want %s", tc.only, ips, err, tc.want)
+		}
+	}
+	_, err := pickLAN(all, "Wi-Fi")
+	if err == nil || !strings.Contains(err.Error(), "Ethernet 3 (192.168.1.218)") {
+		t.Errorf("an unknown adapter: %v; want the ones there are", err)
+	}
+}
+
+// A token or key that ended up in a run (an agent ran env, say) is not shown
+// to anyone: watch knows the values in its own environment and blanks them.
+func TestSecretValuesFromTheEnvironmentAreRedacted(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const key = "sk-ant-api03-test-0123456789abcdefXYZ"
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	t.Setenv("SHORT_TOKEN", "abc") // too short to be worth hiding, and would blank common text
+	w, err := runlog.Create("fake", agent.Task{Prompt: "show env"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: "PATH=/bin\nANTHROPIC_API_KEY=" + key + "\nabc"})
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/run/"+w.ID())
+	if strings.Contains(page, key) || !strings.Contains(page, "ANTHROPIC_API_KEY=[redacted]") {
+		t.Errorf("the run page shows the key, or no redaction:\n%s", page)
+	}
+	s, stop := openStream(t, srv.URL+"/stream/run/"+w.ID(), "")
+	defer stop()
+	w.Event(agent.Event{Kind: agent.EventText, Text: "the key is " + key})
+	for {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("stream ended")
+		}
+		if strings.Contains(m.data, "the key is") {
+			if strings.Contains(m.data, key) {
+				t.Errorf("the stream shows the key: %s", m.data)
+			}
+			break
+		}
+	}
+	_ = w.Close(agent.Result{})
+}
+
+// The footer names this computer's hrn home, and with it the user name; a
+// phone on the network is not told it, nor the paths in an error.
+func TestThePhoneIsNotToldTheHomePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	h := New(context.Background(), Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	for _, path := range []string{"/", "/run/20991231-235959-abcdef"} {
+		req := httptest.NewRequest("GET", "http://192.168.1.20:8089"+path, nil)
+		req.RemoteAddr = "192.168.1.50:6000"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if strings.Contains(rec.Body.String(), home) {
+			t.Errorf("%s shows the phone the hrn home %s", path, home)
+		}
+		local := httptest.NewRequest("GET", "http://127.0.0.1:8089"+path, nil)
+		local.RemoteAddr = "127.0.0.1:5000"
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, local)
+		if path == "/" && !strings.Contains(rec.Body.String(), home) {
+			t.Errorf("this computer's view of / should still name the hrn home")
+		}
+	}
+}
+
+// A key cut in two by a page's length cap must not show either half: secrets
+// are blanked in what a record says before anything is cut, as well as in
+// what the page says.
+func TestASecretCutByACapDoesNotShowEitherHalf(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const key = "sk-ant-api03-Q9w8E7r6T5y4U3i2O1p0-abcdefghijklmnop"
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	w, err := runlog.Create("fake", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(agent.Result{})
+	head := strings.Repeat("a", resultHead-20)
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: head + key + strings.Repeat("b", 30<<10)})
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: strings.Repeat("c", 30<<10) + key[:30] + key[30:] + strings.Repeat("d", resultTail-25)})
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: strings.Repeat("e", 100) + key})                        // the one-line summary's cut
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Input: []byte(`{"command":"echo ` + key + `"}`)}) // JSON form
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/run/"+w.ID())
+	for i := 0; i+16 <= len(key); i += 4 {
+		if strings.Contains(page, key[i:i+16]) {
+			t.Fatalf("the page shows part of the key: %q", key[i:i+16])
+		}
+	}
+}
+
+// A stream that fails names files in its error; a phone is told only that it
+// failed.
+func TestAStreamErrorDoesNotTellThePhoneThePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	w, err := runlog.Create("fake", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(agent.Result{})
+	h := New(context.Background(), Options{Poll: 5 * time.Millisecond, LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	for _, remote := range []string{"192.168.1.50:6000", "127.0.0.1:5000"} {
+		req := httptest.NewRequest("GET", "http://192.168.1.20:8089/stream/run/"+w.ID()+"?after=999999.0", nil)
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if !strings.Contains(body, "event: problem") {
+			t.Fatalf("%s: no problem event in %q", remote, body)
+		}
+		if remote != "127.0.0.1:5000" && strings.Contains(body, filepath.Base(home)) {
+			t.Errorf("the phone was told the path: %q", body)
+		}
 	}
 }

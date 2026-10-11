@@ -5,11 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/qr"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/watch"
 )
@@ -19,7 +22,8 @@ import (
 func cmdWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	addr := fs.String("addr", watch.DefaultAddr, "")
-	lan := fs.Bool("lan", false, "")
+	var lan lanFlag
+	fs.Var(&lan, "lan", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -28,6 +32,9 @@ func cmdWatch(args []string) error {
 		return errors.New("invalid arguments")
 	}
 	if fs.NArg() != 0 {
+		if lan.on && lan.only == "" {
+			return fmt.Errorf("--lan takes its adapter after an equals sign: --lan=%q", strings.Join(fs.Args(), " "))
+		}
 		return fmt.Errorf("unexpected argument %q; the address is set with --addr", fs.Arg(0))
 	}
 	bind, err := watch.LoopbackAddr(*addr)
@@ -39,10 +46,10 @@ func cmdWatch(args []string) error {
 		return err
 	}
 	lns, opt := []net.Listener{ln}, watch.Options{}
-	if *lan {
+	if lan.on {
 		// The same port on the network as on this computer, when it was named.
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
-		more, eps, err := watch.ListenLAN(port)
+		more, eps, err := watch.ListenLAN(port, lan.only)
 		if err != nil {
 			ln.Close()
 			return err
@@ -51,17 +58,75 @@ func cmdWatch(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if *lan {
-		fmt.Printf("hrn watch: http://%s (Ctrl+C stops it)\n", ln.Addr())
-		for _, ep := range opt.LAN {
-			fmt.Printf("  on your network: %s (%s)\n", ep.URL, ep.Interface)
-		}
-		fmt.Println("  no login yet: anyone on each of these networks can read your runs while this runs;")
-		fmt.Println("  a VPN listed here shares them with its network too")
-	} else {
-		fmt.Printf("hrn watch: http://%s (this computer only; --lan for a phone; Ctrl+C stops it)\n", ln.Addr())
-	}
+	printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
 	return watch.Serve(ctx, opt, lns...)
+}
+
+// printWatchStart says where the page is. With one network address it also
+// draws that link's QR code, for a phone to scan; with several, the codes
+// are on the page itself. color forces the code white on black: on a
+// terminal with a light theme it would otherwise come out inverted.
+func printWatchStart(w io.Writer, local string, lan bool, eps []watch.Endpoint, color bool) {
+	if !lan {
+		fmt.Fprintf(w, "hrn watch: http://%s (this computer only; --lan for a phone; Ctrl+C stops it)\n", local)
+		return
+	}
+	fmt.Fprintf(w, "hrn watch: http://%s (Ctrl+C stops it)\n", local)
+	for _, ep := range eps {
+		fmt.Fprintf(w, "  on your network: %s (%s)\n", ep.URL, ep.Interface)
+	}
+	fmt.Fprintln(w, "  viewing needs no login: anyone on each of these networks can read your runs while this runs;")
+	fmt.Fprintln(w, "  a VPN listed here shares them with its network too")
+	if len(eps) != 1 {
+		fmt.Fprintf(w, "  QR codes for each are on http://%s/ (or name one network with --lan=NAME)\n", local)
+		return
+	}
+	c, err := qr.Encode(eps[0].URL)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "\nscan with your phone (%s):\n", eps[0].Interface)
+	for _, line := range strings.Split(strings.TrimSuffix(c.Terminal(), "\n"), "\n") {
+		if color {
+			line = "\x1b[97;40m" + line + "\x1b[0m"
+		}
+		fmt.Fprintln(w, line)
+	}
+}
+
+// lanFlag is --lan (every private network address) or --lan=NAME (one
+// adapter, by name or address); --lan=false turns it off again.
+type lanFlag struct {
+	on   bool
+	only string
+}
+
+func (f *lanFlag) IsBoolFlag() bool { return true }
+
+func (f *lanFlag) String() string {
+	if f == nil || !f.on {
+		return "false"
+	}
+	if f.only == "" {
+		return "true"
+	}
+	return f.only
+}
+
+func (f *lanFlag) Set(s string) error {
+	if strings.TrimSpace(s) == "" {
+		// An unset variable in --lan="$ADAPTER" must not widen to every adapter.
+		return errors.New("--lan= needs an adapter's name or address; plain --lan serves them all")
+	}
+	switch strings.ToLower(s) {
+	case "true":
+		f.on, f.only = true, ""
+	case "false":
+		f.on, f.only = false, ""
+	default:
+		f.on, f.only = true, s
+	}
+	return nil
 }
 
 // followRun prints a run as it is recorded, until its result is saved: the

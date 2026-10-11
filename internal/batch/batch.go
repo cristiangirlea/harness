@@ -33,7 +33,7 @@ import (
 // override the Spec defaults of the same name.
 type Spec struct {
 	Dir      string `json:"dir,omitempty"`      // any path inside the repository; default: the spec file's directory
-	Parallel int    `json:"parallel,omitempty"` // agents at once; default 2
+	Parallel int    `json:"parallel,omitempty"` // agents at once; default DefaultParallel
 	Backend  string `json:"backend,omitempty"`  // default: api when credentials exist, else claude
 	// Options are the run options every task starts from: model, mode (default
 	// auto; nothing can approve prompts in a batch), the budgets (per attempt),
@@ -49,7 +49,10 @@ type Spec struct {
 }
 
 // DefaultParallel is how many agents run at once when a spec does not say.
-const DefaultParallel = 2
+// Four: the owner's PC has 32 threads, and an agent spends most of its time
+// waiting on its model; a gate that builds already takes every core, so more
+// than a few at once mostly compete for memory and disk.
+const DefaultParallel = 4
 
 type Task struct {
 	ID      string `json:"id,omitempty"` // branch hrn/<id> and worktree .hrn/worktrees/<id>; default t1, t2, ...
@@ -858,21 +861,28 @@ func save(res Result) error {
 	}
 	// Written beside the record and renamed over it: `hrn batch show` reads
 	// this file while the batch is still running, and half a file is not a
-	// record. Rename replaces an existing file on Windows too, but not while a
-	// reader has it open (Go opens files without FILE_SHARE_DELETE), and hrn
-	// watch reads it every second: try again for a moment before giving up.
-	path := filepath.Join(batchesDir(), res.ID+".json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// record. hrn watch reads it all the time, for every page and stream open
+	// on it, and on Windows os.Rename (MoveFileEx) refuses to replace a file
+	// that anyone has open. os.Root's Rename replaces it with POSIX semantics
+	// (Windows 10 and later, falling back by itself where the file system
+	// lacks them), which readRecord's FILE_SHARE_DELETE readers allow. The
+	// retries cover any other reader for a moment.
+	root, err := os.OpenRoot(batchesDir())
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	name := res.ID + ".json"
+	if err := root.WriteFile(name+".tmp", data, 0o644); err != nil {
 		return err
 	}
 	for try := 1; ; try++ {
-		err = os.Rename(tmp, path)
+		err = root.Rename(name+".tmp", name)
 		if err == nil {
 			return nil
 		}
 		if try == 20 {
-			_ = os.Remove(tmp)
+			_ = root.Remove(name + ".tmp")
 			return err
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1114,7 +1124,7 @@ func LoadResult(id string) (Result, error) {
 	if id == "" || strings.ContainsAny(id, `/\`) {
 		return res, fmt.Errorf("invalid batch id %q", id)
 	}
-	data, err := os.ReadFile(filepath.Join(batchesDir(), id+".json"))
+	data, err := readRecord(filepath.Join(batchesDir(), id+".json"))
 	if err != nil {
 		return res, err
 	}
