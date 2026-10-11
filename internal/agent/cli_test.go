@@ -109,6 +109,7 @@ func TestTheApiGuardAndClaudesRulesRefuseTheSameCommands(t *testing.T) {
 	rules := claudeDenyRules()
 	for _, command := range []string{
 		"git push", "git push origin main", "git config remote.origin.pushurl https://x", "git remote set-url --push origin x",
+		"git config --local url.x.PushInsteadOf y", "git -c url.a.PushInsteadOf=b fetch", // git's keys ignore case; the rules do not
 		"unset GIT_CONFIG_COUNT", "env -u GH_CONFIG_DIR gh pr merge 1",
 		"gh pr merge 39 --merge", "gh release create v1", "gh release upload v1 a.zip", "gh repo edit --visibility public",
 		"gh repo delete o/r --yes", "gh api repos/o/r -X DELETE", "gh api repos/o/r/merge --method PUT",

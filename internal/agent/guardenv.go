@@ -7,8 +7,9 @@ import "github.com/cristiangirlea/harness/internal/tools"
 // and a bare "*" as any text, so "npm run deploy*" takes deploy:prod as well.
 var guardCommands = []string{
 	"git push", "git push *",
-	// Steering a push around the guarded environment's dead end.
-	"git config *push*", "git -c *push*", "git remote set-url --push *",
+	// Steering a push around the guarded environment's dead end; the rules
+	// match case, git's keys do not.
+	"git config *push*", "git config *Push*", "git -c *push*", "git -c *Push*", "git remote set-url --push *",
 	"unset GIT_CONFIG*", "unset GH_CONFIG_DIR*", "env -u *",
 	"gh pr merge *", "gh release create *", "gh release upload *", "gh release edit *", "gh release delete *",
 	"gh repo delete *", "gh repo edit *", "gh repo archive *", "gh repo rename *",
