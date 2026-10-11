@@ -1020,7 +1020,7 @@ pairs as data.
 
 `result.json` also includes `context_tokens` when known: the last model call's input
 tokens, including cache reads and writes, rather than the sum across the run. The
-api backend records its last message's usage; claude records the last assistant
+api backend records its last message's usage; claude records its main loop's last assistant
 message's usage; opencode records the last step's usage. Codex's `turn.completed`
 usage totals the model calls in its agent turn, and gemini's final stats total the
 run, so neither supplies a last model call's context size. A backend with no usage
