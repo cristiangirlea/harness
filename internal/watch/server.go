@@ -415,6 +415,21 @@ func (s *server) lists() lists {
 		}
 		l.Batches = append(l.Batches, batchRow(s.cleanBatch(res)))
 	}
+	// Every batch attempt is a run too: link each one back to its batch, from
+	// every batch on disk, not only the 20 listed.
+	batchOf := map[string]string{}
+	for _, res := range batches {
+		for _, t := range res.Tasks {
+			for _, a := range t.Attempts {
+				if a.RunID != "" {
+					batchOf[a.RunID] = res.ID
+				}
+			}
+		}
+	}
+	for i := range l.Runs {
+		l.Runs[i].Batch = batchOf[l.Runs[i].ID]
+	}
 	return l
 }
 
