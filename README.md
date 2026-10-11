@@ -812,9 +812,34 @@ British English in the voice there is. Edge's online Natural voices (Sonia, Libb
 Maisie are British women's) sound far better and can be chosen in the settings, knowing
 that each sentence then goes to Microsoft. Talk to me uses the browser's speech
 recogniser, which in Edge and Chrome sends what the microphone hears to Microsoft or Google
-while it listens. The microphone is allowed on the bot's page only. Opened over `--lan`,
-Ada speaks, but the browser allows neither notifications nor the microphone on a plain
-network address.
+while it listens. The microphone is allowed on Ada's page and the voice page below only.
+Opened over `--lan`, Ada speaks, but the browser allows neither notifications nor the
+microphone on a plain network address.
+
+#### Recording Ada's voice
+
+`/voice` (linked from Ada's page on this computer) is where someone records the voice Ada
+will speak in (#83). It works on this computer only, and is refused over `--lan`: it uses
+the microphone, and the recordings are that person's voice.
+
+- **Read the lines**: 523 lines, one at a time, mixing everyday British English (original
+  sentences covering English's sounds, questions, numbers and dates) with Ada's own
+  sentences, made by the functions she speaks with over many backends, places, tasks and
+  durations. Record and stop with Space, play back with P, keep with Enter, retake with R,
+  skip with S, go back with the left arrow. Each take is judged: too short, clipped, too
+  quiet, or good.
+- **Just record me**: one long recording for talking, to someone or to ChatGPT's voice mode,
+  with headphones, so that only the speaker's voice reaches the microphone. It is saved in
+  parts of five minutes and when it stops.
+
+The page asks for the microphone as it is (echo cancellation, noise suppression and
+automatic gain off, one channel) and says so if the browser filters it anyway, as it may
+while another tab uses the microphone. Takes are 16-bit mono WAV at the browser's audio rate (usually 48 kHz).
+They are saved by the browser into a folder the person picks (`0001.wav`, … with
+`metadata.csv` as `id|text`, and `talk-<time>-<part>.wav`), never sent to hrn watch, which
+only serves the page; picking the same folder again carries on at the first line not kept.
+A browser without folder access (Firefox) downloads each take instead, named by its line.
+A line's number never changes, so takes from different sessions line up.
 
 ## Reports
 
