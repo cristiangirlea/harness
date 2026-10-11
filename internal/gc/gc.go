@@ -348,10 +348,7 @@ func scanRepo(ctx context.Context, repo string, owners map[string]owner, cwd str
 		return nil, nil // the first entry is the main checkout
 	}
 	facts := &repoFacts{repo: repo, gh: opt.GH, worktrees: entryPaths(entries)}
-	if _, err := gitOut(ctx, repo, "fetch", "--quiet", "origin"); err != nil {
-		facts.fetchErr = err
-	}
-	facts.def = defaultBranch(ctx, repo)
+	facts.def, facts.fetchErr = originDefault(ctx, repo)
 
 	var wts []Worktree
 	for _, e := range entries[1:] {
@@ -386,8 +383,6 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 			return Keep, "batch " + o.id + " is still running"
 		case facts.fetchErr != nil:
 			return Keep, "fetch failed: " + firstLine(facts.fetchErr.Error())
-		case facts.def == "":
-			return Keep, "origin names no default branch"
 		case !isAncestor(ctx, facts.repo, w.Head, facts.def):
 			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, facts.def)
 		}
@@ -580,16 +575,28 @@ func keepHolders(all []Worktree, repos []string) {
 	}
 }
 
-func defaultBranch(ctx context.Context, repo string) string {
-	if ref, err := gitOut(ctx, repo, "rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil && ref != "origin/HEAD" {
-		return ref
+// originDefault asks origin which branch its HEAD names now and fetches that
+// branch by name, so neither a stale origin/HEAD nor a narrow fetch refspec
+// can stand in for it. It returns the tracking ref, like origin/main.
+func originDefault(ctx context.Context, repo string) (string, error) {
+	out, err := gitOut(ctx, repo, "ls-remote", "--symref", "origin", "HEAD")
+	if err != nil {
+		return "", err
 	}
-	for _, ref := range []string{"origin/main", "origin/master"} {
-		if _, err := gitOut(ctx, repo, "rev-parse", "--verify", "--quiet", ref); err == nil {
-			return ref
+	var name string
+	for _, line := range strings.Split(out, "\n") {
+		if rest, ok := strings.CutPrefix(line, "ref: refs/heads/"); ok {
+			name, _, _ = strings.Cut(rest, "\t")
+			break
 		}
 	}
-	return ""
+	if name == "" {
+		return "", errors.New("origin does not say which branch is its default")
+	}
+	if _, err := gitOut(ctx, repo, "fetch", "--quiet", "origin", "+refs/heads/"+name+":refs/remotes/origin/"+name); err != nil {
+		return "", err
+	}
+	return "origin/" + name, nil
 }
 
 // isAncestor reports whether commit a is reachable from b. A commit git does

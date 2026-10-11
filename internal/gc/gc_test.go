@@ -372,6 +372,19 @@ func TestGCRemovesAFinishedBatchWorktreeOnlyWhenItsCommitIsOnTheDefaultBranch(t 
 	wantVerdict(t, find(t, wts, running), Keep, "still running")
 }
 
+func TestGCJudgesBatchWorktreesAgainstTheBranchOriginNamesNow(t *testing.T) {
+	f := newFixture(t)
+	git(t, f.repo, "push", "-q", "origin", "main:develop")
+	git(t, f.origin, "symbolic-ref", "HEAD", "refs/heads/develop")
+	// This clone still believes origin's default is main.
+	landed, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "landed"), "hrn/landed")
+	f.land("hrn/landed")
+	saveBatch(t, "20261011-100000-aaaaaa", f.repo,
+		batch.TaskResult{ID: "landed", Status: batch.StatusPass, Branch: "hrn/landed", Worktree: landed})
+
+	wantVerdict(t, find(t, f.scan(), landed), Keep, "not on origin/develop")
+}
+
 func TestGCFailsClosedWhenGitHubOrTheFetchIsUnavailable(t *testing.T) {
 	f := newFixture(t)
 	merged, head := f.worktree("wt-merged", "done")

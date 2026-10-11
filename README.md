@@ -682,7 +682,8 @@ worktree only on proof that its work is merged:
   merged at the worktree's commit, or at a later commit that contains it, more than `--grace`
   ago (default 1h, so a session finishing up after its merge keeps its folder).
 - **Made by an hrn batch** (a batch record names the folder): the batch has no task still
-  running, and the worktree's commit is on origin's default branch after a fetch.
+  running, and the worktree's commit is on the branch origin names as its default
+  (`git ls-remote --symref`), fetched by name just before.
 
 And only when nothing would be lost with it: the tree is clean (untracked files count), its
 ignored files are build output (`target`, `node_modules`, `dist`, `.venv` and the like, or any
