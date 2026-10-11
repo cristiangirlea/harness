@@ -70,17 +70,28 @@ func CreateContinuing(backend string, task agent.Task, continues string) (*Write
 	return create(backend, task, continues)
 }
 
-func create(backend string, task agent.Task, continues string) (*Writer, error) {
+// createEventsFile opens a new run's events.jsonl; tests replace it to make the open fail.
+var createEventsFile = func(path string) (io.WriteCloser, error) { return os.Create(path) }
+
+// create starts a run record. If it fails after making the run's directory, it removes the
+// directory again, so a run that never started leaves no half record behind (hrn exec promises a
+// rejected start creates none).
+func create(backend string, task agent.Task, continues string) (w *Writer, err error) {
 	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	w := &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues}}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues}}
 	if err := writeJSON(filepath.Join(dir, "task.json"), w.rec); err != nil {
 		return nil, err
 	}
-	f, err := os.Create(filepath.Join(dir, "events.jsonl"))
+	f, err := createEventsFile(filepath.Join(dir, "events.jsonl"))
 	if err != nil {
 		return nil, err
 	}
