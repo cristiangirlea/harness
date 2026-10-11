@@ -121,11 +121,15 @@ select, input[type="range"] { font: inherit; font-size: .9rem; color: var(--fg);
 input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--link); }
 .bot-head { display: flex; align-items: center; gap: 16px; }
 .bot-head h1 { font-size: 1.4rem; margin: 0; }
-/* Ada: hair, a face, eyes and a mouth that moves while she talks. */
+/* Ada, a robot owl: ear tufts, big eyes with lashes, and a beak that moves
+   while she talks. */
 .bot-face { width: 72px; height: 72px; flex: none; fill: none; stroke: var(--link); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
-.bot-face .hair { fill: var(--eyebrow); stroke: none; }
-.bot-face .skin { fill: var(--card); }
+.bot-face .tuft { fill: var(--eyebrow); stroke: none; }
+.bot-face .shell, .bot-face .ring { fill: var(--card); }
+.bot-face .seam, .bot-face .lash { stroke-width: 2; }
+.bot-face .rivet { fill: var(--link); stroke: none; }
 .bot-face .eye { fill: var(--link); stroke: none; }
+.bot-face .beak { fill: var(--warn-fg); stroke: none; }
 .bot.talking .bot-face { stroke: var(--focus); }
 .bot.talking .bot-face .eye { fill: var(--focus); }
 .bot.talking .bot-face .mouth { animation: talk .3s ease-in-out infinite alternate; transform-box: fill-box; transform-origin: center; }
