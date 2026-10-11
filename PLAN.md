@@ -737,6 +737,21 @@ neither of them follows a run while it happens.
   minimization away). The counts (500000x for the codec, 150000x for SSE) keep each step
   at about 10 s on the lab runner. Part of why minimization was slow is the parser's own
   cost, quadratic in its deltas: #71.
+- 2026-10-11: Streamed text in linear time (#71). `parseSSE` added each text, thinking and
+  signature delta to its block's string, which copied the whole text every time:
+  - a stream of 64,000 small deltas (about one maximum-length response) parsed in 2.75 s;
+  - 32,000 deltas in a 3 MB stream allocated 1.27 GB, about 410 times the stream.
+
+  It also slowed FuzzParseSSE's minimization of large inputs (#70). Each block's deltas
+  now go into a `strings.Builder`, written into the block at its `content_block_stop`, or
+  by a `defer` when the parse ends any other way. The partial response of a cut-off
+  stream keeps what arrived (the api loop reads only its usage today), and a
+  `message_start` first writes what was gathered into the blocks it belongs to, since its
+  decode can replace or shrink the content even when it then fails (the review found
+  that path panicking; it is a FuzzParseSSE seed now). The blocks and the `onDelta` calls
+  are the same byte for byte, so the history stays append-only. 64,000 deltas now parse
+  in 59 ms. The test checks bytes allocated (under 32 times the stream; about 10 now),
+  not time, so a busy runner cannot make it flaky.
 - 2026-10-11: Short-name temp dirs in execproto's tests (#57). Two continuation tests have
   failed on the Windows runner since #53. They seeded the earlier run with a raw
   `t.TempDir()`, which the runner spells in 8.3 short names (`C:\WINDOWS\SERVIC~1\...`), and
