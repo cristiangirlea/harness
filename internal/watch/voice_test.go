@@ -3,8 +3,10 @@ package watch
 import (
 	"context"
 	"fmt"
+	"html"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -94,6 +96,33 @@ func TestRecordedLinesKeepTheirNumbers(t *testing.T) {
 		n, text, _ := strings.Cut(row, "|")
 		if n != strconv.Itoa(i+1) || lines[i].Text != text {
 			t.Errorf("line %s was %q and is now %q: recorded takes would lose their text", n, text, lines[i].Text)
+		}
+	}
+}
+
+// The page shows each line exactly as it was made, through the template's
+// escaping and the redaction of secret values, and Ada's replies recorded here
+// are the ones her page says.
+func TestThePageShowsTheLinesAsTheyAreAndAdasRepliesAreHers(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	req := httptest.NewRequest("GET", "http://127.0.0.1:8089/voice", nil)
+	req.RemoteAddr = "127.0.0.1:5000"
+	rec := httptest.NewRecorder()
+	New(context.Background(), Options{}).ServeHTTP(rec, req)
+	items := regexp.MustCompile(`<li data-n="(\d+)">([^<]*)</li>`).FindAllStringSubmatch(rec.Body.String(), -1)
+	lines := voiceLines()
+	if len(items) != len(lines) {
+		t.Fatalf("the page shows %d lines, want %d", len(items), len(lines))
+	}
+	for i, m := range items {
+		if m[1] != strconv.Itoa(lines[i].N) || html.UnescapeString(m[2]) != lines[i].Text {
+			t.Errorf("line %d shows as %s %q, want %q", lines[i].N, m[1], html.UnescapeString(m[2]), lines[i].Text)
+		}
+	}
+	page := mustAsset("assets/bot.js") + mustAsset("assets/watch.tmpl")
+	for _, r := range adaReplies {
+		if !strings.Contains(page, r) {
+			t.Errorf("Ada no longer says %q on her page: change it in voice.go too, and re-record it", r)
 		}
 	}
 }

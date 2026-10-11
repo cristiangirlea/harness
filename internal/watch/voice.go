@@ -186,15 +186,17 @@ func adaLines() []string {
 		}
 		out = append(out, statusOf(snap))
 	}
-	// Her replies on the page (assets/bot.js).
-	out = append(out,
-		"I'm Ada. I'll tell you what hrn is doing.",
-		"Hello, I'm Ada. This is how I sound. I'll tell you when something starts, and when it's done.",
-		"I'll keep quiet until you unmute me.", "Quiet for an hour.", "Quiet for 15 minutes.",
-		"Right, I'll tell you again.",
-		"Sorry, I didn't catch that. You can say status, skip, quiet, unmute or repeat.",
-	)
-	return out
+	return append(out, adaReplies...)
+}
+
+// adaReplies are what she says on her page (assets/bot.js, watch.tmpl); a
+// test keeps them the same there and here.
+var adaReplies = []string{
+	"I'm Ada. I'll tell you what hrn is doing.",
+	"Hello, I'm Ada. This is how I sound. I'll tell you when something starts, and when it's done.",
+	"I'll keep quiet until you unmute me.", "Quiet for an hour.", "Quiet for 15 minutes.",
+	"Right, I'll tell you again.",
+	"Sorry, I didn't catch that. You can say status, skip, quiet, unmute or repeat.",
 }
 
 type voicePage struct {
