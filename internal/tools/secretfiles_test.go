@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestSecretFile(t *testing.T) {
+func TestSecretFileKnowsTheSecretNamesAndOnlyThem(t *testing.T) {
 	for path, want := range map[string]bool{
 		".env":                      true,
 		".env.local":                true,
