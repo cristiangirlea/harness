@@ -91,13 +91,22 @@
     if (s.echoCancellation || s.noiseSuppression || s.autoGainControl) {
       warn('The browser is still filtering the microphone, perhaps for another tab using it (a ChatGPT tab, say): recordings may sound processed. Close that tab, or talk to ChatGPT in its app or on a phone instead.');
     }
-    ctx = new AudioContext();
-    await ctx.audioWorklet.addModule('/static/voice-worklet.js');
-    const node = new AudioWorkletNode(ctx, 'ada-capture');
-    const silent = ctx.createGain();
-    silent.gain.value = 0; // the graph must reach the speakers to run; nothing is heard
-    ctx.createMediaStreamSource(stream).connect(node).connect(silent).connect(ctx.destination);
-    node.port.onmessage = (e) => { if (onBlock) onBlock(e.data); };
+    // Kept only once the whole graph stands: a half-built one would make
+    // every later take silently empty. On failure the microphone is let go.
+    const c = new AudioContext();
+    try {
+      await c.audioWorklet.addModule('/static/voice-worklet.js');
+      const node = new AudioWorkletNode(c, 'ada-capture');
+      const silent = c.createGain();
+      silent.gain.value = 0; // the graph must reach the speakers to run; nothing is heard
+      c.createMediaStreamSource(stream).connect(node).connect(silent).connect(c.destination);
+      node.port.onmessage = (e) => { if (onBlock) onBlock(e.data); };
+    } catch (e) {
+      stream.getTracks().forEach((t) => t.stop());
+      c.close();
+      throw e;
+    }
+    ctx = c;
   };
   const levelOf = (block) => {
     let peak = 0;
