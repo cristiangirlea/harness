@@ -713,6 +713,30 @@ neither of them follows a run while it happens.
   question about four look-alike runs). Three independent reviews through hrn (claude; codex
   at its limit) found four blocking defects, each fixed with a test seen failing; the rest
   is #88.
+- 2026-10-11: Fuzzing by count (#70). FuzzCodec failed PR #60's job with `context deadline
+  exceeded` at exactly 10 s and no input saved, as it had once before (the PR X entry
+  below). The cause is in Go's coordinator (`internal/fuzz/fuzz.go`):
+  - with `-fuzztime=10s` it closes the deadline context before it cancels the workers'
+    child context;
+  - `stop` drops the deadline error only if it equals the child's, which is not set yet;
+  - the window is the deadline's goroutine being held up between closing the parent and
+    storing the child's error: the OS pausing it on a loaded node, or the child's lock,
+    which each minimization's own timeout context takes as it starts and ends.
+
+  It never happened in 288 runs on the owner's PC, so it is a loaded-runner race; reading
+  the source, not a repro, is the evidence. With a count (`-fuzztime=Nx`) Go makes no
+  deadline context and stops through `stop(nil)`.
+  The 2026-10-10 entry's FuzzParseSSE failure on #34 (`context deadline exceeded` at
+  0 execs/s, put down there to garbage from a 1 MiB buffer) fits this race after the
+  minimization stall below better; that entry stays as recorded.
+
+  FuzzParseSSE also did no executions after a few seconds in every run looked at.
+  `GODEBUG=fuzzdebug=1` showed all four workers minimizing "interesting" inputs, which Go
+  allows 60 s each, so minimization is now bounded too (`-fuzzminimizetime=200x`; a count
+  ends it gracefully, where a duration stops and restarts the worker and throws the
+  minimization away). The counts (500000x for the codec, 150000x for SSE) keep each step
+  at about 10 s on the lab runner. Part of why minimization was slow is the parser's own
+  cost, quadratic in its deltas: #71.
 - 2026-10-11: Short-name temp dirs in execproto's tests (#57). Two continuation tests have
   failed on the Windows runner since #53. They seeded the earlier run with a raw
   `t.TempDir()`, which the runner spells in 8.3 short names (`C:\WINDOWS\SERVIC~1\...`), and
