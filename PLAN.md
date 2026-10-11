@@ -1586,3 +1586,7 @@ neither of them follows a run while it happens.
   panicked the api loop. `content_block_start` now refuses it with an
   error, like the other malformed events; a unit test covers each delta kind and
   FuzzParseSSE has the stream as a seed.
+- 2026-10-12: Issue-only fixes name their PR (#98, PR #101). AGENTS.md asked a PR to update
+  PLAN.md for the item it delivers, and a fix for an issue with no item got a Decisions-log
+  entry that sometimes named only the issue. Such an entry now names the issue and the PR,
+  as the #72 and #77 entries do.

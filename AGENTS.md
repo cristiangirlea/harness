@@ -71,7 +71,8 @@ or a fallback to one.
 - A release tag must match `Version` in `internal/agent/agent.go`; tags and releases are the
   owner's.
 - Every PR updates the README for a new flag, field, command or status, and `PLAN.md` for the item it
-  delivers (tick the box, a `Done: PR #n, <date>` line, deviations in the Decisions log).
+  delivers (tick the box, a `Done: PR #n, <date>` line, deviations in the Decisions log);
+  fixes without a `PLAN.md` item add a Decisions-log entry naming the issue and PR.
 
 ## Working rules
 
