@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -316,7 +317,12 @@ func TestAContinuationReportsItsInheritedRequestedModel(t *testing.T) {
 		}
 		return agent.Result{Backend: "fake-exec", Model: "resolved-model", ModelReported: true, Status: agent.StatusOK}
 	}}})
-	dir := t.TempDir()
+	// Recorded as hrn records a run's directory: in long names, where the
+	// temp dir can be spelt in short ones (the Windows runner's is).
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	prev, err := runlog.Create("fake-exec", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "inherited-model"}})
 	if err != nil {
 		t.Fatal(err)
