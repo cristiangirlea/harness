@@ -80,7 +80,11 @@ func (w *Workspace) Resolve(p string) (string, error) {
 	}
 	p = filepath.Clean(p)
 	// Judge where the path really is, so a link can't escape.
-	if !w.inside(realPath(p)) {
+	real := realPath(p)
+	if real == "" || w.real == "" {
+		return "", fmt.Errorf("path %q is refused: hrn cannot tell where it leads (a link that loops or cannot be read, or a name the system refuses)", p)
+	}
+	if !w.inside(real) {
 		return "", fmt.Errorf("path %q is outside the workspace %s", p, w.Root)
 	}
 	return p, nil

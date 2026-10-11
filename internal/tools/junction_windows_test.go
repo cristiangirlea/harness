@@ -85,6 +85,18 @@ func TestJunctionsThatLoopLeadNowhereOrTakeTwoHopsAreJudged(t *testing.T) {
 	}
 }
 
+func TestAPathWhoseLinksCannotBeJudgedIsRefusedForThatReason(t *testing.T) {
+	ws, _ := setup(t)
+	junction(t, filepath.Join(ws.Root, "a"), filepath.Join(ws.Root, "b"))
+	junction(t, filepath.Join(ws.Root, "b"), filepath.Join(ws.Root, "a"))
+	for _, p := range []string{"a/x.txt", "bad*name/x.txt"} {
+		_, err := ws.Resolve(p)
+		if err == nil || !strings.Contains(err.Error(), "cannot tell where it leads") {
+			t.Errorf("Resolve(%q) = %v, want a refusal that says where it leads cannot be told", p, err)
+		}
+	}
+}
+
 func TestASymlinkThroughAJunctionOutIsRefused(t *testing.T) {
 	ws, tl := setup(t)
 	outside := outsideWithJunction(t, ws)
