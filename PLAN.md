@@ -597,7 +597,7 @@ order they are worth taking:
     approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
     nothing else can answer it. Its actions go through hrn watch's door: they must send
     `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
-    - ~~Part 1, her eyes and voice~~: done as PR #89 (closes #59). The bot is **Ada**, a
+    - ~~Part 1, her eyes and voice.~~ Done: PR #89, 2026-10-11 (closes #59). The bot is **Ada**, a
       female robot scarlet macaw (the owner's choices, 2026-10-11): `hrn bot`, `/bot`,
       sentences in plain UK English made in Go, speech, notifications, skip, snooze, mute,
       push-to-talk for commands that steer her only.
