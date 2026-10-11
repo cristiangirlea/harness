@@ -404,13 +404,14 @@ func in(where string) string {
 }
 
 // topic is a task in a few words: its first line, without markdown in front
-// or a full stop behind, starting small unless it starts with a name.
+// or a full stop behind, starting small unless it starts with a name, an
+// acronym or "I".
 func topic(prompt string) string {
 	line, _ := firstLine(strings.TrimSpace(prompt))
 	line = strings.TrimLeft(line, "#*->` \t")
 	line = strings.TrimRight(words(line, 12), ".!:; ")
 	r, size := utf8.DecodeRuneInString(line)
-	if next, _ := utf8.DecodeRuneInString(line[size:]); size > 0 && unicode.IsUpper(r) && !unicode.IsUpper(next) {
+	if next, _ := utf8.DecodeRuneInString(line[size:]); size > 0 && unicode.IsUpper(r) && unicode.IsLower(next) {
 		line = string(unicode.ToLower(r)) + line[size:]
 	}
 	return line
@@ -428,7 +429,7 @@ func words(s string, n int) string {
 // sentence starts with a capital and ends with a full stop.
 func sentence(s string) string {
 	s = capital(strings.TrimSpace(s))
-	if s != "" && !strings.HasSuffix(s, ".") && !strings.HasSuffix(s, "…") {
+	if s != "" && !strings.ContainsAny(s[len(s)-1:], ".?!") && !strings.HasSuffix(s, "…") {
 		s += "."
 	}
 	return s

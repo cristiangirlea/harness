@@ -54,11 +54,19 @@ func TestTheBotNamesBackendsAndPlacesAsPeopleSayThem(t *testing.T) {
 		"Add the budget guard.\nDetails follow":                                   "add the budget guard",
 		"# Fix the flaky test":                                                    "fix the flaky test",
 		"API keys must never reach a run":                                         "API keys must never reach a run",
+		"I want the guard on every backend":                                       "I want the guard on every backend",
+		"I'm adding the budget":                                                   "I'm adding the budget",
 		"one two three four five six seven eight nine ten eleven twelve thirteen": "one two three four five six seven eight nine ten eleven twelve…",
 		"   ": "",
 	} {
 		if got := topic(in); got != want {
 			t.Errorf("topic(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// A question or an exclamation keeps its own mark.
+	for in, want := range map[string]string{"is it done?": "Is it done?", "done!": "Done!", "done": "Done.", "cut short…": "Cut short…"} {
+		if got := sentence(in); got != want {
+			t.Errorf("sentence(%q) = %q, want %q", in, got, want)
 		}
 	}
 	for d, want := range map[time.Duration]string{0: "under a second", time.Second: "a second", 9 * time.Second: "nine seconds",
