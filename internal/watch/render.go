@@ -356,6 +356,7 @@ type row struct {
 	Cost                    string // what the finished runs cost, as far as their backends say
 	Since                   string // the start, for the live clock while it goes
 	Prompt                  string
+	Batch                   string // for a run: the batch whose attempt it was
 }
 
 func runRow(rec runlog.Record) row {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -42,13 +43,29 @@ func TestLoopbackAddrAcceptsOnlyLoopback(t *testing.T) {
 	}
 }
 
+// addrListener is a listener that reports another address than the one it
+// listens on.
+type addrListener struct {
+	net.Listener
+	addr net.Addr
+}
+
+func (l addrListener) Addr() net.Addr { return l.addr }
+
 func TestServeRefusesAListenerThatIsNotLoopback(t *testing.T) {
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	// Serve judges a listener by its address. Listening on every interface for
+	// real would make Windows ask about the firewall on each run, since the
+	// test binary's path changes every build; a loopback listener that says
+	// it is on every interface is judged the same way.
+	lo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skip("cannot listen on every interface here:", err)
+		t.Fatal(err)
 	}
-	defer ln.Close()
-	if err := Serve(context.Background(), Options{}, ln); err == nil || !strings.Contains(err.Error(), "loopback") {
+	defer lo.Close()
+	ln := addrListener{lo, &net.TCPAddr{IP: net.IPv4zero, Port: lo.Addr().(*net.TCPAddr).Port}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := Serve(ctx, Options{}, ln); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("Serve on %s = %v; want it refused", ln.Addr(), err)
 	}
 }
@@ -609,6 +626,91 @@ func TestTheIndexListsRunsAndBatchesNewestFirst(t *testing.T) {
 		}
 	}
 	assertEscaped(t, "the index", body)
+}
+
+// runRowOf is the index row of one run: from its link to the end of the row.
+func runRowOf(t *testing.T, body, id string) string {
+	t.Helper()
+	i := strings.Index(body, `<a href="/run/`+id+`"`)
+	if i < 0 {
+		t.Fatalf("the index has no row for run %s", id)
+	}
+	row, _, _ := strings.Cut(body[i:], "</tr>")
+	return row
+}
+
+func TestARunABatchStartedLinksToItsBatch(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	newRun := func(prompt string) string {
+		t.Helper()
+		w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
+		return w.ID()
+	}
+	x, oldX, y := newRun("batch work"), newRun("old batch work"), newRun("plain run")
+	retry, second := newRun("batch work, again"), newRun("second task")
+	const id, oldID = "20261010-140000-aaaaaa", "20261001-090000-bbbbbb"
+	start := time.Now()
+	saveBatch(t, batch.Result{ID: id, Started: start, Tasks: []batch.TaskResult{
+		{ID: "t1", Prompt: "batch work", Status: batch.StatusPass, Attempts: []batch.Attempt{
+			{Backend: "fake", RunID: x, Result: agent.Result{Status: agent.StatusOK}},
+			// An attempt naming a run that has no record: nothing to link, nothing wrong.
+			{Backend: "fake", RunID: "20261010-140001-999999", Result: agent.Result{Status: agent.StatusOK}},
+			{Backend: "fake", RunID: retry, Result: agent.Result{Status: agent.StatusOK}},
+		}},
+		{ID: "t2", Prompt: "second task", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "fake", RunID: second}}},
+	}})
+	// The oldest batch is past the 20 the index lists; its run still links to it.
+	saveBatch(t, batch.Result{ID: oldID, Started: start.Add(-time.Hour), Tasks: []batch.TaskResult{
+		{ID: "t1", Prompt: "old batch work", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "fake", RunID: oldX}}},
+	}})
+	for i := range 20 {
+		saveBatch(t, batch.Result{ID: fmt.Sprintf("20261005-100000-%06x", i), Started: start.Add(-time.Duration(i+1) * time.Minute)})
+	}
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	if strings.Contains(body, `href="/batch/`+oldID+`">`+oldID+`</a></td>`) {
+		t.Fatal("the old batch is in the batches table; the test needs it past the 20 listed")
+	}
+	// links checks the runs' rows in one rendering of the lists.
+	links := func(where, html string) {
+		t.Helper()
+		// The first attempt, a later attempt of the same task, and another task's.
+		for _, run := range []string{x, retry, second} {
+			if row := runRowOf(t, html, run); !strings.Contains(row, `href="/batch/`+id+`"`) || !strings.Contains(row, "batch "+id) {
+				t.Errorf("%s: run %s, a batch's attempt, does not link to its batch:\n%s", where, run, row)
+			}
+		}
+		if row := runRowOf(t, html, oldX); !strings.Contains(row, `href="/batch/`+oldID+`"`) {
+			t.Errorf("%s: run %s of a batch older than the 20 listed does not link to it:\n%s", where, oldX, row)
+		}
+		if row := runRowOf(t, html, y); strings.Contains(row, "/batch/") {
+			t.Errorf("%s: plain run %s links to a batch:\n%s", where, y, row)
+		}
+	}
+	links("the index", body)
+	if strings.Contains(body, "20261010-140001-999999") || strings.Contains(body, `class="notice bad"`) {
+		t.Error("an attempt's run with no record shows up on the index or adds a problem")
+	}
+	if !strings.Contains(body, "also appear as runs") {
+		t.Error("the intro does not say a batch's tasks also appear as runs")
+	}
+
+	s, stop := openStream(t, srv.URL+"/stream/index", "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "replace" {
+		t.Fatalf("first message = %+v, %v", m, ok)
+	}
+	links("the streamed index", m.data)
 }
 
 func TestTheIndexSaysWhereAPhoneCanOpenIt(t *testing.T) {

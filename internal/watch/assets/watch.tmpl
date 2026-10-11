@@ -28,7 +28,7 @@
 {{define "index"}}{{template "head" .}}
 <p class="eyebrow">Harness / live view</p>
 <h1>Runs and batches</h1>
-<p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps.</p>
+<p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps. A batch's tasks also appear as runs, linked to their batch.</p>
 {{if .Phone}}<section class="card reach" aria-labelledby="reach-h">
 <h2 id="reach-h">On your phone</h2>
 <p>Scan the code of the network your phone is on, or open its link. On Wi-Fi it is the one on your Wi-Fi adapter; the others are usually virtual adapters (WSL, Hyper-V, Docker), or a VPN that looks like an ordinary adapter. <code>hrn watch --lan=NAME</code> serves just one.</p>
@@ -61,7 +61,7 @@
 {{if .Runs}}<div class="table-wrap" tabindex="0" role="region" aria-label="Runs"><table class="list">
 <thead><tr><th scope="col">Run</th><th scope="col">Backend</th><th scope="col">Status</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">Prompt</th></tr></thead>
 <tbody>{{range .Runs}}<tr>
-<td class="mono"><a href="/run/{{.ID}}">{{.ID}}</a></td>
+<td class="mono"><a href="/run/{{.ID}}">{{.ID}}</a>{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
 <td class="meta">{{.Backend}}</td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
 <td class="num meta">{{template "took" .}}</td>
