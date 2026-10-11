@@ -634,8 +634,9 @@ neither of them follows a run while it happens.
   - with `-fuzztime=10s` it closes the deadline context before it cancels the workers'
     child context;
   - `stop` drops the deadline error only if it equals the child's, which is not set yet;
-  - the canceller has to take the child's lock, which the worker-pipe readers take on
-    every read.
+  - the window is the deadline's goroutine being held up between closing the parent and
+    storing the child's error: the OS pausing it on a loaded node, or the child's lock,
+    which each minimization's own timeout context takes as it starts and ends.
 
   It never happened in 288 runs on the owner's PC, so it is a loaded-runner race; reading
   the source, not a repro, is the evidence. With a count (`-fuzztime=Nx`) Go makes no
