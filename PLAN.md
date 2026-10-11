@@ -634,7 +634,17 @@ neither of them follows a run while it happens.
   path), and a junction on an SMB share (its target is the server's path, judged here).
   For the guard branch's merge: keep `inside` against `w.real`, and judge secret names
   relative to `w.real` too (relative to `Root`, a workspace reached through a junction
-  sees its parents' names); its README sentence on junctions no longer holds.
+  sees its parents' names); its README sentence on junctions no longer holds. The
+  reviewer's second pass found nothing blocking and three low points, fixed: a path that
+  cannot be judged said "outside the workspace" (now "cannot tell where it leads"); a loop
+  of links ran all 255 rounds, each with `EvalSymlinks` following up to 255 links of its
+  own (now refused at the first path met again: a two-junction loop went from 157 ms to
+  3 ms); and a mount point made by hand with an NT target (`\Device\...`) read as a folder
+  on its own volume (refused now). Left, fail-closed on purpose: a workspace under a folder
+  that can be passed through but not read (another account's profile with traverse-only
+  rights, a share with access-based enumeration) refuses every path for the file tools,
+  since a component that cannot be read could be a junction; `NewWorkspace` does not fail
+  there, because it also checks the directory for the CLI backends, which do not use it.
 - 2026-10-11: Junctions (#45), found while reviewing the guard for #36. Since Go 1.23 a
   Windows mount point (a directory junction, which needs no privilege to make) is an
   irregular file to `os.Lstat`, not a symbolic link, so `filepath.EvalSymlinks` stopped
