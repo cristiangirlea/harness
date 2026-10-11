@@ -192,7 +192,7 @@
     $('voice-rec').textContent = recording ? 'Stop (Space)' : 'Record (Space)';
     $('voice-play').disabled = !take || recording;
     $('voice-keep').disabled = !take || recording || saving;
-    $('voice-retake').disabled = !take || recording;
+    $('voice-retake').disabled = !take || recording || saving;
     document.body.classList.toggle('recording', recording || !!talking);
   };
   const judge = (t) => {
@@ -225,7 +225,7 @@
     show();
   };
   const keep = async () => {
-    if (!take || recording || saving) return;
+    if (!take || recording || saving || starting) return;
     const l = lines[at];
     saving = true;
     show();
