@@ -62,6 +62,10 @@ Usage:
   hrn eval list [-n N]            list saved evals, newest first
   hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
   hrn report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
+  hrn gc [--apply] [--grace D] [PATH...]
+                                 list worktrees whose work is merged (pull request merged at their commit, or a
+                                 finished batch's commit on origin's default branch); --apply removes them and
+                                 their branches. PATH is a repository or a folder of them (default: the current one)
 
 Run flags:
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
@@ -136,6 +140,8 @@ func main() {
 		err = cmdReport(os.Args[2:])
 	case "watch":
 		err = cmdWatch(os.Args[2:])
+	case "gc":
+		code, err = cmdGC(os.Args[2:])
 	case "version", "--version", "-V":
 		info, _ := debug.ReadBuildInfo()
 		fmt.Println(versionLine(info))
