@@ -83,11 +83,20 @@ or a fallback to one.
   tested is said in the PR and waits for the owner. Never auto-merge (`--auto`) or `--admin`,
   never push to `main`, never tag or release: hand over the command. PLAN.md's merge step
   (merge commit, delete the branch) is done through the PR under these conditions.
+- **Scope: a branch delivers what it is for, nothing else.** One purpose (one issue) per branch;
+  larger work is a feature branch whose pieces are branches merged into it. Plan the files the
+  change touches; one outside that list needs a reason in the PR. Something found on the way is
+  fixed here only if this branch caused it or it blocks the change; otherwise it gets an issue and
+  a branch of its own. No refactors, renames or extras the issue did not ask for. Merge `main` in
+  only for a conflict or once right before merging (then `/check` again).
 - Commit messages: the area first, lower case, then a plain sentence (`batch rm: name a single
-  leftover file instead of counting it`). No emoji, no AI attribution anywhere (no `Co-Authored-By`,
-  `Assisted-by` or "Generated with", in commits, PR text, comments or docs). Commits are
-  `Cristian Girlea <cristiangirlea@gmail.com>`: check `git config user.email` first.
-- Self-review with `/code-review`; fix each finding as its own commit on the PR, don't squash.
+  leftover file instead of counting it`), one logical change per commit. No emoji, no AI
+  attribution anywhere (no `Co-Authored-By`, `Assisted-by` or "Generated with", in commits, PR
+  text, comments or docs). Commits are `Cristian Girlea <cristiangirlea@gmail.com>`: check
+  `git config user.email` first.
+- Self-review with `/code-review`. Fix each blocking finding as its own commit on the PR, with the
+  smallest change that closes it, and don't squash; non-blocking findings become issues linked
+  from the PR, not changes to it.
 - Tests first, seen failing. On Windows the temp dir has 8.3 short names: compare paths after
   `filepath.EvalSymlinks`. Files are LF (`.gitattributes`).
 - Secrets are never read, printed or committed. Small diffs: don't restyle what you didn't change.
