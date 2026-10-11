@@ -662,6 +662,30 @@ func TestGCScansTheRepositoryItIsGivenWhateverGitDirSays(t *testing.T) {
 	}
 }
 
+func TestGCIgnoresGitConfigPassedDownInItsEnvironment(t *testing.T) {
+	for _, form := range []string{"numbered", "parameters"} {
+		t.Run(form, func(t *testing.T) {
+			f := newFixture(t)
+			mirror := filepath.Join(f.root, "mirror.git")
+			git(t, f.root, "clone", "-q", "--bare", f.origin, mirror)
+			task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+			git(t, f.repo, "push", "-q", mirror, "hrn/task:main") // only the mirror has the task's commit
+			saveBatch(t, "20261011-100000-aaaaaa", f.repo,
+				batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+			key, value := "url."+filepath.ToSlash(mirror)+".insteadOf", f.origin
+			if form == "numbered" {
+				t.Setenv("GIT_CONFIG_COUNT", "1")
+				t.Setenv("GIT_CONFIG_KEY_0", key)
+				t.Setenv("GIT_CONFIG_VALUE_0", value)
+			} else {
+				t.Setenv("GIT_CONFIG_PARAMETERS", "'"+key+"'='"+value+"'")
+			}
+
+			wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+		})
+	}
+}
+
 func TestGCNeverListsTheMainCheckout(t *testing.T) {
 	f := newFixture(t)
 	f.worktree("wt", "branch")

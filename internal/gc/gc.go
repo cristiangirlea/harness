@@ -844,14 +844,20 @@ var repoVars = []string{
 	"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
 }
 
-// cleanEnv is this process's environment without repoVars, for git and gh.
+// cleanEnv is this process's environment for git and gh, without repoVars and
+// without the configuration git passes down to its children (`git -c`):
+// GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT with its KEY_n and VALUE_n. A
+// url.*.insteadOf among them would send the fetch and the pull request
+// question to another repository.
 func cleanEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
-		drop := false
+		upper := strings.ToUpper(name)
+		drop := upper == "GIT_CONFIG_PARAMETERS" || upper == "GIT_CONFIG_COUNT" ||
+			strings.HasPrefix(upper, "GIT_CONFIG_KEY_") || strings.HasPrefix(upper, "GIT_CONFIG_VALUE_")
 		for _, v := range repoVars {
-			drop = drop || strings.EqualFold(name, v)
+			drop = drop || upper == v
 		}
 		if !drop {
 			env = append(env, kv)
