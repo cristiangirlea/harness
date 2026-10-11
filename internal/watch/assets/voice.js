@@ -62,6 +62,10 @@
     }
     await loadKept();
     folderName.textContent = 'Saving into "' + dir.name + '": ' + kept.size + ' of ' + lines.length + ' lines kept so far.';
+    // A take finds its text by its number: if the lines have changed since,
+    // say so rather than mix old takes with new words.
+    const changed = [...kept].filter(([n, t]) => !lines[n - 1] || lines[n - 1].text !== t).length;
+    warn(changed ? changed + ' kept line(s) in this folder no longer match the text shown for their number: record them again, or keep the old folder for the old text.' : '');
     at = firstOpen(0);
     show();
   });

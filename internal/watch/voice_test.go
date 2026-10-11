@@ -2,7 +2,10 @@ package watch
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +60,41 @@ func TestTheVoiceLinesAreAdasOwnAndEveryday(t *testing.T) {
 	}
 	if !firstAda || !firstEveryday {
 		t.Errorf("the first 20 lines should mix Ada's and everyday ones: %+v", lines[:20])
+	}
+}
+
+// A line's number is how a take finds its text (0042.wav is line 42), across
+// sessions and in download mode, so recorded lines must keep their numbers and
+// words. testdata/voice-lines.golden is the contract: every line in it must
+// read the same at the same number, and new lines may only follow it. A change
+// to everyday lines or to Ada's wording in bot.go that moves or rewords a line
+// fails here, and someone decides: re-record those lines, or keep the old text.
+// HRN_WRITE_VOICE_GOLDEN=1 writes the file afresh, for a deliberate new start.
+func TestRecordedLinesKeepTheirNumbers(t *testing.T) {
+	const golden = "testdata/voice-lines.golden"
+	lines := voiceLines()
+	if os.Getenv("HRN_WRITE_VOICE_GOLDEN") == "1" {
+		var b strings.Builder
+		for _, l := range lines {
+			fmt.Fprintf(&b, "%d|%s\n", l.N, l.Text)
+		}
+		if err := os.WriteFile(golden, []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) < len(rows) {
+		t.Fatalf("%d lines, but %d were promised: lines may be added at the end, never taken away", len(lines), len(rows))
+	}
+	for i, row := range rows {
+		n, text, _ := strings.Cut(row, "|")
+		if n != strconv.Itoa(i+1) || lines[i].Text != text {
+			t.Errorf("line %s was %q and is now %q: recorded takes would lose their text", n, text, lines[i].Text)
+		}
 	}
 }
 
