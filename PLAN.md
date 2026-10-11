@@ -638,6 +638,19 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: Short-name temp dirs in execproto's tests (#57). Two continuation tests have
+  failed on the Windows runner since #53. They seeded the earlier run with a raw
+  `t.TempDir()`, which the runner spells in 8.3 short names (`C:\WINDOWS\SERVIC~1\...`), and
+  continued from the long spelling, so `followup`'s `samePath` saw two folders. Real runs
+  record the long one: `hrn run`, MCP `run` and `execproto` go through `NewWorkspace`, and
+  batch and the eval judge record the worktree under `git rev-parse --show-toplevel`, which
+  Git for Windows prints in long names.
+  So the tests now seed it the same way (`filepath.EvalSymlinks`, as `followup`'s tests
+  do), and `samePath` stays strict, since claude finds a session by the exact folder it was
+  started in. The whole suite was run with `TEMP` set to the short spelling of a
+  runner-length folder: everything passes but the junction test #60 fixes. A longer
+  folder makes the batch tests fail with git's "Filename too long" instead, which is a
+  path-length limit, not a short-name bug.
 - 2026-10-11: #45 reviews (PR #48): an independent read-only reviewer, and an adversarial security
   read in a scratch copy, which found nothing it could get out through (junction chains and
   loops, dangling junctions, 8.3 aliases, `\\?\` targets, a junction to `C:\Windows`; no
