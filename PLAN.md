@@ -1221,5 +1221,8 @@ neither of them follows a run while it happens.
   additive and also carries a failure to close events.jsonl; `runlog.Events` skips broken
   lines only in a record that says it is incomplete. The MCP run tool reports a record
   failure without flagging an ok run as an error, because a host may retry a tool error and
-  spend the plan again. The eval judge still ignores Close's error. Review (Claude Opus)
-  found the short-write corruption; fixed.
+  spend the plan again; a result.json that could not be saved is still an error, since the
+  run then never reads as finished. The eval judge still ignores Close's error. Review (Claude
+  Opus) found the short-write corruption; fixed. Left as is: if a broken line and a failed
+  result.json happen in one run, no record_error is saved and hrn show refuses the run; that
+  means the disk is failing.
