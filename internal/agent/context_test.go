@@ -69,6 +69,7 @@ func TestCLIsRecordLastModelInputWithoutGuessingFromTotals(t *testing.T) {
 		want    int64
 	}{
 		{"claude", NewClaudeBackend(), 285000},
+		{"claude-subagent", NewClaudeBackend(), 285000},
 		{"opencode", NewOpencodeBackend(), 285000},
 		{"codex", NewCodexBackend(), 0},
 		{"gemini", NewGeminiBackend(), 0},
@@ -94,10 +95,13 @@ func TestCLIsRecordLastModelInputWithoutGuessingFromTotals(t *testing.T) {
 
 func TestHelperCLIContext(t *testing.T) {
 	switch os.Getenv("HRN_CONTEXT_HELPER") {
-	case "claude", "claude-missing-last":
+	case "claude", "claude-subagent", "claude-missing-last":
 		fmt.Println(`{"type":"assistant","message":{"content":[],"usage":{"input_tokens":6000,"cache_read_input_tokens":300000,"cache_creation_input_tokens":20000}}}`)
-		fmt.Println(`{"type":"assistant","message":{"content":[],"usage":{"input_tokens":5000,"cache_read_input_tokens":270000,"cache_creation_input_tokens":10000}}}`)
+		fmt.Println(`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[],"usage":{"input_tokens":5000,"cache_read_input_tokens":270000,"cache_creation_input_tokens":10000}}}`)
 		fmt.Println(`{"type":"user","message":{"content":[]}}`)
+		if os.Getenv("HRN_CONTEXT_HELPER") == "claude-subagent" {
+			fmt.Println(`{"type":"assistant","parent_tool_use_id":"toolu_x","message":{"content":[],"usage":{"input_tokens":1000,"cache_read_input_tokens":20000,"cache_creation_input_tokens":3000}}}`)
+		}
 		if os.Getenv("HRN_CONTEXT_HELPER") == "claude-missing-last" {
 			fmt.Println(`{"type":"assistant","message":{"content":[]}}`)
 		}

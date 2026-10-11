@@ -107,11 +107,12 @@ func versionLess(a, b string) bool {
 }
 
 type claudeLine struct {
-	Type      string `json:"type"`
-	Subtype   string `json:"subtype"`
-	Model     string `json:"model"`
-	SessionID string `json:"session_id"`
-	Message   struct {
+	Type            string  `json:"type"`
+	Subtype         string  `json:"subtype"`
+	Model           string  `json:"model"`
+	SessionID       string  `json:"session_id"`
+	ParentToolUseID *string `json:"parent_tool_use_id"`
+	Message         struct {
 		Usage   apiUsage `json:"usage"`
 		Model   string   `json:"model"`
 		Content []struct {
@@ -159,7 +160,7 @@ func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 			res.ModelReported = true
 		}
 	case "assistant", "user":
-		if l.Type == "assistant" {
+		if l.Type == "assistant" && l.ParentToolUseID == nil {
 			u := l.Message.Usage
 			res.ContextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 		}
