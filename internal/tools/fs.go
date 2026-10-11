@@ -310,6 +310,11 @@ func grep() Tool {
 				search(base)
 			} else {
 				err = walk(ctx, base, func(p, rel string) bool {
+					// A link out of the workspace is not followed, as Resolve
+					// refuses one.
+					if !ws.inside(realPath(p)) {
+						return true
+					}
 					if globRe == nil || globRe.MatchString(rel) {
 						search(p)
 					}
