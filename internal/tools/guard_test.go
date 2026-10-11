@@ -87,6 +87,16 @@ func TestGuardBlocks(t *testing.T) {
 		"del Env:\\GIT_CONFIG_COUNT":                                    "guard-env",
 		"si env:NPM_CONFIG_USERCONFIG x":                                "guard-env",
 		"for i in 0 1; do export GIT_CONFIG_KEY_$i=x; done":             "guard-env",
+		"& {Remove-Item env:KUBECONFIG}":                                "guard-env", // inside a scriptblock
+		"1 | %{rm env:GH_CONFIG_DIR}":                                   "guard-env",
+		".{Clear-Item env:GIT_CONFIG_COUNT}":                            "guard-env",
+		"Remove-Item Env:/KUBECONFIG":                                   "guard-env",
+		"rm env:KUBE*":                                                  "guard-env", // a wildcard on the env: drive
+		"Rename-Item env:GH_CONFIG_DIR OLD":                             "guard-env",
+		"export -n KUBECONFIG":                                          "guard-env", // taken off what children see
+		"declare +x GH_CONFIG_DIR":                                      "guard-env",
+		"read KUBECONFIG <<< /home/me/kube/config":                      "guard-env",
+		"printf -v KUBECONFIG '%s' /x":                                  "guard-env",
 		// The secret files, reached through the shell.
 		"cat .env":                               "secret-file",
 		"echo X=1 > .env":                        "secret-file",
@@ -167,6 +177,15 @@ func TestGuardAllows(t *testing.T) {
 		"rm -rf .wrangler/state .wrangler/tmp", // a worker's local state, not wrangler's login
 		"npx wrangler dev --persist-to .wrangler/state",
 		"cat docker-compose.yml config.json",
+		"echo $env:KUBECONFIG",   // PowerShell's variable syntax reads it
+		"echo ${env:KUBECONFIG}", // and so does the braced form
+		"Get-ChildItem env:",
+		"while read line; do echo $line; done < notes.txt",
+		"cat .cargo/config.toml",
+		"ls .docker/",
+		"git show HEAD:README.md",
+		"go build C:\\repo\\src\\main.go",
+		"curl http://localhost:8787/api",
 		"go test ./internal/tools -run TestSecretFile",
 		"terraform plan",
 		"tofu validate",

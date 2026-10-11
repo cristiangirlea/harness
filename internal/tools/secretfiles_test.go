@@ -37,6 +37,7 @@ func TestSecretFileKnowsTheSecretNamesAndOnlyThem(t *testing.T) {
 		"_netrc":                   true,
 		".pypirc":                  true,
 		"../outside/.env":          true,
+		".env/..":                  true, // . and .. are dropped before matching; refusing this costs a turn
 		// Logins secret only with the directories above them.
 		"home/me/.claude/.credentials.json":                        true,
 		"C:/Users/me/.codex/auth.json":                             true,
