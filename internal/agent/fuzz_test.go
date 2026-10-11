@@ -13,6 +13,9 @@ func FuzzParseSSE(f *testing.F) {
 	f.Add(strings.Join(toolTurn("toolu_1", "read_file", `{"path":"a"}`), "\n\n"))
 	f.Add("event: message_start\ndata: {\"type\":\"message_start\"}\n\n")
 	f.Add("data: not json\n\n")
+	f.Add("data: {\"type\":\"message_start\",\"message\":{\"content\":[]}}\n\n" +
+		"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":null}\n\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}\n\n")
 	f.Add("")
 
 	f.Fuzz(func(t *testing.T, stream string) {
