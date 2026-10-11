@@ -597,8 +597,9 @@ order they are worth taking:
     nothing else can answer it. Control from the network waits for item 10's key.
 
 12. ~~**Carry on at a plan's usage limit**~~ ([#43](https://github.com/cristiangirlea/harness/issues/43)).
-    Done: a `limited` status, claude and codex carrying on each other's runs, reset times
-    remembered in `limits.json`, `no_switch`. See the Decisions log, 2026-10-11.
+    Done as PR #46, 2026-10-11: a `limited` status, claude and codex carrying on each
+    other's runs, reset times remembered in `limits.json`, `no_switch`. See the Decisions
+    log, 2026-10-11.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
