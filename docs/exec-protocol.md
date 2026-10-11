@@ -55,15 +55,16 @@ hrn       -> result                (always the last line after accepted; then ex
 - `sessions` is `fork` (a continuation copies the native session), `resume` (it continues the
   same session in place), or `none`.
 - `options` includes the required `mode` field and lists the optional task fields the backend
-  honours. A task that sets any other optional field is rejected as `unsupported`.
+  honours. A task that sets any other optional field is rejected as `unsupported`. A field counts
+  as set when it is present, even with a zero or empty value (`"max_turns":0`, `"mcp":[]`), so a
+  caller leaves out what it does not mean to set.
 
 ### `start` (caller, exactly one, the first line)
 
 ```json
 {"type":"start","attempt_id":"att-01J...","task":{
   "prompt":"...","dir":"C:\\work\\project","backend":"codex","mode":"auto",
-  "model":"gpt-6.1-sol","effort":"high","timeout":"30m","max_turns":0,
-  "mcp":[],"continue_run_id":""}}
+  "model":"gpt-6.1-sol","effort":"high","timeout":"30m"}}
 ```
 
 - `attempt_id` is the caller's identity for this attempt: 1 to 128 characters from
@@ -136,7 +137,7 @@ not stop the run.
 {"v":1,"seq":42,"type":"result","time":"...","attempt_id":"...","run_id":"...",
  "result":{"backend":"codex","model":"gpt-6.1-sol","status":"ok","final":"...","turns":3,
            "input_tokens":0,"output_tokens":0,"duration_ns":0,"session":"..."},
- "requested_model":"gpt-6.1-sol","resolved_model":"gpt-6.1-sol","record_error":""}
+ "requested_model":"gpt-6.1-sol","resolved_model":"","record_error":""}
 ```
 
 `result` is the same `agent.Result` a run record holds. `requested_model` is what the start asked
