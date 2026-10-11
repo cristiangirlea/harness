@@ -170,8 +170,11 @@ func runTool(defaultDir string) mcp.Tool {
 			}
 			plan.Apply(&task, rec.Dir(), emit)
 			res := agent.Run(ctx, b, task, emit)
-			if err := rec.Close(res); err != nil {
-				call.Progress("saving run: " + err.Error())
+			recordErr := rec.Close(res)
+			recordMessage := ""
+			if recordErr != nil {
+				recordMessage = runlog.CloseMessage(recordErr)
+				call.Progress(recordMessage)
 			}
 			body := res.Final
 			if res.Status != agent.StatusOK {
@@ -180,8 +183,16 @@ func runTool(defaultDir string) mcp.Tool {
 					body += "\n\n" + res.Final
 				}
 			}
+			structured := map[string]any{"run_id": rec.ID(), "result": res}
+			if recordErr != nil {
+				body = recordMessage + "\n\n" + body
+				structured["record_error"] = recordErr.Error()
+			}
+			// Lost events leave an ok run ok: a host may retry a tool error and spend the
+			// plan again. A result.json that was not saved leaves the run looking unfinished,
+			// so that one is an error.
 			return text(body+"\n\n"+summary(rec.ID(), res),
-				map[string]any{"run_id": rec.ID(), "result": res}, res.Status != agent.StatusOK), nil
+				structured, res.Status != agent.StatusOK || runlog.ResultNotSaved(recordErr)), nil
 		},
 	}
 }
@@ -258,6 +269,9 @@ func showTool() mcp.Tool {
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "%s\n%s · %s · mode %s%s\n\n", tools.OneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode, continues(rec))
+			if rec.RecordError != "" {
+				fmt.Fprintf(&b, "run record incomplete: %s\n\n", rec.RecordError)
+			}
 			var events []agent.Event
 			if args.Events == nil || *args.Events {
 				if events, err = runlog.Events(args.RunID); err != nil {

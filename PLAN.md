@@ -608,7 +608,7 @@ order they are worth taking:
     Ada, a separate private repository, runs hrn as its engine and needs a versioned interface
     instead of terminal output. Four PRs, in this order:
     - [x] Reasoning effort for codex and claude. Done: PR #50, 2026-10-11.
-    - [ ] Run records surface write failures.
+    - [x] Run records surface write failures. Done: PR #51, 2026-10-11.
     - [ ] Agent CLIs run in a contained process tree.
     - [ ] `hrn exec --protocol v1`, documented in `docs/exec-protocol.md`.
 
@@ -1215,3 +1215,14 @@ neither of them follows a run while it happens.
   The review (Claude Opus) found the eval judge skipped the check, which would have failed
   only after every cell ran; fixed. The CLIs accept every level but do not report the
   effective one back.
+- 2026-10-11: PR #51, run records surface write failures. Every complete event is still
+  attempted, one write each; after a write cut short mid-line the next event starts on a
+  new line, so one failure costs one event and the count stays exact. `record_error` is
+  additive and also carries a failure to close events.jsonl; `runlog.Events` skips broken
+  lines only in a record that says it is incomplete. The MCP run tool reports a record
+  failure without flagging an ok run as an error, because a host may retry a tool error and
+  spend the plan again; a result.json that could not be saved is still an error, since the
+  run then never reads as finished. The eval judge still ignores Close's error. Review (Claude
+  Opus) found the short-write corruption; fixed. Left as is: if a broken line and a failed
+  result.json happen in one run, no record_error is saved and hrn show refuses the run; that
+  means the disk is failing.

@@ -2,14 +2,320 @@ package runlog
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 )
+
+func TestWriterCountsFailedEventsAndSavesRecordError(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.events.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "first"})
+	w.Event(agent.Event{Kind: agent.EventText, Text: "second"})
+	recordErr := w.Err()
+	if recordErr == nil || !strings.Contains(recordErr.Error(), "2 events were not recorded") || !errors.Is(recordErr, os.ErrClosed) {
+		t.Fatalf("Err = %v, want two lost events wrapping os.ErrClosed", recordErr)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil || !strings.Contains(err.Error(), recordErr.Error()) || !errors.Is(err, os.ErrClosed) {
+		t.Errorf("Close = %v, want the event write error", err)
+	}
+	if _, err := os.Stat(filepath.Join(w.Dir(), "result.json")); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := Load(w.ID())
+	if err != nil || !rec.Done || !strings.Contains(rec.RecordError, recordErr.Error()) || !strings.Contains(rec.RecordError, "close ") || rec.Result.Status != agent.StatusOK {
+		t.Fatalf("saved record = %+v, err = %v", rec, err)
+	}
+}
+
+func TestWriterWithSuccessfulEventsHasNoRecordError(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Err(); err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+	if err := w.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := Load(w.ID())
+	if err != nil || !rec.Done || rec.RecordError != "" {
+		t.Fatalf("saved record = %+v, err = %v", rec, err)
+	}
+	events, err := Events(w.ID())
+	if err != nil || len(events) != 1 || events[0].Text != "saved" {
+		t.Fatalf("events = %+v, err = %v", events, err)
+	}
+	data, err := os.ReadFile(filepath.Join(w.Dir(), "result.json"))
+	if err != nil || strings.Contains(string(data), "record_error") {
+		t.Fatalf("record_error must be omitted on success: %s, err = %v", data, err)
+	}
+}
+
+func TestWriterDoesNotCountPartialEventsAsLost(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.events.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "fragment", Partial: true})
+	if err := w.Err(); err != nil {
+		t.Fatalf("partial event counted as lost: %v", err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "complete"})
+	w.Event(agent.Event{Kind: agent.EventText, Text: "fragment", Partial: true})
+	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") {
+		t.Fatalf("Err = %v, want only the complete event counted", err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+		t.Fatal("Close must report the lost complete event")
+	}
+}
+
+func TestWriterRetriesWritesAndKeepsTheFirstError(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.events.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
+	// Replace the closed file to simulate storage becoming writable again.
+	w.events, err = os.OpenFile(filepath.Join(w.Dir(), "events.jsonl"), os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.events.Close() })
+	w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") {
+		t.Fatalf("successful retry must not count as lost: %v", err)
+	}
+	// A later, different encoding error must not replace the first write error.
+	w.Event(agent.Event{Kind: agent.EventToolCall, Input: json.RawMessage(`{`)})
+	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "2 events were not recorded") || !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("Err = %v, want two failures wrapping the first error", err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+		t.Fatal("Close must report the earlier failures")
+	}
+	events, err := Events(w.ID())
+	if err != nil || len(events) != 1 || events[0].Text != "saved" {
+		t.Fatalf("writer must try again after a write failure: events = %+v, err = %v", events, err)
+	}
+}
+
+func TestWriterCloseJoinsEventFileAndResultErrors(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.events.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
+	resultPath := filepath.Join(w.Dir(), "result.json")
+	if err := os.Mkdir(resultPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = w.Close(agent.Result{Status: agent.StatusOK})
+	if err == nil || !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("Close = %v, want joined errors wrapping os.ErrClosed", err)
+	}
+	for _, want := range []string{"1 event was not recorded", "close ", resultPath} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Close = %v, missing %q", err, want)
+		}
+	}
+}
+
+// shortWriter leaves a fragment of its first event on disk, then recovers.
+type shortWriter struct {
+	io.WriteCloser
+	failed bool
+	err    error
+}
+
+func (w *shortWriter) Write(p []byte) (int, error) {
+	if !w.failed {
+		w.failed = true
+		n, err := w.WriteCloser.Write(p[:len(p)/2])
+		if err != nil {
+			return n, err
+		}
+		return n, w.err
+	}
+	return w.WriteCloser.Write(p)
+}
+
+func TestWriterKeepsTheNextEventReadableAfterAShortWrite(t *testing.T) {
+	for _, cause := range []error{errors.New("disk full"), nil} {
+		t.Run(fmt.Sprint(cause), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			w, err := Create("stub", agent.Task{Prompt: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.events = &shortWriter{WriteCloser: w.events, err: cause}
+			t.Cleanup(func() { _ = w.events.Close() })
+			w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
+			w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+			wantCause := cause
+			if wantCause == nil {
+				wantCause = io.ErrShortWrite
+			}
+			if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") || !errors.Is(err, wantCause) {
+				t.Errorf("Err = %v, want exactly one loss wrapping %v", err, wantCause)
+			}
+			if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+				t.Error("Close must report the lost event")
+			}
+			events, err := Events(w.ID())
+			if err != nil || len(events) != 1 || events[0].Text != "saved" {
+				t.Fatalf("second event must remain readable: events=%+v err=%v", events, err)
+			}
+		})
+	}
+}
+
+func TestWriterCountsEventsAfterCloseWithoutChangingTheSavedRecord(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(w.Dir(), "result.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "late"})
+	w.Event(agent.Event{Kind: agent.EventText, Text: "later"})
+	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "2 events were not recorded") || !errors.Is(err, os.ErrClosed) {
+		t.Errorf("late events must count as lost: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("late events changed the saved record: err=%v", err)
+	}
+}
+
+func TestWriterErrCanRaceCloseAndReportsTheCloseError(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.events.Close(); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			<-start
+			for range 100 {
+				if err := w.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
+					t.Errorf("Err = %v, want nil or os.ErrClosed", err)
+				}
+			}
+		})
+	}
+	close(start)
+	closeErr := w.Close(agent.Result{Status: agent.StatusOK})
+	wg.Wait()
+	if !errors.Is(closeErr, os.ErrClosed) || !errors.Is(w.Err(), os.ErrClosed) {
+		t.Errorf("Close = %v, Err = %v, want the close error in both", closeErr, w.Err())
+	}
+	rec, err := Load(w.ID())
+	if err != nil || !rec.Done || !strings.Contains(rec.RecordError, "close ") || strings.Contains(rec.RecordError, "not recorded") {
+		t.Fatalf("close-only failure must be saved without inventing lost events: %+v err=%v", rec, err)
+	}
+}
+
+func TestEventsStillRejectsMalformedUnmarkedRecords(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	write(t, w.Dir(), "events.jsonl", "{broken\n{\"kind\":\"text\",\"text\":\"saved\"}\n")
+	if _, err := Events(w.ID()); err == nil {
+		t.Fatal("unmarked corruption must still return an error")
+	}
+}
+
+func TestWriterErrCanBeReadWhileEventsFailConcurrently(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := Create("stub", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.events.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 25 {
+				w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
+				if err := w.Err(); err == nil || !errors.Is(err, os.ErrClosed) {
+					t.Errorf("Err = %v, want the first write error", err)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "100 events were not recorded") {
+		t.Fatalf("Err = %v, want all concurrent failures counted", err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+		t.Fatal("Close must report the failures")
+	}
+}
+
+func TestLoadAcceptsRecordsWithoutRecordError(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const id = "20260101-000000-aaaaaa"
+	write(t, filepath.Join(Root(), id), "result.json",
+		`{"id":"`+id+`","backend":"stub","started":"2026-01-01T00:00:00Z","task":{"prompt":"old","dir":"."},"result":{"backend":"stub","status":"ok","final":"saved","turns":1,"duration_ns":42}}`)
+	rec, err := Load(id)
+	if err != nil || !rec.Done || rec.RecordError != "" || rec.ID != id || rec.Backend != "stub" || rec.Task.Prompt != "old" || rec.Result.Final != "saved" || rec.Result.Duration != 42 {
+		t.Fatalf("old record = %+v, err = %v", rec, err)
+	}
+}
 
 func write(t *testing.T, dir, name, content string) {
 	t.Helper()
@@ -215,5 +521,81 @@ func TestChainRefusesAnUnreadableAncestor(t *testing.T) {
 	chain, missing, err := Chain(second.ID())
 	if err == nil || !strings.Contains(err.Error(), "cannot be read") {
 		t.Errorf("chain = %d runs, missing = %q, err = %v: an unreadable run is not a gone one", len(chain), missing, err)
+	}
+}
+
+// scriptedWriter answers each Write with the next step: how many bytes of it reach the file and
+// which error comes back. After the script it writes normally.
+type scriptedWriter struct {
+	io.WriteCloser
+	steps []writeStep
+}
+
+type writeStep struct {
+	n   int // bytes written; -1 means all but the last byte
+	err error
+}
+
+func (w *scriptedWriter) Write(p []byte) (int, error) {
+	if len(w.steps) == 0 {
+		return w.WriteCloser.Write(p)
+	}
+	step := w.steps[0]
+	w.steps = w.steps[1:]
+	n := step.n
+	if n < 0 {
+		n = len(p) - 1
+	}
+	written, err := w.WriteCloser.Write(p[:n])
+	if err != nil {
+		return written, err
+	}
+	return written, step.err
+}
+
+func TestWriterKeepsEventsApartAcrossConsecutiveFailures(t *testing.T) {
+	full := errors.New("disk full")
+	for _, tc := range []struct {
+		name  string
+		steps []writeStep
+	}{
+		// After a short write, only the separating newline gets out before the next failure.
+		{"separator only", []writeStep{{n: 3, err: full}, {n: 1, err: full}}},
+		// After a short write, the next write gets nothing out; the one after must still separate.
+		{"nothing written", []writeStep{{n: 3, err: full}, {n: 0, err: full}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			w, err := Create("stub", agent.Task{Prompt: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.events = &scriptedWriter{WriteCloser: w.events, steps: tc.steps}
+			w.Event(agent.Event{Kind: agent.EventText, Text: "lost one"})
+			w.Event(agent.Event{Kind: agent.EventText, Text: "lost two"})
+			w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+			if err := w.Err(); err == nil || !strings.Contains(err.Error(), "2 events were not recorded") {
+				t.Errorf("Err = %v, want two losses", err)
+			}
+			_ = w.Close(agent.Result{Status: agent.StatusOK})
+			events, err := Events(w.ID())
+			if err != nil || len(events) != 1 || events[0].Text != "saved" {
+				t.Fatalf("only the third event must read back, intact: events=%+v err=%v", events, err)
+			}
+		})
+	}
+}
+
+func TestCloseMessageTellsAnIncompleteRecordFromAnUnsavedOne(t *testing.T) {
+	incomplete := errors.New("1 event was not recorded: disk full")
+	unsaved := errors.Join(incomplete, &ResultWriteError{Err: errors.New("write result.json: disk full")})
+	if got := CloseMessage(incomplete); !strings.HasPrefix(got, "run record incomplete: ") {
+		t.Errorf("CloseMessage(incomplete) = %q", got)
+	}
+	if got := CloseMessage(unsaved); !strings.HasPrefix(got, "saving run: ") || !strings.Contains(got, "result.json") {
+		t.Errorf("CloseMessage(unsaved) = %q", got)
+	}
+	if ResultNotSaved(incomplete) || !ResultNotSaved(unsaved) || ResultNotSaved(nil) {
+		t.Error("ResultNotSaved must be true only when result.json was not written")
 	}
 }
