@@ -149,7 +149,8 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 | Rule | Refuses |
 |---|---|
 | `git-push` | any `git` command mentioning `push`, including `git -C dir push`, or setting a `pushurl` or `pushInsteadOf` — a batch commits on its own branch; what leaves the machine is the operator's call |
-| `guard-env` | a command naming a variable of the guarded environment below: `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`; any case, for PowerShell |
+| `guard-env` | a command that changes a variable of the guarded environment below (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`): setting it (`NAME=`, `export`, `$env:NAME =`), unsetting it (`unset`, `env -u`, `Remove-Item env:`, `SetEnvironmentVariable`) or `env -i`; any case, for PowerShell. Reading one, searching for it or a flag like `--kubeconfig` is fine |
+| `secret-file` | a command line naming a secret file (the list below) as an argument, a redirect's target or a flag's value: `cat .env`, `echo x > .env`, `cp .env.example .env`, `Get-Content .\.env`, `cat ~/.ssh/id_ed25519` |
 | `sudo` | `sudo` — a password prompt hangs a run with no terminal |
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
 | `pipe-to-shell` | `curl`/`wget` piped into a shell, however many stages the pipe has |
@@ -158,11 +159,16 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 | `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`bun`/`cargo publish`, a project's deploy script (`npm run deploy`, `deploy:prod`, `deploy-docs`, with `pnpm`, `yarn` or `bun` too), `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `terraform`/`tofu apply/destroy`, `helm install/upgrade/uninstall`, `vercel --prod`, `fly`/`netlify deploy` |
 
 The api backend's file tools refuse the secret files as well (rule `secret-file`):
-`read_file`, `write_file` and `edit_file` on a `.env*` file, `.dev.vars`, `*.pem`,
-`*.key`, `.git-credentials`, or anything inside a `.private`, `.ssh`, `.aws`, `.kube`,
-`.azure` or `.wrangler` directory, judged by the path inside the workspace; `grep` over
-a directory passes over them. `.env.example` is refused too: a template costs the agent
-one turn, and `.env.staging` or `.envrc` are what the pattern is for.
+`read_file`, `write_file`, `edit_file` and `grep` on a `.env*` file, `.dev.vars`,
+`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `.git-credentials`,
+`.netrc`/`_netrc`, `.pypirc`, or anything inside a `.private`, `.ssh`, `.aws`, `.kube`,
+`.azure` or `.wrangler` directory. A path is judged inside the workspace, both as
+written and where its links lead (`notes.txt -> .env` is `.env`), with Windows' other
+spellings of a name (`.env.`, `.env::$DATA`, a short `8.3` name) read as the name;
+`grep` over a directory passes over secret files, and never follows a link out of the
+workspace. `.env.example` is refused too: a template costs the agent one turn, and
+`.env.staging` or `.envrc` are what the pattern is for. The command rule reads words,
+so `echo "*.pem" >> .gitignore` is refused as well (`edit_file` on `.gitignore` is not).
 
 `rm-root` reads the arguments rather than matching one pattern, because the spelling
 that matters is not the famous one: `rm -rf /` is refused by `rm` itself without
@@ -229,11 +235,15 @@ included:
 
 The command rules match command text, so the environment is what stops the other
 spellings; what they add is an early, plain refusal and the secret files. Checked live
-against the claude CLI in `yolo`: `git push` with and without arguments, setting a
-`pushurl`, `npm run deploy:prod`, `gh api … -X DELETE`, creating `.env.production`, and
-reading `.env` and gh's `hosts.yml` (with the Read tool and with `cat`) were all refused
-by the rules, and `git -C . push`, which no rule matches, failed at the environment's
-dead end; the remote stayed empty.
+against the claude CLI in `yolo`, all refused by the rules: `git push` with and without
+arguments, setting a `pushurl` or a `PushInsteadOf`, `npm run deploy:prod`, `gh api …
+-X DELETE`; creating `.env.production` with the Write tool, editing `.env` with the Edit
+tool, and writing secret files from Bash (`echo X=3 > .env.staging`, `printf … >> .env`,
+`cp .env .env.bak`); reading `.env`, gh's `hosts.yml`, a `.private/` file and a `*.key`
+(with the Read tool and with `cat`). `git -C . push`, which no rule matches, failed at
+the environment's dead end, and the remote stayed empty. A PowerShell `Set-Content` of
+`.env.test` was refused too, but by Claude Code's working-directory check rather than a
+deny rule, so that path is not shown to hold by the rules alone.
 
 What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
 
@@ -248,7 +258,9 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
 - logins kept where no variable moves them: wrangler's and cargo's, so under codex,
   gemini or opencode a `npx wrangler deploy` or `npm run deploy` would still deploy;
   claude and the api backend refuse those commands, the others get the environment only;
-- secret files stay readable and writable under codex, gemini and opencode;
+- secret files stay readable and writable under codex, gemini and opencode; under the
+  api backend and claude, a command that opens one without naming it (a recursive
+  `grep -r` from the shell, a tool that loads `.env` itself) is not seen;
 - secrets inside ordinary variables stay: a `DATABASE_URL` with a password in it, since
   local tests need it;
 - a CLI that logs in with an API key (opencode or gemini with a key, claude on Bedrock or
