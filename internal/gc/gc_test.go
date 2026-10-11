@@ -356,6 +356,36 @@ func TestGCKeepsAWorktreeHoldingARepository(t *testing.T) {
 	wantVerdict(t, find(t, wts, wt), Keep, "holds the repository")
 }
 
+func TestGCSeesUntrackedFilesWhateverStatusShows(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	git(t, f.repo, "config", "status.showUntrackedFiles", "no")
+	f.write(wt, "notes.txt", "not added\n")
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "1 uncommitted file")
+}
+
+func TestGCCountsAStagedRenameAsOneChange(t *testing.T) {
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "done")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	git(t, wt, "mv", "done.txt", "renamed.txt")
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "1 uncommitted file")
+}
+
+func TestGCReadsPathsGitWouldQuote(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\ncafé-cache/\n")
+	git(t, f.repo, "commit", "-q", "-am", "ignore the cache")
+	wt, head := f.worktree("wt", "done")
+	f.write(wt, filepath.Join("café-cache", "CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scan(), wt), Remove, "merged")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

@@ -145,11 +145,10 @@ func deleteBranch(ctx context.Context, repo, branch, oid string) error {
 // it changed since the scan: locked, a new HEAD or branch, or new files that
 // no branch holds, ignored ones included (git worktree remove deletes those).
 func recheck(ctx context.Context, w Worktree) string {
-	out, err := gitOut(ctx, w.Repo, "worktree", "list", "--porcelain")
+	entries, err := listWorktrees(ctx, w.Repo)
 	if err != nil {
 		return "the worktrees could not be listed again: " + firstLine(err.Error())
 	}
-	entries := parseWorktrees(out)
 	for _, e := range entries {
 		if samePath(e.path) != samePath(w.Path) {
 			continue
@@ -288,11 +287,21 @@ type entry struct {
 	detached, locked, gone bool
 }
 
+// listWorktrees reads `git worktree list --porcelain -z`: NUL ends each line,
+// so no path can be mistaken for the next field.
+func listWorktrees(ctx context.Context, repo string) ([]entry, error) {
+	out, err := gitStdout(ctx, repo, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return nil, err
+	}
+	return parseWorktrees(out), nil
+}
+
 func parseWorktrees(out string) []entry {
 	var list []entry
-	for _, block := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n\n") {
+	for _, block := range strings.Split(out, "\x00\x00") {
 		var e entry
-		for _, line := range strings.Split(block, "\n") {
+		for _, line := range strings.Split(block, "\x00") {
 			key, val, _ := strings.Cut(line, " ")
 			switch key {
 			case "worktree":
@@ -348,11 +357,10 @@ func (r *repoFacts) pullRequests(ctx context.Context) ([]PR, error) {
 }
 
 func scanRepo(ctx context.Context, repo string, owners map[string]owner, ownersErr error, cwd string, opt Options) ([]Worktree, error) {
-	out, err := gitOut(ctx, repo, "worktree", "list", "--porcelain")
+	entries, err := listWorktrees(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
-	entries := parseWorktrees(out)
 	if len(entries) < 2 {
 		return nil, nil // the first entry is the main checkout
 	}
@@ -472,23 +480,29 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 	// "matching" lists the paths an ignore pattern matched; the default mode
 	// shows a folder of nothing but ignored files as the folder, which hides
 	// what is in it.
-	out, err := gitOut(ctx, dir, "status", "--porcelain", "--ignored=matching")
+	// -z gives paths as they are (no quoting), and untracked files are asked
+	// for whatever status.showUntrackedFiles says.
+	out, err := gitStdout(ctx, dir, "status", "--porcelain", "-z", "--untracked-files=all", "--ignored=matching")
 	if err != nil {
 		return "git status failed: " + firstLine(err.Error())
 	}
 	changed := 0
 	var kept []string
 	hrn := false
-	for _, line := range strings.Split(out, "\n") {
-		if line == "" {
+	records := strings.Split(out, "\x00")
+	for i := 0; i < len(records); i++ {
+		rec := records[i]
+		if len(rec) < 4 {
 			continue
 		}
-		path, ignored := strings.CutPrefix(line, "!! ")
-		if !ignored {
+		code, path := rec[:2], rec[3:]
+		if code != "!!" {
 			changed++
+			if code[0] == 'R' || code[0] == 'C' {
+				i++ // a rename or copy is followed by the path it came from
+			}
 			continue
 		}
-		path = strings.Trim(strings.TrimSpace(path), `"`)
 		switch {
 		case path == ".hrn/" || strings.HasPrefix(path, ".hrn/"):
 			hrn = true
@@ -704,6 +718,25 @@ func holding(dir string, paths []string) string {
 		}
 	}
 	return ""
+}
+
+// gitStdout runs git and returns its standard output untouched: the -z
+// formats are data, and stderr mixed in would corrupt them.
+func gitStdout(ctx context.Context, dir string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		text := strings.TrimSpace(stderr.String())
+		if text == "" {
+			text = err.Error()
+		}
+		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), text)
+	}
+	return string(out), nil
 }
 
 // inside reports whether p is dir or under it.
