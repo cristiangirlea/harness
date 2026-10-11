@@ -92,15 +92,24 @@ func Scan(ctx context.Context, paths []string, opt Options) ([]Worktree, error) 
 // remove runs without --force, so git refuses a worktree that changed since.
 func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []error) {
 	var todo []Worktree
+	var stays []string // everything that is not going, including removals that failed
 	for _, w := range wts {
 		if w.Verdict == Remove {
 			todo = append(todo, w)
+		} else {
+			stays = append(stays, w.Path)
 		}
 	}
 	sort.SliceStable(todo, func(i, j int) bool { return len(todo[i].Path) > len(todo[j].Path) })
 	for _, w := range todo {
+		if held := holding(w.Path, stays); held != "" {
+			errs = append(errs, fmt.Errorf("%s: kept, it holds %s, which stays", w.Path, held))
+			stays = append(stays, w.Path)
+			continue
+		}
 		if _, err := gitOut(ctx, w.Repo, "worktree", "remove", w.Path); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", w.Path, err))
+			stays = append(stays, w.Path)
 			continue
 		}
 		removed = append(removed, w)
@@ -532,6 +541,16 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), text)
 	}
 	return text, nil
+}
+
+// holding returns the first of paths that lies under dir, or "".
+func holding(dir string, paths []string) string {
+	for _, p := range paths {
+		if samePath(p) != samePath(dir) && inside(p, dir) {
+			return p
+		}
+	}
+	return ""
 }
 
 // inside reports whether p is dir or under it.

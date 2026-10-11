@@ -411,6 +411,25 @@ func TestGCApplyLeavesAWorktreeThatChangedSinceTheScan(t *testing.T) {
 	}
 }
 
+func TestGCApplyKeepsAParentWhenTheWorktreeInsideItCannotGo(t *testing.T) {
+	f := newFixture(t)
+	outer, head := f.worktree("wt-outer", "outer")
+	f.pr(1, "outer", "MERGED", head, 2*time.Hour)
+	inner, innerHead := f.worktree(filepath.Join(outer, ".hrn", "worktrees", "task"), "inner")
+	f.pr(2, "inner", "MERGED", innerHead, 2*time.Hour)
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, outer), Remove, "merged")
+
+	f.write(inner, "late.txt", "written after the scan\n")
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 2 {
+		t.Fatalf("removed %d, errors %v; want both to stay", len(removed), errs)
+	}
+	if !exists(filepath.Join(inner, "late.txt")) {
+		t.Error("removing the outer worktree deleted the inner one's new file")
+	}
+}
+
 func TestSizeAddsUpTheFilesUnderAFolder(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "a", "b"), 0o755); err != nil {
