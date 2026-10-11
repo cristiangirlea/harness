@@ -17,7 +17,7 @@ decision. The binary was called `hx` until a rename; older PLAN.md entries keep 
 |---|---|
 | `cmd/hrn/` | The CLI and terminal renderer; batch, eval, report and prune subcommands. |
 | `internal/agent/` | `Backend` contract (`Task` -> events -> `Result`), the api loop (`api.go`) on a hand-written Messages client (`messages.go`), one file per CLI adapter, project instructions, the price table. |
-| `internal/tools/` | Workspace-confined tools for the api loop, the command guard (`guard.go`), the MCP tool bridge. |
+| `internal/tools/` | Workspace-confined tools for the api loop, the guard every backend runs under (`guard.go` commands, `guardenv.go` environment, `secretfiles.go` the one list of secret files; claude's deny rules are built from it in `internal/agent/guardenv.go`), the MCP tool bridge. |
 | `internal/mcp/` | JSON-RPC 2.0 over stdio: codec, client, server, config loader. |
 | `internal/hrnmcp/` | `hrn mcp`: run, runs, show, backends, batch, batch_show, batch_merge. |
 | `internal/batch/`, `eval/`, `report/` | Parallel worktrees with gates and retries; a batch across variants with a judge; tables over records. |

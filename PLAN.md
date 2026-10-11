@@ -596,9 +596,11 @@ order they are worth taking:
     nothing else can answer it. Its actions go through hrn watch's door: they must send
     `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
 12. **Guard rails** (the owner, 2026-10-11), in this order:
-    - [#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do. The
-      command guard checks only the api loop; a CLI backend in `yolo` can push, merge or
-      deploy. One refused list, enforced per backend.
+    - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
+      Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
+      deny rules, and the api loop's guard extended to secret files and the guard's own
+      variables. Left: codex's own sandbox under the guard, and per-CLI rules for gemini
+      and opencode (their runs say what is unguarded).
     - [#37](https://github.com/cristiangirlea/harness/issues/37): spending. A daily and weekly
       budget across all runs, refused when reached, shown on hrn watch.
     - [#38](https://github.com/cristiangirlea/harness/issues/38): control. Confirmations,
@@ -611,6 +613,43 @@ batch show answer the questions") until the owner asked for a live view on 2026-
 neither of them follows a run while it happens.
 
 ## Decisions log
+
+- 2026-10-11: PR X done (#44, closes #36): one guard for every backend. Issue #36 asked for
+  each CLI's own policy file; the PR puts the guard in what every backend inherits instead,
+  so one mechanism covers all four CLIs and the api loop's run_command: tokens and keys
+  withheld by name and pattern (git's askpass helpers too; claude's plan login reaches the
+  claude CLI only), the logins tools keep on disk (gh, npm, kubectl, docker, aws, gcloud, az)
+  looked for in an empty directory of the run's own, the ssh agent out of reach, and git
+  pointing every push at `push-refused-by-hrn://`. Claude also gets `--disallowedTools`:
+  the publishing commands in Bash and PowerShell, and a Read and an Edit rule per secret
+  file. The api loop's guard gains `gh-publish`, `deploy`, `guard-env` and `secret-file`,
+  and its file tools refuse secret files. One list of secret files (`tools.SecretNames`,
+  `SecretDirs`) feeds both, and a test keeps the two command lists refusing the same
+  commands. Codex, gemini and opencode get the environment only: each run's guard line
+  says what that leaves open (secret files, wrangler's and cargo's logins), which is the
+  issue's "say so on every run". Not done on purpose: clearing git's credential helper
+  (private fetches need it; an agent set on undoing the push guard can, and the README says
+  how), and withholding `DATABASE_URL` (local tests need it). Checked live with the claude
+  CLI in `yolo` (two runs on a scratch repo, scratch `HRN_HOME`): every refused command and
+  file was refused by the rules, shell writes to `.env` files included, and `git -C . push`
+  failed at the dead end; a PowerShell `Set-Content` was refused by Claude Code's
+  working-directory check instead, so that one is not shown to hold by the rules alone.
+  Codex could not review or be checked live: its plan reached its usage limit until
+  2026-10-16 (#43 is about carrying a run to the other CLI when that happens).
+- 2026-10-11: PR X reviews, both by an independent read-only claude run through hrn (codex
+  was at its limit). The first found four blocking gaps: secret files could be written
+  (claude had Read rules only, the api file tools none), `.env.*`, `*.key` and `.dev.vars`
+  were missing, codex, gemini and opencode runs did not say what was unguarded, and "git
+  cannot push" claimed more than the mechanism holds. The second found run_command could
+  still reach secret files (`echo x > .env`), and that guard-env refused any mention of a
+  variable, `kubectl --kubeconfig` and a search of hrn's own source included; also
+  `GCM_CREDENTIAL_STORE` withheld as a credential, a link to `.env` read as its own name,
+  Windows' other names for a file (`.env.`, `::$DATA`, 8.3), `.netrc`, `.pypirc` and key
+  stores missing, and `PushInsteadOf` in another case. All fixed, each as its own commit;
+  grep's walk no longer follows a link out of the workspace, which it did before this PR.
+  One FuzzCodec run failed once in a container while the Windows suite loaded the same
+  machine; no input was saved, and three 10 s runs and a 2 min run (7.4M executions) after
+  it passed.
 
 - 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
   means including security"), by an independent agent with loopback-only proof tests in a
