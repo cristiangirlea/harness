@@ -100,6 +100,10 @@ carry on; the timeout applies to them all the same. The cost ceiling is checked 
 hrn's own estimate, so a model with no price in the table cannot be capped and the run
 says so instead of pretending.
 
+Agent CLIs and shell commands start in a Windows Job Object or a Unix process group;
+cancellation kills that tree, and CLI runs wait up to five seconds to verify it is gone
+(survivors or unavailable Windows containment are reported; Unix children can escape with setsid).
+
 Where a cost comes from depends on the backend. The claude and opencode CLIs report one
 themselves; on a subscription that figure is what the run would cost at API list
 prices, not a charge. codex and gemini report none. The API returns token counts only,

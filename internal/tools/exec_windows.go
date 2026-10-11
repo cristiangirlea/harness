@@ -3,28 +3,41 @@
 package tools
 
 import (
+	"fmt"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
-// A Job Object holds the shell and every process it starts, whatever their
+// A Job Object holds the command and every process it starts, whatever their
 // parent chain looks like: Git Bash forks and execs in a way that leaves the
 // real command without a stable parent, so taskkill /T misses it.
 var (
-	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
-	procCreateJobObjectW         = kernel32.NewProc("CreateJobObjectW")
-	procSetInformationJobObject  = kernel32.NewProc("SetInformationJobObject")
-	procAssignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
-	procTerminateJobObject       = kernel32.NewProc("TerminateJobObject")
+	kernel32                      = syscall.NewLazyDLL("kernel32.dll")
+	procCreateJobObjectW          = kernel32.NewProc("CreateJobObjectW")
+	procSetInformationJobObject   = kernel32.NewProc("SetInformationJobObject")
+	procAssignProcessToJobObject  = kernel32.NewProc("AssignProcessToJobObject")
+	procTerminateJobObject        = kernel32.NewProc("TerminateJobObject")
+	procQueryInformationJobObject = kernel32.NewProc("QueryInformationJobObject")
+	procCreateToolhelp32Snapshot  = kernel32.NewProc("CreateToolhelp32Snapshot")
+	procThread32First             = kernel32.NewProc("Thread32First")
+	procThread32Next              = kernel32.NewProc("Thread32Next")
+	procOpenThread                = kernel32.NewProc("OpenThread")
+	procResumeThread              = kernel32.NewProc("ResumeThread")
 )
 
 const (
-	jobObjectExtendedLimitInformationClass = 9
-	jobObjectLimitKillOnJobClose           = 0x2000
-	processTerminate                       = 0x0001
-	processSetQuota                        = 0x0100
+	jobObjectExtendedLimitInformationClass   = 9
+	jobObjectLimitKillOnJobClose             = 0x2000
+	processTerminate                         = 0x0001
+	processSetQuota                          = 0x0100
+	createSuspended                          = 0x0004
+	snapThread                               = 0x0004
+	threadSuspendResume                      = 0x0002
+	jobObjectBasicAccountingInformationClass = 1
 )
 
 type jobObjectBasicLimitInformation struct {
@@ -53,15 +66,19 @@ type jobObjectExtendedLimitInformation struct {
 	PeakJobMemoryUsed     uintptr
 }
 
-type processTree struct {
-	job syscall.Handle
+// Tree holds the Job Object containing a command and its descendants.
+type Tree struct {
+	mu        sync.Mutex
+	job       syscall.Handle
+	contained bool
 }
 
-// newProcessTree creates the job and makes cancellation terminate it. When
-// the job cannot be created, cancellation falls back to taskkill /T and then
-// to killing the shell alone.
-func newProcessTree(cmd *exec.Cmd) *processTree {
-	t := &processTree{}
+// StartTree starts cmd suspended, assigns it to a kill-on-close job, then
+// resumes its initial thread. If the job is unavailable, Contained is false
+// and cancellation falls back to taskkill /T and then killing the process.
+// The caller must Wait on cmd and Close the tree.
+func StartTree(cmd *exec.Cmd) (*Tree, error) {
+	t := &Tree{}
 	if h, _, _ := procCreateJobObjectW.Call(0, 0); h != 0 {
 		var info jobObjectExtendedLimitInformation
 		info.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose
@@ -72,40 +89,160 @@ func newProcessTree(cmd *exec.Cmd) *processTree {
 		}
 		t.job = syscall.Handle(h)
 	}
-	cmd.Cancel = func() error {
-		if t.job != 0 {
-			if ok, _, _ := procTerminateJobObject.Call(uintptr(t.job), 1); ok != 0 {
-				return nil
-			}
-		}
-		if err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err == nil {
-			return nil
-		}
-		return cmd.Process.Kill()
-	}
-	return t
+	return startTree(cmd, t)
 }
 
-// Attach puts the started shell into the job. Its children join the job on
-// creation, so a command started before this call would be missed; the shell
-// is still initialising at that point, so in practice nothing is.
-func (t *processTree) Attach(cmd *exec.Cmd) {
-	if t.job == 0 || cmd.Process == nil {
-		return
+func startTree(cmd *exec.Cmd, t *Tree) (*Tree, error) {
+	// CommandContext's watcher can cancel as soon as Start returns. Hold the
+	// lock through assignment and resume so it cannot kill an empty job and
+	// then let the newly assigned process run.
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if cmd.Cancel != nil {
+		cmd.Cancel = func() error {
+			t.mu.Lock()
+			defer t.mu.Unlock()
+			if t.job != 0 {
+				if ok, _, _ := procTerminateJobObject.Call(uintptr(t.job), 1); ok != 0 {
+					return nil
+				}
+			}
+			if err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err == nil {
+				return nil
+			}
+			return cmd.Process.Kill()
+		}
 	}
-	h, err := syscall.OpenProcess(processSetQuota|processTerminate, false, uint32(cmd.Process.Pid))
-	if err != nil {
-		return
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
-	defer syscall.CloseHandle(h)
-	_, _, _ = procAssignProcessToJobObject.Call(uintptr(t.job), uintptr(h))
+	cmd.SysProcAttr.CreationFlags |= createSuspended
+	if err := cmd.Start(); err != nil {
+		t.close()
+		return nil, err
+	}
+	if t.job != 0 {
+		h, err := syscall.OpenProcess(processSetQuota|processTerminate, false, uint32(cmd.Process.Pid))
+		if err == nil {
+			ok, _, _ := procAssignProcessToJobObject.Call(uintptr(t.job), uintptr(h))
+			t.contained = ok != 0
+			_ = syscall.CloseHandle(h)
+		}
+		if !t.contained {
+			t.close()
+		}
+	}
+	if err := resumeInitialThread(uint32(cmd.Process.Pid)); err != nil {
+		// Never leave a suspended process behind on a failed start.
+		t.close()
+		_ = cmd.Process.Kill()
+		// Wait can wait for the cancellation watcher, which takes our lock.
+		t.mu.Unlock()
+		_ = cmd.Wait()
+		t.mu.Lock()
+		return nil, err
+	}
+	return t, nil
+}
+
+type threadEntry32 struct {
+	Size, Usage, ThreadID, OwnerProcessID uint32
+	BasePriority, DeltaPriority           int32
+	Flags                                 uint32
+}
+
+// resumeInitialThread resumes the suspended process. A process created
+// suspended has one thread, but another program (security software, a
+// debugger) may have added one before this runs, and the snapshot does not say
+// which is the initial thread. So every thread of the process is resumed:
+// resuming a thread that was not suspended changes nothing.
+func resumeInitialThread(pid uint32) error {
+	snapshot, _, err := procCreateToolhelp32Snapshot.Call(snapThread, 0)
+	if snapshot == ^uintptr(0) {
+		return fmt.Errorf("snapshot threads for process %d: %w", pid, err)
+	}
+	defer syscall.CloseHandle(syscall.Handle(snapshot))
+	resumed := 0
+	entry := threadEntry32{Size: uint32(unsafe.Sizeof(threadEntry32{}))}
+	ok, _, err := procThread32First.Call(snapshot, uintptr(unsafe.Pointer(&entry)))
+	for ok != 0 {
+		if entry.OwnerProcessID == pid {
+			if err := resumeThread(entry.ThreadID); err != nil {
+				return fmt.Errorf("resume process %d: %w", pid, err)
+			}
+			resumed++
+		}
+		entry.Size = uint32(unsafe.Sizeof(entry))
+		ok, _, err = procThread32Next.Call(snapshot, uintptr(unsafe.Pointer(&entry)))
+	}
+	if resumed == 0 {
+		return fmt.Errorf("find the initial thread of process %d: %w", pid, err)
+	}
+	return nil
+}
+
+func resumeThread(id uint32) error {
+	h, _, err := procOpenThread.Call(threadSuspendResume, 0, uintptr(id))
+	if h == 0 {
+		return fmt.Errorf("open thread %d: %w", id, err)
+	}
+	defer syscall.CloseHandle(syscall.Handle(h))
+	if count, _, err := procResumeThread.Call(h); uint32(count) == ^uint32(0) {
+		return fmt.Errorf("thread %d: %w", id, err)
+	}
+	return nil
 }
 
 // Close releases the job; with kill-on-close set, anything the command left
 // running in the background ends here.
-func (t *processTree) Close() {
+func (t *Tree) Close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.close()
+}
+
+func (t *Tree) close() {
 	if t.job != 0 {
 		_ = syscall.CloseHandle(t.job)
 		t.job = 0
+	}
+}
+
+// Contained reports whether job assignment succeeded.
+func (t *Tree) Contained() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.contained
+}
+
+type jobObjectBasicAccountingInformation struct {
+	TotalUserTime, TotalKernelTime                                                 int64
+	ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime                             int64
+	TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses uint32
+}
+
+// WaitGone polls the job's active process count before Close releases its handle.
+// An unavailable or closed job cannot prove that descendants have stopped.
+func (t *Tree) WaitGone(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		t.mu.Lock()
+		if t.job == 0 {
+			t.mu.Unlock()
+			return fmt.Errorf("process tree is not contained or its job is closed; cannot verify remaining processes")
+		}
+		var info jobObjectBasicAccountingInformation
+		ok, _, err := procQueryInformationJobObject.Call(uintptr(t.job), jobObjectBasicAccountingInformationClass, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info), 0)
+		t.mu.Unlock()
+		if ok == 0 {
+			return fmt.Errorf("query process tree: %w", err)
+		}
+		if info.ActiveProcesses == 0 {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("process tree: %d processes still alive after %s", info.ActiveProcesses, timeout)
+		}
+		time.Sleep(min(10*time.Millisecond, time.Until(deadline)))
 	}
 }
