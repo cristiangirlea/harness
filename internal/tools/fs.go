@@ -325,23 +325,27 @@ func grep() Tool {
 			if info, err := os.Stat(base); err == nil && !info.IsDir() {
 				search(base)
 			} else {
+				// base as it really is, once: the walk goes into no link, so a
+				// regular file below it really is base's real path and rel. It
+				// is judged there too, since base can be spelt otherwise (a
+				// short 8.3 name: CODEX~1/auth.json is .codex/auth.json).
+				realBase := realPath(base)
 				err = walk(ctx, base, func(p, rel string, regular bool) bool {
 					if globRe != nil && !globRe.MatchString(rel) {
 						return true
 					}
 					// A link out of the workspace is not followed, as Resolve
 					// refuses one, and a search of a directory passes over the
-					// secret files in it rather than refusing the whole search.
-					// A regular file is where it is written: the walk goes into
-					// no link, and base is inside. A link is judged by where it
-					// leads as well.
+					// secret files in it rather than refusing the whole search,
+					// judged as written and where they really are.
+					real := filepath.Join(realBase, filepath.FromSlash(rel))
 					if !regular {
-						real := realPath(p)
-						if !ws.inside(real) || (!ws.AllowDangerous && ws.secretReal(real)) {
+						real = realPath(p)
+						if !ws.inside(real) {
 							return true
 						}
 					}
-					if !ws.AllowDangerous && SecretFile(ws.Rel(p)) {
+					if !ws.AllowDangerous && (SecretFile(ws.Rel(p)) || ws.secretReal(real)) {
 						return true
 					}
 					search(p)
