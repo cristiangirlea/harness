@@ -97,6 +97,11 @@ func TestGuardBlocks(t *testing.T) {
 		"declare +x GH_CONFIG_DIR":                                      "guard-env",
 		"read KUBECONFIG <<< /home/me/kube/config":                      "guard-env",
 		"printf -v KUBECONFIG '%s' /x":                                  "guard-env",
+		"typeset +x KUBECONFIG":                                         "guard-env",
+		"Remove-Item Environment::KUBECONFIG":                           "guard-env", // through the provider's name
+		"Remove-Item -Path:env:KUBECONFIG":                              "guard-env",
+		"Remove-Item 'env:KUBECONFIG'":                                  "guard-env",
+		"Test-Path env:KUBECONFIG":                                      "guard-env", // a read, but by the drive path: refused on purpose
 		// The secret files, reached through the shell.
 		"cat .env":                               "secret-file",
 		"echo X=1 > .env":                        "secret-file",
@@ -181,6 +186,11 @@ func TestGuardAllows(t *testing.T) {
 		"echo ${env:KUBECONFIG}", // and so does the braced form
 		"Get-ChildItem env:",
 		"while read line; do echo $line; done < notes.txt",
+		`while IFS= read -r l; do echo "$l"; done < "$KUBECONFIG"`, // read's segment ends at ;
+		"kubectl get pod -o yaml | grep env:",
+		`echo "env: production" >> app.yaml`,
+		"docker run --read-only -e DOCKER_CONFIG img",    // --read-only is not read
+		"kubectl get role read-only --kubeconfig k.yaml", // nor --kubeconfig the variable
 		"cat .cargo/config.toml",
 		"ls .docker/",
 		"git show HEAD:README.md",

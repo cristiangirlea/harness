@@ -103,14 +103,16 @@ func guardEnvPattern() string {
 	return `(?i)` + strings.Join([]string{
 		// NAME=, NAME+=, export, declare, $env:NAME = and ${env:NAME} =.
 		`(?:^|[^\w-])` + n + `\}?\s*\+?=`,
-		// unset, or taken off what child processes see, or set by a builtin.
-		`\b(?:unset|export\s+-n|declare\s+\+x|typeset\s+\+x|read|printf\s+-v)\b[^|&;]*\b` + n + `\b`,
+		// unset, or taken off what child processes see, or set by a builtin;
+		// not a flag that only shares the word (--read-only, --kubeconfig).
+		`(?:^|[^\w-])(?:unset|export\s+-n|declare\s+\+x|typeset\s+\+x|read|printf\s+-v)\b[^|&;]*[^\w-]` + n + `\b`,
 		`\benv\b[^|&;]*(?:-u\s*|--unset[=\s]\s*)` + n + `\b`,
 		`\benv\s+(?:-i|--ignore-environment|-)(?:\s|$)`,
 		// PowerShell's env: drive used as a path, whatever cmdlet, alias or
 		// scriptblock it is in, and any wildcard on it. $env:NAME and
 		// ${env:NAME} are the variable syntax: read freely, caught above when set.
 		`(?:^|[^${\w])env:[\\/]?(?:` + n + `\b|\w*[*?])`,
+		`\benvironment::[\\/]?(?:` + n + `\b|\w*[*?])`, // the same drive by its provider's name
 		`setenvironmentvariable\(\s*['"]` + n + `['"]`,
 	}, "|")
 }
