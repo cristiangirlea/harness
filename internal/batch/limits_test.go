@@ -145,3 +145,40 @@ func TestNoSwitchKeepsABatchOnItsBackend(t *testing.T) {
 		t.Fatalf("task = %+v, want one limited attempt on codex", tr)
 	}
 }
+
+func TestARetryMeantForALimitedBackendRunsOnItsPartner(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	_ = limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-bad", Retry: []string{"codex"},
+		Tasks: []Task{{ID: "retried", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if a := tr.Attempts[1]; a.Backend != "claude" || a.SwitchedFrom != "codex" {
+		t.Errorf("the retry ran on %s, switched from %q", a.Backend, a.SwitchedFrom)
+	}
+}
+
+func TestWhenBothRunOutInATaskNothingStartsAThirdTime(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	orig, _ := agent.Get("claude")
+	// The Fable wording gives no time, so only the task itself knows.
+	agent.Register(stub{"claude", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "claude", Status: agent.StatusLimited, Error: "You've reached your Fable limit."}
+	}})
+	t.Cleanup(func() { agent.Register(orig) })
+
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Retry: []string{"codex", "claude"},
+		Tasks: []Task{{ID: "spent", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	var got []string
+	for _, a := range tr.Attempts {
+		got = append(got, a.Backend)
+	}
+	if tr.Status != StatusFail || strings.Join(got, ",") != "codex,claude" {
+		t.Fatalf("status %s, attempts %v: after both ran out, the retries are skipped", tr.Status, got)
+	}
+}

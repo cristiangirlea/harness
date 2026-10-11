@@ -1168,3 +1168,12 @@ neither of them follows a run while it happens.
   other backend is dropped. Two processes noting a limit at once can lose one note, which
   costs one more limited start, so the file has no lock. An eval sets `no_switch`, for the
   reason retry is refused there. `hrn report` counts `limited` as not ok, which it is.
+- 2026-10-11: #43 review (codex, read-only), 6 findings, 5 fixed. A carry-on that ended
+  limited too was not remembered. Notes from a batch's parallel workers failed on Windows
+  ("Access is denied": a rename cannot replace a file another reader holds) and could
+  overwrite each other: a lock in the process and a short retry across processes, with a
+  test that runs two processes. "You've hit your rate limit" read as a plan limit. The fake
+  claude's fixed reset time failed its test ten minutes a night. A null limits.json
+  panicked the next note. Not changed: switching back to a backend earlier in the chain
+  runs the model the chain chose for it, as `--continue -b` does; the reviewer wanted it
+  cleared. The README says so.

@@ -256,7 +256,8 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
 
 - The other CLI carries it on, once, as a follow-up run (see above): a new record that
   continues the limited one, with the transcript handed over, the same workspace and
-  mode, and the model left to the new backend. `hrn run` and the MCP `run` tool answer
+  mode. A model is never carried from one backend to the other: the new backend runs the
+  model chosen for it earlier in the same chain, as any follow-up does, or its default. `hrn run` and the MCP `run` tool answer
   with that run; the MCP result names the limited one as `limited_run_id`.
 - The reset time is kept in `~/.hrn/limits.json`. Until it passes, a run, a batch
   attempt or a retry meant for that backend starts on the other one, and its transcript

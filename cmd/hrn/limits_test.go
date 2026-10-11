@@ -106,6 +106,8 @@ func TestRunStartsOnTheOtherBackendWhileALimitIsRemembered(t *testing.T) {
 func TestNoSwitchKeepsTheRunOnItsBackend(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	standIn(t)
+	// Remembered or not, the run stays.
+	_ = limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
 	code, _ := cmdRun([]string{"-b", "codex", "--no-switch", "-C", t.TempDir(), "fix", "it"})
 	if code != 1 {
 		t.Errorf("code = %d, want 1 for a limited run", code)
