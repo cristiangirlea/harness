@@ -305,11 +305,16 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 		}
 		switch ev.Type {
 		case "message_start":
+			// What the earlier blocks gathered goes into them first: the
+			// decode below can replace or shrink the content even when it
+			// then fails.
+			for i := range grown {
+				settle(i)
+			}
 			if err := json.Unmarshal(ev.Message, resp); err != nil {
 				return err
 			}
 			resp.Content = resp.Content[:0]
-			clear(grown)
 		case "content_block_start":
 			if ev.Index != len(resp.Content) {
 				return fmt.Errorf("content block %d started out of order", ev.Index)

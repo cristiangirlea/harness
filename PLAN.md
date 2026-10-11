@@ -636,11 +636,13 @@ neither of them follows a run while it happens.
   It also slowed FuzzParseSSE's minimization of large inputs (#70). Each block's deltas
   now go into a `strings.Builder`, written into the block at its `content_block_stop`, or
   by a `defer` when the parse ends any other way. The partial response of a cut-off
-  stream keeps what arrived (the api loop reads only its usage today), and `message_start`
-  clears the builders with the blocks. The blocks and the `onDelta` calls are the same
-  byte for byte, so the history stays append-only. 64,000 deltas now parse in 59 ms.
-  The test checks bytes allocated (under 32 times the stream; about 10 now), not time,
-  so a busy runner cannot make it flaky.
+  stream keeps what arrived (the api loop reads only its usage today), and a
+  `message_start` first writes what was gathered into the blocks it belongs to, since its
+  decode can replace or shrink the content even when it then fails (the review found
+  that path panicking; it is a FuzzParseSSE seed now). The blocks and the `onDelta` calls
+  are the same byte for byte, so the history stays append-only. 64,000 deltas now parse
+  in 59 ms. The test checks bytes allocated (under 32 times the stream; about 10 now),
+  not time, so a busy runner cannot make it flaky.
 - 2026-10-11: #45 reviews (PR #48): an independent read-only reviewer, and an adversarial security
   read in a scratch copy, which found nothing it could get out through (junction chains and
   loops, dangling junctions, 8.3 aliases, `\\?\` targets, a junction to `C:\Windows`; no

@@ -143,6 +143,40 @@ func TestABlockCutOffBeforeItsStopKeepsWhatArrived(t *testing.T) {
 	}
 }
 
+// A message_start can fail after it has already decoded new content into the
+// response. What the earlier blocks gathered must land in those blocks, not in
+// whatever now sits at their index, and never past the end of the content.
+func TestAMessageStartThatFailsMidStreamIsAnErrorAndLeavesTheNewContentAlone(t *testing.T) {
+	for _, next := range []string{
+		`{"content":[],"model":1}`,
+		`{"content":null,"model":1}`,
+		`{"content":[{"text":"Q"}],"model":1}`,
+	} {
+		stream := sse([]string{
+			messageStart("msg_1"),
+			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"a"}}`,
+			`{"type":"message_start","message":` + next + `}`,
+		})
+		var resp *apiResponse
+		var err error
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Fatalf("message_start %s: panic: %v", next, p)
+				}
+			}()
+			resp, _, err = parseSSE(strings.NewReader(stream), func(string, string) {}, func(block) {})
+		}()
+		if err == nil {
+			t.Errorf("message_start %s: no error", next)
+		}
+		if len(resp.Content) == 1 && resp.Content[0]["text"] != "Q" {
+			t.Errorf("message_start %s: text = %q; want the decoded block's own \"Q\"", next, resp.Content[0]["text"])
+		}
+	}
+}
+
 func TestALineLongerThanAMegabyteStillParses(t *testing.T) {
 	long := strings.Repeat("x", 3<<20)
 	resp, _, err := parseSSE(strings.NewReader(sse(textTurn(long))), func(string, string) {}, func(block) {})
