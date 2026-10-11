@@ -504,6 +504,7 @@ func botNowOf(s botSnapshot) botNow {
 type botPage struct {
 	page
 	Now   botNow
+	Local bool // on this computer, where recording her voice works
 	Kinds []botKind
 }
 
@@ -590,7 +591,7 @@ func (s *server) bot(w http.ResponseWriter, r *http.Request) {
 	// The page may ask for the microphone, to listen for its few commands.
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
 	snap := s.newBotWatcher().look()
-	s.page(w, http.StatusOK, "bot", botPage{page: page{Title: "Ada", Home: homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds})
+	s.page(w, http.StatusOK, "bot", botPage{page: page{Title: "Ada", Home: homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds, Local: fromThisComputer(r)})
 }
 
 // streamBot sends the visible part when it changes, and each thing to say as

@@ -606,6 +606,12 @@ order they are worth taking:
       is across the entire workflow, every repository and every stage from idea to release
       (#90); then decisions and actions, behind #38; then planning and improving hrn
       itself (the self-improvement loop).
+    - [x] Recording her voice ([#91](https://github.com/cristiangirlea/harness/issues/91), the
+      first slice of #83). Done: PR #93, 2026-10-11. `/voice`, for this computer only: 523
+      lines to read (everyday ones mixed with Ada's own, made by her wording functions) and a
+      mode that records talk, saved as WAV with `metadata.csv` into a folder the speaker picks.
+      Next in #83, each download with the owner's yes: a taste with Chatterbox, transcribing
+      talk with Whisper, training with Piper, and Ada speaking with the voice.
 12. **Guard rails** (the owner, 2026-10-11), in this order:
     - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
       Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
@@ -647,6 +653,22 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-11: PR #93 (closes #91), recording Ada's voice, the first slice of #83. The voice
+  will be the owner's wife's, recorded by her with her agreement; the recordings stay on this
+  computer, never in a repository. Decided: the page records in the browser and saves into a
+  folder the speaker picks (File System Access, downloads otherwise), so hrn watch stays
+  read-only and keeps no one's voice; it is refused from the network. The microphone is taken
+  as it is (no echo cancellation, noise suppression or auto gain) and saved as 16-bit WAV
+  with `id|text` rows, the layout Piper and most trainers read. Ada's lines come from her own
+  wording functions, so the voice is trained on what she says; their numbers are a contract
+  (`testdata/voice-lines.golden`), since a take finds its text by its number. Training will
+  use only models under MIT or Apache licences, and from ChatGPT conversations only her side
+  is recorded, through a shared microphone with headphones. Rounds of independent review
+  through hrn (claude; codex at its limit) found four blocking defects and smaller races this
+  branch brought in, each fixed and checked in the browser; the rest is #92. Every handler
+  on the page awaits, so each says what may happen while it waits: one microphone setup at a
+  time, nothing moves while a take is saved, Keep and Retake never overlap, and a talk's
+  parts save in order.
 - 2026-10-11: PR #89 (closes #59), Ada, part 1 of item 11. Decided: the sentences are made in
   Go (`internal/watch/bot.go`), not in the page, so they are tested and pass the same
   redaction as every page; one stream per page, the visible card as escaped HTML and the

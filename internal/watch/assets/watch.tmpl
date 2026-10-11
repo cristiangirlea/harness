@@ -155,6 +155,7 @@
 <label>Snooze <select id="bot-snooze"><option value="0">off</option><option value="15">15 minutes</option><option value="60">an hour</option><option value="-1">until I unmute</option></select></label>
 </p>
 <p id="bot-quiet" class="muted small" hidden></p>
+{{if .Local}}<p class="small"><a href="/voice">Record my voice</a>: the voice I will speak in, recorded and kept on this computer.</p>{{end}}
 </section>
 <div id="live" data-stream="/stream/bot" data-replace>{{template "botnow" .Now}}</div>
 <section class="card" aria-labelledby="said-h"><h2 id="said-h">What I've said</h2><ol id="bot-log" class="bot-log"><li class="muted">Nothing yet.</li></ol></section>
@@ -238,3 +239,50 @@
 </g>
 </g>
 </svg>{{end}}
+
+{{define "voice"}}{{template "head" .}}
+<section class="card bot" aria-labelledby="voice-h">
+<div class="bot-head">
+{{template "ada"}}
+<div>
+<h1 id="voice-h">Record Ada's voice</h1>
+<p class="bot-line">The voice recorded here becomes mine. It stays on this computer: nothing is sent anywhere.</p>
+</div>
+</div>
+<p class="bot-buttons"><button type="button" id="voice-folder" class="primary">Choose a folder</button> <span id="voice-folder-name" class="muted small">The takes are saved in a folder you pick; picking it again carries on where you stopped.</span></p>
+<p class="bot-buttons"><button type="button" id="voice-mode-read" aria-pressed="true">Read the lines</button> <button type="button" id="voice-mode-talk" aria-pressed="false">Just record me</button></p>
+<p id="voice-warn" class="notice warn" hidden></p>
+</section>
+<section class="card" id="voice-read" aria-labelledby="read-h">
+<h2 id="read-h">Read the lines</h2>
+<p class="muted small" id="voice-count"></p>
+<p class="voice-line" id="voice-line" aria-live="polite"></p>
+<p class="bot-buttons">
+<button type="button" id="voice-rec" class="primary">Record (Space)</button>
+<button type="button" id="voice-play" disabled>Play back (P)</button>
+<button type="button" id="voice-keep" disabled>Keep (Enter)</button>
+<button type="button" id="voice-retake" disabled>Retake (R)</button>
+<button type="button" id="voice-prev">Back</button>
+<button type="button" id="voice-skip">Skip (S)</button>
+</p>
+<p class="voice-level"><meter id="voice-meter" min="0" max="1" low=".15" high=".9" optimum=".6" value="0"></meter> <span id="voice-note" class="muted small"></span></p>
+</section>
+<section class="card" id="voice-talk" aria-labelledby="talk-h" hidden>
+<h2 id="talk-h">Just record me</h2>
+<p>Start, then talk for as long as you like: to someone, to yourself, or to ChatGPT's voice mode. Wear headphones, so that only your voice reaches the microphone; only your side is kept. A file is saved every five minutes and when you stop.</p>
+<p class="bot-buttons"><button type="button" id="voice-talk-rec" class="primary">Start</button> <span id="voice-talk-time" class="muted"></span></p>
+<p class="voice-level"><meter id="voice-talk-meter" min="0" max="1" low=".15" high=".9" optimum=".6" value="0"></meter> <span id="voice-talk-note" class="muted small"></span></p>
+</section>
+<details class="card"><summary>How to record well</summary>
+<ul>
+<li>A quiet room with soft things in it: curtains, a bed, a wardrobe of clothes. No fan, heater or open window; phones on silent.</li>
+<li>The microphone 15 to 20 cm from your mouth, a little to the side, in the same place every time.</li>
+<li>Your natural voice, calm and clear, at an even pace: the way I should sound. A short pause before and after each line.</li>
+<li>Stumbled? Press R and read the whole line again. Twenty minutes at a time, with water to hand.</li>
+<li>About an hour in all makes a good voice. The meter should sit in the middle; the page says when a take is too quiet or too loud.</li>
+</ul>
+<p class="muted small">These recordings are your voice: they stay in the folder you choose, on this computer. Deleting the folder deletes them.</p>
+</details>
+<ol id="voice-lines" hidden>{{range .Lines}}<li data-n="{{.N}}">{{.Text}}</li>
+{{end}}</ol>
+{{template "foot" .}}{{end}}

@@ -252,6 +252,7 @@ func New(ctx context.Context, opt Options) http.Handler {
 	mux.HandleFunc("GET /stream/batch/{id}", s.streamBatch)
 	mux.HandleFunc("GET /bot", s.bot)
 	mux.HandleFunc("GET /stream/bot", s.streamBot)
+	mux.HandleFunc("GET /voice", s.voice)
 	mux.HandleFunc("GET /static/{name}", s.static)
 	lan := map[string]bool{}
 	for _, ep := range opt.LAN {
@@ -512,7 +513,8 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
-	types := map[string]string{"watch.css": "text/css; charset=utf-8", "watch.js": "text/javascript; charset=utf-8", "bot.js": "text/javascript; charset=utf-8"}
+	types := map[string]string{"watch.css": "text/css; charset=utf-8", "watch.js": "text/javascript; charset=utf-8", "bot.js": "text/javascript; charset=utf-8",
+		"voice.js": "text/javascript; charset=utf-8", "voice-worklet.js": "text/javascript; charset=utf-8"}
 	name := r.PathValue("name")
 	data, err := assets.ReadFile("assets/" + name)
 	if types[name] == "" || err != nil {
