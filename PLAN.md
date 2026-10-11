@@ -663,11 +663,12 @@ neither of them follows a run while it happens.
   wording functions, so the voice is trained on what she says; their numbers are a contract
   (`testdata/voice-lines.golden`), since a take finds its text by its number. Training will
   use only models under MIT or Apache licences, and from ChatGPT conversations only her side
-  is recorded, through a shared microphone with headphones. Two independent reviews through
-  hrn (claude; codex at its limit) found four blocking defects and three smaller races this
+  is recorded, through a shared microphone with headphones. Rounds of independent review
+  through hrn (claude; codex at its limit) found four blocking defects and smaller races this
   branch brought in, each fixed and checked in the browser; the rest is #92. Every handler
   on the page awaits, so each says what may happen while it waits: one microphone setup at a
-  time, nothing moves while a take is saved, and a talk's parts save in order.
+  time, nothing moves while a take is saved, Keep and Retake never overlap, and a talk's
+  parts save in order.
 - 2026-10-11: PR #89 (closes #59), Ada, part 1 of item 11. Decided: the sentences are made in
   Go (`internal/watch/bot.go`), not in the page, so they are tested and pass the same
   redaction as every page; one stream per page, the visible card as escaped HTML and the
