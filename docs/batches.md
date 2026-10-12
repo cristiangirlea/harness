@@ -185,8 +185,8 @@ a `cargo-target` pool) and inside each worktree that stays, up to two levels dow
 `<profile>/.cargo-lock` open while it builds: on Windows an open that shares nothing fails, elsewhere
 a non-blocking `flock` does) and nothing has written it for `--idle` (default 24h). Its last write is
 the newest time among its profile folders (`debug`, `release`, one under a target triple), their
-`deps`, `.fingerprint`, `build` and `incremental` folders, and the files directly in a profile, so the
-files inside are never walked for it. With `--free-below SIZE` (`50G`, `500M`), a drive with less
+`deps`, `.fingerprint`, `build` and `incremental` folders, the files directly in a profile, and
+anything the walk that sizes it sees inside. With `--free-below SIZE` (`50G`, `500M`), a drive with less
 free than SIZE also loses its caches idle past `--min-idle` (default 2h), oldest first, until what
 goes would put it above SIZE; free space is asked of the drive (`GetDiskFreeSpaceEx` on Windows,
 `statfs` elsewhere), and a drive that cannot answer loses nothing more.
