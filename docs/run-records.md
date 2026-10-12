@@ -1,0 +1,59 @@
+# Run records
+
+[← README](../README.md)
+
+## Run records
+
+`~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
+
+- `task.json` — prompt, dir, backend, and the run options by their flag names
+  (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
+  `timeout_ns` and still load)
+  and, for exec runs, the supervisor's `attempt_id`
+- `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
+  one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
+- `messages.json` — the api backend's message history, for `hrn run --continue`. It
+  repeats the tool results the transcript already holds, so an api run costs roughly
+  twice the disk of its transcript
+- `handoff.md` — for a follow-up, the transcript of earlier turns its backend was
+  given before the prompt (see [Continuing a run](backends.md#continuing-a-run))
+- `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled|limited`), final answer, turns,
+  tokens, cache, cost (`cost_is_estimate` for the api backend), duration, the
+  claude or codex `session` id, and for a `limited` run `limit_resets`, when its plan's
+  limit lifts
+
+`result.json` also includes `context_tokens` when known: the last model call's input
+tokens, including cache reads and writes, rather than the sum across the run. The
+api backend records its last message's usage; claude records its main loop's last assistant
+message's usage; opencode records the last step's usage. Codex's `turn.completed`
+usage totals the model calls in its agent turn, and gemini's final stats total the
+run, so neither supplies a last model call's context size. A backend with no usage
+leaves it unset too. The field is omitted when zero; older records still load.
+
+Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
+force, which every run consults before it starts. Deleting it forgets them.
+
+`result.json` includes `model_reported: true` only when the backend reports its
+model: api responses, claude init lines and gemini model stats. A requested/default
+model alone does not set it; codex and opencode do not report one. The field is
+omitted when false, and older records without it still load. Exec uses it to send
+an empty `resolved_model` when the backend did not report its model.
+
+When complete events fail to write or `events.jsonl` fails to close, `result.json`
+includes `record_error` with the number of events not recorded, the first event error
+and any close error; `hrn show` and MCP `show` report it and recover intact events
+after broken lines. The result is still saved to mark the run finished, the field is
+omitted on success, and older records still load.
+
+`hrn runs prune --older-than 30d` removes runs, batch records and eval records that
+started before the cutoff, and prints what it freed; `--dry-run` lists them instead and
+removes nothing, and `--keep N` spares the newest N runs whatever their age. It refuses to
+run without `--older-than`. Records cite each other, so it works from the top down and
+never breaks a reference: an eval it keeps keeps its batch and its judge's runs, a batch it keeps keeps every
+run it made, a run it keeps keeps the run it `--continue`d from, and a batch whose
+worktrees are still on disk stays with its runs, because `hrn batch rm` needs that record
+to remove them (it says so, and names the command). A run with no result that wrote in
+the last hour is taken to be still running and stays; a directory in `runs/` that is not
+a run id is never touched. If any batch or eval record cannot be read, prune refuses:
+that record may cite anything. Records go before the runs they cite, so a failure partway
+never leaves a record pointing at nothing.
