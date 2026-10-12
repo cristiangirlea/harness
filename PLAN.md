@@ -733,6 +733,19 @@ neither of them follows a run while it happens.
   after the scan, a local ref shadowing origin's, git pointed elsewhere by `GIT_DIR` or
   passed-down config, assume-unchanged files, and replace refs; each was fixed the same way.
   Batch work that landed squashed is #85; a tracked folder swapped for a junction is #94.
+- 2026-10-13: `hrn gc`, the cache pass (#79). A build cache is a folder tagged `CACHEDIR.TAG` with
+  the convention's signature, found at each PATH and inside each worktree that stays, two levels
+  down; one inside a worktree that goes is the worktree's. "In use" is Cargo's own signal, its
+  open `.cargo-lock`: an open that shares nothing on Windows, a non-blocking `flock` elsewhere,
+  and a lock that cannot be checked counts as held. The last write is read from folder times (the
+  profiles, their `deps`, `.fingerprint`, `build` and `incremental`) and the files directly in a
+  profile, which a build rewrites in place when it adds no file; the files inside are walked only
+  for the size. `--free-below` works per drive, oldest first, counting what the scan already
+  marked, and a drive whose free space cannot be read loses nothing more. Kept from the worktree
+  pass: a tagged folder git tracks a file in, a repository or a link out inside it, the current
+  directory inside it, and a second look before each removal. Free space comes from
+  `GetDiskFreeSpaceExW` through `syscall.NewLazyDLL` and from `syscall.Statfs`, the lock probe from
+  `syscall.CreateFile` and `syscall.Flock`: standard library only, as the rule says.
 - 2026-10-11: PR #93 (closes #91), recording Ada's voice, the first slice of #83. The voice
   will be the owner's wife's, recorded by her with her agreement; the recordings stay on this
   computer, never in a repository. Decided: the page records in the browser and saves into a
