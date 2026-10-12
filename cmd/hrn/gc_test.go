@@ -95,9 +95,15 @@ func TestParseSizeReadsHumanUnits(t *testing.T) {
 	}
 }
 
+func TestGCAcceptsAnIdleBelowTheDefaultMinIdle(t *testing.T) {
+	code, err := cmdGC([]string{"--idle", "1h", t.TempDir()})
+	if code != 0 || err != nil {
+		t.Errorf("--idle 1h with the default --min-idle: got code %d, error %v", code, err)
+	}
+}
+
 func TestGCRefusesBadIdleFlags(t *testing.T) {
 	for _, args := range [][]string{
-		{"--idle", "1h", "--min-idle", "2h"},
 		{"--idle", "-1h"},
 		{"--min-idle", "-5m"},
 		{"--free-below", "lots"},

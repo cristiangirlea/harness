@@ -42,8 +42,6 @@ func cmdGC(args []string) (int, error) {
 		return 2, fmt.Errorf("--idle %s is negative\n%s", *idle, gcUsage)
 	case *minIdle < 0:
 		return 2, fmt.Errorf("--min-idle %s is negative\n%s", *minIdle, gcUsage)
-	case *minIdle > *idle:
-		return 2, fmt.Errorf("--min-idle %s is above --idle %s, so --free-below could take nothing\n%s", *minIdle, *idle, gcUsage)
 	}
 	below, err := parseSize(*freeBelow)
 	if err != nil {
