@@ -126,6 +126,16 @@ func TestAnEstimatedCostKeepsItsTilde(t *testing.T) {
 	}
 }
 
+func TestALowerBoundCostRoundsDownNeverUp(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.01239})
+	saveRun(t, "codex", "fix the logout bug", &agent.Result{})
+
+	if r := purposeRowOf(t, cardOf(t), "debug"); r.Cost != "≥ $0.0123" {
+		t.Errorf("debug row = %+v", r)
+	}
+}
+
 func TestPurposeRowsComeInCategoryOrderThenAll(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, p := range []string{"hello there", "add a cache", "fix the bug", "review the diff"} {

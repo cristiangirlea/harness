@@ -2,6 +2,7 @@ package watch
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -62,9 +63,20 @@ func (s purposeSum) row(name string) purposeRow {
 	}
 	r.Cost = cost(s.usd, s.estimate)
 	if s.noCost > 0 {
-		r.Cost = "≥ " + r.Cost
+		r.Cost = "≥ " + lowerBound(s.usd, s.estimate)
 	}
 	return r
+}
+
+// lowerBound prints a partial sum rounded down to four decimals, so that it
+// never claims more than is known; a floored zero is still a number. The
+// nudge keeps an exact sum such as 0.0123+0.01 from flooring to 0.0222.
+func lowerBound(usd float64, estimate bool) string {
+	str := fmt.Sprintf("$%.4f", math.Floor(usd*1e4+1e-9)/1e4)
+	if estimate {
+		return "~" + str
+	}
+	return str
 }
 
 // purposesOf builds the card over the runs the index lists; nil for none.
