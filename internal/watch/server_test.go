@@ -1222,14 +1222,23 @@ func TestARunsTaskNameIsBlankedOfSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
-	saveBatch(t, batch.Result{ID: "20261012-170000-abcdef", Started: time.Now(), Dir: "/home/me/myrepo", Duration: time.Minute,
+	// The batch is past the 20 the index lists: its task still names the run.
+	const id = "20261012-170000-abcdef"
+	start := time.Now()
+	saveBatch(t, batch.Result{ID: id, Started: start.Add(-time.Hour), Dir: "/home/me/myrepo", Duration: time.Minute,
 		Tasks: []batch.TaskResult{{ID: "t1", Prompt: prompt, Status: batch.StatusPass,
 			Attempts: []batch.Attempt{{Backend: "fake", RunID: w.ID(), Result: agent.Result{Status: agent.StatusOK}}}}}})
+	for i := range 20 {
+		saveBatch(t, batch.Result{ID: fmt.Sprintf("20261012-180000-%06x", i), Started: start.Add(-time.Duration(i+1) * time.Minute)})
+	}
 
 	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
 	defer srv.Close()
 	check := func(where, html string) {
 		t.Helper()
+		if strings.Contains(html, `href="/batch/`+id+`">`+id+`</a></td>`) {
+			t.Fatalf("%s: the batch is in the batches table; the test needs it past the 20 listed", where)
+		}
 		if strings.Contains(strings.ToLower(html), strings.ToLower(secret)) {
 			t.Errorf("%s shows the secret value, in some case:\n%s", where, html)
 		}
