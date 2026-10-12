@@ -22,7 +22,7 @@ install the ones you want to use.
 ## Quick start
 
 You need **Go 1.26.4 or later** and a configured backend. For this example, install
-and sign in to the Codex CLI first.
+the Codex CLI (`npm install -g @openai/codex`) and sign in with `codex login` first.
 
 ```bash
 go install github.com/cristiangirlea/harness/cmd/hrn@latest
@@ -49,6 +49,10 @@ hrn watch
 Open **http://127.0.0.1:8089** in your browser. The dashboard is included in `hrn`;
 there is no separate watcher repository or service to install. It shows runs started
 through hrn.
+
+Prefer to be told? `hrn bot` opens Ada, hrn's bot, in a small window of her own: she
+says what hrn is doing in plain UK English, out loud once you click her page, and as
+notifications. See [Live dashboard and Ada](docs/watch.md).
 
 Prefer the terminal?
 

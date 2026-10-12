@@ -661,6 +661,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-12: The README's quick start names how to install and sign in to the Codex CLI
+  and introduces `hrn bot` (Ada) next to `hrn watch`, so a newcomer sees both from the
+  entry page (issue #110, PR #111).
 - 2026-10-12: Simplify the public README (PR #107) into an introduction, quick start and guide
   index. Move the detailed reference into `docs/` and contributor/release guidance
   into `CONTRIBUTING.md`; keep permission boundaries visible in the README.
