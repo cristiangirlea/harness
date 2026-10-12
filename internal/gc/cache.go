@@ -3,6 +3,7 @@ package gc
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,7 +21,8 @@ type Cache struct {
 	LastBuild time.Time // its last write; see lastBuild
 	Verdict   Verdict
 	Reason    string
-	young     bool // kept only because it was written too recently
+	risk      string // why it cannot go whole, found by the walk that sized it
+	young     bool   // kept only because it was written too recently
 }
 
 // Drive is what the cache pass knows about the volume holding a folder.
@@ -74,7 +76,7 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 	now := time.Now()
 	for i := range all {
 		c := &all[i]
-		c.Size = Size(c.Path)
+		c.Size, c.risk = measure(c.Path)
 		c.LastBuild = lastBuild(c.Path)
 		c.Verdict, c.Reason = decideCache(ctx, c, cwd, now, opt)
 	}
@@ -171,8 +173,8 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if cwd != "" && inside(cwd, c.Path) {
 		return Keep, "the current directory is inside it"
 	}
-	if why := cacheRisk(c.Path); why != "" {
-		return Keep, why
+	if c.risk != "" {
+		return Keep, c.risk
 	}
 	tracked, err := gitTracks(ctx, c.Path)
 	switch {
@@ -201,8 +203,8 @@ func recheckCache(ctx context.Context, c Cache) string {
 	if lastBuild(c.Path).After(c.LastBuild) {
 		return "written since the scan"
 	}
-	if why := cacheRisk(c.Path); why != "" {
-		return why
+	if _, risk := measure(c.Path); risk != "" {
+		return risk
 	}
 	tracked, err := gitTracks(ctx, c.Path)
 	switch {
@@ -356,23 +358,40 @@ func inUse(dir string) string {
 	return ""
 }
 
-// cacheRisk says why a cache cannot be deleted whole, or "": a repository
+// measure walks a cache once for the size of the files under it (links are
+// not followed) and for why it cannot be deleted whole, or "": a repository
 // inside it, a link leading out of it, or a part it cannot read.
-func cacheRisk(dir string) string {
+func measure(dir string) (size int64, risk string) {
+	var kind, at string
+	unreadable := false
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			unreadable = true
+			return nil // what could be read still counts
+		}
+		if kind == "" {
+			kind, at = riskAt(dir, p, d)
+		}
+		if d.Type().IsRegular() {
+			if info, err := d.Info(); err == nil {
+				size += info.Size()
+			}
+		}
+		return nil
+	})
 	rel := func(p string) string {
 		r, _ := filepath.Rel(dir, p)
 		return filepath.ToSlash(r)
 	}
-	kind, at, err := walkRisk(dir, dir)
 	switch {
 	case kind == riskRepo:
-		return "a repository inside it: " + rel(at)
+		risk = "a repository inside it: " + rel(at)
 	case kind == riskLink:
-		return "a link out of the cache inside it: " + rel(at)
-	case err != nil:
-		return "a part of it cannot be read"
+		risk = "a link out of the cache inside it: " + rel(at)
+	case unreadable:
+		risk = "a part of it cannot be read"
 	}
-	return ""
+	return size, risk
 }
 
 // gitTracks reports whether git tracks any file under dir, which makes the

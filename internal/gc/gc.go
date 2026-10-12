@@ -710,17 +710,7 @@ func walkRisk(root, folder string) (kind, at string, err error) {
 		if err != nil {
 			return err
 		}
-		switch {
-		case d.Name() == ".git":
-			kind, at = riskRepo, filepath.Dir(p)
-		case d.IsDir() && d.Name() == "objects" && isBare(filepath.Dir(p)):
-			kind, at = riskRepo, filepath.Dir(p)
-		case !d.IsDir() && !d.Type().IsRegular(): // a symlink, or a junction (irregular)
-			if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), root) {
-				kind, at = riskLink, p
-			}
-		}
-		if kind != "" {
+		if kind, at = riskAt(root, p, d); kind != "" {
 			return fs.SkipAll
 		}
 		return nil
@@ -729,6 +719,22 @@ func walkRisk(root, folder string) (kind, at string, err error) {
 		err = nil
 	}
 	return kind, at, err
+}
+
+// riskAt classifies one entry of a walk under root: a repository (its
+// folder), a link that does not stay inside root, or nothing.
+func riskAt(root, p string, d fs.DirEntry) (kind, at string) {
+	switch {
+	case d.Name() == ".git":
+		return riskRepo, filepath.Dir(p)
+	case d.IsDir() && d.Name() == "objects" && isBare(filepath.Dir(p)):
+		return riskRepo, filepath.Dir(p)
+	case !d.IsDir() && !d.Type().IsRegular(): // a symlink, or a junction (irregular)
+		if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), root) {
+			return riskLink, p
+		}
+	}
+	return "", ""
 }
 
 // linkAbove checks the folders between worktree wt and a build folder in it
