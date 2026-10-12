@@ -1,6 +1,16 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/report"
+	"github.com/cristiangirlea/harness/internal/runlog"
+)
 
 func TestTableAlignsColumns(t *testing.T) {
 	got := table([][]string{{"key", "n"}, {"a", "10"}, {"longer", "5"}}, 1)
@@ -29,4 +39,71 @@ func TestShortKeyKeepsTheTail(t *testing.T) {
 			t.Errorf("shortKey(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
 		}
 	}
+}
+
+func TestReportGroupsRunsByPurpose(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, prompt := range []string{
+		"Fix the hang in batch.",
+		"Write unit tests for the parser.\n\nThen fix whatever they find.",
+		"Write unit tests for the codec.",
+	} {
+		w, err := runlog.Create("claude", agent.Task{Prompt: prompt, Dir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := captureStdout(t, func() error { return cmdReport([]string{"--by", "purpose", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep report.Report
+	if err := json.Unmarshal(out, &rep); err != nil {
+		t.Fatalf("%v in %s", err, out)
+	}
+	if rep.By != "purpose" || len(rep.Runs) != 2 || rep.Runs[0].Key != "test" || rep.Runs[0].Runs != 2 ||
+		rep.Runs[1].Key != "debug" || rep.Runs[1].Runs != 1 || rep.RunsAll.Runs != 3 {
+		t.Errorf("report = %+v", rep)
+	}
+	// The table groups the same way: heading, header, a row per purpose, the all row.
+	out, err = captureStdout(t, func() error { return cmdReport([]string{"--by", "purpose"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 5 || lines[0] != "runs by purpose, all time" || !strings.HasPrefix(lines[1], "purpose ") {
+		t.Fatalf("table =\n%s", out)
+	}
+	for i, want := range []string{"test 2", "debug 1", "all 3"} {
+		f := strings.Fields(lines[2+i])
+		if len(f) < 2 || f[0]+" "+f[1] != want {
+			t.Errorf("table row %d = %q, want it to start with %q", i, lines[2+i], want)
+		}
+	}
+	if err := cmdReport([]string{"--by", "colour"}); err == nil || !strings.Contains(err.Error(), `unknown key "colour"`) {
+		t.Errorf("an unknown --by must be refused: %v", err)
+	}
+}
+
+// captureStdout runs f with os.Stdout sent to a pipe and returns what it wrote.
+func captureStdout(t *testing.T, f func() error) ([]byte, error) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	done := make(chan []byte)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- b
+	}()
+	ferr := f()
+	w.Close()
+	return <-done, ferr
 }

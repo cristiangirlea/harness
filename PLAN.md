@@ -640,7 +640,8 @@ order they are worth taking:
     in this order:
     - [x] A batch's runs link to their batch on hrn watch ([#61](https://github.com/cristiangirlea/harness/issues/61)).
       Done: PR #67, 2026-10-11.
-    - [ ] `internal/purpose` and `hrn report --by purpose` ([#62](https://github.com/cristiangirlea/harness/issues/62)).
+    - [x] `internal/purpose` and `hrn report --by purpose` ([#62](https://github.com/cristiangirlea/harness/issues/62)).
+      Done: PR #121, 2026-10-12.
     - [ ] hrn watch: what the listed runs were for and what they cost, as a lower bound
       ([#63](https://github.com/cristiangirlea/harness/issues/63)); a first, budget-free step
       towards #37.
@@ -661,6 +662,15 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-12: PR #121 (closes #62), what a run was for, item 15's second box. Decided: only
+  the prompt's lead is classified (its first non-blank paragraph, at most 600 bytes), since a
+  brief's later paragraphs name every keyword; keyword rules adapted from classify-sessions
+  rules-v1 with hrn's reviewer brief first, not a model call, so it is free and testable, and
+  a prompt no rule matches is `unknown` rather than a guess; computed when read, so old records
+  get a purpose and no format changes. Built through hrn: a batch task wrote it, and hrn runs
+  did the checks, two codex reviews and the fixes. Three blocking findings, each fixed as its
+  own commit; the rest is #118 and #119. The checks found that gc's tests cannot pass inside
+  an hrn run, because the guard's push refusal reaches their fixture (#120, already on main).
 - 2026-10-12: The README's quick start names how to install and sign in to the Codex CLI
   and introduces `hrn bot` (Ada) next to `hrn watch`, so a newcomer sees both from the
   entry page (issue #110, PR #111).

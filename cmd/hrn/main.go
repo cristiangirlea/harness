@@ -109,7 +109,7 @@ Batch flags:
 
 Report flags:
       --since WINDOW   only runs and batches started within the window, e.g. 7d, 36h, 90m (default: all)
-      --by KEY         group runs by backend (default), model or dir
+      --by KEY         group runs by backend (default), model, dir or purpose
       --json           print the tables as JSON
 
 Runs are recorded under ~/.hrn/runs (override with HRN_HOME).
