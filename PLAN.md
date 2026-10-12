@@ -747,7 +747,13 @@ neither of them follows a run while it happens.
   pass: a tagged folder git tracks a file in, a repository or a link out inside it, the current
   directory inside it, and a second look before each removal. Free space comes from
   `GetDiskFreeSpaceExW` through `syscall.NewLazyDLL` and from `syscall.Statfs`, the lock probe from
-  `syscall.CreateFile` and `syscall.Flock`: standard library only, as the rule says.
+  `syscall.CreateFile` and `syscall.Flock`: standard library only, as the rule says. A security
+  read added two guards: a worktree entry is swept for caches only when its path's `.git` is a
+  file naming a folder under the repository's `.git/worktrees` (`git worktree list` prints
+  whatever a stale or edited entry says), and only git's discovery failure counts as "outside a
+  repository", since a worktree whose repository is gone fails with another message and its
+  files are tracked. A build starting in the moment between the last lock probe and the removal
+  is #129; saying how far a drive still is below `--free-below` after `--apply` is #130.
 - 2026-10-11: PR #93 (closes #91), recording Ada's voice, the first slice of #83. The voice
   will be the owner's wife's, recorded by her with her agreement; the recordings stay on this
   computer, never in a repository. Decided: the page records in the browser and saves into a
