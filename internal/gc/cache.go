@@ -435,11 +435,13 @@ func measure(dir string) (size int64, newest time.Time, risk string) {
 
 // gitTracks reports whether git tracks any file under dir, which makes the
 // folder someone's (a tagged test fixture) whatever its tag says. A folder git
-// says is in no repository tracks nothing; any other failure is an error, so
-// the folder stays.
+// finds no repository above tracks nothing; any other failure is an error, so
+// the folder stays. The message is matched in full, because a worktree whose
+// repository is gone fails with "not a git repository: <gitdir>", and its
+// files are the tracked ones this check protects.
 func gitTracks(ctx context.Context, dir string) (bool, error) {
 	if _, err := gitOut(ctx, dir, "rev-parse", "--show-toplevel"); err != nil {
-		if strings.Contains(err.Error(), "not a git repository") {
+		if strings.Contains(err.Error(), "not a git repository (or any") {
 			return false, nil
 		}
 		return false, err

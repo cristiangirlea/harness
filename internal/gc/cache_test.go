@@ -136,6 +136,18 @@ func TestGCKeepsACacheWhenGitCannotSayWhetherItTracksIt(t *testing.T) {
 	wantCache(t, findCache(t, cs, cache), Keep, "git could not say whether it tracks files in it")
 }
 
+func TestGCKeepsACacheInAWorktreeWhoseRepositoryIsGone(t *testing.T) {
+	root := tempRoot(t)
+	orphan := filepath.Join(root, "wt")
+	fixture := tagged(t, filepath.Join(orphan, "fixtures"), 30*time.Hour, 10)
+	if err := os.WriteFile(filepath.Join(orphan, ".git"), []byte("gitdir: "+filepath.ToSlash(root)+"/gone/.git/worktrees/wt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	wantCache(t, findCache(t, cs, fixture), Keep, "git could not say whether it tracks files in it")
+}
+
 func TestGCApplyRemovesTheLongestIdleCacheFirst(t *testing.T) {
 	root := tempRoot(t)
 	newer := tagged(t, filepath.Join(root, "a-newer"), 30*time.Hour, 10)
