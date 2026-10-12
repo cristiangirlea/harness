@@ -67,6 +67,12 @@ type Options struct {
 	Grace   time.Duration // a pull request merged more recently than this keeps its worktree
 	GH      []string      // the gh command and leading arguments; empty means gh on PATH
 	PRLimit int           // pull requests read per query; 0 means 1000
+
+	// The cache pass (Caches).
+	Idle      time.Duration                    // a build cache written more recently than this stays; 0 means 24h
+	MinIdle   time.Duration                    // FreeBelow takes no cache written more recently than this; 0 means 2h
+	FreeBelow int64                            // a drive with fewer bytes free loses its idle caches, oldest first, until it has this many; 0 is off
+	Drive     func(path string) (Drive, error) // the volume holding a path and its free space; nil asks the disk
 }
 
 // Scan lists the linked worktrees of every repository at paths, each with a
@@ -679,30 +685,50 @@ func buildRisk(wt, folder string) string {
 		r, _ := filepath.Rel(wt, p)
 		return filepath.ToSlash(r)
 	}
-	why := ""
-	err := filepath.WalkDir(folder, func(p string, d fs.DirEntry, err error) error {
+	kind, at, err := walkRisk(wt, folder)
+	switch {
+	case kind == riskRepo:
+		return "a repository inside build output: " + rel(at)
+	case kind == riskLink:
+		return "a link out of the worktree inside build output: " + rel(at)
+	case err != nil:
+		return "build output that cannot be read: " + rel(folder)
+	}
+	return ""
+}
+
+const (
+	riskRepo = "repository"
+	riskLink = "link"
+)
+
+// walkRisk finds the first thing under folder that must not be deleted with
+// it: a repository (its folder) or a link that does not stay inside root. An
+// error means the walk could not finish.
+func walkRisk(root, folder string) (kind, at string, err error) {
+	err = filepath.WalkDir(folder, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		switch {
 		case d.Name() == ".git":
-			why = "a repository inside build output: " + rel(filepath.Dir(p))
+			kind, at = riskRepo, filepath.Dir(p)
 		case d.IsDir() && d.Name() == "objects" && isBare(filepath.Dir(p)):
-			why = "a repository inside build output: " + rel(filepath.Dir(p))
+			kind, at = riskRepo, filepath.Dir(p)
 		case !d.IsDir() && !d.Type().IsRegular(): // a symlink, or a junction (irregular)
-			if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), wt) {
-				why = "a link out of the worktree inside build output: " + rel(p)
+			if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), root) {
+				kind, at = riskLink, p
 			}
 		}
-		if why != "" {
+		if kind != "" {
 			return fs.SkipAll
 		}
 		return nil
 	})
-	if err != nil && why == "" {
-		return "build output that cannot be read: " + rel(folder)
+	if kind != "" {
+		err = nil
 	}
-	return why
+	return kind, at, err
 }
 
 // linkAbove checks the folders between worktree wt and a build folder in it
