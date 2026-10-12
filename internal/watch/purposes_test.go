@@ -166,6 +166,28 @@ func TestAnEmptyHomeShowsNoPurposeCard(t *testing.T) {
 	}
 }
 
+func TestThePurposeCardCoversOnlyTheListedRuns(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	saveRun(t, "claude", "review the diff", &agent.Result{CostUSD: 0.01})
+	time.Sleep(1100 * time.Millisecond) // run ids are ordered by the second they start
+	saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.01})
+	saveRun(t, "codex", "add a cache", &agent.Result{})
+
+	srv := httptest.NewServer(New(context.Background(), Options{Runs: 2, Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/")
+	if !strings.Contains(page, "newest 2 runs") {
+		t.Error("the card does not say it covers the newest 2 runs")
+	}
+	all := strings.Join([]string{`<tr class="all">`, `<th scope="row">all</th>`, `<td class="num">2</td>`}, "\n")
+	if !strings.Contains(page, all) {
+		t.Error("the card's all row does not count 2 runs")
+	}
+	if strings.Contains(page, `<th scope="row">review</th>`) {
+		t.Error("the card has a row for the oldest run's purpose, which the index does not list")
+	}
+}
+
 func TestTheIndexAndItsStreamShowPurposes(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	fix := saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.0123})
