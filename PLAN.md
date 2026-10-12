@@ -662,6 +662,15 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: PR #127 (closes #82, widened by the owner on 2026-10-12): hrn watch's rows lead
+  with `<repository> · <task>`, the id under it. Decided: the repository is the workspace
+  folder's name (the folder above `.hrn` for a batch worktree), read from the record, not
+  from git or the disk; a task's name is the bot's `taskName`; a batch task named after its
+  issue (`82-repo-and-task`) shows that number with no new field. Task names come only from
+  batch records cleaned of secrets, all of them, since `taskName` changes text and blanking
+  is by exact match. Built through hrn: a batch task, then hrn runs for the checks, two
+  codex reviews and the fixes. One security defect and one id-line defect fixed with tests
+  seen failing; the rest is #124 and #125.
 - 2026-10-12: PR #123 (closes #63), item 15's third box, which closes item 15. hrn watch's
   index has a Purpose column (the rule id in its title) and a card, "What the runs were for",
   over the listed runs only. Decided: a finished run with no reported cost is left out of the
