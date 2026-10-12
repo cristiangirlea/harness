@@ -61,7 +61,9 @@ td { overflow-wrap: anywhere; }
 tbody tr:last-child td { border-bottom: 0; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.mono { white-space: nowrap; }
-.of-batch { display: block; font-size: .78rem; color: var(--muted); }
+td.name { min-width: 11em; }
+.of-batch, .row-id { display: block; font-size: .78rem; color: var(--muted); }
+.row-id { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; }
 .purposes .no-cost { display: block; font-size: .78rem; color: var(--muted); white-space: normal; }
 .purposes tbody th { background: none; font-weight: 600; }
 .purposes tr.all th, .purposes tr.all td { border-top: 2px solid var(--rule); font-weight: 650; }
@@ -97,8 +99,9 @@ footer { margin-top: 30px; font-size: .8rem; overflow-wrap: anywhere; }
   .card { padding: 16px; }
   .ev { grid-template-columns: minmax(0, 1fr); }
   .when { padding-top: 0; }
-  /* On a phone each row of a list is a small card: the id and its status,
-     the prompt under them, then the rest on one muted line. */
+  /* On a phone each row of a list is a small card: the repository and task
+     (the id under them) with the status, the prompt under them, then the rest
+     on one muted line. */
   table.list thead { display: none; }
   table.list, table.list tbody { display: block; }
   table.list tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; padding: 12px 0; border-bottom: 1px solid var(--rule); }

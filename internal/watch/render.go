@@ -356,19 +356,50 @@ type lists struct {
 // row is one run or batch in a list.
 type row struct {
 	ID, Kind, Status, Class string
+	Label                   string // what the row leads with: the repository and the task, or the id
+	Repo                    string // the workspace's folder name, from repoOf
 	Backend                 string
 	Tasks                   string
 	Took                    string // the duration, or the start while it goes
 	Cost                    string // what the finished runs cost, as far as their backends say
 	Since                   string // the start, for the live clock while it goes
-	Prompt                  string
+	Prompt                  string // a run's prompt's first line; a batch's tasks' names
 	Batch                   string // for a run: the batch whose attempt it was
 	Purpose, Rule           string // for a run: what it was for, and the rule that said so
+}
+
+// repoOf is the repository a workspace is in, by its folder's name: the last
+// element of dir, in either path style. A batch task's worktree,
+// <repo>/.hrn/worktrees/<task>, is in the repository above .hrn.
+func repoOf(dir string) string {
+	parts := strings.FieldsFunc(dir, func(r rune) bool { return r == '/' || r == '\\' })
+	if n := len(parts); n >= 4 && parts[n-3] == ".hrn" && parts[n-2] == "worktrees" {
+		return parts[n-4]
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+// labelOf is what a row leads with: the repository and the task; the
+// repository alone when no batch started the run; the id when the workspace
+// is unknown.
+func labelOf(id, repo, task string) string {
+	switch {
+	case repo == "":
+		return id
+	case task == "":
+		return repo
+	}
+	return repo + " · " + task
 }
 
 func runRow(rec runlog.Record) row {
 	p := purpose.Classify(rec.Task.Prompt)
 	r := row{ID: rec.ID, Kind: "run", Backend: rec.Backend, Purpose: p.Category, Rule: p.Rule}
+	r.Repo = repoOf(rec.Task.Dir)
+	r.Label = labelOf(r.ID, r.Repo, "")
 	r.Prompt, _ = firstLine(rec.Task.Prompt)
 	if rec.Done {
 		r.Status, r.Took, r.Cost = string(rec.Result.Status), short(rec.Result.Duration), cost(rec.Result.CostUSD, rec.Result.CostEstimate)
@@ -381,6 +412,8 @@ func runRow(rec runlog.Record) row {
 
 func batchRow(res batch.Result) row {
 	r := row{ID: res.ID, Kind: "batch"}
+	r.Repo = repoOf(res.Dir)
+	r.Label = labelOf(r.ID, r.Repo, "")
 	pass, going := 0, 0
 	var backends []string
 	var usd float64
@@ -418,13 +451,20 @@ func batchRow(res batch.Result) row {
 	if r.Status == "failed" {
 		r.Class = "bad"
 	}
-	if len(res.Tasks) > 0 {
-		r.Prompt, _ = firstLine(res.Tasks[0].Prompt)
-		if len(res.Tasks) > 1 {
-			r.Prompt += fmt.Sprintf(" (and %d more)", len(res.Tasks)-1)
-		}
-	}
+	r.Prompt = taskNames(res.Tasks)
 	return r
+}
+
+// taskNames is up to three of the tasks' names, then how many more there are.
+func taskNames(tasks []batch.TaskResult) string {
+	var names []string
+	for _, t := range tasks {
+		if len(names) == 3 {
+			return strings.Join(names, ", ") + fmt.Sprintf(" and %d more", len(tasks)-3)
+		}
+		names = append(names, taskName(t))
+	}
+	return strings.Join(names, ", ")
 }
 
 func contains(xs []string, s string) bool {

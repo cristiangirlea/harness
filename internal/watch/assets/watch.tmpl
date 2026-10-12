@@ -58,9 +58,9 @@
 {{end}}<section class="card" aria-labelledby="batches-h">
 <h2 id="batches-h">Batches</h2>
 {{if .Batches}}<div class="table-wrap" tabindex="0" role="region" aria-label="Batches"><table class="list">
-<thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Tasks</th><th scope="col">Backends</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">First task</th></tr></thead>
+<thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Passed</th><th scope="col">Backends</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">Tasks</th></tr></thead>
 <tbody>{{range .Batches}}<tr>
-<td class="mono"><a href="/batch/{{.ID}}">{{.ID}}</a></td>
+<td class="name">{{template "name" .}}</td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
 <td class="meta">{{.Tasks}}</td>
 <td class="meta">{{.Backend}}</td>
@@ -75,7 +75,7 @@
 {{if .Runs}}<div class="table-wrap" tabindex="0" role="region" aria-label="Runs"><table class="list">
 <thead><tr><th scope="col">Run</th><th scope="col">Backend</th><th scope="col">Purpose</th><th scope="col">Status</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">Prompt</th></tr></thead>
 <tbody>{{range .Runs}}<tr>
-<td class="mono"><a href="/run/{{.ID}}">{{.ID}}</a>{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
+<td class="name">{{template "name" .}}{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
 <td class="meta">{{.Backend}}</td>
 <td class="meta"{{with .Rule}} title="{{.}}"{{end}}>{{.Purpose}}</td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
@@ -86,6 +86,8 @@
 {{else}}<p class="muted">No runs yet.</p>{{end}}
 </section>
 {{end}}
+
+{{define "name"}}{{if ne .Label .ID}}<a href="/{{.Kind}}/{{.ID}}">{{.Label}}</a><span class="row-id">{{.ID}}</span>{{else}}<a href="/{{.Kind}}/{{.ID}}" class="mono">{{.ID}}</a>{{end}}{{end}}
 
 {{define "took"}}{{if .Since}}<span data-since="{{.Since}}">{{.Took}}</span>{{else}}{{.Took}}{{end}}{{end}}
 

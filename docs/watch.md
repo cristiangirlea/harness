@@ -12,10 +12,18 @@ hrn show -f <run-id>       # the same timeline in the terminal
 hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
 
-`hrn watch` serves a page that lists the newest runs and batches (id, backend, purpose, status,
-duration, cost, the prompt's first line) and keeps itself current. Every attempt of a
-batch's task is also a run; its row links to the batch under the run's id, even when that
-batch is older than the ones listed. A run's page is its
+`hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
+Each row leads with the repository the work is in (its workspace folder's name; for a batch
+task's worktree, `<repo>/.hrn/worktrees/<task>`, the folder above `.hrn`) and, for a run a
+batch started, the task: `harness · 82-repo-and-task`. A task's name is its id, so name tasks
+after their issue (`82-repo-and-task`) to see the number there; when hrn made the id up
+(`t1`, `t2`, ...), the name is the start of the task's prompt. The run's or batch's id is
+under that label, small, still there to copy; a run or batch without a workspace keeps its
+id as its label. Then come a run's backend, purpose, status, duration, cost and the prompt's
+first line, and a batch's status, how many tasks passed, its backends, duration, cost and up
+to three of its tasks' names, then "and N more". Every attempt of a batch's task is also a
+run; its row links to the batch under the run's id, even when that batch is older than the
+ones listed. A run's page is its
 timeline as it happens: the assistant's text, each tool call with its input in one line
 (the input itself folded under it, its first 6 KB and last 2 KB), each result folded and
 capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each
