@@ -89,7 +89,7 @@ func TestAllCostsKnownGiveTheSumAndNoneKnownGiveADash(t *testing.T) {
 	if r := purposeRowOf(t, c, "debug"); r.Cost != "$0.0300" || r.NoCost != "" || r.Tokens != "1.5k" {
 		t.Errorf("debug row = %+v", r)
 	}
-	if r := purposeRowOf(t, c, "implement"); r.Cost != "-" || r.Tokens != "40" {
+	if r := purposeRowOf(t, c, "implement"); r.Cost != "-" || r.NoCost != "1 run reports no cost" || r.Tokens != "40" {
 		t.Errorf("implement row = %+v", r)
 	}
 }
@@ -176,7 +176,8 @@ func TestTheIndexAndItsStreamShowPurposes(t *testing.T) {
 		if card < 0 || card > strings.Index(html, `id="batches-h"`) {
 			t.Errorf("%s has no purpose card above the batches", where)
 		}
-		for _, want := range []string{"newest 3 runs", "≥ $0.0123", "1 run reports no cost", `<th scope="col">Purpose</th>`} {
+		for _, want := range []string{"newest 3 runs", "≥ $0.0123", "1 run reports no cost", `<th scope="col">Purpose</th>`,
+			"Some finished runs reported no cost: they are left out of the known cost, not counted as $0, so a cost marked ≥ is a lower bound and - means none was reported."} {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s lacks %q", where, want)
 			}

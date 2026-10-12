@@ -44,7 +44,7 @@
 {{range .Problems}}<p class="notice bad">{{.}}</p>{{end}}
 {{with .Purposes}}<section class="card" aria-labelledby="purposes-h">
 <h2 id="purposes-h">What the runs were for</h2>
-<p class="muted small">{{.Scope}}{{if .Partial}} A cost marked ≥ is a lower bound: the backends of some finished runs reported no cost, and those runs are left out of it, not counted as $0.{{end}}</p>
+<p class="muted small">{{.Scope}}{{if .Partial}} Some finished runs reported no cost: they are left out of the known cost, not counted as $0, so a cost marked ≥ is a lower bound and - means none was reported.{{end}}</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="What the runs were for"><table class="purposes">
 <thead><tr><th scope="col">Purpose</th><th scope="col" class="num">Runs</th><th scope="col" class="num">Running</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Known cost</th></tr></thead>
 <tbody>{{range .Rows}}<tr{{if eq .Purpose "all"}} class="all"{{end}}>

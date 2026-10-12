@@ -16,8 +16,8 @@ type purposeCard struct {
 }
 
 // purposeRow is ready to print. A finished run whose backend reported no cost
-// is not $0: while any did not, Cost is a lower bound ("≥") over those that
-// did, and NoCost says how many did not.
+// is not $0: NoCost says how many did not, and while any did not, Cost is a
+// lower bound ("≥") over those that did, or "-" when none did.
 type purposeRow struct {
 	Purpose               string
 	Runs, Running, Tokens string
@@ -51,15 +51,18 @@ func (s *purposeSum) add(rec runlog.Record) {
 
 func (s purposeSum) row(name string) purposeRow {
 	r := purposeRow{Purpose: name, Runs: fmt.Sprint(s.runs), Running: fmt.Sprint(s.running), Tokens: tokens(s.tokens), Cost: "-"}
+	if s.noCost > 0 {
+		r.NoCost = fmt.Sprintf("%d runs report no cost", s.noCost)
+		if s.noCost == 1 {
+			r.NoCost = "1 run reports no cost"
+		}
+	}
 	if !s.known {
 		return r
 	}
 	r.Cost = cost(s.usd, s.estimate)
 	if s.noCost > 0 {
-		r.Cost, r.NoCost = "≥ "+r.Cost, fmt.Sprintf("%d runs report no cost", s.noCost)
-		if s.noCost == 1 {
-			r.NoCost = "1 run reports no cost"
-		}
+		r.Cost = "≥ " + r.Cost
 	}
 	return r
 }
