@@ -671,6 +671,9 @@ neither of them follows a run while it happens.
   did the checks, two codex reviews and the fixes. Three blocking findings, each fixed as its
   own commit; the rest is #118 and #119. The checks found that gc's tests cannot pass inside
   an hrn run, because the guard's push refusal reaches their fixture (#120, already on main).
+- 2026-10-12: The README's quick start names how to install and sign in to the Codex CLI
+  and introduces `hrn bot` (Ada) next to `hrn watch`, so a newcomer sees both from the
+  entry page (issue #110, PR #111).
 - 2026-10-12: Simplify the public README (PR #107) into an introduction, quick start and guide
   index. Move the detailed reference into `docs/` and contributor/release guidance
   into `CONTRIBUTING.md`; keep permission boundaries visible in the README.
