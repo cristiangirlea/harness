@@ -70,7 +70,8 @@ func (s purposeSum) row(name string) purposeRow {
 
 // lowerBound prints a partial sum rounded down to four decimals, so that it
 // never claims more than is known; a floored zero is still a number. The
-// nudge keeps an exact sum such as 0.0123+0.01 from flooring to 0.0222.
+// nudge keeps a sum that falls a hair short, such as 0.1+0.7, from flooring
+// to 0.7999.
 func lowerBound(usd float64, estimate bool) string {
 	str := fmt.Sprintf("$%.4f", math.Floor(usd*1e4+1e-9)/1e4)
 	if estimate {

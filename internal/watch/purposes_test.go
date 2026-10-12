@@ -79,6 +79,18 @@ func TestAPurposeWithSomeCostsUnreportedReadsAsALowerBound(t *testing.T) {
 	}
 }
 
+func TestALowerBoundIsNotFlooredBelowAnExactDecimalSum(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.1})
+	saveRun(t, "claude", "fix the logout bug", &agent.Result{CostUSD: 0.7})
+	saveRun(t, "codex", "fix the signup bug", &agent.Result{})
+
+	c := cardOf(t)
+	if r := purposeRowOf(t, c, "debug"); r.Cost != "≥ $0.8000" || r.NoCost != "1 run reports no cost" {
+		t.Errorf("debug row = %+v", r)
+	}
+}
+
 func TestAllCostsKnownGiveTheSumAndNoneKnownGiveADash(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.01, InputTokens: 1000, OutputTokens: 200, CacheRead: 300, CacheWrite: 5000})
