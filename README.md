@@ -175,9 +175,10 @@ lead: symbolic links, and on Windows directory junctions too (Go has not counted
 as a link since 1.23, so hrn reads its target itself). A path through a link out of the
 workspace is refused, and so is one through a link hrn cannot read; a path through a link
 that stays inside works. `grep` over a directory goes into no link or junction and passes
-over a file link that leads out. Not yet on Linux and macOS: a symbolic link to a file that
-does not exist yet is judged by its own name, so `write_file` on it creates that file where
-the link leads ([#47](https://github.com/cristiangirlea/harness/issues/47)).
+over a file link that leads out. A link to a file that does not exist yet is judged by its
+target too, so `write_file` cannot create one outside through it. On Linux and macOS a
+target with a `..` after a name (`a/../b`) is refused: the system takes that `..` after
+following `a`, which may itself be a link.
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
 #### The command guard
