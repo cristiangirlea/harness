@@ -88,7 +88,7 @@ func TestParseSizeReadsHumanUnits(t *testing.T) {
 			t.Errorf("parseSize(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"lots", "-1G", "G", "1X"} {
+	for _, in := range []string{"lots", "-1G", "G", "1X", "99999999999T"} {
 		if _, err := parseSize(in); err == nil {
 			t.Errorf("parseSize(%q) accepted", in)
 		}

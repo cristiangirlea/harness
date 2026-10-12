@@ -186,5 +186,9 @@ func parseSize(s string) (int64, error) {
 	if err != nil || n < 0 || math.IsInf(n, 0) || math.IsNaN(n) {
 		return 0, fmt.Errorf("%q is not a size like 50G or 500M", s)
 	}
-	return int64(n * float64(mult)), nil
+	bytes := n * float64(mult)
+	if bytes >= math.MaxInt64 {
+		return 0, fmt.Errorf("%q is more than a size can be", s)
+	}
+	return int64(bytes), nil
 }
