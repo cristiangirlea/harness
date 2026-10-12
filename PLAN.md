@@ -661,6 +661,13 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-12: Public-repository CI migration (PR #106). Use standard GitHub-hosted Linux
+  and Windows runners, including both PR legs, with read-only CI token permissions. Gate CI
+  and releases on public visibility to avoid private-minute usage. Retire the repository's
+  desktop runner and ARC scale set before changing visibility; infra owns the retirement.
+  The owner authorized the migration and publication. This supersedes the private-only
+  runner rules below. Historical entries remain a record of earlier configurations.
+
 - 2026-10-12: A dangling symbolic link out of the workspace on Linux and macOS (#47). The
   non-Windows `throughLink` now reads a link `EvalSymlinks` left unresolved and judges the
   path by its target, as Windows' did since #45. It is its own short walk in `links_other.go`,

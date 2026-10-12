@@ -1,4 +1,4 @@
-# hrn, a small agent harness (private)
+# hrn, a small agent harness
 
 One Go binary, `hrn`, that runs coding tasks on its own Anthropic API loop (`-b api`) or on agent
 CLIs that are installed (claude, codex, gemini, opencode), and records every run under
@@ -44,13 +44,11 @@ test -z "$(gofmt -l .)"                                       # /check: tracked 
 ```
 
 `-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 ./...` there and leave
-`-race` to CI. CI runs only on the owner's runners: pull requests test on Linux only
-(`vars.CI_RUNNER`, the cluster's scale set); pushes to `main` also run the Windows leg
-(`vars.CI_RUNNER_WINDOWS`, a runner on the owner's desktop with no container, so only merged code
-reaches it). `ubuntu-latest`/`windows-latest` in the matrix are leg names mapped to those runners;
-without `CI_RUNNER` the job is skipped. A `v*` tag runs `release.yml` on `CI_RUNNER` too (skipped
-without it): vet, tests, `release.sh`, then `gh release create`. Never add a GitHub-hosted runner
-or a fallback to one.
+`-race` to CI. CI runs on standard GitHub-hosted Linux and Windows runners. Pull requests and pushes to
+`main` test both platforms. The workflows run only while the repository is public, so they
+cannot consume private-repository Actions minutes. A `v*` tag runs `release.yml` on
+`ubuntu-latest`: vet, tests, `release.sh`, then `gh release create`. Do not attach self-hosted
+runners or route public contributions to the owner's machines.
 
 ## Rules of this repository
 
@@ -84,7 +82,7 @@ or a fallback to one.
   caused it or it stops the change meeting its acceptance criteria; otherwise it gets an issue and
   a branch of its own. No refactors, renames or extras the item did not ask for.
 - **Everything is tested before a merge**: the full local checks (`/check`), tests for every
-  behaviour the change adds or alters, and CI green on the owner's runner. Only then may an agent
+  behaviour the change adds or alters, and CI green on GitHub's standard hosted runners. Only then may an agent
   merge its PR, and only through the PR (`gh pr merge <n> --merge --delete-branch
   --match-head-commit <sha>`), when an independent review ran and its blocking findings are fixed,
   a security read of the diff has nothing open, and the head being merged is the commit all of
