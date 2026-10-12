@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,65 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+type contextWarningBackend struct{ recorder }
+
+func (r contextWarningBackend) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	fmt.Fprintln(os.Stderr, "context test backend started")
+	return r.recorder.Run(ctx, task, emit)
+}
+
+func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *testing.T) {
+	agent.Register(contextWarningBackend{recorder{name: "stub-context"}})
+	for _, jsonOut := range []bool{false, true} {
+		for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
+			t.Run(fmt.Sprintf("json=%v/context=%d", jsonOut, n), func(t *testing.T) {
+				t.Setenv("HRN_HOME", t.TempDir())
+				w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: t.TempDir()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := w.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, ContextTokens: n}); err != nil {
+					t.Fatal(err)
+				}
+				capture, err := os.CreateTemp(t.TempDir(), "stderr")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer capture.Close()
+				prev := os.Stderr
+				os.Stderr = capture
+				defer func() { os.Stderr = prev }()
+				args := []string{"--continue", w.ID(), "-b", "stub-context", "--no-switch"}
+				if jsonOut {
+					args = append(args, "--json")
+				}
+				code, err := cmdRun(append(args, "again"))
+				if code != 0 || err != nil {
+					t.Fatalf("continuation refused: code=%d error=%v", code, err)
+				}
+				data, err := os.ReadFile(capture.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := string(data)
+				start := strings.Index(got, "context test backend started")
+				if start < 0 {
+					t.Fatal("backend never started")
+				}
+				if n > 150000 {
+					for _, want := range []string{"warning:", w.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
+						if !strings.Contains(got[:start], want) {
+							t.Errorf("stderr before start lacks %q: %q", want, got[:start])
+						}
+					}
+				} else if strings.Contains(got, "short hand-over") {
+					t.Errorf("unneeded warning: %q", got)
+				}
+			})
+		}
+	}
+}
 
 // recorder answers immediately and keeps the task it was given, so a test can
 // see what the flags actually produced.

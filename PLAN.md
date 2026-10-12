@@ -1603,3 +1603,12 @@ neither of them follows a run while it happens.
   PLAN.md for the item it delivers, and a fix for an issue with no item got a Decisions-log
   entry that sometimes named only the issue. Such an entry now names the issue and the PR,
   as the #72 and #77 entries do.
+- 2026-10-12: Last-turn context and continuation warnings (#97, PR #105).
+  `context_tokens` is additive and omitted when unknown. The api loop uses its last
+  message's input plus cache reads and writes, claude its last assistant message,
+  and opencode its last step; a claude sub-agent's lines are ignored. Codex's agent-turn totals and gemini's run totals
+  cannot identify the last model call, so neither sets it. The run page shows the
+  reported size. Above 150,000 tokens, one shared threshold, the CLI warns on stderr
+  before starting and MCP includes the warning in its answer; neither refuses the
+  continuation. Old records stay silent. For #37: context size can inform future
+  budget warnings; this change adds no budget enforcement or flags.

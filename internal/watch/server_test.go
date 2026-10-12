@@ -342,6 +342,31 @@ func TestTheRunPageEscapesEverythingFromEvents(t *testing.T) {
 	}
 }
 
+func TestTheRunPageShowsContextOnlyWhenTheBackendReportedIt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(New(context.Background(), Options{}))
+	defer srv.Close()
+	for _, n := range []int64{285000, 0} {
+		w, err := runlog.Create("fake", agent.Task{Prompt: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(agent.Result{Status: agent.StatusOK, InputTokens: 900000, ContextTokens: n}); err != nil {
+			t.Fatal(err)
+		}
+		code, body := get(t, srv.URL+"/run/"+w.ID())
+		if code != 200 {
+			t.Fatalf("status = %d", code)
+		}
+		if n > 0 && (!strings.Contains(body, ">Context</dt>") || !strings.Contains(body, "285.0k tokens at the end")) {
+			t.Error("run page lacks the last turn's context")
+		}
+		if n == 0 && strings.Contains(body, ">Context</dt>") {
+			t.Error("run page guesses context for a record without it")
+		}
+	}
+}
+
 func TestEventDataCannotBreakTheStreamFraming(t *testing.T) {
 	rec := httptest.NewRecorder()
 	st := &stream{w: rec, rc: http.NewResponseController(rec)}

@@ -15,6 +15,41 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
+func TestRecordsKeepContextAndStillLoadResultsWithoutIt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, n := range []int{285000, 0} {
+		w, err := Create("stub", agent.Task{Prompt: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res agent.Result
+		data := `{"status":"ok","turns":1}`
+		if n > 0 {
+			data = fmt.Sprintf(`{"status":"ok","turns":1,"context_tokens":%d}`, n)
+		}
+		if err := json.Unmarshal([]byte(data), &res); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(res); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := Load(w.ID())
+		if err != nil || !rec.Done || rec.Result.Status != agent.StatusOK {
+			t.Fatalf("record = %+v, error = %v", rec, err)
+		}
+		encoded, err := json.Marshal(rec.Result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 && !strings.Contains(string(encoded), `"context_tokens":285000`) {
+			t.Errorf("context lost: %s", encoded)
+		}
+		if n == 0 && strings.Contains(string(encoded), "context_tokens") {
+			t.Errorf("old record gained context: %s", encoded)
+		}
+	}
+}
+
 func TestWriterCountsFailedEventsAndSavesRecordError(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	w, err := Create("stub", agent.Task{Prompt: "p"})

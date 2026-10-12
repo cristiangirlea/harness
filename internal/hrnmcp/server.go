@@ -198,6 +198,10 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				}
 			}
 			var notes []string
+			if warning := plan.ContextWarning(); warning != "" {
+				call.Progress(warning)
+				notes = append(notes, warning)
+			}
 			if routed != "" {
 				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
 				notes = append(notes, routed)

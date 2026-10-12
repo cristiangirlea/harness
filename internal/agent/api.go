@@ -271,6 +271,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		if msg != nil {
 			turn := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens,
 				CacheRead: msg.Usage.CacheReadInputTokens, CacheWrite: msg.Usage.CacheCreationInputTokens}
+			res.ContextTokens = turn.InputTokens + turn.CacheRead + turn.CacheWrite
 			res.InputTokens += turn.InputTokens
 			res.OutputTokens += turn.OutputTokens
 			res.CacheRead += turn.CacheRead

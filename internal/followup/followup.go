@@ -52,6 +52,18 @@ type Plan struct {
 	Notes []string
 }
 
+const contextWarningThreshold = 150000
+
+// ContextWarning advises the caller before continuing a large recorded context.
+// It is informational: the plan and the decision to continue stay unchanged.
+func (p Plan) ContextWarning() string {
+	if p.Prev.Result.ContextTokens <= contextWarningThreshold {
+		return ""
+	}
+	return fmt.Sprintf("warning: run %s had %d tokens of context at the end; consider a fresh run with a short hand-over instead of continuing this long session",
+		p.Prev.ID, p.Prev.Result.ContextTokens)
+}
+
 // Make plans a follow-up to req.RunID.
 func Make(req Request) (Plan, error) {
 	chain, missing, err := runlog.Chain(req.RunID)
