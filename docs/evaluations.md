@@ -1,0 +1,150 @@
+# Evaluations and reports
+
+[← README](../README.md)
+
+## Reports
+
+`hrn report` reads every run and batch record and prints two tables.
+
+```
+runs by backend, since 2026-09-14 17:40 (7d)
+backend  runs  ok  ok%  med dur  med turns  total cost  med cost  cache
+claude      6   5  83%    1m2s          9      ~$1.03     $0.17    96%
+api         3   3 100%     48s          6       $0.42     $0.14    71%
+all         9   8  89%     55s          8      ~$1.45     $0.15    90%
+
+batches by repository, since 2026-09-14 17:40 (7d)
+repository              batches  tasks  pass%  med attempts  total cost
+~/src/example-app                1      3   100%             1      ~$1.03
+all                           1      3   100%             1      ~$1.03
+```
+
+Runs group by backend, or by `--by model` (the model that answered) or `--by dir` (the
+workspace). Columns: runs, how many ended `ok`, median duration, median turns, total and
+median cost, and the cache share (cache-read tokens over every input token, cache writes included;
+`-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
+Batches group by repository; their cost sums every attempt, passed or not. Runs without
+a result (still running or killed), batches with a task still running, and records that
+cannot be read are counted under the tables and left out of them.
+`--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
+JSON for scripts.
+
+## Evals
+
+An eval is a batch with two more dimensions: a matrix of variants to compare and a
+number of repeats. Every cell is an ordinary recorded run, scored by the same gates, so
+the question "which backend, model and effort for this kind of task" gets an answer with
+numbers behind it.
+
+```json
+{
+  "parallel": 3, "mode": "yolo",
+  "gate": ["go build ./... && go test ./..."],
+  "matrix": [
+    {"name": "opus-high", "backend": "api", "model": "claude-opus-5", "effort": "high"},
+    {"name": "opus-low",  "backend": "api", "model": "claude-opus-5", "effort": "low"},
+    {"name": "claude",    "backend": "claude"}
+  ],
+  "repeats": 3,
+  "timeout": "20m", "max_cost_usd": 3,
+  "tasks": [{"id": "vet", "prompt": "Run go vet and fix every finding."}]
+}
+```
+
+A variant's `name` defaults to `backend[-model][-effort]`. Each cell becomes a batch
+task with the id `<evalid>.<task>.<variant>.r<n>`, so branches from different evals never
+collide. Retries are off for every cell on purpose: an eval measures what one attempt
+does, and a retried attempt would score the harness rather than the backend. Everything
+else, gates and mode and the budgets, carries through from the spec.
+
+`hrn eval eval.json` prints what each variant did and how each task scored under it:
+
+```
+  variant                pass  attempts  median cost median time   turns   tools   context
+  sonnet                   0%         1        $0.15        13s       2       1    101061
+  haiku                  100%         1        $0.05        14s       2       1     71814
+
+  task                     sonnet      haiku
+  greet                       0/1        1/1
+── eval cb867 · batch 20260922-164017-1bbd7c · 2 cells · 14s ──
+```
+
+That run is real: asked for a file containing exactly `hrn rocks`, Sonnet wrote `hrn rocks.`
+and failed the gate while Haiku passed at a third of the cost. The run records are still
+there to say why, which is the point of keeping them.
+
+`tools` is the median number of tool calls, counted the same way on every backend; a run
+that takes eight greps to read one file shows up here and not in `turns`. Under a variant,
+a dim line gives the run statuses when any cell did not finish `ok`, and how many passes
+changed nothing: right for "find the bug, if there is one", suspicious for "fix the
+typos".
+
+The record goes to `~/.hrn/evals/<id>.json`; `--json` prints it, `hrn eval show <id>`
+reprints it, `hrn eval list` finds it, `-v` streams every agent's tool calls. The worktrees are removed once the
+record is safely written, unless `--keep`. A failing variant is data, not an error, so
+the exit status is 0 whenever the eval itself ran.
+
+Task ids and variant names take letters, digits, `_` and `-`: dots separate the parts of
+a cell id. `retry` is refused in an eval spec, because a retried cell would score the
+harness rather than the backend, and for the same reason an eval sets `no_switch`: a cell
+whose backend reaches its usage limit ends `limited`. The `context` column counts prompt tokens and cache
+reads together, which is what the model was given rather than what was billed at full
+rate.
+
+### The judge
+
+Gates prove the build and `expect` proves an answer; neither can tell a typo fix from a
+spelling change. A `judge` reads each passing cell's diff against a rubric and scores it
+from 0 to 10:
+
+```json
+"judge": {
+  "backend": "claude", "model": "haiku",
+  "rubric": "Only real misspellings are fixed. British spellings such as colour stay.",
+  "rubrics": {"notes": "The answer is correct and the repository is unchanged."}
+}
+```
+
+`rubric` applies to every task and `rubrics` replaces it for the tasks it names; every
+task needs one or the other, and both are checked before any agent starts. The judge is
+shown the task, the rubric, the agent's final answer and the diff (the first 60 KB, and
+the names of untracked files), and runs read-only in the cell's worktree so it can open
+a file the diff only touches. `backend` defaults to the default backend, `timeout` to 5
+minutes per verdict. Cells that failed are not judged: they already scored where it
+counts, and judging them would only spend money.
+
+The scores join the table as a `judge` column per variant (the mean) and after each
+task's pass count (`1/1 10.0`). Every verdict is in the record under `judgements`, with
+its reason and the run id of the judge's own recorded run; a judge that fails or answers
+without a `{"score": ...}` object is recorded as an error rather than a zero, and the
+footer counts those. On the `claude` backend the first verdicts cost more than the
+answer: Claude Code writes its own system prompt to the cache in the read-only mode the
+judge uses, about 64k tokens, once per judge that starts before the cache exists.
+
+### Comparing evals
+
+The records are kept so a change can be scored: run the same task set before and after
+a new model, a reworded prompt or a harness change, then `hrn eval diff <before> <after>`.
+Variants are matched by name and tasks by id; every cell reads before → after, and a
+variant only one side ran gets its own row instead of disappearing. When a task's prompt
+differs between the two specs, a note says so: often that is the change being measured,
+but those rows do not compare like with like.
+
+```
+  eval cb867 → 847f6
+
+  variant              pass             median cost        median time
+  sonnet               0% → 100%        $0.15 → $0.14      13s → 13s
+  haiku                100% → 100%      $0.05 → $0.05      14s → 16s
+
+  task                 variant              passed
+  greet                sonnet               0/1 → 1/1
+  greet                haiku                1/1 → 1/1
+  note: the prompt differs for task greet, so its rows compare different tasks
+```
+
+That is the greeting eval from above, run again with the target line fenced in
+backticks. The first prompt ended "containing exactly the line: hx rocks. Do not run
+git.", and Sonnet took the sentence's full stop as part of the line; with the text fenced
+it passed. A judge score column appears when either eval was judged; `--json` prints the
+pairs as data.

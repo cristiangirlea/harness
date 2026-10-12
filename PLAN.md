@@ -661,6 +661,12 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-12: Simplify the public README (PR #107) into an introduction, quick start and guide
+  index. Move the detailed reference into `docs/` and contributor/release guidance
+  into `CONTRIBUTING.md`; keep permission boundaries visible in the README.
+  Remove unsupported language-performance comparisons and the install suggestion
+  to download releases when no releases have been published. Runtime behavior is unchanged.
+
 - 2026-10-12: Public-repository CI migration (PR #106). Use standard GitHub-hosted Linux
   and Windows runners, including both PR legs, with read-only CI token permissions. Gate CI
   and releases on public visibility to avoid private-minute usage. Retire the repository's

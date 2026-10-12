@@ -6,7 +6,8 @@ CLIs that are installed (claude, codex, gemini, opencode), and records every run
 `hrn mcp` serves hrn to hosts such as Claude Code. `hrn batch` fans tasks out into git worktrees with
 gates; `hrn eval` scores a matrix of backends and models.
 
-Read the README for commands, flags, the command guard and the run record format. `PLAN.md` is the
+Read the README for the quick start and guide index. `docs/commands.md`,
+`docs/permissions.md` and `docs/run-records.md` hold the command, guard and record references. `PLAN.md` is the
 work queue and the decisions log: read it before taking an item, and don't reopen a recorded
 decision. The binary was called `hx` until a rename; older PLAN.md entries keep that name (`cmd/hx`,
 `$HX_HOME`), the code is `hrn` throughout.
@@ -68,7 +69,8 @@ runners or route public contributions to the owner's machines.
   (`instructions.go`, 32 KiB cap): keep them short.
 - A release tag must match `Version` in `internal/agent/agent.go`; tags and releases are the
   owner's.
-- Every PR updates the README for a new flag, field, command or status, and `PLAN.md` for the item it
+- Every PR updates the relevant guide in `docs/` (and README when the overview changes)
+  for a new flag, field, command or status, and `PLAN.md` for the item it
   delivers (tick the box, a `Done: PR #n, <date>` line, deviations in the Decisions log);
   fixes without a `PLAN.md` item add a Decisions-log entry naming the issue and PR.
 
