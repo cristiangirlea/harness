@@ -865,7 +865,7 @@ all         9   8  89%     55s          8      ~$1.45     $0.15    90%
 
 batches by repository, since 2026-09-14 17:40 (7d)
 repository              batches  tasks  pass%  med attempts  total cost
-~/src/jobpilot                1      3   100%             1      ~$1.03
+~/src/example-app                1      3   100%             1      ~$1.03
 all                           1      3   100%             1      ~$1.03
 ```
 
@@ -1092,6 +1092,11 @@ deferred and why. It still calls the binary by its old name, `hx`, in entries wr
 before the rename.
 
 ## Contributing
+
+CI tests pull requests and pushes to `main` on standard GitHub-hosted Linux and Windows
+runners. Releases build on `ubuntu-latest`. These runners are free for public repositories;
+both workflows skip their jobs if the repository is private. No self-hosted runner is needed.
+See [SECURITY.md](SECURITY.md) for the security boundaries and private vulnerability reports.
 
 - **Standard library only.** No third-party Go modules, and Windows syscalls go through
   `syscall.NewLazyDLL`, not `x/sys`. The CLI backends are external programs, not

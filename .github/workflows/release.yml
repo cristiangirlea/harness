@@ -13,10 +13,9 @@ permissions:
 
 jobs:
   release:
-    # Only on the local cluster's runner set (lab-harness, infra repo), which CI_RUNNER names;
-    # without it no release is built, rather than one built on GitHub's runners.
-    if: ${{ vars.CI_RUNNER != '' }}
-    runs-on: ${{ vars.CI_RUNNER }}
+    # Standard hosted runners are free for public repositories. Refuse private-minute usage.
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -26,29 +25,6 @@ jobs:
       - run: go test -count=1 ./...
       - name: build
         run: bash .github/release.sh "$GITHUB_REF_NAME"
-      - name: install gh
-        shell: bash
-        # GitHub's runner image has gh; the lab runner image does not. Official apt repository,
-        # as https://github.com/cli/cli/blob/trunk/docs/install_linux.md gives it. The keyring's
-        # primary keys must be exactly the fingerprints that page lists, so a swapped key fails the
-        # release instead of being trusted. Each primary key's own fingerprint is the first fpr record
-        # after its pub record (a designated revoker's rvk record, which carries another key's
-        # fingerprint, can come first). When GitHub rotates its keys, update `want` from that page.
-        run: |
-          command -v gh >/dev/null && exit 0
-          key="$RUNNER_TEMP/githubcli-archive-keyring.gpg"
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$key"
-          want='2C6106201985B60E6C7AC87323F3D4EA75716059 7F38BBB59D064DBCB3D84D725612B36462313325'
-          got=$(gpg --show-keys --with-colons "$key" | awk -F: '$1 == "pub" { pub = 1 } pub && $1 == "fpr" { print $10; pub = 0 }' | sort | xargs)
-          if [ "$got" != "$want" ]; then
-            echo "::error::gh's apt signing keys are not the documented ones: $got"
-            exit 1
-          fi
-          sudo install -D -m 644 "$key" /etc/apt/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-            | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-          sudo apt-get update -q
-          sudo apt-get install -y -q gh
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
