@@ -642,9 +642,9 @@ order they are worth taking:
       Done: PR #67, 2026-10-11.
     - [x] `internal/purpose` and `hrn report --by purpose` ([#62](https://github.com/cristiangirlea/harness/issues/62)).
       Done: PR #121, 2026-10-12.
-    - [ ] hrn watch: what the listed runs were for and what they cost, as a lower bound
+    - [x] hrn watch: what the listed runs were for and what they cost, as a lower bound
       ([#63](https://github.com/cristiangirlea/harness/issues/63)); a first, budget-free step
-      towards #37.
+      towards #37. Done: PR #123, 2026-10-12.
 16. **Disk: clear what merged work leaves behind** (the owner, 2026-10-11, after both work
     drives filled with worktrees and Rust build folders). Deterministic, no model involved, and
     nothing local goes before its merge is proven. Three PRs, in this order:
@@ -662,6 +662,15 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-12: PR #123 (closes #63), item 15's third box, which closes item 15. hrn watch's
+  index has a Purpose column (the rule id in its title) and a card, "What the runs were for",
+  over the listed runs only. Decided: a finished run with no reported cost is left out of the
+  sum and counted, never $0; a row with any such run reads "≥", rounded down so the bound is
+  never too high, or "-" when none reported; running runs count only as running; the card is
+  built in Go as ready strings and sits in the "lists" template, so the stream carries it. Built
+  through hrn: a batch task wrote it, and hrn runs did the checks, three reviews (codex, then
+  claude when codex's sandbox would not start a shell) and the fixes. Six findings fixed as
+  their own commits, two of them the phone layout found by the browser check; the rest is #122.
 - 2026-10-12: PR #121 (closes #62), what a run was for, item 15's second box. Decided: only
   the prompt's lead is classified (its first non-blank paragraph, at most 600 bytes), since a
   brief's later paragraphs name every keyword; keyword rules adapted from classify-sessions
