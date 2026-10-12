@@ -108,6 +108,10 @@ footer { margin-top: 30px; font-size: .8rem; overflow-wrap: anywhere; }
   table.list td.meta { order: 2; font-size: .82rem; color: var(--muted); }
   table.list td.meta:empty { display: none; }
   table.list td.meta ~ td.meta::before { content: "· "; }
+  /* The purpose card keeps its columns; tighter cells and a header that
+     may wrap fit its five columns on a phone. */
+  .purposes th, .purposes td { padding: 9px 5px; }
+  .purposes thead th { white-space: normal; }
 }
 .phones { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 16px 28px; }
 .phones li { display: flex; align-items: center; gap: 14px; overflow-wrap: anywhere; }
