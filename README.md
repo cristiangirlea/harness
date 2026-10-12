@@ -51,8 +51,8 @@ there is no separate watcher repository or service to install. It shows runs sta
 through hrn.
 
 Prefer to be told? `hrn bot` opens Ada, hrn's bot, in a small window of her own: she
-says what hrn is doing in plain UK English, out loud and as notifications. See
-[Live dashboard and Ada](docs/watch.md).
+says what hrn is doing in plain UK English, out loud once you click her page, and as
+notifications. See [Live dashboard and Ada](docs/watch.md).
 
 Prefer the terminal?
 
