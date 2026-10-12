@@ -105,6 +105,18 @@ func TestGCKeepsACacheWrittenRecently(t *testing.T) {
 	}
 }
 
+func TestGCKeepsACacheWhenGitCannotSayWhetherItTracksIt(t *testing.T) {
+	root := tempRoot(t)
+	broken := filepath.Join(root, "broken")
+	cache := tagged(t, filepath.Join(broken, "target"), 30*time.Hour, 10)
+	if err := os.WriteFile(filepath.Join(broken, ".git"), []byte("not a gitdir line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	wantCache(t, findCache(t, cs, cache), Keep, "git could not say whether it tracks files in it")
+}
+
 func TestGCApplyRemovesTheLongestIdleCacheFirst(t *testing.T) {
 	root := tempRoot(t)
 	newer := tagged(t, filepath.Join(root, "a-newer"), 30*time.Hour, 10)

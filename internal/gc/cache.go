@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/report"
@@ -400,11 +401,15 @@ func measure(dir string) (size int64, risk string) {
 }
 
 // gitTracks reports whether git tracks any file under dir, which makes the
-// folder someone's (a tagged test fixture) whatever its tag says. A folder in
-// no repository tracks nothing.
+// folder someone's (a tagged test fixture) whatever its tag says. A folder git
+// says is in no repository tracks nothing; any other failure is an error, so
+// the folder stays.
 func gitTracks(ctx context.Context, dir string) (bool, error) {
 	if _, err := gitOut(ctx, dir, "rev-parse", "--show-toplevel"); err != nil {
-		return false, nil
+		if strings.Contains(err.Error(), "not a git repository") {
+			return false, nil
+		}
+		return false, err
 	}
 	out, err := gitStdout(ctx, dir, "ls-files", "-z", "--", ".")
 	if err != nil {
