@@ -27,7 +27,7 @@ func tagged(t *testing.T, dir string, idle time.Duration, size int) string {
 			t.Fatal(err)
 		}
 	}
-	touch(t, time.Now().Add(-idle), filepath.Join(deps, "libx.rlib"), filepath.Join(dir, "debug", ".cargo-lock"), deps, filepath.Join(dir, "debug"), dir)
+	touch(t, time.Now().Add(-idle), filepath.Join(deps, "libx.rlib"), filepath.Join(dir, "debug", ".cargo-lock"), filepath.Join(dir, "CACHEDIR.TAG"), deps, filepath.Join(dir, "debug"), dir)
 	return dir
 }
 
@@ -103,6 +103,25 @@ func TestGCKeepsACacheWrittenRecently(t *testing.T) {
 	if _, errs := ApplyCaches(context.Background(), cs); len(errs) != 0 || !exists(fresh) {
 		t.Errorf("a kept cache must survive apply: %v", errs)
 	}
+}
+
+func TestGCSeesAWriteDeepInsideACacheWithoutProfiles(t *testing.T) {
+	root := tempRoot(t)
+	pytest := filepath.Join(root, ".pytest_cache")
+	deep := filepath.Join(pytest, "v", "cache")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"CACHEDIR.TAG": cacheTagSignature + "\n", filepath.Join("v", "cache", "lastfailed"): "{}\n"} {
+		if err := os.WriteFile(filepath.Join(pytest, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-30 * time.Hour)
+	touch(t, old, filepath.Join(pytest, "CACHEDIR.TAG"), deep, filepath.Join(pytest, "v"), pytest) // every folder is old; the one file is fresh
+
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	wantCache(t, findCache(t, cs, pytest), Keep, "inside --idle 24h")
 }
 
 func TestGCKeepsACacheWhenGitCannotSayWhetherItTracksIt(t *testing.T) {

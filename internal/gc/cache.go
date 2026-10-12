@@ -77,8 +77,9 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 	now := time.Now()
 	for i := range all {
 		c := &all[i]
-		c.Size, c.risk = measure(c.Path)
-		c.LastBuild = lastBuild(c.Path)
+		var newest time.Time
+		c.Size, newest, c.risk = measure(c.Path)
+		c.LastBuild = lastBuild(c.Path, newest)
 		c.Verdict, c.Reason = decideCache(ctx, c, cwd, now, opt)
 	}
 	freeBelow(all, now, opt)
@@ -206,10 +207,11 @@ func recheckCache(ctx context.Context, c Cache) string {
 	if !isCacheDir(c.Path) {
 		return "it is no longer a tagged cache"
 	}
-	if lastBuild(c.Path).After(c.LastBuild) {
+	_, newest, risk := measure(c.Path)
+	if lastBuild(c.Path, newest).After(c.LastBuild) {
 		return "written since the scan"
 	}
-	if _, risk := measure(c.Path); risk != "" {
+	if risk != "" {
 		return risk
 	}
 	tracked, err := gitTracks(ctx, c.Path)
@@ -315,12 +317,13 @@ func profiles(dir string) []string {
 }
 
 // lastBuild is the newest write among a cache's profile folders, their deps,
-// .fingerprint, build and incremental folders, and the files directly in a
-// profile (the binaries a build ends with); the cache's own time when it has
-// no profile. Folder times move when entries come and go, which a build does,
-// so the hundreds of thousands of files inside are not walked.
-func lastBuild(dir string) time.Time {
-	var newest time.Time
+// .fingerprint, build and incremental folders, the files directly in a
+// profile (the binaries a build ends with), and newest, the latest time the
+// walk that sized the cache saw inside it; the cache's own time when it has
+// no profile. The folder times catch what a build removes, which no file
+// shows; the walk catches a file rewritten deep inside a cache with no
+// profile, such as pytest's.
+func lastBuild(dir string, newest time.Time) time.Time {
 	note := func(p string) {
 		if info, err := os.Lstat(p); err == nil && info.ModTime().After(newest) {
 			newest = info.ModTime()
@@ -365,9 +368,10 @@ func inUse(dir string) string {
 }
 
 // measure walks a cache once for the size of the files under it (links are
-// not followed) and for why it cannot be deleted whole, or "": a repository
-// inside it, a link leading out of it, or a part it cannot read.
-func measure(dir string) (size int64, risk string) {
+// not followed), the newest time of anything in it, and why it cannot be
+// deleted whole, or "": a repository inside it, a link leading out of it, or
+// a part it cannot read.
+func measure(dir string) (size int64, newest time.Time, risk string) {
 	var kind, at string
 	unreadable := false
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -378,10 +382,15 @@ func measure(dir string) (size int64, risk string) {
 		if kind == "" {
 			kind, at = riskAt(dir, p, d)
 		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if t := info.ModTime(); t.After(newest) {
+			newest = t
+		}
 		if d.Type().IsRegular() {
-			if info, err := d.Info(); err == nil {
-				size += info.Size()
-			}
+			size += info.Size()
 		}
 		return nil
 	})
@@ -397,7 +406,7 @@ func measure(dir string) (size int64, risk string) {
 	case unreadable:
 		risk = "a part of it cannot be read"
 	}
-	return size, risk
+	return size, newest, risk
 }
 
 // gitTracks reports whether git tracks any file under dir, which makes the
