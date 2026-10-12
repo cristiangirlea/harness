@@ -12,7 +12,7 @@ hrn show -f <run-id>       # the same timeline in the terminal
 hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
 
-`hrn watch` serves a page that lists the newest runs and batches (id, backend, status,
+`hrn watch` serves a page that lists the newest runs and batches (id, backend, purpose, status,
 duration, cost, the prompt's first line) and keeps itself current. Every attempt of a
 batch's task is also a run; its row links to the batch under the run's id, even when that
 batch is older than the ones listed. A run's page is its
@@ -27,6 +27,21 @@ they finish. Steps arrive over Server-Sent Events that check the run's `events.j
 second; a browser that loses the connection picks up where it left off. Cost is whatever
 the backend reports: the api backend's estimate (`~`), the claude and opencode CLIs' own
 figures, nothing for codex and gemini, and only once the run has ended.
+
+Each run on the index also says what it was for (review, debug, implement, refactor, test,
+research, plan, ops or unknown), from `internal/purpose`'s keyword rules on its prompt's
+first paragraph; hover the word for the rule that decided it. Above the batches, a card,
+"What the runs were for", sums up the runs listed below (the newest 50, or `Options.Runs`),
+not all time: one row per purpose that occurs, then "all", each with its runs, how many are
+running, tokens (input, output and cache read) and known cost.
+
+That cost is honest about what it does not know. codex and gemini report no cost, and
+neither does a run that was killed before it saved one; such a run is left out of the
+sum, not counted as $0. A row whose finished runs all reported a cost shows their sum; a
+row where some did not shows "≥ $X", a lower bound over those that did, with how many
+runs report no cost under it; a row where none did shows "-". A sum that includes the
+api backend's estimate keeps its `~`. Running runs count only as running: they have no
+cost yet, known or unknown.
 
 When the backend reports the last turn's context size, the run page also shows
 `Context: 285.0k tokens at the end`. This includes input served from or written to

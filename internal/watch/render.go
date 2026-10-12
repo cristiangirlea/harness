@@ -13,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/qr"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -346,6 +347,7 @@ func phoneLinks(eps []Endpoint) []phoneLink {
 }
 
 type lists struct {
+	Purposes *purposeCard // over Runs; nil when there are none
 	Runs     []row
 	Batches  []row
 	Problems []string
@@ -361,10 +363,12 @@ type row struct {
 	Since                   string // the start, for the live clock while it goes
 	Prompt                  string
 	Batch                   string // for a run: the batch whose attempt it was
+	Purpose, Rule           string // for a run: what it was for, and the rule that said so
 }
 
 func runRow(rec runlog.Record) row {
-	r := row{ID: rec.ID, Kind: "run", Backend: rec.Backend}
+	p := purpose.Classify(rec.Task.Prompt)
+	r := row{ID: rec.ID, Kind: "run", Backend: rec.Backend, Purpose: p.Category, Rule: p.Rule}
 	r.Prompt, _ = firstLine(rec.Task.Prompt)
 	if rec.Done {
 		r.Status, r.Took, r.Cost = string(rec.Result.Status), short(rec.Result.Duration), cost(rec.Result.CostUSD, rec.Result.CostEstimate)

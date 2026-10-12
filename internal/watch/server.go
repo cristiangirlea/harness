@@ -396,9 +396,11 @@ func (s *server) lists() lists {
 	if err != nil {
 		l.Problems = append(l.Problems, "Runs could not be listed: "+err.Error())
 	}
-	for _, rec := range runs {
-		l.Runs = append(l.Runs, runRow(s.cleanRecord(rec)))
+	for i, rec := range runs {
+		runs[i] = s.cleanRecord(rec)
+		l.Runs = append(l.Runs, runRow(runs[i]))
 	}
+	l.Purposes = purposesOf(runs)
 	batches, unreadable, err := batch.List()
 	if unreadable > 0 {
 		// Most likely one caught mid-save: on Windows a read can land on

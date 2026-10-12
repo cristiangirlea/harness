@@ -62,6 +62,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.mono { white-space: nowrap; }
 .of-batch { display: block; font-size: .78rem; color: var(--muted); }
+.purposes .no-cost { display: block; font-size: .78rem; color: var(--muted); white-space: normal; }
+.purposes tbody th { background: none; font-weight: 600; }
+.purposes tr.all th, .purposes tr.all td { border-top: 2px solid var(--rule); font-weight: 650; }
 summary { cursor: pointer; overflow-wrap: anywhere; }
 pre { background: var(--code-bg); color: var(--code-fg); padding: 12px 14px; border-radius: 7px; overflow: auto; font-size: .82rem; max-height: 32rem; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
 .more { font-size: .8rem; color: var(--muted); margin: 4px 0; }
