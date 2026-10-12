@@ -65,10 +65,12 @@ Usage:
   hrn eval list [-n N]            list saved evals, newest first
   hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
   hrn report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
-  hrn gc [--apply] [--grace D] [PATH...]
+  hrn gc [--apply] [--grace D] [--idle D] [--min-idle D] [--free-below SIZE] [PATH...]
                                  list worktrees whose work is merged (pull request merged at their commit, or a
-                                 finished batch's commit on origin's default branch); --apply removes them and
-                                 their branches. PATH is a repository or a folder of them (default: the current one)
+                                 finished batch's commit on origin's default branch) and build caches (CACHEDIR.TAG)
+                                 idle past --idle or, on a drive below --free-below, past --min-idle; --apply
+                                 removes them, and the worktrees' branches. PATH is a repository or a folder of
+                                 them (default: the current one)
 
 Run flags:
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
