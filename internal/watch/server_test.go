@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1277,5 +1278,77 @@ func TestARowKeepsItsIDWhenTheRepositoryIsNamedLikeIt(t *testing.T) {
 	_, body := get(t, srv.URL+"/")
 	if row := runRowOf(t, body, w.ID()); !strings.Contains(row, `">`+w.ID()+`</a><span class="row-id">`+w.ID()+`</span>`) {
 		t.Errorf("the run's row does not keep its id under the label:\n%s", row)
+	}
+}
+
+// A name made from a prompt's start is the prompt's text: markup in it is
+// shown, not run, on the index and in its stream.
+func TestAGeneratedTaskNameIsEscaped(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	prompt := "<b>x</b> in the task's first words"
+	w, err := runlog.Create("fake", agent.Task{Dir: "/home/me/myrepo/.hrn/worktrees/t1", Prompt: prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
+	saveBatch(t, batch.Result{ID: "20261012-180000-abcdef", Started: time.Now(), Dir: "/home/me/myrepo", Duration: time.Minute,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: prompt, Status: batch.StatusPass,
+			Attempts: []batch.Attempt{{Backend: "fake", RunID: w.ID(), Result: agent.Result{Status: agent.StatusOK}}}}}})
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	check := func(where, html string) {
+		t.Helper()
+		if strings.Contains(html, "<b>") {
+			t.Errorf("%s holds the task name's markup unescaped", where)
+		}
+		if row := runRowOf(t, html, w.ID()); !strings.Contains(row, `">myrepo · &lt;b&gt;x&lt;/b&gt; in the task&#39;s first words</a>`) {
+			t.Errorf("%s: the run's label is not the escaped task name:\n%s", where, row)
+		}
+		if row := batchRowOf(t, html, "20261012-180000-abcdef"); !strings.Contains(row, "&lt;b&gt;x&lt;/b&gt;") {
+			t.Errorf("%s: the batch's task name is not escaped:\n%s", where, row)
+		}
+	}
+	_, body := get(t, srv.URL+"/")
+	check("the index", body)
+
+	s, stop := openStream(t, srv.URL+"/stream/index", "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "replace" {
+		t.Fatalf("first message = %+v, %v", m, ok)
+	}
+	check("the streamed index", m.data)
+}
+
+// The batches table's headers stand over their cells: Passed over the pass
+// count, Tasks over the names.
+func TestTheBatchesTablesHeadersLineUpWithItsCells(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const id = "20261012-190000-abcdef"
+	saveBatch(t, batch.Result{ID: id, Started: time.Now(), Dir: "/home/me/myrepo", Duration: time.Minute,
+		Tasks: []batch.TaskResult{{ID: "91-login", Status: batch.StatusPass}, {ID: "92-logout", Status: batch.StatusFail}}})
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, body := get(t, srv.URL+"/")
+	_, table, _ := strings.Cut(body, `aria-label="Batches"`)
+	table, _, _ = strings.Cut(table, "</table>")
+	head, _, _ := strings.Cut(table, "</thead>")
+	var headers []string
+	for _, th := range strings.Split(head, "<th ")[1:] {
+		_, text, _ := strings.Cut(th, ">")
+		text, _, _ = strings.Cut(text, "</th>")
+		headers = append(headers, text)
+	}
+	cells := strings.Split(batchRowOf(t, body, id), "<td")
+	cells = cells[1:] // the row starts inside its first cell
+	if len(cells) != len(headers)-1 {
+		t.Fatalf("%d headers over %d cells after the first:\n%v\n%s", len(headers), len(cells), headers, table)
+	}
+	for header, want := range map[string]string{"Passed": "1/2 passed", "Tasks": "91-login, 92-logout"} {
+		i := slices.Index(headers, header)
+		if i < 1 || !strings.Contains(cells[i-1], want) {
+			t.Errorf("header %q (column %d) is not over %q: %v\n%s", header, i, want, headers, table)
+		}
 	}
 }
