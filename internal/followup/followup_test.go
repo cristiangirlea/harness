@@ -66,6 +66,66 @@ func TestLongContextStillForksItsSessionAndSuggestsAFreshRun(t *testing.T) {
 	}
 }
 
+func TestHandingALongContextToAnotherBackendAsATranscriptGivesNoWarning(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: workspace(t)},
+		agent.Result{Backend: "claude", Session: "s1", ContextTokens: 285000})
+	p, err := Make(Request{RunID: id, Backend: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Resume != nil || p.ForkSession != "" || len(p.Handoff) != 1 {
+		t.Fatalf("codex should receive only a transcript: %+v", p)
+	}
+	if warning := p.ContextWarning(); warning != "" {
+		t.Errorf("a transcript hand-over should not warn: %s", warning)
+	}
+}
+
+func TestSwitchingBackWarnsAboutTheEarlierLongSessionBeingForked(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "one", Dir: dir},
+		agent.Result{Backend: "claude", Session: "s1", ContextTokens: 285000})
+	second := finished(t, first, agent.Task{Prompt: "two", Dir: dir},
+		agent.Result{Backend: "codex", Session: "t2"})
+	p, err := Make(Request{RunID: second, Backend: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ForkSession != "s1" {
+		t.Fatalf("claude should fork its earlier session: %+v", p)
+	}
+	warning := p.ContextWarning()
+	for _, want := range []string{first, "285000 tokens"} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("warning lacks %q: %s", want, warning)
+		}
+	}
+	if strings.Contains(warning, second) {
+		t.Errorf("warning should not name the codex run %s: %s", second, warning)
+	}
+}
+
+func TestSwitchingBackToASmallSessionGivesNoWarningForTheNamedLongRun(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "one", Dir: dir},
+		agent.Result{Backend: "claude", Session: "s1", ContextTokens: 1000})
+	second := finished(t, first, agent.Task{Prompt: "two", Dir: dir},
+		agent.Result{Backend: "codex", Session: "t2", ContextTokens: 285000})
+	p, err := Make(Request{RunID: second, Backend: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ForkSession != "s1" {
+		t.Fatalf("claude should fork its earlier session: %+v", p)
+	}
+	if warning := p.ContextWarning(); warning != "" {
+		t.Errorf("forking the small session should not warn: %s", warning)
+	}
+}
+
 func TestNothingToPickUpOnTheSameBackendIsRefused(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)

@@ -1619,3 +1619,6 @@ neither of them follows a run while it happens.
   before starting and MCP includes the warning in its answer; neither refuses the
   continuation. Old records stay silent. For #37: context size can inform future
   budget warnings; this change adds no budget enforcement or flags.
+- 2026-10-12: continue: warn on the session carried, not the run named (#103, PR #?)
+  The warning uses the run whose conversation is resumed or session is forked, including
+  an earlier run on the same backend; transcript-only hand-overs give no warning.
