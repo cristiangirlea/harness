@@ -84,16 +84,21 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 	return all, nil
 }
 
-// ApplyCaches removes the caches marked Remove, each checked again just
-// before it goes (still tagged, nothing written since the scan, no build
-// holding it, nothing inside that must stay). One that fails the check stays,
-// with the reason among the errors. The removal is not all-or-nothing: a file
-// held open on Windows can leave part of the folder deleted.
+// ApplyCaches removes the caches marked Remove, the longest idle first so an
+// interruption leaves the newest, each checked again just before it goes
+// (still tagged, nothing written since the scan, no build holding it, nothing
+// inside that must stay). One that fails the check stays, with the reason
+// among the errors. The removal is not all-or-nothing: a file held open on
+// Windows can leave part of the folder deleted.
 func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []error) {
+	var todo []Cache
 	for _, c := range caches {
-		if c.Verdict != Remove {
-			continue
+		if c.Verdict == Remove {
+			todo = append(todo, c)
 		}
+	}
+	sort.SliceStable(todo, func(i, j int) bool { return todo[i].LastBuild.Before(todo[j].LastBuild) })
+	for _, c := range todo {
 		if why := recheckCache(ctx, c); why != "" {
 			errs = append(errs, fmt.Errorf("%s: kept, %s", c.Path, why))
 			continue

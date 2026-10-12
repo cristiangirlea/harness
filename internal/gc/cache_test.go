@@ -105,6 +105,20 @@ func TestGCKeepsACacheWrittenRecently(t *testing.T) {
 	}
 }
 
+func TestGCApplyRemovesTheLongestIdleCacheFirst(t *testing.T) {
+	root := tempRoot(t)
+	newer := tagged(t, filepath.Join(root, "a-newer"), 30*time.Hour, 10)
+	older := tagged(t, filepath.Join(root, "z-older"), 60*time.Hour, 10)
+
+	removed, errs := ApplyCaches(context.Background(), caches(t, []string{root}, nil, cacheOpt))
+	if len(errs) != 0 || len(removed) != 2 {
+		t.Fatalf("removed %d, errors %v", len(removed), errs)
+	}
+	if samePath(removed[0].Path) != samePath(older) || samePath(removed[1].Path) != samePath(newer) {
+		t.Errorf("removal order %q, %q; want the older first", removed[0].Path, removed[1].Path)
+	}
+}
+
 func TestGCTakesTheIdleLimitAsGiven(t *testing.T) {
 	root := tempRoot(t)
 	fresh := tagged(t, filepath.Join(root, "fresh"), 0, 100)
