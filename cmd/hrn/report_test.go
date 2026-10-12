@@ -68,6 +68,21 @@ func TestReportGroupsRunsByPurpose(t *testing.T) {
 		rep.Runs[1].Key != "debug" || rep.Runs[1].Runs != 1 || rep.RunsAll.Runs != 3 {
 		t.Errorf("report = %+v", rep)
 	}
+	// The table groups the same way: heading, header, a row per purpose, the all row.
+	out, err = captureStdout(t, func() error { return cmdReport([]string{"--by", "purpose"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 5 || lines[0] != "runs by purpose, all time" || !strings.HasPrefix(lines[1], "purpose ") {
+		t.Fatalf("table =\n%s", out)
+	}
+	for i, want := range []string{"test 2", "debug 1", "all 3"} {
+		f := strings.Fields(lines[2+i])
+		if len(f) < 2 || f[0]+" "+f[1] != want {
+			t.Errorf("table row %d = %q, want it to start with %q", i, lines[2+i], want)
+		}
+	}
 	if err := cmdReport([]string{"--by", "colour"}); err == nil || !strings.Contains(err.Error(), `unknown key "colour"`) {
 		t.Errorf("an unknown --by must be refused: %v", err)
 	}
