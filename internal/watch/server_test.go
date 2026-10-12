@@ -1247,3 +1247,35 @@ func TestARunsTaskNameIsBlankedOfSecrets(t *testing.T) {
 	}
 	check("the streamed index", m.data)
 }
+
+// A workspace folder named like its run still names a repository: the row
+// keeps the run's id under the label.
+func TestARowKeepsItsIDWhenTheRepositoryIsNamedLikeIt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("fake", agent.Task{Prompt: "a run in a folder named like it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
+	path := filepath.Join(runlog.Root(), w.ID(), "result.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec runlog.Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatal(err)
+	}
+	rec.Task.Dir = "/src/" + w.ID()
+	data, _ = json.Marshal(rec)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, body := get(t, srv.URL+"/")
+	if row := runRowOf(t, body, w.ID()); !strings.Contains(row, `">`+w.ID()+`</a><span class="row-id">`+w.ID()+`</span>`) {
+		t.Errorf("the run's row does not keep its id under the label:\n%s", row)
+	}
+}

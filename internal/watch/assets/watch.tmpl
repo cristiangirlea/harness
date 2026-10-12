@@ -87,7 +87,7 @@
 </section>
 {{end}}
 
-{{define "name"}}{{if ne .Label .ID}}<a href="/{{.Kind}}/{{.ID}}">{{.Label}}</a><span class="row-id">{{.ID}}</span>{{else}}<a href="/{{.Kind}}/{{.ID}}" class="mono">{{.ID}}</a>{{end}}{{end}}
+{{define "name"}}{{if .Repo}}<a href="/{{.Kind}}/{{.ID}}">{{.Label}}</a><span class="row-id">{{.ID}}</span>{{else}}<a href="/{{.Kind}}/{{.ID}}" class="mono">{{.ID}}</a>{{end}}{{end}}
 
 {{define "took"}}{{if .Since}}<span data-since="{{.Since}}">{{.Took}}</span>{{else}}{{.Took}}{{end}}{{end}}
 
