@@ -141,7 +141,8 @@ func printGC(w io.Writer, wts []gc.Worktree, sizes map[string]int64) {
 }
 
 // printCaches writes one line per build cache, the ones to remove first: the
-// verdict, the folder, "cache", its size, its last build, and why.
+// verdict, the folder, "cache", its size, when it was last written (a build,
+// for a Cargo target with a profile), and why.
 func printCaches(w io.Writer, caches []gc.Cache) {
 	sorted := append([]gc.Cache(nil), caches...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -149,11 +150,11 @@ func printCaches(w io.Writer, caches []gc.Cache) {
 	})
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, c := range sorted {
-		built := "-"
+		written := "-"
 		if !c.LastBuild.IsZero() {
-			built = "built " + c.LastBuild.Local().Format("2006-01-02 15:04")
+			written = "written " + c.LastBuild.Local().Format("2006-01-02 15:04")
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", c.Verdict, c.Path, "cache", report.Bytes(c.Size), built, c.Reason)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", c.Verdict, c.Path, "cache", report.Bytes(c.Size), written, c.Reason)
 	}
 	tw.Flush()
 }
