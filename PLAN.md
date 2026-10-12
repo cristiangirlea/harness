@@ -650,8 +650,8 @@ order they are worth taking:
     nothing local goes before its merge is proven. Three PRs, in this order:
     - [x] `hrn gc`: worktrees whose pull request is proven merged
       ([#78](https://github.com/cristiangirlea/harness/issues/78)). Done: PR #95, 2026-10-12.
-    - [ ] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
-      ([#79](https://github.com/cristiangirlea/harness/issues/79)).
+    - [x] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
+      ([#79](https://github.com/cristiangirlea/harness/issues/79)). Done: PR #131, 2026-10-13.
     - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
