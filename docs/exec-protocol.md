@@ -1,5 +1,7 @@
 # `hrn exec`: the supervisor protocol, version 1
 
+[← README](../README.md)
+
 `hrn exec --protocol v1` runs one task for a supervising program and reports it as a stream of
 JSON lines. It exists so a program such as Ada can start, follow, cancel and record a run without
 parsing terminal output. People use `hrn run`; programs use this.
