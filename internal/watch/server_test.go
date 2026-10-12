@@ -1206,3 +1206,44 @@ func TestTheBatchesTableLeadsWithTheRepositoryAndNamesTheTasks(t *testing.T) {
 	}
 	check("the streamed index", m.data)
 }
+
+// A task whose id hrn made up is named from its prompt's start, which topic
+// may lowercase: the name is taken from the batch as blanked of secrets, or
+// a key at the start of the prompt would reach the run's label changed past
+// what the page's last pass looks for.
+func TestARunsTaskNameIsBlankedOfSecrets(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const secret = "Abcdefghijklmnop"
+	t.Setenv("SERVICE_TOKEN", secret)
+	prompt := secret + " starts this prompt"
+	w, err := runlog.Create("fake", agent.Task{Dir: "/home/me/myrepo/.hrn/worktrees/t1", Prompt: prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
+	saveBatch(t, batch.Result{ID: "20261012-170000-abcdef", Started: time.Now(), Dir: "/home/me/myrepo", Duration: time.Minute,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: prompt, Status: batch.StatusPass,
+			Attempts: []batch.Attempt{{Backend: "fake", RunID: w.ID(), Result: agent.Result{Status: agent.StatusOK}}}}}})
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	check := func(where, html string) {
+		t.Helper()
+		if strings.Contains(strings.ToLower(html), strings.ToLower(secret)) {
+			t.Errorf("%s shows the secret value, in some case:\n%s", where, html)
+		}
+		if row := runRowOf(t, html, w.ID()); !strings.Contains(row, `">myrepo · `) || !strings.Contains(row, `<span class="row-id">`+w.ID()+`</span>`) {
+			t.Errorf("%s: the run's row has no label:\n%s", where, row)
+		}
+	}
+	_, body := get(t, srv.URL+"/")
+	check("the index", body)
+
+	s, stop := openStream(t, srv.URL+"/stream/index", "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "replace" {
+		t.Fatalf("first message = %+v, %v", m, ok)
+	}
+	check("the streamed index", m.data)
+}

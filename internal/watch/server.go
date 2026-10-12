@@ -415,10 +415,10 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, fmt.Sprintf("%d batch record(s) could not be read.", unreadable))
 	}
 	for i, res := range batches {
-		if i == 20 {
-			break
+		batches[i] = s.cleanBatch(res) // the task names below come from these too
+		if i < 20 {
+			l.Batches = append(l.Batches, batchRow(batches[i]))
 		}
-		l.Batches = append(l.Batches, batchRow(s.cleanBatch(res)))
 	}
 	// Every batch attempt is a run too: link each one back to its batch and
 	// lead with its task, from every batch on disk, not only the 20 listed.
