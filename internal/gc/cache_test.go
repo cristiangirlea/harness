@@ -260,6 +260,27 @@ func TestGCFindsCachesInsideWorktreesButNotThoseGoingWithTheirWorktree(t *testin
 	}
 }
 
+func TestGCSweepsNoCachesUnderAWorktreeEntryThatIsNoWorktree(t *testing.T) {
+	f := newFixture(t)
+	elsewhere := filepath.Join(f.root, "elsewhere")
+	cache := tagged(t, filepath.Join(elsewhere, "target"), 30*time.Hour, 10)
+	entry := filepath.Join(f.repo, ".git", "worktrees", "bogus") // a stale or edited entry pointing at a folder that is no worktree
+	if err := os.MkdirAll(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.write(entry, "gitdir", filepath.ToSlash(elsewhere)+"/.git\n")
+	f.write(entry, "HEAD", git(t, f.repo, "rev-parse", "HEAD")+"\n")
+	f.write(entry, "commondir", "../..\n")
+
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, elsewhere), Keep, "")
+	for _, c := range caches(t, []string{f.repo}, wts, cacheOpt) {
+		if samePath(c.Path) == samePath(cache) {
+			t.Fatalf("a folder that is no worktree of the repository was swept: %+v", c)
+		}
+	}
+}
+
 func TestGCListsACacheFoundBothAsAPathAndInAWorktreeOnce(t *testing.T) {
 	f := newFixture(t)
 	wt, h := f.worktree("wt-open", "open")

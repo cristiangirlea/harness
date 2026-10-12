@@ -50,7 +50,7 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 		}
 	}
 	for _, w := range wts {
-		if w.Verdict == Remove {
+		if w.Verdict == Remove || !worktreeOf(w.Path, w.Repo) {
 			continue
 		}
 		for _, dir := range cacheDirs(w.Path, 2) {
@@ -150,6 +150,30 @@ func cacheDirs(dir string, depth int) []string {
 		found = append(found, cacheDirs(filepath.Join(dir, e.Name()), depth-1)...)
 	}
 	return found
+}
+
+// worktreeOf reports whether dir is a linked worktree of repo: its .git is a
+// file naming a folder under repo's .git/worktrees. git worktree list prints
+// whatever an entry's gitdir file says, a path that is no worktree at all
+// when the entry is stale or edited, and such a path must not be swept.
+func worktreeOf(dir, repo string) bool {
+	gitfile := filepath.Join(dir, ".git")
+	if info, err := os.Lstat(gitfile); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	data, err := os.ReadFile(gitfile)
+	if err != nil {
+		return false
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return false
+	}
+	target = filepath.FromSlash(strings.TrimSpace(target))
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(dir, target)
+	}
+	return inside(target, filepath.Join(repo, ".git", "worktrees"))
 }
 
 // holder names the innermost worktree dir lies in, or "".
