@@ -1236,7 +1236,7 @@ func TestARunsTaskNameIsBlankedOfSecrets(t *testing.T) {
 	defer srv.Close()
 	check := func(where, html string) {
 		t.Helper()
-		if strings.Contains(html, `href="/batch/`+id+`">`+id+`</a></td>`) {
+		if strings.Contains(html, `href="/batch/`+id+`">myrepo</a>`) {
 			t.Fatalf("%s: the batch is in the batches table; the test needs it past the 20 listed", where)
 		}
 		if strings.Contains(strings.ToLower(html), strings.ToLower(secret)) {
