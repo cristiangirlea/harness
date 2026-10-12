@@ -661,7 +661,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-12: Public-repository CI migration (PR pending). Use standard GitHub-hosted Linux
+- 2026-10-12: Public-repository CI migration (PR #106). Use standard GitHub-hosted Linux
   and Windows runners, including both PR legs, with read-only CI token permissions. Gate CI
   and releases on public visibility to avoid private-minute usage. Retire the repository's
   desktop runner and ARC scale set before changing visibility; infra owns the retirement.
