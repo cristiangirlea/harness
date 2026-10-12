@@ -25,7 +25,7 @@
 | `hrn eval show <id>` | Reprint a saved eval. |
 | `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge. |
 | `hrn eval diff [--json] <a> <b>` | Two evals side by side, variant by variant and task by task. |
-| `hrn report [--since 7d] [--by backend\|model\|dir] [--json]` | Tables over the finished runs and the batches (see [Reports](evaluations.md#reports)). |
+| `hrn report [--since 7d] [--by backend\|model\|dir\|purpose] [--json]` | Tables over the finished runs and the batches (see [Reports](evaluations.md#reports)). |
 | `hrn gc [--apply] [--grace 1h] [PATH…]` | Remove worktrees whose work is merged, with their build output (see [Clearing merged worktrees](batches.md#clearing-merged-worktrees)). |
 
 Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,

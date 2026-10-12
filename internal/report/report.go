@@ -14,6 +14,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -22,6 +23,7 @@ const (
 	ByBackend = "backend"
 	ByModel   = "model"
 	ByDir     = "dir"
+	ByPurpose = "purpose"
 )
 
 // ParseSince reads a window such as "7d", "36h" or "90m". Days are accepted
@@ -223,8 +225,11 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 			}
 			return k
 		}, nil
+	case ByPurpose:
+		// What the run was for, from keyword rules on its prompt's first paragraph.
+		return func(r runlog.Record) string { return purpose.Classify(r.Task.Prompt).Category }, nil
 	}
-	return nil, fmt.Errorf("unknown key %q (want backend, model or dir)", by)
+	return nil, fmt.Errorf("unknown key %q (want backend, model, dir or purpose)", by)
 }
 
 // canonDir names a directory the way the filesystem does, so one workspace

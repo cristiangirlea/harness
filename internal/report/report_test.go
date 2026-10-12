@@ -84,8 +84,24 @@ func TestRunRowsByModelAndDir(t *testing.T) {
 	if err != nil || len(rows) != 2 || rows[0].Key != filepath.Clean("/repo/a") || rows[0].Runs != 3 || rows[1].Key != filepath.Clean("/repo/b") || rows[1].Runs != 1 {
 		t.Errorf("by dir: rows = %+v err=%v", rows, err)
 	}
-	if _, _, err := d.RunRows("colour"); err == nil || !strings.Contains(err.Error(), "backend, model or dir") {
+	if _, _, err := d.RunRows("colour"); err == nil || !strings.Contains(err.Error(), "backend, model, dir or purpose") {
 		t.Errorf("unknown key should be refused: %v", err)
+	}
+}
+
+func TestRunRowsByPurposeGroupOnTheCategory(t *testing.T) {
+	recs := sample()
+	recs[0].Task.Prompt = "Fix the hang in batch."
+	recs[1].Task.Prompt = "Implement the purpose classifier.\n\nThen review the diff."
+	recs[2].Task.Prompt = "Add a --by purpose flag."
+	recs[3].Task.Prompt = "Hello there."
+	rows, _, err := Select(recs, nil, time.Time{}).RunRows(ByPurpose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[0].Key != "implement" || rows[0].Runs != 2 ||
+		rows[1].Key != "debug" || rows[1].Runs != 1 || rows[2].Key != "unknown" || rows[2].Runs != 1 {
+		t.Errorf("rows = %+v", rows)
 	}
 }
 

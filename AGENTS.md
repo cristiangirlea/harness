@@ -21,7 +21,7 @@ decision. The binary was called `hx` until a rename; older PLAN.md entries keep 
 | `internal/tools/` | Workspace-confined tools for the api loop, the guard every backend runs under (`guard.go` commands, `guardenv.go` environment, `secretfiles.go` the one list of secret files; claude's deny rules are built from it in `internal/agent/guardenv.go`), the MCP tool bridge. |
 | `internal/mcp/` | JSON-RPC 2.0 over stdio: codec, client, server, config loader. |
 | `internal/hrnmcp/` | `hrn mcp`: run, runs, show, backends, batch, batch_show, batch_merge. |
-| `internal/batch/`, `eval/`, `report/` | Parallel worktrees with gates and retries; a batch across variants with a judge; tables over records. |
+| `internal/batch/`, `eval/`, `report/`, `purpose/` | Parallel worktrees with gates and retries; a batch across variants with a judge; tables over records; what a run was for, from keyword rules on its prompt. |
 | `internal/runlog/`, `followup/` | Run records and pruning; continuing a run on the same or another backend. |
 | `internal/gc/` | `hrn gc`: which worktrees are proven merged (by GitHub or the default branch), and removing them. |
 | `scripts/api-check.sh` | The first real api runs. Costs real money; the owner's to run. |
