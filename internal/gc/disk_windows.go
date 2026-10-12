@@ -13,6 +13,7 @@ import (
 var (
 	kernel32                = syscall.NewLazyDLL("kernel32.dll")
 	procGetDiskFreeSpaceExW = kernel32.NewProc("GetDiskFreeSpaceExW")
+	procGetVolumePathNameW  = kernel32.NewProc("GetVolumePathNameW")
 )
 
 // errSharingViolation is ERROR_SHARING_VIOLATION: the file is open elsewhere
@@ -20,7 +21,8 @@ var (
 const errSharingViolation syscall.Errno = 32
 
 // diskFree asks the volume holding path how much it has free for this user,
-// and names the volume by its drive or share.
+// and names the volume by its mount point (E:\, or E:\mount\ for a volume
+// mounted in a folder), not by the drive letter alone.
 func diskFree(path string) (Drive, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -35,7 +37,12 @@ func diskFree(path string) (Drive, error) {
 	if r == 0 {
 		return Drive{}, &os.PathError{Op: "GetDiskFreeSpaceEx", Path: abs, Err: e}
 	}
-	return Drive{ID: strings.ToUpper(filepath.VolumeName(samePath(abs))), Free: int64(avail)}, nil
+	mount := make([]uint16, syscall.MAX_LONG_PATH)
+	r, _, e = procGetVolumePathNameW.Call(uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&mount[0])), uintptr(len(mount)))
+	if r == 0 {
+		return Drive{}, &os.PathError{Op: "GetVolumePathName", Path: abs, Err: e}
+	}
+	return Drive{ID: strings.ToUpper(syscall.UTF16ToString(mount)), Free: int64(avail)}, nil
 }
 
 // lockHeld reports whether a build holds the lock file. Cargo keeps

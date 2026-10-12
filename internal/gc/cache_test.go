@@ -150,6 +150,21 @@ func TestGCApplyRemovesTheLongestIdleCacheFirst(t *testing.T) {
 	}
 }
 
+func TestDiskFreeNamesTheVolumeAndItsFreeSpace(t *testing.T) {
+	root := tempRoot(t)
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d, err := diskFree(root)
+	if err != nil || d.ID == "" || d.Free <= 0 {
+		t.Fatalf("diskFree(%s) = %+v, %v", root, d, err)
+	}
+	if d2, err := diskFree(sub); err != nil || d2.ID != d.ID {
+		t.Errorf("a folder on the same volume has another id: %+v, %v (want %q)", d2, err, d.ID)
+	}
+}
+
 func TestGCTakesTheIdleLimitAsGiven(t *testing.T) {
 	root := tempRoot(t)
 	fresh := tagged(t, filepath.Join(root, "fresh"), 0, 100)
