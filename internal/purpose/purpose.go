@@ -82,9 +82,11 @@ func Classify(prompt string) Result {
 }
 
 // lead is the prompt's first non-blank paragraph, its lines joined by spaces,
-// lowercased and cut to maxLead bytes without splitting a rune.
+// lowercased and cut to maxLead bytes without splitting a rune. "\r\n", "\n"
+// and a bare "\r" each end a line.
 func lead(prompt string) string {
 	var lines []string
+	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
 	for line := range strings.Lines(prompt) {
 		line = strings.TrimSpace(line)
 		if line == "" {

@@ -51,6 +51,8 @@ func TestClassifyNamesTheRuleThatFired(t *testing.T) {
 		{"later paragraphs are ignored", "Implement the purpose classifier.\n\nWhen done, review the diff and check that CI passes.", "implement", "implement.build"},
 		{"a paragraph is joined across its lines", "Go through the codec\nfor problems.\n\nThen fix them.", "review", "review.find-breakage"},
 		{"crlf blank line ends the lead", "Implement it.\r\n\r\nReview the diff.", "implement", "implement.build"},
+		{"bare cr blank line ends the lead", "Implement it.\r\rReview the diff.", "implement", "implement.build"},
+		{"a paragraph is joined across bare cr lines", "Go through the codec\rfor problems.\r\rThen fix them.", "review", "review.find-breakage"},
 		{"leading blank lines are skipped", "\n  \n\t\nFix the hang in batch.", "debug", "debug.fix"},
 
 		// Nothing fires.
