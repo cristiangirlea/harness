@@ -661,7 +661,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-12: Simplify the public README into an introduction, quick start and guide
+- 2026-10-12: Simplify the public README (PR #107) into an introduction, quick start and guide
   index. Move the detailed reference into `docs/` and contributor/release guidance
   into `CONTRIBUTING.md`; keep permission boundaries visible in the README.
   Remove unsupported language-performance comparisons and the install suggestion
