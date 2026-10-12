@@ -69,8 +69,8 @@ type Options struct {
 	PRLimit int           // pull requests read per query; 0 means 1000
 
 	// The cache pass (Caches).
-	Idle      time.Duration                    // a build cache written more recently than this stays; 0 means 24h
-	MinIdle   time.Duration                    // FreeBelow takes no cache written more recently than this; 0 means 2h
+	Idle      time.Duration                    // a build cache written more recently than this stays (the CLI's default is 24h)
+	MinIdle   time.Duration                    // FreeBelow takes no cache written more recently than this (the CLI's default is 2h)
 	FreeBelow int64                            // a drive with fewer bytes free loses its idle caches, oldest first, until it has this many; 0 is off
 	Drive     func(path string) (Drive, error) // the volume holding a path and its free space; nil asks the disk
 }

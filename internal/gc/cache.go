@@ -29,11 +29,6 @@ type Drive struct {
 	Free int64  // bytes free for this user
 }
 
-const (
-	defaultIdle    = 24 * time.Hour
-	defaultMinIdle = 2 * time.Hour
-)
-
 // Caches lists the build caches at paths, up to two levels down, and inside
 // each worktree that stays, up to two levels down, once each, with a verdict.
 // A cache goes when no build holds it and it was last written more than
@@ -189,16 +184,12 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if why := inUse(c.Path); why != "" {
 		return Keep, why
 	}
-	limit := opt.Idle
-	if limit <= 0 {
-		limit = defaultIdle
-	}
 	idle := now.Sub(c.LastBuild)
-	if idle >= limit {
+	if idle >= opt.Idle {
 		return Remove, "idle " + short(idle)
 	}
 	c.young = true
-	return Keep, fmt.Sprintf("last written %s ago, inside --idle %s", short(idle), short(limit))
+	return Keep, fmt.Sprintf("last written %s ago, inside --idle %s", short(idle), short(opt.Idle))
 }
 
 // recheckCache says why a cache marked for removal must stay after all,
@@ -232,9 +223,6 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 		return
 	}
 	minIdle := opt.MinIdle
-	if minIdle <= 0 {
-		minIdle = defaultMinIdle
-	}
 	lookup := opt.Drive
 	if lookup == nil {
 		lookup = diskFree

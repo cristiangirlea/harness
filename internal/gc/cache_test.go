@@ -105,6 +105,14 @@ func TestGCKeepsACacheWrittenRecently(t *testing.T) {
 	}
 }
 
+func TestGCTakesTheIdleLimitAsGiven(t *testing.T) {
+	root := tempRoot(t)
+	fresh := tagged(t, filepath.Join(root, "fresh"), 0, 100)
+
+	cs := caches(t, []string{root}, nil, Options{Idle: time.Nanosecond, MinIdle: time.Nanosecond})
+	wantCache(t, findCache(t, cs, fresh), Remove, "idle")
+}
+
 func TestGCKeepsACacheWhoseBuildHoldsTheLock(t *testing.T) {
 	root := tempRoot(t)
 	busy := tagged(t, filepath.Join(root, "busy"), 30*time.Hour, 100)
