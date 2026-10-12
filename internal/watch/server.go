@@ -415,18 +415,35 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, fmt.Sprintf("%d batch record(s) could not be read.", unreadable))
 	}
 	for i, res := range batches {
-		if i == 20 {
-			break
+		batches[i] = s.cleanBatch(res) // the task names below come from these too
+		if i < 20 {
+			l.Batches = append(l.Batches, batchRow(batches[i]))
 		}
-		l.Batches = append(l.Batches, batchRow(s.cleanBatch(res)))
 	}
-	// Every batch attempt is a run too: link each one back to its batch, from
-	// every batch on disk, not only the 20 listed.
-	of := batchOf(batches)
+	// Every batch attempt is a run too: link each one back to its batch and
+	// lead with its task, from every batch on disk, not only the 20 listed.
+	of, task := batchOf(batches), taskNameOf(batches)
 	for i := range l.Runs {
-		l.Runs[i].Batch = of[l.Runs[i].ID]
+		r := &l.Runs[i]
+		r.Batch = of[r.ID]
+		r.Label = labelOf(r.ID, r.Repo, task[r.ID])
 	}
 	return l
+}
+
+// taskNameOf maps each run that was a batch task's attempt to the task's name.
+func taskNameOf(batches []batch.Result) map[string]string {
+	m := map[string]string{}
+	for _, res := range batches {
+		for _, t := range res.Tasks {
+			for _, a := range t.Attempts {
+				if a.RunID != "" {
+					m[a.RunID] = taskName(t)
+				}
+			}
+		}
+	}
+	return m
 }
 
 // batchOf maps each run that was a batch task's attempt to its batch.

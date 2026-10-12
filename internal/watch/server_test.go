@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -645,7 +646,7 @@ func TestTheIndexListsRunsAndBatchesNewestFirst(t *testing.T) {
 	if strings.Contains(body, "with more lines") || !strings.Contains(body, "older task") {
 		t.Error("a run shows its prompt's first line only")
 	}
-	for _, want := range []string{"1m30s", "$0.0123", "~$0.7500", "codex", "running", "20261010-130000-cccccc", "batch task (and 1 more)", `data-stream="/stream/index"`} {
+	for _, want := range []string{"1m30s", "$0.0123", "~$0.7500", "codex", "running", "20261010-130000-cccccc", "batch task, second", `data-stream="/stream/index"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the index lacks %q", want)
 		}
@@ -1052,5 +1053,311 @@ func TestALimitedRunIsAWarningWithItsResetTime(t *testing.T) {
 	_, body = get(t, srv.URL+"/batch/"+res.ID)
 	if !strings.Contains(body, "moved from codex at its usage limit") {
 		t.Error("the batch page does not say the attempt was moved from codex")
+	}
+}
+
+func TestTheRepositoryIsTheFolderAboveAWorktreeOrThePathsLastElement(t *testing.T) {
+	for dir, want := range map[string]string{
+		"/home/me/myrepo/.hrn/worktrees/t9":    "myrepo",
+		`C:\src\myrepo\.hrn\worktrees\82-task`: "myrepo",
+		"/home/me/myrepo":                      "myrepo",
+		"/home/me/myrepo/":                     "myrepo",
+		`C:\src\myrepo`:                        "myrepo",
+		`C:\src\myrepo\`:                       "myrepo",
+		`E:/mixed\style/repo`:                  "repo",
+		"myrepo":                               "myrepo",
+		"":                                     "",
+	} {
+		if got := repoOf(dir); got != want {
+			t.Errorf("repoOf(%q) = %q, want %q", dir, got, want)
+		}
+	}
+}
+
+// batchRowOf is the batches table's row of one batch: from its link to the
+// end of the row. A run's link to its batch puts class before href, so it
+// does not match.
+func batchRowOf(t *testing.T, body, id string) string {
+	t.Helper()
+	i := strings.Index(body, `<a href="/batch/`+id+`"`)
+	if i < 0 {
+		t.Fatalf("the index has no row for batch %s", id)
+	}
+	row, _, _ := strings.Cut(body[i:], "</tr>")
+	return row
+}
+
+func TestTheIndexLeadsEachRunWithItsRepositoryAndTask(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	newRun := func(dir, prompt string) string {
+		t.Helper()
+		w, err := runlog.Create("fake", agent.Task{Dir: dir, Prompt: prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
+		return w.ID()
+	}
+	// Four tasks of one batch open with the same paragraph; the last has an
+	// id hrn made up.
+	const opening = "Shared opening paragraph for every task.\n\nThen, for this one: "
+	const wt = "/home/me/myrepo/.hrn/worktrees/"
+	ids := []string{"82-repo-and-task", "83-purpose-card", "84-phone-layout", "t1"}
+	runs := map[string]string{}
+	var tasks []batch.TaskResult
+	for _, id := range ids {
+		runs[id] = newRun(wt+id, opening+id)
+		tasks = append(tasks, batch.TaskResult{ID: id, Prompt: opening + id, Status: batch.StatusPass,
+			Attempts: []batch.Attempt{{Backend: "fake", RunID: runs[id], Result: agent.Result{Status: agent.StatusOK}}}})
+	}
+	saveBatch(t, batch.Result{ID: "20261012-150000-abcdef", Started: time.Now(), Dir: "/home/me/myrepo", Duration: time.Minute, Tasks: tasks})
+	plain, backslash, noDir := newRun("/src/harness", "a run on its own "+hostile), newRun(`C:\src\tidedesk\`, "on Windows"), newRun("", "no workspace")
+	marked := newRun("/src/<b>bold<i>", "a folder named with markup")
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	check := func(where, html string) {
+		t.Helper()
+		labels := map[string]string{"82-repo-and-task": "myrepo · 82-repo-and-task", "83-purpose-card": "myrepo · 83-purpose-card",
+			"84-phone-layout": "myrepo · 84-phone-layout", "t1": "myrepo · shared opening paragraph for every task"}
+		for id, label := range labels {
+			row := runRowOf(t, html, runs[id])
+			if !strings.Contains(row, `">`+label+`</a>`) {
+				t.Errorf("%s: task %s's run does not lead with %q:\n%s", where, id, label, row)
+			}
+			if !strings.Contains(row, `<span class="row-id">`+runs[id]+`</span>`) {
+				t.Errorf("%s: task %s's run does not keep its id in the row:\n%s", where, id, row)
+			}
+		}
+		for run, label := range map[string]string{plain: "harness", backslash: "tidedesk"} {
+			row := runRowOf(t, html, run)
+			if !strings.Contains(row, `">`+label+`</a><span class="row-id">`+run+`</span>`) {
+				t.Errorf("%s: a run no batch started does not lead with its repository %q alone:\n%s", where, label, row)
+			}
+		}
+		if row := runRowOf(t, html, noDir); !strings.Contains(row, `<a href="/run/`+noDir+`" class="mono">`+noDir+`</a>`) || strings.Contains(row, "row-id") {
+			t.Errorf("%s: run %s without a workspace does not keep its id as its label:\n%s", where, noDir, row)
+		}
+		if row := runRowOf(t, html, marked); !strings.Contains(row, `">&lt;b&gt;bold&lt;i&gt;</a>`) {
+			t.Errorf("%s: a repository's name is not escaped:\n%s", where, row)
+		}
+	}
+	check("the index", body)
+	assertEscaped(t, "the index", body)
+
+	s, stop := openStream(t, srv.URL+"/stream/index", "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "replace" {
+		t.Fatalf("first message = %+v, %v", m, ok)
+	}
+	check("the streamed index", m.data)
+}
+
+func TestTheBatchesTableLeadsWithTheRepositoryAndNamesTheTasks(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const five, three, noDir = "20261012-160000-aaaaaa", "20261012-150000-bbbbbb", "20261012-140000-cccccc"
+	tasksNamed := func(ids ...string) []batch.TaskResult {
+		var ts []batch.TaskResult
+		for _, id := range ids {
+			ts = append(ts, batch.TaskResult{ID: id, Prompt: "Shared opening.\nMore", Status: batch.StatusPass})
+		}
+		return ts
+	}
+	start := time.Now()
+	saveBatch(t, batch.Result{ID: five, Started: start, Dir: `C:\src\tidedesk`, Duration: time.Minute, Tasks: tasksNamed("91-login", "92-logout", "t3", "94-billing", "95-export")})
+	saveBatch(t, batch.Result{ID: three, Started: start.Add(-time.Hour), Dir: "/home/me/harness", Duration: time.Minute, Tasks: tasksNamed("a", "b", "c")})
+	saveBatch(t, batch.Result{ID: noDir, Started: start.Add(-2 * time.Hour), Duration: time.Minute, Tasks: tasksNamed("only")})
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	check := func(where, html string) {
+		t.Helper()
+		if !strings.Contains(html, `<th scope="col">Tasks</th>`) || strings.Contains(html, "First task") {
+			t.Errorf("%s: the batches table's last column is not Tasks", where)
+		}
+		row := batchRowOf(t, html, five)
+		for _, want := range []string{`">tidedesk</a><span class="row-id">` + five + `</span>`, "91-login, 92-logout, shared opening and 2 more"} {
+			if !strings.Contains(row, want) {
+				t.Errorf("%s: the batch of five lacks %q:\n%s", where, want, row)
+			}
+		}
+		if row := batchRowOf(t, html, three); !strings.Contains(row, `">harness</a>`) || !strings.Contains(row, "a, b, c<") || strings.Contains(row, "more") {
+			t.Errorf("%s: the batch of three does not list all three tasks under its repository:\n%s", where, row)
+		}
+		if row := batchRowOf(t, html, noDir); !strings.Contains(row, `<a href="/batch/`+noDir+`" class="mono">`+noDir+`</a>`) || strings.Contains(row, "row-id") {
+			t.Errorf("%s: a batch without a repository does not keep its id as its label:\n%s", where, row)
+		}
+	}
+	check("the index", body)
+
+	s, stop := openStream(t, srv.URL+"/stream/index", "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "replace" {
+		t.Fatalf("first message = %+v, %v", m, ok)
+	}
+	check("the streamed index", m.data)
+}
+
+// A task whose id hrn made up is named from its prompt's start, which topic
+// may lowercase: the name is taken from the batch as blanked of secrets, or
+// a key at the start of the prompt would reach the run's label changed past
+// what the page's last pass looks for.
+func TestARunsTaskNameIsBlankedOfSecrets(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const secret = "Abcdefghijklmnop"
+	t.Setenv("SERVICE_TOKEN", secret)
+	prompt := secret + " starts this prompt"
+	w, err := runlog.Create("fake", agent.Task{Dir: "/home/me/myrepo/.hrn/worktrees/t1", Prompt: prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
+	// The batch is past the 20 the index lists: its task still names the run.
+	const id = "20261012-170000-abcdef"
+	start := time.Now()
+	saveBatch(t, batch.Result{ID: id, Started: start.Add(-time.Hour), Dir: "/home/me/myrepo", Duration: time.Minute,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: prompt, Status: batch.StatusPass,
+			Attempts: []batch.Attempt{{Backend: "fake", RunID: w.ID(), Result: agent.Result{Status: agent.StatusOK}}}}}})
+	for i := range 20 {
+		saveBatch(t, batch.Result{ID: fmt.Sprintf("20261012-180000-%06x", i), Started: start.Add(-time.Duration(i+1) * time.Minute)})
+	}
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	check := func(where, html string) {
+		t.Helper()
+		if strings.Contains(html, `href="/batch/`+id+`">myrepo</a>`) {
+			t.Fatalf("%s: the batch is in the batches table; the test needs it past the 20 listed", where)
+		}
+		if strings.Contains(strings.ToLower(html), strings.ToLower(secret)) {
+			t.Errorf("%s shows the secret value, in some case:\n%s", where, html)
+		}
+		if row := runRowOf(t, html, w.ID()); !strings.Contains(row, `">myrepo · `) || !strings.Contains(row, `<span class="row-id">`+w.ID()+`</span>`) {
+			t.Errorf("%s: the run's row has no label:\n%s", where, row)
+		}
+	}
+	_, body := get(t, srv.URL+"/")
+	check("the index", body)
+
+	s, stop := openStream(t, srv.URL+"/stream/index", "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "replace" {
+		t.Fatalf("first message = %+v, %v", m, ok)
+	}
+	check("the streamed index", m.data)
+}
+
+// A workspace folder named like its run still names a repository: the row
+// keeps the run's id under the label.
+func TestARowKeepsItsIDWhenTheRepositoryIsNamedLikeIt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("fake", agent.Task{Prompt: "a run in a folder named like it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
+	path := filepath.Join(runlog.Root(), w.ID(), "result.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec runlog.Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatal(err)
+	}
+	rec.Task.Dir = "/src/" + w.ID()
+	data, _ = json.Marshal(rec)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, body := get(t, srv.URL+"/")
+	if row := runRowOf(t, body, w.ID()); !strings.Contains(row, `">`+w.ID()+`</a><span class="row-id">`+w.ID()+`</span>`) {
+		t.Errorf("the run's row does not keep its id under the label:\n%s", row)
+	}
+}
+
+// A name made from a prompt's start is the prompt's text: markup in it is
+// shown, not run, on the index and in its stream.
+func TestAGeneratedTaskNameIsEscaped(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	prompt := "<b>x</b> in the task's first words"
+	w, err := runlog.Create("fake", agent.Task{Dir: "/home/me/myrepo/.hrn/worktrees/t1", Prompt: prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK})
+	saveBatch(t, batch.Result{ID: "20261012-180000-abcdef", Started: time.Now(), Dir: "/home/me/myrepo", Duration: time.Minute,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: prompt, Status: batch.StatusPass,
+			Attempts: []batch.Attempt{{Backend: "fake", RunID: w.ID(), Result: agent.Result{Status: agent.StatusOK}}}}}})
+
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	check := func(where, html string) {
+		t.Helper()
+		if strings.Contains(html, "<b>") {
+			t.Errorf("%s holds the task name's markup unescaped", where)
+		}
+		if row := runRowOf(t, html, w.ID()); !strings.Contains(row, `">myrepo · &lt;b&gt;x&lt;/b&gt; in the task&#39;s first words</a>`) {
+			t.Errorf("%s: the run's label is not the escaped task name:\n%s", where, row)
+		}
+		if row := batchRowOf(t, html, "20261012-180000-abcdef"); !strings.Contains(row, "&lt;b&gt;x&lt;/b&gt;") {
+			t.Errorf("%s: the batch's task name is not escaped:\n%s", where, row)
+		}
+	}
+	_, body := get(t, srv.URL+"/")
+	check("the index", body)
+
+	s, stop := openStream(t, srv.URL+"/stream/index", "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "replace" {
+		t.Fatalf("first message = %+v, %v", m, ok)
+	}
+	check("the streamed index", m.data)
+}
+
+// The batches table's headers stand over their cells: Passed over the pass
+// count, Tasks over the names.
+func TestTheBatchesTablesHeadersLineUpWithItsCells(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const id = "20261012-190000-abcdef"
+	saveBatch(t, batch.Result{ID: id, Started: time.Now(), Dir: "/home/me/myrepo", Duration: time.Minute,
+		Tasks: []batch.TaskResult{{ID: "91-login", Status: batch.StatusPass}, {ID: "92-logout", Status: batch.StatusFail}}})
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, body := get(t, srv.URL+"/")
+	_, table, _ := strings.Cut(body, `aria-label="Batches"`)
+	table, _, _ = strings.Cut(table, "</table>")
+	head, _, _ := strings.Cut(table, "</thead>")
+	var headers []string
+	for _, th := range strings.Split(head, "<th ")[1:] {
+		_, text, _ := strings.Cut(th, ">")
+		text, _, _ = strings.Cut(text, "</th>")
+		headers = append(headers, text)
+	}
+	cells := strings.Split(batchRowOf(t, body, id), "<td")
+	cells = cells[1:] // the row starts inside its first cell
+	if len(cells) != len(headers)-1 {
+		t.Fatalf("%d headers over %d cells after the first:\n%v\n%s", len(headers), len(cells), headers, table)
+	}
+	for header, want := range map[string]string{"Passed": "1/2 passed", "Tasks": "91-login, 92-logout"} {
+		i := slices.Index(headers, header)
+		if i < 1 || !strings.Contains(cells[i-1], want) {
+			t.Errorf("header %q (column %d) is not over %q: %v\n%s", header, i, want, headers, table)
+		}
 	}
 }
