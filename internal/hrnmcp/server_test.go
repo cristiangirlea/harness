@@ -460,11 +460,14 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			dir := t.TempDir()
 			s := connect(t, dir)
-			w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: dir})
+			w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := w.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, ContextTokens: n}); err != nil {
+			if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub-1"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(agent.Result{Backend: "stub", Status: agent.StatusOK, ContextTokens: n}); err != nil {
 				t.Fatal(err)
 			}
 			r := s.call(t, "run", `{"prompt":"again","backend":"stub","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)

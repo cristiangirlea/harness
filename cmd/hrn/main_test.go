@@ -26,11 +26,14 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 		for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
 			t.Run(fmt.Sprintf("json=%v/context=%d", jsonOut, n), func(t *testing.T) {
 				t.Setenv("HRN_HOME", t.TempDir())
-				w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: t.TempDir()})
+				w, err := runlog.Create("stub-context", agent.Task{Prompt: "first", Dir: t.TempDir()})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := w.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, ContextTokens: n}); err != nil {
+				if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub-context"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := w.Close(agent.Result{Backend: "stub-context", Status: agent.StatusOK, ContextTokens: n}); err != nil {
 					t.Fatal(err)
 				}
 				capture, err := os.CreateTemp(t.TempDir(), "stderr")

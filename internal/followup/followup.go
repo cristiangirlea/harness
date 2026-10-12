@@ -43,6 +43,7 @@ type Plan struct {
 	// chain, when it saved anything it can pick up again here.
 	Resume      *agent.Conversation
 	ForkSession string
+	carried     *runlog.Record
 
 	// Handoff is the runs of the chain after that one, or all of them, oldest
 	// first: the turns this backend has not seen.
@@ -57,11 +58,11 @@ const contextWarningThreshold = 150000
 // ContextWarning advises the caller before continuing a large recorded context.
 // It is informational: the plan and the decision to continue stay unchanged.
 func (p Plan) ContextWarning() string {
-	if p.Prev.Result.ContextTokens <= contextWarningThreshold {
+	if p.carried == nil || p.carried.Result.ContextTokens <= contextWarningThreshold {
 		return ""
 	}
 	return fmt.Sprintf("warning: run %s had %d tokens of context at the end; consider a fresh run with a short hand-over instead of continuing this long session",
-		p.Prev.ID, p.Prev.Result.ContextTokens)
+		p.carried.ID, p.carried.Result.ContextTokens)
 }
 
 // Make plans a follow-up to req.RunID.
@@ -118,6 +119,9 @@ func Make(req Request) (Plan, error) {
 			msg += fmt.Sprintf(" in %s; its session belongs to %s", p.Dir, elsewhere)
 		}
 		return Plan{}, fmt.Errorf("%s. Continue it on another backend to hand its transcript over", msg)
+	}
+	if from >= 0 {
+		p.carried = &chain[from]
 	}
 	p.Handoff = chain[from+1:]
 
