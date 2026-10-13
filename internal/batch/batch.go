@@ -1223,32 +1223,50 @@ func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, erro
 func Remove(res Result) error {
 	var errs []error
 	for _, tr := range res.Tasks {
-		if branchOnly(tr) {
-			if err := removeSlotBranch(res.Dir, tr); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
-			}
-			continue
-		}
-		if tr.Worktree == "" || notMine(res, tr) {
-			continue
-		}
-		// Only a directory git still lists is a worktree whose status means
-		// anything: a leftover one has no .git of its own, and a status taken
-		// inside it would describe the repository around it.
-		if registered, err := isWorktree(res.Dir, tr.Worktree); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
-			continue
-		} else if registered {
-			if dirty, err := hasChanges(tr.Worktree); err == nil && dirty {
-				errs = append(errs, fmt.Errorf("%s: %s has uncommitted changes; commit or discard them first", tr.ID, tr.Worktree))
-				continue
-			}
-		}
-		if err := removeWorktree(res.Dir, tr); err != nil {
+		if err := removeTask(res, tr); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// RemoveTasks applies batch rm's per-task rules to only the named tasks.
+func RemoveTasks(res Result, ids []string) error {
+	tasks := make([]TaskResult, 0, len(ids))
+	for _, id := range ids {
+		tr, err := res.Find(id)
+		if err != nil {
+			return err
+		}
+		tasks = append(tasks, tr)
+	}
+	var errs []error
+	for _, tr := range tasks {
+		if err := removeTask(res, tr); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func removeTask(res Result, tr TaskResult) error {
+	if branchOnly(tr) {
+		return removeSlotBranch(res.Dir, tr)
+	}
+	if tr.Worktree == "" || notMine(res, tr) {
+		return nil
+	}
+	// Only a directory git still lists is a worktree whose status means
+	// anything: a leftover one has no .git of its own, and a status taken
+	// inside it would describe the repository around it.
+	if registered, err := isWorktree(res.Dir, tr.Worktree); err != nil {
+		return err
+	} else if registered {
+		if dirty, err := hasChanges(tr.Worktree); err == nil && dirty {
+			return fmt.Errorf("%s has uncommitted changes; commit or discard them first", tr.Worktree)
+		}
+	}
+	return removeWorktree(res.Dir, tr)
 }
 
 // branchOnly reports whether a task's branch is all hrn batch rm removes of

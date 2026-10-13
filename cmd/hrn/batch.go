@@ -129,12 +129,13 @@ func cmdBatchDiff(args []string) (int, error) {
 func cmdBatchMerge(args []string) (int, error) {
 	fs := flag.NewFlagSet("batch merge", flag.ContinueOnError)
 	squash := fs.Bool("squash", false, "")
+	rm := fs.Bool("rm", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
 	if fs.NArg() < 1 {
-		return 2, errors.New("usage: hrn batch merge [--squash] <batch-id> [task-id...]")
+		return 2, errors.New("usage: hrn batch merge [--squash] [--rm] <batch-id> [task-id...]")
 	}
 	res, err := batch.LoadResult(fs.Arg(0))
 	if err != nil {
@@ -146,6 +147,8 @@ func cmdBatchMerge(args []string) (int, error) {
 	merged, mergeErr := batch.Merge(ctx, res, fs.Args()[1:], *squash)
 	r := newRenderer(false)
 	done := 0
+	var removeIDs []string
+	var removeTasks []batch.TaskResult
 	for _, m := range merged {
 		switch {
 		case m.Conflict:
@@ -156,7 +159,21 @@ func cmdBatchMerge(args []string) (int, error) {
 			r.Line(r.c(dim, fmt.Sprintf("  %-16s skipped: %s", m.Task, m.Skipped)))
 		default:
 			done++
+			if *rm && m.Commit != "" {
+				removeIDs = append(removeIDs, m.Task)
+				tr, _ := res.Find(m.Task)
+				removeTasks = append(removeTasks, tr)
+			}
 			r.Line(fmt.Sprintf("  %-16s merged %s as %s", m.Task, m.Branch, tools.ShortSHA(m.Commit)))
+		}
+	}
+	var removeErr error
+	if len(removeIDs) > 0 {
+		removeErr = batch.RemoveTasks(res, removeIDs)
+		if removeErr == nil {
+			r.Line(r.c(dim, fmt.Sprintf("removed the %s of %d merged task(s)",
+				removedWhat(batch.Result{Tasks: removeTasks}), len(removeIDs))))
+			r.Line(r.c(dim, "undo with: git reset --hard ORIG_HEAD; after removal, the tasks' work is only in the reflog"))
 		}
 	}
 	if mergeErr != nil {
@@ -164,9 +181,12 @@ func cmdBatchMerge(args []string) (int, error) {
 			r.Line(r.c(dim, fmt.Sprintf("the tree is back as it was; %d branch(es) merged before this one, "+
 				"and this one is still there to merge by hand: git merge %s", done, branch)))
 		}
-		return 1, mergeErr
+		return 1, errors.Join(mergeErr, removeErr)
 	}
-	if done > 0 {
+	if removeErr != nil {
+		return 1, removeErr
+	}
+	if done > 0 && !*rm {
 		r.Line(r.c(dim, fmt.Sprintf("%d branch(es) merged into %s · undo with: git reset --hard ORIG_HEAD · "+
 			"remove the %s with: hrn batch rm %s", done, res.Dir, removedWhat(res), res.ID)))
 	}

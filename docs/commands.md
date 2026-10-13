@@ -19,7 +19,7 @@
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](batches.md#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
 | `hrn batch diff <id> <task-id>` | What one task changed, as a diff on stdout. |
-| `hrn batch merge [--squash] <id> [task-id…]` | Merge the branches of the tasks that passed. |
+| `hrn batch merge [--squash] [--rm] <id> [task-id…]` | Merge passed tasks; `--rm` removes each task's worktree and branch only when it merged in this call. |
 | `hrn batch rm <id>` | Remove what a batch created: its branches, and its worktrees when they were fresh (a slot stays; see [Batches](batches.md#reading-and-landing-the-work)). |
 | `hrn eval [flags] <eval.json>` | Run a task set across a matrix of backends, models and efforts (see [Evals](evaluations.md#evals)). |
 | `hrn eval show <id>` | Reprint a saved eval. |

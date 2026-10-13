@@ -57,8 +57,8 @@ Usage:
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hrn batch show [--json] <id>    reprint a batch's table, while it runs or afterwards
   hrn batch diff <id> <task-id>   what one task changed, as a diff on stdout
-  hrn batch merge [--squash] <id> [task-id...]
-                                 merge the branches of the tasks that passed into the current branch
+  hrn batch merge [--squash] [--rm] <id> [task-id...]
+                                 merge passed tasks; --rm removes worktrees and branches merged in this call
   hrn batch rm <batch-id>         remove the worktrees and branches a batch created
   hrn eval [flags] <eval.json>    run a task set across a matrix of backends, models and efforts
   hrn eval show <eval-id>         reprint a saved eval
