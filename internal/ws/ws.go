@@ -620,6 +620,59 @@ func Free(ctx context.Context, path string) (Taken, error) {
 	return Taken{N: n, Path: slot, Lease: lease}, nil
 }
 
+// Release gives back a slot that Take handed out, as Free does, but for a
+// holder whose work stays on a local branch by design (a batch task's
+// hrn/<id>, which batch merge and batch rm read): it does not ask for a push.
+// It refuses, and leaves the lease, while the slot holds changes or untracked
+// files, or when the lease is no longer exactly t's; otherwise it detaches
+// HEAD where it is and removes the lease, both under the slot's takeover lock.
+func Release(ctx context.Context, t Taken) error {
+	main, err := MainCheckout(ctx, t.Path)
+	if err != nil {
+		return err
+	}
+	n, slot, ok := slotOf(main, t.Path)
+	if !ok || n != t.N {
+		return fmt.Errorf("%s is not slot %d of %s", t.Path, t.N, main)
+	}
+	lp := leasePath(SlotsDir(main), n)
+	lease, raw, err := readLease(lp)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("slot %d has no lease: it was given back already", n)
+	}
+	if err != nil {
+		return fmt.Errorf("slot %d: %v", n, err)
+	}
+	if lease.Holder != t.Lease.Holder || lease.PID != t.Lease.PID || lease.Branch != t.Lease.Branch || !lease.Taken.Equal(t.Lease.Taken) {
+		return fmt.Errorf("slot %d is %s now, not %q's, so it stays as it is", n, describe(lease), t.Lease.Holder)
+	}
+	unlock, why := lockLease(lp)
+	if why != "" {
+		return fmt.Errorf("slot %d: %s", n, why)
+	}
+	defer unlock()
+	if now, err := os.ReadFile(lp); err != nil || !bytes.Equal(now, raw) {
+		return fmt.Errorf("slot %d: its lease changed while it was being given back", n)
+	}
+	if !isWorktreeRoot(ctx, slot) {
+		return fmt.Errorf("slot %d (%s) is not a worktree of this repository", n, slot)
+	}
+	lines, err := changes(ctx, slot)
+	if err != nil {
+		return err
+	}
+	if len(lines) > 0 {
+		return fmt.Errorf("slot %d holds changes or untracked files, so it stays taken: %s", n, firstFew(lines))
+	}
+	if _, err := gitOut(ctx, slot, "switch", "--detach"); err != nil {
+		return err
+	}
+	if err := removeOwn(lp); err != nil {
+		return fmt.Errorf("slot %d: %v", n, err)
+	}
+	return nil
+}
+
 // unpushed counts the commits at HEAD that no remote-tracking ref holds. A
 // repository without remotes counts the ones no branch or tag holds instead,
 // since those are what a later checkout would lose.
