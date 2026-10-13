@@ -3,14 +3,15 @@ package batch
 import (
 	"context"
 	"encoding/json"
-	"github.com/cristiangirlea/harness/internal/agent"
-	"github.com/cristiangirlea/harness/internal/retrieval"
-	"github.com/cristiangirlea/harness/internal/runlog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/retrieval"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 func TestRetrievalBatchRetryPinsVersion(t *testing.T) {
@@ -31,7 +32,7 @@ func TestRetrievalBatchRetryPinsVersion(t *testing.T) {
 				id = "v_changed"
 			}
 		}
-		text := "[Reference fixture]"
+		text := "reference fixture"
 		json.NewEncoder(w).Encode(retrieval.Packet{VersionID: id, Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture"}}})
 	}))
 	defer srv.Close()
@@ -65,5 +66,38 @@ func TestRetrievalBatchRetryPinsVersion(t *testing.T) {
 		if e != nil || rec.Task.OriginalPrompt != "original" || rec.Result.Retrieval.Packet.VersionID != "v_first" {
 			t.Fatal("run provenance lost", e)
 		}
+	}
+}
+
+func TestRetrievalBatchRetryOnAnotherBackendIsRefused(t *testing.T) {
+	root := initRepo(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var q retrieval.Search
+		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+			t.Error(err)
+		}
+		text := "reference fixture"
+		if err := json.NewEncoder(w).Encode(retrieval.Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture"}}}); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("HRN_SERVER_URL", srv.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	firstCalls, secondCalls := 0, 0
+	agent.Register(stub{"retrieval-first", func(_ context.Context, task agent.Task) agent.Result {
+		firstCalls++
+		return agent.Result{Backend: "retrieval-first", Model: "fixture", Status: agent.StatusOK, Final: "retry"}
+	}})
+	agent.Register(stub{"retrieval-second", func(_ context.Context, task agent.Task) agent.Result {
+		secondCalls++
+		return agent.Result{Backend: "retrieval-second", Model: "fixture", Status: agent.StatusOK, Final: "done"}
+	}})
+	opts := agent.Options{Mode: agent.ModeReadOnly, Model: "fixture", Retrieval: "required", RetrievalTenant: "t_fixture", RetrievalProject: "p_fixture", RetrievalRevision: strings.Repeat("a", 40)}
+	result, _ := run(t, Spec{Dir: root, Backend: "retrieval-first", Options: opts, Retry: []string{"retrieval-second"}, Tasks: []Task{{ID: "cross-backend-retry", Prompt: "original", Expect: "^done$"}}})
+	tr := result.Tasks[0]
+	if tr.Status != StatusFail || len(tr.Attempts) != 2 || firstCalls != 1 || secondCalls != 0 || !strings.Contains(tr.Attempts[1].Result.Error, "retrieval pin scope differs from execution") {
+		t.Fatalf("cross-backend retry was not refused: task=%+v calls=%d,%d", tr, firstCalls, secondCalls)
 	}
 }
