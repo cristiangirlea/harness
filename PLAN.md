@@ -669,8 +669,8 @@ neither of them follows a run while it happens.
   `"worktrees": "fresh"`; any other value is refused. Each running task leases a slot
   (holder `batch <id> task <task>`, hrn's pid), its branch `hrn/<id>` made from the batch's
   base before the take, so a same-named branch on origin is never tracked. A fresh retry
-  resets the same slot's branch to the base, and the earlier attempt's commit stays in the
-  record. When the task ends, the slot is detached at the base and given back with the new
+  resets the same slot's branch to the base, and the earlier attempt's commit leaves the
+  branch, as it did when fresh mode re-made the worktree. When the task ends, the slot is detached at the base and given back with the new
   `ws.Release`. Release does not require a push, because the branch is local by design:
   batch merge and batch rm read it. A slot left dirty by a refused release keeps its lease
   until hrn exits, and later takes skip it, never clean it. A task waits, rather than

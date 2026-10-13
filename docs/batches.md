@@ -84,7 +84,7 @@ how the attempt failed.
 |---|---|
 | ran to the end, a gate failed | continues in the same worktree, on top of the work already committed, with the failing gate command, its exit code and output appended to the prompt |
 | stopped at its plan's usage limit | continues in the same worktree, told that the limit stopped it and shown its last message |
-| failed, refused or was cut short | starts afresh from the base commit (a new worktree, or the same slot with its branch reset to the base; the earlier attempt's commit stays in the record), with one line saying how the previous attempt ended |
+| failed, refused or was cut short | starts afresh from the base commit (a new worktree, or the same slot with its branch reset to the base; the earlier attempt's commit leaves the branch, as a removed worktree's branch did; git's reflog still has it for a while), with one line saying how the previous attempt ended |
 
 An attempt that ends `limited` on claude or codex is carried on by the other one first, as
 an extra attempt that does not use up a `retry` entry, and an attempt meant for a backend

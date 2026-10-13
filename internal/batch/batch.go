@@ -638,8 +638,8 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		if !plan.continued {
 			switch {
 			case slots && slot != nil:
-				// A fresh retry in the same slot. The last attempt's work is
-				// committed and recorded in it; ignored build output stays.
+				// A fresh retry in the same slot: the last attempt left nothing
+				// uncommitted, and its commit leaves the branch; ignored build output stays.
 				if _, err := gitOut(ctx, slot.Path, "switch", "-q", "-C", tr.Branch, base); err != nil {
 					return fail(err)
 				}
