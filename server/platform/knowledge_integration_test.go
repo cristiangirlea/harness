@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -255,9 +256,16 @@ func TestKnowledgeConcurrentImportsDeduplicateAndRetrievalStaysBounded(t *testin
 func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 	s := testStore(t)
 	p, worker := testProject(t, s)
-	other, otherWorker := testProject(t, s)
-	in := knowledgeFixture(p)
 	ctx := context.Background()
+	otherTenantID, otherTenantToken, e := s.CreateTenant(ctx, "other knowledge tenant")
+	if e != nil {
+		t.Fatal(e)
+	}
+	other, otherWorker, e := s.CreateProject(ctx, Project{TenantID: otherTenantID, Name: "other", RepositoryURL: p.RepositoryURL, BaseRef: p.BaseRef, Backend: p.Backend})
+	if e != nil {
+		t.Fatal(e)
+	}
+	in := knowledgeFixture(p)
 	id, e := s.ImportKnowledge(ctx, in)
 	if e != nil {
 		t.Fatal(e)
@@ -275,13 +283,17 @@ func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 	if code := request("/v1/knowledge/search", worker, query); code != 200 {
 		t.Fatalf("owner %d", code)
 	}
-	for _, path := range []string{"/v1/knowledge/search", "/v1/knowledge/inspect"} {
+	for _, path := range []string{"/v1/knowledge/search", "/v1/knowledge/inspect", "/v1/knowledge/active"} {
 		var input any = query
 		if strings.HasSuffix(path, "inspect") {
 			input = map[string]any{"tenant_id": p.TenantID, "project_id": p.ID, "backend": in.Backend, "model": in.Model, "revision": in.Revision, "version_id": id}
+		} else if strings.HasSuffix(path, "active") {
+			input = in.Scope
 		}
-		if code := request(path, otherWorker, input); code != 404 {
-			t.Fatalf("cross tenant %s %d", path, code)
+		for _, credential := range []string{otherWorker, otherTenantToken} {
+			if code := request(path, credential, input); code != 404 {
+				t.Fatalf("cross tenant %s %d", path, code)
+			}
 		}
 	}
 	// Same tenant, different project worker cannot widen authorization.
@@ -289,8 +301,16 @@ func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if code := request("/v1/knowledge/search", siblingToken, query); code != 404 {
-		t.Fatalf("cross project %d", code)
+	for _, path := range []string{"/v1/knowledge/search", "/v1/knowledge/inspect", "/v1/knowledge/active"} {
+		var input any = query
+		if strings.HasSuffix(path, "inspect") {
+			input = map[string]any{"tenant_id": p.TenantID, "project_id": p.ID, "backend": in.Backend, "model": in.Model, "revision": in.Revision, "version_id": id}
+		} else if strings.HasSuffix(path, "active") {
+			input = in.Scope
+		}
+		if code := request(path, siblingToken, input); code != 404 {
+			t.Fatalf("cross project %s %d", path, code)
+		}
 	}
 	bad := query
 	bad.ProjectID = sibling.ID
@@ -312,8 +332,10 @@ func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 	if code := request("/v1/knowledge/import", worker, in); code != 401 {
 		t.Fatal("worker could approve", code)
 	}
-	if code := request("/v1/knowledge/change", worker, retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: id}); code != 401 {
-		t.Fatal("worker could activate", code)
+	for _, operation := range []string{"activate", "disable", "rollback"} {
+		if code := request("/v1/knowledge/change", worker, retrieval.Change{Scope: in.Scope, Operation: operation, VersionID: id}); code != 401 {
+			t.Fatalf("worker could %s: %d", operation, code)
+		}
 	}
 }
 
@@ -336,6 +358,35 @@ func TestKnowledgeVerboseTasksFindRelevantReferences(t *testing.T) {
 		}
 		if packet.Digest != retrieval.TextDigest(packet.Text) || len(retrieval.ReferenceBlock(packet.Text)) > 8192 {
 			t.Fatal("digest/framing mismatch")
+		}
+	}
+}
+
+func TestKnowledgeSearchTreatsTsqueryOperatorsAsPlainTextAndAcceptsLongQueries(t *testing.T) {
+	s := testStore(t)
+	p, _ := testProject(t, s)
+	in := knowledgeFixture(p)
+	id, err := s.ImportKnowledge(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var words []string
+	for n := 0; ; n++ {
+		word := "word" + strconv.Itoa(n)
+		if len(strings.Join(words, " "))+len(word)+1 > 2048 {
+			break
+		}
+		words = append(words, word)
+	}
+	longQuery := strings.Join(words, " ")
+	longQuery += strings.Repeat(" ", 2048-len(longQuery))
+	for _, query := range []string{"'", `\`, "!", "&", ":*", "<->", `'\!&:*<->`, longQuery} {
+		packet, err := s.SearchKnowledge(context.Background(), retrieval.Search{Scope: in.Scope, VersionID: id, Query: query})
+		if err != nil {
+			t.Fatalf("query %q: %v", query, err)
+		}
+		if err := retrieval.ValidatePacket(packet, id, query); err != nil {
+			t.Fatalf("query %q: invalid packet: %v", query, err)
 		}
 	}
 }
