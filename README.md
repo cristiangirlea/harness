@@ -87,8 +87,6 @@ all backends.
 Run records can contain source code, prompts, and tool output. The dashboard listens
 on loopback by default. Enabling `--lan` lets anyone on the selected network read those
 records without a login. See [security boundaries and vulnerability reporting](SECURITY.md).
-Result records may include usage metadata that identifies cache-inclusive input and
-whether token and cost counters were reported, estimated, or missing.
 
 ## Contributing
 

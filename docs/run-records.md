@@ -29,9 +29,9 @@ reconciliation before it can resume; the field is omitted otherwise.
 `input_semantics` is `inclusive_cache` (Codex input already includes cached input)
 or `exclusive_cache` (api and Claude cache counters are separate). `status` is
 `reported`, `estimated`, or `missing`; `cost_status` distinguishes a reported
-zero from missing cost and may also be `estimated` or `missing`. `calls`, when
-present, counts model calls. Older results without metadata still load; known
-backends infer token semantics from their existing counters.
+zero from missing cost and may also be `estimated` or `missing`. Older results
+without metadata still load; known backends infer token semantics from their
+existing counters.
 
 `result.json` also includes `context_tokens` when known: the last model call's input
 tokens, including cache reads and writes, rather than the sum across the run. The
