@@ -667,6 +667,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: AGENTS.md back under 100 lines (#196, PR #253). Decided: shorten layout
+  rows and the hx note, and point repeated CI and release details to CONTRIBUTING.md.
 - 2026-10-13: three wording points from #58's review (#65, PR #252). Decided: a blocking
   finding is fixed, as AGENTS.md and the owner's merge rule say, so the definition of done
   no longer offers rejecting one; a finding shown wrong is no defect, so it was never
