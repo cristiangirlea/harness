@@ -18,7 +18,7 @@ These are not preferences; a PR that breaks one is not mergeable.
    `internal/tools/exec_windows.go`), never `golang.org/x/sys`. Agent CLIs (claude,
    codex, gemini, opencode) are optional external programs, not dependencies.
 2. **One PR per increment.** Branch from `main` (or from the feature branch the increment
-   is a piece of), short branch name (the PR letter and a slug, e.g. `a-instructions`).
+   is a piece of), short branch name (as in `fix-batch-rm-deregistered`).
    Open the PR with `gh pr create`. Self-review with `/code-review`; fix every blocking
    finding as its own small commit on the same PR (do not squash the fixes into the
    original commit) and file the rest as issues (AGENTS.md, Working rules). CI must be
@@ -542,9 +542,11 @@ where such a typo lives.
 - [ ] `/code-review` on the PR; every blocking finding fixed as its own commit or
       rejected in a PR comment with a reason, the rest filed as issues.
 - [ ] CI green on ubuntu and windows.
-- [ ] README updated for any new flag, field, command or status.
+- [ ] The relevant guide in `docs/` updated for any new flag, field, command or status, and
+      README when the overview changes.
 - [ ] This file: box ticked, `Done: PR #n, <date>` under the PR heading, deviations in
-      the *Decisions log*.
+      the *Decisions log*; a fix with no item here gets a Decisions-log entry naming the
+      issue and the PR.
 - [ ] Merged with a merge commit; branch deleted.
 
 ## Model guidance
