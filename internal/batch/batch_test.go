@@ -377,6 +377,40 @@ func TestRemoveTasksReturnsOnlyIDsWithRemovedWork(t *testing.T) {
 	}
 }
 
+func TestRemoveTasksCountsNothingWhenTheProbeAfterRemovalFails(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	if _, err := Merge(context.Background(), res, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	slot := filepath.Join(dir, ".hrn", "slots", "1")
+	git(t, dir, "worktree", "remove", res.Tasks[0].Worktree)
+	if err := os.MkdirAll(slot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res.Tasks[0].Slot, res.Tasks[0].Worktree = 1, slot
+	real := branchProbe
+	t.Cleanup(func() { branchProbe = real })
+	calls := 0
+	branchProbe = func(ctx context.Context, dir, ref string) (string, error) {
+		calls++
+		if calls == 1 {
+			return real(ctx, dir, ref)
+		}
+		return "", errors.New("git timed out")
+	}
+	removed, err := RemoveTasks(res, []string{"alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 0 {
+		t.Errorf("removed = %v; a probe that failed after the removal cannot prove the branch went", removed)
+	}
+	if calls != 2 {
+		t.Errorf("probe ran %d times, want 2", calls)
+	}
+}
+
 func TestRemoveTasksKeepsSlotAndDeletesItsBranch(t *testing.T) {
 	dir := initRepo(t)
 	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"})
