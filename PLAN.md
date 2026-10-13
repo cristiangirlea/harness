@@ -665,6 +665,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: the records rule names the right guide (#153, PR #250). `.claude/rules/records.md`
+  sent a change to what a record holds to the README's "Run records" section, which moved to
+  `docs/run-records.md` (PR #107). Decided: the rule points at the guide.
 - 2026-10-13: the tree-kill test's timeout (#68, PR #249). `TestRunShellTimeoutKillsTheTree`
   gave the shell 500 ms, and on a busy Windows PC Git's bash had not printed `started` by
   then, so the test failed now and then, in CI too. Decided: three seconds. Its time bound
