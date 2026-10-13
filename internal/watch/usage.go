@@ -185,14 +185,3 @@ func usageOf(events []agent.Event) usageView {
 	v.Keyed = len(v.Marks) > 0
 	return v
 }
-
-// usageEvents keeps what the chart is drawn from.
-func usageEvents(lines []Line) []agent.Event {
-	var out []agent.Event
-	for _, l := range lines {
-		if feedsChart(l) {
-			out = append(out, l.Event)
-		}
-	}
-	return out
-}
