@@ -665,7 +665,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: issue #226 (PR pending): public watch accepts GET and HEAD page navigations
+- 2026-10-13: issue #226 (PR #230): public watch accepts GET and HEAD page navigations
   after Cloudflare Access login even when the browser sends a cross-site fetch site or
   `Origin: null`. The public Host and Access token checks still apply; other requests
   retain the existing origin checks, and local mode is unchanged.
