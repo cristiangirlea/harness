@@ -149,3 +149,31 @@ func TestRemoteMCPRejectsUnsupportedInput(t *testing.T) {
 		t.Errorf("invalid requests reached control: %+v", *requests)
 	}
 }
+
+func TestRemoteToolsRejectCredentialFieldsBeforeSendingRequests(t *testing.T) {
+	session, requests := remoteFixture(t)
+	submit := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"prompt":"inspect","base_ref":%q,"idempotency_key":"mcp-credential","max_cost_usd":0.25`,
+		testRemoteTenant, testRemoteProject, testRemoteRef)
+	job := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"job_id":%q`, testRemoteTenant, testRemoteProject, testRemoteJob)
+	for _, tool := range []struct {
+		name string
+		args string
+	}{
+		{"remote_submit", submit},
+		{"remote_status", job},
+		{"remote_events", job},
+		{"remote_cancel", job},
+	} {
+		for _, field := range []string{"token", "authorization"} {
+			t.Run(tool.name+"/"+field, func(t *testing.T) {
+				args := tool.args + fmt.Sprintf(`,%q:"supplied credential"}`, field)
+				if result := session.call(t, tool.name, args); !result.IsError {
+					t.Fatalf("credential field accepted: %+v", result)
+				}
+			})
+		}
+	}
+	if len(*requests) != 0 {
+		t.Fatalf("credential fields sent %d requests", len(*requests))
+	}
+}

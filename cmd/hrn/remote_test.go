@@ -145,6 +145,27 @@ func TestRemoteSubmitRejectsUnsupportedOptionsBeforeSending(t *testing.T) {
 	}
 }
 
+func TestRemoteCommandsRejectNonServerShapedJobIDsBeforeSending(t *testing.T) {
+	var calls int
+	tenant, project, _ := remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, action := range []string{"show", "events", "cancel"} {
+		for _, job := range []string{"j_../x", "j_" + strings.Repeat("A", 32), "p_" + strings.Repeat("a", 32)} {
+			t.Run(action+"/"+job, func(t *testing.T) {
+				err := runRemote([]string{action, "--tenant", tenant, "--project", project, job}, io.Discard)
+				if err == nil || err.Error() != "show, events and cancel require one server-issued job ID" {
+					t.Fatalf("invalid job ID error = %v", err)
+				}
+			})
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("invalid job IDs sent %d requests", calls)
+	}
+}
+
 func TestRemoteEventCursorAdvancesWithoutDuplicates(t *testing.T) {
 	stream := "id: 4\nevent: checkpoint\ndata: {\"id\":4}\n\n" +
 		"id: 4\nevent: checkpoint\ndata: {\"id\":4}\n\n" +

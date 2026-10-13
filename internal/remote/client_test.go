@@ -89,3 +89,56 @@ func TestWatchErrorNamesTheStatusWithoutTheResponseBody(t *testing.T) {
 		t.Fatalf("watch error = %v, want HTTP 403 without response body", err)
 	}
 }
+
+func TestRemoteTokenNeverAppearsInClientErrors(t *testing.T) {
+	token := strings.Repeat("secret", 8)
+	t.Setenv("HRN_TENANT_TOKEN", token)
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	check := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil || strings.Contains(err.Error(), token) {
+			t.Fatalf("error is missing or contains the tenant token: %v", err)
+		}
+	}
+	t.Run("constructor", func(t *testing.T) {
+		t.Setenv("HRN_SERVER_URL", "http://localhost:1")
+		_, err := NewFromEnv()
+		check(t, err)
+	})
+	t.Run("HTTP error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, token)
+		}))
+		defer server.Close()
+		t.Setenv("HRN_SERVER_URL", server.URL)
+		client, err := NewFromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.Request(context.Background(), http.MethodGet, "/v1/jobs/j_fixture", nil)
+		check(t, err)
+	})
+	t.Run("transport error", func(t *testing.T) {
+		t.Setenv("HRN_SERVER_URL", "http://127.0.0.1:0")
+		client, err := NewFromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.Request(context.Background(), http.MethodGet, "/v1/jobs/j_fixture", nil)
+		check(t, err)
+	})
+	t.Run("watch HTTP error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, token)
+		}))
+		defer server.Close()
+		t.Setenv("HRN_SERVER_URL", server.URL)
+		client, err := NewFromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(t, client.Watch(context.Background(), "/v1/jobs/j_fixture/events", 0, io.Discard))
+	})
+}
