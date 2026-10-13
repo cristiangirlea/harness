@@ -33,7 +33,7 @@ var createLockWait = 2 * time.Minute
 
 // Lease is the JSON in <n>.lease: who holds the slot, since when, and the
 // branch they asked for (empty: detached). A lease with a PID is stale once
-// that process has exited or the PID belongs to a newer process; one without
+// that process has exited or the PID belongs to another process; one without
 // is held until Free.
 type Lease struct {
 	Holder string    `json:"holder"`
@@ -49,7 +49,7 @@ type TakeOptions struct {
 	Branch  string // check out this branch, or create it from the base; empty detaches at the base
 	Base    string // empty: origin's default branch, or HEAD without an origin
 	Holder  string // written into the lease
-	PID     int    // written into the lease; must name a process already running when Take is called; 0 holds until Free
+	PID     int    // written into the lease; must name a running process, so its start identity can be read; 0 holds until Free
 	Max     int    // slots to try, 1..Max (default DefaultMax)
 	NoFetch bool   // use what origin's refs already say
 }
@@ -391,11 +391,21 @@ func (l Lease) processHolds() bool {
 		return false
 	}
 	if l.Start != "" {
-		if id, known := startID(l.PID); known && id != l.Start {
+		// Only identities of one platform compare: a slot folder can be shared by
+		// Windows hrn and hrn under WSL, and there another platform's is unknown.
+		if id, known := startID(l.PID); known && samePlatform(id, l.Start) && id != l.Start {
 			return false
 		}
 	}
 	return true
+}
+
+// samePlatform reports whether two start identities carry the same prefix
+// ("win:", "linux:").
+func samePlatform(a, b string) bool {
+	pa, _, _ := strings.Cut(a, ":")
+	pb, _, _ := strings.Cut(b, ":")
+	return pa == pb
 }
 
 func (l Lease) stale() bool { return l.PID != 0 && !l.processHolds() }
