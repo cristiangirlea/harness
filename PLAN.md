@@ -677,6 +677,32 @@ neither of them follows a run while it happens.
   cut added a session count to the range, which let a session make a batch wait for ever,
   a distant session widen the range, and the bound break when sessions freed their slots.
   `hrn ws take`'s own default `--max` is unchanged.
+- 2026-10-13: PR #192 (closes #160): the recovery of a slot a batch kept, documented in
+  docs/workspaces.md and followed step by step in ws's tests, with no code change. Decided:
+  the work is saved on a local branch first, then the slot is detached at a commit a
+  remote holds (origin's default branch), because Free counts a commit at HEAD as
+  unpushed when no remote-tracking branch holds it, whatever local branch holds it too;
+  Free asks for a push, unlike Release. In a repository without remotes Free counts only
+  the commits no branch or tag holds, so it frees the slot in place once the branch
+  exists. The branch is merged by hand unless the task passed, since batch merge skips
+  every task that did not pass, and ignored files are checked first, since a checkout
+  overwrites them where the target commit tracks the path.
+
+- 2026-10-13: Concurrent takes skipped free slots (#188, PR #191). CI's Windows run of
+  `TestConcurrentTakesNeverShareASlot` got 3 slots for 6 takes with `--max 4`. Reproduced
+  here under load: `git worktree add` for slot 4 died with `fatal: failed to read
+  .git/worktrees/3/commondir: No error`, because git creates a new worktree's admin folder
+  in steps and every command that lists worktrees (add, list, lock) dies on a half-written
+  one. Not git's lock files, so retrying would only narrow the window. Decided: takes, in
+  any process, add, list and lock slot worktrees under an exclusive OS file lock on
+  `.hrn/slots/.create.lock` (`flock` on Unix, `LockFileEx` on Windows), waiting with a
+  backoff up to 2 minutes (and the context). The OS drops the lock when its holder exits
+  or dies, so there is no staleness rule and the file is never removed. A first version
+  used an O_EXCL file taken over after 2 minutes; review found that two waiters could
+  both take over one lock, and a holder's unlock remove a successor's, while a slow
+  `git worktree add` (up to 5 minutes) still ran. Switches and other git commands
+  (batch's, in other processes) that list worktrees are not under the lock; they can
+  still die during an add.
 - 2026-10-13: PR #187 (closes #162): hrn batch rm and prune leave what another batch made
   when a fresh task found its worktree or branch taken. Decided: a fresh task claims its
   worktree and branch through `branch_made`, as a slot task claims its branch; batch records
