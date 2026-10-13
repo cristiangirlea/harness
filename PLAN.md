@@ -670,6 +670,10 @@ neither of them follows a run while it happens.
   id (`--verbatim`, whitespace included) of the task's whole diff with each commit on
   origin's default branch since their merge base; remove only on an exact match. Everything
   else keeps, including a 2000-commit bound.
+- 2026-10-13: issue #226 (PR #230): public watch accepts GET and HEAD page navigations
+  after Cloudflare Access login even when the browser sends a cross-site fetch site or
+  `Origin: null`. The public Host and Access token checks still apply; other requests
+  retain the existing origin checks, and local mode is unchanged.
 - 2026-10-13: the guard's `gh api` method in quotes (PR #223). After PR #213 a quoted method
   still got through `gh-publish`: the shell strips `"DELETE"`, `'delete'`, `\"DELETE\"` and
   `$'delete'` before gh sees them. Decided: quotes, a backslash and `$` may stand between the

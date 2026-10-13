@@ -307,7 +307,8 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 			if !publicHostMatches(r.Host, publicHost) {
 				aw.reason = "bad host"
 			}
-			if aw.reason == "" && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.opt.Public.Origin) {
+			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate")
+			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.opt.Public.Origin) {
 				aw.reason = "bad origin"
 			}
 			if aw.reason == "" {

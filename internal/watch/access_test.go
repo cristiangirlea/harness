@@ -97,8 +97,12 @@ func (f *accessFixture) validToken() string {
 }
 
 func (f *accessFixture) request(h http.Handler, path, host, origin, token string) *httptest.ResponseRecorder {
+	return f.requestWithHeaders(h, http.MethodGet, path, host, origin, token, nil)
+}
+
+func (f *accessFixture) requestWithHeaders(h http.Handler, method, path, host, origin, token string, headers map[string]string) *httptest.ResponseRecorder {
 	f.t.Helper()
-	r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8089"+path, nil)
+	r := httptest.NewRequest(method, "http://127.0.0.1:8089"+path, nil)
 	r.Host = host
 	r.RemoteAddr = "127.0.0.1:5678"
 	r.Header.Set("Cf-Connecting-IP", "198.51.100.8")
@@ -107,6 +111,9 @@ func (f *accessFixture) request(h http.Handler, path, host, origin, token string
 	}
 	if token != "" {
 		r.Header.Set("Cf-Access-Jwt-Assertion", token)
+	}
+	for name, value := range headers {
+		r.Header.Set(name, value)
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -201,6 +208,42 @@ func TestPublicAccessChecksEveryRequestAndKeepsItRemote(t *testing.T) {
 	h.ServeHTTP(crossSiteResponse, crossSite)
 	if crossSiteResponse.Code != 403 {
 		t.Fatalf("cross-site = %d", crossSiteResponse.Code)
+	}
+}
+
+func TestPublicAccessAllowsPageNavigationAfterLoginAndKeepsOtherGuards(t *testing.T) {
+	f := newAccessFixture(t)
+	f.opt.Key = "k3y"
+	h := New(context.Background(), f.opt)
+	token := f.validToken()
+	for _, tc := range []struct {
+		name, method, host, origin, token string
+		headers                           map[string]string
+		want                              int
+	}{
+		{"cross-site GET navigation", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 200},
+		{"cross-site iframe navigation relies on frame headers", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe", "Sec-Fetch-Site": "cross-site"}, 200},
+		{"null-origin GET navigation", http.MethodGet, "harness.example.com", "null", token, map[string]string{"Sec-Fetch-Mode": "navigate"}, 200},
+		{"cross-site HEAD navigation", http.MethodHead, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 200},
+		{"navigation without Access token", http.MethodGet, "harness.example.com", "", "", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
+		{"cross-site CORS GET", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "cross-site"}, 403},
+		{"cross-site POST navigation", http.MethodPost, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site", "X-Hrn-Watch-Key": "k3y"}, 403},
+		{"navigation with wrong Host", http.MethodGet, "other.example", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := f.requestWithHeaders(h, tc.method, "/", tc.host, tc.origin, tc.token, tc.headers)
+			if got.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", got.Code, tc.want, got.Body)
+			}
+			if tc.want == http.StatusOK {
+				if frameOptions := got.Header().Get("X-Frame-Options"); frameOptions != "DENY" {
+					t.Errorf("X-Frame-Options = %q, want DENY", frameOptions)
+				}
+				if policy := got.Header().Get("Content-Security-Policy"); !strings.Contains(policy, "frame-ancestors 'none'") {
+					t.Errorf("Content-Security-Policy = %q, want frame-ancestors 'none'", policy)
+				}
+			}
+		})
 	}
 }
 
