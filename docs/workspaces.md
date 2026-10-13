@@ -76,6 +76,27 @@ slot back itself. Otherwise it detaches HEAD where it is, so the branch is free 
 for `hrn gc`, and removes the lease. The folder and its build output stay for the next
 take.
 
+## A slot a batch kept
+
+When a batch task ends with files in its slot, or with a commit on no branch, the slot
+is not given back (`slot <n> kept` in the task's error). Free refuses it as it stands:
+the work is on no remote, and a batch's work sits on a local branch by design. To get
+the slot back:
+
+1. Find it. `hrn ws list` shows it `taken` while hrn runs and `stale` once hrn has
+   exited, with the holder `batch <id> task <task>`. If it is still `taken`, wait for
+   the batch to end: free refuses a lease whose process is running.
+2. Look at what is in it: `git -C <slot> status` and `git -C <slot> log`.
+3. Keep the work on a branch. Commit what you want to keep (`git -C <slot> add ...`,
+   `git -C <slot> commit`), or remove what you don't. If HEAD is on the task's branch
+   `hrn/<id>`, the commits are kept there. If HEAD is detached, name the commits:
+   `git -C <slot> branch <name>`.
+4. Detach the slot at a commit origin holds, so no commit at HEAD is missing from a
+   remote: `git -C <slot> switch --detach origin/main` (or origin's default branch, if it is
+   not `main`).
+5. `hrn ws free <slot>`. The work stays on its branch, for `hrn batch merge` when it is
+   `hrn/<id>`, or to merge or push yourself.
+
 ## List
 
 `hrn ws list [--json]` prints one row per slot folder or lease: the number, the path,
