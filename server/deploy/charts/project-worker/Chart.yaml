@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hrn-project-worker
+description: Development-only KEDA project worker with a local fake model
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

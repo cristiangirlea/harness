@@ -666,7 +666,7 @@ order they are worth taking:
     - [x] [#136](https://github.com/cristiangirlea/harness/issues/136) agent: usage metadata with backend-aware token semantics. Done: PR #158, 2026-10-13.
     - [x] [#137](https://github.com/cristiangirlea/harness/issues/137) server: PostgreSQL control service and project worker, a separate module. Done: PR #159, 2026-10-13.
     - [x] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools. Done: PR #175, 2026-10-13.
-    - [ ] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier
+    - [x] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier. Done: PR #174, 2026-10-13.
     - [x] [#140](https://github.com/cristiangirlea/harness/issues/140) knowledge: approved project knowledge and text retrieval in the control service. Done: PR #181, 2026-10-13.
     - [ ] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison
     - [ ] `durable` into main
