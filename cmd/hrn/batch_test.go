@@ -98,3 +98,36 @@ func TestPrintBatchNamesTheSlotsOrTheFreshWorktrees(t *testing.T) {
 		t.Errorf("a fresh batch's hint names its worktrees:\n%s", text)
 	}
 }
+
+func TestBatchRmAndMergeNameTheBranchesOfASlotBatchAndTheWorktreesOfAFreshOne(t *testing.T) {
+	slots := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "one", Worktree: filepath.Join("repo", ".hrn", "slots", "1"), Slot: 1},
+		{ID: "waited", Status: batch.StatusRunning}}}
+	if got := removedWhat(slots); got != "branches" {
+		t.Errorf("a slot batch: %q, want branches", got)
+	}
+	fresh := batch.Result{Tasks: []batch.TaskResult{{ID: "one", Worktree: filepath.Join("repo", ".hrn", "worktrees", "one")}}}
+	if got := removedWhat(fresh); got != "worktrees and branches" {
+		t.Errorf("a fresh batch: %q, want worktrees and branches", got)
+	}
+}
+
+func TestBatchDiffOfASlotTaskThatCommittedNothingSaysSoAndWhetherItsSlotWasKept(t *testing.T) {
+	kept := diffNothing(batch.TaskResult{ID: "hooked", Slot: 1,
+		Error: "commit failed, the work is uncommitted\nslot 1 kept: slot 1 holds changes or untracked files"})
+	for _, want := range []string{"task hooked committed nothing", "slot 1 was kept with its work", "hrn ws list"} {
+		if !strings.Contains(kept, want) {
+			t.Errorf("a kept slot: %q lacks %q", kept, want)
+		}
+	}
+	if strings.Contains(kept, "changed nothing") {
+		t.Errorf("a task whose work is in its kept slot did not change nothing: %q", kept)
+	}
+	quiet := diffNothing(batch.TaskResult{ID: "quiet", Slot: 1})
+	if quiet != "task quiet committed nothing" {
+		t.Errorf("a quiet slot task: %q", quiet)
+	}
+	if fresh := diffNothing(batch.TaskResult{ID: "old", Worktree: "wt"}); fresh != "task old changed nothing" {
+		t.Errorf("a fresh task: %q", fresh)
+	}
+}

@@ -141,8 +141,9 @@ renamed into place, so reading it mid-run gets a whole file, never half of one.
 apply` or a pager: the commit against the base the batch branched from, or whatever is
 still uncommitted in the worktree when the task never committed. Files git has never
 seen cannot appear in a diff, so they are listed on stderr instead. A slot task that
-committed nothing has an empty diff: its slot has gone back and may hold another task's
-work by now.
+committed nothing has an empty diff, and `diff` says it committed nothing: its slot has
+gone back and may hold another task's work by now, or, when the task kept it (`slot <n>
+kept`), `diff` says so and the work is still in it (`hrn ws list`).
 
 `merge` merges the branches into whatever the repository has checked out, in spec
 order, and never pushes. It takes every task that passed, or the ones you name; a task
