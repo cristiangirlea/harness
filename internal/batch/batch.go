@@ -403,11 +403,11 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	// sees the batch as it goes. A save that fails here only leaves that view
 	// stale; the save at the end reports its error.
 	var recordMu sync.Mutex
-	update := func(i int, tr TaskResult) {
+	update := func(i int, tr TaskResult) error {
 		recordMu.Lock()
 		defer recordMu.Unlock()
 		res.Tasks[i] = tr
-		_ = save(res)
+		return save(res)
 	}
 
 	kept := &keptSlots{}
@@ -419,7 +419,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 			defer wg.Done()
 			for i := range idx {
 				update(i, runTask(ctx, &spec, res.ID, kept, spec.Tasks[i], res.Tasks[i], root, base, notify,
-					func(tr TaskResult) { update(i, tr) }))
+					func(tr TaskResult) error { return update(i, tr) }))
 			}
 		}()
 	}
@@ -533,7 +533,7 @@ func fence(s string) string {
 	return f
 }
 
-func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult)) TaskResult {
+func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult) error) TaskResult {
 	started := time.Now()
 	tr.Status, tr.Attempts, tr.Commit, tr.Error, tr.BranchMade = "", []Attempt{}, "", "", false
 	slots := spec.Worktrees == WorktreesSlots
@@ -647,15 +647,20 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					return fail(err)
 				}
 			case slots:
-				made := func() {
-					tr.BranchMade = true
+				made := func(mine bool) error {
 					cur := tr
-					cur.Status = StatusRunning
-					progress(cur) // the branch is this task's from now on
+					cur.BranchMade, cur.Status = mine, StatusRunning
+					err := progress(cur) // whether the branch is this task's from now on
+					if err == nil || mine {
+						tr.BranchMade = mine
+					}
+					return err
 				}
 				got, err := takeSlot(ctx, spec, batchID, kept, t.ID, tr.Branch, root, base, notify, made)
 				if err != nil {
-					tr.BranchMade = false // takeSlot dropped it
+					if tr.BranchMade {
+						tr.Error = err.Error() // the branch is left: say so even when canceled
+					}
 					return fail(err)
 				}
 				slot = &got
@@ -737,15 +742,24 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 // While every slot is taken it waits, saying so whenever who holds them
 // changes, and looks again every slotPoll until ctx ends; when none can come
 // free (only skipped slots and ones this batch kept) it fails instead. A task that gets
-// no slot leaves no branch. made is called once the branch exists, before any
-// wait, to save that the branch is the task's: hrn batch rm deletes a slotless
-// task's branch only on that proof. A crash between the two leaves a branch
-// nothing deletes, which is the safe way round: never someone else's branch.
-func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, notify func(Event), made func()) (ws.Taken, error) {
+// no slot leaves no branch. made(true) is called once the branch exists, before
+// any wait, to save that the branch is the task's: hrn batch rm deletes a
+// slotless task's branch only on that proof. made(false) saves that it is not
+// before the branch is dropped, and when that save fails the branch is left.
+// A crash in between either way leaves a branch nothing deletes, which is the
+// safe way round: never someone else's branch.
+func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, notify func(Event), made func(mine bool) error) (ws.Taken, error) {
 	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
 		return ws.Taken{}, err
 	}
-	made()
+	_ = made(true) // unsaved, the branch is only left behind if hrn crashes
+	drop := func(cause error) (ws.Taken, error) {
+		if err := made(false); err != nil {
+			return ws.Taken{}, fmt.Errorf("%w; branch %s is left: saving that it is no longer the task's failed: %v", cause, branch, err)
+		}
+		dropBranch(root, branch)
+		return ws.Taken{}, cause
+	}
 	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: "batch " + batchID + " task " + id,
 		PID: os.Getpid(), Max: max(spec.Parallel, ws.DefaultMax), NoFetch: true}
 	var said string
@@ -756,15 +770,14 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 		var full *ws.NoSlotError
 		if err == nil || !errors.As(err, &full) {
 			if err != nil {
-				dropBranch(root, branch)
+				return drop(err)
 			}
-			return got, err
+			return got, nil
 		}
 		// Only a slot someone else holds can come free: skipped slots stay
 		// as they are, and so do the ones this batch kept.
 		if full.Held <= kept.count() {
-			dropBranch(root, branch)
-			return ws.Taken{}, fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full)
+			return drop(fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full))
 		}
 		if held := strings.Join(full.Passed, "; "); held != said {
 			notify(Event{Task: id, Kind: "wait", Text: "waiting for a free slot: " + held})
@@ -772,8 +785,7 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 		}
 		select {
 		case <-ctx.Done():
-			dropBranch(root, branch)
-			return ws.Taken{}, ctx.Err()
+			return drop(ctx.Err())
 		case <-time.After(slotPoll):
 		}
 	}
@@ -798,8 +810,18 @@ func (k *keptSlots) count() int {
 	return k.n
 }
 
+// droppingBranch and failSave are for tests: one runs as dropBranch starts,
+// the other can make save fail.
+var (
+	droppingBranch func()
+	failSave       func(Result) error
+)
+
 // dropBranch deletes the branch takeSlot made when no slot checked it out.
 func dropBranch(root, branch string) {
+	if droppingBranch != nil {
+		droppingBranch()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	_, _ = gitOut(ctx, root, "branch", "-D", branch)
@@ -1139,6 +1161,11 @@ func removeEmptyDir(dir string) error {
 func batchesDir() string { return filepath.Join(runlog.Home(), "batches") }
 
 func save(res Result) error {
+	if failSave != nil {
+		if err := failSave(res); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(batchesDir(), 0o755); err != nil {
 		return err
 	}

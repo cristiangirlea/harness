@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -567,5 +568,74 @@ func TestATaskCanceledWhileItRunsGivesItsSlotBack(t *testing.T) {
 	}
 	if b := git(t, tr.Worktree, "branch", "--show-current"); b != "" {
 		t.Errorf("the slot should be detached, is on %q", b)
+	}
+}
+
+// The record stops claiming the branch before takeSlot drops it, so a crash
+// between the two never leaves a record that would let hrn batch rm delete
+// a branch of the same name another batch made since.
+func TestATaskWaitingForASlotSavesItNoLongerOwnsItsBranchBeforeDroppingIt(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	holdAll(t, dir)
+	dropped := 0
+	droppingBranch = func() {
+		dropped++
+		saved, _, err := List()
+		if err != nil || len(saved) != 1 || saved[0].Tasks[0].BranchMade {
+			t.Errorf("record as the branch is dropped = %+v (%v), want branch_made cleared", saved, err)
+		}
+	}
+	t.Cleanup(func() { droppingBranch = nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok",
+		Tasks: []Task{{ID: "patient", Prompt: "p"}}}, func(e Event) {
+		if e.Kind == "wait" {
+			cancel()
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if dropped != 1 {
+		t.Errorf("branch dropped %d times, want 1", dropped)
+	}
+}
+
+// When the record cannot say the branch is no longer the task's, the branch
+// stays and the task says so: a record claiming a missing branch could later
+// let hrn batch rm delete someone else's.
+func TestATaskWaitingForASlotLeavesItsBranchWhenItCannotSaveThatItDropsIt(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	holdAll(t, dir)
+	claimed := false // fail only the save that takes back the claim on the branch
+	failSave = func(res Result) error {
+		tr := res.Tasks[0]
+		if tr.Status == StatusRunning && tr.BranchMade {
+			claimed = true
+		} else if claimed && tr.Status == StatusRunning {
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	t.Cleanup(func() { failSave = nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok",
+		Tasks: []Task{{ID: "patient", Prompt: "p"}}}, func(e Event) {
+		if e.Kind == "wait" {
+			cancel()
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Tasks[0]
+	if tr.Status != StatusCanceled || !tr.BranchMade || !strings.Contains(tr.Error, "branch hrn/patient is left") || !strings.Contains(tr.Error, "disk full") {
+		t.Fatalf("task = %+v, want a canceled task that still owns its branch and says it is left", tr)
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/patient"); b == "" {
+		t.Error("the branch must stay when the record could not be saved")
 	}
 }
