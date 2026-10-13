@@ -31,6 +31,19 @@ func TestRunShellExitCodeAndOutput(t *testing.T) {
 	}
 }
 
+func TestRunShellNilEnvironmentHidesWorkerAndScalerTokens(t *testing.T) {
+	t.Setenv("HRN_WORKER_TOKEN", "worker-fixture")
+	t.Setenv("HRN_SCALER_TOKEN", "scaler-fixture")
+	command := "if [ -n \"$HRN_WORKER_TOKEN$HRN_SCALER_TOKEN\" ]; then echo leaked; else echo clean; fi"
+	if name, _ := Shell(); name == "powershell" {
+		command = "if ($env:HRN_WORKER_TOKEN -or $env:HRN_SCALER_TOKEN) { echo leaked } else { echo clean }"
+	}
+	result, err := RunShell(context.Background(), t.TempDir(), command, 0, nil)
+	if err != nil || result.ExitCode != 0 || !strings.Contains(result.Output, "clean") || strings.Contains(result.Output, "leaked") {
+		t.Fatalf("shell environment: result=%+v err=%v", result, err)
+	}
+}
+
 func TestRunShellTimeoutKillsTheTree(t *testing.T) {
 	started := time.Now()
 	// sleep is a grandchild of the shell; without a tree kill it would keep
