@@ -765,6 +765,47 @@ func TestASessionOnADistantSlotDoesNotWidenABatchsRange(t *testing.T) {
 	}
 }
 
+// A session can take a slot after a task's range is worked out and before
+// the take scans that slot. When sessions then fill the range, the task
+// works it out again and tries the next slot rather than fail.
+func TestATaskTriesTheNextSlotWhenASessionTakesOneAfterItsRangeWasWorkedOut(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	failCommits(t, dir)
+	var tasks []Task
+	for i := range ws.DefaultMax {
+		tasks = append(tasks, Task{ID: "t" + strconv.Itoa(i+1), Prompt: "p"})
+	}
+	taken := false
+	rangeComputed = func(max int) {
+		// The last task's try: the ones before it kept slots 1 to 3, so its
+		// range ends at slot 4, which a session takes before the take scans it.
+		if _, ok := leaseHolder(t, dir, ws.DefaultMax-1); !ok || taken {
+			return
+		}
+		taken = true
+		if max != ws.DefaultMax {
+			t.Errorf("range = %d, want %d", max, ws.DefaultMax)
+		}
+		session(t, dir)
+	}
+	t.Cleanup(func() { rangeComputed = nil })
+	res, events := run(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: tasks})
+	if !taken {
+		t.Fatal("the session never took its slot")
+	}
+	if l, ok := leaseHolder(t, dir, ws.DefaultMax); !ok || l.Holder != "session" {
+		t.Fatalf("slot %d lease = %+v (%v), want the session's", ws.DefaultMax, l, ok)
+	}
+	last := res.Tasks[ws.DefaultMax-1]
+	if last.Slot != ws.DefaultMax+1 || !strings.Contains(last.Error, "kept") || strings.Contains(last.Error, "none will come free") {
+		t.Fatalf("last task = %+v, want it to run in slot %d past the session's", last, ws.DefaultMax+1)
+	}
+	if w := eventTexts(events, "wait"); w != "" {
+		t.Errorf("the task should not wait: %q", w)
+	}
+}
+
 // At its bound, a batch waits for the slots its own running tasks hold,
 // which come back when they end; only kept slots never do.
 func TestATaskAtTheBatchsBoundWaitsForItsRunningTasksNotItsKeptSlots(t *testing.T) {

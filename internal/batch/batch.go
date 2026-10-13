@@ -176,6 +176,10 @@ var worktreeMu sync.Mutex
 // slotPoll is how often a task waiting for a free slot looks again.
 var slotPoll = 5 * time.Second
 
+// sessionRetries is how many times a take is tried again at once when a
+// session took a slot in its range after the range was worked out.
+const sessionRetries = 3
+
 var idRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // LoadSpec reads a spec file. A relative Dir is taken from the file's
@@ -776,6 +780,8 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 // from 1 that hold that many slots other than sessions' (hrn ws take, no
 // pid: held until hrn ws free), worked out again at every try, so a session
 // among the first slots is passed over and one further up changes nothing.
+// A session that takes a slot in the range after it was worked out widens
+// it at once, a few times at most.
 // While a slot it needs is held by a live process, another batch's or one
 // of this batch's running tasks, it waits, saying so whenever who holds
 // them changes, and looks again every slotPoll until ctx ends. When none
@@ -821,7 +827,29 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 		if err != nil {
 			return ws.Taken{}, err
 		}
-		return ws.Take(ctx, opt)
+		// A session can take a slot in the range after it was worked out
+		// and before the take scans that slot. When the take then finds a
+		// session among what it passed over, the range is worked out again
+		// and, if it reaches further, tried again; at most sessionRetries
+		// times, so sessions arriving one after another cannot keep it here.
+		for retry := 0; ; retry++ {
+			if rangeComputed != nil {
+				rangeComputed(opt.Max)
+			}
+			got, err := ws.Take(ctx, opt)
+			var full *ws.NoSlotError
+			if !errors.As(err, &full) || !holdsASession(full) || retry == sessionRetries {
+				return got, err
+			}
+			wider, rerr := ws.RangeBeyondSessions(ctx, root, bound)
+			if rerr != nil {
+				return ws.Taken{}, rerr
+			}
+			if wider <= opt.Max {
+				return got, err
+			}
+			opt.Max = wider
+		}
 	}
 	var said string
 	for {
@@ -870,6 +898,17 @@ func (e *atBoundError) Error() string {
 	return fmt.Sprintf("this batch already holds %d slots, the most it may (%d kept)", e.held, e.kept)
 }
 
+// holdsASession reports whether a slot full passed over is a session's: a
+// lease without a pid, which RangeBeyondSessions skips.
+func holdsASession(full *ws.NoSlotError) bool {
+	for _, l := range full.Holders {
+		if l.PID == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // someoneWillFree reports whether a slot full passed over is held by a
 // process that will give it back: one not a session's (no pid) and not one
 // this batch kept. A lease it could not read counts, since one being
@@ -914,10 +953,13 @@ func (k *keptSlots) count() int {
 	return len(k.holders)
 }
 
-// droppingBranch, failSave and failWorktreeList are for tests: the first runs
-// as dropBranch starts, the others can make save or git worktree list fail.
+// droppingBranch, rangeComputed, failSave and failWorktreeList are for
+// tests: the first runs as dropBranch starts, the second once takeSlot has
+// worked out the slot numbers a take will try and before it tries them, the
+// others can make save or git worktree list fail.
 var (
 	droppingBranch   func()
+	rangeComputed    func(max int)
 	failSave         func(Result) error
 	failWorktreeList func() error
 )
