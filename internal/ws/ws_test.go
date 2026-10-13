@@ -357,6 +357,48 @@ func TestASlotABatchKeptIsRecoveredAsTheDocsSay(t *testing.T) {
 	}
 }
 
+// The same recovery in a repository without remotes, as docs/workspaces.md
+// gives it: once a local branch holds HEAD, free gives the slot back without
+// moving HEAD to another commit.
+func TestASlotABatchKeptWithoutARemoteIsFreedOnceABranchHoldsItsWork(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	git(t, f.repo, "remote", "remove", "origin")
+	slot := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: exitedPID(t)}).Path
+	f.identity(slot)
+	git(t, slot, "switch", "-q", "--detach")
+	detached := f.commit(slot, "detached.txt")
+	f.write(slot, "notes.txt", "x\n")
+	if _, err := Free(ctx, slot); err == nil || !strings.Contains(err.Error(), "notes.txt") {
+		t.Fatalf("free with an untracked file: %v", err)
+	}
+
+	git(t, slot, "add", "notes.txt")
+	git(t, slot, "commit", "-q", "-m", "notes")
+	if _, err := Free(ctx, slot); err == nil || !strings.Contains(err.Error(), "2 commits on no remote") {
+		t.Fatalf("free while HEAD holds commits no branch or tag has: %v", err)
+	}
+
+	git(t, slot, "branch", "keep-t1")
+	head := git(t, slot, "rev-parse", "HEAD")
+	if _, err := Free(ctx, slot); err != nil {
+		t.Fatalf("free once keep-t1 holds HEAD: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, ".hrn", "slots", "1.lease")); !os.IsNotExist(err) {
+		t.Errorf("the lease should be gone: %v", err)
+	}
+	if h := git(t, slot, "rev-parse", "HEAD"); h != head {
+		t.Errorf("HEAD %s, want it left at %s", h, head)
+	}
+	if b := git(t, slot, "branch", "--show-current"); b != "" {
+		t.Errorf("HEAD should be detached, is on %q", b)
+	}
+	git(t, f.repo, "merge-base", "--is-ancestor", detached, "keep-t1")
+	if files := git(t, f.repo, "ls-tree", "--name-only", "keep-t1"); !strings.Contains(files, "detached.txt") || !strings.Contains(files, "notes.txt") {
+		t.Errorf("keep-t1 should hold the work, has %q", files)
+	}
+}
+
 func TestFreeRefusesWhileTheSlotIsBeingTakenOverAndLeavesItAsItWas(t *testing.T) {
 	f := newFixture(t)
 	slot := f.take(TakeOptions{Branch: "work", Holder: "a"}).Path
