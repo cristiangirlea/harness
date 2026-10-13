@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,6 +44,7 @@ Usage:
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
   hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
+  hrn show --usage [--json] <id>  a run's model calls, one row each: tokens, context, compactions
   hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]
                                  a local page that follows runs and batches live (default 127.0.0.1:8089,
                                  loopback only); --lan also serves it, read-only and without a login,
@@ -423,16 +425,23 @@ func cmdShow(args []string) error {
 	jsonOut := fs.Bool("json", false, "")
 	follow := fs.Bool("follow", false, "")
 	fs.BoolVar(follow, "f", false, "")
+	usageOnly := fs.Bool("usage", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *jsonOut && *follow {
 		return errors.New("--follow prints the run as it happens and does not combine with --json")
 	}
+	if *usageOnly && *follow {
+		return errors.New("--usage prints a recorded run's turns and does not combine with --follow")
+	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: hrn show [--json | -f] <run-id>")
+		return errors.New("usage: hrn show [--json | -f | --usage] <run-id>")
 	}
 	id := fs.Arg(0)
+	if *usageOnly {
+		return showUsage(id, *jsonOut)
+	}
 	if *follow {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
@@ -459,6 +468,73 @@ func cmdShow(args []string) error {
 	if rec.Done {
 		r.Summary(rec.ID, rec.Result)
 	}
+	return nil
+}
+
+// showUsage prints a run's model calls, one row each: hrn show --usage.
+func showUsage(id string, jsonOut bool) error {
+	rec, err := runlog.Load(id)
+	if err != nil {
+		return err
+	}
+	turns, err := runlog.TurnsOf(id)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		if turns == nil {
+			turns = []runlog.Turn{}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(turns)
+	}
+	if len(turns) == 0 {
+		fmt.Printf("run %s recorded no per-turn usage: the %s backend writes none, or the run is older than the usage events\n",
+			rec.ID, printable(rec.Backend))
+		return nil
+	}
+	rows := [][]string{{"turn", "time", "model", "input", "output", "cache read", "cache write", "context", "cache read so far"}}
+	notes := []string{""}
+	var contexts []float64
+	var peak int64
+	for _, t := range turns {
+		note := ""
+		switch t.Compaction {
+		case runlog.CompactionRecorded:
+			note = "compacted"
+			if t.Trigger != "" {
+				note += " (" + printable(t.Trigger) + ")"
+			}
+			if t.CompactedFrom > 0 {
+				note += fmt.Sprintf(" from %d", t.CompactedFrom)
+			}
+		case runlog.CompactionProbable:
+			note = "probably compacted"
+		}
+		clock := "-"
+		if !t.Time.IsZero() {
+			clock = t.Time.Local().Format("15:04:05")
+		}
+		model := printable(t.Model)
+		if model == "" {
+			model = "-"
+		}
+		rows = append(rows, []string{strconv.Itoa(t.N), clock, model, fmt.Sprint(t.InputTokens), fmt.Sprint(t.OutputTokens),
+			fmt.Sprint(t.CacheRead), fmt.Sprint(t.CacheWrite), fmt.Sprint(t.ContextTokens), fmt.Sprint(t.CacheReadSoFar)})
+		notes = append(notes, note)
+		contexts = append(contexts, float64(t.ContextTokens))
+		peak = max(peak, t.ContextTokens)
+	}
+	// The note trails its row unpadded, so a row without one ends in a number.
+	for i, line := range strings.Split(strings.TrimSuffix(table(rows, 3), "\n"), "\n") {
+		if notes[i] != "" {
+			line += "  " + notes[i]
+		}
+		fmt.Println(line)
+	}
+	fmt.Printf("%d turns · median context %s · peak %d · %d cache read\n",
+		len(turns), report.Number(report.Median(contexts)), peak, turns[len(turns)-1].CacheReadSoFar)
 	return nil
 }
 
