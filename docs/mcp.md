@@ -62,6 +62,17 @@ Tools:
 | `batch` | `spec` | Runs a batch spec, the same JSON as a batch file, and blocks until every task is done: one line per task (status, backend, attempts, the gate that failed, branch and commit) and the batch id. Task outcomes stream back as progress. |
 | `batch_show` | `batch_id`, `task`, `limit` | No id: recent batches. An id: its tasks. An id and a task: that task's diff and its untracked files. |
 | `batch_merge` | `batch_id`, `tasks`, `squash` | Merges the passing branches into the repository's current branch, stopping at the first conflict with the tree put back. |
+| `remote_submit` | `tenant_id`, `project_id`, `prompt`, `base_ref`, `idempotency_key`, `max_cost_usd`, optional `max_turns` | Queue an asynchronous job and return its durable ID. |
+| `remote_status` | `tenant_id`, `project_id`, `job_id` | Current job state and result. |
+| `remote_events` | `tenant_id`, `project_id`, `job_id`, optional `after` | Up to 100 events after a durable event ID. |
+| `remote_cancel` | `tenant_id`, `project_id`, `job_id` | Request job cancellation. |
+
+The remote tools use `HRN_SERVER_URL` for the control service HTTPS origin,
+`HRN_TENANT_TOKEN` for its issued tenant credential, and optional
+`HRN_SERVER_CA_FILE` for a PEM CA file. HTTP is accepted only for loopback
+fixtures. `remote_submit` accepts only read-only `api` jobs on registered
+projects, with a full commit, positive cost ceiling, and idempotency key.
+Unknown and unsupported input fields are refused.
 
 Requests are served concurrently, so parallel tool calls from the host become parallel
 agents, each recorded under `~/.hrn/runs` like a CLI run. Cancelling the tool call cancels
