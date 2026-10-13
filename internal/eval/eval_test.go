@@ -48,7 +48,7 @@ func TestExpand(t *testing.T) {
 	spec := testSpec("somewhere")
 	spec.Timeout = agent.Duration(5 * time.Minute)
 	spec.MaxCostUSD = 2
-	spec.Lean = true
+	spec.Lean = agent.Bool(false)
 	bs, err := Expand(spec, "abc12")
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestExpand(t *testing.T) {
 			t.Errorf("missing id %s in %s", want, joined)
 		}
 	}
-	if bs.Timeout != agent.Duration(5*time.Minute) || bs.MaxCostUSD != 2 || !bs.Lean || len(bs.Gate) != 1 || bs.Dir != "somewhere" {
+	if bs.Timeout != agent.Duration(5*time.Minute) || bs.MaxCostUSD != 2 || bs.Lean == nil || *bs.Lean || len(bs.Gate) != 1 || bs.Dir != "somewhere" {
 		t.Errorf("spec fields must carry through: %+v", bs)
 	}
 	first := bs.Tasks[0]

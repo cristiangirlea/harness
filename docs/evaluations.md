@@ -58,7 +58,9 @@ A variant's `name` defaults to `backend[-model][-effort]`. Each cell becomes a b
 task with the id `<evalid>.<task>.<variant>.r<n>`, so branches from different evals never
 collide. Retries are off for every cell on purpose: an eval measures what one attempt
 does, and a retried attempt would score the harness rather than the backend. Everything
-else, gates and mode and the budgets, carries through from the spec.
+else, gates and mode and the budgets, `lean` and `compact_window`, carries through from the
+spec; cells on claude are lean unless the spec or task says `"lean": false` (see
+[Lean claude workers](backends.md#lean-claude-workers)).
 
 `hrn eval eval.json` prints what each variant did and how each task scored under it:
 

@@ -734,7 +734,11 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			cur.Attempts = append(slices.Clone(tr.Attempts), att)
 			progress(cur)
 		}
-		out, err := runAttempt(ctx, b, t.ID, task, plan, expect, gates, notify, report)
+		at := task
+		if at.Lean == nil && agent.AppliesLean(b) {
+			at.Lean = agent.Bool(true) // lean by default in a batch (#204)
+		}
+		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, gates, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
 		if out.commit != "" {
 			tr.Commit = out.commit
