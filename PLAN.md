@@ -672,6 +672,10 @@ neither of them follows a run while it happens.
   folders by file name, matched only at a path boundary, after secrets are blanked. Records
   and `hrn show` keep the full paths, and a run's purpose comes from its prompt as recorded, as
   `hrn report` has it, not from the shortened text.
+- 2026-10-13: gc --free-below reports the drives after --apply (#130, PR #234). File sizes can
+  overestimate freed space for sparse, linked or compressed files, and removal can fail.
+  Decided: nothing more is removed; drives that were below are measured again and reported;
+  the next-run hint appears only when caches were left because enough was already going.
 - 2026-10-13: gc and squash-landed batch work (#85, PR #227). Ancestry alone keeps task
   worktrees after `batch merge --squash` or a reworded landing. Decided: compare the patch
   id (`--verbatim`, whitespace included) of the task's whole diff with each commit on
