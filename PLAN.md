@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: three wording points from #58's review (#65, PR #N). Decided: a blocking
+- 2026-10-13: three wording points from #58's review (#65, PR #252). Decided: a blocking
   finding is fixed, as AGENTS.md and the owner's merge rule say, so the definition of done
   no longer offers rejecting one; a finding shown wrong is no defect, so it was never
   blocking. AGENTS.md says "the base branch" (a piece of a feature branch merges that one
