@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -140,6 +141,43 @@ func TestDurableResumeRejectsChangedTask(t *testing.T) {
 	}
 }
 
+func TestDurableRefusesConversationContinuationBeforeRequestingAModelResponse(t *testing.T) {
+	store := &checkpointStore{}
+	backend, task, fake, effects := durableFixture(t, store)
+	task.Resume = &Conversation{}
+	result := backend.Run(context.Background(), task, func(Event) {})
+	if result.Status != StatusError || !strings.Contains(result.Error, "cannot be combined") || fake.served != 0 || *effects != 0 || len(store.records) != 0 {
+		t.Fatalf("conversation continuation was accepted with durable execution: result=%+v requests=%d effects=%d checkpoints=%d", result, fake.served, *effects, len(store.records))
+	}
+}
+
+func TestDurableResumeRefusesInvalidToolOutcomesBeforeRunningTools(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		outcomes []map[string]any
+		want     string
+	}{
+		{"excess outcomes", []map[string]any{{"tool_use_id": "effect-1"}, {"tool_use_id": "extra"}}, "excess tool outcomes"},
+		{"mismatched ID", []map[string]any{{"tool_use_id": "wrong"}}, "tool outcome ID mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &checkpointStore{failBoundary: "model_response", commitThenFail: true}
+			backend, task, fake, effects := durableFixture(t, store)
+			first := backend.Run(context.Background(), task, func(Event) {})
+			if !first.RecoveryRequired || store.latest == nil || fake.served != 1 {
+				t.Fatalf("response was not checkpointed: result=%+v requests=%d", first, fake.served)
+			}
+			store.latest.ToolResults = tc.outcomes
+			task.Durable.Resume = store.latest
+			store.failBoundary = ""
+			result := backend.Run(context.Background(), task, func(Event) {})
+			if result.Status != StatusError || !strings.Contains(result.Error, tc.want) || fake.served != 1 || *effects != 0 {
+				t.Fatalf("invalid outcome started execution: result=%+v requests=%d effects=%d", result, fake.served, *effects)
+			}
+		})
+	}
+}
+
 func TestDurableResumeKeepsDeadline(t *testing.T) {
 	store := &checkpointStore{failBoundary: "turn_complete", commitThenFail: true}
 	backend, task, fake, effects := durableFixture(t, store)
@@ -243,6 +281,52 @@ func TestDurableAndLocalRunsCountTheSameToolCalls(t *testing.T) {
 	durable := Run(context.Background(), durableBackend, durableTask, func(Event) {})
 	if local.Status != StatusOK || durable.Status != StatusOK || local.ToolCalls != 1 || durable.ToolCalls != local.ToolCalls || *localEffects != 1 || *durableEffects != 1 {
 		t.Fatalf("tool call counts differ: local=%+v durable=%+v effects=%d,%d", local, durable, *localEffects, *durableEffects)
+	}
+}
+
+func TestDurableAndLocalRunsCountUnknownGuardedAndDeniedToolCallsTheSame(t *testing.T) {
+	turn := []string{messageStart("msg_mixed_tools")}
+	for i, call := range []struct{ id, name, input string }{
+		{"unknown-1", "missing_tool", `{}`},
+		{"guarded-1", "run_command", `{"command":"git push"}`},
+		{"denied-1", "write_file", `{"path":"denied.txt","content":"no"}`},
+	} {
+		for _, event := range toolTurn(call.id, call.name, call.input)[1:4] {
+			turn = append(turn, strings.ReplaceAll(event, `"index":0`, fmt.Sprintf(`"index":%d`, i)))
+		}
+	}
+	turn = append(turn, messageEnd("tool_use")...)
+	for _, durable := range []bool{false, true} {
+		name := "local"
+		if durable {
+			name = "durable"
+		}
+		t.Run(name, func(t *testing.T) {
+			backend, task, fake, _ := durableFixture(t, &checkpointStore{})
+			backend.Tools = NewAPIBackend().Tools
+			fake.turns = [][]string{turn, textTurn("done")}
+			if !durable {
+				task.Durable = nil
+			}
+			task.Mode = ModeAsk
+			approvals := 0
+			task.Approve = func(ApprovalRequest) bool { approvals++; return false }
+			result := Run(context.Background(), backend, task, func(Event) {})
+			if result.Status != StatusOK || result.ToolCalls != 3 || fake.served != 2 || approvals != 1 {
+				t.Fatalf("tool calls were not counted: result=%+v requests=%d approvals=%d", result, fake.served, approvals)
+			}
+			messages := fake.requests[1]["messages"].([]any)
+			outcomes := messages[len(messages)-1].(map[string]any)["content"].([]any)
+			if len(outcomes) != 3 {
+				t.Fatalf("tool outcomes = %d, want 3", len(outcomes))
+			}
+			for i, want := range []string{"unknown tool", "hrn guard", "Permission denied"} {
+				outcome := outcomes[i].(map[string]any)
+				if outcome["is_error"] != true || !strings.Contains(fmt.Sprint(outcome["content"]), want) {
+					t.Fatalf("outcome %d was not refused as expected: %v", i, outcome)
+				}
+			}
+		})
 	}
 }
 
