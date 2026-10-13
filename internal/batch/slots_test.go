@@ -993,8 +993,13 @@ func exitedPID(t *testing.T) int {
 	return cmd.Process.Pid
 }
 
-// leaseFile is the lease of slot n of the repository at dir.
-func leaseFile(dir string, n int) string { return slotPath(dir, n) + ".lease" }
+// leaseFile is the lease of slot n of the repository at dir, as a take
+// names it: dir resolved as ws.MainCheckout resolves the main checkout, so
+// that a temp dir given as a Windows 8.3 short name still matches.
+func leaseFile(t *testing.T, dir string, n int) string {
+	t.Helper()
+	return slotPath(canon(t, dir), n) + ".lease"
+}
 
 // quickUnreadableWait makes a task give up soon on a lease that stays
 // unreadable, and returns the bound.
@@ -1056,14 +1061,14 @@ func TestATaskGivesUpOnLeasesThatStayUnreadable(t *testing.T) {
 	quickPoll(t)
 	bound := quickUnreadableWait(t)
 	for n := 1; n <= ws.DefaultMax; n++ {
-		writeFile(t, leaseFile(dir, n), "{not json")
+		writeFile(t, leaseFile(t, dir, n), "{not json")
 	}
 	tr := runStuck(t, dir, bound)
 	for n := 1; n <= ws.DefaultMax; n++ {
-		if !strings.Contains(tr.Error, leaseFile(dir, n)) {
-			t.Errorf("error = %q, want it to name %s", tr.Error, leaseFile(dir, n))
+		if !strings.Contains(tr.Error, leaseFile(t, dir, n)) {
+			t.Errorf("error = %q, want it to name %s", tr.Error, leaseFile(t, dir, n))
 		}
-		if !exists(leaseFile(dir, n)) {
+		if !exists(leaseFile(t, dir, n)) {
 			t.Errorf("the unreadable lease of slot %d should be left for the owner", n)
 		}
 	}
@@ -1079,15 +1084,15 @@ func TestATaskGivesUpOnALeaseALeftTakeoverFileBlocks(t *testing.T) {
 	gone := exitedPID(t)
 	for n := 1; n <= ws.DefaultMax; n++ {
 		data, _ := json.Marshal(ws.Lease{Holder: "batch old task " + strconv.Itoa(n), PID: gone, Taken: time.Now()})
-		writeFile(t, leaseFile(dir, n), string(data))
-		writeFile(t, leaseFile(dir, n)+".takeover", "")
+		writeFile(t, leaseFile(t, dir, n), string(data))
+		writeFile(t, leaseFile(t, dir, n)+".takeover", "")
 	}
 	tr := runStuck(t, dir, bound)
 	for n := 1; n <= ws.DefaultMax; n++ {
-		if !strings.Contains(tr.Error, leaseFile(dir, n)+".takeover") {
-			t.Errorf("error = %q, want it to name %s.takeover", tr.Error, leaseFile(dir, n))
+		if !strings.Contains(tr.Error, leaseFile(t, dir, n)+".takeover") {
+			t.Errorf("error = %q, want it to name %s.takeover", tr.Error, leaseFile(t, dir, n))
 		}
-		if !exists(leaseFile(dir, n)) || !exists(leaseFile(dir, n)+".takeover") {
+		if !exists(leaseFile(t, dir, n)) || !exists(leaseFile(t, dir, n)+".takeover") {
 			t.Errorf("the lease and takeover file of slot %d should be left for the owner", n)
 		}
 	}
@@ -1105,7 +1110,7 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 	quickPoll(t)
 	bound := quickUnreadableWait(t)
 	for n := 1; n <= ws.DefaultMax; n++ {
-		writeFile(t, leaseFile(dir, n), "")
+		writeFile(t, leaseFile(t, dir, n), "")
 	}
 	// scans counts the task's looks at the leases.
 	var scans atomic.Int32
@@ -1140,13 +1145,13 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 			Tasks: []Task{{ID: "patient", Prompt: "p"}}}, notify)
 		done <- err
 	}()
-	awaitWait(t, waited, done, leaseFile(dir, 2)+" is being written")
+	awaitWait(t, waited, done, leaseFile(t, dir, 2)+" is being written")
 	// The task is held in that event, so no look runs while slot 1's lease
 	// is rewritten; the rewrite is still under worktreeMu, which the take
 	// scans under, as every change to a lease a take may read is.
 	worktreeMu.Lock()
 	data, _ := json.Marshal(ws.Lease{Holder: "batch other task x", PID: os.Getpid(), Taken: time.Now()})
-	writeFile(t, leaseFile(dir, 1), string(data))
+	writeFile(t, leaseFile(t, dir, 1), string(data))
 	worktreeMu.Unlock()
 	release()
 	awaitWait(t, waited, done, `taken by "batch other task x"`)
@@ -1163,7 +1168,7 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 		}
 	}
 	worktreeMu.Lock()
-	os.Remove(leaseFile(dir, 1))
+	os.Remove(leaseFile(t, dir, 1))
 	worktreeMu.Unlock()
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -1174,11 +1179,11 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(waits) == 0 || !strings.Contains(waits[0], leaseFile(dir, 2)+" is being written") {
+	if len(waits) == 0 || !strings.Contains(waits[0], leaseFile(t, dir, 2)+" is being written") {
 		t.Errorf("wait events = %q, want the first to say slot 2's lease is being written and name it", waits)
 	}
 	for n := 2; n <= ws.DefaultMax; n++ {
-		if !exists(leaseFile(dir, n)) {
+		if !exists(leaseFile(t, dir, n)) {
 			t.Errorf("the lease being written on slot %d should stay", n)
 		}
 	}
@@ -1219,7 +1224,7 @@ func TestATasksWaitOnUnreadableLeasesStartsOverAfterAWaitAtTheBatchsBound(t *tes
 		worktreeMu.Lock()
 		defer worktreeMu.Unlock()
 		for n := 1; n <= ws.DefaultMax; n++ {
-			writeFile(t, leaseFile(dir, n), "{not json")
+			writeFile(t, leaseFile(t, dir, n), "{not json")
 		}
 	}
 	broken()
@@ -1253,7 +1258,7 @@ func TestATasksWaitOnUnreadableLeasesStartsOverAfterAWaitAtTheBatchsBound(t *tes
 	worktreeMu.Lock()
 	for n := 1; n <= ws.DefaultMax; n++ {
 		data, _ := json.Marshal(ws.Lease{Holder: "batch b1 task t" + strconv.Itoa(n), PID: os.Getpid(), Taken: time.Now()})
-		writeFile(t, leaseFile(dir, n), string(data))
+		writeFile(t, leaseFile(t, dir, n), string(data))
 	}
 	worktreeMu.Unlock()
 	awaitWait(t, waits, done, "this batch holds")
