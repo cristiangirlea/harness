@@ -739,6 +739,11 @@ func TestGCKeepsBatchChangeWhenScriptModeDidNotLand(t *testing.T) {
 	f.write(task, "script.sh", "echo after\n")
 	git(t, task, "add", "script.sh")
 	git(t, task, "update-index", "--chmod=+x", "script.sh")
+	// The file on disk follows the index, or git on Linux sees the mode as an
+	// uncommitted change and the worktree is kept for that instead.
+	if err := os.Chmod(filepath.Join(task, "script.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	git(t, task, "commit", "-q", "-m", "change script and mode")
 	saveBatch(t, "mode", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
 	f.write(f.repo, "script.sh", "echo after\n")
