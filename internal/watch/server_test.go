@@ -1374,3 +1374,123 @@ func TestTheBatchesTablesHeadersLineUpWithItsCells(t *testing.T) {
 		}
 	}
 }
+
+// viewAs fetches path from h as a browser at remote sees it.
+func viewAs(t *testing.T, h http.Handler, path, remote string) string {
+	t.Helper()
+	host := "127.0.0.1:8089"
+	if !strings.HasPrefix(remote, "127.") {
+		host = "192.168.1.20:8089"
+	}
+	req := httptest.NewRequest("GET", "http://"+host+path, nil)
+	req.RemoteAddr = remote
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("%s from %s: status %d: %s", path, remote, rec.Code, rec.Body)
+	}
+	return rec.Body.String()
+}
+
+// jsonPath is p as a JSON string holds it, without the quotes.
+func jsonPath(p string) string {
+	b, _ := json.Marshal(p)
+	return strings.Trim(string(b), `"`)
+}
+
+func TestTheRunPageNamesItsWorkspaceAndShortensItsPaths(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
+	readme := filepath.Join(ws, "README.md")
+	short := "." + string(filepath.Separator) + "README.md"
+	w, err := runlog.Create("fake", agent.Task{Prompt: "fix " + readme, Dir: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventInfo, Text: "codex exec -C " + ws + " --json"})
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Read", Input: json.RawMessage(`{"file_path":"` + jsonPath(readme) + `"}`)})
+	w.Event(agent.Event{Kind: agent.EventToolResult, Text: "read " + readme})
+	if err := w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK, Final: "changed " + readme}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(context.Background(), Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+
+	phone := viewAs(t, h, "/run/"+w.ID(), "192.168.1.50:6000")
+	for _, bad := range []string{ws, jsonPath(ws), "title="} {
+		if strings.Contains(phone, bad) {
+			t.Errorf("the phone's run page holds %q", bad)
+		}
+	}
+	for _, want := range []string{"<dd>ada-os-ipc</dd>", "codex exec -C . --json", "fix " + short, "read " + short, "changed " + short} {
+		if !strings.Contains(phone, want) {
+			t.Errorf("the phone's run page lacks %q", want)
+		}
+	}
+
+	local := viewAs(t, h, "/run/"+w.ID(), "127.0.0.1:5000")
+	if !strings.Contains(local, `<dd title="`+ws+`">ada-os-ipc</dd>`) || strings.Count(local, ws) != 1 {
+		t.Errorf("this computer should see the full workspace once, as the name's title; it is there %d times", strings.Count(local, ws))
+	}
+}
+
+func TestTheRunStreamShortensItsPaths(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
+	w, err := runlog.Create("fake", agent.Task{Prompt: "p", Dir: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	s, stop := openStream(t, srv.URL+"/stream/run/"+w.ID(), "")
+	defer stop()
+	w.Event(agent.Event{Kind: agent.EventText, Text: "working in " + ws + " now"})
+	_ = w.Close(agent.Result{Status: agent.StatusOK, Final: "done in " + ws})
+	var all string
+	for {
+		m, ok := s.next(t)
+		if !ok || m.event == "end" {
+			break
+		}
+		all += m.data
+	}
+	if strings.Contains(all, ws) || !strings.Contains(all, "working in . now") || !strings.Contains(all, "done in .") {
+		t.Errorf("the stream does not shorten the workspace:\n%s", all)
+	}
+}
+
+func TestTheBatchPageNamesItsRepositoryAndShortensItsPaths(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	repo := filepath.Join(t.TempDir(), "ada-os-ipc")
+	wt := filepath.Join(repo, ".hrn", "worktrees", "t1")
+	sep := string(filepath.Separator)
+	res := batch.Result{ID: "20261010-120000-abcdef", Started: time.Now().Add(-time.Minute), Duration: time.Minute, Dir: repo, Parallel: 1,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: "edit " + filepath.Join(wt, "a.go"), Status: batch.StatusFail, Branch: "hrn/t1", Worktree: wt,
+			Attempts: []batch.Attempt{{Backend: "codex", RunID: "20261010-120001-111111", Result: agent.Result{Status: agent.StatusOK},
+				Gates: []batch.GateResult{{Command: "go vet " + wt + "/...", ExitCode: 1, Output: filepath.Join(wt, "a.go") + ":3: bad"}}}}}}}
+	saveBatch(t, res)
+	h := New(context.Background(), Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+
+	phone := viewAs(t, h, "/batch/"+res.ID, "192.168.1.50:6000")
+	for _, bad := range []string{repo, "title="} {
+		if strings.Contains(phone, bad) {
+			t.Errorf("the phone's batch page holds %q", bad)
+		}
+	}
+	for _, want := range []string{"<dd>ada-os-ipc</dd>", "<dd>." + sep + filepath.Join(".hrn", "worktrees", "t1") + "</dd>",
+		"edit ." + sep + "a.go", "go vet ./...", "." + sep + "a.go:3: bad"} {
+		if !strings.Contains(phone, want) {
+			t.Errorf("the phone's batch page lacks %q", want)
+		}
+	}
+
+	local := viewAs(t, h, "/batch/"+res.ID, "127.0.0.1:5000")
+	for _, want := range []string{`<dd title="` + repo + `">ada-os-ipc</dd>`, `<dd title="` + wt + `">.`} {
+		if !strings.Contains(local, want) {
+			t.Errorf("this computer's batch page lacks %q", want)
+		}
+	}
+	if n := strings.Count(local, repo); n != 2 {
+		t.Errorf("this computer should see the full paths only as the two titles; they are there %d times", n)
+	}
+}

@@ -42,7 +42,10 @@ const (
 	inputHead, inputTail   = 6 << 10, 2 << 10
 )
 
-type fact struct{ Label, Value string }
+type fact struct {
+	Label, Value string
+	Title        string // shown on hover: the whole path, to this computer only
+}
 
 type page struct {
 	Title  string
@@ -255,7 +258,7 @@ type resultView struct {
 
 func resultOf(res agent.Result) resultView {
 	v := resultView{Status: string(res.Status), Class: statusClass(string(res.Status)), Error: res.Error}
-	add := func(label, value string) { v.Facts = append(v.Facts, fact{label, value}) }
+	add := func(label, value string) { v.Facts = append(v.Facts, fact{Label: label, Value: value}) }
 	backend := res.Backend
 	if res.Model != "" {
 		backend += " · " + res.Model
@@ -294,7 +297,7 @@ type runPage struct {
 	Stream        string // where the rest comes from; empty once it ended
 }
 
-func runPageOf(rec runlog.Record, events []eventView, last time.Time) runPage {
+func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) runPage {
 	p := runPage{page: page{Title: "Run " + rec.ID, Home: runlog.Home()}, ID: rec.ID, Continues: rec.Continues, Prompt: rec.Task.Prompt, Events: events}
 	p.PromptLine, p.PromptMore = firstLine(rec.Task.Prompt)
 	model := rec.Task.Model
@@ -305,8 +308,8 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time) runPage {
 	if model != "" {
 		backend += " · " + model
 	}
-	p.Facts = []fact{{"Backend", backend}, {"Mode", string(rec.Task.Mode)}, {"Workspace", rec.Task.Dir},
-		{"Started", rec.Started.Local().Format("2006-01-02 15:04:05")}}
+	p.Facts = []fact{{Label: "Backend", Value: backend}, {Label: "Mode", Value: string(rec.Task.Mode)},
+		v.place("Workspace", repoOf(rec.Task.Dir), rec.Task.Dir), {Label: "Started", Value: rec.Started.Local().Format("2006-01-02 15:04:05")}}
 	if rec.Done {
 		r := resultOf(rec.Result)
 		p.Result = &r
@@ -526,27 +529,28 @@ type gateView struct {
 	Output, More                    string
 }
 
-func batchBodyOf(res batch.Result) batchBody {
+func batchBodyOf(res batch.Result, v viewer) batchBody {
 	r := batchRow(res)
 	b := batchBody{Status: r.Status, Class: r.Class, Since: r.Since}
-	b.Facts = []fact{{"Repository", res.Dir}, {"Base", tools.ShortSHA(res.Base)}, {"Tasks", r.Tasks},
-		{"Parallel", fmt.Sprint(res.Parallel)}, {"Started", res.Started.Local().Format("2006-01-02 15:04:05")}}
+	b.Facts = []fact{v.place("Repository", repoOf(res.Dir), res.Dir), {Label: "Base", Value: tools.ShortSHA(res.Base)}, {Label: "Tasks", Value: r.Tasks},
+		{Label: "Parallel", Value: fmt.Sprint(res.Parallel)}, {Label: "Started", Value: res.Started.Local().Format("2006-01-02 15:04:05")}}
 	if !batchGoing(res) {
-		b.Facts = append(b.Facts, fact{"Duration", short(res.Duration)})
+		b.Facts = append(b.Facts, fact{Label: "Duration", Value: short(res.Duration)})
 	}
+	repo := v.shortener(res.Dir)
 	for _, t := range res.Tasks {
 		tv := taskView{ID: t.ID, Status: string(t.Status), Class: statusClass(string(t.Status)), Prompt: t.Prompt, Error: t.Error,
 			Waiting: t.Status == batch.StatusRunning && len(t.Attempts) == 0}
 		tv.PromptLine, tv.PromptMore = firstLine(t.Prompt)
-		tv.Facts = []fact{{"Branch", t.Branch}}
+		tv.Facts = []fact{{Label: "Branch", Value: t.Branch}}
 		if t.Commit != "" {
-			tv.Facts = append(tv.Facts, fact{"Commit", tools.ShortSHA(t.Commit)})
+			tv.Facts = append(tv.Facts, fact{Label: "Commit", Value: tools.ShortSHA(t.Commit)})
 		}
 		if t.Worktree != "" {
-			tv.Facts = append(tv.Facts, fact{"Worktree", t.Worktree})
+			tv.Facts = append(tv.Facts, v.place("Worktree", repo.shorten(t.Worktree), t.Worktree))
 		}
 		if t.Status != batch.StatusRunning {
-			tv.Facts = append(tv.Facts, fact{"Took", short(t.Duration)})
+			tv.Facts = append(tv.Facts, fact{Label: "Took", Value: short(t.Duration)})
 		}
 		for i, a := range t.Attempts {
 			av := attemptView{N: i + 1, Backend: a.Backend, RunID: a.RunID, Error: a.Error, Continued: a.Continued,
@@ -589,8 +593,8 @@ func batchBodyOf(res batch.Result) batchBody {
 	return b
 }
 
-func batchPageOf(res batch.Result) batchPage {
-	p := batchPage{page: page{Title: "Batch " + res.ID, Home: runlog.Home()}, ID: res.ID, Body: batchBodyOf(res)}
+func batchPageOf(res batch.Result, v viewer) batchPage {
+	p := batchPage{page: page{Title: "Batch " + res.ID, Home: runlog.Home()}, ID: res.ID, Body: batchBodyOf(res, v)}
 	if batchGoing(res) {
 		p.Stream = "/stream/batch/" + res.ID
 	}

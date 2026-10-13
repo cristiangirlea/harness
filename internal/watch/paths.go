@@ -1,11 +1,16 @@
 package watch
 
 import (
+	"encoding/json"
 	"os"
 	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // A run's text names its workspace, the user's home and the programs it ran
@@ -197,4 +202,77 @@ func program(s string, i, j int, windows bool) (int, string) {
 		return 0, ""
 	}
 	return end, name
+}
+
+// viewer is who a page is for: whether they sit at this computer, and the
+// paths their pages are shortened by.
+type viewer struct {
+	local  bool
+	home   string
+	system []string
+}
+
+func (v viewer) shortener(workspace string) shortener {
+	return newShortener(workspace, v.home, v.system)
+}
+
+// place is a path as a page's fact shows it: by name, with the whole path as
+// the hover title for this computer only, as it names the user's account.
+func (v viewer) place(label, name, full string) fact {
+	f := fact{Label: label, Value: name}
+	if v.local && full != name {
+		f.Title = full
+	}
+	return f
+}
+
+// The shortening runs after secrets are blanked (cleanEvent, cleanRecord,
+// cleanBatch), on what a record says, before any cut.
+
+func (sh shortener) event(e agent.Event) agent.Event {
+	e.Text = sh.shorten(e.Text)
+	if len(e.Input) > 0 {
+		e.Input = json.RawMessage(sh.shorten(string(e.Input)))
+	}
+	return e
+}
+
+// record shortens what a run's page shows from its record; Task.Dir stays
+// whole, for the Workspace fact.
+func (sh shortener) record(rec runlog.Record) runlog.Record {
+	rec.Task.Prompt = sh.shorten(rec.Task.Prompt)
+	rec.Result.Final = sh.shorten(rec.Result.Final)
+	rec.Result.Error = sh.shorten(rec.Result.Error)
+	return rec
+}
+
+// batch shortens what a batch's page shows: each task's text by its own
+// worktree (the repository when it has none). Dir and Worktree stay whole,
+// for the facts.
+func (v viewer) batch(res batch.Result) batch.Result {
+	tasks := make([]batch.TaskResult, len(res.Tasks))
+	for i, t := range res.Tasks {
+		ws := t.Worktree
+		if ws == "" {
+			ws = res.Dir
+		}
+		sh := v.shortener(ws)
+		t.Prompt, t.Error = sh.shorten(t.Prompt), sh.shorten(t.Error)
+		attempts := make([]batch.Attempt, len(t.Attempts))
+		for j, a := range t.Attempts {
+			a.Prompt, a.Error = sh.shorten(a.Prompt), sh.shorten(a.Error)
+			a.Result.Final, a.Result.Error = sh.shorten(a.Result.Final), sh.shorten(a.Result.Error)
+			gates := make([]batch.GateResult, len(a.Gates))
+			for k, g := range a.Gates {
+				g.Command, g.Output = sh.shorten(g.Command), sh.shorten(g.Output)
+				gates[k] = g
+			}
+			a.Gates = gates
+			attempts[j] = a
+		}
+		t.Attempts = attempts
+		tasks[i] = t
+	}
+	res.Tasks = tasks
+	return res
 }

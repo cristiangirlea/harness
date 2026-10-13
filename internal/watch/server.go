@@ -239,6 +239,8 @@ type server struct {
 	ctx    context.Context // ends every stream when the server stops
 	opt    Options
 	redact *strings.Replacer // blanks secret values; see secretReplacer
+	home   string            // the user's home folder, shown as ~
+	system []string          // folders whose programs are shown by name; see systemFolders
 	access *accessVerifier
 	logMu  sync.Mutex
 }
@@ -252,7 +254,8 @@ func New(ctx context.Context, opt Options) http.Handler {
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ())}
+	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ()), system: systemFolders()}
+	s.home, _ = os.UserHomeDir()
 	if opt.Public != nil {
 		s.access = &accessVerifier{opt: *opt.Public}
 	}
@@ -532,6 +535,10 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	s.page(w, http.StatusOK, "index", p)
 }
 
+func (s *server) viewerOf(r *http.Request) viewer {
+	return viewer{local: s.fromThisComputer(r), home: s.home, system: s.system}
+}
+
 // fromThisComputer: the connection came from a loopback address. A request
 // to this computer's network address comes from that address, not loopback.
 func (s *server) fromThisComputer(r *http.Request) bool {
@@ -563,15 +570,17 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Run "+rec.ID, err)
 		return
 	}
+	vw := s.viewerOf(r)
+	sh := vw.shortener(rec.Task.Dir)
 	prev := rec.Started
 	events := make([]eventView, 0, len(lines))
 	for _, l := range lines {
 		var v eventView
-		l.Event = s.cleanEvent(l.Event)
+		l.Event = sh.event(s.cleanEvent(l.Event))
 		v, prev = eventOf(l, prev)
 		events = append(events, v)
 	}
-	p := runPageOf(s.cleanRecord(rec), events, prev)
+	p := runPageOf(sh.record(s.cleanRecord(rec)), events, prev, vw)
 	p.Home = s.homeFor(r)
 	if !done {
 		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
@@ -589,7 +598,8 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Batch "+r.PathValue("id"), err)
 		return
 	}
-	p := batchPageOf(s.cleanBatch(res))
+	vw := s.viewerOf(r)
+	p := batchPageOf(vw.batch(s.cleanBatch(res)), vw)
 	p.Home = s.homeFor(r)
 	s.page(w, http.StatusOK, "batch", p)
 }
@@ -754,6 +764,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
 	}
+	vw := s.viewerOf(r)
 	st := s.startStream(w)
 	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, bool, error) {
 		res, err := batch.LoadResult(id)
@@ -765,7 +776,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 			res = last
 		}
 		last = res
-		return batchBodyOf(s.cleanBatch(res)), !batchGoing(res), nil
+		return batchBodyOf(vw.batch(s.cleanBatch(res)), vw), !batchGoing(res), nil
 	}, "batchbody")
 }
 
@@ -795,12 +806,13 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	if prev.IsZero() {
 		prev = rec.Started
 	}
+	sh := s.viewerOf(r).shortener(rec.Task.Dir)
 	st := s.startStream(w)
 	s.loop(r, st, s.opt.Poll, func() (bool, error) {
 		lines, rec, done, err := f.Poll()
 		for _, l := range lines {
 			var v eventView
-			l.Event = s.cleanEvent(l.Event)
+			l.Event = sh.event(s.cleanEvent(l.Event))
 			v, prev = eventOf(l, prev)
 			html, rerr := s.render("event", v)
 			if rerr != nil {
@@ -816,7 +828,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		if !done {
 			return false, nil
 		}
-		html, err := s.render("result", resultOf(s.cleanRecord(rec).Result))
+		html, err := s.render("result", resultOf(sh.record(s.cleanRecord(rec)).Result))
 		if err != nil {
 			return true, s.problem(r, st, err)
 		}
