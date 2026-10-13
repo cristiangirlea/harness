@@ -28,8 +28,7 @@ const DefaultMax = 4
 
 const lockReason = "hrn ws slot"
 
-// createLockWait bounds how long a take waits for the slots' .create.lock,
-// and is the age past which that lock counts as left by a crash.
+// createLockWait bounds how long a take waits for the slots' .create.lock.
 var createLockWait = 2 * time.Minute
 
 // Lease is the JSON in <n>.lease: who holds the slot, since when, and the
@@ -495,40 +494,41 @@ func lockExisting(ctx context.Context, main, path string) (skip string, err erro
 	return "", nil
 }
 
-// lockCreate creates dir's .create.lock with O_EXCL, waiting for whoever
-// holds it, and returns the function that removes it. Takes, in this process
+// lockCreate takes an OS lock on dir's .create.lock, waiting for whoever
+// holds it, and returns the function that releases it. Takes, in this process
 // or another, hold it while they add, list or lock worktrees: git writes a
 // new worktree's admin folder in steps, and every git command that lists the
 // worktrees dies on one half written (issue #188).
 //
-// A lock older than createLockWait is taken as left by a crash and removed,
-// since its holder only runs a few git commands. Removing one a slow holder
-// still uses is safe enough: the lease, not this lock, keeps two takes off
-// one slot, so the worst case is a slot skipped as before this lock existed.
+// The OS releases the lock when its holder closes the file or dies, so a
+// crash leaves only the file, which is never removed and blocks nobody.
 func lockCreate(ctx context.Context, dir string) (unlock func(), err error) {
 	p := filepath.Join(dir, ".create.lock")
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, err
+	}
 	deadline := time.Now().Add(createLockWait)
 	delay := 10 * time.Millisecond
 	for {
-		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err == nil {
+		ok, err := tryLock(f)
+		if err != nil {
 			f.Close()
-			return func() { removeOwn(p) }, nil
+			return nil, fmt.Errorf("locking %s: %w", p, err)
 		}
-		if !errors.Is(err, fs.ErrExist) {
-			return nil, err
-		}
-		if info, err := os.Stat(p); err == nil && time.Since(info.ModTime()) > createLockWait {
-			if err := removeOwn(p); err != nil {
-				return nil, fmt.Errorf("removing %s, left by a crash: %w", p, err)
-			}
-			continue
+		if ok {
+			return func() {
+				unlockFile(f)
+				f.Close()
+			}, nil
 		}
 		if time.Now().After(deadline) {
+			f.Close()
 			return nil, fmt.Errorf("waited %s for %s, which other takes kept holding", createLockWait, p)
 		}
 		select {
 		case <-ctx.Done():
+			f.Close()
 			return nil, ctx.Err()
 		case <-time.After(delay):
 		}
