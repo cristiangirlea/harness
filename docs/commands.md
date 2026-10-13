@@ -35,8 +35,10 @@ Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api, codex and claude: low, medium, high, xhigh, max; unset uses the
 backend default; gemini and opencode report it as not enforced),
 `--json` (JSONL event stream for scripts), `--thinking`,
-`--mcp FILE` (repeatable), `--no-instructions`, `--lean` (claude: start without your
-settings, plugins, hooks, skills and MCP servers; see [Lean claude workers](backends.md#lean-claude-workers)),
+`--mcp FILE` (repeatable), `--no-instructions`, `--lean` (claude: only the run's
+`--mcp` servers, your settings, rules and skills still load; see [Lean claude workers](backends.md#lean-claude-workers)),
+`--compact-window N` (claude: compact at N tokens, 100000 to 1000000, or `auto`; see
+[Compaction window](backends.md#compaction-window)),
 `--allow-dangerous`, `--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
 budgets below.

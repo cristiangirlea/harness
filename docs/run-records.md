@@ -8,7 +8,8 @@
 
 - `task.json` — prompt, dir, backend, and the run options by their flag names
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
-  `timeout_ns` and still load)
+  `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
+  off, or absent; `compact_window` is a number or `"auto"`)
   and, for exec runs, the supervisor's `attempt_id`
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,10 +43,19 @@ type Options struct {
 	// instead of being resent every turn.
 	NoContextEdits bool `json:"no_context_edits,omitempty" desc:"Keep every tool result in the request instead of letting the server clear old ones (api backend)."`
 
-	// Lean starts the claude CLI with only this run's MCP configs and only the
-	// project's settings, so the operator's plugins, hooks, skills and other
-	// MCP servers stay out of every turn's context. The guard is unchanged.
-	Lean bool `json:"lean,omitempty" desc:"Start the claude CLI without the user's settings, plugins, hooks, skills and MCP servers: only the project's settings and this run's --mcp files (claude backend)."`
+	// Lean starts the claude CLI with only this run's MCP configs, so the
+	// operator's other MCP servers stay out of every turn's context. Settings,
+	// rules, hooks, plugins and skills still load. The guard is unchanged.
+	// Unset (nil) takes the entry point's default: on for a batch or eval
+	// task on a backend that applies it, off for hrn run and the MCP run tool;
+	// an explicit false is kept, also over a spec's true.
+	Lean *bool `json:"lean,omitempty" desc:"Start the claude CLI with only this run's --mcp servers: none of your other MCP servers, plugin servers or claude.ai connectors; your settings, rules, plugins and skills still load (claude backend)."`
+
+	// CompactWindow is the context size, in tokens, at which the claude CLI
+	// compacts the conversation (--autocompact): 100000 to 1000000, or
+	// "auto". Unset keeps Claude Code's own threshold, which on a 1M-window
+	// model is close to the whole window (#204).
+	CompactWindow CompactWindow `json:"compact_window,omitempty" desc:"Compact the claude CLI's conversation at this many tokens of context: 100000 to 1000000, or auto (claude backend)."`
 
 	// AllowDangerous lifts the guard: the api backend's command guard, which
 	// otherwise refuses a few command lines (git push, sudo, rm -rf /, curl |
@@ -69,6 +79,12 @@ type Options struct {
 	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its plan's usage limit, instead of carrying on on the other of claude and codex."`
 }
 
+// IsLean reports whether lean is on: set, and true.
+func (o Options) IsLean() bool { return o.Lean != nil && *o.Lean }
+
+// Bool returns a pointer to v, for an option that is set or left unset.
+func Bool(v bool) *bool { return &v }
+
 // Validate rejects what the API or hrn would refuse, where the values are typed
 // rather than after an agent has started. An empty mode passes: each entry
 // point has its own default.
@@ -80,6 +96,9 @@ func (o Options) Validate() error {
 	}
 	if o.Effort != "" && !slices.Contains(EffortLevels, o.Effort) {
 		return fmt.Errorf("unknown effort %q (want %s)", o.Effort, strings.Join(EffortLevels, ", "))
+	}
+	if err := o.CompactWindow.check(); err != nil {
+		return err
 	}
 	if o.AllowDangerous && tools.Guarded() {
 		return ErrGuardedRun
@@ -95,7 +114,8 @@ var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run:
 
 // Over returns o with every unset field taken from base: a task's options over
 // its spec's. A switch left off inherits the spec's, so a task can turn one on
-// but not back off; a list left nil inherits, and an empty list stays empty.
+// but not back off, except lean, which is unset only when nil; a list left nil
+// inherits, and an empty list stays empty.
 func (o Options) Over(base Options) Options {
 	ov, bv := reflect.ValueOf(&o).Elem(), reflect.ValueOf(base)
 	for i := 0; i < ov.NumField(); i++ {
@@ -124,6 +144,8 @@ func (Options) Schema() map[string]any {
 			p["enum"] = names
 		case reflect.TypeOf(Duration(0)):
 			p["type"] = "string"
+		case reflect.TypeOf(CompactWindow("")):
+			p["type"] = []any{"integer", "string"} // a token count, or "auto"
 		default:
 			switch f.Type.Kind() {
 			case reflect.String:
@@ -133,6 +155,11 @@ func (Options) Schema() map[string]any {
 			case reflect.Float64:
 				p["type"] = "number"
 			case reflect.Bool:
+				p["type"] = "boolean"
+			case reflect.Pointer:
+				if f.Type.Elem().Kind() != reflect.Bool {
+					panic(fmt.Sprintf("agent.Options.%s: no schema for %s", f.Name, f.Type))
+				}
 				p["type"] = "boolean"
 			case reflect.Slice:
 				p["type"] = "array"
@@ -164,6 +191,8 @@ func BindFlags(fs *flag.FlagSet, o *Options) {
 			fs.Float64Var(p, name, *p, desc)
 		case *bool:
 			fs.BoolVar(p, name, *p, desc)
+		case **bool:
+			fs.Var(setBool{p}, name, desc)
 		case *[]string:
 			fs.Var((*stringList)(p), name, desc)
 		case flag.Value:
@@ -238,6 +267,81 @@ func (d *Duration) Set(s string) error {
 		return fmt.Errorf("%q is not a duration like 20m", s)
 	}
 	*d = Duration(v)
+	return nil
+}
+
+// setBool is a boolean flag that stays nil until it is given, so that an
+// absent flag and --x=false differ.
+type setBool struct{ p **bool }
+
+func (b setBool) String() string {
+	if b.p == nil || *b.p == nil {
+		return ""
+	}
+	return strconv.FormatBool(**b.p)
+}
+
+func (b setBool) Set(s string) error {
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		return err
+	}
+	*b.p = &v
+	return nil
+}
+
+func (setBool) IsBoolFlag() bool { return true }
+
+// CompactWindow is "auto" or a token count from 100000 to 1000000 in decimal,
+// as claude --autocompact takes it. A spec or call writes the count as a
+// number, and a record stores it the same way.
+type CompactWindow string
+
+const minCompactWindow, maxCompactWindow = 100000, 1000000
+
+func (w CompactWindow) check() error {
+	if w == "" || w == "auto" {
+		return nil
+	}
+	if n, err := strconv.Atoi(string(w)); err == nil && strconv.Itoa(n) == string(w) && n >= minCompactWindow && n <= maxCompactWindow {
+		return nil
+	}
+	return fmt.Errorf("compact_window %q: want a plain decimal integer from %d to %d (no sign or leading zeros), or \"auto\"", string(w), minCompactWindow, maxCompactWindow)
+}
+
+func (w CompactWindow) String() string { return string(w) }
+
+// Set parses a flag value, so a *CompactWindow is a flag.Value.
+func (w *CompactWindow) Set(s string) error {
+	if err := CompactWindow(s).check(); err != nil {
+		return err
+	}
+	*w = CompactWindow(s)
+	return nil
+}
+
+func (w CompactWindow) MarshalJSON() ([]byte, error) {
+	if w == "auto" {
+		return json.Marshal("auto")
+	}
+	return []byte(w), nil
+}
+
+func (w *CompactWindow) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*w = ""
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		*w = CompactWindow(strconv.Itoa(n))
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil || s != "auto" {
+		return fmt.Errorf("compact_window %s: want an integer from %d to %d, or \"auto\"", data, minCompactWindow, maxCompactWindow)
+	}
+	*w = "auto"
 	return nil
 }
 

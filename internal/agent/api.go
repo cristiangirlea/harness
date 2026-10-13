@@ -98,6 +98,11 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text})
 	}
+	if task.CompactWindow != "" {
+		// The api loop has no compaction of its own; context editing, on by
+		// default, is what keeps its requests small.
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "compact_window: not enforced by the api backend"})
+	}
 	// req is built below; saveConversation closes over it so every exit path
 	// leaves a resumable history behind.
 	var req apiRequest

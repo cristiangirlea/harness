@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -37,6 +38,9 @@ func init() {
 		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt+"\n"), 0o644)
 		return agent.Result{Backend: "wb-ok", Status: agent.StatusOK, Final: "wrote out.txt", Turns: 2}
 	}})
+	agent.Register(leanStub{stub{"wb-lean", func(_ context.Context, task agent.Task) agent.Result {
+		return agent.Result{Backend: "wb-lean", Status: agent.StatusOK, Final: "nothing", Turns: 1}
+	}}})
 	agent.Register(stub{"wb-file", func(_ context.Context, task agent.Task) agent.Result {
 		name := strings.Fields(task.Prompt)[0] + ".txt"
 		_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(task.Prompt+"\n"), 0o644)
@@ -1160,20 +1164,29 @@ func TestNoContextEditsReachesTheTask(t *testing.T) {
 	}
 }
 
+// leanStub is a backend that applies lean, as claude does.
+type leanStub struct{ stub }
+
+func (leanStub) AppliesLean() bool { return true }
+
 func TestLeanReachesTheTask(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
 		{ID: "default", Prompt: "a"},
-		{ID: "lean", Prompt: "a", Options: agent.Options{Lean: true}},
+		{ID: "lean", Prompt: "a", Options: agent.Options{Lean: agent.Bool(true)}},
+		{ID: "lean-default", Prompt: "a", Backend: "wb-lean"},
+		{ID: "not-lean", Prompt: "a", Backend: "wb-lean", Options: agent.Options{Lean: agent.Bool(false)}},
 	}})
-	for i, want := range []bool{false, true} {
-		if rec := firstRun(t, res.Tasks[i]); rec.Task.Lean != want {
+	// Lean is the default where the backend applies it; elsewhere an unset
+	// lean stays unset, so the record does not claim what did not happen.
+	for i, want := range []*bool{nil, agent.Bool(true), agent.Bool(true), agent.Bool(false)} {
+		if rec := firstRun(t, res.Tasks[i]); !reflect.DeepEqual(rec.Task.Lean, want) {
 			t.Errorf("%s: Lean = %v, want %v", res.Tasks[i].ID, rec.Task.Lean, want)
 		}
 	}
-	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{Prompt: "a"}}, Options: agent.Options{Lean: true}})
-	if rec := firstRun(t, res.Tasks[0]); !rec.Task.Lean {
-		t.Error("a spec-wide lean must reach every task")
+	res, _ = run(t, Spec{Dir: dir, Backend: "wb-lean", Tasks: []Task{{Prompt: "a"}}, Options: agent.Options{Lean: agent.Bool(false)}})
+	if rec := firstRun(t, res.Tasks[0]); rec.Task.IsLean() {
+		t.Error("a spec-wide lean false must reach every task")
 	}
 }
 

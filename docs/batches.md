@@ -30,7 +30,9 @@ Every option `hrn run` takes as a flag is a spec field under the same name with
 underscores (`--max-turns` is `max_turns`, `--max-cost` is `max_cost_usd`), on the spec
 or on a task; the MCP `run` tool takes the same names. They are one struct in the code
 (`agent.Options`), so the three cannot drift apart. A task's value replaces the spec's;
-a switch a task turns on stays on; a task's own `mcp` list replaces the spec's, and an
+a switch a task turns on stays on, except `lean`, which is on by default for tasks on
+claude and which a task can set to `false` (see
+[Lean claude workers](backends.md#lean-claude-workers)); a task's own `mcp` list replaces the spec's, and an
 empty list (`"mcp": []`) means no servers at all, not even `~/.hrn/mcp.json`. Every list
 is checked before the first task starts.
 

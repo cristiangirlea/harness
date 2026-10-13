@@ -672,6 +672,19 @@ neither of them follows a run while it happens.
 - 2026-10-13: gc tests under the guard (#120, PR #205). The fixture's git now drops
   passed-down git config like gc's own git, so `go test ./...` passes inside an hrn run.
   The guard's refusal of pushes to real remotes remains tested in internal/tools.
+- 2026-10-13: issue #204 (PR #207): lean dropped the owner's own rules, plugins and skills, which
+  workers must keep. Decided: lean is `--strict-mcp-config` only (no `--setting-sources`), so
+  it drops only MCP servers hrn did not pass (the user's, plugin-provided ones and claude.ai
+  connectors). `lean` became a `*bool` in `agent.Options`: unset means the entry point's
+  default, `false` is honoured over a spec's `true` (the one switch a task can turn back
+  off). The JSON is unchanged (`true` or absent, now also `false`), so old records load.
+  Batch, and with it eval and the MCP `batch` tool, makes lean the default per attempt only
+  on a backend that applies it (`agent.AppliesLean`, claude), so a codex task's record does
+  not claim lean and prints no `not enforced` line; `hrn run` and MCP `run` stay opt-in. New
+  `compact_window` (an integer 100000-1000000 or `"auto"`, as `claude --autocompact` takes
+  it; it accepts the bare integer) is passed to claude only and reported as not enforced by
+  the other backends, the api loop included. Measured: lean 55.1K context against 61.7K by
+  default on a two-turn task (docs/backends.md).
 - 2026-10-13: issue #200 (PR #201): a claude worker inherited every plugin, skill, hook and MCP
   server of the operator's, about 64K tokens of context on every turn of a tiny task. Decided:
   an additive `lean` option (`--lean`, spec, task and MCP `run` field, off by default) that
