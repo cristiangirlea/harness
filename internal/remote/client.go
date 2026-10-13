@@ -124,9 +124,8 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 		response, err := watchClient.Do(request)
 		if err == nil {
 			if response.StatusCode != http.StatusOK {
-				data, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
 				response.Body.Close()
-				err = fmt.Errorf("control service %d: %s", response.StatusCode, strings.TrimSpace(string(data)))
+				err = &HTTPError{Status: response.StatusCode}
 				if response.StatusCode < 500 {
 					return err
 				}

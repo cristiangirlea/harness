@@ -68,3 +68,24 @@ func TestNewFromEnvAllowsPlainHTTPOnlyForLoopbackIPLiteral(t *testing.T) {
 		t.Fatalf("loopback IP URL %q: %v", server.URL, err)
 	}
 }
+
+func TestWatchErrorNamesTheStatusWithoutTheResponseBody(t *testing.T) {
+	const body = "untrusted response with credentials and terminal output"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		io.WriteString(w, body)
+	}))
+	defer server.Close()
+	t.Setenv("HRN_SERVER_URL", server.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	client, err := NewFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.Watch(context.Background(), "/v1/jobs/j_fixture/events", 0, io.Discard)
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusForbidden || strings.Contains(err.Error(), body) {
+		t.Fatalf("watch error = %v, want HTTP 403 without response body", err)
+	}
+}
