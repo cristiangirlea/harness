@@ -34,8 +34,10 @@ func TestRunShellExitCodeAndOutput(t *testing.T) {
 func TestRunShellTimeoutKillsTheTree(t *testing.T) {
 	started := time.Now()
 	// sleep is a grandchild of the shell; without a tree kill it would keep
-	// the output pipe open and Run would block for the full 30s.
-	res, err := RunShell(context.Background(), t.TempDir(), "echo started; sleep 30; echo late", 500*time.Millisecond, nil)
+	// the output pipe open and Run would block for the full 30s. The timeout
+	// leaves a busy Windows PC time to start Git's bash and print "started"
+	// (500ms did not, #68); it stays far below the 10s bound checked below.
+	res, err := RunShell(context.Background(), t.TempDir(), "echo started; sleep 30; echo late", 3*time.Second, nil)
 	if err != nil || !res.TimedOut || res.ExitCode != -1 {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
