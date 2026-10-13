@@ -203,3 +203,168 @@ func TestHTTPClientDisconnectControlRestartAndWorkerCompletion(t *testing.T) {
 		t.Fatalf("SSE event: %q %v", line, err)
 	}
 }
+
+func TestHTTPWrongOperatorAndScalerTokensOfValidLengthAreRefused(t *testing.T) {
+	store := testStore(t)
+	operator := "operator-token-abcdefghijklmnopqrstuvwxyz"
+	scaler := "scaler-token-abcdefghijklmnopqrstuvwxyz12"
+	server := httptest.NewServer((&HTTPServer{Store: store, OperatorToken: operator, ScalerToken: scaler}).Handler())
+	defer server.Close()
+	for _, tc := range []struct {
+		name, path, token string
+	}{
+		{"wrong operator token", "/v1/tenants", "operator-token-abcdefghijklmnopqrstuvwxzz"},
+		{"wrong scaler token", "/internal/scaling/projects/missing", "scaler-token-abcdefghijklmnopqrstuvwxzz12"},
+		{"scaler token on operator route", "/v1/tenants", scaler},
+		{"operator token on scaling route", "/internal/scaling/projects/missing", operator},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			method := "GET"
+			if tc.path == "/v1/tenants" {
+				method = "POST"
+			}
+			status, raw := sendJSON(t, server.Client(), method, server.URL+tc.path, tc.token, map[string]string{"name": "denied"})
+			if status != http.StatusUnauthorized {
+				t.Fatalf("status %d, want 401: %s", status, raw)
+			}
+		})
+	}
+}
+
+func TestHTTPTenantCannotReadCancelOrStreamAnotherTenantsJob(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	_, tenantAToken, err := store.CreateTenant(ctx, "tenant-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectB, _ := testProject(t, store)
+	job, _, err := store.Submit(ctx, testSubmission(projectB, "", "private job"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&HTTPServer{Store: store}).Handler())
+	defer server.Close()
+	url := server.URL + "/v1/jobs/" + job.ID + "?tenant_id=" + projectB.TenantID + "&project_id=" + projectB.ID
+	for _, tc := range []struct{ name, method, path string }{
+		{"read", "GET", url},
+		{"cancel", "POST", server.URL + "/v1/jobs/" + job.ID + "/cancel?tenant_id=" + projectB.TenantID + "&project_id=" + projectB.ID},
+		{"stream events", "GET", server.URL + "/v1/jobs/" + job.ID + "/events?tenant_id=" + projectB.TenantID + "&project_id=" + projectB.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(tc.method, tc.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer "+tenantAToken)
+			if tc.name == "stream events" {
+				req.Header.Set("Accept", "text/event-stream")
+			}
+			response, err := server.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusNotFound {
+				t.Fatalf("status %d, want 404", response.StatusCode)
+			}
+		})
+	}
+}
+
+func TestHTTPProjectWorkerCannotActOnAnotherProjectsJob(t *testing.T) {
+	store := testStore(t)
+	projectA, workerAToken := testProject(t, store)
+	projectB, _ := testProject(t, store)
+	job, _, err := store.Submit(context.Background(), testSubmission(projectB, "", "private job"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&HTTPServer{Store: store}).Handler())
+	defer server.Close()
+	worker := workerRequest{ProjectID: projectB.ID, WorkerID: "worker-a", Generation: 1}
+	for _, tc := range []struct {
+		name, path string
+		body       any
+	}{
+		{"claim", "/internal/projects/" + projectB.ID + "/claim", map[string]string{"worker_id": "worker-a"}},
+		{"heartbeat", "/internal/jobs/" + job.ID + "/heartbeat", worker},
+		{"checkpoint", "/internal/jobs/" + job.ID + "/checkpoint", checkpointRequest{worker, agent.APICheckpoint{Version: 1, Sequence: 1, Boundary: "model_intent", TaskDigest: "digest"}}},
+		{"finish", "/internal/jobs/" + job.ID + "/finish", finishRequest{worker, agent.Result{Backend: "api", Status: agent.StatusError}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, raw := sendJSON(t, server.Client(), "POST", server.URL+tc.path, workerAToken, tc.body)
+			if status != http.StatusNotFound {
+				t.Fatalf("project %s token against project B: status %d, want 404: %s", projectA.ID, status, raw)
+			}
+		})
+	}
+}
+
+func TestHTTPSubmissionRejectsNonReadonlyModeAndZeroCost(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	tenantID, tenantToken, err := store.CreateTenant(ctx, "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := store.CreateProject(ctx, Project{TenantID: tenantID, Name: "project", RepositoryURL: "https://example.invalid/example.git", BaseRef: fixtureRef, Backend: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&HTTPServer{Store: store}).Handler())
+	defer server.Close()
+	url := server.URL + "/v1/projects/" + project.ID + "/jobs"
+	for _, tc := range []struct {
+		name string
+		edit func(*Submission)
+		want int
+	}{
+		{"non readonly mode", func(input *Submission) { input.Options.Mode = "invalid" }, http.StatusBadRequest},
+		{"zero cost ceiling", func(input *Submission) { input.Options.MaxCostUSD = 0 }, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := testSubmission(project, "", "inspect")
+			tc.edit(&input)
+			status, raw := sendJSON(t, server.Client(), "POST", url, tenantToken, input)
+			if status != tc.want {
+				t.Fatalf("status %d, want %d: %s", status, tc.want, raw)
+			}
+		})
+	}
+}
+
+func TestHTTPCheckpointRejectsSkippedAndReplayedSequences(t *testing.T) {
+	store := testStore(t)
+	project, workerToken := testProject(t, store)
+	ctx := context.Background()
+	job, _, err := store.Submit(ctx, testSubmission(project, "", "checkpoint order"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AdmitOne(ctx); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.Claim(ctx, project.ID, "owner")
+	if err != nil || claimed.ID != job.ID {
+		t.Fatalf("claim: %+v %v", claimed, err)
+	}
+	server := httptest.NewServer((&HTTPServer{Store: store}).Handler())
+	defer server.Close()
+	url := server.URL + "/internal/jobs/" + job.ID + "/checkpoint"
+	request := checkpointRequest{workerRequest{ProjectID: project.ID, WorkerID: "owner", Generation: claimed.Generation},
+		agent.APICheckpoint{Version: 1, Sequence: 2, Boundary: "model_intent", TaskDigest: "digest"}}
+	status, raw := sendJSON(t, server.Client(), "POST", url, workerToken, request)
+	if status != http.StatusConflict {
+		t.Fatalf("skipped sequence: status %d, want 409: %s", status, raw)
+	}
+	request.Checkpoint.Sequence = 1
+	status, raw = sendJSON(t, server.Client(), "POST", url, workerToken, request)
+	if status != http.StatusOK {
+		t.Fatalf("first sequence: status %d, want 200: %s", status, raw)
+	}
+	status, raw = sendJSON(t, server.Client(), "POST", url, workerToken, request)
+	if status != http.StatusConflict {
+		t.Fatalf("replayed sequence: status %d, want 409: %s", status, raw)
+	}
+}

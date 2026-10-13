@@ -134,6 +134,69 @@ func TestRepositoryMigrationUpgradesEmptyLegacyStore(t *testing.T) {
 	}
 }
 
+func TestRepositoryMigrationLeavesVersionTwoDatabaseUnchanged(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	type migration struct {
+		version int
+		applied time.Time
+	}
+	readVersions := func() []migration {
+		t.Helper()
+		rows, err := s.db.Query(ctx, "SELECT version, applied_at FROM schema_migrations ORDER BY version")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var versions []migration
+		for rows.Next() {
+			var row migration
+			if err := rows.Scan(&row.version, &row.applied); err != nil {
+				t.Fatal(err)
+			}
+			versions = append(versions, row)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return versions
+	}
+	before := readVersions()
+	if len(before) != 2 || before[0].version != 1 || before[1].version != 2 {
+		t.Fatalf("unexpected starting schema versions: %+v", before)
+	}
+	for i := 0; i < 2; i++ {
+		if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
+			t.Fatalf("migration on version 2, pass %d: %v", i+1, err)
+		}
+	}
+	after := readVersions()
+	if len(after) != len(before) {
+		t.Fatalf("migration changed version count: before=%+v after=%+v", before, after)
+	}
+	for i := range before {
+		if before[i].version != after[i].version || !before[i].applied.Equal(after[i].applied) {
+			t.Fatalf("migration changed version record: before=%+v after=%+v", before, after)
+		}
+	}
+}
+
+func TestRepositoryOpenRejectsVersionOneDatabase(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(ctx, "DELETE FROM schema_migrations WHERE version=2"); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(ctx, s.db.Config().ConnString())
+	if opened != nil {
+		opened.Close()
+		t.Fatal("Open accepted a version 1 database")
+	}
+	if err == nil || !strings.Contains(err.Error(), "unsupported schema version 1") {
+		t.Fatalf("Open error for version 1: %v", err)
+	}
+}
+
 func TestPostgresMigrationAndScopedSubmission(t *testing.T) {
 	s := testStore(t)
 	p, token := testProject(t, s)
