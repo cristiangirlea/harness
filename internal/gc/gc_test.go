@@ -627,6 +627,22 @@ func TestGCRemovesAFinishedBatchWorktreeOnlyWhenItsCommitIsOnTheDefaultBranch(t 
 	wantVerdict(t, find(t, wts, running), Keep, "still running")
 }
 
+// A batch task's slot is a locked worktree that outlives the batch: even when
+// the task's commit has landed, the slot stays for the next take.
+func TestGCKeepsABatchSlotWhoseCommitLandedBecauseItIsLocked(t *testing.T) {
+	f := newFixture(t)
+	slot, _ := f.worktree(filepath.Join(f.repo, ".hrn", "slots", "1"), "hrn/landed")
+	git(t, f.repo, "worktree", "lock", "--reason", "hrn ws slot", slot)
+	f.land("hrn/landed")
+	saveBatch(t, "20261013-100000-aaaaaa", f.repo,
+		batch.TaskResult{ID: "landed", Status: batch.StatusPass, Branch: "hrn/landed", Worktree: slot, Slot: 1})
+
+	wantVerdict(t, find(t, f.scan(), slot), Keep, "locked")
+	if !exists(slot) {
+		t.Error("the slot must stay")
+	}
+}
+
 func TestGCKeepsEveryWorktreeWhileABatchRecordCannotBeRead(t *testing.T) {
 	f := newFixture(t)
 	wt, head := f.worktree("wt", "done")
