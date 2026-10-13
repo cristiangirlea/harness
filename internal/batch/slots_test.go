@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1123,5 +1124,101 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 		if !exists(leaseFile(dir, n)) {
 			t.Errorf("the lease being written on slot %d should stay", n)
 		}
+	}
+}
+
+// awaitWait reads wait events until one says text, failing if the take ends
+// first.
+func awaitWait(t *testing.T, waits <-chan string, done <-chan error, text string) {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case w := <-waits:
+			if strings.Contains(w, text) {
+				return
+			}
+		case err := <-done:
+			t.Fatalf("the take ended with %v before it waited saying %q", err, text)
+		case <-deadline:
+			t.Fatalf("no wait said %q", text)
+		}
+	}
+}
+
+// A look that does not find a lease unreadable ends the wait on it, a
+// stretch spent at the batch's bound with no lease scanned included: when
+// the lease is unreadable again later, the 30 seconds count from that look,
+// not from the first.
+func TestATasksWaitOnUnreadableLeasesStartsOverAfterAWaitAtTheBatchsBound(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	bound := quickUnreadableWait(t)
+	root := filepath.Clean(filepath.FromSlash(git(t, dir, "rev-parse", "--show-toplevel")))
+	base := git(t, dir, "rev-parse", "HEAD")
+	// The leases are rewritten under worktreeMu, which the take scans
+	// under, so no look sees a rewrite half done.
+	broken := func() {
+		worktreeMu.Lock()
+		defer worktreeMu.Unlock()
+		for n := 1; n <= ws.DefaultMax; n++ {
+			writeFile(t, leaseFile(dir, n), "{not json")
+		}
+	}
+	broken()
+	waits := make(chan string, 100)
+	notify := func(e Event) {
+		if e.Kind == "wait" {
+			waits <- e.Text
+		}
+	}
+	// scans counts the looks that scanned the leases once they were
+	// unreadable again: the first sets the clocks, so giving up takes
+	// another.
+	var scans atomic.Int32
+	var counting atomic.Bool
+	rangeComputed = func(int) {
+		if counting.Load() {
+			scans.Add(1)
+		}
+	}
+	t.Cleanup(func() { rangeComputed = nil })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := takeSlot(ctx, &Spec{Parallel: 1}, "b1", &keptSlots{}, "t", "hrn/t", root, base, notify, func(bool) error { return nil })
+		done <- err
+	}()
+	awaitWait(t, waits, done, "is unreadable")
+	// Every slot becomes one of this batch's own running tasks', so the task
+	// waits at its bound and scans no lease.
+	worktreeMu.Lock()
+	for n := 1; n <= ws.DefaultMax; n++ {
+		data, _ := json.Marshal(ws.Lease{Holder: "batch b1 task t" + strconv.Itoa(n), PID: os.Getpid(), Taken: time.Now()})
+		writeFile(t, leaseFile(dir, n), string(data))
+	}
+	worktreeMu.Unlock()
+	awaitWait(t, waits, done, "this batch holds")
+	time.Sleep(bound) // long enough for the first look's clocks to have run out
+	again := time.Now()
+	counting.Store(true)
+	broken()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "could not be read") {
+			t.Fatalf("err = %v, want the task to give up on the unreadable leases", err)
+		}
+		if since := time.Since(again); since < bound {
+			t.Errorf("the task gave up %s after the leases were unreadable again, before the %s bound", since, bound)
+		}
+		if n := scans.Load(); n < 2 {
+			t.Errorf("the task gave up after %d look at the leases unreadable again, want the clocks set by one look and run out at a later one", n)
+		}
+	case <-ctx.Done():
+		t.Fatal("the task did not give up on the unreadable leases")
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/t"); b != "" {
+		t.Errorf("a task that never got a slot leaves no branch: %q", b)
 	}
 }

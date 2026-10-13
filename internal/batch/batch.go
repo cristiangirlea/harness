@@ -872,6 +872,9 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 			if bounded.kept >= bounded.held {
 				return drop(fmt.Errorf("%w: none will come free while it runs", err))
 			}
+			// No lease was looked at, so none was seen unreadable: a lease
+			// found so again later is timed from that look.
+			clear(unreadable)
 			wait = "waiting for a slot this batch holds to come back: " + err.Error()
 		case errors.As(err, &full):
 			// Only a slot a live process holds, another batch's or a running
@@ -938,7 +941,8 @@ func someoneWillFree(full *ws.NoSlotError, kept *keptSlots) bool {
 }
 
 // unreadableLeases is when each slot a waiting task passed over for a lease
-// it could not read was first found so, kept across the task's looks.
+// it could not read was first found so, kept across the task's looks for
+// as long as every look finds it so.
 type unreadableLeases map[int]time.Time
 
 // note records full's unreadable slots as of now, forgets those readable
