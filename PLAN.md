@@ -664,6 +664,18 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: Concurrent takes skipped free slots (#188, PR #TBD). CI's Windows run of
+  `TestConcurrentTakesNeverShareASlot` got 3 slots for 6 takes with `--max 4`. Reproduced
+  here under load: `git worktree add` for slot 4 died with `fatal: failed to read
+  .git/worktrees/3/commondir: No error`, because git creates a new worktree's admin folder
+  in steps and every command that lists worktrees (add, list, lock) dies on a half-written
+  one. Not git's lock files, so retrying would only narrow the window. Decided: takes, in
+  any process, add, list and lock slot worktrees under an O_EXCL `.hrn/slots/.create.lock`,
+  waiting with a backoff up to 2 minutes (and the context). A lock older than that is
+  taken as left by a crash and removed: its holder only runs a few git commands, and the
+  lease, not this lock, keeps two takes off one slot, so removing a slow holder's lock can
+  at worst skip a slot, as before. Switches and other git commands (batch's, in other
+  processes) that list worktrees are not under the lock; they can still die during an add.
 - 2026-10-13: PR #163 (closes #126): hrn batch takes its worktrees from the reusable slots of internal/ws.
   Decided: slots by default, a new `.hrn/worktrees/<id>` per task only with
   `"worktrees": "fresh"`; any other value is refused. Each running task leases a slot

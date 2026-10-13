@@ -22,6 +22,10 @@ repository you run hrn from. hrn writes `.hrn/.gitignore` so they never show in 
 repository's status. A slot is made on first use with `git worktree add --detach` and
 then locked (`git worktree lock --reason "hrn ws slot"`), so `hrn gc` and
 `git worktree prune` leave it alone. A bare repository has no checkout and is refused.
+Takes add, list and lock slot worktrees one at a time, holding `.hrn/slots/.create.lock`
+while they do; a take waits up to two minutes for it, and removes one older than that as
+left by a crash, so a leftover lock delays takes but never blocks them for good (delete it
+by hand if no take is running).
 
 Who holds a slot is a lease file beside it, `<n>.lease`:
 `{"holder": "...", "taken": "...", "branch": "..."}`. It is created so that two callers
