@@ -654,6 +654,23 @@ order they are worth taking:
       ([#79](https://github.com/cristiangirlea/harness/issues/79)). Done: PR #131, 2026-10-13.
     - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
 
+17. **Durable project workers and project retrieval** ([#142](https://github.com/cristiangirlea/harness/issues/142)):
+    The work adds a separate `server/` module with a PostgreSQL control service and project
+    worker, durable checkpoints in the api loop, `hrn remote` and its MCP tools, and
+    development charts; it wires approved project knowledge with text retrieval into runs,
+    batches and evals.
+    Implemented against `634507a` and kept as local snapshot commit `8fc689e`, the work
+    lands onto today's main in slices through the feature branch `durable`.
+    - [ ] [#134](https://github.com/cristiangirlea/harness/issues/134) docs: the accepted spec, the retrieval plan and a PLAN.md item
+    - [ ] [#135](https://github.com/cristiangirlea/harness/issues/135) api: durable execution checkpoints for the api loop
+    - [ ] [#136](https://github.com/cristiangirlea/harness/issues/136) agent: usage metadata with backend-aware token semantics
+    - [ ] [#137](https://github.com/cristiangirlea/harness/issues/137) server: PostgreSQL control service and project worker, a separate module
+    - [ ] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools
+    - [ ] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier
+    - [ ] [#140](https://github.com/cristiangirlea/harness/issues/140) knowledge: approved project knowledge and text retrieval in the control service
+    - [ ] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison
+    - [ ] `durable` into main
+
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
 HTTP (every host met so far speaks stdio). A web dashboard was on this list ("report and
@@ -662,6 +679,12 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: Durable project workers and project retrieval ([#142](https://github.com/cristiangirlea/harness/issues/142))
+  land in slices onto the feature branch `durable`: each slice is one pull request into it,
+  and the feature branch reaches main through one pull request reviewed for how the pieces fit.
+  The root module stays standard-library only, as AGENTS.md requires; the separate `server/`
+  module may depend on a maintained PostgreSQL driver, as the spec accepted on 2026-09-27
+  allows. The snapshot stays local as commit `8fc689e` and is never pushed.
 - 2026-10-13: PR #127 (closes #82, widened by the owner on 2026-10-12): hrn watch's rows lead
   with `<repository> · <task>`, the id under it. Decided: the repository is the workspace
   folder's name (the folder above `.hrn` for a batch worktree), read from the record, not
