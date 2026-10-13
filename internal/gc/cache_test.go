@@ -93,6 +93,29 @@ func TestGCRemovesATaggedCacheIdlePastTheLimit(t *testing.T) {
 	if len(errs) != 0 || len(removed) != 1 || exists(old) {
 		t.Errorf("apply: removed %d, errors %v, folder still there: %v", len(removed), errs, exists(old))
 	}
+	if len(removed) == 1 && (removed[0].Path != old || removed[0].Size != c.Size) {
+		t.Errorf("removed cache = %+v, want original path and size %+v", removed[0], c)
+	}
+	leftovers, err := filepath.Glob(filepath.Join(root, ".gc-*-old-target"))
+	if err != nil || len(leftovers) != 0 {
+		t.Errorf("renamed cache left behind: %q, %v", leftovers, err)
+	}
+}
+
+func TestGCListsAndRemovesAnInterruptedCacheDeletion(t *testing.T) {
+	root := tempRoot(t)
+	leftover := tagged(t, filepath.Join(root, ".gc-123-target"), 30*time.Hour, 100)
+
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	if len(cs) != 1 {
+		t.Fatalf("listed %d caches, want the leftover alone: %+v", len(cs), cs)
+	}
+	c := findCache(t, cs, leftover)
+	wantCache(t, c, Remove, "idle 30h")
+	removed, errs := ApplyCaches(context.Background(), cs)
+	if len(errs) != 0 || len(removed) != 1 || removed[0].Path != leftover || exists(leftover) {
+		t.Errorf("apply: removed %+v, errors %v, leftover still there: %v", removed, errs, exists(leftover))
+	}
 }
 
 func TestGCKeepsACacheWrittenRecently(t *testing.T) {

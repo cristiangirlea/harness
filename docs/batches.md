@@ -278,5 +278,6 @@ repository or a link leading out of it, when the current directory is inside it,
 cannot be checked. One inside a worktree that goes is not listed: the worktree's removal takes it.
 The listing shows each cache's size, last build and verdict; `--apply` checks each one again just
 before it goes (still tagged, nothing written since the scan, no lock held, nothing inside that must
-stay) and removes it whole. A cache has no pull request to stand as its record: the build that
-needs it again rebuilds it.
+stay), moves it aside to a sibling `.gc-<pid>-*` folder, then deletes it; a cache in use stays,
+and a leftover `.gc-*` folder is picked up by the next run. A cache has no pull request to stand
+as its record: the build that needs it again rebuilds it.

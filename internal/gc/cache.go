@@ -92,9 +92,9 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 // ApplyCaches removes the caches marked Remove, the longest idle first so an
 // interruption leaves the newest, each checked again just before it goes
 // (still tagged, nothing written since the scan, no build holding it, nothing
-// inside that must stay). One that fails the check stays, with the reason
-// among the errors. The removal is not all-or-nothing: a file held open on
-// Windows can leave part of the folder deleted.
+// inside that must stay). One that fails the check or the rename stays, with
+// the reason among the errors. A failed removal leaves the renamed cache for
+// the next scan.
 func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []error) {
 	var todo []Cache
 	for _, c := range caches {
@@ -108,8 +108,13 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 			errs = append(errs, fmt.Errorf("%s: kept, %s", c.Path, why))
 			continue
 		}
-		if err := os.RemoveAll(c.Path); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", c.Path, err))
+		moved := filepath.Join(filepath.Dir(c.Path), fmt.Sprintf(".gc-%d-%s", os.Getpid(), filepath.Base(c.Path)))
+		if err := os.Rename(c.Path, moved); err != nil {
+			errs = append(errs, fmt.Errorf("%s: kept, it is in use: %s", c.Path, firstLine(err.Error())))
+			continue
+		}
+		if err := os.RemoveAll(moved); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", moved, err))
 			continue
 		}
 		removed = append(removed, c)
