@@ -34,14 +34,40 @@ a switch a task turns on stays on; a task's own `mcp` list replaces the spec's, 
 empty list (`"mcp": []`) means no servers at all, not even `~/.hrn/mcp.json`. Every list
 is checked before the first task starts.
 
-For each task hrn creates branch `hrn/<id>` and worktree `.hrn/worktrees/<id>` from the
-current `HEAD` (uncommitted changes in the main worktree are not included), runs the
+For each task hrn creates branch `hrn/<id>` from the current `HEAD` (uncommitted changes
+in the main worktree are not included) and gives it a worktree (see below), runs the
 agent there, then the gates in order, stopping at the first non-zero exit or after 15
 minutes. Whatever the agent left is committed on the branch as `<id>: <prompt>`, pass or
-fail, so a worktree can be inspected, merged or removed without losing work; if that
-commit fails (no git identity, a pre-commit hook) the task ends as `error` and the work
-stays uncommitted in the worktree. hrn writes `.hrn/.gitignore` so the worktrees never
-show up in the repository's status.
+fail, so the work is on the branch whatever happens to the worktree; if that commit fails
+(no git identity, a pre-commit hook) the task ends as `error` and the work stays
+uncommitted in the worktree. hrn writes `.hrn/.gitignore` so the worktrees never show up
+in the repository's status.
+
+### Slots or fresh worktrees
+
+By default (`"worktrees": "slots"`) a task runs in one of the repository's reusable
+[slots](workspaces.md), `<main checkout>/.hrn/slots/<n>`, so a `target/` or
+`node_modules/` built by an earlier task is still there and the gates build only what
+changed. Each running task leases a slot of its own, holding it with a lease that names
+the hrn process; batch tries slots 1 to `parallel` (at least 4). The task's branch is
+made from the batch's base and checked out in the slot. When the task ends, pass, fail or
+error, the slot is detached at the base and given back. Its ignored files stay for the
+next task, and the work stays on branch `hrn/<id>`, which `diff`, `merge` and `rm` read.
+A failed task's line reads `branch hrn/<id> kept` rather than naming a folder, and the
+record names the slot each task ran in (`worktree` and `slot`).
+
+When every slot is taken (by another batch, or by `hrn ws take`), a task does not fail:
+it says it is waiting and which slots are held, looks again every 5 seconds, and is
+canceled with the batch. A slot that still holds files when its task ends (the commit
+failed, say) is not given back: the task's error says `slot <n> kept` and why. Its lease
+goes stale once hrn exits, and later takes skip the slot without cleaning it; look at
+it, then free it with `hrn ws free`.
+
+`"worktrees": "fresh"` keeps the older behaviour, for a build from nothing: each task gets
+a new worktree `.hrn/worktrees/<id>`, kept after the batch until `hrn batch rm`. Any other
+value is refused before anything runs. `hrn eval` uses fresh worktrees unless its spec
+says otherwise, because its judge reads each cell's worktree after the batch; it refuses
+`slots` together with a judge.
 
 A task can also set `expect`, a regular expression (Go RE2) its final answer must match.
 It is checked before the gates and reported as one, `expect /pattern/`, so a task whose
@@ -57,7 +83,7 @@ how the attempt failed.
 |---|---|
 | ran to the end, a gate failed | continues in the same worktree, on top of the work already committed, with the failing gate command, its exit code and output appended to the prompt |
 | stopped at its plan's usage limit | continues in the same worktree, told that the limit stopped it and shown its last message |
-| failed, refused or was cut short | starts in a fresh worktree from the base commit, with one line saying how the previous attempt ended |
+| failed, refused or was cut short | starts afresh from the base commit (a new worktree, or the same slot with its branch reset to the base; the earlier attempt's commit stays in the record), with one line saying how the previous attempt ended |
 
 An attempt that ends `limited` on claude or codex is carried on by the other one first, as
 an extra attempt that does not use up a `retry` entry, and an attempt meant for a backend
@@ -112,7 +138,9 @@ renamed into place, so reading it mid-run gets a whole file, never half of one.
 `diff` writes one task's changes to stdout and nothing else, so it pipes into `git
 apply` or a pager: the commit against the base the batch branched from, or whatever is
 still uncommitted in the worktree when the task never committed. Files git has never
-seen cannot appear in a diff, so they are listed on stderr instead.
+seen cannot appear in a diff, so they are listed on stderr instead. A slot task that
+committed nothing has an empty diff: its slot has gone back and may hold another task's
+work by now.
 
 `merge` merges the branches into whatever the repository has checked out, in spec
 order, and never pushes. It takes every task that passed, or the ones you name; a task
@@ -123,11 +151,14 @@ which task, and stops — the branches are still there to merge by hand. `--squa
 records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a whole
 run with `git reset --hard ORIG_HEAD`.
 
-`hrn batch rm <id>` removes the worktrees and branches of a batch (it refuses a worktree
-with uncommitted changes); the record and the run logs stay. A directory git no longer counts
-as a worktree (on Windows a file lock can leave one behind) is removed when it is empty and
-reported when it is not, and its branch is deleted either way. One task that cannot be cleaned
-does not stop the others.
+`hrn batch rm <id>` removes what a batch made; the record and the run logs stay. For a
+slot task that is only its branch `hrn/<id>`: the slot and its lease are not the batch's,
+and stay. It refuses while the branch is checked out in a worktree (a task still running).
+For a fresh task it removes the worktree and the branch (it refuses a worktree with
+uncommitted changes). A directory git no longer counts as a worktree (on Windows a file
+lock can leave one behind) is removed when it is empty and reported when it is not, and
+its branch is deleted either way. One task that cannot be cleaned does not stop the
+others.
 
 ## Clearing merged worktrees
 
@@ -154,7 +185,7 @@ ignored files are build output (`target`, `node_modules`, `dist`, `.venv` and th
 folder carrying `CACHEDIR.TAG`, with no repository and no link out of the worktree inside, since
 git on Windows deletes through a junction; an ignored `.env` or notes keep it, because `git
 worktree remove` deletes ignored files; its `.hrn/` may hold only the worktrees git lists there), it is
-not locked, it holds no worktree that stays and no repository, and the current directory is
+not locked (so a slot always stays, even one a batch record names), it holds no worktree that stays and no repository, and the current directory is
 not inside it. Everything else stays and the listing says why: an open or
 closed pull request, none at all, commits after the merged one, a detached `HEAD`, uncommitted
 files. When `gh` fails (not installed, not logged in) or the fetch does, the worktrees that

@@ -26,8 +26,20 @@ then locked (`git worktree lock --reason "hrn ws slot"`), so `hrn gc` and
 Who holds a slot is a lease file beside it, `<n>.lease`:
 `{"holder": "...", "taken": "...", "branch": "..."}`. It is created so that two callers
 can never get the same slot. A lease held from the command line lasts until
-`hrn ws free`. A lease that names a process (`"pid"`, which batch will use) is stale once
+`hrn ws free`. A lease that names a process (`"pid"`, which batch uses) is stale once
 that process has exited, and the next take may take it over.
+
+## Batches
+
+`hrn batch` takes the same slots, one per running task, unless its spec says
+`"worktrees": "fresh"` (see [Slots or fresh worktrees](batches.md#slots-or-fresh-worktrees)).
+Its lease names the task (`batch <id> task <task>`) and hrn's pid, so a crash leaves a
+stale lease rather than a held slot. The task's branch `hrn/<id>` is made from the batch's
+base and checked out in the slot. When the task ends, the slot is detached at the base
+and its lease removed without asking for a push, because the work is meant to stay on
+that local branch for `hrn batch merge`. A slot left with files in it keeps its lease
+until hrn exits. A slot whose HEAD commits are on a local branch or tag is not skipped,
+since a switch strands nothing there.
 
 ## Take
 
