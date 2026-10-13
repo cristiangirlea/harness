@@ -72,7 +72,7 @@ func remoteFixture(t *testing.T) (*session, *[]seenRemoteRequest) {
 	return connect(t, t.TempDir()), &seen
 }
 
-func TestRemoteMCPTools(t *testing.T) {
+func TestRemoteToolsSendScopedRequestsWithTheTenantToken(t *testing.T) {
 	session, requests := remoteFixture(t)
 	args := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"prompt":"inspect","base_ref":%q,"idempotency_key":"mcp-1","max_cost_usd":0.25}`,
 		testRemoteTenant, testRemoteProject, testRemoteRef)
