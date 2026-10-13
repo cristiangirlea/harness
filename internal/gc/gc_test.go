@@ -679,6 +679,32 @@ func TestGCKeepsBatchWorktreeWithTrackedFolderJunctionLeadingOut(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree: data")
 }
 
+func TestGCKeepsSquashLandedBatchWorktreeWithTrackedFolderJunctionLeadingOut(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows junctions on Windows; elsewhere a link changes a tracked folder")
+	}
+	f := newFixture(t)
+	wt, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	f.write(wt, filepath.Join("data", "item.txt"), "precious\n")
+	git(t, wt, "add", "data")
+	git(t, wt, "commit", "-q", "-m", "track data")
+	saveBatch(t, "squash-junction", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: wt})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	f.write(f.repo, filepath.Join("data", "item.txt"), "precious\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "reviewed wording")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, "item.txt", "precious\n")
+	if err := os.RemoveAll(filepath.Join(wt, "data")); err != nil {
+		t.Fatal(err)
+	}
+	link(t, filepath.Join(wt, "data"), outside)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree: data")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")
