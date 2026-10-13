@@ -665,6 +665,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: CONTRIBUTING.md and immutable tags (#197, PR #247). Since ruleset 24992042 a
+  pushed `v*` tag cannot be moved or deleted. Decided: the release section says so, and that a
+  wrong tag or a release needing a code fix takes a new version, while a workflow that
+  failed for another reason is re-run on the same tag.
 - 2026-10-13: gc moves a cache aside before deleting it (#129, PR #246). A build can
   start after the lock probe and before deletion. Decided: rename to a sibling
   `.gc-<pid>-<unix nanos>-<name>` first, probe the moved locks again (including `flock` on
