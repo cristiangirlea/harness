@@ -868,8 +868,9 @@ func isAncestor(ctx context.Context, repo, a, b string) bool {
 // landedBatchChange proves that the whole task diff is one commit on the
 // default branch. A missing base, empty diff, git error or a history at the
 // comparison limit gives no proof.
+var maxCommits = 2000 // tests lower this bound
+
 func landedBatchChange(ctx context.Context, repo, head, def string) string {
-	const maxCommits = 2000
 	base, err := gitOut(ctx, repo, "merge-base", head, def)
 	if err != nil || base == "" {
 		return ""

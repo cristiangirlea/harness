@@ -674,6 +674,24 @@ func TestGCRemovesBatchChangeAfterLaterEditToSameFile(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as "+landed[:7])
 }
 
+func TestGCKeepsBatchChangeAtCommitComparisonBound(t *testing.T) {
+	previous := maxCommits
+	maxCommits = 2
+	t.Cleanup(func() { maxCommits = previous })
+	f := newFixture(t)
+	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	saveBatch(t, "bound", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land task")
+	f.write(f.repo, "later.txt", "later\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "later change")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
 func TestGCKeepsBatchChangeThatLandedDifferently(t *testing.T) {
 	for _, landed := range []string{"hrn/task\nreview edit\n", "review edit\n"} {
 		t.Run(strings.TrimSpace(landed), func(t *testing.T) {
