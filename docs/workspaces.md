@@ -44,8 +44,9 @@ lease and nothing in it:
   the lease.
 - Without `--branch`, the slot is detached at the base.
 - The base is `--base REF`, or origin's default branch, fetched first. With `--no-fetch`
-  it is the one already fetched. A repository without an origin uses the main
-  checkout's `HEAD`.
+  it is `origin/HEAD` as already fetched; if the clone has no `origin/HEAD`, take refuses
+  rather than guess, and asks for `--base` or a fetch. A repository without an origin
+  uses the main checkout's `HEAD`.
 
 `--for TEXT` is the holder written into the lease (default `hrn ws take`). When every
 slot up to `--max` is taken or skipped, take fails and names each slot, its holder and

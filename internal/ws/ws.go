@@ -195,12 +195,12 @@ func resolveBase(ctx context.Context, main string, opt TakeOptions, notes *[]str
 		return sha, nil
 	}
 	if opt.NoFetch {
-		for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"} {
-			if sha, err := commitOf(ctx, main, ref); err == nil {
-				return sha, nil
-			}
+		// Only origin/HEAD says which branch is the default; guessing main
+		// or master could start from the wrong one.
+		if sha, err := commitOf(ctx, main, "refs/remotes/origin/HEAD"); err == nil {
+			return sha, nil
 		}
-		return "", errors.New("origin's default branch has not been fetched; drop --no-fetch or give --base")
+		return "", errors.New("origin's default branch is not known locally (no refs/remotes/origin/HEAD); drop --no-fetch or give --base")
 	}
 	out, err := gitOut(ctx, main, "ls-remote", "--symref", "origin", "HEAD")
 	if err != nil {

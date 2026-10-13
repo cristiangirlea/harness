@@ -453,6 +453,22 @@ func TestTakeRefusesABareRepository(t *testing.T) {
 	}
 }
 
+func TestTakeNoFetchWithoutOriginHEADRefusesToGuessTheDefaultBranch(t *testing.T) {
+	f := newFixture(t)
+	git(t, f.repo, "remote", "set-head", "origin", "-d")
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "a", NoFetch: true})
+	if err == nil || !strings.Contains(err.Error(), "not known locally") || !strings.Contains(err.Error(), "--base") {
+		t.Fatalf("take --no-fetch without origin/HEAD: %v", err)
+	}
+	if _, err := os.Stat(f.slot(1)); err == nil {
+		t.Error("no slot should be made when the base is unknown")
+	}
+	got := f.take(TakeOptions{Holder: "a", NoFetch: true, Base: "origin/main"})
+	if h, want := git(t, got.Path, "rev-parse", "HEAD"), git(t, f.repo, "rev-parse", "origin/main"); h != want {
+		t.Errorf("HEAD %s, want --base origin/main %s", h, want)
+	}
+}
+
 func TestTakeWithoutAnOriginStartsFromHEAD(t *testing.T) {
 	f := newFixture(t)
 	git(t, f.repo, "remote", "remove", "origin")
