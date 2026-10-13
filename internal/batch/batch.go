@@ -28,6 +28,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 // Spec is a batch of tasks to run against one repository. Task fields
@@ -46,8 +47,19 @@ type Spec struct {
 	// GateTimeout bounds each gate command; default 15m. A task's own wins.
 	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
 	Retry       []string       `json:"retry,omitempty"` // backends to try, in order, after a failed attempt
-	Tasks       []Task         `json:"tasks"`
+	// Worktrees is where each task works: WorktreesSlots (the default) or
+	// WorktreesFresh.
+	Worktrees string `json:"worktrees,omitempty"`
+	Tasks     []Task `json:"tasks"`
 }
+
+const (
+	// WorktreesSlots runs each task in a reusable slot of internal/ws, leased
+	// while it runs, so the build output of earlier tasks is there.
+	WorktreesSlots = "slots"
+	// WorktreesFresh makes .hrn/worktrees/<id> per task, kept until hrn batch rm.
+	WorktreesFresh = "fresh"
+)
 
 // DefaultParallel is how many agents run at once when a spec does not say.
 // Four: the owner's PC has 32 threads, and an agent spends most of its time
@@ -56,7 +68,7 @@ type Spec struct {
 const DefaultParallel = 4
 
 type Task struct {
-	ID      string `json:"id,omitempty"` // branch hrn/<id> and worktree .hrn/worktrees/<id>; default t1, t2, ...
+	ID      string `json:"id,omitempty"` // branch hrn/<id> (and worktree .hrn/worktrees/<id> when fresh); default t1, t2, ...
 	Prompt  string `json:"prompt"`
 	Backend string `json:"backend,omitempty"`
 	// Options set here override the spec's, field by field; a switch can be
@@ -99,6 +111,7 @@ type TaskResult struct {
 	Status   Status        `json:"status"`
 	Branch   string        `json:"branch"`
 	Worktree string        `json:"worktree"`
+	Slot     int           `json:"slot,omitempty"`   // the ws slot Worktree is; 0 for a fresh worktree
 	Commit   string        `json:"commit,omitempty"` // the agent's changes; empty when it changed nothing
 	Attempts []Attempt     `json:"attempts"`
 	Error    string        `json:"error,omitempty"`
@@ -128,7 +141,7 @@ type GateResult struct {
 }
 
 // Event is progress for a caller to print. Kind is one of start, tool, run,
-// gate, retry, done. Run delivers events one at a time, so the callback need
+// gate, retry, switch, wait (for a free slot), done. Run delivers events one at a time, so the callback need
 // not lock.
 type Event struct {
 	Task string
@@ -147,6 +160,9 @@ const maxGateTimeout = 24 * time.Hour
 // one another's command. Everything else the workers run - the agent, the
 // gates, the commit - stays parallel, which is where the time goes.
 var worktreeMu sync.Mutex
+
+// slotPoll is how often a task waiting for a free slot looks again.
+var slotPoll = 5 * time.Second
 
 var idRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -185,6 +201,13 @@ func (s *Spec) normalize() error {
 	}
 	if s.Mode == "" {
 		s.Mode = agent.ModeAuto
+	}
+	switch s.Worktrees {
+	case "":
+		s.Worktrees = WorktreesSlots
+	case WorktreesSlots, WorktreesFresh:
+	default:
+		return fmt.Errorf("worktrees %q: use %q (the default) or %q", s.Worktrees, WorktreesSlots, WorktreesFresh)
 	}
 	if err := s.Options.Validate(); err != nil {
 		return err
@@ -348,19 +371,25 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 			}
 		}
 	}
-	// Keep the worktrees out of the repository's status.
+	// Keep the worktrees out of the repository's status. A slot task's
+	// worktree is named once it has a slot, and ws keeps its own .gitignore.
 	wtRoot := filepath.Join(root, ".hrn", "worktrees")
-	if err := os.MkdirAll(wtRoot, 0o755); err != nil {
-		return Result{}, err
-	}
-	if _, err := os.Stat(filepath.Join(root, ".hrn", ".gitignore")); err != nil {
-		_ = os.WriteFile(filepath.Join(root, ".hrn", ".gitignore"), []byte("*\n"), 0o644)
+	fresh := spec.Worktrees == WorktreesFresh
+	if fresh {
+		if err := os.MkdirAll(wtRoot, 0o755); err != nil {
+			return Result{}, err
+		}
+		if _, err := os.Stat(filepath.Join(root, ".hrn", ".gitignore")); err != nil {
+			_ = os.WriteFile(filepath.Join(root, ".hrn", ".gitignore"), []byte("*\n"), 0o644)
+		}
 	}
 
 	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks))}
 	for i, t := range spec.Tasks {
-		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID,
-			Worktree: filepath.Join(wtRoot, t.ID), Attempts: []Attempt{}}
+		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
+		if fresh {
+			res.Tasks[i].Worktree = filepath.Join(wtRoot, t.ID)
+		}
 	}
 	if err := save(res); err != nil {
 		return Result{}, fmt.Errorf("saving batch record: %w", err)
@@ -385,7 +414,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				update(i, runTask(ctx, &spec, spec.Tasks[i], res.Tasks[i], root, base, notify,
+				update(i, runTask(ctx, &spec, res.ID, spec.Tasks[i], res.Tasks[i], root, base, notify,
 					func(tr TaskResult) { update(i, tr) }))
 			}
 		}()
@@ -500,10 +529,20 @@ func fence(s string) string {
 	return f
 }
 
-func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult)) TaskResult {
+func runTask(ctx context.Context, spec *Spec, batchID string, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult)) TaskResult {
 	started := time.Now()
 	tr.Status, tr.Attempts, tr.Commit, tr.Error = "", []Attempt{}, "", ""
+	slots := spec.Worktrees == WorktreesSlots
+	var slot *ws.Taken // the slot this task holds, given back when it ends
 	finish := func(status Status, text string) TaskResult {
+		if slot != nil {
+			if err := giveBack(*slot, base); err != nil {
+				msg := fmt.Sprintf("slot %d kept: %v", slot.N, err)
+				tr.Error = strings.TrimSpace(tr.Error + "\n" + msg)
+				text += " · " + msg
+			}
+			slot = nil
+		}
 		tr.Status = status
 		tr.Duration = time.Since(started)
 		notify(Event{Task: t.ID, Kind: "done", Text: text})
@@ -534,11 +573,13 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
 		return fail(fmt.Errorf("branch %s already exists; remove it or pick another task id", tr.Branch))
 	}
-	if _, err := os.Stat(tr.Worktree); err == nil {
-		return fail(fmt.Errorf("worktree %s already exists; remove it or pick another task id", tr.Worktree))
+	if !slots {
+		if _, err := os.Stat(tr.Worktree); err == nil {
+			return fail(fmt.Errorf("worktree %s already exists; remove it or pick another task id", tr.Worktree))
+		}
 	}
 
-	task := agent.Task{Dir: tr.Worktree, Options: opts}
+	task := agent.Task{Options: opts} // Dir is the worktree, once there is one
 	expect, err := compileExpect(t.Expect)
 	if err != nil {
 		return fail(err)
@@ -576,6 +617,9 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 			text, continued := retryContext(tr.Attempts)
 			plan.prompt, plan.continued = t.Prompt+text, continued
 			where := "fresh worktree"
+			if slots {
+				where = "slot reset to the base"
+			}
 			if continued {
 				where = "continuing in worktree"
 			}
@@ -590,16 +634,36 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 			plan.commit += fmt.Sprintf(" (attempt %d)", plan.number)
 		}
 		if !plan.continued {
-			if len(tr.Attempts) > 0 {
-				if err := removeWorktree(root, tr); err != nil {
+			switch {
+			case slots && slot != nil:
+				// A fresh retry in the same slot. The last attempt's work is
+				// committed and recorded in it; ignored build output stays.
+				if _, err := gitOut(ctx, slot.Path, "switch", "-q", "-C", tr.Branch, base); err != nil {
+					return fail(err)
+				}
+			case slots:
+				got, err := takeSlot(ctx, spec, batchID, t.ID, tr.Branch, root, base, notify)
+				if err != nil {
+					return fail(err)
+				}
+				slot = &got
+				tr.Worktree, tr.Slot = got.Path, got.N
+				cur := tr
+				cur.Status = StatusRunning
+				progress(cur) // the record names the slot from now on
+			default:
+				if len(tr.Attempts) > 0 {
+					if err := removeWorktree(root, tr); err != nil {
+						return fail(err)
+					}
+				}
+				if err := addWorktree(ctx, root, tr, base); err != nil {
 					return fail(err)
 				}
 			}
 			tr.Commit = ""
-			if err := addWorktree(ctx, root, tr, base); err != nil {
-				return fail(err)
-			}
 		}
+		task.Dir = tr.Worktree
 		notify(Event{Task: t.ID, Kind: "start", Text: fmt.Sprintf("%s in %s", name, tr.Worktree)})
 
 		// The attempt so far, on the task as it stands. Copies, because the
@@ -649,7 +713,75 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		tr.Error = outOfPlans
 		return finish(StatusFail, "not started: "+outOfPlans)
 	}
-	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · worktree kept at %s", len(tr.Attempts), tr.Worktree))
+	kept := "worktree kept at " + tr.Worktree
+	if slots {
+		kept = "branch " + tr.Branch + " kept"
+	}
+	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · %s", len(tr.Attempts), kept))
+}
+
+// takeSlot leases a slot of the repository for a task. The branch is made
+// from the base first, so it starts there whatever origin has by that name.
+// While every slot is taken it waits, saying so whenever who holds them
+// changes, and looks again every slotPoll until ctx ends. A task that gets
+// no slot leaves no branch.
+func takeSlot(ctx context.Context, spec *Spec, batchID, id, branch, root, base string, notify func(Event)) (ws.Taken, error) {
+	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
+		return ws.Taken{}, err
+	}
+	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: "batch " + batchID + " task " + id,
+		PID: os.Getpid(), Max: max(spec.Parallel, ws.DefaultMax), NoFetch: true}
+	var said string
+	for {
+		worktreeMu.Lock()
+		got, err := ws.Take(ctx, opt)
+		worktreeMu.Unlock()
+		var full *ws.NoSlotError
+		if err == nil || !errors.As(err, &full) {
+			if err != nil {
+				dropBranch(root, branch)
+			}
+			return got, err
+		}
+		if held := strings.Join(full.Passed, "; "); held != said {
+			notify(Event{Task: id, Kind: "wait", Text: "waiting for a free slot: " + held})
+			said = held
+		}
+		select {
+		case <-ctx.Done():
+			dropBranch(root, branch)
+			return ws.Taken{}, ctx.Err()
+		case <-time.After(slotPoll):
+		}
+	}
+}
+
+// dropBranch deletes the branch takeSlot made when no slot checked it out.
+func dropBranch(root, branch string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, _ = gitOut(ctx, root, "branch", "-D", branch)
+}
+
+// giveBack returns a task's slot when the task ends. A clean slot is first
+// detached at the base, so that once hrn batch rm deletes the branch the
+// slot does not sit on a commit no ref holds, which the next take would
+// skip. A slot with work left in it is refused by ws.Release and stays
+// leased: the lease names this process, so it goes stale when hrn exits,
+// and the next take skips the slot rather than clean it.
+func giveBack(slot ws.Taken, base string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	dirty, err := hasChanges(slot.Path)
+	if err != nil {
+		return err
+	}
+	if !dirty {
+		if _, err := gitOut(ctx, slot.Path, "switch", "-q", "--detach", base); err != nil {
+			return err
+		}
+	}
+	return ws.Release(ctx, slot)
 }
 
 type attemptOutcome struct {

@@ -137,7 +137,7 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 	dir := initRepo(t)
 	base := git(t, dir, "rev-parse", "HEAD")
 	res, events := run(t, Spec{
-		Dir: dir, Parallel: 2, Backend: "wb-ok", Gate: []string{"exit 0"},
+		Dir: dir, Parallel: 2, Worktrees: "fresh", Backend: "wb-ok", Gate: []string{"exit 0"},
 		Tasks: []Task{{ID: "one", Prompt: "first task"}, {Prompt: "second task"}},
 	})
 	if res.ID == "" || canon(t, res.Dir) != canon(t, dir) || res.Base != base || len(res.Tasks) != 2 {
@@ -183,7 +183,7 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 func TestFailuresRetryOnNextBackend(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{
-		Dir: dir, Gate: []string{"exit 0"},
+		Dir: dir, Worktrees: "fresh", Gate: []string{"exit 0"},
 		Tasks: []Task{
 			{ID: "recovers", Prompt: "p", Backend: "wb-bad", Retry: []string{"wb-ok"}},
 			{ID: "gate-fails", Prompt: "p", Backend: "wb-ok", Gate: []string{"exit 0", "exit 3", "exit 0"}, Retry: []string{"wb-ok"}},
@@ -275,7 +275,7 @@ func TestRecordIsSavedBeforeTasksRun(t *testing.T) {
 
 func TestRemoveDeletesWorktreesAndBranches(t *testing.T) {
 	dir := initRepo(t)
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{Prompt: "a"}, {Prompt: "b"}}})
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{Prompt: "a"}, {Prompt: "b"}}})
 	if err := Remove(res); err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func deregister(t *testing.T, root string, tr TaskResult, leftover string) {
 
 func TestRemoveFinishesDeregisteredWorktree(t *testing.T) {
 	dir := initRepo(t)
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{ID: "gone", Prompt: "a"}, {ID: "kept", Prompt: "b"}}})
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "gone", Prompt: "a"}, {ID: "kept", Prompt: "b"}}})
 	deregister(t, dir, res.Tasks[0], "")
 	// A modified file in the repository itself must not count against the leftover directory:
 	// it has no .git of its own, so a status inside it would describe the repository.
@@ -337,7 +337,7 @@ func TestRemoveFinishesDeregisteredWorktree(t *testing.T) {
 
 func TestRemoveKeepsAndReportsANonEmptyLeftover(t *testing.T) {
 	dir := initRepo(t)
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{ID: "gone", Prompt: "a"}, {ID: "kept", Prompt: "b"}}})
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "gone", Prompt: "a"}, {ID: "kept", Prompt: "b"}}})
 	tr := res.Tasks[0]
 	deregister(t, dir, tr, "notes.txt")
 	err := Remove(res)
@@ -365,7 +365,7 @@ func TestCommitFailureIsAnErrorAndRemoveRefuses(t *testing.T) {
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "hooked", Prompt: "a"}}})
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "hooked", Prompt: "a"}}})
 	tr := res.Tasks[0]
 	if tr.Status != StatusError || !strings.Contains(tr.Error, "uncommitted") || len(tr.Attempts) != 1 || tr.Commit != "" {
 		t.Fatalf("task = %+v", tr)
@@ -395,7 +395,7 @@ func TestBranchCollisionIsAnError(t *testing.T) {
 func TestDirtyRepositoryIsRefused(t *testing.T) {
 	dir := initRepo(t)
 	spec := func(allowDirty bool) Spec {
-		return Spec{Dir: dir, Backend: "wb-ok", AllowDirty: allowDirty, Tasks: []Task{{ID: "t", Prompt: "a"}}}
+		return Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", AllowDirty: allowDirty, Tasks: []Task{{ID: "t", Prompt: "a"}}}
 	}
 	// An untracked file is not a reason to stop: .hrn/worktrees is one.
 	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("notes\n"), 0o644); err != nil {
@@ -624,7 +624,7 @@ func TestGateFailureContinuesInTheSameWorktree(t *testing.T) {
 
 func TestRunFailureRetriesInAFreshWorktree(t *testing.T) {
 	dir := initRepo(t)
-	res, events := run(t, Spec{Dir: dir, Backend: "wb-bad-writes", Retry: []string{"wb-ok"},
+	res, events := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-bad-writes", Retry: []string{"wb-ok"},
 		Tasks: []Task{{ID: "fresh", Prompt: "do it"}}})
 	tr := res.Tasks[0]
 	if tr.Status != StatusPass || len(tr.Attempts) != 2 || tr.Attempts[1].Continued {
@@ -763,7 +763,18 @@ func TestNoContextEditsReachesTheTask(t *testing.T) {
 
 func mergeable(t *testing.T, dir string, tasks ...Task) Result {
 	t.Helper()
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-file", Tasks: tasks})
+	return mergeableIn(t, Spec{Dir: dir, Backend: "wb-file", Tasks: tasks})
+}
+
+// mergeableFresh is mergeable with a fresh worktree per task.
+func mergeableFresh(t *testing.T, dir string, tasks ...Task) Result {
+	t.Helper()
+	return mergeableIn(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-file", Tasks: tasks})
+}
+
+func mergeableIn(t *testing.T, spec Spec) Result {
+	t.Helper()
+	res, _ := run(t, spec)
 	for _, tr := range res.Tasks {
 		if tr.Status != StatusPass {
 			t.Fatalf("setup: task %s = %s (%s)", tr.ID, tr.Status, tr.Error)
@@ -894,7 +905,7 @@ func TestMergeFailureThatIsNotAConflict(t *testing.T) {
 
 func TestDiffSaysWhenTheBranchIsGone(t *testing.T) {
 	dir := initRepo(t)
-	res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"})
 	if err := Remove(res); err != nil {
 		t.Fatal(err)
 	}
@@ -984,7 +995,7 @@ func TestDiffFallsBackToTheWorktree(t *testing.T) {
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	res, _ := run(t, Spec{Dir: dir, Backend: "wb-file", Tasks: []Task{{ID: "alpha", Prompt: "alpha"}}})
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-file", Tasks: []Task{{ID: "alpha", Prompt: "alpha"}}})
 	if res.Tasks[0].Commit != "" {
 		t.Fatalf("setup: the commit should have failed: %+v", res.Tasks[0])
 	}
