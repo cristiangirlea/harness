@@ -665,7 +665,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: gc and links out of a worktree (#94, PR #N). A tracked folder
+- 2026-10-13: gc and links out of a worktree (#94, PR #240). A tracked folder
   replaced by an identical junction can look clean to git, while worktree removal
   deletes the outside copy's files. Decided: check the whole worktree for links
   leading out before a Remove verdict and again just before Apply removes it;
