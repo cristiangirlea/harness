@@ -658,6 +658,24 @@ func TestGCLinkWalkKeepsUnreadableWorktree(t *testing.T) {
 	}
 }
 
+func TestGCKeepsAWorktreeWithDotGitLinkLeadingOut(t *testing.T) {
+	f := newFixture(t)
+	wt, _ := f.worktree("wt", "done")
+	f.write(wt, filepath.Join("sub", "item.txt"), "tracked\n")
+	git(t, wt, "add", "sub")
+	git(t, wt, "commit", "-q", "-m", "track subfolder")
+	head := git(t, wt, "rev-parse", "HEAD")
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, "precious.txt", "outside\n")
+	link(t, filepath.Join(wt, "sub", ".git"), outside)
+	if status := git(t, wt, "status", "--porcelain", "--untracked-files=all"); status != "" {
+		t.Skipf("git treats the nested .git link as a worktree change here: %s", status)
+	}
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree: sub/.git")
+}
+
 func TestGCKeepsBatchWorktreeWithTrackedFolderJunctionLeadingOut(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("git follows junctions on Windows; elsewhere a link changes a tracked folder")

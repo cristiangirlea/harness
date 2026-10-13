@@ -741,10 +741,12 @@ func worktreeLinkRisk(wt string, registered []string) string {
 			}
 		}
 		if d.Name() == ".git" {
-			if d.IsDir() {
+			if d.Type() == fs.ModeDir {
 				return fs.SkipDir
 			}
-			return nil
+			if d.Type().IsRegular() {
+				return nil
+			}
 		}
 		if kind, at := riskAt(wt, p, d); kind == riskLink {
 			link = at
@@ -790,14 +792,17 @@ func walkRisk(root, folder string) (kind, at string, err error) {
 // folder), a link that does not stay inside root, or nothing.
 func riskAt(root, p string, d fs.DirEntry) (kind, at string) {
 	switch {
-	case d.Name() == ".git":
-		return riskRepo, filepath.Dir(p)
-	case d.IsDir() && d.Name() == "objects" && isBare(filepath.Dir(p)):
-		return riskRepo, filepath.Dir(p)
 	case !d.IsDir() && !d.Type().IsRegular(): // a symlink, or a junction (irregular)
 		if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), root) {
 			return riskLink, p
 		}
+		if d.Name() == ".git" {
+			return riskRepo, filepath.Dir(p)
+		}
+	case d.Name() == ".git":
+		return riskRepo, filepath.Dir(p)
+	case d.IsDir() && d.Name() == "objects" && isBare(filepath.Dir(p)):
+		return riskRepo, filepath.Dir(p)
 	}
 	return "", ""
 }
