@@ -693,6 +693,23 @@ func TestGCKeepsBatchChangeThatLandedDifferently(t *testing.T) {
 	}
 }
 
+func TestGCKeepsBatchReindentThatLandedWithDifferentWhitespace(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, "README.md", "  hello\n")
+	git(t, f.repo, "commit", "-q", "-am", "original indent")
+	git(t, f.repo, "push", "-q", "origin", "main")
+	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+	f.write(task, "README.md", "    hello\n")
+	git(t, task, "commit", "-q", "-am", "task reindent")
+	saveBatch(t, "reindent", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "README.md", "\thello\n")
+	git(t, f.repo, "commit", "-q", "-am", "different reindent")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
 func TestGCKeepsBatchTasksCombinedIntoOneCommit(t *testing.T) {
 	f := newFixture(t)
 	a, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "a"), "hrn/a")

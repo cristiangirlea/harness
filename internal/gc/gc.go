@@ -886,7 +886,7 @@ func landedBatchChange(ctx context.Context, repo, head, def string) string {
 	if err != nil || taskDiff == "" {
 		return ""
 	}
-	taskID, err := gitStdoutInput(ctx, repo, taskDiff, "patch-id", "--stable")
+	taskID, err := gitStdoutInput(ctx, repo, taskDiff, "patch-id", "--verbatim")
 	if err != nil {
 		return ""
 	}
@@ -898,7 +898,7 @@ func landedBatchChange(ctx context.Context, repo, head, def string) string {
 	if err != nil {
 		return ""
 	}
-	landedIDs, err := gitStdoutInput(ctx, repo, patches, "patch-id", "--stable")
+	landedIDs, err := gitStdoutInput(ctx, repo, patches, "patch-id", "--verbatim")
 	if err != nil {
 		return ""
 	}
