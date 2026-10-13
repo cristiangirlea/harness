@@ -668,7 +668,7 @@ order they are worth taking:
     - [x] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools. Done: PR #175, 2026-10-13.
     - [x] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier. Done: PR #174, 2026-10-13.
     - [x] [#140](https://github.com/cristiangirlea/harness/issues/140) knowledge: approved project knowledge and text retrieval in the control service. Done: PR #181, 2026-10-13.
-    - [ ] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison
+    - [x] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison. Done: PR #186, 2026-10-13.
     - [ ] `durable` into main
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
@@ -679,6 +679,18 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: retrieval wiring in runs, batches, evals and MCP ([#141](https://github.com/cristiangirlea/harness/issues/141), PR #186; slice 8 of #142).
+  The snapshot's wiring on today's code: the packet is prepared and saved before a backend
+  starts, pins are validated on continuation, a same-scope batch retry retrieves again with
+  failure evidence, eval variants and the comparison manifest, `hrn retrieval fixture|compare`,
+  a project-scoped MCP server, and every `HRN_*_TOKEN` stripped from children. The review found
+  one defect, a rejected pin swallowed by followup, now a refusal behind
+  `runlog.ErrNoConversation`. CI's PostgreSQL job caught what no local run could: the client's
+  frame-marker check refused every real packet, since the service writes `[Reference ...]`
+  labels into the text; the check is now structural, one label pair per entry and no outer
+  frame marker, and the test packets carry the labels. Follow-ups: a retry after failed
+  required retrieval (#182), a cross-backend continuation's pin (#183), compare with resolved
+  model names (#184), tests the review named (#185).
 - 2026-10-13: approved project knowledge and text retrieval in the control service ([#140](https://github.com/cristiangirlea/harness/issues/140), PR #181; slice 7 of #142).
   The snapshot's contracts, migration 003, service, routes, bounded client search and
   `hrn knowledge`; the parts slice 4 cut from store.go and http.go return, and the
