@@ -297,6 +297,116 @@ func TestRemoveDeletesWorktreesAndBranches(t *testing.T) {
 	}
 }
 
+func TestRemoveTasksDeletesOnlyNamedSquashMergedTask(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"}, Task{ID: "beta", Prompt: "beta"})
+	merged, err := Merge(context.Background(), res, []string{"alpha"}, true)
+	if err != nil || len(merged) != 1 || merged[0].Commit == "" {
+		t.Fatalf("merge = %+v, %v", merged, err)
+	}
+	if _, err := RemoveTasks(res, []string{"alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(res.Tasks[0].Worktree); !os.IsNotExist(err) {
+		t.Errorf("merged worktree still exists: %v", err)
+	}
+	if branches := git(t, dir, "branch", "--list", res.Tasks[0].Branch); branches != "" {
+		t.Errorf("squash-merged branch remains: %s", branches)
+	}
+	if _, err := os.Stat(res.Tasks[1].Worktree); err != nil {
+		t.Errorf("unmerged worktree was removed: %v", err)
+	}
+	if branches := git(t, dir, "branch", "--list", res.Tasks[1].Branch); branches == "" {
+		t.Error("unmerged branch was removed")
+	}
+}
+
+func TestRemoveTasksKeepsDirtyWorktreeAndReportsIt(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	if _, err := Merge(context.Background(), res, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(res.Tasks[0].Worktree, "notes.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RemoveTasks(res, []string{"alpha"})
+	if err == nil || !strings.Contains(err.Error(), "alpha") || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("dirty worktree error = %v", err)
+	}
+	if _, err := os.Stat(res.Tasks[0].Worktree); err != nil {
+		t.Errorf("dirty worktree was removed: %v", err)
+	}
+	if branches := git(t, dir, "branch", "--list", res.Tasks[0].Branch); branches == "" {
+		t.Error("dirty task branch was removed")
+	}
+}
+
+func TestRemoveTasksKeepsUnownedWorktree(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	res.Tasks[0].BranchMade = false
+	if _, err := RemoveTasks(res, []string{"alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(res.Tasks[0].Worktree); err != nil {
+		t.Errorf("another batch's worktree was removed: %v", err)
+	}
+}
+
+func TestRemoveTasksReturnsOnlyIDsWithRemovedWork(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"}, Task{ID: "beta", Prompt: "beta"}, Task{ID: "gamma", Prompt: "gamma"})
+	res.Tasks[2].BranchMade = false                        // This worktree and branch belong to another batch.
+	res.Tasks = append(res.Tasks, TaskResult{ID: "delta"}) // No worktree or branch was made.
+	if err := os.WriteFile(filepath.Join(res.Tasks[1].Worktree, "notes.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemoveTasks(res, []string{"alpha", "beta", "gamma", "delta"})
+	if len(removed) != 1 || removed[0] != "alpha" || err == nil ||
+		!strings.Contains(err.Error(), "beta") || strings.Contains(err.Error(), "gamma") || strings.Contains(err.Error(), "delta") {
+		t.Fatalf("removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(res.Tasks[0].Worktree); !os.IsNotExist(err) {
+		t.Errorf("alpha worktree remains: %v", err)
+	}
+	for _, tr := range res.Tasks[1:3] {
+		if _, err := os.Stat(tr.Worktree); err != nil {
+			t.Errorf("%s worktree is gone: %v", tr.ID, err)
+		}
+	}
+}
+
+func TestRemoveTasksKeepsSlotAndDeletesItsBranch(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+	if _, err := Merge(context.Background(), res, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	slot := filepath.Join(dir, ".hrn", "slots", "1")
+	git(t, dir, "worktree", "remove", res.Tasks[0].Worktree)
+	if err := os.MkdirAll(slot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res.Tasks[0].Slot, res.Tasks[0].Worktree = 1, slot
+	if _, err := RemoveTasks(res, []string{"alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(slot); err != nil {
+		t.Errorf("slot was removed: %v", err)
+	}
+	if branches := git(t, dir, "branch", "--list", res.Tasks[0].Branch); branches != "" {
+		t.Errorf("slot task branch remains: %s", branches)
+	}
+}
+
+func TestRemoveTasksRejectsUnknownID(t *testing.T) {
+	_, err := RemoveTasks(Result{ID: "batch", Tasks: []TaskResult{{ID: "alpha"}}}, []string{"missing"})
+	if err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Errorf("unknown task error = %v", err)
+	}
+}
+
 // deregister leaves tr's worktree the way a file lock on Windows can: git no longer lists it,
 // its directory is still there (empty, or holding what remains), and its branch still exists.
 func deregister(t *testing.T, root string, tr TaskResult, leftover string) {

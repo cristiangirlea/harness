@@ -176,6 +176,14 @@ which task, and stops — the branches are still there to merge by hand. `--squa
 records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a whole
 run with `git reset --hard ORIG_HEAD`.
 
+`merge --rm` removes the worktree and branch of each task merged in that call,
+including tasks merged before a later conflict; skipped and conflicting tasks stay.
+It uses the same rules as `batch rm`: dirty worktrees stay and cause an error,
+and slot tasks lose only their branch. The printed undo command names the commit
+from before the merge; after removal, the task work is only in the reflog. If
+removal fails for one task, the output counts only tasks whose worktree or branch
+was removed.
+
 `hrn batch rm <id>` removes what a batch made; the record and the run logs stay. For a
 slot task that is only its branch `hrn/<id>`: the slot and its lease are not the batch's,
 and stay. So is it for a task the record still shows waiting for a slot (hrn stopped
