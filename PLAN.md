@@ -539,8 +539,8 @@ where such a typo lives.
 ## Definition of done (every PR)
 
 - [ ] The full local checks, as AGENTS.md's "Build and test" lists them (`/check` runs them).
-- [ ] `/code-review` on the PR; every blocking finding fixed as its own commit or
-      rejected in a PR comment with a reason, the rest filed as issues.
+- [ ] `/code-review` on the PR; every blocking finding fixed as its own commit, the rest
+      filed as issues.
 - [ ] CI green on ubuntu and windows.
 - [ ] The relevant guide in `docs/` updated for any new flag, field, command or status, and
       README when the overview changes.

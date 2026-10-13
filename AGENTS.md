@@ -89,7 +89,8 @@ runners or route public contributions to the owner's machines.
   merge its PR, and only through the PR (`gh pr merge <n> --merge --delete-branch
   --match-head-commit <sha>`), when an independent review ran and its blocking findings are fixed,
   a security read of the diff has nothing open, and the head being merged is the commit all of
-  that ran on. Merge `main` in only for a conflict, or once before those final checks and review.
+  that ran on. Merge the base branch in only for a conflict, or once before those final checks and
+  review.
   What could not be tested is said in the PR and waits for the owner. Never auto-merge (`--auto`)
   or `--admin`, never push to `main`, never tag or release: hand over the command. PLAN.md's merge
   step (merge commit, delete the branch) is done through the PR under these conditions.
@@ -102,7 +103,7 @@ runners or route public contributions to the owner's machines.
   text, comments or docs). Commits are `Cristian Girlea <cristiangirlea@gmail.com>`: check
   `git config user.email` first.
 - Self-review with `/code-review`. A finding is blocking when it is a defect this branch brings in,
-  a missing test for what it changes, a broken rule of this file, or a security hole: fix each as
+  a missing test for what it changes, a broken house rule, or a security hole: fix each as
   its own commit, with the smallest change that closes it, and don't squash. Everything else
   (problems already on `main`, improvements, style) becomes an issue linked from the PR.
 - Tests first, seen failing. On Windows the temp dir has 8.3 short names: compare paths after
