@@ -8,6 +8,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"net/http"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func (h *HTTPServer) knowledgeRoutes(mux *http.ServeMux) {
@@ -59,7 +61,11 @@ func (h *HTTPServer) knowledgeReadAuth(w http.ResponseWriter, r *http.Request, s
 	var worker, tenant []byte
 	err := h.Store.knowledge.QueryRow(ctx, `SELECT p.worker_token_hash,t.token_hash FROM projects p JOIN tenants t ON t.id=p.tenant_id WHERE p.tenant_id=$1 AND p.id=$2`, sc.TenantID, sc.ProjectID).Scan(&worker, &tenant)
 	if err != nil {
-		failure(w, 404, "not_found", "resource not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			failure(w, 404, "not_found", "resource not found")
+		} else {
+			knowledgeFailure(w, ErrRetrievalBusy)
+		}
 		return false
 	}
 	hash := sha256.Sum256([]byte(credential))

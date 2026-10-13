@@ -67,6 +67,25 @@ func TestRetrievalClientValidatesPacket(t *testing.T) {
 	}
 }
 
+func TestRetrievalClientClassifiesKnowledgeAuthorizationStorageFailureAsUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"retrieval_busy","message":"retrieval capacity unavailable"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("HRN_SERVER_URL", srv.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	c, err := NewFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.SearchKnowledge(context.Background(), retrieval.Search{})
+	if err == nil || !RetrievalUnavailable(err) {
+		t.Fatalf("authorization storage failure classified as available or missing: %v", err)
+	}
+}
+
 func TestRetrievalTLSWrappedProtocolFailures(t *testing.T) {
 	for _, cause := range []error{
 		x509.CertificateInvalidError{Cert: &x509.Certificate{}, Reason: x509.Expired},

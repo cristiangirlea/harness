@@ -37,6 +37,20 @@ func TestKnowledgeReadRejectsShortCredentialsBeforeQueryingStorage(t *testing.T)
 	}
 }
 
+func TestKnowledgeReadReportsStorageFailureAsUnavailable(t *testing.T) {
+	s := testStore(t)
+	p, worker := testProject(t, s)
+	scope := knowledgeFixture(p).Scope
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := httptest.NewRequest(http.MethodPost, "/v1/knowledge/search", nil).WithContext(ctx)
+	r.Header.Set("Authorization", "Bearer "+worker)
+	w := httptest.NewRecorder()
+	if (&HTTPServer{Store: s}).knowledgeReadAuth(w, r, scope) || w.Code != http.StatusServiceUnavailable || !bytes.Contains(w.Body.Bytes(), []byte(`"retrieval_busy"`)) {
+		t.Fatalf("storage failure: status %d, body %s", w.Code, w.Body.String())
+	}
+}
+
 func TestKnowledgePostgresLifecycle(t *testing.T) {
 	s := testStore(t)
 	p, _ := testProject(t, s)
