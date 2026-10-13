@@ -668,8 +668,9 @@ neither of them follows a run while it happens.
 ## Decisions log
 
 - 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #N). Its `show-ref` ran with no
-  timeout, unlike the one-minute git calls around it. Decided: the same minute; a probe that
-  times out reads as no branch, which can only lower the count of what was removed.
+  timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
+  (`for-each-ref`, which answers a missing branch with no output) says whether it answered;
+  a branch counts as removed only when it was there and a probe answered that it is gone.
 - 2026-10-14: batch merge names the commit to undo to (#214, #216, PR #254).
   Decided: CLI and MCP capture HEAD before merging and print that full commit when at least
   one task merges, including before a later conflict or when --rm removes nothing.
