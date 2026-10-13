@@ -46,7 +46,12 @@ func (h *HTTPServer) knowledgeReadAuth(w http.ResponseWriter, r *http.Request, s
 		failure(w, 404, "not_found", "resource not found")
 		return false
 	}
-	if sameToken(token(r), h.OperatorToken) {
+	credential := token(r)
+	if len(credential) != 64 {
+		failure(w, 404, "not_found", "resource not found")
+		return false
+	}
+	if sameToken(credential, h.OperatorToken) {
 		return true
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -57,9 +62,8 @@ func (h *HTTPServer) knowledgeReadAuth(w http.ResponseWriter, r *http.Request, s
 		failure(w, 404, "not_found", "resource not found")
 		return false
 	}
-	credential := token(r)
 	hash := sha256.Sum256([]byte(credential))
-	if len(credential) == 64 && (subtle.ConstantTimeCompare(hash[:], worker) == 1 || subtle.ConstantTimeCompare(hash[:], tenant) == 1) {
+	if subtle.ConstantTimeCompare(hash[:], worker) == 1 || subtle.ConstantTimeCompare(hash[:], tenant) == 1 {
 		return true
 	}
 	failure(w, 404, "not_found", "resource not found")

@@ -20,6 +20,23 @@ func knowledgeFixture(p Project) retrieval.Import {
 		{Key: "text", Content: "ERR_BUILD is a build error. build build", Source: "docs/errors.md", Evidence: "fixture check", Identifiers: []string{}},
 	}}
 }
+func TestKnowledgeReadRejectsShortCredentialsBeforeQueryingStorage(t *testing.T) {
+	scope := retrieval.Scope{TenantID: "t_" + strings.Repeat("a", 32), ProjectID: "p_" + strings.Repeat("b", 32), Backend: "codex", Model: "fixture", Revision: fixtureRef}
+	h := &HTTPServer{Store: &Store{}}
+	for _, credential := range []string{"", "short"} {
+		t.Run(credential, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/v1/knowledge/search", nil)
+			if credential != "" {
+				r.Header.Set("Authorization", "Bearer "+credential)
+			}
+			w := httptest.NewRecorder()
+			if h.knowledgeReadAuth(w, r, scope) || w.Code != http.StatusNotFound {
+				t.Fatalf("status %d, want 404", w.Code)
+			}
+		})
+	}
+}
+
 func TestKnowledgePostgresLifecycle(t *testing.T) {
 	s := testStore(t)
 	p, _ := testProject(t, s)
