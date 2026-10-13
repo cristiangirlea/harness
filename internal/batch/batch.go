@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -175,6 +176,11 @@ var worktreeMu sync.Mutex
 
 // slotPoll is how often a task waiting for a free slot looks again.
 var slotPoll = 5 * time.Second
+
+// unreadableWait is how long a task waits on a lease it cannot read before
+// it gives up on it: one being written reads within a moment, one still
+// unreadable after this long is a leftover no process will free.
+var unreadableWait = 30 * time.Second
 
 // sessionRetries is how many times a take is tried again at once when a
 // session took a slot in its range after the range was worked out.
@@ -852,6 +858,7 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 		}
 	}
 	var said string
+	unreadable := unreadableLeases{}
 	for {
 		got, err := try()
 		if err == nil {
@@ -870,8 +877,16 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 			// Only a slot a live process holds, another batch's or a running
 			// task's of this batch, can come free: sessions', skipped slots
 			// and the ones this batch kept stay as they are. A lease that
-			// could not be read is being written, so it is looked at again.
-			if !someoneWillFree(full, kept) {
+			// could not be read is being written, so it is looked at again;
+			// one that stays unreadable for unreadableWait is a leftover no
+			// process will free, so when those are all that is left to wait
+			// for, the task fails and names them.
+			stuck := unreadable.note(full, time.Now())
+			switch {
+			case someoneWillFree(full, kept):
+			case stuck:
+				return drop(unreadableError(full))
+			case len(full.Unreadable) == 0:
 				return drop(fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full))
 			}
 			wait = "waiting for a free slot: " + strings.Join(full.Passed, "; ")
@@ -911,18 +926,61 @@ func holdsASession(full *ws.NoSlotError) bool {
 
 // someoneWillFree reports whether a slot full passed over is held by a
 // process that will give it back: one not a session's (no pid) and not one
-// this batch kept. A lease it could not read counts, since one being
-// written is readable on the next look.
+// this batch kept. A lease it could not read does not count: whether one
+// is still being written is unreadableLeases' call.
 func someoneWillFree(full *ws.NoSlotError, kept *keptSlots) bool {
-	if full.Held > len(full.Holders) {
-		return true
-	}
 	for _, l := range full.Holders {
 		if l.PID != 0 && !kept.has(l.Holder) {
 			return true
 		}
 	}
 	return false
+}
+
+// unreadableLeases is when each slot a waiting task passed over for a lease
+// it could not read was first found so, kept across the task's looks.
+type unreadableLeases map[int]time.Time
+
+// note records full's unreadable slots as of now, forgets those readable
+// again, and reports whether there are any and every one has stayed
+// unreadable for unreadableWait.
+func (u unreadableLeases) note(full *ws.NoSlotError, now time.Time) bool {
+	seen := make(map[int]bool, len(full.Unreadable))
+	stuck := len(full.Unreadable) > 0
+	for _, n := range full.Unreadable {
+		seen[n] = true
+		since, ok := u[n]
+		if !ok {
+			since = now
+			u[n] = now
+		}
+		if now.Sub(since) < unreadableWait {
+			stuck = false
+		}
+	}
+	for n := range u {
+		if !seen[n] {
+			delete(u, n)
+		}
+	}
+	return stuck
+}
+
+// unreadableError is a task's error when the leases full passed over that
+// it could not read are all that keeps it from a slot and they stayed so
+// for unreadableWait: it names each and how to clear it.
+func unreadableError(full *ws.NoSlotError) error {
+	var lines []string
+	for _, n := range full.Unreadable {
+		prefix := "slot " + strconv.Itoa(n) + " "
+		for _, line := range full.Passed {
+			if strings.HasPrefix(line, prefix) {
+				lines = append(lines, line)
+			}
+		}
+	}
+	return fmt.Errorf("no slot is free: these leases could not be read for %s and no process will free them:\n  %s\ncheck them with `hrn ws list`; once no hrn process holds the slot, remove its lease file (or the .takeover file the line names)",
+		unreadableWait, strings.Join(lines, "\n  "))
 }
 
 // keptSlots is the holders of the slots a batch's tasks could not give

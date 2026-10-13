@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -967,5 +968,160 @@ func TestATaskWaitingForASlotLeavesItsBranchWhenItCannotSaveThatItDropsIt(t *tes
 	}
 	if b := git(t, dir, "branch", "--list", "hrn/patient"); b == "" {
 		t.Error("the branch must stay when the record could not be saved")
+	}
+}
+
+// TestHelperExit is a process that ends at once, so its pid names a process
+// that has exited.
+func TestHelperExit(t *testing.T) {
+	if os.Getenv("HRN_BATCH_HELPER") != "exit" {
+		return
+	}
+	os.Exit(0)
+}
+
+// exitedPID starts the test binary as a helper that exits, waits for it, and
+// returns its pid.
+func exitedPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperExit$")
+	cmd.Env = append(os.Environ(), "HRN_BATCH_HELPER=exit")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd.Process.Pid
+}
+
+// leaseFile is the lease of slot n of the repository at dir.
+func leaseFile(dir string, n int) string { return slotPath(dir, n) + ".lease" }
+
+// quickUnreadableWait makes a task give up soon on a lease that stays
+// unreadable, and returns the bound.
+func quickUnreadableWait(t *testing.T) time.Duration {
+	t.Helper()
+	old := unreadableWait
+	unreadableWait = 300 * time.Millisecond
+	t.Cleanup(func() { unreadableWait = old })
+	return unreadableWait
+}
+
+// runStuck runs a batch of one task against slots the test filled, and
+// returns the task once it gave up, checking it did so after the bound and
+// before the context ends, with no slot, no attempt and no branch.
+func runStuck(t *testing.T, dir string, bound time.Duration) TaskResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	started := time.Now()
+	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok",
+		Tasks: []Task{{ID: "stuck", Prompt: "p"}}}, func(Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Tasks[0]
+	if tr.Status != StatusError || tr.Slot != 0 || len(tr.Attempts) != 0 || tr.BranchMade {
+		t.Fatalf("task = %+v, want an error with no slot, attempt or branch", tr)
+	}
+	if time.Since(started) < bound {
+		t.Errorf("the task gave up after %s, before the %s bound", time.Since(started), bound)
+	}
+	if !strings.Contains(tr.Error, "hrn ws list") {
+		t.Errorf("error = %q, want it to say how to inspect the slots", tr.Error)
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/stuck"); b != "" {
+		t.Errorf("a task that never got a slot leaves no branch: %q", b)
+	}
+	return tr
+}
+
+// A lease that is not JSON is never read by anyone and never freed, so a
+// task waiting on it gives up after the bound and names the file, rather
+// than wait until the batch is canceled.
+func TestATaskGivesUpOnLeasesThatStayUnreadable(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	bound := quickUnreadableWait(t)
+	for n := 1; n <= ws.DefaultMax; n++ {
+		writeFile(t, leaseFile(dir, n), "{not json")
+	}
+	tr := runStuck(t, dir, bound)
+	for n := 1; n <= ws.DefaultMax; n++ {
+		if !strings.Contains(tr.Error, leaseFile(dir, n)) {
+			t.Errorf("error = %q, want it to name %s", tr.Error, leaseFile(dir, n))
+		}
+		if !exists(leaseFile(dir, n)) {
+			t.Errorf("the unreadable lease of slot %d should be left for the owner", n)
+		}
+	}
+}
+
+// A <n>.lease.takeover file a crash left stops every take from taking the
+// stale lease over, so a task waiting on it gives up after the bound and
+// names the file to remove.
+func TestATaskGivesUpOnALeaseALeftTakeoverFileBlocks(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	bound := quickUnreadableWait(t)
+	gone := exitedPID(t)
+	for n := 1; n <= ws.DefaultMax; n++ {
+		data, _ := json.Marshal(ws.Lease{Holder: "batch old task " + strconv.Itoa(n), PID: gone, Taken: time.Now()})
+		writeFile(t, leaseFile(dir, n), string(data))
+		writeFile(t, leaseFile(dir, n)+".takeover", "")
+	}
+	tr := runStuck(t, dir, bound)
+	for n := 1; n <= ws.DefaultMax; n++ {
+		if !strings.Contains(tr.Error, leaseFile(dir, n)+".takeover") {
+			t.Errorf("error = %q, want it to name %s.takeover", tr.Error, leaseFile(dir, n))
+		}
+		if !exists(leaseFile(dir, n)) || !exists(leaseFile(dir, n)+".takeover") {
+			t.Errorf("the lease and takeover file of slot %d should be left for the owner", n)
+		}
+	}
+}
+
+// An empty lease is one being written, so a task keeps waiting on it; once
+// it reads as another batch's the task waits on that batch as usual,
+// however long the other slots stay unreadable, and takes the slot when it
+// is given back.
+func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	bound := quickUnreadableWait(t)
+	for n := 1; n <= ws.DefaultMax; n++ {
+		writeFile(t, leaseFile(dir, n), "")
+	}
+	go func() {
+		time.Sleep(bound / 3)
+		data, _ := json.Marshal(ws.Lease{Holder: "batch other task x", PID: os.Getpid(), Taken: time.Now()})
+		writeFile(t, leaseFile(dir, 1), string(data))
+		time.Sleep(bound)
+		os.Remove(leaseFile(dir, 1))
+	}()
+	var mu sync.Mutex
+	var waits []string
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok",
+		Tasks: []Task{{ID: "patient", Prompt: "p"}}}, func(e Event) {
+		if e.Kind == "wait" {
+			mu.Lock()
+			waits = append(waits, e.Text)
+			mu.Unlock()
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || tr.Slot != 1 {
+		t.Fatalf("task = %+v, want a pass in slot 1 once the other batch gave it back", tr)
+	}
+	if len(waits) == 0 || !strings.Contains(waits[0], leaseFile(dir, 2)+" is being written") {
+		t.Errorf("wait events = %q, want the first to say slot 2's lease is being written and name it", waits)
+	}
+	for n := 2; n <= ws.DefaultMax; n++ {
+		if !exists(leaseFile(dir, n)) {
+			t.Errorf("the lease being written on slot %d should stay", n)
+		}
 	}
 }

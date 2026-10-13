@@ -146,6 +146,7 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 
 	var passed []string
 	var holders []Lease
+	var unreadable []int
 	held := 0
 	for n := 1; n <= opt.Max; n++ {
 		path := filepath.Join(dir, strconv.Itoa(n))
@@ -160,6 +161,8 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 			held++
 			if holder != nil {
 				holders = append(holders, *holder)
+			} else {
+				unreadable = append(unreadable, n)
 			}
 			continue
 		}
@@ -180,7 +183,7 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		}
 		return Taken{N: n, Path: path, Lease: lease, Notes: notes}, nil
 	}
-	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Holders: holders, Passed: passed}
+	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Holders: holders, Passed: passed, Unreadable: unreadable}
 }
 
 // NoSlotError is Take's error when every slot up to Max is taken or skipped,
@@ -190,6 +193,10 @@ type NoSlotError struct {
 	Held    int      // how many were passed over for a lease someone holds; the rest were skipped
 	Holders []Lease  // the leases of those, in slot order, less any that could not be read
 	Passed  []string // one line per slot: its path and who holds it, or why it was skipped
+	// Unreadable is the slots among Held whose lease gave no Lease, in slot
+	// order: an empty one being written, one that is not JSON, or a stale one
+	// a left <n>.lease.takeover file keeps from being taken over.
+	Unreadable []int
 }
 
 func (e *NoSlotError) Error() string {
@@ -348,7 +355,7 @@ func readLease(p string) (Lease, []byte, error) {
 	}
 	var l Lease
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return Lease{}, raw, errors.New("its lease is being written")
+		return Lease{}, raw, fmt.Errorf("its lease %s is being written", p)
 	}
 	if err := json.Unmarshal(raw, &l); err != nil {
 		return Lease{}, raw, fmt.Errorf("its lease %s is unreadable: %v", p, err)
