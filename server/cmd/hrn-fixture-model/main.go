@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// This deterministic local endpoint exists only for disposable worker and
-// KEDA tests. It never calls a model provider.
+// This deterministic local endpoint supplies model responses to disposable
+// worker tests. It never calls a model provider.
 func main() {
 	address := os.Getenv("HRN_FIXTURE_LISTEN")
 	if address == "" {
