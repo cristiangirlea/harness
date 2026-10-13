@@ -62,7 +62,7 @@ func durableFixture(t *testing.T, store *checkpointStore) (*APIBackend, Task, *f
 	return backend, task, fake, effects
 }
 
-func TestDurableFailureBoundaries(t *testing.T) {
+func TestDurableStopsAtFailedSavesAndResumesOnlyConfirmedOperations(t *testing.T) {
 	tests := []struct {
 		boundary      string
 		committed     bool
