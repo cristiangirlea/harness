@@ -40,6 +40,35 @@ Whatever the server reports about the edits it applied is recorded as an info ev
 shape was not documented where this was written, so hrn keeps it rather than guessing at
 it. Nothing about it goes back into the history.
 
+### Lean claude workers
+
+By default a claude worker starts the way Claude Code starts for you: with your user and
+local settings, so every plugin, skill, hook and MCP server you have installed, and your
+own `~/.claude/CLAUDE.md` and rules. On a small task that start-up is most of the context
+on every turn (#200). `hrn run --lean`, the `lean` field on a batch or eval spec or task,
+and the MCP `run` argument start it with only:
+
+- the MCP servers in the run's `--mcp` files (and `~/.hrn/mcp.json`):
+  `--strict-mcp-config`, so no user-scope, project `.mcp.json`, plugin or claude.ai
+  connector servers;
+- the project's settings: `--setting-sources project`, so no `~/.claude/settings.json`
+  or `.claude/settings.local.json`, and with them no user plugins, hooks or permission
+  rules.
+
+What a lean worker still gets: the repository's own `CLAUDE.md` (and the `AGENTS.md` it
+imports with `@AGENTS.md`; Claude Code reads `AGENTS.md` only that way), the project's
+`.claude/settings.json`, `.claude/rules`, skills and hooks, and managed (organisation)
+settings and memory. What it no longer gets: your `~/.claude/CLAUDE.md` and
+`~/.claude/rules` (Claude Code 2.1.284 loads user memory only when `user` is a setting
+source), `CLAUDE.local.md`, your plugins and their skills, user skills, user hooks, and
+every MCP server hrn did not pass. It still logs in with your subscription. hrn's guard
+is the same either way: its `--disallowedTools` rules are command-line flags, not settings.
+
+Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
+`apiKeyHelper`, never the subscription, and skips `CLAUDE.md` discovery. Lean is off by
+default. The api loop never reads Claude Code's settings, so lean changes nothing there; the
+codex, gemini and opencode backends say `lean: not enforced` and run as usual.
+
 ### Continuing a run
 
 A finished run can be picked up where it stopped, on the backend that ran it or on
