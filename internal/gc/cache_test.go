@@ -286,7 +286,21 @@ func TestGCFreeBelowReportsDriveStillBelowAfterApply(t *testing.T) {
 	}
 	cs := caches(t, []string{root}, nil, opt)
 	ApplyCaches(context.Background(), cs)
-	if got, want := FreeBelowReport(cs, opt), []string{"C: still has 31.0 GB free, 9.0 GB below 40 GB; another hrn gc --free-below run picks the next caches"}; !equalLines(got, want) {
+	if got, want := FreeBelowReport(cs, opt), []string{"C: still has 31.0 GB free, 9.0 GB below 40 GB"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
+func TestGCFreeBelowReportSuggestsAnotherRunWhenEligibleCachesWereLeft(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	younger := tagged(t, filepath.Join(root, "younger"), 5*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 1000
+	opt.Drive = func(string) (Drive, error) { return Drive{ID: "C:", Free: 1}, nil }
+	cs := caches(t, []string{root}, nil, opt)
+	wantCache(t, findCache(t, cs, younger), Keep, "inside --idle 24h")
+	if got, want := FreeBelowReport(cs, opt), []string{"C: still has 1 bytes free, 999 bytes below 1000 bytes; another hrn gc --free-below run picks the next caches"}; !equalLines(got, want) {
 		t.Errorf("report = %q, want %q", got, want)
 	}
 }

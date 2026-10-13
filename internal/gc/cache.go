@@ -27,6 +27,7 @@ type Cache struct {
 	driveID    string // drive identified during the free-below scan
 	driveKnown bool   // its free space was read successfully
 	driveBelow bool   // that drive was below the limit before any removals
+	driveMore  bool   // eligible caches left because enough was already going
 }
 
 // Drive is what the cache pass knows about the volume holding a folder.
@@ -267,6 +268,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 	type drive struct {
 		free, after int64 // free now, and once what is marked has gone
 		candidates  []int
+		more        bool
 	}
 	drives := map[string]*drive{}
 	var order []string
@@ -294,30 +296,36 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			s.candidates = append(s.candidates, i)
 		}
 	}
-	for i := range all {
-		if s := drives[all[i].driveID]; all[i].driveKnown && s != nil && s.free < opt.FreeBelow {
-			all[i].driveBelow = true
-		}
-	}
 	for _, id := range order {
 		s := drives[id]
-		if s.after >= opt.FreeBelow {
-			continue
-		}
+		alreadyEnough := s.after >= opt.FreeBelow
 		sort.SliceStable(s.candidates, func(a, b int) bool { return all[s.candidates[a]].LastBuild.Before(all[s.candidates[b]].LastBuild) })
 		for _, i := range s.candidates {
 			c := &all[i]
 			idle := now.Sub(c.LastBuild)
+			if alreadyEnough {
+				if s.free < opt.FreeBelow && idle >= minIdle {
+					s.more = true
+				}
+				continue // enough is going already; keep the original reason
+			}
 			if idle < minIdle {
 				c.Reason = fmt.Sprintf("last written %s ago, inside --min-idle %s", short(idle), short(minIdle))
 				continue
 			}
 			if s.after >= opt.FreeBelow {
+				s.more = true
 				continue // enough is going already; younger ones keep their reason
 			}
 			c.Verdict = Remove
 			c.Reason = fmt.Sprintf("idle %s, and %s has only %s free, below %s", short(idle), id, report.Bytes(s.free), report.Bytes(opt.FreeBelow))
 			s.after += c.Size
+		}
+	}
+	for i := range all {
+		if s := drives[all[i].driveID]; all[i].driveKnown && s != nil && s.free < opt.FreeBelow {
+			all[i].driveBelow = true
+			all[i].driveMore = s.more
 		}
 	}
 }
@@ -359,7 +367,11 @@ func FreeBelowReport(caches []Cache, opt Options) []string {
 		if d.Free >= opt.FreeBelow {
 			lines = append(lines, fmt.Sprintf("%s now has %s free, above %s", c.driveID, report.Bytes(d.Free), limit))
 		} else {
-			lines = append(lines, fmt.Sprintf("%s still has %s free, %s below %s; another hrn gc --free-below run picks the next caches", c.driveID, report.Bytes(d.Free), report.Bytes(opt.FreeBelow-d.Free), limit))
+			line := fmt.Sprintf("%s still has %s free, %s below %s", c.driveID, report.Bytes(d.Free), report.Bytes(opt.FreeBelow-d.Free), limit)
+			if c.driveMore {
+				line += "; another hrn gc --free-below run picks the next caches"
+			}
+			lines = append(lines, line)
 		}
 	}
 	return lines
