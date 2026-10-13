@@ -247,6 +247,10 @@ func TestGCFreeBelowLeavesADriveWhoseFreeSpaceIsUnknown(t *testing.T) {
 
 	cs := caches(t, []string{root}, nil, opt)
 	wantCache(t, findCache(t, cs, c), Keep, "free space unknown")
+	ApplyCaches(context.Background(), cs)
+	if got := FreeBelowReport(cs, opt); len(got) != 0 {
+		t.Errorf("a drive whose scan lookup failed was reported: %q", got)
+	}
 }
 
 func TestGCFreeBelowReportsDriveNowAboveAfterApply(t *testing.T) {
@@ -255,11 +259,16 @@ func TestGCFreeBelowReportsDriveNowAboveAfterApply(t *testing.T) {
 	opt := cacheOpt
 	opt.FreeBelow = 40 << 30
 	calls := 0
-	opt.Drive = func(string) (Drive, error) {
+	var reportPath string
+	opt.Drive = func(path string) (Drive, error) {
+		if _, err := os.Stat(path); err != nil {
+			return Drive{}, err
+		}
 		calls++
 		if calls == 1 {
 			return Drive{ID: "C:", Free: 30 << 30}, nil
 		}
+		reportPath = path
 		return Drive{ID: "C:", Free: 41 << 30}, nil
 	}
 	cs := caches(t, []string{root}, nil, opt)
@@ -267,6 +276,39 @@ func TestGCFreeBelowReportsDriveNowAboveAfterApply(t *testing.T) {
 		t.Fatalf("apply: removed %d, errors %v", len(removed), errs)
 	}
 	if got, want := FreeBelowReport(cs, opt), []string{"C: now has 41.0 GB free, above 40 GB"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+	if samePath(reportPath) != samePath(root) {
+		t.Errorf("report looked up %q, want existing parent %q", reportPath, root)
+	}
+}
+
+func TestGCFreeBelowReportPrintsOneLinePerDrive(t *testing.T) {
+	first := tempRoot(t)
+	second := tempRoot(t)
+	tagged(t, filepath.Join(first, "a"), 10*time.Hour, 1000)
+	tagged(t, filepath.Join(first, "b"), 10*time.Hour, 1000)
+	tagged(t, filepath.Join(second, "c"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.Idle = time.Hour
+	opt.FreeBelow = 40 << 30
+	opt.Drive = func(path string) (Drive, error) {
+		if _, err := os.Stat(path); err != nil {
+			return Drive{}, err
+		}
+		if inside(path, second) {
+			return Drive{ID: "D:", Free: 30 << 30}, nil
+		}
+		return Drive{ID: "C:", Free: 30 << 30}, nil
+	}
+	cs := caches(t, []string{first, second}, nil, opt)
+	if removed, errs := ApplyCaches(context.Background(), cs); len(removed) != 3 || len(errs) != 0 {
+		t.Fatalf("apply: removed %d, errors %v", len(removed), errs)
+	}
+	if got, want := FreeBelowReport(cs, opt), []string{
+		"C: still has 30.0 GB free, 10.0 GB below 40 GB",
+		"D: still has 30.0 GB free, 10.0 GB below 40 GB",
+	}; !equalLines(got, want) {
 		t.Errorf("report = %q, want %q", got, want)
 	}
 }
