@@ -53,6 +53,10 @@ may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common 
 second try with the same model, told what went wrong. How the retry starts depends on
 how the attempt failed.
 
+With retrieval enabled, a same-scope retry after a failed gate searches again using
+bounded failure evidence and the first attempt's pinned knowledge version. A change
+of backend, model or retrieval scope is refused rather than silently repinned.
+
 | Previous attempt | Next attempt |
 |---|---|
 | ran to the end, a gate failed | continues in the same worktree, on top of the work already committed, with the failing gate command, its exit code and output appended to the prompt |

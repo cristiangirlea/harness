@@ -217,7 +217,7 @@ func (s *Spec) normalize() error {
 			return fmt.Errorf("duplicate task id %q", t.ID)
 		}
 		seen[t.ID] = true
-		if err := t.Options.Validate(); err != nil {
+		if err := t.Options.Over(s.Options).Validate(); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkBackends(t.Backend, t.Retry); err != nil {
@@ -538,7 +538,7 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		return fail(fmt.Errorf("worktree %s already exists; remove it or pick another task id", tr.Worktree))
 	}
 
-	task := agent.Task{Dir: tr.Worktree, Options: opts}
+	task := agent.Task{Dir: tr.Worktree, Options: opts, OriginalPrompt: t.Prompt}
 	expect, err := compileExpect(t.Expect)
 	if err != nil {
 		return fail(err)
@@ -613,6 +613,13 @@ func runTask(ctx context.Context, spec *Spec, t Task, tr TaskResult, root, base 
 		}
 		out, err := runAttempt(ctx, b, t.ID, task, plan, expect, gates, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
+		task.RetrievalState = out.att.Result.Retrieval
+		task.RetrievalRepair = false
+		for _, g := range out.att.Gates {
+			if g.ExitCode != 0 {
+				task.RetrievalRepair = true
+			}
+		}
 		if out.commit != "" {
 			tr.Commit = out.commit
 		}
