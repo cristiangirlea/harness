@@ -47,6 +47,8 @@ func (r Result) ModelTokens() (int64, bool, bool) {
 	}
 	return total, status == "reported" || status == "estimated", status == "estimated"
 }
+
+// KnownCost distinguishes an explicitly reported zero from absent cost.
 func (r Result) KnownCost() (float64, bool, bool) {
 	if r.ValidateUsage() != nil {
 		return 0, false, false

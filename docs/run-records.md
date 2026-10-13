@@ -32,9 +32,13 @@ For opted-in retrieval, `result.json` includes `retrieval` with its packet or
 failure, and `messages.json` includes the conversation's retrieval pin. Older
 records without these fields still load.
 
-`usage_metadata`, when present on a result, states whether model token counters
-include cache tokens and whether usage and cost were reported, estimated or
-missing. Older results remain readable.
+`result.json` includes `usage_metadata` when the adapter supplies it. Its
+`input_semantics` is `inclusive_cache` (Codex input already includes cached input)
+or `exclusive_cache` (api and Claude cache counters are separate). `status` is
+`reported`, `estimated`, or `missing`; `cost_status` distinguishes a reported
+zero from missing cost and may also be `estimated` or `missing`. Older results
+without metadata still load; known backends infer token semantics from their
+existing counters.
 
 `result.json` also includes `context_tokens` when known: the last model call's input
 tokens, including cache reads and writes, rather than the sum across the run. The
