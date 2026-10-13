@@ -666,8 +666,11 @@ neither of them follows a run while it happens.
 ## Decisions log
 
 - 2026-10-13: gc moves a cache aside before deleting it (#129, PR #N). A build can
-  start after the lock probe and before deletion. Decided: rename to a sibling `.gc-<pid>-*`
-  first, then delete; a rename failure keeps the cache, and a leftover is scanned next run.
+  start after the lock probe and before deletion. Decided: rename to a sibling
+  `.gc-<pid>-<unix nanos>-<name>` first, probe the moved locks again (including `flock` on
+  Unix), moving it back if held, then delete the tag last. A rename failure keeps the
+  cache; a failed deletion leaves a tagged leftover, which is scanned next run and can go
+  regardless of idle time.
   The worktree pass is left as it is: `git worktree remove` does its own deletion.
 - 2026-10-13: gc and links out of a worktree (#94, PR #240). A tracked folder
   replaced by an identical junction can look clean to git, while worktree removal
