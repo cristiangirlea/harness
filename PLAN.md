@@ -667,6 +667,12 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: the definition of done and rule 2 follow AGENTS.md (#64, PR #N). Since the
+  repository went public, CI again tests both platforms on every pull request, so rule 2's
+  "green on both" stays. Decided: the definition of done points at AGENTS.md's checks instead
+  of its own older list, asks for the `docs/` guide as well as the README, and names the
+  entry an issue-only fix adds; rule 2's branch-name example is current. Whether a blocking
+  finding may be rejected rather than fixed is #65.
 - 2026-10-13: the records rule names the right guide (#153, PR #250). `.claude/rules/records.md`
   sent a change to what a record holds to the README's "Run records" section, which moved to
   `docs/run-records.md` (PR #107). Decided: the rule points at the guide.
