@@ -456,10 +456,14 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, msg)
 	}
 	// The rows are the same for every viewer: shortened, never with a title.
+	// A run's purpose comes from its prompt as recorded, as hrn report has
+	// it; only the prompt shown is shortened.
 	vw := viewer{home: s.home, system: s.system}
 	for i, rec := range runs {
-		runs[i] = vw.shortener(rec.Task.Dir).record(s.cleanRecord(rec))
-		l.Runs = append(l.Runs, runRow(runs[i]))
+		runs[i] = s.cleanRecord(rec)
+		r := runRow(runs[i])
+		r.Prompt, _ = firstLine(vw.shortener(rec.Task.Dir).shorten(runs[i].Task.Prompt))
+		l.Runs = append(l.Runs, r)
 	}
 	l.Purposes = purposesOf(runs)
 	batches, unreadable, err := batch.List()

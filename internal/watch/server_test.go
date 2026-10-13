@@ -1537,6 +1537,34 @@ func TestTheIndexShortensThePathsInItsRowsForEveryViewer(t *testing.T) {
 	}
 }
 
+func TestTheIndexClassifiesThePromptAsRecordedNotAsShortened(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	ws := filepath.Join(t.TempDir(), "project", "ci")
+	w, err := runlog.Create("fake", agent.Task{Prompt: "Inspect " + filepath.Join(ws, "workflow.yml"), Dir: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(context.Background(), Options{Poll: 5 * time.Millisecond})
+
+	page := viewAs(t, h, "/", "127.0.0.1:6000")
+	row := runRowOf(t, page, w.ID())
+	if !strings.Contains(row, `title="ops.ci-container">ops</td>`) {
+		t.Errorf("the run's row is not ops, as hrn report has it:\n%s", row)
+	}
+	if !strings.Contains(page, `<th scope="row">ops</th>`) {
+		t.Error("the purpose card has no ops row")
+	}
+	if want := "Inspect ." + string(filepath.Separator) + "workflow.yml"; !strings.Contains(row, want) {
+		t.Errorf("the row's prompt lacks %q:\n%s", want, row)
+	}
+	if strings.Contains(row, ws) {
+		t.Errorf("the row's prompt holds the full path %q", ws)
+	}
+}
+
 func TestTheBatchStreamShortensItsPaths(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	repo := filepath.Join(t.TempDir(), "ada-os-ipc")
