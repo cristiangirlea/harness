@@ -27,12 +27,13 @@ import (
 )
 
 type accessFixture struct {
-	t       *testing.T
-	key     *rsa.PrivateKey
-	certs   *httptest.Server
-	fetches atomic.Int32
-	clock   time.Time
-	opt     Options
+	t        *testing.T
+	key      *rsa.PrivateKey
+	extraKey atomic.Pointer[rsa.PrivateKey]
+	certs    *httptest.Server
+	fetches  atomic.Int32
+	clock    time.Time
+	opt      Options
 }
 
 func newAccessFixture(t *testing.T) *accessFixture {
@@ -51,7 +52,15 @@ func newAccessFixture(t *testing.T) *accessFixture {
 		}
 		n := base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes())
 		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.PublicKey.E)).Bytes())
-		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]string{"kid": "test-key", "kty": "RSA", "n": n, "e": e}}})
+		keys := []any{map[string]string{"kid": "test-key", "kty": "RSA", "n": n, "e": e}}
+		if extra := f.extraKey.Load(); extra != nil {
+			keys = append(keys, map[string]string{
+				"kid": "new-key", "kty": "RSA",
+				"n": base64.RawURLEncoding.EncodeToString(extra.PublicKey.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(extra.PublicKey.E)).Bytes()),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
 	}))
 	t.Cleanup(f.certs.Close)
 	f.opt.Public = &PublicAccess{Origin: "https://harness.example.com", Team: "team.cloudflareaccess.com", Audience: "aud-tag", CertsURL: f.certs.URL + "/cdn-cgi/access/certs", Now: func() time.Time { return f.clock }}
@@ -102,6 +111,42 @@ func (f *accessFixture) request(h http.Handler, path, host, origin, token string
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
+}
+
+func TestParsePublicAccess(t *testing.T) {
+	cases := []struct {
+		name, origin, team, audience string
+		wantOrigin, wantTeam         string
+		wantErr                      bool
+	}{
+		{"normalizes origin and team", "https://HOST.Example.COM:443", "TEAM.CloudflareAccess.COM", "aud-tag", "https://host.example.com", "team.cloudflareaccess.com", false},
+		{"http", "http://host.example.com", "team.cloudflareaccess.com", "aud-tag", "", "", true},
+		{"path", "https://host.example.com/path", "team.cloudflareaccess.com", "aud-tag", "", "", true},
+		{"query", "https://host.example.com?x=1", "team.cloudflareaccess.com", "aud-tag", "", "", true},
+		{"userinfo", "https://user@host.example.com", "team.cloudflareaccess.com", "aud-tag", "", "", true},
+		{"wrong team", "https://host.example.com", "team.example.com", "aud-tag", "", "", true},
+		{"audience whitespace", "https://host.example.com", "team.cloudflareaccess.com", "aud tag", "", "", true},
+		{"empty origin", "", "team.cloudflareaccess.com", "aud-tag", "", "", true},
+		{"empty team", "https://host.example.com", "", "aud-tag", "", "", true},
+		{"empty audience", "https://host.example.com", "team.cloudflareaccess.com", "", "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParsePublicAccess(tc.origin, tc.team, tc.audience)
+			if tc.wantErr {
+				if err == nil || got != nil {
+					t.Fatalf("ParsePublicAccess() = %+v, %v; want error", got, err)
+				}
+				return
+			}
+			if err != nil || got == nil {
+				t.Fatalf("ParsePublicAccess() = %+v, %v; want success", got, err)
+			}
+			if got.Origin != tc.wantOrigin || got.Team != tc.wantTeam || got.Audience != tc.audience {
+				t.Fatalf("ParsePublicAccess() = %+v", got)
+			}
+		})
+	}
 }
 
 func TestPublicAccessChecksEveryRequestAndKeepsItRemote(t *testing.T) {
@@ -224,6 +269,19 @@ func TestPublicAccessRefetchesAnUnknownKeyAtMostOncePerMinute(t *testing.T) {
 	}
 	if got := f.fetches.Load(); got != 2 {
 		t.Fatalf("fetches = %d, want initial and one refetch", got)
+	}
+	newKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.extraKey.Store(newKey)
+	f.clock = f.clock.Add(61 * time.Second)
+	newToken := f.token(map[string]any{"alg": "RS256", "kid": "new-key"}, f.validClaims(), newKey)
+	if w := f.request(h, "/", "harness.example.com", "", newToken); w.Code != 200 {
+		t.Fatalf("new kid after one minute = %d: %s", w.Code, w.Body)
+	}
+	if got := f.fetches.Load(); got != 3 {
+		t.Fatalf("fetches = %d, want initial, first unknown and after one minute", got)
 	}
 }
 
