@@ -49,3 +49,22 @@ func TestRequestRejectsOversizedControlResponse(t *testing.T) {
 		t.Errorf("large response = %v", err)
 	}
 }
+
+func TestNewFromEnvAllowsPlainHTTPOnlyForLoopbackIPLiteral(t *testing.T) {
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	for _, origin := range []string{"http://localhost:1", "http://10.0.0.1:1", "http://192.168.1.1:1"} {
+		t.Run(origin, func(t *testing.T) {
+			t.Setenv("HRN_SERVER_URL", origin)
+			if _, err := NewFromEnv(); err == nil || err.Error() != "remote control requires HTTPS or loopback HTTP" {
+				t.Fatalf("NewFromEnv() error = %v", err)
+			}
+		})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	t.Setenv("HRN_SERVER_URL", server.URL)
+	if _, err := NewFromEnv(); err != nil {
+		t.Fatalf("loopback IP URL %q: %v", server.URL, err)
+	}
+}

@@ -44,7 +44,7 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 	}
 	host := parsed.Hostname()
 	if parsed.Scheme != "https" && !(parsed.Scheme == "http" &&
-		(host == "localhost" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()))) {
+		net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
 		return nil, errors.New("remote control requires HTTPS or loopback HTTP")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
