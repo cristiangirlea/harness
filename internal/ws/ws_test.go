@@ -370,6 +370,43 @@ func TestReleaseRefusesASlotHoldingChangesOrUntrackedFilesAndKeepsTheLease(t *te
 	}
 }
 
+// A release refused under the slot's takeover lock removes the lock, so the
+// next release or take is not stopped by it.
+func TestAReleaseRefusedUnderTheLockRemovesTheLock(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	f.write(got.Path, "left.txt", "x\n")
+	if err := Release(context.Background(), got, ""); err == nil || !strings.Contains(err.Error(), "left.txt") {
+		t.Fatalf("release with an untracked file: %v", err)
+	}
+	if _, err := os.Stat(lp + ".takeover"); !os.IsNotExist(err) {
+		t.Errorf("the takeover lock must go with the refused release: %v", err)
+	}
+	os.Remove(filepath.Join(got.Path, "left.txt"))
+	if err := Release(context.Background(), got, ""); err != nil {
+		t.Errorf("a release once the slot is clean: %v", err)
+	}
+}
+
+// detachAt goes to git as an argument, so one that reads as an option is
+// refused before anything is touched.
+func TestReleaseRefusesADetachPointThatLooksLikeAnOption(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+	if err := Release(context.Background(), got, "--orphan=x"); err == nil || !strings.Contains(err.Error(), "not a commit") {
+		t.Errorf("release with detachAt %q: %v", "--orphan=x", err)
+	}
+	if b := git(t, got.Path, "branch", "--show-current"); b != "hrn/t1" {
+		t.Errorf("HEAD should stay on hrn/t1, is on %q", b)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("a refused release must leave the lease:\n%s\nwant\n%s", after, before)
+	}
+}
+
 func TestReleaseRefusesALeaseThatIsNoLongerTheHolders(t *testing.T) {
 	f := newFixture(t)
 	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
