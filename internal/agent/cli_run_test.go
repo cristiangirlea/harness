@@ -138,11 +138,12 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 	for _, adapter := range []struct {
 		newBackend func() *CLIBackend
 		mapsEffort bool
+		mapsLean   bool
 	}{
-		{NewCodexBackend, true},
-		{NewClaudeBackend, true},
-		{NewGeminiBackend, false},
-		{NewOpencodeBackend, false},
+		{NewCodexBackend, true, false},
+		{NewClaudeBackend, true, true},
+		{NewGeminiBackend, false, false},
+		{NewOpencodeBackend, false, false},
 	} {
 		b := adapter.newBackend()
 		t.Run(b.Name(), func(t *testing.T) {
@@ -154,6 +155,8 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{},
 				{Effort: "high"},
 				{Effort: "high", MaxCostUSD: 5, TaskBudget: 50000},
+				{Lean: true},
+				{Effort: "high", Lean: true},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
@@ -172,6 +175,9 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				}
 				if options.Effort != "" && !adapter.mapsEffort {
 					want = append(want, "effort")
+				}
+				if options.Lean && !adapter.mapsLean {
+					want = append(want, "lean")
 				}
 				if len(want) == 0 {
 					if len(infos) != 0 {

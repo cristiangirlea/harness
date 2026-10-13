@@ -55,7 +55,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |

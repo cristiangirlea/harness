@@ -319,6 +319,15 @@ func TestRunPassesNoContextEdits(t *testing.T) {
 	}
 }
 
+func TestRunPassesLean(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub","lean":true}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	if rec, err := runlog.Load(id); err != nil || !rec.Task.Lean {
+		t.Fatalf("lean should reach the task: %+v err=%v", rec.Task, err)
+	}
+}
+
 func TestRunContinueRejectsWhatItCannot(t *testing.T) {
 	s := connect(t, t.TempDir())
 	if r := s.call(t, "run", `{"prompt":"x","continue_run_id":"nope"}`); !r.IsError || !strings.Contains(r.Text(), "nope") {

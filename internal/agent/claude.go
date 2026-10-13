@@ -48,6 +48,13 @@ func NewClaudeBackend() *CLIBackend {
 			if mode != "" {
 				a = append(a, "--permission-mode", mode)
 			}
+			if t.Lean {
+				// Only the --mcp-config files below, and only the project's
+				// settings: no user or local settings, so none of the user's
+				// plugins, hooks or MCP servers. Not --bare: it logs in only
+				// with an API key, never the subscription, and skips CLAUDE.md.
+				a = append(a, "--strict-mcp-config", "--setting-sources", "project")
+			}
 			if !t.AllowDangerous {
 				a = append(append(a, "--disallowedTools"), claudeDenyRules()...)
 			}
@@ -66,6 +73,7 @@ func NewClaudeBackend() *CLIBackend {
 		mapsModel:    true,
 		mapsMaxTurns: true,
 		mapsMCP:      true,
+		mapsLean:     true,
 		limits:       true,
 		loginEnv:     []string{"CLAUDE_CODE_OAUTH_TOKEN"},
 		fileRules:    true,

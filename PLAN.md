@@ -664,6 +664,17 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: issue #200 (PR #201): a claude worker inherited every plugin, skill, hook and MCP
+  server of the operator's, about 64K tokens of context on every turn of a tiny task. Decided:
+  an additive `lean` option (`--lean`, spec, task and MCP `run` field, off by default) that
+  adds `--strict-mcp-config --setting-sources project` to the claude args, before the guard's
+  `--disallowedTools` rules, which stay as they are. Not `--bare`: it logs in only with an API
+  key (OAuth and the keychain are never read) and skips `CLAUDE.md` discovery. User memory
+  (`~/.claude/CLAUDE.md`, `~/.claude/rules`) stops loading too: Claude Code 2.1.284 reads it
+  only with the `user` source; the repository's `CLAUDE.md` and `AGENTS.md` import still load.
+  codex, gemini and opencode report `lean` as not enforced; the api loop, which reads no Claude
+  Code settings, does not warn. Not listed in the backends' capabilities: the exec protocol's
+  `start` message has no `lean` field. An eval variant cannot set lean on its own yet.
 - 2026-10-13: PR #199 (closes #193): a task waited until the batch was canceled on a slot
   whose lease stayed unreadable (empty, not JSON, or a stale lease a left `<n>.lease.takeover`
   file blocks), since `takeSlot` counted every lease it could not read as one that may come

@@ -1160,6 +1160,23 @@ func TestNoContextEditsReachesTheTask(t *testing.T) {
 	}
 }
 
+func TestLeanReachesTheTask(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{
+		{ID: "default", Prompt: "a"},
+		{ID: "lean", Prompt: "a", Options: agent.Options{Lean: true}},
+	}})
+	for i, want := range []bool{false, true} {
+		if rec := firstRun(t, res.Tasks[i]); rec.Task.Lean != want {
+			t.Errorf("%s: Lean = %v, want %v", res.Tasks[i].ID, rec.Task.Lean, want)
+		}
+	}
+	res, _ = run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{Prompt: "a"}}, Options: agent.Options{Lean: true}})
+	if rec := firstRun(t, res.Tasks[0]); !rec.Task.Lean {
+		t.Error("a spec-wide lean must reach every task")
+	}
+}
+
 func mergeable(t *testing.T, dir string, tasks ...Task) Result {
 	t.Helper()
 	return mergeableIn(t, Spec{Dir: dir, Backend: "wb-file", Tasks: tasks})
