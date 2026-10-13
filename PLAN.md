@@ -664,6 +664,14 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: `gh api` writes in this repository's Claude settings (#198, PR #209). Only the
+  `PUT` spellings were denied, so a session with the owner's token could still change or delete
+  the rulesets. Decided: deny any `gh api` call with an explicit `-X` or `--method`, whatever the
+  method's case or spelling (`gh` upper-cases it and takes `-X=DELETE`); nothing here reads with an
+  explicit method. A field without a method is an implicit `POST`, left to #206.
+- 2026-10-13: gc tests under the guard (#120, PR #205). The fixture's git now drops
+  passed-down git config like gc's own git, so `go test ./...` passes inside an hrn run.
+  The guard's refusal of pushes to real remotes remains tested in internal/tools.
 - 2026-10-13: issue #204 (PR #207): lean dropped the owner's own rules, plugins and skills, which
   workers must keep. Decided: lean is `--strict-mcp-config` only (no `--setting-sources`), so
   it drops only MCP servers hrn did not pass (the user's, plugin-provided ones and claude.ai
