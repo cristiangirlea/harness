@@ -1536,3 +1536,36 @@ func TestTheIndexShortensThePathsInItsRowsForEveryViewer(t *testing.T) {
 		}
 	}
 }
+
+func TestTheBatchStreamShortensItsPaths(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	repo := filepath.Join(t.TempDir(), "ada-os-ipc")
+	wt := filepath.Join(repo, ".hrn", "worktrees", "t1")
+	sep := string(filepath.Separator)
+	res := batch.Result{ID: "20261010-120000-abcdef", Started: time.Now().Add(-time.Minute), Duration: time.Minute, Dir: repo, Parallel: 1,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: "edit " + filepath.Join(wt, "a.go"), Status: batch.StatusFail, Branch: "hrn/t1", Worktree: wt,
+			Attempts: []batch.Attempt{{Backend: "codex", RunID: "20261010-120001-111111", Result: agent.Result{Status: agent.StatusOK},
+				Gates: []batch.GateResult{{Command: "go vet " + wt + "/...", ExitCode: 1, Output: filepath.Join(wt, "a.go") + ":3: bad"}}}}}}}
+	saveBatch(t, res)
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	s, stop := openStream(t, srv.URL+"/stream/batch/"+res.ID, "")
+	defer stop()
+	var all string
+	for {
+		m, ok := s.next(t)
+		if !ok || m.event == "end" {
+			break
+		}
+		all += m.data
+	}
+	for _, want := range []string{"edit ." + sep + "a.go", "go vet ./...", "." + sep + "a.go:3: bad"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the batch stream lacks %q", want)
+		}
+	}
+	// This computer sees the whole worktree only as its fact's hover title.
+	if n := strings.Count(all, wt); n != 1 || !strings.Contains(all, `title="`+wt+`"`) {
+		t.Errorf("the batch stream holds the worktree's path %d times, want once as a title:\n%s", n, all)
+	}
+}

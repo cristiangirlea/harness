@@ -90,6 +90,20 @@ func TestAWorkspaceInsideHomeIsShortenedAsTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestAHomeInsideTheWorkspaceIsShortenedAsTheHome(t *testing.T) {
+	sh := newShortener("/srv/box", "/srv/box/home/ana", nil)
+	for in, want := range map[string]string{
+		"/srv/box/home/ana/.config": "~/.config",
+		"/srv/box/home/ana":         "~",
+		"/srv/box/home/bob":         "./home/bob",
+		"/srv/box":                  ".",
+	} {
+		if got := sh.shorten(in); got != want {
+			t.Errorf("shorten(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestNoWorkspaceOrARootFolderShortensNothingButTheRest(t *testing.T) {
 	for _, ws := range []string{"", "/", `C:\`, "C:"} {
 		sh := newShortener(ws, "/home/ana", nil)
