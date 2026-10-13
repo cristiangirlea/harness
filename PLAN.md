@@ -661,8 +661,8 @@ order they are worth taking:
     batches and evals.
     Implemented against `634507a` and kept as local snapshot commit `8fc689e`, the work
     lands onto today's main in slices through the feature branch `durable`.
-    - [ ] [#134](https://github.com/cristiangirlea/harness/issues/134) docs: the accepted spec, the retrieval plan and a PLAN.md item
-    - [ ] [#135](https://github.com/cristiangirlea/harness/issues/135) api: durable execution checkpoints for the api loop
+    - [x] [#134](https://github.com/cristiangirlea/harness/issues/134) docs: the accepted spec, the retrieval plan and a PLAN.md item. Done: PR #143, 2026-10-13.
+    - [x] [#135](https://github.com/cristiangirlea/harness/issues/135) api: durable execution checkpoints for the api loop. Done: PR #150, 2026-10-13.
     - [ ] [#136](https://github.com/cristiangirlea/harness/issues/136) agent: usage metadata with backend-aware token semantics
     - [ ] [#137](https://github.com/cristiangirlea/harness/issues/137) server: PostgreSQL control service and project worker, a separate module
     - [ ] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools
@@ -679,6 +679,16 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: api durable checkpoints ([#135](https://github.com/cristiangirlea/harness/issues/135), PR #150; slice 2 of #142).
+  Ported from the snapshot onto today's loop with two deviations: a `pause_turn` saves its
+  `turn_complete` checkpoint and then continues, so the local path keeps its plain `continue`;
+  and the context check before a model request runs only in durable mode. `durable.go` is
+  otherwise the snapshot's file. The review (read-only, with a security read: nothing open)
+  left five follow-ups as issues: certain failures reported as `recovery_required` (#145),
+  tool results without their call events for refused calls (#146), `AttemptID` in the task
+  digest (#147), a checkpoint's budget and clock trusted as stored (#148), a part-way failed
+  stream's usage lost (#149). Inside an hrn run `go test ./...` fails in `internal/gc` (#120);
+  the full suite passed outside it.
 - 2026-10-13: Durable project workers and project retrieval ([#142](https://github.com/cristiangirlea/harness/issues/142))
   land in slices onto the feature branch `durable`: each slice is one pull request into it,
   and the feature branch reaches main through one pull request reviewed for how the pieces fit.
