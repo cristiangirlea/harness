@@ -75,6 +75,13 @@ func TestExpand(t *testing.T) {
 	if first.Backend != "ev-ok" || first.Prompt != "do alpha" {
 		t.Errorf("task = %+v", first)
 	}
+	if bs.Worktrees != batch.WorktreesFresh {
+		t.Errorf("worktrees = %q, want fresh: the judge reads each cell's worktree after the batch", bs.Worktrees)
+	}
+	spec.Worktrees = batch.WorktreesSlots
+	if bs, err := Expand(spec, "abc12"); err != nil || bs.Worktrees != batch.WorktreesSlots {
+		t.Errorf("an eval without a judge may ask for slots: %q, %v", bs.Worktrees, err)
+	}
 }
 
 func TestExpandRejectsBadSpecs(t *testing.T) {
@@ -93,6 +100,7 @@ func TestExpandRejectsBadSpecs(t *testing.T) {
 		{"spaced variant", func(s *Spec) { s.Matrix[0].Name = "opus high" }, "variant"},
 		{"spec retry", func(s *Spec) { s.Retry = []string{"ev-ok"} }, "retry does not belong"},
 		{"task retry", func(s *Spec) { s.Tasks[0].Retry = []string{"ev-ok"} }, "retry does not belong"},
+		{"slots with a judge", func(s *Spec) { s.Worktrees = batch.WorktreesSlots; s.Judge = &Judge{Rubric: "r"} }, "fresh"},
 	} {
 		spec := testSpec("somewhere")
 		tc.edit(&spec)
