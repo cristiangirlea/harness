@@ -210,7 +210,9 @@ func TestBatchMergeUndoAfterConflictWithoutRmUsesPreMergeHead(t *testing.T) {
 
 func TestBatchMergeRmUndoWhenNothingRemoved(t *testing.T) {
 	res := batchMergeFixture(t, false, "alpha")
-	res.Tasks[0].Slot = 1 // A shared slot's worktree belongs to another batch.
+	// Without BranchMade, a worktree claimed under ownership belongs to another
+	// batch: --rm removes nothing of it and says nothing is wrong.
+	res.Tasks[0].BranchMade = false
 	data, err := json.Marshal(res)
 	if err != nil {
 		t.Fatal(err)
@@ -220,11 +222,14 @@ func TestBatchMergeRmUndoWhenNothingRemoved(t *testing.T) {
 	}
 	before := batchMergeGit(t, res.Dir, "rev-parse", "HEAD")
 	code, out, err := batchMergeCLI(t, "--rm", res.ID)
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "checked out") ||
-		!strings.Contains(out, "undo with: git reset --hard "+before) ||
+	if code != 0 || err != nil || !strings.Contains(out, "undo with: git reset --hard "+before) ||
 		strings.Contains(out, "removed the") || strings.Contains(out, "only in the reflog") {
 		t.Fatalf("code=%d err=%v output=%q", code, err, out)
 	}
+	if _, err := os.Stat(res.Tasks[0].Worktree); err != nil {
+		t.Errorf("another batch's worktree is gone: %v", err)
+	}
+	batchMergeGit(t, res.Dir, "rev-parse", "--verify", "refs/heads/"+res.Tasks[0].Branch)
 }
 
 func TestBatchMergeNothingMergedHasNoUndoHint(t *testing.T) {
