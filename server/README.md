@@ -115,5 +115,5 @@ reference text and an audit ID.
 ## Later slices
 
 - #138 adds `hrn remote` and its MCP tools.
-- #139 adds the development charts and container image.
+- #139's development charts and container image are documented in [the deploy guide](deploy/README.md).
 - #141 wires retrieval into execution and adds fixture comparison.

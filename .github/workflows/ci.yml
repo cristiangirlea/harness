@@ -117,3 +117,21 @@ jobs:
         with:
           go-version-file: server/go.mod
       - run: go test -race -count=1 ./...
+
+  charts:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: azure/setup-helm@v4.3.1
+        with:
+          version: v4.3.0
+      - name: install chart verifier
+        run: python -m pip install PyYAML==6.0.3
+      - name: render and verify tenant and project charts
+        run: python server/deploy/verify_charts.py
+      - name: build development image
+        run: docker build -f server/Dockerfile -t hrn-durable-fixture:ci .
