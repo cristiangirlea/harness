@@ -710,6 +710,26 @@ func TestGCKeepsBatchReindentThatLandedWithDifferentWhitespace(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
 }
 
+func TestGCComparesBatchChangesWithoutTextconv(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, ".gitattributes", "asset.txt diff=mask\n")
+	f.write(f.repo, "asset.txt", "before\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "original asset")
+	git(t, f.repo, "push", "-q", "origin", "main")
+	git(t, f.repo, "config", "diff.mask.textconv", "echo masked")
+	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+	f.write(task, "asset.txt", "after\n")
+	git(t, task, "commit", "-q", "-am", "task asset")
+	saveBatch(t, "textconv", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "asset.txt", "after\n")
+	git(t, f.repo, "commit", "-q", "-am", "land asset")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
+}
+
 func TestGCKeepsBatchTasksCombinedIntoOneCommit(t *testing.T) {
 	f := newFixture(t)
 	a, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "a"), "hrn/a")

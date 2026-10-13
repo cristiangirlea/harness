@@ -882,7 +882,7 @@ func landedBatchChange(ctx context.Context, repo, head, def string) string {
 	if err != nil || count == 0 || count >= maxCommits {
 		return ""
 	}
-	taskDiff, err := gitStdout(ctx, repo, "diff", "--no-ext-diff", "--binary", base, head)
+	taskDiff, err := gitStdout(ctx, repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", base, head)
 	if err != nil || taskDiff == "" {
 		return ""
 	}
@@ -894,7 +894,7 @@ func landedBatchChange(ctx context.Context, repo, head, def string) string {
 	if len(taskFields) != 2 {
 		return ""
 	}
-	patches, err := gitStdout(ctx, repo, "log", "-p", "--no-ext-diff", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
+	patches, err := gitStdout(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
 	if err != nil {
 		return ""
 	}
