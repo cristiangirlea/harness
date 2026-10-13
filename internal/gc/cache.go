@@ -25,7 +25,6 @@ type Cache struct {
 	risk       string // why it cannot go whole, found by the walk that sized it
 	young      bool   // kept only because it was written too recently
 	driveID    string // drive identified during the free-below scan
-	driveKnown bool   // its free space was read successfully
 	driveBelow bool   // that drive was below the limit before any removals
 	driveMore  bool   // eligible caches left because enough was already going
 }
@@ -282,7 +281,6 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			continue
 		}
 		c.driveID = d.ID
-		c.driveKnown = true
 		s := drives[d.ID]
 		if s == nil {
 			s = &drive{free: d.Free, after: d.Free}
@@ -323,7 +321,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 		}
 	}
 	for i := range all {
-		if s := drives[all[i].driveID]; all[i].driveKnown && s != nil && s.free < opt.FreeBelow {
+		if s := drives[all[i].driveID]; all[i].driveID != "" && s != nil && s.free < opt.FreeBelow {
 			all[i].driveBelow = true
 			all[i].driveMore = s.more
 		}
@@ -340,7 +338,7 @@ func FreeBelowReport(caches []Cache, opt Options) []string {
 	if lookup == nil {
 		lookup = diskFree
 	}
-	limit := strings.Replace(report.Bytes(opt.FreeBelow), ".0 ", " ", 1)
+	limit := report.Bytes(opt.FreeBelow)
 	seen := map[string]bool{}
 	var lines []string
 	for _, c := range caches {
@@ -361,7 +359,11 @@ func FreeBelowReport(caches []Cache, opt Options) []string {
 		}
 		d, err := lookup(path)
 		if err != nil {
-			lines = append(lines, fmt.Sprintf("%s free space could not be read", c.driveID))
+			lines = append(lines, fmt.Sprintf("%s free space could not be read: %s", c.driveID, firstLine(err.Error())))
+			continue
+		}
+		if d.ID != c.driveID {
+			lines = append(lines, fmt.Sprintf("%s free space could not be read: the drive is no longer there", c.driveID))
 			continue
 		}
 		if d.Free >= opt.FreeBelow {

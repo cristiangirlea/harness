@@ -2,6 +2,7 @@ package gc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -275,7 +276,7 @@ func TestGCFreeBelowReportsDriveNowAboveAfterApply(t *testing.T) {
 	if removed, errs := ApplyCaches(context.Background(), cs); len(removed) != 1 || len(errs) != 0 {
 		t.Fatalf("apply: removed %d, errors %v", len(removed), errs)
 	}
-	if got, want := FreeBelowReport(cs, opt), []string{"C: now has 41.0 GB free, above 40 GB"}; !equalLines(got, want) {
+	if got, want := FreeBelowReport(cs, opt), []string{"C: now has 41.0 GB free, above 40.0 GB"}; !equalLines(got, want) {
 		t.Errorf("report = %q, want %q", got, want)
 	}
 	if samePath(reportPath) != samePath(root) {
@@ -306,8 +307,8 @@ func TestGCFreeBelowReportPrintsOneLinePerDrive(t *testing.T) {
 		t.Fatalf("apply: removed %d, errors %v", len(removed), errs)
 	}
 	if got, want := FreeBelowReport(cs, opt), []string{
-		"C: still has 30.0 GB free, 10.0 GB below 40 GB",
-		"D: still has 30.0 GB free, 10.0 GB below 40 GB",
+		"C: still has 30.0 GB free, 10.0 GB below 40.0 GB",
+		"D: still has 30.0 GB free, 10.0 GB below 40.0 GB",
 	}; !equalLines(got, want) {
 		t.Errorf("report = %q, want %q", got, want)
 	}
@@ -328,7 +329,7 @@ func TestGCFreeBelowReportsDriveStillBelowAfterApply(t *testing.T) {
 	}
 	cs := caches(t, []string{root}, nil, opt)
 	ApplyCaches(context.Background(), cs)
-	if got, want := FreeBelowReport(cs, opt), []string{"C: still has 31.0 GB free, 9.0 GB below 40 GB"}; !equalLines(got, want) {
+	if got, want := FreeBelowReport(cs, opt), []string{"C: still has 31.0 GB free, 9.0 GB below 40.0 GB"}; !equalLines(got, want) {
 		t.Errorf("report = %q, want %q", got, want)
 	}
 }
@@ -358,11 +359,31 @@ func TestGCFreeBelowReportsDriveLookupErrorAfterApply(t *testing.T) {
 		if calls == 1 {
 			return Drive{ID: "C:", Free: 30 << 30}, nil
 		}
-		return Drive{}, os.ErrPermission
+		return Drive{}, errors.New("permission denied\nextra detail")
 	}
 	cs := caches(t, []string{root}, nil, opt)
 	ApplyCaches(context.Background(), cs)
-	if got, want := FreeBelowReport(cs, opt), []string{"C: free space could not be read"}; !equalLines(got, want) {
+	if got, want := FreeBelowReport(cs, opt), []string{"C: free space could not be read: permission denied"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
+func TestGCFreeBelowReportsChangedDriveAfterApply(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 40 << 30
+	calls := 0
+	opt.Drive = func(string) (Drive, error) {
+		calls++
+		if calls == 1 {
+			return Drive{ID: "C:", Free: 30 << 30}, nil
+		}
+		return Drive{ID: "D:", Free: 41 << 30}, nil
+	}
+	cs := caches(t, []string{root}, nil, opt)
+	ApplyCaches(context.Background(), cs)
+	if got, want := FreeBelowReport(cs, opt), []string{"C: free space could not be read: the drive is no longer there"}; !equalLines(got, want) {
 		t.Errorf("report = %q, want %q", got, want)
 	}
 }
