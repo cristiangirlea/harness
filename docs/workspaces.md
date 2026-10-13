@@ -100,7 +100,8 @@ the slot back:
    remote's default branch: `git -C <slot> switch --detach origin/main`, or
    `upstream/main` when the remote is `upstream`. `git -C <slot> branch -r` lists the
    remote-tracking branches; `git -C <slot> remote show <remote>` names the default.
-   Only with no remote at all: skip this step. Free then counts only the commits at HEAD
+   If `branch -r` shows no branch of that remote, it was never fetched: run
+   `git -C <slot> fetch <remote>` first, then detach at `<remote>/<default>`. Only with no remote at all: skip this step. Free then counts only the commits at HEAD
    that no local branch or tag holds, and step 3 left none, so HEAD can stay where it is.
 5. `hrn ws free <slot>`. It detaches HEAD where it is and removes the lease; the work stays
    on its branch. Merge or push the branch that now holds the work yourself, from the
