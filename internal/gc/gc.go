@@ -716,13 +716,29 @@ func buildRisk(wt, folder string) string {
 // junctions on Windows when removing a worktree, including tracked folders.
 // Inner worktrees have their own verdicts and are checked separately.
 func worktreeLinkRisk(wt string, registered []string) string {
+	root := samePath(wt)
+	listed := make(map[string]bool, len(registered))
+	for _, path := range registered {
+		listed[samePath(path)] = true
+	}
 	var link string
 	err := filepath.WalkDir(wt, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if p != wt && d.IsDir() && listed(p, registered) {
-			return fs.SkipDir
+		if p != wt && d.IsDir() {
+			rel, err := filepath.Rel(wt, p)
+			if err != nil {
+				return err
+			}
+			// WalkDir only adds names read under wt, so no directory needs EvalSymlinks.
+			key := filepath.Join(root, rel)
+			if runtime.GOOS == "windows" {
+				key = strings.ToLower(key)
+			}
+			if listed[key] {
+				return fs.SkipDir
+			}
 		}
 		if d.Name() == ".git" {
 			if d.IsDir() {
