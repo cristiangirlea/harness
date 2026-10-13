@@ -688,9 +688,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					}
 					tr.BranchMade = false
 					if err := removeWorktree(root, tr); err != nil {
-						// What is left is still the task's: another batch
-						// takes neither a worktree nor a branch that is there.
-						tr.BranchMade = true
+						tr.BranchMade = stillMade(root, tr)
 						return fail(err)
 					}
 				}
@@ -704,7 +702,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					// and prune could drop the record: it goes now.
 					err = fmt.Errorf("saving the claim on worktree %s: %w", tr.Worktree, err)
 					if rerr := removeWorktree(root, tr); rerr != nil {
-						tr.BranchMade = true // the last save may still record it
+						tr.BranchMade = stillMade(root, tr) // the last save may still record it
 						return fail(fmt.Errorf("%w; worktree %s and branch %s are left: %v", err, tr.Worktree, tr.Branch, rerr))
 					}
 					return fail(err)
@@ -1169,6 +1167,21 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 	defer worktreeMu.Unlock()
 	_, err := gitOut(ctx, root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
 	return err
+}
+
+// stillMade says whether anything a fresh task made outlived a removeWorktree
+// that failed: its worktree, still registered, or its branch. Another batch
+// takes neither while it is there, so what is left is still the task's; a
+// directory git no longer knows is no claim. When git cannot list worktrees,
+// the worktree is taken to be there.
+func stillMade(root string, tr TaskResult) bool {
+	if registered, err := isWorktree(root, tr.Worktree); err != nil || registered {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch)
+	return err == nil
 }
 
 func removeWorktree(root string, tr TaskResult) error {

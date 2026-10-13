@@ -591,6 +591,62 @@ func TestAFreshRetryThatCannotRemoveItsWorktreeClaimsItAgain(t *testing.T) {
 	}
 }
 
+// A fresh retry whose removal stops partway claims only what is still the
+// task's: its branch, when git would not delete it, but not a directory git
+// no longer knows, with the branch already gone.
+func TestAFreshRetryThatRemovesPartOfItsWorktreeClaimsWhatIsLeft(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cut   func(t *testing.T, dir string, tr TaskResult) // as the claim is withdrawn
+		claim bool
+	}{
+		{"branch left", func(t *testing.T, dir string, tr TaskResult) {
+			writeFile(t, filepath.Join(dir, ".git", "refs", "heads", "hrn", tr.ID+".lock"), "") // git branch -D refuses
+		}, true},
+		{"directory left", func(t *testing.T, dir string, tr TaskResult) {
+			git(t, dir, "worktree", "remove", "--force", tr.Worktree)
+			writeFile(t, filepath.Join(tr.Worktree, "stray.txt"), "not git's\n")
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			broken := false
+			failSave = func(res Result) error {
+				if tr := res.Tasks[0]; !broken && tr.Status == StatusRunning && len(tr.Attempts) == 1 && !tr.BranchMade {
+					broken = true
+					tc.cut(t, dir, tr)
+				}
+				return nil
+			}
+			t.Cleanup(func() { failSave = nil })
+			res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-bad", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "part", Prompt: "p"}}})
+			tr := res.Tasks[0]
+			if tr.Status != StatusError || len(tr.Attempts) != 1 || exists(filepath.Join(tr.Worktree, ".git")) {
+				t.Fatalf("task = %+v, want an error after the worktree went", tr)
+			}
+			saved, err := LoadResult(res.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := saved.Tasks[0].BranchMade; got != tc.claim {
+				t.Fatalf("branch_made = %v, want %v", got, tc.claim)
+			}
+			if !tc.claim {
+				return
+			}
+			if err := os.Remove(filepath.Join(dir, ".git", "refs", "heads", "hrn", "part.lock")); err != nil {
+				t.Fatal(err)
+			}
+			if err := Remove(saved); err != nil {
+				t.Fatal(err)
+			}
+			if b := git(t, dir, "branch", "--list", "hrn/part"); b != "" {
+				t.Errorf("branch remains: %s", b)
+			}
+		})
+	}
+}
+
 // A fresh task whose record cannot claim the worktree it just made removes it
 // again: hrn batch rm would leave an unclaimed worktree, and prune could drop
 // the record. When the removal fails too, the worktree stays claimed.
