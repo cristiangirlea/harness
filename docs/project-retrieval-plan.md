@@ -1,6 +1,6 @@
 # Project retrieval and measured LLM savings
 
-Status: 2026-10-11 isolated development checkout. Increments 1–3 and the increment 4 fixture/comparison interface are implemented and opt-in; the real held-out pilot is not complete. Increments 5–6 remain gated. See the local snapshot's `docs/project-retrieval-progress.md` for implementation evidence. This document does not enable retrieval or authorize a deployment.
+Status: 2026-10-11 isolated development checkout. Increments 1–3 and the increment 4 fixture/comparison interface are implemented and opt-in; the real held-out pilot is not complete. Increments 5–6 remain gated. The implementation evidence, `docs/project-retrieval-progress.md`, arrives with issue #141. This document does not enable retrieval or authorize a deployment.
 
 ## Objective and decision
 

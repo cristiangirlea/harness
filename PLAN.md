@@ -683,7 +683,7 @@ neither of them follows a run while it happens.
   land in slices onto the feature branch `durable`: each slice is one pull request into it,
   and the feature branch reaches main through one pull request reviewed for how the pieces fit.
   The root module stays standard-library only, as AGENTS.md requires; the separate `server/`
-  module may depend on a maintained PostgreSQL driver, as the spec accepted on 2026-09-27
+  module may depend on maintained PostgreSQL and Kubernetes clients (pgx, client-go), as the spec accepted on 2026-09-27
   allows. The snapshot stays local as commit `8fc689e` and is never pushed.
 - 2026-10-13: PR #127 (closes #82, widened by the owner on 2026-10-12): hrn watch's rows lead
   with `<repository> · <task>`, the id under it. Decided: the repository is the workspace
