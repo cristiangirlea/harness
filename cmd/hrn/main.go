@@ -57,7 +57,7 @@ Usage:
   hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
                                  English, out loud and as notifications, with skip, snooze and a few
                                  spoken commands; serves hrn watch on loopback unless one already does
-  hrn mcp [--dir PATH] [--allow-dangerous-runs]
+  hrn mcp [--dir PATH] [--allow-dangerous-runs] [--retrieval-profile FILE]
                                  serve hrn as an MCP server on stdio; --dir is the default workspace (default: current
                                  directory); allow_dangerous is refused unless --allow-dangerous-runs is given
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
@@ -491,6 +491,7 @@ func cmdMCP(args []string) error {
 	// The server's caller is an agent; lifting the guard for its runs is the
 	// operator's decision, taken here and not in a tool call.
 	dangerous := fs.Bool("allow-dangerous-runs", false, "")
+	profile := fs.String("retrieval-profile", "", "Project-scoped retrieval profile JSON (no credentials).")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -501,6 +502,9 @@ func cmdMCP(args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected argument %q; the workspace is set with --dir", fs.Arg(0))
 	}
+	if *profile != "" && *dangerous {
+		return fmt.Errorf("--retrieval-profile cannot be combined with --allow-dangerous-runs")
+	}
 	newServer := hrnmcp.NewServer
 	if *dangerous {
 		newServer = hrnmcp.NewDangerousServer
@@ -510,10 +514,17 @@ func cmdMCP(args []string) error {
 		return fmt.Errorf("--dir %s: %w", *dir, err)
 	}
 	abs := ws.Root
+	server := newServer(abs)
+	if *profile != "" {
+		server, err = hrnmcp.NewProjectServer(abs, *profile)
+		if err != nil {
+			return err
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	fmt.Fprintln(os.Stderr, "hrn mcp: serving on stdio, workspace", abs)
-	if err := newServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil

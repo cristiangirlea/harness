@@ -47,6 +47,13 @@ thing the flag avoids) for hosts that do not start servers in the project folder
 Cursor (`.cursor/mcp.json`) and VS Code (`.vscode/mcp.json`) take the same command
 and args.
 
+`hrn mcp --retrieval-profile FILE` serves a reviewed project profile with a fixed
+workspace, backend, model, revision, knowledge version and source hashes. It
+checks the revision and source contents before each retrieval-enabled run.
+This server exposes `run`, `runs`, `show` and `backends`; a fresh run may set
+`retrieval: "off"` for a baseline. It cannot be combined with
+`--allow-dangerous-runs`. The profile contains no credentials.
+
 The server refuses `allow_dangerous` on `run` and `batch`, and leaves it out of `run`'s
 arguments, unless it was started with `--allow-dangerous-runs`: the host that calls it is
 an agent, and lifting [the guard](permissions.md#the-guard-for-every-backend) is yours to decide.
@@ -55,7 +62,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
