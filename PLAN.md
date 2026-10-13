@@ -665,6 +665,11 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: gc and links out of a worktree (#94, PR #240). A tracked folder
+  replaced by an identical junction can look clean to git, while worktree removal
+  deletes the outside copy's files. Decided: check the whole worktree for links
+  leading out before a Remove verdict and again just before Apply removes it;
+  skip its own `.git` and inner worktrees git lists, and keep on walk errors.
 - 2026-10-13: gc --free-below reports the drives after --apply (#130, PR #234). File sizes can
   overestimate freed space for sparse, linked or compressed files, and removal can fail.
   Decided: nothing more is removed; drives that were below are measured again and reported;
