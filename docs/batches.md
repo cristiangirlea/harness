@@ -179,8 +179,8 @@ run with `git reset --hard ORIG_HEAD`.
 `merge --rm` removes the worktree and branch of each task merged in that call,
 including tasks merged before a later conflict; skipped and conflicting tasks stay.
 It uses the same rules as `batch rm`: dirty worktrees stay and cause an error,
-and slot tasks lose only their branch. After removal, resetting with
-`git reset --hard ORIG_HEAD` undoes the merge, but the task work is only in the reflog.
+and slot tasks lose only their branch. The printed undo command names the commit
+from before the merge; after removal, the task work is only in the reflog.
 
 `hrn batch rm <id>` removes what a batch made; the record and the run logs stay. For a
 slot task that is only its branch `hrn/<id>`: the slot and its lease are not the batch's,

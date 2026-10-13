@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,14 @@ func cmdBatchMerge(args []string) (int, error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+	var before string
+	if *rm {
+		out, err := exec.CommandContext(ctx, "git", "-C", res.Dir, "rev-parse", "HEAD").CombinedOutput()
+		if err != nil {
+			return 1, fmt.Errorf("git rev-parse HEAD: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		before = strings.TrimSpace(string(out))
+	}
 
 	merged, mergeErr := batch.Merge(ctx, res, fs.Args()[1:], *squash)
 	r := newRenderer(false)
@@ -173,7 +182,7 @@ func cmdBatchMerge(args []string) (int, error) {
 		if removeErr == nil {
 			r.Line(r.c(dim, fmt.Sprintf("removed the %s of %d merged task(s)",
 				removedWhat(batch.Result{Tasks: removeTasks}), len(removeIDs))))
-			r.Line(r.c(dim, "undo with: git reset --hard ORIG_HEAD; after removal, the tasks' work is only in the reflog"))
+			r.Line(r.c(dim, fmt.Sprintf("undo with: git reset --hard %s; after removal, the tasks' work is only in the reflog", before)))
 		}
 	}
 	if mergeErr != nil {

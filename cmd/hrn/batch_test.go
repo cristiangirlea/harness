@@ -106,12 +106,18 @@ func TestBatchMergeRmRemovesOnlyTasksMergedInThisCall(t *testing.T) {
 	}
 }
 
-func TestBatchMergeRmRemovesEarlierTaskAfterConflict(t *testing.T) {
+func TestBatchMergeRmUndoAfterConflictUsesPreMergeHead(t *testing.T) {
 	res := batchMergeFixture(t, true, "alpha", "beta")
+	before := batchMergeGit(t, res.Dir, "rev-parse", "HEAD")
 	code, out, err := batchMergeCLI(t, "--rm", res.ID)
 	if code != 1 || err == nil || !strings.Contains(out, "conflict merging") ||
-		!strings.Contains(out, "removed the worktrees and branches of 1 merged task(s)") {
+		!strings.Contains(out, "removed the worktrees and branches of 1 merged task(s)") ||
+		!strings.Contains(out, "undo with: git reset --hard "+before) {
 		t.Fatalf("code=%d err=%v output=%q", code, err, out)
+	}
+	batchMergeGit(t, res.Dir, "reset", "--hard", before)
+	if head := batchMergeGit(t, res.Dir, "rev-parse", "HEAD"); head != before {
+		t.Errorf("reset HEAD = %s, want %s", head, before)
 	}
 	if _, err := os.Stat(res.Tasks[0].Worktree); !os.IsNotExist(err) {
 		t.Errorf("earlier merged worktree remains: %v", err)
