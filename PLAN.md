@@ -667,6 +667,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: batch merge names the commit to undo to (#214, #216, PR #N).
+  Decided: CLI and MCP capture HEAD before merging and print that full commit when at least
+  one task merges, including before a later conflict or when --rm removes nothing.
+  The reflog note appears only when --rm removes task work.
 - 2026-10-13: AGENTS.md back under 100 lines (#196, PR #253). Decided: shorten layout
   rows and the hx note, and point repeated CI and release details to CONTRIBUTING.md.
 - 2026-10-13: three wording points from #58's review (#65, PR #252). Decided: a blocking
