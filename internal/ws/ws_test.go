@@ -306,6 +306,57 @@ func TestFreeGivesBackALeaseWhoseProcessExited(t *testing.T) {
 	}
 }
 
+// The recovery docs/workspaces.md gives for a slot a batch kept: the work is
+// saved on a local branch, the slot detached at a commit origin holds, and
+// free then gives it back once hrn has exited.
+func TestASlotABatchKeptIsRecoveredAsTheDocsSay(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: exitedPID(t)})
+	slot := got.Path
+	f.identity(slot)
+	git(t, slot, "switch", "-q", "--detach")
+	detached := f.commit(slot, "detached.txt")
+	f.write(slot, "notes.txt", "x\n")
+
+	rows, err := List(ctx, f.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].State != "stale" || rows[0].Holder != "batch b task t1" || !strings.Contains(rows[0].Contents, "notes.txt") {
+		t.Fatalf("list: %+v", rows)
+	}
+	if _, err := Free(ctx, slot); err == nil || !strings.Contains(err.Error(), "notes.txt") {
+		t.Fatalf("free with an untracked file: %v", err)
+	}
+
+	git(t, slot, "add", "notes.txt")
+	git(t, slot, "commit", "-q", "-m", "notes")
+	git(t, slot, "branch", "keep-t1")
+	if _, err := Free(ctx, slot); err == nil || !strings.Contains(err.Error(), "2 commits on no remote") {
+		t.Fatalf("free while HEAD holds commits only a local branch has: %v", err)
+	}
+
+	git(t, slot, "switch", "-q", "--detach", "origin/main")
+	if _, err := Free(ctx, slot); err != nil {
+		t.Fatalf("free after detaching at origin/main: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, ".hrn", "slots", "1.lease")); !os.IsNotExist(err) {
+		t.Errorf("the lease should be gone: %v", err)
+	}
+	if h, want := git(t, slot, "rev-parse", "HEAD"), git(t, f.repo, "rev-parse", "origin/main"); h != want {
+		t.Errorf("HEAD %s, want origin/main %s", h, want)
+	}
+	git(t, f.repo, "merge-base", "--is-ancestor", detached, "keep-t1")
+	if files := git(t, f.repo, "ls-tree", "--name-only", "keep-t1"); !strings.Contains(files, "detached.txt") || !strings.Contains(files, "notes.txt") {
+		t.Errorf("keep-t1 should hold the work, has %q", files)
+	}
+	again := f.take(TakeOptions{Holder: "next"})
+	if again.N != 1 {
+		t.Errorf("the next take got slot %d, want the recovered 1", again.N)
+	}
+}
+
 func TestFreeRefusesWhileTheSlotIsBeingTakenOverAndLeavesItAsItWas(t *testing.T) {
 	f := newFixture(t)
 	slot := f.take(TakeOptions{Branch: "work", Holder: "a"}).Path
