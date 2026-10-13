@@ -19,7 +19,8 @@ func TestRetrievalContinuationSeparatesRequestedAndReportedModel(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
-			pin := &retrieval.Record{Mode: "required", OriginalPrompt: "request", Scope: retrieval.Scope{TenantID: "tenant", ProjectID: "project", Backend: "api", Model: "requested-alias", Revision: "revision"}, Packet: &retrieval.Packet{VersionID: "v_fixture", Text: "reference", Bytes: 9, Digest: retrieval.TextDigest("reference"), Entries: []retrieval.Entry{{ID: "entry", Source: "fixture"}}}}
+			text := testRetrievalText("reference", "fixture", "revision")
+			pin := &retrieval.Record{Mode: "required", OriginalPrompt: "request", Scope: retrieval.Scope{TenantID: "tenant", ProjectID: "project", Backend: "api", Model: "requested-alias", Revision: "revision"}, Packet: &retrieval.Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), Entries: []retrieval.Entry{{ID: "entry", Source: "fixture", Content: "reference"}}}}
 			task := agent.Task{Prompt: "request", Options: agent.Options{Model: "requested-alias", Retrieval: "required", RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalRevision: "revision"}}
 			w, err := Create("api", task)
 			if err != nil {

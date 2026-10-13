@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,10 @@ import (
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func retrievalFixtureText(revision string) string {
+	return fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "e_fixture", "", revision, "", "reference fixture")
+}
 
 func TestRetrievalBatchRetryPinsVersion(t *testing.T) {
 	root := initRepo(t)
@@ -32,8 +37,8 @@ func TestRetrievalBatchRetryPinsVersion(t *testing.T) {
 				id = "v_changed"
 			}
 		}
-		text := "reference fixture"
-		json.NewEncoder(w).Encode(retrieval.Packet{VersionID: id, Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture"}}})
+		text := retrievalFixtureText(q.Revision)
+		json.NewEncoder(w).Encode(retrieval.Packet{VersionID: id, Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture", Content: "reference fixture"}}})
 	}))
 	defer srv.Close()
 	t.Setenv("HRN_SERVER_URL", srv.URL)
@@ -76,8 +81,8 @@ func TestRetrievalBatchRetryOnAnotherBackendIsRefused(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
 			t.Error(err)
 		}
-		text := "reference fixture"
-		if err := json.NewEncoder(w).Encode(retrieval.Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture"}}}); err != nil {
+		text := retrievalFixtureText(q.Revision)
+		if err := json.NewEncoder(w).Encode(retrieval.Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture", Content: "reference fixture"}}}); err != nil {
 			t.Error(err)
 		}
 	}))

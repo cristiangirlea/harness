@@ -2,25 +2,25 @@ package remote
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/cristiangirlea/harness/internal/retrieval"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 func TestRetrievalClientValidatesPacket(t *testing.T) {
 	var mu sync.Mutex
-	hash := sha256.Sum256([]byte("reference"))
-	packet := retrieval.Packet{Text: "reference", Bytes: 9, Digest: hex.EncodeToString(hash[:]), VersionID: "v_pin", QueryDigest: retrieval.TextDigest(""), Entries: []retrieval.Entry{{ID: "e_fixture"}}}
+	text := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "e_fixture", "", "main", "", "reference")
+	packet := retrieval.Packet{Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), VersionID: "v_pin", QueryDigest: retrieval.TextDigest(""), Entries: []retrieval.Entry{{ID: "e_fixture", Content: "reference"}}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/knowledge/search" || r.Header.Get("Authorization") != "Bearer "+strings.Repeat("t", 64) {
 			t.Error("request identity")
@@ -42,13 +42,13 @@ func TestRetrievalClientValidatesPacket(t *testing.T) {
 		t.Fatal(e)
 	}
 	mu.Lock()
-	packet.Bytes = 8
+	packet.Bytes = len(text) - 1
 	mu.Unlock()
 	if _, e = c.SearchKnowledge(context.Background(), in); e == nil {
 		t.Fatal("bad byte count accepted")
 	}
 	mu.Lock()
-	packet.Bytes = 9
+	packet.Bytes = len(text)
 	mu.Unlock()
 	mu.Lock()
 	packet.VersionID = "v_other"

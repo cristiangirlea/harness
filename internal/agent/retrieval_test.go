@@ -52,7 +52,8 @@ func retrievalServer(t *testing.T, status int, text string) (*httptest.Server, *
 		if id == "" {
 			id = "v_" + strings.Repeat("d", 64)
 		}
-		p := retrieval.Packet{VersionID: id, AuditID: "r_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture", Source: "fixture.md", Content: text, Evidence: "synthetic"}}}
+		packetText := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "e_fixture", "fixture.md", q.Revision, "synthetic", text)
+		p := retrieval.Packet{VersionID: id, AuditID: "r_fixture", Text: packetText, Bytes: len(packetText), Digest: retrieval.TextDigest(packetText), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture", Source: "fixture.md", Content: text, Evidence: "synthetic"}}}
 		json.NewEncoder(w).Encode(p)
 	}))
 	t.Cleanup(srv.Close)

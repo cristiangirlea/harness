@@ -2,6 +2,7 @@ package runlog
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,10 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
+
+func testRetrievalText(content, source, revision string) string {
+	return fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "entry", source, revision, "", content)
+}
 
 func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 	for _, tc := range []struct {
@@ -41,7 +46,8 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
-			pin := retrieval.Record{Mode: "required", OriginalPrompt: "task", Scope: retrieval.Scope{TenantID: "tenant", ProjectID: "project", Backend: "api", Model: "fixture", Revision: "revision"}, Packet: &retrieval.Packet{VersionID: "v_fixture", Text: "ref", Bytes: 3, Digest: retrieval.TextDigest("ref"), Entries: []retrieval.Entry{{ID: "entry", Source: "fixture"}}}}
+			text := testRetrievalText("ref", "fixture", "revision")
+			pin := retrieval.Record{Mode: "required", OriginalPrompt: "task", Scope: retrieval.Scope{TenantID: "tenant", ProjectID: "project", Backend: "api", Model: "fixture", Revision: "revision"}, Packet: &retrieval.Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), Entries: []retrieval.Entry{{ID: "entry", Source: "fixture", Content: "ref"}}}}
 			clone := func() *retrieval.Record {
 				b, _ := json.Marshal(pin)
 				var p retrieval.Record

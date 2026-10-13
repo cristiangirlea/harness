@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +49,8 @@ func TestRetrievalMeasuredRunValidation(t *testing.T) {
 					res.Status = ""
 				}
 				if i == 1 && name != "off_candidate" {
-					res.Retrieval = &retrieval.Record{Mode: v.Retrieval, OriginalPrompt: task.Prompt, Scope: retrieval.Scope{TenantID: "tenant", ProjectID: "project", Backend: v.Backend, Model: v.Model, Revision: m.Revision}, Packet: &retrieval.Packet{VersionID: v.RetrievalVersion, Text: "ref", Bytes: 3, Digest: retrieval.TextDigest("ref"), Entries: []retrieval.Entry{{ID: "entry"}}}}
+					text := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "entry", "", m.Revision, "", "ref")
+					res.Retrieval = &retrieval.Record{Mode: v.Retrieval, OriginalPrompt: task.Prompt, Scope: retrieval.Scope{TenantID: "tenant", ProjectID: "project", Backend: v.Backend, Model: v.Model, Revision: m.Revision}, Packet: &retrieval.Packet{VersionID: v.RetrievalVersion, Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), Entries: []retrieval.Entry{{ID: "entry", Content: "ref"}}}}
 					if name == "wrong_version" {
 						res.Retrieval.Packet.VersionID = "v_other"
 					}
