@@ -667,8 +667,9 @@ neither of them follows a run while it happens.
 
 - 2026-10-13: the tree-kill test's timeout (#68, PR #N). `TestRunShellTimeoutKillsTheTree`
   gave the shell 500 ms, and on a busy Windows PC Git's bash had not printed `started` by
-  then, so the test failed now and then, in CI too. Decided: three seconds, still far below
-  the test's 10-second bound and its 30-second sleep, so the kill is what it proves.
+  then, so the test failed now and then, in CI too. Decided: three seconds. Its time bound
+  was 10 s, which a shell-only kill also met (RunShell waits 5 s for the pipe), so it is now
+  the timeout plus 4 s: only a tree kill returns that soon.
 - 2026-10-13: a reused process id does not hold a slot (#231, PR #248). Windows can
   reuse a pid soon after its holder exits. Decided: record the holder's process start
   identity in the lease and compare it exactly on Windows and Linux; a different start
