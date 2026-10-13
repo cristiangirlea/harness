@@ -34,6 +34,11 @@ func TestPathsInAWindowsRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *test
 		{`{"command":"\"C:\\Program Files\\Git\\bin\\bash.exe\" -lc ls"}`, `{"command":"\"bash.exe\" -lc ls"}`},
 		{`{"command":"C:\\Windows\\System32\\cmd.exe /c dir C:\\x"}`, `{"command":"cmd.exe /c dir C:\\x"}`},
 		{`"C:\Program Files\Microsoft VS Code\Code.exe" .`, `"Code.exe" .`},
+		// In quotes a folder's name may hold punctuation; bare, it ends the path.
+		{`"C:\Program Files\Git (Preview)\bin\bash.exe" -lc ls`, `"bash.exe" -lc ls`},
+		{`{"command":"\"C:\\Program Files\\Git (Preview)\\bin\\bash.exe\" -lc ls"}`, `{"command":"\"bash.exe\" -lc ls"}`},
+		{`'C:\Program Files\Tools [x64]\rg.exe' -n x`, `'rg.exe' -n x`},
+		{`run(C:\Windows\System32\where.exe,git)`, `run(where.exe,git)`},
 		// A folder, not a program, and a program outside them, stay.
 		{`C:\Windows\System32`, `C:\Windows\System32`},
 		{`C:\Program Files\Go`, `C:\Program Files\Go`},
@@ -62,6 +67,7 @@ func TestPathsInAUnixRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *testing
 		{"/opt/home/ana/x", "/opt/home/ana/x"},
 		{"/usr/local/bin/node script.js", "node script.js"},
 		{`exec "/bin/sh" -c true`, `exec "sh" -c true`},
+		{"$(/usr/bin/env)", "$(env)"},
 		{"/usr/bin", "/usr/bin"},
 		{"/usr/binx/tool", "/usr/binx/tool"},
 	} {

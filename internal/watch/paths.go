@@ -167,12 +167,14 @@ func nameRune(r rune) bool {
 // program reads the path that starts at s[i] and continues past a system
 // folder at s[j], up to a quote, a space or a delimiter, and returns where it
 // ends and the program's file name; "" when it does not name a program. In
-// quotes a Windows folder may have spaces in its name (Microsoft VS Code); a
+// quotes a Windows folder may have spaces in its name (Microsoft VS Code) and
+// punctuation (Git (Preview)), so only a quote or a line end stops it; a
 // Windows program has an extension, which tells it from a folder.
 func program(s string, i, j int, windows bool) (int, string) {
 	var quote byte
+	stops := "\"'`\r\n,;|&<>()[]{}"
 	if i > 0 && (s[i-1] == '"' || s[i-1] == '\'') {
-		quote = s[i-1]
+		quote, stops = s[i-1], "\"'`\r\n"
 	}
 	end, last := j, j // last: where the current element starts
 	for ; end < len(s); end++ {
@@ -187,7 +189,7 @@ func program(s string, i, j int, windows bool) (int, string) {
 			}
 			break
 		}
-		if c == quote || strings.IndexByte("\"'`\r\n,;|&<>()[]{}", c) >= 0 {
+		if strings.IndexByte(stops, c) >= 0 {
 			break
 		}
 	}
