@@ -174,7 +174,8 @@ accident. The tree must be clean first, since the merge would otherwise mix your
 with the agents'. At the first conflict it puts the tree back as it found it, says
 which task, and stops — the branches are still there to merge by hand. `--squash`
 records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a whole
-run with `git reset --hard ORIG_HEAD`.
+call with the printed `git reset --hard <commit>` command. It names the commit
+from before the call and undoes every task merged in it, even if a later task conflicts.
 
 `merge --rm` removes the worktree and branch of each task merged in that call,
 including tasks merged before a later conflict; skipped and conflicting tasks stay.
