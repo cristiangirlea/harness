@@ -111,7 +111,7 @@ func TestGCListsAndRemovesAnInterruptedCacheDeletion(t *testing.T) {
 		t.Fatalf("listed %d caches, want the leftover alone: %+v", len(cs), cs)
 	}
 	c := findCache(t, cs, leftover)
-	wantCache(t, c, Remove, "idle 30h")
+	wantCache(t, c, Remove, "moved cache")
 	removed, errs := ApplyCaches(context.Background(), cs)
 	if len(errs) != 0 || len(removed) != 1 || removed[0].Path != leftover || exists(leftover) {
 		t.Errorf("apply: removed %+v, errors %v, leftover still there: %v", removed, errs, exists(leftover))
@@ -244,6 +244,19 @@ func TestGCApplyFailedFinalFolderRemovalRestoresTag(t *testing.T) {
 		t.Errorf("failed final folder removal did not leave a tagged cache: %s", leftovers[0])
 	}
 	findCache(t, caches(t, []string{root}, nil, cacheOpt), leftovers[0])
+}
+
+func TestGCListsFreshMovedCachesForRemoval(t *testing.T) {
+	root := tempRoot(t)
+	for _, name := range []string{".gc-1-target", ".gc-1-123-target"} {
+		tagged(t, filepath.Join(root, name), 0, 10)
+	}
+	ordinary := tagged(t, filepath.Join(root, ".gc-x-target"), 0, 10)
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	for _, name := range []string{".gc-1-target", ".gc-1-123-target"} {
+		wantCache(t, findCache(t, cs, filepath.Join(root, name)), Remove, "moved cache")
+	}
+	wantCache(t, findCache(t, cs, ordinary), Keep, "inside --idle")
 }
 
 func TestDiskFreeNamesTheVolumeAndItsFreeSpace(t *testing.T) {

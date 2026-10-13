@@ -271,12 +271,29 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if why := inUse(c.Path); why != "" {
 		return Keep, why
 	}
+	if isMovedCache(c.Path) {
+		return Remove, "moved cache left by an earlier removal"
+	}
 	idle := now.Sub(c.LastBuild)
 	if idle >= opt.Idle {
 		return Remove, "idle " + short(idle)
 	}
 	c.young = true
 	return Keep, fmt.Sprintf("last written %s ago, inside --idle %s", short(idle), short(opt.Idle))
+}
+
+// isMovedCache accepts both the old .gc-<pid>-<name> and the newer
+// .gc-<pid>-<time>-<name> form. Both start with a decimal PID and a hyphen.
+func isMovedCache(dir string) bool {
+	name, ok := strings.CutPrefix(filepath.Base(dir), ".gc-")
+	if !ok || name == "" {
+		return false
+	}
+	i := 0
+	for i < len(name) && name[i] >= '0' && name[i] <= '9' {
+		i++
+	}
+	return i > 0 && i+1 < len(name) && name[i] == '-'
 }
 
 // recheckCache says why a cache marked for removal must stay after all,
