@@ -137,3 +137,40 @@ func TestTheRunStreamRedrawsTheChartAsTurnsArrive(t *testing.T) {
 		t.Errorf("after a reconnect: %+v", m2)
 	}
 }
+
+// A model name comes from a CLI's output or a record, so it is blanked of
+// the environment's secrets like every other text the page shows.
+func TestTheChartBlanksASecretInAModelName(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const secret = "Abcdefghijklmnop"
+	t.Setenv("SERVICE_TOKEN", secret)
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close(agent.Result{Status: agent.StatusOK}) })
+	w.Event(turnEvent("model-"+secret, 10000, 0))
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/run/"+w.ID())
+	if chart := chartOf(t, page); strings.Contains(chart, secret) {
+		t.Errorf("the chart shows the secret in a model name:\n%s", chart)
+	}
+	i := strings.Index(page, `data-stream="`)
+	if i < 0 {
+		t.Fatal("a running run's page has no stream")
+	}
+	url := page[i+len(`data-stream="`):]
+	url = strings.ReplaceAll(url[:strings.Index(url, `"`)], "&amp;", "&")
+	st, closeStream := openStream(t, srv.URL+url, "")
+	defer closeStream()
+
+	w.Event(turnEvent("model-"+secret, 30000, 10000))
+	m, ok := st.next(t)
+	if !ok || m.event != "usage" {
+		t.Fatalf("message = %+v, want the chart redrawn", m)
+	}
+	if strings.Contains(m.data, secret) {
+		t.Errorf("the streamed chart shows the secret in a model name:\n%s", m.data)
+	}
+}
