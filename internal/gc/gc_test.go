@@ -772,6 +772,14 @@ func TestGCKeepsBatchTaskWithEmptyDiff(t *testing.T) {
 	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
 	git(t, task, "commit", "-q", "--allow-empty", "-m", "empty task")
 	saveBatch(t, "empty", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "later.txt", "later\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "later change")
+	git(t, f.repo, "push", "-q", "origin", "main")
+	base := git(t, f.repo, "merge-base", "hrn/task", "main")
+	if got := git(t, f.repo, "rev-list", "--count", "--no-merges", base+"..main"); got != "1" {
+		t.Fatalf("main has %s new commits, want 1 so the empty-diff path is reached", got)
+	}
 
 	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
 }
