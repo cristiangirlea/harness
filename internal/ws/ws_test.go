@@ -395,6 +395,40 @@ func TestASlotABatchKeptIsRecoveredWhenTheRemoteIsNotCalledOrigin(t *testing.T) 
 	git(t, f.repo, "merge-base", "--is-ancestor", detached, "keep-t1")
 }
 
+// The same recovery when the only remote was added but never fetched: it has
+// no remote-tracking branch to detach at until step 4's fetch makes one.
+func TestASlotABatchKeptIsRecoveredOnceAnUnfetchedRemoteIsFetched(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	slot := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: exitedPID(t)}).Path
+	git(t, f.repo, "remote", "remove", "origin")
+	git(t, f.repo, "remote", "add", "upstream", f.origin)
+	f.identity(slot)
+	git(t, slot, "switch", "-q", "--detach")
+	detached := f.commit(slot, "detached.txt")
+
+	git(t, slot, "branch", "keep-t1")
+	if _, err := Free(ctx, slot); err == nil || !strings.Contains(err.Error(), "on no remote") {
+		t.Fatalf("free while no remote-tracking branch holds HEAD: %v", err)
+	}
+	if r := git(t, slot, "branch", "-r"); r != "" {
+		t.Fatalf("the unfetched remote should have no remote-tracking branch, has %q", r)
+	}
+	if out, err := exec.Command("git", "-C", slot, "switch", "-q", "--detach", "upstream/main").CombinedOutput(); err == nil {
+		t.Fatalf("detaching at upstream/main before the fetch should fail:\n%s", out)
+	}
+
+	git(t, slot, "fetch", "-q", "upstream")
+	git(t, slot, "switch", "-q", "--detach", "upstream/main")
+	if _, err := Free(ctx, slot); err != nil {
+		t.Fatalf("free after fetching upstream and detaching at upstream/main: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, ".hrn", "slots", "1.lease")); !os.IsNotExist(err) {
+		t.Errorf("the lease should be gone: %v", err)
+	}
+	git(t, f.repo, "merge-base", "--is-ancestor", detached, "keep-t1")
+}
+
 // The same recovery in a repository without remotes, as docs/workspaces.md
 // gives it: once a local branch holds HEAD, free gives the slot back without
 // moving HEAD to another commit.
