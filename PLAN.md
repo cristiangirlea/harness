@@ -665,7 +665,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: a reused process id does not hold a slot (#231, PR #N). Windows can
+- 2026-10-13: a reused process id does not hold a slot (#231, PR #248). Windows can
   reuse a pid soon after its holder exits. Decided: record the holder's process start
   identity in the lease and compare it exactly on Windows and Linux; a different start
   means the live pid does not hold the lease. A wall-clock comparison with the lease's
