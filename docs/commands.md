@@ -65,6 +65,8 @@ Submission requires a stable idempotency key and a positive USD cost ceiling.
 The prompt can be supplied as arguments or on stdin. Remote jobs currently
 support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
 for the corresponding tools.
+Remote jobs refuse enabled retrieval options until the worker can honor their
+version pin; use a local run for opted-in retrieval.
 
 ### Project knowledge
 

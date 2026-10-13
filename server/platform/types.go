@@ -127,6 +127,9 @@ func validateProject(p Project) error {
 }
 
 func validateSubmission(s Submission) error {
+	if s.Options.Retrieval != "" && s.Options.Retrieval != "off" {
+		return ErrUnsupported
+	}
 	if len(s.Prompt) == 0 || len(s.Prompt) > 100_000 {
 		return errors.New("prompt must be 1..100000 bytes")
 	}
