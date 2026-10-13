@@ -1223,50 +1223,67 @@ func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, erro
 func Remove(res Result) error {
 	var errs []error
 	for _, tr := range res.Tasks {
-		if err := removeTask(res, tr); err != nil {
+		if _, err := removeTask(res, tr); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// RemoveTasks applies batch rm's per-task rules to only the named tasks.
-func RemoveTasks(res Result, ids []string) error {
+// RemoveTasks applies batch rm's per-task rules to only the named tasks and
+// returns the IDs whose worktree or branch was removed, even when others fail.
+func RemoveTasks(res Result, ids []string) ([]string, error) {
 	tasks := make([]TaskResult, 0, len(ids))
 	for _, id := range ids {
 		tr, err := res.Find(id)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		tasks = append(tasks, tr)
 	}
 	var errs []error
+	var removed []string
 	for _, tr := range tasks {
-		if err := removeTask(res, tr); err != nil {
+		didRemove, err := removeTask(res, tr)
+		if didRemove {
+			removed = append(removed, tr.ID)
+		}
+		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
 		}
 	}
-	return errors.Join(errs...)
+	return removed, errors.Join(errs...)
 }
 
-func removeTask(res Result, tr TaskResult) error {
+func removeTask(res Result, tr TaskResult) (bool, error) {
+	branchExists := func() bool {
+		_, err := gitOut(context.Background(), res.Dir, "show-ref", "--verify", "--quiet", "refs/heads/"+tr.Branch)
+		return err == nil
+	}
 	if branchOnly(tr) {
-		return removeSlotBranch(res.Dir, tr)
+		hadBranch := branchExists()
+		err := removeSlotBranch(res.Dir, tr)
+		return hadBranch && !branchExists(), err
 	}
 	if tr.Worktree == "" || notMine(res, tr) {
-		return nil
+		return false, nil
 	}
 	// Only a directory git still lists is a worktree whose status means
 	// anything: a leftover one has no .git of its own, and a status taken
 	// inside it would describe the repository around it.
-	if registered, err := isWorktree(res.Dir, tr.Worktree); err != nil {
-		return err
-	} else if registered {
+	registered, err := isWorktree(res.Dir, tr.Worktree)
+	if err != nil {
+		return false, err
+	}
+	if registered {
 		if dirty, err := hasChanges(tr.Worktree); err == nil && dirty {
-			return fmt.Errorf("%s has uncommitted changes; commit or discard them first", tr.Worktree)
+			return false, fmt.Errorf("%s has uncommitted changes; commit or discard them first", tr.Worktree)
 		}
 	}
-	return removeWorktree(res.Dir, tr)
+	hadBranch := branchExists()
+	err = removeWorktree(res.Dir, tr)
+	stillRegistered, checkErr := isWorktree(res.Dir, tr.Worktree)
+	return (registered && checkErr == nil && !stillRegistered) || (hadBranch && !branchExists()), err
 }
 
 // branchOnly reports whether a task's branch is all hrn batch rm removes of

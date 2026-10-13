@@ -304,7 +304,7 @@ func TestRemoveTasksDeletesOnlyNamedSquashMergedTask(t *testing.T) {
 	if err != nil || len(merged) != 1 || merged[0].Commit == "" {
 		t.Fatalf("merge = %+v, %v", merged, err)
 	}
-	if err := RemoveTasks(res, []string{"alpha"}); err != nil {
+	if _, err := RemoveTasks(res, []string{"alpha"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(res.Tasks[0].Worktree); !os.IsNotExist(err) {
@@ -330,7 +330,7 @@ func TestRemoveTasksKeepsDirtyWorktreeAndReportsIt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(res.Tasks[0].Worktree, "notes.txt"), []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := RemoveTasks(res, []string{"alpha"})
+	_, err := RemoveTasks(res, []string{"alpha"})
 	if err == nil || !strings.Contains(err.Error(), "alpha") || !strings.Contains(err.Error(), "uncommitted changes") {
 		t.Fatalf("dirty worktree error = %v", err)
 	}
@@ -346,11 +346,34 @@ func TestRemoveTasksKeepsUnownedWorktree(t *testing.T) {
 	dir := initRepo(t)
 	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"})
 	res.Tasks[0].BranchMade = false
-	if err := RemoveTasks(res, []string{"alpha"}); err != nil {
+	if _, err := RemoveTasks(res, []string{"alpha"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(res.Tasks[0].Worktree); err != nil {
 		t.Errorf("another batch's worktree was removed: %v", err)
+	}
+}
+
+func TestRemoveTasksReturnsOnlyIDsWithRemovedWork(t *testing.T) {
+	dir := initRepo(t)
+	res := mergeableFresh(t, dir, Task{ID: "alpha", Prompt: "alpha"}, Task{ID: "beta", Prompt: "beta"}, Task{ID: "gamma", Prompt: "gamma"})
+	res.Tasks[2].BranchMade = false                        // This worktree and branch belong to another batch.
+	res.Tasks = append(res.Tasks, TaskResult{ID: "delta"}) // No worktree or branch was made.
+	if err := os.WriteFile(filepath.Join(res.Tasks[1].Worktree, "notes.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemoveTasks(res, []string{"alpha", "beta", "gamma", "delta"})
+	if len(removed) != 1 || removed[0] != "alpha" || err == nil ||
+		!strings.Contains(err.Error(), "beta") || strings.Contains(err.Error(), "gamma") || strings.Contains(err.Error(), "delta") {
+		t.Fatalf("removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(res.Tasks[0].Worktree); !os.IsNotExist(err) {
+		t.Errorf("alpha worktree remains: %v", err)
+	}
+	for _, tr := range res.Tasks[1:3] {
+		if _, err := os.Stat(tr.Worktree); err != nil {
+			t.Errorf("%s worktree is gone: %v", tr.ID, err)
+		}
 	}
 }
 
@@ -366,7 +389,7 @@ func TestRemoveTasksKeepsSlotAndDeletesItsBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Tasks[0].Slot, res.Tasks[0].Worktree = 1, slot
-	if err := RemoveTasks(res, []string{"alpha"}); err != nil {
+	if _, err := RemoveTasks(res, []string{"alpha"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(slot); err != nil {
@@ -378,7 +401,7 @@ func TestRemoveTasksKeepsSlotAndDeletesItsBranch(t *testing.T) {
 }
 
 func TestRemoveTasksRejectsUnknownID(t *testing.T) {
-	err := RemoveTasks(Result{ID: "batch", Tasks: []TaskResult{{ID: "alpha"}}}, []string{"missing"})
+	_, err := RemoveTasks(Result{ID: "batch", Tasks: []TaskResult{{ID: "alpha"}}}, []string{"missing"})
 	if err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Errorf("unknown task error = %v", err)
 	}

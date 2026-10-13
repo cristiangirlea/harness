@@ -193,6 +193,32 @@ func TestBatchMergeRmReportsDirtyMergedWorktree(t *testing.T) {
 	}
 }
 
+func TestBatchMergeRmReportsOnlyRemovedTasksAfterDirtyFailure(t *testing.T) {
+	res := batchMergeFixture(t, false, "alpha", "beta")
+	before := batchMergeGit(t, res.Dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(res.Tasks[1].Worktree, "notes.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, err := batchMergeCLI(t, "--rm", res.ID)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "beta") ||
+		strings.Contains(err.Error(), "alpha") || !strings.Contains(out, "removed the worktrees and branches of 1 merged task(s)") ||
+		!strings.Contains(out, "undo with: git reset --hard "+before) {
+		t.Fatalf("code=%d err=%v output=%q", code, err, out)
+	}
+	if _, err := os.Stat(res.Tasks[0].Worktree); !os.IsNotExist(err) {
+		t.Errorf("clean worktree remains: %v", err)
+	}
+	if branch := batchMergeGit(t, res.Dir, "branch", "--list", res.Tasks[0].Branch); branch != "" {
+		t.Errorf("clean branch remains: %s", branch)
+	}
+	if _, err := os.Stat(res.Tasks[1].Worktree); err != nil {
+		t.Errorf("dirty worktree is gone: %v", err)
+	}
+	if branch := batchMergeGit(t, res.Dir, "branch", "--list", res.Tasks[1].Branch); branch == "" {
+		t.Error("dirty branch is gone")
+	}
+}
+
 func TestBatchMergeRmKeepsSlotDirectory(t *testing.T) {
 	res := batchMergeFixture(t, false, "alpha")
 	batchMergeGit(t, res.Dir, "worktree", "remove", res.Tasks[0].Worktree)

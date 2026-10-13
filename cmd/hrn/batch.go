@@ -157,7 +157,6 @@ func cmdBatchMerge(args []string) (int, error) {
 	r := newRenderer(false)
 	done := 0
 	var removeIDs []string
-	var removeTasks []batch.TaskResult
 	for _, m := range merged {
 		switch {
 		case m.Conflict:
@@ -170,18 +169,22 @@ func cmdBatchMerge(args []string) (int, error) {
 			done++
 			if *rm && m.Commit != "" {
 				removeIDs = append(removeIDs, m.Task)
-				tr, _ := res.Find(m.Task)
-				removeTasks = append(removeTasks, tr)
 			}
 			r.Line(fmt.Sprintf("  %-16s merged %s as %s", m.Task, m.Branch, tools.ShortSHA(m.Commit)))
 		}
 	}
 	var removeErr error
 	if len(removeIDs) > 0 {
-		removeErr = batch.RemoveTasks(res, removeIDs)
-		if removeErr == nil {
+		removedIDs, err := batch.RemoveTasks(res, removeIDs)
+		removeErr = err
+		if len(removedIDs) > 0 {
+			removedTasks := make([]batch.TaskResult, 0, len(removedIDs))
+			for _, id := range removedIDs {
+				tr, _ := res.Find(id)
+				removedTasks = append(removedTasks, tr)
+			}
 			r.Line(r.c(dim, fmt.Sprintf("removed the %s of %d merged task(s)",
-				removedWhat(batch.Result{Tasks: removeTasks}), len(removeIDs))))
+				removedWhat(batch.Result{Tasks: removedTasks}), len(removedIDs))))
 			r.Line(r.c(dim, fmt.Sprintf("undo with: git reset --hard %s; after removal, the tasks' work is only in the reflog", before)))
 		}
 	}
