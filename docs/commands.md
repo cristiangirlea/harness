@@ -14,6 +14,8 @@
 | `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream and resume from the last durable event ID. |
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
+| `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
+| `hrn retrieval compare --manifest FILE --samples FILE [--baseline-preparation FILE] [--candidate-preparation FILE] [--reuse N] [--runs] [--json]` | Compare saved retrieval evidence and verify measured run references locally, without a model call. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn runs [-n N]` | List recent runs. |
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](run-records.md#run-records)). |
@@ -40,6 +42,10 @@ backend default; gemini and opencode report it as not enforced),
 `--mcp FILE` (repeatable), `--no-instructions`, `--allow-dangerous`, `--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
 budgets below.
+`--retrieval off|optional|required` opts into project references; enabled modes
+require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and
+an explicit `--model`. `--retrieval-version` pins a version; otherwise the
+active version is resolved once and saved with the run.
 
 ### hrn exec
 

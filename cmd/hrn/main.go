@@ -42,6 +42,8 @@ Usage:
                                  use the durable control API
   hrn knowledge import|search|inspect|active|activate|disable|rollback request.json
                                  manage approved project knowledge through the control API
+  hrn retrieval fixture|compare [flags]
+                                 compare saved evidence without model calls
   hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
@@ -94,6 +96,11 @@ Run flags:
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
+      --retrieval MODE  off | optional | required
+      --retrieval-tenant ID
+      --retrieval-project ID
+      --retrieval-revision SHA
+      --retrieval-version ID
       --allow-dangerous
                        lift the guard: agents may push, merge and deploy with your credentials
                        (every backend), and run_command may run sudo, rm -rf / and the like
@@ -140,6 +147,8 @@ func main() {
 		err = runRemote(os.Args[2:], os.Stdout)
 	case "knowledge":
 		err = runKnowledge(os.Args[2:], os.Stdout)
+	case "retrieval":
+		err = runRetrieval(os.Args[2:], os.Stdout)
 	case "runs":
 		err = cmdRuns(os.Args[2:])
 	case "show":
