@@ -1096,8 +1096,10 @@ func TestATaskGivesUpOnALeaseALeftTakeoverFileBlocks(t *testing.T) {
 // An empty lease is one being written, so a task keeps waiting on it; once
 // it reads as another batch's the task waits on that batch as usual,
 // however long the other slots stay unreadable, and takes the slot when it
-// is given back. Each change to slot 1's lease waits for the task to have
-// reported what it saw before, so the order holds however slow the machine.
+// is given back. Slot 1's lease is rewritten while the task is held in its
+// first wait event, so its next look is the one that sees the other batch
+// however slow the machine: the task's clock on the empty leases runs from
+// its first look, and a look before the rewrite would have run it out.
 func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 	dir := initRepo(t)
 	quickPoll(t)
@@ -1112,12 +1114,20 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 	var mu sync.Mutex
 	var waits []string
 	waited := make(chan string, 100)
+	// notify runs on the task's goroutine, between one look and the next:
+	// a wait event holds the task there until rewritten is closed, which the
+	// test does once slot 1's lease is another batch's, and later events
+	// pass straight through.
+	rewritten := make(chan struct{})
+	release := sync.OnceFunc(func() { close(rewritten) })
+	t.Cleanup(release)
 	notify := func(e Event) {
 		if e.Kind == "wait" {
 			mu.Lock()
 			waits = append(waits, e.Text)
 			mu.Unlock()
 			waited <- e.Text
+			<-rewritten
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1131,12 +1141,14 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 		done <- err
 	}()
 	awaitWait(t, waited, done, leaseFile(dir, 2)+" is being written")
-	// Slot 1's lease is rewritten under worktreeMu, which the take scans
-	// under, so no look sees it half done.
+	// The task is held in that event, so no look runs while slot 1's lease
+	// is rewritten; the rewrite is still under worktreeMu, which the take
+	// scans under, as every change to a lease a take may read is.
 	worktreeMu.Lock()
 	data, _ := json.Marshal(ws.Lease{Holder: "batch other task x", PID: os.Getpid(), Taken: time.Now()})
 	writeFile(t, leaseFile(dir, 1), string(data))
 	worktreeMu.Unlock()
+	release()
 	awaitWait(t, waited, done, `taken by "batch other task x"`)
 	// The other leases have been unreadable since the first look, before
 	// the first wait event: after the bound their clocks have run out, and
