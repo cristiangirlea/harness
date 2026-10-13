@@ -653,7 +653,8 @@ order they are worth taking:
     - [x] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
       ([#79](https://github.com/cristiangirlea/harness/issues/79)). Done: PR #131, 2026-10-13.
     - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
-    - [ ] hrn ws: reusable workspaces per repository ([#133](https://github.com/cristiangirlea/harness/issues/133)).
+    - [x] `hrn ws`: reusable workspaces per repository
+      ([#133](https://github.com/cristiangirlea/harness/issues/133)). Done: PR #144, 2026-10-13.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
