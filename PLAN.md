@@ -653,7 +653,7 @@ order they are worth taking:
     - [x] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
       ([#79](https://github.com/cristiangirlea/harness/issues/79)). Done: PR #131, 2026-10-13.
     - [x] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
-      Done: PR #N, 2026-10-13.
+      Done: PR #221, 2026-10-13.
     - [x] `hrn ws`: reusable workspaces per repository
       ([#133](https://github.com/cristiangirlea/harness/issues/133)). Done: PR #144, 2026-10-13.
 
