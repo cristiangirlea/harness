@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,5 +73,28 @@ func TestShowHeaderSaysWhenTheRunRecordIsIncomplete(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("record_error %q: header mentions it = %v, want %v:\n%s", tc.recordError, got, tc.want, out.String())
 		}
+	}
+}
+
+func TestPrintBatchNamesTheSlotsOrTheFreshWorktrees(t *testing.T) {
+	print := func(res batch.Result) string {
+		var out strings.Builder
+		r := newRenderer(false)
+		r.out, r.color = &out, false
+		printBatch(r, res)
+		return out.String()
+	}
+	slot := filepath.Join("main", ".hrn", "slots", "2")
+	text := print(batch.Result{ID: "b4", Dir: "repo", Tasks: []batch.TaskResult{
+		{ID: "one", Status: batch.StatusPass, Branch: "hrn/one", Worktree: slot, Slot: 2}}})
+	if !strings.Contains(text, filepath.Join("main", ".hrn", "slots")) || strings.Contains(text, filepath.Join(".hrn", "worktrees")) ||
+		!strings.Contains(text, "hrn batch rm b4") {
+		t.Errorf("a slot batch's hint should name the slots, not .hrn/worktrees:\n%s", text)
+	}
+	fresh := filepath.Join("repo", ".hrn", "worktrees", "one")
+	text = print(batch.Result{ID: "b5", Dir: "repo", Tasks: []batch.TaskResult{
+		{ID: "one", Status: batch.StatusPass, Branch: "hrn/one", Worktree: fresh}}})
+	if !strings.Contains(text, "worktrees under "+filepath.Join("repo", ".hrn", "worktrees")) {
+		t.Errorf("a fresh batch's hint names its worktrees:\n%s", text)
 	}
 }

@@ -275,6 +275,14 @@ func printBatch(r *renderer, res batch.Result) {
 	}
 	r.Line(r.c(dim, fmt.Sprintf("── batch %s · %d/%d passed%s · %s ──",
 		res.ID, passed(res), len(res.Tasks), tail, took)))
+	for _, t := range res.Tasks {
+		if t.Slot != 0 {
+			r.Line(r.c(dim, fmt.Sprintf("each task's work is on its branch; the slots under %s go back as tasks end · "+
+				"merge them with: hrn batch merge %s · delete the branches with: hrn batch rm %s",
+				filepath.Dir(t.Worktree), res.ID, res.ID)))
+			return
+		}
+	}
 	r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · merge them with: hrn batch merge %s · remove them with: hrn batch rm %s",
 		filepath.Join(res.Dir, ".hrn", "worktrees"), res.ID, res.ID)))
 }
