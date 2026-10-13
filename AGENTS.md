@@ -24,6 +24,7 @@ decision. The binary was called `hx` until a rename; older PLAN.md entries keep 
 | `internal/batch/`, `eval/`, `report/`, `purpose/` | Parallel worktrees with gates and retries; a batch across variants with a judge; tables over records; what a run was for, from keyword rules on its prompt. |
 | `internal/runlog/`, `followup/` | Run records and pruning; continuing a run on the same or another backend. |
 | `internal/gc/` | `hrn gc`: which worktrees are proven merged (by GitHub or the default branch), and removing them. |
+| `server/` | Separate PostgreSQL control service and worker module with its own `go.mod`; PostgreSQL tests need `HRN_TEST_DATABASE_URL`. |
 | `scripts/api-check.sh` | The first real api runs. Costs real money; the owner's to run. |
 | `.github/release.sh` | Builds the six release binaries and `SHA256SUMS` into `dist/`. |
 
