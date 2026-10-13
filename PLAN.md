@@ -664,6 +664,11 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: the guard's `gh api` method in any case (PR #213). `gh-publish` refused
+  `gh api` with PUT, PATCH or DELETE in upper case only, and `gh` upper-cases the method it is
+  given, so `-X delete` still deleted. Decided: the method alone matches case-insensitively
+  (`(?i:PUT|PATCH|DELETE)`); `gh`'s subcommands stay case-sensitive. POST is #210, Windows
+  program names in other rules #211.
 - 2026-10-13: `gh api` writes in this repository's Claude settings (#198, PR #209). Only the
   `PUT` spellings were denied, so a session with the owner's token could still change or delete
   the rulesets. Decided: deny any `gh api` call with an explicit `-X` or `--method`, whatever the
