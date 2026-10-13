@@ -217,6 +217,9 @@ func TestTakeAtMaxRefusesAndNamesEveryHolder(t *testing.T) {
 		!strings.Contains(full.Passed[0], "alice") || !strings.Contains(full.Passed[1], "bob") {
 		t.Errorf("the error should be a *NoSlotError naming both slots, got %#v", err)
 	}
+	if len(full.Holders) != 2 || full.Holders[0].Holder != "alice" || full.Holders[1].Holder != "bob" {
+		t.Errorf("the error should carry both leases, got %+v", full.Holders)
+	}
 }
 
 func TestNoSlotErrorCountsOnlyHeldSlotsNotSkippedOnes(t *testing.T) {
@@ -227,8 +230,27 @@ func TestNoSlotErrorCountsOnlyHeldSlotsNotSkippedOnes(t *testing.T) {
 	f.take(TakeOptions{Holder: "b"})                             // slot 2, held
 	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "c", Max: 2})
 	var full *NoSlotError
-	if !errors.As(err, &full) || full.Held != 1 || len(full.Passed) != 2 {
+	if !errors.As(err, &full) || full.Held != 1 || len(full.Passed) != 2 || len(full.Holders) != 1 || full.Holders[0].Holder != "b" {
 		t.Errorf("want one held and one skipped slot, got %#v", err)
+	}
+}
+
+// A lease that cannot be read (being written, or unreadable) is held by
+// someone, so it counts in Held, but no Lease says by whom.
+func TestNoSlotErrorHoldersLeaveOutALeaseItCannotRead(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.repo, ".hrn", "slots")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "1.lease"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.take(TakeOptions{Holder: "b", Max: 2})
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "c", Max: 2})
+	var full *NoSlotError
+	if !errors.As(err, &full) || full.Held != 2 || len(full.Holders) != 1 || full.Holders[0].Holder != "b" {
+		t.Errorf("want two held slots and one readable lease, got %#v", err)
 	}
 }
 
@@ -1077,5 +1099,93 @@ func TestListShowsSlotsLeasesAndWhatIsInThem(t *testing.T) {
 	}
 	if s := got[2]; s.State != "taken" || s.Holder != "ghost" || s.Folder || s.Contents != "no folder" {
 		t.Errorf("slot 3, a lease without a folder: %+v", s)
+	}
+}
+
+// writeLease writes slot n's lease by hand, as a batch would, with pid as its process.
+func writeLease(t *testing.T, repo string, n, pid int, holder string) {
+	t.Helper()
+	dir := filepath.Join(repo, ".hrn", "slots")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(Lease{Holder: holder, PID: pid, Taken: time.Now()})
+	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".lease"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCountLeasesCountsTheReadableLeasesThatMatch(t *testing.T) {
+	f := newFixture(t)
+	sessions := func(l Lease) bool { return l.PID == 0 }
+	if n, err := CountLeases(context.Background(), f.repo, sessions); err != nil || n != 0 {
+		t.Fatalf("no slots yet: %d, %v", n, err)
+	}
+	f.take(TakeOptions{Holder: "alice"})
+	f.take(TakeOptions{Holder: "bob"})
+	writeLease(t, f.repo, 3, os.Getpid(), "batch x task a")
+	writeLease(t, f.repo, 4, exitedPID(t), "batch y task b")
+	dir := filepath.Join(f.repo, ".hrn", "slots")
+	if err := os.WriteFile(filepath.Join(dir, "5.lease"), nil, 0o644); err != nil { // being written
+		t.Fatal(err)
+	}
+	n, err := CountLeases(context.Background(), filepath.Join(dir, "1"), sessions)
+	if err != nil || n != 2 {
+		t.Errorf("sessions = %d, %v; want alice's and bob's 2, not a live or exited process's, nor one being written", n, err)
+	}
+	mine := func(l Lease) bool { return l.PID == os.Getpid() && strings.HasPrefix(l.Holder, "batch x ") }
+	if n, err := CountLeases(context.Background(), f.repo, mine); err != nil || n != 1 {
+		t.Errorf("batch x's = %d, %v; want 1", n, err)
+	}
+}
+
+// A session's lease (no pid) is held until hrn ws free, so a caller that
+// wants n slots of its own must look past the sessions among the first
+// slot numbers, and only those: a session further up widens nothing.
+func TestRangeBeyondSessionsSkipsOnlySessionsAmongTheFirstSlots(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if n, err := RangeBeyondSessions(ctx, f.repo, 4); err != nil || n != 4 {
+		t.Fatalf("no slots yet: %d, %v; want 4", n, err)
+	}
+	f.take(TakeOptions{Holder: "alice"}) // slot 1, a session
+	writeLease(t, f.repo, 2, os.Getpid(), "batch x task a")
+	if n, err := RangeBeyondSessions(ctx, f.repo, 4); err != nil || n != 5 {
+		t.Errorf("one session in the first slots: %d, %v; want 5", n, err)
+	}
+	writeLease(t, f.repo, 10, 0, "far") // a session past the range
+	if n, err := RangeBeyondSessions(ctx, f.repo, 4); err != nil || n != 5 {
+		t.Errorf("a session on slot 10 widens nothing: %d, %v; want 5", n, err)
+	}
+	writeLease(t, f.repo, 5, 0, "carol")
+	if n, err := RangeBeyondSessions(ctx, f.repo, 4); err != nil || n != 6 {
+		t.Errorf("a session on the last slot in range: %d, %v; want 6", n, err)
+	}
+	if n, err := RangeBeyondSessions(ctx, f.repo, 1); err != nil || n != 2 {
+		t.Errorf("one slot: %d, %v; want 2", n, err)
+	}
+}
+
+func TestRangeBeyondSessionsCountsAnUnreadableLeaseAsTaken(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.repo, ".hrn", "slots")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "1.lease"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "2.lease"), nil, 0o644); err != nil { // being written
+		t.Fatal(err)
+	}
+	if n, err := RangeBeyondSessions(context.Background(), f.repo, 2); err != nil || n != 2 {
+		t.Errorf("unreadable leases are not sessions: %d, %v; want 2", n, err)
+	}
+}
+
+func TestRangeBeyondSessionsRefusesLessThanOne(t *testing.T) {
+	f := newFixture(t)
+	if _, err := RangeBeyondSessions(context.Background(), f.repo, 0); err == nil {
+		t.Error("a range of no slots is a mistake")
 	}
 }

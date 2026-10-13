@@ -38,7 +38,11 @@ that process has exited, and the next take may take it over.
 `hrn batch` takes the same slots, one per running task, unless its spec says
 `"worktrees": "fresh"` (see [Slots or fresh worktrees](batches.md#slots-or-fresh-worktrees)).
 Its lease names the task (`batch <id> task <task>`) and hrn's pid, so a crash leaves a
-stale lease rather than a held slot. The task's branch `hrn/<id>` is made from the batch's
+stale lease rather than a held slot. A batch never waits on a session: a slot
+held by `hrn ws take` (no pid) among the ones it would try is passed over and it tries the
+next number instead, up to the bound on its own slots (`parallel`, at least 4). It waits on
+slots other batches or its own running tasks hold, and on a lease it cannot read (see
+[Batches](batches.md#slots-or-fresh-worktrees)). The task's branch `hrn/<id>` is made from the batch's
 base and checked out in the slot. When the task ends, the slot is detached at the base
 and its lease removed without asking for a push, because the work is meant to stay on
 that local branch for `hrn batch merge`. A slot left with files in it keeps its lease

@@ -145,18 +145,22 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	}
 
 	var passed []string
+	var holders []Lease
 	held := 0
 	for n := 1; n <= opt.Max; n++ {
 		path := filepath.Join(dir, strconv.Itoa(n))
 		lp := leasePath(dir, n)
 		lease := Lease{Holder: opt.Holder, PID: opt.PID, Taken: time.Now().UTC().Truncate(time.Second), Branch: opt.Branch}
-		busy, err := acquire(lp, lease)
+		busy, holder, err := acquire(lp, lease)
 		if err != nil {
 			return Taken{Notes: notes}, fmt.Errorf("slot %d: %w", n, err)
 		}
 		if busy != "" {
 			passed = append(passed, fmt.Sprintf("slot %d %s: %s", n, path, busy))
 			held++
+			if holder != nil {
+				holders = append(holders, *holder)
+			}
 			continue
 		}
 		skip, err := prepare(ctx, main, path, base)
@@ -176,15 +180,16 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		}
 		return Taken{N: n, Path: path, Lease: lease, Notes: notes}, nil
 	}
-	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Passed: passed}
+	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Holders: holders, Passed: passed}
 }
 
 // NoSlotError is Take's error when every slot up to Max is taken or skipped,
 // so a caller can wait for one rather than fail.
 type NoSlotError struct {
-	Max    int
-	Held   int      // how many were passed over for a lease someone holds; the rest were skipped
-	Passed []string // one line per slot: its path and who holds it, or why it was skipped
+	Max     int
+	Held    int      // how many were passed over for a lease someone holds; the rest were skipped
+	Holders []Lease  // the leases of those, in slot order, less any that could not be read
+	Passed  []string // one line per slot: its path and who holds it, or why it was skipped
 }
 
 func (e *NoSlotError) Error() string {
@@ -295,12 +300,12 @@ func commitOf(ctx context.Context, dir, ref string) (string, error) {
 }
 
 // acquire creates the lease file with O_EXCL. When one exists it returns why
-// the slot is busy, unless the lease is stale, in which case it takes it
-// over and tries once more.
-func acquire(p string, l Lease) (busy string, err error) {
+// the slot is busy, with the lease it read when it could, unless the lease
+// is stale, in which case it takes it over and tries once more.
+func acquire(p string, l Lease) (busy string, holder *Lease, err error) {
 	data, err := json.Marshal(l)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	for range 2 {
 		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -311,27 +316,27 @@ func acquire(p string, l Lease) (busy string, err error) {
 			}
 			if werr != nil {
 				removeOwn(p)
-				return "", werr
+				return "", nil, werr
 			}
-			return "", nil
+			return "", nil, nil
 		}
 		if !errors.Is(err, fs.ErrExist) {
-			return "", err
+			return "", nil, err
 		}
 		old, raw, err := readLease(p)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			continue // freed in between
 		case err != nil:
-			return err.Error(), nil
+			return err.Error(), nil, nil
 		case !old.stale():
-			return describe(old), nil
+			return describe(old), &old, nil
 		}
 		if why := removeLease(p, raw); why != "" {
-			return why, nil
+			return why, nil, nil
 		}
 	}
-	return "its lease changed while it was being taken over", nil
+	return "its lease changed while it was being taken over", nil, nil
 }
 
 // readLease reads a lease file. One that is empty is being written by the
@@ -792,6 +797,64 @@ func unpushed(ctx context.Context, dir string) (int, error) {
 		return 0, err
 	}
 	return strconv.Atoi(out)
+}
+
+// CountLeases counts the leases of the repository repo is in that match,
+// reading only the lease files: a lease being written or unreadable is not
+// counted. A batch counts the slots it holds itself this way.
+func CountLeases(ctx context.Context, repo string, match func(Lease) bool) (int, error) {
+	main, err := MainCheckout(ctx, repo)
+	if err != nil {
+		return 0, err
+	}
+	dir := SlotsDir(main)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".lease")
+		if !ok || e.IsDir() {
+			continue
+		}
+		if i, err := strconv.Atoi(name); err != nil || i < 1 || strconv.Itoa(i) != name {
+			continue
+		}
+		if l, _, err := readLease(filepath.Join(dir, e.Name())); err == nil && match(l) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// RangeBeyondSessions returns the Max a Take needs for n slots other than
+// sessions' to lie within it. A session's lease (hrn ws take, no pid) is
+// held until hrn ws free, so its slot is skipped; every other slot number
+// counts: free, leased by a process, or with a lease that cannot be read.
+// Slot numbers are walked from 1 until n have counted, so a session past
+// them widens nothing.
+func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
+	if n < 1 {
+		return 0, fmt.Errorf("a range of %d slots is none", n)
+	}
+	main, err := MainCheckout(ctx, repo)
+	if err != nil {
+		return 0, err
+	}
+	dir := SlotsDir(main)
+	counted := 0
+	for slot := 1; ; slot++ {
+		if l, _, err := readLease(leasePath(dir, slot)); err == nil && l.PID == 0 {
+			continue
+		}
+		if counted++; counted == n {
+			return slot, nil
+		}
+	}
 }
 
 // List reports every slot of the repository repo is in: each slot folder and
