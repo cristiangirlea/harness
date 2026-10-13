@@ -174,15 +174,16 @@ func cmdBatchMerge(args []string) (int, error) {
 }
 
 // diffNothing says why a task's diff is empty. A slot task's diff is its
-// commit alone, so without one it committed nothing; whatever it left went
-// with its slot, which the task kept when it could not give it back.
+// commit alone, so without one it committed nothing. A kept slot says only
+// that giving it back failed (work left in it, or a busy lock), so it is
+// named for inspection, not said to hold work.
 func diffNothing(tr batch.TaskResult) string {
 	if tr.Slot == 0 {
 		return fmt.Sprintf("task %s changed nothing", tr.ID)
 	}
 	text := fmt.Sprintf("task %s committed nothing", tr.ID)
 	if strings.Contains(tr.Error, fmt.Sprintf("slot %d kept", tr.Slot)) {
-		text += fmt.Sprintf("; slot %d was kept with its work: see hrn ws list", tr.Slot)
+		text += fmt.Sprintf("; slot %d was kept: inspect it (hrn ws list)", tr.Slot)
 	}
 	return text
 }

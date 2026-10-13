@@ -113,15 +113,19 @@ func TestBatchRmAndMergeNameTheBranchesOfASlotBatchAndTheWorktreesOfAFreshOne(t 
 }
 
 func TestBatchDiffOfASlotTaskThatCommittedNothingSaysSoAndWhetherItsSlotWasKept(t *testing.T) {
-	kept := diffNothing(batch.TaskResult{ID: "hooked", Slot: 1,
-		Error: "commit failed, the work is uncommitted\nslot 1 kept: slot 1 holds changes or untracked files"})
-	for _, want := range []string{"task hooked committed nothing", "slot 1 was kept with its work", "hrn ws list"} {
+	// A kept slot proves only that giving it back failed, not that work is
+	// in it: its lock may have been busy.
+	kept := diffNothing(batch.TaskResult{ID: "locked", Slot: 1,
+		Error: "slot 1 kept: slot 1 is locked by another process"})
+	for _, want := range []string{"task locked committed nothing", "slot 1 was kept", "inspect it", "hrn ws list"} {
 		if !strings.Contains(kept, want) {
 			t.Errorf("a kept slot: %q lacks %q", kept, want)
 		}
 	}
-	if strings.Contains(kept, "changed nothing") {
-		t.Errorf("a task whose work is in its kept slot did not change nothing: %q", kept)
+	for _, claim := range []string{"changed nothing", "its work", "holds"} {
+		if strings.Contains(kept, claim) {
+			t.Errorf("a kept slot says only that it was kept: %q claims %q", kept, claim)
+		}
 	}
 	quiet := diffNothing(batch.TaskResult{ID: "quiet", Slot: 1})
 	if quiet != "task quiet committed nothing" {
