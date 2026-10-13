@@ -23,8 +23,8 @@ func TestGCApplyKeepsAWholeCacheWithAnOpenFileOnWindows(t *testing.T) {
 	}
 	defer f.Close()
 	removed, errs := ApplyCaches(context.Background(), cs)
-	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "kept, it is in use") {
-		t.Fatalf("removed %+v, errors %v; want one in-use error", removed, errs)
+	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "kept, it could not be moved aside") {
+		t.Fatalf("removed %+v, errors %v; want one move error", removed, errs)
 	}
 	for _, path := range []string{"CACHEDIR.TAG", filepath.Join("debug", ".cargo-lock"), filepath.Join("debug", "deps", "libx.rlib")} {
 		if !exists(filepath.Join(cache, path)) {

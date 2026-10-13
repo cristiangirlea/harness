@@ -309,6 +309,35 @@ func TestGCApplyReturnsMovedCacheWhenAProbeFindsBuild(t *testing.T) {
 	}
 }
 
+func TestGCApplyFailedMoveKeepsOriginalCacheWhole(t *testing.T) {
+	root := tempRoot(t)
+	cache := tagged(t, filepath.Join(root, "target"), 30*time.Hour, 10)
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	target := filepath.Join(root, ".gc-1-99-target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "sentinel"), []byte("occupied"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previous := movedCachePath
+	movedCachePath = func(string) string { return target }
+	t.Cleanup(func() { movedCachePath = previous })
+
+	removed, errs := ApplyCaches(context.Background(), cs)
+	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "kept, it could not be moved aside") {
+		t.Fatalf("removed %+v, errors %v", removed, errs)
+	}
+	for _, path := range []string{"CACHEDIR.TAG", filepath.Join("debug", ".cargo-lock"), filepath.Join("debug", "deps", "libx.rlib")} {
+		if !exists(filepath.Join(cache, path)) {
+			t.Errorf("failed move lost %s", path)
+		}
+	}
+	if !exists(filepath.Join(target, "sentinel")) {
+		t.Error("failed move changed its occupied target")
+	}
+}
+
 func TestDiskFreeNamesTheVolumeAndItsFreeSpace(t *testing.T) {
 	root := tempRoot(t)
 	sub := filepath.Join(root, "sub")
