@@ -75,7 +75,7 @@ func TestKnowledgeReadReportsStorageFailureAsUnavailable(t *testing.T) {
 	}
 }
 
-func TestKnowledgePostgresLifecycle(t *testing.T) {
+func TestKnowledgeImportsRemainImmutableAcrossActivationRollbackAndDisable(t *testing.T) {
 	s := testStore(t)
 	p, _ := testProject(t, s)
 	ctx := context.Background()
@@ -192,7 +192,7 @@ func TestKnowledgePostgresLifecycle(t *testing.T) {
 		}
 	}
 }
-func TestKnowledgePostgresConcurrentAndBounded(t *testing.T) {
+func TestKnowledgeConcurrentImportsDeduplicateAndRetrievalStaysBounded(t *testing.T) {
 	s := testStore(t)
 	p, _ := testProject(t, s)
 	ctx := context.Background()
@@ -252,7 +252,7 @@ func TestKnowledgePostgresConcurrentAndBounded(t *testing.T) {
 		t.Fatal("unbounded pool")
 	}
 }
-func TestKnowledgePostgresAuthorization(t *testing.T) {
+func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 	s := testStore(t)
 	p, worker := testProject(t, s)
 	other, otherWorker := testProject(t, s)
@@ -317,7 +317,7 @@ func TestKnowledgePostgresAuthorization(t *testing.T) {
 	}
 }
 
-func TestKnowledgeVerboseQueries(t *testing.T) {
+func TestKnowledgeVerboseTasksFindRelevantReferences(t *testing.T) {
 	s := testStore(t)
 	p, _ := testProject(t, s)
 	in := knowledgeFixture(p)

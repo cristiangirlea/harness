@@ -86,7 +86,7 @@ func TestRetrievalClientClassifiesKnowledgeAuthorizationStorageFailureAsUnavaila
 	}
 }
 
-func TestRetrievalTLSWrappedProtocolFailures(t *testing.T) {
+func TestRetrievalTLSProtocolFailuresDoNotCountAsUnavailable(t *testing.T) {
 	for _, cause := range []error{
 		x509.CertificateInvalidError{Cert: &x509.Certificate{}, Reason: x509.Expired},
 		tls.RecordHeaderError{Msg: "malformed handshake"},

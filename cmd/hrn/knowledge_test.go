@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestKnowledgeCredentialSeparation(t *testing.T) {
+func TestKnowledgeCommandsUseReadAndOperatorCredentialsByRole(t *testing.T) {
 	operator := strings.Repeat("o", 64)
 	read := strings.Repeat("r", 64)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

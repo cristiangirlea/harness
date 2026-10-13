@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPacketFramingAndCredentialEnvironment(t *testing.T) {
+func TestPacketRespectsFramingCapAndExecutorDropsCredentials(t *testing.T) {
 	text := strings.Repeat("x", MaxPacketBytes-len(ReferencePrefix)-len(ReferenceSuffix))
 	p := Packet{Text: text, Bytes: len(text), Digest: TextDigest(text), VersionID: "v_fixture", Entries: []Entry{{ID: "e_fixture"}}}
 	if e := ValidatePacket(p, "", ""); e != nil {
