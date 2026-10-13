@@ -50,14 +50,70 @@ command is `go run ./cmd/hrn-worker`.
 Migration 001 creates the control schema. Migration 002 snapshots the project
 repository URL when a job is accepted. It refuses to upgrade a schema 1
 database that contains jobs, because their accepted URLs cannot be recovered
-safely. The integration tests cover both refusal and the empty schema upgrade.
+safely. Migration 003 adds scoped, immutable project knowledge and retrieval
+records. The integration tests cover both refusal and the empty schema upgrade.
 The worker uses version 2 workspace manifests and refuses older or mismatched
 manifests. An uncertain operation enters `recovery_required` instead of being
 silently replayed. The control service does not independently verify that an
 old worker or node has stopped.
 
+## Approved project knowledge
+
+Only the control service connects to PostgreSQL. Operators import reviewed
+source material with `HRN_OPERATOR_TOKEN`; model-generated candidates are
+rejected. Read clients use `HRN_SERVER_URL`, `HRN_TENANT_TOKEN` (or the exact
+project's worker token), and optionally `HRN_SERVER_CA_FILE`. Knowledge
+commands use `HRN_OPERATOR_TOKEN` for mutations and never fall back to the
+read credential. Credentials stay outside request files and packets.
+
+The API uses these scoped JSON operations:
+
+| Route | Operation | Credential |
+|---|---|---|
+| `POST /v1/knowledge/import` | Import a reviewed, immutable version | Operator |
+| `POST /v1/knowledge/change` | Activate, disable, or roll back a version | Operator |
+| `POST /v1/knowledge/search` | Return an audited, bounded packet | Tenant, project worker, or operator |
+| `POST /v1/knowledge/inspect` | Inspect a version | Tenant, project worker, or operator |
+| `POST /v1/knowledge/active` | Read active and previous pointers | Tenant, project worker, or operator |
+
+A reviewed import request in `seed.json` has this shape:
+
+```json
+{
+  "tenant_id": "t_<32 hex>", "project_id": "p_<32 hex>",
+  "backend": "codex", "model": "<configured model>",
+  "revision": "<full reviewed commit SHA>",
+  "origin": "reviewed_source", "reviewed_by": "<reviewer>",
+  "review_evidence": "<source review reference>",
+  "entries": [{
+    "key": "build-guide", "content": "<reviewed project guidance>",
+    "source": "docs/build.md", "evidence": "<verification reference>",
+    "identifiers": ["BuildProject", "src/build.go"]
+  }]
+}
+```
+
+```text
+hrn knowledge import seed.json
+hrn knowledge active scope.json
+hrn knowledge activate change.json
+hrn knowledge search search.json
+hrn knowledge inspect inspect.json
+hrn knowledge disable change.json
+hrn knowledge rollback change.json
+```
+
+`scope.json` contains tenant_id/project_id/backend/model/revision. `change.json`
+adds version_id for activate and expected_generation from `active`; disable and
+rollback need scope and expected_generation. `search.json` adds query and
+optionally version_id; `inspect.json` adds version_id. Inputs reject unknown
+fields, including credential fields. Search matches exact scope and ranks
+identifiers, paths, and errors before `simple` text matches, with stable ties.
+An empty or no-match packet is valid; packets contain at most 8192 bytes of
+reference text and an audit ID.
+
 ## Later slices
 
 - #138 adds `hrn remote` and its MCP tools.
 - #139's development charts and container image are documented in [the deploy guide](deploy/README.md).
-- #140 adds approved project knowledge to the control service.
+- #141 wires retrieval into execution and adds fixture comparison.

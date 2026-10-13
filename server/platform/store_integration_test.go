@@ -103,7 +103,7 @@ func TestRepositoryMigrationRejectsLegacyJobs(t *testing.T) {
 	if _, err := s.db.Exec(ctx, "ALTER TABLE jobs DROP COLUMN repository_url"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(ctx, "DELETE FROM schema_migrations WHERE version>=2"); err != nil {
+	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_changes,retrieval_records,knowledge_active_versions,knowledge_members,knowledge_versions,knowledge_entries; DROP FUNCTION knowledge_membership_creation_only(); DELETE FROM schema_migrations WHERE version>=2"); err != nil {
 		t.Fatal(err)
 	}
 	err := Migrate(ctx, s.db.Config().ConnString())
@@ -122,19 +122,19 @@ func TestRepositoryMigrationUpgradesEmptyLegacyStore(t *testing.T) {
 	if _, err := s.db.Exec(ctx, "ALTER TABLE jobs DROP COLUMN repository_url"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(ctx, "DELETE FROM schema_migrations WHERE version>=2"); err != nil {
+	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_changes,retrieval_records,knowledge_active_versions,knowledge_members,knowledge_versions,knowledge_entries; DROP FUNCTION knowledge_membership_creation_only(); DELETE FROM schema_migrations WHERE version>=2"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
 		t.Fatalf("empty legacy schema upgrade: %v", err)
 	}
 	var version int
-	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 2 {
+	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 3 {
 		t.Fatalf("migration version: %d %v", version, err)
 	}
 }
 
-func TestRepositoryMigrationLeavesVersionTwoDatabaseUnchanged(t *testing.T) {
+func TestRepositoryMigrationLeavesVersionThreeDatabaseUnchanged(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	type migration struct {
@@ -162,12 +162,12 @@ func TestRepositoryMigrationLeavesVersionTwoDatabaseUnchanged(t *testing.T) {
 		return versions
 	}
 	before := readVersions()
-	if len(before) != 2 || before[0].version != 1 || before[1].version != 2 {
+	if len(before) != 3 || before[0].version != 1 || before[1].version != 2 || before[2].version != 3 {
 		t.Fatalf("unexpected starting schema versions: %+v", before)
 	}
 	for i := 0; i < 2; i++ {
 		if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
-			t.Fatalf("migration on version 2, pass %d: %v", i+1, err)
+			t.Fatalf("migration on version 3, pass %d: %v", i+1, err)
 		}
 	}
 	after := readVersions()
@@ -184,7 +184,7 @@ func TestRepositoryMigrationLeavesVersionTwoDatabaseUnchanged(t *testing.T) {
 func TestRepositoryOpenRejectsVersionOneDatabase(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if _, err := s.db.Exec(ctx, "DELETE FROM schema_migrations WHERE version=2"); err != nil {
+	if _, err := s.db.Exec(ctx, "DELETE FROM schema_migrations WHERE version>=2"); err != nil {
 		t.Fatal(err)
 	}
 	opened, err := Open(ctx, s.db.Config().ConnString())
