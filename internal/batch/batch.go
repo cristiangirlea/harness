@@ -688,7 +688,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					}
 					tr.BranchMade = false
 					if err := removeWorktree(root, tr); err != nil {
-						tr.BranchMade = stillMade(root, tr)
+						tr.BranchMade, _ = stillMade(root, tr)
 						return fail(err)
 					}
 				}
@@ -702,8 +702,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					// and prune could drop the record: it goes now.
 					err = fmt.Errorf("saving the claim on worktree %s: %w", tr.Worktree, err)
 					if rerr := removeWorktree(root, tr); rerr != nil {
-						tr.BranchMade = stillMade(root, tr) // the last save may still record it
-						return fail(fmt.Errorf("%w; worktree %s and branch %s are left: %v", err, tr.Worktree, tr.Branch, rerr))
+						var left string
+						tr.BranchMade, left = stillMade(root, tr) // the last save may still record it
+						return fail(fmt.Errorf("%w; %s: %v", err, left, rerr))
 					}
 					return fail(err)
 				}
@@ -1181,14 +1182,34 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 // directory git no longer knows is no claim. When git cannot list worktrees,
 // only the branch decides: a claim may miss what is left, but must never name
 // a path that another batch could take once a stray directory is cleared.
-func stillMade(root string, tr TaskResult) bool {
-	if registered, err := isWorktree(root, tr.Worktree); err == nil && registered {
-		return true
-	}
+// left names what is still there, for the error.
+func stillMade(root string, tr TaskResult) (made bool, left string) {
+	registered, lerr := isWorktree(root, tr.Worktree)
+	registered = lerr == nil && registered
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	_, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch)
-	return err == nil
+	_, berr := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch)
+	var parts []string
+	switch _, serr := os.Stat(tr.Worktree); {
+	case registered:
+		parts = append(parts, "worktree "+tr.Worktree)
+	case lerr != nil && serr == nil:
+		parts = append(parts, "worktree or directory "+tr.Worktree)
+	case serr == nil:
+		parts = append(parts, "directory "+tr.Worktree)
+	}
+	if berr == nil {
+		parts = append(parts, "branch "+tr.Branch)
+	}
+	switch len(parts) {
+	case 0:
+		left = "nothing is left"
+	case 1:
+		left = parts[0] + " is left"
+	default:
+		left = strings.Join(parts, " and ") + " are left"
+	}
+	return registered || berr == nil, left
 }
 
 func removeWorktree(root string, tr TaskResult) error {

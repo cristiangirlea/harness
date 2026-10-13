@@ -707,13 +707,41 @@ func TestAFreshTaskThatCannotSaveItsClaimRemovesItsWorktree(t *testing.T) {
 				return
 			}
 			git(t, dir, "worktree", "unlock", tr.Worktree)
-			if !strings.Contains(tr.Error, "are left") || !exists(tr.Worktree) || b == "" {
+			if !strings.Contains(tr.Error, "worktree "+tr.Worktree+" and branch hrn/claim are left") || !exists(tr.Worktree) || b == "" {
 				t.Errorf("task = %+v, branch %q: want the worktree and branch left, and said", tr, b)
 			}
 			if !saved.Tasks[0].BranchMade || !WorktreesRemain(saved) {
 				t.Errorf("task = %+v, want the record to claim what is left", saved.Tasks[0])
 			}
 		})
+	}
+}
+
+// When that removal stops at a directory git no longer knows, the error names
+// the directory alone: the worktree and branch are gone.
+func TestAFreshTaskThatCannotSaveItsClaimSaysWhatIsLeft(t *testing.T) {
+	dir := initRepo(t)
+	failed := false
+	failSave = func(res Result) error {
+		if tr := res.Tasks[0]; !failed && tr.Status == StatusRunning && tr.BranchMade {
+			failed = true
+			git(t, dir, "worktree", "remove", "--force", tr.Worktree)
+			writeFile(t, filepath.Join(tr.Worktree, "stray.txt"), "not git's\n")
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	t.Cleanup(func() { failSave = nil })
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "claim", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusError || !strings.Contains(tr.Error, "disk full") {
+		t.Fatalf("task = %+v, want an error naming the failed save", tr)
+	}
+	if !strings.Contains(tr.Error, "directory "+tr.Worktree+" is left") || strings.Contains(tr.Error, "branch") {
+		t.Errorf("error = %q, want only the directory said to be left", tr.Error)
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/claim"); b != "" || tr.BranchMade {
+		t.Errorf("branch %q, branch_made %v: want the branch gone and unclaimed", b, tr.BranchMade)
 	}
 }
 
