@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: PR #TBD (closes #193): a task waited until the batch was canceled on a slot
+- 2026-10-13: PR #199 (closes #193): a task waited until the batch was canceled on a slot
   whose lease stayed unreadable (empty, not JSON, or a stale lease a left `<n>.lease.takeover`
   file blocks), since `takeSlot` counted every lease it could not read as one that may come
   free. Decided: `ws.NoSlotError` gains an additive `Unreadable` field naming those slots,
