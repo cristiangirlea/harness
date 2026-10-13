@@ -16,14 +16,17 @@ import (
 // Cache is one build cache, a folder tagged with CACHEDIR.TAG (Cargo writes
 // one into every target folder), and what the cache pass decided about it.
 type Cache struct {
-	Path      string
-	Worktree  string    // the worktree it lies in, "" for one found on its own
-	Size      int64     // the files under it
-	LastBuild time.Time // its last write; see lastBuild
-	Verdict   Verdict
-	Reason    string
-	risk      string // why it cannot go whole, found by the walk that sized it
-	young     bool   // kept only because it was written too recently
+	Path       string
+	Worktree   string    // the worktree it lies in, "" for one found on its own
+	Size       int64     // the files under it
+	LastBuild  time.Time // its last write; see lastBuild
+	Verdict    Verdict
+	Reason     string
+	risk       string // why it cannot go whole, found by the walk that sized it
+	young      bool   // kept only because it was written too recently
+	driveID    string // drive identified during the free-below scan
+	driveBelow bool   // that drive was below the limit before any removals
+	driveMore  bool   // eligible caches left because enough was already going
 }
 
 // Drive is what the cache pass knows about the volume holding a folder.
@@ -264,6 +267,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 	type drive struct {
 		free, after int64 // free now, and once what is marked has gone
 		candidates  []int
+		more        bool
 	}
 	drives := map[string]*drive{}
 	var order []string
@@ -276,6 +280,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			}
 			continue
 		}
+		c.driveID = d.ID
 		s := drives[d.ID]
 		if s == nil {
 			s = &drive{free: d.Free, after: d.Free}
@@ -291,18 +296,23 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 	}
 	for _, id := range order {
 		s := drives[id]
-		if s.after >= opt.FreeBelow {
-			continue
-		}
+		alreadyEnough := s.after >= opt.FreeBelow
 		sort.SliceStable(s.candidates, func(a, b int) bool { return all[s.candidates[a]].LastBuild.Before(all[s.candidates[b]].LastBuild) })
 		for _, i := range s.candidates {
 			c := &all[i]
 			idle := now.Sub(c.LastBuild)
+			if alreadyEnough {
+				if s.free < opt.FreeBelow && idle >= minIdle {
+					s.more = true
+				}
+				continue // enough is going already; keep the original reason
+			}
 			if idle < minIdle {
 				c.Reason = fmt.Sprintf("last written %s ago, inside --min-idle %s", short(idle), short(minIdle))
 				continue
 			}
 			if s.after >= opt.FreeBelow {
+				s.more = true
 				continue // enough is going already; younger ones keep their reason
 			}
 			c.Verdict = Remove
@@ -310,6 +320,63 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			s.after += c.Size
 		}
 	}
+	for i := range all {
+		if s := drives[all[i].driveID]; all[i].driveID != "" && s != nil && s.free < opt.FreeBelow {
+			all[i].driveBelow = true
+			all[i].driveMore = s.more
+		}
+	}
+}
+
+// FreeBelowReport reads the free space after apply for drives that were below
+// the limit during the cache scan. Call it only after applying the listing.
+func FreeBelowReport(caches []Cache, opt Options) []string {
+	if opt.FreeBelow <= 0 {
+		return nil
+	}
+	lookup := opt.Drive
+	if lookup == nil {
+		lookup = diskFree
+	}
+	limit := report.Bytes(opt.FreeBelow)
+	seen := map[string]bool{}
+	var lines []string
+	for _, c := range caches {
+		if !c.driveBelow || seen[c.driveID] {
+			continue
+		}
+		seen[c.driveID] = true
+		path := c.Path
+		for {
+			if _, err := os.Stat(path); err == nil {
+				break
+			}
+			parent := filepath.Dir(path)
+			if parent == path {
+				break
+			}
+			path = parent
+		}
+		d, err := lookup(path)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("%s free space could not be read: %s", c.driveID, firstLine(err.Error())))
+			continue
+		}
+		if d.ID != c.driveID {
+			lines = append(lines, fmt.Sprintf("%s free space could not be read: the drive is no longer there", c.driveID))
+			continue
+		}
+		if d.Free >= opt.FreeBelow {
+			lines = append(lines, fmt.Sprintf("%s now has %s free, above %s", c.driveID, report.Bytes(d.Free), limit))
+		} else {
+			line := fmt.Sprintf("%s still has %s free, %s below %s", c.driveID, report.Bytes(d.Free), report.Bytes(opt.FreeBelow-d.Free), limit)
+			if c.driveMore {
+				line += "; another hrn gc --free-below run picks the next caches"
+			}
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 // profiles lists a cache's profile folders, those holding Cargo's .cargo-lock

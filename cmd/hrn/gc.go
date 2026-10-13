@@ -80,6 +80,9 @@ func cmdGC(args []string) (int, error) {
 	removedCaches, cacheErrs := gc.ApplyCaches(ctx, caches)
 	errs = append(errs, cacheErrs...)
 	fmt.Printf("removed %d worktrees and %d caches, freeing %s\n", len(removed), len(removedCaches), report.Bytes(gc.Total(removed, sizes)+gc.TotalCaches(removedCaches)))
+	for _, line := range gc.FreeBelowReport(caches, opt) {
+		fmt.Println(line)
+	}
 	if len(errs) > 0 {
 		return 1, errors.Join(errs...)
 	}

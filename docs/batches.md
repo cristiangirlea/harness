@@ -268,6 +268,9 @@ anything the walk that sizes it sees inside. With `--free-below SIZE` (`50G`, `5
 free than SIZE also loses its caches idle past `--min-idle` (default 2h), oldest first, until what
 goes would put it above SIZE; free space is asked of the drive (`GetDiskFreeSpaceEx` on Windows,
 `statfs` elsewhere), and a drive that cannot answer loses nothing more.
+After `--apply`, each drive that was below SIZE in the scan reports its actual free space,
+whether it reached SIZE or how far it remains below; the listing is still the full set of
+removals for that run.
 
 A cache stays when git tracks a file in it (a tagged test fixture is someone's), when it holds a
 repository or a link leading out of it, when the current directory is inside it, or when its lock
