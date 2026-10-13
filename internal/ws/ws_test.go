@@ -1,9 +1,12 @@
 package ws
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -658,6 +661,187 @@ func TestConcurrentTakesNeverShareASlot(t *testing.T) {
 		if n != 1 {
 			t.Errorf("%s handed out %d times", p, n)
 		}
+	}
+}
+
+// halfAddedWorktree makes the admin folder another `git worktree add` leaves
+// for a moment: its commondir file created but not yet written. Git commands
+// that list the worktrees (add, list, lock) die on it (issue #188).
+func (f *fixture) halfAddedWorktree() string {
+	f.t.Helper()
+	admin := filepath.Join(f.repo, ".git", "worktrees", "half")
+	f.write(admin, "gitdir", filepath.ToSlash(filepath.Join(f.root, "half", ".git"))+"\n")
+	f.write(admin, "commondir", "")
+	return admin
+}
+
+// holdCreateLock takes the slots' create lock as another take would, on a
+// handle of its own, and returns the function that releases it.
+func (f *fixture) holdCreateLock() (unlock func()) {
+	f.t.Helper()
+	dir := SlotsDir(f.repo)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	unlock, err := lockCreate(context.Background(), dir)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return unlock
+}
+
+func TestTakeWaitsWhileAnotherTakeIsCreatingASlot(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run("existing="+strconv.FormatBool(existing), func(t *testing.T) {
+			f := newFixture(t)
+			if existing {
+				got := f.take(TakeOptions{Holder: "a", NoFetch: true})
+				if _, err := Free(context.Background(), got.Path); err != nil {
+					t.Fatal(err)
+				}
+				git(t, f.repo, "worktree", "unlock", got.Path)
+			}
+			unlock := f.holdCreateLock()
+			admin := f.halfAddedWorktree()
+			done := make(chan error, 1)
+			go func() {
+				_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "b", Max: 1, NoFetch: true})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				t.Fatalf("take did not wait for the create lock: %v", err)
+			case <-time.After(time.Second):
+			}
+			// The other take finishes: its worktree is whole, its lock released.
+			if err := os.RemoveAll(admin); err != nil {
+				t.Fatal(err)
+			}
+			unlock()
+			if err := <-done; err != nil {
+				t.Fatalf("take after the lock was released: %v", err)
+			}
+			if out := git(t, f.repo, "worktree", "list", "--porcelain"); !strings.Contains(out, "locked "+lockReason) {
+				t.Errorf("slot is not locked:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestCreateLockIsNeverTakenFromAHolderSlowerThanTheWait(t *testing.T) {
+	f := newFixture(t)
+	defer func(d time.Duration) { createLockWait = d }(createLockWait)
+	createLockWait = 200 * time.Millisecond
+	unlock := f.holdCreateLock()
+	defer unlock()
+	// The holder's git commands outlast the wait, as a slow add can.
+	time.Sleep(3 * createLockWait)
+	if second, err := lockCreate(context.Background(), SlotsDir(f.repo)); err == nil {
+		second()
+		t.Fatal("a second caller got the create lock while its holder still held it")
+	}
+}
+
+// TestHelperHoldCreateLock is a process that takes the create lock in
+// HRN_WS_LOCK_DIR, says so, and holds it until it is killed or its stdin
+// closes.
+func TestHelperHoldCreateLock(t *testing.T) {
+	if os.Getenv("HRN_WS_HELPER") != "hold" {
+		return
+	}
+	if _, err := lockCreate(context.Background(), os.Getenv("HRN_WS_LOCK_DIR")); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	fmt.Println("locked")
+	io.Copy(io.Discard, os.Stdin)
+	os.Exit(0)
+}
+
+func TestCreateLockHeldByAProcessThatDiesIsReleased(t *testing.T) {
+	f := newFixture(t)
+	dir := SlotsDir(f.repo)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperHoldCreateLock$")
+	cmd.Env = append(os.Environ(), "HRN_WS_HELPER=hold", "HRN_WS_LOCK_DIR="+dir)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+	if line, _ := bufio.NewReader(stdout).ReadString('\n'); strings.TrimSpace(line) != "locked" {
+		t.Fatalf("helper did not take the lock: %q", line)
+	}
+
+	got := make(chan error, 1)
+	go func() {
+		unlock, err := lockCreate(context.Background(), dir)
+		if err == nil {
+			unlock()
+		}
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		t.Fatalf("took the create lock a live process holds: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatalf("lock after its holder died: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("still waiting for a create lock whose holder died")
+	}
+}
+
+func TestTakeIsNotBlockedByALeftoverCreateLockFile(t *testing.T) {
+	f := newFixture(t)
+	f.write(SlotsDir(f.repo), ".create.lock", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := Take(ctx, TakeOptions{Repo: f.repo, Holder: "a", NoFetch: true}); err != nil {
+		t.Fatalf("take beside a create lock file nobody holds: %v", err)
+	}
+}
+
+func TestTakeWaitingForTheCreateLockStopsWithItsContext(t *testing.T) {
+	f := newFixture(t)
+	unlock := f.holdCreateLock()
+	defer unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, err := Take(ctx, TakeOptions{Repo: f.repo, Holder: "a", NoFetch: true})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("take while the create lock is held: %v, want the context's deadline", err)
+	}
+	probe, cancelProbe := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelProbe()
+	if second, err := lockCreate(probe, SlotsDir(f.repo)); !errors.Is(err, context.DeadlineExceeded) {
+		if err == nil {
+			second()
+		}
+		t.Errorf("the holder lost its create lock to a take that stopped waiting: %v", err)
+	}
+	if _, err := os.Stat(leasePath(SlotsDir(f.repo), 1)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("lease left behind: %v", err)
 	}
 }
 
