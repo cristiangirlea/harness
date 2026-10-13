@@ -39,9 +39,12 @@ type ApprovalRequest struct {
 }
 
 type Task struct {
-	Prompt    string `json:"prompt"`
-	Dir       string `json:"dir"`
-	AttemptID string `json:"attempt_id,omitempty"`
+	// Durable is supplied only by trusted execution coordinators. Callers cannot
+	// configure persistence or resume snapshots through task JSON.
+	Durable   *DurableExecution `json:"-"`
+	Prompt    string            `json:"prompt"`
+	Dir       string            `json:"dir"`
+	AttemptID string            `json:"attempt_id,omitempty"`
 
 	// Options is everything a caller may set besides the prompt and the
 	// workspace: the one struct the run flags, a batch spec and the MCP run
@@ -119,8 +122,11 @@ const (
 )
 
 type Result struct {
-	Backend string `json:"backend"`
-	Model   string `json:"model,omitempty"`
+	// RecoveryRequired is execution evidence for the scheduler, not success or
+	// permission to replay. Orchestration states remain separate from Status.
+	RecoveryRequired bool   `json:"recovery_required,omitempty"`
+	Backend          string `json:"backend"`
+	Model            string `json:"model,omitempty"`
 	// ModelReported distinguishes a backend report from a requested/default model.
 	ModelReported bool   `json:"model_reported,omitempty"`
 	Status        Status `json:"status"`
@@ -134,8 +140,8 @@ type Result struct {
 	// ContextTokens is the last model call's input, including cache reads and
 	// writes. Absent when the backend reports only run totals or no usage.
 	ContextTokens int64 `json:"context_tokens,omitempty"`
-	// ToolCalls counts the tool calls the agent made. Set by Run, so it is the
-	// same count on every backend.
+	// ToolCalls counts the tool calls the agent made. Run counts event calls for
+	// ordinary backends; durable api checkpoints count committed outcomes.
 	ToolCalls    int           `json:"tool_calls,omitempty"`
 	CostUSD      float64       `json:"cost_usd,omitempty"`
 	CostEstimate bool          `json:"cost_is_estimate,omitempty"`
@@ -250,7 +256,9 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		}
 		emit(e)
 	})
-	res.ToolCalls = calls
+	if task.Durable == nil {
+		res.ToolCalls = calls
+	}
 	return res
 }
 
