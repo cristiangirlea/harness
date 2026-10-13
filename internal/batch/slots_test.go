@@ -1029,6 +1029,13 @@ func runStuck(t *testing.T, dir string, bound time.Duration) TaskResult {
 	if !strings.Contains(tr.Error, "hrn ws list") {
 		t.Errorf("error = %q, want it to say how to inspect the slots", tr.Error)
 	}
+	// A live hrn ws free or takeover holds the .takeover file while the lease
+	// may name a dead process, so the advice must not tie its removal to the
+	// slot's process alone.
+	if strings.Contains(tr.Error, "no hrn process holds") || !strings.Contains(tr.Error, "no hrn command") ||
+		!strings.Contains(tr.Error, "tasklist | findstr hrn") || !strings.Contains(tr.Error, "pgrep hrn") {
+		t.Errorf("error = %q, want the .takeover file removed only while no hrn command runs on the repository, with how to check", tr.Error)
+	}
 	if b := git(t, dir, "branch", "--list", "hrn/stuck"); b != "" {
 		t.Errorf("a task that never got a slot leaves no branch: %q", b)
 	}

@@ -427,7 +427,7 @@ func lockLease(p string) (unlock func(), why string) {
 	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return nil, "its lease is being taken over or freed (if no one is, a crash left " + lock + "; remove it)"
+			return nil, "its lease is being taken over or freed (if no one is, a crash left " + lock + ", to remove only while no hrn command runs on this repository)"
 		}
 		return nil, err.Error()
 	}

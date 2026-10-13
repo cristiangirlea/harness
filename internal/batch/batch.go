@@ -976,7 +976,10 @@ func (u unreadableLeases) note(full *ws.NoSlotError, now time.Time) bool {
 
 // unreadableError is a task's error when the leases full passed over that
 // it could not read are all that keeps it from a slot and they stayed so
-// for unreadableWait: it names each and how to clear it.
+// for unreadableWait: it names each and how to clear it. A lease file can
+// go once nothing works in its slot; a .takeover file only while no hrn
+// command runs on the repository at all, since a live hrn ws free or
+// takeover holds it while the lease it guards may name a dead process.
 func unreadableError(full *ws.NoSlotError) error {
 	var lines []string
 	for _, n := range full.Unreadable {
@@ -987,7 +990,7 @@ func unreadableError(full *ws.NoSlotError) error {
 			}
 		}
 	}
-	return fmt.Errorf("no slot is free: these leases could not be read for %s and no process will free them:\n  %s\ncheck them with `hrn ws list`; once no hrn process holds the slot, remove its lease file (or the .takeover file the line names)",
+	return fmt.Errorf("no slot is free: these leases could not be read for %s and no process will free them:\n  %s\ncheck the slots with `hrn ws list`. An empty or broken lease file may be removed once no hrn process works in its slot (the list shows what is checked out there). A left .takeover file may be removed only while no hrn command at all runs on this repository, no hrn ws and no hrn batch: check with Task Manager or `tasklist | findstr hrn` on Windows, `pgrep hrn` elsewhere",
 		unreadableWait, strings.Join(lines, "\n  "))
 }
 

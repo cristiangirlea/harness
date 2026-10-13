@@ -673,9 +673,12 @@ neither of them follows a run while it happens.
   process holds a slot in its range; when the unreadable leases are all that is left to
   wait for and every one has stayed unreadable for `unreadableWait` (30 seconds, a package
   variable the tests shorten), it fails as `error` naming each file and how to clear it
-  (`hrn ws list`, then remove the lease or `.takeover` file once no hrn process holds the
-  slot). Timed per slot from the task's first look that found it unreadable, so a lease
-  that reads again resets, and nothing is removed by hrn.
+  (`hrn ws list`; an empty or broken lease file once no hrn process works in its slot, a
+  left `.takeover` file only while no hrn command at all runs on the repository, since a live
+  `hrn ws free` or takeover holds it while the lease it guards may name a dead process).
+  Timed per slot from the task's first look that found it unreadable; a look that does not
+  find it so, a wait at the batch's bound included, forgets it. A slot whose lease changed
+  hands under the take is held, not unreadable. Nothing is removed by hrn.
 - 2026-10-13: PR #194 (closes #161): a batch waited while sessions (`hrn ws take`) held every
   slot, for as long as a person kept one. Decided: a batch's bound is `max(parallel, 4)` slots
   of its own, running tasks' and kept ones together, counted from the leases that name its

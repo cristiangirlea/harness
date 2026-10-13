@@ -69,9 +69,14 @@ it says it is waiting and which slots are held, looks again every 5 seconds, and
 canceled with the batch. A lease it cannot read keeps it waiting too, since one being
 written reads on the next look. When such leases are all it is waiting for and every one has
 stayed unreadable for 30 seconds (an empty or broken lease file, or a `<n>.lease.takeover`
-file a crash left), no process will free them, so the task fails as `error` naming each file:
-check the slots with `hrn ws list`, and once no hrn process holds the slot remove the lease
-file, or the `.takeover` file the line names. When none can come free, because the rest are sessions', skipped
+file a crash left), no process will free them, so the task fails as `error` naming each file.
+Check the slots with `hrn ws list`. An empty or broken lease file may be removed once no hrn
+process works in its slot (the list shows what is checked out there). A left `.takeover` file
+may be removed only while no hrn command at all runs on this repository, no `hrn ws` and no
+`hrn batch`: a live `hrn ws free` or takeover holds that file while the lease it guards may
+name a dead process, and removing it lets another take in, whose fresh lease the free then
+removes. Check with Task Manager or `tasklist | findstr hrn` on Windows, `pgrep hrn`
+elsewhere. When none can come free, because the rest are sessions', skipped
 for what is in them or kept by this batch's own tasks (below), it fails as `error` instead. A slot that still holds files when its task ends (the commit
 failed, say), or a commit on no branch (the agent detached HEAD and committed), is not
 given back: the task's error says `slot <n> kept` and why. Its lease
