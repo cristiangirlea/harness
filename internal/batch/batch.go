@@ -942,10 +942,17 @@ func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, erro
 
 // Remove deletes the worktrees and branches a batch created. A worktree with
 // uncommitted changes is left alone and reported, because the branch would
-// not hold that work. The record and the run logs stay.
+// not hold that work. A slot task's slot is not the batch's to remove: only
+// its branch goes. The record and the run logs stay.
 func Remove(res Result) error {
 	var errs []error
 	for _, tr := range res.Tasks {
+		if tr.Slot != 0 {
+			if err := removeSlotBranch(res.Dir, tr); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
+			}
+			continue
+		}
 		if tr.Worktree == "" {
 			continue
 		}
@@ -966,6 +973,36 @@ func Remove(res Result) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// removeSlotBranch deletes a slot task's branch, unless a worktree has it
+// checked out right now: a task still running, or someone working on it.
+func removeSlotBranch(root string, tr TaskResult) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := gitOut(ctx, root, "worktree", "list", "--porcelain")
+	if err != nil {
+		return err
+	}
+	for _, block := range strings.Split(out, "\n\n") {
+		var path, branch string
+		for _, line := range strings.Split(block, "\n") {
+			if p, ok := strings.CutPrefix(line, "worktree "); ok {
+				path = p
+			}
+			if b, ok := strings.CutPrefix(line, "branch refs/heads/"); ok {
+				branch = b
+			}
+		}
+		if branch == tr.Branch {
+			return fmt.Errorf("branch %s is checked out in %s (a task still running?), so it stays", tr.Branch, filepath.FromSlash(path))
+		}
+	}
+	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err != nil {
+		return nil // gone already
+	}
+	_, err = gitOut(ctx, root, "branch", "-D", tr.Branch)
+	return err
 }
 
 // isWorktree reports whether git lists path as one of root's worktrees.

@@ -351,3 +351,47 @@ func TestDiffOfASlotTaskReadsOnlyItsCommitNeverTheSlotItLeft(t *testing.T) {
 		t.Errorf("a committed slot task's diff = %q, %v", got, err)
 	}
 }
+
+func TestRemoveOfSlotTasksDeletesOnlyTheirBranches(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-file",
+		Tasks: []Task{{ID: "one", Prompt: "one"}, {ID: "two", Prompt: "two"}}})
+	// Someone else holds a slot meanwhile, and slot 1 has hrn/one checked out
+	// again, as a task still running would.
+	other, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Holder: "someone", NoFetch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	busy, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Branch: "hrn/one", Holder: "still running", NoFetch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Remove(res)
+	if err == nil || !strings.Contains(err.Error(), "hrn/one") || !strings.Contains(err.Error(), "checked out") {
+		t.Fatalf("Remove must refuse a branch checked out in a slot: %v", err)
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/one"); b == "" {
+		t.Error("the checked-out branch must stay")
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/two"); b != "" {
+		t.Errorf("the other task's branch should still go: %q", b)
+	}
+
+	if err := ws.Release(context.Background(), busy); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(res); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/*"); b != "" {
+		t.Errorf("branches remain: %s", b)
+	}
+	for _, tr := range res.Tasks {
+		if !exists(tr.Worktree) {
+			t.Errorf("slot %s must stay", tr.Worktree)
+		}
+	}
+	if !exists(filepath.Join(dir, ".hrn", "slots", strconv.Itoa(other.N)+".lease")) {
+		t.Error("someone else's lease must stay")
+	}
+}
