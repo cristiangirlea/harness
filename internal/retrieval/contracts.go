@@ -56,9 +56,8 @@ type Search struct {
 	Attempt   int    `json:"attempt,omitempty"`
 }
 
-// Packet carries reviewed reference text. Imports reject <project-reference,
-// </project-reference>, [Reference , and [/Reference] in content, source labels,
-// and evidence so entries cannot close the frame or forge a source label.
+// Packet carries reviewed reference text. Imports and packet validation reject
+// frame markers so entries cannot close the frame or forge a source label.
 type Packet struct {
 	VersionID   string  `json:"version_id,omitempty"`
 	AuditID     string  `json:"audit_id"`
@@ -108,7 +107,29 @@ func ValidatePacket(p Packet, version, query string) error {
 	if p.Text != "" && (p.VersionID == "" || len(p.Entries) == 0) {
 		return fmt.Errorf("retrieval packet lacks provenance")
 	}
+	if hasFrameMarker(p.Text) {
+		return fmt.Errorf("retrieval packet contains a frame marker")
+	}
+	for _, e := range p.Entries {
+		if hasFrameMarker(e.ID) || hasFrameMarker(e.Key) || hasFrameMarker(e.Content) || hasFrameMarker(e.Source) || hasFrameMarker(e.Evidence) {
+			return fmt.Errorf("retrieval packet entry contains a frame marker")
+		}
+		for _, id := range e.Identifiers {
+			if hasFrameMarker(id) {
+				return fmt.Errorf("retrieval packet entry contains a frame marker")
+			}
+		}
+	}
 	return nil
+}
+
+func hasFrameMarker(s string) bool {
+	for _, marker := range []string{"<project-reference", "</project-reference>", "[Reference ", "[/Reference]"} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // Record is saved before execution. It contains no transport configuration or credentials.
