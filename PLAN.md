@@ -665,7 +665,7 @@ order they are worth taking:
     - [x] [#135](https://github.com/cristiangirlea/harness/issues/135) api: durable execution checkpoints for the api loop. Done: PR #150, 2026-10-13.
     - [x] [#136](https://github.com/cristiangirlea/harness/issues/136) agent: usage metadata with backend-aware token semantics. Done: PR #158, 2026-10-13.
     - [x] [#137](https://github.com/cristiangirlea/harness/issues/137) server: PostgreSQL control service and project worker, a separate module. Done: PR #159, 2026-10-13.
-    - [ ] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools
+    - [x] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools. Done: PR #175, 2026-10-13.
     - [ ] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier
     - [ ] [#140](https://github.com/cristiangirlea/harness/issues/140) knowledge: approved project knowledge and text retrieval in the control service
     - [ ] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison
@@ -679,6 +679,16 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: hrn remote and the MCP remote tools ([#138](https://github.com/cristiangirlea/harness/issues/138), PR #175; slice 5 of #142).
+  The snapshot's client, CLI and tools, with the commands in docs/commands.md and the tools in
+  docs/mcp.md. The review's security read found one hole: plain HTTP was also accepted for the
+  name `localhost`, which a resolver can point anywhere; now only a loopback IP literal. A watch
+  error names the status without the server's body. Tests added that the token text reaches no
+  error, that a `token` or `authorization` field in a tool input is refused, and that a job id
+  not shaped by the server is refused before any request. Follow-ups: an oversized event line
+  spins the watch (#164), `--watch` never exits (#165), the CLI skips options.Validate (#166),
+  URL and CA file edge cases (#167), no client-side cost cap (#168), tests the review named
+  (#169).
 - 2026-10-13: the server module ([#137](https://github.com/cristiangirlea/harness/issues/137), PR #159; slice 4 of #142).
   The snapshot's PostgreSQL control service and project worker, cut to the control plane: the
   knowledge pool, retrieval slots and schema 003 wait for #140, the deploy charts and image for
