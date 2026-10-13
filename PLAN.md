@@ -665,7 +665,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: gc moves a cache aside before deleting it (#129, PR #N). A build can
+- 2026-10-13: gc moves a cache aside before deleting it (#129, PR #246). A build can
   start after the lock probe and before deletion. Decided: rename to a sibling
   `.gc-<pid>-<unix nanos>-<name>` first, probe the moved locks again (including `flock` on
   Unix), moving it back if held, then delete the tag last. A rename failure keeps the
