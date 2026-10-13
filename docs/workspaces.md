@@ -26,16 +26,29 @@ then locked (`git worktree lock --reason "hrn ws slot"`), so `hrn gc` and
 Who holds a slot is a lease file beside it, `<n>.lease`:
 `{"holder": "...", "taken": "...", "branch": "..."}`. It is created so that two callers
 can never get the same slot. A lease held from the command line lasts until
-`hrn ws free`. A lease that names a process (`"pid"`, which batch will use) is stale once
+`hrn ws free`. A lease that names a process (`"pid"`, which batch uses) is stale once
 that process has exited, and the next take may take it over.
+
+## Batches
+
+`hrn batch` takes the same slots, one per running task, unless its spec says
+`"worktrees": "fresh"` (see [Slots or fresh worktrees](batches.md#slots-or-fresh-worktrees)).
+Its lease names the task (`batch <id> task <task>`) and hrn's pid, so a crash leaves a
+stale lease rather than a held slot. The task's branch `hrn/<id>` is made from the batch's
+base and checked out in the slot. When the task ends, the slot is detached at the base
+and its lease removed without asking for a push, because the work is meant to stay on
+that local branch for `hrn batch merge`. A slot left with files in it keeps its lease
+until hrn exits. A slot whose HEAD commits are on a local branch or tag is not skipped,
+since a switch strands nothing there.
 
 ## Take
 
 `hrn ws take` walks slots 1 to `--max` (default 4) and leases the first one that has no
 lease and nothing in it:
 
-- A slot whose folder holds changes or untracked files, or whose HEAD has commits on no
-  remote (as free counts them), is skipped and named on stderr. hrn never cleans or
+- A slot whose folder holds changes or untracked files, or whose HEAD has commits that
+  a switch would strand (on no remote, local branch or tag), is skipped and named on
+  stderr. hrn never cleans or
   resets someone's files. Ignored files (build output) are never
   touched.
 - `--branch NAME` checks out the local branch of that name, or origin's branch of that
@@ -58,7 +71,8 @@ since when, or why it was skipped.
 refuses while the slot holds changes or untracked files, and names the first few. It
 also refuses while HEAD has commits that are on no remote, and says how many. In a
 repository without remotes it checks for commits that are on no branch or tag instead.
-Otherwise it detaches HEAD where it is, so the branch is free for other checkouts and
+It refuses a lease that names a process still running (a batch task's), which gives the
+slot back itself. Otherwise it detaches HEAD where it is, so the branch is free for other checkouts and
 for `hrn gc`, and removes the lease. The folder and its build output stay for the next
 take.
 

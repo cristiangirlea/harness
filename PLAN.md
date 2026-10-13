@@ -664,6 +664,24 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: PR #163 (closes #126): hrn batch takes its worktrees from the reusable slots of internal/ws.
+  Decided: slots by default, a new `.hrn/worktrees/<id>` per task only with
+  `"worktrees": "fresh"`; any other value is refused. Each running task leases a slot
+  (holder `batch <id> task <task>`, hrn's pid), its branch `hrn/<id>` made from the batch's
+  base before the take, so a same-named branch on origin is never tracked. A fresh retry
+  resets the same slot's branch to the base, and the earlier attempt's commit leaves the
+  branch, as it did when fresh mode re-made the worktree. When the task ends, the slot is detached at the base and given back with the new
+  `ws.Release`. Release does not require a push, because the branch is local by design:
+  batch merge and batch rm read it. A slot left dirty by a refused release keeps its lease
+  until hrn exits, and later takes skip it, never clean it. A task waits, rather than
+  fails, while every slot is taken (`ws.NoSlotError`, looking again every 5s until
+  canceled). ws's take now skips a slot only for commits a switch would strand (on no
+  remote, branch or tag), since a released slot's commit is on its local branch. Diff of a
+  slot task without a commit is empty rather than reading a slot another task may hold.
+  batch rm deletes only a slot task's branch, refusing while it is checked out. prune keeps
+  a slot batch's record while its branches remain. eval keeps fresh worktrees for its judge
+  and refuses slots with one.
+
 - 2026-10-13: hrn ws (#133), item 16's fourth box: a fixed set of reusable worktrees per
   repository at `<main checkout>/.hrn/slots/<n>`. Decided: slots are locked worktrees, so
   gc keeps them without a change to internal/gc; leases are O_EXCL files beside the slots

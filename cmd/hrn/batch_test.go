@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,5 +73,65 @@ func TestShowHeaderSaysWhenTheRunRecordIsIncomplete(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("record_error %q: header mentions it = %v, want %v:\n%s", tc.recordError, got, tc.want, out.String())
 		}
+	}
+}
+
+func TestPrintBatchNamesTheSlotsOrTheFreshWorktrees(t *testing.T) {
+	print := func(res batch.Result) string {
+		var out strings.Builder
+		r := newRenderer(false)
+		r.out, r.color = &out, false
+		printBatch(r, res)
+		return out.String()
+	}
+	slot := filepath.Join("main", ".hrn", "slots", "2")
+	text := print(batch.Result{ID: "b4", Dir: "repo", Tasks: []batch.TaskResult{
+		{ID: "one", Status: batch.StatusPass, Branch: "hrn/one", Worktree: slot, Slot: 2}}})
+	if !strings.Contains(text, filepath.Join("main", ".hrn", "slots")) || strings.Contains(text, filepath.Join(".hrn", "worktrees")) ||
+		!strings.Contains(text, "hrn batch rm b4") {
+		t.Errorf("a slot batch's hint should name the slots, not .hrn/worktrees:\n%s", text)
+	}
+	fresh := filepath.Join("repo", ".hrn", "worktrees", "one")
+	text = print(batch.Result{ID: "b5", Dir: "repo", Tasks: []batch.TaskResult{
+		{ID: "one", Status: batch.StatusPass, Branch: "hrn/one", Worktree: fresh}}})
+	if !strings.Contains(text, "worktrees under "+filepath.Join("repo", ".hrn", "worktrees")) {
+		t.Errorf("a fresh batch's hint names its worktrees:\n%s", text)
+	}
+}
+
+func TestBatchRmAndMergeNameTheBranchesOfASlotBatchAndTheWorktreesOfAFreshOne(t *testing.T) {
+	slots := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "one", Worktree: filepath.Join("repo", ".hrn", "slots", "1"), Slot: 1},
+		{ID: "waited", Status: batch.StatusRunning}}}
+	if got := removedWhat(slots); got != "branches" {
+		t.Errorf("a slot batch: %q, want branches", got)
+	}
+	fresh := batch.Result{Tasks: []batch.TaskResult{{ID: "one", Worktree: filepath.Join("repo", ".hrn", "worktrees", "one")}}}
+	if got := removedWhat(fresh); got != "worktrees and branches" {
+		t.Errorf("a fresh batch: %q, want worktrees and branches", got)
+	}
+}
+
+func TestBatchDiffOfASlotTaskThatCommittedNothingSaysSoAndWhetherItsSlotWasKept(t *testing.T) {
+	// A kept slot proves only that giving it back failed, not that work is
+	// in it: its lock may have been busy.
+	kept := diffNothing(batch.TaskResult{ID: "locked", Slot: 1,
+		Error: "slot 1 kept: slot 1 is locked by another process"})
+	for _, want := range []string{"task locked committed nothing", "slot 1 was kept", "inspect it", "hrn ws list"} {
+		if !strings.Contains(kept, want) {
+			t.Errorf("a kept slot: %q lacks %q", kept, want)
+		}
+	}
+	for _, claim := range []string{"changed nothing", "its work", "holds"} {
+		if strings.Contains(kept, claim) {
+			t.Errorf("a kept slot says only that it was kept: %q claims %q", kept, claim)
+		}
+	}
+	quiet := diffNothing(batch.TaskResult{ID: "quiet", Slot: 1})
+	if quiet != "task quiet committed nothing" {
+		t.Errorf("a quiet slot task: %q", quiet)
+	}
+	if fresh := diffNothing(batch.TaskResult{ID: "old", Worktree: "wt"}); fresh != "task old changed nothing" {
+		t.Errorf("a fresh task: %q", fresh)
 	}
 }

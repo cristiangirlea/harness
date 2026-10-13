@@ -16,7 +16,8 @@ hrn bot                    # Ada, the bot, in a small window: what hrn is doing,
 
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
 Each row leads with the repository the work is in (its workspace folder's name; for a batch
-task's worktree, `<repo>/.hrn/worktrees/<task>`, the folder above `.hrn`) and, for a run a
+task's worktree, `<repo>/.hrn/worktrees/<task>` or a slot, `<repo>/.hrn/slots/<n>`, the folder
+above `.hrn`) and, for a run a
 batch started, the task: `harness · 82-repo-and-task`. A task's name is its id, so name tasks
 after their issue (`82-repo-and-task`) to see the number there; when hrn made the id up
 (`t1`, `t2`, ...), the name is the start of the task's prompt. The run's or batch's id is

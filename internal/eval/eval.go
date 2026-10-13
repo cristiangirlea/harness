@@ -109,6 +109,10 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 		if err := spec.Judge.check(spec.Tasks); err != nil {
 			return batch.Spec{}, err
 		}
+		if spec.Worktrees == batch.WorktreesSlots {
+			return batch.Spec{}, fmt.Errorf("worktrees %q does not go with a judge, which reads each cell's worktree after the batch, when its slot may hold another task; leave worktrees out or use %q",
+				spec.Worktrees, batch.WorktreesFresh)
+		}
 	}
 
 	seen := map[string]bool{}
@@ -132,6 +136,10 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	}
 
 	bs := spec.Spec // the batch fields carry through unchanged
+	if bs.Worktrees == "" {
+		// Each cell keeps its own worktree until the eval is done with it.
+		bs.Worktrees = batch.WorktreesFresh
+	}
 	bs.Retry = nil
 	bs.NoSwitch = true
 	bs.Tasks = nil

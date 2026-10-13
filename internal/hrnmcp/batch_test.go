@@ -53,6 +53,9 @@ func TestBatchShowMerge(t *testing.T) {
 	if res.IsError || !strings.Contains(out, "a: pass on mcp-writer after 1 attempt(s)") || !strings.Contains(out, "2/2 passed") {
 		t.Fatalf("batch = %v\n%s", res.IsError, out)
 	}
+	if !strings.Contains(out, "the branches stay until `hrn batch rm") {
+		t.Errorf("the summary should say what hrn batch rm removes in slots mode:\n%s", out)
+	}
 	var id string
 	for _, line := range strings.Split(out, "\n") {
 		if rest, ok := strings.CutPrefix(line, "batch "); ok {
@@ -114,6 +117,7 @@ func TestBatchRefusesBadSpecs(t *testing.T) {
 		{`{"spec":{"tasks":[{"prompt":"x","expekt":"y"}]}}`, `unknown field "expekt"`},
 		{`{"spec":{"backend":"nope","tasks":[{"prompt":"x"}]}}`, "unknown backend"},
 		{`{"spec":{"tasks":[]}}`, "no tasks"},
+		{`{"spec":{"worktrees":"reuse","tasks":[{"prompt":"x"}]}}`, `worktrees "reuse"`},
 	} {
 		if r := s.call(t, "batch", tc.args); !r.IsError || !strings.Contains(r.Text(), tc.want) {
 			t.Errorf("%s: %s, want %q", tc.args, r.Text(), tc.want)
@@ -124,6 +128,14 @@ func TestBatchRefusesBadSpecs(t *testing.T) {
 	}
 	if r := s.call(t, "batch_merge", `{"batch_id":"../x"}`); !r.IsError {
 		t.Error("a path-like batch id is refused")
+	}
+}
+
+func TestTheBatchSpecDescriptionNamesWorktrees(t *testing.T) {
+	for _, want := range []string{"worktrees", `"slots"`, `"fresh"`} {
+		if !strings.Contains(specDescription, want) {
+			t.Errorf("the spec description lacks %s:\n%s", want, specDescription)
+		}
 	}
 }
 

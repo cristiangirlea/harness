@@ -99,9 +99,8 @@ func leasePath(dir string, n int) string { return filepath.Join(dir, strconv.Ito
 
 // Take leases the first free slot of the repository, creating it on first
 // use, and checks out what opt asks for in it. A slot whose folder holds
-// changes, untracked files or commits on no remote is skipped, never
-// cleaned; ignored files (build
-// output) stay as they are.
+// changes, untracked files or commits on no remote, branch or tag is
+// skipped, never cleaned; ignored files (build output) stay as they are.
 func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	if opt.Repo == "" {
 		opt.Repo = "."
@@ -143,6 +142,7 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	}
 
 	var passed []string
+	held := 0
 	for n := 1; n <= opt.Max; n++ {
 		path := filepath.Join(dir, strconv.Itoa(n))
 		lp := leasePath(dir, n)
@@ -153,6 +153,7 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		}
 		if busy != "" {
 			passed = append(passed, fmt.Sprintf("slot %d %s: %s", n, path, busy))
+			held++
 			continue
 		}
 		skip, err := prepare(ctx, main, path, base)
@@ -172,8 +173,20 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		}
 		return Taken{N: n, Path: path, Lease: lease, Notes: notes}, nil
 	}
-	return Taken{Notes: notes}, fmt.Errorf("every slot up to --max %d is taken or skipped:\n  %s\nfree one with `hrn ws free <path>`, or allow more with --max",
-		opt.Max, strings.Join(passed, "\n  "))
+	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Passed: passed}
+}
+
+// NoSlotError is Take's error when every slot up to Max is taken or skipped,
+// so a caller can wait for one rather than fail.
+type NoSlotError struct {
+	Max    int
+	Held   int      // how many were passed over for a lease someone holds; the rest were skipped
+	Passed []string // one line per slot: its path and who holds it, or why it was skipped
+}
+
+func (e *NoSlotError) Error() string {
+	return fmt.Sprintf("every slot up to --max %d is taken or skipped:\n  %s\nfree one with `hrn ws free <path>`, or allow more with --max",
+		e.Max, strings.Join(e.Passed, "\n  "))
 }
 
 // resolveBase returns the commit a new branch or a detached slot starts
@@ -444,7 +457,7 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 	if len(lines) > 0 {
 		return "it holds changes or untracked files: " + firstFew(lines), nil
 	}
-	count, err := unpushed(ctx, path)
+	count, err := stranded(ctx, path)
 	if err != nil {
 		return "", err
 	}
@@ -453,9 +466,20 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 		if count == 1 {
 			word = "commit"
 		}
-		return fmt.Sprintf("it holds %d %s on no remote", count, word), nil
+		return fmt.Sprintf("it holds %d %s on no remote, branch or tag", count, word), nil
 	}
 	return "", nil
+}
+
+// stranded counts the commits at HEAD that a switch away would leave on no
+// ref: on no remote-tracking ref, local branch or tag. A slot Release gave
+// back sits on its task's local branch, which keeps those commits.
+func stranded(ctx context.Context, dir string) (int, error) {
+	out, err := gitOut(ctx, dir, "rev-list", "--count", "HEAD", "--not", "--remotes", "--branches", "--tags")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(out)
 }
 
 type worktree struct {
@@ -540,7 +564,7 @@ var beforeFreeLock func()
 
 // Free gives back the slot that path (anywhere inside it) lies in. It
 // refuses while the slot holds changes, untracked files or commits on no
-// remote; otherwise it detaches HEAD where it is, so the branch is free for
+// remote, and while the lease names a running process; otherwise it detaches HEAD where it is, so the branch is free for
 // other checkouts and for gc, and removes the lease.
 func Free(ctx context.Context, path string) (Taken, error) {
 	abs, err := filepath.Abs(path)
@@ -563,6 +587,9 @@ func Free(ctx context.Context, path string) (Taken, error) {
 	}
 	if err != nil {
 		return Taken{}, fmt.Errorf("slot %d: %v", n, err)
+	}
+	if lease.PID != 0 && alive(lease.PID) {
+		return Taken{}, fmt.Errorf("slot %d is held by running process %d; it gives the slot back itself", n, lease.PID)
 	}
 	if beforeFreeLock != nil {
 		beforeFreeLock()
@@ -607,6 +634,78 @@ func Free(ctx context.Context, path string) (Taken, error) {
 		return Taken{}, fmt.Errorf("slot %d: %v", n, err)
 	}
 	return Taken{N: n, Path: slot, Lease: lease}, nil
+}
+
+// Release gives back a slot that Take handed out, as Free does, but for a
+// holder whose work stays on a local branch by design (a batch task's
+// hrn/<id>, which batch merge and batch rm read): it does not ask for a push.
+// It refuses, and leaves the lease, while the slot holds changes, untracked
+// files or commits at HEAD on no remote, branch or tag, or when the lease is no longer exactly t's; otherwise it detaches
+// HEAD at detachAt (empty: where HEAD is) and removes the lease, both under
+// the slot's takeover lock.
+func Release(ctx context.Context, t Taken, detachAt string) error {
+	if strings.HasPrefix(detachAt, "-") {
+		return fmt.Errorf("%q is not a commit", detachAt)
+	}
+	main, err := MainCheckout(ctx, t.Path)
+	if err != nil {
+		return err
+	}
+	n, slot, ok := slotOf(main, t.Path)
+	if !ok || n != t.N {
+		return fmt.Errorf("%s is not slot %d of %s", t.Path, t.N, main)
+	}
+	lp := leasePath(SlotsDir(main), n)
+	lease, raw, err := readLease(lp)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("slot %d has no lease: it was given back already", n)
+	}
+	if err != nil {
+		return fmt.Errorf("slot %d: %v", n, err)
+	}
+	if lease.Holder != t.Lease.Holder || lease.PID != t.Lease.PID || lease.Branch != t.Lease.Branch || !lease.Taken.Equal(t.Lease.Taken) {
+		return fmt.Errorf("slot %d is %s now, not %q's, so it stays as it is", n, describe(lease), t.Lease.Holder)
+	}
+	unlock, why := lockLease(lp)
+	if why != "" {
+		return fmt.Errorf("slot %d: %s", n, why)
+	}
+	defer unlock()
+	if now, err := os.ReadFile(lp); err != nil || !bytes.Equal(now, raw) {
+		return fmt.Errorf("slot %d: its lease changed while it was being given back", n)
+	}
+	if !isWorktreeRoot(ctx, slot) {
+		return fmt.Errorf("slot %d (%s) is not a worktree of this repository", n, slot)
+	}
+	lines, err := changes(ctx, slot)
+	if err != nil {
+		return err
+	}
+	if len(lines) > 0 {
+		return fmt.Errorf("slot %d holds changes or untracked files, so it stays taken: %s", n, firstFew(lines))
+	}
+	count, err := stranded(ctx, slot)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		word := "commits"
+		if count == 1 {
+			word = "commit"
+		}
+		return fmt.Errorf("slot %d holds %d %s on no remote, branch or tag, so it stays taken", n, count, word)
+	}
+	detach := []string{"switch", "--detach"}
+	if detachAt != "" {
+		detach = append(detach, detachAt)
+	}
+	if _, err := gitOut(ctx, slot, detach...); err != nil {
+		return err
+	}
+	if err := removeOwn(lp); err != nil {
+		return fmt.Errorf("slot %d: %v", n, err)
+	}
+	return nil
 }
 
 // unpushed counts the commits at HEAD that no remote-tracking ref holds. A

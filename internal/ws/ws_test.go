@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -208,6 +209,33 @@ func TestTakeAtMaxRefusesAndNamesEveryHolder(t *testing.T) {
 	if _, err := os.Stat(f.slot(3)); err == nil {
 		t.Error("no slot 3 should be made past --max")
 	}
+	var full *NoSlotError
+	if !errors.As(err, &full) || full.Max != 2 || full.Held != 2 || len(full.Passed) != 2 ||
+		!strings.Contains(full.Passed[0], "alice") || !strings.Contains(full.Passed[1], "bob") {
+		t.Errorf("the error should be a *NoSlotError naming both slots, got %#v", err)
+	}
+}
+
+func TestNoSlotErrorCountsOnlyHeldSlotsNotSkippedOnes(t *testing.T) {
+	f := newFixture(t)
+	slot := f.take(TakeOptions{Holder: "a"}).Path
+	f.write(slot, "left-behind.txt", "x\n")
+	os.Remove(filepath.Join(f.repo, ".hrn", "slots", "1.lease")) // skipped, held by no one
+	f.take(TakeOptions{Holder: "b"})                             // slot 2, held
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "c", Max: 2})
+	var full *NoSlotError
+	if !errors.As(err, &full) || full.Held != 1 || len(full.Passed) != 2 {
+		t.Errorf("want one held and one skipped slot, got %#v", err)
+	}
+}
+
+func TestTakeFailingForAnotherReasonIsNoNoSlotError(t *testing.T) {
+	f := newFixture(t)
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Branch: "main", Holder: "a"})
+	var full *NoSlotError
+	if err == nil || errors.As(err, &full) {
+		t.Errorf("a branch checked out elsewhere is not a full set of slots: %#v", err)
+	}
 }
 
 func TestFreeRefusesUnsavedOrUnpushedWorkAndDetachesOnceItIsPushed(t *testing.T) {
@@ -253,6 +281,31 @@ func TestFreeRefusesUnsavedOrUnpushedWorkAndDetachesOnceItIsPushed(t *testing.T)
 	}
 }
 
+func TestFreeRefusesALeaseHeldByARunningProcess(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+	_, err := Free(context.Background(), got.Path)
+	if err == nil || !strings.Contains(err.Error(), "running process "+strconv.Itoa(os.Getpid())) {
+		t.Errorf("free of a live holder's slot: %v", err)
+	}
+	if b := git(t, got.Path, "branch", "--show-current"); b != "hrn/t1" {
+		t.Errorf("HEAD should stay on hrn/t1, is on %q", b)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("the lease changed:\n%s\nwant\n%s", after, before)
+	}
+}
+
+func TestFreeGivesBackALeaseWhoseProcessExited(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Holder: "gone", PID: exitedPID(t)})
+	if _, err := Free(context.Background(), got.Path); err != nil {
+		t.Errorf("free of a stale lease: %v", err)
+	}
+}
+
 func TestFreeRefusesWhileTheSlotIsBeingTakenOverAndLeavesItAsItWas(t *testing.T) {
 	f := newFixture(t)
 	slot := f.take(TakeOptions{Branch: "work", Holder: "a"}).Path
@@ -291,6 +344,164 @@ func TestFreeRefusesWhenTheLeaseChangesBeforeItLocksTheSlot(t *testing.T) {
 	}
 	if l, _ := readLeaseT(t, lp); l.Holder != "newcomer" {
 		t.Errorf("the newcomer's lease should stay: %+v", l)
+	}
+}
+
+func TestReleaseRefusesASlotHoldingChangesOrUntrackedFilesAndKeepsTheLease(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+
+	f.write(got.Path, "README.md", "changed\n")
+	if err := Release(context.Background(), got, ""); err == nil || !strings.Contains(err.Error(), "README.md") {
+		t.Errorf("release with a tracked change: %v", err)
+	}
+	git(t, got.Path, "checkout", "--", "README.md")
+	f.write(got.Path, "left.txt", "x\n")
+	if err := Release(context.Background(), got, ""); err == nil || !strings.Contains(err.Error(), "left.txt") {
+		t.Errorf("release with an untracked file: %v", err)
+	}
+	if b := git(t, got.Path, "branch", "--show-current"); b != "hrn/t1" {
+		t.Errorf("a refused release must leave HEAD on hrn/t1, is on %q", b)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("a refused release must leave the lease:\n%s\nwant\n%s", after, before)
+	}
+}
+
+// A release refused under the slot's takeover lock removes the lock, so the
+// next release or take is not stopped by it.
+func TestAReleaseRefusedUnderTheLockRemovesTheLock(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	f.write(got.Path, "left.txt", "x\n")
+	if err := Release(context.Background(), got, ""); err == nil || !strings.Contains(err.Error(), "left.txt") {
+		t.Fatalf("release with an untracked file: %v", err)
+	}
+	if _, err := os.Stat(lp + ".takeover"); !os.IsNotExist(err) {
+		t.Errorf("the takeover lock must go with the refused release: %v", err)
+	}
+	os.Remove(filepath.Join(got.Path, "left.txt"))
+	if err := Release(context.Background(), got, ""); err != nil {
+		t.Errorf("a release once the slot is clean: %v", err)
+	}
+}
+
+// detachAt goes to git as an argument, so one that reads as an option is
+// refused before anything is touched.
+func TestReleaseRefusesADetachPointThatLooksLikeAnOption(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+	if err := Release(context.Background(), got, "--orphan=x"); err == nil || !strings.Contains(err.Error(), "not a commit") {
+		t.Errorf("release with detachAt %q: %v", "--orphan=x", err)
+	}
+	if b := git(t, got.Path, "branch", "--show-current"); b != "hrn/t1" {
+		t.Errorf("HEAD should stay on hrn/t1, is on %q", b)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("a refused release must leave the lease:\n%s\nwant\n%s", after, before)
+	}
+}
+
+func TestReleaseRefusesALeaseThatIsNoLongerTheHolders(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	data, _ := json.Marshal(Lease{Holder: "someone else", PID: os.Getpid(), Taken: time.Now(), Branch: "hrn/t1"})
+	if err := os.WriteFile(lp, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Release(context.Background(), got, ""); err == nil || !strings.Contains(err.Error(), "someone else") {
+		t.Errorf("release of a lease someone else holds now: %v", err)
+	}
+	if l, _ := readLeaseT(t, lp); l.Holder != "someone else" {
+		t.Errorf("the other holder's lease must stay: %+v", l)
+	}
+	if b := git(t, got.Path, "branch", "--show-current"); b != "hrn/t1" {
+		t.Errorf("HEAD should stay on hrn/t1, is on %q", b)
+	}
+	os.Remove(lp)
+	if err := Release(context.Background(), got, ""); err == nil {
+		t.Error("release of a slot with no lease should be refused")
+	}
+}
+
+func TestReleaseRefusesADetachedCommitOnNoRefAndKeepsTheLease(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	git(t, got.Path, "switch", "-q", "--detach")
+	head := f.commit(got.Path, "detached.txt")
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+	if err := Release(context.Background(), got, base); err == nil || !strings.Contains(err.Error(), "1 commit on no remote, branch or tag") {
+		t.Errorf("release of a detached commit no ref holds: %v", err)
+	}
+	if h := git(t, got.Path, "rev-parse", "HEAD"); h != head {
+		t.Errorf("HEAD moved to %s, want the detached %s", h, head)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("a refused release must leave the lease:\n%s\nwant\n%s", after, before)
+	}
+}
+
+func TestReleaseOfALeaseThatChangedLeavesHEADWhereItIs(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	head := f.commit(got.Path, "work.txt")
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	data, _ := json.Marshal(Lease{Holder: "batch c task t1", PID: os.Getpid(), Taken: time.Now(), Branch: "hrn/t1"})
+	if err := os.WriteFile(lp, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Release(context.Background(), got, base); err == nil {
+		t.Fatal("release of a lease that changed should be refused")
+	}
+	if b, h := git(t, got.Path, "branch", "--show-current"), git(t, got.Path, "rev-parse", "HEAD"); b != "hrn/t1" || h != head {
+		t.Errorf("a refused release must not move HEAD: on %q at %s, want hrn/t1 at %s", b, h, head)
+	}
+}
+
+func TestReleaseDetachesAtTheCommitItIsGiven(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	f.commit(got.Path, "work.txt")
+	if err := Release(context.Background(), got, base); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if b, h := git(t, got.Path, "branch", "--show-current"), git(t, got.Path, "rev-parse", "HEAD"); b != "" || h != base {
+		t.Errorf("HEAD on %q at %s, want detached at %s", b, h, base)
+	}
+}
+
+func TestReleaseDetachesAndFreesAnUnpushedBranchWithoutAPush(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	head := f.commit(got.Path, "work.txt") // on the local branch only
+	f.write(got.Path, "target/x", "build output\n")
+	if err := Release(context.Background(), got, ""); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if b := git(t, got.Path, "branch", "--show-current"); b != "" {
+		t.Errorf("HEAD should be detached, is on %q", b)
+	}
+	if h := git(t, f.repo, "rev-parse", "hrn/t1"); h != head {
+		t.Errorf("the branch should keep its commit: %s, want %s", h, head)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, ".hrn", "slots", "1.lease")); !os.IsNotExist(err) {
+		t.Errorf("the lease should be gone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(got.Path, "target", "x")); err != nil {
+		t.Errorf("ignored build output should stay: %v", err)
+	}
+	if err := Release(context.Background(), got, ""); err == nil {
+		t.Error("releasing a released slot again should be refused")
 	}
 }
 
@@ -346,6 +557,20 @@ func TestTakeSkipsACleanSlotHoldingACommitOnNoRemote(t *testing.T) {
 	}
 	if h := git(t, slot, "rev-parse", "HEAD"); h != head {
 		t.Errorf("slot 1's HEAD moved to %s, want the unpushed %s", h, head)
+	}
+}
+
+func TestTakeReusesAReleasedSlotWhoseCommitOnlyALocalBranchHolds(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch", PID: os.Getpid()})
+	f.commit(got.Path, "work.txt") // on hrn/t1 only, never pushed
+	if err := Release(context.Background(), got, ""); err != nil {
+		t.Fatal(err)
+	}
+	again := f.take(TakeOptions{Branch: "hrn/t2", Holder: "batch", PID: os.Getpid()})
+	samePathT(t, again.Path, f.slot(1))
+	if len(again.Notes) != 0 {
+		t.Errorf("nothing was skipped, yet: %q", again.Notes)
 	}
 }
 

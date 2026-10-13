@@ -57,8 +57,19 @@ func cmdBatchRemove(args []string) (int, error) {
 	if err := batch.Remove(res); err != nil {
 		return 1, err
 	}
-	fmt.Printf("removed the worktrees and branches of batch %s (%d tasks)\n", res.ID, len(res.Tasks))
+	fmt.Printf("removed the %s of batch %s (%d tasks)\n", removedWhat(res), res.ID, len(res.Tasks))
 	return 0, nil
+}
+
+// removedWhat is what hrn batch rm removes of a batch: a slot stays, so of a
+// slot batch only the branches go.
+func removedWhat(res batch.Result) string {
+	for _, t := range res.Tasks {
+		if t.Slot == 0 && t.Worktree != "" {
+			return "worktrees and branches"
+		}
+	}
+	return "branches"
 }
 
 func cmdBatchShow(args []string) (int, error) {
@@ -99,7 +110,8 @@ func cmdBatchDiff(args []string) (int, error) {
 		return 1, err
 	}
 	if strings.TrimSpace(diff) == "" && len(untracked) == 0 {
-		fmt.Fprintf(os.Stderr, "task %s changed nothing\n", task)
+		tr, _ := res.Find(task)
+		fmt.Fprintln(os.Stderr, diffNothing(tr))
 		return 0, nil
 	}
 	if diff != "" {
@@ -156,9 +168,24 @@ func cmdBatchMerge(args []string) (int, error) {
 	}
 	if done > 0 {
 		r.Line(r.c(dim, fmt.Sprintf("%d branch(es) merged into %s · undo with: git reset --hard ORIG_HEAD · "+
-			"remove the worktrees with: hrn batch rm %s", done, res.Dir, res.ID)))
+			"remove the %s with: hrn batch rm %s", done, res.Dir, removedWhat(res), res.ID)))
 	}
 	return 0, nil
+}
+
+// diffNothing says why a task's diff is empty. A slot task's diff is its
+// commit alone, so without one it committed nothing. A kept slot says only
+// that giving it back failed (work left in it, or a busy lock), so it is
+// named for inspection, not said to hold work.
+func diffNothing(tr batch.TaskResult) string {
+	if tr.Slot == 0 {
+		return fmt.Sprintf("task %s changed nothing", tr.ID)
+	}
+	text := fmt.Sprintf("task %s committed nothing", tr.ID)
+	if strings.Contains(tr.Error, fmt.Sprintf("slot %d kept", tr.Slot)) {
+		text += fmt.Sprintf("; slot %d was kept: inspect it (hrn ws list)", tr.Slot)
+	}
+	return text
 }
 
 // mergeConflictBranch names the branch that stopped a merge run.
@@ -275,6 +302,14 @@ func printBatch(r *renderer, res batch.Result) {
 	}
 	r.Line(r.c(dim, fmt.Sprintf("── batch %s · %d/%d passed%s · %s ──",
 		res.ID, passed(res), len(res.Tasks), tail, took)))
+	for _, t := range res.Tasks {
+		if t.Slot != 0 {
+			r.Line(r.c(dim, fmt.Sprintf("each task's work is on its branch; the slots under %s go back as tasks end · "+
+				"merge them with: hrn batch merge %s · delete the branches with: hrn batch rm %s",
+				filepath.Dir(t.Worktree), res.ID, res.ID)))
+			return
+		}
+	}
 	r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · merge them with: hrn batch merge %s · remove them with: hrn batch rm %s",
 		filepath.Join(res.Dir, ".hrn", "worktrees"), res.ID, res.ID)))
 }
