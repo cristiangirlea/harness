@@ -2,6 +2,8 @@
 
 [← README](../README.md)
 
+Pictures of each page: [hrn watch and Ada, in pictures](presentation.md).
+
 ## Watching runs live
 
 ```

@@ -72,6 +72,7 @@ hrn show -f <run-id>      # follow a run live
 | Connect hrn to an MCP host or tools | [MCP integration](docs/mcp.md) |
 | Run parallel tasks and manage their branches | [Batches and worktree cleanup](docs/batches.md) |
 | Use the dashboard, phone view, or Ada bot | [Live dashboard and Ada](docs/watch.md) |
+| See the dashboard and Ada in pictures | [hrn watch and Ada, in pictures](docs/presentation.md) |
 | Score tasks or compare models | [Evaluations and reports](docs/evaluations.md) |
 | Inspect or prune saved data | [Run records](docs/run-records.md) |
 | Integrate hrn with a supervising program | [Exec protocol](docs/exec-protocol.md) |
