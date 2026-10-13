@@ -99,7 +99,8 @@ func leasePath(dir string, n int) string { return filepath.Join(dir, strconv.Ito
 
 // Take leases the first free slot of the repository, creating it on first
 // use, and checks out what opt asks for in it. A slot whose folder holds
-// changes or untracked files is skipped, never cleaned; ignored files (build
+// changes, untracked files or commits on no remote is skipped, never
+// cleaned; ignored files (build
 // output) stay as they are.
 func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	if opt.Repo == "" {
@@ -396,7 +397,8 @@ func removeOwn(p string) error {
 
 // prepare makes a slot ready to switch: it creates and locks the worktree on
 // first use, or checks that the folder there is a worktree of this
-// repository with nothing in it. It returns why the slot must be skipped, or
+// repository with nothing in it and no commits a switch would strand. It
+// returns why the slot must be skipped, or
 // "".
 func prepare(ctx context.Context, main, path, base string) (skip string, err error) {
 	info, err := os.Stat(path)
@@ -431,6 +433,17 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 	}
 	if len(lines) > 0 {
 		return "it holds changes or untracked files: " + firstFew(lines), nil
+	}
+	count, err := unpushed(ctx, path)
+	if err != nil {
+		return "", err
+	}
+	if count > 0 {
+		word := "commits"
+		if count == 1 {
+			word = "commit"
+		}
+		return fmt.Sprintf("it holds %d %s on no remote", count, word), nil
 	}
 	return "", nil
 }

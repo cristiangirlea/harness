@@ -293,6 +293,21 @@ func TestTakeSkipsADirtySlotWithoutALeaseAndSaysWhy(t *testing.T) {
 	}
 }
 
+func TestTakeSkipsACleanSlotHoldingACommitOnNoRemote(t *testing.T) {
+	f := newFixture(t)
+	slot := f.take(TakeOptions{Holder: "a"}).Path
+	head := f.commit(slot, "crashed.txt")                        // detached, never pushed
+	os.Remove(filepath.Join(f.repo, ".hrn", "slots", "1.lease")) // the holder's lease is gone
+	got := f.take(TakeOptions{Holder: "b"})
+	samePathT(t, got.Path, f.slot(2))
+	if !strings.Contains(strings.Join(got.Notes, "\n"), "1 commit on no remote") {
+		t.Errorf("notes should say why slot 1 was skipped: %q", got.Notes)
+	}
+	if h := git(t, slot, "rev-parse", "HEAD"); h != head {
+		t.Errorf("slot 1's HEAD moved to %s, want the unpushed %s", h, head)
+	}
+}
+
 func TestTakeChecksOutAnExistingLocalBranch(t *testing.T) {
 	f := newFixture(t)
 	git(t, f.repo, "switch", "-q", "-c", "local")
