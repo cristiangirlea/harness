@@ -323,8 +323,14 @@ func TestRunPassesLean(t *testing.T) {
 	s := connect(t, t.TempDir())
 	res := s.call(t, "run", `{"prompt":"x","backend":"stub","lean":true}`)
 	id := res.StructuredContent.(map[string]any)["run_id"].(string)
-	if rec, err := runlog.Load(id); err != nil || !rec.Task.Lean {
+	if rec, err := runlog.Load(id); err != nil || !rec.Task.IsLean() {
 		t.Fatalf("lean should reach the task: %+v err=%v", rec.Task, err)
+	}
+	// Like hrn run, the tool is not lean unless asked.
+	res = s.call(t, "run", `{"prompt":"x","backend":"stub"}`)
+	id = res.StructuredContent.(map[string]any)["run_id"].(string)
+	if rec, err := runlog.Load(id); err != nil || rec.Task.Lean != nil {
+		t.Fatalf("lean must stay unset: %+v err=%v", rec.Task, err)
 	}
 }
 

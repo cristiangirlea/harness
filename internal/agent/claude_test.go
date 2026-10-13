@@ -26,7 +26,7 @@ func TestClaudePassesEffortOnlyWhenSet(t *testing.T) {
 func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
 	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}}
 	plain := NewClaudeBackend().args(Task{Options: opts}, "")
-	opts.Lean = true
+	opts.Lean = Bool(true)
 	lean := NewClaudeBackend().args(Task{Options: opts}, "")
 	for _, flag := range []string{"--strict-mcp-config", "--setting-sources", "--bare"} {
 		if slices.Contains(plain, flag) {

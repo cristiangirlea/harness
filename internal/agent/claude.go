@@ -48,7 +48,7 @@ func NewClaudeBackend() *CLIBackend {
 			if mode != "" {
 				a = append(a, "--permission-mode", mode)
 			}
-			if t.Lean {
+			if t.IsLean() {
 				// Only the --mcp-config files below: none of the user's other
 				// MCP servers, plugin servers or claude.ai connectors. Every
 				// setting source still loads, so the user's CLAUDE.md, rules,

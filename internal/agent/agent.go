@@ -308,6 +308,13 @@ func stopStatus(ctx context.Context) Status {
 	return StatusCanceled
 }
 
+// AppliesLean reports whether b honours Options.Lean, so that a batch makes
+// lean its default only where it takes effect.
+func AppliesLean(b Backend) bool {
+	l, ok := b.(interface{ AppliesLean() bool })
+	return ok && l.AppliesLean()
+}
+
 // unenforced names the options a CLI backend cannot apply, for one warning line.
 func unenforced(task Task, mapsEffort, mapsLean bool) []string {
 	var out []string
@@ -320,7 +327,7 @@ func unenforced(task Task, mapsEffort, mapsLean bool) []string {
 	if task.Effort != "" && !mapsEffort {
 		out = append(out, "effort")
 	}
-	if task.Lean && !mapsLean {
+	if task.IsLean() && !mapsLean {
 		out = append(out, "lean")
 	}
 	return out

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +46,10 @@ type Options struct {
 	// Lean starts the claude CLI with only this run's MCP configs, so the
 	// operator's other MCP servers stay out of every turn's context. Settings,
 	// rules, hooks, plugins and skills still load. The guard is unchanged.
-	Lean bool `json:"lean,omitempty" desc:"Start the claude CLI with only this run's --mcp servers: none of your other MCP servers, plugin servers or claude.ai connectors; your settings, rules, plugins and skills still load (claude backend)."`
+	// Unset (nil) takes the entry point's default: on for a batch or eval
+	// task on a backend that applies it, off for hrn run and the MCP run tool;
+	// an explicit false is kept, also over a spec's true.
+	Lean *bool `json:"lean,omitempty" desc:"Start the claude CLI with only this run's --mcp servers: none of your other MCP servers, plugin servers or claude.ai connectors; your settings, rules, plugins and skills still load (claude backend)."`
 
 	// AllowDangerous lifts the guard: the api backend's command guard, which
 	// otherwise refuses a few command lines (git push, sudo, rm -rf /, curl |
@@ -68,6 +72,12 @@ type Options struct {
 	// work (internal/limits).
 	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its plan's usage limit, instead of carrying on on the other of claude and codex."`
 }
+
+// IsLean reports whether lean is on: set, and true.
+func (o Options) IsLean() bool { return o.Lean != nil && *o.Lean }
+
+// Bool returns a pointer to v, for an option that is set or left unset.
+func Bool(v bool) *bool { return &v }
 
 // Validate rejects what the API or hrn would refuse, where the values are typed
 // rather than after an agent has started. An empty mode passes: each entry
@@ -95,7 +105,8 @@ var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run:
 
 // Over returns o with every unset field taken from base: a task's options over
 // its spec's. A switch left off inherits the spec's, so a task can turn one on
-// but not back off; a list left nil inherits, and an empty list stays empty.
+// but not back off, except lean, which is unset only when nil; a list left nil
+// inherits, and an empty list stays empty.
 func (o Options) Over(base Options) Options {
 	ov, bv := reflect.ValueOf(&o).Elem(), reflect.ValueOf(base)
 	for i := 0; i < ov.NumField(); i++ {
@@ -134,6 +145,11 @@ func (Options) Schema() map[string]any {
 				p["type"] = "number"
 			case reflect.Bool:
 				p["type"] = "boolean"
+			case reflect.Pointer:
+				if f.Type.Elem().Kind() != reflect.Bool {
+					panic(fmt.Sprintf("agent.Options.%s: no schema for %s", f.Name, f.Type))
+				}
+				p["type"] = "boolean"
 			case reflect.Slice:
 				p["type"] = "array"
 				p["items"] = map[string]any{"type": "string"}
@@ -164,6 +180,8 @@ func BindFlags(fs *flag.FlagSet, o *Options) {
 			fs.Float64Var(p, name, *p, desc)
 		case *bool:
 			fs.BoolVar(p, name, *p, desc)
+		case **bool:
+			fs.Var(setBool{p}, name, desc)
 		case *[]string:
 			fs.Var((*stringList)(p), name, desc)
 		case flag.Value:
@@ -240,6 +258,28 @@ func (d *Duration) Set(s string) error {
 	*d = Duration(v)
 	return nil
 }
+
+// setBool is a boolean flag that stays nil until it is given, so that an
+// absent flag and --x=false differ.
+type setBool struct{ p **bool }
+
+func (b setBool) String() string {
+	if b.p == nil || *b.p == nil {
+		return ""
+	}
+	return strconv.FormatBool(**b.p)
+}
+
+func (b setBool) Set(s string) error {
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		return err
+	}
+	*b.p = &v
+	return nil
+}
+
+func (setBool) IsBoolFlag() bool { return true }
 
 // stringList collects a repeatable string flag.
 type stringList []string

@@ -63,6 +63,9 @@ type CLIBackend struct {
 
 func (c *CLIBackend) Name() string { return c.name }
 
+// AppliesLean reports whether this CLI honours Options.Lean (see AppliesLean).
+func (c *CLIBackend) AppliesLean() bool { return c.mapsLean }
+
 func (c *CLIBackend) Capabilities() Capabilities {
 	caps := Capabilities{Modes: append([]Mode{}, c.mapsModes...), Efforts: []string{}, Sessions: "none", Options: []string{}}
 	if c.mapsModel {

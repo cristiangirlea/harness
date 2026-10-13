@@ -146,6 +146,9 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 		{NewOpencodeBackend, false, false},
 	} {
 		b := adapter.newBackend()
+		if AppliesLean(b) != adapter.mapsLean {
+			t.Errorf("%s: AppliesLean = %v, want %v", b.Name(), AppliesLean(b), adapter.mapsLean)
+		}
 		t.Run(b.Name(), func(t *testing.T) {
 			// Keep the adapter's capabilities, but run only the test binary.
 			b.name = os.Args[0]
@@ -155,8 +158,9 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{},
 				{Effort: "high"},
 				{Effort: "high", MaxCostUSD: 5, TaskBudget: 50000},
-				{Lean: true},
-				{Effort: "high", Lean: true},
+				{Lean: Bool(true)},
+				{Effort: "high", Lean: Bool(true)},
+				{Lean: Bool(false)},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
@@ -176,7 +180,7 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				if options.Effort != "" && !adapter.mapsEffort {
 					want = append(want, "effort")
 				}
-				if options.Lean && !adapter.mapsLean {
+				if options.IsLean() && !adapter.mapsLean {
 					want = append(want, "lean")
 				}
 				if len(want) == 0 {

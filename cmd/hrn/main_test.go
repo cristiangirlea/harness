@@ -158,7 +158,7 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 		"max-turns":        task.MaxTurns == 7,
 		"no-instructions":  task.NoInstructions,
 		"no-context-edits": task.NoContextEdits,
-		"lean":             task.Lean,
+		"lean":             task.IsLean(),
 		"timeout":          task.Timeout == agent.Duration(90*time.Second),
 		"max-cost":         task.MaxCostUSD == 1.5,
 		"task-budget":      task.TaskBudget == 30000,

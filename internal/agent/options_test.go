@@ -57,7 +57,7 @@ func TestFlagsSetTheOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Options{Model: "claude-sonnet-5", Mode: ModeYolo, MaxTurns: 7, Effort: "low", MCP: []string{"a.json", "b.json"},
-		NoInstructions: true, NoContextEdits: true, Lean: true, AllowDangerous: true,
+		NoInstructions: true, NoContextEdits: true, Lean: Bool(true), AllowDangerous: true,
 		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000}
 	if !reflect.DeepEqual(o, want) {
 		t.Errorf("parsed = %+v\nwant     %+v", o, want)
@@ -91,11 +91,52 @@ func TestOverInheritsWhatIsUnset(t *testing.T) {
 		t.Errorf("Over = %+v\nwant   %+v", got, want)
 	}
 	// A switch cannot be turned back off, and an empty list is a choice.
-	if !(Options{}).Over(Options{NoContextEdits: true}).NoContextEdits || !(Options{}).Over(Options{Lean: true}).Lean {
+	if !(Options{}).Over(Options{NoContextEdits: true}).NoContextEdits {
 		t.Error("a task cannot turn a spec-wide switch off")
 	}
 	if got := (Options{MCP: []string{}}).Over(base); len(got.MCP) != 0 || got.MCP == nil {
 		t.Errorf("an empty list must stay empty, got %v", got.MCP)
+	}
+}
+
+// Lean has three states: unset takes the entry point's default (on in a
+// batch, off for hrn run), and an explicit false is honoured, also over a
+// spec that turned it on.
+func TestLeanIsTriState(t *testing.T) {
+	for _, tc := range []struct {
+		json string
+		want *bool
+	}{{`{}`, nil}, {`{"lean":false}`, Bool(false)}, {`{"lean":true}`, Bool(true)}} {
+		var o Options
+		if err := json.Unmarshal([]byte(tc.json), &o); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(o.Lean, tc.want) {
+			t.Errorf("%s: Lean = %v, want %v", tc.json, o.Lean, tc.want)
+		}
+	}
+	if got := (Options{Lean: Bool(false)}).Over(Options{Lean: Bool(true)}); got.Lean == nil || *got.Lean {
+		t.Errorf("a task's lean false must win over the spec's true: %v", got.Lean)
+	}
+	if got := (Options{}).Over(Options{Lean: Bool(true)}); !got.IsLean() {
+		t.Error("an unset lean must inherit the spec's")
+	}
+	if b, _ := json.Marshal(Options{Lean: Bool(false)}); !strings.Contains(string(b), `"lean":false`) {
+		t.Errorf("an explicit false must be recorded: %s", b)
+	}
+	for _, tc := range []struct {
+		args []string
+		want *bool
+	}{{nil, nil}, {[]string{"--lean"}, Bool(true)}, {[]string{"--lean=false"}, Bool(false)}} {
+		fs := flag.NewFlagSet("t", flag.ContinueOnError)
+		var o Options
+		BindFlags(fs, &o)
+		if err := fs.Parse(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(o.Lean, tc.want) {
+			t.Errorf("%v: Lean = %v, want %v", tc.args, o.Lean, tc.want)
+		}
 	}
 }
 
