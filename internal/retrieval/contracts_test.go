@@ -1,12 +1,15 @@
 package retrieval
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
 
 func TestPacketRespectsFramingCapAndExecutorDropsCredentials(t *testing.T) {
-	text := strings.Repeat("x", MaxPacketBytes-len(ReferencePrefix)-len(ReferenceSuffix))
+	label := "[Reference e_fixture; source=\"source\"; revision=main; evidence=\"evidence\"]\n"
+	closer := "\n[/Reference]\n"
+	text := label + strings.Repeat("x", MaxPacketBytes-len(ReferencePrefix)-len(ReferenceSuffix)-len(label)-len(closer)) + closer
 	p := Packet{Text: text, Bytes: len(text), Digest: TextDigest(text), VersionID: "v_fixture", Entries: []Entry{{ID: "e_fixture"}}}
 	if e := ValidatePacket(p, "", ""); e != nil {
 		t.Fatal(e)
@@ -26,17 +29,39 @@ func TestPacketRespectsFramingCapAndExecutorDropsCredentials(t *testing.T) {
 	}
 }
 
-func TestPacketRejectsFrameMarkersInTextAndEntries(t *testing.T) {
+func TestPacketAcceptsOneServerLabelPairPerEntry(t *testing.T) {
+	entries := []Entry{
+		{ID: "e_first", Content: "first content", Source: "first source", Evidence: "first evidence"},
+		{ID: "e_second", Content: "second content", Source: "second source", Evidence: "second evidence"},
+	}
+	var text strings.Builder
+	for _, e := range entries {
+		fmt.Fprintf(&text, "[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", e.ID, e.Source, "main", e.Evidence, e.Content)
+	}
+	p := Packet{VersionID: "v_fixture", Entries: entries, Text: text.String(), Bytes: text.Len(), Digest: TextDigest(text.String())}
+	if err := ValidatePacket(p, "", ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPacketRejectsExtraLabelsAndOuterFrameMarkersInText(t *testing.T) {
+	baseText := "[Reference entry; source=\"source\"; revision=main; evidence=\"evidence\"]\ncontent\n[/Reference]\n"
 	for _, marker := range []string{"<project-reference", "</project-reference>", "[Reference ", "[/Reference]"} {
 		t.Run(marker, func(t *testing.T) {
-			base := Packet{VersionID: "v_fixture", Text: "reference", Bytes: len("reference"), Digest: TextDigest("reference"), Entries: []Entry{{ID: "entry", Key: "key", Content: "content", Source: "source", Evidence: "evidence", Identifiers: []string{"identifier"}}}}
-			withText := base
-			withText.Text += marker
-			withText.Bytes = len(withText.Text)
-			withText.Digest = TextDigest(withText.Text)
-			if err := ValidatePacket(withText, "", ""); err == nil {
+			text := baseText + marker
+			p := Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: TextDigest(text), Entries: []Entry{{ID: "entry", Content: "content", Source: "source", Evidence: "evidence"}}}
+			if err := ValidatePacket(p, "", ""); err == nil {
 				t.Fatal("text marker accepted")
 			}
+		})
+	}
+}
+
+func TestPacketRejectsFrameMarkersInEntryFields(t *testing.T) {
+	for _, marker := range []string{"<project-reference", "</project-reference>", "[Reference ", "[/Reference]"} {
+		t.Run(marker, func(t *testing.T) {
+			text := "[Reference entry; source=\"source\"; revision=main; evidence=\"evidence\"]\ncontent\n[/Reference]\n"
+			base := Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: TextDigest(text), Entries: []Entry{{ID: "entry", Key: "key", Content: "content", Source: "source", Evidence: "evidence", Identifiers: []string{"identifier"}}}}
 			for _, field := range []string{"id", "key", "content", "source", "evidence", "identifier"} {
 				withEntry := base
 				withEntry.Entries = append([]Entry(nil), base.Entries...)

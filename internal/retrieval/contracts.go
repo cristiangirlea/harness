@@ -56,8 +56,9 @@ type Search struct {
 	Attempt   int    `json:"attempt,omitempty"`
 }
 
-// Packet carries reviewed reference text. Imports and packet validation reject
-// frame markers so entries cannot close the frame or forge a source label.
+// Packet carries reviewed reference text. Validation permits one reference
+// label pair per entry in Text, rejects outer project-reference markers there,
+// and rejects all four markers in every entry field.
 type Packet struct {
 	VersionID   string  `json:"version_id,omitempty"`
 	AuditID     string  `json:"audit_id"`
@@ -107,7 +108,7 @@ func ValidatePacket(p Packet, version, query string) error {
 	if p.Text != "" && (p.VersionID == "" || len(p.Entries) == 0) {
 		return fmt.Errorf("retrieval packet lacks provenance")
 	}
-	if hasFrameMarker(p.Text) {
+	if strings.Contains(p.Text, "<project-reference") || strings.Contains(p.Text, "</project-reference>") || strings.Count(p.Text, "[Reference ") != len(p.Entries) || strings.Count(p.Text, "[/Reference]") != len(p.Entries) {
 		return fmt.Errorf("retrieval packet contains a frame marker")
 	}
 	for _, e := range p.Entries {
