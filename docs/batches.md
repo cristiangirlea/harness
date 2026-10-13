@@ -278,5 +278,9 @@ repository or a link leading out of it, when the current directory is inside it,
 cannot be checked. One inside a worktree that goes is not listed: the worktree's removal takes it.
 The listing shows each cache's size, last build and verdict; `--apply` checks each one again just
 before it goes (still tagged, nothing written since the scan, no lock held, nothing inside that must
-stay) and removes it whole. A cache has no pull request to stand as its record: the build that
-needs it again rebuilds it.
+stay), moves it aside to a sibling `.gc-<pid>-<unix nanos>-<name>` folder, probes its locks
+again (including `flock` on Unix), then deletes its contents with `CACHEDIR.TAG` last. If a
+build holds a moved cache's lock, it is moved back and kept. A failed move keeps the original
+cache; a failed deletion leaves a tagged `.gc-*` folder for the next run. That leftover is
+eligible regardless of `--idle`, after the other safety checks. A cache has no pull request to
+stand as its record: the build that needs it again rebuilds it.
