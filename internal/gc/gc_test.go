@@ -728,6 +728,26 @@ func TestGCKeepsBatchReindentThatLandedWithDifferentWhitespace(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
 }
 
+func TestGCKeepsBatchChangeWhenScriptModeDidNotLand(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, "script.sh", "echo before\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "original script")
+	git(t, f.repo, "push", "-q", "origin", "main")
+	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+	f.write(task, "script.sh", "echo after\n")
+	git(t, task, "add", "script.sh")
+	git(t, task, "update-index", "--chmod=+x", "script.sh")
+	git(t, task, "commit", "-q", "-m", "change script and mode")
+	saveBatch(t, "mode", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "script.sh", "echo after\n")
+	git(t, f.repo, "commit", "-q", "-am", "change script content")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
 func TestGCComparesBatchChangesWithoutTextconv(t *testing.T) {
 	f := newFixture(t)
 	f.write(f.repo, ".gitattributes", "asset.txt diff=mask\n")
