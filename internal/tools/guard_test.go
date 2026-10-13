@@ -43,6 +43,10 @@ func TestGuardBlocks(t *testing.T) {
 		"gh repo delete owner/x --yes":           "gh-publish",
 		"gh api -X PUT repos/o/r/pulls/1/merge":  "gh-publish",
 		"gh api --method DELETE repos/o/r":       "gh-publish",
+		"gh api -X delete repos/o/r":             "gh-publish",
+		"gh api --method=patch repos/o/r":        "gh-publish",
+		"gh api -Xput repos/o/r/pulls/1/merge":   "gh-publish",
+		"gh api repos/o/r -X Delete":             "gh-publish",
 		"cd site && npx wrangler deploy":         "deploy",
 		"wrangler pages deploy dist":             "deploy",
 		"npm publish":                            "deploy",
@@ -157,6 +161,7 @@ func TestGuardAllows(t *testing.T) {
 		"gh pr create --title t --body b", // not this rule's; the guarded environment has no gh login
 		"gh release list",
 		"gh api repos/o/r/pulls/1",
+		"gh api repos/o/r --jq .name",
 		"npx wrangler dev",
 		"kubectl get pods",
 		"docker build -t app .",

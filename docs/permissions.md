@@ -42,7 +42,7 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
 | `pipe-to-shell` | `curl`/`wget` piped into a shell, however many stages the pipe has |
 | `disk` | `mkfs`, `format X:`, `dd of=/dev/…` |
-| `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`, and `gh api` with PUT, PATCH or DELETE; opening a pull request stays allowed |
+| `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`, and `gh api` with PUT, PATCH or DELETE in any case; opening a pull request stays allowed |
 | `gh-token` | `gh auth token` (with `--user` too), `gh auth git-credential` and `gh auth status --show-token`/`-t`: gh keeps its login in the system's credential store, which no variable hides, and these hand it out |
 | `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`bun`/`cargo publish`, a project's deploy script (`npm run deploy`, `deploy:prod`, `deploy-docs`, with `pnpm`, `yarn` or `bun` too), `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `terraform`/`tofu apply/destroy`, `helm install/upgrade/uninstall`, `vercel --prod`, `fly`/`netlify deploy` |
 
