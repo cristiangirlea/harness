@@ -585,11 +585,11 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	opts := t.Options.Over(spec.Options)
 
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
-		return fail(fmt.Errorf("branch %s already exists; remove it or pick another task id", tr.Branch))
+		return fail(errors.New(takenError("branch", tr.Branch)))
 	}
 	if !slots {
 		if _, err := os.Stat(tr.Worktree); err == nil {
-			return fail(fmt.Errorf("worktree %s already exists; remove it or pick another task id", tr.Worktree))
+			return fail(errors.New(takenError("worktree", tr.Worktree)))
 		}
 	}
 
@@ -1080,9 +1080,18 @@ func notMine(res Result, tr TaskResult) bool {
 }
 
 // foundTaken reports whether a fresh task in a record from before Ownership
-// failed because its worktree or branch was there already.
+// failed because its worktree or branch was there already: before any
+// attempt, with the error runTask gives then. Other errors can say
+// "already exists" too (a hook's output), after the task made its worktree.
 func foundTaken(tr TaskResult) bool {
-	return tr.Slot == 0 && !tr.BranchMade && strings.Contains(tr.Error, "already exists")
+	return tr.Slot == 0 && !tr.BranchMade && len(tr.Attempts) == 0 &&
+		(tr.Error == takenError("branch", tr.Branch) || tr.Error == takenError("worktree", tr.Worktree))
+}
+
+// takenError is runTask's error for a task whose branch or worktree is there
+// already; foundTaken matches it in old records, so its text stays as it is.
+func takenError(what, name string) string {
+	return fmt.Sprintf("%s %s already exists; remove it or pick another task id", what, name)
 }
 
 // removeSlotBranch deletes a slot task's branch, unless a worktree has it

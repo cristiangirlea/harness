@@ -590,6 +590,27 @@ func TestAFreshRetryThatCannotRemoveItsWorktreeClaimsItAgain(t *testing.T) {
 	}
 }
 
+// In a record from before Ownership, a fresh task that ran made its worktree,
+// whatever its error says: output carried into it can say "already exists".
+func TestRemoveCleansALegacyFreshTaskThatRanWhateverItsErrorSays(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "ran", Prompt: "a"}}})
+	res.Tasks[0].Error = "commit: hook: lock file .git/index.lock already exists"
+	res = legacy(t, res)
+	if !WorktreesRemain(res) {
+		t.Error("the task's worktree must keep the record")
+	}
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+	if exists(res.Tasks[0].Worktree) {
+		t.Error("the worktree must go")
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/ran"); b != "" {
+		t.Errorf("branch remains: %s", b)
+	}
+}
+
 // In a record from before Ownership, a fresh task that failed on hrn's own
 // check (its worktree or branch was there already) made nothing: they stay.
 func TestRemoveLeavesWhatALegacyFreshTaskFoundTaken(t *testing.T) {
