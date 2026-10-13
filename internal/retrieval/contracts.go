@@ -56,9 +56,9 @@ type Search struct {
 	Attempt   int    `json:"attempt,omitempty"`
 }
 
-// Packet carries reviewed reference text. Imports reject <project-reference,
-// </project-reference>, [Reference , and [/Reference] in content, source labels,
-// and evidence so entries cannot close the frame or forge a source label.
+// Packet carries reviewed reference text. Validation permits one reference
+// label pair per entry in Text, rejects outer project-reference markers there,
+// and rejects all four markers in every entry field.
 type Packet struct {
 	VersionID   string  `json:"version_id,omitempty"`
 	AuditID     string  `json:"audit_id"`
@@ -108,7 +108,29 @@ func ValidatePacket(p Packet, version, query string) error {
 	if p.Text != "" && (p.VersionID == "" || len(p.Entries) == 0) {
 		return fmt.Errorf("retrieval packet lacks provenance")
 	}
+	if strings.Contains(p.Text, "<project-reference") || strings.Contains(p.Text, "</project-reference>") || strings.Count(p.Text, "[Reference ") != len(p.Entries) || strings.Count(p.Text, "[/Reference]") != len(p.Entries) {
+		return fmt.Errorf("retrieval packet contains a frame marker")
+	}
+	for _, e := range p.Entries {
+		if hasFrameMarker(e.ID) || hasFrameMarker(e.Key) || hasFrameMarker(e.Content) || hasFrameMarker(e.Source) || hasFrameMarker(e.Evidence) {
+			return fmt.Errorf("retrieval packet entry contains a frame marker")
+		}
+		for _, id := range e.Identifiers {
+			if hasFrameMarker(id) {
+				return fmt.Errorf("retrieval packet entry contains a frame marker")
+			}
+		}
+	}
 	return nil
+}
+
+func hasFrameMarker(s string) bool {
+	for _, marker := range []string{"<project-reference", "</project-reference>", "[Reference ", "[/Reference]"} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // Record is saved before execution. It contains no transport configuration or credentials.
@@ -126,8 +148,8 @@ func ExecutorEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, v := range env {
 		key, _, _ := strings.Cut(v, "=")
-		switch strings.ToUpper(key) {
-		case "HRN_TENANT_TOKEN", "HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL":
+		key = strings.ToUpper(key)
+		if key == "HRN_DATABASE_URL" || (strings.HasPrefix(key, "HRN_") && strings.HasSuffix(key, "_TOKEN")) {
 			continue
 		}
 		out = append(out, v)

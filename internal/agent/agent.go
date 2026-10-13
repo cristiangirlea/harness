@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -39,6 +40,10 @@ type ApprovalRequest struct {
 }
 
 type Task struct {
+	OriginalPrompt  string            `json:"original_prompt,omitempty"`
+	RetrievalState  *retrieval.Record `json:"-"`
+	RetrievalRepair bool              `json:"-"`
+
 	// Durable is supplied only by trusted execution coordinators. Callers cannot
 	// configure persistence or resume snapshots through task JSON.
 	Durable   *DurableExecution `json:"-"`
@@ -72,8 +77,9 @@ type Task struct {
 // transcript so a follow-up can carry on from it. Thinking blocks are bound to
 // the model that produced them, which is why the model is recorded with them.
 type Conversation struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
+	Model     string            `json:"model"`
+	Messages  []Message         `json:"messages"`
 }
 
 // Message is one turn of a Conversation: the role and the content blocks
@@ -122,7 +128,8 @@ const (
 )
 
 type Result struct {
-	Usage *UsageMetadata `json:"usage_metadata,omitempty"`
+	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
+	Usage     *UsageMetadata    `json:"usage_metadata,omitempty"`
 	// RecoveryRequired is execution evidence for the scheduler, not success or
 	// permission to replay. Orchestration states remain separate from Status.
 	RecoveryRequired bool   `json:"recovery_required,omitempty"`
@@ -250,6 +257,14 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		emit(Event{Time: time.Now(), Kind: EventError, Text: ErrGuardedRun.Error()})
 		return Result{Backend: b.Name(), Status: StatusRefused, Error: ErrGuardedRun.Error()}
 	}
+	prepared, state, err := prepareRetrieval(ctx, b.Name(), task)
+	if err != nil {
+		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state}
+	}
+	task = prepared
+	if state != nil {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
+	}
 	calls := 0
 	res := b.Run(ctx, task, func(e Event) {
 		if e.Kind == EventToolCall && !e.Partial {
@@ -257,6 +272,7 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		}
 		emit(e)
 	})
+	res.Retrieval = state
 	if task.Durable == nil {
 		res.ToolCalls = calls
 	}

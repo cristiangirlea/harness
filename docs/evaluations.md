@@ -62,6 +62,14 @@ collide. Retries are off for every cell on purpose: an eval measures what one at
 does, and a retried attempt would score the harness rather than the backend. Everything
 else, gates and mode and the budgets, carries through from the spec.
 
+Variants may set `retrieval` (`off`, `optional` or `required`) and
+`retrieval_version`. An eval record may include `retrieval_manifest` and
+`retrieval_comparison`: held-out tasks, coverage, preparation and online overhead,
+and a gate requiring equal success with at least 10% lower median model tokens
+across complete comparable cells. Failed attempts count in per-success usage;
+zero successes leave that ratio null. The bundled synthetic fixture tests the
+accounting and establishes no real model savings.
+
 `hrn eval eval.json` prints what each variant did and how each task scored under it:
 
 ```

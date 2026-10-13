@@ -42,6 +42,8 @@ Usage:
                                  use the durable control API
   hrn knowledge import|search|inspect|active|activate|disable|rollback request.json
                                  manage approved project knowledge through the control API
+  hrn retrieval fixture|compare [flags]
+                                 compare saved evidence without model calls
   hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
@@ -55,7 +57,7 @@ Usage:
   hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
                                  English, out loud and as notifications, with skip, snooze and a few
                                  spoken commands; serves hrn watch on loopback unless one already does
-  hrn mcp [--dir PATH] [--allow-dangerous-runs]
+  hrn mcp [--dir PATH] [--allow-dangerous-runs] [--retrieval-profile FILE]
                                  serve hrn as an MCP server on stdio; --dir is the default workspace (default: current
                                  directory); allow_dangerous is refused unless --allow-dangerous-runs is given
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
@@ -94,6 +96,11 @@ Run flags:
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
+      --retrieval MODE  off | optional | required
+      --retrieval-tenant ID
+      --retrieval-project ID
+      --retrieval-revision SHA
+      --retrieval-version ID
       --allow-dangerous
                        lift the guard: agents may push, merge and deploy with your credentials
                        (every backend), and run_command may run sudo, rm -rf / and the like
@@ -140,6 +147,8 @@ func main() {
 		err = runRemote(os.Args[2:], os.Stdout)
 	case "knowledge":
 		err = runKnowledge(os.Args[2:], os.Stdout)
+	case "retrieval":
+		err = runRetrieval(os.Args[2:], os.Stdout)
 	case "runs":
 		err = cmdRuns(os.Args[2:])
 	case "show":
@@ -482,6 +491,7 @@ func cmdMCP(args []string) error {
 	// The server's caller is an agent; lifting the guard for its runs is the
 	// operator's decision, taken here and not in a tool call.
 	dangerous := fs.Bool("allow-dangerous-runs", false, "")
+	profile := fs.String("retrieval-profile", "", "Project-scoped retrieval profile JSON (no credentials).")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -492,6 +502,9 @@ func cmdMCP(args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected argument %q; the workspace is set with --dir", fs.Arg(0))
 	}
+	if *profile != "" && *dangerous {
+		return fmt.Errorf("--retrieval-profile cannot be combined with --allow-dangerous-runs")
+	}
 	newServer := hrnmcp.NewServer
 	if *dangerous {
 		newServer = hrnmcp.NewDangerousServer
@@ -501,10 +514,17 @@ func cmdMCP(args []string) error {
 		return fmt.Errorf("--dir %s: %w", *dir, err)
 	}
 	abs := ws.Root
+	server := newServer(abs)
+	if *profile != "" {
+		server, err = hrnmcp.NewProjectServer(abs, *profile)
+		if err != nil {
+			return err
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	fmt.Fprintln(os.Stderr, "hrn mcp: serving on stdio, workspace", abs)
-	if err := newServer(abs).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil

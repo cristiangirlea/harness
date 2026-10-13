@@ -111,7 +111,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			// continue from, and an empty file would look like it had.
 			return
 		}
-		conv := Conversation{Model: res.Model, Messages: msgs}
+		conv := Conversation{Model: res.Model, Messages: msgs, Retrieval: task.RetrievalState}
 		// Compact: this file is read back by hrn, not by people, and it already
 		// repeats every tool result the transcript holds.
 		if data, err := json.Marshal(conv); err == nil {
