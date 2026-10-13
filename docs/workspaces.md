@@ -94,18 +94,21 @@ the slot back:
    `git -C <slot> commit`), or remove what you don't. If HEAD is on the task's branch
    `hrn/<id>`, the commits are kept there. If HEAD is detached, name the commits:
    `git -C <slot> branch <name>`.
-4. With a remote: detach the slot at a commit the remote holds. Free counts a commit at
-   HEAD as unpushed when no remote-tracking branch holds it, and a local branch does not
-   change that, so it would still refuse. `git -C <slot> switch --detach origin/main`
-   (or origin's default branch, if it is not `main`; `git -C <slot> remote show origin`
-   names it).
-   Without any remote: skip this step. Free then counts only the commits at HEAD that no
-   local branch or tag holds, and step 3 left none, so HEAD can stay where it is.
+4. With any remote, whatever its name: detach the slot at a commit a remote-tracking
+   branch holds. Free counts a commit at HEAD as unpushed when no remote-tracking branch
+   holds it, and a local branch does not change that, so it would still refuse. Use the
+   remote's default branch: `git -C <slot> switch --detach origin/main`, or
+   `upstream/main` when the remote is `upstream`. `git -C <slot> branch -r` lists the
+   remote-tracking branches; `git -C <slot> remote show <remote>` names the default.
+   Only with no remote at all: skip this step. Free then counts only the commits at HEAD
+   that no local branch or tag holds, and step 3 left none, so HEAD can stay where it is.
 5. `hrn ws free <slot>`. It detaches HEAD where it is and removes the lease; the work stays
-   on its branch. Merge or push that branch yourself (`git merge hrn/<id>` in the
-   repository): `hrn batch merge` merges only tasks whose status is `pass`, even when you
-   name them, and a task whose slot was kept usually is not (a failed commit ends as
-   `error`). Use `hrn batch merge` only when `hrn batch show` reports the task passed.
+   on its branch. Merge or push the branch that now holds the work yourself, from the
+   repository: `git merge <name>` when step 3 made a branch for detached commits,
+   `git merge hrn/<id>` when the work was committed on the task's branch. `hrn batch merge`
+   merges only tasks whose status is `pass`, even when you name them, and a task whose slot
+   was kept usually is not (a failed commit ends as `error`). Use `hrn batch merge` only
+   when `hrn batch show` reports the task passed.
 
 ## List
 
