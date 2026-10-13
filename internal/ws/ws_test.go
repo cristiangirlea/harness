@@ -392,6 +392,27 @@ func TestFreeGivesBackALeaseWhoseProcessExited(t *testing.T) {
 	}
 }
 
+func TestFreeGivesBackALeaseWhosePIDWasReused(t *testing.T) {
+	if _, known := startedAfter(os.Getpid(), time.Now().Add(-24*time.Hour)); !known {
+		t.Skip("process start time is unavailable on this platform")
+	}
+	f := newFixture(t)
+	got := f.take(TakeOptions{Holder: "gone", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	lease := got.Lease
+	lease.Taken = time.Now().Add(-24 * time.Hour)
+	raw, err := json.Marshal(lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lp, append(raw, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Free(context.Background(), got.Path); err != nil {
+		t.Errorf("free of a lease with a reused pid: %v", err)
+	}
+}
+
 // The recovery docs/workspaces.md gives for a slot a batch kept: the work is
 // saved on a local branch, the slot detached at a commit origin holds, and
 // free then gives it back once hrn has exited.

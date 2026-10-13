@@ -33,7 +33,8 @@ var createLockWait = 2 * time.Minute
 
 // Lease is the JSON in <n>.lease: who holds the slot, since when, and the
 // branch they asked for (empty: detached). A lease with a PID is stale once
-// that process has exited; one without is held until Free.
+// that process has exited or the PID belongs to a newer process; one without
+// is held until Free.
 type Lease struct {
 	Holder string    `json:"holder"`
 	PID    int       `json:"pid,omitempty"`
@@ -381,7 +382,19 @@ func readLease(p string) (Lease, []byte, error) {
 	return l, raw, nil
 }
 
-func (l Lease) stale() bool { return l.PID != 0 && !alive(l.PID) }
+func (l Lease) processHolds() bool {
+	if l.PID == 0 || !alive(l.PID) {
+		return false
+	}
+	if !l.Taken.IsZero() {
+		if after, known := startedAfter(l.PID, l.Taken.Add(time.Second)); known && after {
+			return false
+		}
+	}
+	return true
+}
+
+func (l Lease) stale() bool { return l.PID != 0 && !l.processHolds() }
 
 func describe(l Lease) string {
 	s := fmt.Sprintf("taken by %q since %s", l.Holder, l.Taken.Local().Format("2006-01-02 15:04"))
@@ -660,7 +673,7 @@ var beforeFreeLock func()
 
 // Free gives back the slot that path (anywhere inside it) lies in. It
 // refuses while the slot holds changes, untracked files or commits on no
-// remote, and while the lease names a running process; otherwise it detaches HEAD where it is, so the branch is free for
+// remote, and while the lease names its running holder; otherwise it detaches HEAD where it is, so the branch is free for
 // other checkouts and for gc, and removes the lease.
 func Free(ctx context.Context, path string) (Taken, error) {
 	abs, err := filepath.Abs(path)
@@ -684,7 +697,7 @@ func Free(ctx context.Context, path string) (Taken, error) {
 	if err != nil {
 		return Taken{}, fmt.Errorf("slot %d: %v", n, err)
 	}
-	if lease.PID != 0 && alive(lease.PID) {
+	if lease.processHolds() {
 		return Taken{}, fmt.Errorf("slot %d is held by running process %d; it gives the slot back itself", n, lease.PID)
 	}
 	if beforeFreeLock != nil {

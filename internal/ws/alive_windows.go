@@ -4,6 +4,7 @@ package ws
 
 import (
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -11,6 +12,7 @@ var (
 	kernel32               = syscall.NewLazyDLL("kernel32.dll")
 	procOpenProcess        = kernel32.NewProc("OpenProcess")
 	procGetExitCodeProcess = kernel32.NewProc("GetExitCodeProcess")
+	procGetProcessTimes    = kernel32.NewProc("GetProcessTimes")
 )
 
 const (
@@ -37,4 +39,27 @@ func alive(pid int) bool {
 		return true
 	}
 	return code == stillActive
+}
+
+// startedAfter reports whether the process was created after t. A failed
+// query leaves the lease held if the pid is still alive.
+func startedAfter(pid int, t time.Time) (after bool, known bool) {
+	if pid <= 0 {
+		return false, false
+	}
+	h, _, _ := procOpenProcess.Call(processQueryLimitedInformation, 0, uintptr(pid))
+	if h == 0 {
+		return false, false
+	}
+	defer syscall.CloseHandle(syscall.Handle(h))
+	var created, exited, kernel, user syscall.Filetime
+	ok, _, _ := procGetProcessTimes.Call(h,
+		uintptr(unsafe.Pointer(&created)),
+		uintptr(unsafe.Pointer(&exited)),
+		uintptr(unsafe.Pointer(&kernel)),
+		uintptr(unsafe.Pointer(&user)))
+	if ok == 0 {
+		return false, false
+	}
+	return time.Unix(0, created.Nanoseconds()).After(t), true
 }
