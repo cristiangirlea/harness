@@ -435,6 +435,20 @@ func TestTakeSkipsACleanSlotHoldingACommitOnNoRemote(t *testing.T) {
 	}
 }
 
+func TestTakeReusesAReleasedSlotWhoseCommitOnlyALocalBranchHolds(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch", PID: os.Getpid()})
+	f.commit(got.Path, "work.txt") // on hrn/t1 only, never pushed
+	if err := Release(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	again := f.take(TakeOptions{Branch: "hrn/t2", Holder: "batch", PID: os.Getpid()})
+	samePathT(t, again.Path, f.slot(1))
+	if len(again.Notes) != 0 {
+		t.Errorf("nothing was skipped, yet: %q", again.Notes)
+	}
+}
+
 func TestTakeChecksOutAnExistingLocalBranch(t *testing.T) {
 	f := newFixture(t)
 	git(t, f.repo, "switch", "-q", "-c", "local")

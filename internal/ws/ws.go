@@ -99,9 +99,8 @@ func leasePath(dir string, n int) string { return filepath.Join(dir, strconv.Ito
 
 // Take leases the first free slot of the repository, creating it on first
 // use, and checks out what opt asks for in it. A slot whose folder holds
-// changes, untracked files or commits on no remote is skipped, never
-// cleaned; ignored files (build
-// output) stay as they are.
+// changes, untracked files or commits on no remote, branch or tag is
+// skipped, never cleaned; ignored files (build output) stay as they are.
 func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	if opt.Repo == "" {
 		opt.Repo = "."
@@ -455,7 +454,7 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 	if len(lines) > 0 {
 		return "it holds changes or untracked files: " + firstFew(lines), nil
 	}
-	count, err := unpushed(ctx, path)
+	count, err := stranded(ctx, path)
 	if err != nil {
 		return "", err
 	}
@@ -464,9 +463,20 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 		if count == 1 {
 			word = "commit"
 		}
-		return fmt.Sprintf("it holds %d %s on no remote", count, word), nil
+		return fmt.Sprintf("it holds %d %s on no remote, branch or tag", count, word), nil
 	}
 	return "", nil
+}
+
+// stranded counts the commits at HEAD that a switch away would leave on no
+// ref: on no remote-tracking ref, local branch or tag. A slot Release gave
+// back sits on its task's local branch, which keeps those commits.
+func stranded(ctx context.Context, dir string) (int, error) {
+	out, err := gitOut(ctx, dir, "rev-list", "--count", "HEAD", "--not", "--remotes", "--branches", "--tags")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(out)
 }
 
 type worktree struct {

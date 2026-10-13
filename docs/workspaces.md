@@ -34,8 +34,9 @@ that process has exited, and the next take may take it over.
 `hrn ws take` walks slots 1 to `--max` (default 4) and leases the first one that has no
 lease and nothing in it:
 
-- A slot whose folder holds changes or untracked files, or whose HEAD has commits on no
-  remote (as free counts them), is skipped and named on stderr. hrn never cleans or
+- A slot whose folder holds changes or untracked files, or whose HEAD has commits that
+  a switch would strand (on no remote, local branch or tag), is skipped and named on
+  stderr. hrn never cleans or
   resets someone's files. Ignored files (build output) are never
   touched.
 - `--branch NAME` checks out the local branch of that name, or origin's branch of that
