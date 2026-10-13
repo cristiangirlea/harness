@@ -42,35 +42,67 @@ it. Nothing about it goes back into the history.
 
 ### Lean claude workers
 
-By default a claude worker starts the way Claude Code starts for you: with your user and
-local settings, so every plugin, skill, hook and MCP server you have installed, and your
-own `~/.claude/CLAUDE.md` and rules. On a small task that start-up is most of the context
-on every turn (#200). `hrn run --lean`, the `lean` field on a batch or eval spec or task,
-and the MCP `run` argument start it with only:
+By default a claude worker starts the way Claude Code starts for you, with every MCP
+server you have: your user-scope servers, the project's `.mcp.json`, the servers your
+plugins bring and your claude.ai connectors. Their tool definitions are context on every
+turn (#200). A lean worker starts with only the MCP servers in the run's `--mcp` files
+(and `~/.hrn/mcp.json`): hrn adds `--strict-mcp-config`, and nothing else changes.
 
-- the MCP servers in the run's `--mcp` files (and `~/.hrn/mcp.json`):
-  `--strict-mcp-config`, so no user-scope, project `.mcp.json`, plugin or claude.ai
-  connector servers;
-- the project's settings: `--setting-sources project`, so no `~/.claude/settings.json`
-  or `.claude/settings.local.json`, and with them no user plugins, hooks or permission
-  rules.
+What a lean worker keeps: all of your settings (user, project and local), so your
+`~/.claude/CLAUDE.md` and `~/.claude/rules`, the repository's `CLAUDE.md` and `.claude/rules`,
+your hooks, your plugins and their skills and commands, your own skills, and your
+subscription login. What it drops: every MCP server hrn did not pass, including the ones a
+plugin or a claude.ai connector provides (the plugin's skills stay). hrn's guard is the same
+either way: its `--disallowedTools` rules are command-line flags, not settings.
 
-What a lean worker still gets: the repository's own `CLAUDE.md` (and the `AGENTS.md` it
-imports with `@AGENTS.md`; Claude Code reads `AGENTS.md` only that way), the project's
-`.claude/settings.json`, `.claude/rules`, skills and hooks, and managed (organisation)
-settings and memory. What it no longer gets: your `~/.claude/CLAUDE.md` and
-`~/.claude/rules` (Claude Code 2.1.284 loads user memory only when `user` is a setting
-source), `CLAUDE.local.md`, your plugins and their skills, user skills, user hooks, and
-every MCP server hrn did not pass. It still logs in with your subscription. hrn's guard
-is the same either way: its `--disallowedTools` rules are command-line flags, not settings.
-A rule you keep only in `~/.claude` (how to write commits, what not to publish) does not
-reach a lean worker: a repository that relies on one puts it in its own `CLAUDE.md` or
-`AGENTS.md`.
-
+Lean is the default for `hrn batch` and `hrn eval` tasks that run on claude; a spec or task
+sets `"lean": false` to give its workers every MCP server (a task's `false` wins over a
+spec's `true`). The record of an attempt says `"lean": true` when the default applied. `hrn
+run` and the MCP `run` tool stay as they were: lean only with `--lean` or `"lean": true`.
 Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
-`apiKeyHelper`, never the subscription, and skips `CLAUDE.md` discovery. Lean is off by
-default. The api loop never reads Claude Code's settings, so lean changes nothing there; the
-codex, gemini and opencode backends say `lean: not enforced` and run as usual.
+`apiKeyHelper`, never the subscription. The api loop never reads Claude Code's settings, so
+lean changes nothing there; codex, gemini and opencode say `lean: not enforced` when it is
+asked for and run as usual (a batch's default does not ask them).
+
+Measured on 2026-10-13 (Claude Code 2.1.284, claude-sonnet-5-5, the owner's setup, one
+read-only question on this repository, two runs each; `context_tokens` is the context of the
+last turn):
+
+| Run | `context_tokens` | `cache_read_tokens` | `cache_write_tokens` | Turns |
+|---|---:|---:|---:|---:|
+| default | 61,617 | 88,349 | 34,724 | 2 |
+| default | 61,874 | 98,866 | 24,721 | 2 |
+| lean | 55,150 | 92,042 | 17,997 | 2 |
+| lean, `--compact-window 200000` | 55,051 | 92,043 | 17,898 | 2 |
+
+Lean took about 6.6K tokens (11%) off the context; the rest is the system prompt, built-in
+tools, and the settings, rules and skills lean now keeps. Claude Code already defers most
+MCP tool definitions until a tool is searched for, so the saving depends on how many
+servers you have and grows with every turn of a long run. The compaction window does
+nothing on a run this small; it accepted the value (`--autocompact 200000` in the
+recorded command line) and the run succeeded.
+
+Before #204, lean also passed `--setting-sources project`, which kept the user's
+`CLAUDE.md`, rules, plugins and skills out as well; workers then lost the owner's rules,
+which is why it was dropped.
+
+### Compaction window
+
+Claude Code compacts a conversation (summarises its history into one message) when the
+context nears the model's window. On a 1M-token model that is only at about 967K tokens, so a
+long run carries 300-400K tokens of context into every turn well before it compacts, and
+each of those turns reads them back from the cache. `compact_window` sets the threshold
+instead: `hrn run --compact-window 200000`, or `"compact_window": 200000` on a batch or eval
+spec or task and on the MCP `run` tool. It takes an integer from 100000 to 1000000, or
+`"auto"` (Claude Code's own choice), and is checked before the run starts; hrn passes it as
+`claude --autocompact <value>`. Unset, nothing is passed.
+
+The trade: every compaction is one expensive turn (the whole history is read to write the
+summary), and the summary loses detail the model may later want (exact error text, a file
+it read early). A lower window means smaller turns and more compactions. Set it for long
+runs whose early history matters little; leave it unset for short ones, which never reach
+it anyway. Only the claude backend applies it; the api loop (whose context editing does a
+similar job, see above), codex, gemini and opencode say `compact_window: not enforced`.
 
 ### Continuing a run
 
