@@ -447,7 +447,7 @@ func (s *server) lists() lists {
 	if err != nil {
 		msg := "Runs could not be listed."
 		if s.opt.Public == nil {
-			msg += " " + err.Error()
+			msg = "Runs could not be listed: " + err.Error()
 		}
 		l.Problems = append(l.Problems, msg)
 	}
@@ -466,7 +466,7 @@ func (s *server) lists() lists {
 	if err != nil {
 		msg := "Batches could not be listed."
 		if s.opt.Public == nil {
-			msg += " " + err.Error()
+			msg = "Batches could not be listed: " + err.Error()
 		}
 		l.Problems = append(l.Problems, msg)
 	}
