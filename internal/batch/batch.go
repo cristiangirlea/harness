@@ -1777,6 +1777,11 @@ func LoadResult(id string) (Result, error) {
 	return res, json.Unmarshal(data, &res)
 }
 
+// Head returns the repository's current commit before a batch merge starts.
+func Head(ctx context.Context, dir string) (string, error) {
+	return gitOut(ctx, dir, "rev-parse", "HEAD")
+}
+
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.CombinedOutput()

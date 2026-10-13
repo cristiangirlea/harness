@@ -97,8 +97,14 @@ func TestBatchShowMerge(t *testing.T) {
 	}
 
 	// Land both branches in the main checkout.
+	beforeOut, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v\n%s", err, beforeOut)
+	}
+	before := strings.TrimSpace(string(beforeOut))
 	merged := s.call(t, "batch_merge", `{"batch_id":"`+id+`"}`)
-	if merged.IsError || !strings.Contains(merged.Text(), "2 branch(es) merged") {
+	if merged.IsError || !strings.Contains(merged.Text(), "2 branch(es) merged") ||
+		!strings.Contains(merged.Text(), "git reset --hard "+before) || strings.Contains(merged.Text(), "ORIG_HEAD") {
 		t.Fatalf("merge = %s", merged.Text())
 	}
 	for _, f := range []string{"alpha.txt", "beta.txt"} {
