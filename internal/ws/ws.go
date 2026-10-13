@@ -28,6 +28,10 @@ const DefaultMax = 4
 
 const lockReason = "hrn ws slot"
 
+// createLockWait bounds how long a take waits for the slots' .create.lock,
+// and is the age past which that lock counts as left by a crash.
+var createLockWait = 2 * time.Minute
+
 // Lease is the JSON in <n>.lease: who holds the slot, since when, and the
 // branch they asked for (empty: detached). A lease with a PID is stale once
 // that process has exited; one without is held until Free.
@@ -426,10 +430,15 @@ func removeOwn(p string) error {
 func prepare(ctx context.Context, main, path, base string) (skip string, err error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
+		unlock, err := lockCreate(ctx, filepath.Dir(path))
+		if err != nil {
+			return "", err
+		}
+		defer unlock()
 		if _, err := gitOut(ctx, main, "worktree", "add", "--detach", path, base); err != nil {
 			return err.Error(), nil
 		}
-		_, err := gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path)
+		_, err = gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path)
 		return "", err
 	}
 	if err != nil {
@@ -438,17 +447,8 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 	if !info.IsDir() {
 		return "it is not a folder", nil
 	}
-	wt, ok, err := worktreeAt(ctx, main, path)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "it is not a worktree of this repository", nil
-	}
-	if !wt.locked {
-		if _, err := gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path); err != nil {
-			return "", err
-		}
+	if skip, err := lockExisting(ctx, main, path); err != nil || skip != "" {
+		return skip, err
 	}
 	lines, err := changes(ctx, path)
 	if err != nil {
@@ -469,6 +469,71 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 		return fmt.Sprintf("it holds %d %s on no remote, branch or tag", count, word), nil
 	}
 	return "", nil
+}
+
+// lockExisting checks that path is a worktree of this repository and locks
+// it if it is not locked yet, under the create lock, since listing and
+// locking worktrees fail while another take is adding one.
+func lockExisting(ctx context.Context, main, path string) (skip string, err error) {
+	unlock, err := lockCreate(ctx, filepath.Dir(path))
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	wt, ok, err := worktreeAt(ctx, main, path)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "it is not a worktree of this repository", nil
+	}
+	if !wt.locked {
+		if _, err := gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path); err != nil {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
+// lockCreate creates dir's .create.lock with O_EXCL, waiting for whoever
+// holds it, and returns the function that removes it. Takes, in this process
+// or another, hold it while they add, list or lock worktrees: git writes a
+// new worktree's admin folder in steps, and every git command that lists the
+// worktrees dies on one half written (issue #188).
+//
+// A lock older than createLockWait is taken as left by a crash and removed,
+// since its holder only runs a few git commands. Removing one a slow holder
+// still uses is safe enough: the lease, not this lock, keeps two takes off
+// one slot, so the worst case is a slot skipped as before this lock existed.
+func lockCreate(ctx context.Context, dir string) (unlock func(), err error) {
+	p := filepath.Join(dir, ".create.lock")
+	deadline := time.Now().Add(createLockWait)
+	delay := 10 * time.Millisecond
+	for {
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			f.Close()
+			return func() { removeOwn(p) }, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+		if info, err := os.Stat(p); err == nil && time.Since(info.ModTime()) > createLockWait {
+			if err := removeOwn(p); err != nil {
+				return nil, fmt.Errorf("removing %s, left by a crash: %w", p, err)
+			}
+			continue
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("waited %s for %s, which other takes kept holding", createLockWait, p)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, 200*time.Millisecond)
+	}
 }
 
 // stranded counts the commits at HEAD that a switch away would leave on no

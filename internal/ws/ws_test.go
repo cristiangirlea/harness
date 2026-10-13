@@ -661,6 +661,97 @@ func TestConcurrentTakesNeverShareASlot(t *testing.T) {
 	}
 }
 
+// halfAddedWorktree makes the admin folder another `git worktree add` leaves
+// for a moment: its commondir file created but not yet written. Git commands
+// that list the worktrees (add, list, lock) die on it (issue #188).
+func (f *fixture) halfAddedWorktree() string {
+	f.t.Helper()
+	admin := filepath.Join(f.repo, ".git", "worktrees", "half")
+	f.write(admin, "gitdir", filepath.ToSlash(filepath.Join(f.root, "half", ".git"))+"\n")
+	f.write(admin, "commondir", "")
+	return admin
+}
+
+func (f *fixture) createLock() string {
+	f.t.Helper()
+	p := filepath.Join(f.repo, ".hrn", "slots", ".create.lock")
+	f.write(filepath.Dir(p), ".create.lock", "")
+	return p
+}
+
+func TestTakeWaitsWhileAnotherTakeIsCreatingASlot(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run("existing="+strconv.FormatBool(existing), func(t *testing.T) {
+			f := newFixture(t)
+			if existing {
+				got := f.take(TakeOptions{Holder: "a", NoFetch: true})
+				if _, err := Free(context.Background(), got.Path); err != nil {
+					t.Fatal(err)
+				}
+				git(t, f.repo, "worktree", "unlock", got.Path)
+			}
+			lock := f.createLock()
+			admin := f.halfAddedWorktree()
+			done := make(chan error, 1)
+			go func() {
+				_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "b", Max: 1, NoFetch: true})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				t.Fatalf("take did not wait for the create lock: %v", err)
+			case <-time.After(time.Second):
+			}
+			// The other take finishes: its worktree is whole, its lock gone.
+			if err := os.RemoveAll(admin); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(lock); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("take after the lock was released: %v", err)
+			}
+			if out := git(t, f.repo, "worktree", "list", "--porcelain"); !strings.Contains(out, "locked "+lockReason) {
+				t.Errorf("slot is not locked:\n%s", out)
+			}
+			if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("create lock left behind: %v", err)
+			}
+		})
+	}
+}
+
+func TestTakeTakesOverACreateLockLeftByACrash(t *testing.T) {
+	f := newFixture(t)
+	lock := f.createLock()
+	old := time.Now().Add(-createLockWait - time.Minute)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatal(err)
+	}
+	f.take(TakeOptions{Holder: "a", NoFetch: true})
+	if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("create lock left behind: %v", err)
+	}
+}
+
+func TestTakeWaitingForTheCreateLockStopsWithItsContext(t *testing.T) {
+	f := newFixture(t)
+	lock := f.createLock()
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, err := Take(ctx, TakeOptions{Repo: f.repo, Holder: "a", NoFetch: true})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("take while the create lock is held: %v, want the context's deadline", err)
+	}
+	if _, err := os.Stat(lock); err != nil {
+		t.Errorf("a waiting take removed someone else's create lock: %v", err)
+	}
+	if _, err := os.Stat(leasePath(SlotsDir(f.repo), 1)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("lease left behind: %v", err)
+	}
+}
+
 func TestFreeOutsideASlotIsRefused(t *testing.T) {
 	f := newFixture(t)
 	f.take(TakeOptions{Holder: "a"})
