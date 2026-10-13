@@ -104,8 +104,10 @@ hrn watch --public https://harness.example.com --access-team TEAM.cloudflareacce
 
 All three flags are required together; `--public` cannot be combined with `--lan`.
 Watch still listens only on loopback. In this mode it accepts only the public Host
-and HTTPS Origin, and verifies the Access JWT on every request, including static
-assets and event streams. It treats visitors as remote even though `cloudflared`
+and verifies the Access JWT on every request, including static assets and event
+streams. A page navigation from elsewhere, such as the Access login redirect or an
+email link, opens the page; requests from other sites that are not page navigations
+remain refused. It treats visitors as remote even though `cloudflared`
 connects from the same computer: the page omits the hrn home path and phone hints,
 and `/voice` is unavailable. The terminal prints the public URL and the access
 log path. Each request appends one JSON line to `$HRN_HOME/watch-access.log`

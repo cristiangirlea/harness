@@ -665,6 +665,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: issue #226 (PR pending): public watch accepts GET and HEAD page navigations
+  after Cloudflare Access login even when the browser sends a cross-site fetch site or
+  `Origin: null`. The public Host and Access token checks still apply; other requests
+  retain the existing origin checks, and local mode is unchanged.
 - 2026-10-13: the guard's `gh api` method in quotes (PR #223). After PR #213 a quoted method
   still got through `gh-publish`: the shell strips `"DELETE"`, `'delete'`, `\"DELETE\"` and
   `$'delete'` before gh sees them. Decided: quotes, a backslash and `$` may stand between the

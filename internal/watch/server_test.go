@@ -158,6 +158,7 @@ func TestRequestsFromOutsideAreRefused(t *testing.T) {
 		{"lan address", "192.168.1.5:8089", nil, 403},
 		{"no host", "", nil, 403},
 		{"cross-site fetch", "127.0.0.1:8089", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
+		{"cross-site navigation", "127.0.0.1:8089", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
 		{"foreign origin", "127.0.0.1:8089", map[string]string{"Origin": "http://evil.example"}, 403},
 		{"own origin", "127.0.0.1:8089", map[string]string{"Origin": "http://127.0.0.1:8089"}, 200},
 	} {
