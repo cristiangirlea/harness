@@ -102,7 +102,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	// leaves a resumable history behind.
 	var req apiRequest
 	saveConversation := func() {
-		if task.RunDir == "" {
+		if task.RunDir == "" || task.Durable != nil {
 			return
 		}
 		msgs := resumable(req.Messages)
@@ -126,6 +126,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		return finish(&res, started)
 	}
 
+	if task.Durable != nil && len(task.MCP) != 0 {
+		return fail(StatusError, errors.New("durable MCP execution requires an isolated executor; local MCP subprocesses are unsupported"))
+	}
 	client, err := b.client()
 	if err != nil {
 		return fail(StatusError, err)
@@ -253,22 +256,68 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 	}
 
-	for turn := 1; ; turn++ {
+	durable, err := prepareDurable(task, &req, &res)
+	if err != nil {
+		res.RecoveryRequired = errors.Is(err, ErrRecoveryRequired)
+		return fail(StatusError, err)
+	}
+	firstTurn := 1
+	if durable != nil {
+		// Generic HTTP retries can repeat requests whose effects are unknown.
+		// The local path retains its historical retry behavior.
+		client.maxRetries = 0
+		firstTurn = durable.checkpoint.NextTurn
+		if durable.checkpoint.Finished {
+			return durable.checkpoint.Result
+		}
+		if !durable.checkpoint.Deadline.IsZero() {
+			var deadlineCancel context.CancelFunc
+			ctx, deadlineCancel = context.WithDeadline(ctx, durable.checkpoint.Deadline)
+			defer deadlineCancel()
+		}
+	}
+	durableFailure := func(err error) Result {
+		res.RecoveryRequired = true
+		return fail(StatusError, fmt.Errorf("durable execution: %w", err))
+	}
+	for turn := firstTurn; ; turn++ {
 		if turn > maxTurns {
 			return fail(StatusMaxTurns, fmt.Errorf("stopped after %d turns", maxTurns))
 		}
-		if task.MaxCostUSD > 0 && res.CostUSD >= task.MaxCostUSD {
+		if task.MaxCostUSD > 0 && res.CostUSD >= task.MaxCostUSD && (durable == nil || len(durable.checkpoint.Response) == 0) {
 			return fail(StatusBudget, fmt.Errorf("cost estimate $%.4f reached the $%.4f limit after turn %d", res.CostUSD, task.MaxCostUSD, res.Turns))
 		}
 		res.Turns = turn
 
-		msg, err := client.stream(ctx, req, onDelta, onBlock)
+		var msg *apiResponse
+		var err error
+		restoredResponse := durable != nil && len(durable.checkpoint.Response) != 0
+		if restoredResponse {
+			msg, err = durable.response()
+			if err != nil {
+				return durableFailure(err)
+			}
+		} else {
+			if durable != nil {
+				if err := ctx.Err(); err != nil {
+					return fail(stopStatus(ctx), err)
+				}
+				durable.checkpoint.Pending = &PendingOperation{Kind: "model", ID: fmt.Sprintf("turn-%d", turn)}
+				if err := durable.persist(ctx, "model_intent", req, res); err != nil {
+					return durableFailure(err)
+				}
+			}
+			msg, err = client.stream(ctx, req, onDelta, onBlock)
+		}
+		if err != nil && durable != nil {
+			return durableFailure(err)
+		}
 		if err != nil && dropContextEdits(&req, err) {
 			// A beta hrn sends by default must never make every run fail.
 			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
 			msg, err = client.stream(ctx, req, onDelta, onBlock)
 		}
-		if msg != nil {
+		if msg != nil && !restoredResponse {
 			turn := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens,
 				CacheRead: msg.Usage.CacheReadInputTokens, CacheWrite: msg.Usage.CacheCreationInputTokens}
 			res.ContextTokens = turn.InputTokens + turn.CacheRead + turn.CacheWrite
@@ -301,7 +350,21 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "server context management, turn " + strconv.Itoa(turn) + ": " + compact.String()})
 		}
 		// History is append-only: the assistant turn goes back exactly as received.
-		req.Messages = append(req.Messages, apiMessage{Role: "assistant", Content: msg.Content})
+		if !restoredResponse {
+			req.Messages = append(req.Messages, apiMessage{Role: "assistant", Content: msg.Content})
+			if durable != nil {
+				data, err := json.Marshal(msg)
+				if err != nil {
+					return durableFailure(err)
+				}
+				durable.checkpoint.Response = data
+				durable.checkpoint.InvalidInput = msg.invalidInput
+				durable.checkpoint.Pending = nil
+				if err := durable.persist(ctx, "model_response", req, res); err != nil {
+					return durableFailure(err)
+				}
+			}
+		}
 
 		var calls []block
 		var text strings.Builder
@@ -324,15 +387,48 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		case "max_tokens":
 			return fail(StatusError, errors.New("response hit max_tokens"))
 		case "pause_turn":
+			if durable != nil {
+				durable.checkpoint.Response = nil
+				durable.checkpoint.InvalidInput = nil
+				durable.checkpoint.ToolResults = nil
+				durable.checkpoint.NextTurn = turn + 1
+				if err := durable.persist(ctx, "turn_complete", req, res); err != nil {
+					return durableFailure(err)
+				}
+			}
 			continue
 		case "tool_use":
-			results := b.runTools(ctx, ws, task, calls, msg.invalidInput, byName, emit)
+			var results []block
+			if durable == nil {
+				results = b.runTools(ctx, ws, task, calls, msg.invalidInput, byName, emit)
+			} else {
+				results, err = durable.runTools(ctx, ws, task, calls, msg.invalidInput, byName, emit, req, &res)
+				if err != nil {
+					return durableFailure(err)
+				}
+			}
 			req.Messages = append(req.Messages, apiMessage{Role: "user", Content: results})
 		default:
 			res.Status = StatusOK
 			res.Final = strings.TrimSpace(text.String())
+			if durable != nil {
+				durable.checkpoint.Finished = true
+				if err := durable.persist(ctx, "finished", req, res); err != nil {
+					return durableFailure(err)
+				}
+				return durable.checkpoint.Result
+			}
 			saveConversation()
 			return finish(&res, started)
+		}
+		if durable != nil {
+			durable.checkpoint.Response = nil
+			durable.checkpoint.InvalidInput = nil
+			durable.checkpoint.ToolResults = nil
+			durable.checkpoint.NextTurn = turn + 1
+			if err := durable.persist(ctx, "turn_complete", req, res); err != nil {
+				return durableFailure(err)
+			}
 		}
 	}
 }

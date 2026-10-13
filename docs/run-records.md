@@ -22,6 +22,9 @@
   claude or codex `session` id, and for a `limited` run `limit_resets`, when its plan's
   limit lifts
 
+`result.json` includes `recovery_required: true` when a durable api operation needs
+reconciliation before it can resume; the field is omitted otherwise.
+
 `result.json` also includes `context_tokens` when known: the last model call's input
 tokens, including cache reads and writes, rather than the sum across the run. The
 api backend records its last message's usage; claude records its main loop's last assistant
