@@ -63,6 +63,9 @@ settings and memory. What it no longer gets: your `~/.claude/CLAUDE.md` and
 source), `CLAUDE.local.md`, your plugins and their skills, user skills, user hooks, and
 every MCP server hrn did not pass. It still logs in with your subscription. hrn's guard
 is the same either way: its `--disallowedTools` rules are command-line flags, not settings.
+A rule you keep only in `~/.claude` (how to write commits, what not to publish) does not
+reach a lean worker: a repository that relies on one puts it in its own `CLAUDE.md` or
+`AGENTS.md`.
 
 Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
 `apiKeyHelper`, never the subscription, and skips `CLAUDE.md` discovery. Lean is off by
