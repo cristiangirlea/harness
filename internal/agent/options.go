@@ -303,10 +303,10 @@ func (w CompactWindow) check() error {
 	if w == "" || w == "auto" {
 		return nil
 	}
-	if n, err := strconv.Atoi(string(w)); err == nil && n >= minCompactWindow && n <= maxCompactWindow {
+	if n, err := strconv.Atoi(string(w)); err == nil && strconv.Itoa(n) == string(w) && n >= minCompactWindow && n <= maxCompactWindow {
 		return nil
 	}
-	return fmt.Errorf("compact_window %q: want an integer from %d to %d, or \"auto\"", string(w), minCompactWindow, maxCompactWindow)
+	return fmt.Errorf("compact_window %q: want a plain decimal integer from %d to %d (no sign or leading zeros), or \"auto\"", string(w), minCompactWindow, maxCompactWindow)
 }
 
 func (w CompactWindow) String() string { return string(w) }

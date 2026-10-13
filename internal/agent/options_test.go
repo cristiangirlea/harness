@@ -176,7 +176,7 @@ func TestCompactWindow(t *testing.T) {
 			t.Errorf("%s is in range: %v", v, err)
 		}
 	}
-	for _, v := range []string{"99999", "1000001", "0", "-5", "200k", "AUTO"} {
+	for _, v := range []string{"99999", "1000001", "0", "-5", "200k", "AUTO", "0200000", "+200000"} {
 		if err := (Options{CompactWindow: CompactWindow(v)}).Validate(); err == nil || !strings.Contains(err.Error(), "compact_window") {
 			t.Errorf("%s must be refused naming compact_window, got %v", v, err)
 		}
