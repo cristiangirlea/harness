@@ -393,6 +393,25 @@ func TestReleaseRefusesALeaseThatIsNoLongerTheHolders(t *testing.T) {
 	}
 }
 
+func TestReleaseRefusesADetachedCommitOnNoRefAndKeepsTheLease(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	git(t, got.Path, "switch", "-q", "--detach")
+	head := f.commit(got.Path, "detached.txt")
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+	if err := Release(context.Background(), got, base); err == nil || !strings.Contains(err.Error(), "1 commit on no remote, branch or tag") {
+		t.Errorf("release of a detached commit no ref holds: %v", err)
+	}
+	if h := git(t, got.Path, "rev-parse", "HEAD"); h != head {
+		t.Errorf("HEAD moved to %s, want the detached %s", h, head)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("a refused release must leave the lease:\n%s\nwant\n%s", after, before)
+	}
+}
+
 func TestReleaseOfALeaseThatChangedLeavesHEADWhereItIs(t *testing.T) {
 	f := newFixture(t)
 	base := git(t, f.repo, "rev-parse", "HEAD")

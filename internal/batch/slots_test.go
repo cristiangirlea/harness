@@ -306,6 +306,37 @@ func TestACommitFailureInASlotKeepsItLeasedAndSaysSo(t *testing.T) {
 	}
 }
 
+func TestASlotWhoseAgentCommittedOnADetachedHEADIsKeptAndSkipped(t *testing.T) {
+	dir := initRepo(t)
+	var head string
+	setHook(t, func(task agent.Task) {
+		git(t, task.Dir, "switch", "-q", "--detach")
+		writeFile(t, filepath.Join(task.Dir, "detached.txt"), "x\n")
+		git(t, task.Dir, "add", "detached.txt")
+		git(t, task.Dir, "commit", "-q", "-m", "detached")
+		head = git(t, task.Dir, "rev-parse", "HEAD")
+	})
+	res, _ := run(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-hook", Tasks: []Task{{ID: "loose", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Slot != 1 || !strings.Contains(tr.Error, "slot 1 kept") || !strings.Contains(tr.Error, "no remote, branch or tag") {
+		t.Fatalf("task = %+v", tr)
+	}
+	if h := git(t, tr.Worktree, "rev-parse", "HEAD"); h != head {
+		t.Errorf("the slot's HEAD moved to %s, want the agent's detached commit %s", h, head)
+	}
+	if !exists(filepath.Join(dir, ".hrn", "slots", "1.lease")) {
+		t.Fatal("the slot holding a commit on no ref stays leased")
+	}
+	os.Remove(filepath.Join(dir, ".hrn", "slots", "1.lease")) // as when hrn exits
+	next, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Holder: "next", NoFetch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.N != 2 || !strings.Contains(strings.Join(next.Notes, "\n"), "slot 1") {
+		t.Errorf("the next take should skip slot 1: got slot %d, notes %q", next.N, next.Notes)
+	}
+}
+
 func TestFreshWorktreesAreMadePerTaskAsBefore(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Worktrees: "fresh", Tasks: []Task{{ID: "old", Prompt: "p"}}})

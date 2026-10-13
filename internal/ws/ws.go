@@ -639,8 +639,8 @@ func Free(ctx context.Context, path string) (Taken, error) {
 // Release gives back a slot that Take handed out, as Free does, but for a
 // holder whose work stays on a local branch by design (a batch task's
 // hrn/<id>, which batch merge and batch rm read): it does not ask for a push.
-// It refuses, and leaves the lease, while the slot holds changes or untracked
-// files, or when the lease is no longer exactly t's; otherwise it detaches
+// It refuses, and leaves the lease, while the slot holds changes, untracked
+// files or commits at HEAD on no remote, branch or tag, or when the lease is no longer exactly t's; otherwise it detaches
 // HEAD at detachAt (empty: where HEAD is) and removes the lease, both under
 // the slot's takeover lock.
 func Release(ctx context.Context, t Taken, detachAt string) error {
@@ -683,6 +683,17 @@ func Release(ctx context.Context, t Taken, detachAt string) error {
 	}
 	if len(lines) > 0 {
 		return fmt.Errorf("slot %d holds changes or untracked files, so it stays taken: %s", n, firstFew(lines))
+	}
+	count, err := stranded(ctx, slot)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		word := "commits"
+		if count == 1 {
+			word = "commit"
+		}
+		return fmt.Errorf("slot %d holds %d %s on no remote, branch or tag, so it stays taken", n, count, word)
 	}
 	detach := []string{"switch", "--detach"}
 	if detachAt != "" {
