@@ -71,6 +71,13 @@ Usage:
                                  idle past --idle or, on a drive below --free-below, past --min-idle; --apply
                                  removes them, and the worktrees' branches. PATH is a repository or a folder of
                                  them (default: the current one)
+  hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]
+                                 lease a reusable worktree of the repository (<main checkout>/.hrn/slots/<n>, up to
+                                 --max, default 4), on --branch or detached at origin's default branch, fetched, and
+                                 print only its path: cd "$(hrn ws take --branch fix-x)"
+  hrn ws free [PATH]              give the slot back once its work is pushed: HEAD detached, lease removed
+  hrn ws list [--repo DIR] [--json]
+                                 the slots: who holds each, since when, its branch and what is in it
 
 Run flags:
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
@@ -149,6 +156,8 @@ func main() {
 		err = cmdBot(os.Args[2:])
 	case "gc":
 		code, err = cmdGC(os.Args[2:])
+	case "ws":
+		code, err = cmdWS(os.Args[2:])
 	case "version", "--version", "-V":
 		info, _ := debug.ReadBuildInfo()
 		fmt.Println(versionLine(info))
