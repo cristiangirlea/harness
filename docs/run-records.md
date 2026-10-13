@@ -52,7 +52,7 @@ run without `--older-than`. Records cite each other, so it works from the top do
 never breaks a reference: an eval it keeps keeps its batch and its judge's runs, a batch it keeps keeps every
 run it made, a run it keeps keeps the run it `--continue`d from, and a batch whose
 worktrees are still on disk (for a task that ran in a slot, which outlives the batch, or
-that was waiting for one: whose branch is still there) stays with its runs, because `hrn batch rm` needs that record
+that was waiting for one: whose branch is still there and, its record's `branch_made` says, the task's own) stays with its runs, because `hrn batch rm` needs that record
 to remove them (it says so, and names the command). A run with no result that wrote in
 the last hour is taken to be still running and stays; a directory in `runs/` that is not
 a run id is never touched. If any batch or eval record cannot be read, prune refuses:

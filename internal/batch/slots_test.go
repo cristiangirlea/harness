@@ -231,6 +231,11 @@ func TestATaskWaitsForAFreeSlotAndThenRuns(t *testing.T) {
 		}
 		waits = append(waits, e.Text)
 		once.Do(func() {
+			// The record says the branch is this task's before it waits.
+			saved, _, err := List()
+			if err != nil || len(saved) != 1 || !saved[0].Tasks[0].BranchMade || saved[0].Tasks[0].Status != StatusRunning {
+				t.Errorf("record while waiting = %+v (%v), want a running task with branch_made", saved, err)
+			}
 			go func() {
 				time.Sleep(100 * time.Millisecond)
 				if err := ws.Release(context.Background(), held[2], ""); err != nil {
@@ -270,8 +275,8 @@ func TestATaskWaitingForASlotIsCanceledWhenTheContextEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr := res.Tasks[0]
-	if tr.Status != StatusCanceled || len(tr.Attempts) != 0 || tr.Slot != 0 {
-		t.Fatalf("task = %+v", tr)
+	if tr.Status != StatusCanceled || len(tr.Attempts) != 0 || tr.Slot != 0 || tr.BranchMade {
+		t.Fatalf("task = %+v, want no branch_made once its branch is dropped", tr)
 	}
 	if b := git(t, dir, "branch", "--list", "hrn/patient"); b != "" {
 		t.Errorf("a task that never got a slot leaves no branch: %q", b)
@@ -449,7 +454,7 @@ func TestASlotBatchRemainsWhileItsBranchesDo(t *testing.T) {
 func TestABranchMadeWhileItsTaskWaitedForASlotIsRemovedAndKeepsTheRecord(t *testing.T) {
 	dir := initRepo(t)
 	git(t, dir, "branch", "hrn/waiting")
-	res := Result{ID: "crashed", Dir: dir, Tasks: []TaskResult{{ID: "waiting", Branch: "hrn/waiting", Status: StatusRunning, Attempts: []Attempt{}}}}
+	res := Result{ID: "crashed", Dir: dir, Tasks: []TaskResult{{ID: "waiting", Branch: "hrn/waiting", Status: StatusRunning, BranchMade: true, Attempts: []Attempt{}}}}
 	if !WorktreesRemain(res) {
 		t.Error("the waiting task's branch is still there, so its record must stay")
 	}
@@ -471,6 +476,25 @@ func TestABranchMadeWhileItsTaskWaitedForASlotIsRemovedAndKeepsTheRecord(t *test
 	}
 	if WorktreesRemain(res) {
 		t.Error("with the branch gone the record may go")
+	}
+}
+
+// Run saves every task as running before any branch exists, so a batch that
+// crashed then, before it found hrn/<id> taken, has a running slotless task
+// that never made a branch: another batch's branch by that name stays, and
+// does not keep this record.
+func TestRemoveLeavesAnotherBatchsBranchForATaskThatNeverMadeIt(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "branch", "hrn/same")
+	res := Result{ID: "crashed-early", Dir: dir, Tasks: []TaskResult{{ID: "same", Branch: "hrn/same", Status: StatusRunning, Attempts: []Attempt{}}}}
+	if WorktreesRemain(res) {
+		t.Error("another batch's branch must not keep this record")
+	}
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/same"); b == "" {
+		t.Error("another batch's branch must stay")
 	}
 }
 

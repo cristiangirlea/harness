@@ -106,16 +106,19 @@ type Result struct {
 }
 
 type TaskResult struct {
-	ID       string        `json:"id"`
-	Prompt   string        `json:"prompt"`
-	Status   Status        `json:"status"`
-	Branch   string        `json:"branch"`
-	Worktree string        `json:"worktree"`
-	Slot     int           `json:"slot,omitempty"`   // the ws slot Worktree is; 0 for a fresh worktree
-	Commit   string        `json:"commit,omitempty"` // the agent's changes; empty when it changed nothing
-	Attempts []Attempt     `json:"attempts"`
-	Error    string        `json:"error,omitempty"`
-	Duration time.Duration `json:"duration_ns"`
+	ID       string `json:"id"`
+	Prompt   string `json:"prompt"`
+	Status   Status `json:"status"`
+	Branch   string `json:"branch"`
+	Worktree string `json:"worktree"`
+	Slot     int    `json:"slot,omitempty"` // the ws slot Worktree is; 0 for a fresh worktree
+	// BranchMade says this task made Branch (takeSlot saves it before it
+	// waits for a slot): a slotless task owns its branch only with it.
+	BranchMade bool          `json:"branch_made,omitempty"`
+	Commit     string        `json:"commit,omitempty"` // the agent's changes; empty when it changed nothing
+	Attempts   []Attempt     `json:"attempts"`
+	Error      string        `json:"error,omitempty"`
+	Duration   time.Duration `json:"duration_ns"`
 }
 
 type Attempt struct {
@@ -532,7 +535,7 @@ func fence(s string) string {
 
 func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult)) TaskResult {
 	started := time.Now()
-	tr.Status, tr.Attempts, tr.Commit, tr.Error = "", []Attempt{}, "", ""
+	tr.Status, tr.Attempts, tr.Commit, tr.Error, tr.BranchMade = "", []Attempt{}, "", "", false
 	slots := spec.Worktrees == WorktreesSlots
 	var slot *ws.Taken // the slot this task holds, given back when it ends
 	finish := func(status Status, text string) TaskResult {
@@ -644,8 +647,15 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					return fail(err)
 				}
 			case slots:
-				got, err := takeSlot(ctx, spec, batchID, kept, t.ID, tr.Branch, root, base, notify)
+				made := func() {
+					tr.BranchMade = true
+					cur := tr
+					cur.Status = StatusRunning
+					progress(cur) // the branch is this task's from now on
+				}
+				got, err := takeSlot(ctx, spec, batchID, kept, t.ID, tr.Branch, root, base, notify, made)
 				if err != nil {
+					tr.BranchMade = false // takeSlot dropped it
 					return fail(err)
 				}
 				slot = &got
@@ -727,11 +737,15 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 // While every slot is taken it waits, saying so whenever who holds them
 // changes, and looks again every slotPoll until ctx ends; when none can come
 // free (only skipped slots and ones this batch kept) it fails instead. A task that gets
-// no slot leaves no branch.
-func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, notify func(Event)) (ws.Taken, error) {
+// no slot leaves no branch. made is called once the branch exists, before any
+// wait, to save that the branch is the task's: hrn batch rm deletes a slotless
+// task's branch only on that proof. A crash between the two leaves a branch
+// nothing deletes, which is the safe way round: never someone else's branch.
+func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, notify func(Event), made func()) (ws.Taken, error) {
 	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
 		return ws.Taken{}, err
 	}
+	made()
 	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: "batch " + batchID + " task " + id,
 		PID: os.Getpid(), Max: max(spec.Parallel, ws.DefaultMax), NoFetch: true}
 	var said string
@@ -997,10 +1011,12 @@ func Remove(res Result) error {
 // branchOnly reports whether a task's branch is all hrn batch rm removes of
 // it: a slot task, or one whose record was saved while it waited for a slot
 // (takeSlot makes the branch first) and never got one, as when hrn crashed
-// then. A task that ended without a worktree made no branch: one that was
-// there already is what failed it.
+// then. Without a slot, only BranchMade proves the branch is the task's: Run
+// saves every task as running before any branch exists, and a branch there
+// already (another batch's) is what fails it. Old records lack the field, so
+// they never claim a branch.
 func branchOnly(tr TaskResult) bool {
-	return tr.Slot != 0 || (tr.Worktree == "" && tr.Status == StatusRunning)
+	return tr.Slot != 0 || (tr.Worktree == "" && tr.Status == StatusRunning && tr.BranchMade)
 }
 
 // removeSlotBranch deletes a slot task's branch, unless a worktree has it
