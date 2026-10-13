@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: PR #TBD (closes #161): a batch waited while sessions (`hrn ws take`) held every
+- 2026-10-13: PR #194 (closes #161): a batch waited while sessions (`hrn ws take`) held every
   slot, for as long as a person kept one. Decided: a batch's bound is `max(parallel, 4)` slots
   of its own, running tasks' and kept ones together, counted from the leases that name its
   pid (`ws.CountLeases`) before every take; at the bound a task waits for a running task's
