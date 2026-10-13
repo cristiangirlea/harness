@@ -284,6 +284,31 @@ func TestGCApplyNamesMovedCacheWithNanosecondsAndReportsMoveFailure(t *testing.T
 	}
 }
 
+func TestGCApplyReturnsMovedCacheWhenAProbeFindsBuild(t *testing.T) {
+	root := tempRoot(t)
+	cache := tagged(t, filepath.Join(root, "target"), 30*time.Hour, 10)
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	previous := movedCacheInUse
+	var probed string
+	movedCacheInUse = func(path string) string {
+		probed = path
+		return "in use: debug/.cargo-lock is held"
+	}
+	t.Cleanup(func() { movedCacheInUse = previous })
+
+	removed, errs := ApplyCaches(context.Background(), cs)
+	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "kept, a build started") {
+		t.Fatalf("removed %+v, errors %v", removed, errs)
+	}
+	if !strings.HasPrefix(filepath.Base(probed), ".gc-") || !isCacheDir(cache) || !exists(filepath.Join(cache, "debug", "deps", "libx.rlib")) {
+		t.Errorf("moved probe %q; original cache was not put back whole", probed)
+	}
+	leftovers, err := filepath.Glob(filepath.Join(root, ".gc-*-target"))
+	if err != nil || len(leftovers) != 0 {
+		t.Errorf("moved folders after rollback: %q, %v", leftovers, err)
+	}
+}
+
 func TestDiskFreeNamesTheVolumeAndItsFreeSpace(t *testing.T) {
 	root := tempRoot(t)
 	sub := filepath.Join(root, "sub")

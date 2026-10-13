@@ -27,6 +27,10 @@ var movedCachePath = func(path string) string {
 // immediately after a successful move.
 var renameCache = os.Rename
 
+// movedCacheInUse is replaceable by tests that model a build starting just
+// after the move; production probes the moved cache's profile locks.
+var movedCacheInUse = inUse
+
 // Cache is one build cache, a folder tagged with CACHEDIR.TAG (Cargo writes
 // one into every target folder), and what the cache pass decided about it.
 type Cache struct {
@@ -125,6 +129,14 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 		moved := movedCachePath(c.Path)
 		if err := renameCache(c.Path, moved); err != nil {
 			errs = append(errs, fmt.Errorf("%s: kept, it could not be moved aside: %s", c.Path, firstLine(err.Error())))
+			continue
+		}
+		if why := movedCacheInUse(moved); why != "" {
+			if err := os.Rename(moved, c.Path); err != nil {
+				errs = append(errs, fmt.Errorf("%s (moved to %s): a build started, but it could not be moved back: %w", c.Path, moved, err))
+			} else {
+				errs = append(errs, fmt.Errorf("%s: kept, a build started: %s", c.Path, why))
+			}
 			continue
 		}
 		if err := removeMovedCache(moved); err != nil {
