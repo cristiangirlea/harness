@@ -665,6 +665,13 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: a reused process id does not hold a slot (#231, PR #248). Windows can
+  reuse a pid soon after its holder exits. Decided: record the holder's process start
+  identity in the lease and compare it exactly on Windows and Linux; a different start
+  means the live pid does not hold the lease. A wall-clock comparison with the lease's
+  taken time could give a live holder's slot away after the clock steps backward.
+  Leases without a start identity, or whose current identity cannot be read, use pid
+  liveness as before.
 - 2026-10-13: CONTRIBUTING.md and immutable tags (#197, PR #247). Since ruleset 24992042 a
   pushed `v*` tag cannot be moved or deleted. Decided: the release section says so, and that a
   wrong tag or a release needing a code fix takes a new version, while a workflow that
