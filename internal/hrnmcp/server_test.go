@@ -44,7 +44,14 @@ func (stubBackend) Run(_ context.Context, task agent.Task, emit func(agent.Event
 	return agent.Result{Backend: "stub", Model: "stub-1", Status: agent.StatusOK, Final: "stub says: " + task.Prompt, Turns: 1, InputTokens: 10, OutputTokens: 5}
 }
 
-func init() { agent.Register(stubBackend{}) }
+// leanBackend is a stub that applies lean, as claude does, so a test can tell
+// whether a caller turned lean on by default.
+type leanBackend struct{ stubBackend }
+
+func (leanBackend) Name() string      { return "stub-lean" }
+func (leanBackend) AppliesLean() bool { return true }
+
+func init() { agent.Register(stubBackend{}); agent.Register(leanBackend{}) }
 
 type session struct {
 	cl       *mcp.Client
@@ -321,13 +328,13 @@ func TestRunPassesNoContextEdits(t *testing.T) {
 
 func TestRunPassesLean(t *testing.T) {
 	s := connect(t, t.TempDir())
-	res := s.call(t, "run", `{"prompt":"x","backend":"stub","lean":true}`)
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub-lean","lean":true}`)
 	id := res.StructuredContent.(map[string]any)["run_id"].(string)
 	if rec, err := runlog.Load(id); err != nil || !rec.Task.IsLean() {
 		t.Fatalf("lean should reach the task: %+v err=%v", rec.Task, err)
 	}
 	// Like hrn run, the tool is not lean unless asked.
-	res = s.call(t, "run", `{"prompt":"x","backend":"stub"}`)
+	res = s.call(t, "run", `{"prompt":"x","backend":"stub-lean"}`)
 	id = res.StructuredContent.(map[string]any)["run_id"].(string)
 	if rec, err := runlog.Load(id); err != nil || rec.Task.Lean != nil {
 		t.Fatalf("lean must stay unset: %+v err=%v", rec.Task, err)
