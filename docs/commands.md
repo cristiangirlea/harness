@@ -13,6 +13,7 @@
 | `hrn remote show --tenant ID --project ID JOB_ID` | Show a remote job's state and result. |
 | `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream and resume from the last durable event ID. |
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
+| `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn runs [-n N]` | List recent runs. |
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](run-records.md#run-records)). |
@@ -58,6 +59,28 @@ Submission requires a stable idempotency key and a positive USD cost ceiling.
 The prompt can be supplied as arguments or on stdin. Remote jobs currently
 support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
 for the corresponding tools.
+
+### Project knowledge
+
+`hrn knowledge import|search|inspect|active|activate|disable|rollback request.json`
+accepts one JSON request file and prints a JSON response. `import`, `activate`,
+`disable`, and `rollback` require `HRN_OPERATOR_TOKEN`; read commands use
+`HRN_TENANT_TOKEN` or the exact project's worker credential. Set
+`HRN_SERVER_URL` and optionally `HRN_SERVER_CA_FILE` for the control service.
+Credentials are never placed in request files.
+
+An operator imports only reviewed sources with `origin: "reviewed_source"`,
+`reviewed_by`, and `review_evidence`; model-generated candidates are rejected.
+Each request names the exact tenant, project, backend, model, and full Git
+revision. Imported content revisions and their version membership are
+immutable. `active` returns the active and previous version pointers and their
+generation. `activate`, `disable`, and `rollback` use `expected_generation` to
+reject concurrent changes. `search` uses `query` and optionally `version_id`;
+it returns an audited packet capped at 8192 bytes, including a valid empty or
+no-match result. `inspect` reads a `version_id`. The server records each search
+and ties its query and packet digests to the exact UTF-8 bytes. See
+[the control service guide](../server/README.md#approved-project-knowledge) for
+the protocol table and request examples.
 
 ### Budgets
 

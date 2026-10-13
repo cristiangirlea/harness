@@ -20,7 +20,9 @@ import (
 var migrationFiles embed.FS
 
 type Store struct {
-	db *pgxpool.Pool
+	db             *pgxpool.Pool
+	knowledge      *pgxpool.Pool
+	retrievalSlots chan struct{}
 }
 
 func Open(ctx context.Context, dsn string) (*Store, error) {
@@ -37,14 +39,30 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("database is not initialized: run the explicit migrate command: %w", err)
 	}
-	if version != 2 {
+	if version != 3 {
 		pool.Close()
 		return nil, fmt.Errorf("unsupported schema version %d", version)
 	}
-	return &Store{db: pool}, nil
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	cfg.MaxConns = 2
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "1500"
+	cfg.ConnConfig.RuntimeParams["lock_timeout"] = "250"
+	knowledge, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return &Store{db: pool, knowledge: knowledge, retrievalSlots: make(chan struct{}, 2)}, nil
 }
 
 func (s *Store) Close() {
+	if s.knowledge != nil {
+		s.knowledge.Close()
+	}
 	s.db.Close()
 }
 
@@ -69,7 +87,7 @@ func Migrate(ctx context.Context, dsn string) error {
 	if err := tx.QueryRow(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&version); err != nil {
 		return err
 	}
-	if version > 2 {
+	if version > 3 {
 		return fmt.Errorf("database schema version %d is newer than this binary", version)
 	}
 	if version == 0 {
@@ -94,6 +112,18 @@ func Migrate(ctx context.Context, dsn string) error {
 			return fmt.Errorf("migration 2: %w", err)
 		}
 		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations(version) VALUES (2)"); err != nil {
+			return err
+		}
+	}
+	if version <= 2 {
+		script, err := migrationFiles.ReadFile("migrations/003_project_knowledge.sql")
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("migration 3: %w", err)
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO schema_migrations(version) VALUES (3)"); err != nil {
 			return err
 		}
 	}
