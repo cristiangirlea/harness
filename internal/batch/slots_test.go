@@ -441,3 +441,27 @@ func TestATaskFailsRatherThanWaitForSlotsOnlyItsBatchKept(t *testing.T) {
 		t.Errorf("a task that got no slot leaves no branch: %q", b)
 	}
 }
+
+func TestATaskCanceledWhileItRunsGivesItsSlotBack(t *testing.T) {
+	dir := initRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-blockStarted
+		cancel()
+	}()
+	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-block", Tasks: []Task{{ID: "stopped", Prompt: "p"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Tasks[0]
+	if tr.Status != StatusCanceled || tr.Slot != 1 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".hrn", "slots", "1.lease")); !os.IsNotExist(err) {
+		t.Errorf("a canceled task gives its slot back: %v", err)
+	}
+	if b := git(t, tr.Worktree, "branch", "--show-current"); b != "" {
+		t.Errorf("the slot should be detached, is on %q", b)
+	}
+}
