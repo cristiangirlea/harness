@@ -40,6 +40,9 @@ See [SECURITY.md](SECURITY.md) for the security boundaries and private vulnerabi
 Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 `internal/agent/agent.go`: the release workflow runs the tests, builds with
 `.github/release.sh`, and publishes. Tags and releases are the owner's to create.
+A pushed `v*` tag cannot be moved or deleted (a GitHub ruleset refuses it), so a tag on the
+wrong commit, or a release whose tests failed, is followed by a new version: bump
+`agent.Version` and tag again.
 
 For a local release dry run, use `bash .github/release.sh`. It writes static binaries
 for Linux, macOS, and Windows (amd64 and arm64), plus `SHA256SUMS`, into `dist/`.
