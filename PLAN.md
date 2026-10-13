@@ -664,6 +664,17 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: PR #192 (closes #160): the recovery of a slot a batch kept, documented in
+  docs/workspaces.md and followed step by step in ws's tests, with no code change. Decided:
+  the work is saved on a local branch first, then the slot is detached at a commit a
+  remote holds (origin's default branch), because Free counts a commit at HEAD as
+  unpushed when no remote-tracking branch holds it, whatever local branch holds it too;
+  Free asks for a push, unlike Release. In a repository without remotes Free counts only
+  the commits no branch or tag holds, so it frees the slot in place once the branch
+  exists. The branch is merged by hand unless the task passed, since batch merge skips
+  every task that did not pass, and ignored files are checked first, since a checkout
+  overwrites them where the target commit tracks the path.
+
 - 2026-10-13: Concurrent takes skipped free slots (#188, PR #191). CI's Windows run of
   `TestConcurrentTakesNeverShareASlot` got 3 slots for 6 takes with `--max 4`. Reproduced
   here under load: `git worktree add` for slot 4 died with `fatal: failed to read

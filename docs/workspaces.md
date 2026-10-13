@@ -80,6 +80,41 @@ slot back itself. Otherwise it detaches HEAD where it is, so the branch is free 
 for `hrn gc`, and removes the lease. The folder and its build output stay for the next
 take.
 
+## A slot a batch kept
+
+When a batch task ends with files in its slot, or with a commit on no branch, the slot
+is not given back (`slot <n> kept` in the task's error). Free refuses it as it stands:
+the work is on no remote, and a batch's work sits on a local branch by design. To get
+the slot back:
+
+1. Find it. `hrn ws list` shows it `taken` while hrn runs and `stale` once hrn has
+   exited, with the holder `batch <id> task <task>`. If it is still `taken`, wait for
+   the batch to end: free refuses a lease whose process is running.
+2. Look at what is in it: `git -C <slot> status --ignored` and `git -C <slot> log`.
+   Plain `git status` hides ignored files, and free does not look at them either; but
+   checking out another commit overwrites an ignored file wherever that commit tracks the
+   same path, in step 4 or at the slot's next take. Copy out any ignored file you value now.
+3. Keep the work on a branch. Commit what you want to keep (`git -C <slot> add ...`,
+   `git -C <slot> commit`), or remove what you don't. If HEAD is on the task's branch
+   `hrn/<id>`, the commits are kept there. If HEAD is detached, name the commits:
+   `git -C <slot> branch <name>`.
+4. With any remote, whatever its name: detach the slot at a commit a remote-tracking
+   branch holds. Free counts a commit at HEAD as unpushed when no remote-tracking branch
+   holds it, and a local branch does not change that, so it would still refuse. Use the
+   remote's default branch: `git -C <slot> switch --detach origin/main`, or
+   `upstream/main` when the remote is `upstream`. `git -C <slot> branch -r` lists the
+   remote-tracking branches; `git -C <slot> remote show <remote>` names the default.
+   If `branch -r` shows no branch of that remote, it was never fetched: run
+   `git -C <slot> fetch <remote>` first, then detach at `<remote>/<default>`. Only with no remote at all: skip this step. Free then counts only the commits at HEAD
+   that no local branch or tag holds, and step 3 left none, so HEAD can stay where it is.
+5. `hrn ws free <slot>`. It detaches HEAD where it is and removes the lease; the work stays
+   on its branch. Merge or push the branch that now holds the work yourself, from the
+   repository: `git merge <name>` when step 3 made a branch for detached commits,
+   `git merge hrn/<id>` when the work was committed on the task's branch. `hrn batch merge`
+   merges only tasks whose status is `pass`, even when you name them, and a task whose slot
+   was kept usually is not (a failed commit ends as `error`). Use `hrn batch merge` only
+   when `hrn batch show` reports the task passed.
+
 ## List
 
 `hrn ws list [--json]` prints one row per slot folder or lease: the number, the path,

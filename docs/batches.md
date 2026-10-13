@@ -62,8 +62,8 @@ canceled with the batch. When none can come free, because the rest are skipped f
 is in them or kept by this batch's own tasks (below), it fails as `error` instead. A slot that still holds files when its task ends (the commit
 failed, say), or a commit on no branch (the agent detached HEAD and committed), is not
 given back: the task's error says `slot <n> kept` and why. Its lease
-goes stale once hrn exits, and later takes skip the slot without cleaning it; look at
-it, then free it with `hrn ws free`.
+goes stale once hrn exits, and later takes skip the slot without cleaning it. To keep its
+work and free it, see [A slot a batch kept](workspaces.md#a-slot-a-batch-kept).
 
 `"worktrees": "fresh"` keeps the older behaviour, for a build from nothing: each task gets
 a new worktree `.hrn/worktrees/<id>`, kept after the batch until `hrn batch rm`. Any other
