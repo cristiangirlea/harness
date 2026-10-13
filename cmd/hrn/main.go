@@ -40,6 +40,8 @@ Usage:
   hrn backends                    show which backends are usable
   hrn remote submit|show|events|cancel [flags]
                                  use the durable control API
+  hrn knowledge import|search|inspect|active|activate|disable|rollback request.json
+                                 manage approved project knowledge through the control API
   hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
@@ -136,6 +138,8 @@ func main() {
 		err = cmdBackends()
 	case "remote":
 		err = runRemote(os.Args[2:], os.Stdout)
+	case "knowledge":
+		err = runKnowledge(os.Args[2:], os.Stdout)
 	case "runs":
 		err = cmdRuns(os.Args[2:])
 	case "show":
