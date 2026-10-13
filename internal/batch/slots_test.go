@@ -328,3 +328,26 @@ func TestAnUnknownWorktreesValueIsRefused(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestDiffOfASlotTaskReadsOnlyItsCommitNeverTheSlotItLeft(t *testing.T) {
+	dir := initRepo(t)
+	quiet, _ := run(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-noop", Tasks: []Task{{ID: "quiet", Prompt: "look"}}})
+	var diff string
+	var untracked []string
+	var diffErr error
+	setHook(t, func(task agent.Task) {
+		// Another task holds the slot now and has work in it.
+		writeFile(t, filepath.Join(task.Dir, "stray.txt"), "not quiet's\n")
+		writeFile(t, filepath.Join(task.Dir, "README.md"), "changed\n")
+		diff, untracked, diffErr = Diff(context.Background(), quiet, "quiet")
+	})
+	busy, _ := run(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-hook", Tasks: []Task{{ID: "busy", Prompt: "work"}}})
+	samePathT(t, busy.Tasks[0].Worktree, quiet.Tasks[0].Worktree)
+	if diffErr != nil || diff != "" || len(untracked) != 0 {
+		t.Errorf("a slot task that committed nothing has an empty diff, got %q %v %v", diff, untracked, diffErr)
+	}
+	got, _, err := Diff(context.Background(), busy, "busy")
+	if err != nil || !strings.Contains(got, "stray.txt") {
+		t.Errorf("a committed slot task's diff = %q, %v", got, err)
+	}
+}

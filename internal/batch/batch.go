@@ -1134,8 +1134,9 @@ func (r Result) Find(id string) (TaskResult, error) {
 }
 
 // Diff returns what a task changed: its commit against the base the batch
-// started from, or whatever is still uncommitted in its worktree. Untracked
-// paths come back separately, because a diff cannot show them.
+// started from, or whatever is still uncommitted in its fresh worktree; a
+// slot task without a commit has an empty diff. Untracked paths come back
+// separately, because a diff cannot show them.
 func Diff(ctx context.Context, res Result, taskID string) (diff string, untracked []string, err error) {
 	tr, err := res.Find(taskID)
 	if err != nil {
@@ -1150,6 +1151,11 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 		}
 		out, err := gitStdout(ctx, res.Dir, "diff", res.Base+".."+tr.Commit)
 		return out, nil, err
+	}
+	if tr.Slot != 0 {
+		// The slot went back when the task ended and another task may hold it
+		// now, so what is in it says nothing about this one.
+		return "", nil, nil
 	}
 	if _, err := os.Stat(tr.Worktree); err != nil {
 		return "", nil, fmt.Errorf("task %s committed nothing and its worktree is gone", taskID)
