@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/report"
@@ -73,7 +74,9 @@ func TestReportGroupsRunsByPurpose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	// The runs table is the first block; the tokens table follows it.
+	first, _, _ := strings.Cut(string(out), "\n\n")
+	lines := strings.Split(strings.TrimRight(first, "\n"), "\n")
 	if len(lines) != 5 || lines[0] != "runs by purpose, all time" || !strings.HasPrefix(lines[1], "purpose ") {
 		t.Fatalf("table =\n%s", out)
 	}
@@ -106,4 +109,41 @@ func captureStdout(t *testing.T, f func() error) ([]byte, error) {
 	ferr := f()
 	w.Close()
 	return <-done, ferr
+}
+
+func TestReportByDayPrintsTokensAndContextPerTurn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ctx := range []int64{10000, 30000, 50000} {
+		w.Event(agent.Event{Kind: agent.EventUsage, Usage: &agent.Usage{InputTokens: ctx, ContextTokens: ctx}})
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK, Turns: 3, InputTokens: 90000, OutputTokens: 700, CacheRead: 1500, CacheWrite: 250}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdReport([]string{"--by", "day"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().Format("2006-01-02")
+	text := string(out)
+	i := strings.Index(text, "tokens by day, all time\n")
+	if !strings.HasPrefix(text, "runs by day, all time\n") || i < 0 {
+		t.Fatalf("report =\n%s", text)
+	}
+	lines := strings.Split(strings.TrimRight(text[i:], "\n"), "\n")
+	if len(lines) < 4 || !strings.HasPrefix(lines[1], "day ") || !strings.Contains(lines[1], "med context") {
+		t.Fatalf("tokens table =\n%s", text[i:])
+	}
+	for _, row := range []string{lines[2], lines[3]} {
+		f := strings.Fields(row)
+		if len(f) != 8 || f[1] != "90.0k" || f[2] != "700" || f[3] != "1.5k" || f[4] != "250" || f[5] != "30.0k" || f[6] != "50.0k" || f[7] != "turns" {
+			t.Errorf("row = %q, want input, output, cache read, cache write, median and peak context, and where they came from", row)
+		}
+	}
+	if f := strings.Fields(lines[2]); f[0] != day {
+		t.Errorf("first row is %q, want today, %s", f[0], day)
+	}
 }

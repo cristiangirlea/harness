@@ -26,7 +26,7 @@
 | `hrn eval show <id>` | Reprint a saved eval. |
 | `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge. |
 | `hrn eval diff [--json] <a> <b>` | Two evals side by side, variant by variant and task by task. |
-| `hrn report [--since 7d] [--by backend\|model\|dir\|purpose] [--json]` | Tables over the finished runs and the batches (see [Reports](evaluations.md#reports)). |
+| `hrn report [--since 7d] [--by backend\|model\|dir\|purpose\|day] [--json]` | Tables over the finished runs, their tokens and context per turn, and the batches (see [Reports](evaluations.md#reports)). |
 | `hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [PATH…]` | Remove worktrees whose work is merged, with their build output, and build caches (`CACHEDIR.TAG`) idle past `--idle`, or past `--min-idle` on a drive below `--free-below` (see [Clearing merged worktrees](batches.md#clearing-merged-worktrees) and [Build caches](batches.md#build-caches)). |
 | `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch (see [Reusable workspaces](workspaces.md#take)). |
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
