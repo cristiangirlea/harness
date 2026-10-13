@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: issue #200 (PR #TBD): a claude worker inherited every plugin, skill, hook and MCP
+- 2026-10-13: issue #200 (PR #201): a claude worker inherited every plugin, skill, hook and MCP
   server of the operator's, about 64K tokens of context on every turn of a tiny task. Decided:
   an additive `lean` option (`--lean`, spec, task and MCP `run` field, off by default) that
   adds `--strict-mcp-config --setting-sources project` to the claude args, before the guard's
