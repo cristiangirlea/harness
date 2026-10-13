@@ -74,6 +74,29 @@ func TestCodexIncompleteUsageStaysMissingAfterAnotherTurn(t *testing.T) {
 	}
 }
 
+func TestCodexNullAndNegativeUsageLeaveModelTokensUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+	}{
+		{"null usage", `{"type":"turn.completed","usage":null}`},
+		{"negative counter", `{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":-1,"output_tokens":2}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var res Result
+			if !parseCodexStream([]byte(tc.line), func(Event) {}, &res) {
+				t.Fatal("turn.completed was not parsed")
+			}
+			if res.Turns != 1 {
+				t.Errorf("turns = %d, want 1", res.Turns)
+			}
+			if _, known, _ := res.ModelTokens(); known {
+				t.Errorf("ModelTokens reported known for %s: %+v", tc.name, res)
+			}
+		})
+	}
+}
+
 func TestCodexErrorAndFailedTurnMarkUsageMissing(t *testing.T) {
 	for _, line := range []string{
 		`{"type":"error","message":"connection lost"}`,
