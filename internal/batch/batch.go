@@ -103,7 +103,15 @@ type Result struct {
 	Parallel int           `json:"parallel"`
 	Tasks    []TaskResult  `json:"tasks"`
 	Duration time.Duration `json:"duration_ns"`
+	// Ownership is how the record says which worktrees and branches are its
+	// tasks' own. Run sets ownedByClaim: a slotless task owns them only when
+	// its branch_made says so. Records from before it (0) never said so for a
+	// fresh task, and are read as hrn wrote them then (owned, by path).
+	Ownership int `json:"ownership,omitempty"`
 }
+
+// ownedByClaim is the Ownership of every record Run writes now.
+const ownedByClaim = 1
 
 type TaskResult struct {
 	ID       string `json:"id"`
@@ -388,7 +396,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 
-	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks))}
+	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: ownedByClaim}
 	for i, t := range spec.Tasks {
 		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
@@ -680,6 +688,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					}
 					tr.BranchMade = false
 					if err := removeWorktree(root, tr); err != nil {
+						// What is left is still the task's: another batch
+						// takes neither a worktree nor a branch that is there.
+						tr.BranchMade = true
 						return fail(err)
 					}
 				}
@@ -1021,7 +1032,7 @@ func Remove(res Result) error {
 			}
 			continue
 		}
-		if tr.Worktree == "" || foundTaken(tr) {
+		if tr.Worktree == "" || notMine(res, tr) {
 			continue
 		}
 		// Only a directory git still lists is a worktree whose status means
@@ -1054,13 +1065,22 @@ func branchOnly(tr TaskResult) bool {
 	return tr.Slot != 0 || (tr.Worktree == "" && tr.Status == StatusRunning && tr.BranchMade)
 }
 
-// foundTaken reports whether a fresh task failed because its worktree or
-// branch was there already (another batch's, or anyone's): Run names the
-// worktree in every fresh task's record before the task starts, so the path
-// alone does not make it the task's. Only BranchMade proves that, but records
-// from before fresh tasks set it lack the field, and their tasks did make
-// their worktrees unless that error ended them: so only a task without
-// BranchMade whose error says something already existed is skipped.
+// notMine reports whether a fresh task's worktree and branch are not its own
+// to remove: Run names the worktree in every fresh task's record before the
+// task starts, so the path alone does not make it the task's, and another
+// batch can hold it (the task found it taken, or gave it up for a retry and
+// stopped before it had it back). Only BranchMade proves it is the task's.
+// Records from before Ownership never set it for a fresh task, whose
+// worktree was its own unless finding it taken ended the task (foundTaken).
+func notMine(res Result, tr TaskResult) bool {
+	if res.Ownership >= ownedByClaim {
+		return !tr.BranchMade
+	}
+	return foundTaken(tr)
+}
+
+// foundTaken reports whether a fresh task in a record from before Ownership
+// failed because its worktree or branch was there already.
 func foundTaken(tr TaskResult) bool {
 	return tr.Slot == 0 && !tr.BranchMade && strings.Contains(tr.Error, "already exists")
 }
