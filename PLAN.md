@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: batch merge names the commit to undo to (#214, #216, PR #N).
+- 2026-10-14: batch merge names the commit to undo to (#214, #216, PR #254).
   Decided: CLI and MCP capture HEAD before merging and print that full commit when at least
   one task merges, including before a later conflict or when --rm removes nothing.
   The reflog note appears only when --rm removes task work.
