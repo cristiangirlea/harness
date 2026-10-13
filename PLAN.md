@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: the definition of done and rule 2 follow AGENTS.md (#64, PR #N). Since the
+- 2026-10-13: the definition of done and rule 2 follow AGENTS.md (#64, PR #251). Since the
   repository went public, CI again tests both platforms on every pull request, so rule 2's
   "green on both" stays. Decided: the definition of done points at AGENTS.md's checks instead
   of its own older list, asks for the `docs/` guide as well as the README, and names the
