@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cristiangirlea/harness/internal/retrieval"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 // ShellResult is the outcome of a command RunShell managed to start.

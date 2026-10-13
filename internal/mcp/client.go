@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cristiangirlea/harness/internal/retrieval"
 	"io"
 	"net/url"
 	"os"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 // ServerConfig describes how to start a stdio MCP server.

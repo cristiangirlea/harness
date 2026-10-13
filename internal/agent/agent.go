@@ -263,7 +263,7 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 	}
 	task = prepared
 	if state != nil {
-		emit(Event{Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
 	}
 	calls := 0
 	res := b.Run(ctx, task, func(e Event) {

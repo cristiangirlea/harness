@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestRetrievalMCPWiring(t *testing.T) {
+func TestMCPRunUsesTheRequestedRetrievalModeAndRejectsInvalidTransport(t *testing.T) {
 	s := connect(t, t.TempDir())
 	t.Setenv("HRN_SERVER_URL", "invalid")
 	got := s.call(t, "run", `{"prompt":"unchanged","backend":"stub","retrieval":"off"}`)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/cristiangirlea/harness/internal/retrieval"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 type retrievalBackend struct {
@@ -60,7 +61,7 @@ func retrievalServer(t *testing.T, status int, text string) (*httptest.Server, *
 	t.Setenv("HRN_SERVER_CA_FILE", "")
 	return srv, calls
 }
-func TestRetrievalBoundaryPolicy(t *testing.T) {
+func TestRetrievalOffSkipsSearchAndFailuresRespectTheRequestedMode(t *testing.T) {
 	for _, tc := range []struct {
 		mode   string
 		status int
@@ -73,7 +74,15 @@ func TestRetrievalBoundaryPolicy(t *testing.T) {
 			opts := retrievalOptions()
 			opts.Retrieval = tc.mode
 			task := Task{Prompt: "original task", Options: opts, Dir: t.TempDir(), RunDir: t.TempDir()}
-			result := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, task, func(Event) {})
+			var events []Event
+			result := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, task, func(e Event) { events = append(events, e) })
+			if tc.mode != "off" {
+				for _, event := range events {
+					if strings.HasPrefix(event.Text, "retrieval:") && event.Time.IsZero() {
+						t.Fatal("retrieval info event has no time")
+					}
+				}
+			}
 			if calls != tc.want {
 				t.Fatalf("backend calls=%d result=%+v", calls, result)
 			}
@@ -99,7 +108,7 @@ func TestRetrievalBoundaryPolicy(t *testing.T) {
 		})
 	}
 }
-func TestRetrievalPacketsAndPins(t *testing.T) {
+func TestRetrievalRejectsUnsafePacketsAndKeepsTheVersionPinOnRepair(t *testing.T) {
 	for _, text := range []string{strings.Repeat("x", 8192), strings.Repeat("secret", 12)} {
 		t.Run(fmt.Sprint(len(text)), func(t *testing.T) {
 			retrievalServer(t, 200, text)
@@ -111,7 +120,7 @@ func TestRetrievalPacketsAndPins(t *testing.T) {
 			}
 		})
 	}
-	_, network := retrievalServer(t, 200, "[Reference verified fixture]")
+	_, network := retrievalServer(t, 200, "verified fixture")
 	var seen Task
 	calls := 0
 	b := retrievalBackend{"codex", &seen, &calls}
@@ -142,7 +151,7 @@ func TestRetrievalPacketsAndPins(t *testing.T) {
 	}
 }
 func TestRetrievalAPIContinuationAppendOnly(t *testing.T) {
-	_, network := retrievalServer(t, 200, "[Reference fixture source]")
+	_, network := retrievalServer(t, 200, "fixture source")
 	fake := &fakeAPI{turns: [][]string{textTurn("first"), textTurn("second")}}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
@@ -197,7 +206,7 @@ func TestHelperRetrievalStdin(t *testing.T) {
 	os.Exit(0)
 }
 func TestRetrievalNativeStdin(t *testing.T) {
-	retrievalServer(t, 200, "[Reference native fixture]")
+	retrievalServer(t, 200, "native fixture")
 	t.Setenv("HRN_RETRIEVAL_HELPER", "1")
 	t.Setenv("HRN_OPERATOR_TOKEN", "operator-secret")
 	b := &CLIBackend{name: os.Args[0], promptStdin: true, args: func(Task, string) []string { return []string{"-test.run=^TestHelperRetrievalStdin$"} }, parse: parseCodexStream}
@@ -209,7 +218,7 @@ func TestRetrievalNativeStdin(t *testing.T) {
 }
 
 func TestRetrievalFirstOptInAtContinuationBoundary(t *testing.T) {
-	_, network := retrievalServer(t, 200, "[Reference new pin]")
+	_, network := retrievalServer(t, 200, "new pin")
 	conv := Conversation{Model: "fixture-model", Messages: []Message{{Role: "user", Content: []block{{"type": "text", "text": "prior"}}}}}
 	before, _ := json.Marshal(conv.Messages)
 	task := Task{Prompt: "new question", Options: retrievalOptions(), RunDir: t.TempDir(), Resume: &conv}
@@ -225,7 +234,7 @@ func TestRetrievalFirstOptInAtContinuationBoundary(t *testing.T) {
 }
 
 func TestRetrievalRefusesNativeSessionContinuationBeforeSearch(t *testing.T) {
-	_, network := retrievalServer(t, 200, "[Reference fixture]")
+	_, network := retrievalServer(t, 200, "fixture")
 	var seen Task
 	calls := 0
 	task := Task{Prompt: "follow up", Options: retrievalOptions(), ForkSession: "prior-session", RunDir: t.TempDir()}
