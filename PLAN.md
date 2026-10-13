@@ -665,7 +665,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: gc --free-below reports the drives after --apply (#130, PR #N). File sizes can
+- 2026-10-13: gc --free-below reports the drives after --apply (#130, PR #234). File sizes can
   overestimate freed space for sparse, linked or compressed files, and removal can fail.
   Decided: nothing more is removed; drives that were below are measured again and reported;
   the next-run hint appears only when caches were left because enough was already going.
