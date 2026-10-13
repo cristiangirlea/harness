@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -111,6 +114,45 @@ func TestGCRefusesBadIdleFlags(t *testing.T) {
 		code, err := cmdGC(args)
 		if code != 2 || err == nil || !strings.Contains(err.Error(), "--") {
 			t.Errorf("%v: got code %d, error %v; want 2 and an error naming the flag", args, code, err)
+		}
+	}
+}
+
+func TestGCFreeBelowDryRunHasNoDriveReport(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "target")
+	if err := os.Mkdir(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "CACHEDIR.TAG"), []byte("Signature: 8a477f597d28d172789f06886806bc55\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.CreateTemp(t.TempDir(), "gc-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	old := os.Stdout
+	os.Stdout = out
+	defer func() { os.Stdout = old }()
+	code, runErr := cmdGC([]string{"--free-below", "1000T", "--min-idle", "0", root})
+	os.Stdout = old
+	if code != 0 || runErr != nil {
+		t.Fatalf("dry run: code %d, error %v", code, runErr)
+	}
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), cache) || !strings.Contains(string(data), "would remove") {
+		t.Fatalf("dry run did not list its cache: %s", data)
+	}
+	for _, phrase := range []string{"now has", "still has", "free space could not be read"} {
+		if strings.Contains(string(data), phrase) {
+			t.Errorf("dry run printed an after-apply report: %s", data)
 		}
 	}
 }
