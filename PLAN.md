@@ -653,6 +653,7 @@ order they are worth taking:
     - [x] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
       ([#79](https://github.com/cristiangirlea/harness/issues/79)). Done: PR #131, 2026-10-13.
     - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
+    - [ ] hrn ws: reusable workspaces per repository ([#133](https://github.com/cristiangirlea/harness/issues/133)).
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -662,6 +663,15 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: hrn ws (#133), item 16's fourth box: a fixed set of reusable worktrees per
+  repository at `<main checkout>/.hrn/slots/<n>`. Decided: slots are locked worktrees, so
+  gc keeps them without a change to internal/gc; leases are O_EXCL files beside the slots
+  (`<n>.lease`), and a lease whose pid has exited is stale and taken over under a
+  `.takeover` file, so two callers never remove each other's fresh lease; take never cleans
+  a dirty slot, it skips it and says why; free refuses unpushed work and detaches HEAD, so
+  the branch is free for other checkouts and for gc; CLI only, no `hrn mcp` tool. The
+  package is exported with a pid on the lease so batch can use it (#126). Its test fixture
+  publishes to origin by fetching from origin's side, since hrn's guard refuses every push.
 - 2026-10-13: PR #127 (closes #82, widened by the owner on 2026-10-12): hrn watch's rows lead
   with `<repository> · <task>`, the id under it. Decided: the repository is the workspace
   folder's name (the folder above `.hrn` for a batch worktree), read from the record, not
