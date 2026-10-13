@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #N). Its `show-ref` ran with no
+- 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
   timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
   (`for-each-ref`, which answers a missing branch with no output) says whether it answered;
   a branch counts as removed only when it was there and a probe answered that it is gone.
