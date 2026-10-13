@@ -43,11 +43,12 @@ Usage:
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
   hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
-  hrn watch [--addr HOST:PORT] [--lan[=NAME]]
+  hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]
                                  a local page that follows runs and batches live (default 127.0.0.1:8089,
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR
-                                 code; --lan=NAME only on one adapter (its name or address)
+                                 code; --lan=NAME only on one adapter (its name or address);
+                                 --public serves a Cloudflare Tunnel on loopback, checking Access on every request
   hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
                                  English, out loud and as notifications, with skip, snooze and a few
                                  spoken commands; serves hrn watch on loopback unless one already does

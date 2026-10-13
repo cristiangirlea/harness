@@ -664,6 +664,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: issue #212 (PR #220): `hrn watch --public` keeps the listener on
+  loopback for a same-PC Cloudflare Tunnel, requires the Access team and audience
+  together, and verifies Access JWTs on every request. Public requests are always
+  remote to the page, and a private JSON access log records their outcomes.
 - 2026-10-13: the guard's `gh api` method in any case (PR #213). `gh-publish` refused
   `gh api` with PUT, PATCH or DELETE in upper case only, and `gh` upper-cases the method it is
   given, so `-X delete` still deleted. Decided: the method alone matches case-insensitively

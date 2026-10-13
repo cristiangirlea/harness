@@ -122,3 +122,18 @@ func TestWatchRefusesAnAddressBeyondThisComputer(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchPublicFlagsMustBeCompleteAndUseAnHTTPSOrigin(t *testing.T) {
+	for _, args := range [][]string{
+		{"--public", "https://harness.example.com"},
+		{"--access-team", "team.cloudflareaccess.com"},
+		{"--access-aud", "aud-tag"},
+		{"--public", "http://harness.example.com", "--access-team", "team.cloudflareaccess.com", "--access-aud", "aud-tag"},
+		{"--public", "https://harness.example.com/path", "--access-team", "team.cloudflareaccess.com", "--access-aud", "aud-tag"},
+		{"--public", "https://harness.example.com", "--access-team", "team.cloudflareaccess.com", "--access-aud", "aud-tag", "--lan"},
+	} {
+		if err := cmdWatch(args); err == nil {
+			t.Errorf("cmdWatch(%q) accepted invalid public flags", args)
+		}
+	}
+}

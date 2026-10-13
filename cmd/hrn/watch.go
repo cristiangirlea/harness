@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,9 @@ import (
 func cmdWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	addr := fs.String("addr", watch.DefaultAddr, "")
+	public := fs.String("public", "", "")
+	team := fs.String("access-team", "", "")
+	audience := fs.String("access-aud", "", "")
 	var lan lanFlag
 	fs.Var(&lan, "lan", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -38,6 +42,17 @@ func cmdWatch(args []string) error {
 		}
 		return fmt.Errorf("unexpected argument %q; the address is set with --addr", fs.Arg(0))
 	}
+	var access *watch.PublicAccess
+	if *public != "" || *team != "" || *audience != "" {
+		if lan.on {
+			return errors.New("--public and --lan cannot be used together")
+		}
+		var err error
+		access, err = watch.ParsePublicAccess(*public, *team, *audience)
+		if err != nil {
+			return err
+		}
+	}
 	bind, err := watch.LoopbackAddr(*addr)
 	if err != nil {
 		return err
@@ -46,7 +61,7 @@ func cmdWatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	lns, opt := []net.Listener{ln}, watch.Options{}
+	lns, opt := []net.Listener{ln}, watch.Options{Public: access}
 	if lan.on {
 		// The same port on the network as on this computer, when it was named.
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
@@ -59,7 +74,11 @@ func cmdWatch(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
+	if access != nil {
+		fmt.Fprintf(os.Stdout, "hrn watch: %s (behind Cloudflare Access; Ctrl+C stops it)\n  access log: %s\n", access.Origin, filepath.Join(runlog.Home(), "watch-access.log"))
+	} else {
+		printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
+	}
 	return watch.Serve(ctx, opt, lns...)
 }
 
