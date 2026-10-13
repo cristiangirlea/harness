@@ -650,8 +650,8 @@ order they are worth taking:
     nothing local goes before its merge is proven. Three PRs, in this order:
     - [x] `hrn gc`: worktrees whose pull request is proven merged
       ([#78](https://github.com/cristiangirlea/harness/issues/78)). Done: PR #95, 2026-10-12.
-    - [ ] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
-      ([#79](https://github.com/cristiangirlea/harness/issues/79)).
+    - [x] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
+      ([#79](https://github.com/cristiangirlea/harness/issues/79)). Done: PR #131, 2026-10-13.
     - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
@@ -742,6 +742,27 @@ neither of them follows a run while it happens.
   after the scan, a local ref shadowing origin's, git pointed elsewhere by `GIT_DIR` or
   passed-down config, assume-unchanged files, and replace refs; each was fixed the same way.
   Batch work that landed squashed is #85; a tracked folder swapped for a junction is #94.
+- 2026-10-13: `hrn gc`, the cache pass (#79). A build cache is a folder tagged `CACHEDIR.TAG` with
+  the convention's signature, found at each PATH and inside each worktree that stays, two levels
+  down; one inside a worktree that goes is the worktree's. "In use" is Cargo's own signal, its
+  open `.cargo-lock`: an open that shares nothing on Windows, a non-blocking `flock` elsewhere,
+  and a lock that cannot be checked counts as held. The last write is read from folder times (the
+  profiles, their `deps`, `.fingerprint`, `build` and `incremental`), which catch what a build
+  removes, and from the walk that sizes the cache, whose newest time catches a file rewritten in
+  place or deep inside a cache with no profile (pytest's); an independent review found the folder
+  times alone missed the latter. `--free-below` works per drive (a volume's mount point on
+  Windows, not its letter), oldest first, counting what the scan already
+  marked, and a drive whose free space cannot be read loses nothing more. Kept from the worktree
+  pass: a tagged folder git tracks a file in, a repository or a link out inside it, the current
+  directory inside it, and a second look before each removal. Free space comes from
+  `GetDiskFreeSpaceExW` through `syscall.NewLazyDLL` and from `syscall.Statfs`, the lock probe from
+  `syscall.CreateFile` and `syscall.Flock`: standard library only, as the rule says. A security
+  read added two guards: a worktree entry is swept for caches only when its path's `.git` is a
+  file naming a folder under the repository's `.git/worktrees` (`git worktree list` prints
+  whatever a stale or edited entry says), and only git's discovery failure counts as "outside a
+  repository", since a worktree whose repository is gone fails with another message and its
+  files are tracked. A build starting in the moment between the last lock probe and the removal
+  is #129; saying how far a drive still is below `--free-below` after `--apply` is #130.
 - 2026-10-11: PR #93 (closes #91), recording Ada's voice, the first slice of #83. The voice
   will be the owner's wife's, recorded by her with her agreement; the recordings stay on this
   computer, never in a repository. Decided: the page records in the browser and saves into a

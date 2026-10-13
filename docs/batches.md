@@ -171,3 +171,30 @@ folder deleted. Only merged, clean worktrees get that far, and the branch then s
 it once its worktrees are gone). Open pull requests are read on their own, so a long history
 cannot hide one; with 1000 or more open, no worktree on a branch is removed. Up to 1000 pull
 requests of every state are read besides; a branch whose pull request is older stays.
+
+### Build caches
+
+```
+hrn gc --free-below 50G E:\work C:\Users\me\cargo-target
+```
+
+The same run looks for build caches: folders carrying a `CACHEDIR.TAG` with the convention's
+signature, which Cargo writes into every target folder (pytest and ruff tag their caches the same
+way), at each PATH and up to two levels down (a `.sec-target` beside its repository, each folder of
+a `cargo-target` pool) and inside each worktree that stays, up to two levels down. A cache goes when no build holds it (Cargo keeps
+`<profile>/.cargo-lock` open while it builds: on Windows an open that shares nothing fails, elsewhere
+a non-blocking `flock` does) and nothing has written it for `--idle` (default 24h). Its last write is
+the newest time among its profile folders (`debug`, `release`, one under a target triple), their
+`deps`, `.fingerprint`, `build` and `incremental` folders, the files directly in a profile, and
+anything the walk that sizes it sees inside. With `--free-below SIZE` (`50G`, `500M`), a drive with less
+free than SIZE also loses its caches idle past `--min-idle` (default 2h), oldest first, until what
+goes would put it above SIZE; free space is asked of the drive (`GetDiskFreeSpaceEx` on Windows,
+`statfs` elsewhere), and a drive that cannot answer loses nothing more.
+
+A cache stays when git tracks a file in it (a tagged test fixture is someone's), when it holds a
+repository or a link leading out of it, when the current directory is inside it, or when its lock
+cannot be checked. One inside a worktree that goes is not listed: the worktree's removal takes it.
+The listing shows each cache's size, last build and verdict; `--apply` checks each one again just
+before it goes (still tagged, nothing written since the scan, no lock held, nothing inside that must
+stay) and removes it whole. A cache has no pull request to stand as its record: the build that
+needs it again rebuilds it.
