@@ -28,6 +28,9 @@ const DefaultMax = 4
 
 const lockReason = "hrn ws slot"
 
+// createLockWait bounds how long a take waits for the slots' .create.lock.
+var createLockWait = 2 * time.Minute
+
 // Lease is the JSON in <n>.lease: who holds the slot, since when, and the
 // branch they asked for (empty: detached). A lease with a PID is stale once
 // that process has exited; one without is held until Free.
@@ -426,10 +429,15 @@ func removeOwn(p string) error {
 func prepare(ctx context.Context, main, path, base string) (skip string, err error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
+		unlock, err := lockCreate(ctx, filepath.Dir(path))
+		if err != nil {
+			return "", err
+		}
+		defer unlock()
 		if _, err := gitOut(ctx, main, "worktree", "add", "--detach", path, base); err != nil {
 			return err.Error(), nil
 		}
-		_, err := gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path)
+		_, err = gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path)
 		return "", err
 	}
 	if err != nil {
@@ -438,17 +446,8 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 	if !info.IsDir() {
 		return "it is not a folder", nil
 	}
-	wt, ok, err := worktreeAt(ctx, main, path)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "it is not a worktree of this repository", nil
-	}
-	if !wt.locked {
-		if _, err := gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path); err != nil {
-			return "", err
-		}
+	if skip, err := lockExisting(ctx, main, path); err != nil || skip != "" {
+		return skip, err
 	}
 	lines, err := changes(ctx, path)
 	if err != nil {
@@ -469,6 +468,72 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 		return fmt.Sprintf("it holds %d %s on no remote, branch or tag", count, word), nil
 	}
 	return "", nil
+}
+
+// lockExisting checks that path is a worktree of this repository and locks
+// it if it is not locked yet, under the create lock, since listing and
+// locking worktrees fail while another take is adding one.
+func lockExisting(ctx context.Context, main, path string) (skip string, err error) {
+	unlock, err := lockCreate(ctx, filepath.Dir(path))
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	wt, ok, err := worktreeAt(ctx, main, path)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "it is not a worktree of this repository", nil
+	}
+	if !wt.locked {
+		if _, err := gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path); err != nil {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
+// lockCreate takes an OS lock on dir's .create.lock, waiting for whoever
+// holds it, and returns the function that releases it. Takes, in this process
+// or another, hold it while they add, list or lock worktrees: git writes a
+// new worktree's admin folder in steps, and every git command that lists the
+// worktrees dies on one half written (issue #188).
+//
+// The OS releases the lock when its holder closes the file or dies, so a
+// crash leaves only the file, which is never removed and blocks nobody.
+func lockCreate(ctx context.Context, dir string) (unlock func(), err error) {
+	p := filepath.Join(dir, ".create.lock")
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(createLockWait)
+	delay := 10 * time.Millisecond
+	for {
+		ok, err := tryLock(f)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("locking %s: %w", p, err)
+		}
+		if ok {
+			return func() {
+				unlockFile(f)
+				f.Close()
+			}, nil
+		}
+		if time.Now().After(deadline) {
+			f.Close()
+			return nil, fmt.Errorf("waited %s for %s, which other takes kept holding", createLockWait, p)
+		}
+		select {
+		case <-ctx.Done():
+			f.Close()
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, 200*time.Millisecond)
+	}
 }
 
 // stranded counts the commits at HEAD that a switch away would leave on no

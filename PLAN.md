@@ -675,6 +675,30 @@ neither of them follows a run while it happens.
   every task that did not pass, and ignored files are checked first, since a checkout
   overwrites them where the target commit tracks the path.
 
+- 2026-10-13: Concurrent takes skipped free slots (#188, PR #191). CI's Windows run of
+  `TestConcurrentTakesNeverShareASlot` got 3 slots for 6 takes with `--max 4`. Reproduced
+  here under load: `git worktree add` for slot 4 died with `fatal: failed to read
+  .git/worktrees/3/commondir: No error`, because git creates a new worktree's admin folder
+  in steps and every command that lists worktrees (add, list, lock) dies on a half-written
+  one. Not git's lock files, so retrying would only narrow the window. Decided: takes, in
+  any process, add, list and lock slot worktrees under an exclusive OS file lock on
+  `.hrn/slots/.create.lock` (`flock` on Unix, `LockFileEx` on Windows), waiting with a
+  backoff up to 2 minutes (and the context). The OS drops the lock when its holder exits
+  or dies, so there is no staleness rule and the file is never removed. A first version
+  used an O_EXCL file taken over after 2 minutes; review found that two waiters could
+  both take over one lock, and a holder's unlock remove a successor's, while a slow
+  `git worktree add` (up to 5 minutes) still ran. Switches and other git commands
+  (batch's, in other processes) that list worktrees are not under the lock; they can
+  still die during an add.
+- 2026-10-13: PR #187 (closes #162): hrn batch rm and prune leave what another batch made
+  when a fresh task found its worktree or branch taken. Decided: a fresh task claims its
+  worktree and branch through `branch_made`, as a slot task claims its branch; batch records
+  now carry `ownership`, and in records that have it rm, prune and WorktreesRemain trust only
+  that claim. Records from before it skip a fresh task only for hrn's own collision error,
+  raised before any attempt. The claim is saved after the worktree is made and withdrawn
+  before a retry removes it, so a failure leaves things behind rather than removing another
+  batch's: a claim that cannot be saved removes the new worktree again, and a removal that
+  fails claims again only the registered worktree or branch that is still there.
 - 2026-10-13: PR #163 (closes #126): hrn batch takes its worktrees from the reusable slots of internal/ws.
   Decided: slots by default, a new `.hrn/worktrees/<id>` per task only with
   `"worktrees": "fresh"`; any other value is refused. Each running task leases a slot
