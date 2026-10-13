@@ -103,7 +103,15 @@ type Result struct {
 	Parallel int           `json:"parallel"`
 	Tasks    []TaskResult  `json:"tasks"`
 	Duration time.Duration `json:"duration_ns"`
+	// Ownership is how the record says which worktrees and branches are its
+	// tasks' own. Run sets ownedByClaim: a slotless task owns them only when
+	// its branch_made says so. Records from before it (0) never said so for a
+	// fresh task, and are read as hrn wrote them then (owned, by path).
+	Ownership int `json:"ownership,omitempty"`
 }
+
+// ownedByClaim is the Ownership of every record Run writes now.
+const ownedByClaim = 1
 
 type TaskResult struct {
 	ID       string `json:"id"`
@@ -113,7 +121,8 @@ type TaskResult struct {
 	Worktree string `json:"worktree"`
 	Slot     int    `json:"slot,omitempty"` // the ws slot Worktree is; 0 for a fresh worktree
 	// BranchMade says this task made Branch (takeSlot saves it before it
-	// waits for a slot): a slotless task owns its branch only with it.
+	// waits for a slot; a fresh task, with its worktree, once git made
+	// both): a slotless task owns its branch only with it.
 	BranchMade bool          `json:"branch_made,omitempty"`
 	Commit     string        `json:"commit,omitempty"` // the agent's changes; empty when it changed nothing
 	Attempts   []Attempt     `json:"attempts"`
@@ -387,7 +396,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 
-	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks))}
+	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: ownedByClaim}
 	for i, t := range spec.Tasks {
 		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
@@ -576,11 +585,11 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	opts := t.Options.Over(spec.Options)
 
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
-		return fail(fmt.Errorf("branch %s already exists; remove it or pick another task id", tr.Branch))
+		return fail(errors.New(takenError("branch", tr.Branch)))
 	}
 	if !slots {
 		if _, err := os.Stat(tr.Worktree); err == nil {
-			return fail(fmt.Errorf("worktree %s already exists; remove it or pick another task id", tr.Worktree))
+			return fail(errors.New(takenError("worktree", tr.Worktree)))
 		}
 	}
 
@@ -670,13 +679,36 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				progress(cur) // the record names the slot from now on
 			default:
 				if len(tr.Attempts) > 0 {
+					// The record stops claiming the worktree before it goes:
+					// another batch could take the path before it is back.
+					cur := tr
+					cur.BranchMade, cur.Status = false, StatusRunning
+					if err := progress(cur); err != nil {
+						return fail(err) // the worktree stays, and is still claimed
+					}
+					tr.BranchMade = false
 					if err := removeWorktree(root, tr); err != nil {
+						tr.BranchMade, _ = stillMade(root, tr)
 						return fail(err)
 					}
 				}
 				if err := addWorktree(ctx, root, tr, base); err != nil {
 					return fail(err)
 				}
+				cur := tr
+				cur.BranchMade, cur.Status = true, StatusRunning
+				if err := progress(cur); err != nil {
+					// Unclaimed on disk, hrn batch rm would leave the worktree
+					// and prune could drop the record: it goes now.
+					err = fmt.Errorf("saving the claim on worktree %s: %w", tr.Worktree, err)
+					if rerr := removeWorktree(root, tr); rerr != nil {
+						var left string
+						tr.BranchMade, left = stillMade(root, tr) // the last save may still record it
+						return fail(fmt.Errorf("%w; %s: %v", err, left, rerr))
+					}
+					return fail(err)
+				}
+				tr.BranchMade = true // the worktree and branch are this task's from now on
 			}
 			tr.Commit = ""
 		}
@@ -810,11 +842,12 @@ func (k *keptSlots) count() int {
 	return k.n
 }
 
-// droppingBranch and failSave are for tests: one runs as dropBranch starts,
-// the other can make save fail.
+// droppingBranch, failSave and failWorktreeList are for tests: the first runs
+// as dropBranch starts, the others can make save or git worktree list fail.
 var (
-	droppingBranch func()
-	failSave       func(Result) error
+	droppingBranch   func()
+	failSave         func(Result) error
+	failWorktreeList func() error
 )
 
 // dropBranch deletes the branch takeSlot made when no slot checked it out.
@@ -1008,7 +1041,7 @@ func Remove(res Result) error {
 			}
 			continue
 		}
-		if tr.Worktree == "" {
+		if tr.Worktree == "" || notMine(res, tr) {
 			continue
 		}
 		// Only a directory git still lists is a worktree whose status means
@@ -1039,6 +1072,35 @@ func Remove(res Result) error {
 // they never claim a branch.
 func branchOnly(tr TaskResult) bool {
 	return tr.Slot != 0 || (tr.Worktree == "" && tr.Status == StatusRunning && tr.BranchMade)
+}
+
+// notMine reports whether a fresh task's worktree and branch are not its own
+// to remove: Run names the worktree in every fresh task's record before the
+// task starts, so the path alone does not make it the task's, and another
+// batch can hold it (the task found it taken, or gave it up for a retry and
+// stopped before it had it back). Only BranchMade proves it is the task's.
+// Records from before Ownership never set it for a fresh task, whose
+// worktree was its own unless finding it taken ended the task (foundTaken).
+func notMine(res Result, tr TaskResult) bool {
+	if res.Ownership >= ownedByClaim {
+		return !tr.BranchMade
+	}
+	return foundTaken(tr)
+}
+
+// foundTaken reports whether a fresh task in a record from before Ownership
+// failed because its worktree or branch was there already: before any
+// attempt, with the error runTask gives then. Other errors can say
+// "already exists" too (a hook's output), after the task made its worktree.
+func foundTaken(tr TaskResult) bool {
+	return tr.Slot == 0 && !tr.BranchMade && len(tr.Attempts) == 0 &&
+		(tr.Error == takenError("branch", tr.Branch) || tr.Error == takenError("worktree", tr.Worktree))
+}
+
+// takenError is runTask's error for a task whose branch or worktree is there
+// already; foundTaken matches it in old records, so its text stays as it is.
+func takenError(what, name string) string {
+	return fmt.Sprintf("%s %s already exists; remove it or pick another task id", what, name)
 }
 
 // removeSlotBranch deletes a slot task's branch, unless a worktree has it
@@ -1075,6 +1137,11 @@ func removeSlotBranch(root string, tr TaskResult) error {
 func isWorktree(root, path string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	if failWorktreeList != nil {
+		if err := failWorktreeList(); err != nil {
+			return false, err
+		}
+	}
 	out, err := gitOut(ctx, root, "worktree", "list", "--porcelain")
 	if err != nil {
 		return false, err
@@ -1107,6 +1174,42 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 	defer worktreeMu.Unlock()
 	_, err := gitOut(ctx, root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
 	return err
+}
+
+// stillMade says whether anything a fresh task made outlived a removeWorktree
+// that failed: its worktree, still registered, or its branch. Another batch
+// takes neither while it is there, so what is left is still the task's; a
+// directory git no longer knows is no claim. When git cannot list worktrees,
+// only the branch decides: a claim may miss what is left, but must never name
+// a path that another batch could take once a stray directory is cleared.
+// left names what is still there, for the error.
+func stillMade(root string, tr TaskResult) (made bool, left string) {
+	registered, lerr := isWorktree(root, tr.Worktree)
+	registered = lerr == nil && registered
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, berr := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch)
+	var parts []string
+	switch _, serr := os.Stat(tr.Worktree); {
+	case registered:
+		parts = append(parts, "worktree "+tr.Worktree)
+	case lerr != nil && serr == nil:
+		parts = append(parts, "worktree or directory "+tr.Worktree)
+	case serr == nil:
+		parts = append(parts, "directory "+tr.Worktree)
+	}
+	if berr == nil {
+		parts = append(parts, "branch "+tr.Branch)
+	}
+	switch len(parts) {
+	case 0:
+		left = "nothing is left"
+	case 1:
+		left = parts[0] + " is left"
+	default:
+		left = strings.Join(parts, " and ") + " are left"
+	}
+	return registered || berr == nil, left
 }
 
 func removeWorktree(root string, tr TaskResult) error {
