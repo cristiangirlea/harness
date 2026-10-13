@@ -329,12 +329,12 @@ func TestReleaseRefusesASlotHoldingChangesOrUntrackedFilesAndKeepsTheLease(t *te
 	_, before := readLeaseT(t, lp)
 
 	f.write(got.Path, "README.md", "changed\n")
-	if err := Release(context.Background(), got); err == nil || !strings.Contains(err.Error(), "README.md") {
+	if err := Release(context.Background(), got, ""); err == nil || !strings.Contains(err.Error(), "README.md") {
 		t.Errorf("release with a tracked change: %v", err)
 	}
 	git(t, got.Path, "checkout", "--", "README.md")
 	f.write(got.Path, "left.txt", "x\n")
-	if err := Release(context.Background(), got); err == nil || !strings.Contains(err.Error(), "left.txt") {
+	if err := Release(context.Background(), got, ""); err == nil || !strings.Contains(err.Error(), "left.txt") {
 		t.Errorf("release with an untracked file: %v", err)
 	}
 	if b := git(t, got.Path, "branch", "--show-current"); b != "hrn/t1" {
@@ -353,7 +353,7 @@ func TestReleaseRefusesALeaseThatIsNoLongerTheHolders(t *testing.T) {
 	if err := os.WriteFile(lp, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Release(context.Background(), got); err == nil || !strings.Contains(err.Error(), "someone else") {
+	if err := Release(context.Background(), got, ""); err == nil || !strings.Contains(err.Error(), "someone else") {
 		t.Errorf("release of a lease someone else holds now: %v", err)
 	}
 	if l, _ := readLeaseT(t, lp); l.Holder != "someone else" {
@@ -363,8 +363,39 @@ func TestReleaseRefusesALeaseThatIsNoLongerTheHolders(t *testing.T) {
 		t.Errorf("HEAD should stay on hrn/t1, is on %q", b)
 	}
 	os.Remove(lp)
-	if err := Release(context.Background(), got); err == nil {
+	if err := Release(context.Background(), got, ""); err == nil {
 		t.Error("release of a slot with no lease should be refused")
+	}
+}
+
+func TestReleaseOfALeaseThatChangedLeavesHEADWhereItIs(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	head := f.commit(got.Path, "work.txt")
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	data, _ := json.Marshal(Lease{Holder: "batch c task t1", PID: os.Getpid(), Taken: time.Now(), Branch: "hrn/t1"})
+	if err := os.WriteFile(lp, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Release(context.Background(), got, base); err == nil {
+		t.Fatal("release of a lease that changed should be refused")
+	}
+	if b, h := git(t, got.Path, "branch", "--show-current"), git(t, got.Path, "rev-parse", "HEAD"); b != "hrn/t1" || h != head {
+		t.Errorf("a refused release must not move HEAD: on %q at %s, want hrn/t1 at %s", b, h, head)
+	}
+}
+
+func TestReleaseDetachesAtTheCommitItIsGiven(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	f.commit(got.Path, "work.txt")
+	if err := Release(context.Background(), got, base); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if b, h := git(t, got.Path, "branch", "--show-current"), git(t, got.Path, "rev-parse", "HEAD"); b != "" || h != base {
+		t.Errorf("HEAD on %q at %s, want detached at %s", b, h, base)
 	}
 }
 
@@ -373,7 +404,7 @@ func TestReleaseDetachesAndFreesAnUnpushedBranchWithoutAPush(t *testing.T) {
 	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
 	head := f.commit(got.Path, "work.txt") // on the local branch only
 	f.write(got.Path, "target/x", "build output\n")
-	if err := Release(context.Background(), got); err != nil {
+	if err := Release(context.Background(), got, ""); err != nil {
 		t.Fatalf("release: %v", err)
 	}
 	if b := git(t, got.Path, "branch", "--show-current"); b != "" {
@@ -388,7 +419,7 @@ func TestReleaseDetachesAndFreesAnUnpushedBranchWithoutAPush(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(got.Path, "target", "x")); err != nil {
 		t.Errorf("ignored build output should stay: %v", err)
 	}
-	if err := Release(context.Background(), got); err == nil {
+	if err := Release(context.Background(), got, ""); err == nil {
 		t.Error("releasing a released slot again should be refused")
 	}
 }
@@ -452,7 +483,7 @@ func TestTakeReusesAReleasedSlotWhoseCommitOnlyALocalBranchHolds(t *testing.T) {
 	f := newFixture(t)
 	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch", PID: os.Getpid()})
 	f.commit(got.Path, "work.txt") // on hrn/t1 only, never pushed
-	if err := Release(context.Background(), got); err != nil {
+	if err := Release(context.Background(), got, ""); err != nil {
 		t.Fatal(err)
 	}
 	again := f.take(TakeOptions{Branch: "hrn/t2", Holder: "batch", PID: os.Getpid()})

@@ -233,7 +233,7 @@ func TestATaskWaitsForAFreeSlotAndThenRuns(t *testing.T) {
 		once.Do(func() {
 			go func() {
 				time.Sleep(100 * time.Millisecond)
-				if err := ws.Release(context.Background(), held[2]); err != nil {
+				if err := ws.Release(context.Background(), held[2], ""); err != nil {
 					t.Errorf("release: %v", err)
 				}
 			}()
@@ -377,7 +377,7 @@ func TestRemoveOfSlotTasksDeletesOnlyTheirBranches(t *testing.T) {
 		t.Errorf("the other task's branch should still go: %q", b)
 	}
 
-	if err := ws.Release(context.Background(), busy); err != nil {
+	if err := ws.Release(context.Background(), busy, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := Remove(res); err != nil {

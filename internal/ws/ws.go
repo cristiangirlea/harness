@@ -638,8 +638,12 @@ func Free(ctx context.Context, path string) (Taken, error) {
 // hrn/<id>, which batch merge and batch rm read): it does not ask for a push.
 // It refuses, and leaves the lease, while the slot holds changes or untracked
 // files, or when the lease is no longer exactly t's; otherwise it detaches
-// HEAD where it is and removes the lease, both under the slot's takeover lock.
-func Release(ctx context.Context, t Taken) error {
+// HEAD at detachAt (empty: where HEAD is) and removes the lease, both under
+// the slot's takeover lock.
+func Release(ctx context.Context, t Taken, detachAt string) error {
+	if strings.HasPrefix(detachAt, "-") {
+		return fmt.Errorf("%q is not a commit", detachAt)
+	}
 	main, err := MainCheckout(ctx, t.Path)
 	if err != nil {
 		return err
@@ -677,7 +681,11 @@ func Release(ctx context.Context, t Taken) error {
 	if len(lines) > 0 {
 		return fmt.Errorf("slot %d holds changes or untracked files, so it stays taken: %s", n, firstFew(lines))
 	}
-	if _, err := gitOut(ctx, slot, "switch", "--detach"); err != nil {
+	detach := []string{"switch", "--detach"}
+	if detachAt != "" {
+		detach = append(detach, detachAt)
+	}
+	if _, err := gitOut(ctx, slot, detach...); err != nil {
 		return err
 	}
 	if err := removeOwn(lp); err != nil {

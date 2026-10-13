@@ -791,8 +791,8 @@ func dropBranch(root, branch string) {
 	_, _ = gitOut(ctx, root, "branch", "-D", branch)
 }
 
-// giveBack returns a task's slot when the task ends. A clean slot is first
-// detached at the base, so that once hrn batch rm deletes the branch the
+// giveBack returns a task's slot when the task ends. ws.Release detaches a
+// clean slot at the base, so that once hrn batch rm deletes the branch the
 // slot does not sit on a commit no ref holds, which the next take would
 // skip. A slot with work left in it is refused by ws.Release and stays
 // leased: the lease names this process, so it goes stale when hrn exits,
@@ -800,16 +800,7 @@ func dropBranch(root, branch string) {
 func giveBack(slot ws.Taken, base string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	dirty, err := hasChanges(slot.Path)
-	if err != nil {
-		return err
-	}
-	if !dirty {
-		if _, err := gitOut(ctx, slot.Path, "switch", "-q", "--detach", base); err != nil {
-			return err
-		}
-	}
-	return ws.Release(ctx, slot)
+	return ws.Release(ctx, slot, base)
 }
 
 type attemptOutcome struct {
