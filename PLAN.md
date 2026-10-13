@@ -667,7 +667,7 @@ order they are worth taking:
     - [x] [#137](https://github.com/cristiangirlea/harness/issues/137) server: PostgreSQL control service and project worker, a separate module. Done: PR #159, 2026-10-13.
     - [x] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools. Done: PR #175, 2026-10-13.
     - [ ] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier
-    - [ ] [#140](https://github.com/cristiangirlea/harness/issues/140) knowledge: approved project knowledge and text retrieval in the control service
+    - [x] [#140](https://github.com/cristiangirlea/harness/issues/140) knowledge: approved project knowledge and text retrieval in the control service. Done: PR #181, 2026-10-13.
     - [ ] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison
     - [ ] `durable` into main
 
@@ -679,6 +679,15 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: approved project knowledge and text retrieval in the control service ([#140](https://github.com/cristiangirlea/harness/issues/140), PR #181; slice 7 of #142).
+  The snapshot's contracts, migration 003, service, routes, bounded client search and
+  `hrn knowledge`; the parts slice 4 cut from store.go and http.go return, and the
+  `Options.Retrieval` check waits for #141. The review's security read found no defect in the
+  service; three small ones closed: the credential's length is checked before any knowledge
+  query, a storage error during authorization answers 503 rather than 404, and content carrying
+  the packet frame markers is refused at import. Follow-ups: the narrow deny list (#176), packet
+  entries not tied to the capped text (#177), the GIN pre-filter over every tenant (#178), four
+  smaller points (#179), tests the review named (#180).
 - 2026-10-13: hrn remote and the MCP remote tools ([#138](https://github.com/cristiangirlea/harness/issues/138), PR #175; slice 5 of #142).
   The snapshot's client, CLI and tools, with the commands in docs/commands.md and the tools in
   docs/mcp.md. The review's security read found one hole: plain HTTP was also accepted for the
