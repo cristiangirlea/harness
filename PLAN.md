@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: PR #TBD (closes #160): the recovery of a slot a batch kept, documented in
+- 2026-10-13: PR #192 (closes #160): the recovery of a slot a batch kept, documented in
   docs/workspaces.md and followed step by step in ws's tests, with no code change. Decided:
   the work is saved on a local branch first, then the slot is detached at a commit a
   remote holds (origin's default branch), because Free counts a commit at HEAD as
