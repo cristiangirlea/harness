@@ -172,8 +172,19 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		}
 		return Taken{N: n, Path: path, Lease: lease, Notes: notes}, nil
 	}
-	return Taken{Notes: notes}, fmt.Errorf("every slot up to --max %d is taken or skipped:\n  %s\nfree one with `hrn ws free <path>`, or allow more with --max",
-		opt.Max, strings.Join(passed, "\n  "))
+	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Passed: passed}
+}
+
+// NoSlotError is Take's error when every slot up to Max is taken or skipped,
+// so a caller can wait for one rather than fail.
+type NoSlotError struct {
+	Max    int
+	Passed []string // one line per slot: its path and who holds it, or why it was skipped
+}
+
+func (e *NoSlotError) Error() string {
+	return fmt.Sprintf("every slot up to --max %d is taken or skipped:\n  %s\nfree one with `hrn ws free <path>`, or allow more with --max",
+		e.Max, strings.Join(e.Passed, "\n  "))
 }
 
 // resolveBase returns the commit a new branch or a detached slot starts

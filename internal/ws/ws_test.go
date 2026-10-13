@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -207,6 +208,20 @@ func TestTakeAtMaxRefusesAndNamesEveryHolder(t *testing.T) {
 	}
 	if _, err := os.Stat(f.slot(3)); err == nil {
 		t.Error("no slot 3 should be made past --max")
+	}
+	var full *NoSlotError
+	if !errors.As(err, &full) || full.Max != 2 || len(full.Passed) != 2 ||
+		!strings.Contains(full.Passed[0], "alice") || !strings.Contains(full.Passed[1], "bob") {
+		t.Errorf("the error should be a *NoSlotError naming both slots, got %#v", err)
+	}
+}
+
+func TestTakeFailingForAnotherReasonIsNoNoSlotError(t *testing.T) {
+	f := newFixture(t)
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Branch: "main", Holder: "a"})
+	var full *NoSlotError
+	if err == nil || errors.As(err, &full) {
+		t.Errorf("a branch checked out elsewhere is not a full set of slots: %#v", err)
 	}
 }
 
