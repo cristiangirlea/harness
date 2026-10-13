@@ -563,6 +563,122 @@ func TestGCKeepsAWorktreeWithAJunctionAboveItsBuildOutput(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree above build output: x")
 }
 
+func TestGCKeepsTrackedFolderJunctionLeadingOut(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows junctions on Windows; elsewhere a link changes a tracked folder")
+	}
+	f := newFixture(t)
+	wt, _ := f.worktree("wt", "done")
+	f.write(wt, filepath.Join("data", "item.txt"), "precious\n")
+	git(t, wt, "add", "data")
+	git(t, wt, "commit", "-q", "-m", "track data")
+	head := git(t, wt, "rev-parse", "HEAD")
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, "item.txt", "precious\n")
+	if err := os.RemoveAll(filepath.Join(wt, "data")); err != nil {
+		t.Fatal(err)
+	}
+	link(t, filepath.Join(wt, "data"), outside)
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, wt), Keep, "a link out of the worktree: data")
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 0 || !exists(filepath.Join(outside, "item.txt")) {
+		t.Fatalf("removed %d, errors %v, outside copy exists: %v", len(removed), errs, exists(filepath.Join(outside, "item.txt")))
+	}
+}
+
+func TestGCAllowsTrackedFolderJunctionStayingInside(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows junctions on Windows; elsewhere a link changes a tracked folder")
+	}
+	f := newFixture(t)
+	wt, _ := f.worktree("wt", "done")
+	f.write(wt, filepath.Join("data", "item.txt"), "same\n")
+	f.write(wt, filepath.Join("other", "item.txt"), "same\n")
+	git(t, wt, "add", "data", "other")
+	git(t, wt, "commit", "-q", "-m", "track folders")
+	head := git(t, wt, "rev-parse", "HEAD")
+	if err := os.RemoveAll(filepath.Join(wt, "data")); err != nil {
+		t.Fatal(err)
+	}
+	link(t, filepath.Join(wt, "data"), filepath.Join(wt, "other"))
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scan(), wt), Remove, "merged")
+}
+
+func TestGCApplyKeepsTrackedFolderJunctionMadeAfterScan(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows junctions on Windows; elsewhere a link changes a tracked folder")
+	}
+	f := newFixture(t)
+	wt, _ := f.worktree("wt", "done")
+	f.write(wt, filepath.Join("data", "item.txt"), "precious\n")
+	git(t, wt, "add", "data")
+	git(t, wt, "commit", "-q", "-m", "track data")
+	head := git(t, wt, "rev-parse", "HEAD")
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, wt), Remove, "merged")
+
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, "item.txt", "precious\n")
+	if err := os.RemoveAll(filepath.Join(wt, "data")); err != nil {
+		t.Fatal(err)
+	}
+	link(t, filepath.Join(wt, "data"), outside)
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "a link out of the worktree: data") {
+		t.Fatalf("removed %d, errors %v; want the new junction kept", len(removed), errs)
+	}
+	if !exists(filepath.Join(outside, "item.txt")) {
+		t.Error("the outside copy was deleted")
+	}
+}
+
+func TestGCLinkWalkSkipsListedInnerWorktree(t *testing.T) {
+	f := newFixture(t)
+	outer, _ := f.worktree("wt-outer", "outer")
+	inner, _ := f.worktree(filepath.Join(outer, ".hrn", "worktrees", "task"), "inner")
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, "item.txt", "precious\n")
+	link(t, filepath.Join(inner, "target", "dep"), outside)
+
+	if why := worktreeLinkRisk(outer, []string{outer, inner}); why != "" {
+		t.Errorf("outer worktree found a risk inside its listed inner worktree: %s", why)
+	}
+}
+
+func TestGCLinkWalkKeepsUnreadableWorktree(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if why := worktreeLinkRisk(missing, nil); !strings.Contains(why, "the worktree cannot be read:") {
+		t.Errorf("missing worktree: got %q, want an unreadable reason", why)
+	}
+}
+
+func TestGCKeepsBatchWorktreeWithTrackedFolderJunctionLeadingOut(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows junctions on Windows; elsewhere a link changes a tracked folder")
+	}
+	f := newFixture(t)
+	wt, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	f.write(wt, filepath.Join("data", "item.txt"), "precious\n")
+	git(t, wt, "add", "data")
+	git(t, wt, "commit", "-q", "-m", "track data")
+	f.land("hrn/task")
+	saveBatch(t, "junction", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: wt})
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, "item.txt", "precious\n")
+	if err := os.RemoveAll(filepath.Join(wt, "data")); err != nil {
+		t.Fatal(err)
+	}
+	link(t, filepath.Join(wt, "data"), outside)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree: data")
+}
+
 func TestGCKeepsAWorktreeThatHoldsOneThatStays(t *testing.T) {
 	f := newFixture(t)
 	outer, head := f.worktree("wt-outer", "outer")

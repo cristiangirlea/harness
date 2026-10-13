@@ -174,6 +174,9 @@ func recheck(ctx context.Context, w Worktree) string {
 		if why := unsaved(ctx, w.Path, entryPaths(entries)); why != "" {
 			return why + " since the scan"
 		}
+		if why := worktreeLinkRisk(w.Path, entryPaths(entries)); why != "" {
+			return why + " since the scan"
+		}
 		return ""
 	}
 	return "git no longer lists it as a worktree"
@@ -443,9 +446,15 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 			return Keep, "fetch failed: " + firstLine(facts.fetchErr.Error())
 		case !isAncestor(ctx, facts.repo, w.Head, facts.def):
 			if landed := landedBatchChange(ctx, facts.repo, w.Head, facts.def); landed != "" {
+				if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+					return Keep, why
+				}
 				return Remove, fmt.Sprintf("batch %s: its change landed on %s as %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"), landed[:7])
 			}
 			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
+		}
+		if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+			return Keep, why
 		}
 		return Remove, fmt.Sprintf("batch %s finished and its commit is on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
 	}
@@ -482,6 +491,9 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		w.PR = &mine[i]
 		if age := time.Since(p.MergedAt); age < grace {
 			return Keep, fmt.Sprintf("PR #%d merged %s ago, inside the %s grace period", p.Number, short(age), short(grace))
+		}
+		if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+			return Keep, why
 		}
 		return Remove, fmt.Sprintf("PR #%d merged %s", p.Number, p.MergedAt.Local().Format("2006-01-02 15:04"))
 	}
@@ -696,6 +708,40 @@ func buildRisk(wt, folder string) string {
 		return "a link out of the worktree inside build output: " + rel(at)
 	case err != nil:
 		return "build output that cannot be read: " + rel(folder)
+	}
+	return ""
+}
+
+// worktreeLinkRisk checks every entry that would go with wt. Git follows
+// junctions on Windows when removing a worktree, including tracked folders.
+// Inner worktrees have their own verdicts and are checked separately.
+func worktreeLinkRisk(wt string, registered []string) string {
+	var link string
+	err := filepath.WalkDir(wt, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p != wt && d.IsDir() && listed(p, registered) {
+			return fs.SkipDir
+		}
+		if d.Name() == ".git" {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if kind, at := riskAt(wt, p, d); kind == riskLink {
+			link = at
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if link != "" {
+		rel, _ := filepath.Rel(wt, link)
+		return "a link out of the worktree: " + filepath.ToSlash(rel)
+	}
+	if err != nil {
+		return "the worktree cannot be read: " + firstLine(err.Error())
 	}
 	return ""
 }
