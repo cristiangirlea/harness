@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -587,6 +588,55 @@ func TestAFreshRetryThatCannotRemoveItsWorktreeClaimsItAgain(t *testing.T) {
 	}
 	if !saved.Tasks[0].BranchMade || !WorktreesRemain(saved) {
 		t.Errorf("task = %+v, want the record to claim the worktree it still has", saved.Tasks[0])
+	}
+}
+
+// A fresh task whose record cannot claim the worktree it just made removes it
+// again: hrn batch rm would leave an unclaimed worktree, and prune could drop
+// the record. When the removal fails too, the worktree stays claimed.
+func TestAFreshTaskThatCannotSaveItsClaimRemovesItsWorktree(t *testing.T) {
+	for name, removable := range map[string]bool{"removed": true, "left": false} {
+		t.Run(name, func(t *testing.T) {
+			dir := initRepo(t)
+			failed := false // fail only the first save that claims the worktree
+			failSave = func(res Result) error {
+				if tr := res.Tasks[0]; !failed && tr.Status == StatusRunning && tr.BranchMade {
+					failed = true
+					if !removable {
+						git(t, dir, "worktree", "lock", tr.Worktree) // git worktree remove --force refuses it
+					}
+					return errors.New("disk full")
+				}
+				return nil
+			}
+			t.Cleanup(func() { failSave = nil })
+			res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "claim", Prompt: "p"}}})
+			tr := res.Tasks[0]
+			if tr.Status != StatusError || len(tr.Attempts) != 0 || !strings.Contains(tr.Error, "disk full") {
+				t.Fatalf("task = %+v, want an error naming the failed save before any attempt", tr)
+			}
+			saved, err := LoadResult(res.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := git(t, dir, "branch", "--list", "hrn/claim")
+			if removable {
+				if exists(tr.Worktree) || b != "" {
+					t.Errorf("worktree there %v, branch %q: want both gone", exists(tr.Worktree), b)
+				}
+				if saved.Tasks[0].BranchMade {
+					t.Error("the record must not claim a worktree that is gone")
+				}
+				return
+			}
+			git(t, dir, "worktree", "unlock", tr.Worktree)
+			if !strings.Contains(tr.Error, "are left") || !exists(tr.Worktree) || b == "" {
+				t.Errorf("task = %+v, branch %q: want the worktree and branch left, and said", tr, b)
+			}
+			if !saved.Tasks[0].BranchMade || !WorktreesRemain(saved) {
+				t.Errorf("task = %+v, want the record to claim what is left", saved.Tasks[0])
+			}
+		})
 	}
 }
 

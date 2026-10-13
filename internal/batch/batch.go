@@ -697,10 +697,19 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				if err := addWorktree(ctx, root, tr, base); err != nil {
 					return fail(err)
 				}
-				tr.BranchMade = true
 				cur := tr
-				cur.Status = StatusRunning
-				progress(cur) // the worktree and branch are this task's from now on
+				cur.BranchMade, cur.Status = true, StatusRunning
+				if err := progress(cur); err != nil {
+					// Unclaimed on disk, hrn batch rm would leave the worktree
+					// and prune could drop the record: it goes now.
+					err = fmt.Errorf("saving the claim on worktree %s: %w", tr.Worktree, err)
+					if rerr := removeWorktree(root, tr); rerr != nil {
+						tr.BranchMade = true // the last save may still record it
+						return fail(fmt.Errorf("%w; worktree %s and branch %s are left: %v", err, tr.Worktree, tr.Branch, rerr))
+					}
+					return fail(err)
+				}
+				tr.BranchMade = true // the worktree and branch are this task's from now on
 			}
 			tr.Commit = ""
 		}
