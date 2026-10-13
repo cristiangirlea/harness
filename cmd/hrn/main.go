@@ -93,6 +93,8 @@ Run flags:
                        skip the project instruction files (api backend)
       --no-context-edits
                        keep every tool result in the request instead of letting the server clear old ones (api backend)
+      --lean           start claude without your settings, plugins, hooks, skills and MCP servers: only the
+                       project's settings and the run's --mcp files (claude backend)
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost

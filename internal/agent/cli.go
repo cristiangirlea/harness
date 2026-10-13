@@ -52,6 +52,9 @@ type CLIBackend struct {
 	mapsModel    bool
 	mapsMaxTurns bool
 	mapsMCP      bool
+	// mapsLean is set when args honours Options.Lean. It is not a capability:
+	// the exec protocol's start message has no lean field.
+	mapsLean bool
 	// limits is set when the CLI bills to a plan and says in words that its
 	// usage limit was reached (usageLimit knows the words): such a run ends
 	// limited rather than in an error.
@@ -189,7 +192,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, err)
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(shownArgs(cmd.Args[1:]), " "))})
-	if limits := unenforced(task, c.mapsEffort); len(limits) > 0 {
+	if limits := unenforced(task, c.mapsEffort, c.mapsLean); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}

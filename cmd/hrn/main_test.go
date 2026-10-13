@@ -135,7 +135,7 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 	dir := t.TempDir()
 	code, err := cmdRun([]string{
 		"-b", "stub-cmd", "-C", dir, "--mode", "auto", "-m", "some-model",
-		"--effort", "high", "--max-turns", "7", "--no-instructions", "--no-context-edits",
+		"--effort", "high", "--max-turns", "7", "--no-instructions", "--no-context-edits", "--lean",
 		"--timeout", "90s", "--max-cost", "1.5", "--task-budget", "30000",
 		"hello", "world",
 	})
@@ -158,6 +158,7 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 		"max-turns":        task.MaxTurns == 7,
 		"no-instructions":  task.NoInstructions,
 		"no-context-edits": task.NoContextEdits,
+		"lean":             task.Lean,
 		"timeout":          task.Timeout == agent.Duration(90*time.Second),
 		"max-cost":         task.MaxCostUSD == 1.5,
 		"task-budget":      task.TaskBudget == 30000,

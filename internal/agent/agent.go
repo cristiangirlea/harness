@@ -309,7 +309,7 @@ func stopStatus(ctx context.Context) Status {
 }
 
 // unenforced names the options a CLI backend cannot apply, for one warning line.
-func unenforced(task Task, mapsEffort bool) []string {
+func unenforced(task Task, mapsEffort, mapsLean bool) []string {
 	var out []string
 	if task.MaxCostUSD > 0 {
 		out = append(out, "max_cost")
@@ -319,6 +319,9 @@ func unenforced(task Task, mapsEffort bool) []string {
 	}
 	if task.Effort != "" && !mapsEffort {
 		out = append(out, "effort")
+	}
+	if task.Lean && !mapsLean {
+		out = append(out, "lean")
 	}
 	return out
 }

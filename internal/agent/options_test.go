@@ -51,13 +51,13 @@ func TestFlagsSetTheOptions(t *testing.T) {
 	o := Options{Mode: ModeAsk} // the caller's default shows through
 	BindFlags(fs, &o)
 	err := fs.Parse([]string{"--model", "claude-sonnet-5", "--mode", "yolo", "--max-turns", "7", "--effort", "low",
-		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--allow-dangerous",
+		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--lean", "--allow-dangerous",
 		"--timeout", "90s", "--max-cost", "2.5", "--task-budget", "30000"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Options{Model: "claude-sonnet-5", Mode: ModeYolo, MaxTurns: 7, Effort: "low", MCP: []string{"a.json", "b.json"},
-		NoInstructions: true, NoContextEdits: true, AllowDangerous: true,
+		NoInstructions: true, NoContextEdits: true, Lean: true, AllowDangerous: true,
 		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000}
 	if !reflect.DeepEqual(o, want) {
 		t.Errorf("parsed = %+v\nwant     %+v", o, want)
@@ -91,7 +91,7 @@ func TestOverInheritsWhatIsUnset(t *testing.T) {
 		t.Errorf("Over = %+v\nwant   %+v", got, want)
 	}
 	// A switch cannot be turned back off, and an empty list is a choice.
-	if !(Options{}).Over(Options{NoContextEdits: true}).NoContextEdits {
+	if !(Options{}).Over(Options{NoContextEdits: true}).NoContextEdits || !(Options{}).Over(Options{Lean: true}).Lean {
 		t.Error("a task cannot turn a spec-wide switch off")
 	}
 	if got := (Options{MCP: []string{}}).Over(base); len(got.MCP) != 0 || got.MCP == nil {
