@@ -222,6 +222,7 @@ func TestPublicAccessAllowsPageNavigationAfterLoginAndKeepsOtherGuards(t *testin
 		want                              int
 	}{
 		{"cross-site GET navigation", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 200},
+		{"cross-site iframe navigation relies on frame headers", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe", "Sec-Fetch-Site": "cross-site"}, 200},
 		{"null-origin GET navigation", http.MethodGet, "harness.example.com", "null", token, map[string]string{"Sec-Fetch-Mode": "navigate"}, 200},
 		{"cross-site HEAD navigation", http.MethodHead, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 200},
 		{"navigation without Access token", http.MethodGet, "harness.example.com", "", "", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
@@ -230,8 +231,17 @@ func TestPublicAccessAllowsPageNavigationAfterLoginAndKeepsOtherGuards(t *testin
 		{"navigation with wrong Host", http.MethodGet, "other.example", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := f.requestWithHeaders(h, tc.method, "/", tc.host, tc.origin, tc.token, tc.headers); got.Code != tc.want {
+			got := f.requestWithHeaders(h, tc.method, "/", tc.host, tc.origin, tc.token, tc.headers)
+			if got.Code != tc.want {
 				t.Fatalf("status = %d, want %d: %s", got.Code, tc.want, got.Body)
+			}
+			if tc.want == http.StatusOK {
+				if frameOptions := got.Header().Get("X-Frame-Options"); frameOptions != "DENY" {
+					t.Errorf("X-Frame-Options = %q, want DENY", frameOptions)
+				}
+				if policy := got.Header().Get("Content-Security-Policy"); !strings.Contains(policy, "frame-ancestors 'none'") {
+					t.Errorf("Content-Security-Policy = %q, want frame-ancestors 'none'", policy)
+				}
 			}
 		})
 	}
