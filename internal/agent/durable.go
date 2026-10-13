@@ -155,9 +155,6 @@ func (d *durableAPI) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 	// existing parallel read behavior.
 	for i, call := range calls {
 		name, id := str(call["name"]), str(call["id"])
-		if id == "" {
-			return nil, errors.New("tool call has no operation ID")
-		}
 		if i < len(d.checkpoint.ToolResults) {
 			if d.checkpoint.ToolResults[i]["tool_use_id"] != id {
 				return nil, errors.New("checkpoint tool outcome ID mismatch")
