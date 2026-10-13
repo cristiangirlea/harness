@@ -218,7 +218,10 @@ worktree only on proof that its work is merged:
   ago (default 1h, so a session finishing up after its merge keeps its folder).
 - **Made by an hrn batch** (a batch record names the folder): the batch has no task still
   running, and the worktree's commit is on the branch origin names as its default
-  (`git ls-remote --symref`), fetched by name just before.
+  (`git ls-remote --symref`), fetched by name just before. A squashed or reworded landing
+  is also recognised when the patch id of the task's whole diff exactly matches one commit
+  on that branch since their merge base. The comparison checks fewer than 2000 non-merge
+  commits; if it reaches that bound, or cannot prove an exact match, the worktree stays.
 
 And only when nothing would be lost with it: the tree is clean (untracked files count), its
 ignored files are build output (`target`, `node_modules`, `dist`, `.venv` and the like, or any

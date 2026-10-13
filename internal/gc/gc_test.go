@@ -624,9 +624,117 @@ func TestGCRemovesAFinishedBatchWorktreeOnlyWhenItsCommitIsOnTheDefaultBranch(t 
 		batch.TaskResult{ID: "running", Status: batch.StatusRunning, Branch: "hrn/running", Worktree: running})
 
 	wts := f.scan()
-	wantVerdict(t, find(t, wts, landed), Remove, "batch 20261011-100000-aaaaaa")
+	wantVerdict(t, find(t, wts, landed), Remove, "batch 20261011-100000-aaaaaa finished and its commit is on origin/main")
 	wantVerdict(t, find(t, wts, unlanded), Keep, "not on origin/main")
 	wantVerdict(t, find(t, wts, running), Keep, "still running")
+}
+
+func TestGCRemovesBatchChangeLandedAsRewordedSquash(t *testing.T) {
+	f := newFixture(t)
+	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	saveBatch(t, "squash", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "reviewed wording")
+	landed := git(t, f.repo, "rev-parse", "HEAD")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as "+landed[:7])
+}
+
+func TestGCRemovesTwoCommitBatchChangeLandedAsOneCommit(t *testing.T) {
+	f := newFixture(t)
+	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	f.write(task, "second.txt", "second\n")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "second task commit")
+	saveBatch(t, "two-commits", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	f.write(f.repo, "second.txt", "second\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "one landed commit")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
+}
+
+func TestGCRemovesBatchChangeAfterLaterEditToSameFile(t *testing.T) {
+	f := newFixture(t)
+	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	saveBatch(t, "later-edit", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land task")
+	landed := git(t, f.repo, "rev-parse", "HEAD")
+	f.write(f.repo, "hrn/task.txt", "hrn/task\nlater edit\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "later edit")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as "+landed[:7])
+}
+
+func TestGCKeepsBatchChangeThatLandedDifferently(t *testing.T) {
+	for _, landed := range []string{"hrn/task\nreview edit\n", "review edit\n"} {
+		t.Run(strings.TrimSpace(landed), func(t *testing.T) {
+			f := newFixture(t)
+			task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+			f.write(task, "hrn/task.txt", "hrn/task\nsecond line\n")
+			git(t, task, "add", ".")
+			git(t, task, "commit", "-q", "-m", "second task commit")
+			saveBatch(t, "different", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+			f.write(f.repo, "hrn/task.txt", landed)
+			git(t, f.repo, "add", ".")
+			git(t, f.repo, "commit", "-q", "-m", "different landing")
+			git(t, f.repo, "push", "-q", "origin", "main")
+
+			wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+		})
+	}
+}
+
+func TestGCKeepsBatchTasksCombinedIntoOneCommit(t *testing.T) {
+	f := newFixture(t)
+	a, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "a"), "hrn/a")
+	b, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "b"), "hrn/b")
+	saveBatch(t, "combined", f.repo,
+		batch.TaskResult{ID: "a", Status: batch.StatusPass, Branch: "hrn/a", Worktree: a},
+		batch.TaskResult{ID: "b", Status: batch.StatusPass, Branch: "hrn/b", Worktree: b})
+	f.write(f.repo, "hrn/a.txt", "hrn/a\n")
+	f.write(f.repo, "hrn/b.txt", "hrn/b\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "combine tasks")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, a), Keep, "not on origin/main")
+	wantVerdict(t, find(t, wts, b), Keep, "not on origin/main")
+}
+
+func TestGCKeepsBatchTaskWithEmptyDiff(t *testing.T) {
+	f := newFixture(t)
+	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+	git(t, task, "commit", "-q", "--allow-empty", "-m", "empty task")
+	saveBatch(t, "empty", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
+func TestGCRemovesBinaryBatchChangeLandedAsSquash(t *testing.T) {
+	f := newFixture(t)
+	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+	f.write(task, "asset.bin", "\x00\x01\x02\xff")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "task binary")
+	saveBatch(t, "binary", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "asset.bin", "\x00\x01\x02\xff")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land binary")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
 
 // A batch task's slot is a locked worktree that outlives the batch: even when
