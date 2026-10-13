@@ -1,0 +1,41 @@
+{{- $id := required "tenant.id is required" .Values.tenant.id -}}
+{{- if not (regexMatch "^t_[0-9a-f]{32}$" $id) -}}
+{{- fail "tenant.id must be a server-issued t_ ID" -}}
+{{- end -}}
+{{- $namespace := printf "hrn-%s" ($id | replace "_" "-") -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $namespace }}
+  labels:
+    app.kubernetes.io/part-of: harness
+    harness.dev/tenant-id: {{ $id | quote }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: hrn-tenant-quota
+  namespace: {{ $namespace }}
+spec:
+  hard:
+    pods: {{ .Values.quota.pods | quote }}
+    persistentvolumeclaims: {{ .Values.quota.persistentVolumeClaims | quote }}
+    requests.storage: {{ .Values.quota.storage | quote }}
+    requests.cpu: {{ .Values.quota.requestsCpu | quote }}
+    requests.memory: {{ .Values.quota.requestsMemory | quote }}
+    limits.cpu: {{ .Values.quota.limitsCpu | quote }}
+    limits.memory: {{ .Values.quota.limitsMemory | quote }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hrn-tenant-default-deny
+  namespace: {{ $namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

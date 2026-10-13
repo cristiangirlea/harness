@@ -1,0 +1,73 @@
+# Disposable PostgreSQL only. Data is lost when this Pod is deleted.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrn-postgres
+  namespace: harness-system
+spec:
+  selector:
+    app.kubernetes.io/name: hrn-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hrn-postgres
+  namespace: harness-system
+  labels:
+    app.kubernetes.io/name: hrn-postgres
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 70
+    runAsGroup: 70
+    fsGroup: 70
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: postgres
+      image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+      env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: hrn-postgres-auth
+              key: password
+        - name: POSTGRES_DB
+          value: harness_test
+        - name: PGDATA
+          value: /pgdata/db
+      ports:
+        - containerPort: 5432
+          name: postgres
+      readinessProbe:
+        exec:
+          command: ["pg_isready", "-U", "postgres", "-d", "harness_test"]
+        periodSeconds: 2
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: pgdata
+          mountPath: /pgdata
+        - name: run
+          mountPath: /var/run/postgresql
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+  volumes:
+    - name: pgdata
+      emptyDir:
+        sizeLimit: 512Mi
+    - name: run
+      emptyDir:
+        sizeLimit: 16Mi
