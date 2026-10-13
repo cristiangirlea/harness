@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: issue #204: lean dropped the owner's own rules, plugins and skills, which
+- 2026-10-13: issue #204 (PR #207): lean dropped the owner's own rules, plugins and skills, which
   workers must keep. Decided: lean is `--strict-mcp-config` only (no `--setting-sources`), so
   it drops only MCP servers hrn did not pass (the user's, plugin-provided ones and claude.ai
   connectors). `lean` became a `*bool` in `agent.Options`: unset means the entry point's
