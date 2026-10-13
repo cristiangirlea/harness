@@ -48,6 +48,69 @@ func TestCodexRecordsItsThread(t *testing.T) {
 	if len(events) != 1 || events[0].Text != "alpha gamma" {
 		t.Errorf("unexpected events %+v", events)
 	}
+	if res.Usage == nil || res.Usage.InputSemantics != "inclusive_cache" || res.Usage.Status != "reported" || res.Usage.CostStatus != "missing" {
+		t.Errorf("completed usage = %+v", res.Usage)
+	}
+}
+
+func TestCodexIncompleteUsageStaysMissingAfterAnotherTurn(t *testing.T) {
+	for _, incomplete := range []string{
+		`{"type":"turn.completed"}`,
+		`{"type":"turn.completed","usage":{"cached_input_tokens":1,"output_tokens":2}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":2}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":3,"cached_input_tokens":1}}`,
+	} {
+		t.Run(incomplete, func(t *testing.T) {
+			var res Result
+			parseCodexStream([]byte(incomplete), func(Event) {}, &res)
+			parseCodexStream([]byte(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`), func(Event) {}, &res)
+			if res.Usage == nil || res.Usage.Status != "missing" || res.Turns != 2 {
+				t.Fatalf("incomplete turn became known: %+v", res)
+			}
+			if _, known, _ := res.ModelTokens(); known {
+				t.Fatal("partial usage was counted as complete")
+			}
+		})
+	}
+}
+
+func TestCodexNullAndNegativeUsageLeaveModelTokensUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+	}{
+		{"null usage", `{"type":"turn.completed","usage":null}`},
+		{"negative counter", `{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":-1,"output_tokens":2}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var res Result
+			if !parseCodexStream([]byte(tc.line), func(Event) {}, &res) {
+				t.Fatal("turn.completed was not parsed")
+			}
+			if res.Turns != 1 {
+				t.Errorf("turns = %d, want 1", res.Turns)
+			}
+			if _, known, _ := res.ModelTokens(); known {
+				t.Errorf("ModelTokens reported known for %s: %+v", tc.name, res)
+			}
+		})
+	}
+}
+
+func TestCodexErrorAndFailedTurnMarkUsageMissing(t *testing.T) {
+	for _, line := range []string{
+		`{"type":"error","message":"connection lost"}`,
+		`{"type":"turn.failed","error":{"message":"connection lost"}}`,
+	} {
+		t.Run(line, func(t *testing.T) {
+			var res Result
+			parseCodexStream([]byte(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`), func(Event) {}, &res)
+			parseCodexStream([]byte(line), func(Event) {}, &res)
+			if res.Usage == nil || res.Usage.Status != "missing" || res.Usage.CostStatus != "missing" {
+				t.Fatalf("failed turn usage = %+v", res.Usage)
+			}
+		})
+	}
 }
 
 func TestClaudeForksTheSessionItIsGiven(t *testing.T) {

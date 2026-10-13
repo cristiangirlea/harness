@@ -26,6 +26,8 @@ first paragraph only, since a brief's later paragraphs mention every keyword; th
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
 median cost, and the cache share (cache-read tokens over every input token, cache writes included;
 `-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
+It also shows `-` when Codex usage is marked missing; Codex's cache share divides
+cache reads by input tokens that already include those reads.
 Batches group by repository; their cost sums every attempt, passed or not. Runs without
 a result (still running or killed), batches with a task still running, and records that
 cannot be read are counted under the tables and left out of them.
