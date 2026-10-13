@@ -841,11 +841,12 @@ func (k *keptSlots) count() int {
 	return k.n
 }
 
-// droppingBranch and failSave are for tests: one runs as dropBranch starts,
-// the other can make save fail.
+// droppingBranch, failSave and failWorktreeList are for tests: the first runs
+// as dropBranch starts, the others can make save or git worktree list fail.
 var (
-	droppingBranch func()
-	failSave       func(Result) error
+	droppingBranch   func()
+	failSave         func(Result) error
+	failWorktreeList func() error
 )
 
 // dropBranch deletes the branch takeSlot made when no slot checked it out.
@@ -1135,6 +1136,11 @@ func removeSlotBranch(root string, tr TaskResult) error {
 func isWorktree(root, path string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	if failWorktreeList != nil {
+		if err := failWorktreeList(); err != nil {
+			return false, err
+		}
+	}
 	out, err := gitOut(ctx, root, "worktree", "list", "--porcelain")
 	if err != nil {
 		return false, err
@@ -1173,9 +1179,10 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 // that failed: its worktree, still registered, or its branch. Another batch
 // takes neither while it is there, so what is left is still the task's; a
 // directory git no longer knows is no claim. When git cannot list worktrees,
-// the worktree is taken to be there.
+// only the branch decides: a claim may miss what is left, but must never name
+// a path that another batch could take once a stray directory is cleared.
 func stillMade(root string, tr TaskResult) bool {
-	if registered, err := isWorktree(root, tr.Worktree); err != nil || registered {
+	if registered, err := isWorktree(root, tr.Worktree); err == nil && registered {
 		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

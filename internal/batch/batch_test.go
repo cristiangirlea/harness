@@ -607,6 +607,23 @@ func TestAFreshRetryThatRemovesPartOfItsWorktreeClaimsWhatIsLeft(t *testing.T) {
 			git(t, dir, "worktree", "remove", "--force", tr.Worktree)
 			writeFile(t, filepath.Join(tr.Worktree, "stray.txt"), "not git's\n")
 		}, false},
+		// git cannot list worktrees once the branch is gone: no claim from that.
+		{"directory left, worktrees unlisted", func(t *testing.T, dir string, tr TaskResult) {
+			git(t, dir, "worktree", "remove", "--force", tr.Worktree)
+			writeFile(t, filepath.Join(tr.Worktree, "stray.txt"), "not git's\n")
+			failWorktreeList = func() error {
+				if git(t, dir, "branch", "--list", tr.Branch) == "" {
+					return errors.New("cannot list worktrees")
+				}
+				return nil
+			}
+		}, false},
+		// The removal stops at the listing, so the branch is left, and claimed.
+		{"branch left, worktrees unlisted", func(t *testing.T, dir string, tr TaskResult) {
+			git(t, dir, "worktree", "remove", "--force", tr.Worktree)
+			writeFile(t, filepath.Join(tr.Worktree, "stray.txt"), "not git's\n")
+			failWorktreeList = func() error { return errors.New("cannot list worktrees") }
+		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := initRepo(t)
@@ -618,8 +635,9 @@ func TestAFreshRetryThatRemovesPartOfItsWorktreeClaimsWhatIsLeft(t *testing.T) {
 				}
 				return nil
 			}
-			t.Cleanup(func() { failSave = nil })
+			t.Cleanup(func() { failSave, failWorktreeList = nil, nil })
 			res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-bad", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "part", Prompt: "p"}}})
+			failWorktreeList = nil
 			tr := res.Tasks[0]
 			if tr.Status != StatusError || len(tr.Attempts) != 1 || exists(filepath.Join(tr.Worktree, ".git")) {
 				t.Fatalf("task = %+v, want an error after the worktree went", tr)
@@ -634,7 +652,10 @@ func TestAFreshRetryThatRemovesPartOfItsWorktreeClaimsWhatIsLeft(t *testing.T) {
 			if !tc.claim {
 				return
 			}
-			if err := os.Remove(filepath.Join(dir, ".git", "refs", "heads", "hrn", "part.lock")); err != nil {
+			if err := os.Remove(filepath.Join(dir, ".git", "refs", "heads", "hrn", "part.lock")); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if err := os.RemoveAll(filepath.Join(tr.Worktree, "stray.txt")); err != nil {
 				t.Fatal(err)
 			}
 			if err := Remove(saved); err != nil {
