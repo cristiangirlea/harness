@@ -348,6 +348,38 @@ func TestGCFreeBelowReportSuggestsAnotherRunWhenEligibleCachesWereLeft(t *testin
 	}
 }
 
+func TestGCFreeBelowReportWhenIdleRemovalAlreadyFreesEnough(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		youngIdle time.Duration
+		hint      string
+	}{
+		{"eligible cache left", 5 * time.Hour, "; another hrn gc --free-below run picks the next caches"},
+		{"inside min idle", time.Hour, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := tempRoot(t)
+			old := tagged(t, filepath.Join(root, "old"), 30*time.Hour, 2000)
+			young := tagged(t, filepath.Join(root, "young"), tc.youngIdle, 1000)
+			opt := cacheOpt
+			opt.FreeBelow = 1000
+			opt.Drive = func(string) (Drive, error) { return Drive{ID: "C:", Free: 100}, nil }
+
+			cs := caches(t, []string{root}, nil, opt)
+			wantCache(t, findCache(t, cs, old), Remove, "idle 30h")
+			wantCache(t, findCache(t, cs, young), Keep, "inside --idle 24h")
+			removed, errs := ApplyCaches(context.Background(), cs)
+			if len(errs) != 0 || len(removed) != 1 || samePath(removed[0].Path) != samePath(old) || exists(old) || !exists(young) {
+				t.Fatalf("apply: removed %+v, errors %v, old exists: %v, young exists: %v", removed, errs, exists(old), exists(young))
+			}
+			want := []string{"C: still has 100 bytes free, 900 bytes below 1000 bytes" + tc.hint}
+			if got := FreeBelowReport(cs, opt); !equalLines(got, want) {
+				t.Errorf("report = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestGCFreeBelowReportsDriveLookupErrorAfterApply(t *testing.T) {
 	root := tempRoot(t)
 	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
