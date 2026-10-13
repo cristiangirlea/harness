@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -112,5 +115,91 @@ func TestGCRefusesBadIdleFlags(t *testing.T) {
 		if code != 2 || err == nil || !strings.Contains(err.Error(), "--") {
 			t.Errorf("%v: got code %d, error %v; want 2 and an error naming the flag", args, code, err)
 		}
+	}
+}
+
+func TestGCFreeBelowDryRunHasNoDriveReport(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "target")
+	if err := os.Mkdir(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "CACHEDIR.TAG"), []byte("Signature: 8a477f597d28d172789f06886806bc55\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.CreateTemp(t.TempDir(), "gc-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	old := os.Stdout
+	os.Stdout = out
+	defer func() { os.Stdout = old }()
+	code, runErr := cmdGC([]string{"--free-below", "1000T", "--min-idle", "0", root})
+	os.Stdout = old
+	if code != 0 || runErr != nil {
+		t.Fatalf("dry run: code %d, error %v", code, runErr)
+	}
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), cache) || !strings.Contains(string(data), "would remove") {
+		t.Fatalf("dry run did not list its cache: %s", data)
+	}
+	for _, phrase := range []string{"now has", "still has", "free space could not be read"} {
+		if strings.Contains(string(data), phrase) {
+			t.Errorf("dry run printed an after-apply report: %s", data)
+		}
+	}
+}
+
+func TestGCFreeBelowApplyPrintsDriveReportAfterRemoval(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "target")
+	if err := os.Mkdir(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tag := filepath.Join(cache, "CACHEDIR.TAG")
+	if err := os.WriteFile(tag, []byte("Signature: 8a477f597d28d172789f06886806bc55\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-48 * time.Hour)
+	for _, path := range []string{tag, cache} {
+		if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := os.CreateTemp(t.TempDir(), "gc-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	old := os.Stdout
+	os.Stdout = out
+	defer func() { os.Stdout = old }()
+	code, runErr := cmdGC([]string{"--apply", "--free-below", "1000T", root})
+	os.Stdout = old
+	if code != 0 || runErr != nil {
+		t.Fatalf("apply: code %d, error %v", code, runErr)
+	}
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	removed := strings.Index(text, "removed 0 worktrees and 1 caches, freeing")
+	reported := strings.Index(text, "still has")
+	if removed < 0 || reported <= removed || !strings.Contains(text[reported:], "below") {
+		t.Errorf("report should follow the removal summary:\n%s", text)
+	}
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Errorf("cache still exists after apply: %v", err)
 	}
 }

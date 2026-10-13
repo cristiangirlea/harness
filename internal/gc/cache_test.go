@@ -2,6 +2,7 @@ package gc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -247,6 +248,202 @@ func TestGCFreeBelowLeavesADriveWhoseFreeSpaceIsUnknown(t *testing.T) {
 
 	cs := caches(t, []string{root}, nil, opt)
 	wantCache(t, findCache(t, cs, c), Keep, "free space unknown")
+	ApplyCaches(context.Background(), cs)
+	if got := FreeBelowReport(cs, opt); len(got) != 0 {
+		t.Errorf("a drive whose scan lookup failed was reported: %q", got)
+	}
+}
+
+func TestGCFreeBelowReportsDriveNowAboveAfterApply(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 40 << 30
+	calls := 0
+	var reportPath string
+	opt.Drive = func(path string) (Drive, error) {
+		if _, err := os.Stat(path); err != nil {
+			return Drive{}, err
+		}
+		calls++
+		if calls == 1 {
+			return Drive{ID: "C:", Free: 30 << 30}, nil
+		}
+		reportPath = path
+		return Drive{ID: "C:", Free: 41 << 30}, nil
+	}
+	cs := caches(t, []string{root}, nil, opt)
+	if removed, errs := ApplyCaches(context.Background(), cs); len(removed) != 1 || len(errs) != 0 {
+		t.Fatalf("apply: removed %d, errors %v", len(removed), errs)
+	}
+	if got, want := FreeBelowReport(cs, opt), []string{"C: now has 41.0 GB free, above 40.0 GB"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+	if samePath(reportPath) != samePath(root) {
+		t.Errorf("report looked up %q, want existing parent %q", reportPath, root)
+	}
+}
+
+func TestGCFreeBelowReportPrintsOneLinePerDrive(t *testing.T) {
+	first := tempRoot(t)
+	second := tempRoot(t)
+	tagged(t, filepath.Join(first, "a"), 10*time.Hour, 1000)
+	tagged(t, filepath.Join(first, "b"), 10*time.Hour, 1000)
+	tagged(t, filepath.Join(second, "c"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.Idle = time.Hour
+	opt.FreeBelow = 40 << 30
+	opt.Drive = func(path string) (Drive, error) {
+		if _, err := os.Stat(path); err != nil {
+			return Drive{}, err
+		}
+		if inside(path, second) {
+			return Drive{ID: "D:", Free: 30 << 30}, nil
+		}
+		return Drive{ID: "C:", Free: 30 << 30}, nil
+	}
+	cs := caches(t, []string{first, second}, nil, opt)
+	if removed, errs := ApplyCaches(context.Background(), cs); len(removed) != 3 || len(errs) != 0 {
+		t.Fatalf("apply: removed %d, errors %v", len(removed), errs)
+	}
+	if got, want := FreeBelowReport(cs, opt), []string{
+		"C: still has 30.0 GB free, 10.0 GB below 40.0 GB",
+		"D: still has 30.0 GB free, 10.0 GB below 40.0 GB",
+	}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
+func TestGCFreeBelowReportsDriveStillBelowAfterApply(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 40 << 30
+	calls := 0
+	opt.Drive = func(string) (Drive, error) {
+		calls++
+		if calls == 1 {
+			return Drive{ID: "C:", Free: 30 << 30}, nil
+		}
+		return Drive{ID: "C:", Free: 31 << 30}, nil
+	}
+	cs := caches(t, []string{root}, nil, opt)
+	ApplyCaches(context.Background(), cs)
+	if got, want := FreeBelowReport(cs, opt), []string{"C: still has 31.0 GB free, 9.0 GB below 40.0 GB"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
+func TestGCFreeBelowReportSuggestsAnotherRunWhenEligibleCachesWereLeft(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	younger := tagged(t, filepath.Join(root, "younger"), 5*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 1000
+	opt.Drive = func(string) (Drive, error) { return Drive{ID: "C:", Free: 1}, nil }
+	cs := caches(t, []string{root}, nil, opt)
+	wantCache(t, findCache(t, cs, younger), Keep, "inside --idle 24h")
+	if got, want := FreeBelowReport(cs, opt), []string{"C: still has 1 bytes free, 999 bytes below 1000 bytes; another hrn gc --free-below run picks the next caches"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
+func TestGCFreeBelowReportWhenIdleRemovalAlreadyFreesEnough(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		youngIdle time.Duration
+		hint      string
+	}{
+		{"eligible cache left", 5 * time.Hour, "; another hrn gc --free-below run picks the next caches"},
+		{"inside min idle", time.Hour, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := tempRoot(t)
+			old := tagged(t, filepath.Join(root, "old"), 30*time.Hour, 2000)
+			young := tagged(t, filepath.Join(root, "young"), tc.youngIdle, 1000)
+			opt := cacheOpt
+			opt.FreeBelow = 1000
+			opt.Drive = func(string) (Drive, error) { return Drive{ID: "C:", Free: 100}, nil }
+
+			cs := caches(t, []string{root}, nil, opt)
+			wantCache(t, findCache(t, cs, old), Remove, "idle 30h")
+			wantCache(t, findCache(t, cs, young), Keep, "inside --idle 24h")
+			removed, errs := ApplyCaches(context.Background(), cs)
+			if len(errs) != 0 || len(removed) != 1 || samePath(removed[0].Path) != samePath(old) || exists(old) || !exists(young) {
+				t.Fatalf("apply: removed %+v, errors %v, old exists: %v, young exists: %v", removed, errs, exists(old), exists(young))
+			}
+			want := []string{"C: still has 100 bytes free, 900 bytes below 1000 bytes" + tc.hint}
+			if got := FreeBelowReport(cs, opt); !equalLines(got, want) {
+				t.Errorf("report = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestGCFreeBelowReportsDriveLookupErrorAfterApply(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 40 << 30
+	calls := 0
+	opt.Drive = func(string) (Drive, error) {
+		calls++
+		if calls == 1 {
+			return Drive{ID: "C:", Free: 30 << 30}, nil
+		}
+		return Drive{}, errors.New("permission denied\nextra detail")
+	}
+	cs := caches(t, []string{root}, nil, opt)
+	ApplyCaches(context.Background(), cs)
+	if got, want := FreeBelowReport(cs, opt), []string{"C: free space could not be read: permission denied"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
+func TestGCFreeBelowReportsChangedDriveAfterApply(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 40 << 30
+	calls := 0
+	opt.Drive = func(string) (Drive, error) {
+		calls++
+		if calls == 1 {
+			return Drive{ID: "C:", Free: 30 << 30}, nil
+		}
+		return Drive{ID: "D:", Free: 41 << 30}, nil
+	}
+	cs := caches(t, []string{root}, nil, opt)
+	ApplyCaches(context.Background(), cs)
+	if got, want := FreeBelowReport(cs, opt), []string{"C: free space could not be read: the drive is no longer there"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
+func TestGCFreeBelowReportSkipsUnsetAndInitiallyAboveDrives(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.Drive = func(string) (Drive, error) { return Drive{ID: "C:", Free: 50 << 30}, nil }
+	if got := FreeBelowReport(caches(t, []string{root}, nil, opt), opt); len(got) != 0 {
+		t.Errorf("without --free-below: %q", got)
+	}
+	opt.FreeBelow = 40 << 30
+	if got := FreeBelowReport(caches(t, []string{root}, nil, opt), opt); len(got) != 0 {
+		t.Errorf("initially above: %q", got)
+	}
+}
+
+func equalLines(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestGCFindsCachesInsideWorktreesButNotThoseGoingWithTheirWorktree(t *testing.T) {
