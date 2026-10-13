@@ -71,6 +71,7 @@ hrn show -f <run-id>      # follow a run live
 | Understand what an agent is allowed to do | [Permissions and command guard](docs/permissions.md) |
 | Connect hrn to an MCP host or tools | [MCP integration](docs/mcp.md) |
 | Run parallel tasks and manage their branches | [Batches and worktree cleanup](docs/batches.md) |
+| Reuse a few worktrees per repository instead of making new ones | [Reusable workspaces](docs/workspaces.md) |
 | Use the dashboard, phone view, or Ada bot | [Live dashboard and Ada](docs/watch.md) |
 | See the dashboard and Ada in pictures | [hrn watch and Ada, in pictures](docs/presentation.md) |
 | Score tasks or compare models | [Evaluations and reports](docs/evaluations.md) |
