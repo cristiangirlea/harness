@@ -395,3 +395,19 @@ func TestRemoveOfSlotTasksDeletesOnlyTheirBranches(t *testing.T) {
 		t.Error("someone else's lease must stay")
 	}
 }
+
+// hrn prune keeps a batch record while hrn batch rm still has something to
+// remove. A slot outlives every batch, so for a slot task that is its branch.
+func TestASlotBatchRemainsWhileItsBranchesDo(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{ID: "one", Prompt: "p"}}})
+	if !WorktreesRemain(res) {
+		t.Error("the batch's branch is still there, so its record must stay")
+	}
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+	if WorktreesRemain(res) {
+		t.Error("after batch rm only the slot is left, which is not the batch's")
+	}
+}
