@@ -24,6 +24,7 @@ type HTTPServer struct {
 
 func (h *HTTPServer) Handler() http.Handler {
 	mux := http.NewServeMux()
+	h.knowledgeRoutes(mux)
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("POST /v1/tenants", h.tenants)
 	mux.HandleFunc("POST /v1/projects", h.projects)
