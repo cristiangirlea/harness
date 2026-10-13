@@ -105,8 +105,19 @@ func (s *session) call(t *testing.T, name, args string) mcp.CallResult {
 func TestRunThenInspect(t *testing.T) {
 	dir := t.TempDir()
 	s := connect(t, dir)
-	if names := s.cl.Tools(); len(names) != 7 || names[0].Name != "run" || !names[1].Annotations.ReadOnly() {
-		t.Fatalf("tools = %+v", names)
+	tools := s.cl.Tools()
+	seen := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		seen[tool.Name] = true
+	}
+	for _, name := range []string{"run", "runs", "show", "backends", "batch", "batch_show", "batch_merge",
+		"remote_submit", "remote_status", "remote_events", "remote_cancel"} {
+		if !seen[name] {
+			t.Errorf("missing tool %s", name)
+		}
+	}
+	if len(tools) != 11 || !tools[1].Annotations.ReadOnly() {
+		t.Fatalf("tools = %+v", tools)
 	}
 
 	res := s.call(t, "run", `{"prompt":"hello","backend":"stub","mode":"auto"}`)
