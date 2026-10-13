@@ -1096,7 +1096,8 @@ func TestATaskGivesUpOnALeaseALeftTakeoverFileBlocks(t *testing.T) {
 // An empty lease is one being written, so a task keeps waiting on it; once
 // it reads as another batch's the task waits on that batch as usual,
 // however long the other slots stay unreadable, and takes the slot when it
-// is given back.
+// is given back. Each change to slot 1's lease waits for the task to have
+// reported what it saw before, so the order holds however slow the machine.
 func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 	dir := initRepo(t)
 	quickPoll(t)
@@ -1104,32 +1105,63 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 	for n := 1; n <= ws.DefaultMax; n++ {
 		writeFile(t, leaseFile(dir, n), "")
 	}
-	go func() {
-		time.Sleep(bound / 3)
-		data, _ := json.Marshal(ws.Lease{Holder: "batch other task x", PID: os.Getpid(), Taken: time.Now()})
-		writeFile(t, leaseFile(dir, 1), string(data))
-		time.Sleep(bound)
-		os.Remove(leaseFile(dir, 1))
-	}()
+	// scans counts the task's looks at the leases.
+	var scans atomic.Int32
+	rangeComputed = func(int) { scans.Add(1) }
+	t.Cleanup(func() { rangeComputed = nil })
 	var mu sync.Mutex
 	var waits []string
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok",
-		Tasks: []Task{{ID: "patient", Prompt: "p"}}}, func(e Event) {
+	waited := make(chan string, 100)
+	notify := func(e Event) {
 		if e.Kind == "wait" {
 			mu.Lock()
 			waits = append(waits, e.Text)
 			mu.Unlock()
+			waited <- e.Text
 		}
-	})
-	if err != nil {
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var res Result
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		res, err = Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok",
+			Tasks: []Task{{ID: "patient", Prompt: "p"}}}, notify)
+		done <- err
+	}()
+	awaitWait(t, waited, done, leaseFile(dir, 2)+" is being written")
+	// Slot 1's lease is rewritten under worktreeMu, which the take scans
+	// under, so no look sees it half done.
+	worktreeMu.Lock()
+	data, _ := json.Marshal(ws.Lease{Holder: "batch other task x", PID: os.Getpid(), Taken: time.Now()})
+	writeFile(t, leaseFile(dir, 1), string(data))
+	worktreeMu.Unlock()
+	awaitWait(t, waited, done, `taken by "batch other task x"`)
+	// The other leases have been unreadable since the first look, before
+	// the first wait event: after the bound their clocks have run out, and
+	// two more looks mean one completed with them so and did not give up.
+	time.Sleep(bound)
+	seen := scans.Load() + 2
+	for scans.Load() < seen {
+		select {
+		case err := <-done:
+			t.Fatalf("the task ended with %v, %+v while another batch held slot 1", err, res.Tasks)
+		case <-time.After(slotPoll):
+		}
+	}
+	worktreeMu.Lock()
+	os.Remove(leaseFile(dir, 1))
+	worktreeMu.Unlock()
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 	tr := res.Tasks[0]
 	if tr.Status != StatusPass || tr.Slot != 1 {
 		t.Fatalf("task = %+v, want a pass in slot 1 once the other batch gave it back", tr)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if len(waits) == 0 || !strings.Contains(waits[0], leaseFile(dir, 2)+" is being written") {
 		t.Errorf("wait events = %q, want the first to say slot 2's lease is being written and name it", waits)
 	}
