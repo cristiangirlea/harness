@@ -67,8 +67,11 @@ When every slot it tries is taken by another batch, or by this batch's own runni
 tasks once it holds as many as it may, a task does not fail:
 it says it is waiting and which slots are held, looks again every 5 seconds, and is
 canceled with the batch. A lease it cannot read keeps it waiting too, since one being
-written reads on the next look; one that stays unreadable keeps it waiting for ever, which
-is [#193](https://github.com/cristiangirlea/harness/issues/193). When none can come free, because the rest are sessions', skipped
+written reads on the next look. When such leases are all it is waiting for and every one has
+stayed unreadable for 30 seconds (an empty or broken lease file, or a `<n>.lease.takeover`
+file a crash left), no process will free them, so the task fails as `error` naming each file:
+check the slots with `hrn ws list`, and once no hrn process holds the slot remove the lease
+file, or the `.takeover` file the line names. When none can come free, because the rest are sessions', skipped
 for what is in them or kept by this batch's own tasks (below), it fails as `error` instead. A slot that still holds files when its task ends (the commit
 failed, say), or a commit on no branch (the agent detached HEAD and committed), is not
 given back: the task's error says `slot <n> kept` and why. Its lease

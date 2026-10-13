@@ -664,6 +664,18 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: PR #TBD (closes #193): a task waited until the batch was canceled on a slot
+  whose lease stayed unreadable (empty, not JSON, or a stale lease a left `<n>.lease.takeover`
+  file blocks), since `takeSlot` counted every lease it could not read as one that may come
+  free. Decided: `ws.NoSlotError` gains an additive `Unreadable` field naming those slots,
+  and the empty-lease line names the file like the other two. The task still waits on them,
+  since a lease being written reads on the next look, and keeps waiting while any live
+  process holds a slot in its range; when the unreadable leases are all that is left to
+  wait for and every one has stayed unreadable for `unreadableWait` (30 seconds, a package
+  variable the tests shorten), it fails as `error` naming each file and how to clear it
+  (`hrn ws list`, then remove the lease or `.takeover` file once no hrn process holds the
+  slot). Timed per slot from the task's first look that found it unreadable, so a lease
+  that reads again resets, and nothing is removed by hrn.
 - 2026-10-13: PR #194 (closes #161): a batch waited while sessions (`hrn ws take`) held every
   slot, for as long as a person kept one. Decided: a batch's bound is `max(parallel, 4)` slots
   of its own, running tasks' and kept ones together, counted from the leases that name its
