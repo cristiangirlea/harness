@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: PR #TBD (closes #162): hrn batch rm and prune leave what another batch made
+- 2026-10-13: PR #187 (closes #162): hrn batch rm and prune leave what another batch made
   when a fresh task found its worktree or branch taken. Decided: a fresh task claims its
   worktree and branch through `branch_made`, as a slot task claims its branch; batch records
   now carry `ownership`, and in records that have it rm, prune and WorktreesRemain trust only
