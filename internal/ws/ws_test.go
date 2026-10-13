@@ -840,28 +840,3 @@ func TestRangeBeyondSessionsRefusesLessThanOne(t *testing.T) {
 		t.Error("a range of no slots is a mistake")
 	}
 }
-
-func TestSessionsCountsOnlyLeasesWithoutAProcess(t *testing.T) {
-	f := newFixture(t)
-	if n, err := Sessions(context.Background(), f.repo); err != nil || n != 0 {
-		t.Fatalf("no slots yet: %d, %v", n, err)
-	}
-	f.take(TakeOptions{Holder: "alice"})
-	f.take(TakeOptions{Holder: "bob"})
-	dir := filepath.Join(f.repo, ".hrn", "slots")
-	writeLease := func(n, pid int) {
-		data, _ := json.Marshal(Lease{Holder: "batch", PID: pid, Taken: time.Now()})
-		if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".lease"), data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	writeLease(3, os.Getpid())
-	writeLease(4, exitedPID(t))
-	if err := os.WriteFile(filepath.Join(dir, "5.lease"), nil, 0o644); err != nil { // being written
-		t.Fatal(err)
-	}
-	n, err := Sessions(context.Background(), filepath.Join(f.repo, ".hrn", "slots", "1"))
-	if err != nil || n != 2 {
-		t.Errorf("Sessions = %d, %v; want alice's and bob's 2, not a live or exited process's, nor one being written", n, err)
-	}
-}

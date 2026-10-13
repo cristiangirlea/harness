@@ -550,7 +550,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	finish := func(status Status, text string) TaskResult {
 		if slot != nil {
 			if err := giveBack(*slot, base); err != nil {
-				kept.add()
+				kept.add(slot.Lease.Holder)
 				msg := fmt.Sprintf("slot %d kept: %v", slot.N, err)
 				tr.Error = strings.TrimSpace(tr.Error + "\n" + msg)
 				text += " · " + msg
@@ -771,18 +771,22 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 
 // takeSlot leases a slot of the repository for a task. The branch is made
 // from the base first, so it starts there whatever origin has by that name.
-// It tries max(parallel, ws.DefaultMax) slots plus one for each slot a session
-// (hrn ws take, no pid) holds, counted again at every try, so a batch never
-// waits on a person's slot and its slots stay bounded.
-// While every slot is taken it waits, saying so whenever who holds them
-// changes, and looks again every slotPoll until ctx ends; when none can come
-// free (only skipped slots and ones this batch kept) it fails instead. A task that gets
-// no slot leaves no branch. made(true) is called once the branch exists, before
-// any wait, to save that the branch is the task's: hrn batch rm deletes a
-// slotless task's branch only on that proof. made(false) saves that it is not
-// before the branch is dropped, and when that save fails the branch is left.
-// A crash in between either way leaves a branch nothing deletes, which is the
-// safe way round: never someone else's branch.
+// The batch holds at most max(parallel, ws.DefaultMax) slots of its own at
+// once, running tasks' and kept ones together. It tries the slot numbers
+// from 1 that hold that many slots other than sessions' (hrn ws take, no
+// pid: held until hrn ws free), worked out again at every try, so a session
+// among the first slots is passed over and one further up changes nothing.
+// While a slot it needs is held by a live process, another batch's or one
+// of this batch's running tasks, it waits, saying so whenever who holds
+// them changes, and looks again every slotPoll until ctx ends. When none
+// can come free (sessions, skipped slots and the slots this batch kept) it
+// fails instead. A task that gets no slot leaves no branch. made(true) is
+// called once the branch exists, before any wait, to save that the branch
+// is the task's: hrn batch rm deletes a slotless task's branch only on that
+// proof. made(false) saves that it is not before the branch is dropped, and
+// when that save fails the branch is left. A crash in between either way
+// leaves a branch nothing deletes, which is the safe way round: never
+// someone else's branch.
 func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, notify func(Event), made func(mine bool) error) (ws.Taken, error) {
 	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
 		return ws.Taken{}, err
@@ -795,33 +799,60 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 		dropBranch(root, branch)
 		return ws.Taken{}, cause
 	}
-	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: "batch " + batchID + " task " + id,
-		PID: os.Getpid(), NoFetch: true}
+	prefix := "batch " + batchID + " "
+	pid := os.Getpid()
+	mine := func(l ws.Lease) bool { return l.PID == pid && strings.HasPrefix(l.Holder, prefix) }
+	bound := max(spec.Parallel, ws.DefaultMax)
+	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: prefix + "task " + id, PID: pid, NoFetch: true}
+	// try takes a slot under worktreeMu, so this batch's tasks count their
+	// slots and take one by one. While the batch holds its bound it returns
+	// an atBoundError, which says so.
+	try := func() (ws.Taken, error) {
+		worktreeMu.Lock()
+		defer worktreeMu.Unlock()
+		own, err := ws.CountLeases(ctx, root, mine)
+		if err != nil {
+			return ws.Taken{}, err
+		}
+		if own >= bound {
+			return ws.Taken{}, &atBoundError{held: own, kept: kept.count()}
+		}
+		opt.Max, err = ws.RangeBeyondSessions(ctx, root, bound)
+		if err != nil {
+			return ws.Taken{}, err
+		}
+		return ws.Take(ctx, opt)
+	}
 	var said string
 	for {
-		sessions, err := ws.Sessions(ctx, root)
-		if err != nil {
-			return drop(err)
-		}
-		opt.Max = max(spec.Parallel, ws.DefaultMax) + sessions
-		worktreeMu.Lock()
-		got, err := ws.Take(ctx, opt)
-		worktreeMu.Unlock()
-		var full *ws.NoSlotError
-		if err == nil || !errors.As(err, &full) {
-			if err != nil {
-				return drop(err)
-			}
+		got, err := try()
+		if err == nil {
 			return got, nil
 		}
-		// Only a slot someone else holds can come free: skipped slots stay
-		// as they are, and so do the ones this batch kept.
-		if full.Held <= kept.count() {
-			return drop(fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full))
+		var full *ws.NoSlotError
+		var bounded *atBoundError
+		var wait string
+		switch {
+		case errors.As(err, &bounded):
+			if bounded.kept >= bounded.held {
+				return drop(fmt.Errorf("%w: none will come free while it runs", err))
+			}
+			wait = "waiting for a slot this batch holds to come back: " + err.Error()
+		case errors.As(err, &full):
+			// Only a slot a live process holds, another batch's or a running
+			// task's of this batch, can come free: sessions', skipped slots
+			// and the ones this batch kept stay as they are. A lease that
+			// could not be read is being written, so it is looked at again.
+			if !someoneWillFree(full, kept) {
+				return drop(fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full))
+			}
+			wait = "waiting for a free slot: " + strings.Join(full.Passed, "; ")
+		default:
+			return drop(err)
 		}
-		if held := strings.Join(full.Passed, "; "); held != said {
-			notify(Event{Task: id, Kind: "wait", Text: "waiting for a free slot: " + held})
-			said = held
+		if wait != said {
+			notify(Event{Task: id, Kind: "wait", Text: wait})
+			said = wait
 		}
 		select {
 		case <-ctx.Done():
@@ -831,23 +862,56 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 	}
 }
 
-// keptSlots counts the slots a batch's tasks could not give back, which
-// stay leased by this process until it exits.
-type keptSlots struct {
-	mu sync.Mutex
-	n  int
+// atBoundError is takeSlot's try failing because the batch holds as many
+// slots as it may: held of them, kept of those for good.
+type atBoundError struct{ held, kept int }
+
+func (e *atBoundError) Error() string {
+	return fmt.Sprintf("this batch already holds %d slots, the most it may (%d kept)", e.held, e.kept)
 }
 
-func (k *keptSlots) add() {
+// someoneWillFree reports whether a slot full passed over is held by a
+// process that will give it back: one not a session's (no pid) and not one
+// this batch kept. A lease it could not read counts, since one being
+// written is readable on the next look.
+func someoneWillFree(full *ws.NoSlotError, kept *keptSlots) bool {
+	if full.Held > len(full.Holders) {
+		return true
+	}
+	for _, l := range full.Holders {
+		if l.PID != 0 && !kept.has(l.Holder) {
+			return true
+		}
+	}
+	return false
+}
+
+// keptSlots is the holders of the slots a batch's tasks could not give
+// back, which stay leased by this process until it exits.
+type keptSlots struct {
+	mu      sync.Mutex
+	holders map[string]bool
+}
+
+func (k *keptSlots) add(holder string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	k.n++
+	if k.holders == nil {
+		k.holders = map[string]bool{}
+	}
+	k.holders[holder] = true
+}
+
+func (k *keptSlots) has(holder string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.holders[holder]
 }
 
 func (k *keptSlots) count() int {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	return k.n
+	return len(k.holders)
 }
 
 // droppingBranch, failSave and failWorktreeList are for tests: the first runs
