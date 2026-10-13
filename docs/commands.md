@@ -14,7 +14,7 @@
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](run-records.md#run-records)). |
 | `hrn show [--json] <id>` | Replay a recorded run. |
 | `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](watch.md#watching-runs-live)). |
-| `hrn watch [--addr HOST:PORT] [--lan[=NAME]]` | A local page that follows runs and batches live (see [Watching runs live](watch.md#watching-runs-live)). |
+| `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]` | Follow runs and batches live. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](batches.md#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |

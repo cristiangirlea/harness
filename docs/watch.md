@@ -91,6 +91,28 @@ second or more, and ends with the summary line once the run's result is saved. C
 stops following and leaves the run alone. A run killed before it saved its result never
 ends, on the page or in the terminal: hrn cannot tell it from a long step.
 
+### Behind Cloudflare Access
+
+To reach watch through a Cloudflare Tunnel, forward `https://harness.example.com` to
+`http://127.0.0.1:8089` on the same computer. Create a Cloudflare Access application
+for that hostname, require email one-time-code login, and copy its team domain and
+audience tag into the command:
+
+```
+hrn watch --public https://harness.example.com --access-team TEAM.cloudflareaccess.com --access-aud AUDIENCE_TAG
+```
+
+All three flags are required together; `--public` cannot be combined with `--lan`.
+Watch still listens only on loopback. In this mode it accepts only the public Host
+and HTTPS Origin, and verifies the Access JWT on every request, including static
+assets and event streams. It treats visitors as remote even though `cloudflared`
+connects from the same computer: the page omits the hrn home path and phone hints,
+and `/voice` is unavailable. The terminal prints the public URL and the access
+log path. Each request appends one JSON line to `$HRN_HOME/watch-access.log`
+(or `~/.hrn/watch-access.log`), with the time, email when allowed, method, path,
+status, Cloudflare connecting IP, and a short reason when refused. Cloudflare's
+own Access logs record logins; this file records requests that reached watch.
+
 ### Ada, the bot
 
 `hrn bot` opens Ada, hrn watch's bot (`/bot`), in a small window of her own: Edge's or Chrome's
