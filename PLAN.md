@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: Concurrent takes skipped free slots (#188, PR #TBD). CI's Windows run of
+- 2026-10-13: Concurrent takes skipped free slots (#188, PR #191). CI's Windows run of
   `TestConcurrentTakesNeverShareASlot` got 3 slots for 6 takes with `--max 4`. Reproduced
   here under load: `git worktree add` for slot 4 died with `fatal: failed to read
   .git/worktrees/3/commondir: No error`, because git creates a new worktree's admin folder
