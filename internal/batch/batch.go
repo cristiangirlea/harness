@@ -113,7 +113,8 @@ type TaskResult struct {
 	Worktree string `json:"worktree"`
 	Slot     int    `json:"slot,omitempty"` // the ws slot Worktree is; 0 for a fresh worktree
 	// BranchMade says this task made Branch (takeSlot saves it before it
-	// waits for a slot): a slotless task owns its branch only with it.
+	// waits for a slot; a fresh task, with its worktree, once git made
+	// both): a slotless task owns its branch only with it.
 	BranchMade bool          `json:"branch_made,omitempty"`
 	Commit     string        `json:"commit,omitempty"` // the agent's changes; empty when it changed nothing
 	Attempts   []Attempt     `json:"attempts"`
@@ -670,6 +671,14 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				progress(cur) // the record names the slot from now on
 			default:
 				if len(tr.Attempts) > 0 {
+					// The record stops claiming the worktree before it goes:
+					// another batch could take the path before it is back.
+					cur := tr
+					cur.BranchMade, cur.Status = false, StatusRunning
+					if err := progress(cur); err != nil {
+						return fail(err) // the worktree stays, and is still claimed
+					}
+					tr.BranchMade = false
 					if err := removeWorktree(root, tr); err != nil {
 						return fail(err)
 					}
@@ -677,6 +686,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				if err := addWorktree(ctx, root, tr, base); err != nil {
 					return fail(err)
 				}
+				tr.BranchMade = true
+				cur := tr
+				cur.Status = StatusRunning
+				progress(cur) // the worktree and branch are this task's from now on
 			}
 			tr.Commit = ""
 		}
@@ -1008,7 +1021,7 @@ func Remove(res Result) error {
 			}
 			continue
 		}
-		if tr.Worktree == "" {
+		if tr.Worktree == "" || foundTaken(tr) {
 			continue
 		}
 		// Only a directory git still lists is a worktree whose status means
@@ -1039,6 +1052,17 @@ func Remove(res Result) error {
 // they never claim a branch.
 func branchOnly(tr TaskResult) bool {
 	return tr.Slot != 0 || (tr.Worktree == "" && tr.Status == StatusRunning && tr.BranchMade)
+}
+
+// foundTaken reports whether a fresh task failed because its worktree or
+// branch was there already (another batch's, or anyone's): Run names the
+// worktree in every fresh task's record before the task starts, so the path
+// alone does not make it the task's. Only BranchMade proves that, but records
+// from before fresh tasks set it lack the field, and their tasks did make
+// their worktrees unless that error ended them: so only a task without
+// BranchMade whose error says something already existed is skipped.
+func foundTaken(tr TaskResult) bool {
+	return tr.Slot == 0 && !tr.BranchMade && strings.Contains(tr.Error, "already exists")
 }
 
 // removeSlotBranch deletes a slot task's branch, unless a worktree has it

@@ -30,7 +30,7 @@ func RemoveRecord(id string, dryRun bool) (int64, error) {
 }
 
 // WorktreesRemain reports whether any of the batch's worktrees is still on
-// disk, or for a slot task (whose slot outlives the batch) or one that waited
+// disk (not one a fresh task found taken, foundTaken), or for a slot task (whose slot outlives the batch) or one that waited
 // for a slot (branchOnly) its branch, which is when its record must stay:
 // hrn batch rm reads it.
 func WorktreesRemain(res Result) bool {
@@ -44,7 +44,7 @@ func WorktreesRemain(res Result) bool {
 			}
 			continue
 		}
-		if t.Worktree == "" {
+		if t.Worktree == "" || foundTaken(t) {
 			continue
 		}
 		if _, err := os.Stat(t.Worktree); err == nil {

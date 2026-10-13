@@ -392,6 +392,112 @@ func TestBranchCollisionIsAnError(t *testing.T) {
 	}
 }
 
+// A fresh task that finds hrn/<id> or .hrn/worktrees/<id> already there
+// (another batch's) fails at once, though its record names that worktree (Run
+// sets it before the task starts): hrn batch rm of its batch must leave them,
+// and they must not keep its record (#162).
+func TestRemoveLeavesAnotherFreshBatchsWorktreeThatFailedATask(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		taken func(t *testing.T, dir string) (worktree string) // what the other batch left
+	}{
+		{"branch and worktree", func(t *testing.T, dir string) string {
+			a, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "x", Prompt: "a"}}})
+			if tr := a.Tasks[0]; tr.Status != StatusPass || !tr.BranchMade {
+				t.Errorf("the other batch's task = %+v, want a pass whose record says it made its worktree", tr)
+			}
+			return a.Tasks[0].Worktree
+		}},
+		{"worktree only", func(t *testing.T, dir string) string {
+			wt := filepath.Join(dir, ".hrn", "worktrees", "x")
+			git(t, dir, "worktree", "add", "-q", "-b", "other", wt)
+			writeFile(t, filepath.Join(wt, "out.txt"), "theirs\n")
+			git(t, wt, "add", "out.txt")
+			git(t, wt, "commit", "-q", "-m", "theirs")
+			return wt
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := tc.taken(t, dir)
+			branches := git(t, dir, "branch", "--list", "hrn/*", "other")
+			b, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "x", Prompt: "b"}}})
+			tr := b.Tasks[0]
+			if tr.Status != StatusError || !strings.Contains(tr.Error, "already exists") || len(tr.Attempts) != 0 || tr.BranchMade {
+				t.Fatalf("task = %+v, want a fast failure that made nothing", tr)
+			}
+			if WorktreesRemain(b) {
+				t.Error("another batch's worktree must not keep this record")
+			}
+			if err := Remove(b); err != nil {
+				t.Fatal(err)
+			}
+			if !exists(filepath.Join(wt, "out.txt")) {
+				t.Error("another batch's worktree must stay")
+			}
+			if got := git(t, dir, "branch", "--list", "hrn/*", "other"); got != branches {
+				t.Errorf("branches = %q, want %q left as they were", got, branches)
+			}
+		})
+	}
+}
+
+// Records saved before branch_made was set for fresh tasks lack it: a fresh
+// task in one that did not fail on a taken worktree or branch made them, and
+// hrn batch rm still removes them.
+func TestRemoveStillCleansAFreshTaskFromARecordWithoutBranchMade(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "old", Prompt: "a"}}})
+	res.Tasks[0].BranchMade = false
+	if !WorktreesRemain(res) {
+		t.Error("the task's worktree must keep the record")
+	}
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+	if exists(res.Tasks[0].Worktree) {
+		t.Error("the worktree must go")
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/old"); b != "" {
+		t.Errorf("branch remains: %s", b)
+	}
+}
+
+// A fresh retry removes the task's worktree and makes it again: the record
+// stops claiming it before it goes, and claims it again once it is back.
+func TestAFreshRetrySavesItNoLongerOwnsItsWorktreeBeforeRemovingIt(t *testing.T) {
+	dir := initRepo(t)
+	type seen struct{ made, there bool }
+	var saves []seen
+	failSave = func(res Result) error {
+		if tr := res.Tasks[0]; tr.Status == StatusRunning {
+			saves = append(saves, seen{tr.BranchMade, exists(tr.Worktree)})
+		}
+		return nil
+	}
+	t.Cleanup(func() { failSave = nil })
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-bad", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "again", Prompt: "p"}}})
+	if tr := res.Tasks[0]; tr.Status != StatusPass || len(tr.Attempts) != 2 || !tr.BranchMade {
+		t.Fatalf("task = %+v, want a pass on the retry that owns its worktree", tr)
+	}
+	// Made, then given up while the worktree is still there, then made again.
+	step := 0
+	for _, s := range saves {
+		switch {
+		case step == 0 && s.made && s.there, step == 2 && s.made && s.there:
+			step++
+		case step == 1 && !s.made:
+			if !s.there {
+				t.Fatalf("the claim was dropped only after the worktree went: %+v", saves)
+			}
+			step++
+		}
+	}
+	if step != 3 {
+		t.Errorf("running saves (branch_made, worktree there) = %+v, want made, given up, made again", saves)
+	}
+}
+
 func TestDirtyRepositoryIsRefused(t *testing.T) {
 	dir := initRepo(t)
 	spec := func(allowDirty bool) Spec {
