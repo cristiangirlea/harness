@@ -38,6 +38,7 @@ var createLockWait = 2 * time.Minute
 type Lease struct {
 	Holder string    `json:"holder"`
 	PID    int       `json:"pid,omitempty"`
+	Start  string    `json:"start,omitempty"` // holder process's start identity, platform-specific, compared for equality; empty in old leases or where unknown
 	Taken  time.Time `json:"taken"`
 	Branch string    `json:"branch"`
 }
@@ -48,7 +49,7 @@ type TakeOptions struct {
 	Branch  string // check out this branch, or create it from the base; empty detaches at the base
 	Base    string // empty: origin's default branch, or HEAD without an origin
 	Holder  string // written into the lease
-	PID     int    // written into the lease; 0 holds the slot until Free
+	PID     int    // written into the lease; must name a process already running when Take is called; 0 holds until Free
 	Max     int    // slots to try, 1..Max (default DefaultMax)
 	NoFetch bool   // use what origin's refs already say
 }
@@ -153,6 +154,9 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		path := filepath.Join(dir, strconv.Itoa(n))
 		lp := leasePath(dir, n)
 		lease := Lease{Holder: opt.Holder, PID: opt.PID, Taken: time.Now().UTC().Truncate(time.Second), Branch: opt.Branch}
+		if opt.PID != 0 {
+			lease.Start, _ = startID(opt.PID)
+		}
 		busy, holder, changed, err := acquire(lp, lease)
 		if err != nil {
 			return Taken{Notes: notes}, fmt.Errorf("slot %d: %w", n, err)
@@ -386,8 +390,8 @@ func (l Lease) processHolds() bool {
 	if l.PID == 0 || !alive(l.PID) {
 		return false
 	}
-	if !l.Taken.IsZero() {
-		if after, known := startedAfter(l.PID, l.Taken.Add(time.Second)); known && after {
+	if l.Start != "" {
+		if id, known := startID(l.PID); known && id != l.Start {
 			return false
 		}
 	}
@@ -772,7 +776,7 @@ func Release(ctx context.Context, t Taken, detachAt string) error {
 	if err != nil {
 		return fmt.Errorf("slot %d: %v", n, err)
 	}
-	if lease.Holder != t.Lease.Holder || lease.PID != t.Lease.PID || lease.Branch != t.Lease.Branch || !lease.Taken.Equal(t.Lease.Taken) {
+	if lease.Holder != t.Lease.Holder || lease.PID != t.Lease.PID || lease.Start != t.Lease.Start || lease.Branch != t.Lease.Branch || !lease.Taken.Equal(t.Lease.Taken) {
 		return fmt.Errorf("slot %d is %s now, not %q's, so it stays as it is", n, describe(lease), t.Lease.Holder)
 	}
 	unlock, why := lockLease(lp)

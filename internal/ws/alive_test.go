@@ -3,6 +3,7 @@ package ws
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -42,22 +43,27 @@ func TestAliveSeesThisProcessAndNotOneThatExited(t *testing.T) {
 
 func TestLeaseWithReusedPIDIsStale(t *testing.T) {
 	pid := os.Getpid()
-	if _, known := startedAfter(pid, time.Now().Add(-24*time.Hour)); !known {
-		t.Skip("process start time is unavailable on this platform")
+	id, known := startID(pid)
+	if !known {
+		t.Skip("process start identity is unavailable on this platform")
 	}
-	if (Lease{PID: pid, Taken: time.Now().UTC().Truncate(time.Second)}).stale() {
-		t.Error("a process already running when the lease was taken holds it")
+	if (Lease{PID: pid, Start: id, Taken: time.Now().Add(-24 * time.Hour)}).stale() {
+		t.Error("a process with the recorded start identity holds the lease despite its Taken time")
 	}
-	if !(Lease{PID: pid, Taken: time.Now().Add(-24 * time.Hour)}).stale() {
-		t.Error("a process started after the lease was taken cannot hold it")
+	other := strings.SplitN(id, ":", 2)[0] + ":1"
+	if other == id {
+		other += "0"
+	}
+	if !(Lease{PID: pid, Start: other}).stale() {
+		t.Error("a process with another start identity cannot hold the lease")
 	}
 	if (Lease{PID: pid}).stale() {
-		t.Error("a lease without Taken falls back to pid liveness")
+		t.Error("an old lease without Start falls back to pid liveness")
 	}
 }
 
-func TestStartedAfterForMissingPID(t *testing.T) {
-	if _, known := startedAfter(1<<30, time.Now()); known {
-		t.Error("a nonexistent pid has no known start time")
+func TestStartIDForMissingPID(t *testing.T) {
+	if id, known := startID(1 << 30); known || id != "" {
+		t.Errorf("a nonexistent pid has start identity %q, %t", id, known)
 	}
 }

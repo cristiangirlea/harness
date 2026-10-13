@@ -178,8 +178,8 @@ func TestTakeMakesALockedSlotOnANewBranchFromOriginsDefaultBranch(t *testing.T) 
 	if l.Holder != "alice" || l.Branch != "fix-x" || l.Taken.IsZero() {
 		t.Errorf("lease %+v", l)
 	}
-	if strings.Contains(raw, "pid") {
-		t.Errorf("a lease without a pid writes none: %s", raw)
+	if strings.Contains(raw, "pid") || strings.Contains(raw, "start") {
+		t.Errorf("a lease without a pid writes neither pid nor start: %s", raw)
 	}
 }
 
@@ -393,14 +393,18 @@ func TestFreeGivesBackALeaseWhoseProcessExited(t *testing.T) {
 }
 
 func TestFreeGivesBackALeaseWhosePIDWasReused(t *testing.T) {
-	if _, known := startedAfter(os.Getpid(), time.Now().Add(-24*time.Hour)); !known {
-		t.Skip("process start time is unavailable on this platform")
+	id, known := startID(os.Getpid())
+	if !known {
+		t.Skip("process start identity is unavailable on this platform")
 	}
 	f := newFixture(t)
 	got := f.take(TakeOptions{Holder: "gone", PID: os.Getpid()})
 	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
 	lease := got.Lease
-	lease.Taken = time.Now().Add(-24 * time.Hour)
+	lease.Start = strings.SplitN(id, ":", 2)[0] + ":1"
+	if lease.Start == id {
+		lease.Start += "0"
+	}
 	raw, err := json.Marshal(lease)
 	if err != nil {
 		t.Fatal(err)
@@ -410,6 +414,29 @@ func TestFreeGivesBackALeaseWhosePIDWasReused(t *testing.T) {
 	}
 	if _, err := Free(context.Background(), got.Path); err != nil {
 		t.Errorf("free of a lease with a reused pid: %v", err)
+	}
+}
+
+func TestTakeRecordsProcessStartIdentity(t *testing.T) {
+	id, known := startID(os.Getpid())
+	if !known {
+		t.Skip("process start identity is unavailable on this platform")
+	}
+	f := newFixture(t)
+	got := f.take(TakeOptions{Holder: "batch", PID: os.Getpid()})
+	l, _ := readLeaseT(t, filepath.Join(f.repo, ".hrn", "slots", "1.lease"))
+	if got.Lease.Start != id || l.Start != id {
+		t.Errorf("returned start %q, stored start %q; want %q", got.Lease.Start, l.Start, id)
+	}
+}
+
+func TestOldLeaseJSONWithoutStartLoads(t *testing.T) {
+	var l Lease
+	if err := json.Unmarshal([]byte(`{"holder":"old","pid":123,"taken":"2026-10-13T00:00:00Z","branch":""}`), &l); err != nil {
+		t.Fatal(err)
+	}
+	if l.Holder != "old" || l.PID != 123 || l.Start != "" {
+		t.Errorf("old lease loaded as %+v", l)
 	}
 }
 
@@ -699,6 +726,30 @@ func TestReleaseRefusesALeaseThatIsNoLongerTheHolders(t *testing.T) {
 	os.Remove(lp)
 	if err := Release(context.Background(), got, ""); err == nil {
 		t.Error("release of a slot with no lease should be refused")
+	}
+}
+
+func TestReleaseRefusesALeaseWithAnotherStartIdentity(t *testing.T) {
+	if _, known := startID(os.Getpid()); !known {
+		t.Skip("process start identity is unavailable on this platform")
+	}
+	f := newFixture(t)
+	got := f.take(TakeOptions{Holder: "batch", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	l := got.Lease
+	l.Start += "-other"
+	raw, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lp, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Release(context.Background(), got, ""); err == nil {
+		t.Error("release of a lease with another start identity should be refused")
+	}
+	if stored, _ := readLeaseT(t, lp); stored.Start != l.Start {
+		t.Errorf("another holder's lease changed: %+v", stored)
 	}
 }
 

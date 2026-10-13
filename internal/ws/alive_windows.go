@@ -3,8 +3,8 @@
 package ws
 
 import (
+	"strconv"
 	"syscall"
-	"time"
 	"unsafe"
 )
 
@@ -41,15 +41,14 @@ func alive(pid int) bool {
 	return code == stillActive
 }
 
-// startedAfter reports whether the process was created after t. A failed
-// query leaves the lease held if the pid is still alive.
-func startedAfter(pid int, t time.Time) (after bool, known bool) {
+// startID returns the process creation FILETIME in 100 ns ticks.
+func startID(pid int) (string, bool) {
 	if pid <= 0 {
-		return false, false
+		return "", false
 	}
 	h, _, _ := procOpenProcess.Call(processQueryLimitedInformation, 0, uintptr(pid))
 	if h == 0 {
-		return false, false
+		return "", false
 	}
 	defer syscall.CloseHandle(syscall.Handle(h))
 	var created, exited, kernel, user syscall.Filetime
@@ -59,7 +58,8 @@ func startedAfter(pid int, t time.Time) (after bool, known bool) {
 		uintptr(unsafe.Pointer(&kernel)),
 		uintptr(unsafe.Pointer(&user)))
 	if ok == 0 {
-		return false, false
+		return "", false
 	}
-	return time.Unix(0, created.Nanoseconds()).After(t), true
+	ticks := uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime)
+	return "win:" + strconv.FormatUint(ticks, 10), true
 }
