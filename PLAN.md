@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: hrn batch takes its worktrees from the reusable slots of internal/ws (#126).
+- 2026-10-13: PR #163 (closes #126): hrn batch takes its worktrees from the reusable slots of internal/ws.
   Decided: slots by default, a new `.hrn/worktrees/<id>` per task only with
   `"worktrees": "fresh"`; any other value is refused. Each running task leases a slot
   (holder `batch <id> task <task>`, hrn's pid), its branch `hrn/<id>` made from the batch's
