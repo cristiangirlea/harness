@@ -664,6 +664,22 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: PR #199 (closes #193): a task waited until the batch was canceled on a slot
+  whose lease stayed unreadable (empty, not JSON, or a stale lease a left `<n>.lease.takeover`
+  file blocks), since `takeSlot` counted every lease it could not read as one that may come
+  free. Decided: `ws.NoSlotError` gains an additive `Unreadable` field naming those slots,
+  and the empty-lease line names the file like the other two. The task still waits on them,
+  since a lease being written reads on the next look, and keeps waiting while any live
+  process holds a slot in its range; when the unreadable leases are all that is left to
+  wait for and every one has stayed unreadable for `unreadableWait` (30 seconds, a package
+  variable the tests shorten), it fails as `error` naming each file and how to clear it
+  (`hrn ws list`; a lease that stays unreadable or a left `.takeover` file only while no hrn
+  command at all runs on the repository, since a live take creates its lease empty before
+  writing it and a live `hrn ws free` or takeover holds the `.takeover` file while the lease
+  it guards may name a dead process).
+  Timed per slot from the task's first look that found it unreadable; a look that does not
+  find it so, a wait at the batch's bound included, forgets it. A slot whose lease changed
+  hands under the take is held, not unreadable. Nothing is removed by hrn.
 - 2026-10-13: `main` and `v*` tags are protected by GitHub rulesets (PR #195). Branch ruleset
   24992040 (pull requests only, merge commits only, `test (ubuntu-latest)` and
   `test (windows-latest)` required, no deletion, no force push) and tag ruleset 24992042 (no

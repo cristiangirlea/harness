@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -251,6 +252,66 @@ func TestNoSlotErrorHoldersLeaveOutALeaseItCannotRead(t *testing.T) {
 	var full *NoSlotError
 	if !errors.As(err, &full) || full.Held != 2 || len(full.Holders) != 1 || full.Holders[0].Holder != "b" {
 		t.Errorf("want two held slots and one readable lease, got %#v", err)
+	}
+	if full == nil || !slices.Equal(full.Unreadable, []int{1}) {
+		t.Errorf("unreadable slots = %v, want slot 1 alone", full.Unreadable)
+	}
+}
+
+// A lease being written (empty) and a stale lease a left takeover file
+// blocks are unreadable too, and each line names the file in the way.
+func TestNoSlotErrorNamesTheFileBehindEachLeaseItCannotRead(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.repo, ".hrn", "slots")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "1.lease"), nil, 0o644); err != nil { // being written
+		t.Fatal(err)
+	}
+	writeLease(t, f.repo, 2, exitedPID(t), "batch y task b")
+	if err := os.WriteFile(filepath.Join(dir, "2.lease.takeover"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "c", Max: 2})
+	var full *NoSlotError
+	if !errors.As(err, &full) || full.Held != 2 || len(full.Holders) != 0 || !slices.Equal(full.Unreadable, []int{1, 2}) {
+		t.Fatalf("want two held slots, both unreadable, got %#v", err)
+	}
+	if len(full.Passed) != 2 || !strings.Contains(full.Passed[0], filepath.Join(dir, "1.lease")+" is being written") ||
+		!strings.Contains(full.Passed[1], filepath.Join(dir, "2.lease.takeover")) {
+		t.Errorf("passed = %q, want the lease being written and the takeover file named", full.Passed)
+	}
+}
+
+// A stale lease that a live process takes over or frees between a take's
+// read of it and its lock on the slot is contention, not a lease that
+// cannot be read: the slot is passed over as held, outside Unreadable, and
+// the newcomer's lease stays.
+func TestNoSlotErrorKeepsALeaseThatChangedUnderTheTakeOutOfUnreadable(t *testing.T) {
+	f := newFixture(t)
+	writeLease(t, f.repo, 1, exitedPID(t), "batch old task a")
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	data, _ := json.Marshal(Lease{Holder: "newcomer", PID: os.Getpid(), Taken: time.Now()})
+	beforeTakeoverLock = func() {
+		if err := os.WriteFile(lp, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() { beforeTakeoverLock = nil }()
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "c", Max: 1})
+	var full *NoSlotError
+	if !errors.As(err, &full) || full.Held != 1 || len(full.Holders) != 0 {
+		t.Fatalf("want one held slot with no lease read, got %#v", err)
+	}
+	if len(full.Unreadable) != 0 {
+		t.Errorf("unreadable slots = %v, want none: a lease that changed hands is not one that cannot be read", full.Unreadable)
+	}
+	if len(full.Passed) != 1 || !strings.Contains(full.Passed[0], "changed while it was being taken over") {
+		t.Errorf("passed = %q, want the slot passed over for its lease changing hands", full.Passed)
+	}
+	if l, _ := readLeaseT(t, lp); l.Holder != "newcomer" {
+		t.Errorf("the newcomer's lease should stay: %+v", l)
 	}
 }
 
