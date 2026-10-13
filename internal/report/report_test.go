@@ -127,6 +127,44 @@ func TestCacheShareCountsCacheWritesAsInput(t *testing.T) {
 	}
 }
 
+func TestCacheShareNormalizesCodexAndApiCounters(t *testing.T) {
+	codex := rec("codex", "m", "/repo", 0, agent.Result{Status: agent.StatusOK, InputTokens: 100, CacheRead: 60, OutputTokens: 10,
+		Usage: &agent.UsageMetadata{InputSemantics: "inclusive_cache", Status: "reported"}})
+	// Older run records can hold the backend on the record without repeating it in the result.
+	codex.Result.Backend = ""
+	api := rec("api", "m", "/repo", time.Hour, agent.Result{Status: agent.StatusOK, InputTokens: 100, CacheWrite: 30, CacheRead: 70, OutputTokens: 10,
+		Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "reported"}})
+	for _, tc := range []struct {
+		record runlog.Record
+		want   float64
+	}{{codex, 0.6}, {api, 0.35}} {
+		rows, _, err := Select([]runlog.Record{tc.record}, nil, time.Time{}).RunRows(ByBackend)
+		if err != nil || len(rows) != 1 || !near(rows[0].CacheShare, tc.want) {
+			t.Errorf("%s: rows=%+v err=%v, want cache share %v", tc.record.Backend, rows, err, tc.want)
+		}
+	}
+}
+
+func TestLegacyRecordWithoutUsageMetadataStillLoadsAndReports(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(runlog.Root(), "legacy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"id":"legacy","backend":"api","result":{"status":"ok","input_tokens":100,"cache_write_tokens":300,"cache_read_tokens":600}}`)
+	if err := os.WriteFile(filepath.Join(dir, "result.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := runlog.Load("legacy")
+	if err != nil || !r.Done || r.Result.Usage != nil {
+		t.Fatalf("load legacy record: %+v err=%v", r, err)
+	}
+	rows, _, err := Select([]runlog.Record{r}, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil || len(rows) != 1 || !near(rows[0].CacheShare, 0.6) {
+		t.Errorf("legacy report: rows=%+v err=%v", rows, err)
+	}
+}
+
 func TestDirKeysAreCanonical(t *testing.T) {
 	dir := t.TempDir()
 	recs := []runlog.Record{
