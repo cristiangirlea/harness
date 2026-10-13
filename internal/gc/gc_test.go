@@ -676,6 +676,29 @@ func TestGCKeepsAWorktreeWithDotGitLinkLeadingOut(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree: sub/.git")
 }
 
+func TestGCKeepsTrackedSymlinkLeadingOutOffWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("git may not create tracked symlinks on Windows")
+	}
+	f := newFixture(t)
+	wt, _ := f.worktree("wt", "done")
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, "precious.txt", "outside\n")
+	if err := os.Symlink(outside, filepath.Join(wt, "outside-link")); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, "add", "outside-link")
+	git(t, wt, "commit", "-q", "-m", "track outside link")
+	head := git(t, wt, "rev-parse", "HEAD")
+	f.land("done")
+	if status := git(t, wt, "status", "--porcelain", "--untracked-files=all"); status != "" {
+		t.Fatalf("tracked symlink left the worktree dirty: %s", status)
+	}
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree: outside-link")
+}
+
 func TestGCKeepsBatchWorktreeWithTrackedFolderJunctionLeadingOut(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("git follows junctions on Windows; elsewhere a link changes a tracked folder")
