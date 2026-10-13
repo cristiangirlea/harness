@@ -64,7 +64,8 @@ answer) and in a run's or batch's header, the workspace is `.` (`.\src\main.go`,
 path's own slashes), the home folder is `~`, and a program named by its full path in
 System32, Program Files, `/usr/bin`, `/bin` or `/usr/local/bin` is its file name: `codex
 exec -C . --json`, `"powershell.exe" -Command ...`. A batch task's text is shortened by its
-worktree. A path only counts whole, so `ada-os-ipc-old` keeps its name. This is the page
+worktree. The index's rows (a run's prompt, a batch's task names) are shortened the same way,
+for every viewer. A path only counts whole, so `ada-os-ipc-old` keeps its name. This is the page
 only: `events.jsonl`, the records and `hrn show` keep the full paths.
 
 When the backend reports the last turn's context size, the run page also shows

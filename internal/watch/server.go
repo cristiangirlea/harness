@@ -455,8 +455,10 @@ func (s *server) lists() lists {
 		}
 		l.Problems = append(l.Problems, msg)
 	}
+	// The rows are the same for every viewer: shortened, never with a title.
+	vw := viewer{home: s.home, system: s.system}
 	for i, rec := range runs {
-		runs[i] = s.cleanRecord(rec)
+		runs[i] = vw.shortener(rec.Task.Dir).record(s.cleanRecord(rec))
 		l.Runs = append(l.Runs, runRow(runs[i]))
 	}
 	l.Purposes = purposesOf(runs)
@@ -478,7 +480,7 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, fmt.Sprintf("%d batch record(s) could not be read.", unreadable))
 	}
 	for i, res := range batches {
-		batches[i] = s.cleanBatch(res) // the task names below come from these too
+		batches[i] = vw.batch(s.cleanBatch(res)) // the task names below come from these too
 		if i < 20 {
 			l.Batches = append(l.Batches, batchRow(batches[i]))
 		}

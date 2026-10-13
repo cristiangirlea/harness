@@ -1494,3 +1494,45 @@ func TestTheBatchPageNamesItsRepositoryAndShortensItsPaths(t *testing.T) {
 		t.Errorf("this computer should see the full paths only as the two titles; they are there %d times", n)
 	}
 }
+
+func TestTheIndexShortensThePathsInItsRowsForEveryViewer(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const key = "sk-ant-api03-test-0123456789abcdefXYZ"
+	t.Setenv("ANTHROPIC_API_KEY", key)
+	sep := string(filepath.Separator)
+	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
+	w, err := runlog.Create("fake", agent.Task{Prompt: "fix " + filepath.Join(ws, "README.md") + " with " + filepath.Join(ws, key), Dir: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "fake", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(t.TempDir(), "other-repo")
+	wt := filepath.Join(repo, ".hrn", "worktrees", "t1")
+	saveBatch(t, batch.Result{ID: "20261010-120000-abcdef", Started: time.Now().Add(-time.Minute), Duration: time.Minute, Dir: repo, Parallel: 1,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: "edit " + filepath.Join(wt, "a.go"), Status: batch.StatusPass, Branch: "hrn/t1", Worktree: wt,
+			Attempts: []batch.Attempt{{Backend: "codex", RunID: "20261010-120001-111111", Result: agent.Result{Status: agent.StatusOK}}}}}})
+	h := New(context.Background(), Options{Poll: 5 * time.Millisecond, LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+
+	// The stream runs until its request is done; a short deadline ends it.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest("GET", "http://192.168.1.20:8089/stream/index", nil).WithContext(ctx)
+	req.RemoteAddr = "192.168.1.50:6000"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	for name, body := range map[string]string{"page": viewAs(t, h, "/", "192.168.1.50:6000"), "stream": rec.Body.String()} {
+		for _, bad := range []string{ws, repo, key} {
+			if strings.Contains(body, bad) {
+				t.Errorf("the phone's index %s holds %q", name, bad)
+			}
+		}
+		for _, want := range []string{"fix ." + sep + "README.md with ." + sep + "[redacted]", "edit ." + sep + "a.go"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("the phone's index %s lacks %q", name, want)
+			}
+		}
+	}
+}

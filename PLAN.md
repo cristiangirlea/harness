@@ -668,7 +668,7 @@ neither of them follows a run while it happens.
 - 2026-10-13: issue #233 (PR #TBD): hrn watch shows a run's workspace by name (`repoOf`,
   as the index does) and a batch's repository too, the whole path as a hover title for this
   computer only. Text from a run's events, its prompt and result, and a batch's tasks and
-  gates show the workspace (a task's worktree) as `.`, home as `~`, and programs in system
+  gates, and the index's rows show the workspace (a task's worktree) as `.`, home as `~`, and programs in system
   folders by file name, matched only at a path boundary, after secrets are blanked. Records
   and `hrn show` keep the full paths.
 - 2026-10-13: gc and squash-landed batch work (#85, PR #227). Ancestry alone keeps task
