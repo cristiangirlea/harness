@@ -53,6 +53,8 @@ func TestGuardBlocks(t *testing.T) {
 		`gh api -X 'delete' repos/o/r`:           "gh-publish",
 		`gh api --method="patch" repos/o/r`:      "gh-publish",
 		`gh api -X"PUT" repos/o/r/pulls/1/merge`: "gh-publish",
+		`gh api -X \"DELETE\" repos/o/r`:         "gh-publish",
+		`gh api -X $'delete' repos/o/r`:          "gh-publish",
 		"cd site && npx wrangler deploy":         "deploy",
 		"wrangler pages deploy dist":             "deploy",
 		"npm publish":                            "deploy",
