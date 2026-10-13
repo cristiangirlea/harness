@@ -1,9 +1,9 @@
 // Package gc finds the git worktrees whose work is already merged and removes
 // them, with their build output. A worktree goes only on proof: GitHub says
 // its pull request merged at the commit it holds, or, for one an hrn batch
-// made, its commit or its change is on origin's default branch. Anything it cannot prove
-// stays, with the reason, and when GitHub or the fetch cannot be reached the
-// answer is to keep.
+// made, its commit or its change is on origin's default branch. Anything it
+// cannot prove stays, with the reason. If GitHub or the fetch cannot be
+// reached, the answer is to keep.
 package gc
 
 import (

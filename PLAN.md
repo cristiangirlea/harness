@@ -666,9 +666,10 @@ neither of them follows a run while it happens.
 ## Decisions log
 
 - 2026-10-13: gc and squash-landed batch work (#85, PR #N). Ancestry alone keeps task
-  worktrees after `batch merge --squash` or a reworded landing. Compare the patch id of the
-  task's whole diff with each commit on origin's default branch since their merge base;
-  remove only on an exact match. Everything else keeps, including a 2000-commit bound.
+  worktrees after `batch merge --squash` or a reworded landing. Decided: compare the patch
+  id (`--verbatim`, whitespace included) of the task's whole diff with each commit on
+  origin's default branch since their merge base; remove only on an exact match. Everything
+  else keeps, including a 2000-commit bound.
 - 2026-10-13: the guard's `gh api` method in quotes (PR #223). After PR #213 a quoted method
   still got through `gh-publish`: the shell strips `"DELETE"`, `'delete'`, `\"DELETE\"` and
   `$'delete'` before gh sees them. Decided: quotes, a backslash and `$` may stand between the
