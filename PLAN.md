@@ -691,6 +691,11 @@ neither of them follows a run while it happens.
   Timed per slot from the task's first look that found it unreadable; a look that does not
   find it so, a wait at the batch's bound included, forgets it. A slot whose lease changed
   hands under the take is held, not unreadable. Nothing is removed by hrn.
+- 2026-10-13: `main` and `v*` tags are protected by GitHub rulesets (PR #195). Branch ruleset
+  24992040 (pull requests only, merge commits only, `test (ubuntu-latest)` and
+  `test (windows-latest)` required, no deletion, no force push) and tag ruleset 24992042 (no
+  deletion, update or force push; creating a tag still runs `release.yml`), both without bypass
+  actors, created 2026-10-13. AGENTS.md's working rules say what GitHub itself refuses.
 - 2026-10-13: PR #194 (closes #161): a batch waited while sessions (`hrn ws take`) held every
   slot, for as long as a person kept one. Decided: a batch's bound is `max(parallel, 4)` slots
   of its own, running tasks' and kept ones together, counted from the leases that name its
