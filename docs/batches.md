@@ -53,7 +53,8 @@ the hrn process. A batch holds at most `parallel` slots (at least 4) at once, ru
 tasks' and kept ones (below) together, and tries the slot numbers from 1 that hold that
 many slots other than sessions' (`hrn ws take`, a lease without a pid, held until `hrn ws
 free`), worked out again at every try: a session on slot 2 makes it try 1 and 3 to 5, one on
-slot 10 changes nothing. So a batch waits only on slots other batches hold, and its own stay
+slot 10 changes nothing, and a session that takes a slot in the range just as a task tries
+it widens the range at once. So a batch never waits on a session, and its own slots stay
 bounded whatever the sessions do. The task's branch is
 made from the batch's base and checked out in the slot. When the task ends, pass, fail or
 error, the slot is detached at the base and given back. Its ignored files stay for the
@@ -64,7 +65,9 @@ record names the slot each task ran in (`worktree` and `slot`).
 When every slot it tries is taken by another batch, or by this batch's own running
 tasks once it holds as many as it may, a task does not fail:
 it says it is waiting and which slots are held, looks again every 5 seconds, and is
-canceled with the batch. When none can come free, because the rest are sessions', skipped
+canceled with the batch. A lease it cannot read keeps it waiting too, since one being
+written reads on the next look; one that stays unreadable keeps it waiting for ever, which
+is [#193](https://github.com/cristiangirlea/harness/issues/193). When none can come free, because the rest are sessions', skipped
 for what is in them or kept by this batch's own tasks (below), it fails as `error` instead. A slot that still holds files when its task ends (the commit
 failed, say), or a commit on no branch (the agent detached HEAD and committed), is not
 given back: the task's error says `slot <n> kept` and why. Its lease

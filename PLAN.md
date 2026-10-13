@@ -673,7 +673,11 @@ neither of them follows a run while it happens.
   lease that cannot be read counts), worked out again at every try, so a session among the
   first slots is passed over and one further up widens nothing. It waits only while a slot in
   that range is held by a live process (another batch, or its own running task;
-  `ws.NoSlotError.Holders`) and fails when the rest are sessions', skipped or kept. A first
+  `ws.NoSlotError.Holders`) or has a lease it cannot read (one that stays unreadable keeps
+  it waiting for ever: #193), and fails when the rest are sessions', skipped or kept. A
+  session can take a slot in the range between working it out and the take scanning that
+  slot, so a take that passed over a session works the range out again and tries again at
+  once while the range reaches further, three times at most. A first
   cut added a session count to the range, which let a session make a batch wait for ever,
   a distant session widen the range, and the bound break when sessions freed their slots.
   `hrn ws take`'s own default `--max` is unchanged.
