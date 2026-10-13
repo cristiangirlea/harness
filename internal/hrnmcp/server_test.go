@@ -334,6 +334,18 @@ func TestRunPassesLean(t *testing.T) {
 	}
 }
 
+func TestRunPassesCompactWindow(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":200000}`)
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	if rec, err := runlog.Load(id); err != nil || rec.Task.CompactWindow != "200000" {
+		t.Fatalf("compact_window should reach the task: %+v err=%v", rec.Task, err)
+	}
+	if r := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":50000}`); !r.IsError || !strings.Contains(r.Text(), "compact_window") {
+		t.Errorf("an out-of-range window must be refused before the run: %s", r.Text())
+	}
+}
+
 func TestRunContinueRejectsWhatItCannot(t *testing.T) {
 	s := connect(t, t.TempDir())
 	if r := s.call(t, "run", `{"prompt":"x","continue_run_id":"nope"}`); !r.IsError || !strings.Contains(r.Text(), "nope") {

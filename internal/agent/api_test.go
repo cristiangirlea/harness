@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -330,6 +331,20 @@ func TestAPILoopSendsProjectInstructions(t *testing.T) {
 		}
 	}
 	if len(infos) != 1 || !strings.HasPrefix(infos[0], "instructions: AGENTS.md, CLAUDE.md (") {
+		t.Errorf("info events = %v", infos)
+	}
+}
+
+func TestAPIReportsCompactWindowAsNotEnforced(t *testing.T) {
+	_, events, _ := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(),
+		Options: Options{Mode: ModeAsk, NoInstructions: true, CompactWindow: "auto"}})
+	var infos []string
+	for _, e := range events {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	}
+	if !slices.Contains(infos, "compact_window: not enforced by the api backend") {
 		t.Errorf("info events = %v", infos)
 	}
 }

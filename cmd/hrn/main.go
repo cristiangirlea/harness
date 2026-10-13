@@ -95,6 +95,9 @@ Run flags:
                        keep every tool result in the request instead of letting the server clear old ones (api backend)
       --lean           start claude with only the run's --mcp servers: none of your other MCP servers,
                        plugin servers or connectors; settings, rules and skills still load (claude backend)
+      --compact-window N
+                       compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
+                       (claude backend; unset keeps Claude Code's own threshold)
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost

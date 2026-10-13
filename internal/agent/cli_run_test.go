@@ -139,11 +139,13 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 		newBackend func() *CLIBackend
 		mapsEffort bool
 		mapsLean   bool
+		// mapsCompact: the adapter passes compact_window on.
+		mapsCompact bool
 	}{
-		{NewCodexBackend, true, false},
-		{NewClaudeBackend, true, true},
-		{NewGeminiBackend, false, false},
-		{NewOpencodeBackend, false, false},
+		{NewCodexBackend, true, false, false},
+		{NewClaudeBackend, true, true, true},
+		{NewGeminiBackend, false, false, false},
+		{NewOpencodeBackend, false, false, false},
 	} {
 		b := adapter.newBackend()
 		if AppliesLean(b) != adapter.mapsLean {
@@ -161,6 +163,8 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{Lean: Bool(true)},
 				{Effort: "high", Lean: Bool(true)},
 				{Lean: Bool(false)},
+				{CompactWindow: "auto"},
+				{Lean: Bool(true), CompactWindow: "200000"},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
@@ -182,6 +186,9 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				}
 				if options.IsLean() && !adapter.mapsLean {
 					want = append(want, "lean")
+				}
+				if options.CompactWindow != "" && !adapter.mapsCompact {
+					want = append(want, "compact_window")
 				}
 				if len(want) == 0 {
 					if len(infos) != 0 {

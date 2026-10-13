@@ -316,7 +316,7 @@ func AppliesLean(b Backend) bool {
 }
 
 // unenforced names the options a CLI backend cannot apply, for one warning line.
-func unenforced(task Task, mapsEffort, mapsLean bool) []string {
+func unenforced(task Task, mapsEffort, mapsLean, mapsCompact bool) []string {
 	var out []string
 	if task.MaxCostUSD > 0 {
 		out = append(out, "max_cost")
@@ -329,6 +329,9 @@ func unenforced(task Task, mapsEffort, mapsLean bool) []string {
 	}
 	if task.IsLean() && !mapsLean {
 		out = append(out, "lean")
+	}
+	if task.CompactWindow != "" && !mapsCompact {
+		out = append(out, "compact_window")
 	}
 	return out
 }

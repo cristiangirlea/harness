@@ -51,6 +51,12 @@ type Options struct {
 	// an explicit false is kept, also over a spec's true.
 	Lean *bool `json:"lean,omitempty" desc:"Start the claude CLI with only this run's --mcp servers: none of your other MCP servers, plugin servers or claude.ai connectors; your settings, rules, plugins and skills still load (claude backend)."`
 
+	// CompactWindow is the context size, in tokens, at which the claude CLI
+	// compacts the conversation (--autocompact): 100000 to 1000000, or
+	// "auto". Unset keeps Claude Code's own threshold, which on a 1M-window
+	// model is close to the whole window (#204).
+	CompactWindow CompactWindow `json:"compact_window,omitempty" desc:"Compact the claude CLI's conversation at this many tokens of context: 100000 to 1000000, or auto (claude backend)."`
+
 	// AllowDangerous lifts the guard: the api backend's command guard, which
 	// otherwise refuses a few command lines (git push, sudo, rm -rf /, curl |
 	// sh), and the guarded environment every backend runs in (tools.GuardEnv).
@@ -90,6 +96,9 @@ func (o Options) Validate() error {
 	}
 	if o.Effort != "" && !slices.Contains(EffortLevels, o.Effort) {
 		return fmt.Errorf("unknown effort %q (want %s)", o.Effort, strings.Join(EffortLevels, ", "))
+	}
+	if err := o.CompactWindow.check(); err != nil {
+		return err
 	}
 	if o.AllowDangerous && tools.Guarded() {
 		return ErrGuardedRun
@@ -135,6 +144,8 @@ func (Options) Schema() map[string]any {
 			p["enum"] = names
 		case reflect.TypeOf(Duration(0)):
 			p["type"] = "string"
+		case reflect.TypeOf(CompactWindow("")):
+			p["type"] = []any{"integer", "string"} // a token count, or "auto"
 		default:
 			switch f.Type.Kind() {
 			case reflect.String:
@@ -280,6 +291,59 @@ func (b setBool) Set(s string) error {
 }
 
 func (setBool) IsBoolFlag() bool { return true }
+
+// CompactWindow is "auto" or a token count from 100000 to 1000000 in decimal,
+// as claude --autocompact takes it. A spec or call writes the count as a
+// number, and a record stores it the same way.
+type CompactWindow string
+
+const minCompactWindow, maxCompactWindow = 100000, 1000000
+
+func (w CompactWindow) check() error {
+	if w == "" || w == "auto" {
+		return nil
+	}
+	if n, err := strconv.Atoi(string(w)); err == nil && n >= minCompactWindow && n <= maxCompactWindow {
+		return nil
+	}
+	return fmt.Errorf("compact_window %q: want an integer from %d to %d, or \"auto\"", string(w), minCompactWindow, maxCompactWindow)
+}
+
+func (w CompactWindow) String() string { return string(w) }
+
+// Set parses a flag value, so a *CompactWindow is a flag.Value.
+func (w *CompactWindow) Set(s string) error {
+	if err := CompactWindow(s).check(); err != nil {
+		return err
+	}
+	*w = CompactWindow(s)
+	return nil
+}
+
+func (w CompactWindow) MarshalJSON() ([]byte, error) {
+	if w == "auto" {
+		return json.Marshal("auto")
+	}
+	return []byte(w), nil
+}
+
+func (w *CompactWindow) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*w = ""
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		*w = CompactWindow(strconv.Itoa(n))
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil || s != "auto" {
+		return fmt.Errorf("compact_window %s: want an integer from %d to %d, or \"auto\"", data, minCompactWindow, maxCompactWindow)
+	}
+	*w = "auto"
+	return nil
+}
 
 // stringList collects a repeatable string flag.
 type stringList []string

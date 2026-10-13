@@ -56,6 +56,9 @@ func NewClaudeBackend() *CLIBackend {
 				// in only with an API key, never the subscription.
 				a = append(a, "--strict-mcp-config")
 			}
+			if t.CompactWindow != "" {
+				a = append(a, "--autocompact", string(t.CompactWindow))
+			}
 			if !t.AllowDangerous {
 				a = append(append(a, "--disallowedTools"), claudeDenyRules()...)
 			}
@@ -75,6 +78,7 @@ func NewClaudeBackend() *CLIBackend {
 		mapsMaxTurns: true,
 		mapsMCP:      true,
 		mapsLean:     true,
+		mapsCompact:  true,
 		limits:       true,
 		loginEnv:     []string{"CLAUDE_CODE_OAUTH_TOKEN"},
 		fileRules:    true,

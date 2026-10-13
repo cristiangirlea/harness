@@ -23,6 +23,25 @@ func TestClaudePassesEffortOnlyWhenSet(t *testing.T) {
 	}
 }
 
+func TestClaudePassesCompactWindowOnlyWhenSet(t *testing.T) {
+	for _, window := range []CompactWindow{"", "auto", "200000"} {
+		args := NewClaudeBackend().args(Task{Options: Options{CompactWindow: window}}, "")
+		i := slices.Index(args, "--autocompact")
+		if window == "" {
+			if i != -1 {
+				t.Errorf("unset: Claude Code's own threshold must stay: %v", args)
+			}
+			continue
+		}
+		if i < 0 || i+1 >= len(args) || args[i+1] != string(window) {
+			t.Errorf("want --autocompact %s: %v", window, args)
+		}
+		if d := slices.Index(args, "--disallowedTools"); d < i {
+			t.Errorf("--autocompact must come before the deny rules: %v", args)
+		}
+	}
+}
+
 func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
 	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}}
 	plain := NewClaudeBackend().args(Task{Options: opts}, "")
