@@ -152,16 +152,17 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		path := filepath.Join(dir, strconv.Itoa(n))
 		lp := leasePath(dir, n)
 		lease := Lease{Holder: opt.Holder, PID: opt.PID, Taken: time.Now().UTC().Truncate(time.Second), Branch: opt.Branch}
-		busy, holder, err := acquire(lp, lease)
+		busy, holder, changed, err := acquire(lp, lease)
 		if err != nil {
 			return Taken{Notes: notes}, fmt.Errorf("slot %d: %w", n, err)
 		}
 		if busy != "" {
 			passed = append(passed, fmt.Sprintf("slot %d %s: %s", n, path, busy))
 			held++
-			if holder != nil {
+			switch {
+			case holder != nil:
 				holders = append(holders, *holder)
-			} else {
+			case !changed:
 				unreadable = append(unreadable, n)
 			}
 			continue
@@ -195,7 +196,10 @@ type NoSlotError struct {
 	Passed  []string // one line per slot: its path and who holds it, or why it was skipped
 	// Unreadable is the slots among Held whose lease gave no Lease, in slot
 	// order: an empty one being written, one that is not JSON, or a stale one
-	// a left <n>.lease.takeover file keeps from being taken over.
+	// a left <n>.lease.takeover file keeps from being taken over. A slot
+	// whose lease changed hands under the take, a live process taking it
+	// over or freeing it meanwhile, counts in Held but is in neither
+	// Holders nor Unreadable.
 	Unreadable []int
 }
 
@@ -306,13 +310,20 @@ func commitOf(ctx context.Context, dir, ref string) (string, error) {
 	return gitOut(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 }
 
+// beforeTakeoverLock, set only by tests, runs between acquire's read of a
+// stale lease and taking the slot's lock to take it over.
+var beforeTakeoverLock func()
+
 // acquire creates the lease file with O_EXCL. When one exists it returns why
 // the slot is busy, with the lease it read when it could, unless the lease
-// is stale, in which case it takes it over and tries once more.
-func acquire(p string, l Lease) (busy string, holder *Lease, err error) {
+// is stale, in which case it takes it over and tries once more. changed
+// reports that the slot changed hands under it instead, a live process
+// taking it over or freeing it meanwhile: contention, which clears in a
+// moment, not a lease that cannot be read.
+func acquire(p string, l Lease) (busy string, holder *Lease, changed bool, err error) {
 	data, err := json.Marshal(l)
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	for range 2 {
 		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -323,28 +334,35 @@ func acquire(p string, l Lease) (busy string, holder *Lease, err error) {
 			}
 			if werr != nil {
 				removeOwn(p)
-				return "", nil, werr
+				return "", nil, false, werr
 			}
-			return "", nil, nil
+			return "", nil, false, nil
 		}
 		if !errors.Is(err, fs.ErrExist) {
-			return "", nil, err
+			return "", nil, false, err
 		}
 		old, raw, err := readLease(p)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			continue // freed in between
 		case err != nil:
-			return err.Error(), nil, nil
+			return err.Error(), nil, false, nil
 		case !old.stale():
-			return describe(old), &old, nil
+			return describe(old), &old, false, nil
 		}
-		if why := removeLease(p, raw); why != "" {
-			return why, nil, nil
+		if beforeTakeoverLock != nil {
+			beforeTakeoverLock()
+		}
+		if why, changed := removeLease(p, raw); why != "" {
+			return why, nil, changed, nil
 		}
 	}
-	return "its lease changed while it was being taken over", nil, nil
+	return leaseChanged, nil, true, nil
 }
+
+// leaseChanged is why a slot is busy when its lease changed hands under
+// acquire.
+const leaseChanged = "its lease changed while it was being taken over"
 
 // readLease reads a lease file. One that is empty is being written by the
 // caller that just created it, and counts as held.
@@ -378,26 +396,27 @@ func describe(l Lease) string {
 
 // removeLease removes the lease at p if it still holds want, under
 // lockLease, so two callers taking over or freeing the same lease never
-// remove a lease someone made after it. It returns why it did not, or "".
-func removeLease(p string, want []byte) string {
+// remove a lease someone made after it. It returns why it did not, or "",
+// and whether that is because the lease changed meanwhile.
+func removeLease(p string, want []byte) (why string, changed bool) {
 	unlock, why := lockLease(p)
 	if why != "" {
-		return why
+		return why, false
 	}
 	defer unlock()
 	now, err := os.ReadFile(p)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return ""
+		return "", false
 	case err != nil:
-		return err.Error()
+		return err.Error(), false
 	case !bytes.Equal(now, want):
-		return "its lease changed while it was being taken over"
+		return leaseChanged, true
 	}
 	if err := removeOwn(p); err != nil {
-		return err.Error()
+		return err.Error(), false
 	}
-	return ""
+	return "", false
 }
 
 // lockLease creates the lease's <n>.lease.takeover file with O_EXCL, which

@@ -1222,3 +1222,15 @@ func TestATasksWaitOnUnreadableLeasesStartsOverAfterAWaitAtTheBatchsBound(t *tes
 		t.Errorf("a task that never got a slot leaves no branch: %q", b)
 	}
 }
+
+// A slot whose lease changed hands under the take, in Held but in neither
+// Holders nor Unreadable, is a live process's, which gives it back; an
+// unreadable lease promises nothing.
+func TestSomeoneWillFreeCountsASlotThatChangedHandsUnderTheTake(t *testing.T) {
+	if !someoneWillFree(&ws.NoSlotError{Held: 1}, &keptSlots{}) {
+		t.Error("a slot that changed hands under the take is held by a live process")
+	}
+	if someoneWillFree(&ws.NoSlotError{Held: 1, Unreadable: []int{1}}, &keptSlots{}) {
+		t.Error("an unreadable lease is no promise that the slot comes free")
+	}
+}

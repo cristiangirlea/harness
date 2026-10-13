@@ -929,9 +929,13 @@ func holdsASession(full *ws.NoSlotError) bool {
 
 // someoneWillFree reports whether a slot full passed over is held by a
 // process that will give it back: one not a session's (no pid) and not one
-// this batch kept. A lease it could not read does not count: whether one
-// is still being written is unreadableLeases' call.
+// this batch kept, or one whose lease changed hands under the take, which
+// a live process has. A lease it could not read does not count: whether
+// one is still being written is unreadableLeases' call.
 func someoneWillFree(full *ws.NoSlotError, kept *keptSlots) bool {
+	if full.Held > len(full.Holders)+len(full.Unreadable) {
+		return true
+	}
 	for _, l := range full.Holders {
 		if l.PID != 0 && !kept.has(l.Holder) {
 			return true
