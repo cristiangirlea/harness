@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 // Home is $HRN_HOME, or ~/.hrn.
@@ -292,6 +293,8 @@ func Load(id string) (Record, error) {
 	if data, err := os.ReadFile(filepath.Join(dir, "result.json")); err == nil {
 		rec.Done = true
 		return rec, json.Unmarshal(data, &rec)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return rec, err
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "task.json"))
 	if err != nil {
@@ -350,7 +353,49 @@ func LoadConversation(id string) (Record, agent.Conversation, error) {
 	if err != nil {
 		return rec, conv, fmt.Errorf("run %s has no saved conversation: only api runs save one", id)
 	}
-	return rec, conv, json.Unmarshal(data, &conv)
+	if err := json.Unmarshal(data, &conv); err != nil {
+		return rec, conv, err
+	}
+	// retrieval.json is persisted before model execution, including runs killed
+	// before result.json. Never silently discard a pin from an unfinished run.
+	data, err = os.ReadFile(filepath.Join(Root(), id, "retrieval.json"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return rec, conv, err
+	}
+	if err == nil {
+		var saved *retrieval.Record
+		if err := json.Unmarshal(data, &saved); err != nil {
+			return rec, conv, fmt.Errorf("invalid persisted retrieval: %w", err)
+		}
+		if saved == nil {
+			return rec, conv, fmt.Errorf("empty persisted retrieval")
+		}
+		if err := agent.ValidateContinuationPin(saved, &conv); err != nil {
+			return rec, conv, err
+		}
+		if !rec.Done {
+			rec.Result.Retrieval = saved
+		}
+	} else if rec.Result.Retrieval != nil || conv.Retrieval != nil || (rec.Task.Retrieval != "" && rec.Task.Retrieval != "off") {
+		return rec, conv, fmt.Errorf("persisted retrieval metadata missing")
+	}
+	if r := conv.Retrieval; r != nil {
+		if rec.Done && rec.Result.Model != "" && rec.Result.Model != conv.Model {
+			return rec, conv, fmt.Errorf("saved conversation differs from reported model")
+		}
+		o := rec.Task.Options
+		original := rec.Task.OriginalPrompt
+		if original == "" {
+			original = rec.Task.Prompt
+		}
+		if r.OriginalPrompt != original {
+			return rec, conv, fmt.Errorf("saved retrieval original task mismatch")
+		}
+		if rec.Backend != "api" || (o.Model != "" && o.Model != r.Scope.Model) || (o.Retrieval != "" && o.Retrieval != r.Mode) || (o.RetrievalTenant != "" && o.RetrievalTenant != r.Scope.TenantID) || (o.RetrievalProject != "" && o.RetrievalProject != r.Scope.ProjectID) || (o.RetrievalRevision != "" && o.RetrievalRevision != r.Scope.Revision) || (o.RetrievalVersion != "" && (r.Packet == nil || o.RetrievalVersion != r.Packet.VersionID)) {
+			return rec, conv, fmt.Errorf("saved task differs from retrieval scope or mode")
+		}
+	}
+	return rec, conv, agent.ValidateContinuationPin(rec.Result.Retrieval, &conv)
 }
 
 // Chain returns run id and every run before it that it continues, oldest

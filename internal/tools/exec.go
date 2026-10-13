@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/retrieval"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -31,7 +33,12 @@ func RunShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	parts := argv(command)
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
 	cmd.Dir = dir
-	cmd.Env = env
+	// GuardEnv already withholds *_TOKEN. ExecutorEnv also removes the
+	// operator token and database URL if a caller supplies them explicitly.
+	if env == nil {
+		env = os.Environ()
+	}
+	cmd.Env = retrieval.ExecutorEnv(env)
 	out := &boundedBuffer{keepHead: maxOutput * 2 / 3, keepTail: maxOutput / 3}
 	cmd.Stdout, cmd.Stderr = out, out
 	// Stop waiting on the pipes if something survived the kill or was left

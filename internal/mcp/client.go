@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"io"
 	"net/url"
 	"os"
@@ -79,6 +80,7 @@ func (c *Client) Start(ctx context.Context, cfg ServerConfig) error {
 	for k, v := range cfg.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
+	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
