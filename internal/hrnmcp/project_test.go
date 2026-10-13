@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -101,6 +102,22 @@ func TestProjectServerExposesOnlyScopedRunAndInspectionTools(t *testing.T) {
 	}
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"oversized", string(data) + strings.Repeat(" ", 8<<20), "8 MiB"},
+		{"unknown token", string(data[:len(data)-1]) + `,"token":"fixture"}`, "unknown field"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			badPath := filepath.Join(t.TempDir(), "profile.json")
+			if err := os.WriteFile(badPath, []byte(tc.body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewProjectServer(dir, badPath); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("profile accepted or wrong error: %v", err)
+			}
+		})
 	}
 	srv, err := NewProjectServer(dir, path)
 	if err != nil {

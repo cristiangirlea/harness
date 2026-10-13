@@ -1,11 +1,13 @@
 package hrnmcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,13 +109,26 @@ func (p ProjectProfile) arguments(ctx context.Context, dir string, raw json.RawM
 // NewProjectServer exposes only local run/inspection tools. Batch and remote
 // execution cannot silently bypass the project profile.
 func NewProjectServer(dir, profilePath string) (*mcp.Server, error) {
-	data, err := os.ReadFile(profilePath)
+	f, err := os.Open(profilePath)
 	if err != nil {
 		return nil, err
 	}
-	var profile ProjectProfile
-	if err = json.Unmarshal(data, &profile); err != nil {
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 8<<20+1))
+	if err != nil {
 		return nil, err
+	}
+	if len(data) > 8<<20 {
+		return nil, fmt.Errorf("retrieval profile exceeds 8 MiB")
+	}
+	var profile ProjectProfile
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&profile); err != nil {
+		return nil, err
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return nil, fmt.Errorf("extra JSON input in retrieval profile")
 	}
 	if err = profile.validate(context.Background(), dir); err != nil {
 		return nil, err
