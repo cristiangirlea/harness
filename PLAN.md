@@ -667,7 +667,8 @@ neither of them follows a run while it happens.
 
 - 2026-10-13: gc --free-below reports the drives after --apply (#130, PR #N). File sizes can
   overestimate freed space for sparse, linked or compressed files, and removal can fail.
-  The listing stays the contract, so nothing more is removed; the report shows actual free space.
+  Decided: nothing more is removed; drives that were below are measured again and reported;
+  the next-run hint appears only when caches were left because enough was already going.
 - 2026-10-13: gc and squash-landed batch work (#85, PR #227). Ancestry alone keeps task
   worktrees after `batch merge --squash` or a reworded landing. Decided: compare the patch
   id (`--verbatim`, whitespace included) of the task's whole diff with each commit on
