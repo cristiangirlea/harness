@@ -664,7 +664,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: `gh api` writes in this repository's Claude settings (#198, PR #207). Only the
+- 2026-10-13: `gh api` writes in this repository's Claude settings (#198, PR #209). Only the
   `PUT` spellings were denied, so a session with the owner's token could still change or delete
   the rulesets. Decided: deny any `gh api` call with an explicit `-X` or `--method`, whatever the
   method's case or spelling (`gh` upper-cases it and takes `-X=DELETE`); nothing here reads with an
