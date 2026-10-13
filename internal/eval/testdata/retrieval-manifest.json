@@ -1,0 +1,82 @@
+{
+  "id": "retrieval-heldout-fixture-v1",
+  "evidence_kind": "synthetic_fixture",
+  "revision": "634507a8f90bc615348da4b0fb1dd6fadd2025ac",
+  "corpus_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "held_out": true,
+  "cache_conditions": "Synthetic counters only; no provider calls. Pilot must counterbalance off/on order and record warm/cold cache state.",
+  "spec": {
+    "dir": ".",
+    "mode": "readonly",
+    "parallel": 1,
+    "timeout": "2m",
+    "max_turns": 3,
+    "repeats": 3,
+    "matrix": [
+      {
+        "name": "off",
+        "backend": "codex",
+        "model": "fixture-model",
+        "retrieval": "off"
+      },
+      {
+        "name": "text",
+        "backend": "codex",
+        "model": "fixture-model",
+        "retrieval": "required"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "root-dependencies",
+        "prompt": "How many external requirements does the root Go module have?",
+        "expect": "(?i)zero|no external"
+      },
+      {
+        "id": "queue-capacity",
+        "prompt": "Identify the global project worker slot limit.",
+        "expect": "\\b2\\b"
+      },
+      {
+        "id": "heartbeat-interval",
+        "prompt": "Identify HeartbeatInterval in the worker protocol.",
+        "expect": "10"
+      },
+      {
+        "id": "stale-owner",
+        "prompt": "Explain the ErrNotOwner condition without retrying execution.",
+        "expect": "(?i)stale|expired"
+      },
+      {
+        "id": "repository-pin",
+        "prompt": "Identify the field that binds an accepted job to its repository.",
+        "expect": "repository_url"
+      },
+      {
+        "id": "checkpoint-order",
+        "prompt": "Identify how checkpoint sequence ordering is represented.",
+        "expect": "(?i)sequence"
+      },
+      {
+        "id": "exact-path",
+        "prompt": "Explain the role of server/platform/queue.go.",
+        "expect": "(?i)queue|admission"
+      },
+      {
+        "id": "exact-symbol",
+        "prompt": "Find WorkerAuthorized and describe its project boundary.",
+        "expect": "(?i)project"
+      },
+      {
+        "id": "unknown-error",
+        "prompt": "Look for error ZZX_NO_SUCH_CODE_9081; explicitly say when absent.",
+        "expect": "(?i)absent|not found|no match"
+      },
+      {
+        "id": "unknown-component",
+        "prompt": "Look for subsystem nonexistent_quantum_index_9081; say when absent.",
+        "expect": "(?i)absent|not found|no match"
+      }
+    ]
+  }
+}
