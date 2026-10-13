@@ -73,6 +73,9 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		}
 		return task, state, err
 	}
+	if task.ForkSession != "" {
+		return fail(fmt.Errorf("retrieval is unsupported for native session continuation"))
+	}
 	if previous != nil {
 		if task.Resume != nil {
 			if err := ValidateContinuationPin(previous, task.Resume); err != nil {

@@ -223,3 +223,14 @@ func TestRetrievalFirstOptInAtContinuationBoundary(t *testing.T) {
 		t.Fatal("new input boundary lost context/history")
 	}
 }
+
+func TestRetrievalRefusesNativeSessionContinuationBeforeSearch(t *testing.T) {
+	_, network := retrievalServer(t, 200, "[Reference fixture]")
+	var seen Task
+	calls := 0
+	task := Task{Prompt: "follow up", Options: retrievalOptions(), ForkSession: "prior-session", RunDir: t.TempDir()}
+	result := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, task, func(Event) {})
+	if result.Status != StatusError || calls != 0 || network.Load() != 0 || !strings.Contains(result.Error, "native session") {
+		t.Fatalf("native continuation: result=%+v calls=%d network=%d", result, calls, network.Load())
+	}
+}
