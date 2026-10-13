@@ -253,6 +253,47 @@ func TestFreeRefusesUnsavedOrUnpushedWorkAndDetachesOnceItIsPushed(t *testing.T)
 	}
 }
 
+func TestFreeRefusesWhileTheSlotIsBeingTakenOverAndLeavesItAsItWas(t *testing.T) {
+	f := newFixture(t)
+	slot := f.take(TakeOptions{Branch: "work", Holder: "a"}).Path
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+	if err := os.WriteFile(lp+".takeover", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Free(context.Background(), slot); err == nil || !strings.Contains(err.Error(), "being taken over or freed") {
+		t.Errorf("free under another caller's takeover lock: %v", err)
+	}
+	if b := git(t, slot, "branch", "--show-current"); b != "work" {
+		t.Errorf("HEAD should stay on work, is on %q", b)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("the lease changed:\n%s\nwant\n%s", after, before)
+	}
+}
+
+func TestFreeRefusesWhenTheLeaseChangesBeforeItLocksTheSlot(t *testing.T) {
+	f := newFixture(t)
+	slot := f.take(TakeOptions{Branch: "work", Holder: "a"}).Path
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	data, _ := json.Marshal(Lease{Holder: "newcomer", Taken: time.Now(), Branch: "work"})
+	beforeFreeLock = func() {
+		if err := os.WriteFile(lp, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() { beforeFreeLock = nil }()
+	if _, err := Free(context.Background(), slot); err == nil || !strings.Contains(err.Error(), "lease changed") {
+		t.Errorf("free after the lease changed: %v", err)
+	}
+	if b := git(t, slot, "branch", "--show-current"); b != "work" {
+		t.Errorf("HEAD should stay on work, is on %q", b)
+	}
+	if l, _ := readLeaseT(t, lp); l.Holder != "newcomer" {
+		t.Errorf("the newcomer's lease should stay: %+v", l)
+	}
+}
+
 func TestTakeAfterFreeReusesTheSlotAndKeepsIgnoredFiles(t *testing.T) {
 	f := newFixture(t)
 	slot := f.take(TakeOptions{Branch: "a", Holder: "a"}).Path

@@ -348,21 +348,15 @@ func describe(l Lease) string {
 	return s
 }
 
-// removeLease removes the lease at p if it still holds want, under a
-// <n>.lease.takeover file made with O_EXCL, so two callers taking over or
-// freeing the same lease never remove a lease someone made after it. It
-// returns why it did not, or "".
+// removeLease removes the lease at p if it still holds want, under
+// lockLease, so two callers taking over or freeing the same lease never
+// remove a lease someone made after it. It returns why it did not, or "".
 func removeLease(p string, want []byte) string {
-	lock := p + ".takeover"
-	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return "its lease is being taken over or freed (if no one is, a crash left " + lock + "; remove it)"
-		}
-		return err.Error()
+	unlock, why := lockLease(p)
+	if why != "" {
+		return why
 	}
-	f.Close()
-	defer os.Remove(lock)
+	defer unlock()
 	now, err := os.ReadFile(p)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -376,6 +370,22 @@ func removeLease(p string, want []byte) string {
 		return err.Error()
 	}
 	return ""
+}
+
+// lockLease creates the lease's <n>.lease.takeover file with O_EXCL, which
+// whoever takes over or frees the lease holds while doing it. It returns the
+// function that removes it, or why it could not.
+func lockLease(p string) (unlock func(), why string) {
+	lock := p + ".takeover"
+	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return nil, "its lease is being taken over or freed (if no one is, a crash left " + lock + "; remove it)"
+		}
+		return nil, err.Error()
+	}
+	f.Close()
+	return func() { os.Remove(lock) }, ""
 }
 
 // removeOwn removes a lease this caller holds. Windows refuses to remove a
@@ -524,6 +534,10 @@ func slotOf(main, path string) (int, string, bool) {
 	return n, filepath.Join(SlotsDir(main), first), true
 }
 
+// beforeFreeLock, set only by tests, runs between Free's first read of the
+// lease and taking the slot's lock.
+var beforeFreeLock func()
+
 // Free gives back the slot that path (anywhere inside it) lies in. It
 // refuses while the slot holds changes, untracked files or commits on no
 // remote; otherwise it detaches HEAD where it is, so the branch is free for
@@ -550,6 +564,20 @@ func Free(ctx context.Context, path string) (Taken, error) {
 	if err != nil {
 		return Taken{}, fmt.Errorf("slot %d: %v", n, err)
 	}
+	if beforeFreeLock != nil {
+		beforeFreeLock()
+	}
+	// Hold the takeover lock from here to the lease's removal, so no take
+	// can take over a stale lease and check out a branch that free then
+	// detaches.
+	unlock, why := lockLease(lp)
+	if why != "" {
+		return Taken{}, fmt.Errorf("slot %d: %s", n, why)
+	}
+	defer unlock()
+	if now, err := os.ReadFile(lp); err != nil || !bytes.Equal(now, raw) {
+		return Taken{}, fmt.Errorf("slot %d: its lease changed while it was being freed", n)
+	}
 	if !isWorktreeRoot(ctx, slot) {
 		return Taken{}, fmt.Errorf("slot %d (%s) is not a worktree of this repository", n, slot)
 	}
@@ -575,8 +603,8 @@ func Free(ctx context.Context, path string) (Taken, error) {
 	if _, err := gitOut(ctx, slot, "switch", "--detach"); err != nil {
 		return Taken{}, err
 	}
-	if why := removeLease(lp, raw); why != "" {
-		return Taken{}, fmt.Errorf("slot %d: %s", n, why)
+	if err := removeOwn(lp); err != nil {
+		return Taken{}, fmt.Errorf("slot %d: %v", n, err)
 	}
 	return Taken{N: n, Path: slot, Lease: lease}, nil
 }
