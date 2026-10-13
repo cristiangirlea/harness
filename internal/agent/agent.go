@@ -122,6 +122,7 @@ const (
 )
 
 type Result struct {
+	Usage *UsageMetadata `json:"usage_metadata,omitempty"`
 	// RecoveryRequired is execution evidence for the scheduler, not success or
 	// permission to replay. Orchestration states remain separate from Status.
 	RecoveryRequired bool   `json:"recovery_required,omitempty"`

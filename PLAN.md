@@ -663,7 +663,7 @@ order they are worth taking:
     lands onto today's main in slices through the feature branch `durable`.
     - [x] [#134](https://github.com/cristiangirlea/harness/issues/134) docs: the accepted spec, the retrieval plan and a PLAN.md item. Done: PR #143, 2026-10-13.
     - [x] [#135](https://github.com/cristiangirlea/harness/issues/135) api: durable execution checkpoints for the api loop. Done: PR #150, 2026-10-13.
-    - [ ] [#136](https://github.com/cristiangirlea/harness/issues/136) agent: usage metadata with backend-aware token semantics
+    - [x] [#136](https://github.com/cristiangirlea/harness/issues/136) agent: usage metadata with backend-aware token semantics. Done: PR #158, 2026-10-13.
     - [x] [#137](https://github.com/cristiangirlea/harness/issues/137) server: PostgreSQL control service and project worker, a separate module. Done: PR #159, 2026-10-13.
     - [ ] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools
     - [ ] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier
@@ -689,6 +689,14 @@ neither of them follows a run while it happens.
   postgres job, where the suite runs: Docker's engine on the owner's PC answers with an
   internal error. Follow-ups: refuse mcp and allow_dangerous at submission (#154), the token
   check before the body (#155), bounded event streams (#156), two status codes (#157).
+- 2026-10-13: agent usage metadata ([#136](https://github.com/cristiangirlea/harness/issues/136), PR #158; slice 3 of #142).
+  Ported from the snapshot: codex input includes its cached input, api and claude counters are
+  disjoint, and a missing counter, an incomplete turn or a failed turn marks the run's usage
+  missing, which it stays. A missing `cached_input_tokens` field counts as missing too. The
+  review found the report had dropped gemini and opencode records from the cache share, the
+  snapshot's bug as well: a record without metadata keeps the old sum. Follow-ups: KnownCost
+  has no caller (#151), summed counters can wrap (#152), records.md's stale README reference
+  (#153).
 - 2026-10-13: api durable checkpoints ([#135](https://github.com/cristiangirlea/harness/issues/135), PR #150; slice 2 of #142).
   Ported from the snapshot onto today's loop with two deviations: a `pause_turn` saves its
   `turn_complete` checkpoint and then continues, so the local path keeps its plain `continue`;
