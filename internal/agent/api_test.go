@@ -153,7 +153,8 @@ func TestAPILoopRunsToolsAndFinishes(t *testing.T) {
 	for _, e := range events {
 		kinds = append(kinds, e.Kind)
 	}
-	want := []EventKind{EventToolCall, EventToolResult, EventText}
+	// Each request's usage follows its response; the text streams first.
+	want := []EventKind{EventUsage, EventToolCall, EventToolResult, EventText, EventUsage}
 	if fmt.Sprint(kinds) != fmt.Sprint(want) {
 		t.Errorf("events = %v, want %v", kinds, want)
 	}
