@@ -281,6 +281,31 @@ func TestFreeRefusesUnsavedOrUnpushedWorkAndDetachesOnceItIsPushed(t *testing.T)
 	}
 }
 
+func TestFreeRefusesALeaseHeldByARunningProcess(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+	_, err := Free(context.Background(), got.Path)
+	if err == nil || !strings.Contains(err.Error(), "running process "+strconv.Itoa(os.Getpid())) {
+		t.Errorf("free of a live holder's slot: %v", err)
+	}
+	if b := git(t, got.Path, "branch", "--show-current"); b != "hrn/t1" {
+		t.Errorf("HEAD should stay on hrn/t1, is on %q", b)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("the lease changed:\n%s\nwant\n%s", after, before)
+	}
+}
+
+func TestFreeGivesBackALeaseWhoseProcessExited(t *testing.T) {
+	f := newFixture(t)
+	got := f.take(TakeOptions{Holder: "gone", PID: exitedPID(t)})
+	if _, err := Free(context.Background(), got.Path); err != nil {
+		t.Errorf("free of a stale lease: %v", err)
+	}
+}
+
 func TestFreeRefusesWhileTheSlotIsBeingTakenOverAndLeavesItAsItWas(t *testing.T) {
 	f := newFixture(t)
 	slot := f.take(TakeOptions{Branch: "work", Holder: "a"}).Path

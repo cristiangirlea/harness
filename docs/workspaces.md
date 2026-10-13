@@ -71,7 +71,8 @@ since when, or why it was skipped.
 refuses while the slot holds changes or untracked files, and names the first few. It
 also refuses while HEAD has commits that are on no remote, and says how many. In a
 repository without remotes it checks for commits that are on no branch or tag instead.
-Otherwise it detaches HEAD where it is, so the branch is free for other checkouts and
+It refuses a lease that names a process still running (a batch task's), which gives the
+slot back itself. Otherwise it detaches HEAD where it is, so the branch is free for other checkouts and
 for `hrn gc`, and removes the lease. The folder and its build output stay for the next
 take.
 

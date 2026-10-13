@@ -564,7 +564,7 @@ var beforeFreeLock func()
 
 // Free gives back the slot that path (anywhere inside it) lies in. It
 // refuses while the slot holds changes, untracked files or commits on no
-// remote; otherwise it detaches HEAD where it is, so the branch is free for
+// remote, and while the lease names a running process; otherwise it detaches HEAD where it is, so the branch is free for
 // other checkouts and for gc, and removes the lease.
 func Free(ctx context.Context, path string) (Taken, error) {
 	abs, err := filepath.Abs(path)
@@ -587,6 +587,9 @@ func Free(ctx context.Context, path string) (Taken, error) {
 	}
 	if err != nil {
 		return Taken{}, fmt.Errorf("slot %d: %v", n, err)
+	}
+	if lease.PID != 0 && alive(lease.PID) {
+		return Taken{}, fmt.Errorf("slot %d is held by running process %d; it gives the slot back itself", n, lease.PID)
 	}
 	if beforeFreeLock != nil {
 		beforeFreeLock()
