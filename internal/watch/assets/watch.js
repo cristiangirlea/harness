@@ -52,6 +52,14 @@
     if (ago && last && last.dataset.at) ago.dataset.ago = last.dataset.at;
     if (follow) window.scrollTo(0, document.body.scrollHeight);
   });
+  // The usage chart, redrawn over every turn so far; a table a reader opened stays open.
+  es.addEventListener('usage', (m) => {
+    const usage = document.getElementById('usage');
+    if (!usage) return;
+    const open = new Set([...usage.querySelectorAll('details[open][data-key]')].map((d) => d.dataset.key));
+    usage.innerHTML = m.data;
+    for (const d of usage.querySelectorAll('details[data-key]')) if (open.has(d.dataset.key)) d.open = true;
+  });
   es.addEventListener('result', (m) => {
     const result = document.getElementById('result');
     if (result) result.innerHTML = m.data;

@@ -11,12 +11,14 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -565,13 +567,21 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	}
 	prev := rec.Started
 	events := make([]eventView, 0, len(lines))
+	var usage []agent.Event
 	for _, l := range lines {
 		var v eventView
 		l.Event = s.cleanEvent(l.Event)
+		if feedsChart(l) {
+			usage = append(usage, l.Event)
+		}
+		if isUsage(l) {
+			continue
+		}
 		v, prev = eventOf(l, prev)
 		events = append(events, v)
 	}
 	p := runPageOf(s.cleanRecord(rec), events, prev)
+	p.Usage = usageOf(usage)
 	p.Home = s.homeFor(r)
 	if !done {
 		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
@@ -795,12 +805,39 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	if prev.IsZero() {
 		prev = rec.Started
 	}
+	// The chart is drawn over every turn, so a stream that starts partway
+	// reads the turns before it first.
+	before := Tail{Path: filepath.Join(runlog.Root(), id, "events.jsonl")}
+	earlier, err := before.Read()
+	if err != nil {
+		http.Error(w, "run not readable", http.StatusInternalServerError)
+		return
+	}
+	var usage []agent.Event
+	for _, l := range earlier {
+		if l.End <= cur.off && feedsChart(l) {
+			usage = append(usage, s.cleanEvent(l.Event))
+		}
+	}
 	st := s.startStream(w)
 	s.loop(r, st, s.opt.Poll, func() (bool, error) {
 		lines, rec, done, err := f.Poll()
 		for _, l := range lines {
 			var v eventView
 			l.Event = s.cleanEvent(l.Event)
+			if feedsChart(l) {
+				usage = append(usage, l.Event)
+				html, rerr := s.render("usage", usageOf(usage))
+				if rerr != nil {
+					return true, s.problem(r, st, rerr)
+				}
+				if werr := st.send("usage", cursor{l.End, prev}.String(), html); werr != nil {
+					return true, werr
+				}
+			}
+			if isUsage(l) {
+				continue
+			}
 			v, prev = eventOf(l, prev)
 			html, rerr := s.render("event", v)
 			if rerr != nil {

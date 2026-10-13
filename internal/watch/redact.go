@@ -74,6 +74,11 @@ func (s *server) cleanEvent(e agent.Event) agent.Event {
 	if len(e.Input) > 0 {
 		e.Input = json.RawMessage(s.clean(string(e.Input)))
 	}
+	if e.Usage != nil {
+		u := *e.Usage
+		u.Model = s.clean(u.Model)
+		e.Usage = &u
+	}
 	return e
 }
 

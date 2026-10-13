@@ -97,6 +97,7 @@
 {{if .PromptMore}}<details class="prompt" data-key="prompt"><summary>Whole prompt</summary><pre>{{.Prompt}}</pre></details>{{end}}
 {{template "facts" .Facts}}
 {{if .Since}}<p class="muted clock">Running for <span data-since="{{.Since}}">a while</span>{{if .Last}} · last step <span data-ago="{{.Last}}">a moment</span> ago{{end}}</p>{{end}}
+<div id="usage">{{template "usage" .Usage}}</div>
 <ol id="timeline" class="timeline"{{with .Stream}} data-stream="{{.}}"{{end}}>{{range .Events}}{{template "event" .}}{{end}}</ol>
 <div id="result">{{with .Result}}{{template "result" .}}{{else}}<p class="muted">Running. New steps appear above as hrn records them.</p>{{end}}</div>
 {{template "foot" .}}{{end}}
@@ -107,6 +108,28 @@
 {{else if .Body}}<details><summary><span class="tag">{{.Label}}</span> <span class="sum">{{.Summary}}</span></summary><pre>{{.Body}}</pre>{{with .More}}<p class="more">{{.}}</p>{{end}}</details>
 {{else}}<span class="tag">{{.Label}}</span> <span class="sum">{{.Summary}}</span>{{end}}</div>
 </li>{{end}}
+
+{{define "usage"}}{{if .Turns}}<section class="card usage" aria-labelledby="usage-h">
+<h2 id="usage-h">Tokens per turn</h2>
+<p class="muted">{{.Summary}}</p>
+<svg class="usage-chart" viewBox="0 0 {{.W}} {{.H}}" role="img" aria-label="{{.Label}}">
+{{range .Panels}}<text class="chart-title" x="{{$.Left}}" y="{{.TitleY}}">{{.Title}}</text>
+<text class="chart-axis chart-y" x="{{$.Left}}" y="{{.MaxY}}" dx="-8">{{.Max}}</text>
+<text class="chart-axis chart-y" x="{{$.Left}}" y="{{.ZeroY}}" dx="-8">0</text>
+<line class="chart-grid" x1="{{$.Left}}" y1="{{.Top}}" x2="{{$.Right}}" y2="{{.Top}}"/>
+<line class="chart-base" x1="{{$.Left}}" y1="{{.Base}}" x2="{{$.Right}}" y2="{{.Base}}"/>
+<polyline class="chart-line" points="{{.Points}}"/>
+{{range .Dots}}<circle class="chart-dot" cx="{{.X}}" cy="{{.Y}}" r="3"><title>{{.Tip}}</title></circle>{{end}}
+{{end}}{{range .Marks}}<line class="chart-mark{{if .Probable}} probable{{end}}" x1="{{.X}}" y1="{{.Top}}" x2="{{.X}}" y2="{{.Bot}}"><title>{{.Tip}}</title></line>
+{{end}}<text class="chart-axis" x="{{.Left}}" y="{{.AxisY}}">{{.First}}</text>
+<text class="chart-axis chart-end" x="{{.Right}}" y="{{.AxisY}}">{{.Last}}</text>
+</svg>
+{{if .Keyed}}<p class="chart-key small"><span class="key-mark">compacted, as the backend reported</span> <span class="key-mark probable">probably compacted: the context fell by more than half</span></p>{{end}}
+<details data-key="usage-table"><summary>Turns as a table</summary><div class="table-wrap"><table>
+<thead><tr><th scope="col" class="num">Turn</th><th scope="col">Model</th><th scope="col" class="num">Input</th><th scope="col" class="num">Output</th><th scope="col" class="num">Cache read</th><th scope="col" class="num">Cache write</th><th scope="col" class="num">Context</th><th scope="col" class="num">Cache read so far</th><th scope="col">Compaction</th></tr></thead>
+<tbody>{{range .Rows}}<tr><td class="num">{{.N}}</td><td>{{.Model}}</td><td class="num">{{.Input}}</td><td class="num">{{.Output}}</td><td class="num">{{.CacheRead}}</td><td class="num">{{.CacheWrite}}</td><td class="num">{{.Context}}</td><td class="num">{{.SoFar}}</td><td>{{.Note}}</td></tr>
+{{end}}</tbody></table></div></details>
+</section>{{end}}{{end}}
 
 {{define "result"}}<section class="card result" aria-labelledby="result-h">
 <h2 id="result-h">Finished <span class="badge {{.Class}}">{{.Status}}</span></h2>
