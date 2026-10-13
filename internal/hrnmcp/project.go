@@ -69,6 +69,9 @@ func (p ProjectProfile) arguments(ctx context.Context, dir string, raw json.RawM
 	if args == nil {
 		args = map[string]json.RawMessage{}
 	}
+	if _, ok := args["continue_run_id"]; ok {
+		return nil, fmt.Errorf("project retrieval profile requires a fresh run")
+	}
 	// This server is dedicated to one scope; explicit off uses the same workspace.
 	fixed := map[string]string{"dir": p.Workspace, "backend": p.Backend, "model": p.Options.Model, "retrieval_tenant": p.Options.RetrievalTenant, "retrieval_project": p.Options.RetrievalProject, "retrieval_revision": p.Options.RetrievalRevision, "retrieval_version": p.Options.RetrievalVersion}
 	for key, want := range fixed {
@@ -119,6 +122,7 @@ func NewProjectServer(dir, profilePath string) (*mcp.Server, error) {
 	tool := runTool(dir, false)
 	tool.Description += " This server supplies a fixed project scope and defaults to required retrieval."
 	properties := tool.InputSchema["properties"].(map[string]any)
+	delete(properties, "continue_run_id")
 	properties["backend"] = map[string]any{"type": "string", "enum": []string{profile.Backend}, "default": profile.Backend, "description": "Backend fixed by the project retrieval profile."}
 	properties["model"].(map[string]any)["default"] = profile.Options.Model
 	properties["retrieval"].(map[string]any)["default"] = "required"

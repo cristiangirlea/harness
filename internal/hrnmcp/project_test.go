@@ -44,7 +44,7 @@ func TestProjectProfileScopeAndFreshness(t *testing.T) {
 	if got["retrieval"] != "required" || got["model"] != "test-model" || got["backend"] != "codex" || got["mode"] != nil {
 		t.Fatalf("bad defaults: %s", raw)
 	}
-	for _, args := range []string{`{"backend":"claude"}`, `{"model":"other"}`, `{"dir":"elsewhere"}`, `{"retrieval_project":"other"}`, `{"retrieval_version":"other"}`} {
+	for _, args := range []string{`{"backend":"claude"}`, `{"model":"other"}`, `{"dir":"elsewhere"}`, `{"retrieval_project":"other"}`, `{"retrieval_version":"other"}`, `{"continue_run_id":"prior"}`} {
 		if _, err := p.arguments(context.Background(), dir, json.RawMessage(args)); err == nil {
 			t.Fatalf("accepted mismatched scope: %s", args)
 		}

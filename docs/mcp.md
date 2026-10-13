@@ -50,8 +50,8 @@ and args.
 `hrn mcp --retrieval-profile FILE` serves a reviewed project profile with a fixed
 workspace, backend, model, revision, knowledge version and source hashes. It
 checks the revision and source contents before each retrieval-enabled run.
-This server exposes `run`, `runs`, `show` and `backends`; a fresh run may set
-`retrieval: "off"` for a baseline. It cannot be combined with
+This server exposes `run`, `runs`, `show` and `backends`, and accepts fresh runs
+only; a baseline may set `retrieval: "off"`. It cannot be combined with
 `--allow-dangerous-runs`. The profile contains no credentials.
 
 The server refuses `allow_dangerous` on `run` and `batch`, and leaves it out of `run`'s
