@@ -729,6 +729,38 @@ func unpushed(ctx context.Context, dir string) (int, error) {
 	return strconv.Atoi(out)
 }
 
+// Sessions counts the slots of the repository repo is in that are leased
+// without a pid, as hrn ws take does for a person: held until hrn ws free,
+// never stale. A lease being written or unreadable is not counted.
+func Sessions(ctx context.Context, repo string) (int, error) {
+	main, err := MainCheckout(ctx, repo)
+	if err != nil {
+		return 0, err
+	}
+	dir := SlotsDir(main)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".lease")
+		if !ok || e.IsDir() {
+			continue
+		}
+		if i, err := strconv.Atoi(name); err != nil || i < 1 || strconv.Itoa(i) != name {
+			continue
+		}
+		if l, _, err := readLease(filepath.Join(dir, e.Name())); err == nil && l.PID == 0 {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // List reports every slot of the repository repo is in: each slot folder and
 // each lease, so a lease without a folder and a folder without a lease both
 // show.

@@ -63,12 +63,13 @@ func quickPoll(t *testing.T) {
 	t.Cleanup(func() { slotPoll = old })
 }
 
-// holdAll leases every slot a batch of parallel 1 would try, from the test.
+// holdAll leases every slot a batch of parallel 1 would try, from the test,
+// as another batch does: with a live pid, this process's.
 func holdAll(t *testing.T, dir string) []ws.Taken {
 	t.Helper()
 	var held []ws.Taken
 	for range ws.DefaultMax {
-		got, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Holder: "test", NoFetch: true})
+		got, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Holder: "test", PID: os.Getpid(), NoFetch: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -257,6 +258,70 @@ func TestATaskWaitsForAFreeSlotAndThenRuns(t *testing.T) {
 	}
 	if len(waits) > 1 && waits[1] == waits[0] {
 		t.Errorf("the same wait was announced twice: %q", waits)
+	}
+}
+
+// Sessions' leases (hrn ws take, no pid) are held until hrn ws free, so a
+// batch takes as many slots more as they hold rather than wait on a person.
+func TestABatchRunsBesideSlotsSessionsHoldWithoutWaiting(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	for range ws.DefaultMax {
+		if _, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Holder: "session", NoFetch: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var mu sync.Mutex
+	arrived := 0
+	both := make(chan struct{})
+	setHook(t, func(agent.Task) {
+		mu.Lock()
+		if arrived++; arrived == 2 {
+			close(both)
+		}
+		mu.Unlock()
+		select {
+		case <-both:
+		case <-time.After(10 * time.Second):
+			t.Error("the two tasks did not run at once")
+		}
+	})
+	var waits []string
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := Run(ctx, Spec{Dir: dir, Parallel: 2, Backend: "wb-hook",
+		Tasks: []Task{{ID: "alpha", Prompt: "a"}, {ID: "beta", Prompt: "b"}}}, func(e Event) {
+		if e.Kind == "wait" {
+			mu.Lock()
+			waits = append(waits, e.Text)
+			mu.Unlock()
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(waits) != 0 {
+		t.Errorf("a batch should not wait on sessions' slots: %q", waits)
+	}
+	slots := map[int]bool{}
+	for _, tr := range res.Tasks {
+		if tr.Status != StatusPass {
+			t.Fatalf("%s: %+v", tr.ID, tr)
+		}
+		slots[tr.Slot] = true
+	}
+	if !slots[5] || !slots[6] {
+		t.Errorf("slots = %v, want 5 and 6", slots)
+	}
+	for _, n := range []int{5, 6} {
+		if exists(filepath.Join(dir, ".hrn", "slots", strconv.Itoa(n)+".lease")) {
+			t.Errorf("slot %d should be given back", n)
+		}
+	}
+	for n := 1; n <= ws.DefaultMax; n++ {
+		if !exists(filepath.Join(dir, ".hrn", "slots", strconv.Itoa(n)+".lease")) {
+			t.Errorf("the session's lease on slot %d should stay", n)
+		}
 	}
 }
 

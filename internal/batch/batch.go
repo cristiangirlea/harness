@@ -771,6 +771,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 
 // takeSlot leases a slot of the repository for a task. The branch is made
 // from the base first, so it starts there whatever origin has by that name.
+// It tries max(parallel, ws.DefaultMax) slots plus one for each slot a session
+// (hrn ws take, no pid) holds, counted again at every try, so a batch never
+// waits on a person's slot and its slots stay bounded.
 // While every slot is taken it waits, saying so whenever who holds them
 // changes, and looks again every slotPoll until ctx ends; when none can come
 // free (only skipped slots and ones this batch kept) it fails instead. A task that gets
@@ -793,9 +796,14 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 		return ws.Taken{}, cause
 	}
 	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: "batch " + batchID + " task " + id,
-		PID: os.Getpid(), Max: max(spec.Parallel, ws.DefaultMax), NoFetch: true}
+		PID: os.Getpid(), NoFetch: true}
 	var said string
 	for {
+		sessions, err := ws.Sessions(ctx, root)
+		if err != nil {
+			return drop(err)
+		}
+		opt.Max = max(spec.Parallel, ws.DefaultMax) + sessions
 		worktreeMu.Lock()
 		got, err := ws.Take(ctx, opt)
 		worktreeMu.Unlock()
