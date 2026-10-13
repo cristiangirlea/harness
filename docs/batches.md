@@ -159,7 +159,8 @@ slot task that is only its branch `hrn/<id>`: the slot and its lease are not the
 and stay. So is it for a task the record still shows waiting for a slot (hrn stopped
 then), whose branch is made before the wait. It refuses while the branch is checked out in a worktree (a task still running).
 For a fresh task it removes the worktree and the branch (it refuses a worktree with
-uncommitted changes). A directory git no longer counts as a worktree (on Windows a file
+uncommitted changes), unless the task failed because they were there already: they are
+another batch's, and stay. A directory git no longer counts as a worktree (on Windows a file
 lock can leave one behind) is removed when it is empty and reported when it is not, and
 its branch is deleted either way. One task that cannot be cleaned does not stop the
 others.
