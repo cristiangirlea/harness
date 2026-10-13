@@ -210,9 +210,22 @@ func TestTakeAtMaxRefusesAndNamesEveryHolder(t *testing.T) {
 		t.Error("no slot 3 should be made past --max")
 	}
 	var full *NoSlotError
-	if !errors.As(err, &full) || full.Max != 2 || len(full.Passed) != 2 ||
+	if !errors.As(err, &full) || full.Max != 2 || full.Held != 2 || len(full.Passed) != 2 ||
 		!strings.Contains(full.Passed[0], "alice") || !strings.Contains(full.Passed[1], "bob") {
 		t.Errorf("the error should be a *NoSlotError naming both slots, got %#v", err)
+	}
+}
+
+func TestNoSlotErrorCountsOnlyHeldSlotsNotSkippedOnes(t *testing.T) {
+	f := newFixture(t)
+	slot := f.take(TakeOptions{Holder: "a"}).Path
+	f.write(slot, "left-behind.txt", "x\n")
+	os.Remove(filepath.Join(f.repo, ".hrn", "slots", "1.lease")) // skipped, held by no one
+	f.take(TakeOptions{Holder: "b"})                             // slot 2, held
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "c", Max: 2})
+	var full *NoSlotError
+	if !errors.As(err, &full) || full.Held != 1 || len(full.Passed) != 2 {
+		t.Errorf("want one held and one skipped slot, got %#v", err)
 	}
 }
 

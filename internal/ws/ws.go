@@ -142,6 +142,7 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	}
 
 	var passed []string
+	held := 0
 	for n := 1; n <= opt.Max; n++ {
 		path := filepath.Join(dir, strconv.Itoa(n))
 		lp := leasePath(dir, n)
@@ -152,6 +153,7 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		}
 		if busy != "" {
 			passed = append(passed, fmt.Sprintf("slot %d %s: %s", n, path, busy))
+			held++
 			continue
 		}
 		skip, err := prepare(ctx, main, path, base)
@@ -171,13 +173,14 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		}
 		return Taken{N: n, Path: path, Lease: lease, Notes: notes}, nil
 	}
-	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Passed: passed}
+	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Passed: passed}
 }
 
 // NoSlotError is Take's error when every slot up to Max is taken or skipped,
 // so a caller can wait for one rather than fail.
 type NoSlotError struct {
 	Max    int
+	Held   int      // how many were passed over for a lease someone holds; the rest were skipped
 	Passed []string // one line per slot: its path and who holds it, or why it was skipped
 }
 
