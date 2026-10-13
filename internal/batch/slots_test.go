@@ -443,6 +443,55 @@ func TestASlotBatchRemainsWhileItsBranchesDo(t *testing.T) {
 	}
 }
 
+// takeSlot makes a task's branch before a slot is free, so a record saved by
+// an hrn that crashed while the task waited names no worktree, yet the branch
+// is there: batch rm removes it and prune keeps the record until then.
+func TestABranchMadeWhileItsTaskWaitedForASlotIsRemovedAndKeepsTheRecord(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "branch", "hrn/waiting")
+	res := Result{ID: "crashed", Dir: dir, Tasks: []TaskResult{{ID: "waiting", Branch: "hrn/waiting", Status: StatusRunning, Attempts: []Attempt{}}}}
+	if !WorktreesRemain(res) {
+		t.Error("the waiting task's branch is still there, so its record must stay")
+	}
+	busy, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Branch: "hrn/waiting", Holder: "someone", NoFetch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(res); err == nil || !strings.Contains(err.Error(), "checked out") {
+		t.Errorf("Remove must refuse a branch checked out in a worktree: %v", err)
+	}
+	if err := ws.Release(context.Background(), busy, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(res); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/waiting"); b != "" {
+		t.Errorf("the branch should be gone: %q", b)
+	}
+	if WorktreesRemain(res) {
+		t.Error("with the branch gone the record may go")
+	}
+}
+
+// A task that ended without a worktree made no branch: one that was there
+// already (another batch's) is what failed it, and stays.
+func TestRemoveLeavesTheBranchThatFailedATaskWithoutAWorktree(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "branch", "hrn/taken")
+	res := Result{ID: "collided", Dir: dir, Tasks: []TaskResult{{ID: "taken", Branch: "hrn/taken", Status: StatusError,
+		Error: "branch hrn/taken already exists; remove it or pick another task id", Attempts: []Attempt{}}}}
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+	if b := git(t, dir, "branch", "--list", "hrn/taken"); b == "" {
+		t.Error("another batch's branch must stay")
+	}
+	if WorktreesRemain(res) {
+		t.Error("nothing of this batch remains")
+	}
+}
+
 // Slots a batch keeps (their commit failed) never come free while it runs, so
 // a task that finds only those, or slots skipped for what is in them, fails
 // instead of waiting for ever.

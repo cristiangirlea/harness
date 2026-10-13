@@ -966,7 +966,7 @@ func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, erro
 func Remove(res Result) error {
 	var errs []error
 	for _, tr := range res.Tasks {
-		if tr.Slot != 0 {
+		if branchOnly(tr) {
 			if err := removeSlotBranch(res.Dir, tr); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", tr.ID, err))
 			}
@@ -992,6 +992,15 @@ func Remove(res Result) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// branchOnly reports whether a task's branch is all hrn batch rm removes of
+// it: a slot task, or one whose record was saved while it waited for a slot
+// (takeSlot makes the branch first) and never got one, as when hrn crashed
+// then. A task that ended without a worktree made no branch: one that was
+// there already is what failed it.
+func branchOnly(tr TaskResult) bool {
+	return tr.Slot != 0 || (tr.Worktree == "" && tr.Status == StatusRunning)
 }
 
 // removeSlotBranch deletes a slot task's branch, unless a worktree has it
