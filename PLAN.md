@@ -664,6 +664,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: gc tests under the guard (#120, PR #205). The fixture's git now drops
+  passed-down git config like gc's own git, so `go test ./...` passes inside an hrn run.
+  The guard's refusal of pushes to real remotes remains tested in internal/tools.
 - 2026-10-13: issue #200 (PR #201): a claude worker inherited every plugin, skill, hook and MCP
   server of the operator's, about 64K tokens of context on every turn of a tiny task. Decided:
   an additive `lean` option (`--lean`, spec, task and MCP `run` field, off by default) that

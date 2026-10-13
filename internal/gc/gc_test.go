@@ -64,7 +64,9 @@ var fakeGH = []string{os.Args[0], "-test.run=^TestHelperGH$", "--"}
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = cleanEnv()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -746,6 +748,18 @@ func TestGCScansTheRepositoryItIsGivenWhateverGitDirSays(t *testing.T) {
 	wts := f.scan()
 	if len(wts) != 1 || samePath(wts[0].Path) != samePath(mine) {
 		t.Fatalf("scanning %s found %+v; want only its own worktree", f.repo, wts)
+	}
+}
+
+func TestGCFixtureGitIgnoresGuardConfigPassedDownInItsEnvironment(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url.push-refused-by-hrn://.pushinsteadof")
+	t.Setenv("GIT_CONFIG_VALUE_0", "")
+
+	f := newFixture(t)
+	wt, head := f.worktree("wt", "branch")
+	if !exists(wt) || head == "" {
+		t.Fatal("the fixture did not create its worktree")
 	}
 }
 
