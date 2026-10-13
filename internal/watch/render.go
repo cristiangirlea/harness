@@ -370,10 +370,11 @@ type row struct {
 
 // repoOf is the repository a workspace is in, by its folder's name: the last
 // element of dir, in either path style. A batch task's worktree,
-// <repo>/.hrn/worktrees/<task>, is in the repository above .hrn.
+// <repo>/.hrn/worktrees/<task>, or a slot, <repo>/.hrn/slots/<n>, is in the
+// repository above .hrn.
 func repoOf(dir string) string {
 	parts := strings.FieldsFunc(dir, func(r rune) bool { return r == '/' || r == '\\' })
-	if n := len(parts); n >= 4 && parts[n-3] == ".hrn" && parts[n-2] == "worktrees" {
+	if n := len(parts); n >= 4 && parts[n-3] == ".hrn" && (parts[n-2] == "worktrees" || parts[n-2] == "slots") {
 		return parts[n-4]
 	}
 	if len(parts) == 0 {

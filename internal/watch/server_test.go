@@ -1056,6 +1056,18 @@ func TestALimitedRunIsAWarningWithItsResetTime(t *testing.T) {
 	}
 }
 
+func TestTheRepositoryOfASlotIsTheFolderAboveHrn(t *testing.T) {
+	for dir, want := range map[string]string{
+		"/home/me/myrepo/.hrn/slots/1": "myrepo",
+		`C:\src\myrepo\.hrn\slots\12`:  "myrepo",
+		"/home/me/myrepo/.hrn/other/1": "1",
+	} {
+		if got := repoOf(dir); got != want {
+			t.Errorf("repoOf(%q) = %q, want %q", dir, got, want)
+		}
+	}
+}
+
 func TestTheRepositoryIsTheFolderAboveAWorktreeOrThePathsLastElement(t *testing.T) {
 	for dir, want := range map[string]string{
 		"/home/me/myrepo/.hrn/worktrees/t9":    "myrepo",
