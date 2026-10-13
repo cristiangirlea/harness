@@ -145,6 +145,46 @@ func TestCacheShareNormalizesCodexAndApiCounters(t *testing.T) {
 	}
 }
 
+func TestCacheShareKeepsLegacyGeminiAndOpencodeCounters(t *testing.T) {
+	for _, tc := range []struct {
+		backend string
+		result  agent.Result
+		want    float64
+	}{
+		{"gemini", agent.Result{InputTokens: 100, CacheRead: 300}, 0.75},
+		{"opencode", agent.Result{InputTokens: 100, CacheWrite: 100, CacheRead: 300}, 0.6},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			r := rec(tc.backend, "m", "/repo", 0, tc.result)
+			rows, all, err := Select([]runlog.Record{r}, nil, time.Time{}).RunRows(ByBackend)
+			if err != nil || len(rows) != 1 || !near(rows[0].CacheShare, tc.want) || !near(all.CacheShare, tc.want) {
+				t.Errorf("rows=%+v all=%+v err=%v, want cache share %v", rows, all, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCacheShareLeavesMissingCodexUsageOutOfItsGroup(t *testing.T) {
+	codex := rec("codex", "m", "/repo", 0, agent.Result{InputTokens: 100, CacheRead: 60,
+		Usage: &agent.UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing"}})
+	api := rec("api", "m", "/repo", time.Hour, agent.Result{InputTokens: 100, CacheRead: 100})
+	rows, all, err := Select([]runlog.Record{codex, api}, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil || len(rows) != 2 || rows[1].Key != "codex" || rows[1].CacheShare != -1 || !near(all.CacheShare, 0.5) {
+		t.Errorf("rows=%+v all=%+v err=%v, want missing codex group and api-only all share", rows, all, err)
+	}
+}
+
+func TestCacheShareCombinesApiAndCodexInputSemanticsInAllRow(t *testing.T) {
+	recs := []runlog.Record{
+		rec("api", "m", "/repo", 0, agent.Result{InputTokens: 100, CacheWrite: 50, CacheRead: 50}),
+		rec("codex", "m", "/repo", time.Hour, agent.Result{InputTokens: 100, CacheRead: 60}),
+	}
+	_, all, err := Select(recs, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil || !near(all.CacheShare, 110.0/300.0) {
+		t.Errorf("all=%+v err=%v, want cache share 110/300", all, err)
+	}
+}
+
 func TestLegacyRecordWithoutUsageMetadataStillLoadsAndReports(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := filepath.Join(runlog.Root(), "legacy")

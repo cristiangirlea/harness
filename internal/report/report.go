@@ -267,6 +267,9 @@ func summarize(key string, recs []runlog.Record) Row {
 		if total, known, _ := res.ModelTokens(); known {
 			input += total - res.OutputTokens - res.CacheRead
 			cached += res.CacheRead
+		} else if res.Usage == nil {
+			input += res.InputTokens + res.CacheWrite
+			cached += res.CacheRead
 		}
 	}
 	row.MedianDuration = time.Duration(Median(durations))
