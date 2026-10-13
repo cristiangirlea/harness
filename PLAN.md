@@ -665,7 +665,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: gc and squash-landed batch work (#85, PR #N). Ancestry alone keeps task
+- 2026-10-13: gc and squash-landed batch work (#85, PR #227). Ancestry alone keeps task
   worktrees after `batch merge --squash` or a reworded landing. Decided: compare the patch
   id (`--verbatim`, whitespace included) of the task's whole diff with each commit on
   origin's default branch since their merge base; remove only on an exact match. Everything
