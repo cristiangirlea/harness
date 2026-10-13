@@ -42,10 +42,10 @@ type Options struct {
 	// instead of being resent every turn.
 	NoContextEdits bool `json:"no_context_edits,omitempty" desc:"Keep every tool result in the request instead of letting the server clear old ones (api backend)."`
 
-	// Lean starts the claude CLI with only this run's MCP configs and only the
-	// project's settings, so the operator's plugins, hooks, skills and other
-	// MCP servers stay out of every turn's context. The guard is unchanged.
-	Lean bool `json:"lean,omitempty" desc:"Start the claude CLI without the user's settings, plugins, hooks, skills and MCP servers: only the project's settings and this run's --mcp files (claude backend)."`
+	// Lean starts the claude CLI with only this run's MCP configs, so the
+	// operator's other MCP servers stay out of every turn's context. Settings,
+	// rules, hooks, plugins and skills still load. The guard is unchanged.
+	Lean bool `json:"lean,omitempty" desc:"Start the claude CLI with only this run's --mcp servers: none of your other MCP servers, plugin servers or claude.ai connectors; your settings, rules, plugins and skills still load (claude backend)."`
 
 	// AllowDangerous lifts the guard: the api backend's command guard, which
 	// otherwise refuses a few command lines (git push, sudo, rm -rf /, curl |

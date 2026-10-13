@@ -23,7 +23,7 @@ func TestClaudePassesEffortOnlyWhenSet(t *testing.T) {
 	}
 }
 
-func TestClaudeLeanAddsOnlyTheStrictFlags(t *testing.T) {
+func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
 	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}}
 	plain := NewClaudeBackend().args(Task{Options: opts}, "")
 	opts.Lean = true
@@ -36,13 +36,14 @@ func TestClaudeLeanAddsOnlyTheStrictFlags(t *testing.T) {
 	if slices.Contains(lean, "--bare") {
 		t.Errorf("--bare ignores the subscription login: %v", lean)
 	}
-	// Exactly these three words, before the deny rules: --disallowedTools takes
+	// Exactly this one flag, before the deny rules: --disallowedTools takes
 	// every word up to the next flag, so the guard's rules stay as they were.
+	// No --setting-sources: the user's rules, plugins and skills still load.
 	d := slices.Index(plain, "--disallowedTools")
 	if d < 0 {
 		t.Fatalf("the guard's deny rules are missing: %v", plain)
 	}
-	want := slices.Insert(slices.Clone(plain), d, "--strict-mcp-config", "--setting-sources", "project")
+	want := slices.Insert(slices.Clone(plain), d, "--strict-mcp-config")
 	if !slices.Equal(lean, want) {
 		t.Errorf("lean args:\n got %v\nwant %v", lean, want)
 	}
