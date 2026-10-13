@@ -49,19 +49,23 @@ By default (`"worktrees": "slots"`) a task runs in one of the repository's reusa
 [slots](workspaces.md), `<main checkout>/.hrn/slots/<n>`, so a `target/` or
 `node_modules/` built by an earlier task is still there and the gates build only what
 changed. Each running task leases a slot of its own, holding it with a lease that names
-the hrn process; batch tries slots 1 to `parallel` (at least 4), plus one more for each
-slot a session holds (`hrn ws take`, a lease without a pid), counted again at every try.
-So people's slots never hold a batch up, and a batch's own stay bounded. The task's branch is
+the hrn process. A batch holds at most `parallel` slots (at least 4) at once, running
+tasks' and kept ones (below) together, and tries the slot numbers from 1 that hold that
+many slots other than sessions' (`hrn ws take`, a lease without a pid, held until `hrn ws
+free`), worked out again at every try: a session on slot 2 makes it try 1 and 3 to 5, one on
+slot 10 changes nothing. So a batch waits only on slots other batches hold, and its own stay
+bounded whatever the sessions do. The task's branch is
 made from the batch's base and checked out in the slot. When the task ends, pass, fail or
 error, the slot is detached at the base and given back. Its ignored files stay for the
 next task, and the work stays on branch `hrn/<id>`, which `diff`, `merge` and `rm` read.
 A failed task's line reads `branch hrn/<id> kept` rather than naming a folder, and the
 record names the slot each task ran in (`worktree` and `slot`).
 
-When every slot it tries is taken (by another batch), a task does not fail:
+When every slot it tries is taken by another batch, or by this batch's own running
+tasks once it holds as many as it may, a task does not fail:
 it says it is waiting and which slots are held, looks again every 5 seconds, and is
-canceled with the batch. When none can come free, because the rest are skipped for what
-is in them or kept by this batch's own tasks (below), it fails as `error` instead. A slot that still holds files when its task ends (the commit
+canceled with the batch. When none can come free, because the rest are sessions', skipped
+for what is in them or kept by this batch's own tasks (below), it fails as `error` instead. A slot that still holds files when its task ends (the commit
 failed, say), or a commit on no branch (the agent detached HEAD and committed), is not
 given back: the task's error says `slot <n> kept` and why. Its lease
 goes stale once hrn exits, and later takes skip the slot without cleaning it; look at

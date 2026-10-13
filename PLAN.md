@@ -665,10 +665,18 @@ neither of them follows a run while it happens.
 ## Decisions log
 
 - 2026-10-13: PR #TBD (closes #161): a batch waited while sessions (`hrn ws take`) held every
-  slot, for as long as a person kept one. Decided: a batch tries `max(parallel, 4)` slots plus
-  one for each slot leased without a pid (`ws.Sessions`), counted again at every try, so it
-  never waits on a session and its own slots stay bounded by `parallel`. Leases with a live pid
-  (other batches) still make it wait. `hrn ws take`'s own default `--max` is unchanged.
+  slot, for as long as a person kept one. Decided: a batch's bound is `max(parallel, 4)` slots
+  of its own, running tasks' and kept ones together, counted from the leases that name its
+  pid (`ws.CountLeases`) before every take; at the bound a task waits for a running task's
+  slot and fails when all are kept. It tries the slot numbers from 1 that hold that many
+  slots other than sessions' (`ws.RangeBeyondSessions`: a lease without a pid is skipped, a
+  lease that cannot be read counts), worked out again at every try, so a session among the
+  first slots is passed over and one further up widens nothing. It waits only while a slot in
+  that range is held by a live process (another batch, or its own running task;
+  `ws.NoSlotError.Holders`) and fails when the rest are sessions', skipped or kept. A first
+  cut added a session count to the range, which let a session make a batch wait for ever,
+  a distant session widen the range, and the bound break when sessions freed their slots.
+  `hrn ws take`'s own default `--max` is unchanged.
 - 2026-10-13: PR #187 (closes #162): hrn batch rm and prune leave what another batch made
   when a fresh task found its worktree or branch taken. Decided: a fresh task claims its
   worktree and branch through `branch_made`, as a slot task claims its branch; batch records
