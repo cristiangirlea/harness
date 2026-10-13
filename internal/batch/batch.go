@@ -1256,8 +1256,13 @@ func RemoveTasks(res Result, ids []string) ([]string, error) {
 }
 
 func removeTask(res Result, tr TaskResult) (bool, error) {
+	// Bounded like the git calls around it, so a wedged git cannot hang the
+	// removal; a probe that times out reads as no branch, which only makes the
+	// count of what was removed smaller.
 	branchExists := func() bool {
-		_, err := gitOut(context.Background(), res.Dir, "show-ref", "--verify", "--quiet", "refs/heads/"+tr.Branch)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, err := gitOut(ctx, res.Dir, "show-ref", "--verify", "--quiet", "refs/heads/"+tr.Branch)
 		return err == nil
 	}
 	if branchOnly(tr) {
