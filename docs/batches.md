@@ -58,7 +58,8 @@ record names the slot each task ran in (`worktree` and `slot`).
 
 When every slot is taken (by another batch, or by `hrn ws take`), a task does not fail:
 it says it is waiting and which slots are held, looks again every 5 seconds, and is
-canceled with the batch. A slot that still holds files when its task ends (the commit
+canceled with the batch. When none can come free, because the rest are skipped for what
+is in them or kept by this batch's own tasks (below), it fails as `error` instead. A slot that still holds files when its task ends (the commit
 failed, say) is not given back: the task's error says `slot <n> kept` and why. Its lease
 goes stale once hrn exits, and later takes skip the slot without cleaning it; look at
 it, then free it with `hrn ws free`.

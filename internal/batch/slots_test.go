@@ -411,3 +411,33 @@ func TestASlotBatchRemainsWhileItsBranchesDo(t *testing.T) {
 		t.Error("after batch rm only the slot is left, which is not the batch's")
 	}
 }
+
+// Slots a batch keeps (their commit failed) never come free while it runs, so
+// a task that finds only those, or slots skipped for what is in them, fails
+// instead of waiting for ever.
+func TestATaskFailsRatherThanWaitForSlotsOnlyItsBatchKept(t *testing.T) {
+	dir := initRepo(t)
+	quickPoll(t)
+	hookFile := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	writeFile(t, hookFile, "#!/bin/sh\nexit 1\n")
+	if err := os.Chmod(hookFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var tasks []Task
+	for i := range ws.DefaultMax + 1 {
+		tasks = append(tasks, Task{ID: "t" + strconv.Itoa(i+1), Prompt: "p"})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: tasks}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := res.Tasks[len(res.Tasks)-1]
+	if last.Status != StatusError || !strings.Contains(last.Error, "none will come free") || !strings.Contains(last.Error, "slot 1") {
+		t.Fatalf("last task = %s: %s", last.Status, last.Error)
+	}
+	if b := git(t, dir, "branch", "--list", last.Branch); b != "" {
+		t.Errorf("a task that got no slot leaves no branch: %q", b)
+	}
+}

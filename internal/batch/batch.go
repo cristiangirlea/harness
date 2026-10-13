@@ -407,6 +407,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		_ = save(res)
 	}
 
+	kept := &keptSlots{}
 	idx := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < spec.Parallel; w++ {
@@ -414,7 +415,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				update(i, runTask(ctx, &spec, res.ID, spec.Tasks[i], res.Tasks[i], root, base, notify,
+				update(i, runTask(ctx, &spec, res.ID, kept, spec.Tasks[i], res.Tasks[i], root, base, notify,
 					func(tr TaskResult) { update(i, tr) }))
 			}
 		}()
@@ -529,7 +530,7 @@ func fence(s string) string {
 	return f
 }
 
-func runTask(ctx context.Context, spec *Spec, batchID string, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult)) TaskResult {
+func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult)) TaskResult {
 	started := time.Now()
 	tr.Status, tr.Attempts, tr.Commit, tr.Error = "", []Attempt{}, "", ""
 	slots := spec.Worktrees == WorktreesSlots
@@ -537,6 +538,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, t Task, tr TaskRes
 	finish := func(status Status, text string) TaskResult {
 		if slot != nil {
 			if err := giveBack(*slot, base); err != nil {
+				kept.add()
 				msg := fmt.Sprintf("slot %d kept: %v", slot.N, err)
 				tr.Error = strings.TrimSpace(tr.Error + "\n" + msg)
 				text += " · " + msg
@@ -642,7 +644,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, t Task, tr TaskRes
 					return fail(err)
 				}
 			case slots:
-				got, err := takeSlot(ctx, spec, batchID, t.ID, tr.Branch, root, base, notify)
+				got, err := takeSlot(ctx, spec, batchID, kept, t.ID, tr.Branch, root, base, notify)
 				if err != nil {
 					return fail(err)
 				}
@@ -713,19 +715,20 @@ func runTask(ctx context.Context, spec *Spec, batchID string, t Task, tr TaskRes
 		tr.Error = outOfPlans
 		return finish(StatusFail, "not started: "+outOfPlans)
 	}
-	kept := "worktree kept at " + tr.Worktree
+	left := "worktree kept at " + tr.Worktree
 	if slots {
-		kept = "branch " + tr.Branch + " kept"
+		left = "branch " + tr.Branch + " kept"
 	}
-	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · %s", len(tr.Attempts), kept))
+	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · %s", len(tr.Attempts), left))
 }
 
 // takeSlot leases a slot of the repository for a task. The branch is made
 // from the base first, so it starts there whatever origin has by that name.
 // While every slot is taken it waits, saying so whenever who holds them
-// changes, and looks again every slotPoll until ctx ends. A task that gets
+// changes, and looks again every slotPoll until ctx ends; when none can come
+// free (only skipped slots and ones this batch kept) it fails instead. A task that gets
 // no slot leaves no branch.
-func takeSlot(ctx context.Context, spec *Spec, batchID, id, branch, root, base string, notify func(Event)) (ws.Taken, error) {
+func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, notify func(Event)) (ws.Taken, error) {
 	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
 		return ws.Taken{}, err
 	}
@@ -743,6 +746,12 @@ func takeSlot(ctx context.Context, spec *Spec, batchID, id, branch, root, base s
 			}
 			return got, err
 		}
+		// Only a slot someone else holds can come free: skipped slots stay
+		// as they are, and so do the ones this batch kept.
+		if full.Held <= kept.count() {
+			dropBranch(root, branch)
+			return ws.Taken{}, fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full)
+		}
 		if held := strings.Join(full.Passed, "; "); held != said {
 			notify(Event{Task: id, Kind: "wait", Text: "waiting for a free slot: " + held})
 			said = held
@@ -754,6 +763,25 @@ func takeSlot(ctx context.Context, spec *Spec, batchID, id, branch, root, base s
 		case <-time.After(slotPoll):
 		}
 	}
+}
+
+// keptSlots counts the slots a batch's tasks could not give back, which
+// stay leased by this process until it exits.
+type keptSlots struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (k *keptSlots) add() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.n++
+}
+
+func (k *keptSlots) count() int {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.n
 }
 
 // dropBranch deletes the branch takeSlot made when no slot checked it out.
