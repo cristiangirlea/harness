@@ -86,16 +86,26 @@ the slot back:
 1. Find it. `hrn ws list` shows it `taken` while hrn runs and `stale` once hrn has
    exited, with the holder `batch <id> task <task>`. If it is still `taken`, wait for
    the batch to end: free refuses a lease whose process is running.
-2. Look at what is in it: `git -C <slot> status` and `git -C <slot> log`.
+2. Look at what is in it: `git -C <slot> status --ignored` and `git -C <slot> log`.
+   Plain `git status` hides ignored files, and free does not look at them either; but
+   checking out another commit overwrites an ignored file wherever that commit tracks the
+   same path, in step 4 or at the slot's next take. Copy out any ignored file you value now.
 3. Keep the work on a branch. Commit what you want to keep (`git -C <slot> add ...`,
    `git -C <slot> commit`), or remove what you don't. If HEAD is on the task's branch
    `hrn/<id>`, the commits are kept there. If HEAD is detached, name the commits:
    `git -C <slot> branch <name>`.
-4. Detach the slot at a commit origin holds, so no commit at HEAD is missing from a
-   remote: `git -C <slot> switch --detach origin/main` (or origin's default branch, if it is
-   not `main`).
-5. `hrn ws free <slot>`. The work stays on its branch, for `hrn batch merge` when it is
-   `hrn/<id>`, or to merge or push yourself.
+4. With a remote: detach the slot at a commit the remote holds. Free counts a commit at
+   HEAD as unpushed when no remote-tracking branch holds it, and a local branch does not
+   change that, so it would still refuse. `git -C <slot> switch --detach origin/main`
+   (or origin's default branch, if it is not `main`; `git -C <slot> remote show origin`
+   names it).
+   Without any remote: skip this step. Free then counts only the commits at HEAD that no
+   local branch or tag holds, and step 3 left none, so HEAD can stay where it is.
+5. `hrn ws free <slot>`. It detaches HEAD where it is and removes the lease; the work stays
+   on its branch. Merge or push that branch yourself (`git merge hrn/<id>` in the
+   repository): `hrn batch merge` merges only tasks whose status is `pass`, even when you
+   name them, and a task whose slot was kept usually is not (a failed commit ends as
+   `error`). Use `hrn batch merge` only when `hrn batch show` reports the task passed.
 
 ## List
 
