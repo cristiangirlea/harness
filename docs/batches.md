@@ -122,7 +122,9 @@ with `[timed out after …]` in its output, which a retry then sees.
 The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts,
 again each time a task moves on (an attempt's run starts or ends, a gate finishes, a task
 ends) and at the end, so `hrn watch` and `hrn batch show` can follow it; `--json` prints
-it, `-v` streams every agent's tool calls. Ctrl+C
+it, `-v` streams every agent's tool calls. Its `ownership` is 1 in records hrn writes now: a
+fresh task owns its worktree and branch only when its `branch_made` says so (older records
+lack the field and still load). Ctrl+C
 cancels running agents and skips the rest. Exit status is 1 unless every task passed.
 
 ### Reading and landing the work
@@ -159,8 +161,12 @@ slot task that is only its branch `hrn/<id>`: the slot and its lease are not the
 and stay. So is it for a task the record still shows waiting for a slot (hrn stopped
 then), whose branch is made before the wait. It refuses while the branch is checked out in a worktree (a task still running).
 For a fresh task it removes the worktree and the branch (it refuses a worktree with
-uncommitted changes), unless the task failed because they were there already: they are
-another batch's, and stay. A directory git no longer counts as a worktree (on Windows a file
+uncommitted changes) when the record says the task made them (`branch_made`, set once
+git made both, and dropped while a retry makes them again): a task that found them there
+already, or that hrn left before it had them back, does not own them (they may be another
+batch's), and they stay. Records from before the record's `ownership` field never said so:
+there every fresh task's worktree goes, except one whose task failed before any attempt
+with hrn's own "already exists; remove it or pick another task id" error. A directory git no longer counts as a worktree (on Windows a file
 lock can leave one behind) is removed when it is empty and reported when it is not, and
 its branch is deleted either way. One task that cannot be cleaned does not stop the
 others.

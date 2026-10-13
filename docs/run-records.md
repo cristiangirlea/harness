@@ -51,7 +51,7 @@ removes nothing, and `--keep N` spares the newest N runs whatever their age. It 
 run without `--older-than`. Records cite each other, so it works from the top down and
 never breaks a reference: an eval it keeps keeps its batch and its judge's runs, a batch it keeps keeps every
 run it made, a run it keeps keeps the run it `--continue`d from, and a batch whose
-worktrees are still on disk (not one a fresh task failed on because it was there already; for a task that ran in a slot, which outlives the batch, or
+worktrees are still on disk (for a fresh task, one its record's `branch_made` says it made, or in a record without `ownership` one it did not fail on, before any attempt, because it was there already; for a task that ran in a slot, which outlives the batch, or
 that was waiting for one: whose branch is still there and, its record's `branch_made` says, the task's own) stays with its runs, because `hrn batch rm` needs that record
 to remove them (it says so, and names the command). A run with no result that wrote in
 the last hour is taken to be still running and stays; a directory in `runs/` that is not
