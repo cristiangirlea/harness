@@ -9,6 +9,10 @@
 | `hrn run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
 | `hrn exec --protocol v1` | Run one recorded task over the supervisor JSONL protocol (see [hrn exec](#hrn-exec)). |
 | `hrn backends` | Show which backends are usable and where they were found. |
+| `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
+| `hrn remote show --tenant ID --project ID JOB_ID` | Show a remote job's state and result. |
+| `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream and resume from the last durable event ID. |
+| `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn runs [-n N]` | List recent runs. |
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](run-records.md#run-records)). |
@@ -43,6 +47,17 @@ one run per process without parsing terminal output. stdin and stdout carry JSON
 lines: hrn sends `hello` first, then accepts one `start`, streams complete events,
 and ends with `result`. Closing stdin or interrupting hrn cancels the run. See
 [the v1 protocol](exec-protocol.md) for messages, capabilities, limits and exit codes.
+
+### Remote development jobs
+
+Set `HRN_SERVER_URL` to the control service HTTPS origin, `HRN_TENANT_TOKEN` to an
+issued tenant token, and optionally `HRN_SERVER_CA_FILE` to a PEM CA file. HTTP
+is accepted only for loopback fixtures. The tenant and project IDs are issued
+by the server; `--base-ref` is a full Git commit registered for the project.
+Submission requires a stable idempotency key and a positive USD cost ceiling.
+The prompt can be supplied as arguments or on stdin. Remote jobs currently
+support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
+for the corresponding tools.
 
 ### Budgets
 

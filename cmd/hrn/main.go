@@ -38,6 +38,8 @@ Usage:
   hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
   hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
   hrn backends                    show which backends are usable
+  hrn remote submit|show|events|cancel [flags]
+                                 use the durable control API
   hrn version                     print the hrn version, Go version and commit
   hrn runs [-n N]                 list recent runs
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
@@ -114,6 +116,7 @@ Report flags:
       --by KEY         group runs by backend (default), model, dir or purpose
       --json           print the tables as JSON
 
+Remote commands use HRN_SERVER_URL, HRN_TENANT_TOKEN, and optional HRN_SERVER_CA_FILE.
 Runs are recorded under ~/.hrn/runs (override with HRN_HOME).
 `
 
@@ -131,6 +134,8 @@ func main() {
 		code, err = cmdExec(os.Args[2:])
 	case "backends":
 		err = cmdBackends()
+	case "remote":
+		err = runRemote(os.Args[2:], os.Stdout)
 	case "runs":
 		err = cmdRuns(os.Args[2:])
 	case "show":
