@@ -343,6 +343,8 @@ func Events(id string) ([]agent.Event, error) {
 
 // LoadConversation returns a run's record together with the message history it
 // saved, for continuing it. Only the api backend saves one.
+var ErrNoConversation = errors.New("no saved conversation")
+
 func LoadConversation(id string) (Record, agent.Conversation, error) {
 	var conv agent.Conversation
 	rec, err := Load(id)
@@ -351,7 +353,10 @@ func LoadConversation(id string) (Record, agent.Conversation, error) {
 	}
 	data, err := os.ReadFile(filepath.Join(Root(), id, "messages.json"))
 	if err != nil {
-		return rec, conv, fmt.Errorf("run %s has no saved conversation: only api runs save one", id)
+		if errors.Is(err, os.ErrNotExist) {
+			return rec, conv, fmt.Errorf("run %s has no saved conversation: only api runs save one: %w", id, ErrNoConversation)
+		}
+		return rec, conv, err
 	}
 	if err := json.Unmarshal(data, &conv); err != nil {
 		return rec, conv, err
