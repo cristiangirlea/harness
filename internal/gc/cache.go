@@ -17,6 +17,16 @@ import (
 // after the cache has been moved aside.
 var removeCacheEntry = os.RemoveAll
 
+// movedCachePath is replaceable by tests that need a predictable collision.
+var movedCachePath = func(path string) string {
+	name := fmt.Sprintf(".gc-%d-%d-%s", os.Getpid(), time.Now().UnixNano(), filepath.Base(path))
+	return filepath.Join(filepath.Dir(path), name)
+}
+
+// renameCache is replaceable by tests that make a move fail or start a build
+// immediately after a successful move.
+var renameCache = os.Rename
+
 // Cache is one build cache, a folder tagged with CACHEDIR.TAG (Cargo writes
 // one into every target folder), and what the cache pass decided about it.
 type Cache struct {
@@ -112,9 +122,9 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 			errs = append(errs, fmt.Errorf("%s: kept, %s", c.Path, why))
 			continue
 		}
-		moved := filepath.Join(filepath.Dir(c.Path), fmt.Sprintf(".gc-%d-%s", os.Getpid(), filepath.Base(c.Path)))
-		if err := os.Rename(c.Path, moved); err != nil {
-			errs = append(errs, fmt.Errorf("%s: kept, it is in use: %s", c.Path, firstLine(err.Error())))
+		moved := movedCachePath(c.Path)
+		if err := renameCache(c.Path, moved); err != nil {
+			errs = append(errs, fmt.Errorf("%s: kept, it could not be moved aside: %s", c.Path, firstLine(err.Error())))
 			continue
 		}
 		if err := removeMovedCache(moved); err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -257,6 +258,30 @@ func TestGCListsFreshMovedCachesForRemoval(t *testing.T) {
 		wantCache(t, findCache(t, cs, filepath.Join(root, name)), Remove, "moved cache")
 	}
 	wantCache(t, findCache(t, cs, ordinary), Keep, "inside --idle")
+}
+
+func TestGCApplyNamesMovedCacheWithNanosecondsAndReportsMoveFailure(t *testing.T) {
+	root := tempRoot(t)
+	cache := tagged(t, filepath.Join(root, "target"), 30*time.Hour, 10)
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	previous := renameCache
+	var target string
+	renameCache = func(src, dst string) error {
+		target = dst
+		return errors.New("mount point\nother details")
+	}
+	t.Cleanup(func() { renameCache = previous })
+
+	removed, errs := ApplyCaches(context.Background(), cs)
+	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "kept, it could not be moved aside: mount point") || strings.Contains(errs[0].Error(), "other details") {
+		t.Fatalf("removed %+v, errors %v", removed, errs)
+	}
+	if !exists(cache) {
+		t.Errorf("failed move lost the original cache: %s", cache)
+	}
+	if !regexp.MustCompile(`^\.gc-[0-9]+-[0-9]+-target$`).MatchString(filepath.Base(target)) {
+		t.Errorf("moved name = %q", target)
+	}
 }
 
 func TestDiskFreeNamesTheVolumeAndItsFreeSpace(t *testing.T) {
