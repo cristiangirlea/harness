@@ -774,6 +774,22 @@ func TestGCRemovesBinaryBatchChangeLandedAsSquash(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
 
+func TestGCKeepsBatchChangeWhenMainAddsDifferentBinaryAtSamePath(t *testing.T) {
+	f := newFixture(t)
+	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+	f.write(task, "asset.bin", "\x00\x01\x02\xff")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "task binary")
+	saveBatch(t, "different-binary", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "asset.bin", "\x00\x01\x03\xff")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "different binary")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
 // A batch task's slot is a locked worktree that outlives the batch: even when
 // the task's commit has landed, the slot stays for the next take.
 func TestGCKeepsABatchSlotWhoseCommitLandedBecauseItIsLocked(t *testing.T) {
