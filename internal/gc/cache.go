@@ -13,6 +13,10 @@ import (
 	"github.com/cristiangirlea/harness/internal/report"
 )
 
+// removeCacheEntry is replaceable by tests to make an inner deletion fail
+// after the cache has been moved aside.
+var removeCacheEntry = os.RemoveAll
+
 // Cache is one build cache, a folder tagged with CACHEDIR.TAG (Cargo writes
 // one into every target folder), and what the cache pass decided about it.
 type Cache struct {
@@ -113,13 +117,55 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 			errs = append(errs, fmt.Errorf("%s: kept, it is in use: %s", c.Path, firstLine(err.Error())))
 			continue
 		}
-		if err := os.RemoveAll(moved); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", moved, err))
+		if err := removeMovedCache(moved); err != nil {
+			errs = append(errs, fmt.Errorf("%s (moved to %s): %w", c.Path, moved, err))
 			continue
 		}
 		removed = append(removed, c)
 	}
 	return removed, errs
+}
+
+// removeMovedCache keeps the signature until everything else has gone, so a
+// failed deletion remains a tagged cache for the next scan.
+func removeMovedCache(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "CACHEDIR.TAG" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := removeCacheEntry(path); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	tag := filepath.Join(dir, "CACHEDIR.TAG")
+	if err := os.Remove(tag); err != nil {
+		return err
+	}
+	if err := os.Remove(dir); err != nil {
+		if restoreErr := restoreCacheTag(tag); restoreErr != nil {
+			return fmt.Errorf("%w (also could not restore %s: %v)", err, tag, restoreErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func restoreCacheTag(tag string) error {
+	f, err := os.OpenFile(tag, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.WriteString(cacheTagSignature + "\n")
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 // TotalCaches adds up the caches' sizes, counting one inside another once.

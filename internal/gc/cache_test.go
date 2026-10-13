@@ -186,6 +186,66 @@ func TestGCApplyRemovesTheLongestIdleCacheFirst(t *testing.T) {
 	}
 }
 
+func TestGCApplyFailedDeletionLeavesTaggedCacheForNextScan(t *testing.T) {
+	root := tempRoot(t)
+	cache := tagged(t, filepath.Join(root, "target"), 30*time.Hour, 10)
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	previous := removeCacheEntry
+	removeCacheEntry = func(path string) error {
+		if filepath.Base(path) == "debug" {
+			return os.ErrPermission
+		}
+		return os.RemoveAll(path)
+	}
+	t.Cleanup(func() { removeCacheEntry = previous })
+
+	removed, errs := ApplyCaches(context.Background(), cs)
+	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), cache+" (moved to ") {
+		t.Fatalf("removed %+v, errors %v", removed, errs)
+	}
+	if exists(cache) {
+		t.Errorf("original path still exists after a successful move: %s", cache)
+	}
+	leftovers, err := filepath.Glob(filepath.Join(root, ".gc-*-target"))
+	if err != nil || len(leftovers) != 1 {
+		t.Fatalf("moved caches = %q, %v", leftovers, err)
+	}
+	if !isCacheDir(leftovers[0]) {
+		t.Errorf("failed deletion lost its tag: %s", leftovers[0])
+	}
+	findCache(t, caches(t, []string{root}, nil, cacheOpt), leftovers[0])
+}
+
+func TestGCApplyFailedFinalFolderRemovalRestoresTag(t *testing.T) {
+	root := tempRoot(t)
+	tagged(t, filepath.Join(root, "target"), 30*time.Hour, 10)
+	cs := caches(t, []string{root}, nil, cacheOpt)
+	previous := removeCacheEntry
+	removeCacheEntry = func(path string) error {
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		if filepath.Base(path) == "debug" {
+			return os.WriteFile(filepath.Join(filepath.Dir(path), "new-entry"), []byte("new"), 0o644)
+		}
+		return nil
+	}
+	t.Cleanup(func() { removeCacheEntry = previous })
+
+	removed, errs := ApplyCaches(context.Background(), cs)
+	if len(removed) != 0 || len(errs) != 1 {
+		t.Fatalf("removed %+v, errors %v", removed, errs)
+	}
+	leftovers, err := filepath.Glob(filepath.Join(root, ".gc-*-target"))
+	if err != nil || len(leftovers) != 1 {
+		t.Fatalf("moved caches = %q, %v", leftovers, err)
+	}
+	if !isCacheDir(leftovers[0]) || !exists(filepath.Join(leftovers[0], "new-entry")) {
+		t.Errorf("failed final folder removal did not leave a tagged cache: %s", leftovers[0])
+	}
+	findCache(t, caches(t, []string{root}, nil, cacheOpt), leftovers[0])
+}
+
 func TestDiskFreeNamesTheVolumeAndItsFreeSpace(t *testing.T) {
 	root := tempRoot(t)
 	sub := filepath.Join(root, "sub")
