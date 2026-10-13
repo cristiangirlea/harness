@@ -665,6 +665,11 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: the guard's `gh api` method in quotes (PR #223). After PR #213 a quoted method
+  still got through `gh-publish`: the shell strips `"DELETE"`, `'delete'`, `\"DELETE\"` and
+  `$'delete'` before gh sees them. Decided: quotes, a backslash and `$` may stand between the
+  flag and the method. A method in a variable stays out of reach of a textual guard; a `|`
+  inside a quoted argument is #222.
 - 2026-10-13: issue #212 (PR #220): `hrn watch --public` keeps the listener on
   loopback for a same-PC Cloudflare Tunnel, requires the Access team and audience
   together, and verifies Access JWTs on every request. Public requests are always
