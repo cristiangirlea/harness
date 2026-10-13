@@ -1,9 +1,9 @@
 // Package gc finds the git worktrees whose work is already merged and removes
 // them, with their build output. A worktree goes only on proof: GitHub says
 // its pull request merged at the commit it holds, or, for one an hrn batch
-// made, that commit is on origin's default branch. Anything it cannot prove
-// stays, with the reason, and when GitHub or the fetch cannot be reached the
-// answer is to keep.
+// made, its commit or its change is on origin's default branch. Anything it
+// cannot prove stays, with the reason. If GitHub or the fetch cannot be
+// reached, the answer is to keep.
 package gc
 
 import (
@@ -442,6 +442,9 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		case facts.fetchErr != nil:
 			return Keep, "fetch failed: " + firstLine(facts.fetchErr.Error())
 		case !isAncestor(ctx, facts.repo, w.Head, facts.def):
+			if landed := landedBatchChange(ctx, facts.repo, w.Head, facts.def); landed != "" {
+				return Remove, fmt.Sprintf("batch %s: its change landed on %s as %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"), landed[:7])
+			}
 			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
 		}
 		return Remove, fmt.Sprintf("batch %s finished and its commit is on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
@@ -862,6 +865,58 @@ func isAncestor(ctx context.Context, repo, a, b string) bool {
 	return err == nil
 }
 
+// maxCommits bounds the default branch's commits landedBatchChange compares;
+// tests lower it.
+var maxCommits = 2000
+
+// landedBatchChange proves that the whole task diff is one commit on the
+// default branch. A missing base, empty diff, git error or a history at the
+// comparison limit gives no proof.
+func landedBatchChange(ctx context.Context, repo, head, def string) string {
+	base, err := gitOut(ctx, repo, "merge-base", head, def)
+	if err != nil || base == "" {
+		return ""
+	}
+	countText, err := gitOut(ctx, repo, "rev-list", "--count", "--max-count="+strconv.Itoa(maxCommits), "--no-merges", base+".."+def)
+	if err != nil {
+		return ""
+	}
+	count, err := strconv.Atoi(countText)
+	if err != nil || count == 0 || count >= maxCommits {
+		return ""
+	}
+	taskDiff, err := gitStdout(ctx, repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", base, head)
+	if err != nil || taskDiff == "" {
+		return ""
+	}
+	taskID, err := gitStdoutInput(ctx, repo, taskDiff, "patch-id", "--verbatim")
+	if err != nil {
+		return ""
+	}
+	taskFields := strings.Fields(taskID)
+	if len(taskFields) != 2 {
+		return ""
+	}
+	patches, err := gitStdout(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
+	if err != nil {
+		return ""
+	}
+	landedIDs, err := gitStdoutInput(ctx, repo, patches, "patch-id", "--verbatim")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(landedIDs), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || len(fields[1]) < 7 {
+			return ""
+		}
+		if fields[0] == taskFields[0] {
+			return fields[1]
+		}
+	}
+	return ""
+}
+
 // listPRs reads the repository's pull requests: the open ones on their own,
 // because a merged one proves nothing while an open one exists and a list of
 // everything cut at the limit could leave the open one out; then the rest.
@@ -989,9 +1044,15 @@ func holding(dir string, paths []string) string {
 // gitStdout runs git and returns its standard output untouched: the -z
 // formats are data, and stderr mixed in would corrupt them.
 func gitStdout(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitStdoutInput(ctx, dir, "", args...)
+}
+
+// gitStdoutInput supplies a git command's stdin without losing cleanEnv.
+func gitStdoutInput(ctx context.Context, dir, input string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	cmd := gitCommand(ctx, dir, args...)
+	cmd.Stdin = strings.NewReader(input)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
