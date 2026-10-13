@@ -665,7 +665,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-13: the tree-kill test's timeout (#68, PR #N). `TestRunShellTimeoutKillsTheTree`
+- 2026-10-13: the tree-kill test's timeout (#68, PR #249). `TestRunShellTimeoutKillsTheTree`
   gave the shell 500 ms, and on a busy Windows PC Git's bash had not printed `started` by
   then, so the test failed now and then, in CI too. Decided: three seconds. Its time bound
   was 10 s, which a shell-only kill also met (RunShell waits 5 s for the pipe), so it is now
