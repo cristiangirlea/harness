@@ -93,6 +93,9 @@ runners or route public contributions to the owner's machines.
   What could not be tested is said in the PR and waits for the owner. Never auto-merge (`--auto`)
   or `--admin`, never push to `main`, never tag or release: hand over the command. PLAN.md's merge
   step (merge commit, delete the branch) is done through the PR under these conditions.
+  Rulesets with no bypass protect `main` and `v*` tags: GitHub itself refuses a direct push to
+  `main`, a squash or rebase merge, a merge with a failing or missing check, and a moved or deleted
+  `v*` tag; in an emergency the owner turns the ruleset off in Settings > Rules and back on after.
 - Commit messages: the area first, lower case, then a plain sentence (`batch rm: name a single
   leftover file instead of counting it`), one logical change per commit. No emoji, no AI
   attribution anywhere (no `Co-Authored-By`, `Assisted-by` or "Generated with", in commits, PR
