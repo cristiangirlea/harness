@@ -162,7 +162,8 @@ and stay. So is it for a task the record still shows waiting for a slot (hrn sto
 then), whose branch is made before the wait. It refuses while the branch is checked out in a worktree (a task still running).
 For a fresh task it removes the worktree and the branch (it refuses a worktree with
 uncommitted changes) when the record says the task made them (`branch_made`, set once
-git made both, and dropped while a retry makes them again): a task that found them there
+git made both, and dropped while a retry makes them again; a task whose record cannot say
+so removes them at once, and one whose removal fails claims what is still there): a task that found them there
 already, or that hrn left before it had them back, does not own them (they may be another
 batch's), and they stay. Records from before the record's `ownership` field never said so:
 there every fresh task's worktree goes, except one whose task failed before any attempt
