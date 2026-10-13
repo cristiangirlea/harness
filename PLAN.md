@@ -538,7 +538,7 @@ where such a typo lives.
 
 ## Definition of done (every PR)
 
-- [ ] `go vet ./...`, `go build ./...`, `go test -count=3 ./...`, `gofmt -l .` empty, locally.
+- [ ] The full local checks, as AGENTS.md's "Build and test" lists them (`/check` runs them).
 - [ ] `/code-review` on the PR; every blocking finding fixed as its own commit or
       rejected in a PR comment with a reason, the rest filed as issues.
 - [ ] CI green on ubuntu and windows.
