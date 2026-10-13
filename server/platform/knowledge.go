@@ -30,7 +30,19 @@ func digestKnowledgeText(v string) string {
 	h := sha256.Sum256([]byte(v))
 	return hex.EncodeToString(h[:])
 }
+func unsafeKnowledgeFrame(v string) bool {
+	v = strings.ToLower(v)
+	for _, marker := range []string{"<project-reference", "</project-reference>", "[reference ", "[/reference]"} {
+		if strings.Contains(v, marker) {
+			return true
+		}
+	}
+	return false
+}
 func unsafeKnowledgeSource(e retrieval.Entry) bool {
+	if unsafeKnowledgeFrame(e.Content) || unsafeKnowledgeFrame(e.Source) || unsafeKnowledgeFrame(e.Evidence) {
+		return true
+	}
 	source := strings.ToLower(strings.ReplaceAll(e.Source, `\`, "/"))
 	for _, private := range []string{".codex/auth.json", ".ssh/", ".aws/credentials", ".env", "credentials.json"} {
 		if strings.Contains(source, private) {
@@ -75,7 +87,7 @@ func knowledgeProject(ctx context.Context, tx pgx.Tx, sc retrieval.Scope) error 
 }
 
 func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (string, error) {
-	if !validKnowledgeScope(in.Scope) || in.Origin != "reviewed_source" || strings.TrimSpace(in.ReviewedBy) == "" || strings.TrimSpace(in.ReviewEvidence) == "" || len(in.ReviewedBy) > 256 || len(in.ReviewEvidence) > 2048 || len(in.Entries) > 100 || len(in.Entries) == 0 {
+	if !validKnowledgeScope(in.Scope) || in.Origin != "reviewed_source" || strings.TrimSpace(in.ReviewedBy) == "" || strings.TrimSpace(in.ReviewEvidence) == "" || len(in.ReviewedBy) > 256 || len(in.ReviewEvidence) > 2048 || unsafeKnowledgeFrame(in.ReviewEvidence) || len(in.Entries) > 100 || len(in.Entries) == 0 {
 		return "", ErrUnsupported
 	}
 	// Canonical IDs and order make retries (including concurrent imports) idempotent.

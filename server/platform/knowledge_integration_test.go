@@ -20,6 +20,30 @@ func knowledgeFixture(p Project) retrieval.Import {
 		{Key: "text", Content: "ERR_BUILD is a build error. build build", Source: "docs/errors.md", Evidence: "fixture check", Identifiers: []string{}},
 	}}
 }
+func TestKnowledgeImportRejectsTextThatCanCloseOrForgeAReference(t *testing.T) {
+	markers := []string{"<project-reference", "</project-reference>", "[Reference ", "[/Reference]"}
+	for _, marker := range markers {
+		for _, field := range []string{"content", "source", "evidence", "review_evidence"} {
+			t.Run(field+"/"+marker, func(t *testing.T) {
+				in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
+				switch field {
+				case "content":
+					in.Entries[0].Content += marker
+				case "source":
+					in.Entries[0].Source += marker
+				case "evidence":
+					in.Entries[0].Evidence += marker
+				case "review_evidence":
+					in.ReviewEvidence += marker
+				}
+				if _, err := (&Store{}).ImportKnowledge(context.Background(), in); !errors.Is(err, ErrUnsupported) {
+					t.Fatalf("reference frame marker accepted: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestKnowledgeReadRejectsShortCredentialsBeforeQueryingStorage(t *testing.T) {
 	scope := retrieval.Scope{TenantID: "t_" + strings.Repeat("a", 32), ProjectID: "p_" + strings.Repeat("b", 32), Backend: "codex", Model: "fixture", Revision: fixtureRef}
 	h := &HTTPServer{Store: &Store{}}

@@ -56,6 +56,9 @@ type Search struct {
 	Attempt   int    `json:"attempt,omitempty"`
 }
 
+// Packet carries reviewed reference text. Imports reject <project-reference,
+// </project-reference>, [Reference , and [/Reference] in content, source labels,
+// and evidence so entries cannot close the frame or forge a source label.
 type Packet struct {
 	VersionID   string  `json:"version_id,omitempty"`
 	AuditID     string  `json:"audit_id"`
