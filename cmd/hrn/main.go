@@ -102,7 +102,7 @@ Usage:
 
 Run flags:
   When backend, model and effort are all unset, use the purpose row in route.json before falling back to defaults.
-  -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
+  -b, --backend NAME   enabled backend (default follows hrn backends and purpose routing)
   -m, --model NAME     model id (api default: claude-opus-5)
   -C, --dir PATH       workspace directory (default: current directory)
       --mode MODE      readonly | ask | auto | yolo (default: ask)
