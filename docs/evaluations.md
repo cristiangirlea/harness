@@ -75,9 +75,10 @@ all                           1      3   100%             1      ~$1.03
 Runs group by backend, or by `--by model` (the model that answered), `--by dir` (the
 workspace), `--by purpose` (what the run was for: review, debug, implement, refactor, test,
 research, plan, ops or unknown) or `--by day` (the day the run started, on this computer's
-calendar; days are listed in date order rather than largest first). The purpose comes from ordered keyword rules on the prompt's
-first paragraph, or its second when the first matches no rule, with leading `Label: value`
-lines skipped, since a brief's later paragraphs mention every keyword; the first rule
+calendar; days are listed in date order rather than largest first). The purpose is the one the run declared (`--purpose`, the MCP `purpose`
+field, or a valid leading `Purpose: <category>` header); otherwise it comes from ordered keyword
+rules on the prompt's first paragraph, or its second when the first matches no rule, with leading
+`Label: value` lines skipped, since a brief's later paragraphs mention every keyword; the first rule
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
 median cost, and the cache share (cache-read tokens over every input token, cache writes included;
 `-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.

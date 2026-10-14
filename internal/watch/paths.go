@@ -168,13 +168,15 @@ func nameRune(r rune) bool {
 // folder at s[j], up to a quote, a space or a delimiter, and returns where it
 // ends and the program's file name; "" when it does not name a program. In
 // quotes a Windows folder may have spaces in its name (Microsoft VS Code) and
-// punctuation (Git (Preview)), so only a quote or a line end stops it; a
-// Windows program has an extension, which tells it from a folder.
+// punctuation (Git (Preview)), so only the matching quote, a backtick or a
+// line end stops it (in single quotes an unescaped double quote too, which ends
+// a JSON string); a Windows program has an extension, which tells it from a folder.
 func program(s string, i, j int, windows bool) (int, string) {
 	var quote byte
 	stops := "\"'`\r\n,;|&<>()[]{}"
 	if i > 0 && (s[i-1] == '"' || s[i-1] == '\'') {
-		quote, stops = s[i-1], "\"'`\r\n"
+		quote = s[i-1]
+		stops = string(quote) + "`\r\n"
 	}
 	end, last := j, j // last: where the current element starts
 	for ; end < len(s); end++ {
@@ -191,6 +193,18 @@ func program(s string, i, j int, windows bool) (int, string) {
 		}
 		if strings.IndexByte(stops, c) >= 0 {
 			break
+		}
+		// In single quotes a double quote that no backslash escapes still ends the
+		// scan: in JSON text it closes the string, and the next field is not a path.
+		// An even run of backslashes before it escapes only itself.
+		if quote == '\'' && c == '"' {
+			n := 0
+			for k := end - 1; k >= j && s[k] == '\\'; k-- {
+				n++
+			}
+			if n%2 == 0 {
+				break
+			}
 		}
 	}
 	for end > j && s[end-1] == '\\' { // a JSON-escaped closing quote's backslash

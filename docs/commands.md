@@ -6,7 +6,7 @@
 
 | Command | What it does |
 |---|---|
-| `hrn run [flags] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`. |
+| `hrn run [flags] [--purpose CATEGORY] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`; optionally declare its purpose (see [Declared purpose](#declared-purpose)). |
 | `hrn exec --protocol v1` | Run one recorded task over the supervisor JSONL protocol (see [hrn exec](#hrn-exec)). |
 | `hrn backends` | Show which backends are usable and where they were found. |
 | `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
@@ -24,7 +24,7 @@
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
 | `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]` | Follow runs and batches live. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
-| `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries (see [Batches](batches.md#batches)). |
+| `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
 | `hrn batch diff <id> <task-id>` | What one task changed, as a diff on stdout. |
 | `hrn batch merge [--squash] [--rm] <id> [task-id…]` | Merge passed tasks; `--rm` removes each task's worktree and branch only when it merged in this call. |
@@ -53,10 +53,40 @@ backend default; gemini and opencode report it as not enforced),
 `--allow-dangerous`, `--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
 budgets below.
+`--shape-tools` opts the api backend into summaries of large terminal, log and
+test-runner results from shell and MCP tools, with the full original saved behind
+a handle (see [Run records](run-records.md#run-records)). It is off by default
+pending the #296 eval; JSON and tabular summaries are deferred. Summaries must
+preserve failing tests and error lines and introduce no numbers, negations or
+paths absent from the original; a rejected summary uses the existing cut. This
+includes generated counts, so a count absent from the original also rejects the
+summary. Failing-test diagnostics must stay with their test name, in order;
+ambiguous interleaved diagnostics reject the summary and use the existing cut.
+`--shape-tools=false` keeps the existing behavior. The additive `shape_tools`
+boolean is also available in run options, batch specs/tasks and MCP
+run inputs. Eval matrix variants each select `shape_tools` (default false),
+overriding task/spec shaping so a suite can compare raw and shaped variants;
+give the variants distinct names. This flag does not change CLI backend tools.
 `--retrieval off|optional|required` opts into project references; enabled modes
 require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and
 an explicit `--model`. `--retrieval-version` pins a version; otherwise the
 active version is resolved once and saved with the run.
+
+### Declared purpose
+
+`hrn run --purpose CATEGORY` declares what a run is for: `review`, `debug`,
+`implement`, `refactor`, `test`, `research`, `plan` or `ops`. An invalid flag value
+is refused with exit 2 before the run starts. The MCP `run` tool takes the same
+optional `purpose` string, and each task in a CLI or MCP batch spec may set it;
+invalid values are refused before any task runs.
+
+Without an explicit value, a `Purpose: <category>` header on the prompt's first
+non-blank line supplies the declaration. The header label and category are
+case-insensitive; a non-category value, including free text or `unknown`, is
+ignored as a declaration and is never an error. The explicit value takes
+precedence over the header. The effective declaration is saved in `task.purpose`;
+no prompt text is added, removed or changed. Watch and reports use it before
+falling back to the keyword classifier.
 
 ### hrn exec
 

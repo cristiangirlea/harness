@@ -109,7 +109,18 @@ func leasePath(dir string, n int) string { return filepath.Join(dir, strconv.Ito
 // use, and checks out what opt asks for in it. A slot whose folder holds
 // changes, untracked files or commits on no remote, branch or tag is
 // skipped, never cleaned; ignored files (build output) stay as they are.
+// When ctx ends, the error says so, wherever the take stopped: the git
+// commands before the create lock run under ctx too, and a killed one would
+// otherwise read as a broken repository.
 func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
+	t, err := take(ctx, opt)
+	if err != nil && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
+		err = fmt.Errorf("%w: %w", ctx.Err(), err)
+	}
+	return t, err
+}
+
+func take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	if opt.Repo == "" {
 		opt.Repo = "."
 	}

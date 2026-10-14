@@ -14,9 +14,10 @@ import (
 
 // ShellResult is the outcome of a command RunShell managed to start.
 type ShellResult struct {
-	Output   string // combined stdout and stderr; head and tail are kept when long
-	ExitCode int    // -1 when the command was killed by timeout or cancellation
-	TimedOut bool
+	Output    string // combined stdout and stderr; head and tail are kept when long
+	OutputCut bool   // full capture exceeded its ceiling; Output is the existing cut
+	ExitCode  int    // -1 when the command was killed by timeout or cancellation
+	TimedOut  bool
 }
 
 // RunShell runs one command line through Shell() in dir. A zero timeout means
@@ -25,6 +26,12 @@ type ShellResult struct {
 // a failure to start is an error; a non-zero exit is a result. env is the
 // command's environment; nil is hrn's own.
 func RunShell(ctx context.Context, dir, command string, timeout time.Duration, env []string) (ShellResult, error) {
+	return runShell(ctx, dir, command, timeout, env, false)
+}
+
+const maxCapture = 8 << 20
+
+func runShell(ctx context.Context, dir, command string, timeout time.Duration, env []string, capture bool) (ShellResult, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -41,6 +48,9 @@ func RunShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	}
 	cmd.Env = retrieval.ExecutorEnv(env)
 	out := &boundedBuffer{keepHead: maxOutput * 2 / 3, keepTail: maxOutput / 3}
+	if capture {
+		out.fullLimit = maxCapture
+	}
 	cmd.Stdout, cmd.Stderr = out, out
 	// Stop waiting on the pipes if something survived the kill or was left
 	// running in the background.
@@ -52,7 +62,7 @@ func RunShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	defer tree.Close()
 
 	err = cmd.Wait()
-	res := ShellResult{Output: out.String(), TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded)}
+	res := ShellResult{Output: out.String(), OutputCut: out.fullDropped, TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded)}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil, errors.Is(err, exec.ErrWaitDelay):
@@ -79,12 +89,24 @@ type boundedBuffer struct {
 	keepHead, keepTail int
 	head, tail         []byte
 	dropped            int
+	// Opt-in full capture still feeds the bounded buffer, so crossing the
+	// ceiling can discard the full copy and return the same head-and-tail cut.
+	fullLimit   int
+	full        []byte
+	fullDropped bool
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(p)
+	if b.fullLimit > 0 && !b.fullDropped {
+		if n <= b.fullLimit-len(b.full) {
+			b.full = append(b.full, p...)
+		} else {
+			b.full, b.fullDropped = nil, true
+		}
+	}
 	if room := b.keepHead - len(b.head); room > 0 {
 		take := min(room, len(p))
 		b.head = append(b.head, p[:take]...)
@@ -103,6 +125,9 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 func (b *boundedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.fullLimit > 0 && !b.fullDropped {
+		return string(b.full)
+	}
 	tail, dropped := b.tail, b.dropped
 	if len(tail) > b.keepTail {
 		dropped += len(tail) - b.keepTail

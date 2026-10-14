@@ -284,6 +284,21 @@ func TestRunRowsByPurposeGroupOnTheCategory(t *testing.T) {
 	}
 }
 
+func TestRunRowsByPurposePreferTheDeclaration(t *testing.T) {
+	recs := sample()[:3]
+	recs[0].Task.Purpose = "review"
+	recs[0].Task.Prompt = "Purpose: plan\nFix it."
+	recs[1].Task.Prompt = "Purpose: review\nFix it."
+	recs[2].Task.Prompt = "Fix it."
+	rows, _, err := Select(recs, nil, time.Time{}).RunRows(ByPurpose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Key != "review" || rows[0].Runs != 2 || rows[1].Key != "debug" || rows[1].Runs != 1 {
+		t.Errorf("rows = %+v, want review (2) and debug (1)", rows)
+	}
+}
+
 func TestModelFallsBackToTheTask(t *testing.T) {
 	r := rec("api", "", "/repo", 0, agent.Result{Status: agent.StatusOK})
 	r.Task.Model = "asked-for"

@@ -62,7 +62,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
+| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
@@ -73,6 +73,13 @@ Tools:
 | `remote_status` | `tenant_id`, `project_id`, `job_id` | Current job state and result. |
 | `remote_events` | `tenant_id`, `project_id`, `job_id`, optional `after` | Up to 100 events after a durable event ID. |
 | `remote_cancel` | `tenant_id`, `project_id`, `job_id` | Request job cancellation. |
+
+The `run` tool and each task in a `batch` spec accept optional `purpose`: `review`,
+`debug`, `implement`, `refactor`, `test`, `research`, `plan` or `ops`. Invalid values
+are tool errors; without one, a valid leading `Purpose: <category>` header is used.
+The declaration is saved without changing the prompt, and batch task summaries
+include it when set. See [Declared purpose](commands.md#declared-purpose) for
+header handling and classifier fallback.
 
 The remote tools use `HRN_SERVER_URL` for the control service HTTPS origin,
 `HRN_TENANT_TOKEN` for its issued tenant credential, and optional
