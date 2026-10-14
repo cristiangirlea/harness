@@ -147,8 +147,10 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 	running := map[string]bool{}
 	current := ""
 	markedOwner, sawMarker, unassigned := false, false, false
+	var pending []int
 	for i, line := range lines {
 		if m := testMarker.FindStringSubmatch(line); m != nil {
+			pending = nil // text before a RUN is outside that test
 			sawMarker = true
 			markedOwner = m[1] == "CONT"
 			name := m[2]
@@ -178,7 +180,14 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 					return nil, false // repeated names cannot identify one test
 				}
 				tests[name].failed, current = true, name
+				// With one unmarked failure, leading diagnostics belong to
+				// that test. Multiple failures with such text are rejected below.
+				for _, j := range pending {
+					tests[name].indices = append(tests[name].indices, j)
+					tests[name].messages = append(tests[name].messages, lines[j])
+				}
 			}
+			pending = nil
 			continue
 		}
 		if strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "ok ") || strings.HasPrefix(line, "ok\t") || strings.HasPrefix(line, "go test") || counts.MatchString(line) {
@@ -196,6 +205,7 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 			tests[current].messages = append(tests[current].messages, line)
 		} else {
 			unassigned = true
+			pending = append(pending, i)
 			for _, test := range tests {
 				if !test.failed {
 					return nil, false // an unfinished test has no output marker

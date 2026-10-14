@@ -134,6 +134,17 @@ func TestParallelFailuresWithContextMarkers(t *testing.T) {
 	}
 }
 
+func TestUnmarkedFailurePreservesLeadingDiagnostics(t *testing.T) {
+	text := "counts 0 1\n    first diagnostic\n    second diagnostic\n--- FAIL: TestBad (0.00s)\nFAIL\n"
+	s, ok := Summarize(Test, text)
+	if !ok || !strings.Contains(s, "    first diagnostic") || !strings.Contains(s, "    second diagnostic") {
+		t.Fatalf("unmarked diagnostic lost: %q ok=%v", s, ok)
+	}
+	if valid(Test, text, strings.Replace(text, "    first diagnostic\n", "", 1)) {
+		t.Fatal("accepted a removed unmarked diagnostic")
+	}
+}
+
 func TestTerminalHeadTailAndErrorFallback(t *testing.T) {
 	text := strings.Repeat("head\n", 1) + strings.Repeat(strings.Repeat("x", 100)+"\n"+strings.Repeat("y", 100)+"\n", 250) + "tail"
 	s, ok := Summarize(Terminal, text)
