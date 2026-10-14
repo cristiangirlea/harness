@@ -397,18 +397,19 @@ func workerProjectID(body []byte) string {
 	return projectID
 }
 
-func (h *HTTPServer) decodeWorkerRequest(w http.ResponseWriter, r *http.Request, destination any) bool {
+func (h *HTTPServer) decodeWorkerRequest(w http.ResponseWriter, r *http.Request, destination any) (string, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	body, readErr := io.ReadAll(r.Body)
-	if !h.project(w, r, workerProjectID(body)) {
-		return false
+	projectID := workerProjectID(body)
+	if !h.project(w, r, projectID) {
+		return "", false
 	}
 	if readErr != nil {
 		failure(w, 400, "invalid_json", readErr.Error())
-		return false
+		return "", false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	return decode(w, r, destination)
+	return projectID, decode(w, r, destination)
 }
 
 func (h *HTTPServer) claim(w http.ResponseWriter, r *http.Request) {
@@ -440,7 +441,12 @@ func (h *HTTPServer) claim(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) heartbeat(w http.ResponseWriter, r *http.Request) {
 	var request workerRequest
-	if !h.decodeWorkerRequest(w, r, &request) {
+	projectID, ok := h.decodeWorkerRequest(w, r, &request)
+	if !ok {
+		return
+	}
+	if request.ProjectID != projectID {
+		failure(w, 404, "not_found", "project or resource not found")
 		return
 	}
 	ok, cancel, err := h.Store.Heartbeat(r.Context(), request.ProjectID, r.PathValue("job"), request.WorkerID, request.Generation)
@@ -457,7 +463,12 @@ func (h *HTTPServer) heartbeat(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) checkpoint(w http.ResponseWriter, r *http.Request) {
 	var request checkpointRequest
-	if !h.decodeWorkerRequest(w, r, &request) {
+	projectID, ok := h.decodeWorkerRequest(w, r, &request)
+	if !ok {
+		return
+	}
+	if request.ProjectID != projectID {
+		failure(w, 404, "not_found", "project or resource not found")
 		return
 	}
 	if err := h.Store.SaveCheckpoint(r.Context(), request.ProjectID, r.PathValue("job"), request.WorkerID, request.Generation, request.Checkpoint); err != nil {
@@ -469,7 +480,12 @@ func (h *HTTPServer) checkpoint(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) finish(w http.ResponseWriter, r *http.Request) {
 	var request finishRequest
-	if !h.decodeWorkerRequest(w, r, &request) {
+	projectID, ok := h.decodeWorkerRequest(w, r, &request)
+	if !ok {
+		return
+	}
+	if request.ProjectID != projectID {
+		failure(w, 404, "not_found", "project or resource not found")
 		return
 	}
 	if err := h.Store.Finish(r.Context(), request.ProjectID, r.PathValue("job"), request.WorkerID, request.Generation, request.Result); err != nil {

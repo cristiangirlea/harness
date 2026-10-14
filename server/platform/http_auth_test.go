@@ -103,3 +103,21 @@ func TestHTTPWorkerBadBodyAfterProjectID(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPWorkerTokenCannotAuthorizeAnotherBodyProject(t *testing.T) {
+	const goodToken = "good-token-abcdefghijklmnopqrstuvwxyz"
+	server := &HTTPServer{workerAuthorized: func(_ context.Context, projectID, candidate string) (bool, error) {
+		return projectID == "project" && candidate == goodToken, nil
+	}}
+	for _, route := range []string{"heartbeat", "checkpoint", "finish"} {
+		t.Run(route, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/internal/jobs/job/"+route, strings.NewReader(`{"project_id":"other"}`))
+			r.Header.Set("Authorization", "Bearer "+goodToken)
+			w := httptest.NewRecorder()
+			server.Handler().ServeHTTP(w, r)
+			if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "project or resource not found") {
+				t.Fatalf("status %d, want plain 404: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
