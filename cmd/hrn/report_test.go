@@ -27,6 +27,9 @@ func TestReportCostCells(t *testing.T) {
 		{"reported zero", []agent.Result{{Usage: &agent.UsageMetadata{CostStatus: "reported"}}}, "$0.00", "$0.00"},
 		{"zero and missing", []agent.Result{{Usage: &agent.UsageMetadata{CostStatus: "reported"}}, {}}, "$0.00 (1 unknown)", "$0.00"},
 		{"estimated zero", []agent.Result{{Usage: &agent.UsageMetadata{CostStatus: "estimated"}}}, "~$0.00", "~$0.00"},
+		{"estimated positive", []agent.Result{{CostUSD: 1.23, Usage: &agent.UsageMetadata{CostStatus: "estimated"}}}, "~$1.23", "~$1.23"},
+		{"missing estimate ignored", []agent.Result{{CostUSD: 1.23}, {CostUSD: 9, CostEstimate: true, Usage: &agent.UsageMetadata{CostStatus: "missing"}}}, "$1.23 (1 unknown)", "$1.23"},
+		{"known zero median", []agent.Result{{Usage: &agent.UsageMetadata{CostStatus: "reported"}}, {Usage: &agent.UsageMetadata{CostStatus: "reported"}}, {CostUSD: 1.23}}, "$1.23", "$0.00"},
 		{"legacy positive", []agent.Result{{CostUSD: 1.23}}, "$1.23", "$1.23"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
