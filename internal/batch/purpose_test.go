@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,5 +39,31 @@ func TestLoadSpecValidatesPurposeBeforeAnyTaskRuns(t *testing.T) {
 		if rec.Task.Purpose != want || rec.Task.Prompt != "Purpose: ReViEw\nFix it." {
 			t.Errorf("task=%+v, want purpose %q and unchanged prompt", rec.Task, want)
 		}
+	}
+}
+
+func TestAnOldBatchResultWithoutAPurposeStillLoads(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := os.MkdirAll(batchesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const id = "20260101-000000-abcdef"
+	old := `{"id":"` + id + `","tasks":[{"id":"t1","prompt":"Fix it.","status":"ok","branch":"hrn/t1"}]}`
+	if err := os.WriteFile(filepath.Join(batchesDir(), id+".json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := LoadResult(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Tasks) != 1 || res.Tasks[0].Purpose != "" || res.Tasks[0].Prompt != "Fix it." {
+		t.Fatalf("tasks = %+v, want one task with no purpose", res.Tasks)
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"purpose"`) {
+		t.Errorf("the re-encoded result names a purpose it never had: %s", data)
 	}
 }
