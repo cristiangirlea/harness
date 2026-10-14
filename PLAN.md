@@ -684,6 +684,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a raw `gh api` POST asks first (#206, PR #292). A field (`-f`, `-F`, `--field`,
+  `--raw-field`, `--input`) with no method makes `gh api` POST, which can create a release, a tag or
+  a deploy key. Decided: in this repository's Claude settings such a call asks the owner; hrn runs
+  hold no GitHub token at all, and #210 adds the guard's refusals as a second layer.
 - 2026-10-14: a retrieval packet's entries stay within the text cap (#177, PR #291).
   Decided: count only rendered entry fields (ID, Content, Source, Evidence) against the 8192-byte
   text cap; Key and Identifiers keep the import limits. Require each entry ID in Text's reference label.
