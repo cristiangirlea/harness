@@ -50,9 +50,9 @@ indexed with `(not verified: reason)`. The paid `api-check.sh` is excluded and
 keeps its existing behavior. No example may invoke it.
 
 `check.sh --list` prints the check skill's commands without executing them;
-normal execution stops on the first failure. `test-summary.sh [file]` reads
-Each check reports its step number; failures include at most 2,000 bytes of diagnostics.
-JSON test events from a file or stdin, counts terminal test events (including
+normal execution stops on the first failure. Each check reports its step number;
+failures include at most 2,000 bytes of diagnostics. `test-summary.sh [file]`
+reads JSON test events from a file or stdin, counts terminal test events (including
 subtests, excluding package events), and returns at most 20 failure names,
 each at most 200 characters, plus `truncated`. Invalid input is an error.
 `wait-for.sh host port [timeout]` waits for TCP connection success; timeout
