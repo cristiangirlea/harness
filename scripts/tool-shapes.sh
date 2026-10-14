@@ -3,7 +3,7 @@
 # summary: Measure recorded tool output and repeated inline scripts without exposing text.
 # effects: read, exec
 # parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true
-# example: out=$(bash scripts/tool-shapes.sh --home scripts/testdata/tool-shapes --days 36500 --json); test "$(printf '%s' "$out" | tr ',' '\n' | sed -n 's/.*"read":\([0-9]*\).*/\1/p')" = 2; test "$(printf '%s' "$out" | tr ',' '\n' | sed -n 's/.*"with_usage":\([0-9]*\).*/\1/p')" = 2
+# example: go test -count=1 ./scripts/tool-shapes && out=$(bash scripts/tool-shapes.sh --home scripts/testdata/tool-shapes --days 36500 --json) && test "$(printf '%s' "$out" | tr ',' '\n' | sed -n 's/.*"read":\([0-9]*\).*/\1/p')" = 2 && test "$(printf '%s' "$out" | tr ',' '\n' | sed -n 's/.*"with_usage":\([0-9]*\).*/\1/p')" = 2 && [[ $out == *'"tool_result_bytes":27'* ]] && [[ $out == *'"shape":"heredoc","count":2,"runs":2'* ]]
 # hash: none
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)

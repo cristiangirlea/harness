@@ -169,6 +169,7 @@ func TestAnonymousResults(t *testing.T) {
 		{"sequential", []event{{Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_result", Text: "hello"}}, 5},
 		{"shell batch", []event{{Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_call", Tool: "shell"}, {Kind: "tool_result", Text: "hi"}, {Kind: "tool_result", Text: "bye"}}, 5},
 		{"mixed batch", []event{{Kind: "tool_call", Tool: "read_file"}, {Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_result", Text: "hi"}, {Kind: "tool_result", Text: "bye"}}, 0},
+		{"named result", []event{{Kind: "tool_call", Tool: "read_file"}, {Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_result", Tool: "Bash", Text: "hi"}, {Kind: "tool_result", Text: "bye"}}, 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newStats()

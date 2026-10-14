@@ -173,7 +173,21 @@ func (s *stats) add(events []event) {
 				}
 			}
 			if len(pending) > 0 {
-				pending = pending[1:]
+				index := 0
+				if e.Tool != "" {
+					found := false
+					for i, name := range pending {
+						if name == e.Tool {
+							index = i
+							found = true
+							break
+						}
+					}
+					if !found {
+						ambiguous = true
+					}
+				}
+				pending = append(pending[:index], pending[index+1:]...)
 			}
 			if len(pending) == 0 {
 				ambiguous = false
