@@ -92,9 +92,21 @@ func TestLeaseWithReusedPIDIsStale(t *testing.T) {
 }
 
 func TestExitedHelperStartKeepsReusedPIDLeaseFree(t *testing.T) {
+	// Linux counts start times in 10 ms ticks, so a helper started in the
+	// same tick as this test process shares its identity. That cannot fool a
+	// real lease, which compares one pid's identity over time; this test
+	// borrows another process's pid, so it needs a helper from a later tick.
+	self, _ := startID(os.Getpid())
 	_, start := exitedPID(t)
+	for i := 0; i < 5 && start != "" && start == self; i++ {
+		time.Sleep(20 * time.Millisecond)
+		_, start = exitedPID(t)
+	}
 	if start == "" {
 		t.Skip("process start identity is unavailable on this platform")
+	}
+	if start == self {
+		t.Fatal("every helper started in the test process's own start tick")
 	}
 	if (Lease{PID: os.Getpid(), Start: start}).processHolds() {
 		t.Error("the live test process cannot hold a lease recorded for an exited helper")
