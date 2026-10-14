@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: public watch navigation exemption (#228, PR pending). Decided: only GET/HEAD
+- 2026-10-14: public watch navigation exemption (#228, PR #259). Decided: only GET/HEAD
   navigations with `Sec-Fetch-Dest: document` bypass the Origin and cross-site check;
   embedded and destination-less navigations follow the normal rule.
 - 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
