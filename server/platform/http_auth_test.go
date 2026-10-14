@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,50 @@ func TestHTTPWorkerTokenCannotAuthorizeAnotherBodyProject(t *testing.T) {
 			server.Handler().ServeHTTP(w, r)
 			if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "project or resource not found") {
 				t.Fatalf("status %d, want plain 404: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestHTTPWorkerBadTokenWithUnusableProjectBodyGetsPlainNotFound(t *testing.T) {
+	const badToken = "bad-token-abcdefghijklmnopqrstuvwxyz0"
+	server := &HTTPServer{workerAuthorized: func(_ context.Context, _, _ string) (bool, error) {
+		return false, nil
+	}}
+	for _, body := range []struct{ name, value string }{
+		{"non-object", `[]`},
+		{"no project ID", `{"worker_id":"worker"}`},
+		{"malformed before project ID", `{"worker_id":`},
+	} {
+		for _, route := range []string{"heartbeat", "checkpoint", "finish"} {
+			t.Run(body.name+"/"+route, func(t *testing.T) {
+				r := httptest.NewRequest(http.MethodPost, "/internal/jobs/job/"+route, strings.NewReader(body.value))
+				r.Header.Set("Authorization", "Bearer "+badToken)
+				w := httptest.NewRecorder()
+				server.Handler().ServeHTTP(w, r)
+				const want = "{\"error\":{\"code\":\"not_found\",\"message\":\"project or resource not found\"}}\n"
+				if w.Code != http.StatusNotFound || w.Body.String() != want {
+					t.Fatalf("status %d, body %q; want plain 404 %q", w.Code, w.Body.String(), want)
+				}
+			})
+		}
+	}
+}
+
+func TestHTTPWorkerProjectIDPreparseMatchesStrictDecode(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"case-insensitive field", `{"Project_ID":"project"}`},
+		{"duplicate field", `{"project_id":"project","project_id":"project"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var request workerRequest
+			decoder := json.NewDecoder(strings.NewReader(tc.body))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if got := workerProjectID([]byte(tc.body)); got != "project" || request.ProjectID != got {
+				t.Fatalf("preparse project %q, decoded project %q; want project", got, request.ProjectID)
 			}
 		})
 	}
