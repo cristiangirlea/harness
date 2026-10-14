@@ -97,10 +97,10 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			AggregatedOutput string `json:"aggregated_output"`
 			ExitCode         *int   `json:"exit_code"`
 		} `json:"item"`
-		Usage struct {
-			InputTokens       int64 `json:"input_tokens"`
-			CachedInputTokens int64 `json:"cached_input_tokens"`
-			OutputTokens      int64 `json:"output_tokens"`
+		Usage *struct {
+			InputTokens       *int64 `json:"input_tokens"`
+			CachedInputTokens *int64 `json:"cached_input_tokens"`
+			OutputTokens      *int64 `json:"output_tokens"`
 		} `json:"usage"`
 		Message string `json:"message"`
 		// turn.failed carries its text here rather than in Message.
@@ -133,10 +133,18 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 		}
 	case "turn.completed":
 		res.Turns++
-		res.InputTokens += l.Usage.InputTokens
-		res.CacheRead += l.Usage.CachedInputTokens
-		res.OutputTokens += l.Usage.OutputTokens
+		if l.Usage == nil || l.Usage.InputTokens == nil || l.Usage.CachedInputTokens == nil || l.Usage.OutputTokens == nil {
+			res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
+		} else {
+			if res.Usage == nil {
+				res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "reported", CostStatus: "missing"}
+			}
+			res.InputTokens += *l.Usage.InputTokens
+			res.CacheRead += *l.Usage.CachedInputTokens
+			res.OutputTokens += *l.Usage.OutputTokens
+		}
 	case "error", "turn.failed":
+		res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
 		msg := cmp.Or(l.Message, l.Error.Message)
 		if msg == "" || msg == res.Error {
 			// A turn.failed after the error line that said why: keep that text,

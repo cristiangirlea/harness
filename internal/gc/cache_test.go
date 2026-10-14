@@ -355,10 +355,22 @@ func TestDiskFreeNamesTheVolumeAndItsFreeSpace(t *testing.T) {
 
 func TestGCTakesTheIdleLimitAsGiven(t *testing.T) {
 	root := tempRoot(t)
-	fresh := tagged(t, filepath.Join(root, "fresh"), 0, 100)
+	// Written a second ago, not now: a file's time and the clock differ by
+	// their resolution, so a cache written now can read as not yet 1ns old (#245).
+	fresh := tagged(t, filepath.Join(root, "fresh"), time.Second, 100)
 
 	cs := caches(t, []string{root}, nil, Options{Idle: time.Nanosecond, MinIdle: time.Nanosecond})
 	wantCache(t, findCache(t, cs, fresh), Remove, "idle")
+}
+
+func TestGCTakesACacheWrittenAfterNowAsZeroIdle(t *testing.T) {
+	now := time.Now()
+	if got := ageAt(now, now.Add(5*time.Millisecond)); got != 0 {
+		t.Errorf("a write time just after now gives age %s, want 0", got)
+	}
+	if got := ageAt(now, now.Add(-time.Hour)); got != time.Hour {
+		t.Errorf("age = %s, want 1h", got)
+	}
 }
 
 func TestGCKeepsACacheWhoseBuildHoldsTheLock(t *testing.T) {
@@ -412,6 +424,25 @@ func TestGCFreeBelowRemovesTheOldestCachesFirstUntilTheDriveHasEnough(t *testing
 	wantCache(t, findCache(t, cs, recent), Keep, "inside --idle 24h")
 	wantCache(t, findCache(t, cs, young), Keep, "inside --min-idle 2h")
 	wantCache(t, findCache(t, cs, elsewhere), Keep, "inside --idle 24h")
+}
+
+func TestGCFreeBelowUsesDriveNameInMessages(t *testing.T) {
+	root := tempRoot(t)
+	cache := tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 1000
+	opt.Drive = func(string) (Drive, error) {
+		return Drive{ID: "device 42", Name: "/mnt/build", Free: 100}, nil
+	}
+
+	cs := caches(t, []string{root}, nil, opt)
+	wantCache(t, findCache(t, cs, cache), Remove, "/mnt/build has only 100 bytes free")
+	if removed, errs := ApplyCaches(context.Background(), cs); len(removed) != 1 || len(errs) != 0 {
+		t.Fatalf("apply: removed %d, errors %v", len(removed), errs)
+	}
+	if got, want := FreeBelowReport(cs, opt), []string{"/mnt/build still has 100 bytes free, 900 bytes below 1000 bytes"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
 }
 
 func TestGCFreeBelowLeavesADriveWhoseFreeSpaceIsUnknown(t *testing.T) {

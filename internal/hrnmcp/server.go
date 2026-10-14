@@ -25,6 +25,8 @@ const instructions = `hrn runs coding tasks on an agent backend of your choice (
 
 Use "run" to delegate a task. It blocks until the task finishes and returns the final answer, a summary line and a run id; "show" replays a run, "runs" lists recent ones, "backends" says which backends are usable. Several "run" calls may be in flight at once.
 
+For server-side asynchronous jobs, use "remote_submit" then "remote_status" or "remote_events" with a durable cursor; "remote_cancel" requests cancellation. These tools require HRN_SERVER_URL and HRN_TENANT_TOKEN in the MCP server environment. Remote submission currently supports only read-only API jobs on registered projects.
+
 Use "batch" to fan out: several tasks at once, each on its own branch and git worktree, checked by gate commands, all in one call. "batch_show" reads a batch's results and each task's diff; "batch_merge" merges the passing branches into the current branch.
 
 There is no terminal behind this server. Mode "ask" puts each write and command to you through the host, when the host supports elicitation, and denies it otherwise. Use "readonly" for investigation, "auto" to allow file edits without asking, "yolo" to also allow shell commands.`
@@ -51,6 +53,10 @@ func newServer(defaultDir string, allowDangerous bool) *mcp.Server {
 	s.AddTool(batchTool(defaultDir, allowDangerous))
 	s.AddTool(batchShowTool())
 	s.AddTool(batchMergeTool())
+	s.AddTool(remoteSubmitTool())
+	s.AddTool(remoteStatusTool())
+	s.AddTool(remoteEventsTool())
+	s.AddTool(remoteCancelTool())
 	return s
 }
 

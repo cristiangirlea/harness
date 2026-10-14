@@ -55,6 +55,19 @@ running: they have no cost yet, known or unknown. A run killed before it saved i
 has no result and stays running on the page (#96), so it counts as running, not as no
 cost.
 
+A run's page names its workspace by the same name as its row (`ada-os-ipc`, the repository
+for a batch task's worktree), and a batch's page its repository; a task's worktree shows
+relative to the repository (`.\.hrn\worktrees\t1`). Hover the name for the whole path,
+on this computer only: a phone on the network sees the name alone. In what a run's steps
+show (step text, a tool call's one line and its input, results, info lines, the final
+answer) and in a run's or batch's header, the workspace is `.` (`.\src\main.go`, in the
+path's own slashes), the home folder is `~`, and a program named by its full path in
+System32, Program Files, `/usr/bin`, `/bin` or `/usr/local/bin` is its file name: `codex
+exec -C . --json`, `"powershell.exe" -Command ...`. A batch task's text is shortened by its
+worktree. The index's rows (a run's prompt, a batch's task names) are shortened the same way,
+for every viewer. A path only counts whole, so `ada-os-ipc-old` keeps its name. This is the page
+only: `events.jsonl`, the records and `hrn show` keep the full paths.
+
 When the backend reports the last turn's context size, the run page also shows
 `Context: 285.0k tokens at the end`. This includes input served from or written to
 the cache. It is absent when that size is unknown, including on older records.

@@ -24,7 +24,7 @@
 </html>
 {{end}}
 
-{{define "facts"}}<dl class="facts">{{range .}}<div><dt>{{.Label}}</dt><dd>{{.Value}}</dd></div>{{end}}</dl>{{end}}
+{{define "facts"}}<dl class="facts">{{range .}}<div><dt>{{.Label}}</dt><dd{{with .Title}} title="{{.}}"{{end}}>{{.Value}}</dd></div>{{end}}</dl>{{end}}
 
 {{define "index"}}{{template "head" .}}
 <p class="eyebrow">Harness / live view</p>

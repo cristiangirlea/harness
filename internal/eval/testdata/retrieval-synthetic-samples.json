@@ -1,0 +1,2102 @@
+[
+  {
+    "task_id": "root-dependencies",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:root-dependencies:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "root-dependencies",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:root-dependencies:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "root-dependencies",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:root-dependencies:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "root-dependencies",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:root-dependencies:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "root-dependencies",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:root-dependencies:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "root-dependencies",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:root-dependencies:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "queue-capacity",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:queue-capacity:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "queue-capacity",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:queue-capacity:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "queue-capacity",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:queue-capacity:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "queue-capacity",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:queue-capacity:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "queue-capacity",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:queue-capacity:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "queue-capacity",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:queue-capacity:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "heartbeat-interval",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:heartbeat-interval:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "heartbeat-interval",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:heartbeat-interval:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "heartbeat-interval",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:heartbeat-interval:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "heartbeat-interval",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:heartbeat-interval:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "heartbeat-interval",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:heartbeat-interval:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "heartbeat-interval",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:heartbeat-interval:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "stale-owner",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:stale-owner:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "stale-owner",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:stale-owner:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "stale-owner",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:stale-owner:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "stale-owner",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:stale-owner:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "stale-owner",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:stale-owner:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "stale-owner",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:stale-owner:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "repository-pin",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:repository-pin:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "repository-pin",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:repository-pin:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "repository-pin",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:repository-pin:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "repository-pin",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:repository-pin:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "repository-pin",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:repository-pin:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "repository-pin",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:repository-pin:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "checkpoint-order",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:checkpoint-order:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "checkpoint-order",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:checkpoint-order:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "checkpoint-order",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:checkpoint-order:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "checkpoint-order",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:checkpoint-order:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "checkpoint-order",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:checkpoint-order:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "checkpoint-order",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:checkpoint-order:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-path",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:exact-path:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-path",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:exact-path:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-path",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:exact-path:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-path",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:exact-path:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-path",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:exact-path:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-path",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:exact-path:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-symbol",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:exact-symbol:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-symbol",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:exact-symbol:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-symbol",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:exact-symbol:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-symbol",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:exact-symbol:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-symbol",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:exact-symbol:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "exact-symbol",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:exact-symbol:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-error",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:unknown-error:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-error",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:unknown-error:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-error",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:unknown-error:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-error",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:unknown-error:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-error",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:unknown-error:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-error",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:unknown-error:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-component",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:unknown-component:0:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-component",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "synthetic:unknown-component:0:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-component",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:unknown-component:1:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-component",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "synthetic:unknown-component:1:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-component",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:unknown-component:2:off"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 900,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "task_id": "unknown-component",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "synthetic:unknown-component:2:text"
+    ],
+    "usage": {
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      },
+      "attempts": [
+        {
+          "backend": "codex",
+          "model": "fixture-model",
+          "status": "ok",
+          "turns": 1,
+          "input_tokens": 800,
+          "output_tokens": 100,
+          "cache_read_tokens": 400,
+          "duration_ns": 1000000,
+          "cost_usd": 0,
+          "usage_metadata": {
+            "input_semantics": "inclusive_cache",
+            "status": "reported",
+            "cost_status": "reported",
+            "calls": 1
+          }
+        }
+      ]
+    }
+  }
+]
