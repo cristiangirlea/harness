@@ -684,6 +684,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a raw `gh api` POST asks first (#206, PR #N). A field (`-f`, `-F`, `--field`,
+  `--raw-field`, `--input`) with no method makes `gh api` POST, which can create a release, a tag or
+  a deploy key. Decided: in this repository's Claude settings such a call asks the owner; hrn runs
+  hold no GitHub token at all, and #210 adds the guard's refusals as a second layer.
 - 2026-10-14: gc's idle age and the clock's resolution (#245, PR #278). A cache written moments
   before could read as not yet idle, failing `TestGCTakesTheIdleLimitAsGiven` on Windows CI.
   Decided: an age below zero counts as zero, so `--idle 0` takes any cache; the test writes its
