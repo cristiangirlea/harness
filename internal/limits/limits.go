@@ -204,6 +204,9 @@ func meteredBy(backend string) string {
 // chose the backend that takes over, so it must bill to a plan as the one it
 // stands in for does.
 func Ready(backend string, now time.Time, spent Spent) (bool, string) {
+	if backend == "api" {
+		return false, "api would bill per token, not to a plan"
+	}
 	b, err := agent.Get(backend)
 	if err != nil {
 		return false, err.Error()

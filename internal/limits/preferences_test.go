@@ -64,3 +64,20 @@ func TestChooseAndAfterUseOnlyAnEnabledInstalledPartner(t *testing.T) {
 		})
 	}
 }
+
+func TestAnEnabledAPIBackendCannotBecomeABilledCarryOn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	orig, _ := agent.Get("api")
+	agent.Register(stub{"api", true})
+	t.Cleanup(func() { agent.Register(orig) })
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "api"}}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := Ready("api", time.Now(), nil); ok {
+		t.Fatal("api always bills per token")
+	}
+	if pick, _, _ := Pick("codex", time.Now(), Spent{"codex": true}); pick != "codex" {
+		t.Fatalf("switched to %s", pick)
+	}
+}
