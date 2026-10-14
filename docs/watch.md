@@ -119,7 +119,7 @@ second or more, and ends with the summary line once the run's result is saved. C
 stops following and leaves the run alone. A run killed before it saved its result never
 ends, on the page or in the terminal: hrn cannot tell it from a long step.
 
-## Backends
+### Backends
 
 The index's Backends card, above "What the runs were for", shows every registered
 backend to every viewer: installed or not, enabled or disabled, the configured
@@ -129,7 +129,10 @@ Reload the index to refresh the card.
 
 Loopback viewers can change the enabled checkboxes and default radio buttons,
 then click Apply. In public mode every Cloudflare Access-verified viewer can do
-the same. LAN viewers see the state only, without controls or the write key.
+the same. LAN viewers see the state only, without controls or the write key, and so
+does any viewer whose request carries a forwarding header (`Forwarded`, `X-Forwarded-For`,
+`Cf-Connecting-Ip`): a proxy in front of watch belongs in public mode, where Access says
+who the viewer is.
 Apply uses a same-origin request carrying the startup key; it writes
 `$HRN_HOME/backends.json` atomically and reloads the index. Runs started afterwards
 follow those preferences. Choose "No configured default" to let hrn choose;
