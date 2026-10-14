@@ -667,6 +667,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: public watch's local-use and tunnel address follow-up (#218, PR pending).
+  Decided: document that its loopback Host is refused, use a separate plain watch for
+  local browsing and `hrn bot`, print the tunnel's loopback target at start, and explain
+  a 403 on the bot's existing-watch probe with `--addr` guidance.
 - 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
   timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
   (`for-each-ref`, which answers a missing branch with no output) says whether it answered;

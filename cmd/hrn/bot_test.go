@@ -87,3 +87,15 @@ func TestHrnBotServesOnLoopbackOnly(t *testing.T) {
 		t.Error("an argument was accepted")
 	}
 }
+
+func TestBotReportsPublicWatchOnOccupiedPort(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	if err := cmdBot([]string{"--addr", addr}); err == nil ||
+		!strings.Contains(err.Error(), "public watch") || !strings.Contains(err.Error(), "--addr") {
+		t.Fatalf("hrn bot on public watch port = %v; want public watch and --addr guidance", err)
+	}
+}
