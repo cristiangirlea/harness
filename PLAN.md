@@ -688,6 +688,25 @@ neither of them follows a run while it happens.
   `--raw-field`, `--input`) with no method makes `gh api` POST, which can create a release, a tag or
   a deploy key. Decided: in this repository's Claude settings such a call asks the owner; hrn runs
   hold no GitHub token at all, and #210 adds the guard's refusals as a second layer.
+- 2026-10-14: a retrieval packet's entries stay within the text cap (#177, PR #291).
+  Decided: count only rendered entry fields (ID, Content, Source, Evidence) against the 8192-byte
+  text cap; Key and Identifiers keep the import limits. Require each entry ID in Text's reference label.
+- 2026-10-14: gc names a Unix drive by its mount point (#232, PR #290). Decided:
+  keep the device number as the grouping key and use the mount point only in messages.
+- 2026-10-14: hrn remote checks its server URL and CA file more strictly (#167, PR #289).
+  Decided: reject empty queries, opaque and encoded paths, and non-regular CA files before reading; allow symlinks to regular CA files.
+- 2026-10-14: hrn remote validates options as its MCP tool does (#166, PR #288). Decided: shared
+  validation rejects non-finite max cost before either submission sends a request.
+- 2026-10-14: the server refuses mcp and allow_dangerous at submission (#154, PR #287).
+  Decided: reject either durable-job option with ErrUnsupported before the worker takes a slot;
+  empty mcp lists and allow_dangerous false remain valid.
+- 2026-10-14: the batch merge tests save records through the batch package (#215, PR #280).
+  Decided: expose the ownership claim and a save wrapper so fixtures use the same value and record writer as Run.
+- 2026-10-14: tests give an exited helper's lease its start identity (#242, PR #286).
+  Decided: hold the helper alive while reading its identity, then record it with the pid so reuse cannot hold the lease.
+- 2026-10-14: the billing-refusal test's deadline (#283, PR #284). Its refusal cases had 500 ms,
+  which also had to cover starting the helper; a busy PC timed out first. Decided: 2 s for every
+  case; a refusal that failed to stop the CLI still ends as a timeout and fails the test.
 - 2026-10-14: gc's idle age and the clock's resolution (#245, PR #278). A cache written moments
   before could read as not yet idle, failing `TestGCTakesTheIdleLimitAsGiven` on Windows CI.
   Decided: an age below zero counts as zero, so `--idle 0` takes any cache; the test writes its

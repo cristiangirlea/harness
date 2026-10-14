@@ -38,9 +38,10 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 		return nil, fmt.Errorf("HRN_SERVER_URL and %s (at least 32 characters) are required", credentialEnv)
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" ||
+	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.ForceQuery ||
+		parsed.RawQuery != "" || parsed.Opaque != "" || parsed.RawPath != "" || strings.Contains(raw, "#") ||
 		parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return nil, errors.New("HRN_SERVER_URL must be an origin without credentials, path or query")
+		return nil, errors.New("HRN_SERVER_URL must be an origin without credentials, path, query or fragment")
 	}
 	host := parsed.Hostname()
 	if parsed.Scheme != "https" && !(parsed.Scheme == "http" &&
@@ -53,8 +54,8 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 			return nil, errors.New("HRN_SERVER_CA_FILE requires HTTPS")
 		}
 		info, err := os.Stat(caFile)
-		if err != nil || info.Size() > 1<<20 {
-			return nil, errors.New("invalid remote CA file")
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+			return nil, errors.New("HRN_SERVER_CA_FILE must name a regular PEM CA file of at most 1 MiB")
 		}
 		pem, err := os.ReadFile(caFile)
 		if err != nil {
