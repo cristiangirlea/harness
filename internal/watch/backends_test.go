@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,7 +77,7 @@ func TestBackendsCardShowsStateAndControlsOnlyToAllowedViewers(t *testing.T) {
 				if name == "claude" {
 					enabled = "enabled"
 					for _, want := range []string{">default<", "limited until " + until.Format(time.RFC3339)} {
-						if !strings.Contains(row, want) {
+						if !strings.Contains(row, html.EscapeString(want)) {
 							t.Errorf("claude row lacks %q", want)
 						}
 					}
