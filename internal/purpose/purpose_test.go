@@ -90,6 +90,11 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 		{"bare cr context", "Repository: hrn\r\rGoal: Implement the purpose classifier.", "implement", "implement.build"},
 		{"second paragraph has its own cap", strings.Repeat("x", maxLead+1) + "\n\nImplement the purpose classifier.", "implement", "implement.build"},
 		{"second paragraph cannot match past cap", "Hello there.\n\n" + strings.Repeat("x", maxLead+1) + " review the diff.", "unknown", ""},
+		{"a panic line is an error, not a label", "panic: test timed out after 10m0s", "debug", "debug.error-message"},
+		{"an exception name is an error, not a label", "TypeError: x is undefined", "debug", "debug.error-message"},
+		{"an error word before a code is an error, not a label", "Error: ENOENT: no such file or directory", "debug", "debug.error-message"},
+		{"a drive letter is not a label", "fix C:\\repo\\README.md", "debug", "debug.fix"},
+		{"only leading labels are skipped", "Repository: hrn\nImplement x\nBranch: y", "implement", "implement.build"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -101,9 +106,9 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 	}
 }
 
-func TestLeadKeepsASingleLabelValue(t *testing.T) {
-	if got := lead("Repository: hrn"); got != "hrn" {
-		t.Errorf("lead = %q, want hrn", got)
+func TestUnlabelKeepsASingleLabelValue(t *testing.T) {
+	if got := unlabel("Repository: hrn"); got != "hrn" {
+		t.Errorf("unlabel = %q, want hrn", got)
 	}
 }
 
