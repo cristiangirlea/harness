@@ -69,9 +69,9 @@ for file in scripts/*.go scripts/*.sh; do
   if [[ ${metadata[hash]} != "$hash" ]]; then
     if $check; then error "stale hash: $file"; status=1
     else
-      content=$(awk -v hash="$hash" '/^# hash: / {$0="# hash: " hash}
-        /^\/\/ hash: / {$0="// hash: " hash} {print}' "$file")
-      printf '%s\n' "$content" > "$file"
+      awk -v hash="$hash" '/^# hash: / {$0="# hash: " hash}
+        /^\/\/ hash: / {$0="// hash: " hash} {print}' "$file" > "$tmp/stamped"
+      cat "$tmp/stamped" > "$file"
     fi
   fi
   printf -- '- `%s`: %s\n' "$file" "$summary" >> "$tmp/index"

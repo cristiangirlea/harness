@@ -20,6 +20,7 @@ check_fails() {
   grep -q "$1" "$tmp/out" || fail "missing diagnostic: $1"
 }
 fixture good 'bash scripts/good.sh'
+printf '\n\n' >> "$tmp/scripts/good.sh"
 fixture stale 'bash scripts/stale.sh'
 fixture failing 'false'
 fixture paid 'none (spends money)'
@@ -29,7 +30,9 @@ grep -q 'example failed: scripts/failing.sh' "$tmp/out" || fail failing-diagnost
 grep -q 'index differs' "$tmp/out" || fail index-diagnostic
 [[ $(grep '^# hash:' "$tmp/scripts/good.sh") == '# hash: pending' ]] || fail check-wrote-hash
 [[ $(wc -l < "$tmp/AGENTS.md") == 2 ]] || fail check-wrote-index
+cp "$tmp/scripts/good.sh" "$tmp/before"
 if bash "$runner" --root "$tmp" > "$tmp/out" 2>&1; then fail expected-example-failure; fi
+cmp <(sed '/^# hash: /d' "$tmp/before") <(sed '/^# hash: /d' "$tmp/scripts/good.sh") || fail changed-body
 grep -q 'scripts/good.sh' "$tmp/AGENTS.md" || fail good-index
 if grep -q 'scripts/failing.sh' "$tmp/AGENTS.md"; then fail failing-index; fi
 grep -q '(not verified: spends money)' "$tmp/AGENTS.md" || fail excluded-index
@@ -85,4 +88,10 @@ chmod +x "$tmp/bin/go"
 if PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" bash scripts/check.sh > "$tmp/out" 2>&1; then fail check-failure; fi
 [[ $(cat "$tmp/trace") == 'vet ./...' ]] || fail check-stop
 grep -q '"error":' "$tmp/out" || fail check-error
+real_bash=$(command -v bash)
+printf '#!/bin/bash\nprintf "%%s\\n" "$2" >> "$TRACE"\n' > "$tmp/bin/bash"
+chmod +x "$tmp/bin/bash"
+PATH="$tmp/bin:$PATH" TRACE="$tmp/all" "$real_bash" scripts/check.sh > "$tmp/out"
+cmp "$tmp/steps" "$tmp/all" || fail check-order
+if "$real_bash" scripts/check.sh --unknown > "$tmp/out" 2>&1; then fail check-usage; fi
 printf '{"passed":true}\n'
