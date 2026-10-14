@@ -11,7 +11,7 @@
 | `hrn backends` | Show which backends are usable and where they were found. |
 | `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
 | `hrn remote show --tenant ID --project ID JOB_ID` | Show a remote job's state and result. |
-| `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream and resume from the last durable event ID. |
+| `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream until the job ends and resume from the last durable event ID after a disconnect. |
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
 | `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
@@ -111,6 +111,13 @@ support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
 for the corresponding tools.
 Remote jobs refuse enabled retrieval options until the worker can honor their
 version pin; use a local run for opted-in retrieval.
+
+`hrn remote events --watch` prints events until it prints one that ends the job,
+then exits with status 0, including when the job failed or was canceled. Terminal
+event kinds are `succeeded`, `failed`, and `canceled`; `admission_timeout` and
+`recovery_resolved` also end the watch when their `details.state` is terminal.
+The watch reconnects from the last printed event ID if a stream ends before a
+terminal event. Ctrl-C ends the watch early.
 
 ### Project knowledge
 
