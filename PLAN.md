@@ -622,7 +622,7 @@ order they are worth taking:
       own sessions ([#305](https://github.com/cristiangirlea/harness/issues/305)); and Ada
       gamified, experience gathered by working with the AI, from real outcomes only, with
       Ada's own growth beside it ([#306](https://github.com/cristiangirlea/harness/issues/306),
-      four owner decisions before any slice).
+      four owner decisions before any slice). #304 done: PR #314, 2026-10-14.
 12. **Guard rails** (the owner, 2026-10-11), in this order:
     - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
       Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
@@ -2134,3 +2134,17 @@ neither of them follows a run while it happens.
   per turn come from usage events, or, without them, from one per-run average
   (totals over turns), and the row says `turns`, `totals` or `mixed`. `--by day` lists days
   in date order.
+- 2026-10-14: PR #314 (closes #304): secrets masked on display. `internal/mask.Text` applies the
+  issue's ordered rules (URL credentials, `-u user:password`, JSON secret fields,
+  authorization-style headers, bare Bearer tokens, known token shapes, `NAME=value` where a
+  whole segment of the name is KEY, TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or
+  SESSION, and `--password`-style flags), replacing each value with `••••`. It runs on hrn
+  watch's rows, pages and streams (local and `--lan`, beside the env-value replacer), `hrn
+  show`, the renderer's progress lines and Ada's sentences; records and `--json` output are
+  unchanged. Deviation from the issue: the mask does not cut text at 1 KiB. The first cut
+  broke tool inputs over 1 KiB (the summary and pretty body need the whole JSON) and lost
+  everything past 1 KiB of prompts, answers and results, so the mask scans the whole text
+  (Go's regexp is linear; a page shows at most 32 KiB) and the existing excerpt cuts run
+  after it, which keeps the rule that a cut never leaves half a token visible. The names
+  pattern matches whole segments so `--max-tokens=400` and `authors=x` stay. Left out, as
+  #311: `hrn runs`, streamed deltas, URL user names.
