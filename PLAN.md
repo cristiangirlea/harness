@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: the batch merge tests save records through the batch package (#215, PR #N).
+- 2026-10-14: the batch merge tests save records through the batch package (#215, PR #280).
   Decided: expose the ownership claim and a save wrapper so fixtures use the same value and record writer as Run.
 - 2026-10-14: five slots per repository, ten at most (#256, PR #270).
   Decided: keep a small pool of reusable worktrees, about five, that may grow to ten; reuse them rather than create and delete them.
