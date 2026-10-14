@@ -726,6 +726,10 @@ neither of them follows a run while it happens.
   as stream-json on stdin, maps modes/model/effort, and records streamed text, result
   usage and conversation IDs using a parser per run. Continuation uses `--conversation`
   in place through the existing session hook; no usage-limit wording is guessed.
+- 2026-10-14: a codex reconnect notice is not the run's error (#342, PR #343). `Reconnecting...
+  n/5` is the CLI retrying its model stream: an `info` event that stands as the error only until
+  the turn completes, so a run whose work finished is `ok` with its usage, and a stream that
+  ends on the notice still reports it.
 - 2026-10-14: a take stopped by its context says so (#257, PR #339). The git commands
   before the create lock run under the take's context, so on a loaded machine its deadline
   could kill one and the take reported a broken repository. Decided: `ws.Take` wraps any
