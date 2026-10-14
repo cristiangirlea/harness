@@ -33,14 +33,16 @@ var guardRules = []struct {
 	{"guard-env", matches(guardEnvPattern())},
 	// A password prompt hangs a run that has no terminal, and anything worth
 	// running as root is worth a human typing it.
-	{"sudo", matches(`\bsudo\b`)},
+	{"sudo", matches(`\b(?i:sudo)\b`)},
 	// rm -r against a root rather than something inside one.
 	{"rm-root", rmHitsRoot},
 	// Downloading a script straight into a shell, however many stages the pipe
 	// has on the way.
-	{"pipe-to-shell", matches(`\b(?:curl|wget)\b.*\|\s*(?:sudo\s+)?(?:sh|bash|zsh|powershell|pwsh)\b`)},
+	{"pipe-to-shell", matches(`\b(?i:curl|wget|irm|iwr)\b.*\|\s*(?:(?i:sudo)\s+)?(?i:sh|bash|zsh|powershell|pwsh|iex|Invoke-Expression)\b`)},
 	// Formatting a filesystem, or writing over a device rather than a file.
-	{"disk", matches(`\bmkfs|\bformat\s+[A-Za-z]:|\bdd\b[^|&;]*\bof=\s*(?:/dev/|\\\\\.\\)`)},
+	// Match program names in any case on every platform; a Linux command named
+	// Format is not a realistic false positive.
+	{"disk", matches(`\b(?i:mkfs)|\b(?i:format)\s+[A-Za-z]:|\b(?i:dd)\b[^|&;]*\bof=\s*(?:/dev/|\\\\\.\\)`)},
 	// GitHub's side of publishing: merging, releasing, changing who can see a
 	// repository or removing it, and the API calls that change things.
 	// gh pr create is left to the guarded environment, where gh has no login:

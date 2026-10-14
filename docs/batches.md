@@ -51,14 +51,18 @@ By default (`"worktrees": "slots"`) a task runs in one of the repository's reusa
 [slots](workspaces.md), `<main checkout>/.hrn/slots/<n>`, so a `target/` or
 `node_modules/` built by an earlier task is still there and the gates build only what
 changed. Each running task leases a slot of its own, holding it with a lease that names
-the hrn process. A batch holds at most `parallel` slots (at least 4) at once, running
-tasks' and kept ones (below) together, and tries the slot numbers from 1 that hold that
-many slots other than sessions' (`hrn ws take`, a lease without a pid, held until `hrn ws
-free`), worked out again at every try: a session on slot 2 makes it try 1 and 3 to 5, one on
-slot 10 changes nothing, and a session that takes a slot in the range just as a task tries
-it widens the range at once (up to three times in a row; a fourth session arriving in that
-instant fails the task rather than retrying for ever). So a batch never waits on a session, and its own slots stay
-bounded whatever the sessions do. The task's branch is
+the hrn process. Its slot bound is `max(parallel, 5)`, capped at 10, counting
+running tasks' and kept slots (below) together. It tries the slot
+numbers from 1 that hold that many slots other than sessions' (`hrn ws take`,
+a lease without a pid, held until `hrn ws free`), worked out again at every
+try: with a five-slot bound, a session on slot 2 makes it try 1 and 3 to 6,
+one on slot 10 changes nothing, and a session that takes a slot in the range
+just as a task tries it widens the range at once (up to three times in a row;
+a fourth session arriving in that instant fails the task rather than retrying
+for ever). The range never passes slot 10; when no slot through 10 can be used,
+the task waits or fails with the repository limit named. So a batch never
+waits on a session, and its own slots stay bounded whatever the sessions do.
+The task's branch is
 made from the batch's base and checked out in the slot. When the task ends, pass, fail or
 error, the slot is detached at the base and given back. Its ignored files stay for the
 next task, and the work stays on branch `hrn/<id>`, which `diff`, `merge` and `rm` read.
