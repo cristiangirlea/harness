@@ -81,3 +81,18 @@ func TestAnEnabledAPIBackendCannotBecomeABilledCarryOn(t *testing.T) {
 		t.Fatalf("switched to %s", pick)
 	}
 }
+
+func TestALimitIsRememberedWhenThePreferenceHasNoPartner(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(time.Hour).Truncate(time.Second)
+	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: until}); err != nil {
+		t.Fatal(err)
+	}
+	if got := Until("codex", time.Now()); !got.Equal(until) {
+		t.Fatalf("remembered %v, want %v", got, until)
+	}
+}
