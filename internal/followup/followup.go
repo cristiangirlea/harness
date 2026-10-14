@@ -8,6 +8,7 @@ package followup
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,6 +102,8 @@ func Make(req Request) (Plan, error) {
 		}
 		if _, c, err := runlog.LoadConversation(r.ID); err == nil {
 			from, conv, p.Resume = i, c, &c
+		} else if !errors.Is(err, runlog.ErrNoConversation) {
+			return Plan{}, err
 		} else if agent.ForksSessions(b) && r.Result.Session != "" {
 			// A session knows the files of its own workspace, and claude only
 			// finds one from the directory it was started in.

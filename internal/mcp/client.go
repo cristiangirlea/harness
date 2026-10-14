@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 // ServerConfig describes how to start a stdio MCP server.
@@ -79,6 +81,7 @@ func (c *Client) Start(ctx context.Context, cfg ServerConfig) error {
 	for k, v := range cfg.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
+	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

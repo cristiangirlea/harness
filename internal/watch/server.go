@@ -190,10 +190,19 @@ func Serve(ctx context.Context, opt Options, lns ...net.Listener) error {
 			return err
 		}
 	}
+	var access *accessVerifier
+	if opt.Public != nil {
+		access = &accessVerifier{opt: *opt.Public}
+		keys, err := access.fetch()
+		if err != nil {
+			return fmt.Errorf("Cloudflare Access certificates at %s: %w", access.certsURL(), err)
+		}
+		access.keys = keys
+	}
 	ctx, stopStreams := context.WithCancel(ctx)
 	defer stopStreams()
 	srv := &http.Server{
-		Handler:           New(ctx, opt),
+		Handler:           newHandler(ctx, opt, access),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		// No WriteTimeout: streams stay open. Each write sets its own deadline.
@@ -241,6 +250,8 @@ type server struct {
 	ctx    context.Context // ends every stream when the server stops
 	opt    Options
 	redact *strings.Replacer // blanks secret values; see secretReplacer
+	home   string            // the user's home folder, shown as ~
+	system []string          // folders whose programs are shown by name; see systemFolders
 	access *accessVerifier
 	logMu  sync.Mutex
 }
@@ -248,15 +259,23 @@ type server struct {
 // New is the watch page's handler. Streams end when ctx does, so a server
 // shutting down does not wait for its browsers to leave.
 func New(ctx context.Context, opt Options) http.Handler {
+	return newHandler(ctx, opt, nil)
+}
+
+func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.Handler {
 	if opt.Poll <= 0 {
 		opt.Poll = 500 * time.Millisecond
 	}
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ())}
+	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ()), system: systemFolders()}
+	s.home, _ = os.UserHomeDir()
 	if opt.Public != nil {
-		s.access = &accessVerifier{opt: *opt.Public}
+		if access == nil {
+			access = &accessVerifier{opt: *opt.Public}
+		}
+		s.access = access
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
@@ -309,7 +328,7 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 			if !publicHostMatches(r.Host, publicHost) {
 				aw.reason = "bad host"
 			}
-			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate")
+			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document")
 			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.opt.Public.Origin) {
 				aw.reason = "bad origin"
 			}
@@ -454,9 +473,15 @@ func (s *server) lists() lists {
 		}
 		l.Problems = append(l.Problems, msg)
 	}
+	// The rows are the same for every viewer: shortened, never with a title.
+	// A run's purpose comes from its prompt as recorded, as hrn report has
+	// it; only the prompt shown is shortened.
+	vw := viewer{home: s.home, system: s.system}
 	for i, rec := range runs {
 		runs[i] = s.cleanRecord(rec)
-		l.Runs = append(l.Runs, runRow(runs[i]))
+		r := runRow(runs[i])
+		r.Prompt, _ = firstLine(vw.shortener(rec.Task.Dir).shorten(runs[i].Task.Prompt))
+		l.Runs = append(l.Runs, r)
 	}
 	l.Purposes = purposesOf(runs)
 	batches, unreadable, err := batch.List()
@@ -477,7 +502,7 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, fmt.Sprintf("%d batch record(s) could not be read.", unreadable))
 	}
 	for i, res := range batches {
-		batches[i] = s.cleanBatch(res) // the task names below come from these too
+		batches[i] = vw.batch(s.cleanBatch(res)) // the task names below come from these too
 		if i < 20 {
 			l.Batches = append(l.Batches, batchRow(batches[i]))
 		}
@@ -534,6 +559,10 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	s.page(w, http.StatusOK, "index", p)
 }
 
+func (s *server) viewerOf(r *http.Request) viewer {
+	return viewer{local: s.fromThisComputer(r), home: s.home, system: s.system}
+}
+
 // fromThisComputer: the connection came from a loopback address. A request
 // to this computer's network address comes from that address, not loopback.
 func (s *server) fromThisComputer(r *http.Request) bool {
@@ -565,12 +594,14 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Run "+rec.ID, err)
 		return
 	}
+	vw := s.viewerOf(r)
+	sh := vw.shortener(rec.Task.Dir)
 	prev := rec.Started
 	events := make([]eventView, 0, len(lines))
 	var usage []agent.Event
 	for _, l := range lines {
 		var v eventView
-		l.Event = s.cleanEvent(l.Event)
+		l.Event = sh.event(s.cleanEvent(l.Event))
 		if feedsChart(l) {
 			usage = append(usage, l.Event)
 		}
@@ -580,7 +611,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		v, prev = eventOf(l, prev)
 		events = append(events, v)
 	}
-	p := runPageOf(s.cleanRecord(rec), events, prev)
+	p := runPageOf(sh.record(s.cleanRecord(rec)), events, prev, vw)
 	p.Usage = usageOf(usage)
 	p.Home = s.homeFor(r)
 	if !done {
@@ -599,7 +630,8 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Batch "+r.PathValue("id"), err)
 		return
 	}
-	p := batchPageOf(s.cleanBatch(res))
+	vw := s.viewerOf(r)
+	p := batchPageOf(vw.batch(s.cleanBatch(res)), vw)
 	p.Home = s.homeFor(r)
 	s.page(w, http.StatusOK, "batch", p)
 }
@@ -764,6 +796,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
 	}
+	vw := s.viewerOf(r)
 	st := s.startStream(w)
 	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, bool, error) {
 		res, err := batch.LoadResult(id)
@@ -775,7 +808,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 			res = last
 		}
 		last = res
-		return batchBodyOf(s.cleanBatch(res)), !batchGoing(res), nil
+		return batchBodyOf(vw.batch(s.cleanBatch(res)), vw), !batchGoing(res), nil
 	}, "batchbody")
 }
 
@@ -805,6 +838,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	if prev.IsZero() {
 		prev = rec.Started
 	}
+	sh := s.viewerOf(r).shortener(rec.Task.Dir)
 	// The chart is drawn over every turn, so a stream that starts partway
 	// reads the turns before it first.
 	before := Tail{Path: filepath.Join(runlog.Root(), id, "events.jsonl")}
@@ -816,7 +850,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	var usage []agent.Event
 	for _, l := range earlier {
 		if l.End <= cur.off && feedsChart(l) {
-			usage = append(usage, s.cleanEvent(l.Event))
+			usage = append(usage, sh.event(s.cleanEvent(l.Event)))
 		}
 	}
 	st := s.startStream(w)
@@ -824,7 +858,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		lines, rec, done, err := f.Poll()
 		for _, l := range lines {
 			var v eventView
-			l.Event = s.cleanEvent(l.Event)
+			l.Event = sh.event(s.cleanEvent(l.Event))
 			if feedsChart(l) {
 				usage = append(usage, l.Event)
 				html, rerr := s.render("usage", usageOf(usage))
@@ -853,7 +887,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		if !done {
 			return false, nil
 		}
-		html, err := s.render("result", resultOf(s.cleanRecord(rec).Result))
+		html, err := s.render("result", resultOf(sh.record(s.cleanRecord(rec)).Result))
 		if err != nil {
 			return true, s.problem(r, st, err)
 		}

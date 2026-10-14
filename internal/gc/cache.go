@@ -43,6 +43,7 @@ type Cache struct {
 	risk       string // why it cannot go whole, found by the walk that sized it
 	young      bool   // kept only because it was written too recently
 	driveID    string // drive identified during the free-below scan
+	driveName  string // readable name from the free-below scan
 	driveBelow bool   // that drive was below the limit before any removals
 	driveMore  bool   // eligible caches left because enough was already going
 }
@@ -50,6 +51,7 @@ type Cache struct {
 // Drive is what the cache pass knows about the volume holding a folder.
 type Drive struct {
 	ID   string // the same for every folder on one volume: the drive on Windows, the device elsewhere
+	Name string // readable mount point, when available
 	Free int64  // bytes free for this user
 }
 
@@ -296,7 +298,7 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if isMovedCache(c.Path) {
 		return Remove, "moved cache left by an earlier removal"
 	}
-	idle := now.Sub(c.LastBuild)
+	idle := ageAt(now, c.LastBuild)
 	if idle >= opt.Idle {
 		return Remove, "idle " + short(idle)
 	}
@@ -371,6 +373,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			continue
 		}
 		c.driveID = d.ID
+		c.driveName = d.Name
 		s := drives[d.ID]
 		if s == nil {
 			s = &drive{free: d.Free, after: d.Free}
@@ -390,7 +393,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 		sort.SliceStable(s.candidates, func(a, b int) bool { return all[s.candidates[a]].LastBuild.Before(all[s.candidates[b]].LastBuild) })
 		for _, i := range s.candidates {
 			c := &all[i]
-			idle := now.Sub(c.LastBuild)
+			idle := ageAt(now, c.LastBuild)
 			if alreadyEnough {
 				if s.free < opt.FreeBelow && idle >= minIdle {
 					s.more = true
@@ -406,7 +409,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 				continue // enough is going already; younger ones keep their reason
 			}
 			c.Verdict = Remove
-			c.Reason = fmt.Sprintf("idle %s, and %s has only %s free, below %s", short(idle), id, report.Bytes(s.free), report.Bytes(opt.FreeBelow))
+			c.Reason = fmt.Sprintf("idle %s, and %s has only %s free, below %s", short(idle), driveLabel(c.driveID, c.driveName), report.Bytes(s.free), report.Bytes(opt.FreeBelow))
 			s.after += c.Size
 		}
 	}
@@ -416,6 +419,13 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			all[i].driveMore = s.more
 		}
 	}
+}
+
+func driveLabel(id, name string) string {
+	if name != "" {
+		return name
+	}
+	return id
 }
 
 // FreeBelowReport reads the free space after apply for drives that were below
@@ -436,6 +446,7 @@ func FreeBelowReport(caches []Cache, opt Options) []string {
 			continue
 		}
 		seen[c.driveID] = true
+		label := driveLabel(c.driveID, c.driveName)
 		path := c.Path
 		for {
 			if _, err := os.Stat(path); err == nil {
@@ -449,17 +460,20 @@ func FreeBelowReport(caches []Cache, opt Options) []string {
 		}
 		d, err := lookup(path)
 		if err != nil {
-			lines = append(lines, fmt.Sprintf("%s free space could not be read: %s", c.driveID, firstLine(err.Error())))
+			lines = append(lines, fmt.Sprintf("%s free space could not be read: %s", label, firstLine(err.Error())))
 			continue
 		}
 		if d.ID != c.driveID {
-			lines = append(lines, fmt.Sprintf("%s free space could not be read: the drive is no longer there", c.driveID))
+			lines = append(lines, fmt.Sprintf("%s free space could not be read: the drive is no longer there", label))
 			continue
 		}
+		if d.Name != "" {
+			label = d.Name
+		}
 		if d.Free >= opt.FreeBelow {
-			lines = append(lines, fmt.Sprintf("%s now has %s free, above %s", c.driveID, report.Bytes(d.Free), limit))
+			lines = append(lines, fmt.Sprintf("%s now has %s free, above %s", label, report.Bytes(d.Free), limit))
 		} else {
-			line := fmt.Sprintf("%s still has %s free, %s below %s", c.driveID, report.Bytes(d.Free), report.Bytes(opt.FreeBelow-d.Free), limit)
+			line := fmt.Sprintf("%s still has %s free, %s below %s", label, report.Bytes(d.Free), report.Bytes(opt.FreeBelow-d.Free), limit)
 			if c.driveMore {
 				line += "; another hrn gc --free-below run picks the next caches"
 			}
@@ -495,6 +509,16 @@ func profiles(dir string) []string {
 	walk(dir, 2)
 	sort.Strings(out)
 	return out
+}
+
+// ageAt is how long before now a cache was last written. A write time a hair
+// after now (file times and the clock differ by their resolution) is age 0,
+// so --idle 0 takes any cache (#245).
+func ageAt(now, written time.Time) time.Duration {
+	if d := now.Sub(written); d > 0 {
+		return d
+	}
+	return 0
 }
 
 // lastBuild is the newest write among a cache's profile folders, their deps,
