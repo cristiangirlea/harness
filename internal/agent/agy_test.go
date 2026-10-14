@@ -148,6 +148,7 @@ func TestAgyParsesUnknownStepsWithoutAddingThemToTheAnswer(t *testing.T) {
 		}
 	}
 	for _, line := range []string{
+		`{"event":"step_update","step_update":{"step_type":"user_input","text_delta":"the prompt echoed"}}`,
 		`{"event":"step_update","step_update":{"conversation_id":"step-session","step_type":"new_tool_type","text_delta":"tool detail"}}`,
 		`{"event":"step_update","step_update":{"step_type":"new_empty_type"}}`,
 		`{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"answer"}}`,
@@ -159,6 +160,13 @@ func TestAgyParsesUnknownStepsWithoutAddingThemToTheAnswer(t *testing.T) {
 	}
 	if text.String() != "tool detailanswer\n" || res.Final != "answer\n" || res.Session != "step-session" || res.Status == StatusError {
 		t.Fatalf("text %q, result %+v", text.String(), res)
+	}
+	// A result without a response keeps the streamed answer.
+	if !parse([]byte(`{"event":"result","result":{"status":"SUCCESS","num_turns":1}}`), emit, &res) {
+		t.Fatal("unparsed result")
+	}
+	if res.Final != "answer\n" || res.Status != StatusOK || res.Turns != 1 {
+		t.Fatalf("a result without a response lost the answer: %+v", res)
 	}
 	if parse([]byte("not JSON"), emit, &res) {
 		t.Fatal("accepted non-JSON")

@@ -115,7 +115,8 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 			if l.Step.Model != "" {
 				model = l.Step.Model
 			}
-			if l.Step.TextDelta != "" {
+			// A user_input step carries the prompt back; it is not the answer.
+			if l.Step.TextDelta != "" && l.Step.StepType != "user_input" {
 				emit(Event{Time: now, Kind: EventText, Text: l.Step.TextDelta, Partial: true})
 				if l.Step.StepType == "agent_response" {
 					answer.WriteString(l.Step.TextDelta)
@@ -130,7 +131,11 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 			if r.Model != "" {
 				model = r.Model
 			}
-			res.Final, res.Turns = r.Response, r.NumTurns
+			// A result without a response keeps the streamed answer.
+			if r.Response != "" {
+				res.Final = r.Response
+			}
+			res.Turns = r.NumTurns
 			res.Status = StatusOK
 			if r.Status != "SUCCESS" {
 				res.Status = StatusError
