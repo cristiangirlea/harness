@@ -25,6 +25,9 @@ do not make paid model calls as part of validation.
 CI tests pull requests and pushes to `main` on standard GitHub-hosted Linux and Windows
 runners. Releases build on `ubuntu-latest`. These runners are free for public repositories;
 both workflows skip their jobs if the repository is private. No self-hosted runner is needed.
+A change that touches only Markdown (AGENTS.md excepted, since `scripts/verify.sh` checks its
+script index) builds and tests nothing: CI's `changes` job decides, the required `test` jobs
+still report with their steps skipped, and the other jobs are skipped.
 See [SECURITY.md](SECURITY.md) for the security boundaries and private vulnerability reports.
 
 - **Standard library only.** No third-party Go modules, and Windows syscalls go through
