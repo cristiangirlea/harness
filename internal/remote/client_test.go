@@ -1,13 +1,16 @@
 package remote
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type brokenWriter struct{}
@@ -87,6 +90,35 @@ func TestWatchErrorNamesTheStatusWithoutTheResponseBody(t *testing.T) {
 	var httpErr *HTTPError
 	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusForbidden || strings.Contains(err.Error(), body) {
 		t.Fatalf("watch error = %v, want HTTP 403 without response body", err)
+	}
+}
+
+func TestWatchStopsOnOversizedEventLine(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "id: 1\ndata: "+strings.Repeat("x", 1<<20)+"\n\n")
+	}))
+	defer server.Close()
+	t.Setenv("HRN_SERVER_URL", server.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	client, err := NewFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err = client.Watch(ctx, "/v1/jobs/j_fixture/events", 0, io.Discard)
+	if ctx.Err() != nil {
+		t.Fatalf("Watch reached the context deadline instead of returning the line error: %v", err)
+	}
+	if !errors.Is(err, bufio.ErrTooLong) || !strings.Contains(err.Error(), "event line") || !strings.Contains(err.Error(), "1 MiB") {
+		t.Errorf("Watch error = %v, want an event line over the 1 MiB limit", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Errorf("requests = %d, want 1", got)
 	}
 }
 
