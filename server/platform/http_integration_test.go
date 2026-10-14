@@ -231,6 +231,42 @@ func TestHTTPWrongOperatorAndScalerTokensOfValidLengthAreRefused(t *testing.T) {
 	}
 }
 
+func TestHTTPCreateProjectUnknownTenant(t *testing.T) {
+	store := testStore(t)
+	operator := "operator-token-abcdefghijklmnopqrstuvwxyz"
+	server := httptest.NewServer((&HTTPServer{Store: store, OperatorToken: operator}).Handler())
+	defer server.Close()
+
+	missingTenant, err := newID("t_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := Project{TenantID: missingTenant, Name: "missing-tenant",
+		RepositoryURL: "https://example.invalid/example.git", BaseRef: fixtureRef, Backend: "api"}
+	status, raw := sendJSON(t, server.Client(), "POST", server.URL+"/v1/projects", operator, project)
+	if status != http.StatusNotFound || !bytes.Contains(raw, []byte(`"code":"not_found"`)) ||
+		!bytes.Contains(raw, []byte(`"message":"tenant or resource not found"`)) {
+		t.Fatalf("unknown tenant: %d %s", status, raw)
+	}
+}
+
+func TestHTTPScalingDemandUnknownProject(t *testing.T) {
+	store := testStore(t)
+	scaler := "scaler-token-abcdefghijklmnopqrstuvwxyz12"
+	server := httptest.NewServer((&HTTPServer{Store: store, ScalerToken: scaler}).Handler())
+	defer server.Close()
+
+	missingProject, err := newID("p_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, raw := sendJSON(t, server.Client(), "GET", server.URL+"/internal/scaling/projects/"+missingProject, scaler, nil)
+	if status != http.StatusNotFound || !bytes.Contains(raw, []byte(`"code":"not_found"`)) ||
+		!bytes.Contains(raw, []byte(`"message":"project or resource not found"`)) {
+		t.Fatalf("unknown project: %d %s", status, raw)
+	}
+}
+
 func TestHTTPSubmitAuthorizationWithRealStorePrecedesDecode(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
