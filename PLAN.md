@@ -684,6 +684,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: public watch navigation exemption (#228, PR #259). Decided: only GET/HEAD
+  navigations with `Sec-Fetch-Dest: document` bypass the Origin and cross-site check;
+  embedded and destination-less navigations follow the normal rule.
 - 2026-10-14: the guard refuses gh api calls to publishing endpoints (#210, PR #293).
   Decided: refuse the named REST paths under any method, including harmless GETs, so implicit
   POSTs from fields or --input cannot slip through; refuse GraphQL mutations in the line.
