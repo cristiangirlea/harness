@@ -721,6 +721,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a take stopped by its context says so (#257, PR #N). The git commands
+  before the create lock run under the take's context, so on a loaded machine its deadline
+  could kill one and the take reported a broken repository. Decided: `ws.Take` wraps any
+  error with the context's once the context has ended, keeping both for `errors.Is`/`As`.
 - 2026-10-14: purpose reads past labels and context (#118, PR #319). Leading label
   lines are skipped, a final label contributes its value, and the second non-blank
   paragraph is tried only when the first matches no rule, with the cap applied to each.
