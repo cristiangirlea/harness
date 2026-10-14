@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: none
+// hash: e802a27b13c10af11ff2052afc358f95051799d4a165718df7bc8f1fd9382ddb
 package main
 
 import (

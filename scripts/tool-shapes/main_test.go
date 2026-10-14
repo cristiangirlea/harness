@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: none
+// hash: 4634e920659c3b45f114be525d2fadbb2d4d781c9f31e25248b7ef25cb6e1e20
 package main
 
 import (
