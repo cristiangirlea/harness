@@ -8,6 +8,7 @@ package purpose
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -17,6 +18,42 @@ var Categories = []string{"review", "debug", "implement", "refactor", "test", "r
 
 // Unknown is the category of a prompt no rule matches.
 const Unknown = "unknown"
+
+// Valid reports whether c is a category that callers may declare.
+func Valid(c string) bool {
+	return c != Unknown && slices.Contains(Categories, c)
+}
+
+// Declared reads a Purpose: <category> header on the first non-blank line.
+// The label and category are case-insensitive. A non-category value, including
+// unknown or free text, is ignored rather than treated as an error.
+func Declared(prompt string) string {
+	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
+	for line := range strings.Lines(prompt) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		label, value, ok := strings.Cut(line, ":")
+		value = strings.ToLower(strings.TrimSpace(value))
+		if ok && strings.EqualFold(label, "Purpose") && Valid(value) {
+			return value
+		}
+		break
+	}
+	return ""
+}
+
+// Resolve prefers an explicit declaration, then a header, then keyword rules.
+func Resolve(declared, prompt string) Result {
+	if declared == "" {
+		declared = Declared(prompt)
+	}
+	if declared != "" {
+		return Result{Category: declared, Rule: "declared"}
+	}
+	return Classify(prompt)
+}
 
 // Result is a prompt's category and the id of the rule that put it there ("" for
 // unknown). It never carries prompt text.
