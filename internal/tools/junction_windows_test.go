@@ -195,6 +195,52 @@ func TestAWorkspaceReachedThroughAJunctionStillWorks(t *testing.T) {
 	}
 }
 
+func TestListAndGrepInJunctionRootedWorkspace(t *testing.T) {
+	real, _ := setup(t)
+	must(t, os.MkdirAll(filepath.Join(real.Root, "sub"), 0o755))
+	must(t, os.WriteFile(filepath.Join(real.Root, "root.txt"), []byte("junction root marker\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(real.Root, "sub", "target.txt"), []byte("junction root marker\n"), 0o644))
+	link := filepath.Join(t.TempDir(), "link")
+	junction(t, link, real.Root)
+	ws, err := NewWorkspace(link)
+	must(t, err)
+	outsideWithJunction(t, ws)
+	byName := map[string]Tool{}
+	for _, tl := range All() {
+		byName[tl.Name] = tl
+	}
+
+	out, err := call(t, ws, byName["list_files"], map[string]any{})
+	must(t, err)
+	for _, path := range []string{"root.txt", "sub/target.txt"} {
+		if !strings.Contains(out, path) {
+			t.Errorf("list_files = %q, want %q", out, path)
+		}
+	}
+	if strings.Contains(out, "out/secret.txt") {
+		t.Errorf("list_files followed the junction outside: %q", out)
+	}
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"", "root.txt:1:junction root marker"},
+		{"sub", "sub/target.txt:1:junction root marker"},
+	} {
+		out, err := call(t, ws, byName["grep"], map[string]any{"pattern": "junction root marker", "path": tc.path})
+		must(t, err)
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("grep in %q = %q, want %q", tc.path, out, tc.want)
+		}
+	}
+	out, err = call(t, ws, byName["grep"], map[string]any{"pattern": "outside TODO"})
+	must(t, err)
+	if out != "(no matches)" {
+		t.Errorf("grep followed the junction outside: %q", out)
+	}
+}
+
 // A secret directory reached through a junction inside the workspace is
 // secret where the junction leads, for the file tools and for grep.
 func TestASecretDirectoryBehindAJunctionIsSecret(t *testing.T) {
