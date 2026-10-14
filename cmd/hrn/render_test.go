@@ -55,3 +55,30 @@ func TestRunFieldsCannotDriveTheTerminalEither(t *testing.T) {
 		}
 	}
 }
+
+func TestRendererMasksBeforeShortening(t *testing.T) {
+	secret := "Authorization: Bearer " + strings.Repeat("z", 300)
+	for _, kind := range []agent.EventKind{agent.EventText, agent.EventThinking, agent.EventToolCall, agent.EventToolResult, agent.EventInfo, agent.EventSession, agent.EventError} {
+		var b strings.Builder
+		r := &renderer{out: &b, thinking: true}
+		r.Event(agent.Event{Kind: kind, Text: secret})
+		if strings.Contains(b.String(), "zz") || !strings.Contains(b.String(), "••••") {
+			t.Errorf("%s leaks: %q", kind, b.String())
+		}
+	}
+	for _, input := range []string{`{"command":"` + secret + `"}`, `{"password":"` + strings.Repeat("z", 300) + `"}`} {
+		var b strings.Builder
+		r := &renderer{out: &b}
+		r.Event(agent.Event{Kind: agent.EventToolCall, Input: []byte(input)})
+		if strings.Contains(b.String(), "zz") || !strings.Contains(b.String(), "••••") {
+			t.Errorf("input leaks: %q", b.String())
+		}
+	}
+	var b strings.Builder
+	r := &renderer{out: &b}
+	r.Line(secret)
+	showHeader(r, runlog.Record{Task: agent.Task{Prompt: secret}})
+	if strings.Contains(b.String(), "zz") || strings.Count(b.String(), "••••") != 2 {
+		t.Errorf("lines leak: %q", b.String())
+	}
+}
