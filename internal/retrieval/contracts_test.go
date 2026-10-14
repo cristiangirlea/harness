@@ -44,6 +44,53 @@ func TestPacketAcceptsOneServerLabelPairPerEntry(t *testing.T) {
 	}
 }
 
+func TestPacketRejectsOversizedEntryContent(t *testing.T) {
+	text := "[Reference entry; source=\"source\"; revision=main; evidence=\"evidence\"]\nshort\n[/Reference]\n"
+	p := Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: TextDigest(text), Entries: []Entry{{ID: "entry", Content: strings.Repeat("x", 1<<20)}}}
+	if err := ValidatePacket(p, "", ""); err == nil || !strings.Contains(err.Error(), "entries") || !strings.Contains(err.Error(), "8192") {
+		t.Fatalf("oversized entry content: %v", err)
+	}
+}
+
+func TestPacketRejectsCombinedEntryTextOverCap(t *testing.T) {
+	text := "[Reference first; source=\"source\"; revision=main; evidence=\"evidence\"]\nshort\n[/Reference]\n" +
+		"[Reference second; source=\"source\"; revision=main; evidence=\"evidence\"]\nshort\n[/Reference]\n"
+	p := Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: TextDigest(text), Entries: []Entry{
+		{ID: "first", Content: strings.Repeat("x", MaxPacketBytes/2)},
+		{ID: "second", Content: strings.Repeat("x", MaxPacketBytes/2)},
+	}}
+	if err := ValidatePacket(p, "", ""); err == nil || !strings.Contains(err.Error(), "entries") || !strings.Contains(err.Error(), "8192") {
+		t.Fatalf("combined entry text over cap: %v", err)
+	}
+}
+
+func TestPacketRejectsOversizedEntryMetadata(t *testing.T) {
+	text := "[Reference entry; source=\"source\"; revision=main; evidence=\"evidence\"]\nshort\n[/Reference]\n"
+	for _, field := range []string{"key", "identifier"} {
+		t.Run(field, func(t *testing.T) {
+			entry := Entry{ID: "entry", Content: "short"}
+			switch field {
+			case "key":
+				entry.Key = strings.Repeat("x", MaxPacketBytes)
+			case "identifier":
+				entry.Identifiers = []string{strings.Repeat("x", MaxPacketBytes)}
+			}
+			p := Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: TextDigest(text), Entries: []Entry{entry}}
+			if err := ValidatePacket(p, "", ""); err == nil || !strings.Contains(err.Error(), "entries") || !strings.Contains(err.Error(), "8192") {
+				t.Fatalf("oversized entry metadata: %v", err)
+			}
+		})
+	}
+}
+
+func TestPacketRejectsEntryIDMissingFromText(t *testing.T) {
+	text := "[Reference listed; source=\"source\"; revision=main; evidence=\"evidence\"]\nshort\n[/Reference]\n"
+	p := Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: TextDigest(text), Entries: []Entry{{ID: "unlisted", Content: "short"}}}
+	if err := ValidatePacket(p, "", ""); err == nil || !strings.Contains(err.Error(), "entry id") {
+		t.Fatalf("entry id missing from text: %v", err)
+	}
+}
+
 func TestPacketRejectsExtraLabelsAndOuterFrameMarkersInText(t *testing.T) {
 	baseText := "[Reference entry; source=\"source\"; revision=main; evidence=\"evidence\"]\ncontent\n[/Reference]\n"
 	for _, marker := range []string{"<project-reference", "</project-reference>", "[Reference ", "[/Reference]"} {
