@@ -676,6 +676,29 @@ order they are worth taking:
     - [x] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison. Done: PR #186, 2026-10-13.
     - [x] `durable` into main. Done: PR #266, 2026-10-14.
 
+18. **Cheaper runs: shape what the agent reads, route by evidence, keep the scripts it retypes**
+    (the owner, 2026-10-14). A session's tokens are mostly cache reads of tool results (in the
+    sample in `docs/evaluations.md`, output is about 2% of them), so an output style saves
+    nothing here. The levers are what the agent reads, which effort and model answer, and what
+    it writes twice. In this order, each its own PR:
+    - [#295](https://github.com/cristiangirlea/harness/issues/295): measure first, from the run
+      records: tool-result bytes by shape, and the inline scripts written again and again.
+    - [#151](https://github.com/cristiangirlea/harness/issues/151) and
+      [#264](https://github.com/cristiangirlea/harness/issues/264): an unknown cost is never
+      zero and a cache read is counted once, before any saving is claimed.
+    - [#296](https://github.com/cristiangirlea/harness/issues/296): large tool results shaped
+      per kind (tests, logs, JSON, tables, terminal), the original kept behind a handle,
+      invariants checked, measured by an eval in hrn-evals.
+    - [#297](https://github.com/cristiangirlea/harness/issues/297): a routing table from eval
+      results (purpose to backend, model and effort), applied when a run names none and
+      recorded in the run; effort first, then model; the AdaNext allocation as the first table,
+      local models once measured (#224).
+    - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
+      CI-verified index for the scripts agents write twice, kept under `scripts/`.
+    The gate side lives in adanext-exec (output shaping, and the hint when a kept script covers
+    a command: adanext-exec #1 and #2); the rule for claiming a saving and the page of where
+    each model loses live in hrn-evals (#3 and #4).
+
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
 HTTP (every host met so far speaks stdio). A web dashboard was on this list ("report and
