@@ -92,6 +92,47 @@ func TestReportCostCells(t *testing.T) {
 	}
 }
 
+func TestReportRoutedTextAndJSON(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.CreateContinuing("codex", agent.Task{Prompt: "Implement widget"}, "", &runlog.RoutedBy{Category: "implement", Eval: "e1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK, CostUSD: 1.5}); err != nil {
+		t.Fatal(err)
+	}
+	for _, jsonOut := range []bool{false, true} {
+		f, err := os.CreateTemp(t.TempDir(), "stdout")
+		if err != nil {
+			t.Fatal(err)
+		}
+		prev := os.Stdout
+		os.Stdout = f
+		args := []string{"--by", "routed"}
+		if jsonOut {
+			args = append(args, "--json")
+		}
+		err = cmdReport(args)
+		os.Stdout = prev
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(f.Name())
+		if !strings.Contains(string(data), "implement via e1") {
+			t.Fatalf("output: %s", data)
+		}
+		if jsonOut {
+			var rep report.Report
+			if err := json.Unmarshal(data, &rep); err != nil || rep.Runs[0].Runs != 1 || rep.Runs[0].OK != 1 || rep.Runs[0].TotalCost != 1.5 {
+				t.Fatalf("json: %s %v", data, err)
+			}
+		} else if !strings.Contains(string(data), "$1.50") {
+			t.Fatalf("text: %s", data)
+		}
+	}
+}
+
 func TestReportCostCellsAcrossBackends(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, run := range []struct {
