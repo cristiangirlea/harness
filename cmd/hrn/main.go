@@ -238,6 +238,13 @@ func cmdRun(args []string) (int, error) {
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
+	preference, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return 2, fmt.Errorf("run: %w", err)
+	}
+	if err := preference.Check(backend); err != nil {
+		return 2, fmt.Errorf("run: %w", err)
+	}
 
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -315,6 +322,9 @@ func cmdRun(args []string) (int, error) {
 	}
 	if backend == "" {
 		backend = agent.DefaultBackendNameIn(runlog.Home())
+	}
+	if err := preference.Check(backend); err != nil {
+		return 2, fmt.Errorf("run: %w", err)
 	}
 	b, err := agent.Get(backend)
 	if err != nil {

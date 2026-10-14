@@ -99,6 +99,11 @@ func text(s string, structured any, isError bool) mcp.CallResult {
 
 func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	names := agent.Names()
+	if p, err := agent.BackendPreferences(runlog.Home()); err == nil {
+		names = p.Filter(names)
+	} else {
+		names = nil // Invalid preferences offer no backends; the handler reports the error.
+	}
 	enum := make([]any, len(names))
 	for i, n := range names {
 		enum[i] = n
@@ -152,6 +157,13 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if err := args.Options.Validate(); err != nil {
 				return mcp.CallResult{}, err
 			}
+			preference, err := agent.BackendPreferences(runlog.Home())
+			if err != nil {
+				return text("run: "+err.Error(), nil, true), nil
+			}
+			if err := preference.Check(args.Backend); err != nil {
+				return text("run: "+err.Error(), nil, true), nil
+			}
 			// As hrn run does: a backend whose limit is remembered hands
 			// the run to its partner before anything is planned.
 			var routed string
@@ -193,6 +205,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			if args.Backend == "" {
 				args.Backend = agent.DefaultBackendNameIn(runlog.Home())
+			}
+			if err := preference.Check(args.Backend); err != nil {
+				return text("run: "+err.Error(), nil, true), nil
 			}
 			b, err := agent.Get(args.Backend)
 			if err != nil {
