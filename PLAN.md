@@ -706,7 +706,11 @@ order they are worth taking:
       results (purpose to backend, model and effort), applied when a run names none and
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
       local models once a hrn-evals suite has measured them (the eval #224 asks for). Done:
-      PR #329, 2026-10-14, without the first table: that eval run waits for the owner.
+      PR #329, 2026-10-14. The first table: hrn-evals eval `b123c` (six tasks, four codex
+      variants, one repeat), five rows, all Luna since codex reports no cost data and the
+      rules then take the lower effort; recorded in hrn-evals PR #11
+      (`results/2026-10-14-routing.md`). The claude rows and three repetitions follow the
+      limit reset of 2026-10-18, on the owner's yes.
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
       CI-verified index for the scripts agents write twice, kept under `scripts/`. Done:
       PR #317, 2026-10-14.
@@ -726,6 +730,11 @@ neither of them follows a run while it happens.
   as stream-json on stdin, maps modes/model/effort, and records streamed text, result
   usage and conversation IDs using a parser per run. Continuation uses `--conversation`
   in place through the existing session hook; no usage-limit wording is guessed.
+- 2026-10-14: watch matches quoted program path delimiters (#237, PR #363). Only the
+  matching quote ends a quoted program path, so apostrophes in double-quoted Windows
+  folder names survive the scan, including JSON-escaped text. In single quotes a
+  double quote that no backslash escapes still ends the scan, since in JSON text it
+  closes the string. Unquoted delimiters and the line-end and input-end bounds stay.
 - 2026-10-14: index stream sends later changes (#66, PR #362). Test a new run
   appearing in a later replace on the same connection, after reading the first
   fragment, with a short poll interval and a generous deadline. Suppressing every
