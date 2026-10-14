@@ -172,6 +172,10 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
 			dir = ws.Root
+			routedBy, err := args.Options.Route(args.Prompt, &args.Backend, runlog.Home())
+			if err != nil {
+				return mcp.CallResult{}, err
+			}
 			if args.Backend == "" {
 				args.Backend = agent.DefaultBackendName()
 			}
@@ -183,7 +187,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
-			rec, err := runlog.CreateContinuing(args.Backend, task, args.ContinueRunID)
+			rec, err := runlog.CreateContinuing(args.Backend, task, args.ContinueRunID, routedBy)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 			}

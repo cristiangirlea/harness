@@ -16,6 +16,23 @@ import (
 
 var t0 = time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 
+func TestRowsByRouted(t *testing.T) {
+	runs := sample()
+	runs[0].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1"}
+	runs[1].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1"}
+	runs[2].RoutedBy = &runlog.RoutedBy{Category: "review"}
+	rows, all, err := (Data{Runs: runs}).RunRows("routed")
+	if err != nil || len(rows) != 3 || all.Runs != 4 {
+		t.Fatalf("rows: %+v %+v %v", rows, all, err)
+	}
+	if rows[0].Key != "implement via e1" || rows[0].Runs != 2 || rows[0].OK != 2 || !near(rows[0].TotalCost, .4) {
+		t.Fatalf("eval row: %+v", rows[0])
+	}
+	if rows[1].Key != "-" || rows[1].OK != 0 || rows[2].Key != "review via hand" {
+		t.Fatalf("other rows: %+v", rows)
+	}
+}
+
 func rec(backend, model, dir string, started time.Duration, res agent.Result) runlog.Record {
 	res.Backend = backend
 	res.Model = model
