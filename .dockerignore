@@ -1,0 +1,12 @@
+# The image builds from go.mod, internal/ and server/ only (server/Dockerfile). Everything else,
+# and untracked local files such as a .env or a kubeconfig, stays out of the build context.
+*
+!go.mod
+!internal
+!server
+server/deploy
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/kubeconfig*
