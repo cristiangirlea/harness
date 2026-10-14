@@ -20,7 +20,49 @@ compatibility matrix for every CLI version; check your installed backend with `h
 by hand, not that a test passed. Treat the unverified rows as drafts that need one run and
 probably one fix.
 
-Default backend: `api` when credentials exist, otherwise `claude`, or the route table's row for the prompt's purpose, when one exists.
+Without preferences, the default backend is `api` when credentials exist, otherwise
+`claude`, or the route table's row for the prompt's purpose, when one exists.
+
+### Choosing which backends hrn may use
+
+Set the enabled backends once for runs, MCP calls, batches, eval cells and judges,
+and the supervisor protocol:
+
+```bash
+hrn backends set --only claude,codex --default claude
+hrn backends
+hrn backends reset
+```
+
+`set` validates names against the backends registered in this hrn binary and writes
+`$HRN_HOME/backends.json` (normally `~/.hrn/backends.json`) atomically:
+
+```json
+{"enabled":["claude","codex"],"default":"claude"}
+```
+
+For a build that registers `agy`, use `--only claude,agy` instead. A name need not
+be installed to be enabled, but it must be registered. `--default` is optional;
+when supplied it must appear in `--only`. `set` replaces the whole preference.
+`reset` removes the file, including a malformed one, and restores today's default
+selection. A missing file or an empty enabled list with no default leaves all
+backends enabled. A nonempty default without an enabled list is refused.
+
+The configured default wins when installed; otherwise hrn chooses enabled `api`
+when credentials exist, then the first installed enabled backend in preference
+order, falling back to `claude`. If that fallback is disabled, the run is refused.
+`hrn backends` shows enabled/disabled, the configured default (or the selected default
+when none is configured), availability and remembered limits beside each backend.
+
+An explicit disabled backend is refused before execution (`hrn run` exits 2).
+Purpose routing ignores disabled rows with a warning and records no routing evidence.
+Batch retry lists lose disabled entries while keeping their original order and
+repetitions; a nonempty list with no enabled entries is refused.
+
+At a usage limit the carry-on partner is the first other installed enabled backend
+in preference order, subject to the existing readiness and billing checks. With no
+preference, the claude/codex pairing is unchanged. With no ready enabled partner,
+the run stays limited. `--no-switch` still disables carry-on.
 
 The `agy` adapter sends one `{"event":"user","message":{"content":"..."}}` line on
 stdin with `--input-format stream-json --output-format stream-json`, which selects
@@ -196,8 +238,9 @@ thinking.
 
 ### When a plan's usage limit is reached
 
-The claude and codex CLIs bill to subscriptions with usage limits, and each stands in for
-the other. A run that ends because its CLI said the limit was reached ("You've hit your
+Without preferences, the claude and codex CLIs stand in for each other at subscription
+usage limits. With preferences, the partner follows the enabled list described above.
+A run that ends because its CLI said the limit was reached ("You've hit your
 session limit · resets 10:10pm (Europe/Bucharest)", "You've hit your usage limit ... try
 again at Oct 16th, 2026 3:29 PM") is `limited`, not `error`, and its result keeps the
 time the limit lifts as `limit_resets` when the message gives one. Then:
@@ -212,8 +255,10 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
   tool) shows each limit it remembers. A limit can lift early (codex sells credits);
   deleting the file forgets it.
-- Nothing moves to `api`, which is billed per token, or to gemini, opencode or agy. If the
-  other CLI is not installed, or is limited too, the run stays `limited` and says so.
+- Nothing moves automatically to `api`, which is billed per token. Without preferences,
+  gemini, opencode and agy are not partners either; with one, the enabled installed plan
+  backends stand in, in preference order. If no enabled partner is installed, or the
+  selected partner is limited too, the run stays `limited` and says so.
 - Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
   the plan, and so does codex with `CODEX_API_KEY` or `OPENAI_API_KEY`; that CLI does not

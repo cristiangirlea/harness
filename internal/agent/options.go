@@ -85,9 +85,9 @@ type Options struct {
 	TaskBudget int `json:"task_budget,omitempty" desc:"Token ceiling the api backend gives the model to pace itself (min 20000)."`
 
 	// NoSwitch keeps a run on its backend when that backend has reached its
-	// plan's usage limit. Otherwise claude and codex carry on each other's
-	// work (internal/limits).
-	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its plan's usage limit, instead of carrying on on the other of claude and codex."`
+	// plan's usage limit. Otherwise an enabled partner carries on its work;
+	// without preferences claude and codex stand in for each other (internal/limits).
+	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its usage limit, instead of carrying on on an enabled partner (claude and codex pair by default)."`
 }
 
 // Route fills a wholly unspecified backend/model/effort choice from evidence.
@@ -106,6 +106,14 @@ func (o *Options) Route(prompt string, backend *string, home string) (*table.Rou
 		return nil, nil
 	}
 	if r.Backend != "" {
+		p, err := BackendPreferences(home)
+		if err != nil {
+			return nil, err
+		}
+		if !p.Enabled(r.Backend) {
+			fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: backend %s is disabled\n", category, r.Backend)
+			return nil, nil
+		}
 		if _, err := Get(r.Backend); err != nil {
 			fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: %v\n", category, err)
 			return nil, nil
