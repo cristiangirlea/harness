@@ -684,7 +684,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: a `.dockerignore` for the server image (#170, PR #N). `docker build -f server/Dockerfile .`
+- 2026-10-14: a `.dockerignore` for the server image (#170, PR #303). `docker build -f server/Dockerfile .`
   sent the whole repository, untracked files under `server/` included. Decided: an allowlist of
   `go.mod`, `internal/` and `server/` without `server/deploy`, with secret-looking files kept out.
 - 2026-10-14: the server's status codes for an unknown tenant or project (#157, PR #302).
