@@ -15,7 +15,8 @@ import (
 // stops is the plausible accident.
 //
 // The rules lean towards refusing too much. A command segment ends at |, &&,
-// || or ;, so a rule reads one command at a time rather than the whole line.
+// || or ; outside quotes (see Guard), so a rule reads one command at a time
+// rather than the whole line.
 var guardRules = []struct {
 	name  string
 	match func(command string) bool
@@ -70,10 +71,15 @@ func matches(pattern string) func(string) bool {
 // The match is textual, so a line that merely mentions a pattern (echo "git
 // push") is refused as well; that false positive costs the agent one turn,
 // which is cheap next to what the rules prevent.
+//
+// Each rule sees the line as written and a copy with the separators inside
+// quotes read as text (#222), and refuses when either matches. A misread
+// quote (a substitution "$(... | sh)", an apostrophe in a comment) can then
+// only add a refusal, never hide a real pipe the line as written shows.
 func Guard(command string) string {
-	command = guardQuotedSeparators(command)
+	quoted := guardQuotedSeparators(command)
 	for _, r := range guardRules {
-		if r.match(command) {
+		if r.match(command) || r.match(quoted) {
 			return r.name
 		}
 	}
