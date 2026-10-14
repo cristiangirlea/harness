@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -41,20 +42,20 @@ func run() error {
 	if len(operator) < 32 || len(scaler) < 32 || operator == scaler {
 		return errors.New("independent operator and scaler tokens of at least 32 characters are required")
 	}
-	store, err := platform.Open(ctx, dsn)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
 	address := os.Getenv("HRN_LISTEN")
 	if address == "" {
 		address = "127.0.0.1:8088"
 	}
 	certFile := os.Getenv("HRN_TLS_CERT_FILE")
 	keyFile := os.Getenv("HRN_TLS_KEY_FILE")
-	if (certFile == "") != (keyFile == "") {
-		return errors.New("HRN_TLS_CERT_FILE and HRN_TLS_KEY_FILE must be set together")
+	if err := validateListen(address, certFile, keyFile); err != nil {
+		return err
 	}
+	store, err := platform.Open(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 	server := &http.Server{Addr: address, Handler: (&platform.HTTPServer{Store: store, OperatorToken: operator, ScalerToken: scaler}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() {
@@ -90,4 +91,21 @@ func run() error {
 		return nil
 	}
 	return fmt.Errorf("serve: %w", err)
+}
+
+func validateListen(address, certFile, keyFile string) error {
+	if (certFile == "") != (keyFile == "") {
+		return errors.New("HRN_TLS_CERT_FILE and HRN_TLS_KEY_FILE must be set together")
+	}
+	if certFile != "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err == nil {
+		ip := net.ParseIP(host)
+		if ip != nil && ip.IsLoopback() {
+			return nil
+		}
+	}
+	return errors.New("HRN_LISTEN must use a loopback IP literal without TLS; set both HRN_TLS_CERT_FILE and HRN_TLS_KEY_FILE for other addresses")
 }
