@@ -1,0 +1,10 @@
+tenant:
+  id: ""
+quota:
+  pods: "12"
+  persistentVolumeClaims: "8"
+  storage: "80Gi"
+  requestsCpu: "8"
+  requestsMemory: "16Gi"
+  limitsCpu: "16"
+  limitsMemory: "32Gi"

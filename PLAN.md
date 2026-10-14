@@ -659,6 +659,23 @@ order they are worth taking:
     - [x] `hrn ws`: reusable workspaces per repository
       ([#133](https://github.com/cristiangirlea/harness/issues/133)). Done: PR #144, 2026-10-13.
 
+17. **Durable project workers and project retrieval** ([#142](https://github.com/cristiangirlea/harness/issues/142)):
+    The work adds a separate `server/` module with a PostgreSQL control service and project
+    worker, durable checkpoints in the api loop, `hrn remote` and its MCP tools, and
+    development charts; it wires approved project knowledge with text retrieval into runs,
+    batches and evals.
+    Implemented against `634507a` and kept as local snapshot commit `8fc689e`, the work
+    lands onto today's main in slices through the feature branch `durable`.
+    - [x] [#134](https://github.com/cristiangirlea/harness/issues/134) docs: the accepted spec, the retrieval plan and a PLAN.md item. Done: PR #143, 2026-10-13.
+    - [x] [#135](https://github.com/cristiangirlea/harness/issues/135) api: durable execution checkpoints for the api loop. Done: PR #150, 2026-10-13.
+    - [x] [#136](https://github.com/cristiangirlea/harness/issues/136) agent: usage metadata with backend-aware token semantics. Done: PR #158, 2026-10-13.
+    - [x] [#137](https://github.com/cristiangirlea/harness/issues/137) server: PostgreSQL control service and project worker, a separate module. Done: PR #159, 2026-10-13.
+    - [x] [#138](https://github.com/cristiangirlea/harness/issues/138) remote: `hrn remote` and the MCP remote tools. Done: PR #175, 2026-10-13.
+    - [x] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier. Done: PR #174, 2026-10-13.
+    - [x] [#140](https://github.com/cristiangirlea/harness/issues/140) knowledge: approved project knowledge and text retrieval in the control service. Done: PR #181, 2026-10-13.
+    - [x] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison. Done: PR #186, 2026-10-13.
+    - [x] `durable` into main. Done: PR #266, 2026-10-14.
+
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
 HTTP (every host met so far speaks stdio). A web dashboard was on this list ("report and
@@ -669,6 +686,13 @@ neither of them follows a run while it happens.
 
 - 2026-10-14: tests give an exited helper's lease its start identity (#242, PR #N).
   Decided: hold the helper alive while reading its identity, then record it with the pid so reuse cannot hold the lease.
+- 2026-10-14: the billing-refusal test's deadline (#283, PR #284). Its refusal cases had 500 ms,
+  which also had to cover starting the helper; a busy PC timed out first. Decided: 2 s for every
+  case; a refusal that failed to stop the CLI still ends as a timeout and fails the test.
+- 2026-10-14: gc's idle age and the clock's resolution (#245, PR #278). A cache written moments
+  before could read as not yet idle, failing `TestGCTakesTheIdleLimitAsGiven` on Windows CI.
+  Decided: an age below zero counts as zero, so `--idle 0` takes any cache; the test writes its
+  cache a second in the past, which still shows a 1 ns limit is honoured.
 - 2026-10-14: the guard reads a quoted separator as text (#222, PR #277). Decided:
   replace only separators inside quotes, leaving quoted text visible so #223 holds, and
   refuse when a rule matches either the line as written or that copy, so a misread quote
@@ -689,6 +713,22 @@ neither of them follows a run while it happens.
   folders by file name, matched only at a path boundary, after secrets are blanked. Records
   and `hrn show` keep the full paths, and a run's purpose comes from its prompt as recorded, as
   `hrn report` has it, not from the shortened text.
+- 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #273).
+  Decided: use the path project for submission; worker routes read only the project ID before strict JSON decoding.
+- 2026-10-14: hrn remote stops on an oversized event line (#164, PR #271). Decided: a line over
+  the 1 MiB scanner limit is terminal for Watch, with the limit named and bufio.ErrTooLong wrapped.
+- 2026-10-14: durable project workers and project retrieval reach main ([#142](https://github.com/cristiangirlea/harness/issues/142), PR #266; item 17's last box).
+  Eight slices (PRs #143, #150, #158, #159, #175, #174, #181, #186), each reviewed with a security
+  read and merged through its pull request into `durable`; main merged in once at db7dbe6 with
+  five conflicts resolved: AGENTS.md's table plus a `server/` row; item 17 and the slice entries
+  folded into this log, with main's lone 2026-10-13 entry moved below its 2026-10-14 ones to
+  keep the dates in order; both sides' MCP guide text; both sides' usage tests; main's batch code
+  with the three retrieval hooks. The final review found two documentation gaps, fixed: the
+  retrieval plan's evidence pointer and `original_prompt` in the records guide. Follow-ups: a
+  backend switch under retrieval (#262), plain HTTP on a network listen address (#263), codex
+  cache reads counted twice outside ModelTokens (#264), two types named Usage (#265). Open
+  gates, as the docs say: a separate untrusted executor, native CLI sessions under durable
+  execution, a live cluster, backup and restore, soak, the retrieval pilot on real runs.
 - 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
   timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
   (`for-each-ref`, which answers a missing branch with no output) says whether it answered;
@@ -697,6 +737,87 @@ neither of them follows a run while it happens.
   Decided: CLI and MCP capture HEAD before merging and print that full commit when at least
   one task merges, including before a later conflict or when --rm removes nothing.
   The reflog note appears only when --rm removes task work.
+- 2026-10-13: retrieval wiring in runs, batches, evals and MCP ([#141](https://github.com/cristiangirlea/harness/issues/141), PR #186; slice 8 of #142).
+  The snapshot's wiring on today's code: the packet is prepared and saved before a backend
+  starts, pins are validated on continuation, a same-scope batch retry retrieves again with
+  failure evidence, eval variants and the comparison manifest, `hrn retrieval fixture|compare`,
+  a project-scoped MCP server, and every `HRN_*_TOKEN` stripped from children. The review found
+  one defect, a rejected pin swallowed by followup, now a refusal behind
+  `runlog.ErrNoConversation`. CI's PostgreSQL job caught what no local run could: the client's
+  frame-marker check refused every real packet, since the service writes `[Reference ...]`
+  labels into the text; the check is now structural, one label pair per entry and no outer
+  frame marker, and the test packets carry the labels. Follow-ups: a retry after failed
+  required retrieval (#182), a cross-backend continuation's pin (#183), compare with resolved
+  model names (#184), tests the review named (#185).
+- 2026-10-13: approved project knowledge and text retrieval in the control service ([#140](https://github.com/cristiangirlea/harness/issues/140), PR #181; slice 7 of #142).
+  The snapshot's contracts, migration 003, service, routes, bounded client search and
+  `hrn knowledge`; the parts slice 4 cut from store.go and http.go return, and the
+  `Options.Retrieval` check waits for #141. The review's security read found no defect in the
+  service; three small ones closed: the credential's length is checked before any knowledge
+  query, a storage error during authorization answers 503 rather than 404, and content carrying
+  the packet frame markers is refused at import. Follow-ups: the narrow deny list (#176), packet
+  entries not tied to the capped text (#177), the GIN pre-filter over every tenant (#178), four
+  smaller points (#179), tests the review named (#180).
+- 2026-10-13: development charts, image and chart verifier ([#139](https://github.com/cristiangirlea/harness/issues/139), PR #174; slice 6 of #142).
+  The snapshot's three charts, fixtures, verifier and Dockerfile, trailing blank lines trimmed
+  and the deploy docs' paths turned into links; a CI job verifies the charts and builds the
+  image on the hosted Linux runner. The review's security read found nothing open: no secret in
+  any file, Secrets by name, images pinned by digest and unpinned ones refused, the fake-model
+  sidecar without the PVC or the worker token, non-root read-only containers, default-deny
+  policies. Follow-ups: a .dockerignore (#170), two minor template and image points (#171), a
+  rerun of the disposable cluster check with an image from this branch (#172), stronger
+  verifier assertions (#173).
+- 2026-10-13: hrn remote and the MCP remote tools ([#138](https://github.com/cristiangirlea/harness/issues/138), PR #175; slice 5 of #142).
+  The snapshot's client, CLI and tools, with the commands in docs/commands.md and the tools in
+  docs/mcp.md. The review's security read found one hole: plain HTTP was also accepted for the
+  name `localhost`, which a resolver can point anywhere; now only a loopback IP literal. A watch
+  error names the status without the server's body. Tests added that the token text reaches no
+  error, that a `token` or `authorization` field in a tool input is refused, and that a job id
+  not shaped by the server is refused before any request. Follow-ups: an oversized event line
+  spins the watch (#164), `--watch` never exits (#165), the CLI skips options.Validate (#166),
+  URL and CA file edge cases (#167), no client-side cost cap (#168), tests the review named
+  (#169).
+- 2026-10-13: the server module ([#137](https://github.com/cristiangirlea/harness/issues/137), PR #159; slice 4 of #142).
+  The snapshot's PostgreSQL control service and project worker, cut to the control plane: the
+  knowledge pool, retrieval slots and schema 003 wait for #140, the deploy charts and image for
+  #139, the remote-client test for #138. CI: server unit jobs on both hosted runners and a
+  PostgreSQL race job on Linux. The review's security read found nothing blocking; tests for
+  token scope across tenants and projects, wrong tokens of the real length, submission
+  validation, migration idempotence and checkpoint sequence were added and passed in CI's
+  postgres job, where the suite runs: Docker's engine on the owner's PC answers with an
+  internal error. Follow-ups: refuse mcp and allow_dangerous at submission (#154), the token
+  check before the body (#155), bounded event streams (#156), two status codes (#157).
+- 2026-10-13: agent usage metadata ([#136](https://github.com/cristiangirlea/harness/issues/136), PR #158; slice 3 of #142).
+  Ported from the snapshot: codex input includes its cached input, api and claude counters are
+  disjoint, and a missing counter, an incomplete turn or a failed turn marks the run's usage
+  missing, which it stays. A missing `cached_input_tokens` field counts as missing too. The
+  review found the report had dropped gemini and opencode records from the cache share, the
+  snapshot's bug as well: a record without metadata keeps the old sum. Follow-ups: KnownCost
+  has no caller (#151), summed counters can wrap (#152), records.md's stale README reference
+  (#153).
+- 2026-10-13: api durable checkpoints ([#135](https://github.com/cristiangirlea/harness/issues/135), PR #150; slice 2 of #142).
+  Ported from the snapshot onto today's loop with two deviations: a `pause_turn` saves its
+  `turn_complete` checkpoint and then continues, so the local path keeps its plain `continue`;
+  and the context check before a model request runs only in durable mode. `durable.go` is
+  otherwise the snapshot's file. The review (read-only, with a security read: nothing open)
+  left five follow-ups as issues: certain failures reported as `recovery_required` (#145),
+  tool results without their call events for refused calls (#146), `AttemptID` in the task
+  digest (#147), a checkpoint's budget and clock trusted as stored (#148), a part-way failed
+  stream's usage lost (#149). Inside an hrn run `go test ./...` fails in `internal/gc` (#120);
+  the full suite passed outside it.
+- 2026-10-13: Durable project workers and project retrieval ([#142](https://github.com/cristiangirlea/harness/issues/142))
+  land in slices onto the feature branch `durable`: each slice is one pull request into it,
+  and the feature branch reaches main through one pull request reviewed for how the pieces fit.
+  The root module stays standard-library only, as AGENTS.md requires; the separate `server/`
+  module may depend on maintained PostgreSQL and Kubernetes clients (pgx, client-go), as the spec accepted on 2026-09-27
+  allows. The snapshot stays local as commit `8fc689e` and is never pushed.
+- 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
+  as the index does) and a batch's repository too, the whole path as a hover title for this
+  computer only. Text from a run's events, its prompt and result, and a batch's tasks and
+  gates, and the index's rows show the workspace (a task's worktree) as `.`, home as `~`, and programs in system
+  folders by file name, matched only at a path boundary, after secrets are blanked. Records
+  and `hrn show` keep the full paths, and a run's purpose comes from its prompt as recorded, as
+  `hrn report` has it, not from the shortened text.
 - 2026-10-13: AGENTS.md back under 100 lines (#196, PR #253). Decided: shorten layout
   rows and the hx note, and point repeated CI and release details to CONTRIBUTING.md.
 - 2026-10-13: three wording points from #58's review (#65, PR #252). Decided: a blocking

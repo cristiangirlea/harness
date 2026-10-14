@@ -229,6 +229,12 @@ func TestHelperMCPServer(t *testing.T) {
 	case "crash":
 		fmt.Fprintln(os.Stderr, "helper crashing on purpose")
 		os.Exit(3)
+	case "env":
+		if os.Getenv("HRN_WORKER_TOKEN") != "" || os.Getenv("HRN_SCALER_TOKEN") != "" {
+			os.Exit(4)
+		}
+		_ = echoServer().Serve(context.Background(), os.Stdin, os.Stdout)
+		os.Exit(0)
 	}
 }
 
@@ -252,6 +258,20 @@ func TestStdioProcess(t *testing.T) {
 	}
 	if _, err := cl.CallTool(context.Background(), "echo", nil); err == nil {
 		t.Fatal("call after close should fail")
+	}
+}
+
+func TestChildMCPServerCannotSeeWorkerOrScalerTokens(t *testing.T) {
+	t.Setenv("HRN_WORKER_TOKEN", "worker-fixture")
+	t.Setenv("HRN_SCALER_TOKEN", "scaler-fixture")
+	cl := &Client{}
+	cfg := helperConfig("env")
+	cfg.Env["HRN_WORKER_TOKEN"] = "worker-override"
+	if err := cl.Start(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

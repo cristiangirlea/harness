@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+    environment:
+      POSTGRES_PASSWORD: fixture-only
+      POSTGRES_DB: harness_test
+    ports:
+      - "127.0.0.1:54329:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,size=256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d harness_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 20

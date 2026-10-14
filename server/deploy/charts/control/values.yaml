@@ -1,0 +1,23 @@
+image:
+  ref: ""
+  pullPolicy: IfNotPresent
+secrets:
+  databaseName: ""
+  databaseKey: dsn
+  authName: ""
+  operatorKey: operator-token
+  scalerKey: scaler-token
+  tlsName: ""
+postgres:
+  namespace: harness-system
+  podLabelName: hrn-postgres
+  port: 5432
+keda:
+  namespace: keda
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
