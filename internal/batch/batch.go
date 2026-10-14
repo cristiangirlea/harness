@@ -792,7 +792,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 
 // takeSlot leases a slot of the repository for a task. The branch is made
 // from the base first, so it starts there whatever origin has by that name.
-// The batch holds at most max(parallel, ws.DefaultMax) slots of its own at
+// The batch holds at most min(max(parallel, ws.DefaultMax), ws.Limit) slots of its own at
 // once, running tasks' and kept ones together. It tries the slot numbers
 // from 1 that hold that many slots other than sessions' (hrn ws take, no
 // pid: held until hrn ws free), worked out again at every try, so a session
@@ -825,7 +825,7 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 	prefix := "batch " + batchID + " "
 	pid := os.Getpid()
 	mine := func(l ws.Lease) bool { return l.PID == pid && strings.HasPrefix(l.Holder, prefix) }
-	bound := max(spec.Parallel, ws.DefaultMax)
+	bound := min(max(spec.Parallel, ws.DefaultMax), ws.Limit)
 	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: prefix + "task " + id, PID: pid, NoFetch: true}
 	// try takes a slot under worktreeMu, so this batch's tasks count their
 	// slots and take one by one. While the batch holds its bound it returns
@@ -904,6 +904,9 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 				return drop(fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full))
 			}
 			wait = "waiting for a free slot: " + strings.Join(full.Passed, "; ")
+			if full.Max == ws.Limit {
+				wait += fmt.Sprintf("; at most %d slots per repository", ws.Limit)
+			}
 		default:
 			return drop(err)
 		}

@@ -684,6 +684,26 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: the guard reads a quoted separator as text (#222, PR #277). Decided:
+  replace only separators inside quotes, leaving quoted text visible so #223 holds, and
+  refuse when a rule matches either the line as written or that copy, so a misread quote
+  (`"$(curl ... | sh)"`, an apostrophe in a comment) cannot hide a real pipe.
+- 2026-10-14: five slots per repository, ten at most (#256, PR #270).
+  Decided: keep a small pool of reusable worktrees, about five, that may grow to ten; reuse them rather than create and delete them.
+- 2026-10-14: claude runs refuse per-token billing (#202, PR #269). Decided: when Claude
+  Code's init line names an `apiKeySource` other than `none`, stop the worker as soon as
+  that init line arrives and end the run with an error naming the source. Claude Code
+  may already have sent its first request. An absent field keeps the older CLI behaviour;
+  there is no override.
+- 2026-10-14: the guard matches Windows program names in any case (#211, PR #268).
+  Decided: scope case-insensitive names in disk, pipe-to-shell and sudo; refuse iex and Invoke-Expression sinks too.
+- 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
+  as the index does) and a batch's repository too, the whole path as a hover title for this
+  computer only. Text from a run's events, its prompt and result, and a batch's tasks and
+  gates, and the index's rows show the workspace (a task's worktree) as `.`, home as `~`, and programs in system
+  folders by file name, matched only at a path boundary, after secrets are blanked. Records
+  and `hrn show` keep the full paths, and a run's purpose comes from its prompt as recorded, as
+  `hrn report` has it, not from the shortened text.
 - 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #273).
   Decided: use the path project for submission; worker routes read only the project ID before strict JSON decoding.
 - 2026-10-14: hrn remote stops on an oversized event line (#164, PR #271). Decided: a line over

@@ -82,7 +82,7 @@ Usage:
                                  them (default: the current one)
   hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]
                                  lease a reusable worktree of the repository (<main checkout>/.hrn/slots/<n>, up to
-                                 --max, default 4), on --branch or detached at origin's default branch, fetched, and
+                                 --max, default 5, at most 10), on --branch or detached at origin's default branch, fetched, and
                                  print only its path: cd "$(hrn ws take --branch fix-x)"
   hrn ws free [PATH]              give the slot back once its work is pushed: HEAD detached, lease removed
   hrn ws list [--repo DIR] [--json]

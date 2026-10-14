@@ -190,6 +190,51 @@ func TestASecondTakeGetsTheNextSlot(t *testing.T) {
 	samePathT(t, got.Path, f.slot(2))
 }
 
+func TestTakeDefaultTriesFiveSlots(t *testing.T) {
+	f := newFixture(t)
+	for i := 1; i <= 5; i++ {
+		got := f.take(TakeOptions{Holder: fmt.Sprintf("holder-%d", i), NoFetch: true})
+		if got.N != i {
+			t.Fatalf("take %d got slot %d, want %d", i, got.N, i)
+		}
+	}
+	_, err := Take(context.Background(), TakeOptions{Repo: f.repo, Holder: "sixth", NoFetch: true})
+	var full *NoSlotError
+	if !errors.As(err, &full) || full.Max != 5 {
+		t.Fatalf("sixth take: %v, want no slot through 5", err)
+	}
+	if _, err := os.Stat(f.slot(6)); !os.IsNotExist(err) {
+		t.Errorf("slot 6 should not be made: %v", err)
+	}
+}
+
+func TestTakeRefusesMaxAboveTen(t *testing.T) {
+	_, err := Take(context.Background(), TakeOptions{Max: 11})
+	if err == nil || !strings.Contains(err.Error(), "at most 10 slots per repository") {
+		t.Fatalf("Max 11: %v, want the repository limit", err)
+	}
+}
+
+func TestSessionsCannotExtendRangePastTen(t *testing.T) {
+	f := newFixture(t)
+	for n := 1; n <= 10; n++ {
+		f.write(f.repo, filepath.Join(".hrn", "slots", fmt.Sprintf("%d.lease", n)),
+			fmt.Sprintf(`{"holder":"session","taken":%q}`, time.Now().UTC().Format(time.RFC3339)))
+	}
+	got, err := RangeBeyondSessions(context.Background(), f.repo, 5)
+	if err != nil || got != 10 {
+		t.Fatalf("range = %d, %v; want 10", got, err)
+	}
+	_, err = Take(context.Background(), TakeOptions{Repo: f.repo, Max: got, NoFetch: true})
+	var full *NoSlotError
+	if !errors.As(err, &full) || !strings.Contains(err.Error(), "at most 10 slots per repository") {
+		t.Fatalf("take through range: %v, want the limit named", err)
+	}
+	if _, err := os.Stat(f.slot(11)); !os.IsNotExist(err) {
+		t.Errorf("slot 11 should not be made: %v", err)
+	}
+}
+
 func TestTakeFromInsideASlotUsesTheMainCheckout(t *testing.T) {
 	f := newFixture(t)
 	one := f.take(TakeOptions{Holder: "a"})
