@@ -49,6 +49,15 @@ func TestInline(t *testing.T) {
 	if normalize("node -e x") == normalize("perl -e x") {
 		t.Fatal("distinct forms merged")
 	}
+	if inlineShape("  python -c 'print(1)'") != "python" {
+		t.Error("leading whitespace")
+	}
+	if normalize("C:/Temp/a.go 123 identifierabc") != normalize("/tmp/b.go 456 identifierxyz") {
+		t.Error("forward slash paths")
+	}
+	if normalize("abcdefghijkl") != "abcdefghijkl" || normalize("abcdefghijklm") != "<identifier>" {
+		t.Fatal("identifier boundary")
+	}
 }
 
 func writeRun(t *testing.T, home, id, backend, status, events string) {
@@ -125,6 +134,15 @@ func TestOptions(t *testing.T) {
 	home, days, err = options([]string{"--home", "override", "--days", "2", "--json"})
 	if err != nil || home != "override" || days != 2 {
 		t.Fatal(home, days, err)
+	}
+	t.Setenv("HRN_HOME", "")
+	base, e := os.UserHomeDir()
+	if e != nil {
+		t.Fatal(e)
+	}
+	home, _, err = options(nil)
+	if err != nil || home != filepath.Join(base, ".hrn") {
+		t.Fatal("default home", err)
 	}
 }
 

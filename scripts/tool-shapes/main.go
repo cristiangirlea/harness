@@ -58,8 +58,8 @@ func classify(text, tool string) string {
 	return "other"
 }
 
-var interpreter = regexp.MustCompile(`(?:^|[;|&\n]\s*|\b(?:sudo|env)\s+)(python3?|node|perl)\s+(-c|-e)(?:\s|$)`)
-var goTemp = regexp.MustCompile(`(?i)(?:^|[;|&\n]\s*)go\s+run\s+["']?(?:[^\s"']*[/\\](?:tmp|temp)[/\\]|\$\{?TMPDIR\}?[/\\]|\$\{?TEMP\}?[/\\]|%TEMP%[/\\])[^\s"']*\.go\b`)
+var interpreter = regexp.MustCompile(`(?:^\s*|[;|&\n]\s*|\b(?:sudo|env)\s+)(python3?|node|perl)\s+(-c|-e)(?:\s|$)`)
+var goTemp = regexp.MustCompile(`(?i)(?:^\s*|[;|&\n]\s*)go\s+run\s+["']?(?:[^\s"']*[/\\](?:tmp|temp)[/\\]|\$\{?TMPDIR\}?[/\\]|\$\{?TEMP\}?[/\\]|%TEMP%[/\\])[^\s"']*\.go\b`)
 
 func inlineShape(command string) string {
 	if strings.Contains(command, "<<") {
@@ -80,7 +80,7 @@ func inlineShape(command string) string {
 }
 
 var quoted = regexp.MustCompile(`"(?:\\.|[^"\\])*"|'[^']*'`)
-var paths = regexp.MustCompile(`(?:[A-Za-z]:\\|/|\.\.?[/\\]|~[/\\]|\$\{?[A-Za-z_][A-Za-z_0-9]*\}?[/\\])[^\s;|&"']+`)
+var paths = regexp.MustCompile(`(?:[A-Za-z]:[/\\]|/|\.\.?[/\\]|~[/\\]|\$\{?[A-Za-z_][A-Za-z_0-9]*\}?[/\\])[^\s;|&"']+`)
 var numbers = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
 var identifiers = regexp.MustCompile(`\b[A-Za-z_][A-Za-z_0-9]{12,}\b`)
 
