@@ -71,12 +71,44 @@ func matches(pattern string) func(string) bool {
 // push") is refused as well; that false positive costs the agent one turn,
 // which is cheap next to what the rules prevent.
 func Guard(command string) string {
+	command = guardQuotedSeparators(command)
 	for _, r := range guardRules {
 		if r.match(command) {
 			return r.name
 		}
 	}
 	return ""
+}
+
+// guardQuotedSeparators keeps quoted text visible to the rules while preventing
+// separators inside it from ending a pipeline stage. An unterminated quote
+// treats the rest of the line as quoted, which can only add refusals.
+func guardQuotedSeparators(command string) string {
+	line := []byte(command)
+	var quote byte
+	escaped := false
+	for i, c := range line {
+		if quote == '"' && escaped {
+			escaped = false
+			continue
+		}
+		if quote == '"' && c == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 && c == quote {
+			quote = 0
+			continue
+		}
+		if quote == 0 && (c == '\'' || c == '"') {
+			quote = c
+			continue
+		}
+		if quote != 0 && (c == '|' || c == '&' || c == ';') {
+			line[i] = ' '
+		}
+	}
+	return string(line)
 }
 
 // GuardError is what a refused command returns to the model. It names the rule
