@@ -4,6 +4,8 @@
 
 ## Run records
 
+Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
+
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 
 - `task.json` — prompt, dir, backend, and the run options by their flag names; when retrieval

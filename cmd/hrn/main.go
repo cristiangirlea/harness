@@ -27,6 +27,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/hrnmcp"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
@@ -576,7 +577,7 @@ func showHeader(r *renderer, rec runlog.Record) {
 		head += " · session " + rec.Result.Session
 	}
 	head = printable(head)
-	r.Line(r.c(bold, printable(tools.OneLine(rec.Task.Prompt, 200))))
+	r.Line(r.c(bold, printable(tools.OneLine(mask.Text(rec.Task.Prompt), 200))))
 	r.Line(head)
 	if rec.RecordError != "" {
 		r.Line("run record incomplete: " + printable(strings.Join(strings.Fields(rec.RecordError), " ")))

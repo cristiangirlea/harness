@@ -61,6 +61,9 @@ jobs:
       - name: shell scripts parse
         if: matrix.os == 'ubuntu-latest'
         run: bash -n .github/release.sh && bash -n scripts/api-check.sh
+      - name: kept scripts verify
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/verify.sh --check
       - name: release dry run
         # The release job only runs on a tag, so its script is exercised here.
         if: matrix.os == 'ubuntu-latest'

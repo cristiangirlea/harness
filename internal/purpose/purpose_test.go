@@ -127,6 +127,48 @@ func TestClassifyNamesTheRuleThatFired(t *testing.T) {
 	}
 }
 
+func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
+	cases := []struct {
+		name, prompt, category, rule string
+	}{
+		{"repository line before instruction", "Repository: hrn\nImplement the purpose classifier.", "implement", "implement.build"},
+		{"batch context before goal", "Repository: hrn (harness), Go, standard library only. Read AGENTS.md, CLAUDE.md and .claude/rules/ first; they are the house rules.\n\nGoal (issue #82): on hrn watch's index, each run and each batch leads with its repository and its task, not its id. Add a repository column ...", "implement", "implement.add"},
+		{"goal with note", "Goal (issue #82): fix the flaky ws create-lock test", "debug", "debug.fix"},
+		{"reviewer role in first paragraph wins", "You are an independent, read-only senior reviewer. Your job is to find real defects.\n\nSecond round on branch x: review the diff", "review", "review.reviewer-role"},
+		{"third paragraph never counts", "Hello there.\n\nThis is hrn.\n\nReview the diff for anything that would break.", "unknown", ""},
+		{"label-only context before instruction", "Repository: hrn\nBranch: main\n\nAdd a repository column.", "implement", "implement.add"},
+		{"context label", "Context: Implement the purpose classifier.", "implement", "implement.build"},
+		{"three word label with digits slash and hyphen", "Task 2 Build/Goal-x: Implement the purpose classifier.", "implement", "implement.build"},
+		{"four word prefix is not a label", "This has four words: Implement the purpose classifier.", "unknown", ""},
+		{"punctuation is not a label", "Task!: Implement the purpose classifier.", "unknown", ""},
+		{"empty labels before instruction", "Repository:\nContext:\n\nImplement the purpose classifier.", "implement", "implement.build"},
+		{"first paragraph wins over earlier rule in second", "Implement the purpose classifier.\n\nReview the diff.", "implement", "implement.build"},
+		{"crlf context", "Repository: hrn\r\n \r\nGoal: Implement the purpose classifier.", "implement", "implement.build"},
+		{"bare cr context", "Repository: hrn\r\rGoal: Implement the purpose classifier.", "implement", "implement.build"},
+		{"second paragraph has its own cap", strings.Repeat("x", maxLead+1) + "\n\nImplement the purpose classifier.", "implement", "implement.build"},
+		{"second paragraph cannot match past cap", "Hello there.\n\n" + strings.Repeat("x", maxLead+1) + " review the diff.", "unknown", ""},
+		{"a panic line is an error, not a label", "panic: test timed out after 10m0s", "debug", "debug.error-message"},
+		{"an exception name is an error, not a label", "TypeError: x is undefined", "debug", "debug.error-message"},
+		{"an error word before a code is an error, not a label", "Error: ENOENT: no such file or directory", "debug", "debug.error-message"},
+		{"a drive letter is not a label", "fix C:\\repo\\README.md", "debug", "debug.fix"},
+		{"only leading labels are skipped", "Repository: hrn\nImplement x\nBranch: y", "implement", "implement.build"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Classify(c.prompt)
+			if got.Category != c.category || got.Rule != c.rule {
+				t.Errorf("Classify(%q) = %+v, want {%s %s}", c.prompt, got, c.category, c.rule)
+			}
+		})
+	}
+}
+
+func TestUnlabelKeepsASingleLabelValue(t *testing.T) {
+	if got := unlabel("Repository: hrn"); got != "hrn" {
+		t.Errorf("unlabel = %q, want hrn", got)
+	}
+}
+
 func TestEveryRuleIsNamedAfterAKnownCategory(t *testing.T) {
 	want := []string{"review", "debug", "implement", "refactor", "test", "research", "plan", "ops", "unknown"}
 	if !slices.Equal(Categories, want) {

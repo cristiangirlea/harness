@@ -622,7 +622,7 @@ order they are worth taking:
       own sessions ([#305](https://github.com/cristiangirlea/harness/issues/305)); and Ada
       gamified, experience gathered by working with the AI, from real outcomes only, with
       Ada's own growth beside it ([#306](https://github.com/cristiangirlea/harness/issues/306),
-      four owner decisions before any slice).
+      four owner decisions before any slice). #304 done: PR #314, 2026-10-14.
 12. **Guard rails** (the owner, 2026-10-11), in this order:
     - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
       Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
@@ -704,7 +704,8 @@ order they are worth taking:
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
       local models once a hrn-evals suite has measured them (the eval #224 asks for).
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
-      CI-verified index for the scripts agents write twice, kept under `scripts/`.
+      CI-verified index for the scripts agents write twice, kept under `scripts/`. Done:
+      PR #317, 2026-10-14.
     The gate side lives in adanext-exec (output shaping, and the hint when a kept script covers
     a command: adanext-exec #1 and #2); the rule for claiming a saving and the page of where
     each model loses live in hrn-evals (#3 and #4).
@@ -717,6 +718,11 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: purpose reads past labels and context (#118, PR #319). Leading label
+  lines are skipped, a final label contributes its value, and the second non-blank
+  paragraph is tried only when the first matches no rule, with the cap applied to each.
+  This classifies hrn's batch briefs without changing rules-v1 or letting later
+  paragraphs override the task.
 - 2026-10-14: a `.dockerignore` for the server image (#170, PR #303). `docker build -f server/Dockerfile .`
   sent the whole repository, untracked files under `server/` included. Decided: an allowlist of
   `go.mod`, `internal/` and `server/` without `server/deploy`, with secret-looking files kept out.
@@ -2148,3 +2154,26 @@ neither of them follows a run while it happens.
   the prompt. Watch and reports prefer the declaration over keyword rules; a header
   with free text or `unknown` is ignored as a declaration, while an invalid explicit
   value is refused before a run starts.
+- 2026-10-14: PR #314 (closes #304): secrets masked on display. `internal/mask.Text` applies the
+  issue's ordered rules (URL credentials, `-u user:password`, JSON secret fields,
+  authorization-style headers, bare Bearer tokens, known token shapes, `NAME=value` where a
+  whole segment of the name is KEY, TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or
+  SESSION, and `--password`-style flags), replacing each value with `••••`. It runs on hrn
+  watch's rows, pages and streams (local and `--lan`, beside the env-value replacer), `hrn
+  show`, the renderer's progress lines and Ada's sentences; records and `--json` output are
+  unchanged. Deviation from the issue: the mask does not cut text at 1 KiB. The first cut
+  broke tool inputs over 1 KiB (the summary and pretty body need the whole JSON) and lost
+  everything past 1 KiB of prompts, answers and results, so the mask scans the whole text
+  (Go's regexp is linear; a page shows at most 32 KiB) and the existing excerpt cuts run
+  after it, which keeps the rule that a cut never leaves half a token visible. The names
+  pattern matches whole segments so `--max-tokens=400` and `authors=x` stay. Left out, as
+  #311: `hrn runs`, streamed deltas, URL user names.
+- 2026-10-14: PR #317 (closes #298): kept scripts. `docs/scripts.md` has the header (name,
+  summary, effects, parameters, an example that is the script's test, a hash line) and the
+  eight rules; `scripts/verify.sh` runs every example, stamps the hash and regenerates the
+  index between markers in AGENTS.md, and `--check` (CI, ubuntu only, and `/check`) fails on
+  a failing example, a stale hash or a differing index. First kept scripts: `check.sh`
+  (`--list`), `test-summary.sh` and `wait-for.sh`, both over `answers.go` through `go run`;
+  `api-check.sh` is listed as not verified (it spends money). Sized before #295's numbers
+  exist: the owner asked for this order on 2026-10-14. Hardening and extra tests from the
+  review are #318; AGENTS.md is 119 lines for now, with the rules also in the doc.
