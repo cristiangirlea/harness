@@ -1,6 +1,7 @@
 package route
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -76,6 +77,47 @@ func TestFromEvalPrefersPlanAtEqualCostAndRate(t *testing.T) {
 	r.Table.Tasks[2].Passed = 10
 	if got := FromEval(r, 0)["implement"]; got.Backend != "codex" {
 		t.Fatalf("tie: %+v", got)
+	}
+}
+
+func TestFromEvalSkipsMissingAndNonFiniteCosts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cost float64
+	}{
+		{"missing", 0}, {"nan", math.NaN()}, {"positive-infinity", math.Inf(1)}, {"negative-infinity", math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := evidence()
+			if tc.name == "missing" {
+				r.Table.Variants = r.Table.Variants[:2]
+			} else {
+				r.Table.Variants[2].MedianCostUSD = tc.cost
+			}
+			if got := FromEval(r, .1)["implement"]; got.Backend != "codex" || got.Model != "sol" || got.Effort != "low" {
+				t.Fatalf("invalid cost selected: %+v", got)
+			}
+		})
+	}
+}
+
+func TestFromEvalPlanPreferencePrecedesEffortAcrossFamilies(t *testing.T) {
+	r := evidence()
+	r.Spec.Matrix[1].Backend = "gemini"
+	r.Spec.Matrix[1].Model = "other"
+	r.Table.Variants[0].MedianCostUSD = 2
+	r.Table.Variants[2].MedianCostUSD = 2
+	r.Table.Tasks[2].Passed = 10
+	if got := FromEval(r, 0)["implement"]; got.Backend != "codex" || got.Model != "sol" || got.Effort != "high" {
+		t.Fatalf("lower effort beat plan CLI: %+v", got)
+	}
+}
+
+func TestFromEvalInvalidMarginReturnsEmptyTable(t *testing.T) {
+	for _, margin := range []float64{-.01, 1.01, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if got := FromEval(evidence(), margin); got == nil || len(got) != 0 {
+			t.Errorf("margin %v: got %+v, want empty table", margin, got)
+		}
 	}
 }
 
