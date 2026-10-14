@@ -70,7 +70,11 @@ func runProperties(backends []any, defaultDir string) map[string]any {
 		" Default readonly here. ask puts each write and command to you when this host supports elicitation, and denies it otherwise."
 	props["prompt"] = str("The task, as you would brief an engineer.")
 	props["purpose"] = str("Optional declared purpose: review, debug, implement, refactor, test, research, plan, ops; otherwise a leading Purpose: category header is used.")
-	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: the backend preference, or api when credentials exist, otherwise claude; an enabled route for the prompt's purpose takes precedence."}
+	backend := map[string]any{"type": "string", "description": "Default: the backend preference, or api when credentials exist, otherwise claude; an enabled route for the prompt's purpose takes precedence."}
+	if len(backends) > 0 { // an empty enum would make every value invalid; the handler reports why
+		backend["enum"] = backends
+	}
+	props["backend"] = backend
 	props["dir"] = str("Workspace directory. Default: " + defaultDir)
 	props["continue_run_id"] = str("Continue a finished run, in its workspace and mode unless dir or mode say otherwise. " +
 		"On the same backend it carries on from that run's conversation (api) or a fork of its session (claude, codex). " +

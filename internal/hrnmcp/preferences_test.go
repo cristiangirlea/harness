@@ -3,6 +3,8 @@ package hrnmcp
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -47,5 +49,17 @@ func TestBackendsToolShowsEnabledAndDefaultPreferences(t *testing.T) {
 	}
 	if data["default"] != "claude" {
 		t.Errorf("default: %v", data["default"])
+	}
+}
+
+func TestRunToolOffersNoEnumWhenThePreferenceFileIsMalformed(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "backends.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	props := runTool(t.TempDir(), false).InputSchema["properties"].(map[string]any)
+	backend := props["backend"].(map[string]any)
+	if _, has := backend["enum"]; has {
+		t.Fatalf("an empty enum would make every value invalid: %v", backend)
 	}
 }
