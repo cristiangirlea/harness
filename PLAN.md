@@ -716,6 +716,11 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: purpose reads past labels and context (#118, PR #TBD). Leading label
+  lines are skipped, a final label contributes its value, and the second non-blank
+  paragraph is tried only when the first matches no rule, with the cap applied to each.
+  This classifies hrn's batch briefs without changing rules-v1 or letting later
+  paragraphs override the task.
 - 2026-10-14: a `.dockerignore` for the server image (#170, PR #303). `docker build -f server/Dockerfile .`
   sent the whole repository, untracked files under `server/` included. Decided: an allowlist of
   `go.mod`, `internal/` and `server/` without `server/deploy`, with secret-looking files kept out.
