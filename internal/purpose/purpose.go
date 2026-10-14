@@ -2,8 +2,10 @@
 // its prompt, with ordered keyword rules: the first rule that matches wins.
 //
 // hrn prompts are long briefs whose later paragraphs mention every keyword
-// ("review the diff", "CI", "deploy"), so only the lead is classified: the
-// first non-blank paragraph, lowercased, at most maxLead bytes.
+// ("review the diff", "CI", "deploy"), so only the first two non-blank paragraphs
+// can supply the lead: the second is tried only if no rule matches the first.
+// Leading label lines are skipped, retaining a final label's value. Each
+// paragraph is lowercased and capped at maxLead bytes.
 package purpose
 
 import (
@@ -69,33 +71,68 @@ var rules = []rule{
 
 // Classify names what a prompt asks for, from its lead.
 func Classify(prompt string) Result {
-	l := lead(prompt)
-	if l == "" {
-		return Result{Category: Unknown}
-	}
-	for _, rl := range rules {
-		if rl.re.MatchString(l) {
-			return Result{Category: rl.category, Rule: rl.id}
+	for _, paragraph := range paragraphs(prompt) {
+		l := lead(paragraph)
+		if l == "" {
+			continue
+		}
+		for _, rl := range rules {
+			if rl.re.MatchString(l) {
+				return Result{Category: rl.category, Rule: rl.id}
+			}
 		}
 	}
 	return Result{Category: Unknown}
 }
 
-// lead is the prompt's first non-blank paragraph, its lines joined by spaces,
-// lowercased and cut to maxLead bytes without splitting a rune. "\r\n", "\n"
-// and a bare "\r" each end a line.
-func lead(prompt string) string {
+// paragraphs returns at most the first two non-blank paragraphs. "\r\n", "\n"
+// and a bare "\r" each end a line; whitespace-only lines separate paragraphs.
+func paragraphs(prompt string) []string {
+	var result []string
 	var lines []string
 	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
 	for line := range strings.Lines(prompt) {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			if len(lines) > 0 {
-				break
+				result = append(result, strings.Join(lines, "\n"))
+				if len(result) == 2 {
+					return result
+				}
+				lines = nil
 			}
 			continue
 		}
 		lines = append(lines, line)
+	}
+	if len(lines) > 0 {
+		result = append(result, strings.Join(lines, "\n"))
+	}
+	return result
+}
+
+var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?: *`)
+
+// lead takes the first non-blank paragraph, skipping leading label lines and
+// retaining a final label's value. Its remaining lines are joined by spaces,
+// lowercased and cut to maxLead bytes without splitting a rune. Classify tries
+// the second paragraph only if no rule matches the first, never later paragraphs.
+func lead(prompt string) string {
+	ps := paragraphs(prompt)
+	if len(ps) == 0 {
+		return ""
+	}
+	lines := strings.Split(ps[0], "\n")
+	for len(lines) > 0 {
+		end := label.FindStringIndex(lines[0])
+		if end == nil {
+			break
+		}
+		if len(lines) == 1 {
+			lines[0] = strings.TrimSpace(lines[0][end[1]:])
+			break
+		}
+		lines = lines[1:]
 	}
 	l := strings.ToLower(strings.Join(lines, " "))
 	if len(l) <= maxLead {
