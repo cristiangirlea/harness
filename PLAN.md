@@ -722,6 +722,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a reconnect notice keeps the error before it (#349, PR #350). #343 stored the notice
+  as the pending error even over a usage limit, and the completed turn cleared it. Decided: the
+  notice is stored only when nothing else is, so an earlier error stays the run's error and its
+  `limited` status.
 - 2026-10-14: a codex reconnect notice is not the run's error (#342, PR #343). `Reconnecting...
   n/5` is the CLI retrying its model stream: an `info` event that stands as the error only until
   the turn completes, so a run whose work finished is `ok` with its usage, and a stream that
