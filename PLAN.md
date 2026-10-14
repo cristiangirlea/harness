@@ -686,6 +686,8 @@ neither of them follows a run while it happens.
 
 - 2026-10-14: hrn remote validates options as its MCP tool does (#166, PR #N). Decided: shared
   validation rejects non-finite max cost before either submission sends a request.
+- 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #273).
+  Decided: use the path project for submission; worker routes read only the project ID before strict JSON decoding.
 - 2026-10-14: hrn remote stops on an oversized event line (#164, PR #271). Decided: a line over
   the 1 MiB scanner limit is terminal for Watch, with the limit named and bufio.ErrTooLong wrapped.
 - 2026-10-14: durable project workers and project retrieval reach main ([#142](https://github.com/cristiangirlea/harness/issues/142), PR #266; item 17's last box).
