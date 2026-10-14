@@ -402,8 +402,10 @@ func measure(home string, days int, now time.Time) (*report, error) {
 		var tokenFigure *int64
 		if hasUsage {
 			tokenFigure = &tokens
-		} else if result.Input != nil {
-			tokens = *result.Input
+		} else if result.Input != nil || backend != "codex" && result.Cache > 0 {
+			if result.Input != nil {
+				tokens = *result.Input
+			}
 			if backend != "codex" {
 				tokens += result.Cache
 			}

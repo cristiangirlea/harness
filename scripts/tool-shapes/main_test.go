@@ -129,6 +129,7 @@ func TestTokenCoverage(t *testing.T) {
 		want                         int64
 	}{
 		{"flat api", "api", `{"status":"ok","input_tokens":100,"cache_read_tokens":50}`, "", 150},
+		{"cache only api", "api", `{"status":"ok","cache_read_tokens":50}`, "", 50},
 		{"wrapped claude", "claude", `{"result":{"status":"ok","input_tokens":100,"cache_read_tokens":50}}`, "", 150},
 		{"old codex", "codex", `{"status":"ok","input_tokens":100,"cache_read_tokens":50}`, "", 100},
 		{"wrapped codex", "codex", `{"result":{"status":"ok","backend":"codex","input_tokens":100,"cache_read_tokens":50,"usage_metadata":{"input_semantics":"inclusive_cache"}}}`, "", 100},
