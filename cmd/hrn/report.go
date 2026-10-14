@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -65,6 +66,19 @@ func cmdReport(args []string) error {
 			t = append(t, []string{shortKey(r.Key, 48), strconv.Itoa(r.Runs), strconv.Itoa(r.OK), report.Percent(r.OK, r.Runs),
 				r.MedianDuration.Round(time.Second).String(), report.Number(r.MedianTurns),
 				report.Money(r.TotalCost, r.CostEstimated), report.Money(r.MedianCost, r.CostEstimated), report.Share(r.CacheShare)})
+		}
+		fmt.Print(table(t, 1))
+
+		// Context per turn is from the runs' usage events, their totals, or both.
+		fmt.Printf("\ntokens by %s, %s\n", rep.By, scope)
+		t = [][]string{{rep.By, "input", "output", "cache read", "cache write", "med context", "peak context", "from"}}
+		for _, r := range append(rep.Runs, rep.RunsAll) {
+			median, peak, from := "-", "-", "-"
+			if r.ContextFrom != "" {
+				median, peak, from = report.Tokens(int64(math.Round(r.MedianContext))), report.Tokens(r.PeakContext), r.ContextFrom
+			}
+			t = append(t, []string{shortKey(r.Key, 48), report.Tokens(r.InputTokens), report.Tokens(r.OutputTokens),
+				report.Tokens(r.CacheRead), report.Tokens(r.CacheWrite), median, peak, from})
 		}
 		fmt.Print(table(t, 1))
 	}

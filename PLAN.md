@@ -1896,3 +1896,21 @@ neither of them follows a run while it happens.
 - 2026-10-12: continue: warn on the session carried, not the run named (#103, PR #109)
   The warning uses the run whose conversation is resumed or session is forked, including
   an earlier run on the same backend; transcript-only hand-overs give no warning.
+- 2026-10-13: Usage per turn (#235). A `usage` event in `events.jsonl` (additive kind, its
+  figures under `usage`, zero fields omitted) records each model call: the api loop per
+  request, claude per main-loop assistant message, opencode per step. Claude's stream-json
+  repeats a message's usage on the line of each content block, so the event goes out once per
+  message id with the first line's figures (its output count can be short of the final one;
+  the context is the same on every line). Sub-agent messages are left out, as for
+  `context_tokens`. Codex and gemini report agent-turn or run totals only and write none.
+  Claude Code's `{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger",
+  "pre_tokens"}}` becomes a `compaction` event; that shape is the Agent SDK's documented
+  message and the fixtures are written from it, not captured from a real run, so the first
+  long claude run with `compact_window` should confirm it. A drop of more than half from the
+  turn before is shown as a probable compaction by `hrn watch` and `hrn show --usage` only,
+  never recorded. The watch chart is server-rendered inline SVG (two panels on one turn axis,
+  no dual scale), redrawn over every turn on each new one through a `usage` SSE message.
+  `hrn report` token totals come from results (sub-agents included); median and peak context
+  per turn come from usage events, or, without them, from one per-run average
+  (totals over turns), and the row says `turns`, `totals` or `mixed`. `--by day` lists days
+  in date order.

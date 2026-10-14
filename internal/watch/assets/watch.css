@@ -167,3 +167,21 @@ input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--link
 .voice-level meter { width: min(320px, 60vw); height: 14px; }
 button[aria-pressed="true"] { border-color: var(--link); box-shadow: inset 0 0 0 1px var(--link); font-weight: 650; }
 .recording #voice-rec, .recording #voice-talk-rec { background: var(--bad-fg); border-color: var(--bad-fg); }
+/* The usage chart: inline SVG coloured from here, since the page allows no inline style. */
+.usage-chart { display: block; width: 100%; height: auto; max-height: 22rem; overflow: visible; }
+.chart-title { font-size: 13px; font-weight: 650; fill: var(--fg); }
+.chart-axis { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.chart-y, .chart-end { text-anchor: end; }
+.chart-y { dominant-baseline: middle; }
+.chart-grid { stroke: var(--rule); stroke-width: 1; }
+.chart-base { stroke: var(--line); stroke-width: 1; }
+.chart-line { fill: none; stroke: var(--run-fg); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-dot { fill: var(--run-fg); stroke: transparent; stroke-width: 8; }
+.chart-dot:hover { fill: var(--focus); }
+.chart-mark { stroke: var(--warn-fg); stroke-width: 2; }
+.chart-mark.probable { stroke-dasharray: 4 4; stroke-width: 1.5; }
+.chart-mark:hover { stroke-width: 6; }
+.chart-key { display: flex; flex-wrap: wrap; gap: 4px 20px; color: var(--muted); }
+.key-mark::before { content: ""; display: inline-block; width: 0; height: .9em; margin-right: 6px; vertical-align: -1px; border-left: 2px solid var(--warn-fg); }
+.key-mark.probable::before { border-left-style: dashed; }
+.ev-compaction::before { background: var(--warn-fg); }

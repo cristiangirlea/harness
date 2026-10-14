@@ -109,7 +109,9 @@ It creates no additional record, and the accepted run continues to its final `re
  "event":{"t":"...","kind":"tool_call","tool":"shell","text":"go test ./...","truncated":false}}
 ```
 
-`kind` is one of `text`, `thinking`, `tool_call`, `tool_result`, `info`, `error`, and `session`.
+`kind` is one of `text`, `thinking`, `tool_call`, `tool_result`, `info`, `error`, `session`,
+`usage` and `compaction` (see [Run records](run-records.md#usage-per-turn)); a supervisor should
+ignore a kind it does not know.
 A `session` event carries the backend's native session id in `text`, as soon as the CLI reports
 it, so a supervisor knows which session to resume even if the run is interrupted. Streaming
 fragments are not sent; each event is complete.

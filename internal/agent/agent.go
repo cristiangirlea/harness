@@ -87,7 +87,23 @@ const (
 	EventInfo       EventKind = "info"
 	EventError      EventKind = "error"
 	EventSession    EventKind = "session"
+	// EventUsage is one model call's token usage, in Event.Usage.
+	EventUsage EventKind = "usage"
+	// EventCompaction is a compaction the backend reported: Text is what set
+	// it off (auto, manual), Usage.ContextTokens the context before it.
+	EventCompaction EventKind = "compaction"
 )
+
+// Usage is the tokens one model call used. ContextTokens is what that call
+// carried: its input including cache reads and writes.
+type Usage struct {
+	Model         string `json:"model,omitempty"`
+	InputTokens   int64  `json:"input_tokens,omitempty"`
+	OutputTokens  int64  `json:"output_tokens,omitempty"`
+	CacheRead     int64  `json:"cache_read_tokens,omitempty"`
+	CacheWrite    int64  `json:"cache_write_tokens,omitempty"`
+	ContextTokens int64  `json:"context_tokens,omitempty"`
+}
 
 type Event struct {
 	Time    time.Time       `json:"t"`
@@ -96,6 +112,7 @@ type Event struct {
 	Tool    string          `json:"tool,omitempty"`
 	Input   json.RawMessage `json:"input,omitempty"`
 	IsError bool            `json:"is_error,omitempty"`
+	Usage   *Usage          `json:"usage,omitempty"`
 
 	// Partial marks a streaming fragment. Renderers print it; transcripts skip it.
 	Partial bool `json:"-"`
