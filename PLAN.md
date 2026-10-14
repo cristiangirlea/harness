@@ -677,10 +677,10 @@ order they are worth taking:
     - [x] `durable` into main. Done: PR #266, 2026-10-14.
 
 18. **Cheaper runs: shape what the agent reads, route by evidence, keep the scripts it retypes**
-    (the owner, 2026-10-14). A session's tokens are mostly cache reads of tool results (in the
-    sample in `docs/evaluations.md`, output is about 2% of them), so an output style saves
-    nothing here. The levers are what the agent reads, which effort and model answer, and what
-    it writes twice. In this order, each its own PR:
+    (the owner, 2026-10-14). In the sample in `docs/evaluations.md` (nine runs over a week),
+    output is about 2% of the tokens moved and cache reads of the growing context are most of
+    the rest, so shorter answers can save little. The levers are what the agent reads, which
+    effort and model answer, and what it writes twice. In this order, each its own PR:
     - [#295](https://github.com/cristiangirlea/harness/issues/295): measure first, from the run
       records: tool-result bytes by shape, and the inline scripts written again and again.
     - [#151](https://github.com/cristiangirlea/harness/issues/151) and
@@ -692,7 +692,7 @@ order they are worth taking:
     - [#297](https://github.com/cristiangirlea/harness/issues/297): a routing table from eval
       results (purpose to backend, model and effort), applied when a run names none and
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
-      local models once measured (#224).
+      local models once a hrn-evals suite has measured them (the eval #224 asks for).
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
       CI-verified index for the scripts agents write twice, kept under `scripts/`.
     The gate side lives in adanext-exec (output shaping, and the hint when a kept script covers
