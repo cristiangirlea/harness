@@ -122,6 +122,21 @@ func (f *fixture) take(opt TakeOptions) Taken {
 	return got
 }
 
+// takeWithExitedPID gives a taken slot the identity of a helper that has exited.
+func takeWithExitedPID(t *testing.T, f *fixture, opt TakeOptions) Taken {
+	t.Helper()
+	got := f.take(opt)
+	got.Lease.PID, got.Lease.Start = exitedPID(t)
+	data, err := json.Marshal(got.Lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.repo, ".hrn", "slots", strconv.Itoa(got.N)+".lease"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
 func samePathT(t *testing.T, got, want string) {
 	t.Helper()
 	g, err1 := filepath.EvalSymlinks(got)
@@ -314,7 +329,8 @@ func TestNoSlotErrorNamesTheFileBehindEachLeaseItCannotRead(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "1.lease"), nil, 0o644); err != nil { // being written
 		t.Fatal(err)
 	}
-	writeLease(t, f.repo, 2, exitedPID(t), "batch y task b")
+	pid, start := exitedPID(t)
+	writeLease(t, f.repo, 2, pid, start, "batch y task b")
 	if err := os.WriteFile(filepath.Join(dir, "2.lease.takeover"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +351,8 @@ func TestNoSlotErrorNamesTheFileBehindEachLeaseItCannotRead(t *testing.T) {
 // the newcomer's lease stays.
 func TestNoSlotErrorKeepsALeaseThatChangedUnderTheTakeOutOfUnreadable(t *testing.T) {
 	f := newFixture(t)
-	writeLease(t, f.repo, 1, exitedPID(t), "batch old task a")
+	pid, start := exitedPID(t)
+	writeLease(t, f.repo, 1, pid, start, "batch old task a")
 	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
 	data, _ := json.Marshal(Lease{Holder: "newcomer", PID: os.Getpid(), Taken: time.Now()})
 	beforeTakeoverLock = func() {
@@ -431,7 +448,7 @@ func TestFreeRefusesALeaseHeldByARunningProcess(t *testing.T) {
 
 func TestFreeGivesBackALeaseWhoseProcessExited(t *testing.T) {
 	f := newFixture(t)
-	got := f.take(TakeOptions{Holder: "gone", PID: exitedPID(t)})
+	got := takeWithExitedPID(t, f, TakeOptions{Holder: "gone"})
 	if _, err := Free(context.Background(), got.Path); err != nil {
 		t.Errorf("free of a stale lease: %v", err)
 	}
@@ -491,7 +508,7 @@ func TestOldLeaseJSONWithoutStartLoads(t *testing.T) {
 func TestASlotABatchKeptIsRecoveredAsTheDocsSay(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: exitedPID(t)})
+	got := takeWithExitedPID(t, f, TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1"})
 	slot := got.Path
 	f.identity(slot)
 	git(t, slot, "switch", "-q", "--detach")
@@ -553,7 +570,7 @@ func TestASlotABatchKeptIsRecoveredAsTheDocsSay(t *testing.T) {
 func TestASlotABatchKeptIsRecoveredWhenTheRemoteIsNotCalledOrigin(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	slot := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: exitedPID(t)}).Path
+	slot := takeWithExitedPID(t, f, TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1"}).Path
 	git(t, f.repo, "remote", "rename", "origin", "upstream")
 	f.identity(slot)
 	git(t, slot, "switch", "-q", "--detach")
@@ -579,7 +596,7 @@ func TestASlotABatchKeptIsRecoveredWhenTheRemoteIsNotCalledOrigin(t *testing.T) 
 func TestASlotABatchKeptIsRecoveredOnceAnUnfetchedRemoteIsFetched(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	slot := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: exitedPID(t)}).Path
+	slot := takeWithExitedPID(t, f, TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1"}).Path
 	git(t, f.repo, "remote", "remove", "origin")
 	git(t, f.repo, "remote", "add", "upstream", f.origin)
 	f.identity(slot)
@@ -615,7 +632,7 @@ func TestASlotABatchKeptWithoutARemoteIsFreedOnceABranchHoldsItsWork(t *testing.
 	f := newFixture(t)
 	ctx := context.Background()
 	git(t, f.repo, "remote", "remove", "origin")
-	slot := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: exitedPID(t)}).Path
+	slot := takeWithExitedPID(t, f, TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1"}).Path
 	f.identity(slot)
 	git(t, slot, "switch", "-q", "--detach")
 	detached := f.commit(slot, "detached.txt")
@@ -980,14 +997,15 @@ func TestTakeTakesOverALeaseWhoseProcessExitedButNotALiveOne(t *testing.T) {
 	f := newFixture(t)
 	dir := filepath.Join(f.repo, ".hrn", "slots")
 	os.MkdirAll(dir, 0o755)
-	writeLease := func(n, pid int) {
-		data, _ := json.Marshal(Lease{Holder: "batch", PID: pid, Taken: time.Now()})
+	writeLease := func(n, pid int, start string) {
+		data, _ := json.Marshal(Lease{Holder: "batch", PID: pid, Start: start, Taken: time.Now()})
 		if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".lease"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	writeLease(1, os.Getpid())
-	writeLease(2, exitedPID(t))
+	writeLease(1, os.Getpid(), "") // an old lease without Start still uses pid liveness
+	pid, start := exitedPID(t)
+	writeLease(2, pid, start)
 	got := f.take(TakeOptions{Holder: "new", PID: os.Getpid()})
 	samePathT(t, got.Path, f.slot(2))
 	if l, _ := readLeaseT(t, filepath.Join(dir, "2.lease")); l.Holder != "new" || l.PID != os.Getpid() {
@@ -1280,14 +1298,14 @@ func TestListShowsSlotsLeasesAndWhatIsInThem(t *testing.T) {
 	}
 }
 
-// writeLease writes slot n's lease by hand, as a batch would, with pid as its process.
-func writeLease(t *testing.T, repo string, n, pid int, holder string) {
+// writeLease writes slot n's lease by hand, as a batch would.
+func writeLease(t *testing.T, repo string, n, pid int, start, holder string) {
 	t.Helper()
 	dir := filepath.Join(repo, ".hrn", "slots")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := json.Marshal(Lease{Holder: holder, PID: pid, Taken: time.Now()})
+	data, _ := json.Marshal(Lease{Holder: holder, PID: pid, Start: start, Taken: time.Now()})
 	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(n)+".lease"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1301,8 +1319,9 @@ func TestCountLeasesCountsTheReadableLeasesThatMatch(t *testing.T) {
 	}
 	f.take(TakeOptions{Holder: "alice"})
 	f.take(TakeOptions{Holder: "bob"})
-	writeLease(t, f.repo, 3, os.Getpid(), "batch x task a")
-	writeLease(t, f.repo, 4, exitedPID(t), "batch y task b")
+	writeLease(t, f.repo, 3, os.Getpid(), "", "batch x task a")
+	pid, start := exitedPID(t)
+	writeLease(t, f.repo, 4, pid, start, "batch y task b")
 	dir := filepath.Join(f.repo, ".hrn", "slots")
 	if err := os.WriteFile(filepath.Join(dir, "5.lease"), nil, 0o644); err != nil { // being written
 		t.Fatal(err)
@@ -1327,15 +1346,15 @@ func TestRangeBeyondSessionsSkipsOnlySessionsAmongTheFirstSlots(t *testing.T) {
 		t.Fatalf("no slots yet: %d, %v; want 4", n, err)
 	}
 	f.take(TakeOptions{Holder: "alice"}) // slot 1, a session
-	writeLease(t, f.repo, 2, os.Getpid(), "batch x task a")
+	writeLease(t, f.repo, 2, os.Getpid(), "", "batch x task a")
 	if n, err := RangeBeyondSessions(ctx, f.repo, 4); err != nil || n != 5 {
 		t.Errorf("one session in the first slots: %d, %v; want 5", n, err)
 	}
-	writeLease(t, f.repo, 10, 0, "far") // a session past the range
+	writeLease(t, f.repo, 10, 0, "", "far") // a session past the range
 	if n, err := RangeBeyondSessions(ctx, f.repo, 4); err != nil || n != 5 {
 		t.Errorf("a session on slot 10 widens nothing: %d, %v; want 5", n, err)
 	}
-	writeLease(t, f.repo, 5, 0, "carol")
+	writeLease(t, f.repo, 5, 0, "", "carol")
 	if n, err := RangeBeyondSessions(ctx, f.repo, 4); err != nil || n != 6 {
 		t.Errorf("a session on the last slot in range: %d, %v; want 6", n, err)
 	}

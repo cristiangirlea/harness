@@ -3,6 +3,7 @@ package ws
 import (
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,27 +15,46 @@ func TestHelperExit(t *testing.T) {
 	if os.Getenv("HRN_WS_HELPER") != "exit" {
 		return
 	}
+	var hold [1]byte
+	_, _ = os.Stdin.Read(hold[:])
 	os.Exit(0)
 }
 
-// exitedPID starts the test binary as a helper that exits, waits for it, and
-// returns its pid.
-func exitedPID(t *testing.T) int {
+// exitedPID records the helper's start identity while it is held running,
+// then lets it exit and returns its pid and start identity.
+func exitedPID(t *testing.T) (int, string) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperExit$")
 	cmd.Env = append(os.Environ(), "HRN_WS_HELPER=exit")
-	if err := cmd.Run(); err != nil {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
 		t.Fatal(err)
 	}
-	return cmd.Process.Pid
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	start, known := startID(cmd.Process.Pid)
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if !known && (runtime.GOOS == "windows" || runtime.GOOS == "linux") {
+		t.Fatal("cannot read the running helper's start identity")
+	}
+	return cmd.Process.Pid, start
 }
 
 func TestAliveSeesThisProcessAndNotOneThatExited(t *testing.T) {
 	if !alive(os.Getpid()) {
 		t.Error("this process should be alive")
 	}
-	if pid := exitedPID(t); alive(pid) {
-		t.Errorf("pid %d has exited and was waited for, but alive says it runs", pid)
+	pid, start := exitedPID(t)
+	if alive(pid) {
+		if current, known := startID(pid); start == "" || !known || current == start {
+			t.Errorf("pid %d has exited and was waited for, but alive says it runs", pid)
+		}
 	}
 	if alive(0) || alive(-1) {
 		t.Error("no pid is not a live process")
@@ -68,6 +88,16 @@ func TestLeaseWithReusedPIDIsStale(t *testing.T) {
 	}
 	if (Lease{PID: pid, Start: foreign}).stale() {
 		t.Error("a start identity from another platform cannot tell the holder apart")
+	}
+}
+
+func TestExitedHelperStartKeepsReusedPIDLeaseFree(t *testing.T) {
+	_, start := exitedPID(t)
+	if start == "" {
+		t.Skip("process start identity is unavailable on this platform")
+	}
+	if (Lease{PID: os.Getpid(), Start: start}).processHolds() {
+		t.Error("the live test process cannot hold a lease recorded for an exited helper")
 	}
 }
 
