@@ -695,7 +695,7 @@ order they are worth taking:
     - [#151](https://github.com/cristiangirlea/harness/issues/151) and
       [#264](https://github.com/cristiangirlea/harness/issues/264): an unknown cost is never
       zero and a cache read is counted once, before any saving is claimed. #151 done:
-      PR #312, 2026-10-14.
+      PR #313, 2026-10-14.
     - [#296](https://github.com/cristiangirlea/harness/issues/296): large tool results shaped
       per kind (tests, logs, JSON, tables, terminal), the original kept behind a handle,
       invariants checked, measured by an eval in hrn-evals.
@@ -2135,7 +2135,7 @@ neither of them follows a run while it happens.
   per turn come from usage events, or, without them, from one per-run average
   (totals over turns), and the row says `turns`, `totals` or `mixed`. `--by day` lists days
   in date order.
-- 2026-10-14: PR #312 (closes #151): `hrn report` sums costs through `KnownCost`, so a run
+- 2026-10-14: PR #313 (closes #151): `hrn report` sums costs through `KnownCost`, so a run
   or a batch task whose cost is unknown (codex usage marked missing, or an old record with
   no usage and a zero cost) adds nothing, is left out of the median and is counted in
   `runs_without_cost` or `tasks_without_cost` (additive, omitted at zero). The table shows
