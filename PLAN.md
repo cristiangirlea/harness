@@ -684,7 +684,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: hrn remote validates options as its MCP tool does (#166, PR #281). Decided: shared
+- 2026-10-14: hrn remote validates options as its MCP tool does (#166, PR #N). Decided: shared
   validation rejects non-finite max cost before either submission sends a request.
 - 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #273).
   Decided: use the path project for submission; worker routes read only the project ID before strict JSON decoding.
