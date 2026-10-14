@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: gc's idle age and the clock's resolution (#245, PR #N). A cache written moments
+- 2026-10-14: gc's idle age and the clock's resolution (#245, PR #278). A cache written moments
   before could read as not yet idle, failing `TestGCTakesTheIdleLimitAsGiven` on Windows CI.
   Decided: an age below zero counts as zero, so `--idle 0` takes any cache; the test writes its
   cache a second in the past, which still shows a 1 ns limit is honoured.
