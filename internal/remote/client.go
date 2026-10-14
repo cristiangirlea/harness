@@ -133,7 +133,7 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 			} else {
 				failures = 0
 				var terminal bool
-				after, terminal, err = readEvents(response.Body, after, out)
+				after, terminal, err = readEvents(response.Body, after, out, true)
 				response.Body.Close()
 				if terminal {
 					return nil
@@ -168,7 +168,7 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 }
 
 func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
-	after, _, err := readEvents(input, after, out)
+	after, _, err := readEvents(input, after, out, false)
 	return after, err
 }
 
@@ -195,7 +195,9 @@ func terminalEvent(kind, data string) bool {
 	}
 }
 
-func readEvents(input io.Reader, after int64, out io.Writer) (int64, bool, error) {
+// readEvents prints the events after the cursor and reports whether one ended the job; with
+// stop it returns at that event, as a watch does, otherwise it reads to the end.
+func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, bool, error) {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	var currentID int64
@@ -227,7 +229,7 @@ func readEvents(input io.Reader, after int64, out io.Writer) (int64, bool, error
 			if err := emit(); err != nil {
 				return after, false, err
 			}
-			if terminal {
+			if terminal && stop {
 				return after, true, nil
 			}
 			currentID, kind, data = 0, "", ""

@@ -98,3 +98,31 @@ func TestReadEventsReportsTerminalEventOutputFailure(t *testing.T) {
 		t.Fatalf("terminal output error = %v", err)
 	}
 }
+
+func TestAWrongShapedTerminalDetailIsNotTerminalAndALaterTerminalEventStillEndsTheWatch(t *testing.T) {
+	stream := "id: 1\nevent: admission_timeout\ndata: {\"id\":1,\"kind\":\"admission_timeout\",\"details\":{\"state\":5}}\n\n" +
+		"id: 2\nevent: recovery_resolved\ndata: {\"id\":2,\"kind\":\"recovery_resolved\",\"details\":\"failed\"}\n\n" +
+		"id: 3\nevent: succeeded\ndata: {\"id\":3,\"kind\":\"succeeded\"}\n\n" +
+		"id: 4\nevent: checkpoint\ndata: {\"id\":4}\n\n"
+	var output bytes.Buffer
+	after, terminal, err := readEvents(strings.NewReader(stream), 0, &output, true)
+	if err != nil || !terminal || after != 3 {
+		t.Fatalf("readEvents = after %d, terminal %v, err %v; want 3, true, nil", after, terminal, err)
+	}
+}
+
+func TestAnEventWhoseDataIsNotJSONIsMalformed(t *testing.T) {
+	stream := "id: 1\nevent: succeeded\ndata: not json\n\n"
+	if _, _, err := readEvents(strings.NewReader(stream), 0, io.Discard, true); !errors.Is(err, ErrMalformedEvent) {
+		t.Fatalf("readEvents error = %v, want ErrMalformedEvent", err)
+	}
+}
+
+func TestReadEventsStillReadsPastATerminalEvent(t *testing.T) {
+	stream := "id: 1\nevent: succeeded\ndata: {\"id\":1,\"kind\":\"succeeded\"}\n\n" +
+		"id: 2\nevent: checkpoint\ndata: {\"id\":2}\n\n"
+	after, err := ReadEvents(strings.NewReader(stream), 0, io.Discard)
+	if err != nil || after != 2 {
+		t.Fatalf("ReadEvents = after %d, err %v; want 2, nil", after, err)
+	}
+}
