@@ -614,6 +614,15 @@ order they are worth taking:
       mode that records talk, saved as WAV with `metadata.csv` into a folder the speaker picks.
       Next in #83, each download with the owner's yes: a taste with Chatterbox, transcribing
       talk with Whisper, training with Piper, and Ada speaking with the voice.
+    - Ada where the owner works (the owner, 2026-10-14), after the map of #90 and behind the
+      masking of [#304](https://github.com/cristiangirlea/harness/issues/304) (secrets masked
+      in everything hrn watch, `hrn show`, the renderer and the bot display): a Claude Code
+      side pane with Ada reacting to the live session, the map in short form and the session
+      meter, the session recorded under `~/.hrn` so reports and hrn watch include the owner's
+      own sessions ([#305](https://github.com/cristiangirlea/harness/issues/305)); and Ada
+      gamified, experience gathered by working with the AI, from real outcomes only, with
+      Ada's own growth beside it ([#306](https://github.com/cristiangirlea/harness/issues/306),
+      four owner decisions before any slice).
 12. **Guard rails** (the owner, 2026-10-11), in this order:
     - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
       Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
