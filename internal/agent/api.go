@@ -314,10 +314,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			}
 			msg, err = client.stream(ctx, req, onDelta, onBlock)
 		}
-		if err != nil && durable != nil {
-			return durableFailure(err)
-		}
-		if err != nil && dropContextEdits(&req, err) {
+		if err != nil && durable == nil && dropContextEdits(&req, err) {
 			// A beta hrn sends by default must never make every run fail.
 			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
 			msg, err = client.stream(ctx, req, onDelta, onBlock)
@@ -336,6 +333,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			// Each turn at the price of the model that served it: a server-side
 			// fallback can answer a refused turn with another model.
 			res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
+		}
+		if err != nil && durable != nil {
+			return durableFailure(err)
 		}
 		if err != nil {
 			if ctx.Err() != nil {
