@@ -83,11 +83,12 @@ bash scripts/check.sh --list > "$tmp/list"
 cmp "$tmp/steps" "$tmp/list" || fail check-list
 # Shadow commands so executing the runner tests order and short-circuiting only.
 mkdir "$tmp/bin"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TRACE"\nexit 7\n' > "$tmp/bin/go"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TRACE"\nprintf "%%5000s\\n" diagnostic\nexit 7\n' > "$tmp/bin/go"
 chmod +x "$tmp/bin/go"
 if PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" bash scripts/check.sh > "$tmp/out" 2>&1; then fail check-failure; fi
 [[ $(cat "$tmp/trace") == 'vet ./...' ]] || fail check-stop
 grep -q '"error":' "$tmp/out" || fail check-error
+(( $(wc -c < "$tmp/out") < 2200 )) || fail check-output-cap
 real_bash=$(command -v bash)
 printf '#!/bin/bash\nprintf "%%s\\n" "$2" >> "$TRACE"\n' > "$tmp/bin/bash"
 chmod +x "$tmp/bin/bash"
