@@ -79,6 +79,30 @@ func TestFromEvalPrefersPlanAtEqualCostAndRate(t *testing.T) {
 	}
 }
 
+func TestFromEvalInheritsMeasuredTaskChoices(t *testing.T) {
+	r := evidence()
+	r.Spec.Backend = "api"
+	r.Spec.Model = "spec-model"
+	r.Spec.Effort = "max"
+	r.Spec.Matrix = []eval.Variant{{Name: "high"}}
+	r.Spec.Tasks[0].Backend = "codex"
+	r.Spec.Tasks[0].Model = "task-model"
+	r.Spec.Tasks[0].Effort = "medium"
+	if got := FromEval(r, 0)["implement"]; got.Backend != "codex" || got.Model != "task-model" || got.Effort != "medium" {
+		t.Fatalf("task choices lost: %+v", got)
+	}
+	if got := FromEval(r, 0)["review"]; got.Backend != "api" || got.Model != "spec-model" || got.Effort != "max" {
+		t.Fatalf("spec choices lost: %+v", got)
+	}
+	// A single row cannot reproduce variants whose tasks in one purpose used
+	// different models. Do not misattribute their combined pass rate.
+	r.Spec.Tasks = append(r.Spec.Tasks, batch.Task{ID: "other", Prompt: "Implement another widget", Options: agent.Options{Model: "different"}})
+	r.Table.Tasks = append(r.Table.Tasks, eval.TaskRow{Task: "other", Variant: "high", Passed: 10, Total: 10})
+	if _, ok := FromEval(r, 0)["implement"]; ok {
+		t.Fatal("mixed model evidence became one route")
+	}
+}
+
 func TestApplyOnlyWhenAllChoicesEmpty(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	if err := Save(Table{"implement": {Backend: "codex", Model: "sol", Effort: "medium", Eval: "e1", Set: "2026-10-12"}}); err != nil {

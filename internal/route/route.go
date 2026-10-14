@@ -30,8 +30,10 @@ func FromEval(rec eval.Record, margin float64) Table {
 		return out
 	}
 	categories := map[string]string{}
+	tasks := map[string]struct{ backend, model, effort string }{}
 	for _, t := range rec.Spec.Tasks {
 		categories[t.ID] = purpose.Classify(t.Prompt).Category
+		tasks[t.ID] = struct{ backend, model, effort string }{t.Backend, t.Model, t.Effort}
 	}
 	groups := map[string]map[string]eval.VariantRow{}
 	for _, t := range rec.Table.Tasks {
@@ -97,16 +99,37 @@ func FromEval(rec eval.Record, margin float64) Table {
 			if !ok || cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
 				continue
 			}
-			// Inherit what Expand applies from the spec to every variant.
-			if v.Backend == "" {
-				v.Backend = rec.Spec.Backend
+			// Expand inherits variant over task over spec. Only a uniform
+			// measured choice can be represented by a single purpose row.
+			first := func(values ...string) string {
+				for _, s := range values {
+					if s != "" {
+						return s
+					}
+				}
+				return ""
 			}
-			if v.Model == "" {
-				v.Model = rec.Spec.Model
+			var effective eval.Variant
+			found, mixed := false, false
+			for _, tr := range rec.Table.Tasks {
+				if tr.Variant != name || tr.Total <= 0 || categories[tr.Task] != cat {
+					continue
+				}
+				t := tasks[tr.Task]
+				resolved := v
+				resolved.Backend = first(v.Backend, t.backend, rec.Spec.Backend)
+				resolved.Model = first(v.Model, t.model, rec.Spec.Model)
+				resolved.Effort = first(v.Effort, t.effort, rec.Spec.Effort)
+				if found && resolved != effective {
+					mixed = true
+					break
+				}
+				effective, found = resolved, true
 			}
-			if v.Effort == "" {
-				v.Effort = rec.Spec.Effort
+			if mixed || !found || effective.Backend == "" {
+				continue
 			}
+			v = effective
 			c := candidate{v, name, cost}
 			key := v.Backend + "\x00" + v.Model
 			if prev, ok := families[key]; !ok || less(c, prev) {

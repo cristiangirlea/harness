@@ -32,7 +32,9 @@ the cheapest qualifying effort within each backend/model family, then compare
 those winners by cost. Equal costs prefer plan-based claude or codex over api,
 then lower effort, with variant names breaking remaining ties. Cost is the
 variant's recorded median across the eval, since task rows do not store separate
-costs. The row carries the eval's id and date.
+costs. Variant choices inherit task and spec defaults as in the measured run;
+evidence that mixes different choices within one purpose/variant is skipped.
+The row carries the eval's id and date.
 
 `hrn run`, batch tasks (after inheriting spec options), and MCP `run` apply the
 classified purpose's row only when backend, model **and** effort are all empty.
