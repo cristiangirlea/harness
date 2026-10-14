@@ -15,7 +15,8 @@ import (
 // stops is the plausible accident.
 //
 // The rules lean towards refusing too much. A command segment ends at |, &&,
-// || or ;, so a rule reads one command at a time rather than the whole line.
+// || or ; outside quotes (see Guard), so a rule reads one command at a time
+// rather than the whole line.
 var guardRules = []struct {
 	name  string
 	match func(command string) bool
@@ -70,13 +71,50 @@ func matches(pattern string) func(string) bool {
 // The match is textual, so a line that merely mentions a pattern (echo "git
 // push") is refused as well; that false positive costs the agent one turn,
 // which is cheap next to what the rules prevent.
+//
+// Each rule sees the line as written and a copy with the separators inside
+// quotes read as text (#222), and refuses when either matches. A misread
+// quote (a substitution "$(... | sh)", an apostrophe in a comment) can then
+// only add a refusal, never hide a real pipe the line as written shows.
 func Guard(command string) string {
+	quoted := guardQuotedSeparators(command)
 	for _, r := range guardRules {
-		if r.match(command) {
+		if r.match(command) || r.match(quoted) {
 			return r.name
 		}
 	}
 	return ""
+}
+
+// guardQuotedSeparators keeps quoted text visible to the rules while preventing
+// separators inside it from ending a pipeline stage. An unterminated quote
+// treats the rest of the line as quoted, which can only add refusals.
+func guardQuotedSeparators(command string) string {
+	line := []byte(command)
+	var quote byte
+	escaped := false
+	for i, c := range line {
+		if quote == '"' && escaped {
+			escaped = false
+			continue
+		}
+		if quote == '"' && c == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 && c == quote {
+			quote = 0
+			continue
+		}
+		if quote == 0 && (c == '\'' || c == '"') {
+			quote = c
+			continue
+		}
+		if quote != 0 && (c == '|' || c == '&' || c == ';') {
+			line[i] = ' '
+		}
+	}
+	return string(line)
 }
 
 // GuardError is what a refused command returns to the model. It names the rule
