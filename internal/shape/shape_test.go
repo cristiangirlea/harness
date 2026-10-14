@@ -75,6 +75,7 @@ func TestInvariantsRejectAdversarialSummaries(t *testing.T) {
 		{"number sign", Terminal, "count 2", "count -2"},
 		{"number exponent", Terminal, "count 2 3", "count 2e3"},
 		{"path", Terminal, "file /tmp/old", "file /tmp/new"}, {"windows path", Terminal, `C:\work\old.txt`, `C:\work\new.txt`}, {"relative path", Terminal, "src/old.go", "src/new.go"},
+		{"path prefix", Terminal, "file /tmp/config.yaml", "file /tmp/config"},
 		{"invented error", Log, "INFO ready", "error broken"}, {"missing error", Terminal, "error broken\nready", "ready"},
 		{"error substring", Terminal, "error long broken", "error broken"},
 		{"error hidden in another line", Log, "error broken", "prefix error broken"},
@@ -86,6 +87,50 @@ func TestInvariantsRejectAdversarialSummaries(t *testing.T) {
 				t.Fatal("accepted an invalid summary")
 			}
 		})
+	}
+}
+
+func TestParallelFailureDiagnostics(t *testing.T) {
+	text := "counts 1\n=== RUN   TestBad\n    ordinary diagnostic\n=== PAUSE TestBad\n=== RUN   TestGood\n--- PASS: TestGood (0.00s)\n=== CONT  TestBad\n--- FAIL: TestBad (0.00s)\nFAIL\n"
+	s, ok := Summarize(Test, text)
+	if !ok || !strings.Contains(s, "    ordinary diagnostic") {
+		t.Fatalf("parallel diagnostic lost: %q ok=%v", s, ok)
+	}
+}
+
+func TestFailureDiagnosticsStayWithTheirTest(t *testing.T) {
+	original := "counts 0 2\n=== RUN   TestA\n    first message\n    second message\n--- FAIL: TestA (0.00s)\n=== RUN   TestB\n    other message\n--- FAIL: TestB (0.00s)\nFAIL\n"
+	if s, ok := Summarize(Test, original); !ok || !valid(Test, original, s) {
+		t.Fatalf("ordinary failures rejected: %q ok=%v", s, ok)
+	}
+	for _, tc := range []struct{ name, summary string }{
+		{"swapped", "counts 0 2\n=== RUN   TestA\n    other message\n--- FAIL: TestA (0.00s)\n=== RUN   TestB\n    first message\n    second message\n--- FAIL: TestB (0.00s)\nFAIL\n"},
+		{"removed", strings.Replace(original, "    first message\n", "", 1)},
+		{"reordered", strings.Replace(original, "    first message\n    second message", "    second message\n    first message", 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if valid(Test, original, tc.summary) {
+				t.Fatal("accepted changed failure diagnostics")
+			}
+		})
+	}
+}
+
+func TestAmbiguousParallelDiagnosticsFallBack(t *testing.T) {
+	for _, text := range []string{
+		"counts 0 2\n=== RUN   TestA\n=== RUN   TestB\n    unattributed diagnostic\n--- FAIL: TestA (0.00s)\n--- FAIL: TestB (0.00s)\nFAIL\n",
+		"counts 0 2\n    first unattributed diagnostic\n    second unattributed diagnostic\n--- FAIL: TestA (0.00s)\n--- FAIL: TestB (0.00s)\nFAIL\n",
+	} {
+		if _, ok := Summarize(Test, text); ok {
+			t.Fatal("accepted diagnostics with ambiguous ownership")
+		}
+	}
+}
+
+func TestParallelFailuresWithContextMarkers(t *testing.T) {
+	text := "counts 0 2\n=== RUN   TestA\n=== PAUSE TestA\n=== RUN   TestB\n=== PAUSE TestB\n=== CONT  TestA\n    first message\n=== CONT  TestB\n    second message\n--- FAIL: TestB (0.00s)\n=== CONT  TestA\n    final message\n--- FAIL: TestA (0.00s)\nFAIL\n"
+	if s, ok := Summarize(Test, text); !ok || !strings.Contains(s, "    first message") || !strings.Contains(s, "    second message") || !strings.Contains(s, "    final message") {
+		t.Fatalf("marked parallel failures rejected: %q ok=%v", s, ok)
 	}
 }
 

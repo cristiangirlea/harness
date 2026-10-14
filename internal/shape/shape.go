@@ -4,6 +4,7 @@ package shape
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -18,15 +19,17 @@ const (
 )
 
 var (
-	testLine  = regexp.MustCompile(`^(?:go test\b|\s*--- (?:FAIL|PASS):|ok\s|FAIL(?:\s|$)|=== RUN\s)`)
-	logLine   = regexp.MustCompile(`(?i)^(?:\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d|\[?(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\]?(?:\s|:))`)
-	failName  = regexp.MustCompile(`--- FAIL:\s+(\S+)`)
-	numbers   = regexp.MustCompile(`[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?`)
-	negations = regexp.MustCompile(`(?i)\b(?:not|never|no|only)\b`)
-	paths     = regexp.MustCompile(`(?:[A-Za-z]:[\\/]|\.{0,2}/|[A-Za-z0-9_.-]+[\\/])[^\s<>"'()]+|\b[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]*`)
-	ansi      = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|[@-_])")
-	counts    = regexp.MustCompile(`^tests: passed=(\d+) failed=(\d+)$`)
-	repeats   = regexp.MustCompile(`^\[repeated (\d+) times\]$`)
+	testLine   = regexp.MustCompile(`^(?:go test\b|\s*--- (?:FAIL|PASS):|ok\s|FAIL(?:\s|$)|=== RUN\s)`)
+	logLine    = regexp.MustCompile(`(?i)^(?:\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d|\[?(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\]?(?:\s|:))`)
+	failName   = regexp.MustCompile(`--- FAIL:\s+(\S+)`)
+	testMarker = regexp.MustCompile(`^\s*=== (RUN|CONT|PAUSE)\s+(\S+)\s*$`)
+	testResult = regexp.MustCompile(`^\s*--- (FAIL|PASS):\s+(\S+)`)
+	numbers    = regexp.MustCompile(`[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?`)
+	negations  = regexp.MustCompile(`(?i)\b(?:not|never|no|only)\b`)
+	paths      = regexp.MustCompile(`(?:[A-Za-z]:[\\/]|\.{0,2}/|[A-Za-z0-9_.-]+[\\/])[^\s<>"'()]+|\b[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]*`)
+	ansi       = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|[@-_])")
+	counts     = regexp.MustCompile(`^tests: passed=(\d+) failed=(\d+)$`)
+	repeats    = regexp.MustCompile(`^\[repeated (\d+) times\]$`)
 )
 
 func Classify(text string) Kind {
@@ -55,25 +58,16 @@ func Summarize(kind Kind, text string) (string, bool) {
 	case Test:
 		passed, failed := testCounts(lines)
 		keep := make([]bool, len(lines))
-		start := 0
-		afterFail := false
-		for i, line := range lines {
-			if strings.HasPrefix(strings.TrimSpace(line), "=== RUN") {
-				start = i
-				afterFail = false
-			}
-			if afterFail {
+		failures, ok := testFailures(lines)
+		if !ok {
+			return "", false
+		}
+		for _, failure := range failures {
+			for _, i := range failure.indices {
 				keep[i] = true
 			}
-			if failName.MatchString(line) {
-				for j := start; j <= i; j++ {
-					keep[j] = true
-				}
-			}
-			if strings.Contains(line, "--- PASS:") || failName.MatchString(line) {
-				start = i + 1
-				afterFail = failName.MatchString(line)
-			}
+		}
+		for i, line := range lines {
 			if errorLine(line) || strings.HasPrefix(line, "ok ") || strings.HasPrefix(line, "ok\t") || strings.HasPrefix(line, "FAIL") {
 				keep[i] = true
 			}
@@ -136,6 +130,88 @@ func testCounts(lines []string) (passed, failed int) {
 		}
 	}
 	return
+}
+
+type testFailure struct {
+	indices  []int
+	messages []string
+	failed   bool
+}
+
+// A RUN or CONT owns following diagnostics until PAUSE or a result. Keep
+// paused tests' earlier diagnostics, and refuse unmarked output while more
+// than one test is running: its owner cannot be recovered from plain text.
+// Non-verbose Go output also prints diagnostics immediately after FAIL.
+func testFailures(lines []string) (map[string]*testFailure, bool) {
+	tests := map[string]*testFailure{}
+	running := map[string]bool{}
+	current := ""
+	markedOwner, sawMarker, unassigned := false, false, false
+	for i, line := range lines {
+		if m := testMarker.FindStringSubmatch(line); m != nil {
+			sawMarker = true
+			markedOwner = m[1] == "CONT"
+			name := m[2]
+			if tests[name] == nil {
+				tests[name] = &testFailure{}
+			}
+			tests[name].indices = append(tests[name].indices, i)
+			if m[1] == "PAUSE" {
+				delete(running, name)
+				current = ""
+			} else {
+				running[name], current = true, name
+			}
+			continue
+		}
+		if m := testResult.FindStringSubmatch(line); m != nil {
+			markedOwner = false
+			name := m[2]
+			if tests[name] == nil {
+				tests[name] = &testFailure{}
+			}
+			tests[name].indices = append(tests[name].indices, i)
+			delete(running, name)
+			current = ""
+			if m[1] == "FAIL" {
+				if tests[name].failed {
+					return nil, false // repeated names cannot identify one test
+				}
+				tests[name].failed, current = true, name
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "ok ") || strings.HasPrefix(line, "ok\t") || strings.HasPrefix(line, "go test") || counts.MatchString(line) {
+			current = ""
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if (len(running) > 1 && !markedOwner) || (len(running) > 0 && !running[current]) {
+			return nil, false
+		}
+		if current != "" {
+			tests[current].indices = append(tests[current].indices, i)
+			tests[current].messages = append(tests[current].messages, line)
+		} else {
+			unassigned = true
+			for _, test := range tests {
+				if !test.failed {
+					return nil, false // an unfinished test has no output marker
+				}
+			}
+		}
+	}
+	for name, test := range tests {
+		if !test.failed {
+			delete(tests, name)
+		}
+	}
+	if !sawMarker && unassigned && len(tests) > 1 {
+		return nil, false // diagnostics before unmarked failures have no owner
+	}
+	return tests, true
 }
 
 func collapse(lines []string) []string {
@@ -221,6 +297,19 @@ func valid(kind Kind, original, summary string) bool {
 		}
 	}
 	cleanLines := strings.Split(ansi.ReplaceAllString(original, ""), "\n")
+	if kind == Test {
+		origFailures, origOK := testFailures(cleanLines)
+		sumFailures, sumOK := testFailures(sumLines)
+		if !origOK || !sumOK || len(origFailures) != len(sumFailures) {
+			return false
+		}
+		for name, failure := range origFailures {
+			other := sumFailures[name]
+			if other == nil || !slices.Equal(failure.messages, other.messages) {
+				return false
+			}
+		}
+	}
 	for i, line := range sumLines {
 		if m := counts.FindStringSubmatch(line); m != nil {
 			p, f := testCounts(cleanLines)

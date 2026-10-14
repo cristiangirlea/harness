@@ -60,8 +60,10 @@ pending the #296 eval; JSON and tabular summaries are deferred. Summaries must
 preserve failing tests and error lines and introduce no numbers, negations or
 paths absent from the original; a rejected summary uses the existing cut. This
 includes generated counts, so a count absent from the original also rejects the
-summary. `--shape-tools=false` keeps the existing behavior. The additive
-`shape_tools` boolean is also available in run options, batch specs/tasks and MCP
+summary. Failing-test diagnostics must stay with their test name, in order;
+ambiguous interleaved diagnostics reject the summary and use the existing cut.
+`--shape-tools=false` keeps the existing behavior. The additive `shape_tools`
+boolean is also available in run options, batch specs/tasks and MCP
 run inputs. Eval matrix variants each select `shape_tools` (default false),
 overriding task/spec shaping so a suite can compare raw and shaped variants;
 give the variants distinct names. This flag does not change CLI backend tools.
