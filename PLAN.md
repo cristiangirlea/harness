@@ -684,6 +684,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a `.dockerignore` for the server image (#170, PR #N). `docker build -f server/Dockerfile .`
+  sent the whole repository, untracked files under `server/` included. Decided: an allowlist of
+  `go.mod`, `internal/` and `server/` without `server/deploy`, with secret-looking files kept out.
 - 2026-10-14: public watch's local-use and tunnel address follow-up (#218, PR #261).
   Decided: document that its loopback Host is refused, use a separate plain watch for
   local browsing and `hrn bot`, print the tunnel's loopback target at start, and explain
