@@ -313,10 +313,10 @@ func TestABatchRunsBesideSlotsSessionsHoldWithoutWaiting(t *testing.T) {
 		}
 		slots[tr.Slot] = true
 	}
-	if !slots[5] || !slots[6] {
-		t.Errorf("slots = %v, want 5 and 6", slots)
+	if !slots[ws.DefaultMax+1] || !slots[ws.DefaultMax+2] {
+		t.Errorf("slots = %v, want %d and %d", slots, ws.DefaultMax+1, ws.DefaultMax+2)
 	}
-	for _, n := range []int{5, 6} {
+	for _, n := range []int{ws.DefaultMax + 1, ws.DefaultMax + 2} {
 		if exists(filepath.Join(dir, ".hrn", "slots", strconv.Itoa(n)+".lease")) {
 			t.Errorf("slot %d should be given back", n)
 		}
