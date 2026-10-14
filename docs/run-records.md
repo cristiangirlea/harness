@@ -6,7 +6,9 @@
 
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 
-- `task.json` — prompt, dir, backend, and the run options by their flag names
+- `task.json` — prompt, dir, backend, and the run options by their flag names; when retrieval
+  rewrote the prompt the run started with, `original_prompt` holds the task as typed, read back
+  by a continuation and by `hrn retrieval compare`
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
   off, or absent; `compact_window` is a number or `"auto"`)
