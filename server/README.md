@@ -14,6 +14,10 @@ or native CLI execution. It does not fetch the registered repository or provide
 an isolation boundary. Its workspace manifests detect identity drift; they do
 not make filesystem changes and database checkpoints atomic.
 
+Both submission and the durable API run path refuse MCP servers and
+`allow_dangerous`. A stored job that bypassed submission with either option
+finishes as `failed`, with the refusal in its result, before any model call.
+
 ## Local checks
 
 Run from `server/`:
