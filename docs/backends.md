@@ -213,8 +213,9 @@ thinking.
 
 ### When a plan's usage limit is reached
 
-The claude and codex CLIs bill to subscriptions with usage limits, and each stands in for
-the other. A run that ends because its CLI said the limit was reached ("You've hit your
+Without preferences, the claude and codex CLIs stand in for each other at subscription
+usage limits. With preferences, the partner follows the enabled list described above.
+A run that ends because its CLI said the limit was reached ("You've hit your
 session limit · resets 10:10pm (Europe/Bucharest)", "You've hit your usage limit ... try
 again at Oct 16th, 2026 3:29 PM") is `limited`, not `error`, and its result keeps the
 time the limit lifts as `limit_resets` when the message gives one. Then:
@@ -229,8 +230,9 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
   tool) shows each limit it remembers. A limit can lift early (codex sells credits);
   deleting the file forgets it.
-- Nothing moves to `api`, which is billed per token, or to gemini or opencode. If the
-  other CLI is not installed, or is limited too, the run stays `limited` and says so.
+- Nothing moves automatically to `api`, which is billed per token. Without preferences,
+  gemini and opencode are not partners either. If no enabled partner is installed or
+  the selected partner is limited too, the run stays `limited`.
 - Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
   the plan, and so does codex with `CODEX_API_KEY` or `OPENAI_API_KEY`; that CLI does not

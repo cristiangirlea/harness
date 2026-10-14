@@ -70,7 +70,7 @@ func runProperties(backends []any, defaultDir string) map[string]any {
 		" Default readonly here. ask puts each write and command to you when this host supports elicitation, and denies it otherwise."
 	props["prompt"] = str("The task, as you would brief an engineer.")
 	props["purpose"] = str("Optional declared purpose: review, debug, implement, refactor, test, research, plan, ops; otherwise a leading Purpose: category header is used.")
-	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: api when API credentials exist, otherwise claude, or the route table's row for the prompt's purpose, when one exists."}
+	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: the backend preference, or api when credentials exist, otherwise claude; an enabled route for the prompt's purpose takes precedence."}
 	props["dir"] = str("Workspace directory. Default: " + defaultDir)
 	props["continue_run_id"] = str("Continue a finished run, in its workspace and mode unless dir or mode say otherwise. " +
 		"On the same backend it carries on from that run's conversation (api) or a fork of its session (claude, codex). " +
@@ -118,7 +118,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 		Description: "Run a coding task with an agent backend in a workspace directory and wait for it to finish. " +
 			"Optionally declare its purpose; this is recorded without changing the prompt. " +
 			"Returns the final answer, a summary line (status, tokens, cost, duration) and the run id. " +
-			"A claude or codex run that reaches its plan's usage limit is carried on by the other one, " +
+			"A run that reaches its usage limit is carried on by a ready enabled partner (claude and codex pair by default), " +
 			"which then sees the workspace, unless no_switch is set.",
 		InputSchema: map[string]any{
 			"type":       "object",

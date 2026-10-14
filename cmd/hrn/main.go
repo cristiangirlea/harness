@@ -42,7 +42,10 @@ const usage = `hrn — personal agent harness
 Usage:
   hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
   hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
-  hrn backends                    show which backends are usable
+  hrn backends                    show enabled backends, default, availability and limits
+  hrn backends set --only NAMES [--default NAME]
+                                  replace the backend preference (comma-separated names)
+  hrn backends reset              remove the backend preference
   hrn remote submit|show|events|cancel [flags]
                                  use the durable control API
   hrn knowledge import|search|inspect|active|activate|disable|rollback request.json
@@ -132,8 +135,7 @@ Run flags:
       --allow-dangerous
                        lift the guard: agents may push, merge and deploy with your credentials
                        (every backend), and run_command may run sudo, rm -rf / and the like
-      --no-switch      stay on claude or codex when it reaches its plan's usage limit, instead of
-                       carrying on on the other one
+      --no-switch      stay on this backend at its usage limit instead of using an enabled partner
 
 Eval flags:
       --parallel N     cells at once (default: the file's value, else 4)
