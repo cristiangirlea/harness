@@ -104,3 +104,33 @@ func TestCodexPassesEffortBeforeForkAndPrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestACodexTurnThatCannotBeAddedLeavesEveryTotalAsItWas(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bad  [3]int64 // input, cache read, output
+	}{
+		{"input overflows", [3]int64{math.MaxInt64, 5, 7}},
+		{"output overflows", [3]int64{5, 7, math.MaxInt64}},
+		{"a negative counter", [3]int64{3, -1, 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var res Result
+			turn := func(c [3]int64) {
+				line := fmt.Sprintf(`{"type":"turn.completed","usage":{"input_tokens":%d,"cached_input_tokens":%d,"output_tokens":%d}}`, c[0], c[1], c[2])
+				if !parseCodexStream([]byte(line), func(Event) {}, &res) {
+					t.Fatal("turn.completed was not parsed")
+				}
+			}
+			turn([3]int64{10, 4, 2})
+			turn(tc.bad)
+			if got := [3]int64{res.InputTokens, res.CacheRead, res.OutputTokens}; got != [3]int64{10, 4, 2} {
+				t.Errorf("totals after the rejected turn = %v, want [10 4 2]", got)
+			}
+			turn([3]int64{1, 1, 1})
+			if res.Usage == nil || res.Usage.Status != "missing" {
+				t.Errorf("usage after a later valid turn = %+v, want missing", res.Usage)
+			}
+		})
+	}
+}
