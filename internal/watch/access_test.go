@@ -2,6 +2,7 @@ package watch
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,6 +34,10 @@ type accessFixture struct {
 	extraKey atomic.Pointer[rsa.PrivateKey]
 	certs    *httptest.Server
 	fetches  atomic.Int32
+	fail     atomic.Bool
+	pauseAt  atomic.Int32
+	started  chan struct{}
+	release  chan struct{}
 	clock    time.Time
 	opt      Options
 }
@@ -45,7 +51,15 @@ func newAccessFixture(t *testing.T) *accessFixture {
 	}
 	f := &accessFixture{t: t, key: key, clock: time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)}
 	f.certs = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.fetches.Add(1)
+		fetch := f.fetches.Add(1)
+		if fetch == f.pauseAt.Load() {
+			close(f.started)
+			<-f.release
+		}
+		if f.fail.Load() {
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+			return
+		}
 		if r.URL.Path != "/cdn-cgi/access/certs" {
 			http.NotFound(w, r)
 			return
@@ -221,11 +235,12 @@ func TestPublicAccessAllowsPageNavigationAfterLoginAndKeepsOtherGuards(t *testin
 		headers                           map[string]string
 		want                              int
 	}{
-		{"cross-site GET navigation", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 200},
-		{"cross-site iframe navigation relies on frame headers", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe", "Sec-Fetch-Site": "cross-site"}, 200},
-		{"null-origin GET navigation", http.MethodGet, "harness.example.com", "null", token, map[string]string{"Sec-Fetch-Mode": "navigate"}, 200},
-		{"cross-site HEAD navigation", http.MethodHead, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 200},
-		{"navigation without Access token", http.MethodGet, "harness.example.com", "", "", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
+		{"cross-site GET navigation", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "cross-site"}, 200},
+		{"cross-site iframe navigation", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe", "Sec-Fetch-Site": "cross-site"}, 403},
+		{"cross-site navigation without destination", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
+		{"null-origin GET navigation", http.MethodGet, "harness.example.com", "null", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, 200},
+		{"cross-site HEAD navigation", http.MethodHead, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "cross-site"}, 200},
+		{"navigation without Access token", http.MethodGet, "harness.example.com", "", "", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "cross-site"}, 403},
 		{"cross-site CORS GET", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "cross-site"}, 403},
 		{"cross-site POST navigation", http.MethodPost, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site", "X-Hrn-Watch-Key": "k3y"}, 403},
 		{"navigation with wrong Host", http.MethodGet, "other.example", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
@@ -234,6 +249,22 @@ func TestPublicAccessAllowsPageNavigationAfterLoginAndKeepsOtherGuards(t *testin
 			got := f.requestWithHeaders(h, tc.method, "/", tc.host, tc.origin, tc.token, tc.headers)
 			if got.Code != tc.want {
 				t.Fatalf("status = %d, want %d: %s", got.Code, tc.want, got.Body)
+			}
+			if tc.name == "cross-site iframe navigation" || tc.name == "cross-site navigation without destination" {
+				data, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-access.log"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+				var row struct {
+					Reason string `json:"reason"`
+				}
+				if err := json.Unmarshal([]byte(lines[len(lines)-1]), &row); err != nil {
+					t.Fatal(err)
+				}
+				if row.Reason != "bad origin" {
+					t.Errorf("access log reason = %q, want bad origin", row.Reason)
+				}
 			}
 			if tc.want == http.StatusOK {
 				if frameOptions := got.Header().Get("X-Frame-Options"); frameOptions != "DENY" {
@@ -325,6 +356,253 @@ func TestPublicAccessRefetchesAnUnknownKeyAtMostOncePerMinute(t *testing.T) {
 	}
 	if got := f.fetches.Load(); got != 3 {
 		t.Fatalf("fetches = %d, want initial, first unknown and after one minute", got)
+	}
+}
+
+func TestPublicAccessRefusesToServeWhenCertificatesFailAtStart(t *testing.T) {
+	f := newAccessFixture(t)
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusInternalServerError)
+	}))
+	defer bad.Close()
+	f.opt.Public.CertsURL = bad.URL + "/cdn-cgi/access/certs"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	err = Serve(context.Background(), f.opt, ln)
+	if err == nil || !strings.Contains(err.Error(), f.opt.Public.CertsURL) || !strings.Contains(err.Error(), "500") {
+		t.Fatalf("Serve() = %v; want certs URL and HTTP 500", err)
+	}
+}
+
+func TestPublicAccessFetchesCertificatesOnceBeforeServing(t *testing.T) {
+	f := newAccessFixture(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Serve(ctx, f.opt, ln) }()
+	client := &http.Client{Timeout: 2 * time.Second}
+	for range 2 {
+		r, err := http.NewRequest(http.MethodGet, "http://"+ln.Addr().String()+"/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Host = "harness.example.com"
+		r.Header.Set("Cf-Access-Jwt-Assertion", f.validToken())
+		var resp *http.Response
+		for attempt := 0; attempt < 20; attempt++ {
+			resp, err = client.Do(r)
+			if err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("request = %d", resp.StatusCode)
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := f.fetches.Load(); got != 1 {
+		t.Fatalf("certificate fetches = %d, want startup only", got)
+	}
+}
+
+func TestPublicAccessReportsLaterFetchFailureOncePerStreak(t *testing.T) {
+	f := newAccessFixture(t)
+	var output bytes.Buffer
+	f.opt.Public.Errors = &output
+	h := New(context.Background(), f.opt)
+	if got := f.request(h, "/", "harness.example.com", "", f.validToken()); got.Code != 200 {
+		t.Fatalf("initial request = %d", got.Code)
+	}
+	f.fail.Store(true)
+	unknown := f.token(map[string]any{"alg": "RS256", "kid": "unknown"}, f.validClaims(), f.key)
+	for range 2 {
+		if got := f.request(h, "/", "harness.example.com", "", unknown); got.Code != 403 {
+			t.Fatalf("failed refresh = %d", got.Code)
+		}
+		f.clock = f.clock.Add(61 * time.Second)
+	}
+	if got := strings.Count(output.String(), f.opt.Public.CertsURL); got != 1 {
+		t.Fatalf("failure reports = %d, want 1: %s", got, output.String())
+	}
+	f.fail.Store(false)
+	f.request(h, "/", "harness.example.com", "", unknown)
+	f.clock = f.clock.Add(61 * time.Second)
+	f.fail.Store(true)
+	f.request(h, "/", "harness.example.com", "", unknown)
+	if got := strings.Count(output.String(), f.opt.Public.CertsURL); got != 2 {
+		t.Fatalf("failure reports after recovery = %d, want 2: %s", got, output.String())
+	}
+}
+
+func TestPublicAccessKeepsKnownKeysAvailableDuringOneSlowRefresh(t *testing.T) {
+	f := newAccessFixture(t)
+	f.started = make(chan struct{})
+	f.release = make(chan struct{})
+	f.pauseAt.Store(2)
+	h := New(context.Background(), f.opt)
+	if got := f.request(h, "/", "harness.example.com", "", f.validToken()); got.Code != 200 {
+		t.Fatalf("initial request = %d", got.Code)
+	}
+	newKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newToken := f.token(map[string]any{"alg": "RS256", "kid": "new-key"}, f.validClaims(), newKey)
+	knownToken := f.validToken()
+	var wg sync.WaitGroup
+	results := make(chan int, 9)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		results <- f.request(h, "/", "harness.example.com", "", newToken).Code
+	}()
+	<-f.started
+	f.extraKey.Store(newKey)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- f.request(h, "/", "harness.example.com", "", newToken).Code
+		}()
+	}
+	known := make(chan int, 1)
+	go func() { known <- f.request(h, "/", "harness.example.com", "", knownToken).Code }()
+	select {
+	case code := <-known:
+		if code != 200 {
+			t.Errorf("known key during refresh = %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("known key waited for the certificate fetch")
+	}
+	close(f.release)
+	wg.Wait()
+	close(results)
+	for code := range results {
+		if code != http.StatusOK {
+			t.Errorf("new key after refresh = %d, want 200", code)
+		}
+	}
+	if got := f.fetches.Load(); got != 2 {
+		t.Fatalf("certificate fetches = %d, want initial and one refresh", got)
+	}
+}
+
+type blockingAccessWriter struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingAccessWriter) Write(p []byte) (int, error) {
+	close(w.started)
+	<-w.release
+	return len(p), nil
+}
+
+func TestPublicAccessBlockedFailureReportDoesNotHoldKeysOrWaiters(t *testing.T) {
+	f := newAccessFixture(t)
+	w := &blockingAccessWriter{started: make(chan struct{}), release: make(chan struct{})}
+	f.opt.Public.Errors = w
+	v := &accessVerifier{opt: *f.opt.Public}
+	if email, reason := v.verify(f.validToken()); reason != "" || email != "owner@example.com" {
+		t.Fatalf("initial verification = %q, %q", email, reason)
+	}
+	f.fail.Store(true)
+	unknown := f.token(map[string]any{"alg": "RS256", "kid": "unknown"}, f.validClaims(), f.key)
+	fetchDone := make(chan string, 1)
+	go func() {
+		_, reason := v.verify(unknown)
+		fetchDone <- reason
+	}()
+	select {
+	case <-w.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("failure report did not start")
+	}
+	defer func() {
+		select {
+		case <-w.release:
+		default:
+			close(w.release)
+		}
+	}()
+	knownToken := f.validToken()
+	known := make(chan string, 1)
+	go func() {
+		_, reason := v.verify(knownToken)
+		known <- reason
+	}()
+	select {
+	case reason := <-known:
+		if reason != "" {
+			t.Errorf("cached key verification = %q", reason)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("cached key verification waited for the error writer")
+	}
+	const waiters = 8
+	waiterResults := make(chan string, waiters)
+	for range waiters {
+		go func() {
+			_, reason := v.verify(unknown)
+			waiterResults <- reason
+		}()
+	}
+	for range waiters {
+		select {
+		case reason := <-waiterResults:
+			if reason != "key fetch failed" {
+				t.Errorf("waiting verification = %q, want key fetch failed", reason)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("waiting verification waited for the error writer")
+		}
+	}
+	close(w.release)
+	if reason := <-fetchDone; reason != "key fetch failed" {
+		t.Errorf("refresh verification = %q, want key fetch failed", reason)
+	}
+	if got := f.fetches.Load(); got != 2 {
+		t.Errorf("certificate fetches = %d, want initial and one failed refresh", got)
+	}
+}
+
+func TestPublicAccessLimitsEmptyCacheFailuresToOneFetchPerTenSeconds(t *testing.T) {
+	f := newAccessFixture(t)
+	f.fail.Store(true)
+	f.opt.Public.Errors = io.Discard
+	h := New(context.Background(), f.opt)
+	for range 3 {
+		f.request(h, "/", "harness.example.com", "", f.validToken())
+	}
+	if got := f.fetches.Load(); got != 1 {
+		t.Fatalf("fetches without time advance = %d, want 1", got)
+	}
+	f.clock = f.clock.Add(9 * time.Second)
+	f.request(h, "/", "harness.example.com", "", f.validToken())
+	if got := f.fetches.Load(); got != 1 {
+		t.Fatalf("fetches after nine seconds = %d, want 1", got)
+	}
+	f.clock = f.clock.Add(time.Second)
+	f.request(h, "/", "harness.example.com", "", f.validToken())
+	if got := f.fetches.Load(); got != 2 {
+		t.Fatalf("fetches after ten seconds = %d, want 2", got)
 	}
 }
 

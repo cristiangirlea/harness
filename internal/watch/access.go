@@ -23,7 +23,7 @@ import (
 )
 
 // PublicAccess enables Cloudflare Access verification for a loopback-only
-// watch server. CertsURL, Client and Now are test seams; leave them empty in
+// watch server. CertsURL, Client, Now and Errors are test seams; leave them empty in
 // the CLI so certificates come from the named team with a 10-second timeout.
 type PublicAccess struct {
 	Origin   string
@@ -32,6 +32,7 @@ type PublicAccess struct {
 	CertsURL string
 	Client   *http.Client
 	Now      func() time.Time
+	Errors   io.Writer
 }
 
 // ParsePublicAccess validates the three flags before a listener is opened.
@@ -73,6 +74,10 @@ type accessVerifier struct {
 	mu               sync.Mutex
 	keys             map[string]*rsa.PublicKey
 	lastUnknownFetch time.Time
+	lastEmptyFailure time.Time
+	lastFetchErr     error
+	fetching         chan struct{}
+	failureReported  bool
 }
 
 func (v *accessVerifier) now() time.Time {
@@ -181,53 +186,105 @@ func (v *accessVerifier) verify(token string) (string, string) {
 }
 
 func (v *accessVerifier) key(kid string) (*rsa.PublicKey, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if v.keys == nil {
-		if err := v.fetch(); err != nil {
-			return nil, err
+	for {
+		v.mu.Lock()
+		if key := v.keys[kid]; key != nil {
+			v.mu.Unlock()
+			return key, nil
 		}
-		if v.keys[kid] == nil {
-			v.lastUnknownFetch = v.now()
+		if v.fetching != nil {
+			wait := v.fetching
+			v.mu.Unlock()
+			<-wait
+			continue
 		}
-	} else if v.keys[kid] == nil && (v.lastUnknownFetch.IsZero() || v.now().Sub(v.lastUnknownFetch) >= time.Minute) {
-		v.lastUnknownFetch = v.now()
-		if err := v.fetch(); err != nil {
-			return nil, err
+		now := v.now()
+		if v.keys == nil {
+			if !v.lastEmptyFailure.IsZero() && now.Sub(v.lastEmptyFailure) < 10*time.Second {
+				err := v.lastFetchErr
+				v.mu.Unlock()
+				return nil, err
+			}
+		} else {
+			if !v.lastUnknownFetch.IsZero() && now.Sub(v.lastUnknownFetch) < time.Minute {
+				err := v.lastFetchErr
+				v.mu.Unlock()
+				return nil, err
+			}
+			v.lastUnknownFetch = now
 		}
+		v.fetching = make(chan struct{})
+		v.mu.Unlock()
+
+		keys, err := v.fetch()
+		v.mu.Lock()
+		reportFailure := false
+		if err != nil {
+			v.lastFetchErr = err
+			if v.keys == nil {
+				v.lastEmptyFailure = v.now()
+			}
+			if !v.failureReported {
+				v.failureReported = true
+				reportFailure = true
+			}
+		} else {
+			v.keys = keys
+			v.lastFetchErr = nil
+			v.lastEmptyFailure = time.Time{}
+			v.failureReported = false
+			if keys[kid] == nil {
+				v.lastUnknownFetch = now
+			}
+		}
+		close(v.fetching)
+		v.fetching = nil
+		key := v.keys[kid]
+		v.mu.Unlock()
+		if reportFailure {
+			out := v.opt.Errors
+			if out == nil {
+				out = os.Stderr
+			}
+			fmt.Fprintf(out, "hrn watch: Cloudflare Access keys at %s: %v\n", v.certsURL(), err)
+		}
+		return key, err
 	}
-	return v.keys[kid], nil
 }
 
-func (v *accessVerifier) fetch() error {
+func (v *accessVerifier) certsURL() string {
 	endpoint := v.opt.CertsURL
 	if endpoint == "" {
 		endpoint = "https://" + v.opt.Team + "/cdn-cgi/access/certs"
 	}
+	return endpoint
+}
+
+func (v *accessVerifier) fetch() (map[string]*rsa.PublicKey, error) {
 	client := v.opt.Client
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	resp, err := client.Get(endpoint)
+	resp, err := client.Get(v.certsURL())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("certificates: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("certificates: HTTP %d", resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20+1))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(b) > 1<<20 {
-		return errors.New("certificates too large")
+		return nil, errors.New("certificates too large")
 	}
 	var jwks struct {
 		Keys []struct{ Kid, Kty, N, E string } `json:"keys"`
 	}
 	if err := json.Unmarshal(b, &jwks); err != nil {
-		return err
+		return nil, err
 	}
 	keys := make(map[string]*rsa.PublicKey)
 	for _, k := range jwks.Keys {
@@ -245,8 +302,10 @@ func (v *accessVerifier) fetch() error {
 		}
 		keys[k.Kid] = &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(exponent)}
 	}
-	v.keys = keys
-	return nil
+	if len(keys) == 0 {
+		return nil, errors.New("certificates: no RSA keys")
+	}
+	return keys, nil
 }
 
 type accessWriter struct {
