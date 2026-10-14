@@ -206,7 +206,7 @@ type voicePage struct {
 
 // voice serves the recording page to this computer only.
 func (s *server) voice(w http.ResponseWriter, r *http.Request) {
-	if !fromThisComputer(r) {
+	if !s.fromThisComputer(r) {
 		s.page(w, http.StatusForbidden, "missing", struct {
 			page
 			Message string
@@ -214,5 +214,5 @@ func (s *server) voice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
-	s.page(w, http.StatusOK, "voice", voicePage{page: page{Title: "Record Ada's voice", Home: homeFor(r), Script: "voice.js"}, Lines: voiceLines()})
+	s.page(w, http.StatusOK, "voice", voicePage{page: page{Title: "Record Ada's voice", Home: s.homeFor(r), Script: "voice.js"}, Lines: voiceLines()})
 }

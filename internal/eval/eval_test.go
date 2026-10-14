@@ -48,6 +48,7 @@ func TestExpand(t *testing.T) {
 	spec := testSpec("somewhere")
 	spec.Timeout = agent.Duration(5 * time.Minute)
 	spec.MaxCostUSD = 2
+	spec.Lean = agent.Bool(false)
 	bs, err := Expand(spec, "abc12")
 	if err != nil {
 		t.Fatal(err)
@@ -68,12 +69,19 @@ func TestExpand(t *testing.T) {
 			t.Errorf("missing id %s in %s", want, joined)
 		}
 	}
-	if bs.Timeout != agent.Duration(5*time.Minute) || bs.MaxCostUSD != 2 || len(bs.Gate) != 1 || bs.Dir != "somewhere" {
+	if bs.Timeout != agent.Duration(5*time.Minute) || bs.MaxCostUSD != 2 || bs.Lean == nil || *bs.Lean || len(bs.Gate) != 1 || bs.Dir != "somewhere" {
 		t.Errorf("spec fields must carry through: %+v", bs)
 	}
 	first := bs.Tasks[0]
 	if first.Backend != "ev-ok" || first.Prompt != "do alpha" {
 		t.Errorf("task = %+v", first)
+	}
+	if bs.Worktrees != batch.WorktreesFresh {
+		t.Errorf("worktrees = %q, want fresh: the judge reads each cell's worktree after the batch", bs.Worktrees)
+	}
+	spec.Worktrees = batch.WorktreesSlots
+	if bs, err := Expand(spec, "abc12"); err != nil || bs.Worktrees != batch.WorktreesSlots {
+		t.Errorf("an eval without a judge may ask for slots: %q, %v", bs.Worktrees, err)
 	}
 }
 
@@ -93,6 +101,7 @@ func TestExpandRejectsBadSpecs(t *testing.T) {
 		{"spaced variant", func(s *Spec) { s.Matrix[0].Name = "opus high" }, "variant"},
 		{"spec retry", func(s *Spec) { s.Retry = []string{"ev-ok"} }, "retry does not belong"},
 		{"task retry", func(s *Spec) { s.Tasks[0].Retry = []string{"ev-ok"} }, "retry does not belong"},
+		{"slots with a judge", func(s *Spec) { s.Worktrees = batch.WorktreesSlots; s.Judge = &Judge{Rubric: "r"} }, "fresh"},
 	} {
 		spec := testSpec("somewhere")
 		tc.edit(&spec)

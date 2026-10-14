@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -152,7 +153,8 @@ func TestAPILoopRunsToolsAndFinishes(t *testing.T) {
 	for _, e := range events {
 		kinds = append(kinds, e.Kind)
 	}
-	want := []EventKind{EventToolCall, EventToolResult, EventText}
+	// Each request's usage follows its response; the text streams first.
+	want := []EventKind{EventUsage, EventToolCall, EventToolResult, EventText, EventUsage}
 	if fmt.Sprint(kinds) != fmt.Sprint(want) {
 		t.Errorf("events = %v, want %v", kinds, want)
 	}
@@ -330,6 +332,20 @@ func TestAPILoopSendsProjectInstructions(t *testing.T) {
 		}
 	}
 	if len(infos) != 1 || !strings.HasPrefix(infos[0], "instructions: AGENTS.md, CLAUDE.md (") {
+		t.Errorf("info events = %v", infos)
+	}
+}
+
+func TestAPIReportsCompactWindowAsNotEnforced(t *testing.T) {
+	_, events, _ := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(),
+		Options: Options{Mode: ModeAsk, NoInstructions: true, CompactWindow: "auto"}})
+	var infos []string
+	for _, e := range events {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	}
+	if !slices.Contains(infos, "compact_window: not enforced by the api backend") {
 		t.Errorf("info events = %v", infos)
 	}
 }

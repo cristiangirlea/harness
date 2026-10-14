@@ -4,7 +4,7 @@
 
 ## Reports
 
-`hrn report` reads every run and batch record and prints two tables.
+`hrn report` reads every run and batch record and prints three tables: runs, their tokens, and batches.
 
 ```
 runs by backend, since 2026-09-14 17:40 (7d)
@@ -13,6 +13,12 @@ claude      6   5  83%    1m2s          9      ~$1.03     $0.17    96%
 api         3   3 100%     48s          6       $0.42     $0.14    71%
 all         9   8  89%     55s          8      ~$1.45     $0.15    90%
 
+tokens by backend, since 2026-09-14 17:40 (7d)
+backend  input  output  cache read  cache write  med context  peak context  from
+claude   41.2k  210.4k        9.8M       610.3k        96.1k        212.0k  turns
+api       3.1k   40.2k      870.0k        52.0k        48.5k         91.3k  mixed
+all      44.3k  250.6k       10.7M       662.3k        81.0k        212.0k  mixed
+
 batches by repository, since 2026-09-14 17:40 (7d)
 repository              batches  tasks  pass%  med attempts  total cost
 ~/src/example-app                1      3   100%             1      ~$1.03
@@ -20,8 +26,9 @@ all                           1      3   100%             1      ~$1.03
 ```
 
 Runs group by backend, or by `--by model` (the model that answered), `--by dir` (the
-workspace) or `--by purpose` (what the run was for: review, debug, implement, refactor, test,
-research, plan, ops or unknown). The purpose comes from ordered keyword rules on the prompt's
+workspace), `--by purpose` (what the run was for: review, debug, implement, refactor, test,
+research, plan, ops or unknown) or `--by day` (the day the run started, on this computer's
+calendar; days are listed in date order rather than largest first). The purpose comes from ordered keyword rules on the prompt's
 first paragraph only, since a brief's later paragraphs mention every keyword; the first rule
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
 median cost, and the cache share (cache-read tokens over every input token, cache writes included;
@@ -31,6 +38,13 @@ cache reads by input tokens that already include those reads.
 Batches group by repository; their cost sums every attempt, passed or not. Runs without
 a result (still running or killed), batches with a task still running, and records that
 cannot be read are counted under the tables and left out of them.
+The tokens table sums each group's input, output, cache-read and cache-write tokens from the
+runs' results, and gives the median and peak context a model call carried (input plus cache
+reads and writes). Those come from a run's `usage` events when it has them (see
+[Usage per turn](run-records.md#usage-per-turn)): every turn counts. A run without them (codex,
+gemini, older records) counts once, as its average, its totals over its turns, and its peak
+is the larger of that average and its recorded last-call context. `from` says which: `turns`,
+`totals`, `mixed`, or `-` when no run in the group reported tokens.
 `--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
 JSON for scripts.
 
@@ -60,7 +74,9 @@ A variant's `name` defaults to `backend[-model][-effort]`. Each cell becomes a b
 task with the id `<evalid>.<task>.<variant>.r<n>`, so branches from different evals never
 collide. Retries are off for every cell on purpose: an eval measures what one attempt
 does, and a retried attempt would score the harness rather than the backend. Everything
-else, gates and mode and the budgets, carries through from the spec.
+else, gates and mode and the budgets, `lean` and `compact_window`, carries through from the
+spec; cells on claude are lean unless the spec or task says `"lean": false` (see
+[Lean claude workers](backends.md#lean-claude-workers)).
 
 Variants may set `retrieval` (`off`, `optional` or `required`) and
 `retrieval_version`. An eval record may include `retrieval_manifest` and

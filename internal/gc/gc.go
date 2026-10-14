@@ -1,9 +1,9 @@
 // Package gc finds the git worktrees whose work is already merged and removes
 // them, with their build output. A worktree goes only on proof: GitHub says
 // its pull request merged at the commit it holds, or, for one an hrn batch
-// made, that commit is on origin's default branch. Anything it cannot prove
-// stays, with the reason, and when GitHub or the fetch cannot be reached the
-// answer is to keep.
+// made, its commit or its change is on origin's default branch. Anything it
+// cannot prove stays, with the reason. If GitHub or the fetch cannot be
+// reached, the answer is to keep.
 package gc
 
 import (
@@ -172,6 +172,9 @@ func recheck(ctx context.Context, w Worktree) string {
 			return "it holds the worktree " + held + ", which nothing judged"
 		}
 		if why := unsaved(ctx, w.Path, entryPaths(entries)); why != "" {
+			return why + " since the scan"
+		}
+		if why := worktreeLinkRisk(w.Path, entryPaths(entries)); why != "" {
 			return why + " since the scan"
 		}
 		return ""
@@ -442,7 +445,16 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		case facts.fetchErr != nil:
 			return Keep, "fetch failed: " + firstLine(facts.fetchErr.Error())
 		case !isAncestor(ctx, facts.repo, w.Head, facts.def):
+			if landed := landedBatchChange(ctx, facts.repo, w.Head, facts.def); landed != "" {
+				if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+					return Keep, why
+				}
+				return Remove, fmt.Sprintf("batch %s: its change landed on %s as %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"), landed[:7])
+			}
 			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
+		}
+		if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+			return Keep, why
 		}
 		return Remove, fmt.Sprintf("batch %s finished and its commit is on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
 	}
@@ -479,6 +491,9 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		w.PR = &mine[i]
 		if age := time.Since(p.MergedAt); age < grace {
 			return Keep, fmt.Sprintf("PR #%d merged %s ago, inside the %s grace period", p.Number, short(age), short(grace))
+		}
+		if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+			return Keep, why
 		}
 		return Remove, fmt.Sprintf("PR #%d merged %s", p.Number, p.MergedAt.Local().Format("2006-01-02 15:04"))
 	}
@@ -697,6 +712,58 @@ func buildRisk(wt, folder string) string {
 	return ""
 }
 
+// worktreeLinkRisk checks every entry that would go with wt. Git follows
+// junctions on Windows when removing a worktree, including tracked folders.
+// Inner worktrees have their own verdicts and are checked separately.
+func worktreeLinkRisk(wt string, registered []string) string {
+	root := samePath(wt)
+	listed := make(map[string]bool, len(registered))
+	for _, path := range registered {
+		listed[samePath(path)] = true
+	}
+	var link string
+	err := filepath.WalkDir(wt, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p != wt && d.IsDir() {
+			rel, err := filepath.Rel(wt, p)
+			if err != nil {
+				return err
+			}
+			// WalkDir only adds names read under wt, so no directory needs EvalSymlinks.
+			key := filepath.Join(root, rel)
+			if runtime.GOOS == "windows" {
+				key = strings.ToLower(key)
+			}
+			if listed[key] {
+				return fs.SkipDir
+			}
+		}
+		if d.Name() == ".git" {
+			if d.Type() == fs.ModeDir {
+				return fs.SkipDir
+			}
+			if d.Type().IsRegular() {
+				return nil
+			}
+		}
+		if kind, at := riskAt(wt, p, d); kind == riskLink {
+			link = at
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if link != "" {
+		rel, _ := filepath.Rel(wt, link)
+		return "a link out of the worktree: " + filepath.ToSlash(rel)
+	}
+	if err != nil {
+		return "the worktree cannot be read: " + firstLine(err.Error())
+	}
+	return ""
+}
+
 const (
 	riskRepo = "repository"
 	riskLink = "link"
@@ -725,14 +792,17 @@ func walkRisk(root, folder string) (kind, at string, err error) {
 // folder), a link that does not stay inside root, or nothing.
 func riskAt(root, p string, d fs.DirEntry) (kind, at string) {
 	switch {
-	case d.Name() == ".git":
-		return riskRepo, filepath.Dir(p)
-	case d.IsDir() && d.Name() == "objects" && isBare(filepath.Dir(p)):
-		return riskRepo, filepath.Dir(p)
 	case !d.IsDir() && !d.Type().IsRegular(): // a symlink, or a junction (irregular)
 		if to, err := os.Readlink(p); err != nil || !inside(linkTarget(p, to), root) {
 			return riskLink, p
 		}
+		if d.Name() == ".git" {
+			return riskRepo, filepath.Dir(p)
+		}
+	case d.Name() == ".git":
+		return riskRepo, filepath.Dir(p)
+	case d.IsDir() && d.Name() == "objects" && isBare(filepath.Dir(p)):
+		return riskRepo, filepath.Dir(p)
 	}
 	return "", ""
 }
@@ -862,6 +932,58 @@ func isAncestor(ctx context.Context, repo, a, b string) bool {
 	return err == nil
 }
 
+// maxCommits bounds the default branch's commits landedBatchChange compares;
+// tests lower it.
+var maxCommits = 2000
+
+// landedBatchChange proves that the whole task diff is one commit on the
+// default branch. A missing base, empty diff, git error or a history at the
+// comparison limit gives no proof.
+func landedBatchChange(ctx context.Context, repo, head, def string) string {
+	base, err := gitOut(ctx, repo, "merge-base", head, def)
+	if err != nil || base == "" {
+		return ""
+	}
+	countText, err := gitOut(ctx, repo, "rev-list", "--count", "--max-count="+strconv.Itoa(maxCommits), "--no-merges", base+".."+def)
+	if err != nil {
+		return ""
+	}
+	count, err := strconv.Atoi(countText)
+	if err != nil || count == 0 || count >= maxCommits {
+		return ""
+	}
+	taskDiff, err := gitStdout(ctx, repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", base, head)
+	if err != nil || taskDiff == "" {
+		return ""
+	}
+	taskID, err := gitStdoutInput(ctx, repo, taskDiff, "patch-id", "--verbatim")
+	if err != nil {
+		return ""
+	}
+	taskFields := strings.Fields(taskID)
+	if len(taskFields) != 2 {
+		return ""
+	}
+	patches, err := gitStdout(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
+	if err != nil {
+		return ""
+	}
+	landedIDs, err := gitStdoutInput(ctx, repo, patches, "patch-id", "--verbatim")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(landedIDs), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || len(fields[1]) < 7 {
+			return ""
+		}
+		if fields[0] == taskFields[0] {
+			return fields[1]
+		}
+	}
+	return ""
+}
+
 // listPRs reads the repository's pull requests: the open ones on their own,
 // because a merged one proves nothing while an open one exists and a list of
 // everything cut at the limit could leave the open one out; then the rest.
@@ -989,9 +1111,15 @@ func holding(dir string, paths []string) string {
 // gitStdout runs git and returns its standard output untouched: the -z
 // formats are data, and stderr mixed in would corrupt them.
 func gitStdout(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitStdoutInput(ctx, dir, "", args...)
+}
+
+// gitStdoutInput supplies a git command's stdin without losing cleanEnv.
+func gitStdoutInput(ctx context.Context, dir, input string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	cmd := gitCommand(ctx, dir, args...)
+	cmd.Stdin = strings.NewReader(input)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

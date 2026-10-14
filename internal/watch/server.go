@@ -11,11 +11,14 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -32,6 +35,9 @@ type Options struct {
 	// private network addresses. Requests naming one of them are let in, and
 	// the index shows them as links for a phone.
 	LAN []Endpoint
+	// Public serves only the named HTTPS origin behind Cloudflare Access.
+	// The listener remains on loopback and every request needs a valid JWT.
+	Public *PublicAccess
 	// Key is what a request that would act on hrn (anything but GET and
 	// HEAD) must send in X-Hrn-Watch-Key, from this computer or the network
 	// alike. Viewing needs none. Empty refuses every action; none exists yet.
@@ -172,11 +178,15 @@ func LoopbackAddr(addr string) (string, error) {
 }
 
 // Serve answers on every listener until ctx ends. It refuses a listener that
-// is neither on a loopback address nor one of opt.LAN's private addresses,
-// whoever opened it.
+// is neither on a loopback address nor one of opt.LAN's private addresses;
+// public mode permits loopback only, whoever opened the listener.
 func Serve(ctx context.Context, opt Options, lns ...net.Listener) error {
+	lan := opt.LAN
+	if opt.Public != nil {
+		lan = nil
+	}
 	for _, ln := range lns {
-		if err := checkListener(ln.Addr(), opt.LAN); err != nil {
+		if err := checkListener(ln.Addr(), lan); err != nil {
 			return err
 		}
 	}
@@ -231,6 +241,10 @@ type server struct {
 	ctx    context.Context // ends every stream when the server stops
 	opt    Options
 	redact *strings.Replacer // blanks secret values; see secretReplacer
+	home   string            // the user's home folder, shown as ~
+	system []string          // folders whose programs are shown by name; see systemFolders
+	access *accessVerifier
+	logMu  sync.Mutex
 }
 
 // New is the watch page's handler. Streams end when ctx does, so a server
@@ -242,7 +256,11 @@ func New(ctx context.Context, opt Options) http.Handler {
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ())}
+	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ()), system: systemFolders()}
+	s.home, _ = os.UserHomeDir()
+	if opt.Public != nil {
+		s.access = &accessVerifier{opt: *opt.Public}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /run/{id}", s.run)
@@ -258,7 +276,11 @@ func New(ctx context.Context, opt Options) http.Handler {
 	for _, ep := range opt.LAN {
 		lan[ep.Addr] = true
 	}
-	return guard(mux, lan, opt.Key)
+	h := s.guard(mux, lan, opt.Key)
+	if opt.Public != nil {
+		return s.publicLog(h)
+	}
+	return h
 }
 
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
@@ -273,7 +295,7 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 's
 // X-Hrn-Watch-Key. A custom header is also the CSRF check: a form on another
 // site cannot set one, and a script elsewhere cannot send one here without a
 // CORS answer this server never gives.
-func guard(next http.Handler, lan map[string]bool, key string) http.Handler {
+func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
@@ -283,13 +305,40 @@ func guard(next http.Handler, lan map[string]bool, key string) http.Handler {
 		h.Set("Content-Security-Policy", csp)
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
-		if !(isLoopbackHost(r.Host) || lan[withPort(r.Host)]) || strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || !isSameOrigin(r) {
+		if s.opt.Public != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+			aw := w.(*accessWriter)
+			publicHost := strings.TrimPrefix(s.opt.Public.Origin, "https://")
+			if !publicHostMatches(r.Host, publicHost) {
+				aw.reason = "bad host"
+			}
+			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate")
+			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.opt.Public.Origin) {
+				aw.reason = "bad origin"
+			}
+			if aw.reason == "" {
+				token := r.Header.Get("Cf-Access-Jwt-Assertion")
+				if token == "" {
+					if c, err := r.Cookie("CF_Authorization"); err == nil {
+						token = c.Value
+					}
+				}
+				aw.email, aw.reason = s.access.verify(token)
+			}
+			if aw.reason != "" {
+				http.Error(w, "Cloudflare Access login required", http.StatusForbidden)
+				return
+			}
+		} else if !(isLoopbackHost(r.Host) || lan[withPort(r.Host)]) || strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || !isSameOrigin(r) {
 			http.Error(w, "Local requests only", http.StatusForbidden)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			sent := r.Header.Get("X-Hrn-Watch-Key")
 			if key == "" || subtle.ConstantTimeCompare([]byte(sent), []byte(key)) != 1 {
+				if aw, ok := w.(*accessWriter); ok {
+					aw.email, aw.reason = "", "missing action key"
+				}
 				http.Error(w, "Acting on hrn needs hrn watch's key", http.StatusForbidden)
 				return
 			}
@@ -297,6 +346,10 @@ func guard(next http.Handler, lan map[string]bool, key string) http.Handler {
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
 		next.ServeHTTP(w, r)
 	})
+}
+
+func publicHostMatches(authority, host string) bool {
+	return strings.EqualFold(authority, host) || strings.EqualFold(authority, host+":443")
 }
 
 // isLoopbackHost checks the Host header, so a DNS name an attacker rebinds to
@@ -358,8 +411,8 @@ func (s *server) render(name string, data any) (string, error) {
 
 // homeFor is the hrn home to show: to this computer only, as it names the
 // user's account.
-func homeFor(r *http.Request) string {
-	if fromThisComputer(r) {
+func (s *server) homeFor(r *http.Request) string {
+	if s.fromThisComputer(r) {
 		return runlog.Home()
 	}
 	return ""
@@ -368,7 +421,11 @@ func homeFor(r *http.Request) string {
 func (s *server) page(w http.ResponseWriter, status int, name string, data any) {
 	body, err := s.render(name, data)
 	if err != nil {
-		http.Error(w, "the page could not be rendered: "+err.Error(), http.StatusInternalServerError)
+		msg := "the page could not be rendered"
+		if s.opt.Public == nil {
+			msg += ": " + err.Error()
+		}
+		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -380,25 +437,35 @@ func (s *server) missing(w http.ResponseWriter, r *http.Request, what string, er
 	msg := what + " not found"
 	if !errors.Is(err, os.ErrNotExist) {
 		msg = what + " could not be read"
-		if fromThisComputer(r) { // the error names paths
+		if s.fromThisComputer(r) { // the error names paths
 			msg = fmt.Sprintf("%s could not be read: %v", what, err)
 		}
 	}
 	s.page(w, http.StatusNotFound, "missing", struct {
 		page
 		Message string
-	}{page{Title: "Not found", Home: homeFor(r)}, msg})
+	}{page{Title: "Not found", Home: s.homeFor(r)}, msg})
 }
 
 func (s *server) lists() lists {
 	var l lists
 	runs, err := runlog.List(s.opt.Runs)
 	if err != nil {
-		l.Problems = append(l.Problems, "Runs could not be listed: "+err.Error())
+		msg := "Runs could not be listed."
+		if s.opt.Public == nil {
+			msg = "Runs could not be listed: " + err.Error()
+		}
+		l.Problems = append(l.Problems, msg)
 	}
+	// The rows are the same for every viewer: shortened, never with a title.
+	// A run's purpose comes from its prompt as recorded, as hrn report has
+	// it; only the prompt shown is shortened.
+	vw := viewer{home: s.home, system: s.system}
 	for i, rec := range runs {
 		runs[i] = s.cleanRecord(rec)
-		l.Runs = append(l.Runs, runRow(runs[i]))
+		r := runRow(runs[i])
+		r.Prompt, _ = firstLine(vw.shortener(rec.Task.Dir).shorten(runs[i].Task.Prompt))
+		l.Runs = append(l.Runs, r)
 	}
 	l.Purposes = purposesOf(runs)
 	batches, unreadable, err := batch.List()
@@ -409,13 +476,17 @@ func (s *server) lists() lists {
 		batches, unreadable, err = batch.List()
 	}
 	if err != nil {
-		l.Problems = append(l.Problems, "Batches could not be listed: "+err.Error())
+		msg := "Batches could not be listed."
+		if s.opt.Public == nil {
+			msg = "Batches could not be listed: " + err.Error()
+		}
+		l.Problems = append(l.Problems, msg)
 	}
 	if unreadable > 0 {
 		l.Problems = append(l.Problems, fmt.Sprintf("%d batch record(s) could not be read.", unreadable))
 	}
 	for i, res := range batches {
-		batches[i] = s.cleanBatch(res) // the task names below come from these too
+		batches[i] = vw.batch(s.cleanBatch(res)) // the task names below come from these too
 		if i < 20 {
 			l.Batches = append(l.Batches, batchRow(batches[i]))
 		}
@@ -462,19 +533,26 @@ func batchOf(batches []batch.Result) map[string]string {
 }
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
-	p := indexPage{page: page{Title: "Runs and batches", Home: homeFor(r)}, Lists: s.lists()}
+	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists()}
 	// The phone links and the hints about --lan are for the person at this
 	// computer; a phone that came in over the network needs neither.
-	if fromThisComputer(r) {
+	if s.fromThisComputer(r) {
 		p.Local = true
 		p.Phone = phoneLinks(s.opt.LAN)
 	}
 	s.page(w, http.StatusOK, "index", p)
 }
 
+func (s *server) viewerOf(r *http.Request) viewer {
+	return viewer{local: s.fromThisComputer(r), home: s.home, system: s.system}
+}
+
 // fromThisComputer: the connection came from a loopback address. A request
 // to this computer's network address comes from that address, not loopback.
-func fromThisComputer(r *http.Request) bool {
+func (s *server) fromThisComputer(r *http.Request) bool {
+	if s.opt.Public != nil {
+		return false
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return false
@@ -500,16 +578,26 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Run "+rec.ID, err)
 		return
 	}
+	vw := s.viewerOf(r)
+	sh := vw.shortener(rec.Task.Dir)
 	prev := rec.Started
 	events := make([]eventView, 0, len(lines))
+	var usage []agent.Event
 	for _, l := range lines {
 		var v eventView
-		l.Event = s.cleanEvent(l.Event)
+		l.Event = sh.event(s.cleanEvent(l.Event))
+		if feedsChart(l) {
+			usage = append(usage, l.Event)
+		}
+		if isUsage(l) {
+			continue
+		}
 		v, prev = eventOf(l, prev)
 		events = append(events, v)
 	}
-	p := runPageOf(s.cleanRecord(rec), events, prev)
-	p.Home = homeFor(r)
+	p := runPageOf(sh.record(s.cleanRecord(rec)), events, prev, vw)
+	p.Usage = usageOf(usage)
+	p.Home = s.homeFor(r)
 	if !done {
 		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
 	}
@@ -526,8 +614,9 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Batch "+r.PathValue("id"), err)
 		return
 	}
-	p := batchPageOf(s.cleanBatch(res))
-	p.Home = homeFor(r)
+	vw := s.viewerOf(r)
+	p := batchPageOf(vw.batch(s.cleanBatch(res)), vw)
+	p.Home = s.homeFor(r)
 	s.page(w, http.StatusOK, "batch", p)
 }
 
@@ -667,7 +756,7 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 
 func (s *server) problem(r *http.Request, st *stream, err error) error {
 	msg := "The stream stopped: the record could not be read."
-	if fromThisComputer(r) { // the error names paths
+	if s.fromThisComputer(r) { // the error names paths
 		msg = err.Error()
 	}
 	html, _ := s.render("problem", msg)
@@ -691,6 +780,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
 	}
+	vw := s.viewerOf(r)
 	st := s.startStream(w)
 	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, bool, error) {
 		res, err := batch.LoadResult(id)
@@ -702,7 +792,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 			res = last
 		}
 		last = res
-		return batchBodyOf(s.cleanBatch(res)), !batchGoing(res), nil
+		return batchBodyOf(vw.batch(s.cleanBatch(res)), vw), !batchGoing(res), nil
 	}, "batchbody")
 }
 
@@ -732,12 +822,40 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	if prev.IsZero() {
 		prev = rec.Started
 	}
+	sh := s.viewerOf(r).shortener(rec.Task.Dir)
+	// The chart is drawn over every turn, so a stream that starts partway
+	// reads the turns before it first.
+	before := Tail{Path: filepath.Join(runlog.Root(), id, "events.jsonl")}
+	earlier, err := before.Read()
+	if err != nil {
+		http.Error(w, "run not readable", http.StatusInternalServerError)
+		return
+	}
+	var usage []agent.Event
+	for _, l := range earlier {
+		if l.End <= cur.off && feedsChart(l) {
+			usage = append(usage, sh.event(s.cleanEvent(l.Event)))
+		}
+	}
 	st := s.startStream(w)
 	s.loop(r, st, s.opt.Poll, func() (bool, error) {
 		lines, rec, done, err := f.Poll()
 		for _, l := range lines {
 			var v eventView
-			l.Event = s.cleanEvent(l.Event)
+			l.Event = sh.event(s.cleanEvent(l.Event))
+			if feedsChart(l) {
+				usage = append(usage, l.Event)
+				html, rerr := s.render("usage", usageOf(usage))
+				if rerr != nil {
+					return true, s.problem(r, st, rerr)
+				}
+				if werr := st.send("usage", cursor{l.End, prev}.String(), html); werr != nil {
+					return true, werr
+				}
+			}
+			if isUsage(l) {
+				continue
+			}
 			v, prev = eventOf(l, prev)
 			html, rerr := s.render("event", v)
 			if rerr != nil {
@@ -753,7 +871,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		if !done {
 			return false, nil
 		}
-		html, err := s.render("result", resultOf(s.cleanRecord(rec).Result))
+		html, err := s.render("result", resultOf(sh.record(s.cleanRecord(rec)).Result))
 		if err != nil {
 			return true, s.problem(r, st, err)
 		}

@@ -24,6 +24,15 @@ const (
 	ByModel   = "model"
 	ByDir     = "dir"
 	ByPurpose = "purpose"
+	ByDay     = "day"
+)
+
+// Where a row's context per turn comes from: every run's usage events, every
+// run's totals (an average a run), or some of each.
+const (
+	ContextFromTurns  = "turns"
+	ContextFromTotals = "totals"
+	ContextFromMixed  = "mixed"
 )
 
 // ParseSince reads a window such as "7d", "36h" or "90m". Days are accepted
@@ -69,6 +78,9 @@ type Data struct {
 	RunningBatches int
 	// Unreadable counts run and batch records that could not be read.
 	Unreadable int
+	// Turns holds the runs' model calls by run id, for those that recorded
+	// usage events.
+	Turns map[string][]runlog.Turn
 }
 
 // Collect reads every run and batch record under HRN_HOME.
@@ -83,6 +95,13 @@ func Collect(since time.Time) (Data, error) {
 	}
 	d := Select(recs, batches, since)
 	d.Unreadable = unreadableRuns + unreadableBatches
+	// A run whose events cannot be read is reported from its totals.
+	d.Turns = map[string][]runlog.Turn{}
+	for _, r := range d.Runs {
+		if turns, err := runlog.TurnsOf(r.ID); err == nil && len(turns) > 0 {
+			d.Turns[r.ID] = turns
+		}
+	}
 	return d, nil
 }
 
@@ -173,6 +192,17 @@ type Row struct {
 	// saw (uncached input, cache writes and cache reads), or -1 when the group
 	// reported no tokens at all (the CLI backends that do not count them).
 	CacheShare float64 `json:"cache_share"`
+	// Token totals, from each run's result.
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	CacheRead    int64 `json:"cache_read_tokens"`
+	CacheWrite   int64 `json:"cache_write_tokens"`
+	// The median and peak context a model call carried. ContextFrom says
+	// where they come from (ContextFromTurns, ContextFromTotals or
+	// ContextFromMixed); empty when no run in the group reported tokens.
+	MedianContext float64 `json:"median_context_tokens"`
+	PeakContext   int64   `json:"peak_context_tokens"`
+	ContextFrom   string  `json:"context_from,omitempty"`
 }
 
 // RunRows groups the finished runs by key and summarises each group, plus an
@@ -189,15 +219,16 @@ func (d Data) RunRows(by string) (rows []Row, all Row, err error) {
 		groups[k] = append(groups[k], r)
 	}
 	for k, recs := range groups {
-		rows = append(rows, summarize(k, recs))
+		rows = append(rows, summarize(k, recs, d.Turns))
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Runs != rows[j].Runs {
+		// Days read in order; any other key, the largest group first.
+		if rows[i].Runs != rows[j].Runs && by != ByDay {
 			return rows[i].Runs > rows[j].Runs
 		}
 		return rows[i].Key < rows[j].Key
 	})
-	return rows, summarize("all", d.Runs), nil
+	return rows, summarize("all", d.Runs, d.Turns), nil
 }
 
 func keyFunc(by string) (func(runlog.Record) string, error) {
@@ -228,8 +259,11 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 	case ByPurpose:
 		// What the run was for, from keyword rules on its prompt's first paragraph.
 		return func(r runlog.Record) string { return purpose.Classify(r.Task.Prompt).Category }, nil
+	case ByDay:
+		// The day the run started, on this computer's calendar.
+		return func(r runlog.Record) string { return r.Started.Local().Format("2006-01-02") }, nil
 	}
-	return nil, fmt.Errorf("unknown key %q (want backend, model, dir or purpose)", by)
+	return nil, fmt.Errorf("unknown key %q (want backend, model, dir, purpose or day)", by)
 }
 
 // canonDir names a directory the way the filesystem does, so one workspace
@@ -243,12 +277,31 @@ func canonDir(p string) string {
 	return filepath.Clean(p)
 }
 
-func summarize(key string, recs []runlog.Record) Row {
+func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Turn) Row {
 	row := Row{Key: key, Runs: len(recs), CacheShare: -1}
-	var durations, turns, costs []float64
+	var durations, turns, costs, contexts []float64
 	var input, cached int64
+	fromTurns, fromTotals := false, false
 	for _, r := range recs {
 		res := r.Result
+		row.InputTokens += res.InputTokens
+		row.OutputTokens += res.OutputTokens
+		row.CacheRead += res.CacheRead
+		row.CacheWrite += res.CacheWrite
+		if calls := turnsOf[r.ID]; len(calls) > 0 {
+			fromTurns = true
+			for _, c := range calls {
+				contexts = append(contexts, float64(c.ContextTokens))
+				row.PeakContext = max(row.PeakContext, c.ContextTokens)
+			}
+		} else if seen := res.InputTokens + res.CacheRead + res.CacheWrite; seen > 0 && res.Turns > 0 {
+			// Without the calls, a run's turns are its average; the last
+			// call's context, where known, may be above it.
+			fromTotals = true
+			avg := seen / int64(res.Turns)
+			contexts = append(contexts, float64(avg))
+			row.PeakContext = max(row.PeakContext, avg, res.ContextTokens)
+		}
 		if res.Status == agent.StatusOK {
 			row.OK++
 		}
@@ -275,6 +328,15 @@ func summarize(key string, recs []runlog.Record) Row {
 	row.MedianDuration = time.Duration(Median(durations))
 	row.MedianTurns = Median(turns)
 	row.MedianCost = Median(costs)
+	row.MedianContext = Median(contexts)
+	switch {
+	case fromTurns && fromTotals:
+		row.ContextFrom = ContextFromMixed
+	case fromTurns:
+		row.ContextFrom = ContextFromTurns
+	case fromTotals:
+		row.ContextFrom = ContextFromTotals
+	}
 	if input+cached > 0 {
 		row.CacheShare = float64(cached) / float64(input+cached)
 	}
@@ -410,4 +472,15 @@ func Share(ratio float64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.0f%%", 100*ratio)
+}
+
+// Tokens renders a token count as hrn's summaries do: 340, 1.2k, 3.4M.
+func Tokens(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	}
+	return strconv.FormatInt(n, 10)
 }

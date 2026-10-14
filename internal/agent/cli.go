@@ -35,6 +35,9 @@ type CLIBackend struct {
 	promptStdin bool
 	// parse handles one stdout line. Nil means stdout is plain text.
 	parse func(line []byte, emit func(Event), res *Result) bool
+	// newParse, when set, makes a parse for one run, for a stream whose lines
+	// are read in the light of earlier ones; Run uses it instead of parse.
+	newParse func() func(line []byte, emit func(Event), res *Result) bool
 	// finalize runs after exit with all of stdout, for single-JSON outputs.
 	finalize func(stdout []byte, emit func(Event), res *Result)
 	// forks is set when args honours Task.ForkSession and parse records
@@ -53,6 +56,12 @@ type CLIBackend struct {
 	mapsModel    bool
 	mapsMaxTurns bool
 	mapsMCP      bool
+	// mapsLean is set when args honours Options.Lean. It is not a capability:
+	// the exec protocol's start message has no lean field.
+	mapsLean bool
+	// mapsCompact is set when args honours Options.CompactWindow; like
+	// mapsLean, not a capability.
+	mapsCompact bool
 	// limits is set when the CLI bills to a plan and says in words that its
 	// usage limit was reached (usageLimit knows the words): such a run ends
 	// limited rather than in an error.
@@ -60,6 +69,9 @@ type CLIBackend struct {
 }
 
 func (c *CLIBackend) Name() string { return c.name }
+
+// AppliesLean reports whether this CLI honours Options.Lean (see AppliesLean).
+func (c *CLIBackend) AppliesLean() bool { return c.mapsLean }
 
 func (c *CLIBackend) Capabilities() Capabilities {
 	caps := Capabilities{Modes: append([]Mode{}, c.mapsModes...), Efforts: []string{}, Sessions: "none", Options: []string{}}
@@ -191,7 +203,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, err)
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(shownArgs(cmd.Args[1:]), " "))})
-	if limits := unenforced(task, c.mapsEffort); len(limits) > 0 {
+	if limits := unenforced(task, c.mapsEffort, c.mapsLean, c.mapsCompact); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
@@ -234,14 +246,18 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	var plain strings.Builder
 	var session string
+	parse := c.parse
+	if c.newParse != nil {
+		parse = c.newParse()
+	}
 	for sc.Scan() {
 		line := sc.Bytes()
 		if c.finalize != nil {
 			all = append(append(all, line...), '\n')
 			continue
 		}
-		if c.parse != nil {
-			parsed := c.parse(line, emit, &res)
+		if parse != nil {
+			parsed := parse(line, emit, &res)
 			if res.Session != "" && res.Session != session {
 				session = res.Session
 				emit(Event{Time: time.Now(), Kind: EventSession, Text: session})

@@ -21,7 +21,7 @@ import (
 // reads the results and diffs back; batch_merge lands the branches. They are
 // the hrn batch subcommands with the same package calls behind them.
 
-const specDescription = `A batch spec, the same JSON as an hrn batch file. Fields: tasks (required; each has prompt, and optionally id, backend, gate, retry, expect and any run option), and on the spec: dir, parallel (default 4), backend, gate (commands that must exit 0 in each worktree), retry (backends to try after a failed attempt), allow_dirty, and the run options (model, mode, max_turns, effort, timeout, max_cost_usd, ...) every task starts from. mode defaults to auto here too, because nothing can approve a prompt inside a batch; use yolo when a task must build or test. Unknown fields are refused, so a misspelt one cannot be silently ignored.`
+const specDescription = `A batch spec, the same JSON as an hrn batch file. Fields: tasks (required; each has prompt, and optionally id, backend, gate, retry, expect and any run option), and on the spec: dir, parallel (default 4), backend, gate (commands that must exit 0 in each worktree), retry (backends to try after a failed attempt), allow_dirty, worktrees ("slots", the default: each task runs in one of the repository's reusable slots, which keep their build output, and gives it back when it ends; "fresh": a new worktree per task, kept until hrn batch rm), and the run options (model, mode, max_turns, effort, timeout, max_cost_usd, ...) every task starts from. mode defaults to auto here too, because nothing can approve a prompt inside a batch; use yolo when a task must build or test. Unknown fields are refused, so a misspelt one cannot be silently ignored.`
 
 func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	return mcp.Tool{
@@ -137,8 +137,15 @@ func batchSummary(res batch.Result) string {
 	} else {
 		fmt.Fprintf(&b, " · %s", res.Duration.Round(time.Second))
 	}
+	kept := "the worktrees stay"
+	for _, t := range res.Tasks {
+		if t.Slot != 0 {
+			kept = "the branches stay" // the slots went back as their tasks ended
+			break
+		}
+	}
 	fmt.Fprintf(&b, "\nNext: batch_show with batch_id %q and a task to read its diff; batch_merge to land passing branches; "+
-		"the worktrees stay until `hrn batch rm %s`.", res.ID, res.ID)
+		"%s until `hrn batch rm %s`.", res.ID, kept, res.ID)
 	return b.String()
 }
 
@@ -290,7 +297,7 @@ func batchMergeTool() mcp.Tool {
 		Title: "Merge a batch's branches",
 		Description: "Merge the branches of a batch's passing tasks into the repository's current branch, in task order " +
 			"(or only the tasks named). Stops at the first conflict and puts the tree back as it was before that merge. " +
-			"Undo a finished merge with `git reset --hard ORIG_HEAD`.",
+			"The result names the commit from before this call for undoing merged tasks.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -317,6 +324,10 @@ func batchMergeTool() mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
+			before, err := batch.Head(ctx, res.Dir)
+			if err != nil {
+				return mcp.CallResult{}, err
+			}
 			merged, mergeErr := batch.Merge(ctx, res, args.Tasks, args.Squash)
 			var b strings.Builder
 			done := 0
@@ -334,6 +345,9 @@ func batchMergeTool() mcp.Tool {
 				}
 			}
 			fmt.Fprintf(&b, "\n%d branch(es) merged into %s", done, res.Dir)
+			if done > 0 {
+				fmt.Fprintf(&b, "\nundo with: git reset --hard %s", before)
+			}
 			if mergeErr != nil {
 				fmt.Fprintf(&b, "\nerror: %v", mergeErr)
 			}

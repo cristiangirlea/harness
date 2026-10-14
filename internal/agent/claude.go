@@ -48,6 +48,17 @@ func NewClaudeBackend() *CLIBackend {
 			if mode != "" {
 				a = append(a, "--permission-mode", mode)
 			}
+			if t.IsLean() {
+				// Only the --mcp-config files below: none of the user's other
+				// MCP servers, plugin servers or claude.ai connectors. Every
+				// setting source still loads, so the user's CLAUDE.md, rules,
+				// hooks, plugins and skills do too (#204). Not --bare: it logs
+				// in only with an API key, never the subscription.
+				a = append(a, "--strict-mcp-config")
+			}
+			if t.CompactWindow != "" {
+				a = append(a, "--autocompact", string(t.CompactWindow))
+			}
 			if !t.AllowDangerous {
 				a = append(append(a, "--disallowedTools"), claudeDenyRules()...)
 			}
@@ -60,12 +71,15 @@ func NewClaudeBackend() *CLIBackend {
 			return a
 		},
 		parse:        parseClaudeStream,
+		newParse:     newClaudeParse,
 		forks:        true,
 		mapsEffort:   true,
 		mapsModes:    []Mode{ModeReadOnly, ModeAuto, ModeYolo},
 		mapsModel:    true,
 		mapsMaxTurns: true,
 		mapsMCP:      true,
+		mapsLean:     true,
+		mapsCompact:  true,
 		limits:       true,
 		loginEnv:     []string{"CLAUDE_CODE_OAUTH_TOKEN"},
 		fileRules:    true,
@@ -113,6 +127,7 @@ type claudeLine struct {
 	SessionID       string  `json:"session_id"`
 	ParentToolUseID *string `json:"parent_tool_use_id"`
 	Message         struct {
+		ID      string   `json:"id"`
 		Usage   apiUsage `json:"usage"`
 		Model   string   `json:"model"`
 		Content []struct {
@@ -126,6 +141,10 @@ type claudeLine struct {
 			ToolUseID string          `json:"tool_use_id"`
 		} `json:"content"`
 	} `json:"message"`
+	CompactMetadata struct {
+		Trigger   string `json:"trigger"`
+		PreTokens int64  `json:"pre_tokens"`
+	} `json:"compact_metadata"`
 	Result       string  `json:"result"`
 	IsError      bool    `json:"is_error"`
 	NumTurns     int     `json:"num_turns"`
@@ -138,7 +157,24 @@ type claudeLine struct {
 	} `json:"usage"`
 }
 
+// newClaudeParse is parseClaudeStream for one run. stream-json writes each
+// content block of a message as a line of its own and repeats the message's
+// usage on every one, so the usage event goes out once per message id, with
+// the first line's figures.
+func newClaudeParse() func([]byte, func(Event), *Result) bool {
+	seen := map[string]bool{}
+	return func(line []byte, emit func(Event), res *Result) bool {
+		return parseClaudeLine(line, emit, res, seen)
+	}
+}
+
+// parseClaudeStream reads one line on its own: a line with usage is a usage
+// event, whatever came before.
 func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
+	return parseClaudeLine(line, emit, res, nil)
+}
+
+func parseClaudeLine(line []byte, emit func(Event), res *Result, seen map[string]bool) bool {
 	var l claudeLine
 	// A field of an unexpected type (a permission_denied system line carries
 	// its message as a string, not an object) leaves the rest of the line
@@ -159,10 +195,25 @@ func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 			res.Model = l.Model
 			res.ModelReported = true
 		}
+		if l.Subtype == "compact_boundary" {
+			emit(Event{Time: now, Kind: EventCompaction, Text: l.CompactMetadata.Trigger,
+				Usage: &Usage{ContextTokens: l.CompactMetadata.PreTokens}})
+		}
 	case "assistant", "user":
+		// A sub-agent's turns (under a parent tool call) fill its own context,
+		// not the main loop's: they count in the run's totals only.
 		if l.Type == "assistant" && l.ParentToolUseID == nil {
 			u := l.Message.Usage
 			res.ContextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+			id := l.Message.ID
+			if u != (apiUsage{}) && (id == "" || !seen[id]) {
+				if seen != nil && id != "" {
+					seen[id] = true
+				}
+				emit(Event{Time: now, Kind: EventUsage, Usage: &Usage{Model: l.Message.Model,
+					InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
+					CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens, ContextTokens: res.ContextTokens}})
+			}
 		}
 		for _, c := range l.Message.Content {
 			switch c.Type {

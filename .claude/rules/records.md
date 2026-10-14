@@ -17,4 +17,4 @@ Records under `$HRN_HOME` (`runs/`, `batches/`, `evals/`) outlive the code that 
 - Records cite each other (an eval its batch, a batch its runs, a run the run it continues).
   Pruning works top down and removes a record before the runs it cites, so a failure partway never
   leaves a reference to nothing; keep that order.
-- A change to what a record holds updates the README's "Run records" section.
+- A change to what a record holds updates `docs/run-records.md`.

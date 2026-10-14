@@ -57,8 +57,19 @@ func cmdBatchRemove(args []string) (int, error) {
 	if err := batch.Remove(res); err != nil {
 		return 1, err
 	}
-	fmt.Printf("removed the worktrees and branches of batch %s (%d tasks)\n", res.ID, len(res.Tasks))
+	fmt.Printf("removed the %s of batch %s (%d tasks)\n", removedWhat(res), res.ID, len(res.Tasks))
 	return 0, nil
+}
+
+// removedWhat is what hrn batch rm removes of a batch: a slot stays, so of a
+// slot batch only the branches go.
+func removedWhat(res batch.Result) string {
+	for _, t := range res.Tasks {
+		if t.Slot == 0 && t.Worktree != "" {
+			return "worktrees and branches"
+		}
+	}
+	return "branches"
 }
 
 func cmdBatchShow(args []string) (int, error) {
@@ -99,7 +110,8 @@ func cmdBatchDiff(args []string) (int, error) {
 		return 1, err
 	}
 	if strings.TrimSpace(diff) == "" && len(untracked) == 0 {
-		fmt.Fprintf(os.Stderr, "task %s changed nothing\n", task)
+		tr, _ := res.Find(task)
+		fmt.Fprintln(os.Stderr, diffNothing(tr))
 		return 0, nil
 	}
 	if diff != "" {
@@ -117,12 +129,13 @@ func cmdBatchDiff(args []string) (int, error) {
 func cmdBatchMerge(args []string) (int, error) {
 	fs := flag.NewFlagSet("batch merge", flag.ContinueOnError)
 	squash := fs.Bool("squash", false, "")
+	rm := fs.Bool("rm", false, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
 	if fs.NArg() < 1 {
-		return 2, errors.New("usage: hrn batch merge [--squash] <batch-id> [task-id...]")
+		return 2, errors.New("usage: hrn batch merge [--squash] [--rm] <batch-id> [task-id...]")
 	}
 	res, err := batch.LoadResult(fs.Arg(0))
 	if err != nil {
@@ -130,10 +143,15 @@ func cmdBatchMerge(args []string) (int, error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+	before, err := batch.Head(ctx, res.Dir)
+	if err != nil {
+		return 1, err
+	}
 
 	merged, mergeErr := batch.Merge(ctx, res, fs.Args()[1:], *squash)
 	r := newRenderer(false)
 	done := 0
+	var removeIDs []string
 	for _, m := range merged {
 		switch {
 		case m.Conflict:
@@ -144,7 +162,38 @@ func cmdBatchMerge(args []string) (int, error) {
 			r.Line(r.c(dim, fmt.Sprintf("  %-16s skipped: %s", m.Task, m.Skipped)))
 		default:
 			done++
+			if *rm && m.Commit != "" {
+				removeIDs = append(removeIDs, m.Task)
+			}
 			r.Line(fmt.Sprintf("  %-16s merged %s as %s", m.Task, m.Branch, tools.ShortSHA(m.Commit)))
+		}
+	}
+	var removeErr error
+	removedCount := 0
+	if len(removeIDs) > 0 {
+		removedIDs, err := batch.RemoveTasks(res, removeIDs)
+		removeErr = err
+		removedCount = len(removedIDs)
+		if len(removedIDs) > 0 {
+			removedTasks := make([]batch.TaskResult, 0, len(removedIDs))
+			for _, id := range removedIDs {
+				tr, _ := res.Find(id)
+				removedTasks = append(removedTasks, tr)
+			}
+			r.Line(r.c(dim, fmt.Sprintf("removed the %s of %d merged task(s)",
+				removedWhat(batch.Result{Tasks: removedTasks}), len(removedIDs))))
+		}
+	}
+	if done > 0 {
+		if *rm {
+			hint := fmt.Sprintf("undo with: git reset --hard %s", before)
+			if removedCount > 0 {
+				hint += "; after removal, the tasks' work is only in the reflog"
+			}
+			r.Line(r.c(dim, hint))
+		} else {
+			r.Line(r.c(dim, fmt.Sprintf("%d branch(es) merged into %s · undo with: git reset --hard %s · "+
+				"remove the %s with: hrn batch rm %s", done, res.Dir, before, removedWhat(res), res.ID)))
 		}
 	}
 	if mergeErr != nil {
@@ -152,13 +201,27 @@ func cmdBatchMerge(args []string) (int, error) {
 			r.Line(r.c(dim, fmt.Sprintf("the tree is back as it was; %d branch(es) merged before this one, "+
 				"and this one is still there to merge by hand: git merge %s", done, branch)))
 		}
-		return 1, mergeErr
+		return 1, errors.Join(mergeErr, removeErr)
 	}
-	if done > 0 {
-		r.Line(r.c(dim, fmt.Sprintf("%d branch(es) merged into %s · undo with: git reset --hard ORIG_HEAD · "+
-			"remove the worktrees with: hrn batch rm %s", done, res.Dir, res.ID)))
+	if removeErr != nil {
+		return 1, removeErr
 	}
 	return 0, nil
+}
+
+// diffNothing says why a task's diff is empty. A slot task's diff is its
+// commit alone, so without one it committed nothing. A kept slot says only
+// that giving it back failed (work left in it, or a busy lock), so it is
+// named for inspection, not said to hold work.
+func diffNothing(tr batch.TaskResult) string {
+	if tr.Slot == 0 {
+		return fmt.Sprintf("task %s changed nothing", tr.ID)
+	}
+	text := fmt.Sprintf("task %s committed nothing", tr.ID)
+	if strings.Contains(tr.Error, fmt.Sprintf("slot %d kept", tr.Slot)) {
+		text += fmt.Sprintf("; slot %d was kept: inspect it (hrn ws list)", tr.Slot)
+	}
+	return text
 }
 
 // mergeConflictBranch names the branch that stopped a merge run.
@@ -275,6 +338,14 @@ func printBatch(r *renderer, res batch.Result) {
 	}
 	r.Line(r.c(dim, fmt.Sprintf("── batch %s · %d/%d passed%s · %s ──",
 		res.ID, passed(res), len(res.Tasks), tail, took)))
+	for _, t := range res.Tasks {
+		if t.Slot != 0 {
+			r.Line(r.c(dim, fmt.Sprintf("each task's work is on its branch; the slots under %s go back as tasks end · "+
+				"merge them with: hrn batch merge %s · delete the branches with: hrn batch rm %s",
+				filepath.Dir(t.Worktree), res.ID, res.ID)))
+			return
+		}
+	}
 	r.Line(r.c(dim, fmt.Sprintf("worktrees under %s · merge them with: hrn batch merge %s · remove them with: hrn batch rm %s",
 		filepath.Join(res.Dir, ".hrn", "worktrees"), res.ID, res.ID)))
 }

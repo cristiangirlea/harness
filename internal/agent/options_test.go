@@ -51,13 +51,13 @@ func TestFlagsSetTheOptions(t *testing.T) {
 	o := Options{Mode: ModeAsk} // the caller's default shows through
 	BindFlags(fs, &o)
 	err := fs.Parse([]string{"--model", "claude-sonnet-5", "--mode", "yolo", "--max-turns", "7", "--effort", "low",
-		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--allow-dangerous",
+		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--lean", "--compact-window", "300000", "--allow-dangerous",
 		"--timeout", "90s", "--max-cost", "2.5", "--task-budget", "30000"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Options{Model: "claude-sonnet-5", Mode: ModeYolo, MaxTurns: 7, Effort: "low", MCP: []string{"a.json", "b.json"},
-		NoInstructions: true, NoContextEdits: true, AllowDangerous: true,
+		NoInstructions: true, NoContextEdits: true, Lean: Bool(true), CompactWindow: "300000", AllowDangerous: true,
 		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000}
 	if !reflect.DeepEqual(o, want) {
 		t.Errorf("parsed = %+v\nwant     %+v", o, want)
@@ -96,6 +96,97 @@ func TestOverInheritsWhatIsUnset(t *testing.T) {
 	}
 	if got := (Options{MCP: []string{}}).Over(base); len(got.MCP) != 0 || got.MCP == nil {
 		t.Errorf("an empty list must stay empty, got %v", got.MCP)
+	}
+}
+
+// Lean has three states: unset takes the entry point's default (on in a
+// batch, off for hrn run), and an explicit false is honoured, also over a
+// spec that turned it on.
+func TestLeanIsTriState(t *testing.T) {
+	for _, tc := range []struct {
+		json string
+		want *bool
+	}{{`{}`, nil}, {`{"lean":false}`, Bool(false)}, {`{"lean":true}`, Bool(true)}} {
+		var o Options
+		if err := json.Unmarshal([]byte(tc.json), &o); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(o.Lean, tc.want) {
+			t.Errorf("%s: Lean = %v, want %v", tc.json, o.Lean, tc.want)
+		}
+	}
+	if got := (Options{Lean: Bool(false)}).Over(Options{Lean: Bool(true)}); got.Lean == nil || *got.Lean {
+		t.Errorf("a task's lean false must win over the spec's true: %v", got.Lean)
+	}
+	if got := (Options{}).Over(Options{Lean: Bool(true)}); !got.IsLean() {
+		t.Error("an unset lean must inherit the spec's")
+	}
+	if b, _ := json.Marshal(Options{Lean: Bool(false)}); !strings.Contains(string(b), `"lean":false`) {
+		t.Errorf("an explicit false must be recorded: %s", b)
+	}
+	for _, tc := range []struct {
+		args []string
+		want *bool
+	}{{nil, nil}, {[]string{"--lean"}, Bool(true)}, {[]string{"--lean=false"}, Bool(false)}} {
+		fs := flag.NewFlagSet("t", flag.ContinueOnError)
+		var o Options
+		BindFlags(fs, &o)
+		if err := fs.Parse(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(o.Lean, tc.want) {
+			t.Errorf("%v: Lean = %v, want %v", tc.args, o.Lean, tc.want)
+		}
+	}
+}
+
+// compact_window is an integer from 100000 to 1000000 or "auto", the values
+// claude --autocompact accepts, checked before a run starts.
+func TestCompactWindow(t *testing.T) {
+	for _, tc := range []struct {
+		json, want string
+	}{{`{}`, ""}, {`{"compact_window":200000}`, "200000"}, {`{"compact_window":"auto"}`, "auto"}} {
+		var o Options
+		if err := json.Unmarshal([]byte(tc.json), &o); err != nil {
+			t.Fatalf("%s: %v", tc.json, err)
+		}
+		if string(o.CompactWindow) != tc.want {
+			t.Errorf("%s: CompactWindow = %q, want %q", tc.json, o.CompactWindow, tc.want)
+		}
+		if err := o.Validate(); err != nil {
+			t.Errorf("%s: %v", tc.json, err)
+		}
+		b, _ := json.Marshal(o)
+		var back Options
+		if err := json.Unmarshal(b, &back); err != nil || back.CompactWindow != o.CompactWindow {
+			t.Errorf("%s: round trip through %s gives %q (%v)", tc.json, b, back.CompactWindow, err)
+		}
+	}
+	if b, _ := json.Marshal(Options{CompactWindow: "200000"}); !strings.Contains(string(b), `"compact_window":200000`) {
+		t.Errorf("a window is written as a number: %s", b)
+	}
+	for _, bad := range []string{`{"compact_window":"200000"}`, `{"compact_window":"200k"}`, `{"compact_window":true}`, `{"compact_window":2.5e5}`} {
+		var o Options
+		if err := json.Unmarshal([]byte(bad), &o); err == nil {
+			t.Errorf("%s must be refused, got %q", bad, o.CompactWindow)
+		}
+	}
+	for _, v := range []string{"100000", "1000000"} {
+		if err := (Options{CompactWindow: CompactWindow(v)}).Validate(); err != nil {
+			t.Errorf("%s is in range: %v", v, err)
+		}
+	}
+	for _, v := range []string{"99999", "1000001", "0", "-5", "200k", "AUTO", "0200000", "+200000"} {
+		if err := (Options{CompactWindow: CompactWindow(v)}).Validate(); err == nil || !strings.Contains(err.Error(), "compact_window") {
+			t.Errorf("%s must be refused naming compact_window, got %v", v, err)
+		}
+		fs := flag.NewFlagSet("t", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		var o Options
+		BindFlags(fs, &o)
+		if err := fs.Parse([]string{"--compact-window", v}); err == nil {
+			t.Errorf("--compact-window %s must be refused", v)
+		}
 	}
 }
 

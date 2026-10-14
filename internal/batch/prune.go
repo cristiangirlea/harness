@@ -1,10 +1,12 @@
 package batch
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // RemoveRecord deletes a saved batch record and returns how many bytes it
@@ -28,10 +30,21 @@ func RemoveRecord(id string, dryRun bool) (int64, error) {
 }
 
 // WorktreesRemain reports whether any of the batch's worktrees is still on
-// disk, which is when its record must stay: hrn batch rm reads it.
+// disk (not one a fresh task does not own, notMine), or for a slot task (whose slot outlives the batch) or one that waited
+// for a slot (branchOnly) its branch, which is when its record must stay:
+// hrn batch rm reads it.
 func WorktreesRemain(res Result) bool {
 	for _, t := range res.Tasks {
-		if t.Worktree == "" {
+		if branchOnly(t) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			_, err := gitOut(ctx, res.Dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+t.Branch)
+			cancel()
+			if err == nil {
+				return true
+			}
+			continue
+		}
+		if t.Worktree == "" || notMine(res, t) {
 			continue
 		}
 		if _, err := os.Stat(t.Worktree); err == nil {

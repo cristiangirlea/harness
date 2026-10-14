@@ -13,17 +13,38 @@ import (
 	"github.com/cristiangirlea/harness/internal/report"
 )
 
+// removeCacheEntry is replaceable by tests to make an inner deletion fail
+// after the cache has been moved aside.
+var removeCacheEntry = os.RemoveAll
+
+// movedCachePath is replaceable by tests that need a predictable collision.
+var movedCachePath = func(path string) string {
+	name := fmt.Sprintf(".gc-%d-%d-%s", os.Getpid(), time.Now().UnixNano(), filepath.Base(path))
+	return filepath.Join(filepath.Dir(path), name)
+}
+
+// renameCache is replaceable by tests that make a move fail or start a build
+// immediately after a successful move.
+var renameCache = os.Rename
+
+// movedCacheInUse is replaceable by tests that model a build starting just
+// after the move; production probes the moved cache's profile locks.
+var movedCacheInUse = inUse
+
 // Cache is one build cache, a folder tagged with CACHEDIR.TAG (Cargo writes
 // one into every target folder), and what the cache pass decided about it.
 type Cache struct {
-	Path      string
-	Worktree  string    // the worktree it lies in, "" for one found on its own
-	Size      int64     // the files under it
-	LastBuild time.Time // its last write; see lastBuild
-	Verdict   Verdict
-	Reason    string
-	risk      string // why it cannot go whole, found by the walk that sized it
-	young     bool   // kept only because it was written too recently
+	Path       string
+	Worktree   string    // the worktree it lies in, "" for one found on its own
+	Size       int64     // the files under it
+	LastBuild  time.Time // its last write; see lastBuild
+	Verdict    Verdict
+	Reason     string
+	risk       string // why it cannot go whole, found by the walk that sized it
+	young      bool   // kept only because it was written too recently
+	driveID    string // drive identified during the free-below scan
+	driveBelow bool   // that drive was below the limit before any removals
+	driveMore  bool   // eligible caches left because enough was already going
 }
 
 // Drive is what the cache pass knows about the volume holding a folder.
@@ -89,9 +110,9 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 // ApplyCaches removes the caches marked Remove, the longest idle first so an
 // interruption leaves the newest, each checked again just before it goes
 // (still tagged, nothing written since the scan, no build holding it, nothing
-// inside that must stay). One that fails the check stays, with the reason
-// among the errors. The removal is not all-or-nothing: a file held open on
-// Windows can leave part of the folder deleted.
+// inside that must stay). One that fails the check or the rename stays, with
+// the reason among the errors. A failed removal leaves the renamed cache for
+// the next scan.
 func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []error) {
 	var todo []Cache
 	for _, c := range caches {
@@ -105,13 +126,68 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 			errs = append(errs, fmt.Errorf("%s: kept, %s", c.Path, why))
 			continue
 		}
-		if err := os.RemoveAll(c.Path); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", c.Path, err))
+		moved := movedCachePath(c.Path)
+		if err := renameCache(c.Path, moved); err != nil {
+			errs = append(errs, fmt.Errorf("%s: kept, it could not be moved aside: %s", c.Path, firstLine(err.Error())))
+			continue
+		}
+		if why := movedCacheInUse(moved); why != "" {
+			if err := os.Rename(moved, c.Path); err != nil {
+				errs = append(errs, fmt.Errorf("%s (moved to %s): a build started, but it could not be moved back: %w", c.Path, moved, err))
+			} else {
+				errs = append(errs, fmt.Errorf("%s: kept, a build started: %s", c.Path, why))
+			}
+			continue
+		}
+		if err := removeMovedCache(moved); err != nil {
+			errs = append(errs, fmt.Errorf("%s (moved to %s): %w", c.Path, moved, err))
 			continue
 		}
 		removed = append(removed, c)
 	}
 	return removed, errs
+}
+
+// removeMovedCache keeps the signature until everything else has gone, so a
+// failed deletion remains a tagged cache for the next scan.
+func removeMovedCache(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "CACHEDIR.TAG" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := removeCacheEntry(path); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	tag := filepath.Join(dir, "CACHEDIR.TAG")
+	if err := os.Remove(tag); err != nil {
+		return err
+	}
+	if err := os.Remove(dir); err != nil {
+		if restoreErr := restoreCacheTag(tag); restoreErr != nil {
+			return fmt.Errorf("%w (also could not restore %s: %v)", err, tag, restoreErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func restoreCacheTag(tag string) error {
+	f, err := os.OpenFile(tag, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.WriteString(cacheTagSignature + "\n")
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 // TotalCaches adds up the caches' sizes, counting one inside another once.
@@ -217,12 +293,29 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if why := inUse(c.Path); why != "" {
 		return Keep, why
 	}
+	if isMovedCache(c.Path) {
+		return Remove, "moved cache left by an earlier removal"
+	}
 	idle := now.Sub(c.LastBuild)
 	if idle >= opt.Idle {
 		return Remove, "idle " + short(idle)
 	}
 	c.young = true
 	return Keep, fmt.Sprintf("last written %s ago, inside --idle %s", short(idle), short(opt.Idle))
+}
+
+// isMovedCache accepts both the old .gc-<pid>-<name> and the newer
+// .gc-<pid>-<time>-<name> form. Both start with a decimal PID and a hyphen.
+func isMovedCache(dir string) bool {
+	name, ok := strings.CutPrefix(filepath.Base(dir), ".gc-")
+	if !ok || name == "" {
+		return false
+	}
+	i := 0
+	for i < len(name) && name[i] >= '0' && name[i] <= '9' {
+		i++
+	}
+	return i > 0 && i+1 < len(name) && name[i] == '-'
 }
 
 // recheckCache says why a cache marked for removal must stay after all,
@@ -264,6 +357,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 	type drive struct {
 		free, after int64 // free now, and once what is marked has gone
 		candidates  []int
+		more        bool
 	}
 	drives := map[string]*drive{}
 	var order []string
@@ -276,6 +370,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			}
 			continue
 		}
+		c.driveID = d.ID
 		s := drives[d.ID]
 		if s == nil {
 			s = &drive{free: d.Free, after: d.Free}
@@ -291,18 +386,23 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 	}
 	for _, id := range order {
 		s := drives[id]
-		if s.after >= opt.FreeBelow {
-			continue
-		}
+		alreadyEnough := s.after >= opt.FreeBelow
 		sort.SliceStable(s.candidates, func(a, b int) bool { return all[s.candidates[a]].LastBuild.Before(all[s.candidates[b]].LastBuild) })
 		for _, i := range s.candidates {
 			c := &all[i]
 			idle := now.Sub(c.LastBuild)
+			if alreadyEnough {
+				if s.free < opt.FreeBelow && idle >= minIdle {
+					s.more = true
+				}
+				continue // enough is going already; keep the original reason
+			}
 			if idle < minIdle {
 				c.Reason = fmt.Sprintf("last written %s ago, inside --min-idle %s", short(idle), short(minIdle))
 				continue
 			}
 			if s.after >= opt.FreeBelow {
+				s.more = true
 				continue // enough is going already; younger ones keep their reason
 			}
 			c.Verdict = Remove
@@ -310,6 +410,63 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			s.after += c.Size
 		}
 	}
+	for i := range all {
+		if s := drives[all[i].driveID]; all[i].driveID != "" && s != nil && s.free < opt.FreeBelow {
+			all[i].driveBelow = true
+			all[i].driveMore = s.more
+		}
+	}
+}
+
+// FreeBelowReport reads the free space after apply for drives that were below
+// the limit during the cache scan. Call it only after applying the listing.
+func FreeBelowReport(caches []Cache, opt Options) []string {
+	if opt.FreeBelow <= 0 {
+		return nil
+	}
+	lookup := opt.Drive
+	if lookup == nil {
+		lookup = diskFree
+	}
+	limit := report.Bytes(opt.FreeBelow)
+	seen := map[string]bool{}
+	var lines []string
+	for _, c := range caches {
+		if !c.driveBelow || seen[c.driveID] {
+			continue
+		}
+		seen[c.driveID] = true
+		path := c.Path
+		for {
+			if _, err := os.Stat(path); err == nil {
+				break
+			}
+			parent := filepath.Dir(path)
+			if parent == path {
+				break
+			}
+			path = parent
+		}
+		d, err := lookup(path)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("%s free space could not be read: %s", c.driveID, firstLine(err.Error())))
+			continue
+		}
+		if d.ID != c.driveID {
+			lines = append(lines, fmt.Sprintf("%s free space could not be read: the drive is no longer there", c.driveID))
+			continue
+		}
+		if d.Free >= opt.FreeBelow {
+			lines = append(lines, fmt.Sprintf("%s now has %s free, above %s", c.driveID, report.Bytes(d.Free), limit))
+		} else {
+			line := fmt.Sprintf("%s still has %s free, %s below %s", c.driveID, report.Bytes(d.Free), report.Bytes(opt.FreeBelow-d.Free), limit)
+			if c.driveMore {
+				line += "; another hrn gc --free-below run picks the next caches"
+			}
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 // profiles lists a cache's profile folders, those holding Cargo's .cargo-lock

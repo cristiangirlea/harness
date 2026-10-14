@@ -138,13 +138,19 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 	for _, adapter := range []struct {
 		newBackend func() *CLIBackend
 		mapsEffort bool
+		mapsLean   bool
+		// mapsCompact: the adapter passes compact_window on.
+		mapsCompact bool
 	}{
-		{NewCodexBackend, true},
-		{NewClaudeBackend, true},
-		{NewGeminiBackend, false},
-		{NewOpencodeBackend, false},
+		{NewCodexBackend, true, false, false},
+		{NewClaudeBackend, true, true, true},
+		{NewGeminiBackend, false, false, false},
+		{NewOpencodeBackend, false, false, false},
 	} {
 		b := adapter.newBackend()
+		if AppliesLean(b) != adapter.mapsLean {
+			t.Errorf("%s: AppliesLean = %v, want %v", b.Name(), AppliesLean(b), adapter.mapsLean)
+		}
 		t.Run(b.Name(), func(t *testing.T) {
 			// Keep the adapter's capabilities, but run only the test binary.
 			b.name = os.Args[0]
@@ -154,6 +160,11 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{},
 				{Effort: "high"},
 				{Effort: "high", MaxCostUSD: 5, TaskBudget: 50000},
+				{Lean: Bool(true)},
+				{Effort: "high", Lean: Bool(true)},
+				{Lean: Bool(false)},
+				{CompactWindow: "auto"},
+				{Lean: Bool(true), CompactWindow: "200000"},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
@@ -172,6 +183,12 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				}
 				if options.Effort != "" && !adapter.mapsEffort {
 					want = append(want, "effort")
+				}
+				if options.IsLean() && !adapter.mapsLean {
+					want = append(want, "lean")
+				}
+				if options.CompactWindow != "" && !adapter.mapsCompact {
+					want = append(want, "compact_window")
 				}
 				if len(want) == 0 {
 					if len(infos) != 0 {

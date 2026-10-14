@@ -18,7 +18,7 @@ These are not preferences; a PR that breaks one is not mergeable.
    `internal/tools/exec_windows.go`), never `golang.org/x/sys`. Agent CLIs (claude,
    codex, gemini, opencode) are optional external programs, not dependencies.
 2. **One PR per increment.** Branch from `main` (or from the feature branch the increment
-   is a piece of), short branch name (the PR letter and a slug, e.g. `a-instructions`).
+   is a piece of), short branch name (as in `fix-batch-rm-deregistered`).
    Open the PR with `gh pr create`. Self-review with `/code-review`; fix every blocking
    finding as its own small commit on the same PR (do not squash the fixes into the
    original commit) and file the rest as issues (AGENTS.md, Working rules). CI must be
@@ -538,13 +538,15 @@ where such a typo lives.
 
 ## Definition of done (every PR)
 
-- [ ] `go vet ./...`, `go build ./...`, `go test -count=3 ./...`, `gofmt -l .` empty, locally.
-- [ ] `/code-review` on the PR; every blocking finding fixed as its own commit or
-      rejected in a PR comment with a reason, the rest filed as issues.
+- [ ] The full local checks, as AGENTS.md's "Build and test" lists them (`/check` runs them).
+- [ ] `/code-review` on the PR; every blocking finding fixed as its own commit, the rest
+      filed as issues.
 - [ ] CI green on ubuntu and windows.
-- [ ] README updated for any new flag, field, command or status.
+- [ ] The relevant guide in `docs/` updated for any new flag, field, command or status, and
+      README when the overview changes.
 - [ ] This file: box ticked, `Done: PR #n, <date>` under the PR heading, deviations in
-      the *Decisions log*.
+      the *Decisions log*; a fix with no item here gets a Decisions-log entry naming the
+      issue and the PR.
 - [ ] Merged with a merge commit; branch deleted.
 
 ## Model guidance
@@ -652,7 +654,10 @@ order they are worth taking:
       ([#78](https://github.com/cristiangirlea/harness/issues/78)). Done: PR #95, 2026-10-12.
     - [x] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
       ([#79](https://github.com/cristiangirlea/harness/issues/79)). Done: PR #131, 2026-10-13.
-    - [ ] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
+    - [x] `hrn batch merge --rm` ([#80](https://github.com/cristiangirlea/harness/issues/80)).
+      Done: PR #221, 2026-10-13.
+    - [x] `hrn ws`: reusable workspaces per repository
+      ([#133](https://github.com/cristiangirlea/harness/issues/133)). Done: PR #144, 2026-10-13.
 
 17. **Durable project workers and project retrieval** ([#142](https://github.com/cristiangirlea/harness/issues/142)):
     The work adds a separate `server/` module with a PostgreSQL control service and project
@@ -679,6 +684,14 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
+  timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
+  (`for-each-ref`, which answers a missing branch with no output) says whether it answered;
+  a branch counts as removed only when it was there and a probe answered that it is gone.
+- 2026-10-14: batch merge names the commit to undo to (#214, #216, PR #254).
+  Decided: CLI and MCP capture HEAD before merging and print that full commit when at least
+  one task merges, including before a later conflict or when --rm removes nothing.
+  The reflog note appears only when --rm removes task work.
 - 2026-10-13: retrieval wiring in runs, batches, evals and MCP ([#141](https://github.com/cristiangirlea/harness/issues/141), PR #186; slice 8 of #142).
   The snapshot's wiring on today's code: the packet is prepared and saved before a backend
   starts, pins are validated on continuation, a same-scope batch retry retrieves again with
@@ -744,6 +757,216 @@ neither of them follows a run while it happens.
   The root module stays standard-library only, as AGENTS.md requires; the separate `server/`
   module may depend on maintained PostgreSQL and Kubernetes clients (pgx, client-go), as the spec accepted on 2026-09-27
   allows. The snapshot stays local as commit `8fc689e` and is never pushed.
+- 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
+  as the index does) and a batch's repository too, the whole path as a hover title for this
+  computer only. Text from a run's events, its prompt and result, and a batch's tasks and
+  gates, and the index's rows show the workspace (a task's worktree) as `.`, home as `~`, and programs in system
+  folders by file name, matched only at a path boundary, after secrets are blanked. Records
+  and `hrn show` keep the full paths, and a run's purpose comes from its prompt as recorded, as
+  `hrn report` has it, not from the shortened text.
+- 2026-10-13: AGENTS.md back under 100 lines (#196, PR #253). Decided: shorten layout
+  rows and the hx note, and point repeated CI and release details to CONTRIBUTING.md.
+- 2026-10-13: three wording points from #58's review (#65, PR #252). Decided: a blocking
+  finding is fixed, as AGENTS.md and the owner's merge rule say, so the definition of done
+  no longer offers rejecting one; a finding shown wrong is no defect, so it was never
+  blocking. AGENTS.md says "the base branch" (a piece of a feature branch merges that one
+  in) and "a broken house rule" (PLAN.md's rules and `.claude/rules/` count too).
+- 2026-10-13: the definition of done and rule 2 follow AGENTS.md (#64, PR #251). Since the
+  repository went public, CI again tests both platforms on every pull request, so rule 2's
+  "green on both" stays. Decided: the definition of done points at AGENTS.md's checks instead
+  of its own older list, asks for the `docs/` guide as well as the README, and names the
+  entry an issue-only fix adds; rule 2's branch-name example is current. Whether a blocking
+  finding may be rejected rather than fixed is #65.
+- 2026-10-13: the records rule names the right guide (#153, PR #250). `.claude/rules/records.md`
+  sent a change to what a record holds to the README's "Run records" section, which moved to
+  `docs/run-records.md` (PR #107). Decided: the rule points at the guide.
+- 2026-10-13: the tree-kill test's timeout (#68, PR #249). `TestRunShellTimeoutKillsTheTree`
+  gave the shell 500 ms, and on a busy Windows PC Git's bash had not printed `started` by
+  then, so the test failed now and then, in CI too. Decided: three seconds. Its time bound
+  was 10 s, which a shell-only kill also met (RunShell waits 5 s for the pipe), so it is now
+  the timeout plus 4 s: only a tree kill returns that soon.
+- 2026-10-13: a reused process id does not hold a slot (#231, PR #248). Windows can
+  reuse a pid soon after its holder exits. Decided: record the holder's process start
+  identity in the lease and compare it exactly on Windows and Linux; a different start
+  means the live pid does not hold the lease. A wall-clock comparison with the lease's
+  taken time could give a live holder's slot away after the clock steps backward.
+  Leases without a start identity, or whose current identity cannot be read, use pid
+  liveness as before.
+- 2026-10-13: CONTRIBUTING.md and immutable tags (#197, PR #247). Since ruleset 24992042 a
+  pushed `v*` tag cannot be moved or deleted. Decided: the release section says so, and that a
+  wrong tag or a release needing a code fix takes a new version, while a workflow that
+  failed for another reason is re-run on the same tag.
+- 2026-10-13: gc moves a cache aside before deleting it (#129, PR #246). A build can
+  start after the lock probe and before deletion. Decided: rename to a sibling
+  `.gc-<pid>-<unix nanos>-<name>` first, probe the moved locks again (including `flock` on
+  Unix), moving it back if held, then delete the tag last. A rename failure keeps the
+  cache; a failed deletion leaves a tagged leftover, which is scanned next run and can go
+  regardless of idle time.
+  The worktree pass is left as it is: `git worktree remove` does its own deletion.
+- 2026-10-13: gc and links out of a worktree (#94, PR #240). A tracked folder
+  replaced by an identical junction can look clean to git, while worktree removal
+  deletes the outside copy's files. Decided: check the whole worktree for links
+  leading out before a Remove verdict and again just before Apply removes it;
+  skip its own `.git` and inner worktrees git lists, and keep on walk errors.
+- 2026-10-13: gc --free-below reports the drives after --apply (#130, PR #234). File sizes can
+  overestimate freed space for sparse, linked or compressed files, and removal can fail.
+  Decided: nothing more is removed; drives that were below are measured again and reported;
+  the next-run hint appears only when caches were left because enough was already going.
+- 2026-10-13: gc and squash-landed batch work (#85, PR #227). Ancestry alone keeps task
+  worktrees after `batch merge --squash` or a reworded landing. Decided: compare the patch
+  id (`--verbatim`, whitespace included) of the task's whole diff with each commit on
+  origin's default branch since their merge base; remove only on an exact match. Everything
+  else keeps, including a 2000-commit bound.
+- 2026-10-13: issue #226 (PR #230): public watch accepts GET and HEAD page navigations
+  after Cloudflare Access login even when the browser sends a cross-site fetch site or
+  `Origin: null`. The public Host and Access token checks still apply; other requests
+  retain the existing origin checks, and local mode is unchanged.
+- 2026-10-13: the guard's `gh api` method in quotes (PR #223). After PR #213 a quoted method
+  still got through `gh-publish`: the shell strips `"DELETE"`, `'delete'`, `\"DELETE\"` and
+  `$'delete'` before gh sees them. Decided: quotes, a backslash and `$` may stand between the
+  flag and the method. A method in a variable stays out of reach of a textual guard; a `|`
+  inside a quoted argument is #222.
+- 2026-10-13: issue #212 (PR #220): `hrn watch --public` keeps the listener on
+  loopback for a same-PC Cloudflare Tunnel, requires the Access team and audience
+  together, and verifies Access JWTs on every request. Public requests are always
+  remote to the page, and a private JSON access log records their outcomes.
+- 2026-10-13: the guard's `gh api` method in any case (PR #213). `gh-publish` refused
+  `gh api` with PUT, PATCH or DELETE in upper case only, and `gh` upper-cases the method it is
+  given, so `-X delete` still deleted. Decided: the method alone matches case-insensitively
+  (`(?i:PUT|PATCH|DELETE)`); `gh`'s subcommands stay case-sensitive. POST is #210, Windows
+  program names in other rules #211.
+- 2026-10-13: `gh api` writes in this repository's Claude settings (#198, PR #209). Only the
+  `PUT` spellings were denied, so a session with the owner's token could still change or delete
+  the rulesets. Decided: deny any `gh api` call with an explicit `-X` or `--method`, whatever the
+  method's case or spelling (`gh` upper-cases it and takes `-X=DELETE`); nothing here reads with an
+  explicit method. A field without a method is an implicit `POST`, left to #206.
+- 2026-10-13: gc tests under the guard (#120, PR #205). The fixture's git now drops
+  passed-down git config like gc's own git, so `go test ./...` passes inside an hrn run.
+  The guard's refusal of pushes to real remotes remains tested in internal/tools.
+- 2026-10-13: issue #204 (PR #207): lean dropped the owner's own rules, plugins and skills, which
+  workers must keep. Decided: lean is `--strict-mcp-config` only (no `--setting-sources`), so
+  it drops only MCP servers hrn did not pass (the user's, plugin-provided ones and claude.ai
+  connectors). `lean` became a `*bool` in `agent.Options`: unset means the entry point's
+  default, `false` is honoured over a spec's `true` (the one switch a task can turn back
+  off). The JSON is unchanged (`true` or absent, now also `false`), so old records load.
+  Batch, and with it eval and the MCP `batch` tool, makes lean the default per attempt only
+  on a backend that applies it (`agent.AppliesLean`, claude), so a codex task's record does
+  not claim lean and prints no `not enforced` line; `hrn run` and MCP `run` stay opt-in. New
+  `compact_window` (an integer 100000-1000000 or `"auto"`, as `claude --autocompact` takes
+  it; it accepts the bare integer) is passed to claude only and reported as not enforced by
+  the other backends, the api loop included. Measured: lean 55.1K context against 61.7K by
+  default on a two-turn task (docs/backends.md).
+- 2026-10-13: issue #200 (PR #201): a claude worker inherited every plugin, skill, hook and MCP
+  server of the operator's, about 64K tokens of context on every turn of a tiny task. Decided:
+  an additive `lean` option (`--lean`, spec, task and MCP `run` field, off by default) that
+  adds `--strict-mcp-config --setting-sources project` to the claude args, before the guard's
+  `--disallowedTools` rules, which stay as they are. Not `--bare`: it logs in only with an API
+  key (OAuth and the keychain are never read) and skips `CLAUDE.md` discovery. User memory
+  (`~/.claude/CLAUDE.md`, `~/.claude/rules`) stops loading too: Claude Code 2.1.284 reads it
+  only with the `user` source; the repository's `CLAUDE.md` and `AGENTS.md` import still load.
+  codex, gemini and opencode report `lean` as not enforced; the api loop, which reads no Claude
+  Code settings, does not warn. Not listed in the backends' capabilities: the exec protocol's
+  `start` message has no `lean` field. An eval variant cannot set lean on its own yet.
+- 2026-10-13: PR #199 (closes #193): a task waited until the batch was canceled on a slot
+  whose lease stayed unreadable (empty, not JSON, or a stale lease a left `<n>.lease.takeover`
+  file blocks), since `takeSlot` counted every lease it could not read as one that may come
+  free. Decided: `ws.NoSlotError` gains an additive `Unreadable` field naming those slots,
+  and the empty-lease line names the file like the other two. The task still waits on them,
+  since a lease being written reads on the next look, and keeps waiting while any live
+  process holds a slot in its range; when the unreadable leases are all that is left to
+  wait for and every one has stayed unreadable for `unreadableWait` (30 seconds, a package
+  variable the tests shorten), it fails as `error` naming each file and how to clear it
+  (`hrn ws list`; a lease that stays unreadable or a left `.takeover` file only while no hrn
+  command at all runs on the repository, since a live take creates its lease empty before
+  writing it and a live `hrn ws free` or takeover holds the `.takeover` file while the lease
+  it guards may name a dead process).
+  Timed per slot from the task's first look that found it unreadable; a look that does not
+  find it so, a wait at the batch's bound included, forgets it. A slot whose lease changed
+  hands under the take is held, not unreadable. Nothing is removed by hrn.
+- 2026-10-13: `main` and `v*` tags are protected by GitHub rulesets (PR #195). Branch ruleset
+  24992040 (pull requests only, merge commits only, `test (ubuntu-latest)` and
+  `test (windows-latest)` required, no deletion, no force push) and tag ruleset 24992042 (no
+  deletion, update or force push; creating a tag still runs `release.yml`), both without bypass
+  actors, created 2026-10-13. AGENTS.md's working rules say what GitHub itself refuses.
+- 2026-10-13: PR #194 (closes #161): a batch waited while sessions (`hrn ws take`) held every
+  slot, for as long as a person kept one. Decided: a batch's bound is `max(parallel, 4)` slots
+  of its own, running tasks' and kept ones together, counted from the leases that name its
+  pid (`ws.CountLeases`) before every take; at the bound a task waits for a running task's
+  slot and fails when all are kept. It tries the slot numbers from 1 that hold that many
+  slots other than sessions' (`ws.RangeBeyondSessions`: a lease without a pid is skipped, a
+  lease that cannot be read counts), worked out again at every try, so a session among the
+  first slots is passed over and one further up widens nothing. It waits only while a slot in
+  that range is held by a live process (another batch, or its own running task;
+  `ws.NoSlotError.Holders`) or has a lease it cannot read (one that stays unreadable keeps
+  it waiting for ever: #193), and fails when the rest are sessions', skipped or kept. A
+  session can take a slot in the range between working it out and the take scanning that
+  slot, so a take that passed over a session works the range out again and tries again at
+  once while the range reaches further, three times at most. A first
+  cut added a session count to the range, which let a session make a batch wait for ever,
+  a distant session widen the range, and the bound break when sessions freed their slots.
+  `hrn ws take`'s own default `--max` is unchanged.
+- 2026-10-13: PR #192 (closes #160): the recovery of a slot a batch kept, documented in
+  docs/workspaces.md and followed step by step in ws's tests, with no code change. Decided:
+  the work is saved on a local branch first, then the slot is detached at a commit a
+  remote holds (origin's default branch), because Free counts a commit at HEAD as
+  unpushed when no remote-tracking branch holds it, whatever local branch holds it too;
+  Free asks for a push, unlike Release. In a repository without remotes Free counts only
+  the commits no branch or tag holds, so it frees the slot in place once the branch
+  exists. The branch is merged by hand unless the task passed, since batch merge skips
+  every task that did not pass, and ignored files are checked first, since a checkout
+  overwrites them where the target commit tracks the path.
+
+- 2026-10-13: Concurrent takes skipped free slots (#188, PR #191). CI's Windows run of
+  `TestConcurrentTakesNeverShareASlot` got 3 slots for 6 takes with `--max 4`. Reproduced
+  here under load: `git worktree add` for slot 4 died with `fatal: failed to read
+  .git/worktrees/3/commondir: No error`, because git creates a new worktree's admin folder
+  in steps and every command that lists worktrees (add, list, lock) dies on a half-written
+  one. Not git's lock files, so retrying would only narrow the window. Decided: takes, in
+  any process, add, list and lock slot worktrees under an exclusive OS file lock on
+  `.hrn/slots/.create.lock` (`flock` on Unix, `LockFileEx` on Windows), waiting with a
+  backoff up to 2 minutes (and the context). The OS drops the lock when its holder exits
+  or dies, so there is no staleness rule and the file is never removed. A first version
+  used an O_EXCL file taken over after 2 minutes; review found that two waiters could
+  both take over one lock, and a holder's unlock remove a successor's, while a slow
+  `git worktree add` (up to 5 minutes) still ran. Switches and other git commands
+  (batch's, in other processes) that list worktrees are not under the lock; they can
+  still die during an add.
+- 2026-10-13: PR #187 (closes #162): hrn batch rm and prune leave what another batch made
+  when a fresh task found its worktree or branch taken. Decided: a fresh task claims its
+  worktree and branch through `branch_made`, as a slot task claims its branch; batch records
+  now carry `ownership`, and in records that have it rm, prune and WorktreesRemain trust only
+  that claim. Records from before it skip a fresh task only for hrn's own collision error,
+  raised before any attempt. The claim is saved after the worktree is made and withdrawn
+  before a retry removes it, so a failure leaves things behind rather than removing another
+  batch's: a claim that cannot be saved removes the new worktree again, and a removal that
+  fails claims again only the registered worktree or branch that is still there.
+- 2026-10-13: PR #163 (closes #126): hrn batch takes its worktrees from the reusable slots of internal/ws.
+  Decided: slots by default, a new `.hrn/worktrees/<id>` per task only with
+  `"worktrees": "fresh"`; any other value is refused. Each running task leases a slot
+  (holder `batch <id> task <task>`, hrn's pid), its branch `hrn/<id>` made from the batch's
+  base before the take, so a same-named branch on origin is never tracked. A fresh retry
+  resets the same slot's branch to the base, and the earlier attempt's commit leaves the
+  branch, as it did when fresh mode re-made the worktree. When the task ends, the slot is detached at the base and given back with the new
+  `ws.Release`. Release does not require a push, because the branch is local by design:
+  batch merge and batch rm read it. A slot left dirty by a refused release keeps its lease
+  until hrn exits, and later takes skip it, never clean it. A task waits, rather than
+  fails, while every slot is taken (`ws.NoSlotError`, looking again every 5s until
+  canceled). ws's take now skips a slot only for commits a switch would strand (on no
+  remote, branch or tag), since a released slot's commit is on its local branch. Diff of a
+  slot task without a commit is empty rather than reading a slot another task may hold.
+  batch rm deletes only a slot task's branch, refusing while it is checked out. prune keeps
+  a slot batch's record while its branches remain. eval keeps fresh worktrees for its judge
+  and refuses slots with one.
+
+- 2026-10-13: hrn ws (#133), item 16's fourth box: a fixed set of reusable worktrees per
+  repository at `<main checkout>/.hrn/slots/<n>`. Decided: slots are locked worktrees, so
+  gc keeps them without a change to internal/gc; leases are O_EXCL files beside the slots
+  (`<n>.lease`), and a lease whose pid has exited is stale and taken over under a
+  `.takeover` file, so two callers never remove each other's fresh lease; take never cleans
+  a dirty slot, it skips it and says why; free refuses unpushed work and detaches HEAD, so
+  the branch is free for other checkouts and for gc; CLI only, no `hrn mcp` tool. The
+  package is exported with a pid on the lease so batch can use it (#126). Its test fixture
+  publishes to origin by fetching from origin's side, since hrn's guard refuses every push.
 - 2026-10-13: PR #127 (closes #82, widened by the owner on 2026-10-12): hrn watch's rows lead
   with `<repository> · <task>`, the id under it. Decided: the repository is the workspace
   folder's name (the folder above `.hrn` for a batch worktree), read from the record, not
@@ -1762,3 +1985,21 @@ neither of them follows a run while it happens.
 - 2026-10-12: continue: warn on the session carried, not the run named (#103, PR #109)
   The warning uses the run whose conversation is resumed or session is forked, including
   an earlier run on the same backend; transcript-only hand-overs give no warning.
+- 2026-10-13: Usage per turn (#235). A `usage` event in `events.jsonl` (additive kind, its
+  figures under `usage`, zero fields omitted) records each model call: the api loop per
+  request, claude per main-loop assistant message, opencode per step. Claude's stream-json
+  repeats a message's usage on the line of each content block, so the event goes out once per
+  message id with the first line's figures (its output count can be short of the final one;
+  the context is the same on every line). Sub-agent messages are left out, as for
+  `context_tokens`. Codex and gemini report agent-turn or run totals only and write none.
+  Claude Code's `{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger",
+  "pre_tokens"}}` becomes a `compaction` event; that shape is the Agent SDK's documented
+  message and the fixtures are written from it, not captured from a real run, so the first
+  long claude run with `compact_window` should confirm it. A drop of more than half from the
+  turn before is shown as a probable compaction by `hrn watch` and `hrn show --usage` only,
+  never recorded. The watch chart is server-rendered inline SVG (two panels on one turn axis,
+  no dual scale), redrawn over every turn on each new one through a `usage` SSE message.
+  `hrn report` token totals come from results (sub-agents included); median and peak context
+  per turn come from usage events, or, without them, from one per-run average
+  (totals over turns), and the row says `turns`, `totals` or `mixed`. `--by day` lists days
+  in date order.

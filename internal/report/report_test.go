@@ -84,7 +84,7 @@ func TestRunRowsByModelAndDir(t *testing.T) {
 	if err != nil || len(rows) != 2 || rows[0].Key != filepath.Clean("/repo/a") || rows[0].Runs != 3 || rows[1].Key != filepath.Clean("/repo/b") || rows[1].Runs != 1 {
 		t.Errorf("by dir: rows = %+v err=%v", rows, err)
 	}
-	if _, _, err := d.RunRows("colour"); err == nil || !strings.Contains(err.Error(), "backend, model, dir or purpose") {
+	if _, _, err := d.RunRows("colour"); err == nil || !strings.Contains(err.Error(), "backend, model, dir, purpose or day") {
 		t.Errorf("unknown key should be refused: %v", err)
 	}
 }

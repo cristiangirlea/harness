@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -49,11 +50,13 @@ Usage:
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
   hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
-  hrn watch [--addr HOST:PORT] [--lan[=NAME]]
+  hrn show --usage [--json] <id>  a run's model calls, one row each: tokens, context, compactions
+  hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]
                                  a local page that follows runs and batches live (default 127.0.0.1:8089,
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR
-                                 code; --lan=NAME only on one adapter (its name or address)
+                                 code; --lan=NAME only on one adapter (its name or address);
+                                 --public serves a Cloudflare Tunnel on loopback, checking Access on every request
   hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
                                  English, out loud and as notifications, with skip, snooze and a few
                                  spoken commands; serves hrn watch on loopback unless one already does
@@ -63,8 +66,8 @@ Usage:
   hrn batch [flags] <tasks.json>  run tasks in parallel, each in its own git worktree, with gates and retries
   hrn batch show [--json] <id>    reprint a batch's table, while it runs or afterwards
   hrn batch diff <id> <task-id>   what one task changed, as a diff on stdout
-  hrn batch merge [--squash] <id> [task-id...]
-                                 merge the branches of the tasks that passed into the current branch
+  hrn batch merge [--squash] [--rm] <id> [task-id...]
+                                 merge passed tasks; --rm removes worktrees and branches merged in this call
   hrn batch rm <batch-id>         remove the worktrees and branches a batch created
   hrn eval [flags] <eval.json>    run a task set across a matrix of backends, models and efforts
   hrn eval show <eval-id>         reprint a saved eval
@@ -77,6 +80,13 @@ Usage:
                                  idle past --idle or, on a drive below --free-below, past --min-idle; --apply
                                  removes them, and the worktrees' branches. PATH is a repository or a folder of
                                  them (default: the current one)
+  hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]
+                                 lease a reusable worktree of the repository (<main checkout>/.hrn/slots/<n>, up to
+                                 --max, default 4), on --branch or detached at origin's default branch, fetched, and
+                                 print only its path: cd "$(hrn ws take --branch fix-x)"
+  hrn ws free [PATH]              give the slot back once its work is pushed: HEAD detached, lease removed
+  hrn ws list [--repo DIR] [--json]
+                                 the slots: who holds each, since when, its branch and what is in it
 
 Run flags:
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
@@ -92,6 +102,11 @@ Run flags:
                        skip the project instruction files (api backend)
       --no-context-edits
                        keep every tool result in the request instead of letting the server clear old ones (api backend)
+      --lean           start claude with only the run's --mcp servers: none of your other MCP servers,
+                       plugin servers or connectors; settings, rules and skills still load (claude backend)
+      --compact-window N
+                       compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
+                       (claude backend; unset keeps Claude Code's own threshold)
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
@@ -122,7 +137,7 @@ Batch flags:
 
 Report flags:
       --since WINDOW   only runs and batches started within the window, e.g. 7d, 36h, 90m (default: all)
-      --by KEY         group runs by backend (default), model, dir or purpose
+      --by KEY         group runs by backend (default), model, dir, purpose or day
       --json           print the tables as JSON
 
 Remote commands use HRN_SERVER_URL, HRN_TENANT_TOKEN, and optional HRN_SERVER_CA_FILE.
@@ -167,6 +182,8 @@ func main() {
 		err = cmdBot(os.Args[2:])
 	case "gc":
 		code, err = cmdGC(os.Args[2:])
+	case "ws":
+		code, err = cmdWS(os.Args[2:])
 	case "version", "--version", "-V":
 		info, _ := debug.ReadBuildInfo()
 		fmt.Println(versionLine(info))
@@ -426,16 +443,23 @@ func cmdShow(args []string) error {
 	jsonOut := fs.Bool("json", false, "")
 	follow := fs.Bool("follow", false, "")
 	fs.BoolVar(follow, "f", false, "")
+	usageOnly := fs.Bool("usage", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *jsonOut && *follow {
 		return errors.New("--follow prints the run as it happens and does not combine with --json")
 	}
+	if *usageOnly && *follow {
+		return errors.New("--usage prints a recorded run's turns and does not combine with --follow")
+	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: hrn show [--json | -f] <run-id>")
+		return errors.New("usage: hrn show [--json | -f | --usage] <run-id>")
 	}
 	id := fs.Arg(0)
+	if *usageOnly {
+		return showUsage(id, *jsonOut)
+	}
 	if *follow {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
@@ -462,6 +486,73 @@ func cmdShow(args []string) error {
 	if rec.Done {
 		r.Summary(rec.ID, rec.Result)
 	}
+	return nil
+}
+
+// showUsage prints a run's model calls, one row each: hrn show --usage.
+func showUsage(id string, jsonOut bool) error {
+	rec, err := runlog.Load(id)
+	if err != nil {
+		return err
+	}
+	turns, err := runlog.TurnsOf(id)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		if turns == nil {
+			turns = []runlog.Turn{}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(turns)
+	}
+	if len(turns) == 0 {
+		fmt.Printf("run %s recorded no per-turn usage: the %s backend writes none, or the run is older than the usage events\n",
+			rec.ID, printable(rec.Backend))
+		return nil
+	}
+	rows := [][]string{{"turn", "time", "model", "input", "output", "cache read", "cache write", "context", "cache read so far"}}
+	notes := []string{""}
+	var contexts []float64
+	var peak int64
+	for _, t := range turns {
+		note := ""
+		switch t.Compaction {
+		case runlog.CompactionRecorded:
+			note = "compacted"
+			if t.Trigger != "" {
+				note += " (" + printable(t.Trigger) + ")"
+			}
+			if t.CompactedFrom > 0 {
+				note += fmt.Sprintf(" from %d", t.CompactedFrom)
+			}
+		case runlog.CompactionProbable:
+			note = "probably compacted"
+		}
+		clock := "-"
+		if !t.Time.IsZero() {
+			clock = t.Time.Local().Format("15:04:05")
+		}
+		model := printable(t.Model)
+		if model == "" {
+			model = "-"
+		}
+		rows = append(rows, []string{strconv.Itoa(t.N), clock, model, fmt.Sprint(t.InputTokens), fmt.Sprint(t.OutputTokens),
+			fmt.Sprint(t.CacheRead), fmt.Sprint(t.CacheWrite), fmt.Sprint(t.ContextTokens), fmt.Sprint(t.CacheReadSoFar)})
+		notes = append(notes, note)
+		contexts = append(contexts, float64(t.ContextTokens))
+		peak = max(peak, t.ContextTokens)
+	}
+	// The note trails its row unpadded, so a row without one ends in a number.
+	for i, line := range strings.Split(strings.TrimSuffix(table(rows, 3), "\n"), "\n") {
+		if notes[i] != "" {
+			line += "  " + notes[i]
+		}
+		fmt.Println(line)
+	}
+	fmt.Printf("%d turns · median context %s · peak %d · %d cache read\n",
+		len(turns), report.Number(report.Median(contexts)), peak, turns[len(turns)-1].CacheReadSoFar)
 	return nil
 }
 

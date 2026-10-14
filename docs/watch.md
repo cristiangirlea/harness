@@ -16,7 +16,8 @@ hrn bot                    # Ada, the bot, in a small window: what hrn is doing,
 
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
 Each row leads with the repository the work is in (its workspace folder's name; for a batch
-task's worktree, `<repo>/.hrn/worktrees/<task>`, the folder above `.hrn`) and, for a run a
+task's worktree, `<repo>/.hrn/worktrees/<task>` or a slot, `<repo>/.hrn/slots/<n>`, the folder
+above `.hrn`) and, for a run a
 batch started, the task: `harness · 82-repo-and-task`. A task's name is its id, so name tasks
 after their issue (`82-repo-and-task`) to see the number there; when hrn made the id up
 (`t1`, `t2`, ...), the name is the start of the task's prompt. The run's or batch's id is
@@ -54,9 +55,34 @@ running: they have no cost yet, known or unknown. A run killed before it saved i
 has no result and stays running on the page (#96), so it counts as running, not as no
 cost.
 
+A run's page names its workspace by the same name as its row (`ada-os-ipc`, the repository
+for a batch task's worktree), and a batch's page its repository; a task's worktree shows
+relative to the repository (`.\.hrn\worktrees\t1`). Hover the name for the whole path,
+on this computer only: a phone on the network sees the name alone. In what a run's steps
+show (step text, a tool call's one line and its input, results, info lines, the final
+answer) and in a run's or batch's header, the workspace is `.` (`.\src\main.go`, in the
+path's own slashes), the home folder is `~`, and a program named by its full path in
+System32, Program Files, `/usr/bin`, `/bin` or `/usr/local/bin` is its file name: `codex
+exec -C . --json`, `"powershell.exe" -Command ...`. A batch task's text is shortened by its
+worktree. The index's rows (a run's prompt, a batch's task names) are shortened the same way,
+for every viewer. A path only counts whole, so `ada-os-ipc-old` keeps its name. This is the page
+only: `events.jsonl`, the records and `hrn show` keep the full paths.
+
 When the backend reports the last turn's context size, the run page also shows
 `Context: 285.0k tokens at the end`. This includes input served from or written to
 the cache. It is absent when that size is unknown, including on older records.
+
+When the run recorded `usage` events (the api, claude and opencode backends; see
+[Usage per turn](run-records.md#usage-per-turn)), its page opens with "Tokens per turn": a
+chart of the context each model call carried and, under it on a scale of its own, the cache
+reads so far, with the turn count, peak and median context above. A compaction the backend
+reported (Claude Code's `compact_boundary`) is a solid line between the turns it came between,
+and also a step in the timeline; a turn whose context fell by more than half with nothing
+reported is a dashed line, "probably compacted", a reading of the numbers that is never
+recorded. Hovering a point or a line says what it is, and "Turns as a table" lists every
+turn's figures. While the run goes, each new turn redraws the chart over every turn so far.
+The chart is inline SVG coloured by the page's stylesheet, so it needs no script, style or
+font beyond the page's own. Usage events themselves are not listed in the timeline.
 
 Everything from a record is escaped as text, since tool results hold whatever the agent
 read. The page loads nothing from anywhere else (one stylesheet and a script or two, all
@@ -89,6 +115,30 @@ codes nor the hints meant for this computer.
 second or more, and ends with the summary line once the run's result is saved. Ctrl+C
 stops following and leaves the run alone. A run killed before it saved its result never
 ends, on the page or in the terminal: hrn cannot tell it from a long step.
+
+### Behind Cloudflare Access
+
+To reach watch through a Cloudflare Tunnel, forward `https://harness.example.com` to
+`http://127.0.0.1:8089` on the same computer. Create a Cloudflare Access application
+for that hostname, require email one-time-code login, and copy its team domain and
+audience tag into the command:
+
+```
+hrn watch --public https://harness.example.com --access-team TEAM.cloudflareaccess.com --access-aud AUDIENCE_TAG
+```
+
+All three flags are required together; `--public` cannot be combined with `--lan`.
+Watch still listens only on loopback. In this mode it accepts only the public Host
+and verifies the Access JWT on every request, including static assets and event
+streams. A page navigation from elsewhere, such as the Access login redirect or an
+email link, opens the page; requests from other sites that are not page navigations
+remain refused. It treats visitors as remote even though `cloudflared`
+connects from the same computer: the page omits the hrn home path and phone hints,
+and `/voice` is unavailable. The terminal prints the public URL and the access
+log path. Each request appends one JSON line to `$HRN_HOME/watch-access.log`
+(or `~/.hrn/watch-access.log`), with the time, email when allowed, method, path,
+status, Cloudflare connecting IP, and a short reason when refused. Cloudflare's
+own Access logs record logins; this file records requests that reached watch.
 
 ### Ada, the bot
 
