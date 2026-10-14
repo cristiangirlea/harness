@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -44,6 +45,24 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+	}
+	// The card lists backends alphabetically, but the list's order is the
+	// preference order (the carry-on partner, the default's fallback): keep
+	// what was already enabled in its order and append what is new.
+	// An empty list means every backend, so there is nothing to order.
+	if had, err := prefs.Load(runlog.Home()); err == nil && len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {
+		var kept []string
+		for _, name := range had.EnabledNames {
+			if p.Enabled(name) {
+				kept = append(kept, name)
+			}
+		}
+		for _, name := range p.EnabledNames {
+			if !slices.Contains(kept, name) {
+				kept = append(kept, name)
+			}
+		}
+		p.EnabledNames = kept
 	}
 	if err := prefs.Save(runlog.Home(), *p); err != nil {
 		// Save validates the default before touching the filesystem. Other

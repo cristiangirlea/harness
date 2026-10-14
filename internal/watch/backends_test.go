@@ -211,3 +211,20 @@ func TestBackendsWriteUpdatesPreferencesAndRepairsMalformedFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestBackendsWriteKeepsThePreferenceOrderAndAppendsNewOnes(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude", "agy"}, DefaultName: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(context.Background(), Options{Key: "test-key"})
+	// The card lists backends alphabetically; applying it must not reorder what was already enabled.
+	w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", `{"enabled":["agy","claude","codex"],"default":"claude"}`)
+	if w.Code != 204 {
+		t.Fatalf("POST = %d %s", w.Code, w.Body)
+	}
+	p, err := prefs.Load(runlog.Home())
+	if err != nil || !reflect.DeepEqual(p.EnabledNames, []string{"claude", "agy", "codex"}) {
+		t.Fatalf("order after the card = %v, %v; want claude, agy, codex", p.EnabledNames, err)
+	}
+}
