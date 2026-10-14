@@ -91,6 +91,13 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if strings.TrimSpace(t.Prompt) == "" || strings.TrimSpace(t.Dir) == "" || t.Backend == "" || t.Mode == "" {
 		return w.reject(req.AttemptID, "bad_request", "prompt, dir, backend and mode are required")
 	}
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return w.reject(req.AttemptID, "bad_request", err.Error())
+	}
+	if err := p.Check(t.Backend); err != nil {
+		return w.reject(req.AttemptID, "unsupported", err.Error())
+	}
 	b, err := agent.Get(t.Backend)
 	if err != nil {
 		return w.reject(req.AttemptID, "unsupported", err.Error())
