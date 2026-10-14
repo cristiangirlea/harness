@@ -174,7 +174,8 @@ accident. The tree must be clean first, since the merge would otherwise mix your
 with the agents'. At the first conflict it puts the tree back as it found it, says
 which task, and stops — the branches are still there to merge by hand. `--squash`
 records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a whole
-run with `git reset --hard ORIG_HEAD`.
+call with the printed `git reset --hard <commit>` command. It names the commit
+from before the call and undoes every task merged in it, even if a later task conflicts.
 
 `merge --rm` removes the worktree and branch of each task merged in that call,
 including tasks merged before a later conflict; skipped and conflicting tasks stay.
@@ -232,8 +233,9 @@ ignored files are build output (`target`, `node_modules`, `dist`, `.venv` and th
 folder carrying `CACHEDIR.TAG`, with no repository and no link out of the worktree inside, since
 git on Windows deletes through a junction; an ignored `.env` or notes keep it, because `git
 worktree remove` deletes ignored files; its `.hrn/` may hold only the worktrees git lists there), it is
-not locked (so a slot always stays, even one a batch record names), it holds no worktree that stays and no repository, and the current directory is
-not inside it. Everything else stays and the listing says why: an open or
+not locked (so a slot always stays, even one a batch record names), it holds no worktree that
+stays and no repository, it has no link (symlink or junction) leading out of it anywhere in it,
+and the current directory is not inside it. Everything else stays and the listing says why: an open or
 closed pull request, none at all, commits after the merged one, a detached `HEAD`, uncommitted
 files. When `gh` fails (not installed, not logged in) or the fetch does, the worktrees that
 needed it stay, and while any batch record cannot be read every worktree stays (it may be the
@@ -277,5 +279,9 @@ repository or a link leading out of it, when the current directory is inside it,
 cannot be checked. One inside a worktree that goes is not listed: the worktree's removal takes it.
 The listing shows each cache's size, last build and verdict; `--apply` checks each one again just
 before it goes (still tagged, nothing written since the scan, no lock held, nothing inside that must
-stay) and removes it whole. A cache has no pull request to stand as its record: the build that
-needs it again rebuilds it.
+stay), moves it aside to a sibling `.gc-<pid>-<unix nanos>-<name>` folder, probes its locks
+again (including `flock` on Unix), then deletes its contents with `CACHEDIR.TAG` last. If a
+build holds a moved cache's lock, it is moved back and kept. A failed move keeps the original
+cache; a failed deletion leaves a tagged `.gc-*` folder for the next run. That leftover is
+eligible regardless of `--idle`, after the other safety checks. A cache has no pull request to
+stand as its record: the build that needs it again rebuilds it.

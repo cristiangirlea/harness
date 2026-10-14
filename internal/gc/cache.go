@@ -13,6 +13,24 @@ import (
 	"github.com/cristiangirlea/harness/internal/report"
 )
 
+// removeCacheEntry is replaceable by tests to make an inner deletion fail
+// after the cache has been moved aside.
+var removeCacheEntry = os.RemoveAll
+
+// movedCachePath is replaceable by tests that need a predictable collision.
+var movedCachePath = func(path string) string {
+	name := fmt.Sprintf(".gc-%d-%d-%s", os.Getpid(), time.Now().UnixNano(), filepath.Base(path))
+	return filepath.Join(filepath.Dir(path), name)
+}
+
+// renameCache is replaceable by tests that make a move fail or start a build
+// immediately after a successful move.
+var renameCache = os.Rename
+
+// movedCacheInUse is replaceable by tests that model a build starting just
+// after the move; production probes the moved cache's profile locks.
+var movedCacheInUse = inUse
+
 // Cache is one build cache, a folder tagged with CACHEDIR.TAG (Cargo writes
 // one into every target folder), and what the cache pass decided about it.
 type Cache struct {
@@ -92,9 +110,9 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 // ApplyCaches removes the caches marked Remove, the longest idle first so an
 // interruption leaves the newest, each checked again just before it goes
 // (still tagged, nothing written since the scan, no build holding it, nothing
-// inside that must stay). One that fails the check stays, with the reason
-// among the errors. The removal is not all-or-nothing: a file held open on
-// Windows can leave part of the folder deleted.
+// inside that must stay). One that fails the check or the rename stays, with
+// the reason among the errors. A failed removal leaves the renamed cache for
+// the next scan.
 func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []error) {
 	var todo []Cache
 	for _, c := range caches {
@@ -108,13 +126,68 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 			errs = append(errs, fmt.Errorf("%s: kept, %s", c.Path, why))
 			continue
 		}
-		if err := os.RemoveAll(c.Path); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", c.Path, err))
+		moved := movedCachePath(c.Path)
+		if err := renameCache(c.Path, moved); err != nil {
+			errs = append(errs, fmt.Errorf("%s: kept, it could not be moved aside: %s", c.Path, firstLine(err.Error())))
+			continue
+		}
+		if why := movedCacheInUse(moved); why != "" {
+			if err := os.Rename(moved, c.Path); err != nil {
+				errs = append(errs, fmt.Errorf("%s (moved to %s): a build started, but it could not be moved back: %w", c.Path, moved, err))
+			} else {
+				errs = append(errs, fmt.Errorf("%s: kept, a build started: %s", c.Path, why))
+			}
+			continue
+		}
+		if err := removeMovedCache(moved); err != nil {
+			errs = append(errs, fmt.Errorf("%s (moved to %s): %w", c.Path, moved, err))
 			continue
 		}
 		removed = append(removed, c)
 	}
 	return removed, errs
+}
+
+// removeMovedCache keeps the signature until everything else has gone, so a
+// failed deletion remains a tagged cache for the next scan.
+func removeMovedCache(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "CACHEDIR.TAG" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := removeCacheEntry(path); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	tag := filepath.Join(dir, "CACHEDIR.TAG")
+	if err := os.Remove(tag); err != nil {
+		return err
+	}
+	if err := os.Remove(dir); err != nil {
+		if restoreErr := restoreCacheTag(tag); restoreErr != nil {
+			return fmt.Errorf("%w (also could not restore %s: %v)", err, tag, restoreErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func restoreCacheTag(tag string) error {
+	f, err := os.OpenFile(tag, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.WriteString(cacheTagSignature + "\n")
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 // TotalCaches adds up the caches' sizes, counting one inside another once.
@@ -220,12 +293,29 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if why := inUse(c.Path); why != "" {
 		return Keep, why
 	}
+	if isMovedCache(c.Path) {
+		return Remove, "moved cache left by an earlier removal"
+	}
 	idle := now.Sub(c.LastBuild)
 	if idle >= opt.Idle {
 		return Remove, "idle " + short(idle)
 	}
 	c.young = true
 	return Keep, fmt.Sprintf("last written %s ago, inside --idle %s", short(idle), short(opt.Idle))
+}
+
+// isMovedCache accepts both the old .gc-<pid>-<name> and the newer
+// .gc-<pid>-<time>-<name> form. Both start with a decimal PID and a hyphen.
+func isMovedCache(dir string) bool {
+	name, ok := strings.CutPrefix(filepath.Base(dir), ".gc-")
+	if !ok || name == "" {
+		return false
+	}
+	i := 0
+	for i < len(name) && name[i] >= '0' && name[i] <= '9' {
+		i++
+	}
+	return i > 0 && i+1 < len(name) && name[i] == '-'
 }
 
 // recheckCache says why a cache marked for removal must stay after all,

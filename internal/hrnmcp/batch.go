@@ -297,7 +297,7 @@ func batchMergeTool() mcp.Tool {
 		Title: "Merge a batch's branches",
 		Description: "Merge the branches of a batch's passing tasks into the repository's current branch, in task order " +
 			"(or only the tasks named). Stops at the first conflict and puts the tree back as it was before that merge. " +
-			"Undo a finished merge with `git reset --hard ORIG_HEAD`.",
+			"The result names the commit from before this call for undoing merged tasks.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -324,6 +324,10 @@ func batchMergeTool() mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
+			before, err := batch.Head(ctx, res.Dir)
+			if err != nil {
+				return mcp.CallResult{}, err
+			}
 			merged, mergeErr := batch.Merge(ctx, res, args.Tasks, args.Squash)
 			var b strings.Builder
 			done := 0
@@ -341,6 +345,9 @@ func batchMergeTool() mcp.Tool {
 				}
 			}
 			fmt.Fprintf(&b, "\n%d branch(es) merged into %s", done, res.Dir)
+			if done > 0 {
+				fmt.Fprintf(&b, "\nundo with: git reset --hard %s", before)
+			}
 			if mergeErr != nil {
 				fmt.Fprintf(&b, "\nerror: %v", mergeErr)
 			}

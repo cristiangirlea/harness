@@ -32,6 +32,9 @@ Who holds a slot is a lease file beside it, `<n>.lease`:
 can never get the same slot. A lease held from the command line lasts until
 `hrn ws free`. A lease that names a process (`"pid"`, which batch uses) is stale once
 that process has exited, and the next take may take it over.
+A process lease records its holder's start identity in `"start"` when available. On
+Windows and Linux, a live process with the same id but another start does not hold it.
+Leases written before `"start"` was added keep the old rule: a live pid holds the slot.
 
 ## Batches
 

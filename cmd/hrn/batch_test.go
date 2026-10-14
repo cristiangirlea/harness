@@ -176,6 +176,82 @@ func TestBatchMergeWithoutRmKeepsTaskWorktreeAndBranch(t *testing.T) {
 	}
 }
 
+func TestBatchMergeUndoAllTasksUsesPreMergeHead(t *testing.T) {
+	res := batchMergeFixture(t, false, "alpha", "beta")
+	before := batchMergeGit(t, res.Dir, "rev-parse", "HEAD")
+	code, out, err := batchMergeCLI(t, res.ID)
+	if code != 0 || err != nil || !strings.Contains(out, "2 branch(es) merged") ||
+		!strings.Contains(out, "undo with: git reset --hard "+before) || strings.Contains(out, "ORIG_HEAD") {
+		t.Fatalf("code=%d err=%v output=%q", code, err, out)
+	}
+	batchMergeGit(t, res.Dir, "reset", "--hard", before)
+	if head := batchMergeGit(t, res.Dir, "rev-parse", "HEAD"); head != before {
+		t.Errorf("reset HEAD = %s, want %s", head, before)
+	}
+	for _, name := range []string{"alpha.txt", "beta.txt"} {
+		if _, err := os.Stat(filepath.Join(res.Dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s remains after reset: %v", name, err)
+		}
+	}
+}
+
+func TestBatchMergeUndoAfterConflictWithoutRmUsesPreMergeHead(t *testing.T) {
+	res := batchMergeFixture(t, true, "alpha", "beta")
+	before := batchMergeGit(t, res.Dir, "rev-parse", "HEAD")
+	code, out, err := batchMergeCLI(t, res.ID)
+	if code != 1 || err == nil || !strings.Contains(out, "conflict merging") ||
+		!strings.Contains(out, "undo with: git reset --hard "+before) {
+		t.Fatalf("code=%d err=%v output=%q", code, err, out)
+	}
+	if head := batchMergeGit(t, res.Dir, "rev-parse", "HEAD"); head == before {
+		t.Fatal("earlier task was not merged before the conflict")
+	}
+}
+
+func TestBatchMergeRmUndoWhenNothingRemoved(t *testing.T) {
+	res := batchMergeFixture(t, false, "alpha")
+	// Without BranchMade, a worktree claimed under ownership belongs to another
+	// batch: --rm removes nothing of it and says nothing is wrong.
+	res.Tasks[0].BranchMade = false
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "batches", res.ID+".json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := batchMergeGit(t, res.Dir, "rev-parse", "HEAD")
+	code, out, err := batchMergeCLI(t, "--rm", res.ID)
+	if code != 0 || err != nil || !strings.Contains(out, "undo with: git reset --hard "+before) ||
+		strings.Contains(out, "removed the") || strings.Contains(out, "only in the reflog") {
+		t.Fatalf("code=%d err=%v output=%q", code, err, out)
+	}
+	if _, err := os.Stat(res.Tasks[0].Worktree); err != nil {
+		t.Errorf("another batch's worktree is gone: %v", err)
+	}
+	batchMergeGit(t, res.Dir, "rev-parse", "--verify", "refs/heads/"+res.Tasks[0].Branch)
+}
+
+func TestBatchMergeNothingMergedHasNoUndoHint(t *testing.T) {
+	for _, rm := range []bool{false, true} {
+		t.Run(map[bool]string{false: "keep", true: "rm"}[rm], func(t *testing.T) {
+			res := batchMergeFixture(t, false, "alpha")
+			args := []string{res.ID}
+			if rm {
+				args = append([]string{"--rm"}, args...)
+			}
+			code, _, err := batchMergeCLI(t, res.ID)
+			if code != 0 || err != nil {
+				t.Fatalf("initial merge: code=%d err=%v", code, err)
+			}
+			code, out, err := batchMergeCLI(t, args...)
+			if code != 0 || err != nil || !strings.Contains(out, "already merged") || strings.Contains(out, "undo with:") {
+				t.Fatalf("code=%d err=%v output=%q", code, err, out)
+			}
+		})
+	}
+}
+
 func TestBatchMergeRmReportsDirtyMergedWorktree(t *testing.T) {
 	res := batchMergeFixture(t, false, "alpha")
 	if err := os.WriteFile(filepath.Join(res.Tasks[0].Worktree, "notes.txt"), []byte("keep"), 0o644); err != nil {

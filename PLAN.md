@@ -18,7 +18,7 @@ These are not preferences; a PR that breaks one is not mergeable.
    `internal/tools/exec_windows.go`), never `golang.org/x/sys`. Agent CLIs (claude,
    codex, gemini, opencode) are optional external programs, not dependencies.
 2. **One PR per increment.** Branch from `main` (or from the feature branch the increment
-   is a piece of), short branch name (the PR letter and a slug, e.g. `a-instructions`).
+   is a piece of), short branch name (as in `fix-batch-rm-deregistered`).
    Open the PR with `gh pr create`. Self-review with `/code-review`; fix every blocking
    finding as its own small commit on the same PR (do not squash the fixes into the
    original commit) and file the rest as issues (AGENTS.md, Working rules). CI must be
@@ -538,13 +538,15 @@ where such a typo lives.
 
 ## Definition of done (every PR)
 
-- [ ] `go vet ./...`, `go build ./...`, `go test -count=3 ./...`, `gofmt -l .` empty, locally.
-- [ ] `/code-review` on the PR; every blocking finding fixed as its own commit or
-      rejected in a PR comment with a reason, the rest filed as issues.
+- [ ] The full local checks, as AGENTS.md's "Build and test" lists them (`/check` runs them).
+- [ ] `/code-review` on the PR; every blocking finding fixed as its own commit, the rest
+      filed as issues.
 - [ ] CI green on ubuntu and windows.
-- [ ] README updated for any new flag, field, command or status.
+- [ ] The relevant guide in `docs/` updated for any new flag, field, command or status, and
+      README when the overview changes.
 - [ ] This file: box ticked, `Done: PR #n, <date>` under the PR heading, deviations in
-      the *Decisions log*.
+      the *Decisions log*; a fix with no item here gets a Decisions-log entry naming the
+      issue and the PR.
 - [ ] Merged with a merge commit; branch deleted.
 
 ## Model guidance
@@ -665,6 +667,58 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
+  timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
+  (`for-each-ref`, which answers a missing branch with no output) says whether it answered;
+  a branch counts as removed only when it was there and a probe answered that it is gone.
+- 2026-10-14: batch merge names the commit to undo to (#214, #216, PR #254).
+  Decided: CLI and MCP capture HEAD before merging and print that full commit when at least
+  one task merges, including before a later conflict or when --rm removes nothing.
+  The reflog note appears only when --rm removes task work.
+- 2026-10-13: AGENTS.md back under 100 lines (#196, PR #253). Decided: shorten layout
+  rows and the hx note, and point repeated CI and release details to CONTRIBUTING.md.
+- 2026-10-13: three wording points from #58's review (#65, PR #252). Decided: a blocking
+  finding is fixed, as AGENTS.md and the owner's merge rule say, so the definition of done
+  no longer offers rejecting one; a finding shown wrong is no defect, so it was never
+  blocking. AGENTS.md says "the base branch" (a piece of a feature branch merges that one
+  in) and "a broken house rule" (PLAN.md's rules and `.claude/rules/` count too).
+- 2026-10-13: the definition of done and rule 2 follow AGENTS.md (#64, PR #251). Since the
+  repository went public, CI again tests both platforms on every pull request, so rule 2's
+  "green on both" stays. Decided: the definition of done points at AGENTS.md's checks instead
+  of its own older list, asks for the `docs/` guide as well as the README, and names the
+  entry an issue-only fix adds; rule 2's branch-name example is current. Whether a blocking
+  finding may be rejected rather than fixed is #65.
+- 2026-10-13: the records rule names the right guide (#153, PR #250). `.claude/rules/records.md`
+  sent a change to what a record holds to the README's "Run records" section, which moved to
+  `docs/run-records.md` (PR #107). Decided: the rule points at the guide.
+- 2026-10-13: the tree-kill test's timeout (#68, PR #249). `TestRunShellTimeoutKillsTheTree`
+  gave the shell 500 ms, and on a busy Windows PC Git's bash had not printed `started` by
+  then, so the test failed now and then, in CI too. Decided: three seconds. Its time bound
+  was 10 s, which a shell-only kill also met (RunShell waits 5 s for the pipe), so it is now
+  the timeout plus 4 s: only a tree kill returns that soon.
+- 2026-10-13: a reused process id does not hold a slot (#231, PR #248). Windows can
+  reuse a pid soon after its holder exits. Decided: record the holder's process start
+  identity in the lease and compare it exactly on Windows and Linux; a different start
+  means the live pid does not hold the lease. A wall-clock comparison with the lease's
+  taken time could give a live holder's slot away after the clock steps backward.
+  Leases without a start identity, or whose current identity cannot be read, use pid
+  liveness as before.
+- 2026-10-13: CONTRIBUTING.md and immutable tags (#197, PR #247). Since ruleset 24992042 a
+  pushed `v*` tag cannot be moved or deleted. Decided: the release section says so, and that a
+  wrong tag or a release needing a code fix takes a new version, while a workflow that
+  failed for another reason is re-run on the same tag.
+- 2026-10-13: gc moves a cache aside before deleting it (#129, PR #246). A build can
+  start after the lock probe and before deletion. Decided: rename to a sibling
+  `.gc-<pid>-<unix nanos>-<name>` first, probe the moved locks again (including `flock` on
+  Unix), moving it back if held, then delete the tag last. A rename failure keeps the
+  cache; a failed deletion leaves a tagged leftover, which is scanned next run and can go
+  regardless of idle time.
+  The worktree pass is left as it is: `git worktree remove` does its own deletion.
+- 2026-10-13: gc and links out of a worktree (#94, PR #240). A tracked folder
+  replaced by an identical junction can look clean to git, while worktree removal
+  deletes the outside copy's files. Decided: check the whole worktree for links
+  leading out before a Remove verdict and again just before Apply removes it;
+  skip its own `.git` and inner worktrees git lists, and keep on walk errors.
 - 2026-10-13: gc --free-below reports the drives after --apply (#130, PR #234). File sizes can
   overestimate freed space for sparse, linked or compressed files, and removal can fail.
   Decided: nothing more is removed; drives that were below are measured again and reported;

@@ -3,7 +3,9 @@ package ws
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestHelperExit is a process that ends at once, so its pid names a process
@@ -36,5 +38,41 @@ func TestAliveSeesThisProcessAndNotOneThatExited(t *testing.T) {
 	}
 	if alive(0) || alive(-1) {
 		t.Error("no pid is not a live process")
+	}
+}
+
+func TestLeaseWithReusedPIDIsStale(t *testing.T) {
+	pid := os.Getpid()
+	id, known := startID(pid)
+	if !known {
+		t.Skip("process start identity is unavailable on this platform")
+	}
+	if (Lease{PID: pid, Start: id, Taken: time.Now().Add(-24 * time.Hour)}).stale() {
+		t.Error("a process with the recorded start identity holds the lease despite its Taken time")
+	}
+	other := strings.SplitN(id, ":", 2)[0] + ":1"
+	if other == id {
+		other += "0"
+	}
+	if !(Lease{PID: pid, Start: other}).stale() {
+		t.Error("a process with another start identity cannot hold the lease")
+	}
+	if (Lease{PID: pid}).stale() {
+		t.Error("an old lease without Start falls back to pid liveness")
+	}
+	// A slot folder shared by Windows hrn and hrn under WSL: the other
+	// platform's identity cannot be compared, so the live pid still holds.
+	foreign := "linux:1"
+	if strings.HasPrefix(id, "linux:") {
+		foreign = "win:1"
+	}
+	if (Lease{PID: pid, Start: foreign}).stale() {
+		t.Error("a start identity from another platform cannot tell the holder apart")
+	}
+}
+
+func TestStartIDForMissingPID(t *testing.T) {
+	if id, known := startID(1 << 30); known || id != "" {
+		t.Errorf("a nonexistent pid has start identity %q, %t", id, known)
 	}
 }
