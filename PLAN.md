@@ -667,6 +667,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: issue #217 (PR pending), follow-up to #212: public watch checks Access
+  signing keys before serving, reports later fetch failures once per failure streak,
+  and shares unlocked, rate-limited certificate fetches across requests.
 - 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
   timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
   (`for-each-ref`, which answers a missing branch with no output) says whether it answered;

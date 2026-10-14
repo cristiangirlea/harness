@@ -2,6 +2,7 @@ package watch
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,6 +34,10 @@ type accessFixture struct {
 	extraKey atomic.Pointer[rsa.PrivateKey]
 	certs    *httptest.Server
 	fetches  atomic.Int32
+	fail     atomic.Bool
+	pauseAt  atomic.Int32
+	started  chan struct{}
+	release  chan struct{}
 	clock    time.Time
 	opt      Options
 }
@@ -45,7 +51,15 @@ func newAccessFixture(t *testing.T) *accessFixture {
 	}
 	f := &accessFixture{t: t, key: key, clock: time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)}
 	f.certs = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.fetches.Add(1)
+		fetch := f.fetches.Add(1)
+		if fetch == f.pauseAt.Load() {
+			close(f.started)
+			<-f.release
+		}
+		if f.fail.Load() {
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+			return
+		}
 		if r.URL.Path != "/cdn-cgi/access/certs" {
 			http.NotFound(w, r)
 			return
@@ -325,6 +339,162 @@ func TestPublicAccessRefetchesAnUnknownKeyAtMostOncePerMinute(t *testing.T) {
 	}
 	if got := f.fetches.Load(); got != 3 {
 		t.Fatalf("fetches = %d, want initial, first unknown and after one minute", got)
+	}
+}
+
+func TestPublicAccessRefusesToServeWhenCertificatesFailAtStart(t *testing.T) {
+	f := newAccessFixture(t)
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusInternalServerError)
+	}))
+	defer bad.Close()
+	f.opt.Public.CertsURL = bad.URL + "/cdn-cgi/access/certs"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	err = Serve(context.Background(), f.opt, ln)
+	if err == nil || !strings.Contains(err.Error(), f.opt.Public.CertsURL) || !strings.Contains(err.Error(), "500") {
+		t.Fatalf("Serve() = %v; want certs URL and HTTP 500", err)
+	}
+}
+
+func TestPublicAccessFetchesCertificatesOnceBeforeServing(t *testing.T) {
+	f := newAccessFixture(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Serve(ctx, f.opt, ln) }()
+	client := &http.Client{Timeout: 2 * time.Second}
+	for range 2 {
+		r, err := http.NewRequest(http.MethodGet, "http://"+ln.Addr().String()+"/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Host = "harness.example.com"
+		r.Header.Set("Cf-Access-Jwt-Assertion", f.validToken())
+		var resp *http.Response
+		for attempt := 0; attempt < 20; attempt++ {
+			resp, err = client.Do(r)
+			if err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("request = %d", resp.StatusCode)
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := f.fetches.Load(); got != 1 {
+		t.Fatalf("certificate fetches = %d, want startup only", got)
+	}
+}
+
+func TestPublicAccessReportsLaterFetchFailureOncePerStreak(t *testing.T) {
+	f := newAccessFixture(t)
+	var output bytes.Buffer
+	f.opt.Public.Errors = &output
+	h := New(context.Background(), f.opt)
+	if got := f.request(h, "/", "harness.example.com", "", f.validToken()); got.Code != 200 {
+		t.Fatalf("initial request = %d", got.Code)
+	}
+	f.fail.Store(true)
+	unknown := f.token(map[string]any{"alg": "RS256", "kid": "unknown"}, f.validClaims(), f.key)
+	for range 2 {
+		if got := f.request(h, "/", "harness.example.com", "", unknown); got.Code != 403 {
+			t.Fatalf("failed refresh = %d", got.Code)
+		}
+		f.clock = f.clock.Add(61 * time.Second)
+	}
+	if got := strings.Count(output.String(), f.opt.Public.CertsURL); got != 1 {
+		t.Fatalf("failure reports = %d, want 1: %s", got, output.String())
+	}
+	f.fail.Store(false)
+	f.request(h, "/", "harness.example.com", "", unknown)
+	f.clock = f.clock.Add(61 * time.Second)
+	f.fail.Store(true)
+	f.request(h, "/", "harness.example.com", "", unknown)
+	if got := strings.Count(output.String(), f.opt.Public.CertsURL); got != 2 {
+		t.Fatalf("failure reports after recovery = %d, want 2: %s", got, output.String())
+	}
+}
+
+func TestPublicAccessKeepsKnownKeysAvailableDuringOneSlowRefresh(t *testing.T) {
+	f := newAccessFixture(t)
+	f.started = make(chan struct{})
+	f.release = make(chan struct{})
+	f.pauseAt.Store(2)
+	h := New(context.Background(), f.opt)
+	if got := f.request(h, "/", "harness.example.com", "", f.validToken()); got.Code != 200 {
+		t.Fatalf("initial request = %d", got.Code)
+	}
+	unknown := f.token(map[string]any{"alg": "RS256", "kid": "unknown"}, f.validClaims(), f.key)
+	knownToken := f.validToken()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		f.request(h, "/", "harness.example.com", "", unknown)
+	}()
+	<-f.started
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f.request(h, "/", "harness.example.com", "", unknown)
+		}()
+	}
+	known := make(chan int, 1)
+	go func() { known <- f.request(h, "/", "harness.example.com", "", knownToken).Code }()
+	select {
+	case code := <-known:
+		if code != 200 {
+			t.Errorf("known key during refresh = %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("known key waited for the certificate fetch")
+	}
+	close(f.release)
+	wg.Wait()
+	if got := f.fetches.Load(); got != 2 {
+		t.Fatalf("certificate fetches = %d, want initial and one refresh", got)
+	}
+}
+
+func TestPublicAccessLimitsEmptyCacheFailuresToOneFetchPerTenSeconds(t *testing.T) {
+	f := newAccessFixture(t)
+	f.fail.Store(true)
+	f.opt.Public.Errors = io.Discard
+	h := New(context.Background(), f.opt)
+	for range 3 {
+		f.request(h, "/", "harness.example.com", "", f.validToken())
+	}
+	if got := f.fetches.Load(); got != 1 {
+		t.Fatalf("fetches without time advance = %d, want 1", got)
+	}
+	f.clock = f.clock.Add(9 * time.Second)
+	f.request(h, "/", "harness.example.com", "", f.validToken())
+	if got := f.fetches.Load(); got != 1 {
+		t.Fatalf("fetches after nine seconds = %d, want 1", got)
+	}
+	f.clock = f.clock.Add(time.Second)
+	f.request(h, "/", "harness.example.com", "", f.validToken())
+	if got := f.fetches.Load(); got != 2 {
+		t.Fatalf("fetches after ten seconds = %d, want 2", got)
 	}
 }
 
