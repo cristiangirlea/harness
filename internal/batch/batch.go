@@ -584,6 +584,8 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		return finish(StatusCanceled, "canceled")
 	}
 
+	// The spec's options with whatever the task sets on top; Run resolved
+	// both MCP lists already.
 	opts := t.Options.Over(spec.Options)
 	backend := firstOf(t.Backend, spec.Backend)
 	routedBy, err := opts.Route(t.Prompt, &backend, runlog.Home())
@@ -597,9 +599,6 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	if d := firstNonZero(t.GateTimeout, spec.GateTimeout); d > 0 {
 		gateTimeout = time.Duration(d)
 	}
-	// The spec's options with whatever the task sets on top; Run resolved
-	// both MCP lists already.
-
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
 		return fail(errors.New(takenError("branch", tr.Branch)))
 	}
