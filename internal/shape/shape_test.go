@@ -70,6 +70,9 @@ func TestInvariantsRejectAdversarialSummaries(t *testing.T) {
 		{"changed count with all errors", Test, "counts 0 1 2\n--- FAIL: TestA (0.00s)\nerror broken", "tests: passed=0 failed=2\n--- FAIL: TestA (0.00s)\nerror broken"},
 		{"negation", Terminal, "ready", "not ready"}, {"never", Terminal, "ready", "never ready"}, {"no", Terminal, "ready", "no ready"}, {"only", Terminal, "ready", "only ready"},
 		{"number substring", Terminal, "123", "23"}, {"number", Terminal, "1", "2"},
+		{"bare file path", Terminal, "old.go:7", "new.go:7"},
+		{"number sign", Terminal, "count 2", "count -2"},
+		{"number exponent", Terminal, "count 2 3", "count 2e3"},
 		{"path", Terminal, "file /tmp/old", "file /tmp/new"}, {"windows path", Terminal, `C:\work\old.txt`, `C:\work\new.txt`}, {"relative path", Terminal, "src/old.go", "src/new.go"},
 		{"invented error", Log, "INFO ready", "error broken"}, {"missing error", Terminal, "error broken\nready", "ready"},
 		{"error substring", Terminal, "error long broken", "error broken"},
@@ -102,5 +105,13 @@ func TestFailureMessagesAfterMarker(t *testing.T) {
 	s, ok := Summarize(Test, text)
 	if !ok || !strings.Contains(s, "detail: not ready") || !strings.Contains(s, "more details") {
 		t.Fatalf("failure message lost: %q ok=%v", s, ok)
+	}
+}
+
+func TestLogCollapsesRepeatedErrorLines(t *testing.T) {
+	text := "INFO count 3\nERROR broken\nERROR broken\nERROR broken\n"
+	s, ok := Summarize(Log, text)
+	if !ok || strings.Count(s, "ERROR broken") != 1 || !strings.Contains(s, "[repeated 3 times]") {
+		t.Fatalf("log repetition: %q ok=%v", s, ok)
 	}
 }
