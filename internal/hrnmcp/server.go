@@ -17,6 +17,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -68,6 +69,7 @@ func runProperties(backends []any, defaultDir string) map[string]any {
 	mode["description"] = mode["description"].(string) +
 		" Default readonly here. ask puts each write and command to you when this host supports elicitation, and denies it otherwise."
 	props["prompt"] = str("The task, as you would brief an engineer.")
+	props["purpose"] = str("Optional declared purpose: review, debug, implement, refactor, test, research, plan, ops; otherwise a leading Purpose: category header is used.")
 	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: api when API credentials exist, otherwise claude."}
 	props["dir"] = str("Workspace directory. Default: " + defaultDir)
 	props["continue_run_id"] = str("Continue a finished run, in its workspace and mode unless dir or mode say otherwise. " +
@@ -109,6 +111,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 		Name:  "run",
 		Title: "Run a task",
 		Description: "Run a coding task with an agent backend in a workspace directory and wait for it to finish. " +
+			"Optionally declare its purpose; this is recorded without changing the prompt. " +
 			"Returns the final answer, a summary line (status, tokens, cost, duration) and the run id. " +
 			"A claude or codex run that reaches its plan's usage limit is carried on by the other one, " +
 			"which then sees the workspace, unless no_switch is set.",
@@ -121,6 +124,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			args, err := decode[struct {
 				Prompt        string `json:"prompt"`
+				Purpose       string `json:"purpose,omitempty"`
 				Backend       string `json:"backend"`
 				Dir           string `json:"dir"`
 				ContinueRunID string `json:"continue_run_id"`
@@ -131,6 +135,12 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			if strings.TrimSpace(args.Prompt) == "" {
 				return mcp.CallResult{}, errors.New("prompt is required")
+			}
+			if args.Purpose != "" && !purpose.Valid(args.Purpose) {
+				return mcp.CallResult{}, fmt.Errorf("purpose %q: one of %s", args.Purpose, strings.Join(purpose.Categories[:len(purpose.Categories)-1], ", "))
+			}
+			if args.Purpose == "" {
+				args.Purpose = purpose.Declared(args.Prompt)
 			}
 			if args.AllowDangerous && !allowDangerous {
 				return mcp.CallResult{}, errDangerousRefused
@@ -179,7 +189,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
-			task := agent.Task{Prompt: args.Prompt, Dir: dir, Options: args.Options}
+			task := agent.Task{Prompt: args.Prompt, Purpose: args.Purpose, Dir: dir, Options: args.Options}
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
