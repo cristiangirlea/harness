@@ -143,6 +143,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, err)
 	}
 	ws.AllowDangerous = task.AllowDangerous
+	ws.ShapeTools, ws.RunDir = task.ShapeTools, task.RunDir
 	maxTurns := task.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 50
