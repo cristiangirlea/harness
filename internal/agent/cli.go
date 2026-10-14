@@ -37,8 +37,8 @@ type CLIBackend struct {
 	// newParse, when set, makes a parse for one run, for a stream whose lines
 	// are read in the light of earlier ones; Run uses it instead of parse.
 	newParse func() func(line []byte, emit func(Event), res *Result) bool
-	// stopOnError stops a streaming CLI as soon as its parser reports an error.
-	stopOnError bool
+	// stopWhen stops a streaming CLI when its parser reports a reason to stop.
+	stopWhen func(*Result) bool
 	// finalize runs after exit with all of stdout, for single-JSON outputs.
 	finalize func(stdout []byte, emit func(Event), res *Result)
 	// forks is set when args honours Task.ForkSession and parse records
@@ -258,7 +258,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		if parse != nil {
 			parsed := parse(line, emit, &res)
-			if c.stopOnError && res.Status == StatusError && res.Error != "" {
+			if c.stopWhen != nil && c.stopWhen(&res) {
 				cancel()
 				stopErr := stopCLITree(tree, errors.New(res.Error))
 				_ = stdout.Close()

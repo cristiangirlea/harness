@@ -16,6 +16,10 @@ func TestHelperClaudeKeySource(t *testing.T) {
 	if source == "" {
 		return
 	}
+	if source == "second" {
+		fmt.Println(`{"type":"system","subtype":"init","apiKeySource":"none"}`)
+		source = "apiKeyHelper"
+	}
 	init := `{"type":"system","subtype":"init"}`
 	if source != "missing" {
 		init = fmt.Sprintf(`{"type":"system","subtype":"init","apiKeySource":%q}`, source)
@@ -46,7 +50,11 @@ func TestClaudeRefusesPerTokenBillingAtInit(t *testing.T) {
 			b.candidates = nil
 			b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperClaudeKeySource$", "--"} }
 			var text []string
-			res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(500 * time.Millisecond)}},
+			timeout := 500 * time.Millisecond
+			if !tc.refuse {
+				timeout = 2 * time.Second
+			}
+			res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(timeout)}},
 				func(e Event) {
 					if e.Kind == EventText {
 						text = append(text, e.Text)
@@ -63,6 +71,58 @@ func TestClaudeRefusesPerTokenBillingAtInit(t *testing.T) {
 				t.Fatalf("key source %q: plan login should run: %+v", tc.source, res)
 			}
 		})
+	}
+}
+
+func TestClaudeRefusesPerTokenBillingAtSecondInit(t *testing.T) {
+	t.Setenv("HRN_CLAUDE_KEY_SOURCE_TEST", "second")
+	b := NewClaudeBackend()
+	b.name = os.Args[0]
+	b.candidates = nil
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperClaudeKeySource$", "--"} }
+	var text []string
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(500 * time.Millisecond)}},
+		func(e Event) {
+			if e.Kind == EventText {
+				text = append(text, e.Text)
+			}
+		})
+	if res.Status != StatusError || !strings.Contains(res.Error, "apiKeyHelper") || !strings.Contains(res.Error, "refused") {
+		t.Fatalf("second init: want billing refusal, got %+v", res)
+	}
+	if len(text) != 0 || res.Final != "" {
+		t.Fatalf("second init: used output after init: text %v, result %+v", text, res)
+	}
+}
+
+func TestHelperClaudeResultError(t *testing.T) {
+	marker := os.Getenv("HRN_CLAUDE_ERROR_TEST")
+	if marker == "" {
+		return
+	}
+	fmt.Println(`{"type":"result","subtype":"success","is_error":true,"result":"Not logged in"}`)
+	fmt.Fprintln(os.Stderr, "CLI stderr: login failed")
+	time.Sleep(100 * time.Millisecond)
+	if err := os.WriteFile(marker, []byte("exited on its own"), 0600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(3)
+	}
+	os.Exit(2)
+}
+
+func TestClaudeResultErrorPreservesCLIExit(t *testing.T) {
+	marker := t.TempDir() + string(os.PathSeparator) + "exited"
+	t.Setenv("HRN_CLAUDE_ERROR_TEST", marker)
+	b := NewClaudeBackend()
+	b.name = os.Args[0]
+	b.candidates = nil
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperClaudeResultError$", "--"} }
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(2 * time.Second)}}, func(Event) {})
+	if res.Status != StatusError || res.Error != "CLI stderr: login failed" {
+		t.Fatalf("want CLI stderr on normal exit, got %+v", res)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("CLI did not reach its own exit: %v", err)
 	}
 }
 

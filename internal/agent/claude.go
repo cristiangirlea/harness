@@ -14,6 +14,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
+const perTokenRefusal = "claude would bill per token"
+
 // ---- claude ---------------------------------------------------------------
 func NewClaudeBackend() *CLIBackend {
 	return &CLIBackend{
@@ -72,7 +74,7 @@ func NewClaudeBackend() *CLIBackend {
 		},
 		parse:        parseClaudeStream,
 		newParse:     newClaudeParse,
-		stopOnError:  true,
+		stopWhen:     func(r *Result) bool { return strings.HasPrefix(r.Error, perTokenRefusal) },
 		forks:        true,
 		mapsEffort:   true,
 		mapsModes:    []Mode{ModeReadOnly, ModeAuto, ModeYolo},
@@ -195,7 +197,7 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, seen map[string
 	case "system":
 		if l.Subtype == "init" && l.APIKeySource != "" && l.APIKeySource != "none" {
 			res.Status = StatusError
-			res.Error = "claude would bill per token (apiKeySource " + strconv.Quote(l.APIKeySource) + "): refused; hrn runs claude on the plan login only"
+			res.Error = perTokenRefusal + " (apiKeySource " + strconv.Quote(l.APIKeySource) + "): refused; hrn runs claude on the plan login only"
 			return true
 		}
 		if l.Subtype == "init" && l.Model != "" {
