@@ -24,6 +24,7 @@ const (
 	ByModel   = "model"
 	ByDir     = "dir"
 	ByPurpose = "purpose"
+	ByRouted  = "routed"
 	ByDay     = "day"
 )
 
@@ -261,11 +262,22 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 	case ByPurpose:
 		// What the run declared, otherwise keyword rules on its prompt's first paragraph.
 		return func(r runlog.Record) string { return purpose.Resolve(r.Task.Purpose, r.Task.Prompt).Category }, nil
+	case ByRouted:
+		return func(r runlog.Record) string {
+			if r.RoutedBy == nil {
+				return "-"
+			}
+			eval := r.RoutedBy.Eval
+			if eval == "" {
+				eval = "hand"
+			}
+			return r.RoutedBy.Category + " via " + eval
+		}, nil
 	case ByDay:
 		// The day the run started, on this computer's calendar.
 		return func(r runlog.Record) string { return r.Started.Local().Format("2006-01-02") }, nil
 	}
-	return nil, fmt.Errorf("unknown key %q (want backend, model, dir, purpose or day)", by)
+	return nil, fmt.Errorf("unknown key %q (want backend, model, dir, purpose, routed or day)", by)
 }
 
 // canonDir names a directory the way the filesystem does, so one workspace
@@ -286,6 +298,9 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 	fromTurns, fromTotals := false, false
 	for _, r := range recs {
 		res := r.Result
+		if res.Backend == "" {
+			res.Backend = r.Backend
+		}
 		row.InputTokens += res.InputTokens
 		row.OutputTokens += res.OutputTokens
 		row.CacheRead += res.CacheRead
@@ -296,11 +311,11 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 				contexts = append(contexts, float64(c.ContextTokens))
 				row.PeakContext = max(row.PeakContext, c.ContextTokens)
 			}
-		} else if seen := res.InputTokens + res.CacheRead + res.CacheWrite; seen > 0 && res.Turns > 0 {
+		} else if total, known, _ := res.ModelTokens(); known && total > res.OutputTokens && res.Turns > 0 {
 			// Without the calls, a run's turns are its average; the last
 			// call's context, where known, may be above it.
 			fromTotals = true
-			avg := seen / int64(res.Turns)
+			avg := (total - res.OutputTokens) / int64(res.Turns)
 			contexts = append(contexts, float64(avg))
 			row.PeakContext = max(row.PeakContext, avg, res.ContextTokens)
 		}
@@ -318,9 +333,6 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		}
 		// ModelTokens accounts for backends that include cache reads in input
 		// and those that report disjoint input and cache counters.
-		if res.Backend == "" {
-			res.Backend = r.Backend
-		}
 		if total, known, _ := res.ModelTokens(); known {
 			input += total - res.OutputTokens - res.CacheRead
 			cached += res.CacheRead

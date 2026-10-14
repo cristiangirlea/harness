@@ -171,6 +171,48 @@ func TestRunThenInspect(t *testing.T) {
 	}
 }
 
+func TestMCPUsesRoutingAndKeepsNamedModel(t *testing.T) {
+	s := connect(t, t.TempDir())
+	name := agent.DefaultBackendName()
+	old, _ := agent.Get(name)
+	agent.Register(namedRouteStub{name})
+	defer agent.Register(old)
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"stub","model":"routed","effort":"medium","eval":"e1","set":"2026-10-12"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, explicit := range []bool{false, true} {
+		args := `{"prompt":"Implement a widget","no_switch":true`
+		if explicit {
+			args += `,"model":"mine"`
+		}
+		args += `}`
+		res := s.call(t, "run", args)
+		if res.IsError {
+			t.Fatal(res.Text())
+		}
+		id := res.StructuredContent.(map[string]any)["run_id"].(string)
+		rec, err := runlog.Load(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if explicit {
+			if rec.Task.Model != "mine" || rec.Task.Effort != "" || rec.Backend != name || rec.RoutedBy != nil {
+				t.Fatalf("substituted: %+v", rec)
+			}
+		} else if rec.Task.Model != "routed" || rec.Task.Effort != "medium" || rec.Backend != "stub" || rec.RoutedBy == nil {
+			t.Fatalf("route: %+v", rec)
+		}
+	}
+}
+
+type namedRouteStub struct{ name string }
+
+func (s namedRouteStub) Name() string            { return s.name }
+func (s namedRouteStub) Detect() (string, error) { return "stub", nil }
+func (s namedRouteStub) Run(ctx context.Context, t agent.Task, e func(agent.Event)) agent.Result {
+	return stubBackend{}.Run(ctx, t, e)
+}
+
 func TestRunReturnsRecordErrorsToTheHost(t *testing.T) {
 	for _, tc := range []struct {
 		prompt, prefix, want string

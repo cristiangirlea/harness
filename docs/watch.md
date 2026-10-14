@@ -46,7 +46,7 @@ lines skipped, unless the run declared one; hover the word for the rule that dec
 (or `declared` for an explicit purpose or valid leading header). Above the batches, a card,
 "What the runs were for", sums up the newest 50 runs, the ones listed below, not all time:
 one row per purpose that occurs, then "all", each with its runs, how many are running,
-tokens (input, output and cache read) and known cost.
+tokens (input, output, cache reads and writes, counted once) and known cost.
 
 That cost is honest about what it does not know. codex and gemini report no cost; such a
 run is left out of the sum, not counted as $0. A row whose finished runs all reported a

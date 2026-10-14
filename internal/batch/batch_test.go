@@ -185,6 +185,82 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 	}
 }
 
+func TestBatchUsesRoutingAndKeepsNamedModel(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmtBool(explicit), func(t *testing.T) {
+			dir := initRepo(t)
+			name := agent.DefaultBackendName()
+			old, _ := agent.Get(name)
+			agent.Register(stub{name, func(context.Context, agent.Task) agent.Result {
+				return agent.Result{Backend: name, Status: agent.StatusOK}
+			}})
+			defer agent.Register(old)
+			if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"wb-noop","model":"routed","effort":"medium","eval":"e1","set":"2026-10-12"}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			task := Task{ID: "route", Prompt: "Implement a widget"}
+			if explicit {
+				task.Model = "mine"
+			}
+			res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Options: agent.Options{NoSwitch: true}, Tasks: []Task{task}})
+			rec := firstRun(t, res.Tasks[0])
+			if explicit {
+				if rec.Task.Model != "mine" || rec.Task.Effort != "" || rec.Backend != name || rec.RoutedBy != nil {
+					t.Fatalf("substituted: %+v", rec)
+				}
+			} else if rec.Task.Model != "routed" || rec.Task.Effort != "medium" || rec.Backend != "wb-noop" || rec.RoutedBy == nil {
+				t.Fatalf("route: %+v", rec)
+			}
+		})
+	}
+}
+
+func TestBatchInheritedChoicesAreNotRouted(t *testing.T) {
+	for _, choice := range []string{"backend", "model", "effort"} {
+		t.Run(choice, func(t *testing.T) {
+			dir := initRepo(t)
+			name := agent.DefaultBackendName()
+			old, err := agent.Get(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent.Register(stub{name, func(context.Context, agent.Task) agent.Result {
+				return agent.Result{Backend: name, Status: agent.StatusOK}
+			}})
+			defer agent.Register(old)
+			if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"wb-noop","model":"routed","effort":"medium"}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			spec := Spec{Dir: dir, Worktrees: "fresh", Options: agent.Options{NoSwitch: true},
+				Tasks: []Task{{ID: "inherited", Prompt: "Implement a widget"}}}
+			wantBackend := name
+			switch choice {
+			case "backend":
+				spec.Backend, wantBackend = "wb-ok", "wb-ok"
+			case "model":
+				spec.Model = "mine"
+			case "effort":
+				spec.Effort = "high"
+			}
+			res, _ := run(t, spec)
+			rec := firstRun(t, res.Tasks[0])
+			if res.Tasks[0].Status != StatusPass || rec.Backend != wantBackend || rec.Task.Model != spec.Model || rec.Task.Effort != spec.Effort || rec.RoutedBy != nil {
+				t.Fatalf("inherited choice was routed: %+v", rec)
+			}
+			if err := Remove(res); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func fmtBool(v bool) string {
+	if v {
+		return "explicit"
+	}
+	return "routed"
+}
+
 func TestFailuresRetryOnNextBackend(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{

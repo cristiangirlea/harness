@@ -695,14 +695,15 @@ order they are worth taking:
     - [#151](https://github.com/cristiangirlea/harness/issues/151) and
       [#264](https://github.com/cristiangirlea/harness/issues/264): an unknown cost is never
       zero and a cache read is counted once, before any saving is claimed. #151 done:
-      PR #313, 2026-10-14.
+      PR #313, 2026-10-14. #264 done: PR #321, 2026-10-14.
     - [#296](https://github.com/cristiangirlea/harness/issues/296): large tool results shaped
       per kind (tests, logs, JSON, tables, terminal), the original kept behind a handle,
       invariants checked, measured by an eval in hrn-evals.
     - [#297](https://github.com/cristiangirlea/harness/issues/297): a routing table from eval
       results (purpose to backend, model and effort), applied when a run names none and
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
-      local models once a hrn-evals suite has measured them (the eval #224 asks for).
+      local models once a hrn-evals suite has measured them (the eval #224 asks for). Done:
+      PR #329, 2026-10-14, without the first table: that eval run waits for the owner.
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
       CI-verified index for the scripts agents write twice, kept under `scripts/`. Done:
       PR #317, 2026-10-14.
@@ -2177,3 +2178,19 @@ neither of them follows a run while it happens.
   `api-check.sh` is listed as not verified (it spends money). Sized before #295's numbers
   exist: the owner asked for this order on 2026-10-14. Hardening and extra tests from the
   review are #318; AGENTS.md is 119 lines for now, with the rules also in the doc.
+- 2026-10-14: PR #321 (closes #264): a codex cache read is counted once. The report's
+  context average for a run without usage events and hrn watch's purposes card both go
+  through `ModelTokens` (context is its total less output; the card sums input, output,
+  cache reads and writes once). A record the helper cannot place that carries no usage
+  metadata keeps the plain sum of its counters on the card, as in the report, so opencode
+  and gemini rows do not shrink silently; gemini's and opencode's semantics in the helper
+  itself are #320.
+- 2026-10-14: PR #329 (closes #297): routing by evidence. `$HRN_HOME/route.json` maps a purpose
+  to backend, model and effort with the eval each row came from; `hrn route show|set|from-eval`;
+  `Options.Route` fills the three only when a run names none of them (`hrn run`, a batch task,
+  the MCP run tool) and records `routed_by`; `hrn report --by routed`. An eval cell's backend is
+  pinned so an eval never measures the table it feeds. Deviation: the first table from a
+  hrn-evals run is not in the PR (the run spends plan quota; the owner's word first), so the
+  table starts empty and nothing is routed until it is filled. Left open as #327: a routed
+  model following a retry onto another backend, `routed_by` after a limit switch, eval naming
+  shared with `FromEval`, uneven row validation.

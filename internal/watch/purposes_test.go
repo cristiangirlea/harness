@@ -98,11 +98,47 @@ func TestAllCostsKnownGiveTheSumAndNoneKnownGiveADash(t *testing.T) {
 	saveRun(t, "codex", "add a cache", &agent.Result{InputTokens: 40})
 
 	c := cardOf(t)
-	if r := purposeRowOf(t, c, "debug"); r.Cost != "$0.0300" || r.NoCost != "" || r.Tokens != "1.5k" {
+	if r := purposeRowOf(t, c, "debug"); r.Cost != "$0.0300" || r.NoCost != "" || r.Tokens != "6.5k" {
 		t.Errorf("debug row = %+v", r)
 	}
 	if r := purposeRowOf(t, c, "implement"); r.Cost != "-" || r.NoCost != "1 run reports no cost" || r.Tokens != "40" {
 		t.Errorf("implement row = %+v", r)
+	}
+}
+
+func TestPurposeTokensCountCacheOnce(t *testing.T) {
+	for _, tc := range []struct {
+		backend string
+		want    string
+	}{{"codex", "1.2k"}, {"api", "2.1k"}, {"opencode", "2.1k"}} {
+		t.Run(tc.backend, func(t *testing.T) {
+			for _, resultBackend := range []string{tc.backend, ""} {
+				c := purposesOf([]runlog.Record{{
+					Backend: tc.backend, Done: true, Task: agent.Task{Prompt: "fix the login bug"},
+					Result: agent.Result{Backend: resultBackend, InputTokens: 1000, OutputTokens: 200, CacheRead: 800, CacheWrite: 100},
+				}})
+				for _, name := range []string{"debug", "all"} {
+					if row := purposeRowOf(t, c, name); row.Tokens != tc.want {
+						t.Errorf("result backend %q: %s tokens = %s, want %s", resultBackend, name, row.Tokens, tc.want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPurposeTokensExcludeMissingUsage(t *testing.T) {
+	c := purposesOf([]runlog.Record{{
+		Backend: "opencode", Done: true, Task: agent.Task{Prompt: "fix the login bug"},
+		Result: agent.Result{
+			InputTokens: 1000, OutputTokens: 200, CacheRead: 800, CacheWrite: 100,
+			Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "missing"},
+		},
+	}})
+	for _, name := range []string{"debug", "all"} {
+		if row := purposeRowOf(t, c, name); row.Tokens != "0" {
+			t.Errorf("%s tokens = %s, want 0", name, row.Tokens)
+		}
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // Two stubs: one does the work the gate checks for, the other does nothing.
@@ -82,6 +83,58 @@ func TestExpand(t *testing.T) {
 	spec.Worktrees = batch.WorktreesSlots
 	if bs, err := Expand(spec, "abc12"); err != nil || bs.Worktrees != batch.WorktreesSlots {
 		t.Errorf("an eval without a judge may ask for slots: %q, %v", bs.Worktrees, err)
+	}
+}
+
+func TestExpandDefaultCellsAreNotRouted(t *testing.T) {
+	for _, backend := range []string{"", "ev-ok"} {
+		t.Run("spec-"+backend, func(t *testing.T) {
+			dir := initRepo(t)
+			name := agent.DefaultBackendName()
+			old, err := agent.Get(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent.Register(stub{name, false})
+			defer agent.Register(old)
+			if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"ev-lazy","model":"routed","effort":"medium"}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			spec := Spec{Spec: batch.Spec{Dir: dir, Backend: backend,
+				Tasks: []batch.Task{{ID: "one", Prompt: "Implement a widget"}, {ID: "two", Prompt: "Implement another widget"}}},
+				Matrix: []Variant{{Name: "default"}}, Repeats: 2}
+			bs, err := Expand(spec, "routecheck")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := firstOf(backend, name)
+			for _, cell := range bs.Tasks {
+				if cell.Backend != want {
+					t.Errorf("cell %s backend = %q, want %q", cell.ID, cell.Backend, want)
+				}
+			}
+			res, err := batch.Run(context.Background(), bs, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := batch.Remove(res); err != nil {
+					t.Error(err)
+				}
+			}()
+			for _, tr := range res.Tasks {
+				if tr.Status != batch.StatusPass || len(tr.Attempts) != 1 {
+					t.Fatalf("cell: %+v", tr)
+				}
+				rec, err := runlog.Load(tr.Attempts[0].RunID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rec.Backend != want || rec.RoutedBy != nil || rec.Task.Model != "" || rec.Task.Effort != "" {
+					t.Errorf("cell was routed: %+v", rec)
+				}
+			}
+		})
 	}
 }
 

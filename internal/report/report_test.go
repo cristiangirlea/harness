@@ -16,6 +16,23 @@ import (
 
 var t0 = time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 
+func TestRowsByRouted(t *testing.T) {
+	runs := sample()
+	runs[0].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1"}
+	runs[1].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1"}
+	runs[2].RoutedBy = &runlog.RoutedBy{Category: "review"}
+	rows, all, err := (Data{Runs: runs}).RunRows("routed")
+	if err != nil || len(rows) != 3 || all.Runs != 4 {
+		t.Fatalf("rows: %+v %+v %v", rows, all, err)
+	}
+	if rows[0].Key != "implement via e1" || rows[0].Runs != 2 || rows[0].OK != 2 || !near(rows[0].TotalCost, .4) {
+		t.Fatalf("eval row: %+v", rows[0])
+	}
+	if rows[1].Key != "-" || rows[1].OK != 0 || rows[2].Key != "review via hand" {
+		t.Fatalf("other rows: %+v", rows)
+	}
+}
+
 func rec(backend, model, dir string, started time.Duration, res agent.Result) runlog.Record {
 	res.Backend = backend
 	res.Model = model
@@ -48,6 +65,67 @@ func sampleBatch() batch.Result {
 }
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+func TestContextFromTotalsCountsCacheOnce(t *testing.T) {
+	for _, tc := range []struct {
+		backend string
+		want    int64
+	}{{"codex", 500}, {"api", 950}} {
+		t.Run(tc.backend, func(t *testing.T) {
+			for _, resultBackend := range []string{tc.backend, ""} {
+				r := rec(tc.backend, "m", "/repo", 0, agent.Result{
+					InputTokens: 1000, OutputTokens: 200, CacheRead: 800, CacheWrite: 100, Turns: 2,
+				})
+				r.Result.Backend = resultBackend
+				rows, all, err := Select([]runlog.Record{r}, nil, time.Time{}).RunRows(ByBackend)
+				if err != nil || len(rows) != 1 {
+					t.Fatalf("rows=%+v err=%v", rows, err)
+				}
+				for _, row := range []Row{rows[0], all} {
+					if row.MedianContext != float64(tc.want) || row.PeakContext != tc.want || row.ContextFrom != ContextFromTotals {
+						t.Errorf("result backend %q: row=%+v, want context %d from totals", resultBackend, row, tc.want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestContextFromTotalsExcludesMissingUsage(t *testing.T) {
+	r := rec("codex", "m", "/repo", 0, agent.Result{
+		InputTokens: 1000, OutputTokens: 200, CacheRead: 800, CacheWrite: 100, Turns: 2,
+		ContextTokens: 1200,
+		Usage:         &agent.UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing"},
+	})
+	rows, all, err := Select([]runlog.Record{r}, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	for _, row := range []Row{rows[0], all} {
+		if row.MedianContext != 0 || row.PeakContext != 0 || row.ContextFrom != "" {
+			t.Errorf("row=%+v, want no context from missing usage", row)
+		}
+	}
+}
+
+func TestContextFromTotalsCombinesBackendSemantics(t *testing.T) {
+	var recs []runlog.Record
+	for _, backend := range []string{"codex", "api"} {
+		recs = append(recs, rec(backend, "m", "/repo", 0, agent.Result{
+			InputTokens: 1000, OutputTokens: 200, CacheRead: 800, CacheWrite: 100, Turns: 2,
+		}))
+	}
+	rows, all, err := Select(recs, nil, time.Time{}).RunRows(ByModel)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	// Codex's inclusive input averages 500; api's disjoint counters average 950.
+	for _, row := range []Row{rows[0], all} {
+		if row.Runs != 2 || row.MedianContext != 725 || row.PeakContext != 950 || row.ContextFrom != ContextFromTotals {
+			t.Errorf("row=%+v, want median 725 and peak 950 from totals over two runs", row)
+		}
+	}
+}
 
 func TestRowsKnownCost(t *testing.T) {
 	result := func(cost float64, status string, estimate bool) agent.Result {
@@ -185,7 +263,7 @@ func TestRunRowsByModelAndDir(t *testing.T) {
 	if err != nil || len(rows) != 2 || rows[0].Key != filepath.Clean("/repo/a") || rows[0].Runs != 3 || rows[1].Key != filepath.Clean("/repo/b") || rows[1].Runs != 1 {
 		t.Errorf("by dir: rows = %+v err=%v", rows, err)
 	}
-	if _, _, err := d.RunRows("colour"); err == nil || !strings.Contains(err.Error(), "backend, model, dir, purpose or day") {
+	if _, _, err := d.RunRows("colour"); err == nil || !strings.Contains(err.Error(), "backend, model, dir, purpose, routed or day") {
 		t.Errorf("unknown key should be refused: %v", err)
 	}
 }

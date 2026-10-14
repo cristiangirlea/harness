@@ -75,6 +75,11 @@ Usage:
   hrn eval show <eval-id>         reprint a saved eval
   hrn eval list [-n N]            list saved evals, newest first
   hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
+  hrn route show                 show purpose routing rows
+  hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]
+                                 replace a routing row by hand
+  hrn route from-eval <id> [--margin 0.05]
+                                 print and save rows from measured eval results
   hrn report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
   hrn gc [--apply] [--grace D] [--idle D] [--min-idle D] [--free-below SIZE] [PATH...]
                                  list worktrees whose work is merged (pull request merged at their commit, or a
@@ -91,6 +96,7 @@ Usage:
                                  the slots: who holds each, since when, its branch and what is in it
 
 Run flags:
+  When backend, model and effort are all unset, use the purpose row in route.json before falling back to defaults.
   -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
   -m, --model NAME     model id (api default: claude-opus-5)
   -C, --dir PATH       workspace directory (default: current directory)
@@ -141,7 +147,7 @@ Batch flags:
 
 Report flags:
       --since WINDOW   only runs and batches started within the window, e.g. 7d, 36h, 90m (default: all)
-      --by KEY         group runs by backend (default), model, dir, purpose or day
+      --by KEY         group runs by backend (default), model, dir, purpose, routed or day
       --json           print the tables as JSON
 
 Remote commands use HRN_SERVER_URL, HRN_TENANT_TOKEN, and optional HRN_SERVER_CA_FILE.
@@ -178,6 +184,8 @@ func main() {
 		code, err = cmdBatch(os.Args[2:])
 	case "eval":
 		code, err = cmdEval(os.Args[2:])
+	case "route":
+		code, err = cmdRoute(os.Args[2:])
 	case "report":
 		err = cmdReport(os.Args[2:])
 	case "watch":
@@ -240,7 +248,7 @@ func cmdRun(args []string) (int, error) {
 	// from the start, a continued one too, so this is settled before the
 	// plan. A model typed for it means nothing to the partner.
 	var routed string
-	if !opts.NoSwitch {
+	if !opts.NoSwitch && *continueID != "" {
 		if backend, routed = limits.Choose(backend, *continueID); routed != "" {
 			opts.Model = ""
 		}
@@ -295,6 +303,15 @@ func cmdRun(args []string) (int, error) {
 		return 2, errors.New("empty prompt")
 	}
 
+	routedBy, err := opts.Route(prompt, &backend, runlog.Home())
+	if err != nil {
+		return 2, err
+	}
+	if !opts.NoSwitch && *continueID == "" {
+		if backend, routed = limits.Choose(backend, ""); routed != "" {
+			opts.Model = ""
+		}
+	}
 	if backend == "" {
 		backend = agent.DefaultBackendName()
 	}
@@ -319,7 +336,7 @@ func cmdRun(args []string) (int, error) {
 		}
 	}
 
-	rec, err := runlog.CreateContinuing(backend, task, *continueID)
+	rec, err := runlog.CreateContinuing(backend, task, *continueID, routedBy)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}
