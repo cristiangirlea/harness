@@ -72,7 +72,11 @@ func TestWSRefusesAMaxBelowOne(t *testing.T) {
 }
 
 func TestWSRefusesAMaxAboveTen(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperWS$", "--", "take", "--max", "11")
+	// A throwaway folder, never the checkout the tests run in: if the limit
+	// ever stopped working, a take there would lease a real slot and keep it.
+	dir := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperWS$", "--", "take", "--repo", dir, "--max", "11")
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "HRN_WS_HELPER=1")
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "at most 10 slots per repository") {
