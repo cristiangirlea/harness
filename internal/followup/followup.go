@@ -154,7 +154,11 @@ func Make(req Request) (Plan, error) {
 	case p.Resume != nil:
 		p.Notes = append(p.Notes, fmt.Sprintf("resuming the conversation of run %s", chain[from].ID))
 	case p.ForkSession != "":
-		p.Notes = append(p.Notes, fmt.Sprintf("forking %s session %s from run %s", p.Backend, p.ForkSession, chain[from].ID))
+		action := "forking"
+		if agent.BackendCapabilities(b).Sessions == "resume" {
+			action = "resuming"
+		}
+		p.Notes = append(p.Notes, fmt.Sprintf("%s %s session %s from run %s", action, p.Backend, p.ForkSession, chain[from].ID))
 	default:
 		p.Notes = append(p.Notes, fmt.Sprintf("no %s session in this chain to pick up; starting a new one", p.Backend))
 	}
