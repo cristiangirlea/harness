@@ -684,6 +684,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: the guard refuses gh api calls to publishing endpoints (#210, PR #N).
+  Decided: refuse the named REST paths under any method, including harmless GETs, so implicit
+  POSTs from fields or --input cannot slip through; refuse GraphQL mutations in the line.
+  Ordinary issue, pull request, comment, label and reaction POSTs remain allowed.
 - 2026-10-14: gc's idle age and the clock's resolution (#245, PR #278). A cache written moments
   before could read as not yet idle, failing `TestGCTakesTheIdleLimitAsGiven` on Windows CI.
   Decided: an age below zero counts as zero, so `--idle 0` takes any cache; the test writes its
