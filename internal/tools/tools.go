@@ -42,6 +42,9 @@ type Tool struct {
 
 type Workspace struct {
 	Root string
+	// RunDir is the record directory, not a model-supplied workspace path.
+	RunDir     string
+	ShapeTools bool
 	// AllowDangerous lifts the command guard for this run. It lives here
 	// because the tool set is built once and shared by every run, so per-task
 	// policy has to travel with the workspace.
@@ -175,7 +178,7 @@ func (w *Workspace) Rel(p string) string {
 // All returns the default tool set in a fixed order; a stable order keeps the
 // API prompt cache warm across turns.
 func All() []Tool {
-	return []Tool{readFile(), listFiles(), grep(), writeFile(), editFile(), runCommand()}
+	return []Tool{readFile(), listFiles(), grep(), writeFile(), editFile(), runCommand(), readOriginal()}
 }
 
 func decode[T any](input json.RawMessage) (T, error) {
