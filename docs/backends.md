@@ -14,7 +14,7 @@ compatibility matrix for every CLI version; check your installed backend with `h
 | `codex` | your ChatGPT subscription | `codex exec --json`. Found on PATH, npm, or the Codex desktop app's bundled build. | `run` and `--continue` (fork, and handing a claude run over) verified on codex-cli 0.155; not exercised by `batch` or `eval`. |
 | `gemini` | your Google login | `gemini -o json` (single JSON result, no live stream). | Not yet run for real. |
 | `opencode` | whatever opencode is configured with | `opencode run --format json`, prompt attached as a file. | `run` verified; not exercised by the later layers. |
-| `agy` | your Antigravity plan (Google) | `agy --print --output-format stream-json`. Found on PATH or `%LOCALAPPDATA%\agy\bin` (Windows), or `~/.local/bin` elsewhere. | Parser tested against an anonymised agy 1.3.3 sample; this adapter has only run with a fake CLI. |
+| `agy` | your Antigravity plan (Google) | `agy --input-format stream-json --output-format stream-json`, the prompt as one stream-json event on stdin. Found on PATH or `%LOCALAPPDATA%\agy\bin` (Windows), or `~/.local/bin` elsewhere. | Parser tested against an anonymised agy 1.3.3 sample; `run` and `--continue` verified once each on agy 1.3.3 (2026-10-14); not exercised by `batch` or `eval`. |
 
 "Verified" means a real agent did real work through that path and the result was checked
 by hand, not that a test passed. Treat the unverified rows as drafts that need one run and

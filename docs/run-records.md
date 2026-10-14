@@ -50,7 +50,7 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
   given before the prompt (see [Continuing a run](backends.md#continuing-a-run))
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled|limited`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration, the
-  claude or codex `session` id, and for a `limited` run `limit_resets`, when its plan's
+  claude, codex or agy `session` id, and for a `limited` run `limit_resets`, when its plan's
   limit lifts
 
 `result.json` includes `recovery_required: true` when a durable api operation needs
