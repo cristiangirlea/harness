@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// TestHelperExit is a process that ends at once, so its pid names a process
+// TestHelperExit is a process that ends once its stdin closes, so its pid names a process
 // that has exited.
 func TestHelperExit(t *testing.T) {
 	if os.Getenv("HRN_WS_HELPER") != "exit" {
