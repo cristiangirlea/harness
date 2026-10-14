@@ -497,13 +497,6 @@ func profiles(dir string) []string {
 	return out
 }
 
-// lastBuild is the newest write among a cache's profile folders, their deps,
-// .fingerprint, build and incremental folders, the files directly in a
-// profile (the binaries a build ends with), and newest, the latest time the
-// walk that sized the cache saw inside it; the cache's own time when it has
-// no profile. The folder times catch what a build removes, which no file
-// shows; the walk catches a file rewritten deep inside a cache with no
-// profile, such as pytest's.
 // ageAt is how long before now a cache was last written. A write time a hair
 // after now (file times and the clock differ by their resolution) is age 0,
 // so --idle 0 takes any cache (#245).
@@ -514,6 +507,13 @@ func ageAt(now, written time.Time) time.Duration {
 	return 0
 }
 
+// lastBuild is the newest write among a cache's profile folders, their deps,
+// .fingerprint, build and incremental folders, the files directly in a
+// profile (the binaries a build ends with), and newest, the latest time the
+// walk that sized the cache saw inside it; the cache's own time when it has
+// no profile. The folder times catch what a build removes, which no file
+// shows; the walk catches a file rewritten deep inside a cache with no
+// profile, such as pytest's.
 func lastBuild(dir string, newest time.Time) time.Time {
 	note := func(p string) {
 		if info, err := os.Lstat(p); err == nil && info.ModTime().After(newest) {
