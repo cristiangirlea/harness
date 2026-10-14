@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 func TestProjectProfileScopeAndFreshness(t *testing.T) {
@@ -135,4 +137,13 @@ func TestProjectServerExposesOnlyScopedRunAndInspectionTools(t *testing.T) {
 	if got.IsError {
 		t.Fatal(got)
 	}
+	t.Run("disabled profile backend is refused before advertising it", func(t *testing.T) {
+		t.Setenv("HRN_HOME", t.TempDir())
+		if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewProjectServer(dir, path); err == nil || !strings.Contains(err.Error(), "backend stub is disabled") {
+			t.Fatalf("disabled profile: %v", err)
+		}
+	})
 }
