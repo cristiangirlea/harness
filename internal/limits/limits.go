@@ -241,7 +241,7 @@ func Choose(backend, continueID string) (string, string) {
 		}
 	}
 	if meant == "" {
-		meant = agent.DefaultBackendName()
+		meant = agent.DefaultBackendNameIn(runlog.Home())
 	}
 	if pick, why, _ := Pick(meant, time.Now(), nil); pick != meant {
 		return pick, why

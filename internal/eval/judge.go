@@ -105,7 +105,7 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 		defer notifyMu.Unlock()
 		report(e)
 	}
-	b, err := agent.Get(firstOf(j.Backend, agent.DefaultBackendName()))
+	b, err := agent.Get(firstOf(j.Backend, agent.DefaultBackendNameIn(runlog.Home())))
 	if err != nil {
 		notify(batch.Event{Kind: "judge", Text: "judge: " + err.Error()})
 		return nil

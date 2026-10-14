@@ -192,7 +192,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				}
 			}
 			if args.Backend == "" {
-				args.Backend = agent.DefaultBackendName()
+				args.Backend = agent.DefaultBackendNameIn(runlog.Home())
 			}
 			b, err := agent.Get(args.Backend)
 			if err != nil {
@@ -446,7 +446,7 @@ func backendsTool() mcp.Tool {
 				}
 				list = append(list, entry)
 			}
-			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendName()}, false), nil
+			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendNameIn(runlog.Home())}, false), nil
 		},
 	}
 }

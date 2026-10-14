@@ -314,7 +314,7 @@ func cmdRun(args []string) (int, error) {
 		}
 	}
 	if backend == "" {
-		backend = agent.DefaultBackendName()
+		backend = agent.DefaultBackendNameIn(runlog.Home())
 	}
 	b, err := agent.Get(backend)
 	if err != nil {

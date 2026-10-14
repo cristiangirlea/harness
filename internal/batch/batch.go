@@ -601,7 +601,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	if err != nil {
 		return fail(err)
 	}
-	backends := []string{firstOf(backend, agent.DefaultBackendName())}
+	backends := []string{firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
 	gateTimeout := defaultGateTimeout
