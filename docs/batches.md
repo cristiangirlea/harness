@@ -26,7 +26,7 @@ retried on the next backend in `retry`. Every attempt is an ordinary recorded ru
 `dir` (default: the file's directory) is any path inside the repository. Task fields
 override the file's defaults of the same name; `id` defaults to `t1`, `t2`, ….
 
-Every option `hrn run` takes as a flag is a spec field under the same name with
+Every shared run option (`agent.Options`) is a spec field under the same name with
 underscores (`--max-turns` is `max_turns`, `--max-cost` is `max_cost_usd`), on the spec
 or on a task; the MCP `run` tool takes the same names. They are one struct in the code
 (`agent.Options`), so the three cannot drift apart. A task's value replaces the spec's;
@@ -35,6 +35,14 @@ claude and which a task can set to `false` (see
 [Lean claude workers](backends.md#lean-claude-workers)); a task's own `mcp` list replaces the spec's, and an
 empty list (`"mcp": []`) means no servers at all, not even `~/.hrn/mcp.json`. Every list
 is checked before the first task starts.
+
+Each task may also set `purpose`: `review`, `debug`, `implement`, `refactor`,
+`test`, `research`, `plan` or `ops`. It is a task field, not a spec-wide default.
+An invalid value is refused before any task starts. If omitted or empty, a valid
+`Purpose: <category>` header on the first non-blank prompt line supplies it (see
+[Declared purpose](commands.md#declared-purpose)). The effective declaration is
+saved on the batch task result and each attempt's `agent.Task`, without changing
+the prompt.
 
 For each task hrn creates branch `hrn/<id>` from the current `HEAD` (uncommitted changes
 in the main worktree are not included) and gives it a worktree (see below), runs the

@@ -29,7 +29,8 @@ Runs group by backend, or by `--by model` (the model that answered), `--by dir` 
 workspace), `--by purpose` (what the run was for: review, debug, implement, refactor, test,
 research, plan, ops or unknown) or `--by day` (the day the run started, on this computer's
 calendar; days are listed in date order rather than largest first). The purpose comes from ordered keyword rules on the prompt's
-first paragraph only, since a brief's later paragraphs mention every keyword; the first rule
+first paragraph only, unless the run declared one (explicitly or with a valid leading
+`Purpose: <category>` header), since a brief's later paragraphs mention every keyword; the first rule
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
 median cost, and the cache share (cache-read tokens over every input token, cache writes included;
 `-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.

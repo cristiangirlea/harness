@@ -12,7 +12,10 @@
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
   off, or absent; `compact_window` is a number or `"auto"`)
-  and, for exec runs, the supervisor's `attempt_id`
+  and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
+  the declared category from `--purpose`, MCP `purpose`, a batch task's `purpose`,
+  or a valid leading `Purpose: <category>` header. It is omitted when undeclared;
+  old records without it still load and use the header or classifier for display
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
   and, where the backend reports them, each model call's `usage` and each `compaction`
