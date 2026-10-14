@@ -56,9 +56,14 @@ func Summarize(kind Kind, text string) (string, bool) {
 		passed, failed := testCounts(lines)
 		keep := make([]bool, len(lines))
 		start := 0
+		afterFail := false
 		for i, line := range lines {
 			if strings.HasPrefix(strings.TrimSpace(line), "=== RUN") {
 				start = i
+				afterFail = false
+			}
+			if afterFail {
+				keep[i] = true
 			}
 			if failName.MatchString(line) {
 				for j := start; j <= i; j++ {
@@ -67,6 +72,7 @@ func Summarize(kind Kind, text string) (string, bool) {
 			}
 			if strings.Contains(line, "--- PASS:") || failName.MatchString(line) {
 				start = i + 1
+				afterFail = failName.MatchString(line)
 			}
 			if errorLine(line) || strings.HasPrefix(line, "ok ") || strings.HasPrefix(line, "ok\t") || strings.HasPrefix(line, "FAIL") {
 				keep[i] = true

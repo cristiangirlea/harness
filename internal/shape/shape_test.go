@@ -96,3 +96,11 @@ func TestTerminalHeadTailAndErrorFallback(t *testing.T) {
 		t.Fatal("dropped a middle error")
 	}
 }
+
+func TestFailureMessagesAfterMarker(t *testing.T) {
+	text := "counts 0 1\n--- FAIL: TestOuter (0.00s)\n    detail: not ready\n    more details\nFAIL\n"
+	s, ok := Summarize(Test, text)
+	if !ok || !strings.Contains(s, "detail: not ready") || !strings.Contains(s, "more details") {
+		t.Fatalf("failure message lost: %q ok=%v", s, ok)
+	}
+}
