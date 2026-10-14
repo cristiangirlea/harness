@@ -684,6 +684,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a durable stream that fails part-way keeps its usage (#149, PR #N).
+  Decided: count the partial message's usage before returning the durable failure; keep the pending model operation and recovery-required status.
 - 2026-10-14: the guard refuses gh api calls to publishing endpoints (#210, PR #293).
   Decided: refuse the named REST paths under any method, including harmless GETs, so implicit
   POSTs from fields or --input cannot slip through; refuse GraphQL mutations in the line.
