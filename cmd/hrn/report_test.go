@@ -4,14 +4,89 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func TestReportCostCells(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		results       []agent.Result
+		total, median string
+	}{
+		{"all known", []agent.Result{{CostUSD: 1.23}, {CostUSD: 2.77}}, "$4.00", "$2.00"},
+		{"some missing", []agent.Result{{CostUSD: 1.23}, {Usage: &agent.UsageMetadata{CostStatus: "missing"}}, {}}, "$1.23 (2 unknown)", "$1.23"},
+		{"none known", []agent.Result{{CostUSD: 9, Usage: &agent.UsageMetadata{CostStatus: "missing"}}, {}}, "-", "-"},
+		{"reported zero", []agent.Result{{Usage: &agent.UsageMetadata{CostStatus: "reported"}}}, "$0.00", "$0.00"},
+		{"zero and missing", []agent.Result{{Usage: &agent.UsageMetadata{CostStatus: "reported"}}, {}}, "$0.00 (1 unknown)", "$0.00"},
+		{"estimated zero", []agent.Result{{Usage: &agent.UsageMetadata{CostStatus: "estimated"}}}, "~$0.00", "~$0.00"},
+		{"legacy positive", []agent.Result{{CostUSD: 1.23}}, "$1.23", "$1.23"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			b := batch.Result{ID: "costs", Dir: "repo"}
+			for _, res := range tc.results {
+				w, err := runlog.Create("codex", agent.Task{Prompt: "p"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				res.Status = agent.StatusOK
+				if err := w.Close(res); err != nil {
+					t.Fatal(err)
+				}
+				b.Tasks = append(b.Tasks, batch.TaskResult{Status: batch.StatusPass, Attempts: []batch.Attempt{{Result: res}}})
+			}
+			dir := filepath.Join(runlog.Home(), "batches")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "costs.json"), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := captureStdout(t, func() error { return cmdReport(nil) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocks := strings.Split(strings.TrimSpace(string(out)), "\n\n")
+			if len(blocks) != 3 {
+				t.Fatalf("report=%s", out)
+			}
+			for _, index := range []int{0, 2} {
+				lines := strings.Split(blocks[index], "\n")
+				if len(lines) != 4 {
+					t.Fatalf("table=%s", blocks[index])
+				}
+				for _, line := range lines[2:] {
+					// Two spaces separate columns; spaces within the unknown count stay intact.
+					var columns []string
+					for _, c := range strings.Split(line, "  ") {
+						if c = strings.TrimSpace(c); c != "" {
+							columns = append(columns, c)
+						}
+					}
+					if index == 0 {
+						if len(columns) != 9 || columns[6] != tc.total || columns[7] != tc.median {
+							t.Errorf("run row=%q, want total %q median %q", line, tc.total, tc.median)
+						}
+					} else if len(columns) != 6 || columns[5] != tc.total {
+						t.Errorf("batch row=%q, want total %q", line, tc.total)
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestTableAlignsColumns(t *testing.T) {
 	got := table([][]string{{"key", "n"}, {"a", "10"}, {"longer", "5"}}, 1)

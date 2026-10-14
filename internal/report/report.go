@@ -185,6 +185,8 @@ type Row struct {
 	MedianTurns    float64       `json:"median_turns"`
 	TotalCost      float64       `json:"total_cost_usd"`
 	MedianCost     float64       `json:"median_cost_usd"`
+	// RunsWithoutCost counts results whose cost is unknown.
+	RunsWithoutCost int `json:"runs_without_cost,omitempty"`
 	// CostEstimated is set when any run's cost is the api backend's estimate
 	// rather than a figure the backend reported.
 	CostEstimated bool `json:"cost_is_estimate,omitempty"`
@@ -307,10 +309,12 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		}
 		durations = append(durations, float64(res.Duration))
 		turns = append(turns, float64(res.Turns))
-		costs = append(costs, res.CostUSD)
-		row.TotalCost += res.CostUSD
-		if res.CostEstimate && res.CostUSD > 0 {
-			row.CostEstimated = true
+		if cost, known, estimated := res.KnownCost(); known {
+			costs = append(costs, cost)
+			row.TotalCost += cost
+			row.CostEstimated = row.CostEstimated || estimated
+		} else {
+			row.RunsWithoutCost++
 		}
 		// ModelTokens accounts for backends that include cache reads in input
 		// and those that report disjoint input and cache counters.
@@ -354,6 +358,8 @@ type BatchRow struct {
 	MedianAttempts float64 `json:"median_attempts"`
 	TotalCost      float64 `json:"total_cost_usd"`
 	CostEstimated  bool    `json:"cost_is_estimate,omitempty"`
+	// TasksWithoutCost counts tasks with no known cost in any attempt.
+	TasksWithoutCost int `json:"tasks_without_cost,omitempty"`
 }
 
 // BatchRows groups the batches by repository, plus an "all" row.
@@ -390,11 +396,16 @@ func summarizeBatches(key string, bs []batch.Result) BatchRow {
 			if n := len(t.Attempts); n > 0 {
 				attempts = append(attempts, float64(n))
 			}
+			costKnown := false
 			for _, a := range t.Attempts {
-				row.TotalCost += a.Result.CostUSD
-				if a.Result.CostEstimate && a.Result.CostUSD > 0 {
-					row.CostEstimated = true
+				if cost, known, estimated := a.Result.KnownCost(); known {
+					costKnown = true
+					row.TotalCost += cost
+					row.CostEstimated = row.CostEstimated || estimated
 				}
+			}
+			if !costKnown {
+				row.TasksWithoutCost++
 			}
 		}
 	}
