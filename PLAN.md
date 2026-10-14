@@ -667,6 +667,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: gc's idle age and the clock's resolution (#245, PR #N). A cache written moments
+  before could read as not yet idle, failing `TestGCTakesTheIdleLimitAsGiven` on Windows CI.
+  Decided: an age below zero counts as zero, so `--idle 0` takes any cache; the test writes its
+  cache a second in the past, which still shows a 1 ns limit is honoured.
 - 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
   as the index does) and a batch's repository too, the whole path as a hover title for this
   computer only. Text from a run's events, its prompt and result, and a batch's tasks and
