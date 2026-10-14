@@ -684,6 +684,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: retrieval compare matches the requested model (#184, PR #301).
+  Decided: use the task model when recorded; a run without a requested model matches
+  only when its reported result model equals the variant model. Show a different
+  provider-reported model in the text comparison.
 - 2026-10-14: a durable stream that fails part-way keeps its usage (#149, PR #300).
   Decided: count the partial message's usage before returning the durable failure; keep the pending model operation and recovery-required status.
 - 2026-10-14: grep and list_files in a workspace reached through a junction (#55, PR #294).
