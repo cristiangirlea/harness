@@ -8,6 +8,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -63,16 +64,16 @@ func secretName(name string) bool {
 // server.render's pass over the finished page stays as a backstop.
 
 func (s *server) clean(text string) string {
-	if s.redact == nil || text == "" {
-		return text
+	if s.redact != nil {
+		text = s.redact.Replace(text)
 	}
-	return s.redact.Replace(text)
+	return mask.Text(text)
 }
 
 func (s *server) cleanEvent(e agent.Event) agent.Event {
 	e.Text = s.clean(e.Text)
-	if len(e.Input) > 0 {
-		e.Input = json.RawMessage(s.clean(string(e.Input)))
+	if len(e.Input) > 0 && s.redact != nil {
+		e.Input = json.RawMessage(s.redact.Replace(string(e.Input)))
 	}
 	if e.Usage != nil {
 		u := *e.Usage

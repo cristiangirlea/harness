@@ -63,9 +63,10 @@ func cmdReport(args []string) error {
 		fmt.Printf("runs by %s, %s\n", rep.By, scope)
 		t := [][]string{{rep.By, "runs", "ok", "ok%", "med dur", "med turns", "total cost", "med cost", "cache"}}
 		for _, r := range append(rep.Runs, rep.RunsAll) {
+			known := r.Runs > r.RunsWithoutCost
 			t = append(t, []string{shortKey(r.Key, 48), strconv.Itoa(r.Runs), strconv.Itoa(r.OK), report.Percent(r.OK, r.Runs),
 				r.MedianDuration.Round(time.Second).String(), report.Number(r.MedianTurns),
-				report.Money(r.TotalCost, r.CostEstimated), report.Money(r.MedianCost, r.CostEstimated), report.Share(r.CacheShare)})
+				reportCost(r.TotalCost, known, r.CostEstimated, r.RunsWithoutCost), reportCost(r.MedianCost, known, r.CostEstimated, 0), report.Share(r.CacheShare)})
 		}
 		fmt.Print(table(t, 1))
 
@@ -90,7 +91,7 @@ func cmdReport(args []string) error {
 		t := [][]string{{"repository", "batches", "tasks", "pass%", "med attempts", "total cost"}}
 		for _, r := range append(rep.Batches, rep.BatchesAll) {
 			t = append(t, []string{shortKey(r.Key, 48), strconv.Itoa(r.Batches), strconv.Itoa(r.Tasks), report.Percent(r.Passed, r.Tasks),
-				report.Number(r.MedianAttempts), report.Money(r.TotalCost, r.CostEstimated)})
+				report.Number(r.MedianAttempts), reportCost(r.TotalCost, r.Tasks > r.TasksWithoutCost, r.CostEstimated, r.TasksWithoutCost)})
 		}
 		fmt.Print(table(t, 1))
 	}
@@ -101,6 +102,24 @@ func cmdReport(args []string) error {
 		fmt.Printf("%d unreadable record(s) skipped\n", rep.Unreadable)
 	}
 	return nil
+}
+
+// reportCost preserves a known zero and counts missing costs beside a partial total.
+func reportCost(cost float64, known, estimated bool, unknown int) string {
+	if !known {
+		return "-"
+	}
+	value := report.Money(cost, estimated)
+	if cost == 0 {
+		value = "$0.00"
+		if estimated {
+			value = "~" + value
+		}
+	}
+	if unknown > 0 {
+		value += fmt.Sprintf(" (%d unknown)", unknown)
+	}
+	return value
 }
 
 // shortKey keeps the end of a long key: for a path, that is the part that

@@ -49,6 +49,107 @@ func sampleBatch() batch.Result {
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
+func TestRowsKnownCost(t *testing.T) {
+	result := func(cost float64, status string, estimate bool) agent.Result {
+		return agent.Result{CostUSD: cost, CostEstimate: estimate, Usage: &agent.UsageMetadata{CostStatus: status}}
+	}
+	for _, tc := range []struct {
+		name          string
+		results       []agent.Result
+		total, median float64
+		unknown       int
+		estimated     bool
+	}{
+		{"all known", []agent.Result{result(1, "reported", false), result(3, "reported", false)}, 4, 2, 0, false},
+		{"some missing", []agent.Result{result(1, "reported", false), result(9, "missing", true), result(3, "reported", false)}, 4, 2, 1, false},
+		{"none known", []agent.Result{result(9, "missing", true), {}}, 0, 0, 2, false},
+		{"reported zero", []agent.Result{result(0, "reported", false), result(2, "reported", false)}, 2, 1, 0, false},
+		{"estimated metadata", []agent.Result{result(0, "estimated", false)}, 0, 0, 0, true},
+		{"reported estimate", []agent.Result{result(0, "reported", true)}, 0, 0, 0, true},
+		{"legacy positive", []agent.Result{{CostUSD: 2, CostEstimate: true}}, 2, 2, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var recs []runlog.Record
+			b := batch.Result{Dir: "/repo"}
+			for i, res := range tc.results {
+				recs = append(recs, rec("codex", "m", "/repo", time.Duration(i)*time.Hour, res))
+				b.Tasks = append(b.Tasks, batch.TaskResult{Attempts: []batch.Attempt{{Result: res}}})
+			}
+			rows, all, err := Select(recs, nil, time.Time{}).RunRows(ByBackend)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("rows=%+v err=%v", rows, err)
+			}
+			for _, row := range []Row{rows[0], all} {
+				if !near(row.TotalCost, tc.total) || !near(row.MedianCost, tc.median) || row.CostEstimated != tc.estimated {
+					t.Errorf("run row=%+v", row)
+				}
+				checkUnknownCostJSON(t, row, "runs_without_cost", tc.unknown)
+			}
+			brows, ball := Select(nil, []batch.Result{b}, time.Time{}).BatchRows()
+			for _, row := range []BatchRow{brows[0], ball} {
+				if !near(row.TotalCost, tc.total) || row.CostEstimated != tc.estimated {
+					t.Errorf("batch row=%+v", row)
+				}
+				checkUnknownCostJSON(t, row, "tasks_without_cost", tc.unknown)
+			}
+		})
+	}
+}
+
+func checkUnknownCostJSON(t *testing.T, row any, key string, want int) {
+	t.Helper()
+	data, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	value, exists := fields[key]
+	if want == 0 {
+		if exists {
+			t.Errorf("zero count must be omitted: %s", data)
+		}
+		return
+	}
+	var got int
+	if !exists || json.Unmarshal(value, &got) != nil || got != want {
+		t.Errorf("%s: want %s=%d", data, key, want)
+	}
+}
+
+func TestOldCostRowJSONStillLoads(t *testing.T) {
+	var row Row
+	if err := json.Unmarshal([]byte(`{"runs":1,"total_cost_usd":2,"median_cost_usd":2}`), &row); err != nil || row.TotalCost != 2 || row.MedianCost != 2 {
+		t.Fatalf("row=%+v err=%v", row, err)
+	}
+	checkUnknownCostJSON(t, row, "runs_without_cost", 0)
+	var b BatchRow
+	if err := json.Unmarshal([]byte(`{"tasks":1,"total_cost_usd":2}`), &b); err != nil || b.TotalCost != 2 {
+		t.Fatalf("row=%+v err=%v", b, err)
+	}
+	checkUnknownCostJSON(t, b, "tasks_without_cost", 0)
+}
+
+func TestBatchCostCountsTasksNotAttempts(t *testing.T) {
+	missing := batch.Attempt{Result: agent.Result{Usage: &agent.UsageMetadata{CostStatus: "missing"}}}
+	zero := batch.Attempt{Result: agent.Result{Usage: &agent.UsageMetadata{CostStatus: "reported"}}}
+	b := batch.Result{Dir: "/repo", Tasks: []batch.TaskResult{
+		{Attempts: []batch.Attempt{missing, missing}},
+		{Attempts: []batch.Attempt{missing, zero}},
+		{Attempts: []batch.Attempt{{Result: agent.Result{CostUSD: 1}}, {Result: agent.Result{CostUSD: 2}}}},
+		{},
+	}}
+	rows, all := Select(nil, []batch.Result{b}, time.Time{}).BatchRows()
+	for _, row := range []BatchRow{rows[0], all} {
+		if row.Tasks != 4 || row.TotalCost != 3 {
+			t.Errorf("row=%+v", row)
+		}
+		checkUnknownCostJSON(t, row, "tasks_without_cost", 1)
+	}
+}
+
 func TestRunRowsByBackend(t *testing.T) {
 	d := Select(sample(), nil, time.Time{})
 	rows, all, err := d.RunRows(ByBackend)

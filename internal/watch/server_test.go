@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1660,5 +1661,58 @@ func TestTheBatchStreamShortensItsPaths(t *testing.T) {
 	// This computer sees the whole worktree only as its fact's hover title.
 	if n := strings.Count(all, wt); n != 1 || !strings.Contains(all, `title="`+wt+`"`) {
 		t.Errorf("the batch stream holds the worktree's path %d times, want once as a title:\n%s", n, all)
+	}
+}
+
+func TestMaskDisplayKeepsRecordedSecrets(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const token = "sk-test-display-only-0123456789"
+	const prompt = "API_KEY=fake-prompt-0123456789 do the task"
+	w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(agent.Result{Status: agent.StatusOK})
+	command := "curl -H \"Authorization: Bearer " + token + "\""
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Text: command, Input: json.RawMessage(`{"command":` + strconv.Quote(command) + `}`)})
+	h := New(context.Background(), Options{Poll: time.Millisecond, LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	time.Sleep(settle) // A newly created run is deliberately held back by the bot.
+	for _, remote := range []string{"127.0.0.1:6000", "192.168.1.50:6000"} {
+		for _, path := range []string{"/", "/run/" + w.ID(), "/bot", "/stream/index", "/stream/run/" + w.ID(), "/stream/bot"} {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			host := "127.0.0.1:8089"
+			if strings.HasPrefix(remote, "192.") {
+				host = "192.168.1.20:8089"
+			}
+			req := httptest.NewRequest("GET", "http://"+host+path, nil).WithContext(ctx)
+			req.RemoteAddr = remote
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			cancel()
+			body := rec.Body.String()
+			if rec.Code != 200 || strings.Contains(body, token) || strings.Contains(body, "fake-prompt-0123456789") || !strings.Contains(body, "••••") {
+				t.Errorf("%s %s status=%d lacks masking", remote, path, rec.Code)
+			}
+		}
+	}
+	rec, err := runlog.Load(w.ID())
+	if err != nil || rec.Task.Prompt != prompt {
+		t.Fatalf("record changed: %+v %v", rec, err)
+	}
+	events, err := runlog.Events(w.ID())
+	if err != nil || len(events) != 1 || events[0].Text != command {
+		t.Fatalf("events changed: %+v %v", events, err)
+	}
+}
+
+func TestBotMasksBeforeMakingWords(t *testing.T) {
+	for _, got := range []string{
+		activity("Read", "sk-test-private"), commandWords("sk-test-private"),
+		topic("API_KEY=private do something"),
+		announce(botSnapshot{}, botSnapshot{items: []botItem{{ID: "r", Kind: "run", Who: "agent", Going: true, What: "API_KEY=private"}}}, false)[0].Text,
+	} {
+		if strings.Contains(got, "private") || !strings.Contains(got, "••••") {
+			t.Errorf("bot leaks: %q", got)
+		}
 	}
 }
