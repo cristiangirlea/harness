@@ -684,6 +684,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: grep and list_files in a workspace reached through a junction (#55, PR #N).
+  Decided: walk the resolved root while reporting paths under Root; keep inner junctions untraversed.
 - 2026-10-14: the guard refuses gh api calls to publishing endpoints (#210, PR #293).
   Decided: refuse the named REST paths under any method, including harmless GETs, so implicit
   POSTs from fields or --input cannot slip through; refuse GraphQL mutations in the line.
