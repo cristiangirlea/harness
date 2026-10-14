@@ -684,7 +684,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: grep and list_files in a workspace reached through a junction (#55, PR #N).
+- 2026-10-14: grep and list_files in a workspace reached through a junction (#55, PR #294).
   Decided: walk the resolved root while reporting paths under Root; keep inner junctions untraversed.
 - 2026-10-14: public watch's local-use and tunnel address follow-up (#218, PR #261).
   Decided: document that its loopback Host is refused, use a separate plain watch for
