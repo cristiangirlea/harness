@@ -716,7 +716,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: purpose reads past labels and context (#118, PR #TBD). Leading label
+- 2026-10-14: purpose reads past labels and context (#118, PR #319). Leading label
   lines are skipped, a final label contributes its value, and the second non-blank
   paragraph is tried only when the first matches no rule, with the cap applied to each.
   This classifies hrn's batch briefs without changing rules-v1 or letting later
