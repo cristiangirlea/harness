@@ -45,6 +45,8 @@ func (s *purposeSum) add(rec runlog.Record) {
 	}
 	if total, known, _ := res.ModelTokens(); known {
 		s.tokens += total
+	} else if res.Usage == nil {
+		s.tokens += res.InputTokens + res.OutputTokens + res.CacheRead + res.CacheWrite
 	}
 	if res.CostUSD <= 0 {
 		s.noCost++
