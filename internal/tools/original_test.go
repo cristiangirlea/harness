@@ -170,3 +170,36 @@ func TestOriginalRefusesSymlinkEscape(t *testing.T) {
 		}
 	}
 }
+
+func TestOriginalPreservesExistingBytes(t *testing.T) {
+	ws, _ := setup(t)
+	ws.ShapeTools, ws.RunDir = true, t.TempDir()
+	text := "count 10000\n" + strings.Repeat("working\n", 10000)
+	handle, err := ws.storeOriginal(text)
+	must(t, err)
+	p := filepath.Join(ws.RunDir, "originals", handle+".txt")
+	must(t, os.WriteFile(p, []byte("different bytes"), 0o644))
+	if _, err := ws.storeOriginal(text); err == nil {
+		t.Fatal("replaced a conflicting original")
+	}
+	if got := ws.toolOutput(text); got != Truncate(text) {
+		t.Fatal("conflicting original did not fall back")
+	}
+	data, err := os.ReadFile(p)
+	must(t, err)
+	if string(data) != "different bytes" {
+		t.Fatal("existing original overwritten")
+	}
+}
+
+func TestAtOutputCapDoesNotStore(t *testing.T) {
+	ws, _ := setup(t)
+	ws.ShapeTools, ws.RunDir = true, t.TempDir()
+	text := strings.Repeat("x", maxOutput)
+	if got := ws.toolOutput(text); got != text {
+		t.Fatal("changed output at the cap")
+	}
+	if _, err := os.Stat(filepath.Join(ws.RunDir, "originals")); !os.IsNotExist(err) {
+		t.Fatal("stored output at the cap")
+	}
+}

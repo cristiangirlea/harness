@@ -13,6 +13,7 @@ func TestClassify(t *testing.T) {
 		{"go test ./...", Test}, {"--- FAIL: TestBroken (0.00s)", Test},
 		{"--- PASS: TestGood (0.00s)", Test}, {"ok  example/pkg 0.1s", Test}, {"FAIL\texample/pkg", Test},
 		{"2026-10-14T10:00:00Z service started", Log}, {"[WARN] retry", Log},
+		{"info started", Log},
 		{"INFO started\n--- FAIL: TestX (0.00s)", Test}, {"ordinary output", Terminal},
 		{"okay this is not a test", Terminal}, {"", Other},
 	} {
