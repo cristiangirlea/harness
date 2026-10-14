@@ -19,7 +19,49 @@ compatibility matrix for every CLI version; check your installed backend with `h
 by hand, not that a test passed. Treat the unverified rows as drafts that need one run and
 probably one fix.
 
-Default backend: `api` when credentials exist, otherwise `claude`, or the route table's row for the prompt's purpose, when one exists.
+Without preferences, the default backend is `api` when credentials exist, otherwise
+`claude`, or the route table's row for the prompt's purpose, when one exists.
+
+### Choosing which backends hrn may use
+
+Set the enabled backends once for runs, MCP calls, batches, eval cells and judges,
+and the supervisor protocol:
+
+```bash
+hrn backends set --only claude,codex --default claude
+hrn backends
+hrn backends reset
+```
+
+`set` validates names against the backends registered in this hrn binary and writes
+`$HRN_HOME/backends.json` (normally `~/.hrn/backends.json`) atomically:
+
+```json
+{"enabled":["claude","codex"],"default":"claude"}
+```
+
+For a build that registers `agy`, use `--only claude,agy` instead. A name need not
+be installed to be enabled, but it must be registered. `--default` is optional;
+when supplied it must appear in `--only`. `set` replaces the whole preference.
+`reset` removes the file, including a malformed one, and restores today's default
+selection. A missing file or an empty enabled list with no default leaves all
+backends enabled. A nonempty default without an enabled list is refused.
+
+The configured default wins when installed; otherwise hrn chooses enabled `api`
+when credentials exist, then the first installed enabled backend in preference
+order, falling back to `claude`. If that fallback is disabled, the run is refused.
+`hrn backends` shows enabled/disabled, the configured default (or the selected default
+when none is configured), availability and remembered limits beside each backend.
+
+An explicit disabled backend is refused before execution (`hrn run` exits 2).
+Purpose routing ignores disabled rows with a warning and records no routing evidence.
+Batch retry lists lose disabled entries while keeping their original order and
+repetitions; a nonempty list with no enabled entries is refused.
+
+At a usage limit the carry-on partner is the first other installed enabled backend
+in preference order, subject to the existing readiness and billing checks. With no
+preference, the claude/codex pairing is unchanged. With no ready enabled partner,
+the run stays limited. `--no-switch` still disables carry-on.
 
 The `claude` backend uses the plan login only. If Claude Code's init line reports an
 `apiKeySource` other than `none`, hrn stops the worker as soon as that init line arrives

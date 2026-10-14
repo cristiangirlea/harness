@@ -65,7 +65,7 @@ Tools:
 | `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
-| `backends` | — | Which backends are usable here. |
+| `backends` | — | Availability and remembered limits, plus per-backend `enabled` and `default` booleans. The top-level `default` string names the backend selected for a fresh run. |
 | `batch` | `spec` | Runs a batch spec, the same JSON as a batch file, and blocks until every task is done: one line per task (status, backend, attempts, the gate that failed, branch and commit) and the batch id. Task outcomes stream back as progress. |
 | `batch_show` | `batch_id`, `task`, `limit` | No id: recent batches. An id: its tasks. An id and a task: that task's diff and its untracked files. |
 | `batch_merge` | `batch_id`, `tasks`, `squash` | Merges the passing branches into the repository's current branch, stopping at the first conflict with the tree put back. |
@@ -73,6 +73,15 @@ Tools:
 | `remote_status` | `tenant_id`, `project_id`, `job_id` | Current job state and result. |
 | `remote_events` | `tenant_id`, `project_id`, `job_id`, optional `after` | Up to 100 events after a durable event ID. |
 | `remote_cancel` | `tenant_id`, `project_id`, `job_id` | Request job cancellation. |
+
+The `run` tool's `backend` enum contains only enabled registered names, in preference
+order, when the server starts. Restart the server to refresh the advertised enum
+after changing preferences. Every call reads the current file and refuses a disabled
+backend as a tool error, even if it appeared in an older enum. A malformed preference
+is also a tool error. In `backends`, the per-backend default marker identifies the
+configured default, or the selected default when none is configured; an unavailable
+configured default can differ from the top-level selected default. See
+[Backend preferences](backends.md#choosing-which-backends-hrn-may-use).
 
 The `run` tool and each task in a `batch` spec accept optional `purpose`: `review`,
 `debug`, `implement`, `refactor`, `test`, `research`, `plan` or `ops`. Invalid values
