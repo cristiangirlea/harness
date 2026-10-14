@@ -130,6 +130,12 @@ func validateSubmission(s Submission) error {
 	if s.Options.Retrieval != "" && s.Options.Retrieval != "off" {
 		return ErrUnsupported
 	}
+	if len(s.Options.MCP) != 0 {
+		return fmt.Errorf("%w: mcp servers are not supported for durable jobs", ErrUnsupported)
+	}
+	if s.Options.AllowDangerous {
+		return fmt.Errorf("%w: allow_dangerous is not supported for durable jobs", ErrUnsupported)
+	}
 	if len(s.Prompt) == 0 || len(s.Prompt) > 100_000 {
 		return errors.New("prompt must be 1..100000 bytes")
 	}

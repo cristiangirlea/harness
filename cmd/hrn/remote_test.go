@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -142,6 +143,38 @@ func TestRemoteSubmitRejectsUnsupportedOptionsBeforeSending(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("invalid submissions sent %d requests", calls)
+	}
+}
+
+func TestRemoteSubmitValidatesCostBeforeSending(t *testing.T) {
+	var calls atomic.Int32
+	tenant, project, _ := remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"state":"queued"}`)
+	}))
+	for _, cost := range []string{"NaN", "+Inf", "-Inf"} {
+		t.Run(cost, func(t *testing.T) {
+			args := []string{"submit", "--tenant", tenant, "--project", project,
+				"--base-ref", strings.Repeat("a", 40), "--key", "stable-key",
+				"--max-cost", cost, "inspect"}
+			err := runRemote(args, io.Discard)
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "cost") {
+				t.Fatalf("invalid cost %s error = %v, want cost named", cost, err)
+			}
+			if got := calls.Load(); got != 0 {
+				t.Fatalf("invalid cost %s sent %d requests", cost, got)
+			}
+		})
+	}
+	args := []string{"submit", "--tenant", tenant, "--project", project,
+		"--base-ref", strings.Repeat("a", 40), "--key", "stable-key",
+		"--max-cost", "1", "inspect"}
+	if err := runRemote(args, io.Discard); err != nil {
+		t.Fatalf("valid cost submission: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("valid cost sent %d requests, want 1", got)
 	}
 }
 
