@@ -707,8 +707,8 @@ order they are worth taking:
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
       local models once a hrn-evals suite has measured them (the eval #224 asks for). Done:
       PR #329, 2026-10-14. The first table: hrn-evals eval `b123c` (six tasks, four codex
-      variants, one repeat), five rows, all Luna since codex reports no cost and the rules
-      then take the lower effort; recorded in hrn-evals PR #11
+      variants, one repeat), five rows, all Luna since codex reports no cost data and the
+      rules then take the lower effort; recorded in hrn-evals PR #11
       (`results/2026-10-14-routing.md`). The claude rows and three repetitions follow the
       limit reset of 2026-10-18, on the owner's yes.
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
