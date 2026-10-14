@@ -9,9 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -122,20 +120,21 @@ func TestNewFromEnvRejectsNonRegularCAFile(t *testing.T) {
 		}
 	})
 	t.Run("FIFO", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("mkfifo is unavailable on Windows")
-		}
-		mkfifo, err := exec.LookPath("mkfifo")
-		if err != nil {
-			t.Skip("mkfifo is unavailable")
-		}
 		path := filepath.Join(t.TempDir(), "ca.fifo")
-		if output, err := exec.Command(mkfifo, path).CombinedOutput(); err != nil {
-			t.Fatalf("mkfifo: %v: %s", err, output)
-		}
+		makeCAFIFO(t, path)
 		t.Setenv("HRN_SERVER_CA_FILE", path)
-		if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "HRN_SERVER_CA_FILE") {
-			t.Fatalf("NewFromEnv() error = %v, want HRN_SERVER_CA_FILE refusal", err)
+		done := make(chan error, 1)
+		go func() {
+			_, err := NewFromEnv()
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "HRN_SERVER_CA_FILE") {
+				t.Fatalf("NewFromEnv() error = %v, want HRN_SERVER_CA_FILE refusal", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("opening a FIFO blocked")
 		}
 	})
 }

@@ -53,11 +53,7 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 		if parsed.Scheme != "https" {
 			return nil, errors.New("HRN_SERVER_CA_FILE requires HTTPS")
 		}
-		info, err := os.Stat(caFile)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
-			return nil, errors.New("HRN_SERVER_CA_FILE must name a regular PEM CA file of at most 1 MiB")
-		}
-		pem, err := os.ReadFile(caFile)
+		pem, err := readCAFile(caFile)
 		if err != nil {
 			return nil, err
 		}
@@ -66,7 +62,7 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 			pool = x509.NewCertPool()
 		}
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, errors.New("remote CA file contains no certificates")
+			return nil, errors.New("HRN_SERVER_CA_FILE contains no certificates")
 		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
