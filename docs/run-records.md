@@ -33,6 +33,9 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
   saw. If checks fail or the original cannot be saved, the existing head-and-tail
   cut is used; without a run record directory, nothing is saved. File reads are
   not shaped. Old records without this directory or `shape_tools` still load.
+  Shell capture keeps the whole output up to 8 MiB, including on nonzero exit
+  and timeout. Above that ceiling it uses the existing head-and-tail cut, says
+  the original is unavailable, and saves no incomplete original.
 - `retrieval.json` — the opt-in packet, scope and version pin, saved before a backend
   starts. An unfinished run keeps this pin; a continuation checks it against the
   conversation before reuse.
