@@ -55,6 +55,9 @@ func wsTake(ctx context.Context, args []string) (int, error) {
 	if *max < 1 {
 		return 2, fmt.Errorf("--max %d: at least one slot\n%s", *max, wsUsage)
 	}
+	if *max > ws.Limit {
+		return 2, fmt.Errorf("--max %d: at most %d slots per repository", *max, ws.Limit)
+	}
 	got, err := ws.Take(ctx, ws.TakeOptions{Repo: *repo, Branch: *branch, Base: *base, Holder: *holder, Max: *max, NoFetch: *noFetch})
 	for _, n := range got.Notes {
 		fmt.Fprintln(os.Stderr, n)

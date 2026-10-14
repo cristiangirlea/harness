@@ -313,10 +313,10 @@ func TestABatchRunsBesideSlotsSessionsHoldWithoutWaiting(t *testing.T) {
 		}
 		slots[tr.Slot] = true
 	}
-	if !slots[5] || !slots[6] {
-		t.Errorf("slots = %v, want 5 and 6", slots)
+	if !slots[ws.DefaultMax+1] || !slots[ws.DefaultMax+2] {
+		t.Errorf("slots = %v, want %d and %d", slots, ws.DefaultMax+1, ws.DefaultMax+2)
 	}
-	for _, n := range []int{5, 6} {
+	for _, n := range []int{ws.DefaultMax + 1, ws.DefaultMax + 2} {
 		if exists(filepath.Join(dir, ".hrn", "slots", strconv.Itoa(n)+".lease")) {
 			t.Errorf("slot %d should be given back", n)
 		}
@@ -607,11 +607,62 @@ func TestATaskFailsRatherThanWaitForSlotsOnlyItsBatchKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	last := res.Tasks[len(res.Tasks)-1]
-	if last.Status != StatusError || !strings.Contains(last.Error, "already holds 4 slots") || !strings.Contains(last.Error, "none will come free") {
+	if last.Status != StatusError || !strings.Contains(last.Error, "already holds 5 slots") || !strings.Contains(last.Error, "none will come free") {
 		t.Fatalf("last task = %s: %s", last.Status, last.Error)
 	}
 	if b := git(t, dir, "branch", "--list", last.Branch); b != "" {
 		t.Errorf("a task that got no slot leaves no branch: %q", b)
+	}
+}
+
+func TestParallelAboveTenNeverTakesSlotEleven(t *testing.T) {
+	dir := initRepo(t)
+	failCommits(t, dir)
+	var tasks []Task
+	for i := range 11 {
+		tasks = append(tasks, Task{ID: "t" + strconv.Itoa(i+1), Prompt: "p"})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	res, err := Run(ctx, Spec{Dir: dir, Parallel: 12, Backend: "wb-ok", Tasks: tasks}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	used, denied := 0, 0
+	for _, tr := range res.Tasks {
+		if tr.Slot > 10 {
+			t.Errorf("task %s took slot %d", tr.ID, tr.Slot)
+		}
+		if tr.Slot > 0 {
+			used++
+		} else if strings.Contains(tr.Error, "10 slots") {
+			denied++
+		}
+	}
+	if used != 10 || denied != 1 {
+		t.Errorf("used %d slots, denied %d tasks; want 10 and 1", used, denied)
+	}
+	if exists(slotPath(dir, 11)) {
+		t.Error("slot 11 was made")
+	}
+}
+
+func TestSessionsAtLimitLeaveBatchWithoutASlot(t *testing.T) {
+	dir := initRepo(t)
+	for n := 1; n <= ws.Limit; n++ {
+		data, err := json.Marshal(ws.Lease{Holder: "session", Taken: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(dir, ".hrn", "slots", strconv.Itoa(n)+".lease"), string(data))
+	}
+	res, _ := run(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: []Task{{ID: "blocked", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusError || tr.Slot != 0 || !strings.Contains(tr.Error, "at most 10 slots per repository") {
+		t.Fatalf("task = %+v, want no slot and the limit named", tr)
+	}
+	if exists(slotPath(dir, 11)) {
+		t.Error("slot 11 was made")
 	}
 }
 
@@ -634,7 +685,7 @@ func failCommits(t *testing.T, dir string, branches ...string) {
 // until hrn ws free.
 func session(t *testing.T, dir string) ws.Taken {
 	t.Helper()
-	got, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Holder: "session", NoFetch: true, Max: 100})
+	got, err := ws.Take(context.Background(), ws.TakeOptions{Repo: dir, Holder: "session", NoFetch: true, Max: ws.Limit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +734,7 @@ func TestATaskFailsRatherThanWaitOnASessionOnceItsBatchHoldsItsBound(t *testing.
 		}
 	}
 	last := res.Tasks[ws.DefaultMax]
-	if last.Status != StatusError || !strings.Contains(last.Error, "already holds 4 slots") {
+	if last.Status != StatusError || !strings.Contains(last.Error, "already holds 5 slots") {
 		t.Errorf("last task = %s: %s, want it to fail on the batch's bound", last.Status, last.Error)
 	}
 	if len(waits) != 0 {
@@ -725,7 +776,7 @@ func TestABatchHoldsNoMoreThanItsBoundWhenSessionsFreeTheirSlots(t *testing.T) {
 		}
 	}
 	for _, tr := range res.Tasks[ws.DefaultMax:] {
-		if tr.Status != StatusError || tr.Slot != 0 || !strings.Contains(tr.Error, "already holds 4 slots") {
+		if tr.Status != StatusError || tr.Slot != 0 || !strings.Contains(tr.Error, "already holds 5 slots") {
 			t.Errorf("%s = %+v, want it to fail on the batch's bound", tr.ID, tr)
 		}
 	}
@@ -741,7 +792,7 @@ func TestABatchHoldsNoMoreThanItsBoundWhenSessionsFreeTheirSlots(t *testing.T) {
 func TestASessionOnADistantSlotDoesNotWidenABatchsRange(t *testing.T) {
 	dir := initRepo(t)
 	quickPoll(t)
-	holdAll(t, dir) // another batch on slots 1 to 4
+	holdAll(t, dir) // another batch on slots 1 to 5
 	far := 10
 	data, _ := json.Marshal(ws.Lease{Holder: "session", Taken: time.Now()})
 	writeFile(t, filepath.Join(dir, ".hrn", "slots", strconv.Itoa(far)+".lease"), string(data))
@@ -780,8 +831,8 @@ func TestATaskTriesTheNextSlotWhenASessionTakesOneAfterItsRangeWasWorkedOut(t *t
 	}
 	taken := false
 	rangeComputed = func(max int) {
-		// The last task's try: the ones before it kept slots 1 to 3, so its
-		// range ends at slot 4, which a session takes before the take scans it.
+		// The last task's try: the ones before it kept slots 1 to 4, so its
+		// range ends at slot 5, which a session takes before the take scans it.
 		if _, ok := leaseHolder(t, dir, ws.DefaultMax-1); !ok || taken {
 			return
 		}
@@ -816,28 +867,28 @@ func TestATaskAtTheBatchsBoundWaitsForItsRunningTasksNotItsKeptSlots(t *testing.
 	failCommits(t, dir, "hrn/t1")
 	var mu sync.Mutex
 	var waits []string
-	t5Waited := make(chan struct{})
+	t6Waited := make(chan struct{})
 	setHook(t, func(task agent.Task) {
 		writeFile(t, filepath.Join(task.Dir, "out.txt"), "ok\n")
 		if strings.HasPrefix(task.Prompt, "t1") {
 			return // its commit fails, so its slot is kept
 		}
 		select {
-		case <-t5Waited:
+		case <-t6Waited:
 		case <-time.After(10 * time.Second):
-			t.Error("t5 did not wait for a running task's slot")
+			t.Error("t6 did not wait for a running task's slot")
 		}
 	})
-	tasks := []Task{{ID: "t1", Prompt: "t1"}, {ID: "t2", Prompt: "t2"}, {ID: "t3", Prompt: "t3"}, {ID: "t4", Prompt: "t4"}, {ID: "t5", Prompt: "t5"}}
+	tasks := []Task{{ID: "t1", Prompt: "t1"}, {ID: "t2", Prompt: "t2"}, {ID: "t3", Prompt: "t3"}, {ID: "t4", Prompt: "t4"}, {ID: "t5", Prompt: "t5"}, {ID: "t6", Prompt: "t6"}}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var once sync.Once
 	res, err := Run(ctx, Spec{Dir: dir, Parallel: ws.DefaultMax, Backend: "wb-hook", Tasks: tasks}, func(e Event) {
-		if e.Kind == "wait" && e.Task == "t5" {
+		if e.Kind == "wait" && e.Task == "t6" {
 			mu.Lock()
 			waits = append(waits, e.Text)
 			mu.Unlock()
-			once.Do(func() { close(t5Waited) })
+			once.Do(func() { close(t6Waited) })
 		}
 	})
 	if err != nil {
@@ -850,11 +901,11 @@ func TestATaskAtTheBatchsBoundWaitsForItsRunningTasksNotItsKeptSlots(t *testing.
 	if tr := byID["t1"]; tr.Status != StatusError || !strings.Contains(tr.Error, "kept") {
 		t.Errorf("t1 = %+v, want its slot kept", tr)
 	}
-	if tr := byID["t5"]; tr.Status != StatusPass {
-		t.Errorf("t5 = %+v, want it to run once a running task gave its slot back", tr)
+	if tr := byID["t6"]; tr.Status != StatusPass {
+		t.Errorf("t6 = %+v, want it to run once a running task gave its slot back", tr)
 	}
 	if len(waits) == 0 || !strings.Contains(waits[0], "this batch holds") {
-		t.Errorf("t5's waits = %q, want one on the batch's own slots", waits)
+		t.Errorf("t6's waits = %q, want one on the batch's own slots", waits)
 	}
 }
 
