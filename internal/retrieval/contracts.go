@@ -11,6 +11,9 @@ import (
 )
 
 const MaxPacketBytes = 8 * 1024
+const MaxEntryKeyBytes = 128
+const MaxEntryIdentifiers = 32
+const MaxIdentifierBytes = 256
 const RankingVersion = "simple-or-exact-v2"
 
 type Scope struct {
@@ -57,8 +60,8 @@ type Search struct {
 }
 
 // Packet carries reviewed reference text. Validation permits one reference
-// label pair per entry in Text, rejects outer project-reference markers there,
-// and rejects all four markers in every entry field.
+// label pair per entry in Text, bounds the combined rendered entry fields, rejects outer
+// project-reference markers there, and rejects all four markers in every entry field.
 type Packet struct {
 	VersionID   string  `json:"version_id,omitempty"`
 	AuditID     string  `json:"audit_id"`
@@ -111,14 +114,33 @@ func ValidatePacket(p Packet, version, query string) error {
 	if strings.Contains(p.Text, "<project-reference") || strings.Contains(p.Text, "</project-reference>") || strings.Count(p.Text, "[Reference ") != len(p.Entries) || strings.Count(p.Text, "[/Reference]") != len(p.Entries) {
 		return fmt.Errorf("retrieval packet contains a frame marker")
 	}
+	entryBytes := 0
 	for _, e := range p.Entries {
+		if !strings.Contains(p.Text, "[Reference "+e.ID+";") {
+			return fmt.Errorf("retrieval packet entry id is missing from text")
+		}
 		if hasFrameMarker(e.ID) || hasFrameMarker(e.Key) || hasFrameMarker(e.Content) || hasFrameMarker(e.Source) || hasFrameMarker(e.Evidence) {
 			return fmt.Errorf("retrieval packet entry contains a frame marker")
+		}
+		if len(e.Key) > MaxEntryKeyBytes {
+			return fmt.Errorf("retrieval packet entry key exceeds %d-byte import limit", MaxEntryKeyBytes)
+		}
+		if len(e.Identifiers) > MaxEntryIdentifiers {
+			return fmt.Errorf("retrieval packet entry identifiers exceed %d-item import limit", MaxEntryIdentifiers)
 		}
 		for _, id := range e.Identifiers {
 			if hasFrameMarker(id) {
 				return fmt.Errorf("retrieval packet entry contains a frame marker")
 			}
+			if len(id) > MaxIdentifierBytes {
+				return fmt.Errorf("retrieval packet entry identifier exceeds %d-byte import limit", MaxIdentifierBytes)
+			}
+		}
+		for _, field := range []string{e.ID, e.Content, e.Source, e.Evidence} {
+			if len(field) > MaxPacketBytes-entryBytes {
+				return fmt.Errorf("retrieval packet entries total text exceeds %d-byte cap", MaxPacketBytes)
+			}
+			entryBytes += len(field)
 		}
 	}
 	return nil

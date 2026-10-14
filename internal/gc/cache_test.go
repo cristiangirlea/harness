@@ -426,6 +426,25 @@ func TestGCFreeBelowRemovesTheOldestCachesFirstUntilTheDriveHasEnough(t *testing
 	wantCache(t, findCache(t, cs, elsewhere), Keep, "inside --idle 24h")
 }
 
+func TestGCFreeBelowUsesDriveNameInMessages(t *testing.T) {
+	root := tempRoot(t)
+	cache := tagged(t, filepath.Join(root, "old"), 10*time.Hour, 1000)
+	opt := cacheOpt
+	opt.FreeBelow = 1000
+	opt.Drive = func(string) (Drive, error) {
+		return Drive{ID: "device 42", Name: "/mnt/build", Free: 100}, nil
+	}
+
+	cs := caches(t, []string{root}, nil, opt)
+	wantCache(t, findCache(t, cs, cache), Remove, "/mnt/build has only 100 bytes free")
+	if removed, errs := ApplyCaches(context.Background(), cs); len(removed) != 1 || len(errs) != 0 {
+		t.Fatalf("apply: removed %d, errors %v", len(removed), errs)
+	}
+	if got, want := FreeBelowReport(cs, opt), []string{"/mnt/build still has 100 bytes free, 900 bytes below 1000 bytes"}; !equalLines(got, want) {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
 func TestGCFreeBelowLeavesADriveWhoseFreeSpaceIsUnknown(t *testing.T) {
 	root := tempRoot(t)
 	c := tagged(t, filepath.Join(root, "c10h"), 10*time.Hour, 1000)

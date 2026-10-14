@@ -4,6 +4,7 @@ package gc
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,41 @@ import (
 	"testing"
 	"time"
 )
+
+func TestGCDiskFreeNamesUnixMountPoint(t *testing.T) {
+	root := tempRoot(t)
+	d, err := diskFree(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(d.Name) {
+		t.Fatalf("mount name %q is not absolute", d.Name)
+	}
+	info, err := os.Stat(d.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("mount name %q is not a directory", d.Name)
+	}
+	if rel, err := filepath.Rel(d.Name, root); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		t.Fatalf("mount %q does not contain %q: relative path %q, error %v", d.Name, root, rel, err)
+	}
+	sys := info.Sys().(*syscall.Stat_t)
+	if want := fmt.Sprintf("device %d", sys.Dev); d.ID != want {
+		t.Errorf("drive ID = %q, want %q", d.ID, want)
+	}
+	parent := filepath.Dir(d.Name)
+	if parent != d.Name {
+		parentInfo, err := os.Stat(parent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parentInfo.Sys().(*syscall.Stat_t).Dev == sys.Dev {
+			t.Errorf("mount %q and parent %q have the same device", d.Name, parent)
+		}
+	}
+}
 
 func TestGCApplyPutsBackCacheLockedJustAfterMoveOnUnix(t *testing.T) {
 	root := tempRoot(t)

@@ -410,6 +410,9 @@ func (l Lease) processHolds() bool {
 	return true
 }
 
+// StartID returns a process's platform-specific start identity when available.
+func StartID(pid int) (string, bool) { return startID(pid) }
+
 // samePlatform reports whether two start identities carry the same prefix
 // ("win:", "linux:").
 func samePlatform(a, b string) bool {

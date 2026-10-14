@@ -95,11 +95,11 @@ func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (strin
 	seen := map[string]bool{}
 	for i := range entries {
 		e := &entries[i]
-		if unsafeKnowledgeSource(*e) || e.Key == "" || len(e.Key) > 128 || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > 32 || !utf8.ValidString(e.Content) {
+		if unsafeKnowledgeSource(*e) || e.Key == "" || len(e.Key) > retrieval.MaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > retrieval.MaxEntryIdentifiers || !utf8.ValidString(e.Content) {
 			return "", ErrUnsupported
 		}
 		for _, id := range e.Identifiers {
-			if len(id) == 0 || len(id) > 256 || exactWords.FindString(id) != id {
+			if len(id) == 0 || len(id) > retrieval.MaxIdentifierBytes || exactWords.FindString(id) != id {
 				return "", ErrUnsupported
 			}
 		}
