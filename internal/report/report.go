@@ -312,11 +312,18 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		if res.CostEstimate && res.CostUSD > 0 {
 			row.CostEstimated = true
 		}
-		// Cache writes are input the model read uncached this turn; leaving
-		// them out would report a full cache hit for a run that cached
-		// everything once and read it once.
-		input += res.InputTokens + res.CacheWrite
-		cached += res.CacheRead
+		// ModelTokens accounts for backends that include cache reads in input
+		// and those that report disjoint input and cache counters.
+		if res.Backend == "" {
+			res.Backend = r.Backend
+		}
+		if total, known, _ := res.ModelTokens(); known {
+			input += total - res.OutputTokens - res.CacheRead
+			cached += res.CacheRead
+		} else if res.Usage == nil {
+			input += res.InputTokens + res.CacheWrite
+			cached += res.CacheRead
+		}
 	}
 	row.MedianDuration = time.Duration(Median(durations))
 	row.MedianTurns = Median(turns)

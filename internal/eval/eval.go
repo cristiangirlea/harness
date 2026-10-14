@@ -39,10 +39,12 @@ type Spec struct {
 
 // Variant is one cell of the matrix: what to run the task set with.
 type Variant struct {
-	Name    string `json:"name,omitempty"` // default: backend[-model][-effort]
-	Backend string `json:"backend,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Effort  string `json:"effort,omitempty"`
+	Retrieval        string `json:"retrieval,omitempty"`
+	RetrievalVersion string `json:"retrieval_version,omitempty"`
+	Name             string `json:"name,omitempty"` // default: backend[-model][-effort]
+	Backend          string `json:"backend,omitempty"`
+	Model            string `json:"model,omitempty"`
+	Effort           string `json:"effort,omitempty"`
 }
 
 func (v Variant) name() string {
@@ -157,6 +159,8 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 				cell.Backend = firstOf(v.Backend, t.Backend)
 				cell.Model = firstOf(v.Model, t.Model)
 				cell.Effort = firstOf(v.Effort, t.Effort)
+				cell.Retrieval = firstOf(v.Retrieval, t.Retrieval)
+				cell.RetrievalVersion = firstOf(v.RetrievalVersion, t.RetrievalVersion)
 				cell.Retry = nil
 				bs.Tasks = append(bs.Tasks, cell)
 			}
@@ -259,12 +263,14 @@ func (r Record) Totals() (cells, passed int, costUSD float64, estimate bool) {
 
 // Record is one eval, saved under $HRN_HOME/evals.
 type Record struct {
-	ID       string        `json:"id"`
-	BatchID  string        `json:"batch_id"`
-	Started  time.Time     `json:"started"`
-	Duration time.Duration `json:"duration_ns"`
-	Spec     Spec          `json:"spec"`
-	Table    Table         `json:"table"`
+	RetrievalManifest   *RetrievalManifest   `json:"retrieval_manifest,omitempty"`
+	RetrievalComparison *RetrievalComparison `json:"retrieval_comparison,omitempty"`
+	ID                  string               `json:"id"`
+	BatchID             string               `json:"batch_id"`
+	Started             time.Time            `json:"started"`
+	Duration            time.Duration        `json:"duration_ns"`
+	Spec                Spec                 `json:"spec"`
+	Table               Table                `json:"table"`
 	// Judgements are the judge's verdicts, one per passing cell.
 	Judgements   []Judgement `json:"judgements,omitempty"`
 	JudgeCostUSD float64     `json:"judge_cost_usd,omitempty"`

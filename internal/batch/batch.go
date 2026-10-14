@@ -105,14 +105,14 @@ type Result struct {
 	Tasks    []TaskResult  `json:"tasks"`
 	Duration time.Duration `json:"duration_ns"`
 	// Ownership is how the record says which worktrees and branches are its
-	// tasks' own. Run sets ownedByClaim: a slotless task owns them only when
+	// tasks' own. Run sets OwnershipClaim: a slotless task owns them only when
 	// its branch_made says so. Records from before it (0) never said so for a
 	// fresh task, and are read as hrn wrote them then (owned, by path).
 	Ownership int `json:"ownership,omitempty"`
 }
 
-// ownedByClaim is the Ownership of every record Run writes now.
-const ownedByClaim = 1
+// OwnershipClaim is the Ownership of every record Run writes now.
+const OwnershipClaim = 1
 
 type TaskResult struct {
 	ID       string `json:"id"`
@@ -262,7 +262,7 @@ func (s *Spec) normalize() error {
 			return fmt.Errorf("duplicate task id %q", t.ID)
 		}
 		seen[t.ID] = true
-		if err := t.Options.Validate(); err != nil {
+		if err := t.Options.Over(s.Options).Validate(); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkBackends(t.Backend, t.Retry); err != nil {
@@ -406,7 +406,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 
-	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: ownedByClaim}
+	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
 	for i, t := range spec.Tasks {
 		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
@@ -603,7 +603,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 	}
 
-	task := agent.Task{Options: opts} // Dir is the worktree, once there is one
+	task := agent.Task{Options: opts, OriginalPrompt: t.Prompt} // Dir is the worktree, once there is one
 	expect, err := compileExpect(t.Expect)
 	if err != nil {
 		return fail(err)
@@ -740,6 +740,13 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, gates, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
+		task.RetrievalState = out.att.Result.Retrieval
+		task.RetrievalRepair = false
+		for _, g := range out.att.Gates {
+			if g.ExitCode != 0 {
+				task.RetrievalRepair = true
+			}
+		}
 		if out.commit != "" {
 			tr.Commit = out.commit
 		}
@@ -1330,7 +1337,7 @@ func branchOnly(tr TaskResult) bool {
 // Records from before Ownership never set it for a fresh task, whose
 // worktree was its own unless finding it taken ended the task (foundTaken).
 func notMine(res Result, tr TaskResult) bool {
-	if res.Ownership >= ownedByClaim {
+	if res.Ownership >= OwnershipClaim {
 		return !tr.BranchMade
 	}
 	return foundTaken(tr)
@@ -1510,6 +1517,9 @@ func removeEmptyDir(dir string) error {
 }
 
 func batchesDir() string { return filepath.Join(runlog.Home(), "batches") }
+
+// SaveResult saves a batch record using the same path as Run.
+func SaveResult(res Result) error { return save(res) }
 
 func save(res Result) error {
 	if failSave != nil {

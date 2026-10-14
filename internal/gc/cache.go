@@ -298,7 +298,7 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if isMovedCache(c.Path) {
 		return Remove, "moved cache left by an earlier removal"
 	}
-	idle := now.Sub(c.LastBuild)
+	idle := ageAt(now, c.LastBuild)
 	if idle >= opt.Idle {
 		return Remove, "idle " + short(idle)
 	}
@@ -393,7 +393,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 		sort.SliceStable(s.candidates, func(a, b int) bool { return all[s.candidates[a]].LastBuild.Before(all[s.candidates[b]].LastBuild) })
 		for _, i := range s.candidates {
 			c := &all[i]
-			idle := now.Sub(c.LastBuild)
+			idle := ageAt(now, c.LastBuild)
 			if alreadyEnough {
 				if s.free < opt.FreeBelow && idle >= minIdle {
 					s.more = true
@@ -509,6 +509,16 @@ func profiles(dir string) []string {
 	walk(dir, 2)
 	sort.Strings(out)
 	return out
+}
+
+// ageAt is how long before now a cache was last written. A write time a hair
+// after now (file times and the clock differ by their resolution) is age 0,
+// so --idle 0 takes any cache (#245).
+func ageAt(now, written time.Time) time.Duration {
+	if d := now.Sub(written); d > 0 {
+		return d
+	}
+	return 0
 }
 
 // lastBuild is the newest write among a cache's profile folders, their deps,

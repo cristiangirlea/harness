@@ -33,6 +33,8 @@ first paragraph only, since a brief's later paragraphs mention every keyword; th
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
 median cost, and the cache share (cache-read tokens over every input token, cache writes included;
 `-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
+It also shows `-` when Codex usage is marked missing; Codex's cache share divides
+cache reads by input tokens that already include those reads.
 Batches group by repository; their cost sums every attempt, passed or not. Runs without
 a result (still running or killed), batches with a task still running, and records that
 cannot be read are counted under the tables and left out of them.
@@ -75,6 +77,14 @@ does, and a retried attempt would score the harness rather than the backend. Eve
 else, gates and mode and the budgets, `lean` and `compact_window`, carries through from the
 spec; cells on claude are lean unless the spec or task says `"lean": false` (see
 [Lean claude workers](backends.md#lean-claude-workers)).
+
+Variants may set `retrieval` (`off`, `optional` or `required`) and
+`retrieval_version`. An eval record may include `retrieval_manifest` and
+`retrieval_comparison`: held-out tasks, coverage, preparation and online overhead,
+and a gate requiring equal success with at least 10% lower median model tokens
+across complete comparable cells. Failed attempts count in per-success usage;
+zero successes leave that ratio null. The bundled synthetic fixture tests the
+accounting and establishes no real model savings.
 
 `hrn eval eval.json` prints what each variant did and how each task scored under it:
 

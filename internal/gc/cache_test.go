@@ -355,10 +355,22 @@ func TestDiskFreeNamesTheVolumeAndItsFreeSpace(t *testing.T) {
 
 func TestGCTakesTheIdleLimitAsGiven(t *testing.T) {
 	root := tempRoot(t)
-	fresh := tagged(t, filepath.Join(root, "fresh"), 0, 100)
+	// Written a second ago, not now: a file's time and the clock differ by
+	// their resolution, so a cache written now can read as not yet 1ns old (#245).
+	fresh := tagged(t, filepath.Join(root, "fresh"), time.Second, 100)
 
 	cs := caches(t, []string{root}, nil, Options{Idle: time.Nanosecond, MinIdle: time.Nanosecond})
 	wantCache(t, findCache(t, cs, fresh), Remove, "idle")
+}
+
+func TestGCTakesACacheWrittenAfterNowAsZeroIdle(t *testing.T) {
+	now := time.Now()
+	if got := ageAt(now, now.Add(5*time.Millisecond)); got != 0 {
+		t.Errorf("a write time just after now gives age %s, want 0", got)
+	}
+	if got := ageAt(now, now.Add(-time.Hour)); got != time.Hour {
+		t.Errorf("age = %s, want 1h", got)
+	}
 }
 
 func TestGCKeepsACacheWhoseBuildHoldsTheLock(t *testing.T) {

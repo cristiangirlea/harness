@@ -50,11 +50,10 @@ func TestClaudeRefusesPerTokenBillingAtInit(t *testing.T) {
 			b.candidates = nil
 			b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperClaudeKeySource$", "--"} }
 			var text []string
-			timeout := 500 * time.Millisecond
-			if !tc.refuse {
-				timeout = 2 * time.Second
-			}
-			res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(timeout)}},
+			// One deadline for every case, long enough for a busy PC to start the
+			// helper: a refusal that did not stop the CLI still ends as a timeout,
+			// since the helper sleeps 5s after init, and that fails the test below.
+			res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(2 * time.Second)}},
 				func(e Event) {
 					if e.Kind == EventText {
 						text = append(text, e.Text)
@@ -81,7 +80,7 @@ func TestClaudeRefusesPerTokenBillingAtSecondInit(t *testing.T) {
 	b.candidates = nil
 	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperClaudeKeySource$", "--"} }
 	var text []string
-	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(500 * time.Millisecond)}},
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(2 * time.Second)}},
 		func(e Event) {
 			if e.Kind == EventText {
 				text = append(text, e.Text)
