@@ -726,6 +726,11 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: watch matches quoted program path delimiters (#237, PR #363). Only the
+  matching quote ends a quoted program path, so apostrophes in double-quoted Windows
+  folder names survive the scan, including JSON-escaped text. In single quotes a
+  double quote that no backslash escapes still ends the scan, since in JSON text it
+  closes the string. Unquoted delimiters and the line-end and input-end bounds stay.
 - 2026-10-14: index stream sends later changes (#66, PR #362). Test a new run
   appearing in a later replace on the same connection, after reading the first
   fragment, with a short poll interval and a generous deadline. Suppressing every
