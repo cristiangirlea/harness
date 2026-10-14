@@ -37,9 +37,14 @@ var guardRules = []struct {
 	{"sudo", matches(`\b(?i:sudo)\b`)},
 	// rm -r against a root rather than something inside one.
 	{"rm-root", rmHitsRoot},
-	// Downloading a script straight into a shell, however many stages the pipe
-	// has on the way.
-	{"pipe-to-shell", matches(`\b(?i:curl|wget|irm|iwr)\b.*\|\s*(?:(?i:sudo)\s+)?(?i:sh|bash|zsh|powershell|pwsh|iex|Invoke-Expression)\b`)},
+	// Downloading a script straight into a shell or PowerShell evaluation,
+	// through any number of pipe stages or a parenthesized download argument.
+	{"pipe-to-shell", matches(
+		`\b(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b.*\|\s*(?:(?i:sudo)\s+)?(?i:sh|bash|zsh|powershell|pwsh|iex|Invoke-Expression)\b` +
+			`|(?:^|[^\w-])(?i:iex|Invoke-Expression)\s*\(\s*(?:\(\s*)*(?:` +
+			`(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\s+` +
+			`|(?i:New-Object)\s+(?i:(?:System\.)?Net\.WebClient)\s*\)\s*\.\s*(?i:DownloadString)\s*\()`,
+	)},
 	// Formatting a filesystem, or writing over a device rather than a file.
 	// Match program names in any case on every platform; a Linux command named
 	// Format is not a realistic false positive.
