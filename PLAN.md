@@ -722,6 +722,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: Backend preferences (#345, PR #TBD). `backends.json` stores the enabled names in preference order and an optional default, with no record changes and unchanged selection when absent. Runs, MCP, batch retries, evals and supervisor execution respect the preference; routing skips disabled rows and carry-on uses an enabled installed partner.
+
 - 2026-10-14: a codex reconnect notice is not the run's error (#342, PR #343). `Reconnecting...
   n/5` is the CLI retrying its model stream: an `info` event that stands as the error only until
   the turn completes, so a run whose work finished is `ok` with its usage, and a stream that
