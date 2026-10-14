@@ -442,20 +442,26 @@ func TestPublicAccessKeepsKnownKeysAvailableDuringOneSlowRefresh(t *testing.T) {
 	if got := f.request(h, "/", "harness.example.com", "", f.validToken()); got.Code != 200 {
 		t.Fatalf("initial request = %d", got.Code)
 	}
-	unknown := f.token(map[string]any{"alg": "RS256", "kid": "unknown"}, f.validClaims(), f.key)
+	newKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newToken := f.token(map[string]any{"alg": "RS256", "kid": "new-key"}, f.validClaims(), newKey)
 	knownToken := f.validToken()
 	var wg sync.WaitGroup
+	results := make(chan int, 9)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		f.request(h, "/", "harness.example.com", "", unknown)
+		results <- f.request(h, "/", "harness.example.com", "", newToken).Code
 	}()
 	<-f.started
+	f.extraKey.Store(newKey)
 	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			f.request(h, "/", "harness.example.com", "", unknown)
+			results <- f.request(h, "/", "harness.example.com", "", newToken).Code
 		}()
 	}
 	known := make(chan int, 1)
@@ -470,8 +476,93 @@ func TestPublicAccessKeepsKnownKeysAvailableDuringOneSlowRefresh(t *testing.T) {
 	}
 	close(f.release)
 	wg.Wait()
+	close(results)
+	for code := range results {
+		if code != http.StatusOK {
+			t.Errorf("new key after refresh = %d, want 200", code)
+		}
+	}
 	if got := f.fetches.Load(); got != 2 {
 		t.Fatalf("certificate fetches = %d, want initial and one refresh", got)
+	}
+}
+
+type blockingAccessWriter struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingAccessWriter) Write(p []byte) (int, error) {
+	close(w.started)
+	<-w.release
+	return len(p), nil
+}
+
+func TestPublicAccessBlockedFailureReportDoesNotHoldKeysOrWaiters(t *testing.T) {
+	f := newAccessFixture(t)
+	w := &blockingAccessWriter{started: make(chan struct{}), release: make(chan struct{})}
+	f.opt.Public.Errors = w
+	v := &accessVerifier{opt: *f.opt.Public}
+	if email, reason := v.verify(f.validToken()); reason != "" || email != "owner@example.com" {
+		t.Fatalf("initial verification = %q, %q", email, reason)
+	}
+	f.fail.Store(true)
+	unknown := f.token(map[string]any{"alg": "RS256", "kid": "unknown"}, f.validClaims(), f.key)
+	fetchDone := make(chan string, 1)
+	go func() {
+		_, reason := v.verify(unknown)
+		fetchDone <- reason
+	}()
+	select {
+	case <-w.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("failure report did not start")
+	}
+	defer func() {
+		select {
+		case <-w.release:
+		default:
+			close(w.release)
+		}
+	}()
+	knownToken := f.validToken()
+	known := make(chan string, 1)
+	go func() {
+		_, reason := v.verify(knownToken)
+		known <- reason
+	}()
+	select {
+	case reason := <-known:
+		if reason != "" {
+			t.Errorf("cached key verification = %q", reason)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("cached key verification waited for the error writer")
+	}
+	const waiters = 8
+	waiterResults := make(chan string, waiters)
+	for range waiters {
+		go func() {
+			_, reason := v.verify(unknown)
+			waiterResults <- reason
+		}()
+	}
+	for range waiters {
+		select {
+		case reason := <-waiterResults:
+			if reason != "key fetch failed" {
+				t.Errorf("waiting verification = %q, want key fetch failed", reason)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("waiting verification waited for the error writer")
+		}
+	}
+	close(w.release)
+	if reason := <-fetchDone; reason != "key fetch failed" {
+		t.Errorf("refresh verification = %q, want key fetch failed", reason)
+	}
+	if got := f.fetches.Load(); got != 2 {
+		t.Errorf("certificate fetches = %d, want initial and one failed refresh", got)
 	}
 }
 

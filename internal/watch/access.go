@@ -218,18 +218,15 @@ func (v *accessVerifier) key(kid string) (*rsa.PublicKey, error) {
 
 		keys, err := v.fetch()
 		v.mu.Lock()
+		reportFailure := false
 		if err != nil {
 			v.lastFetchErr = err
 			if v.keys == nil {
 				v.lastEmptyFailure = v.now()
 			}
 			if !v.failureReported {
-				out := v.opt.Errors
-				if out == nil {
-					out = os.Stderr
-				}
-				fmt.Fprintf(out, "hrn watch: Cloudflare Access keys at %s: %v\n", v.certsURL(), err)
 				v.failureReported = true
+				reportFailure = true
 			}
 		} else {
 			v.keys = keys
@@ -244,6 +241,13 @@ func (v *accessVerifier) key(kid string) (*rsa.PublicKey, error) {
 		v.fetching = nil
 		key := v.keys[kid]
 		v.mu.Unlock()
+		if reportFailure {
+			out := v.opt.Errors
+			if out == nil {
+				out = os.Stderr
+			}
+			fmt.Fprintf(out, "hrn watch: Cloudflare Access keys at %s: %v\n", v.certsURL(), err)
+		}
 		return key, err
 	}
 }
