@@ -695,7 +695,7 @@ order they are worth taking:
     - [#151](https://github.com/cristiangirlea/harness/issues/151) and
       [#264](https://github.com/cristiangirlea/harness/issues/264): an unknown cost is never
       zero and a cache read is counted once, before any saving is claimed. #151 done:
-      PR #313, 2026-10-14.
+      PR #313, 2026-10-14. #264 done: PR #321, 2026-10-14.
     - [#296](https://github.com/cristiangirlea/harness/issues/296): large tool results shaped
       per kind (tests, logs, JSON, tables, terminal), the original kept behind a handle,
       invariants checked, measured by an eval in hrn-evals.
@@ -2166,3 +2166,10 @@ neither of them follows a run while it happens.
   `api-check.sh` is listed as not verified (it spends money). Sized before #295's numbers
   exist: the owner asked for this order on 2026-10-14. Hardening and extra tests from the
   review are #318; AGENTS.md is 119 lines for now, with the rules also in the doc.
+- 2026-10-14: PR #321 (closes #264): a codex cache read is counted once. The report's
+  context average for a run without usage events and hrn watch's purposes card both go
+  through `ModelTokens` (context is its total less output; the card sums input, output,
+  cache reads and writes once). A record the helper cannot place that carries no usage
+  metadata keeps the plain sum of its counters on the card, as in the report, so opencode
+  and gemini rows do not shrink silently; gemini's and opencode's semantics in the helper
+  itself are #320.
