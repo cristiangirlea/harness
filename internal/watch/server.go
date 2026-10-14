@@ -279,6 +279,7 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
+	mux.HandleFunc("POST /backends", s.saveBackends)
 	mux.HandleFunc("GET /run/{id}", s.run)
 	mux.HandleFunc("GET /batch/{id}", s.batch)
 	mux.HandleFunc("GET /stream/index", s.streamIndex)

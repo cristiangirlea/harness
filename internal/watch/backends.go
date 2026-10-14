@@ -1,11 +1,14 @@
 package watch
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -14,6 +17,45 @@ type backendCard struct {
 	Default, Chosen, Key string
 	Problem              string
 	Editable             bool
+}
+
+func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
+	if !s.mayChangeBackends(w, r) {
+		http.Error(w, "Local requests only", http.StatusForbidden)
+		return
+	}
+	var p *prefs.Prefs
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&p); err != nil || p == nil {
+		http.Error(w, "Expected a backend preferences object", http.StatusBadRequest)
+		return
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		http.Error(w, "Expected one backend preferences object", http.StatusBadRequest)
+		return
+	}
+	names := append([]string{}, p.EnabledNames...)
+	if p.Default() != "" {
+		names = append(names, p.Default())
+	}
+	for _, name := range names {
+		if _, err := agent.Get(name); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if err := prefs.Save(runlog.Home(), *p); err != nil {
+		// Save validates the default before touching the filesystem. Other
+		// errors may include private paths, so keep them off the page.
+		if p.Default() != "" && (len(p.EnabledNames) == 0 || !p.Enabled(p.Default())) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			http.Error(w, "Backend preferences could not be saved", http.StatusInternalServerError)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type backendRow struct {
