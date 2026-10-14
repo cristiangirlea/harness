@@ -49,6 +49,67 @@ func sampleBatch() batch.Result {
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
+func TestContextFromTotalsCountsCacheOnce(t *testing.T) {
+	for _, tc := range []struct {
+		backend string
+		want    int64
+	}{{"codex", 500}, {"api", 950}} {
+		t.Run(tc.backend, func(t *testing.T) {
+			for _, resultBackend := range []string{tc.backend, ""} {
+				r := rec(tc.backend, "m", "/repo", 0, agent.Result{
+					InputTokens: 1000, OutputTokens: 200, CacheRead: 800, CacheWrite: 100, Turns: 2,
+				})
+				r.Result.Backend = resultBackend
+				rows, all, err := Select([]runlog.Record{r}, nil, time.Time{}).RunRows(ByBackend)
+				if err != nil || len(rows) != 1 {
+					t.Fatalf("rows=%+v err=%v", rows, err)
+				}
+				for _, row := range []Row{rows[0], all} {
+					if row.MedianContext != float64(tc.want) || row.PeakContext != tc.want || row.ContextFrom != ContextFromTotals {
+						t.Errorf("result backend %q: row=%+v, want context %d from totals", resultBackend, row, tc.want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestContextFromTotalsExcludesMissingUsage(t *testing.T) {
+	r := rec("codex", "m", "/repo", 0, agent.Result{
+		InputTokens: 1000, OutputTokens: 200, CacheRead: 800, CacheWrite: 100, Turns: 2,
+		ContextTokens: 1200,
+		Usage:         &agent.UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing"},
+	})
+	rows, all, err := Select([]runlog.Record{r}, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	for _, row := range []Row{rows[0], all} {
+		if row.MedianContext != 0 || row.PeakContext != 0 || row.ContextFrom != "" {
+			t.Errorf("row=%+v, want no context from missing usage", row)
+		}
+	}
+}
+
+func TestContextFromTotalsCombinesBackendSemantics(t *testing.T) {
+	var recs []runlog.Record
+	for _, backend := range []string{"codex", "api"} {
+		recs = append(recs, rec(backend, "m", "/repo", 0, agent.Result{
+			InputTokens: 1000, OutputTokens: 200, CacheRead: 800, CacheWrite: 100, Turns: 2,
+		}))
+	}
+	rows, all, err := Select(recs, nil, time.Time{}).RunRows(ByModel)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	// Codex's inclusive input averages 500; api's disjoint counters average 950.
+	for _, row := range []Row{rows[0], all} {
+		if row.Runs != 2 || row.MedianContext != 725 || row.PeakContext != 950 || row.ContextFrom != ContextFromTotals {
+			t.Errorf("row=%+v, want median 725 and peak 950 from totals over two runs", row)
+		}
+	}
+}
+
 func TestRowsKnownCost(t *testing.T) {
 	result := func(cost float64, status string, estimate bool) agent.Result {
 		return agent.Result{CostUSD: cost, CostEstimate: estimate, Usage: &agent.UsageMetadata{CostStatus: status}}

@@ -46,8 +46,8 @@ Batches group by repository; their cost sums every attempt, passed or not. Runs 
 a result (still running or killed), batches with a task still running, and records that
 cannot be read are counted under the tables and left out of them.
 The tokens table sums each group's input, output, cache-read and cache-write tokens from the
-runs' results, and gives the median and peak context a model call carried (input plus cache
-reads and writes). Those come from a run's `usage` events when it has them (see
+runs' results, and gives the median and peak context a model call carried (input including cache
+reads and writes, counted once). Those come from a run's `usage` events when it has them (see
 [Usage per turn](run-records.md#usage-per-turn)): every turn counts. A run without them (codex,
 gemini, older records) counts once, as its average, its totals over its turns, and its peak
 is the larger of that average and its recorded last-call context. `from` says which: `turns`,
