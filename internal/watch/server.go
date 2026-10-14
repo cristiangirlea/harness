@@ -40,7 +40,7 @@ type Options struct {
 	Public *PublicAccess
 	// Key is what a request that would act on hrn (anything but GET and
 	// HEAD) must send in X-Hrn-Watch-Key, from this computer or the network
-	// alike. Viewing needs none. Empty refuses every action; none exists yet.
+	// alike. Viewing needs none. Empty refuses every action.
 	Key string
 }
 
@@ -550,6 +550,7 @@ func batchOf(batches []batch.Result) map[string]string {
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists()}
+	p.Backends = s.backendsCard(w, r)
 	// The phone links and the hints about --lan are for the person at this
 	// computer; a phone that came in over the network needs neither.
 	if s.fromThisComputer(r) {
