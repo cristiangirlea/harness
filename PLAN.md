@@ -723,8 +723,9 @@ neither of them follows a run while it happens.
 ## Decisions log
 
 - 2026-10-14: CI skips a Markdown-only change (#341, PR #353). Owner's request: a change
-  touching only `*.md` (not AGENTS.md, whose script index verify.sh checks) runs no build or
-  test. The required `test` jobs still report, skipping their steps, so the ruleset's checks pass.
+  touching only documentation Markdown (an allowlist: top-level `*.md` but AGENTS.md, `docs/`,
+  the server READMEs) runs no build or test. The required `test` jobs still report, skipping
+  their steps, so the ruleset's checks pass.
 - 2026-10-14: a take stopped by its context says so (#257, PR #339). The git commands
   before the create lock run under the take's context, so on a loaded machine its deadline
   could kill one and the take reported a broken repository. Decided: `ws.Take` wraps any

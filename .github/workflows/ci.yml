@@ -11,10 +11,10 @@ permissions:
 
 jobs:
   changes:
-    # Whether this event changes anything but Markdown. A Markdown-only change (AGENTS.md
-    # excepted: scripts/verify.sh checks its script index) builds and tests nothing. The
-    # required test jobs still run and report, skipping their steps, so the ruleset's checks
-    # pass; the other jobs are skipped. Anything unclear counts as code.
+    # Whether this event changes anything but documentation Markdown (the allowlist below).
+    # Such a change builds and tests nothing: the required test jobs still run and report,
+    # skipping their steps, so the ruleset's checks pass; the other jobs are skipped. Anything
+    # unclear counts as code.
     if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest
     outputs:
@@ -31,24 +31,33 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: |
+          # Only documentation counts as Markdown here, by an allowlist: Markdown at the top
+          # level except AGENTS.md, under docs/, and the two server READMEs. Other .md files can
+          # be inputs (the check skill's commands, embedded watch assets, chart templates).
+          # --no-renames shows both sides of a rename; -z keeps every name unquoted and whole.
           code=true
           case "$EVENT" in
             pull_request) range="$BASE...$HEAD" ;;
             push) range="$BEFORE..$AFTER" ;;
             *) range="" ;;
           esac
-          if [ -n "$range" ] && files="$(git diff --name-only "$range")" && [ -n "$files" ]; then
+          list="$RUNNER_TEMP/changed"
+          if [ -n "$range" ] && git -c core.quotePath=false diff --no-renames --name-only -z "$range" > "$list" && [ -s "$list" ]; then
             code=false
-            while IFS= read -r f; do
+            while IFS= read -r -d '' f; do
               case "$f" in
                 AGENTS.md) code=true ;;
+                */*) case "$f" in
+                       docs/*.md | server/README.md | server/deploy/README.md) ;;
+                       *) code=true ;;
+                     esac ;;
                 *.md) ;;
                 *) code=true ;;
               esac
-            done <<< "$files"
+            done < "$list"
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "changes beyond Markdown: $code"
+          echo "changes beyond documentation Markdown: $code"
 
   test:
     needs: changes
