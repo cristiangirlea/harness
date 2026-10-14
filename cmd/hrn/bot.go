@@ -42,7 +42,11 @@ func cmdBot(args []string) error {
 	ln, err := net.Listen("tcp", bind)
 	if err != nil {
 		url := "http://" + bind + "/bot"
-		if !servesBot(url) {
+		serves, status := probeBot(url)
+		if status == http.StatusForbidden {
+			return fmt.Errorf("%s answered 403: another program holds the port, possibly an hrn watch --public (which refuses this computer's browser); start the bot on another port with --addr", bind)
+		}
+		if !serves {
 			return err
 		}
 		fmt.Printf("hrn bot: hrn watch already serves http://%s; opening its bot\n", bind)
@@ -62,14 +66,21 @@ func cmdBot(args []string) error {
 // address may be taken by something else, or by an hrn watch from before the
 // bot.
 func servesBot(url string) bool {
+	serves, _ := probeBot(url)
+	return serves
+}
+
+// probeBot is servesBot that also returns the status code, 0 when nothing
+// answered: a 403 may be a public watch refusing a loopback Host.
+func probeBot(url string) (bool, int) {
 	c := http.Client{Timeout: 2 * time.Second}
 	resp, err := c.Get(url)
 	if err != nil {
-		return false
+		return false, 0
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
-	return resp.StatusCode == http.StatusOK && strings.Contains(string(body), `data-stream="/stream/bot"`)
+	return resp.StatusCode == http.StatusOK && strings.Contains(string(body), `data-stream="/stream/bot"`), resp.StatusCode
 }
 
 // openWindow starts the browser and does not wait for it, but reaps it when

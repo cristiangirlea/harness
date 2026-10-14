@@ -87,3 +87,27 @@ func TestHrnBotServesOnLoopbackOnly(t *testing.T) {
 		t.Error("an argument was accepted")
 	}
 }
+
+func TestBotReportsPublicWatchOnOccupiedPort(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	want := addr + " answered 403: another program holds the port, possibly an hrn watch --public (which refuses this computer's browser); start the bot on another port with --addr"
+	if err := cmdBot([]string{"--addr", addr}); err == nil || err.Error() != want {
+		t.Fatalf("hrn bot on occupied port = %v; want %q", err, want)
+	}
+}
+
+func TestBotDoesNotIdentifyAnUnrelatedForbiddenServerAsPublicWatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unrelated service", http.StatusForbidden)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	want := addr + " answered 403: another program holds the port, possibly an hrn watch --public (which refuses this computer's browser); start the bot on another port with --addr"
+	if err := cmdBot([]string{"--addr", addr}); err == nil || err.Error() != want {
+		t.Fatalf("hrn bot on unrelated service's port = %v; want %q", err, want)
+	}
+}

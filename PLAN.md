@@ -684,6 +684,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: public watch's local-use and tunnel address follow-up (#218, PR #261).
+  Decided: document that its loopback Host is refused, use a separate plain watch for
+  local browsing and `hrn bot`, print the tunnel's loopback target at start, and explain
+  a 403 on the bot's existing-watch probe with `--addr` guidance.
 - 2026-10-14: issue #217 (PR #260), follow-up to #212: public watch checks Access
   signing keys before serving, reports later fetch failures once per failure streak,
   and shares unlocked, rate-limited certificate fetches across requests.

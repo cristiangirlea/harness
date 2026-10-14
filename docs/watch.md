@@ -119,12 +119,12 @@ ends, on the page or in the terminal: hrn cannot tell it from a long step.
 ### Behind Cloudflare Access
 
 To reach watch through a Cloudflare Tunnel, forward `https://harness.example.com` to
-`http://127.0.0.1:8089` on the same computer. Create a Cloudflare Access application
+`http://127.0.0.1:8090` on the same computer. Create a Cloudflare Access application
 for that hostname, require email one-time-code login, and copy its team domain and
 audience tag into the command:
 
 ```
-hrn watch --public https://harness.example.com --access-team TEAM.cloudflareaccess.com --access-aud AUDIENCE_TAG
+hrn watch --addr 127.0.0.1:8090 --public https://harness.example.com --access-team TEAM.cloudflareaccess.com --access-aud AUDIENCE_TAG
 ```
 
 All three flags are required together; `--public` cannot be combined with `--lan`.
@@ -135,8 +135,14 @@ streams. A top-level page load from elsewhere, such as the Access login redirect
 email link, opens the page; cross-site embedded loads and other cross-site requests remain refused.
 It treats visitors as remote even though `cloudflared`
 connects from the same computer: the page omits the hrn home path and phone hints,
-and `/voice` is unavailable. The terminal prints the public URL and the access
-log path. Each request appends one JSON line to `$HRN_HOME/watch-access.log`
+and `/voice` is unavailable. You cannot open this public watch at its loopback URL
+from this computer's browser: the loopback Host is refused by design so the Access
+login cannot be skipped. For local use, run a second, plain `hrn watch` in another
+terminal; its default `127.0.0.1:8089` port works alongside the public watch on `8090`.
+`hrn bot` needs the plain watch too. If the public watch holds the bot's port, run
+`hrn bot --addr 127.0.0.1:8091` instead. The terminal prints the public URL, the
+loopback address for the tunnel, and the access log path. Each request appends one
+JSON line to `$HRN_HOME/watch-access.log`
 (or `~/.hrn/watch-access.log`), with the time, email when allowed, method, path,
 status, Cloudflare connecting IP, and a short reason when refused. Cloudflare's
 own Access logs record logins; this file records requests that reached watch.
