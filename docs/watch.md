@@ -128,6 +128,7 @@ hrn watch --public https://harness.example.com --access-team TEAM.cloudflareacce
 ```
 
 All three flags are required together; `--public` cannot be combined with `--lan`.
+Watch checks the Cloudflare Access signing keys at start and refuses to serve if they cannot be fetched.
 Watch still listens only on loopback. In this mode it accepts only the public Host
 and verifies the Access JWT on every request, including static assets and event
 streams. A top-level page load from elsewhere, such as the Access login redirect or an

@@ -684,6 +684,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: issue #217 (PR #260), follow-up to #212: public watch checks Access
+  signing keys before serving, reports later fetch failures once per failure streak,
+  and shares unlocked, rate-limited certificate fetches across requests.
 - 2026-10-14: public watch navigation exemption (#228, PR #259). Decided: only GET/HEAD
   navigations with `Sec-Fetch-Dest: document` bypass the Origin and cross-site check;
   embedded and destination-less navigations follow the normal rule.
