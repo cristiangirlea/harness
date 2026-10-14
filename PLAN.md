@@ -725,6 +725,15 @@ neither of them follows a run while it happens.
   the packet frame markers is refused at import. Follow-ups: the narrow deny list (#176), packet
   entries not tied to the capped text (#177), the GIN pre-filter over every tenant (#178), four
   smaller points (#179), tests the review named (#180).
+- 2026-10-13: development charts, image and chart verifier ([#139](https://github.com/cristiangirlea/harness/issues/139), PR #174; slice 6 of #142).
+  The snapshot's three charts, fixtures, verifier and Dockerfile, trailing blank lines trimmed
+  and the deploy docs' paths turned into links; a CI job verifies the charts and builds the
+  image on the hosted Linux runner. The review's security read found nothing open: no secret in
+  any file, Secrets by name, images pinned by digest and unpinned ones refused, the fake-model
+  sidecar without the PVC or the worker token, non-root read-only containers, default-deny
+  policies. Follow-ups: a .dockerignore (#170), two minor template and image points (#171), a
+  rerun of the disposable cluster check with an image from this branch (#172), stronger
+  verifier assertions (#173).
 - 2026-10-13: hrn remote and the MCP remote tools ([#138](https://github.com/cristiangirlea/harness/issues/138), PR #175; slice 5 of #142).
   The snapshot's client, CLI and tools, with the commands in docs/commands.md and the tools in
   docs/mcp.md. The review's security read found one hole: plain HTTP was also accepted for the
