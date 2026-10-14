@@ -704,7 +704,8 @@ order they are worth taking:
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
       local models once a hrn-evals suite has measured them (the eval #224 asks for).
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
-      CI-verified index for the scripts agents write twice, kept under `scripts/`.
+      CI-verified index for the scripts agents write twice, kept under `scripts/`. Done:
+      PR #317, 2026-10-14.
     The gate side lives in adanext-exec (output shaping, and the hint when a kept script covers
     a command: adanext-exec #1 and #2); the rule for claiming a saving and the page of where
     each model loses live in hrn-evals (#3 and #4).
@@ -2156,3 +2157,12 @@ neither of them follows a run while it happens.
   after it, which keeps the rule that a cut never leaves half a token visible. The names
   pattern matches whole segments so `--max-tokens=400` and `authors=x` stay. Left out, as
   #311: `hrn runs`, streamed deltas, URL user names.
+- 2026-10-14: PR #317 (closes #298): kept scripts. `docs/scripts.md` has the header (name,
+  summary, effects, parameters, an example that is the script's test, a hash line) and the
+  eight rules; `scripts/verify.sh` runs every example, stamps the hash and regenerates the
+  index between markers in AGENTS.md, and `--check` (CI, ubuntu only, and `/check`) fails on
+  a failing example, a stale hash or a differing index. First kept scripts: `check.sh`
+  (`--list`), `test-summary.sh` and `wait-for.sh`, both over `answers.go` through `go run`;
+  `api-check.sh` is listed as not verified (it spends money). Sized before #295's numbers
+  exist: the owner asked for this order on 2026-10-14. Hardening and extra tests from the
+  review are #318; AGENTS.md is 119 lines for now, with the rules also in the doc.
