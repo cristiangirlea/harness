@@ -667,6 +667,13 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
+  as the index does) and a batch's repository too, the whole path as a hover title for this
+  computer only. Text from a run's events, its prompt and result, and a batch's tasks and
+  gates, and the index's rows show the workspace (a task's worktree) as `.`, home as `~`, and programs in system
+  folders by file name, matched only at a path boundary, after secrets are blanked. Records
+  and `hrn show` keep the full paths, and a run's purpose comes from its prompt as recorded, as
+  `hrn report` has it, not from the shortened text.
 - 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
   timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
   (`for-each-ref`, which answers a missing branch with no output) says whether it answered;
