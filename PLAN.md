@@ -726,7 +726,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: A Backends card on hrn watch (#346, PR #TBD). Every viewer sees backend availability, preferences and remembered limits; loopback and Access-verified public viewers can save preferences using a fresh startup key. Changes atomically replace backends.json for later runs, while LAN viewers remain read-only and running MCP servers keep their backend enum until their host restarts them.
+- 2026-10-14: A Backends card on hrn watch (#346, PR #373). Every viewer sees backend availability, preferences and remembered limits; loopback and Access-verified public viewers can save preferences using a fresh startup key. Changes atomically replace backends.json for later runs, while LAN viewers remain read-only and running MCP servers keep their backend enum until their host restarts them.
 
 - 2026-10-14: Backend preferences (#345, PR #371). `backends.json` stores the enabled names in preference order and an optional default, with no record changes and unchanged selection when absent. Runs, MCP, batch retries, evals and supervisor execution respect the preference; routing skips disabled rows and carry-on uses an enabled installed partner.
 - 2026-10-14: An agy backend (#344, PR #369). Antigravity's CLI receives the prompt
