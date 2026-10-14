@@ -29,7 +29,8 @@ func Partner(backend string) string {
 	}
 	if len(p.EnabledNames) > 0 {
 		for _, name := range p.Filter(agent.Names()) {
-			if name == backend {
+			// api bills per token, never a plan: it is no stand-in even when enabled.
+			if name == backend || name == "api" {
 				continue
 			}
 			b, _ := agent.Get(name)

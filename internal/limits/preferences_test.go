@@ -96,3 +96,32 @@ func TestALimitIsRememberedWhenThePreferenceHasNoPartner(t *testing.T) {
 		t.Fatalf("remembered %v, want %v", got, until)
 	}
 }
+
+func TestAnEnabledAPIAheadOfAPlanBackendIsSkippedAsAPartner(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	orig, _ := agent.Get("api")
+	agent.Register(stub{"api", true})
+	t.Cleanup(func() { agent.Register(orig) })
+	res := agent.Result{Backend: "codex", Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}
+	if err := Note("codex", res); err != nil {
+		t.Fatal(err)
+	}
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "api", "claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := Partner("codex"); got != "claude" {
+		t.Fatalf("partner %q, want claude: api bills per token and must be passed over", got)
+	}
+	if got, _ := Choose("codex", ""); got != "claude" {
+		t.Fatalf("choice %q, want claude", got)
+	}
+	prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
+	next, why, err := After(limitedRun(t, prev), "codex", prev, res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == nil || next.To != "claude" {
+		t.Fatalf("carry-on %+v, %s", next, why)
+	}
+}
