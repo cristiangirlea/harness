@@ -722,6 +722,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: index stream sends later changes (#66, PR #362). Test a new run
+  appearing in a later replace on the same connection, after reading the first
+  fragment, with a short poll interval and a generous deadline. Suppressing every
+  replace after the first makes the test fail; production code is unchanged.
 - 2026-10-14: CI skips a Markdown-only change (#341, PR #353). Owner's request: a change
   touching only documentation Markdown (an allowlist: top-level `*.md` but AGENTS.md, `docs/`,
   the server READMEs) runs no build or test. The required `test` jobs still report, skipping
