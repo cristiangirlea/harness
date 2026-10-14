@@ -52,6 +52,24 @@ func TestSameBackendForksItsSession(t *testing.T) {
 	}
 }
 
+func TestAgyContinuesItsConversationWithoutPromisingAFork(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "requested-model"}},
+		agent.Result{Backend: "agy", Session: "conversation-1", Final: "a"})
+	p, err := Make(Request{RunID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Backend != "agy" || p.ForkSession != "conversation-1" || p.Resume != nil || len(p.Handoff) != 0 || p.Model != "requested-model" || p.Dir != dir {
+		t.Fatalf("unexpected plan %+v", p)
+	}
+	notes := strings.Join(p.Notes, "\n")
+	if !strings.Contains(notes, "resuming agy session conversation-1") || strings.Contains(notes, "forking") {
+		t.Fatalf("misleading continuation: %s", notes)
+	}
+}
+
 func TestLongContextStillForksItsSessionAndSuggestsAFreshRun(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	id := finished(t, "", agent.Task{Prompt: "p", Dir: workspace(t)},

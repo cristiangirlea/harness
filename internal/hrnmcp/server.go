@@ -22,7 +22,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-const instructions = `hrn runs coding tasks on an agent backend of your choice (its own API loop, or the claude, codex, gemini or opencode CLIs) and records every run.
+const instructions = `hrn runs coding tasks on an agent backend of your choice (its own API loop, or the claude, codex, gemini, opencode or agy CLIs) and records every run.
 
 Use "run" to delegate a task. It blocks until the task finishes and returns the final answer, a summary line and a run id; "show" replays a run, "runs" lists recent ones, "backends" says which backends are usable. Several "run" calls may be in flight at once.
 

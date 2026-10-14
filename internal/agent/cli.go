@@ -21,7 +21,7 @@ import (
 // This file holds the machinery every agent CLI shares: finding the binary,
 // running it, reading its stdout and turning a non-zero exit into a Result.
 // Each backend's arguments and stream format live in its own file, claude.go,
-// codex.go, gemini.go and opencode.go.
+// codex.go, gemini.go, opencode.go and agy.go.
 
 // CLIBackend drives an installed agent CLI non-interactively, so the work is
 // billed to that CLI's own subscription login rather than per API token.
@@ -33,6 +33,8 @@ type CLIBackend struct {
 	// passed as an attachment instead of on stdin.
 	args        func(t Task, promptFile string) []string
 	promptStdin bool
+	// encodePrompt wraps stdin for CLIs that require structured input.
+	encodePrompt func(string) string
 	// parse handles one stdout line. Nil means stdout is plain text.
 	parse func(line []byte, emit func(Event), res *Result) bool
 	// newParse, when set, makes a parse for one run, for a stream whose lines
@@ -45,6 +47,8 @@ type CLIBackend struct {
 	// forks is set when args honours Task.ForkSession and parse records
 	// Result.Session.
 	forks bool
+	// resumesInPlace distinguishes a continuation that does not copy the session.
+	resumesInPlace bool
 	// loginEnv names the secret-looking variables the CLI logs in with on a
 	// plan; the guard passes them on to this CLI and no other.
 	loginEnv []string
@@ -97,12 +101,15 @@ func (c *CLIBackend) Capabilities() Capabilities {
 	}
 	if c.forks {
 		caps.Sessions = "fork"
+		if c.resumesInPlace {
+			caps.Sessions = "resume"
+		}
 	}
 	return caps
 }
 
-// ForksSessions reports whether the CLI can start from a copy of an earlier
-// run's session.
+// ForksSessions reports whether the CLI honours Task.ForkSession. Capabilities
+// distinguishes a copied session from one resumed in place.
 func (c *CLIBackend) ForksSessions() bool { return c.forks }
 
 var sessionID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
@@ -195,7 +202,11 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
 	}
 	if c.promptStdin {
-		cmd.Stdin = strings.NewReader(task.Prompt)
+		prompt := task.Prompt
+		if c.encodePrompt != nil {
+			prompt = c.encodePrompt(prompt)
+		}
+		cmd.Stdin = strings.NewReader(prompt)
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -382,6 +393,7 @@ func init() {
 	Register(NewCodexBackend())
 	Register(NewGeminiBackend())
 	Register(NewOpencodeBackend())
+	Register(NewAgyBackend())
 }
 
 // guardLine is what a guarded run says about the guard, with what this CLI

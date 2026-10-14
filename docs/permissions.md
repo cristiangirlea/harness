@@ -4,12 +4,15 @@
 
 ### Permission modes
 
-| Mode | api backend | claude | codex | gemini | opencode |
-|---|---|---|---|---|---|
-| `readonly` | read tools only (write tools not offered) | `plan` | `--sandbox read-only` | `default` | its config |
-| `ask` (default) | reads auto; writes + commands prompt y/N | `default` | `--sandbox read-only` | `default` | its config |
-| `auto` | reads + edits auto; commands prompt | `acceptEdits` | `--sandbox workspace-write` | `auto_edit` | its config |
-| `yolo` | everything | `bypassPermissions` | bypass sandbox | `yolo` | `--auto` |
+| Mode | api backend | claude | codex | gemini | opencode | agy |
+|---|---|---|---|---|---|---|
+| `readonly` | read tools only (write tools not offered) | `plan` | `--sandbox read-only` | `default` | its config | `--mode plan` |
+| `ask` (default) | reads auto; writes + commands prompt y/N | `default` | `--sandbox read-only` | `default` | its config | `--mode plan` |
+| `auto` | reads + edits auto; commands prompt | `acceptEdits` | `--sandbox workspace-write` | `auto_edit` | its config | `--mode accept-edits` |
+| `yolo` | everything | `bypassPermissions` | bypass sandbox | `yolo` | `--auto` | `--dangerously-skip-permissions` |
+
+agy maps `ask` to plan mode without interactive approval. Its `plan` mode is not a
+filesystem sandbox; see [agy's mappings](backends.md#backends).
 
 When the prompt comes from stdin there is no terminal to ask, so anything needing
 approval is denied.
