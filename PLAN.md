@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: claude runs refuse per-token billing (#202, PR #N). Decided: when Claude
+- 2026-10-14: claude runs refuse per-token billing (#202, PR #269). Decided: when Claude
   Code's init line names an `apiKeySource` other than `none`, stop the worker as soon as
   that init line arrives and end the run with an error naming the source. Claude Code
   may already have sent its first request. An absent field keeps the older CLI behaviour;
