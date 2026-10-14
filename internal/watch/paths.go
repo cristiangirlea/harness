@@ -169,7 +169,8 @@ func nameRune(r rune) bool {
 // ends and the program's file name; "" when it does not name a program. In
 // quotes a Windows folder may have spaces in its name (Microsoft VS Code) and
 // punctuation (Git (Preview)), so only the matching quote, a backtick or a
-// line end stops it; a Windows program has an extension, which tells it from a folder.
+// line end stops it (in single quotes an unescaped double quote too, which ends
+// a JSON string); a Windows program has an extension, which tells it from a folder.
 func program(s string, i, j int, windows bool) (int, string) {
 	var quote byte
 	stops := "\"'`\r\n,;|&<>()[]{}"
@@ -195,8 +196,15 @@ func program(s string, i, j int, windows bool) (int, string) {
 		}
 		// In single quotes a double quote that no backslash escapes still ends the
 		// scan: in JSON text it closes the string, and the next field is not a path.
-		if quote == '\'' && c == '"' && s[end-1] != '\\' {
-			break
+		// An even run of backslashes before it escapes only itself.
+		if quote == '\'' && c == '"' {
+			n := 0
+			for k := end - 1; k >= j && s[k] == '\\'; k-- {
+				n++
+			}
+			if n%2 == 0 {
+				break
+			}
 		}
 	}
 	for end > j && s[end-1] == '\\' { // a JSON-escaped closing quote's backslash

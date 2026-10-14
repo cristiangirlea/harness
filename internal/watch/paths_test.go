@@ -50,6 +50,8 @@ func TestPathsInAWindowsRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *test
 		{"\"C:\\Program Files\\Bob's Tools\nnext", "\"C:\\Program Files\\Bob's Tools\nnext"},
 		// An unterminated single quote in JSON text stops at the string's end, keeping the next field.
 		{`{"command":"'C:\\Windows\\System32\\cmd.exe","cwd":"D:\\work.dir"}`, `{"command":"'cmd.exe","cwd":"D:\\work.dir"}`},
+		// Two backslashes before the quote are an escaped backslash: the quote still ends the string.
+		{`["'C:\\Windows\\System32\\cmd.exe\\",1.5]`, `["'cmd.exe\\",1.5]`},
 		{`run(C:\Windows\System32\where.exe,git)`, `run(where.exe,git)`},
 		// A folder, not a program, and a program outside them, stay.
 		{`C:\Windows\System32`, `C:\Windows\System32`},
