@@ -684,6 +684,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: the guard refuses gh api calls to publishing endpoints (#210, PR #293).
+  Decided: refuse the named REST paths under any method, including harmless GETs, so implicit
+  POSTs from fields or --input cannot slip through; refuse GraphQL mutations in the line.
+  Ordinary issue, pull request, comment, label and reaction POSTs remain allowed.
 - 2026-10-14: a raw `gh api` POST asks first (#206, PR #292). A field (`-f`, `-F`, `--field`,
   `--raw-field`, `--input`) with no method makes `gh api` POST, which can create a release, a tag or
   a deploy key. Decided: in this repository's Claude settings such a call asks the owner; hrn runs
