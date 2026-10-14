@@ -684,6 +684,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: the batch merge tests save records through the batch package (#215, PR #280).
+  Decided: expose the ownership claim and a save wrapper so fixtures use the same value and record writer as Run.
 - 2026-10-14: tests give an exited helper's lease its start identity (#242, PR #286).
   Decided: hold the helper alive while reading its identity, then record it with the pid so reuse cannot hold the lease.
 - 2026-10-14: the billing-refusal test's deadline (#283, PR #284). Its refusal cases had 500 ms,

@@ -105,14 +105,14 @@ type Result struct {
 	Tasks    []TaskResult  `json:"tasks"`
 	Duration time.Duration `json:"duration_ns"`
 	// Ownership is how the record says which worktrees and branches are its
-	// tasks' own. Run sets ownedByClaim: a slotless task owns them only when
+	// tasks' own. Run sets OwnershipClaim: a slotless task owns them only when
 	// its branch_made says so. Records from before it (0) never said so for a
 	// fresh task, and are read as hrn wrote them then (owned, by path).
 	Ownership int `json:"ownership,omitempty"`
 }
 
-// ownedByClaim is the Ownership of every record Run writes now.
-const ownedByClaim = 1
+// OwnershipClaim is the Ownership of every record Run writes now.
+const OwnershipClaim = 1
 
 type TaskResult struct {
 	ID       string `json:"id"`
@@ -406,7 +406,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 
-	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: ownedByClaim}
+	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
 	for i, t := range spec.Tasks {
 		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
@@ -1337,7 +1337,7 @@ func branchOnly(tr TaskResult) bool {
 // Records from before Ownership never set it for a fresh task, whose
 // worktree was its own unless finding it taken ended the task (foundTaken).
 func notMine(res Result, tr TaskResult) bool {
-	if res.Ownership >= ownedByClaim {
+	if res.Ownership >= OwnershipClaim {
 		return !tr.BranchMade
 	}
 	return foundTaken(tr)
@@ -1517,6 +1517,9 @@ func removeEmptyDir(dir string) error {
 }
 
 func batchesDir() string { return filepath.Join(runlog.Home(), "batches") }
+
+// SaveResult saves a batch record using the same path as Run.
+func SaveResult(res Result) error { return save(res) }
 
 func save(res Result) error {
 	if failSave != nil {
