@@ -134,6 +134,52 @@ func TestParallelFailuresWithContextMarkers(t *testing.T) {
 	}
 }
 
+func TestFailureDiagnosticsWithNameMarker(t *testing.T) {
+	text := "=== CONT  TestBad\n=== CONT  TestGood\n=== NAME  TestBad\n    bad_test.go:1: got empty\n--- FAIL: TestBad (0.00s)\n--- PASS: TestGood (0.00s)\nFAIL\n"
+	want := "tests: passed=1 failed=1\n=== CONT  TestBad\n=== NAME  TestBad\n    bad_test.go:1: got empty\n--- FAIL: TestBad (0.00s)\nFAIL"
+	if s, ok := Summarize(Test, text); !ok || s != want {
+		t.Fatalf("NAME diagnostic lost: %q ok=%v", s, ok)
+	}
+	if valid(Test, text, strings.Replace(want, "    bad_test.go:1: got empty\n", "", 1)) {
+		t.Fatal("accepted a removed NAME diagnostic")
+	}
+}
+
+func TestUnknownTestMarkersFallBack(t *testing.T) {
+	for _, marker := range []string{"=== SWITCH TestGood", "=== FUTURE", "=== FUTURE TestBad extra"} {
+		t.Run(marker, func(t *testing.T) {
+			text := "counts 1\n=== CONT  TestBad\n=== CONT  TestGood\n" + marker + "\n    bad_test.go:1: got empty\n--- FAIL: TestBad (0.00s)\n--- PASS: TestGood (0.00s)\nFAIL\n"
+			if _, ok := Summarize(Test, text); ok {
+				t.Fatal("accepted an unknown ownership marker")
+			}
+			if valid(Test, text, "tests: passed=1 failed=1\n=== CONT  TestBad\n--- FAIL: TestBad (0.00s)\nFAIL") {
+				t.Fatal("validator accepted an unknown ownership marker")
+			}
+		})
+	}
+}
+
+func TestNonVerboseFailureDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, want string
+	}{
+		{"two diagnostics", "--- FAIL: TestA (0.00s)\n    a_test.go:1: got 0 of 2 values\n--- FAIL: TestB (0.00s)\n    b_test.go:2: got missing\nFAIL\n", "tests: passed=0 failed=2\n--- FAIL: TestA (0.00s)\n    a_test.go:1: got 0 of 2 values\n--- FAIL: TestB (0.00s)\n    b_test.go:2: got missing\nFAIL"},
+		{"silent first", "--- FAIL: TestA (0.00s)\n--- FAIL: TestB (0.00s)\n    b_test.go:2: got 0 values\nFAIL\n", "tests: passed=0 failed=2\n--- FAIL: TestA (0.00s)\n--- FAIL: TestB (0.00s)\n    b_test.go:2: got 0 values\nFAIL"},
+		{"silent second", "--- FAIL: TestA (0.00s)\n    a_test.go:2: got 0 values\n--- FAIL: TestB (0.00s)\nFAIL\n", "tests: passed=0 failed=2\n--- FAIL: TestA (0.00s)\n    a_test.go:2: got 0 values\n--- FAIL: TestB (0.00s)\nFAIL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if s, ok := Summarize(Test, tc.text); !ok || s != tc.want {
+				t.Fatalf("non-verbose diagnostics changed: %q ok=%v", s, ok)
+			}
+			for _, line := range strings.Split(tc.text, "\n") {
+				if strings.HasPrefix(line, "    ") && valid(Test, tc.text, strings.Replace(tc.want, line+"\n", "", 1)) {
+					t.Fatalf("accepted a removed diagnostic: %q", line)
+				}
+			}
+		})
+	}
+}
+
 func TestUnmarkedFailurePreservesLeadingDiagnostics(t *testing.T) {
 	text := "counts 0 1\n    first diagnostic\n    second diagnostic\n--- FAIL: TestBad (0.00s)\nFAIL\n"
 	s, ok := Summarize(Test, text)

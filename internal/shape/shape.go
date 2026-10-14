@@ -22,7 +22,7 @@ var (
 	testLine   = regexp.MustCompile(`^(?:go test\b|\s*--- (?:FAIL|PASS):|ok\s|FAIL(?:\s|$)|=== RUN\s)`)
 	logLine    = regexp.MustCompile(`(?i)^(?:\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d|\[?(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\]?(?:\s|:))`)
 	failName   = regexp.MustCompile(`--- FAIL:\s+(\S+)`)
-	testMarker = regexp.MustCompile(`^\s*=== (RUN|CONT|PAUSE)\s+(\S+)\s*$`)
+	testMarker = regexp.MustCompile(`^\s*=== (RUN|CONT|PAUSE|NAME)\s+(\S+)\s*$`)
 	testResult = regexp.MustCompile(`^\s*--- (FAIL|PASS):\s+(\S+)`)
 	numbers    = regexp.MustCompile(`[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?`)
 	negations  = regexp.MustCompile(`(?i)\b(?:not|never|no|only)\b`)
@@ -138,7 +138,7 @@ type testFailure struct {
 	failed   bool
 }
 
-// A RUN or CONT owns following diagnostics until PAUSE or a result. Keep
+// A RUN, CONT or NAME owns following diagnostics until PAUSE or a result. Keep
 // paused tests' earlier diagnostics, and refuse unmarked output while more
 // than one test is running: its owner cannot be recovered from plain text.
 // Non-verbose Go output also prints diagnostics immediately after FAIL.
@@ -152,7 +152,7 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 		if m := testMarker.FindStringSubmatch(line); m != nil {
 			pending = nil // text before a RUN is outside that test
 			sawMarker = true
-			markedOwner = m[1] == "CONT"
+			markedOwner = m[1] == "CONT" || m[1] == "NAME"
 			name := m[2]
 			if tests[name] == nil {
 				tests[name] = &testFailure{}
@@ -165,6 +165,9 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 				running[name], current = true, name
 			}
 			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "=== ") {
+			return nil, false // unknown markers may switch diagnostic ownership
 		}
 		if m := testResult.FindStringSubmatch(line); m != nil {
 			markedOwner = false
