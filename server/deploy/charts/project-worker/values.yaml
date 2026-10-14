@@ -1,0 +1,45 @@
+tenant:
+  id: ""
+project:
+  id: ""
+image:
+  # Supply an immutable digest built from this checkout.
+  ref: ""
+  pullPolicy: IfNotPresent
+control:
+  # TLS endpoint of a separately installed, always-on control service.
+  url: "https://hrn-control.harness-system.svc.cluster.local:8443"
+  namespace: harness-system
+  podLabelName: hrn-control
+  port: 8443
+secrets:
+  # Precreate both Secrets in the tenant namespace. Never put tokens in values.
+  workerName: ""
+  workerKey: token
+  scalerName: ""
+  scalerKey: token
+  # CA used by both the worker and KEDA; Secret precreated in tenant namespace.
+  caName: ""
+  caKey: ca.crt
+  # Separate disposable TLS client identity required by KEDA tls auth mode.
+  scalerTLSName: ""
+  scalerTLSCertKey: tls.crt
+  scalerTLSKeyKey: tls.key
+storage:
+  className: ""
+  size: 10Gi
+resources:
+  worker:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  fixture:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi

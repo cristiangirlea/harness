@@ -47,6 +47,13 @@ thing the flag avoids) for hosts that do not start servers in the project folder
 Cursor (`.cursor/mcp.json`) and VS Code (`.vscode/mcp.json`) take the same command
 and args.
 
+`hrn mcp --retrieval-profile FILE` serves a reviewed project profile with a fixed
+workspace, backend, model, revision, knowledge version and source hashes. It
+checks the revision and source contents before each retrieval-enabled run.
+This server exposes `run`, `runs`, `show` and `backends`, and accepts fresh runs
+only; a baseline may set `retrieval: "off"`. It cannot be combined with
+`--allow-dangerous-runs`. The profile contains no credentials.
+
 The server refuses `allow_dangerous` on `run` and `batch`, and leaves it out of `run`'s
 arguments, unless it was started with `--allow-dangerous-runs`: the host that calls it is
 an agent, and lifting [the guard](permissions.md#the-guard-for-every-backend) is yours to decide.
@@ -55,13 +62,24 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
+| `run` | `prompt`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Which backends are usable here. |
 | `batch` | `spec` | Runs a batch spec, the same JSON as a batch file, and blocks until every task is done: one line per task (status, backend, attempts, the gate that failed, branch and commit) and the batch id. Task outcomes stream back as progress. |
 | `batch_show` | `batch_id`, `task`, `limit` | No id: recent batches. An id: its tasks. An id and a task: that task's diff and its untracked files. |
 | `batch_merge` | `batch_id`, `tasks`, `squash` | Merges the passing branches into the repository's current branch, stopping at the first conflict with the tree put back. |
+| `remote_submit` | `tenant_id`, `project_id`, `prompt`, `base_ref`, `idempotency_key`, `max_cost_usd`, optional `max_turns` | Queue an asynchronous job and return its durable ID. |
+| `remote_status` | `tenant_id`, `project_id`, `job_id` | Current job state and result. |
+| `remote_events` | `tenant_id`, `project_id`, `job_id`, optional `after` | Up to 100 events after a durable event ID. |
+| `remote_cancel` | `tenant_id`, `project_id`, `job_id` | Request job cancellation. |
+
+The remote tools use `HRN_SERVER_URL` for the control service HTTPS origin,
+`HRN_TENANT_TOKEN` for its issued tenant credential, and optional
+`HRN_SERVER_CA_FILE` for a PEM CA file. HTTP is accepted only for loopback
+fixtures. `remote_submit` accepts only read-only `api` jobs on registered
+projects, with a full commit, positive cost ceiling, and idempotency key.
+Unknown and unsupported input fields are refused.
 
 Requests are served concurrently, so parallel tool calls from the host become parallel
 agents, each recorded under `~/.hrn/runs` like a CLI run. Cancelling the tool call cancels

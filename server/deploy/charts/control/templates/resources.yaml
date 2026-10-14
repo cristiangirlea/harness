@@ -1,0 +1,160 @@
+{{- if ne .Release.Namespace "harness-system" -}}
+{{- fail "install control in harness-system" -}}
+{{- end -}}
+{{- $image := required "image.ref is required" .Values.image.ref -}}
+{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) -}}
+{{- fail "image.ref must be an immutable SHA256 digest" -}}
+{{- end -}}
+{{- $_ := required "secrets.databaseName is required" .Values.secrets.databaseName -}}
+{{- $_ := required "secrets.authName is required" .Values.secrets.authName -}}
+{{- $_ := required "secrets.tlsName is required" .Values.secrets.tlsName -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrn-control
+  namespace: harness-system
+  labels:
+    app.kubernetes.io/name: hrn-control
+spec:
+  selector:
+    app.kubernetes.io/name: hrn-control
+  ports:
+    - name: https
+      port: 8443
+      targetPort: 8443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hrn-control
+  namespace: harness-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hrn-control
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hrn-control
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: control
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/hrn-server", "serve"]
+          env:
+            - name: HRN_LISTEN
+              value: 0.0.0.0:8443
+            - name: HRN_TLS_CERT_FILE
+              value: /etc/hrn-tls/tls.crt
+            - name: HRN_TLS_KEY_FILE
+              value: /etc/hrn-tls/tls.key
+            - name: HRN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.databaseName | quote }}
+                  key: {{ .Values.secrets.databaseKey | quote }}
+            - name: HRN_OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.authName | quote }}
+                  key: {{ .Values.secrets.operatorKey | quote }}
+            - name: HRN_SCALER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.authName | quote }}
+                  key: {{ .Values.secrets.scalerKey | quote }}
+          ports:
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/hrn-tls
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ .Values.secrets.tlsName | quote }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hrn-control
+  namespace: harness-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hrn-control
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: harness
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hrn-project-worker
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.keda.namespace | quote }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hrn-admin
+      ports:
+        - protocol: TCP
+          port: 8443
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.postgres.namespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.postgres.podLabelName | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.port }}
