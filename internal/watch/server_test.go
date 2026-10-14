@@ -1433,6 +1433,71 @@ func TestTheRunPageNamesItsWorkspaceAndShortensItsPaths(t *testing.T) {
 	}
 }
 
+func TestTheUsageChartShowsShortenedPathsOnTheRunPageAndInItsStream(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	homeNote := filepath.Join(home, "notes.txt")
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close(agent.Result{Status: agent.StatusOK}) })
+	w.Event(agent.Event{Kind: agent.EventUsage, Usage: &agent.Usage{Model: "m", ContextTokens: 10000}})
+	w.Event(agent.Event{Kind: agent.EventCompaction, Text: "before " + ws + " near " + homeNote, Usage: &agent.Usage{ContextTokens: 10000}})
+	w.Event(agent.Event{Kind: agent.EventUsage, Usage: &agent.Usage{Model: "m", ContextTokens: 2000}})
+	h := New(context.Background(), Options{Poll: 5 * time.Millisecond, LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	page := viewAs(t, h, "/run/"+w.ID(), "192.168.1.50:6000")
+	chart := chartOf(t, page)
+	want := "<title>compacted before turn 2 (before . near ~" + string(filepath.Separator) + "notes.txt)"
+	if !strings.Contains(chart, want) {
+		t.Errorf("the page chart lacks %q:\n%s", want, chart)
+	}
+	if strings.Contains(chart, ws) || strings.Contains(chart, homeNote) {
+		t.Errorf("the page chart holds a full path:\n%s", chart)
+	}
+
+	i := strings.Index(page, `data-stream="`)
+	if i < 0 {
+		t.Fatal("a running run's page has no stream")
+	}
+	streamPath := page[i+len(`data-stream="`):]
+	streamPath = strings.ReplaceAll(streamPath[:strings.Index(streamPath, `"`)], "&amp;", "&")
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	st, stop := openStream(t, srv.URL+streamPath, "")
+	defer stop()
+	w.Event(agent.Event{Kind: agent.EventCompaction, Text: "after " + ws, Usage: &agent.Usage{ContextTokens: 12000}})
+	w.Event(agent.Event{Kind: agent.EventUsage, Usage: &agent.Usage{Model: "m", ContextTokens: 3000}})
+	var m message
+	found := false
+	for range 4 {
+		var ok bool
+		m, ok = st.next(t)
+		if !ok || m.event == "end" {
+			t.Fatalf("stream ended before the later compaction appeared: %+v", m)
+		}
+		if m.event == "usage" && strings.Contains(m.data, "3 turns") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("the stream did not redraw the chart over three turns: %+v", m)
+	}
+	for _, want := range []string{"<title>compacted before turn 2 (before . near ~" + string(filepath.Separator) + "notes.txt)", "<title>compacted before turn 3 (after .)"} {
+		if !strings.Contains(m.data, want) {
+			t.Errorf("the streamed chart lacks %q:\n%s", want, m.data)
+		}
+	}
+	if strings.Contains(m.data, ws) || strings.Contains(m.data, homeNote) {
+		t.Errorf("the streamed chart holds a full path:\n%s", m.data)
+	}
+}
+
 func TestTheRunStreamShortensItsPaths(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
