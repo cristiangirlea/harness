@@ -684,6 +684,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: hrn remote checks its server URL and CA file more strictly (#167, PR #N).
+  Decided: reject empty queries, opaque and encoded paths, and non-regular CA files before reading; allow symlinks to regular CA files.
 - 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #273).
   Decided: use the path project for submission; worker routes read only the project ID before strict JSON decoding.
 - 2026-10-14: hrn remote stops on an oversized event line (#164, PR #271). Decided: a line over
