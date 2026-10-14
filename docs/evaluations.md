@@ -102,6 +102,66 @@ is the larger of that average and its recorded last-call context. `from` says wh
 `--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
 JSON for scripts.
 
+## Measuring what shaping can touch
+
+Run `bash scripts/tool-shapes.sh --home /path/to/.hrn --days 30 --json` from the
+repository root. `--home` defaults to `$HRN_HOME`, then `~/.hrn`; `--days` defaults
+to 30 (a rolling window of 24-hour days), and JSON is the only output form.
+It reads finished runs, including unsuccessful ones, started in that window.
+The record envelope's `started` timestamp selects the window; flat records fall
+back to the local timestamp in their run directory name. Unfinished runs are
+excluded; unreadable finished records in the window are counted and excluded.
+
+`shapes` classifies UTF-8 tool-result bytes as `test`, `log`, `json`, `table`,
+`terminal`, or `other`, in that priority order. Tests have `go test`, `ok`, `FAIL`,
+`=== RUN`, or `--- PASS|FAIL|SKIP|BENCH` lines; unified diff headers do not match.
+Logs have timestamp or level prefixes; JSON must parse; CSV/TSV
+needs at least two rows with a consistent field count. Shell results otherwise
+count as terminal output. For unnamed results, a pending shell call (or a batch
+entirely of shell calls) establishes that origin; mixed pending calls remain
+`other` when their origin is ambiguous. The `claude` tables use only Claude runs
+with recorded tool calls.
+
+Each shape reports its fraction of all result bytes and an **estimate**:
+bytes / 4 divided by input tokens from the same runs. Each run uses its `usage`
+event sum when present, otherwise its `result.json` totals, otherwise no token
+figure. Input includes `cache_read_tokens` for api and Claude; Codex's
+`input_tokens` already includes cache reads, so those are not added again.
+Cache writes are excluded. A missing denominator is `null`. All runs contribute
+to `bytes` and `tool_result_share`; only runs with a token figure contribute bytes
+to input-share estimates, including inline-script estimates. `runs.with_tokens`
+reports that coverage beside `runs.with_usage` and `runs.read`. Existing estimates
+count bytes once. `input_token_share_replayed_estimate` instead multiplies each
+result's bytes / 4 by the number of later model calls and divides their sum by
+the same input-token denominator. Later calls are the usage events
+after the result when any are present; otherwise result ordinal `i` (starting at
+1) and `result.json` total turns `n` give `max(0, n - i)`. The fallback approximates
+calls as one-to-one with tool results; batches and calls without results can
+break that assumption. Missing turns give zero later calls. Replay assumes the
+text remains in context through the run's end. These are candidate byte budgets, not
+measured savings or a strict bound on total context tokens.
+
+`inline_scripts` lists the top 20 normalised command groups by count, with the
+count, distinct run count, command bytes and label (`heredoc`, `python`, `node`,
+`perl`, `go`). It recognises `<<`, Python `-c`, Node/Perl `-e`, and `go run` of
+temporary Go files in `tmp`/`temp` directories or common temporary-directory
+variables. Quoted strings, paths, numbers and identifiers longer than 12
+characters become placeholders; whitespace collapses. `command` and `cmd`
+input fields are supported; shell calls without either use the event's `text`
+(including Codex command events). Normalisation is a heuristic, not proof that two
+scripts are interchangeable. Totals cover all groups, including those beyond
+20; repeated bytes include every occurrence of groups seen more than once,
+even within one run. Keeping a script still costs its invocation and result.
+`inline_script_input_share_replayed_estimate` weights command bytes / 4 by
+usage events after the command, or `max(0, n - i)` using its ordinal
+among all tool calls when usage is absent, over the same token denominator.
+`repeated_inline_script_input_share_replayed_estimate` applies that weighting
+to every occurrence of groups seen more than once, including groups beyond 20.
+The command fallback likewise approximates one tool call per model call.
+Nothing from the records is quoted: no prompt, command, path, normalised form,
+or output. The fixture home and Go tests exercise the measurement without model
+calls. See [the local 30-day snapshot](tool-shapes.md) for the measured budgets.
+
 ## Evals
 
 An eval is a batch with two more dimensions: a matrix of variants to compare and a

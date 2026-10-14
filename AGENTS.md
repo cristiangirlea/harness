@@ -113,6 +113,7 @@ machines. See `CONTRIBUTING.md` for CI and release details.
 - `scripts/api-check.sh`: Exercise real API runs, continuation and context editing at the owner's expense. (not verified: spends money)
 - `scripts/check.sh`: Run the check skill commands in order, stopping on failure.
 - `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
+- `scripts/tool-shapes.sh`: Measure recorded tool output and repeated inline scripts without exposing text.
 - `scripts/verify.sh`: Run kept examples and synchronize script hashes and the AGENTS index. (not verified: the runner)
 - `scripts/verify_test.sh`: Test verifier stamping, exclusions, errors and read-only checks in fixtures.
 - `scripts/wait-for.sh`: Wait for a TCP port with a bounded timeout.
