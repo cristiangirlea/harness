@@ -268,4 +268,12 @@ func TestCodexAReconnectNoticeKeepsTheErrorBeforeIt(t *testing.T) {
 	if res.Status != StatusError || res.Error != "You've hit your usage limit." {
 		t.Errorf("status %s, error %q: a completed turn clears a notice, not an error", res.Status, res.Error)
 	}
+
+	// With no error before them, a later notice replaces the earlier one.
+	res = Result{}
+	parseCodexStream([]byte(`{"type":"error","message":"Reconnecting... 1/5 (high demand)"}`), emit, &res)
+	parseCodexStream([]byte(`{"type":"error","message":"Reconnecting... 2/5 (high demand)"}`), emit, &res)
+	if res.Error != "Reconnecting... 2/5 (high demand)" {
+		t.Errorf("error %q: the latest notice is the pending one", res.Error)
+	}
 }
