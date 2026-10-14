@@ -21,7 +21,7 @@ import (
 // reads the results and diffs back; batch_merge lands the branches. They are
 // the hrn batch subcommands with the same package calls behind them.
 
-const specDescription = `A batch spec, the same JSON as an hrn batch file. Fields: tasks (required; each has prompt, and optionally id, backend, gate, retry, expect and any run option), and on the spec: dir, parallel (default 4), backend, gate (commands that must exit 0 in each worktree), retry (backends to try after a failed attempt), allow_dirty, worktrees ("slots", the default: each task runs in one of the repository's reusable slots, which keep their build output, and gives it back when it ends; "fresh": a new worktree per task, kept until hrn batch rm), and the run options (model, mode, max_turns, effort, timeout, max_cost_usd, ...) every task starts from. mode defaults to auto here too, because nothing can approve a prompt inside a batch; use yolo when a task must build or test. Unknown fields are refused, so a misspelt one cannot be silently ignored.`
+const specDescription = `A batch spec, the same JSON as an hrn batch file. Fields: tasks (required; each has prompt, and optionally id, purpose (review, debug, implement, refactor, test, research, plan, ops; otherwise a leading Purpose: category header is used), backend, gate, retry, expect and any run option), and on the spec: dir, parallel (default 4), backend, gate (commands that must exit 0 in each worktree), retry (backends to try after a failed attempt), allow_dirty, worktrees ("slots", the default: each task runs in one of the repository's reusable slots, which keep their build output, and gives it back when it ends; "fresh": a new worktree per task, kept until hrn batch rm), and the run options (model, mode, max_turns, effort, timeout, max_cost_usd, ...) every task starts from. mode defaults to auto here too, because nothing can approve a prompt inside a batch; use yolo when a task must build or test. Unknown fields are refused, so a misspelt one cannot be silently ignored.`
 
 func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	return mcp.Tool{
@@ -163,6 +163,7 @@ type batchBrief struct {
 
 type taskBrief struct {
 	ID       string `json:"id"`
+	Purpose  string `json:"purpose,omitempty"`
 	Status   string `json:"status"`
 	Backend  string `json:"backend,omitempty"`
 	Attempts int    `json:"attempts"`
@@ -176,7 +177,7 @@ func brief(res batch.Result) batchBrief {
 	out := batchBrief{ID: res.ID, Passed: passed(res), Total: len(res.Tasks),
 		Next: fmt.Sprintf("batch_show {batch_id: %q, task: <id>} for a diff; batch_merge {batch_id: %q} to land passing branches", res.ID, res.ID)}
 	for _, t := range res.Tasks {
-		tb := taskBrief{ID: t.ID, Status: string(t.Status), Attempts: len(t.Attempts), Changed: t.Commit != "", Failed: tools.OneLine(t.Error, 200)}
+		tb := taskBrief{ID: t.ID, Purpose: t.Purpose, Status: string(t.Status), Attempts: len(t.Attempts), Changed: t.Commit != "", Failed: tools.OneLine(t.Error, 200)}
 		if t.Commit != "" {
 			tb.Branch, tb.Commit = t.Branch, tools.ShortSHA(t.Commit)
 		}

@@ -42,6 +42,9 @@ type Tool struct {
 
 type Workspace struct {
 	Root string
+	// RunDir is the record directory, not a model-supplied workspace path.
+	RunDir     string
+	ShapeTools bool
 	// AllowDangerous lifts the command guard for this run. It lives here
 	// because the tool set is built once and shared by every run, so per-task
 	// policy has to travel with the workspace.

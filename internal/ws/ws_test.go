@@ -1228,6 +1228,22 @@ func TestTakeWaitingForTheCreateLockStopsWithItsContext(t *testing.T) {
 	}
 }
 
+// A take whose context ends before the create lock (resolving the base runs git
+// under the same context, which can be slow on a loaded machine) reports the
+// context, not the error of the git command it stopped (#257).
+func TestATakeWhoseContextEndedReportsTheContextWhereverItStopped(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Take(ctx, TakeOptions{Repo: f.repo, Holder: "a", NoFetch: true})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("take with an ended context: %v, want the context's error", err)
+	}
+	if _, err := os.Stat(leasePath(SlotsDir(f.repo), 1)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("lease left behind: %v", err)
+	}
+}
+
 func TestFreeOutsideASlotIsRefused(t *testing.T) {
 	f := newFixture(t)
 	f.take(TakeOptions{Holder: "a"})

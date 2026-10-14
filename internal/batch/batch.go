@@ -27,6 +27,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 	"github.com/cristiangirlea/harness/internal/ws"
@@ -71,6 +72,7 @@ const DefaultParallel = 4
 type Task struct {
 	ID      string `json:"id,omitempty"` // branch hrn/<id> (and worktree .hrn/worktrees/<id> when fresh); default t1, t2, ...
 	Prompt  string `json:"prompt"`
+	Purpose string `json:"purpose,omitempty"`
 	Backend string `json:"backend,omitempty"`
 	// Options set here override the spec's, field by field; a switch can be
 	// turned on for one task but not back off, and a zero limit inherits.
@@ -117,6 +119,7 @@ const OwnershipClaim = 1
 type TaskResult struct {
 	ID       string `json:"id"`
 	Prompt   string `json:"prompt"`
+	Purpose  string `json:"purpose,omitempty"`
 	Status   Status `json:"status"`
 	Branch   string `json:"branch"`
 	Worktree string `json:"worktree"`
@@ -262,6 +265,12 @@ func (s *Spec) normalize() error {
 			return fmt.Errorf("duplicate task id %q", t.ID)
 		}
 		seen[t.ID] = true
+		if t.Purpose != "" && !purpose.Valid(t.Purpose) {
+			return fmt.Errorf("task %s: purpose %q: one of %s", t.ID, t.Purpose, strings.Join(purpose.Categories[:len(purpose.Categories)-1], ", "))
+		}
+		if t.Purpose == "" {
+			t.Purpose = purpose.Declared(t.Prompt)
+		}
 		if err := t.Options.Over(s.Options).Validate(); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
@@ -408,7 +417,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 
 	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
 	for i, t := range spec.Tasks {
-		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
+		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Purpose: t.Purpose, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
 			res.Tasks[i].Worktree = filepath.Join(wtRoot, t.ID)
 		}
@@ -608,7 +617,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 	}
 
-	task := agent.Task{Options: opts, OriginalPrompt: t.Prompt} // Dir is the worktree, once there is one
+	task := agent.Task{Options: opts, OriginalPrompt: t.Prompt, Purpose: t.Purpose} // Dir is the worktree, once there is one
 	expect, err := compileExpect(t.Expect)
 	if err != nil {
 		return fail(err)

@@ -29,6 +29,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -115,9 +116,12 @@ Run flags:
                        compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
                        (claude backend; unset keeps Claude Code's own threshold)
       --continue ID    continue a finished run, on its backend or, with -b, on another one
+      --purpose CATEGORY
+                       review | debug | implement | refactor | test | research | plan | ops
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
+      --shape-tools    summarises large terminal, log and test results and keeps the original behind a handle (api backend; off by default)
       --retrieval MODE  off | optional | required
       --retrieval-tenant ID
       --retrieval-project ID
@@ -229,6 +233,7 @@ func cmdRun(args []string) (int, error) {
 	fs.BoolVar(&jsonOut, "json", false, "")
 	fs.BoolVar(&thinking, "thinking", false, "")
 	continueID := fs.String("continue", "", "")
+	declared := fs.String("purpose", "", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
@@ -236,6 +241,9 @@ func cmdRun(args []string) (int, error) {
 
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["purpose"] && !purpose.Valid(*declared) {
+		return 2, fmt.Errorf("run: --purpose %s: one of %s", *declared, strings.Join(purpose.Categories[:len(purpose.Categories)-1], ", "))
+	}
 
 	// A backend whose plan limit is remembered hands the run to its partner
 	// from the start, a continued one too, so this is settled before the
@@ -313,7 +321,10 @@ func cmdRun(args []string) (int, error) {
 		return 2, err
 	}
 
-	task := agent.Task{Prompt: prompt, Dir: absDir, Options: opts}
+	if *declared == "" {
+		*declared = purpose.Declared(prompt)
+	}
+	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts}
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
 	}

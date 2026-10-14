@@ -16,14 +16,35 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
   off, or absent; `compact_window` is a number or `"auto"`)
-  and, for exec runs, the supervisor's `attempt_id`
+  and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
+  the declared category from `--purpose`, MCP `purpose`, a batch task's `purpose`,
+  or a valid leading `Purpose: <category>` header. It is omitted when undeclared;
+  old records without it still load and use the header or classifier for display
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
   and, where the backend reports them, each model call's `usage` and each `compaction`
-  (see [Usage per turn](#usage-per-turn))
+  (see [Usage per turn](#usage-per-turn)). Codex's `Reconnecting... n/5` line is an `info`
+  event: the CLI retries its dropped model stream itself, and the run's status is what the
+  turn's end says. It is the run's error only when the stream ends on it
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
+- `originals/<handle>.txt` — with `--shape-tools`, the full text of a shell or MCP
+  result over 30,000 bytes. The handle is the first 16 lowercase hex characters of
+  its SHA-256; files are created on demand with mode `0644`.
+  Originals are written and closed in temporary files inside `originals/` before
+  being renamed to the handle; failed writes remove the temporary file.
+  A checked summary or a cut after failed checks ends with
+  `original: <handle> (<n> bytes); read_original reads it` whenever the original was saved. The `read_original`
+  tool returns the whole original or a byte range (`range: "a-b"`, zero-based,
+  end exclusive). Tool-result events and messages contain the summary the model
+  saw. If checks fail or the original cannot be saved, the existing head-and-tail
+  cut is used; without a run record directory, nothing is saved. File reads are
+  not shaped. Old records without this directory or `shape_tools` still load.
+  A continuation has a new run record directory, so it cannot reach the earlier run's originals (#337).
+  Shell capture keeps the whole output up to 8 MiB, including on nonzero exit
+  and timeout. Above that ceiling it uses the existing head-and-tail cut, says
+  the original is unavailable, and saves no incomplete original.
 - `retrieval.json` — the opt-in packet, scope and version pin, saved before a backend
   starts. An unfinished run keeps this pin; a continuation checks it against the
   conversation before reuse.
