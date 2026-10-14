@@ -686,6 +686,14 @@ neither of them follows a run while it happens.
 
 - 2026-10-14: the server's status codes for an unknown tenant or project (#157, PR #N).
   Decided: CreateProject returns 404 for an unknown tenant and ScalingDemand returns 404 for an unknown project; other storage errors retain 500 and 503.
+- 2026-10-14: retrieval compare matches the requested model (#184, PR #301).
+  Decided: use the task model when recorded; a run without a requested model matches
+  only when its reported result model equals the variant model. Show a different
+  provider-reported model in the text comparison.
+- 2026-10-14: a durable stream that fails part-way keeps its usage (#149, PR #300).
+  Decided: count the partial message's usage before returning the durable failure; keep the pending model operation and recovery-required status.
+- 2026-10-14: grep and list_files in a workspace reached through a junction (#55, PR #294).
+  Decided: walk the resolved root while reporting paths under Root; keep inner junctions untraversed.
 - 2026-10-14: public watch's local-use and tunnel address follow-up (#218, PR #261).
   Decided: document that its loopback Host is refused, use a separate plain watch for
   local browsing and `hrn bot`, print the tunnel's loopback target at start, and explain
