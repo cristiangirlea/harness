@@ -29,8 +29,8 @@ target with a `..` after a name (`a/../b`) is refused: the system takes that `..
 following `a`, which may itself be a link.
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
-`read_original` is a read-only api tool, offered and allowed in `readonly` mode
-like `read_file`. It reads saved shell/MCP output from this run's record directory,
+`read_original` is a read-only api tool, offered only when `--shape-tools` is on,
+and allowed in `readonly` mode like `read_file`. It reads saved shell/MCP output from this run's record directory,
 rather than a workspace path. Its required `handle` is exactly 16 lowercase hex
 characters, with no path separators; an unknown handle is an error naming it.
 An optional `range` is `a-b` in zero-based byte offsets, start inclusive and end

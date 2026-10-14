@@ -15,6 +15,7 @@ import (
 
 func TestOriginalRoundTrip(t *testing.T) {
 	ws, tl := setup(t)
+	tl["read_original"] = ReadOriginal()
 	ws.ShapeTools, ws.RunDir = true, t.TempDir()
 	text := "count 10000\n" + strings.Repeat("working\n", 10000) + "done\n"
 	got := ws.toolOutput(text)
@@ -88,6 +89,7 @@ func TestOriginalFallback(t *testing.T) {
 
 func TestReadOriginalRejectsInvalidInput(t *testing.T) {
 	ws, tl := setup(t)
+	tl["read_original"] = ReadOriginal()
 	ws.RunDir = t.TempDir()
 	for _, handle := range []string{"", "../12345678901234", "0123456789abcdeg", "0123456789abcdef/x", "0123456789abcde", "0123456789abcdef0", "0123456789ABCDEF", `0123456789abcde\f`} {
 		if _, err := call(t, ws, tl["read_original"], map[string]any{"handle": handle}); err == nil {
@@ -196,6 +198,7 @@ func TestFileReadsAreNotShaped(t *testing.T) {
 func TestOriginalRefusesSymlinkEscape(t *testing.T) {
 	for _, directory := range []bool{false, true} {
 		ws, tl := setup(t)
+		tl["read_original"] = ReadOriginal()
 		ws.RunDir = t.TempDir()
 		outside := t.TempDir()
 		name := "0123456789abcdef.txt"

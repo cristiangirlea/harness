@@ -71,6 +71,29 @@ func TestAPIShapingStoresAndReadsOriginal(t *testing.T) {
 	}
 }
 
+func TestAPIShapingToolSchemaIsOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, mode := range []Mode{ModeYolo, ModeReadOnly} {
+			_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(),
+				Options: Options{Mode: mode, ShapeTools: enabled}})
+			var names []string
+			for _, tool := range fake.requests[0]["tools"].([]any) {
+				names = append(names, tool.(map[string]any)["name"].(string))
+			}
+			want := []string{"read_file", "list_files", "grep"}
+			if mode != ModeReadOnly {
+				want = append(want, "write_file", "edit_file", "run_command")
+			}
+			if enabled {
+				want = append(want, "read_original")
+			}
+			if !slices.Equal(names, want) {
+				t.Errorf("shape=%v mode=%s tools=%v want=%v", enabled, mode, names, want)
+			}
+		}
+	}
+}
+
 // fakeAPI replays scripted SSE turns and records each request body and headers.
 // A turn of nil answers 529 overloaded without consuming a scripted turn.
 type fakeAPI struct {

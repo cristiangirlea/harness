@@ -107,7 +107,8 @@ func (w *Workspace) storeOriginalWithWriter(text string, write func(io.Writer, s
 	return handle, nil
 }
 
-func readOriginal() Tool {
+// ReadOriginal is added to the API tool set only when shaping is enabled.
+func ReadOriginal() Tool {
 	type in struct {
 		Handle string `json:"handle"`
 		Range  string `json:"range"`

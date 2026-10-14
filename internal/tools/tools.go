@@ -178,7 +178,7 @@ func (w *Workspace) Rel(p string) string {
 // All returns the default tool set in a fixed order; a stable order keeps the
 // API prompt cache warm across turns.
 func All() []Tool {
-	return []Tool{readFile(), listFiles(), grep(), writeFile(), editFile(), runCommand(), readOriginal()}
+	return []Tool{readFile(), listFiles(), grep(), writeFile(), editFile(), runCommand()}
 }
 
 func decode[T any](input json.RawMessage) (T, error) {

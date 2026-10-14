@@ -150,6 +150,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 
 	toolset := b.Tools
+	if task.ShapeTools {
+		toolset = append(append([]tools.Tool(nil), toolset...), tools.ReadOriginal())
+	}
 	if len(task.MCP) > 0 {
 		clients, extra := startMCP(ctx, task, ws.Root, emit)
 		defer func() {

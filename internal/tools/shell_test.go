@@ -49,7 +49,7 @@ func TestRunCommandShapesLargeOutput(t *testing.T) {
 					if string(data) != text {
 						t.Fatal("shell original cut or changed")
 					}
-					rangeOut, err := call(t, ws, tl["read_original"], map[string]any{"handle": strings.TrimSuffix(files[0].Name(), ".txt"), "range": "20000-20010"})
+					rangeOut, err := call(t, ws, ReadOriginal(), map[string]any{"handle": strings.TrimSuffix(files[0].Name(), ".txt"), "range": "20000-20010"})
 					must(t, err)
 					if rangeOut != text[20000:20010] {
 						t.Fatal("shell range changed")
