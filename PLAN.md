@@ -684,7 +684,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: retrieval compare matches the requested model (#184, PR #N).
+- 2026-10-14: retrieval compare matches the requested model (#184, PR #301).
   Decided: use the task model when recorded; a run without a requested model matches
   only when its reported result model equals the variant model. Show a different
   provider-reported model in the text comparison.
