@@ -16,6 +16,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type HTTPServer struct {
@@ -127,6 +128,16 @@ func invalid(w http.ResponseWriter, err error) {
 	}
 }
 
+func createProjectErrorStatus(err error) int {
+	var pgErr *pgconn.PgError
+	// Only the tenant foreign key: PostgreSQL always names the constraint, and
+	// an unnamed or other one must not become a 404 if the table gains a key.
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "projects_tenant_id_fkey" {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
 func decode(w http.ResponseWriter, r *http.Request, destination any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
@@ -193,6 +204,10 @@ func (h *HTTPServer) projects(w http.ResponseWriter, r *http.Request) {
 	}
 	created, issued, err := h.Store.CreateProject(r.Context(), project)
 	if err != nil {
+		if createProjectErrorStatus(err) == http.StatusNotFound {
+			failure(w, http.StatusNotFound, "not_found", "tenant or resource not found")
+			return
+		}
 		invalid(w, err)
 		return
 	}
@@ -526,10 +541,21 @@ func (h *HTTPServer) scaling(w http.ResponseWriter, r *http.Request) {
 	}
 	demand, err := h.Store.ScalingDemand(r.Context(), r.PathValue("project"))
 	if err != nil {
+		if scalingDemandErrorStatus(err) == http.StatusNotFound {
+			failure(w, http.StatusNotFound, "not_found", "project or resource not found")
+			return
+		}
 		failure(w, 503, "unavailable", "scaling metric unavailable")
 		return
 	}
 	respond(w, 200, map[string]int{"value": demand})
+}
+
+func scalingDemandErrorStatus(err error) int {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusNotFound
+	}
+	return http.StatusServiceUnavailable
 }
 
 type recoveryRequest struct {

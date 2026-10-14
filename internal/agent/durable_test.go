@@ -201,6 +201,42 @@ func TestDurableModelRequestIsNotAutomaticallyRetried(t *testing.T) {
 	}
 }
 
+func TestDurableFailedStreamKeepsPartialUsage(t *testing.T) {
+	for _, durable := range []bool{false, true} {
+		name := "local"
+		if durable {
+			name = "durable"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := &checkpointStore{}
+			backend, task, fake, _ := durableFixture(t, store)
+			backend.MaxRetries = 0
+			turn := textTurn("partial")
+			fake.turns = [][]string{append(turn[:len(turn)-1],
+				`{"type":"error","error":{"type":"api_error","message":"stream interrupted"}}`)}
+			if !durable {
+				task.Durable = nil
+			}
+			result := backend.Run(context.Background(), task, func(Event) {})
+			if result.Status != StatusError || result.RecoveryRequired != durable || fake.served != 1 ||
+				!strings.Contains(result.Error, "api stream api_error: stream interrupted") {
+				t.Fatalf("failed stream result = %+v, requests = %d", result, fake.served)
+			}
+			wantCost := estimateCost("claude-opus-5", Result{InputTokens: 100, OutputTokens: 20})
+			if wantCost <= 0 {
+				t.Fatal("test model must have a price")
+			}
+			if result.InputTokens != 100 || result.OutputTokens != 20 || result.ContextTokens != 100 ||
+				result.CostUSD != wantCost {
+				t.Fatalf("partial usage lost: %+v", result)
+			}
+			if durable && (store.latest == nil || store.latest.Pending == nil || store.latest.Pending.Kind != "model") {
+				t.Fatalf("failed stream lost pending model operation: %+v", store.latest)
+			}
+		})
+	}
+}
+
 func TestDurableDoesNotStartSecondEffectAfterFailedOutcome(t *testing.T) {
 	store := &checkpointStore{failBoundary: "tool_outcome"}
 	effects := 0
