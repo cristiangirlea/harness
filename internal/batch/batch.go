@@ -237,7 +237,7 @@ func (s *Spec) normalize() error {
 	if err := s.Options.Validate(); err != nil {
 		return err
 	}
-	if err := checkBackends(s.Backend, s.Retry); err != nil {
+	if err := checkBackends(s.Backend, &s.Retry); err != nil {
 		return err
 	}
 	if err := checkGates(s.Gate); err != nil {
@@ -274,7 +274,7 @@ func (s *Spec) normalize() error {
 		if err := t.Options.Over(s.Options).Validate(); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
-		if err := checkBackends(t.Backend, t.Retry); err != nil {
+		if err := checkBackends(t.Backend, &t.Retry); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkGates(t.Gate); err != nil {
@@ -305,14 +305,33 @@ func compileExpect(expr string) (*regexp.Regexp, error) {
 // expectCommand is how an expect check is named where a gate command would be.
 func expectCommand(expr string) string { return "expect /" + expr + "/" }
 
-func checkBackends(backend string, retry []string) error {
-	for _, name := range append([]string{backend}, retry...) {
+func checkBackends(backend string, retry *[]string) error {
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return err
+	}
+	if err := p.Check(backend); err != nil {
+		return err
+	}
+	for _, name := range append([]string{backend}, (*retry)...) {
 		if name == "" {
 			continue
 		}
 		if _, err := agent.Get(name); err != nil {
 			return err
 		}
+	}
+	if len(*retry) > 0 {
+		filtered := make([]string, 0, len(*retry))
+		for _, name := range *retry {
+			if p.Enabled(name) {
+				filtered = append(filtered, name)
+			}
+		}
+		if len(filtered) == 0 {
+			return fmt.Errorf("retry has no enabled backends; enabled: %s (hrn backends set)", strings.Join(p.EnabledNames, ", "))
+		}
+		*retry = filtered
 	}
 	return nil
 }
@@ -602,6 +621,13 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		return fail(err)
 	}
 	backends := []string{firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))}
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return fail(err)
+	}
+	if err := p.Check(backends[0]); err != nil {
+		return fail(err)
+	}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
 	gateTimeout := defaultGateTimeout
