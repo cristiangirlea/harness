@@ -128,7 +128,7 @@ func validateProject(p Project) error {
 
 func validateSubmission(s Submission) error {
 	if s.Options.Retrieval != "" && s.Options.Retrieval != "off" {
-		return ErrUnsupported
+		return fmt.Errorf("%w: retrieval is not supported for durable jobs", ErrUnsupported)
 	}
 	if len(s.Options.MCP) != 0 {
 		return fmt.Errorf("%w: mcp servers are not supported for durable jobs", ErrUnsupported)
