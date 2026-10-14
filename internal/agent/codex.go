@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -133,6 +134,10 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 		}
 	case "turn.completed":
 		res.Turns++
+		if codexReconnecting(res.Error) {
+			// The turn survived its reconnects: the notice was not the end.
+			res.Status, res.Error = "", ""
+		}
 		if l.Usage == nil || l.Usage.InputTokens == nil || l.Usage.CachedInputTokens == nil || l.Usage.OutputTokens == nil {
 			res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
 		} else {
@@ -144,18 +149,35 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			res.OutputTokens += *l.Usage.OutputTokens
 		}
 	case "error", "turn.failed":
-		res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
 		msg := cmp.Or(l.Message, l.Error.Message)
+		if l.Type == "error" && codexReconnecting(msg) {
+			// The CLI lost its model stream and retries by itself; the turn
+			// goes on. The notice is shown as information and stands as the
+			// run's error only until turn.completed, so a stream that ends on
+			// it still says why. The usage the turn reports later is whole.
+			emit(Event{Time: now, Kind: EventInfo, Text: msg})
+			res.Status, res.Error = StatusError, msg
+			break
+		}
+		res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
 		if msg == "" || msg == res.Error {
 			// A turn.failed after the error line that said why: keep that text,
-			// which is what a reader and the limit check need.
-			if res.Error != "" {
+			// which is what a reader and the limit check need. A reconnect
+			// notice was shown as information, so the failure is reported here.
+			if res.Error != "" && !codexReconnecting(res.Error) {
 				break
 			}
-			msg = l.Type
+			msg = cmp.Or(res.Error, l.Type)
 		}
 		emit(Event{Time: now, Kind: EventError, Text: msg})
 		res.Status, res.Error = StatusError, msg
 	}
 	return true
+}
+
+// codexReconnecting reports whether a codex error line is the CLI saying it is
+// retrying a dropped model stream ("Reconnecting... 2/5 (...)"), which the turn
+// may still survive.
+func codexReconnecting(msg string) bool {
+	return strings.HasPrefix(msg, "Reconnecting...")
 }

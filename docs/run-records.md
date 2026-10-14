@@ -23,7 +23,9 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
   and, where the backend reports them, each model call's `usage` and each `compaction`
-  (see [Usage per turn](#usage-per-turn))
+  (see [Usage per turn](#usage-per-turn)). Codex's `Reconnecting... n/5` line is an `info`
+  event: the CLI retries its dropped model stream itself, and the run's status is what the
+  turn's end says. It is the run's error only when the stream ends on it
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
