@@ -39,6 +39,7 @@ func runRetrieval(args []string, out io.Writer) error {
 	var m eval.RetrievalManifest
 	var cells []eval.RetrievalSample
 	var bp, cp report.Overhead
+	var resolvedRuns bool
 	switch args[0] {
 	case "fixture":
 		var err error
@@ -71,6 +72,7 @@ func runRetrieval(args []string, out io.Writer) error {
 			if e := resolveRetrievalRuns(m, cells); e != nil {
 				return e
 			}
+			resolvedRuns = true
 		}
 	default:
 		return fmt.Errorf("unknown retrieval command")
@@ -85,7 +87,40 @@ func runRetrieval(args []string, out io.Writer) error {
 		return enc.Encode(result)
 	}
 	_, err = fmt.Fprintf(out, "Evidence: %s\nGate: %s — %s\nCells: %d/%d; comparable usage: %d/%d\nSuccess: baseline %d/%d, candidate %d/%d\nMedian tokens: baseline %s, candidate %s; reduction %s\nPreparation coverage (tokens/cost): baseline %t/%t, candidate %t/%t\nSupported full-workflow token/cost savings: %t/%t\n", result.EvidenceKind, result.Gate, result.Reason, result.ObservedPairs, result.ExpectedPairs, result.ComparablePairs, result.ExpectedPairs, result.Baseline.Successes, result.Baseline.Tasks, result.Candidate.Successes, result.Candidate.Tasks, numberPtr(result.BaselineMedian), numberPtr(result.CandidateMedian), numberPtr(result.MedianReduction), result.Baseline.PreparationTokensKnown, result.Baseline.PreparationCostKnown, result.Candidate.PreparationTokensKnown, result.Candidate.PreparationCostKnown, result.TokenSavingsSupported, result.CostSavingsSupported)
+	if err == nil && resolvedRuns {
+		err = writeRetrievalModels(out, m, cells)
+	}
 	return err
+}
+
+func writeRetrievalModels(out io.Writer, m eval.RetrievalManifest, cells []eval.RetrievalSample) error {
+	if labels := retrievalModelLabels(m, cells); len(labels) != 0 {
+		_, err := fmt.Fprintf(out, "Models: %s\n", strings.Join(labels, ", "))
+		return err
+	}
+	return nil
+}
+
+func retrievalModelLabels(m eval.RetrievalManifest, cells []eval.RetrievalSample) []string {
+	if len(m.Spec.Matrix) == 0 {
+		return nil
+	}
+	requested := m.Spec.Matrix[0].Model // Manifest validation requires the same model in every variant.
+	seen := map[string]bool{}
+	var labels []string
+	for _, cell := range cells {
+		for _, attempt := range cell.Usage.Attempts {
+			label := requested
+			if attempt.Model != "" && attempt.Model != requested {
+				label += " (reported " + attempt.Model + ")"
+			}
+			if !seen[label] {
+				seen[label] = true
+				labels = append(labels, label)
+			}
+		}
+	}
+	return labels
 }
 
 // Resolve local records even without --runs for measured inputs. This verifies
@@ -167,7 +202,12 @@ func resolveRetrievalRuns(m eval.RetrievalManifest, cells []eval.RetrievalSample
 			default:
 				return fmt.Errorf("run lacks a terminal result status")
 			}
-			if r.Backend != variant.Backend || r.Result.Backend != variant.Backend || r.Task.Model != variant.Model || r.Result.Model != variant.Model || r.Task.Effort != variant.Effort {
+			model := r.Task.Model
+			if model == "" {
+				// Old records have no requested model; keep matching their reported result model.
+				model = r.Result.Model
+			}
+			if r.Backend != variant.Backend || r.Result.Backend != variant.Backend || model != variant.Model || r.Task.Effort != variant.Effort {
 				return fmt.Errorf("run backend/model/effort differs from variant")
 			}
 			prompt := r.Task.OriginalPrompt
