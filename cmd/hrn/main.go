@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -168,7 +170,7 @@ func main() {
 	case "exec":
 		code, err = cmdExec(os.Args[2:])
 	case "backends":
-		err = cmdBackends()
+		err = cmdBackends(os.Args[2:])
 	case "remote":
 		err = runRemote(os.Args[2:], os.Stdout)
 	case "knowledge":
@@ -432,15 +434,69 @@ func cmdRun(args []string) (int, error) {
 	return 0, nil
 }
 
-func cmdBackends() error {
+func cmdBackends(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "set":
+			fs := flag.NewFlagSet("backends set", flag.ContinueOnError)
+			only := fs.String("only", "", "comma-separated enabled backends, in preference order")
+			def := fs.String("default", "", "default backend, from --only")
+			if err := fs.Parse(args[1:]); err != nil {
+				return err
+			}
+			if *only == "" || fs.NArg() != 0 {
+				return errors.New("usage: hrn backends set --only claude,codex [--default claude]")
+			}
+			p := prefs.Prefs{DefaultName: *def}
+			for _, name := range strings.Split(*only, ",") {
+				name = strings.TrimSpace(name)
+				if _, err := agent.Get(name); err != nil {
+					return err
+				}
+				p.EnabledNames = append(p.EnabledNames, name)
+			}
+			if *def != "" {
+				if _, err := agent.Get(*def); err != nil {
+					return err
+				}
+			}
+			if err := prefs.Save(runlog.Home(), p); err != nil {
+				return err
+			}
+		case "reset":
+			if len(args) != 1 {
+				return errors.New("usage: hrn backends reset")
+			}
+			if err := os.Remove(filepath.Join(runlog.Home(), "backends.json")); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		default:
+			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] | reset]")
+		}
+	}
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return err
+	}
+	def := p.Default()
+	if def == "" {
+		def = agent.DefaultBackendNameIn(runlog.Home())
+	}
 	now := time.Now()
 	for _, name := range agent.Names() {
+		state := "disabled"
+		if p.Enabled(name) {
+			state = "enabled"
+		}
+		if name == def {
+			state += " (default)"
+		}
 		b, _ := agent.Get(name)
 		src, err := b.Detect()
 		if err != nil {
-			fmt.Printf("  ✗ %-9s %s\n", name, err)
+			fmt.Printf("  ✗ %-9s %s: %s\n", name, state, err)
 		} else {
-			fmt.Printf("  ✓ %-9s %s\n", name, src)
+			fmt.Printf("  ✓ %-9s %s: %s\n", name, state, src)
 		}
 		if s := limits.Status(name, now); s != "" {
 			fmt.Printf("    %-9s %s\n", "", s)

@@ -443,22 +443,39 @@ func backendsTool() mcp.Tool {
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			var b strings.Builder
 			var list []map[string]any
+			p, err := agent.BackendPreferences(runlog.Home())
+			if err != nil {
+				return text(err.Error(), nil, true), nil
+			}
+			def := p.Default()
+			if def == "" {
+				def = agent.DefaultBackendNameIn(runlog.Home())
+			}
 			now := time.Now()
 			for _, name := range agent.Names() {
+				state := "disabled"
+				if p.Enabled(name) {
+					state = "enabled"
+				}
+				if name == def {
+					state += " (default)"
+				}
 				be, _ := agent.Get(name)
 				src, err := be.Detect()
 				var entry map[string]any
 				if err != nil {
-					fmt.Fprintf(&b, "✗ %-9s %s\n", name, err)
+					fmt.Fprintf(&b, "✗ %-9s %s: %s\n", name, state, err)
 					entry = map[string]any{"name": name, "available": false, "detail": err.Error()}
 				} else {
-					fmt.Fprintf(&b, "✓ %-9s %s\n", name, src)
+					fmt.Fprintf(&b, "✓ %-9s %s: %s\n", name, state, src)
 					entry = map[string]any{"name": name, "available": true, "detail": src}
 				}
 				if s := limits.Status(name, now); s != "" {
 					fmt.Fprintf(&b, "  %-9s %s\n", "", s)
 					entry["limited_until"] = limits.Until(name, now)
 				}
+				entry["enabled"] = p.Enabled(name)
+				entry["default"] = name == def
 				list = append(list, entry)
 			}
 			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendNameIn(runlog.Home())}, false), nil

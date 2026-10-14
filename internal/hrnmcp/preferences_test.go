@@ -28,3 +28,24 @@ func TestRunToolOffersOnlyEnabledBackendsAndRefusesDisabledOnes(t *testing.T) {
 		t.Fatalf("got %+v, %v", result, err)
 	}
 }
+
+func TestBackendsToolShowsEnabledAndDefaultPreferences(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}, DefaultName: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := backendsTool().Handler(context.Background(), mcp.Call{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := result.StructuredContent.(map[string]any)
+	for _, entry := range data["backends"].([]map[string]any) {
+		want := entry["name"] == "claude"
+		if entry["enabled"] != want || entry["default"] != want {
+			t.Errorf("entry: %v", entry)
+		}
+	}
+	if data["default"] != "claude" {
+		t.Errorf("default: %v", data["default"])
+	}
+}
