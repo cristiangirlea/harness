@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -212,8 +213,10 @@ func TestListAndGrepInJunctionRootedWorkspace(t *testing.T) {
 
 	out, err := call(t, ws, byName["list_files"], map[string]any{})
 	must(t, err)
+	// Whole lines, not substrings: a path reported relative to the junction's
+	// target would still contain the name ("../../x/root.txt").
 	for _, path := range []string{"root.txt", "sub/target.txt"} {
-		if !strings.Contains(out, path) {
+		if !slices.Contains(strings.Split(out, "\n"), path) {
 			t.Errorf("list_files = %q, want %q", out, path)
 		}
 	}
@@ -230,8 +233,8 @@ func TestListAndGrepInJunctionRootedWorkspace(t *testing.T) {
 	} {
 		out, err := call(t, ws, byName["grep"], map[string]any{"pattern": "junction root marker", "path": tc.path})
 		must(t, err)
-		if !strings.Contains(out, tc.want) {
-			t.Errorf("grep in %q = %q, want %q", tc.path, out, tc.want)
+		if !slices.Contains(strings.Split(out, "\n"), tc.want) {
+			t.Errorf("grep in %q = %q, want the line %q", tc.path, out, tc.want)
 		}
 	}
 	out, err = call(t, ws, byName["grep"], map[string]any{"pattern": "outside TODO"})
