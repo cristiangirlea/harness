@@ -32,7 +32,8 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
   its SHA-256; files are created on demand with mode `0644`.
   Originals are written and closed in temporary files inside `originals/` before
   being renamed to the handle; failed writes remove the temporary file.
-  A checked summary ends with `original: <handle> (<n> bytes); read_original reads it`. The `read_original`
+  A checked summary or a cut after failed checks ends with
+  `original: <handle> (<n> bytes); read_original reads it` whenever the original was saved. The `read_original`
   tool returns the whole original or a byte range (`range: "a-b"`, zero-based,
   end exclusive). Tool-result events and messages contain the summary the model
   saw. If checks fail or the original cannot be saved, the existing head-and-tail

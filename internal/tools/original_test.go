@@ -65,7 +65,12 @@ func TestOriginalFallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, _ := setup(t)
 			ws.ShapeTools, ws.RunDir = tc.enabled, tc.dir
-			if got := ws.toolOutput(text); got != Truncate(text) {
+			want := Truncate(text)
+			if tc.enabled && tc.dir != "" {
+				hash := sha256.Sum256([]byte(text))
+				want += fmt.Sprintf("\noriginal: %s (%d bytes); read_original reads it", fmt.Sprintf("%x", hash)[:16], len(text))
+			}
+			if got := ws.toolOutput(text); got != want {
 				t.Fatal("fallback changed")
 			}
 			if tc.dir != "" {
@@ -84,6 +89,29 @@ func TestOriginalFallback(t *testing.T) {
 	must(t, os.WriteFile(ws.RunDir, []byte("blocked"), 0o644))
 	if got := ws.toolOutput("count 10000\n" + text); got != Truncate("count 10000\n"+text) {
 		t.Fatal("storage failure did not fall back")
+	}
+}
+
+func TestOriginalRetrievalAfterSummaryRejection(t *testing.T) {
+	ws, _ := setup(t)
+	ws.ShapeTools, ws.RunDir = true, t.TempDir()
+	text := strings.Repeat("x", 25000) + "middle" + strings.Repeat("y", 24994)
+	got := ws.toolOutput(text)
+	cut, handleLine, found := strings.Cut(got, "\noriginal: ")
+	if !found || cut != Truncate(text) || strings.Contains(cut, "middle") {
+		t.Fatal("rejected summary did not return a cut with an original handle")
+	}
+	handle, _, _ := strings.Cut(handleLine, " ")
+	for _, r := range []string{"", "25000-25006"} {
+		out, err := call(t, ws, ReadOriginal(), map[string]any{"handle": handle, "range": r})
+		must(t, err)
+		want := text
+		if r != "" {
+			want = "middle"
+		}
+		if out != want {
+			t.Fatalf("range %q did not retrieve the saved original", r)
+		}
 	}
 }
 

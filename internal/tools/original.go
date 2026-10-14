@@ -35,7 +35,7 @@ func (w *Workspace) toolOutput(text string) string {
 	}
 	summary, ok := shape.Summarize(shape.Classify(text), text)
 	if !ok {
-		return Truncate(text)
+		summary = Truncate(text)
 	}
 	return fmt.Sprintf("%s\noriginal: %s (%d bytes); read_original reads it", summary, handle, len(text))
 }
