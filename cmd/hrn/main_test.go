@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/route"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -94,6 +95,38 @@ func (r recorder) Run(_ context.Context, task agent.Task, _ func(agent.Event)) a
 }
 
 var recorded = make(chan agent.Task, 4)
+
+func TestRunChecksLimitsOnTheRoutedBackend(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, name := range []string{"claude", "codex"} {
+		old, _ := agent.Get(name)
+		defer agent.Register(old)
+		agent.Register(recorder{name, recorded})
+	}
+	// Choose the backend other than the default so the test detects checking
+	// limits before the purpose row has supplied a backend.
+	limited := "codex"
+	partner := "claude"
+	if agent.DefaultBackendName() == "codex" {
+		limited, partner = partner, limited
+	}
+	if err := limits.Note(limited, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := route.Save(route.Table{"implement": {Backend: limited, Model: "routed", Effort: "medium"}}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"-C", t.TempDir(), "Implement a widget"})
+	if code != 0 || err != nil {
+		t.Fatalf("run: %d %v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].RoutedBy == nil {
+		t.Fatalf("limit after routing: %+v %v", recs, err)
+	}
+}
 
 func TestRunUsesRoutingAndKeepsNamedModel(t *testing.T) {
 	for _, explicit := range []bool{false, true} {

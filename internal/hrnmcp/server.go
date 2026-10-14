@@ -145,7 +145,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			// As hrn run does: a backend whose limit is remembered hands
 			// the run to its partner before anything is planned.
 			var routed string
-			if !args.NoSwitch {
+			if !args.NoSwitch && args.ContinueRunID != "" {
 				if args.Backend, routed = limits.Choose(args.Backend, args.ContinueRunID); routed != "" {
 					args.Model = ""
 				}
@@ -175,6 +175,11 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			routedBy, err := args.Options.Route(args.Prompt, &args.Backend, runlog.Home())
 			if err != nil {
 				return mcp.CallResult{}, err
+			}
+			if !args.NoSwitch && args.ContinueRunID == "" {
+				if args.Backend, routed = limits.Choose(args.Backend, ""); routed != "" {
+					args.Model = ""
+				}
 			}
 			if args.Backend == "" {
 				args.Backend = agent.DefaultBackendName()

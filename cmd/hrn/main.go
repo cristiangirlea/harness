@@ -240,7 +240,7 @@ func cmdRun(args []string) (int, error) {
 	// from the start, a continued one too, so this is settled before the
 	// plan. A model typed for it means nothing to the partner.
 	var routed string
-	if !opts.NoSwitch {
+	if !opts.NoSwitch && *continueID != "" {
 		if backend, routed = limits.Choose(backend, *continueID); routed != "" {
 			opts.Model = ""
 		}
@@ -298,6 +298,11 @@ func cmdRun(args []string) (int, error) {
 	routedBy, err := opts.Route(prompt, &backend, runlog.Home())
 	if err != nil {
 		return 2, err
+	}
+	if !opts.NoSwitch && *continueID == "" {
+		if backend, routed = limits.Choose(backend, ""); routed != "" {
+			opts.Model = ""
+		}
 	}
 	if backend == "" {
 		backend = agent.DefaultBackendName()
