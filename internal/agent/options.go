@@ -106,6 +106,14 @@ func (o *Options) Route(prompt string, backend *string, home string) (*table.Rou
 		return nil, nil
 	}
 	if r.Backend != "" {
+		p, err := BackendPreferences(home)
+		if err != nil {
+			return nil, err
+		}
+		if !p.Enabled(r.Backend) {
+			fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: backend %s is disabled\n", category, r.Backend)
+			return nil, nil
+		}
 		if _, err := Get(r.Backend); err != nil {
 			fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: %v\n", category, err)
 			return nil, nil
