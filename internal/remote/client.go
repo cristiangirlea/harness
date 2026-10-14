@@ -39,9 +39,9 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.ForceQuery ||
-		parsed.RawQuery != "" || parsed.Opaque != "" || parsed.RawPath != "" ||
+		parsed.RawQuery != "" || parsed.Opaque != "" || parsed.RawPath != "" || strings.Contains(raw, "#") ||
 		parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return nil, errors.New("HRN_SERVER_URL must be an origin without credentials, path or query")
+		return nil, errors.New("HRN_SERVER_URL must be an origin without credentials, path, query or fragment")
 	}
 	host := parsed.Hostname()
 	if parsed.Scheme != "https" && !(parsed.Scheme == "http" &&
