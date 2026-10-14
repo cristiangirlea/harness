@@ -16,7 +16,7 @@ func TestCreateProjectErrorStatus(t *testing.T) {
 		want int
 	}{
 		{"tenant foreign key", &pgconn.PgError{Code: "23503", ConstraintName: "projects_tenant_id_fkey"}, http.StatusNotFound},
-		{"unnamed foreign key", &pgconn.PgError{Code: "23503"}, http.StatusNotFound},
+		{"unnamed foreign key", &pgconn.PgError{Code: "23503"}, http.StatusInternalServerError},
 		{"wrapped tenant foreign key", errors.Join(errors.New("insert project"), &pgconn.PgError{Code: "23503", ConstraintName: "projects_tenant_id_fkey"}), http.StatusNotFound},
 		{"other foreign key", &pgconn.PgError{Code: "23503", ConstraintName: "projects_other_id_fkey"}, http.StatusInternalServerError},
 		{"other postgres error", &pgconn.PgError{Code: "23505", ConstraintName: "projects_tenant_id_fkey"}, http.StatusInternalServerError},

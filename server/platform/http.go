@@ -130,8 +130,9 @@ func invalid(w http.ResponseWriter, err error) {
 
 func createProjectErrorStatus(err error) int {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" &&
-		(pgErr.ConstraintName == "" || pgErr.ConstraintName == "projects_tenant_id_fkey") {
+	// Only the tenant foreign key: PostgreSQL always names the constraint, and
+	// an unnamed or other one must not become a 404 if the table gains a key.
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "projects_tenant_id_fkey" {
 		return http.StatusNotFound
 	}
 	return http.StatusInternalServerError
