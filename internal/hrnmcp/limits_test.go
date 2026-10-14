@@ -55,7 +55,7 @@ func standIn(t *testing.T) {
 func TestRunToolCarriesALimitedRunOn(t *testing.T) {
 	s := connect(t, t.TempDir())
 	standIn(t)
-	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto"}`)
+	res := s.call(t, "run", `{"prompt":"fix it","purpose":"review","backend":"codex","mode":"auto"}`)
 	if res.IsError {
 		t.Fatalf("the carried-on run finished, yet: %s", res.Text())
 	}
@@ -71,6 +71,9 @@ func TestRunToolCarriesALimitedRunOn(t *testing.T) {
 	}
 	if rec.Backend != "claude" || rec.Continues == "" {
 		t.Fatalf("run_id names %s continuing %q, want the claude run that carried it on", rec.Backend, rec.Continues)
+	}
+	if rec.Task.Purpose != "review" {
+		t.Errorf("carried-on purpose = %q, want review", rec.Task.Purpose)
 	}
 	if limited, _ := sc["limited_run_id"].(string); limited != rec.Continues {
 		t.Errorf("limited_run_id = %q, want %q", limited, rec.Continues)

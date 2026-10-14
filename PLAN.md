@@ -692,6 +692,8 @@ order they are worth taking:
     effort and model answer, and what it writes twice. In this order, each its own PR:
     - [#295](https://github.com/cristiangirlea/harness/issues/295): measure first, from the run
       records: tool-result bytes by shape, and the inline scripts written again and again.
+      Done: PR #330, 2026-10-14. The page says shaping can touch about 10% of the context
+      carried (terminal output most of it) and kept scripts under half a percent.
     - [#151](https://github.com/cristiangirlea/harness/issues/151) and
       [#264](https://github.com/cristiangirlea/harness/issues/264): an unknown cost is never
       zero and a cache read is counted once, before any saving is claimed. #151 done:
@@ -2149,6 +2151,12 @@ neither of them follows a run while it happens.
   `-` when nothing in the row is known and `$1.23 (2 unknown)` when some are; a reported
   zero is known and shows `$0.00`. A task that never ran (no attempts) is not counted as
   unknown: nothing about its cost is missing. `hrn eval` still sums raw (#309).
+- 2026-10-14: A declared purpose on run and batch (#312, PR #331). Callers may
+  declare a category with `--purpose` or `purpose`, otherwise a valid leading
+  `Purpose: <category>` header supplies it, and the record stores it without changing
+  the prompt. Watch and reports prefer the declaration over keyword rules; a header
+  with free text or `unknown` is ignored as a declaration, while an invalid explicit
+  value is refused before a run starts.
 - 2026-10-14: PR #314 (closes #304): secrets masked on display. `internal/mask.Text` applies the
   issue's ordered rules (URL credentials, `-u user:password`, JSON secret fields,
   authorization-style headers, bare Bearer tokens, known token shapes, `NAME=value` where a
@@ -2188,3 +2196,15 @@ neither of them follows a run while it happens.
   table starts empty and nothing is routed until it is filled. Left open as #327: a routed
   model following a retry onto another backend, `routed_by` after a limit switch, eval naming
   shared with `FromEval`, uneven row validation.
+- 2026-10-14: PR #330 (closes #295): the measurement before any saving is claimed.
+  `scripts/tool-shapes.sh` (a kept script over `scripts/tool-shapes/`) reads the run records
+  of a window and prints bytes per result shape, two estimated shares of input tokens
+  (once-counted, and replayed by every later call of the run), and inline-script groups by a
+  normalised form, never the text; `docs/tool-shapes.md` holds the numbers for this machine.
+  Over 30 days: 87 MB of tool results against 1.35 billion input tokens, so output shaping
+  (#296) can touch about 1.6% once-counted and about 10% replayed, three quarters of it
+  terminal output; inline scripts 0.4% replayed and the groups that repeat 0.001%, so kept
+  scripts (#298) are justified by reuse, not tokens. Shares use only runs with a token figure
+  (usage events, else result totals; codex input already holds its cached tokens). Left open
+  as #328: interpreter groups in the table, the verifier and subdirectories, cache writes in
+  the denominator, the shape of `go test -json`.
