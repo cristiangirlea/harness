@@ -722,6 +722,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: An agy backend (#344, PR #TBD). Antigravity's CLI receives the prompt
+  as stream-json on stdin, maps modes/model/effort, and records streamed text, result
+  usage and conversation IDs using a parser per run. Continuation uses `--conversation`
+  in place through the existing session hook; no usage-limit wording is guessed.
 - 2026-10-14: a take stopped by its context says so (#257, PR #339). The git commands
   before the create lock run under the take's context, so on a loaded machine its deadline
   could kill one and the take reported a broken repository. Decided: `ws.Take` wraps any
