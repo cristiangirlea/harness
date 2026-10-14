@@ -667,6 +667,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: five slots per repository, ten at most (#256, PR #N).
+  Decided: keep a small pool of reusable worktrees, about five, that may grow to ten; reuse them rather than create and delete them.
 - 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
   as the index does) and a batch's repository too, the whole path as a hover title for this
   computer only. Text from a run's events, its prompt and result, and a batch's tasks and
