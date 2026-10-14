@@ -22,8 +22,9 @@ probably one fix.
 Default backend: `api` when credentials exist, otherwise `claude`.
 
 The `claude` backend uses the plan login only. If Claude Code's init line reports an
-`apiKeySource` other than `none`, hrn stops the worker and errors before its first turn;
-older CLI versions that omit the field keep their existing behaviour.
+`apiKeySource` other than `none`, hrn stops the worker as soon as that init line arrives
+and ends the run with an error. Claude Code may already have sent its first request.
+Older CLI versions that omit the field keep their existing behaviour.
 
 ### Context management
 
