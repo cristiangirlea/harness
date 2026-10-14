@@ -296,7 +296,7 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if isMovedCache(c.Path) {
 		return Remove, "moved cache left by an earlier removal"
 	}
-	idle := now.Sub(c.LastBuild)
+	idle := ageAt(now, c.LastBuild)
 	if idle >= opt.Idle {
 		return Remove, "idle " + short(idle)
 	}
@@ -390,7 +390,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 		sort.SliceStable(s.candidates, func(a, b int) bool { return all[s.candidates[a]].LastBuild.Before(all[s.candidates[b]].LastBuild) })
 		for _, i := range s.candidates {
 			c := &all[i]
-			idle := now.Sub(c.LastBuild)
+			idle := ageAt(now, c.LastBuild)
 			if alreadyEnough {
 				if s.free < opt.FreeBelow && idle >= minIdle {
 					s.more = true
@@ -504,6 +504,16 @@ func profiles(dir string) []string {
 // no profile. The folder times catch what a build removes, which no file
 // shows; the walk catches a file rewritten deep inside a cache with no
 // profile, such as pytest's.
+// ageAt is how long before now a cache was last written. A write time a hair
+// after now (file times and the clock differ by their resolution) is age 0,
+// so --idle 0 takes any cache (#245).
+func ageAt(now, written time.Time) time.Duration {
+	if d := now.Sub(written); d > 0 {
+		return d
+	}
+	return 0
+}
+
 func lastBuild(dir string, newest time.Time) time.Time {
 	note := func(p string) {
 		if info, err := os.Lstat(p); err == nil && info.ModTime().After(newest) {
