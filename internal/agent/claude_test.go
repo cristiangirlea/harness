@@ -1,9 +1,70 @@
 package agent
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 )
+
+// TestHelperClaudeKeySource acts as Claude Code without starting a paid turn.
+func TestHelperClaudeKeySource(t *testing.T) {
+	source := os.Getenv("HRN_CLAUDE_KEY_SOURCE_TEST")
+	if source == "" {
+		return
+	}
+	init := `{"type":"system","subtype":"init"}`
+	if source != "missing" {
+		init = fmt.Sprintf(`{"type":"system","subtype":"init","apiKeySource":%q}`, source)
+	}
+	fmt.Println(init)
+	if source != "none" && source != "missing" {
+		time.Sleep(5 * time.Second)
+		fmt.Println(`{"type":"assistant","message":{"content":[{"type":"text","text":"paid turn"}]}}`)
+	}
+	fmt.Println(`{"type":"result","subtype":"success","result":"done"}`)
+	os.Exit(0)
+}
+
+func TestClaudeRefusesPerTokenBillingAtInit(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		refuse       bool
+	}{
+		{"plan login", "none", false},
+		{"environment key", "ANTHROPIC_API_KEY", true},
+		{"key helper", "apiKeyHelper", true},
+		{"older CLI", "missing", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_CLAUDE_KEY_SOURCE_TEST", tc.source)
+			b := NewClaudeBackend()
+			b.name = os.Args[0]
+			b.candidates = nil
+			b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperClaudeKeySource$", "--"} }
+			var text []string
+			res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(500 * time.Millisecond)}},
+				func(e Event) {
+					if e.Kind == EventText {
+						text = append(text, e.Text)
+					}
+				})
+			if tc.refuse {
+				if res.Status != StatusError || !strings.Contains(res.Error, tc.source) || !strings.Contains(res.Error, "refused") {
+					t.Fatalf("key source %q: want billing refusal, got %+v", tc.source, res)
+				}
+				if len(text) != 0 || res.Final != "" {
+					t.Fatalf("key source %q: used output after init: text %v, result %+v", tc.source, text, res)
+				}
+			} else if res.Status != StatusOK || res.Final != "done" {
+				t.Fatalf("key source %q: plan login should run: %+v", tc.source, res)
+			}
+		})
+	}
+}
 
 func TestClaudePassesEffortOnlyWhenSet(t *testing.T) {
 	for _, effort := range []string{"", "low", "medium", "high", "xhigh", "max"} {

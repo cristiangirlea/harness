@@ -21,6 +21,10 @@ probably one fix.
 
 Default backend: `api` when credentials exist, otherwise `claude`.
 
+The `claude` backend uses the plan login only. If Claude Code's init line reports an
+`apiKeySource` other than `none`, hrn stops the worker and errors before its first turn;
+older CLI versions that omit the field keep their existing behaviour.
+
 ### Context management
 
 A long run carries every tool result, and the cap is 30 KB per result, so the
