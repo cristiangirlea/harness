@@ -726,7 +726,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: An agy backend (#344, PR #TBD). Antigravity's CLI receives the prompt
+- 2026-10-14: An agy backend (#344, PR #369). Antigravity's CLI receives the prompt
   as stream-json on stdin, maps modes/model/effort, and records streamed text, result
   usage and conversation IDs using a parser per run. Continuation uses `--conversation`
   in place through the existing session hook; no usage-limit wording is guessed.
