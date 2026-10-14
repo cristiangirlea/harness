@@ -29,6 +29,16 @@ target with a `..` after a name (`a/../b`) is refused: the system takes that `..
 following `a`, which may itself be a link.
 Read-only calls in one turn run in parallel; writes and commands run in order.
 
+`read_original` is a read-only api tool, offered and allowed in `readonly` mode
+like `read_file`. It reads saved shell/MCP output from this run's record directory,
+rather than a workspace path. Its required `handle` is exactly 16 lowercase hex
+characters, with no path separators; an unknown handle is an error naming it.
+An optional `range` is `a-b` in zero-based byte offsets, start inclusive and end
+exclusive; invalid or out-of-bounds ranges are refused. Without a range it returns
+all bytes without truncating or shaping them. Links that leave `originals/` are
+refused. The harness stores originals as run records when `--shape-tools` is on;
+the tool itself never writes them.
+
 #### The command guard
 
 `run_command` refuses seven kinds of command line before the shell sees them:

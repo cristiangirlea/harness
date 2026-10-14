@@ -53,6 +53,18 @@ backend default; gemini and opencode report it as not enforced),
 `--allow-dangerous`, `--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
 budgets below.
+`--shape-tools` opts the api backend into summaries of large terminal, log and
+test-runner results from shell and MCP tools, with the full original saved behind
+a handle (see [Run records](run-records.md#run-records)). It is off by default
+pending the #296 eval; JSON and tabular summaries are deferred. Summaries must
+preserve failing tests and error lines and introduce no numbers, negations or
+paths absent from the original; a rejected summary uses the existing cut. This
+includes generated counts, so a count absent from the original also rejects the
+summary. `--shape-tools=false` keeps the existing behavior. The additive
+`shape_tools` boolean is also available in run options, batch specs/tasks and MCP
+run inputs. Eval matrix variants each select `shape_tools` (default false),
+overriding task/spec shaping so a suite can compare raw and shaped variants;
+give the variants distinct names. This flag does not change CLI backend tools.
 `--retrieval off|optional|required` opts into project references; enabled modes
 require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and
 an explicit `--model`. `--retrieval-version` pins a version; otherwise the
