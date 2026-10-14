@@ -66,7 +66,7 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
-	return &Client{origin: parsed.Scheme + "://" + parsed.Host, token: token,
+	return &Client{origin: (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host}).String(), token: token,
 		http: &http.Client{Transport: transport, Timeout: 20 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }

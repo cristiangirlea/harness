@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,23 @@ func TestNewFromEnvBuildsOriginFromParsedURL(t *testing.T) {
 				t.Fatalf("origin = %q, want https://host", client.origin)
 			}
 		})
+	}
+}
+
+func TestAScopedIPv6OriginStaysEscapedInRequestURLs(t *testing.T) {
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	t.Setenv("HRN_SERVER_URL", "https://[fe80::1%25en0]:443")
+	client, err := NewFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(client.origin + "/v1/jobs")
+	if err != nil {
+		t.Fatalf("a request URL from origin %q does not parse: %v", client.origin, err)
+	}
+	if u.Hostname() != "fe80::1%en0" || u.Port() != "443" {
+		t.Fatalf("request host = %q port %q, want fe80::1%%en0 and 443", u.Hostname(), u.Port())
 	}
 }
 
