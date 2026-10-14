@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -53,5 +54,53 @@ func TestRunFieldsCannotDriveTheTerminalEither(t *testing.T) {
 		if strings.Contains(b.String(), bad) {
 			t.Errorf("the terminal got %q:\n%q", bad, b.String())
 		}
+	}
+}
+
+func TestRendererMasksBeforeShortening(t *testing.T) {
+	secret := "Authorization: Bearer " + strings.Repeat("z", 300)
+	for _, kind := range []agent.EventKind{agent.EventText, agent.EventThinking, agent.EventToolCall, agent.EventToolResult, agent.EventInfo, agent.EventSession, agent.EventError} {
+		var b strings.Builder
+		r := &renderer{out: &b, thinking: true}
+		r.Event(agent.Event{Kind: kind, Text: secret})
+		if strings.Contains(b.String(), "zz") || !strings.Contains(b.String(), "••••") {
+			t.Errorf("%s leaks: %q", kind, b.String())
+		}
+	}
+	for _, input := range []string{`{"command":"` + secret + `"}`, `{"password":"` + strings.Repeat("z", 300) + `"}`} {
+		var b strings.Builder
+		r := &renderer{out: &b}
+		r.Event(agent.Event{Kind: agent.EventToolCall, Input: []byte(input)})
+		if strings.Contains(b.String(), "zz") || !strings.Contains(b.String(), "••••") {
+			t.Errorf("input leaks: %q", b.String())
+		}
+	}
+	var b strings.Builder
+	r := &renderer{out: &b}
+	r.Line(secret)
+	showHeader(r, runlog.Record{Task: agent.Task{Prompt: secret}})
+	if strings.Contains(b.String(), "zz") || strings.Count(b.String(), "••••") != 2 {
+		t.Errorf("lines leak: %q", b.String())
+	}
+}
+
+func TestRendererLongToolInputMasksAfterCompacting(t *testing.T) {
+	// Compacting sorts the command before the large content field.
+	input := json.RawMessage(`{"content":"` + strings.Repeat("x", 2048) + `","command":"echo sk-test-long-input"}`)
+	var b strings.Builder
+	r := &renderer{out: &b}
+	r.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Input: input})
+	if !strings.Contains(b.String(), `"command":"echo ••••"`) || strings.Contains(b.String(), "sk-test-long-input") {
+		t.Error("tool line must show the command with its token masked")
+	}
+}
+
+func TestRendererLongResultKeepsLineCount(t *testing.T) {
+	text := strings.Repeat(strings.Repeat("x", 99)+"\n", 512)
+	var b strings.Builder
+	r := &renderer{out: &b}
+	r.Event(agent.Event{Kind: agent.EventToolResult, Text: text})
+	if !strings.Contains(b.String(), " (+511 lines)") {
+		t.Errorf("result line count = %q", b.String())
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -160,6 +161,9 @@ func announce(prev, cur botSnapshot, first bool) []say {
 	if status.Text != statusOf(prev) {
 		out = append(out, status)
 	}
+	for i := range out {
+		out[i].Text = mask.Text(out[i].Text)
+	}
 	return out
 }
 
@@ -285,6 +289,7 @@ func taskName(t batch.TaskResult) string {
 // activity is what a tool call shows an agent doing, in a few words. The
 // tools' names differ by backend; the summary is the call's one line.
 func activity(tool, summary string) string {
+	tool, summary = mask.Text(tool), mask.Text(summary)
 	t := strings.ToLower(tool)
 	if _, after, ok := strings.Cut(t, "mcp__"); ok { // mcp__server__tool
 		if i := strings.LastIndex(after, "__"); i >= 0 {
@@ -318,7 +323,7 @@ func activity(tool, summary string) string {
 // commandWords is a command line as one would say it: the program and what
 // it was asked to do, without paths, settings or a cd in front.
 func commandWords(line string) string {
-	fields := strings.Fields(line)
+	fields := strings.Fields(mask.Text(line))
 	for len(fields) > 0 {
 		f := fields[0]
 		switch {
@@ -429,7 +434,7 @@ func words(s string, n int) string {
 
 // sentence starts with a capital and ends with a full stop.
 func sentence(s string) string {
-	s = capital(strings.TrimSpace(s))
+	s = capital(strings.TrimSpace(mask.Text(s)))
 	if s != "" && !strings.ContainsAny(s[len(s)-1:], ".?!") && !strings.HasSuffix(s, "…") {
 		s += "."
 	}
@@ -614,6 +619,7 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		for _, m := range announce(prev, cur, first) {
+			m.Text = s.clean(m.Text)
 			data, _ := json.Marshal(m)
 			text := string(data)
 			if s.redact != nil { // a backstop: the records were blanked already

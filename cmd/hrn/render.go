@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -59,7 +60,7 @@ func (r *renderer) newline() {
 func (r *renderer) Event(e agent.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e.Text, e.Tool = printable(e.Text), printable(e.Tool)
+	e.Text, e.Tool = printable(mask.Text(e.Text)), printable(mask.Text(e.Tool))
 	if e.Kind != agent.EventThinking && r.inThought {
 		r.newline()
 		r.inThought = false
@@ -145,10 +146,10 @@ func (r *renderer) Summary(runID string, res agent.Result) {
 func compactJSON(raw json.RawMessage, n int) string {
 	var v any
 	if json.Unmarshal(raw, &v) != nil {
-		return tools.OneLine(string(raw), n)
+		return tools.OneLine(mask.Text(string(raw)), n)
 	}
 	b, _ := json.Marshal(v)
-	return tools.OneLine(string(b), n)
+	return tools.OneLine(mask.Text(string(b)), n)
 }
 
 func human(n int64) string {
@@ -171,7 +172,7 @@ func (r *renderer) Line(s string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.newline()
-	r.write(s + "\n")
+	r.write(mask.Text(s) + "\n")
 }
 
 // printable is record text made safe for a terminal. Records hold whatever an

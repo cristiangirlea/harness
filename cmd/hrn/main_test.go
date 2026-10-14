@@ -256,3 +256,47 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 		t.Errorf("code=%d err=%v", code, err)
 	}
 }
+
+func TestShowMasksHumanOutputOnly(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const prompt = "API_KEY=fake-show-secret task"
+	const command = "Authorization: Bearer sk-test-show-secret"
+	w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Text: command})
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	for _, jsonOut := range []bool{false, true} {
+		f, err := os.CreateTemp(t.TempDir(), "show")
+		if err != nil {
+			t.Fatal(err)
+		}
+		prev := os.Stdout
+		os.Stdout = f
+		args := []string{w.ID()}
+		if jsonOut {
+			args = append([]string{"--json"}, args...)
+		}
+		err = cmdShow(args)
+		os.Stdout = prev
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(data)
+		if jsonOut {
+			if !strings.Contains(got, prompt) || !strings.Contains(got, command) {
+				t.Fatal("JSON was masked")
+			}
+		} else if strings.Contains(got, "fake-show-secret") || strings.Contains(got, "sk-test-show-secret") || !strings.Contains(got, "••••") {
+			t.Fatal("show did not mask")
+		}
+	}
+}

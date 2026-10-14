@@ -13,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/qr"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -70,9 +71,10 @@ type eventView struct {
 // before (the run's start for the first); it returns the time to pass on.
 func eventOf(l Line, prev time.Time) (eventView, time.Time) {
 	if l.Err != nil {
-		return eventView{Class: "ev-bad", Label: "unreadable", Summary: l.Err.Error()}, prev
+		return eventView{Class: "ev-bad", Label: "unreadable", Summary: mask.Text(l.Err.Error())}, prev
 	}
 	e := l.Event
+	e.Text, e.Tool = mask.Text(e.Text), mask.Text(e.Tool)
 	var v eventView
 	if !e.Time.IsZero() {
 		v.When, v.Clock = e.Time.Format(time.RFC3339Nano), e.Time.Local().Format("15:04:05")
@@ -93,7 +95,7 @@ func eventOf(l Line, prev time.Time) (eventView, time.Time) {
 		if v.Label == "" {
 			v.Label = "tool"
 		}
-		v.Body, v.More = capText(prettyJSON(e.Input), inputHead, inputTail)
+		v.Body, v.More = capText(mask.Text(prettyJSON(e.Input)), inputHead, inputTail)
 	case agent.EventToolResult:
 		v.Class, v.Label, v.Summary = "ev-result", "result", resultSummary(e.Text)
 		if e.IsError {
@@ -136,11 +138,11 @@ func callSummary(e agent.Event) string {
 			s = string(e.Input)
 		}
 	}
-	return tools.OneLine(s, 200)
+	return tools.OneLine(mask.Text(s), 200)
 }
 
 func resultSummary(s string) string {
-	trimmed := strings.TrimSpace(s)
+	trimmed := strings.TrimSpace(mask.Text(s))
 	if trimmed == "" {
 		return "(empty)"
 	}
@@ -247,7 +249,7 @@ func statusClass(s string) string {
 
 // firstLine is the first line of a prompt that has something on it.
 func firstLine(s string) (line string, more bool) {
-	trimmed := strings.TrimSpace(s)
+	trimmed := strings.TrimSpace(mask.Text(s))
 	first, rest, _ := strings.Cut(trimmed, "\n")
 	line = tools.OneLine(first, 140)
 	return line, rest != "" || line != strings.TrimSpace(first)
@@ -262,7 +264,7 @@ type resultView struct {
 }
 
 func resultOf(res agent.Result) resultView {
-	v := resultView{Status: string(res.Status), Class: statusClass(string(res.Status)), Error: res.Error}
+	v := resultView{Status: string(res.Status), Class: statusClass(string(res.Status)), Error: mask.Text(res.Error)}
 	add := func(label, value string) { v.Facts = append(v.Facts, fact{Label: label, Value: value}) }
 	backend := res.Backend
 	if res.Model != "" {
@@ -284,7 +286,7 @@ func resultOf(res agent.Result) resultView {
 	if !res.LimitResets.IsZero() {
 		add("Limit lifts", res.LimitResets.Local().Format("2006-01-02 15:04"))
 	}
-	v.Final, v.FinalMore = capText(res.Final, textHead, textTail)
+	v.Final, v.FinalMore = capText(mask.Text(res.Final), textHead, textTail)
 	return v
 }
 
@@ -304,7 +306,7 @@ type runPage struct {
 }
 
 func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) runPage {
-	p := runPage{page: page{Title: "Run " + rec.ID, Home: runlog.Home()}, ID: rec.ID, Continues: rec.Continues, Prompt: rec.Task.Prompt, Events: events}
+	p := runPage{page: page{Title: "Run " + rec.ID, Home: runlog.Home()}, ID: rec.ID, Continues: rec.Continues, Prompt: mask.Text(rec.Task.Prompt), Events: events}
 	p.PromptLine, p.PromptMore = firstLine(rec.Task.Prompt)
 	model := rec.Task.Model
 	if rec.Done && rec.Result.Model != "" {
@@ -545,7 +547,7 @@ func batchBodyOf(res batch.Result, v viewer) batchBody {
 	}
 	repo := v.shortener(res.Dir)
 	for _, t := range res.Tasks {
-		tv := taskView{ID: t.ID, Status: string(t.Status), Class: statusClass(string(t.Status)), Prompt: t.Prompt, Error: t.Error,
+		tv := taskView{ID: t.ID, Status: string(t.Status), Class: statusClass(string(t.Status)), Prompt: mask.Text(t.Prompt), Error: mask.Text(t.Error),
 			Waiting: t.Status == batch.StatusRunning && len(t.Attempts) == 0}
 		tv.PromptLine, tv.PromptMore = firstLine(t.Prompt)
 		tv.Facts = []fact{{Label: "Branch", Value: t.Branch}}

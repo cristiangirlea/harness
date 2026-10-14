@@ -221,3 +221,18 @@ They are saved by the browser into a folder the person picks (`0001.wav`, … wi
 only serves the page; picking the same folder again carries on at the first line not kept.
 A browser without folder access (Firefox) downloads each take instead, named by its line.
 A line's number never changes, so takes from different sessions line up.
+
+## Secret masking
+
+Human-facing text in watch rows, pages and streams (local and `--lan`), `hrn show`,
+terminal progress lines and Ada's speech and notifications masks secret values as
+`••••`: URL credentials; `-u`/`--user` user:password flags; JSON secret fields;
+authorization, API-key and cookie headers; bare Bearer tokens; recognised `sk-`,
+`ghp_`, `github_pat_`, `xox`, `AKIA` and JWT tokens; assignments whose names have KEY,
+TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or SESSION as a whole segment
+(separated by `_`, `-` or the name's ends); and secret flags
+such as `--password`, `--token` and `--api-key`. Masking scans the whole text before
+any display excerpt is shortened; it does not cut the text itself.
+The existing environment-value redaction also runs. Records remain unchanged,
+and JSON record output retains the original text. These rules recognise common
+secret shapes; they cannot identify every possible secret.
