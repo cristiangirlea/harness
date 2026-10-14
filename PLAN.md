@@ -723,8 +723,9 @@ neither of them follows a run while it happens.
 
 - 2026-10-14: watch matches quoted program path delimiters (#237, PR #363). Only the
   matching quote ends a quoted program path, so apostrophes in double-quoted Windows
-  folder names survive the scan, including JSON-escaped text. Unquoted delimiters
-  and the existing line-end and input-end bounds stay unchanged.
+  folder names survive the scan, including JSON-escaped text. In single quotes a
+  double quote that no backslash escapes still ends the scan, since in JSON text it
+  closes the string. Unquoted delimiters and the line-end and input-end bounds stay.
 - 2026-10-14: purpose reads past labels and context (#118, PR #319). Leading label
   lines are skipped, a final label contributes its value, and the second non-blank
   paragraph is tried only when the first matches no rule, with the cap applied to each.
