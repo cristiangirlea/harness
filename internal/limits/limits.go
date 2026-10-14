@@ -1,9 +1,6 @@
 // Package limits keeps work going when a CLI backend reaches its plan's usage
-// limit. claude and codex bill to the owner's subscriptions, and each stands in
-// for the other: a run that ends limited is carried on by the other one, and
-// the time the limit lifts is remembered, so runs meanwhile start on the other
-// one directly. No other backend takes part: api is billed per token, and
-// gemini and opencode are not the plans this is for.
+// limit. By default claude and codex stand in for each other. A preference
+// selects partners among enabled, installed backends in preference order.
 package limits
 
 import (
@@ -26,6 +23,22 @@ import (
 // Partner is the backend that takes over from one at its usage limit, or ""
 // when none does.
 func Partner(backend string) string {
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return ""
+	}
+	if len(p.EnabledNames) > 0 {
+		for _, name := range p.Filter(agent.Names()) {
+			if name == backend {
+				continue
+			}
+			b, _ := agent.Get(name)
+			if _, err := b.Detect(); err == nil {
+				return name
+			}
+		}
+		return ""
+	}
 	switch backend {
 	case "claude":
 		return "codex"
