@@ -684,6 +684,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: the server's status codes for an unknown tenant or project (#157, PR #N).
+  Decided: CreateProject returns 404 for an unknown tenant and ScalingDemand returns 404 for an unknown project; other storage errors retain 500 and 503.
 - 2026-10-14: public watch's local-use and tunnel address follow-up (#218, PR #261).
   Decided: document that its loopback Host is refused, use a separate plain watch for
   local browsing and `hrn bot`, print the tunnel's loopback target at start, and explain
