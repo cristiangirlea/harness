@@ -213,12 +213,15 @@ func (s *stats) add(events []event, tokens *int64) {
 				Command string `json:"command"`
 				Cmd     string `json:"cmd"`
 			}
-			if json.Unmarshal(e.Input, &input) != nil {
+			if len(e.Input) > 0 && json.Unmarshal(e.Input, &input) != nil {
 				continue
 			}
 			command := input.Command
 			if command == "" {
 				command = input.Cmd
+			}
+			if command == "" && shellTool(e.Tool) {
+				command = e.Text
 			}
 			label := inlineShape(command)
 			if label == "" {

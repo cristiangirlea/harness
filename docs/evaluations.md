@@ -93,7 +93,8 @@ count, distinct run count, command bytes and label (`heredoc`, `python`, `node`,
 temporary Go files in `tmp`/`temp` directories or common temporary-directory
 variables. Quoted strings, paths, numbers and identifiers longer than 12
 characters become placeholders; whitespace collapses. `command` and `cmd`
-input fields are supported. Normalisation is a heuristic, not proof that two
+input fields are supported; shell calls without either use the event's `text`
+(including Codex command events). Normalisation is a heuristic, not proof that two
 scripts are interchangeable. Totals cover all groups, including those beyond
 20; repeated bytes include every occurrence of groups seen more than once,
 even within one run. Keeping a script still costs its invocation and result.

@@ -225,6 +225,23 @@ func TestAccountingDetails(t *testing.T) {
 	}
 }
 
+func TestShellCommandText(t *testing.T) {
+	for _, input := range []json.RawMessage{nil, json.RawMessage(`{}`), json.RawMessage(`null`)} {
+		s := newStats()
+		command := `python -c 'print(1)'`
+		s.add([]event{
+			{Kind: "tool_call", Tool: "shell", Text: command, Input: input},
+			{Kind: "tool_call", Tool: "read_file", Text: command, Input: input},
+			{Kind: "tool_call", Tool: "shell", Text: command, Input: json.RawMessage(`{"command":"echo hello"}`)},
+			{Kind: "tool_call", Tool: "shell", Text: command, Input: json.RawMessage(`{"cmd":"echo hello"}`)},
+		}, nil)
+		s.finish()
+		if len(s.InlineScripts) != 1 || s.InlineScripts[0].Count != 1 || s.InlineBytes != int64(len(command)) {
+			t.Fatalf("text fallback for input %s: %+v", input, s)
+		}
+	}
+}
+
 func TestAnonymousResults(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
