@@ -684,6 +684,8 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: hrn remote checks its server URL and CA file more strictly (#167, PR #289).
+  Decided: reject empty queries, opaque and encoded paths, and non-regular CA files before reading; allow symlinks to regular CA files.
 - 2026-10-14: hrn remote validates options as its MCP tool does (#166, PR #288). Decided: shared
   validation rejects non-finite max cost before either submission sends a request.
 - 2026-10-14: the server refuses mcp and allow_dangerous at submission (#154, PR #287).

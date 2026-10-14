@@ -3,10 +3,15 @@ package remote
 import (
 	"bufio"
 	"context"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -70,6 +75,81 @@ func TestNewFromEnvAllowsPlainHTTPOnlyForLoopbackIPLiteral(t *testing.T) {
 	if _, err := NewFromEnv(); err != nil {
 		t.Fatalf("loopback IP URL %q: %v", server.URL, err)
 	}
+}
+
+func TestNewFromEnvRejectsNonOriginServerURL(t *testing.T) {
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	for _, origin := range []string{
+		"https://host?", "https:host", "https://host/a%2Fb", "https://host/%2F",
+		"https://host#", "https://host/#",
+		"https://user@host", "https://host/#fragment", "https://host/?q=1",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			t.Setenv("HRN_SERVER_URL", origin)
+			if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "HRN_SERVER_URL") {
+				t.Fatalf("NewFromEnv(%q) error = %v, want HRN_SERVER_URL refusal", origin, err)
+			}
+		})
+	}
+}
+
+func TestNewFromEnvRejectsNonRegularCAFile(t *testing.T) {
+	t.Setenv("HRN_SERVER_URL", "https://host")
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Run("directory", func(t *testing.T) {
+		t.Setenv("HRN_SERVER_CA_FILE", t.TempDir())
+		if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "HRN_SERVER_CA_FILE") {
+			t.Fatalf("NewFromEnv() error = %v, want HRN_SERVER_CA_FILE refusal", err)
+		}
+	})
+	t.Run("FIFO", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("mkfifo is unavailable on Windows")
+		}
+		mkfifo, err := exec.LookPath("mkfifo")
+		if err != nil {
+			t.Skip("mkfifo is unavailable")
+		}
+		path := filepath.Join(t.TempDir(), "ca.fifo")
+		if output, err := exec.Command(mkfifo, path).CombinedOutput(); err != nil {
+			t.Fatalf("mkfifo: %v: %s", err, output)
+		}
+		t.Setenv("HRN_SERVER_CA_FILE", path)
+		if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "HRN_SERVER_CA_FILE") {
+			t.Fatalf("NewFromEnv() error = %v, want HRN_SERVER_CA_FILE refusal", err)
+		}
+	})
+}
+
+func TestNewFromEnvLoadsRegularCAFile(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := os.WriteFile(path, certificate, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HRN_SERVER_URL", server.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", path)
+	client, err := NewFromEnv()
+	if err != nil {
+		t.Fatalf("regular CA file: %v", err)
+	}
+	if _, err := client.Request(context.Background(), http.MethodGet, "/", nil); err != nil {
+		t.Fatalf("request using regular CA file: %v", err)
+	}
+	t.Run("symlink", func(t *testing.T) {
+		link := filepath.Join(t.TempDir(), "ca-link.pem")
+		if err := os.Symlink(path, link); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		t.Setenv("HRN_SERVER_CA_FILE", link)
+		if _, err := NewFromEnv(); err != nil {
+			t.Fatalf("symlink to regular CA file: %v", err)
+		}
+	})
 }
 
 func TestWatchErrorNamesTheStatusWithoutTheResponseBody(t *testing.T) {
