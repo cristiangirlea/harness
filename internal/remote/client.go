@@ -136,7 +136,7 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 				if ctx.Err() != nil {
 					return nil
 				}
-				if errors.Is(err, ErrMalformedEvent) || errors.Is(err, ErrEventOutput) {
+				if errors.Is(err, ErrMalformedEvent) || errors.Is(err, ErrEventOutput) || errors.Is(err, bufio.ErrTooLong) {
 					return err
 				}
 			}
@@ -209,6 +209,9 @@ func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return after, fmt.Errorf("event line exceeds 1 MiB limit: %w", err)
+		}
 		return after, err
 	}
 	if data != "" {
