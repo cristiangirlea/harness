@@ -684,6 +684,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: the server refuses mcp and allow_dangerous at submission (#154, PR #287).
+  Decided: reject either durable-job option with ErrUnsupported before the worker takes a slot;
+  empty mcp lists and allow_dangerous false remain valid.
 - 2026-10-14: the batch merge tests save records through the batch package (#215, PR #280).
   Decided: expose the ownership claim and a save wrapper so fixtures use the same value and record writer as Run.
 - 2026-10-14: tests give an exited helper's lease its start identity (#242, PR #286).
