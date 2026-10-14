@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1023,25 +1024,41 @@ func TestATaskWaitingForASlotLeavesItsBranchWhenItCannotSaveThatItDropsIt(t *tes
 	}
 }
 
-// TestHelperExit is a process that ends at once, so its pid names a process
+// TestHelperExit is a process that ends once its stdin closes, so its pid names a process
 // that has exited.
 func TestHelperExit(t *testing.T) {
 	if os.Getenv("HRN_BATCH_HELPER") != "exit" {
 		return
 	}
+	var hold [1]byte
+	_, _ = os.Stdin.Read(hold[:])
 	os.Exit(0)
 }
 
-// exitedPID starts the test binary as a helper that exits, waits for it, and
-// returns its pid.
-func exitedPID(t *testing.T) int {
+// exitedPID records the helper's start identity while it is held running,
+// then lets it exit and returns its pid and start identity.
+func exitedPID(t *testing.T) (int, string) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperExit$")
 	cmd.Env = append(os.Environ(), "HRN_BATCH_HELPER=exit")
-	if err := cmd.Run(); err != nil {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
 		t.Fatal(err)
 	}
-	return cmd.Process.Pid
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	start, known := ws.StartID(cmd.Process.Pid)
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if !known && (runtime.GOOS == "windows" || runtime.GOOS == "linux") {
+		t.Fatal("cannot read the running helper's start identity")
+	}
+	return cmd.Process.Pid, start
 }
 
 // leaseFile is the lease of slot n of the repository at dir, as a take
@@ -1132,9 +1149,9 @@ func TestATaskGivesUpOnALeaseALeftTakeoverFileBlocks(t *testing.T) {
 	dir := initRepo(t)
 	quickPoll(t)
 	bound := quickUnreadableWait(t)
-	gone := exitedPID(t)
+	gone, start := exitedPID(t)
 	for n := 1; n <= ws.DefaultMax; n++ {
-		data, _ := json.Marshal(ws.Lease{Holder: "batch old task " + strconv.Itoa(n), PID: gone, Taken: time.Now()})
+		data, _ := json.Marshal(ws.Lease{Holder: "batch old task " + strconv.Itoa(n), PID: gone, Start: start, Taken: time.Now()})
 		writeFile(t, leaseFile(t, dir, n), string(data))
 		writeFile(t, leaseFile(t, dir, n)+".takeover", "")
 	}
