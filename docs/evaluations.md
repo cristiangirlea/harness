@@ -2,6 +2,51 @@
 
 [← README](../README.md)
 
+## Routing by evidence
+
+`$HRN_HOME/route.json` (default `~/.hrn/route.json`) maps purpose categories to
+`backend`, `model`, and `effort`. Each row also has `eval`, the source eval id
+(absent for a hand-set row), and `set`, its date in `YYYY-MM-DD` form.
+A missing file is an empty table; a malformed file is an error naming the file.
+No initial table is supplied: the first evidence table follows a separately
+approved hrn-evals run.
+
+```sh
+hrn route show
+hrn route set implement -b codex -m sol --effort medium
+hrn route from-eval <eval-id> --margin 0.05
+```
+
+`show` lists one row per purpose, sorted by category, or `(empty)`. `set` replaces
+one row; any subset of backend, model and effort is accepted, with at least one
+nonempty value. Backend names and effort levels use the usual run validation.
+Purposes are review, debug, implement, refactor, test, research, plan, ops and unknown.
+`from-eval` prints the proposed rows, then saves them, preserving existing rows
+for purposes the eval did not measure. It reads saved results and calls no model.
+
+For each purpose, task prompts are classified with the same rules as
+`report --by purpose`. Pass rates sum that purpose's task results across repeats.
+The margin is an absolute fraction from 0 to 1 (default 0.05): a best pass rate of
+0.95 admits variants at 0.90 or above. Effort comes before model: first choose
+the cheapest qualifying effort within each backend/model family, then compare
+those winners by cost. Equal costs prefer plan-based claude or codex over api,
+then lower effort, with variant names breaking remaining ties. Cost is the
+variant's recorded median across the eval, since task rows do not store separate
+costs. The row carries the eval's id and date.
+
+`hrn run`, batch tasks (after inheriting spec options), and MCP `run` apply the
+classified purpose's row only when backend, model **and** effort are all empty.
+Naming any of the three disables routing: routing never substitutes a named
+model. Missing rows keep the existing backend default. A row naming an unknown
+backend is ignored with a warning on stderr. Continued runs retain inherited
+choices, and the existing plan-limit switching rules still apply.
+
+The additive `routed_by` record field contains `category`, `eval` (absent for a
+manual row), and `set`. It is omitted for unrouted runs; older records still load.
+`hrn report --by routed` groups them as `<category> via <eval id>` or
+`<category> via hand`, with unrouted runs under `-`, using the usual runs, ok,
+and cost columns.
+
 ## Reports
 
 `hrn report` reads every run and batch record and prints three tables: runs, their tokens, and batches.
