@@ -231,6 +231,55 @@ func TestHTTPWrongOperatorAndScalerTokensOfValidLengthAreRefused(t *testing.T) {
 	}
 }
 
+func TestHTTPSubmitAuthorizationWithRealStorePrecedesDecode(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	tenantID, tenantToken, err := store.CreateTenant(ctx, "submit-auth-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, otherToken, err := store.CreateTenant(ctx, "submit-auth-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := store.CreateProject(ctx, Project{TenantID: tenantID, Name: "submit-auth-project",
+		RepositoryURL: "https://example.invalid/example.git", BaseRef: fixtureRef, Backend: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := (&HTTPServer{Store: store}).Handler()
+	const unknown = "secret_unknown_field"
+	const body = `{"secret_unknown_field":true}`
+	const missingProject = "00000000-0000-4000-8000-000000000000"
+	var badTokenResponse string
+	for _, tc := range []struct {
+		name, projectID, token string
+	}{
+		{"bad token", project.ID, "bad-token-abcdefghijklmnopqrstuvwxyz0"},
+		{"unknown project", missingProject, tenantToken},
+		{"another tenant", project.ID, otherToken},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/v1/projects/"+tc.projectID+"/jobs", strings.NewReader(body))
+			r.Header.Set("Authorization", "Bearer "+tc.token)
+			w := httptest.NewRecorder()
+			server.ServeHTTP(w, r)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status %d, want 404: %s", w.Code, w.Body.String())
+			}
+			response := w.Body.String()
+			if strings.Contains(response, unknown) || strings.Contains(response, "unknown field") {
+				t.Fatalf("authorization refusal leaked request field: %s", response)
+			}
+			if tc.name == "bad token" {
+				badTokenResponse = response
+			} else if response != badTokenResponse {
+				t.Fatalf("authorization refusal %q differs from bad-token response %q", response, badTokenResponse)
+			}
+		})
+	}
+}
+
 func TestHTTPTenantCannotReadCancelOrStreamAnotherTenantsJob(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
