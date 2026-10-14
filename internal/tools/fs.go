@@ -228,7 +228,7 @@ func listFiles() Tool {
 			}
 			var out []string
 			const limit = 500
-			err = walk(ctx, base, func(p, rel string, _ bool) bool {
+			err = walk(ctx, ws, base, func(p, rel string, _ bool) bool {
 				if re.MatchString(rel) {
 					out = append(out, ws.Rel(p))
 				}
@@ -334,7 +334,7 @@ func grep() Tool {
 					// Resolve judged it a moment ago; it changed since.
 					return "", fmt.Errorf("path %q is refused: hrn cannot tell where it leads", args.Path)
 				}
-				err = walk(ctx, base, func(p, rel string, regular bool) bool {
+				err = walk(ctx, ws, base, func(p, rel string, regular bool) bool {
 					if globRe != nil && !globRe.MatchString(rel) {
 						return true
 					}
@@ -375,9 +375,14 @@ var errStop = errors.New("stop")
 // walk visits what is not a directory under base, passing the slash-separated
 // path relative to base and whether it is a regular file rather than a link,
 // a junction or another irregular entry. It goes into no link or junction
-// (filepath.WalkDir does not). visit returns false to stop.
-func walk(ctx context.Context, base string, visit func(path, rel string, regular bool) bool) error {
-	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+// (filepath.WalkDir does not). A workspace root is walked from its real path,
+// while visit receives paths under Root. visit returns false to stop.
+func walk(ctx context.Context, ws *Workspace, base string, visit func(path, rel string, regular bool) bool) error {
+	walkBase := base
+	if base == ws.Root {
+		walkBase = ws.real
+	}
+	err := filepath.WalkDir(walkBase, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -385,13 +390,13 @@ func walk(ctx context.Context, base string, visit func(path, rel string, regular
 			return ctx.Err()
 		}
 		if d.IsDir() {
-			if p != base && skipDirs[d.Name()] {
+			if p != walkBase && skipDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		rel, _ := filepath.Rel(base, p)
-		if !visit(p, filepath.ToSlash(rel), d.Type().IsRegular()) {
+		rel, _ := filepath.Rel(walkBase, p)
+		if !visit(filepath.Join(base, rel), filepath.ToSlash(rel), d.Type().IsRegular()) {
 			return errStop
 		}
 		return nil
