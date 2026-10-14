@@ -2,7 +2,9 @@ package tools
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,7 +89,7 @@ func TestOriginalFallback(t *testing.T) {
 func TestReadOriginalRejectsInvalidInput(t *testing.T) {
 	ws, tl := setup(t)
 	ws.RunDir = t.TempDir()
-	for _, handle := range []string{"", "../12345678901234", "0123456789abcdeg", "0123456789abcdef/x", "0123456789abcde", "0123456789abcdef0"} {
+	for _, handle := range []string{"", "../12345678901234", "0123456789abcdeg", "0123456789abcdef/x", "0123456789abcde", "0123456789abcdef0", "0123456789ABCDEF", `0123456789abcde\f`} {
 		if _, err := call(t, ws, tl["read_original"], map[string]any{"handle": handle}); err == nil {
 			t.Errorf("accepted %q", handle)
 		}
@@ -98,10 +100,13 @@ func TestReadOriginalRejectsInvalidInput(t *testing.T) {
 	}
 	must(t, os.MkdirAll(filepath.Join(ws.RunDir, "originals"), 0o755))
 	must(t, os.WriteFile(filepath.Join(ws.RunDir, "originals", handle+".txt"), []byte("abc"), 0o644))
-	for _, r := range []string{"-1-2", "2-1", "0-4", "1", "1-2-3", "x-2", "0-99999999999999999999999999"} {
+	for _, r := range []string{"-1-2", "2-1", "0-4", "1", "1-2-3", "x-2", "0-99999999999999999999999999", "99999999999999999999999999-2"} {
 		if _, err := call(t, ws, tl["read_original"], map[string]any{"handle": handle, "range": r}); err == nil {
 			t.Errorf("accepted range %q", r)
 		}
+	}
+	if _, err := call(t, ws, tl["read_original"], map[string]any{"handle": handle, "range": 1}); err == nil {
+		t.Fatal("accepted a range of the wrong type")
 	}
 	if _, err := tl["read_original"].Run(t.Context(), ws, []byte(`{"handle":`)); err == nil {
 		t.Fatal("accepted bad JSON")
@@ -109,6 +114,45 @@ func TestReadOriginalRejectsInvalidInput(t *testing.T) {
 	ws.RunDir = ""
 	if _, err := call(t, ws, tl["read_original"], map[string]any{"handle": handle}); err == nil {
 		t.Fatal("read without a record")
+	}
+}
+
+func TestInterruptedOriginalWriteDoesNotPublish(t *testing.T) {
+	ws, _ := setup(t)
+	ws.RunDir = t.TempDir()
+	text := "complete original"
+	hash := sha256.Sum256([]byte(text))
+	handle := fmt.Sprintf("%x", hash)[:16]
+	name := filepath.Join(ws.RunDir, "originals", handle+".txt")
+	interrupted := errors.New("interrupted write")
+	_, err := ws.storeOriginalWithWriter(text, func(w io.Writer, s string) (int, error) {
+		n, err := io.WriteString(w, s[:len(s)/2])
+		must(t, err)
+		if _, err := os.Stat(name); !os.IsNotExist(err) {
+			t.Error("published the original before its contents were complete")
+		}
+		return n, interrupted
+	})
+	if !errors.Is(err, interrupted) {
+		t.Fatalf("write error lost: %v", err)
+	}
+	if _, err := os.Stat(name); !os.IsNotExist(err) {
+		t.Fatal("interrupted write left a hash-named file")
+	}
+	files, err := os.ReadDir(filepath.Dir(name))
+	must(t, err)
+	if len(files) != 0 {
+		t.Fatal("interrupted write left a temporary file")
+	}
+	got, err := ws.storeOriginal(text)
+	must(t, err)
+	if got != handle {
+		t.Fatal("retry changed the handle")
+	}
+	data, err := os.ReadFile(name)
+	must(t, err)
+	if string(data) != text {
+		t.Fatal("retry did not publish the complete original")
 	}
 }
 

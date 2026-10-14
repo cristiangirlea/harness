@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -9,12 +10,17 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync"
 
 	"github.com/cristiangirlea/harness/internal/shape"
 )
 
 var originalHandle = regexp.MustCompile(`^[0-9a-f]{16}$`)
 var originalRange = regexp.MustCompile(`^(\d+)-(\d+)$`)
+
+// Serialize the collision check and publication, so concurrent tool results
+// cannot replace each other's hash-named files.
+var originalWrites sync.Mutex
 
 func (w *Workspace) toolOutput(text string) string {
 	if len(text) <= maxOutput {
@@ -54,6 +60,10 @@ func (w *Workspace) originals(create bool) (*os.Root, error) {
 }
 
 func (w *Workspace) storeOriginal(text string) (string, error) {
+	return w.storeOriginalWithWriter(text, io.WriteString)
+}
+
+func (w *Workspace) storeOriginalWithWriter(text string, write func(io.Writer, string) (int, error)) (string, error) {
 	hash := sha256.Sum256([]byte(text))
 	handle := fmt.Sprintf("%x", hash)[:16]
 	root, err := w.originals(true)
@@ -62,26 +72,39 @@ func (w *Workspace) storeOriginal(text string) (string, error) {
 	}
 	defer root.Close()
 	name := handle + ".txt"
-	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if os.IsExist(err) {
-		data, readErr := root.ReadFile(name)
-		if readErr != nil {
-			return "", readErr
-		}
+	originalWrites.Lock()
+	defer originalWrites.Unlock()
+	data, err := root.ReadFile(name)
+	if err == nil {
 		if string(data) != text {
 			return "", fmt.Errorf("original handle %s already holds different bytes", handle)
 		}
 		return handle, nil
 	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	temp := ".original-" + rand.Text() + ".tmp"
+	f, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return "", err
 	}
-	_, writeErr := io.WriteString(f, text)
+	defer root.Remove(temp)
+	n, writeErr := write(f, text)
 	closeErr := f.Close()
 	if writeErr != nil {
 		return "", writeErr
 	}
-	return handle, closeErr
+	if n != len(text) {
+		return "", io.ErrShortWrite
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if err := root.Rename(temp, name); err != nil {
+		return "", err
+	}
+	return handle, nil
 }
 
 func readOriginal() Tool {
