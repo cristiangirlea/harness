@@ -93,9 +93,14 @@ func runCommand() Tool {
 				defer os.RemoveAll(guardDir)
 				env, _ = GuardEnv(os.Environ(), guardDir)
 			}
-			res, err := RunShell(ctx, ws.Root, args.Command, timeout, env)
+			res, err := runShell(ctx, ws.Root, args.Command, timeout, env, ws.ShapeTools)
 			if err != nil {
 				return "", err
+			}
+			if res.OutputCut {
+				res.Output += fmt.Sprintf("\n[output exceeded %d-byte capture ceiling; original unavailable]", maxCapture)
+			} else if ws.ShapeTools {
+				res.Output = ws.toolOutput(res.Output)
 			}
 			if res.TimedOut {
 				return res.Output + fmt.Sprintf("\n[timed out after %s]", timeout), errors.New("command timed out")

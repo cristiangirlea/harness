@@ -48,6 +48,7 @@ type Task struct {
 	// configure persistence or resume snapshots through task JSON.
 	Durable   *DurableExecution `json:"-"`
 	Prompt    string            `json:"prompt"`
+	Purpose   string            `json:"purpose,omitempty"`
 	Dir       string            `json:"dir"`
 	AttemptID string            `json:"attempt_id,omitempty"`
 

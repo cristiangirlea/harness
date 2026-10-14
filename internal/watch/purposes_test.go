@@ -270,3 +270,42 @@ func TestTheIndexAndItsStreamShowPurposes(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchPrefersDeclaredPurposesAndKeepsClassifierTitles(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, tc := range []struct{ declared, prompt, category, rule string }{
+		{"plan", "Purpose: review\nFix it.", "plan", "declared"},
+		{"", "Purpose: review\nFix it.", "review", "declared"},
+		{"", "Fix it.", "debug", "debug.fix"},
+	} {
+		w, err := runlog.Create("stub", agent.Task{Purpose: tc.declared, Prompt: tc.prompt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := runlog.Load(w.ID())
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := runRow(rec)
+		if row.Purpose != tc.category || row.Rule != tc.rule {
+			t.Errorf("row purpose=%q rule=%q, want %q %q", row.Purpose, row.Rule, tc.category, tc.rule)
+		}
+	}
+	card := cardOf(t)
+	for _, category := range []string{"plan", "review", "debug"} {
+		if row := purposeRowOf(t, card, category); row.Runs != "1" {
+			t.Errorf("%s row = %+v", category, row)
+		}
+	}
+	srv := httptest.NewServer(New(context.Background(), Options{}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/")
+	for _, want := range []string{`title="declared">plan</td>`, `title="declared">review</td>`, `title="debug.fix">debug</td>`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %s", want)
+		}
+	}
+}
