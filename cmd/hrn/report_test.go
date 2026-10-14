@@ -31,6 +31,7 @@ func TestReportCostCells(t *testing.T) {
 		{"missing estimate ignored", []agent.Result{{CostUSD: 1.23}, {CostUSD: 9, CostEstimate: true, Usage: &agent.UsageMetadata{CostStatus: "missing"}}}, "$1.23 (1 unknown)", "$1.23"},
 		{"known zero median", []agent.Result{{Usage: &agent.UsageMetadata{CostStatus: "reported"}}, {Usage: &agent.UsageMetadata{CostStatus: "reported"}}, {CostUSD: 1.23}}, "$1.23", "$0.00"},
 		{"legacy positive", []agent.Result{{CostUSD: 1.23}}, "$1.23", "$1.23"},
+		{"sub-cent known", []agent.Result{{CostUSD: 0.0012, Usage: &agent.UsageMetadata{CostStatus: "reported"}}}, "$0.0012", "$0.0012"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
@@ -88,6 +89,51 @@ func TestReportCostCells(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReportCostCellsAcrossBackends(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, run := range []struct {
+		backend string
+		result  agent.Result
+	}{
+		{"claude", agent.Result{Status: agent.StatusOK, CostUSD: 1.23, Usage: &agent.UsageMetadata{CostStatus: "reported"}}},
+		{"codex", agent.Result{Status: agent.StatusOK, Usage: &agent.UsageMetadata{CostStatus: "missing"}}},
+	} {
+		w, err := runlog.Create(run.backend, agent.Task{Prompt: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(run.result); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := captureStdout(t, func() error { return cmdReport(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := strings.Cut(string(out), "\n\n")
+	lines := strings.Split(first, "\n")
+	if len(lines) != 5 {
+		t.Fatalf("report=%s", out)
+	}
+	for i, want := range []struct {
+		backend, total, median string
+	}{
+		{"claude", "$1.23", "$1.23"},
+		{"codex", "-", "-"},
+		{"all", "$1.23 (1 unknown)", "$1.23"},
+	} {
+		var columns []string
+		for _, c := range strings.Split(lines[i+2], "  ") {
+			if c = strings.TrimSpace(c); c != "" {
+				columns = append(columns, c)
+			}
+		}
+		if len(columns) != 9 || columns[0] != want.backend || columns[6] != want.total || columns[7] != want.median {
+			t.Errorf("run row=%q, want %s total %q median %q", lines[i+2], want.backend, want.total, want.median)
+		}
 	}
 }
 
