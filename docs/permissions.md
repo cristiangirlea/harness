@@ -38,10 +38,10 @@ Read-only calls in one turn run in parallel; writes and commands run in order.
 | `git-push` | any `git` command mentioning `push`, including `git -C dir push`, or setting a `pushurl` or `pushInsteadOf` — a batch commits on its own branch; what leaves the machine is the operator's call |
 | `guard-env` | a command that changes a variable of the guarded environment below (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`/`PARAMETERS`, `GH_CONFIG_DIR`, `NPM_CONFIG_USERCONFIG`, `KUBECONFIG` and the other login places, `SSH_AUTH_SOCK`, gh's stand-in `GH_TOKEN` and `GH_ENTERPRISE_TOKEN`, the `HRN_GUARDED` marker): setting it (`NAME=`, `NAME+=`, `export`, `$env:NAME =`, `${env:NAME} =`, `read`, `printf -v`, `GIT_CONFIG_KEY_$i=` in a loop), unsetting it or hiding it from child processes (`unset`, `export -n`, `declare +x`, `typeset +x`, `env -u`, `SetEnvironmentVariable`), `env -i`, and any use of PowerShell's `env:` drive (or `Environment::`) as a path on one of them or with a wildcard (`Remove-Item env:X`, `rm env:X`, `& {Set-Item env:X …}`), whatever the cmdlet, reads through that path (`Test-Path env:X`) included; any case. Reading one as a variable (`$X`, `$env:X`, `${env:X}`), searching for it, or a flag like `--kubeconfig` or `--read-only` is fine |
 | `secret-file` | a command line naming a secret file (the list below) as an argument, a redirect's target or a flag's value: `cat .env`, `echo x > .env`, `cp .env.example .env`, `Get-Content .\.env`, `cat ~/.ssh/id_ed25519` |
-| `sudo` | `sudo` — a password prompt hangs a run with no terminal |
+| `sudo` | `sudo` in any case — a password prompt hangs a run with no terminal |
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
-| `pipe-to-shell` | `curl`/`wget` piped into a shell, however many stages the pipe has |
-| `disk` | `mkfs`, `format X:`, `dd of=/dev/…` |
+| `pipe-to-shell` | `curl`/`wget`/`irm`/`iwr` piped into a shell, `iex` or `Invoke-Expression`, however many stages the pipe has; program names match in any case |
+| `disk` | `mkfs`, `format X:`, `dd of=/dev/…`; program names match in any case |
 | `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`, and `gh api` with PUT, PATCH or DELETE, upper or lower case, quoted, escaped or not; opening a pull request stays allowed |
 | `gh-token` | `gh auth token` (with `--user` too), `gh auth git-credential` and `gh auth status --show-token`/`-t`: gh keeps its login in the system's credential store, which no variable hides, and these hand it out |
 | `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`bun`/`cargo publish`, a project's deploy script (`npm run deploy`, `deploy:prod`, `deploy-docs`, with `pnpm`, `yarn` or `bun` too), `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `terraform`/`tofu apply/destroy`, `helm install/upgrade/uninstall`, `vercel --prod`, `fly`/`netlify deploy` |
@@ -73,6 +73,7 @@ continues and the transcript says what was stopped. It is decided before any app
 prompt, so `ask` mode never asks for a yes it would then ignore. Matching is textual and
 leans towards refusing too much: `echo "git push"` and `git commit -m "push later"` are
 refused as well, which costs a turn and is the trade this makes on purpose.
+Separators inside quotes do not end a pipeline stage for the guard.
 
 This is a guard rail, not a sandbox — an agent that wants around a pattern can get
 around it. What decides whether commands run at all is the [permission mode](#permission-modes);

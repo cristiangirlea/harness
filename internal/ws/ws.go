@@ -24,7 +24,10 @@ import (
 )
 
 // DefaultMax is how many slots Take tries when TakeOptions.Max is 0.
-const DefaultMax = 4
+const DefaultMax = 5
+
+// Limit is the most slots a repository may use.
+const Limit = 10
 
 const lockReason = "hrn ws slot"
 
@@ -50,7 +53,7 @@ type TakeOptions struct {
 	Base    string // empty: origin's default branch, or HEAD without an origin
 	Holder  string // written into the lease
 	PID     int    // written into the lease; must name a running process, so its start identity can be read; 0 holds until Free
-	Max     int    // slots to try, 1..Max (default DefaultMax)
+	Max     int    // slots to try, 1..Max (default DefaultMax, at most Limit)
 	NoFetch bool   // use what origin's refs already say
 }
 
@@ -112,6 +115,9 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	}
 	if opt.Max <= 0 {
 		opt.Max = DefaultMax
+	}
+	if opt.Max > Limit {
+		return Taken{}, fmt.Errorf("--max %d: at most %d slots per repository", opt.Max, Limit)
 	}
 	for _, v := range []string{opt.Branch, opt.Base} {
 		if strings.HasPrefix(v, "-") {
@@ -209,8 +215,12 @@ type NoSlotError struct {
 }
 
 func (e *NoSlotError) Error() string {
-	return fmt.Sprintf("every slot up to --max %d is taken or skipped:\n  %s\nfree one with `hrn ws free <path>`, or allow more with --max",
-		e.Max, strings.Join(e.Passed, "\n  "))
+	advice := "free one with `hrn ws free <path>`, or allow more with --max"
+	if e.Max == Limit {
+		advice = fmt.Sprintf("free one with `hrn ws free <path>`; at most %d slots per repository", Limit)
+	}
+	return fmt.Sprintf("every slot up to --max %d is taken or skipped:\n  %s\n%s",
+		e.Max, strings.Join(e.Passed, "\n  "), advice)
 }
 
 // resolveBase returns the commit a new branch or a detached slot starts
@@ -399,6 +409,9 @@ func (l Lease) processHolds() bool {
 	}
 	return true
 }
+
+// StartID returns a process's platform-specific start identity when available.
+func StartID(pid int) (string, bool) { return startID(pid) }
 
 // samePlatform reports whether two start identities carry the same prefix
 // ("win:", "linux:").
@@ -885,14 +898,18 @@ func CountLeases(ctx context.Context, repo string, match func(Lease) bool) (int,
 }
 
 // RangeBeyondSessions returns the Max a Take needs for n slots other than
-// sessions' to lie within it. A session's lease (hrn ws take, no pid) is
+// sessions' to lie within it, capped at Limit when there are too few. A
+// session's lease (hrn ws take, no pid) is
 // held until hrn ws free, so its slot is skipped; every other slot number
 // counts: free, leased by a process, or with a lease that cannot be read.
-// Slot numbers are walked from 1 until n have counted, so a session past
-// them widens nothing.
+// Slot numbers are walked from 1 until n have counted or Limit is reached,
+// so a session past them widens nothing.
 func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
 	if n < 1 {
 		return 0, fmt.Errorf("a range of %d slots is none", n)
+	}
+	if n > Limit {
+		return 0, fmt.Errorf("a range of %d slots exceeds at most %d slots per repository", n, Limit)
 	}
 	main, err := MainCheckout(ctx, repo)
 	if err != nil {
@@ -900,7 +917,7 @@ func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
 	}
 	dir := SlotsDir(main)
 	counted := 0
-	for slot := 1; ; slot++ {
+	for slot := 1; slot <= Limit; slot++ {
 		if l, _, err := readLease(leasePath(dir, slot)); err == nil && l.PID == 0 {
 			continue
 		}
@@ -908,6 +925,7 @@ func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
 			return slot, nil
 		}
 	}
+	return Limit, nil
 }
 
 // List reports every slot of the repository repo is in: each slot folder and
