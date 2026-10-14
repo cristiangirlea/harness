@@ -726,7 +726,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: Backend preferences (#345, PR #TBD). `backends.json` stores the enabled names in preference order and an optional default, with no record changes and unchanged selection when absent. Runs, MCP, batch retries, evals and supervisor execution respect the preference; routing skips disabled rows and carry-on uses an enabled installed partner.
+- 2026-10-14: Backend preferences (#345, PR #371). `backends.json` stores the enabled names in preference order and an optional default, with no record changes and unchanged selection when absent. Runs, MCP, batch retries, evals and supervisor execution respect the preference; routing skips disabled rows and carry-on uses an enabled installed partner.
 - 2026-10-14: An agy backend (#344, PR #369). Antigravity's CLI receives the prompt
   as stream-json on stdin, maps modes/model/effort, and records streamed text, result
   usage and conversation IDs using a parser per run. Continuation uses `--conversation`
