@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/jackc/pgx/v5"
 )
 
 type HTTPServer struct {
@@ -205,7 +205,7 @@ func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
 	if check == nil {
 		check = func(ctx context.Context, projectID, candidate string) (bool, error) {
 			tenantID, err := h.Store.ProjectTenant(ctx, projectID)
-			if errors.Is(err, sql.ErrNoRows) {
+			if errors.Is(err, pgx.ErrNoRows) {
 				return false, nil
 			}
 			if err != nil {
