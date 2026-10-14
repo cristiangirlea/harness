@@ -674,7 +674,7 @@ order they are worth taking:
     - [x] [#139](https://github.com/cristiangirlea/harness/issues/139) deploy: development charts, image and chart verifier. Done: PR #174, 2026-10-13.
     - [x] [#140](https://github.com/cristiangirlea/harness/issues/140) knowledge: approved project knowledge and text retrieval in the control service. Done: PR #181, 2026-10-13.
     - [x] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison. Done: PR #186, 2026-10-13.
-    - [ ] `durable` into main
+    - [x] `durable` into main. Done: PR #266, 2026-10-14.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -684,6 +684,18 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: durable project workers and project retrieval reach main ([#142](https://github.com/cristiangirlea/harness/issues/142), PR #266; item 17's last box).
+  Eight slices (PRs #143, #150, #158, #159, #175, #174, #181, #186), each reviewed with a security
+  read and merged through its pull request into `durable`; main merged in once at db7dbe6 with
+  five conflicts resolved: AGENTS.md's table plus a `server/` row; item 17 and the slice entries
+  folded into this log, with main's lone 2026-10-13 entry moved below its 2026-10-14 ones to
+  keep the dates in order; both sides' MCP guide text; both sides' usage tests; main's batch code
+  with the three retrieval hooks. The final review found two documentation gaps, fixed: the
+  retrieval plan's evidence pointer and `original_prompt` in the records guide. Follow-ups: a
+  backend switch under retrieval (#262), plain HTTP on a network listen address (#263), codex
+  cache reads counted twice outside ModelTokens (#264), two types named Usage (#265). Open
+  gates, as the docs say: a separate untrusted executor, native CLI sessions under durable
+  execution, a live cluster, backup and restore, soak, the retrieval pilot on real runs.
 - 2026-10-14: a bounded branch probe in `removeTask` (#216, PR #255). Its `show-ref` ran with no
   timeout, unlike the one-minute git calls around it. Decided: the same minute, and the probe
   (`for-each-ref`, which answers a missing branch with no output) says whether it answered;
