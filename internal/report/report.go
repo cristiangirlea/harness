@@ -260,8 +260,8 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 			return k
 		}, nil
 	case ByPurpose:
-		// What the run was for, from keyword rules on its prompt's first paragraph.
-		return func(r runlog.Record) string { return purpose.Classify(r.Task.Prompt).Category }, nil
+		// What the run declared, otherwise keyword rules on its prompt's first paragraph.
+		return func(r runlog.Record) string { return purpose.Resolve(r.Task.Purpose, r.Task.Prompt).Category }, nil
 	case ByRouted:
 		return func(r runlog.Record) string {
 			if r.RoutedBy == nil {

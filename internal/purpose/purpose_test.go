@@ -7,6 +7,63 @@ import (
 	"unicode/utf8"
 )
 
+func TestValidAcceptsOnlyDeclaredCategories(t *testing.T) {
+	for _, c := range Categories {
+		if got := Valid(c); got != (c != Unknown) {
+			t.Errorf("Valid(%q) = %v", c, got)
+		}
+	}
+	for _, c := range []string{"", "Review", " review", "free text"} {
+		if Valid(c) {
+			t.Errorf("Valid(%q) = true", c)
+		}
+	}
+}
+
+func TestDeclaredReadsOnlyTheFirstNonBlankLine(t *testing.T) {
+	for _, tc := range []struct{ prompt, want string }{
+		{"Purpose: review\nImplement it.", "review"},
+		{"\n \t\r\n pUrPoSe: ReFaCtOr \r\nFix it.", "refactor"},
+		{"\rPurpose: OPS\rFix it.", "ops"},
+		{"Purpose: fix the bug\nReview it.", ""},
+		{"Purpose: unknown\nReview it.", ""},
+		{"Purpose: UNKNOWN", ""},
+		{"Purpose:", ""},
+		{"Review it.\nPurpose: debug", ""},
+		{"Repository: hrn\nPurpose: debug", ""},
+		{"Purposeful: review", ""},
+		{"", ""},
+		{" \n\t", ""},
+	} {
+		if got := Declared(tc.prompt); got != tc.want {
+			t.Errorf("Declared(%q) = %q, want %q", tc.prompt, got, tc.want)
+		}
+	}
+	for _, c := range Categories {
+		if c != Unknown && Declared("Purpose: "+strings.ToUpper(c)) != c {
+			t.Errorf("header does not accept %q", c)
+		}
+	}
+}
+
+func TestResolvePrefersDeclarationsAndKeepsTheFallbackRule(t *testing.T) {
+	for _, tc := range []struct {
+		declared, prompt string
+		want             Result
+	}{
+		{"plan", "Purpose: review\nFix the bug.", Result{Category: "plan", Rule: "declared"}},
+		{"", "Purpose: review\nFix the bug.", Result{Category: "review", Rule: "declared"}},
+		{"", "Fix the bug.", Classify("Fix the bug.")},
+		{"", "Purpose: free text\nReview the diff.", Classify("Purpose: free text\nReview the diff.")},
+		{"", "Purpose: unknown\nReview the diff.", Classify("Purpose: unknown\nReview the diff.")},
+		{"", "", Result{Category: Unknown}},
+	} {
+		if got := Resolve(tc.declared, tc.prompt); got != tc.want {
+			t.Errorf("Resolve(%q, %q) = %+v, want %+v", tc.declared, tc.prompt, got, tc.want)
+		}
+	}
+}
+
 func TestClassifyNamesTheRuleThatFired(t *testing.T) {
 	cases := []struct {
 		name, prompt, category, rule string

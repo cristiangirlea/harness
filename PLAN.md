@@ -2151,6 +2151,12 @@ neither of them follows a run while it happens.
   `-` when nothing in the row is known and `$1.23 (2 unknown)` when some are; a reported
   zero is known and shows `$0.00`. A task that never ran (no attempts) is not counted as
   unknown: nothing about its cost is missing. `hrn eval` still sums raw (#309).
+- 2026-10-14: A declared purpose on run and batch (#312, PR #331). Callers may
+  declare a category with `--purpose` or `purpose`, otherwise a valid leading
+  `Purpose: <category>` header supplies it, and the record stores it without changing
+  the prompt. Watch and reports prefer the declaration over keyword rules; a header
+  with free text or `unknown` is ignored as a declaration, while an invalid explicit
+  value is refused before a run starts.
 - 2026-10-14: PR #314 (closes #304): secrets masked on display. `internal/mask.Text` applies the
   issue's ordered rules (URL credentials, `-u user:password`, JSON secret fields,
   authorization-style headers, bare Bearer tokens, known token shapes, `NAME=value` where a

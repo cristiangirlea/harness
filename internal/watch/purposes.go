@@ -95,7 +95,7 @@ func purposesOf(runs []runlog.Record) *purposeCard {
 	by := map[string]*purposeSum{}
 	var all purposeSum
 	for _, rec := range runs {
-		c := purpose.Classify(rec.Task.Prompt).Category
+		c := purpose.Resolve(rec.Task.Purpose, rec.Task.Prompt).Category
 		if by[c] == nil {
 			by[c] = &purposeSum{}
 		}

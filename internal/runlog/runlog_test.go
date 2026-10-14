@@ -15,6 +15,27 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
+func TestOldTaskRecordsLoadWithoutAPurpose(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	id := "20261014-120000-abcdef"
+	dir := filepath.Join(Root(), id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"id":"` + id + `","backend":"stub","task":{"prompt":"Fix it.","dir":"."}}`
+	if err := os.WriteFile(filepath.Join(dir, "task.json"), []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := Load(id)
+	if err != nil || rec.Task.Purpose != "" || rec.Task.Prompt != "Fix it." {
+		t.Fatalf("old record = %+v, error = %v", rec, err)
+	}
+	encoded, err := json.Marshal(rec.Task)
+	if err != nil || strings.Contains(string(encoded), `"purpose"`) {
+		t.Fatalf("empty purpose must be omitted: %s, error = %v", encoded, err)
+	}
+}
+
 func TestRoutingRecordAndLegacy(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	by := &RoutedBy{Category: "implement", Eval: "e1", Set: "2026-10-12"}
