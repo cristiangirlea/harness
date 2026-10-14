@@ -38,7 +38,7 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 		return nil, fmt.Errorf("HRN_SERVER_URL and %s (at least 32 characters) are required", credentialEnv)
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.ForceQuery ||
+	if err != nil || parsed == nil || parsed.Hostname() == "" || parsed.User != nil || parsed.ForceQuery ||
 		parsed.RawQuery != "" || parsed.Opaque != "" || parsed.RawPath != "" || strings.Contains(raw, "#") ||
 		parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 		return nil, errors.New("HRN_SERVER_URL must be an origin without credentials, path, query or fragment")
@@ -70,7 +70,7 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
-	return &Client{origin: strings.TrimRight(raw, "/"), token: token,
+	return &Client{origin: parsed.Scheme + "://" + parsed.Host, token: token,
 		http: &http.Client{Transport: transport, Timeout: 20 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }

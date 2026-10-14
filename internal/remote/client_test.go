@@ -84,11 +84,29 @@ func TestNewFromEnvRejectsNonOriginServerURL(t *testing.T) {
 		"https://host?", "https:host", "https://host/a%2Fb", "https://host/%2F",
 		"https://host#", "https://host/#",
 		"https://user@host", "https://host/#fragment", "https://host/?q=1",
+		"https://:443", "https://host/prefix",
 	} {
 		t.Run(origin, func(t *testing.T) {
 			t.Setenv("HRN_SERVER_URL", origin)
 			if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "HRN_SERVER_URL") {
 				t.Fatalf("NewFromEnv(%q) error = %v, want HRN_SERVER_URL refusal", origin, err)
+			}
+		})
+	}
+}
+
+func TestNewFromEnvBuildsOriginFromParsedURL(t *testing.T) {
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	for _, raw := range []string{"HTTPS://host", "HTTPS://host/"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("HRN_SERVER_URL", raw)
+			client, err := NewFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if client.origin != "https://host" {
+				t.Fatalf("origin = %q, want https://host", client.origin)
 			}
 		})
 	}
