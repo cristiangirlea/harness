@@ -146,7 +146,7 @@ func TestBatchCostCountsTasksNotAttempts(t *testing.T) {
 		if row.Tasks != 4 || row.TotalCost != 3 {
 			t.Errorf("row=%+v", row)
 		}
-		checkUnknownCostJSON(t, row, "tasks_without_cost", 2)
+		checkUnknownCostJSON(t, row, "tasks_without_cost", 1)
 	}
 }
 

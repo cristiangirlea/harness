@@ -91,6 +91,37 @@ func TestReportCostCells(t *testing.T) {
 	}
 }
 
+func TestReportBatchWithoutAttemptsHasZeroCost(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	b := batch.Result{ID: "queued", Dir: "repo", Tasks: []batch.TaskResult{{Status: batch.StatusCanceled}, {Status: batch.StatusCanceled}}}
+	dir := filepath.Join(runlog.Home(), "batches")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "queued.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdReport(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, batches, found := strings.Cut(string(out), "batches by repository, all time\n")
+	lines := strings.Split(strings.TrimSpace(batches), "\n")
+	if !found || len(lines) != 3 {
+		t.Fatalf("report=%s", out)
+	}
+	for _, line := range lines[1:] {
+		columns := strings.Fields(line)
+		if len(columns) != 6 || columns[2] != "2" || columns[5] != "$0.00" {
+			t.Errorf("batch row=%q, want two tasks with total $0.00", line)
+		}
+	}
+}
+
 func TestTableAlignsColumns(t *testing.T) {
 	got := table([][]string{{"key", "n"}, {"a", "10"}, {"longer", "5"}}, 1)
 	want := "key      n\na       10\nlonger   5\n"

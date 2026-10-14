@@ -358,7 +358,7 @@ type BatchRow struct {
 	MedianAttempts float64 `json:"median_attempts"`
 	TotalCost      float64 `json:"total_cost_usd"`
 	CostEstimated  bool    `json:"cost_is_estimate,omitempty"`
-	// TasksWithoutCost counts tasks with no known cost in any attempt.
+	// TasksWithoutCost counts tasks that ran with no known cost in any attempt.
 	TasksWithoutCost int `json:"tasks_without_cost,omitempty"`
 }
 
@@ -404,7 +404,7 @@ func summarizeBatches(key string, bs []batch.Result) BatchRow {
 					row.CostEstimated = row.CostEstimated || estimated
 				}
 			}
-			if !costKnown {
+			if len(t.Attempts) > 0 && !costKnown {
 				row.TasksWithoutCost++
 			}
 		}
