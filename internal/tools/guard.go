@@ -41,7 +41,7 @@ var guardRules = []struct {
 	// through any number of pipe stages or a parenthesized download argument.
 	{"pipe-to-shell", matches(
 		`\b(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b.*\|\s*(?:(?i:sudo)\s+)?(?i:sh|bash|zsh|powershell|pwsh|iex|Invoke-Expression)\b` +
-			`|(?:^|[^\w-])(?i:iex|Invoke-Expression)\s*\(\s*(?:\(\s*)*(?:` +
+			`|(?:^|[^\w-])(?i:iex|Invoke-Expression)\s*(?:-(?i:c\w*)\s+)?\$?\(\s*(?:\(\s*)*(?:` +
 			`(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\s+` +
 			`|(?i:New-Object)\s+(?i:(?:System\.)?Net\.WebClient)\s*\)\s*\.\s*(?i:DownloadString)\s*\()`,
 	)},
