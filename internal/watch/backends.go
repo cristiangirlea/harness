@@ -88,6 +88,13 @@ func (s *server) mayChangeBackends(w http.ResponseWriter, r *http.Request) bool 
 		aw, ok := w.(*accessWriter)
 		return ok && aw.email != ""
 	}
+	// A proxy on this computer (a tunnel without --public, a dev proxy) makes
+	// its users look like loopback viewers; a forwarding header gives it away.
+	for _, h := range []string{"Forwarded", "X-Forwarded-For", "Cf-Connecting-Ip"} {
+		if r.Header.Get(h) != "" {
+			return false
+		}
+	}
 	return s.fromThisComputer(r)
 }
 

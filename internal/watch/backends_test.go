@@ -228,3 +228,54 @@ func TestBackendsWriteKeepsThePreferenceOrderAndAppendsNewOnes(t *testing.T) {
 		t.Fatalf("order after the card = %v, %v; want claude, agy, codex", p.EnabledNames, err)
 	}
 }
+
+func TestBackendsWriteRefusesAnEmptyListWithADefaultEvenWhenStored(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}, DefaultName: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(context.Background(), Options{Key: "test-key"})
+	w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", `{"enabled":[],"default":"claude"}`)
+	p, _ := prefs.Load(runlog.Home())
+	if w.Code != 400 || !reflect.DeepEqual(p.EnabledNames, []string{"claude"}) {
+		t.Fatalf("POST = %d %s, file %v; want 400 and the file unchanged", w.Code, w.Body, p.EnabledNames)
+	}
+}
+
+func TestBackendsControlsAreNotForViewersBehindAProxyOrOnTheLAN(t *testing.T) {
+	for _, tc := range []struct{ name, remote, host, header string }{
+		{"forwarded through a local proxy", "127.0.0.1:1234", "127.0.0.1:8089", "X-Forwarded-For"},
+		{"forwarded with the standard header", "127.0.0.1:1234", "127.0.0.1:8089", "Forwarded"},
+		{"cloudflare without public mode", "127.0.0.1:1234", "127.0.0.1:8089", "Cf-Connecting-Ip"},
+		{"a LAN remote naming a loopback host", "192.168.1.3:1234", "127.0.0.1:8089", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			h := New(context.Background(), Options{Key: "test-key", LAN: []Endpoint{{Addr: "192.168.1.2:8089"}}})
+			get := httptest.NewRequest("GET", "http://"+tc.host+"/", nil)
+			get.RemoteAddr = tc.remote
+			if tc.header != "" {
+				get.Header.Set(tc.header, "203.0.113.9")
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, get)
+			if w.Code == http.StatusOK {
+				card := backendCardHTML(t, w)
+				if strings.Contains(card, "data-key") || strings.Contains(card, "backends-apply") {
+					t.Fatalf("controls or the key shown to a %s viewer", tc.name)
+				}
+			}
+			post := httptest.NewRequest("POST", "http://"+tc.host+"/backends", strings.NewReader(`{"enabled":["codex"]}`))
+			post.RemoteAddr = tc.remote
+			post.Header.Set("X-Hrn-Watch-Key", "test-key")
+			if tc.header != "" {
+				post.Header.Set(tc.header, "203.0.113.9")
+			}
+			w = httptest.NewRecorder()
+			h.ServeHTTP(w, post)
+			if _, err := os.Stat(filepath.Join(runlog.Home(), "backends.json")); w.Code != 403 || err == nil {
+				t.Fatalf("POST = %d %s, file exists = %v; want 403 and no file", w.Code, w.Body, err == nil)
+			}
+		})
+	}
+}
