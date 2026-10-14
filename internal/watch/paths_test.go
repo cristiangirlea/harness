@@ -38,6 +38,16 @@ func TestPathsInAWindowsRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *test
 		{`"C:\Program Files\Git (Preview)\bin\bash.exe" -lc ls`, `"bash.exe" -lc ls`},
 		{`{"command":"\"C:\\Program Files\\Git (Preview)\\bin\\bash.exe\" -lc ls"}`, `{"command":"\"bash.exe\" -lc ls"}`},
 		{`'C:\Program Files\Tools [x64]\rg.exe' -n x`, `'rg.exe' -n x`},
+		// Only the matching quote ends a quoted path.
+		{`"C:\Program Files\Bob's Tools\tool.exe" --help`, `"tool.exe" --help`},
+		{`{"command":"\"C:\\Program Files\\Bob's Tools\\tool.exe\" --help"}`, `{"command":"\"tool.exe\" --help"}`},
+		// Double quotes cannot occur in Windows folder names; single quoting stays the same.
+		{`'C:\Program Files\Other Tools\tool.exe' --help`, `'tool.exe' --help`},
+		{`{"command":"'C:\\Program Files\\Other Tools\\tool.exe' --help"}`, `{"command":"'tool.exe' --help"}`},
+		{`C:\Program Files\Bob's Tools\tool.exe --help`, `C:\Program Files\Bob's Tools\tool.exe --help`},
+		// Unterminated quotes stop at the input's end or a line end.
+		{`"C:\Program Files\Bob's Tools\tool.exe`, `"tool.exe`},
+		{"\"C:\\Program Files\\Bob's Tools\nnext", "\"C:\\Program Files\\Bob's Tools\nnext"},
 		{`run(C:\Windows\System32\where.exe,git)`, `run(where.exe,git)`},
 		// A folder, not a program, and a program outside them, stay.
 		{`C:\Windows\System32`, `C:\Windows\System32`},
@@ -67,6 +77,8 @@ func TestPathsInAUnixRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *testing
 		{"/opt/home/ana/x", "/opt/home/ana/x"},
 		{"/usr/local/bin/node script.js", "node script.js"},
 		{`exec "/bin/sh" -c true`, `exec "sh" -c true`},
+		{`'/usr/bin/Bob"s/tool' --help`, `'tool' --help`},
+		{`{"command":"'/usr/bin/Bob\"s/tool' --help"}`, `{"command":"'tool' --help"}`},
 		{"$(/usr/bin/env)", "$(env)"},
 		{"/usr/bin", "/usr/bin"},
 		{"/usr/binx/tool", "/usr/binx/tool"},
