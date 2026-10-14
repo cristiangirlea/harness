@@ -684,6 +684,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: the server refuses mcp and allow_dangerous at submission (#154, PR #N).
+  Decided: reject either durable-job option with ErrUnsupported before the worker takes a slot;
+  empty mcp lists and allow_dangerous false remain valid.
 - 2026-10-14: durable project workers and project retrieval reach main ([#142](https://github.com/cristiangirlea/harness/issues/142), PR #266; item 17's last box).
   Eight slices (PRs #143, #150, #158, #159, #175, #174, #181, #186), each reviewed with a security
   read and merged through its pull request into `durable`; main merged in once at db7dbe6 with
