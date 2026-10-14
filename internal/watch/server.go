@@ -190,10 +190,19 @@ func Serve(ctx context.Context, opt Options, lns ...net.Listener) error {
 			return err
 		}
 	}
+	var access *accessVerifier
+	if opt.Public != nil {
+		access = &accessVerifier{opt: *opt.Public}
+		keys, err := access.fetch()
+		if err != nil {
+			return fmt.Errorf("Cloudflare Access certificates at %s: %w", access.certsURL(), err)
+		}
+		access.keys = keys
+	}
 	ctx, stopStreams := context.WithCancel(ctx)
 	defer stopStreams()
 	srv := &http.Server{
-		Handler:           New(ctx, opt),
+		Handler:           newHandler(ctx, opt, access),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		// No WriteTimeout: streams stay open. Each write sets its own deadline.
@@ -250,6 +259,10 @@ type server struct {
 // New is the watch page's handler. Streams end when ctx does, so a server
 // shutting down does not wait for its browsers to leave.
 func New(ctx context.Context, opt Options) http.Handler {
+	return newHandler(ctx, opt, nil)
+}
+
+func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.Handler {
 	if opt.Poll <= 0 {
 		opt.Poll = 500 * time.Millisecond
 	}
@@ -259,7 +272,10 @@ func New(ctx context.Context, opt Options) http.Handler {
 	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ()), system: systemFolders()}
 	s.home, _ = os.UserHomeDir()
 	if opt.Public != nil {
-		s.access = &accessVerifier{opt: *opt.Public}
+		if access == nil {
+			access = &accessVerifier{opt: *opt.Public}
+		}
+		s.access = access
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
@@ -312,7 +328,7 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 			if !publicHostMatches(r.Host, publicHost) {
 				aw.reason = "bad host"
 			}
-			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate")
+			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document")
 			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.opt.Public.Origin) {
 				aw.reason = "bad origin"
 			}

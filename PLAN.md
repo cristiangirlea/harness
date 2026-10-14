@@ -686,6 +686,18 @@ neither of them follows a run while it happens.
 
 - 2026-10-14: a durable stream that fails part-way keeps its usage (#149, PR #N).
   Decided: count the partial message's usage before returning the durable failure; keep the pending model operation and recovery-required status.
+- 2026-10-14: grep and list_files in a workspace reached through a junction (#55, PR #294).
+  Decided: walk the resolved root while reporting paths under Root; keep inner junctions untraversed.
+- 2026-10-14: public watch's local-use and tunnel address follow-up (#218, PR #261).
+  Decided: document that its loopback Host is refused, use a separate plain watch for
+  local browsing and `hrn bot`, print the tunnel's loopback target at start, and explain
+  a 403 on the bot's existing-watch probe with `--addr` guidance.
+- 2026-10-14: issue #217 (PR #260), follow-up to #212: public watch checks Access
+  signing keys before serving, reports later fetch failures once per failure streak,
+  and shares unlocked, rate-limited certificate fetches across requests.
+- 2026-10-14: public watch navigation exemption (#228, PR #259). Decided: only GET/HEAD
+  navigations with `Sec-Fetch-Dest: document` bypass the Origin and cross-site check;
+  embedded and destination-less navigations follow the normal rule.
 - 2026-10-14: the guard refuses gh api calls to publishing endpoints (#210, PR #293).
   Decided: refuse the named REST paths under any method, including harmless GETs, so implicit
   POSTs from fields or --input cannot slip through; refuse GraphQL mutations in the line.

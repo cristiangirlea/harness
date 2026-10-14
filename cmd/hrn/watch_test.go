@@ -137,3 +137,12 @@ func TestWatchPublicFlagsMustBeCompleteAndUseAnHTTPSOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintPublicWatchStartIncludesTunnelTarget(t *testing.T) {
+	var out bytes.Buffer
+	printPublicWatchStart(&out, "https://harness.example.com", "127.0.0.1:8090", "watch-access.log")
+	want := "hrn watch: https://harness.example.com (behind Cloudflare Access; tunnel to http://127.0.0.1:8090; Ctrl+C stops it)\n  access log: watch-access.log\n"
+	if got := out.String(); got != want {
+		t.Fatalf("public startup line = %q, want %q", got, want)
+	}
+}

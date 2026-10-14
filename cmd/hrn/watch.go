@@ -75,11 +75,15 @@ func cmdWatch(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	if access != nil {
-		fmt.Fprintf(os.Stdout, "hrn watch: %s (behind Cloudflare Access; Ctrl+C stops it)\n  access log: %s\n", access.Origin, filepath.Join(runlog.Home(), "watch-access.log"))
+		printPublicWatchStart(os.Stdout, access.Origin, ln.Addr().String(), filepath.Join(runlog.Home(), "watch-access.log"))
 	} else {
 		printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
 	}
 	return watch.Serve(ctx, opt, lns...)
+}
+
+func printPublicWatchStart(w io.Writer, origin, local, accessLog string) {
+	fmt.Fprintf(w, "hrn watch: %s (behind Cloudflare Access; tunnel to http://%s; Ctrl+C stops it)\n  access log: %s\n", origin, local, accessLog)
 }
 
 // printWatchStart says where the page is. With one network address it also

@@ -86,8 +86,10 @@ an operating-system sandbox; the same mode does not mean identical permissions o
 all backends.
 
 Run records can contain source code, prompts, and tool output. The dashboard listens
-on loopback by default. Enabling `--lan` lets anyone on the selected network read those
-records without a login. See [security boundaries and vulnerability reporting](SECURITY.md).
+on loopback by default. `--lan` lets anyone on the selected network read them without a login.
+With `--public`, the page is available beyond loopback only through a Cloudflare Tunnel
+and Access application you set up; the flag makes hrn accept that route. See [watch exposure](docs/watch.md#behind-cloudflare-access).
+See [security boundaries and vulnerability reporting](SECURITY.md).
 
 ## Contributing
 
