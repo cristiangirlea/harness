@@ -43,7 +43,8 @@ Leases written before `"start"` was added keep the old rule: a live pid holds th
 Its lease names the task (`batch <id> task <task>`) and hrn's pid, so a crash leaves a
 stale lease rather than a held slot. A batch never waits on a session: a slot
 held by `hrn ws take` (no pid) among the ones it would try is passed over and it tries the
-next number instead, up to the bound on its own slots (`parallel`, at least 4). It waits on
+next number instead, up to the bound on its own slots (`parallel`, at least 5,
+capped at 10). It waits on
 slots other batches or its own running tasks hold, and on a lease it cannot read (see
 [Batches](batches.md#slots-or-fresh-worktrees)). The task's branch `hrn/<id>` is made from the batch's
 base and checked out in the slot. When the task ends, the slot is detached at the base
@@ -54,8 +55,8 @@ since a switch strands nothing there.
 
 ## Take
 
-`hrn ws take` walks slots 1 to `--max` (default 4) and leases the first one that has no
-lease and nothing in it:
+`hrn ws take` walks slots 1 to `--max` (default 5, at most 10 per repository)
+and leases the first one that has no lease and nothing in it:
 
 - A slot whose folder holds changes or untracked files, or whose HEAD has commits that
   a switch would strand (on no remote, local branch or tag), is skipped and named on

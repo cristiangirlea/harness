@@ -71,6 +71,15 @@ func TestWSRefusesAMaxBelowOne(t *testing.T) {
 	}
 }
 
+func TestWSRefusesAMaxAboveTen(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperWS$", "--", "take", "--max", "11")
+	cmd.Env = append(os.Environ(), "HRN_WS_HELPER=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "at most 10 slots per repository") {
+		t.Errorf("got error %v and output %q; want non-zero exit and the repository limit", err, out)
+	}
+}
+
 func TestWSListShowsOneRowPerSlot(t *testing.T) {
 	since := time.Date(2026, 10, 13, 9, 30, 0, 0, time.Local)
 	rows := []ws.Status{
