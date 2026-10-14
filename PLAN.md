@@ -684,7 +684,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: the billing-refusal test's deadline (#283, PR #N). Its refusal cases had 500 ms,
+- 2026-10-14: the billing-refusal test's deadline (#283, PR #284). Its refusal cases had 500 ms,
   which also had to cover starting the helper; a busy PC timed out first. Decided: 2 s for every
   case; a refusal that failed to stop the CLI still ends as a timeout and fails the test.
 - 2026-10-14: gc's idle age and the clock's resolution (#245, PR #278). A cache written moments
