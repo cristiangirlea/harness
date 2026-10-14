@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"strconv"
@@ -114,6 +115,9 @@ func (o Options) Validate() error {
 	}
 	if o.AllowDangerous && tools.Guarded() {
 		return ErrGuardedRun
+	}
+	if math.IsNaN(o.MaxCostUSD) || math.IsInf(o.MaxCostUSD, 0) {
+		return fmt.Errorf("max cost must be finite")
 	}
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }
