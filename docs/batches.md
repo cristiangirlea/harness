@@ -123,9 +123,15 @@ of backend, model or retrieval scope is refused rather than silently repinned.
 | stopped at its plan's usage limit | continues in the same worktree, told that the limit stopped it and shown its last message |
 | failed, refused or was cut short | starts afresh from the base commit (a new worktree, or the same slot with its branch reset to the base; the earlier attempt's commit leaves the branch, as a removed worktree's branch did; git's reflog still has it for a while), with one line saying how the previous attempt ended |
 
-An attempt that ends `limited` on claude or codex is carried on by the other one first, as
+Backend preferences apply to both the spec's and each task's `backend` and `retry`.
+A disabled primary backend is refused. Retry filtering preserves order and repeated
+names, removes disabled entries, and refuses a nonempty list that becomes empty.
+An explicit empty task retry list still overrides the spec's retries. See
+[Backend preferences](backends.md#choosing-which-backends-hrn-may-use).
+
+An attempt that ends `limited` is carried on by its ready enabled partner first, as
 an extra attempt that does not use up a `retry` entry, and an attempt meant for a backend
-whose limit is remembered starts on the other one (see [When a plan's usage limit is
+whose limit is remembered starts on that partner (see [When a plan's usage limit is
 reached](backends.md#when-a-plans-usage-limit-is-reached)). When both are limited, the attempt is
 skipped, and a task with nothing left to run fails without starting an agent, its error
 saying why. `no_switch` turns this off.

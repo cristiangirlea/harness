@@ -15,6 +15,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // ProjectProfile is an opt-in, credential-free snapshot for a single workspace.
@@ -131,6 +132,13 @@ func NewProjectServer(dir, profilePath string) (*mcp.Server, error) {
 		return nil, fmt.Errorf("extra JSON input in retrieval profile")
 	}
 	if err = profile.validate(context.Background(), dir); err != nil {
+		return nil, err
+	}
+	preference, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return nil, err
+	}
+	if err := preference.Check(profile.Backend); err != nil {
 		return nil, err
 	}
 	s := mcp.NewServer(mcp.Implementation{Name: "hrn-project", Version: agent.Version}, "Project-scoped Harness with required, pinned reviewed-source retrieval. Use run for this workspace; permissions default to readonly. Profile scope cannot be changed. Explicit retrieval off disables context for a fresh baseline run. Reviewed source freshness is checked before each retrieval-enabled run. Use the regular hrn server for other workspaces and native continuation.")
