@@ -193,6 +193,11 @@ func program(s string, i, j int, windows bool) (int, string) {
 		if strings.IndexByte(stops, c) >= 0 {
 			break
 		}
+		// In single quotes a double quote that no backslash escapes still ends the
+		// scan: in JSON text it closes the string, and the next field is not a path.
+		if quote == '\'' && c == '"' && s[end-1] != '\\' {
+			break
+		}
 	}
 	for end > j && s[end-1] == '\\' { // a JSON-escaped closing quote's backslash
 		end--
