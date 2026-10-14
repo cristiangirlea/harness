@@ -684,7 +684,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #N).
+- 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #273).
   Decided: use the path project for submission; worker routes read only the project ID before strict JSON decoding.
 - 2026-10-14: durable project workers and project retrieval reach main ([#142](https://github.com/cristiangirlea/harness/issues/142), PR #266; item 17's last box).
   Eight slices (PRs #143, #150, #158, #159, #175, #174, #181, #186), each reviewed with a security
