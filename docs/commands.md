@@ -42,8 +42,8 @@
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
 | `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it (see [List](workspaces.md#list)). |
 
-Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
-`--effort` (api, codex and claude: low, medium, high, xhigh, max; unset uses the
+Run flags: `-b/--backend` (api, claude, codex, gemini, opencode, agy), `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
+`--effort` (api, codex, claude and agy: low, medium, high, xhigh, max; unset uses the
 backend default; gemini and opencode report it as not enforced),
 `--json` (JSONL event stream for scripts), `--thinking`,
 `--mcp FILE` (repeatable), `--no-instructions`, `--lean` (claude: only the run's
@@ -170,7 +170,7 @@ optimistic.
 
 Where a cost comes from depends on the backend. The claude and opencode CLIs report one
 themselves; on a subscription that figure is what the run would cost at API list
-prices, not a charge. codex and gemini report none. The API returns token counts only,
+prices, not a charge. codex, gemini and agy report none. The API returns token counts only,
 so the api backend prices them from a table in `internal/agent/api.go`: Anthropic's
 first-party list prices per model, including the newer models' own cache-read prices,
 with cache writes at 1.25x input. A dated snapshot id such as
