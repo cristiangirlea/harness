@@ -31,6 +31,12 @@ func TestTextRules(t *testing.T) {
 
 		{"unquoted escapes", `API_KEY=two\ words cmd --password a\b`, `API_KEY=•••• cmd --password ••••`},
 
+		{"ordinary flags", "--max-tokens=400 --auth-type=basic --cookie-jar=f", "--max-tokens=400 --auth-type=basic --cookie-jar=f"},
+		{"ordinary names", "authors=x monkey=1 keyboard=us", "authors=x monkey=1 keyboard=us"},
+		{"ordinary json names", `{"authors":"x","monkey":"1","keyboard":"us"}`, `{"authors":"x","monkey":"1","keyboard":"us"}`},
+		{"name segments", "API_KEY=abc my-token=value SESSION_ID=abc", "API_KEY=•••• my-token=•••• SESSION_ID=••••"},
+		{"auth flag", "--auth basic", "--auth ••••"},
+
 		{"unchanged", "feature/sk-add-user-avatar 0123456789abcdef0123456789abcdef01234567 -p https://example.test/a NAME=value", "feature/sk-add-user-avatar 0123456789abcdef0123456789abcdef01234567 -p https://example.test/a NAME=value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

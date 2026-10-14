@@ -7,7 +7,7 @@ import (
 )
 
 const hidden = "••••"
-const names = `(?i:[A-Z0-9_-]*(?:KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIALS|COOKIE|SESSION)[A-Z0-9_-]*)`
+const names = `(?i:(?:[A-Z0-9]+[_-])*(?:KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIALS|COOKIE|SESSION)(?:[_-][A-Z0-9]+)*)`
 
 // Each expression names only the secret value; punctuation and field names stay.
 // Specific forms precede generic token, assignment and flag rules.
@@ -20,10 +20,11 @@ var rules = []*regexp.Regexp{
 	regexp.MustCompile(`(?i:\b(?:Authorization|Proxy-Authorization|x-api-key|Cookie|Set-Cookie))\s*:\s*(?P<secret>[^\r\n"'\\]+)`),
 	regexp.MustCompile(`(?i:\bBearer)\s+(?P<secret>(?:\\[^"']|[^\s"'\\,;])+)`),
 	regexp.MustCompile(`(?:^|[^A-Za-z0-9_/-])(?P<secret>(?:sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+))`),
-	regexp.MustCompile(`(?:^|[^A-Za-z0-9_])` + names + `\s*=\s*\\"(?P<secret>(?:\\[^"\\]|[^"\\])*)(?:\\"|$)`),
-	regexp.MustCompile(`(?:^|[^A-Za-z0-9_])` + names + `\s*=\s*"(?P<secret>(?:\\.|[^"\\])*)(?:"|$)`),
-	regexp.MustCompile(`(?:^|[^A-Za-z0-9_])` + names + `\s*=\s*'(?P<secret>[^']*)(?:'|$)`),
-	regexp.MustCompile(`(?:^|[^A-Za-z0-9_])` + names + `\s*=\s*(?P<secret>(?:\\[^"']|[^\s"'\\,;])+)`),
+	// Assignments exclude flag prefixes; secret flags have exact rules below.
+	regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])` + names + `\s*=\s*\\"(?P<secret>(?:\\[^"\\]|[^"\\])*)(?:\\"|$)`),
+	regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])` + names + `\s*=\s*"(?P<secret>(?:\\.|[^"\\])*)(?:"|$)`),
+	regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])` + names + `\s*=\s*'(?P<secret>[^']*)(?:'|$)`),
+	regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])` + names + `\s*=\s*(?P<secret>(?:\\[^"']|[^\s"'\\,;])+)`),
 	regexp.MustCompile(`(?i:--(?:password|passwd|token|api[-_]key|secret|auth|credentials|cookie|session))\b(?:=|\s+)\\"(?P<secret>(?:\\[^"\\]|[^"\\])*)(?:\\"|$)`),
 	regexp.MustCompile(`(?i:--(?:password|passwd|token|api[-_]key|secret|auth|credentials|cookie|session))\b(?:=|\s+)"(?P<secret>(?:\\.|[^"\\])*)(?:"|$)`),
 	regexp.MustCompile(`(?i:--(?:password|passwd|token|api[-_]key|secret|auth|credentials|cookie|session))\b(?:=|\s+)'(?P<secret>[^']*)(?:'|$)`),

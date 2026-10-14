@@ -228,8 +228,9 @@ Human-facing text in watch rows, pages and streams (local and `--lan`), `hrn sho
 terminal progress lines and Ada's speech and notifications masks secret values as
 `••••`: URL credentials; `-u`/`--user` user:password flags; JSON secret fields;
 authorization, API-key and cookie headers; bare Bearer tokens; recognised `sk-`,
-`ghp_`, `github_pat_`, `xox`, `AKIA` and JWT tokens; assignments whose names contain
-KEY, TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or SESSION; and secret flags
+`ghp_`, `github_pat_`, `xox`, `AKIA` and JWT tokens; assignments whose names have KEY,
+TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or SESSION as a whole segment
+(separated by `_`, `-` or the name's ends); and secret flags
 such as `--password`, `--token` and `--api-key`. Masking scans the whole text before
 any display excerpt is shortened; it does not cut the text itself.
 The existing environment-value redaction also runs. Records remain unchanged,
