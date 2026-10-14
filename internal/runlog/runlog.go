@@ -23,6 +23,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/retrieval"
+	"github.com/cristiangirlea/harness/internal/route/table"
 )
 
 // Home is $HRN_HOME, or ~/.hrn.
@@ -37,12 +38,15 @@ func Home() string {
 // Root is the runs directory under Home.
 func Root() string { return filepath.Join(Home(), "runs") }
 
+type RoutedBy = table.RoutedBy
+
 type Record struct {
-	ID      string       `json:"id"`
-	Backend string       `json:"backend"`
-	Started time.Time    `json:"started"`
-	Task    agent.Task   `json:"task"`
-	Result  agent.Result `json:"result"`
+	RoutedBy *RoutedBy    `json:"routed_by,omitempty"`
+	ID       string       `json:"id"`
+	Backend  string       `json:"backend"`
+	Started  time.Time    `json:"started"`
+	Task     agent.Task   `json:"task"`
+	Result   agent.Result `json:"result"`
 	// Continues names the run this one follows, when it was started with
 	// hrn run --continue.
 	Continues   string `json:"continues,omitempty"`
@@ -67,8 +71,8 @@ func Create(backend string, task agent.Task) (*Writer, error) {
 }
 
 // CreateContinuing starts a run record that follows an earlier run.
-func CreateContinuing(backend string, task agent.Task, continues string) (*Writer, error) {
-	return create(backend, task, continues)
+func CreateContinuing(backend string, task agent.Task, continues string, routed ...*RoutedBy) (*Writer, error) {
+	return create(backend, task, continues, routed...)
 }
 
 // createEventsFile opens a new run's events.jsonl; tests replace it to make the open fail.
@@ -77,7 +81,7 @@ var createEventsFile = func(path string) (io.WriteCloser, error) { return os.Cre
 // create starts a run record. If it fails after making the run's directory, it removes the
 // directory again, so a run that never started leaves no half record behind (hrn exec promises a
 // rejected start creates none).
-func create(backend string, task agent.Task, continues string) (w *Writer, err error) {
+func create(backend string, task agent.Task, continues string, routed ...*RoutedBy) (w *Writer, err error) {
 	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -89,6 +93,10 @@ func create(backend string, task agent.Task, continues string) (w *Writer, err e
 		}
 	}()
 	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues}}
+	if len(routed) > 0 && routed[0] != nil {
+		by := *routed[0]
+		w.rec.RoutedBy = &by
+	}
 	if err := writeJSON(filepath.Join(dir, "task.json"), w.rec); err != nil {
 		return nil, err
 	}

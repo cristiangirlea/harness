@@ -456,9 +456,10 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 
 // attemptPlan is how one attempt differs from the one before it.
 type attemptPlan struct {
-	number int    // 1-based
-	prompt string // what the agent is sent, failure context included
-	commit string // the commit subject for whatever it leaves behind
+	routedBy *runlog.RoutedBy
+	number   int    // 1-based
+	prompt   string // what the agent is sent, failure context included
+	commit   string // the commit subject for whatever it leaves behind
 	// continued keeps the worktree and the work already committed on the
 	// branch, so the agent fixes its own output instead of starting over.
 	continued bool
@@ -583,17 +584,21 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		return finish(StatusCanceled, "canceled")
 	}
 
-	backends := []string{firstOf(t.Backend, spec.Backend, agent.DefaultBackendName())}
+	// The spec's options with whatever the task sets on top; Run resolved
+	// both MCP lists already.
+	opts := t.Options.Over(spec.Options)
+	backend := firstOf(t.Backend, spec.Backend)
+	routedBy, err := opts.Route(t.Prompt, &backend, runlog.Home())
+	if err != nil {
+		return fail(err)
+	}
+	backends := []string{firstOf(backend, agent.DefaultBackendName())}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
 	gateTimeout := defaultGateTimeout
 	if d := firstNonZero(t.GateTimeout, spec.GateTimeout); d > 0 {
 		gateTimeout = time.Duration(d)
 	}
-	// The spec's options with whatever the task sets on top; Run resolved
-	// both MCP lists already.
-	opts := t.Options.Over(spec.Options)
-
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
 		return fail(errors.New(takenError("branch", tr.Branch)))
 	}
@@ -617,6 +622,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	for i := 0; i < len(backends); i++ {
 		name := backends[i]
 		plan := attemptPlan{number: len(tr.Attempts) + 1, prompt: t.Prompt, gateTimeout: gateTimeout}
+		if i == 0 {
+			plan.routedBy = routedBy
+		}
 		if carry != nil {
 			plan.switchedFrom, plan.continues = carry.Backend, carry.RunID
 			carry = nil
@@ -1087,7 +1095,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 
 	// A carry-on's record continues the limited run, so the chain shows.
-	rec, err := runlog.CreateContinuing(b.Name(), task, plan.continues)
+	rec, err := runlog.CreateContinuing(b.Name(), task, plan.continues, plan.routedBy)
 	if err != nil {
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
 	}

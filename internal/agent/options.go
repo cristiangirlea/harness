@@ -6,12 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"os"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/purpose"
+	"github.com/cristiangirlea/harness/internal/route/table"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -84,6 +87,37 @@ type Options struct {
 	// plan's usage limit. Otherwise claude and codex carry on each other's
 	// work (internal/limits).
 	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its plan's usage limit, instead of carrying on on the other of claude and codex."`
+}
+
+// Route fills a wholly unspecified backend/model/effort choice from evidence.
+// Backend lives beside Options in the callers, so it is passed separately.
+func (o *Options) Route(prompt string, backend *string, home string) (*table.RoutedBy, error) {
+	if *backend != "" || o.Model != "" || o.Effort != "" {
+		return nil, nil
+	}
+	t, err := table.Load(home)
+	if err != nil {
+		return nil, err
+	}
+	category := purpose.Classify(prompt).Category
+	r, ok := t.Pick(category)
+	if !ok {
+		return nil, nil
+	}
+	if r.Backend != "" {
+		if _, err := Get(r.Backend); err != nil {
+			fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: %v\n", category, err)
+			return nil, nil
+		}
+	}
+	if err := (Options{Effort: r.Effort}).Validate(); err != nil {
+		return nil, fmt.Errorf("route for %s: %w", category, err)
+	}
+	if r.Backend == "" && r.Model == "" && r.Effort == "" {
+		return nil, nil
+	}
+	*backend, o.Model, o.Effort = r.Backend, r.Model, r.Effort
+	return &table.RoutedBy{Category: category, Eval: r.Eval, Set: r.Set}, nil
 }
 
 // IsLean reports whether lean is on: set, and true.

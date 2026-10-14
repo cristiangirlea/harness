@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/route"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -93,6 +95,76 @@ func (r recorder) Run(_ context.Context, task agent.Task, _ func(agent.Event)) a
 }
 
 var recorded = make(chan agent.Task, 4)
+
+func TestRunChecksLimitsOnTheRoutedBackend(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, name := range []string{"claude", "codex"} {
+		old, _ := agent.Get(name)
+		defer agent.Register(old)
+		agent.Register(recorder{name, recorded})
+	}
+	// Choose the backend other than the default so the test detects checking
+	// limits before the purpose row has supplied a backend.
+	limited := "codex"
+	partner := "claude"
+	if agent.DefaultBackendName() == "codex" {
+		limited, partner = partner, limited
+	}
+	if err := limits.Note(limited, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := route.Save(route.Table{"implement": {Backend: limited, Model: "routed", Effort: "medium"}}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"-C", t.TempDir(), "Implement a widget"})
+	if code != 0 || err != nil {
+		t.Fatalf("run: %d %v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].RoutedBy == nil {
+		t.Fatalf("limit after routing: %+v %v", recs, err)
+	}
+}
+
+func TestRunUsesRoutingAndKeepsNamedModel(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			drain(t)
+			t.Setenv("HRN_HOME", t.TempDir())
+			// Replace only the default backend with a local recorder: no model calls.
+			name := agent.DefaultBackendName()
+			old, _ := agent.Get(name)
+			agent.Register(recorder{name, recorded})
+			defer agent.Register(old)
+			if err := route.Save(route.Table{"implement": {Backend: "stub-cmd", Model: "routed", Effort: "medium", Eval: "e1", Set: "2026-10-12"}}); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"--no-switch", "-C", t.TempDir()}
+			if explicit {
+				args = append(args, "-m", "mine")
+			}
+			args = append(args, "Implement a widget")
+			code, err := cmdRun(args)
+			if code != 0 || err != nil {
+				t.Fatalf("run: %d %v", code, err)
+			}
+			task := <-recorded
+			recs, err := runlog.List(1)
+			if err != nil || len(recs) != 1 {
+				t.Fatalf("records: %v %v", recs, err)
+			}
+			if explicit {
+				if task.Model != "mine" || task.Effort != "" || recs[0].RoutedBy != nil || recs[0].Backend != name {
+					t.Fatalf("substituted: %+v %+v", task, recs[0])
+				}
+			} else if task.Model != "routed" || task.Effort != "medium" || recs[0].RoutedBy == nil || recs[0].Backend != "stub-cmd" {
+				t.Fatalf("route: %+v %+v", task, recs[0])
+			}
+		})
+	}
+}
 
 // A second backend, for continuing a run somewhere else.
 func init() {

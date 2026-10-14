@@ -68,7 +68,7 @@ func runProperties(backends []any, defaultDir string) map[string]any {
 	mode["description"] = mode["description"].(string) +
 		" Default readonly here. ask puts each write and command to you when this host supports elicitation, and denies it otherwise."
 	props["prompt"] = str("The task, as you would brief an engineer.")
-	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: api when API credentials exist, otherwise claude."}
+	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: api when API credentials exist, otherwise claude, or the route table's row for the prompt's purpose, when one exists."}
 	props["dir"] = str("Workspace directory. Default: " + defaultDir)
 	props["continue_run_id"] = str("Continue a finished run, in its workspace and mode unless dir or mode say otherwise. " +
 		"On the same backend it carries on from that run's conversation (api) or a fork of its session (claude, codex). " +
@@ -145,7 +145,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			// As hrn run does: a backend whose limit is remembered hands
 			// the run to its partner before anything is planned.
 			var routed string
-			if !args.NoSwitch {
+			if !args.NoSwitch && args.ContinueRunID != "" {
 				if args.Backend, routed = limits.Choose(args.Backend, args.ContinueRunID); routed != "" {
 					args.Model = ""
 				}
@@ -172,6 +172,15 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
 			dir = ws.Root
+			routedBy, err := args.Options.Route(args.Prompt, &args.Backend, runlog.Home())
+			if err != nil {
+				return mcp.CallResult{}, err
+			}
+			if !args.NoSwitch && args.ContinueRunID == "" {
+				if args.Backend, routed = limits.Choose(args.Backend, ""); routed != "" {
+					args.Model = ""
+				}
+			}
 			if args.Backend == "" {
 				args.Backend = agent.DefaultBackendName()
 			}
@@ -183,7 +192,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
-			rec, err := runlog.CreateContinuing(args.Backend, task, args.ContinueRunID)
+			rec, err := runlog.CreateContinuing(args.Backend, task, args.ContinueRunID, routedBy)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 			}

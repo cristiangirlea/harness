@@ -15,6 +15,41 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
+func TestRoutingRecordAndLegacy(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	by := &RoutedBy{Category: "implement", Eval: "e1", Set: "2026-10-12"}
+	w, err := CreateContinuing("codex", agent.Task{Prompt: "Implement widget"}, "", by)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load(w.ID())
+	if err != nil || r.RoutedBy == nil || *r.RoutedBy != *by {
+		t.Fatalf("record: %+v %v", r, err)
+	}
+	data, err := os.ReadFile(filepath.Join(w.Dir(), "task.json"))
+	if err != nil || !strings.Contains(string(data), "routed_by") {
+		t.Fatalf("task: %s %v", data, err)
+	}
+	w, err = Create("codex", agent.Task{Prompt: "old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	r, err = Load(w.ID())
+	if err != nil || r.RoutedBy != nil {
+		t.Fatalf("legacy: %+v %v", r, err)
+	}
+	data, _ = json.Marshal(r)
+	if strings.Contains(string(data), "routed_by") {
+		t.Fatalf("legacy gained field: %s", data)
+	}
+}
+
 func TestRecordsKeepContextAndStillLoadResultsWithoutIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, n := range []int{285000, 0} {

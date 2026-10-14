@@ -24,6 +24,7 @@ const (
 	ByModel   = "model"
 	ByDir     = "dir"
 	ByPurpose = "purpose"
+	ByRouted  = "routed"
 	ByDay     = "day"
 )
 
@@ -261,11 +262,22 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 	case ByPurpose:
 		// What the run was for, from keyword rules on its prompt's first paragraph.
 		return func(r runlog.Record) string { return purpose.Classify(r.Task.Prompt).Category }, nil
+	case ByRouted:
+		return func(r runlog.Record) string {
+			if r.RoutedBy == nil {
+				return "-"
+			}
+			eval := r.RoutedBy.Eval
+			if eval == "" {
+				eval = "hand"
+			}
+			return r.RoutedBy.Category + " via " + eval
+		}, nil
 	case ByDay:
 		// The day the run started, on this computer's calendar.
 		return func(r runlog.Record) string { return r.Started.Local().Format("2006-01-02") }, nil
 	}
-	return nil, fmt.Errorf("unknown key %q (want backend, model, dir, purpose or day)", by)
+	return nil, fmt.Errorf("unknown key %q (want backend, model, dir, purpose, routed or day)", by)
 }
 
 // canonDir names a directory the way the filesystem does, so one workspace
