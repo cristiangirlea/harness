@@ -4,7 +4,7 @@
 # effects: exec, network
 # parameters: host:string=required; port:int=required; timeout:seconds=10
 # example: out=$(bash scripts/wait-for.sh 127.0.0.1 1 1 2>&1) && exit 1; test "$out" = '{"error":"timeout"}'$'\nexit status 1'
-# hash: pending
+# hash: 01ae4ec5dd59ad60f771cfb470cb237ed99d74d2d37a47238d914f11883ad4e9
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 exec go run "$root/scripts/answers.go" wait "$@"

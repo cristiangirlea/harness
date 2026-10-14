@@ -4,7 +4,7 @@
 # effects: read, exec
 # parameters: none
 # example: bash scripts/verify_test.sh
-# hash: pending
+# hash: 2feed4b226fe169fd4187aee1725877e2c36ff9f0f0d77556ea71a994dd67022
 set -euo pipefail
 runner=$(cd "$(dirname "$0")" && pwd)/verify.sh
 tmp=$(mktemp -d)

@@ -3,7 +3,7 @@
 // effects: read, exec, network
 // parameters: mode:string=required; arguments:string[]=mode-specific
 // example: test "$(go run scripts/answers.go self-test)" = '{"ready":true}'
-// hash: pending
+// hash: 24f76c38224733f82802396a3510e80e61c585d95bbff9a64a7498f45ae6b477
 package main
 
 import (

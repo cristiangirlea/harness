@@ -35,6 +35,7 @@ go test -race -count=1 ./...                                  # Linux only in CI
 go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -parallel=4 ./internal/agent
 go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
 bash -n .github/release.sh && bash -n scripts/api-check.sh
+bash scripts/verify.sh --check
 bash .github/release.sh                                       # release dry run, writes dist/
 test -z "$(gofmt -l .)"                                       # /check: tracked files only
 ```
@@ -98,3 +99,21 @@ machines. See `CONTRIBUTING.md` for CI and release details.
   `filepath.EvalSymlinks`. Files are LF (`.gitattributes`).
 - Secrets are never read, printed or committed. Small diffs: don't restyle what you didn't change.
   Not sure? Ask, with one proposal.
+## Scripts
+- Index first: run a fitting script; add a parameter if it almost fits.
+- Keep scripts you would run twice or that exceed ten lines.
+- Inputs are parameters, never hardcoded paths, IDs or dates.
+- Answer, not data: small JSON objects, capped output.
+- Fail loud: non-zero exit with an error object.
+- Be safe to re-run.
+- Header first; see docs/scripts.md for the format.
+- Compose by calling scripts, never copying their code.
+<!-- scripts index: start -->
+- `scripts/answers.go`: Provide JSON test summaries and bounded TCP probes for Bash entry points.
+- `scripts/api-check.sh`: Exercise real API runs, continuation and context editing at the owner's expense. (not verified: spends money)
+- `scripts/check.sh`: Run the check skill commands in order, stopping on failure.
+- `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
+- `scripts/verify.sh`: Run kept examples and synchronize script hashes and the AGENTS index. (not verified: the runner)
+- `scripts/verify_test.sh`: Test verifier stamping, exclusions, errors and read-only checks in fixtures.
+- `scripts/wait-for.sh`: Wait for a TCP port with a bounded timeout.
+<!-- scripts index: end -->

@@ -4,7 +4,7 @@
 # effects: read, write-workspace, exec
 # parameters: --list:bool=false
 # example: bash scripts/check.sh --list
-# hash: b5dde62789dedb0b214f21e73672a3237c25d909c2a2ed8fcc32e839284736b8
+# hash: 41220986af322ba142f4ba165c2e04f1a58e0973184260c03abca8d958444aab
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if (( $# > 1 )) || [[ ${1:-} != '' && ${1:-} != --list ]]; then
