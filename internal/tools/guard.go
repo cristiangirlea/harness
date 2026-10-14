@@ -48,7 +48,14 @@ var guardRules = []struct {
 	// repository or removing it, and the API calls that change things.
 	// gh pr create is left to the guarded environment, where gh has no login:
 	// handing work over is hrn's (a branch per batch task) or the operator's.
-	{"gh-publish", matches(`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s="'\\$]*(?i:PUT|PATCH|DELETE)\b`)},
+	// A GET of a publishing endpoint is harmless, but uncommon for an agent;
+	// refusing every method keeps implicit POSTs from fields and --input covered.
+	{"gh-publish", matches(
+		`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b` +
+			`|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s="'\\$]*(?i:PUT|PATCH|DELETE)\b` +
+			`|\bgh\s+api\b[^|&;]*/(?:releases|git/(?:refs|tags)|rulesets|keys|hooks|collaborators|dispatches|merges|environments|actions/(?:secrets|variables))(?:/|[\s"'?]|$)` +
+			`|\bgh\s+api\b[^|&;]*(?:\bgraphql\b[^|&;]*(?i:mutation)\b|(?i:mutation)\b[^|&;]*\bgraphql\b)`,
+	)},
 	// gh's login in the system's credential store, which no variable hides:
 	// printing it, or handing it to git as a credential helper.
 	{"gh-token", matches(`(?i)\bgh\b[^|&;]*\bauth\s+(?:token|git-credential)\b|\bgh\b[^|&;]*\bauth\s+status\b[^|&;]*(?:--show-token\b|\s-[a-z]*t\b)`)},
