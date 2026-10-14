@@ -700,7 +700,8 @@ order they are worth taking:
       PR #313, 2026-10-14. #264 done: PR #321, 2026-10-14.
     - [#296](https://github.com/cristiangirlea/harness/issues/296): large tool results shaped
       per kind (tests, logs, JSON, tables, terminal), the original kept behind a handle,
-      invariants checked, measured by an eval in hrn-evals.
+      invariants checked, measured by an eval in hrn-evals. Done: PR #335, 2026-10-14, for
+      terminal, log and test output, off by default; the eval and its run wait for the owner.
     - [#297](https://github.com/cristiangirlea/harness/issues/297): a routing table from eval
       results (purpose to backend, model and effort), applied when a run names none and
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
@@ -2208,3 +2209,14 @@ neither of them follows a run while it happens.
   (usage events, else result totals; codex input already holds its cached tokens). Left open
   as #328: interpreter groups in the table, the verifier and subdirectories, cache writes in
   the denominator, the shape of `go test -json`.
+- 2026-10-14: PR #335 (closes #296): large tool results shaped. `internal/shape` summarises
+  terminal, log and test output (the shapes #295's page ranks first; JSON and tabular are 0.3%
+  of the bytes and wait for their own issue), and a summary replaces the cut only when its
+  invariants hold against the original (numbers, negations, error strings, paths, every
+  failing test with its own diagnostics in order), else the head-and-tail cut as before. The
+  original is kept whole under the run's `originals/` behind a hash handle that `read_original`
+  reads back, read-only. All of it is behind `--shape-tools` (`shape_tools` on a run, batch
+  task, MCP run or eval variant), off by default: the issue says on by default only once the
+  hrn-evals eval shows it pays, and that run spends plan quota, so it waits for the owner's
+  word, with the suite as a slice of its own in hrn-evals. With the flag off the tool schema
+  and every byte of behaviour are as before.
