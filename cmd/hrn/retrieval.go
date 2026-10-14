@@ -207,7 +207,7 @@ func resolveRetrievalRunsWithModels(m eval.RetrievalManifest, cells []eval.Retri
 			}
 			model := r.Task.Model
 			if model == "" {
-				// Old records have no requested model; keep matching their reported result model.
+				// A run without a requested model matches on its reported result model.
 				model = r.Result.Model
 			}
 			if r.Backend != variant.Backend || r.Result.Backend != variant.Backend || model != variant.Model || r.Task.Effort != variant.Effort {

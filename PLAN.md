@@ -685,8 +685,9 @@ neither of them follows a run while it happens.
 ## Decisions log
 
 - 2026-10-14: retrieval compare matches the requested model (#184, PR #N).
-  Decided: use the task model when recorded, fall back to the result model for old records,
-  and show a different provider-reported model in the text comparison.
+  Decided: use the task model when recorded; a run without a requested model matches
+  only when its reported result model equals the variant model. Show a different
+  provider-reported model in the text comparison.
 - 2026-10-14: public watch's local-use and tunnel address follow-up (#218, PR #261).
   Decided: document that its loopback Host is refused, use a separate plain watch for
   local browsing and `hrn bot`, print the tunnel's loopback target at start, and explain
