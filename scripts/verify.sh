@@ -31,21 +31,29 @@ elif command -v shasum >/dev/null; then hash_command=(shasum -a 256)
 else error 'no SHA-256 command'; exit 1; fi
 status=0
 : > "$tmp/index"
-field() { printf '%s\n' "$header" | sed -n "s/^$1: //p"; }
 shopt -s nullglob
 for file in scripts/*.go scripts/*.sh; do
   header=$(awk '/^#!/ {next} /^# / {sub(/^# /, ""); print; next}
     /^\/\/ / {sub(/^\/\/ /, ""); print; next} {exit}' "$file")
   valid=true
+  unset metadata
+  declare -A metadata=()
+  while IFS= read -r line; do
+    [[ $line == *': '* ]] || continue
+    key=${line%%: *}
+    value=${line#*: }
+    [[ ! ${metadata[$key]+set} ]] || valid=false
+    metadata[$key]=$value
+  done <<< "$header"
   for key in name summary effects parameters example hash; do
-    value=$(field "$key")
+    value=${metadata[$key]:-}
     [[ -n $value && $value != *$'\n'* ]] || valid=false
   done
-  effects=$(field effects)
+  effects=${metadata[effects]:-}
   [[ $effects =~ ^(read|write-workspace|exec|network)(,[[:space:]]*(read|write-workspace|exec|network))*$ ]] || valid=false
   if ! $valid; then error "invalid header: $file"; status=1; continue; fi
-  summary=$(field summary)
-  example=$(field example)
+  summary=${metadata[summary]}
+  example=${metadata[example]}
   if [[ $example =~ ^none\ \((.+)\)$ ]]; then
     reason=${BASH_REMATCH[1]}
     printf -- '- `%s`: %s (not verified: %s)\n' "$file" "$summary" "$reason" >> "$tmp/index"
@@ -58,7 +66,7 @@ for file in scripts/*.go scripts/*.sh; do
     continue
   fi
   hash=$(sed '/^# hash: /d; /^\/\/ hash: /d' "$file" | "${hash_command[@]}" | awk '{print $1}')
-  if [[ $(field hash) != "$hash" ]]; then
+  if [[ ${metadata[hash]} != "$hash" ]]; then
     if $check; then error "stale hash: $file"; status=1
     else
       content=$(awk -v hash="$hash" '/^# hash: / {$0="# hash: " hash}
