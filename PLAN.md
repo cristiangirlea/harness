@@ -719,6 +719,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: index stream sends later changes (#66, PR #362). Test a new run
+  appearing in a later replace on the same connection, after reading the first
+  fragment, with a short poll interval and a generous deadline. Suppressing every
+  replace after the first makes the test fail; production code is unchanged.
 - 2026-10-14: purpose reads past labels and context (#118, PR #319). Leading label
   lines are skipped, a final label contributes its value, and the second non-blank
   paragraph is tried only when the first matches no rule, with the cap applied to each.
