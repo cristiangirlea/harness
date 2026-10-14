@@ -75,12 +75,16 @@ entirely of shell calls) establishes that origin; mixed pending calls remain
 with recorded tool calls.
 
 Each shape reports its fraction of all result bytes and an **estimate**:
-bytes / 4 divided by the sum of `input_tokens + cache_read_tokens` in `usage`
-events. Cache writes are excluded as requested for this measurement. A missing
-denominator is `null`. Bytes count once, not again for each later context replay;
-runs without usage still contribute bytes, so ratios can exceed one. These are
-candidate byte budgets, not measured savings or a strict bound on total context
-tokens. Check `runs.with_usage` against `runs.read` before interpreting them.
+bytes / 4 divided by input tokens from the same runs. Each run uses its `usage`
+event sum when present, otherwise its `result.json` totals, otherwise no token
+figure. Input includes `cache_read_tokens` for api and Claude; Codex's
+`input_tokens` already includes cache reads, so those are not added again.
+Cache writes are excluded. A missing denominator is `null`. All runs contribute
+to `bytes` and `tool_result_share`; only runs with a token figure contribute bytes
+to input-share estimates, including inline-script estimates. `runs.with_tokens`
+reports that coverage beside `runs.with_usage` and `runs.read`. Bytes count once,
+not again for each later context replay. These are candidate byte budgets, not
+measured savings or a strict bound on total context tokens.
 
 `inline_scripts` lists the top 20 normalised command groups by count, with the
 count, distinct run count, command bytes and label (`heredoc`, `python`, `node`,

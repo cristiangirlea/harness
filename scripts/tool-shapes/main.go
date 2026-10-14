@@ -97,23 +97,27 @@ type shape struct {
 	Bytes       int64    `json:"bytes"`
 	ResultShare float64  `json:"tool_result_share"`
 	InputShare  *float64 `json:"input_token_share_estimate"`
+	tokenBytes  int64
 }
 type group struct {
-	Shape string `json:"shape"`
-	Count int    `json:"count"`
-	Runs  int    `json:"runs"`
-	Bytes int64  `json:"command_bytes"`
+	Shape      string `json:"shape"`
+	Count      int    `json:"count"`
+	Runs       int    `json:"runs"`
+	Bytes      int64  `json:"command_bytes"`
+	tokenBytes int64
 }
 type stats struct {
-	Shapes          []shape  `json:"shapes"`
-	InlineScripts   []group  `json:"inline_scripts"`
-	ToolResultBytes int64    `json:"tool_result_bytes"`
-	InputTokens     int64    `json:"input_plus_cache_read_tokens"`
-	InlineBytes     int64    `json:"inline_script_bytes"`
-	InlineShare     *float64 `json:"inline_script_input_share_estimate"`
-	RepeatedBytes   int64    `json:"repeated_inline_script_bytes"`
-	RepeatedShare   *float64 `json:"repeated_inline_script_input_share_estimate"`
-	groups          map[string]*group
+	Shapes             []shape  `json:"shapes"`
+	InlineScripts      []group  `json:"inline_scripts"`
+	ToolResultBytes    int64    `json:"tool_result_bytes"`
+	InputTokens        int64    `json:"input_plus_cache_read_tokens"`
+	InlineBytes        int64    `json:"inline_script_bytes"`
+	InlineShare        *float64 `json:"inline_script_input_share_estimate"`
+	RepeatedBytes      int64    `json:"repeated_inline_script_bytes"`
+	RepeatedShare      *float64 `json:"repeated_inline_script_input_share_estimate"`
+	groups             map[string]*group
+	inlineTokenBytes   int64
+	repeatedTokenBytes int64
 }
 type report struct {
 	*stats
@@ -121,6 +125,7 @@ type report struct {
 	Runs   struct {
 		Read       int `json:"read"`
 		WithUsage  int `json:"with_usage"`
+		WithTokens int `json:"with_tokens"`
 		Unreadable int `json:"skipped_unreadable"`
 	} `json:"runs"`
 }
@@ -149,16 +154,15 @@ func fraction(bytes, tokens int64) *float64 {
 	v := float64(bytes) / 4 / float64(tokens)
 	return &v
 }
-func (s *stats) add(events []event) {
+func (s *stats) add(events []event, tokens *int64) {
+	if tokens != nil {
+		s.InputTokens += *tokens
+	}
 	seen := map[string]bool{}
 	var pending []string
 	ambiguous := false
 	for _, e := range events {
 		switch e.Kind {
-		case "usage":
-			if e.Usage != nil {
-				s.InputTokens += e.Usage.Input + e.Usage.Cache
-			}
 		case "tool_result":
 			tool := e.Tool
 			if tool == "" && len(pending) > 0 {
@@ -198,6 +202,9 @@ func (s *stats) add(events []event) {
 			for i := range s.Shapes {
 				if s.Shapes[i].Shape == label {
 					s.Shapes[i].Bytes += n
+					if tokens != nil {
+						s.Shapes[i].tokenBytes += n
+					}
 				}
 			}
 		case "tool_call":
@@ -226,6 +233,10 @@ func (s *stats) add(events []event) {
 			g.Count++
 			g.Bytes += int64(len(command))
 			s.InlineBytes += int64(len(command))
+			if tokens != nil {
+				g.tokenBytes += int64(len(command))
+				s.inlineTokenBytes += int64(len(command))
+			}
 			if !seen[key] {
 				g.Runs++
 				seen[key] = true
@@ -239,13 +250,14 @@ func (s *stats) finish() {
 		if s.ToolResultBytes > 0 {
 			v.ResultShare = float64(v.Bytes) / float64(s.ToolResultBytes)
 		}
-		v.InputShare = fraction(v.Bytes, s.InputTokens)
+		v.InputShare = fraction(v.tokenBytes, s.InputTokens)
 	}
 	keys := make([]string, 0, len(s.groups))
 	for k, g := range s.groups {
 		keys = append(keys, k)
 		if g.Count > 1 {
 			s.RepeatedBytes += g.Bytes
+			s.repeatedTokenBytes += g.tokenBytes
 		}
 	}
 	sort.Slice(keys, func(i, j int) bool {
@@ -258,8 +270,8 @@ func (s *stats) finish() {
 	for _, key := range keys[:min(20, len(keys))] {
 		s.InlineScripts = append(s.InlineScripts, *s.groups[key])
 	}
-	s.InlineShare = fraction(s.InlineBytes, s.InputTokens)
-	s.RepeatedShare = fraction(s.RepeatedBytes, s.InputTokens)
+	s.InlineShare = fraction(s.inlineTokenBytes, s.InputTokens)
+	s.RepeatedShare = fraction(s.repeatedTokenBytes, s.InputTokens)
 }
 func readJSON(path string, value any) error {
 	f, err := os.Open(path)
@@ -317,14 +329,16 @@ func measure(home string, days int, now time.Time) (*report, error) {
 			continue
 		}
 		dir := filepath.Join(home, "runs", name)
+		type totals struct {
+			Status  string `json:"status"`
+			Backend string `json:"backend"`
+			Input   *int64 `json:"input_tokens"`
+			Cache   int64  `json:"cache_read_tokens"`
+		}
 		var result struct {
-			Status  string    `json:"status"`
-			Backend string    `json:"backend"`
+			totals
 			Started time.Time `json:"started"`
-			Result  *struct {
-				Status  string `json:"status"`
-				Backend string `json:"backend"`
-			} `json:"result"`
+			Result  *totals   `json:"result"`
 		}
 		err = readJSON(filepath.Join(dir, "result.json"), &result)
 		if os.IsNotExist(err) {
@@ -341,9 +355,10 @@ func measure(home string, days int, now time.Time) (*report, error) {
 			continue
 		}
 		if result.Result != nil {
-			result.Status = result.Result.Status
-			if result.Result.Backend != "" {
-				result.Backend = result.Result.Backend
+			backend := result.Backend
+			result.totals = *result.Result
+			if result.Backend == "" {
+				result.Backend = backend
 			}
 		}
 		if result.Status == "" {
@@ -362,21 +377,41 @@ func measure(home string, days int, now time.Time) (*report, error) {
 			continue
 		}
 		r.Runs.Read++
-		hasUsage, hasCalls := false, false
-		for _, e := range events {
-			hasUsage = hasUsage || e.Kind == "usage" && e.Usage != nil
-			hasCalls = hasCalls || e.Kind == "tool_call"
-		}
-		if hasUsage {
-			r.Runs.WithUsage++
-		}
-		r.stats.add(events)
 		backend := result.Backend
 		if backend == "" {
 			backend = task.Backend
 		}
+		hasUsage, hasCalls := false, false
+		var tokens int64
+		for _, e := range events {
+			hasUsage = hasUsage || e.Kind == "usage" && e.Usage != nil
+			hasCalls = hasCalls || e.Kind == "tool_call"
+			if e.Kind == "usage" && e.Usage != nil {
+				tokens += e.Usage.Input
+				if backend != "codex" {
+					tokens += e.Usage.Cache
+				}
+			}
+		}
+		if hasUsage {
+			r.Runs.WithUsage++
+		}
+		var tokenFigure *int64
+		if hasUsage {
+			tokenFigure = &tokens
+		} else if result.Input != nil {
+			tokens = *result.Input
+			if backend != "codex" {
+				tokens += result.Cache
+			}
+			tokenFigure = &tokens
+		}
+		if tokenFigure != nil {
+			r.Runs.WithTokens++
+		}
+		r.stats.add(events, tokenFigure)
 		if backend == "claude" && hasCalls {
-			r.Claude.add(events)
+			r.Claude.add(events, tokenFigure)
 		}
 	}
 	r.stats.finish()

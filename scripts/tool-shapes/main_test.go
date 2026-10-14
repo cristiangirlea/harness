@@ -120,6 +120,50 @@ func TestNoUsageAndCap(t *testing.T) {
 	}
 }
 
+func TestTokenCoverage(t *testing.T) {
+	for _, tt := range []struct {
+		name, backend, result, usage string
+		want                         int64
+	}{
+		{"flat api", "api", `{"status":"ok","input_tokens":100,"cache_read_tokens":50}`, "", 150},
+		{"wrapped claude", "claude", `{"result":{"status":"ok","input_tokens":100,"cache_read_tokens":50}}`, "", 150},
+		{"old codex", "codex", `{"status":"ok","input_tokens":100,"cache_read_tokens":50}`, "", 100},
+		{"wrapped codex", "codex", `{"result":{"status":"ok","backend":"codex","input_tokens":100,"cache_read_tokens":50,"usage_metadata":{"input_semantics":"inclusive_cache"}}}`, "", 100},
+		{"usage wins", "api", `{"status":"ok","input_tokens":900,"cache_read_tokens":900}`, "\n{\"kind\":\"usage\",\"usage\":{\"input_tokens\":20,\"cache_read_tokens\":30}}\n{\"kind\":\"usage\",\"usage\":{\"input_tokens\":40,\"cache_read_tokens\":60}}", 150},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.Local)
+			events := `{"kind":"tool_call","tool":"shell","input":{"command":"python -c 'x()'"}}
+{"kind":"tool_result","tool":"shell","text":"abcdefgh"}`
+			id := "20261014-100000-known"
+			writeRun(t, home, id, tt.backend, "ok", events+tt.usage)
+			if err := os.WriteFile(filepath.Join(home, "runs", id, "result.json"), []byte(tt.result), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := measure(home, 30, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if before.InputTokens != tt.want || before.Shapes[4].InputShare == nil || *before.Shapes[4].InputShare != 2/float64(tt.want) {
+				t.Fatalf("tokens %d, shape %+v", before.InputTokens, before.Shapes[4])
+			}
+			writeRun(t, home, "20261014-100001-unknown", tt.backend, "ok", events)
+			after, err := measure(home, 30, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.ToolResultBytes != 16 || after.Shapes[4].Bytes != 16 || *after.Shapes[4].InputShare != *before.Shapes[4].InputShare || *after.InlineShare != *before.InlineShare || *after.RepeatedShare != *before.InlineShare {
+				t.Fatalf("uncovered bytes changed token shares: %+v", after.stats)
+			}
+			data, err := json.Marshal(after)
+			if err != nil || !strings.Contains(string(data), `"with_tokens":1`) {
+				t.Fatalf("coverage %s %v", data, err)
+			}
+		})
+	}
+}
+
 func TestOptions(t *testing.T) {
 	for _, args := range [][]string{{"--days", "0"}, {"--days", "x"}, {"--home"}, {"--text"}, {"--json", "extra"}} {
 		if _, _, err := options(args); err == nil {
@@ -171,7 +215,7 @@ func TestAccountingDetails(t *testing.T) {
 		{Kind: "tool_call", Input: json.RawMessage(`{"command":123}`)},
 		{Kind: "tool_result", Text: "é", Tool: "shell"},
 	}
-	s.add(e)
+	s.add(e, nil)
 	s.finish()
 	if len(s.InlineScripts) != 1 || s.InlineScripts[0].Count != 2 || s.InlineScripts[0].Runs != 1 || s.RepeatedBytes != 42 || s.ToolResultBytes != 2 || s.Shapes[4].Bytes != 2 {
 		t.Fatalf("accounting %+v", s)
@@ -191,7 +235,7 @@ func TestAnonymousResults(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newStats()
-			s.add(tt.events)
+			s.add(tt.events, nil)
 			if s.Shapes[4].Bytes != tt.terminal {
 				t.Fatalf("terminal %d want %d", s.Shapes[4].Bytes, tt.terminal)
 			}
