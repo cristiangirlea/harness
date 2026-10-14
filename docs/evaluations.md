@@ -35,6 +35,12 @@ median cost, and the cache share (cache-read tokens over every input token, cach
 `-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
 It also shows `-` when Codex usage is marked missing; Codex's cache share divides
 cache reads by input tokens that already include those reads.
+Unknown costs are never summed as zero or included in the cost median. When no cost
+is known, cost cells show `-`; otherwise the total counts runs without a known cost
+(or batch tasks that ran without a known cost), for example `$1.23 (2 unknown)`. An explicitly
+reported zero is known and shows `$0.00`. JSON rows include `runs_without_cost` or
+`tasks_without_cost` when nonzero; older records without usage metadata retain a
+known cost when it is positive.
 Batches group by repository; their cost sums every attempt, passed or not. Runs without
 a result (still running or killed), batches with a task still running, and records that
 cannot be read are counted under the tables and left out of them.
