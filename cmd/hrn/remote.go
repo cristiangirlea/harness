@@ -123,6 +123,10 @@ func runRemote(args []string, out io.Writer) error {
 		if len(prompt) == 0 || len(prompt) > 100_000 {
 			return errors.New("prompt must be 1..100000 bytes")
 		}
+		options := agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: cost, MaxTurns: turns}
+		if err := options.Validate(); err != nil {
+			return err
+		}
 		input := struct {
 			TenantID       string        `json:"tenant_id"`
 			ProjectID      string        `json:"project_id"`
@@ -133,7 +137,7 @@ func runRemote(args []string, out io.Writer) error {
 			IdempotencyKey string        `json:"idempotency_key"`
 		}{
 			TenantID: *tenant, ProjectID: *project, Prompt: prompt,
-			Options: agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: cost, MaxTurns: turns},
+			Options: options,
 			Backend: "api", BaseRef: ref, IdempotencyKey: key,
 		}
 		data, err := connection.request(ctx, http.MethodPost,

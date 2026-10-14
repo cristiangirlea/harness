@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"io"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -204,6 +205,9 @@ func TestValidate(t *testing.T) {
 		{Options{Mode: "weird"}, "unknown mode"},
 		{Options{Timeout: Duration(-time.Second)}, "negative"},
 		{Options{MaxCostUSD: -1}, "negative"},
+		{Options{MaxCostUSD: math.NaN()}, "finite"},
+		{Options{MaxCostUSD: math.Inf(1)}, "finite"},
+		{Options{MaxCostUSD: math.Inf(-1)}, "finite"},
 		{Options{TaskBudget: 100}, "20000"},
 	} {
 		if err := tc.o.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
