@@ -116,3 +116,9 @@ func TestLogCollapsesRepeatedErrorLines(t *testing.T) {
 		t.Fatalf("log repetition: %q ok=%v", s, ok)
 	}
 }
+
+func TestSingleLongLineFallsBack(t *testing.T) {
+	if _, ok := Summarize(Terminal, strings.Repeat("x", 50000)); ok {
+		t.Fatal("accepted a summary that drops both head and tail")
+	}
+}

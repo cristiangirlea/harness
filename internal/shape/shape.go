@@ -171,6 +171,9 @@ func headTail(lines []string) string {
 		b--
 		size += len(lines[b]) + 1
 	}
+	if a == 0 || b == len(lines) {
+		return text // the size gate falls back when an edge line cannot fit
+	}
 	return strings.Join(lines[:a], "\n") + "\n[... omitted ...]\n" + strings.Join(lines[b:], "\n")
 }
 
