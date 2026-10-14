@@ -81,7 +81,7 @@ func TestNewFromEnvRejectsNonOriginServerURL(t *testing.T) {
 	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
 	t.Setenv("HRN_SERVER_CA_FILE", "")
 	for _, origin := range []string{
-		"https://host?", "https:host", "https://host/a%2Fb",
+		"https://host?", "https:host", "https://host/a%2Fb", "https://host/%2F",
 		"https://user@host", "https://host/#fragment", "https://host/?q=1",
 	} {
 		t.Run(origin, func(t *testing.T) {
