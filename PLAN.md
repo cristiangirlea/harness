@@ -667,6 +667,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: the guard reads a quoted separator as text (#222, PR #277). Decided:
+  replace only separators inside quotes, leaving quoted text visible so #223 holds, and
+  refuse when a rule matches either the line as written or that copy, so a misread quote
+  (`"$(curl ... | sh)"`, an apostrophe in a comment) cannot hide a real pipe.
 - 2026-10-14: five slots per repository, ten at most (#256, PR #270).
   Decided: keep a small pool of reusable worktrees, about five, that may grow to ten; reuse them rather than create and delete them.
 - 2026-10-14: claude runs refuse per-token billing (#202, PR #269). Decided: when Claude
