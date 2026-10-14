@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -37,6 +38,8 @@ type CLIBackend struct {
 	// newParse, when set, makes a parse for one run, for a stream whose lines
 	// are read in the light of earlier ones; Run uses it instead of parse.
 	newParse func() func(line []byte, emit func(Event), res *Result) bool
+	// stopWhen stops a streaming CLI when its parser reports a reason to stop.
+	stopWhen func(*Result) bool
 	// finalize runs after exit with all of stdout, for single-JSON outputs.
 	finalize func(stdout []byte, emit func(Event), res *Result)
 	// forks is set when args honours Task.ForkSession and parse records
@@ -178,6 +181,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	// A nested Claude Code session refuses to start when it thinks it is
 	// inside another one.
 	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
+	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
 	guarded := !task.AllowDangerous
 	var withheld []string
 	if guarded {
@@ -256,6 +260,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		if parse != nil {
 			parsed := parse(line, emit, &res)
+			if c.stopWhen != nil && c.stopWhen(&res) {
+				cancel()
+				stopErr := stopCLITree(tree, errors.New(res.Error))
+				_ = stdout.Close()
+				_ = cmd.Wait()
+				return fail(StatusError, stopErr)
+			}
 			if res.Session != "" && res.Session != session {
 				session = res.Session
 				emit(Event{Time: time.Now(), Kind: EventSession, Text: session})

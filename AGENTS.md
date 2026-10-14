@@ -19,6 +19,7 @@ don't reopen its decisions. Older entries use `hx` (`cmd/hx`, `$HX_HOME`); code 
 | `internal/batch/`, `eval/`, `report/`, `purpose/` | Worktrees, variants, tables, prompt labels. |
 | `internal/runlog/`, `followup/` | Run records, pruning, continuation. |
 | `internal/gc/`, `internal/ws/` | Merged cleanup; O_EXCL-leased slots (`.hrn/slots/<n>`). |
+| `server/` | Separate module with its own `go.mod`; PostgreSQL control service and project worker. PostgreSQL tests need `HRN_TEST_DATABASE_URL`. |
 | `scripts/api-check.sh` | The first real api runs. Costs real money; the owner's to run. |
 | `.github/release.sh` | Builds the six release binaries and `SHA256SUMS` into `dist/`. |
 

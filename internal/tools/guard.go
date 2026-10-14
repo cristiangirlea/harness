@@ -15,7 +15,8 @@ import (
 // stops is the plausible accident.
 //
 // The rules lean towards refusing too much. A command segment ends at |, &&,
-// || or ;, so a rule reads one command at a time rather than the whole line.
+// || or ; outside quotes (see Guard), so a rule reads one command at a time
+// rather than the whole line.
 var guardRules = []struct {
 	name  string
 	match func(command string) bool
@@ -33,19 +34,28 @@ var guardRules = []struct {
 	{"guard-env", matches(guardEnvPattern())},
 	// A password prompt hangs a run that has no terminal, and anything worth
 	// running as root is worth a human typing it.
-	{"sudo", matches(`\bsudo\b`)},
+	{"sudo", matches(`\b(?i:sudo)\b`)},
 	// rm -r against a root rather than something inside one.
 	{"rm-root", rmHitsRoot},
 	// Downloading a script straight into a shell, however many stages the pipe
 	// has on the way.
-	{"pipe-to-shell", matches(`\b(?:curl|wget)\b.*\|\s*(?:sudo\s+)?(?:sh|bash|zsh|powershell|pwsh)\b`)},
+	{"pipe-to-shell", matches(`\b(?i:curl|wget|irm|iwr)\b.*\|\s*(?:(?i:sudo)\s+)?(?i:sh|bash|zsh|powershell|pwsh|iex|Invoke-Expression)\b`)},
 	// Formatting a filesystem, or writing over a device rather than a file.
-	{"disk", matches(`\bmkfs|\bformat\s+[A-Za-z]:|\bdd\b[^|&;]*\bof=\s*(?:/dev/|\\\\\.\\)`)},
+	// Match program names in any case on every platform; a Linux command named
+	// Format is not a realistic false positive.
+	{"disk", matches(`\b(?i:mkfs)|\b(?i:format)\s+[A-Za-z]:|\b(?i:dd)\b[^|&;]*\bof=\s*(?:/dev/|\\\\\.\\)`)},
 	// GitHub's side of publishing: merging, releasing, changing who can see a
 	// repository or removing it, and the API calls that change things.
 	// gh pr create is left to the guarded environment, where gh has no login:
 	// handing work over is hrn's (a branch per batch task) or the operator's.
-	{"gh-publish", matches(`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s="'\\$]*(?i:PUT|PATCH|DELETE)\b`)},
+	// A GET of a publishing endpoint is harmless, but uncommon for an agent;
+	// refusing every method keeps implicit POSTs from fields and --input covered.
+	{"gh-publish", matches(
+		`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b` +
+			`|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s="'\\$]*(?i:PUT|PATCH|DELETE)\b` +
+			`|\bgh\s+api\b[^|&;]*/(?:releases|git/(?:refs|tags)|rulesets|keys|hooks|collaborators|dispatches|merges|environments|actions/(?:secrets|variables))(?:/|[\s"'?]|$)` +
+			`|\bgh\s+api\b[^|&;]*(?:\bgraphql\b[^|&;]*(?i:mutation)\b|(?i:mutation)\b[^|&;]*\bgraphql\b)`,
+	)},
 	// gh's login in the system's credential store, which no variable hides:
 	// printing it, or handing it to git as a credential helper.
 	{"gh-token", matches(`(?i)\bgh\b[^|&;]*\bauth\s+(?:token|git-credential)\b|\bgh\b[^|&;]*\bauth\s+status\b[^|&;]*(?:--show-token\b|\s-[a-z]*t\b)`)},
@@ -68,13 +78,50 @@ func matches(pattern string) func(string) bool {
 // The match is textual, so a line that merely mentions a pattern (echo "git
 // push") is refused as well; that false positive costs the agent one turn,
 // which is cheap next to what the rules prevent.
+//
+// Each rule sees the line as written and a copy with the separators inside
+// quotes read as text (#222), and refuses when either matches. A misread
+// quote (a substitution "$(... | sh)", an apostrophe in a comment) can then
+// only add a refusal, never hide a real pipe the line as written shows.
 func Guard(command string) string {
+	quoted := guardQuotedSeparators(command)
 	for _, r := range guardRules {
-		if r.match(command) {
+		if r.match(command) || r.match(quoted) {
 			return r.name
 		}
 	}
 	return ""
+}
+
+// guardQuotedSeparators keeps quoted text visible to the rules while preventing
+// separators inside it from ending a pipeline stage. An unterminated quote
+// treats the rest of the line as quoted, which can only add refusals.
+func guardQuotedSeparators(command string) string {
+	line := []byte(command)
+	var quote byte
+	escaped := false
+	for i, c := range line {
+		if quote == '"' && escaped {
+			escaped = false
+			continue
+		}
+		if quote == '"' && c == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 && c == quote {
+			quote = 0
+			continue
+		}
+		if quote == 0 && (c == '\'' || c == '"') {
+			quote = c
+			continue
+		}
+		if quote != 0 && (c == '|' || c == '&' || c == ';') {
+			line[i] = ' '
+		}
+	}
+	return string(line)
 }
 
 // GuardError is what a refused command returns to the model. It names the rule

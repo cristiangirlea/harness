@@ -689,8 +689,8 @@ func TestRemoveLeavesAWorktreeARunningFreshTaskNoLongerClaims(t *testing.T) {
 			other, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "x", Prompt: "theirs"}}})
 			wt := other.Tasks[0].Worktree
 			mine, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Tasks: []Task{{ID: "y", Prompt: "mine"}}})
-			if mine.Ownership != ownedByClaim {
-				t.Fatalf("ownership = %d, want %d on every new record", mine.Ownership, ownedByClaim)
+			if mine.Ownership != OwnershipClaim {
+				t.Fatalf("ownership = %d, want %d on every new record", mine.Ownership, OwnershipClaim)
 			}
 			// Where this task stood when hrn stopped: named x, like the other one.
 			tr := &mine.Tasks[0]
