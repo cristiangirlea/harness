@@ -83,8 +83,15 @@ figure. Input includes `cache_read_tokens` for api and Claude; Codex's
 Cache writes are excluded. A missing denominator is `null`. All runs contribute
 to `bytes` and `tool_result_share`; only runs with a token figure contribute bytes
 to input-share estimates, including inline-script estimates. `runs.with_tokens`
-reports that coverage beside `runs.with_usage` and `runs.read`. Bytes count once,
-not again for each later context replay. These are candidate byte budgets, not
+reports that coverage beside `runs.with_usage` and `runs.read`. Existing estimates
+count bytes once. `input_token_share_replayed_estimate` instead multiplies each
+result's bytes / 4 by the number of later model calls and divides their sum by
+the same input-token denominator. Later calls are the usage events
+after the result when any are present; otherwise result ordinal `i` (starting at
+1) and `result.json` total turns `n` give `max(0, n - i)`. The fallback approximates
+calls as one-to-one with tool results; batches and calls without results can
+break that assumption. Missing turns give zero later calls. Replay assumes the
+text remains in context through the run's end. These are candidate byte budgets, not
 measured savings or a strict bound on total context tokens.
 
 `inline_scripts` lists the top 20 normalised command groups by count, with the
@@ -98,6 +105,12 @@ input fields are supported; shell calls without either use the event's `text`
 scripts are interchangeable. Totals cover all groups, including those beyond
 20; repeated bytes include every occurrence of groups seen more than once,
 even within one run. Keeping a script still costs its invocation and result.
+`inline_script_input_share_replayed_estimate` weights command bytes / 4 by
+usage events after the command, or `max(0, n - i)` using its ordinal
+among all tool calls when usage is absent, over the same token denominator.
+`repeated_inline_script_input_share_replayed_estimate` applies that weighting
+to every occurrence of groups seen more than once, including groups beyond 20.
+The command fallback likewise approximates one tool call per model call.
 Nothing from the records is quoted: no prompt, command, path, normalised form,
 or output. The fixture home and Go tests exercise the measurement without model
 calls. See [the local 30-day snapshot](tool-shapes.md) for the measured budgets.

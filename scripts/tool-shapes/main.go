@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 05c4b0488c81a15103a86717d285743ad0851912f56ea715aab824c2ee20cb94
+// hash: 28d7a78f2d8a8dca670aac738a0a7bd898811ee446455422a215bc05e4f7ea9b
 package main
 
 import (
@@ -93,31 +93,38 @@ func normalize(command string) string {
 }
 
 type shape struct {
-	Shape       string   `json:"shape"`
-	Bytes       int64    `json:"bytes"`
-	ResultShare float64  `json:"tool_result_share"`
-	InputShare  *float64 `json:"input_token_share_estimate"`
-	tokenBytes  int64
+	Shape         string   `json:"shape"`
+	Bytes         int64    `json:"bytes"`
+	ResultShare   float64  `json:"tool_result_share"`
+	InputShare    *float64 `json:"input_token_share_estimate"`
+	ReplayedShare *float64 `json:"input_token_share_replayed_estimate"`
+	tokenBytes    int64
+	replayedBytes int64
 }
 type group struct {
-	Shape      string `json:"shape"`
-	Count      int    `json:"count"`
-	Runs       int    `json:"runs"`
-	Bytes      int64  `json:"command_bytes"`
-	tokenBytes int64
+	Shape         string `json:"shape"`
+	Count         int    `json:"count"`
+	Runs          int    `json:"runs"`
+	Bytes         int64  `json:"command_bytes"`
+	tokenBytes    int64
+	replayedBytes int64
 }
 type stats struct {
-	Shapes             []shape  `json:"shapes"`
-	InlineScripts      []group  `json:"inline_scripts"`
-	ToolResultBytes    int64    `json:"tool_result_bytes"`
-	InputTokens        int64    `json:"input_plus_cache_read_tokens"`
-	InlineBytes        int64    `json:"inline_script_bytes"`
-	InlineShare        *float64 `json:"inline_script_input_share_estimate"`
-	RepeatedBytes      int64    `json:"repeated_inline_script_bytes"`
-	RepeatedShare      *float64 `json:"repeated_inline_script_input_share_estimate"`
-	groups             map[string]*group
-	inlineTokenBytes   int64
-	repeatedTokenBytes int64
+	Shapes                []shape  `json:"shapes"`
+	InlineScripts         []group  `json:"inline_scripts"`
+	ToolResultBytes       int64    `json:"tool_result_bytes"`
+	InputTokens           int64    `json:"input_plus_cache_read_tokens"`
+	InlineBytes           int64    `json:"inline_script_bytes"`
+	InlineShare           *float64 `json:"inline_script_input_share_estimate"`
+	InlineReplayedShare   *float64 `json:"inline_script_input_share_replayed_estimate"`
+	RepeatedBytes         int64    `json:"repeated_inline_script_bytes"`
+	RepeatedShare         *float64 `json:"repeated_inline_script_input_share_estimate"`
+	RepeatedReplayedShare *float64 `json:"repeated_inline_script_input_share_replayed_estimate"`
+	groups                map[string]*group
+	inlineTokenBytes      int64
+	repeatedTokenBytes    int64
+	inlineReplayedBytes   int64
+	repeatedReplayedBytes int64
 }
 type report struct {
 	*stats
@@ -154,16 +161,32 @@ func fraction(bytes, tokens int64) *float64 {
 	v := float64(bytes) / 4 / float64(tokens)
 	return &v
 }
-func (s *stats) add(events []event, tokens *int64) {
+func (s *stats) add(events []event, tokens *int64, turns int) {
 	if tokens != nil {
 		s.InputTokens += *tokens
 	}
 	seen := map[string]bool{}
 	var pending []string
 	ambiguous := false
+	remainingUsage := 0
 	for _, e := range events {
+		if e.Kind == "usage" {
+			remainingUsage++
+		}
+	}
+	hasUsage := remainingUsage > 0
+	resultOrdinal, callOrdinal := 0, 0
+	for _, e := range events {
+		if e.Kind == "usage" {
+			remainingUsage--
+		}
 		switch e.Kind {
 		case "tool_result":
+			resultOrdinal++
+			carried := max(0, turns-resultOrdinal)
+			if hasUsage {
+				carried = remainingUsage
+			}
 			tool := e.Tool
 			if tool == "" && len(pending) > 0 {
 				allShell := true
@@ -204,10 +227,16 @@ func (s *stats) add(events []event, tokens *int64) {
 					s.Shapes[i].Bytes += n
 					if tokens != nil {
 						s.Shapes[i].tokenBytes += n
+						s.Shapes[i].replayedBytes += n * int64(carried)
 					}
 				}
 			}
 		case "tool_call":
+			callOrdinal++
+			carried := max(0, turns-callOrdinal)
+			if hasUsage {
+				carried = remainingUsage
+			}
 			pending = append(pending, e.Tool)
 			var input struct {
 				Command string `json:"command"`
@@ -239,6 +268,9 @@ func (s *stats) add(events []event, tokens *int64) {
 			if tokens != nil {
 				g.tokenBytes += int64(len(command))
 				s.inlineTokenBytes += int64(len(command))
+				replayed := int64(len(command)) * int64(carried)
+				g.replayedBytes += replayed
+				s.inlineReplayedBytes += replayed
 			}
 			if !seen[key] {
 				g.Runs++
@@ -254,6 +286,7 @@ func (s *stats) finish() {
 			v.ResultShare = float64(v.Bytes) / float64(s.ToolResultBytes)
 		}
 		v.InputShare = fraction(v.tokenBytes, s.InputTokens)
+		v.ReplayedShare = fraction(v.replayedBytes, s.InputTokens)
 	}
 	keys := make([]string, 0, len(s.groups))
 	for k, g := range s.groups {
@@ -261,6 +294,7 @@ func (s *stats) finish() {
 		if g.Count > 1 {
 			s.RepeatedBytes += g.Bytes
 			s.repeatedTokenBytes += g.tokenBytes
+			s.repeatedReplayedBytes += g.replayedBytes
 		}
 	}
 	sort.Slice(keys, func(i, j int) bool {
@@ -275,6 +309,8 @@ func (s *stats) finish() {
 	}
 	s.InlineShare = fraction(s.inlineTokenBytes, s.InputTokens)
 	s.RepeatedShare = fraction(s.repeatedTokenBytes, s.InputTokens)
+	s.InlineReplayedShare = fraction(s.inlineReplayedBytes, s.InputTokens)
+	s.RepeatedReplayedShare = fraction(s.repeatedReplayedBytes, s.InputTokens)
 }
 func readJSON(path string, value any) error {
 	f, err := os.Open(path)
@@ -337,6 +373,7 @@ func measure(home string, days int, now time.Time) (*report, error) {
 			Backend string `json:"backend"`
 			Input   *int64 `json:"input_tokens"`
 			Cache   int64  `json:"cache_read_tokens"`
+			Turns   int    `json:"turns"`
 		}
 		var result struct {
 			totals
@@ -414,9 +451,9 @@ func measure(home string, days int, now time.Time) (*report, error) {
 		if tokenFigure != nil {
 			r.Runs.WithTokens++
 		}
-		r.stats.add(events, tokenFigure)
+		r.stats.add(events, tokenFigure, result.Turns)
 		if backend == "claude" && hasCalls {
-			r.Claude.add(events, tokenFigure)
+			r.Claude.add(events, tokenFigure, result.Turns)
 		}
 	}
 	r.stats.finish()

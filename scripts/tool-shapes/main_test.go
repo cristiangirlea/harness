@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: d1b5bd1a28bc38f9e092d7a1cdac04ee31c9fbd8d8dd817dee0075ab21430d53
+// hash: 45da13a459d56a51c4aeab57cd99dcad82ae09d7077208355a47996c2e76551a
 package main
 
 import (
@@ -112,6 +112,84 @@ func TestMeasure(t *testing.T) {
 	}
 }
 
+func TestReplayedShares(t *testing.T) {
+	command := "python -c 'x()'"
+	call := `{"kind":"tool_call","tool":"shell","text":"` + command + `"}`
+	result := `{"kind":"tool_result","tool":"shell","text":"abcdefgh"}`
+	usage := `{"kind":"usage","usage":{"input_tokens":100}}`
+	for _, tt := range []struct {
+		name, totals, events        string
+		resultWeight, commandWeight float64
+	}{
+		{"usage order", `{"status":"ok","turns":99,"input_tokens":999}`, strings.Join([]string{usage, call, usage, result, usage, call, result, usage, result}, "\n"), 3, 4},
+		{"usage without figures", `{"status":"ok","turns":99,"input_tokens":300}`, strings.Join([]string{call, result, `{"kind":"usage"}`, call, result, `{"kind":"usage"}`}, "\n"), 3, 3},
+		{"flat turns", `{"status":"ok","turns":4,"input_tokens":300}`, strings.Join([]string{call, result, call, result, result}, "\n"), 6, 5},
+		{"wrapped turns", `{"result":{"status":"ok","turns":4,"input_tokens":300}}`, strings.Join([]string{call, result, call, result, result}, "\n"), 6, 5},
+		{"clamp", `{"status":"ok","turns":1,"input_tokens":300}`, strings.Join([]string{call, result, call, result, result}, "\n"), 0, 0},
+		{"missing turns", `{"status":"ok","input_tokens":300}`, strings.Join([]string{call, result, call, result, result}, "\n"), 0, 0},
+		{"no tokens", `{"status":"ok","turns":4}`, strings.Join([]string{call, result, call, result, result}, "\n"), 0, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			id := "20261014-100000-replay"
+			writeRun(t, home, id, "claude", "ok", tt.events)
+			if err := os.WriteFile(filepath.Join(home, "runs", id, "result.json"), []byte(tt.totals), 0600); err != nil {
+				t.Fatal(err)
+			}
+			r, err := measure(home, 30, time.Date(2026, 10, 14, 12, 0, 0, 0, time.Local))
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				Shapes []struct {
+					Replayed *float64 `json:"input_token_share_replayed_estimate"`
+				} `json:"shapes"`
+				Inline   *float64 `json:"inline_script_input_share_replayed_estimate"`
+				Repeated *float64 `json:"repeated_inline_script_input_share_replayed_estimate"`
+			}
+			check := func(data []byte) {
+				t.Helper()
+				if err := json.Unmarshal(data, &got); err != nil {
+					t.Fatal(err)
+				}
+				for key, want := range map[string]float64{
+					"input_token_share_replayed_estimate":                  2 * tt.resultWeight / float64(max(1, r.InputTokens)),
+					"inline_script_input_share_replayed_estimate":          float64(len(command)) / 4 * tt.commandWeight / float64(max(1, r.InputTokens)),
+					"repeated_inline_script_input_share_replayed_estimate": float64(len(command)) / 4 * tt.commandWeight / float64(max(1, r.InputTokens)),
+				} {
+					value := got.Inline
+					if key == "input_token_share_replayed_estimate" {
+						value = got.Shapes[4].Replayed
+					}
+					if key == "repeated_inline_script_input_share_replayed_estimate" {
+						value = got.Repeated
+					}
+					if !strings.Contains(string(data), `"`+key+`"`) {
+						t.Errorf("missing %s", key)
+						continue
+					}
+					if tt.name == "no tokens" {
+						if value != nil {
+							t.Errorf("%s without denominator", key)
+						}
+						continue
+					}
+					if value == nil || *value != want {
+						t.Errorf("%s = %v want %g", key, value, want)
+					}
+				}
+			}
+			check(data)
+			data, _ = json.Marshal(r.Claude)
+			check(data)
+		})
+	}
+}
+
 func TestNoUsageAndCap(t *testing.T) {
 	s := newStats()
 	for i := 0; i < 25; i++ {
@@ -159,6 +237,9 @@ func TestTokenCoverage(t *testing.T) {
 			}
 			if after.ToolResultBytes != 16 || after.Shapes[4].Bytes != 16 || *after.Shapes[4].InputShare != *before.Shapes[4].InputShare || *after.InlineShare != *before.InlineShare || *after.RepeatedShare != *before.InlineShare {
 				t.Fatalf("uncovered bytes changed token shares: %+v", after.stats)
+			}
+			if *after.Shapes[4].ReplayedShare != *before.Shapes[4].ReplayedShare || *after.InlineReplayedShare != *before.InlineReplayedShare || *after.RepeatedReplayedShare != *before.InlineReplayedShare {
+				t.Fatal("uncovered bytes changed replayed token shares")
 			}
 			data, err := json.Marshal(after)
 			if err != nil || !strings.Contains(string(data), `"with_tokens":1`) {
@@ -219,7 +300,7 @@ func TestAccountingDetails(t *testing.T) {
 		{Kind: "tool_call", Input: json.RawMessage(`{"command":123}`)},
 		{Kind: "tool_result", Text: "é", Tool: "shell"},
 	}
-	s.add(e, nil)
+	s.add(e, nil, 0)
 	s.finish()
 	if len(s.InlineScripts) != 1 || s.InlineScripts[0].Count != 2 || s.InlineScripts[0].Runs != 1 || s.RepeatedBytes != 42 || s.ToolResultBytes != 2 || s.Shapes[4].Bytes != 2 {
 		t.Fatalf("accounting %+v", s)
@@ -235,7 +316,7 @@ func TestShellCommandText(t *testing.T) {
 			{Kind: "tool_call", Tool: "read_file", Text: command, Input: input},
 			{Kind: "tool_call", Tool: "shell", Text: command, Input: json.RawMessage(`{"command":"echo hello"}`)},
 			{Kind: "tool_call", Tool: "shell", Text: command, Input: json.RawMessage(`{"cmd":"echo hello"}`)},
-		}, nil)
+		}, nil, 0)
 		s.finish()
 		if len(s.InlineScripts) != 1 || s.InlineScripts[0].Count != 1 || s.InlineBytes != int64(len(command)) {
 			t.Fatalf("text fallback for input %s: %+v", input, s)
@@ -256,7 +337,7 @@ func TestAnonymousResults(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newStats()
-			s.add(tt.events, nil)
+			s.add(tt.events, nil, 0)
 			if s.Shapes[4].Bytes != tt.terminal {
 				t.Fatalf("terminal %d want %d", s.Shapes[4].Bytes, tt.terminal)
 			}
