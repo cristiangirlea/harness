@@ -685,7 +685,8 @@ neither of them follows a run while it happens.
 ## Decisions log
 
 - 2026-10-14: a retrieval packet's entries stay within the text cap (#177, PR #N).
-  Decided: cap all entry text fields together at 8192 bytes and require each entry ID in Text's reference label.
+  Decided: count only rendered entry fields (ID, Content, Source, Evidence) against the 8192-byte
+  text cap; Key and Identifiers keep the import limits. Require each entry ID in Text's reference label.
 - 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #273).
   Decided: use the path project for submission; worker routes read only the project ID before strict JSON decoding.
 - 2026-10-14: hrn remote stops on an oversized event line (#164, PR #271). Decided: a line over
