@@ -672,6 +672,8 @@ neither of them follows a run while it happens.
   that init line arrives and end the run with an error naming the source. Claude Code
   may already have sent its first request. An absent field keeps the older CLI behaviour;
   there is no override.
+- 2026-10-14: the guard matches Windows program names in any case (#211, PR #268).
+  Decided: scope case-insensitive names in disk, pipe-to-shell and sudo; refuse iex and Invoke-Expression sinks too.
 - 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
   as the index does) and a batch's repository too, the whole path as a hover title for this
   computer only. Text from a run's events, its prompt and result, and a batch's tasks and
