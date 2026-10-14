@@ -286,6 +286,9 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 	fromTurns, fromTotals := false, false
 	for _, r := range recs {
 		res := r.Result
+		if res.Backend == "" {
+			res.Backend = r.Backend
+		}
 		row.InputTokens += res.InputTokens
 		row.OutputTokens += res.OutputTokens
 		row.CacheRead += res.CacheRead
@@ -296,11 +299,11 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 				contexts = append(contexts, float64(c.ContextTokens))
 				row.PeakContext = max(row.PeakContext, c.ContextTokens)
 			}
-		} else if seen := res.InputTokens + res.CacheRead + res.CacheWrite; seen > 0 && res.Turns > 0 {
+		} else if total, known, _ := res.ModelTokens(); known && total > res.OutputTokens && res.Turns > 0 {
 			// Without the calls, a run's turns are its average; the last
 			// call's context, where known, may be above it.
 			fromTotals = true
-			avg := seen / int64(res.Turns)
+			avg := (total - res.OutputTokens) / int64(res.Turns)
 			contexts = append(contexts, float64(avg))
 			row.PeakContext = max(row.PeakContext, avg, res.ContextTokens)
 		}
@@ -318,9 +321,6 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		}
 		// ModelTokens accounts for backends that include cache reads in input
 		// and those that report disjoint input and cache counters.
-		if res.Backend == "" {
-			res.Backend = r.Backend
-		}
 		if total, known, _ := res.ModelTokens(); known {
 			input += total - res.OutputTokens - res.CacheRead
 			cached += res.CacheRead
