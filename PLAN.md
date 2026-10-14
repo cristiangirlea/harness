@@ -684,6 +684,9 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: a retrieval packet's entries stay within the text cap (#177, PR #291).
+  Decided: count only rendered entry fields (ID, Content, Source, Evidence) against the 8192-byte
+  text cap; Key and Identifiers keep the import limits. Require each entry ID in Text's reference label.
 - 2026-10-14: gc names a Unix drive by its mount point (#232, PR #290). Decided:
   keep the device number as the grouping key and use the mount point only in messages.
 - 2026-10-14: hrn remote checks its server URL and CA file more strictly (#167, PR #289).
