@@ -105,14 +105,14 @@ type Result struct {
 	Tasks    []TaskResult  `json:"tasks"`
 	Duration time.Duration `json:"duration_ns"`
 	// Ownership is how the record says which worktrees and branches are its
-	// tasks' own. Run sets ownedByClaim: a slotless task owns them only when
+	// tasks' own. Run sets OwnershipClaim: a slotless task owns them only when
 	// its branch_made says so. Records from before it (0) never said so for a
 	// fresh task, and are read as hrn wrote them then (owned, by path).
 	Ownership int `json:"ownership,omitempty"`
 }
 
-// ownedByClaim is the Ownership of every record Run writes now.
-const ownedByClaim = 1
+// OwnershipClaim is the Ownership of every record Run writes now.
+const OwnershipClaim = 1
 
 type TaskResult struct {
 	ID       string `json:"id"`
@@ -406,7 +406,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 
-	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: ownedByClaim}
+	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
 	for i, t := range spec.Tasks {
 		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
@@ -792,7 +792,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 
 // takeSlot leases a slot of the repository for a task. The branch is made
 // from the base first, so it starts there whatever origin has by that name.
-// The batch holds at most max(parallel, ws.DefaultMax) slots of its own at
+// The batch holds at most min(max(parallel, ws.DefaultMax), ws.Limit) slots of its own at
 // once, running tasks' and kept ones together. It tries the slot numbers
 // from 1 that hold that many slots other than sessions' (hrn ws take, no
 // pid: held until hrn ws free), worked out again at every try, so a session
@@ -825,7 +825,7 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 	prefix := "batch " + batchID + " "
 	pid := os.Getpid()
 	mine := func(l ws.Lease) bool { return l.PID == pid && strings.HasPrefix(l.Holder, prefix) }
-	bound := max(spec.Parallel, ws.DefaultMax)
+	bound := min(max(spec.Parallel, ws.DefaultMax), ws.Limit)
 	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: prefix + "task " + id, PID: pid, NoFetch: true}
 	// try takes a slot under worktreeMu, so this batch's tasks count their
 	// slots and take one by one. While the batch holds its bound it returns
@@ -904,6 +904,9 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 				return drop(fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full))
 			}
 			wait = "waiting for a free slot: " + strings.Join(full.Passed, "; ")
+			if full.Max == ws.Limit {
+				wait += fmt.Sprintf("; at most %d slots per repository", ws.Limit)
+			}
 		default:
 			return drop(err)
 		}
@@ -1334,7 +1337,7 @@ func branchOnly(tr TaskResult) bool {
 // Records from before Ownership never set it for a fresh task, whose
 // worktree was its own unless finding it taken ended the task (foundTaken).
 func notMine(res Result, tr TaskResult) bool {
-	if res.Ownership >= ownedByClaim {
+	if res.Ownership >= OwnershipClaim {
 		return !tr.BranchMade
 	}
 	return foundTaken(tr)
@@ -1514,6 +1517,9 @@ func removeEmptyDir(dir string) error {
 }
 
 func batchesDir() string { return filepath.Join(runlog.Home(), "batches") }
+
+// SaveResult saves a batch record using the same path as Run.
+func SaveResult(res Result) error { return save(res) }
 
 func save(res Result) error {
 	if failSave != nil {

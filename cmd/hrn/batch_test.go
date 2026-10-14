@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -25,8 +24,7 @@ func batchMergeGit(t *testing.T, dir string, args ...string) string {
 
 func batchMergeFixture(t *testing.T, sameFile bool, ids ...string) batch.Result {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HRN_HOME", home)
+	t.Setenv("HRN_HOME", t.TempDir())
 	dir := t.TempDir()
 	batchMergeGit(t, dir, "init", "-q", "-b", "main")
 	batchMergeGit(t, dir, "config", "user.email", "test@example.com")
@@ -36,7 +34,7 @@ func batchMergeFixture(t *testing.T, sameFile bool, ids ...string) batch.Result 
 	}
 	batchMergeGit(t, dir, "add", "README.md")
 	batchMergeGit(t, dir, "commit", "-q", "-m", "base")
-	res := batch.Result{ID: "b1", Dir: dir, Base: batchMergeGit(t, dir, "rev-parse", "HEAD"), Ownership: 1}
+	res := batch.Result{ID: "b1", Dir: dir, Base: batchMergeGit(t, dir, "rev-parse", "HEAD"), Ownership: batch.OwnershipClaim}
 	for _, id := range ids {
 		branch := "hrn/" + id
 		wt := filepath.Join(t.TempDir(), id)
@@ -53,17 +51,21 @@ func batchMergeFixture(t *testing.T, sameFile bool, ids ...string) batch.Result 
 		res.Tasks = append(res.Tasks, batch.TaskResult{ID: id, Prompt: id, Status: batch.StatusPass,
 			Branch: branch, Worktree: wt, BranchMade: true, Commit: batchMergeGit(t, wt, "rev-parse", "HEAD")})
 	}
-	data, err := json.Marshal(res)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(home, "batches"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "batches", res.ID+".json"), data, 0o644); err != nil {
+	if err := batch.SaveResult(res); err != nil {
 		t.Fatal(err)
 	}
 	return res
+}
+
+func TestBatchMergeFixtureSavesClaimedRecord(t *testing.T) {
+	res := batchMergeFixture(t, false, "alpha")
+	saved, err := batch.LoadResult(res.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Ownership != batch.OwnershipClaim {
+		t.Fatalf("saved ownership = %d, want %d", saved.Ownership, batch.OwnershipClaim)
+	}
 }
 
 func batchMergeCLI(t *testing.T, args ...string) (int, string, error) {
@@ -136,11 +138,7 @@ func TestBatchMergeRmUndoAfterConflictUsesPreMergeHead(t *testing.T) {
 func TestBatchMergeRmLeavesSkippedFailedAndAlreadyMergedTasks(t *testing.T) {
 	res := batchMergeFixture(t, false, "alpha", "beta")
 	res.Tasks[1].Status = batch.StatusFail
-	data, err := json.Marshal(res)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "batches", res.ID+".json"), data, 0o644); err != nil {
+	if err := batch.SaveResult(res); err != nil {
 		t.Fatal(err)
 	}
 	code, _, err := batchMergeCLI(t, res.ID, "alpha")
@@ -213,11 +211,7 @@ func TestBatchMergeRmUndoWhenNothingRemoved(t *testing.T) {
 	// Without BranchMade, a worktree claimed under ownership belongs to another
 	// batch: --rm removes nothing of it and says nothing is wrong.
 	res.Tasks[0].BranchMade = false
-	data, err := json.Marshal(res)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "batches", res.ID+".json"), data, 0o644); err != nil {
+	if err := batch.SaveResult(res); err != nil {
 		t.Fatal(err)
 	}
 	before := batchMergeGit(t, res.Dir, "rev-parse", "HEAD")
@@ -303,11 +297,7 @@ func TestBatchMergeRmKeepsSlotDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Tasks[0].Slot, res.Tasks[0].Worktree = 1, slot
-	data, err := json.Marshal(res)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "batches", res.ID+".json"), data, 0o644); err != nil {
+	if err := batch.SaveResult(res); err != nil {
 		t.Fatal(err)
 	}
 	code, out, err := batchMergeCLI(t, "--rm", res.ID)

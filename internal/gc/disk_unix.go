@@ -7,25 +7,53 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
 // diskFree asks the file system holding path how much it has free for this
-// user, and names the volume by its device number.
+// user, and names the volume by its device number and mount point.
 func diskFree(path string) (Drive, error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(path, &st); err != nil {
 		return Drive{}, &fs.PathError{Op: "statfs", Path: path, Err: err}
 	}
-	info, err := os.Stat(path)
+	mount, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return Drive{}, err
+	}
+	mount, err = filepath.Abs(mount)
+	if err != nil {
+		return Drive{}, err
+	}
+	info, err := os.Stat(mount)
 	if err != nil {
 		return Drive{}, err
 	}
 	sys, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return Drive{}, errors.New("no device number for " + path)
+		return Drive{}, errors.New("no device number for " + mount)
 	}
-	return Drive{ID: fmt.Sprintf("device %d", sys.Dev), Free: int64(st.Bavail) * int64(st.Bsize)}, nil
+	dev := sys.Dev
+	for {
+		parent := filepath.Dir(mount)
+		if parent == mount {
+			break
+		}
+		info, err := os.Stat(parent)
+		if err != nil {
+			return Drive{}, err
+		}
+		parentSys, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return Drive{}, errors.New("no device number for " + parent)
+		}
+		if parentSys.Dev != dev {
+			break
+		}
+		mount = parent
+	}
+	return Drive{ID: fmt.Sprintf("device %d", dev), Name: mount, Free: int64(st.Bavail) * int64(st.Bsize)}, nil
 }
 
 // lockHeld reports whether a build holds the lock file. Cargo takes an

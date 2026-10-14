@@ -69,6 +69,9 @@ Set `HRN_SERVER_URL` to the control service HTTPS origin, `HRN_TENANT_TOKEN` to 
 issued tenant token, and optionally `HRN_SERVER_CA_FILE` to a PEM CA file. HTTP
 is accepted only for loopback fixtures. The tenant and project IDs are issued
 by the server; `--base-ref` is a full Git commit registered for the project.
+The origin may have a trailing `/`, but no credentials, other path, query
+(including an empty `?`), or fragment. The CA path must name a regular file;
+symlinks to regular files are accepted.
 Submission requires a stable idempotency key and a positive USD cost ceiling.
 The prompt can be supplied as arguments or on stdin. Remote jobs currently
 support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)

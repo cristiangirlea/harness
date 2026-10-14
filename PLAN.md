@@ -687,6 +687,46 @@ neither of them follows a run while it happens.
 - 2026-10-14: a retrieval packet's entries stay within the text cap (#177, PR #N).
   Decided: count only rendered entry fields (ID, Content, Source, Evidence) against the 8192-byte
   text cap; Key and Identifiers keep the import limits. Require each entry ID in Text's reference label.
+- 2026-10-14: gc names a Unix drive by its mount point (#232, PR #290). Decided:
+  keep the device number as the grouping key and use the mount point only in messages.
+- 2026-10-14: hrn remote checks its server URL and CA file more strictly (#167, PR #289).
+  Decided: reject empty queries, opaque and encoded paths, and non-regular CA files before reading; allow symlinks to regular CA files.
+- 2026-10-14: hrn remote validates options as its MCP tool does (#166, PR #288). Decided: shared
+  validation rejects non-finite max cost before either submission sends a request.
+- 2026-10-14: the server refuses mcp and allow_dangerous at submission (#154, PR #287).
+  Decided: reject either durable-job option with ErrUnsupported before the worker takes a slot;
+  empty mcp lists and allow_dangerous false remain valid.
+- 2026-10-14: the batch merge tests save records through the batch package (#215, PR #280).
+  Decided: expose the ownership claim and a save wrapper so fixtures use the same value and record writer as Run.
+- 2026-10-14: tests give an exited helper's lease its start identity (#242, PR #286).
+  Decided: hold the helper alive while reading its identity, then record it with the pid so reuse cannot hold the lease.
+- 2026-10-14: the billing-refusal test's deadline (#283, PR #284). Its refusal cases had 500 ms,
+  which also had to cover starting the helper; a busy PC timed out first. Decided: 2 s for every
+  case; a refusal that failed to stop the CLI still ends as a timeout and fails the test.
+- 2026-10-14: gc's idle age and the clock's resolution (#245, PR #278). A cache written moments
+  before could read as not yet idle, failing `TestGCTakesTheIdleLimitAsGiven` on Windows CI.
+  Decided: an age below zero counts as zero, so `--idle 0` takes any cache; the test writes its
+  cache a second in the past, which still shows a 1 ns limit is honoured.
+- 2026-10-14: the guard reads a quoted separator as text (#222, PR #277). Decided:
+  replace only separators inside quotes, leaving quoted text visible so #223 holds, and
+  refuse when a rule matches either the line as written or that copy, so a misread quote
+  (`"$(curl ... | sh)"`, an apostrophe in a comment) cannot hide a real pipe.
+- 2026-10-14: five slots per repository, ten at most (#256, PR #270).
+  Decided: keep a small pool of reusable worktrees, about five, that may grow to ten; reuse them rather than create and delete them.
+- 2026-10-14: claude runs refuse per-token billing (#202, PR #269). Decided: when Claude
+  Code's init line names an `apiKeySource` other than `none`, stop the worker as soon as
+  that init line arrives and end the run with an error naming the source. Claude Code
+  may already have sent its first request. An absent field keeps the older CLI behaviour;
+  there is no override.
+- 2026-10-14: the guard matches Windows program names in any case (#211, PR #268).
+  Decided: scope case-insensitive names in disk, pipe-to-shell and sudo; refuse iex and Invoke-Expression sinks too.
+- 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
+  as the index does) and a batch's repository too, the whole path as a hover title for this
+  computer only. Text from a run's events, its prompt and result, and a batch's tasks and
+  gates, and the index's rows show the workspace (a task's worktree) as `.`, home as `~`, and programs in system
+  folders by file name, matched only at a path boundary, after secrets are blanked. Records
+  and `hrn show` keep the full paths, and a run's purpose comes from its prompt as recorded, as
+  `hrn report` has it, not from the shortened text.
 - 2026-10-14: the server checks the token before reading a body ([#155](https://github.com/cristiangirlea/harness/issues/155), PR #273).
   Decided: use the path project for submission; worker routes read only the project ID before strict JSON decoding.
 - 2026-10-14: hrn remote stops on an oversized event line (#164, PR #271). Decided: a line over

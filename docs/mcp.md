@@ -77,8 +77,11 @@ Tools:
 The remote tools use `HRN_SERVER_URL` for the control service HTTPS origin,
 `HRN_TENANT_TOKEN` for its issued tenant credential, and optional
 `HRN_SERVER_CA_FILE` for a PEM CA file. HTTP is accepted only for loopback
-fixtures. `remote_submit` accepts only read-only `api` jobs on registered
-projects, with a full commit, positive cost ceiling, and idempotency key.
+fixtures. The origin may have a trailing `/`, but no credentials, other path,
+query (including an empty `?`), or fragment. The CA path must name a regular
+file; symlinks to regular files are accepted. `remote_submit` accepts only
+read-only `api` jobs on registered projects, with a full commit, positive cost
+ceiling, and idempotency key.
 Unknown and unsupported input fields are refused.
 
 Requests are served concurrently, so parallel tool calls from the host become parallel
