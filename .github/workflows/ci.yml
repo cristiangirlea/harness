@@ -62,7 +62,8 @@ jobs:
   test:
     needs: changes
     # Standard hosted runners are free for public repositories. Refuse private-minute usage.
-    if: ${{ github.event.repository.private == false }}
+    # always(): if the changes job fails, these required checks fail rather than go missing.
+    if: ${{ always() && github.event.repository.private == false }}
     strategy:
       fail-fast: false
       matrix:
@@ -73,8 +74,13 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: the changes job decided
+        if: needs.changes.result != 'success' || (needs.changes.outputs.code != 'true' && needs.changes.outputs.code != 'false')
+        run: |
+          echo "The changes job did not decide (result: ${{ needs.changes.result }}); failing closed."
+          exit 1
       - name: Markdown only, nothing to build or test
-        if: needs.changes.outputs.code != 'true'
+        if: needs.changes.outputs.code == 'false'
         run: echo "This change touches only Markdown; the build and tests are skipped."
       - uses: actions/checkout@v4
         if: needs.changes.outputs.code == 'true'
