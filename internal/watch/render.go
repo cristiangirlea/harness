@@ -406,7 +406,7 @@ func labelOf(id, repo, task string) string {
 }
 
 func runRow(rec runlog.Record) row {
-	p := purpose.Classify(rec.Task.Prompt)
+	p := purpose.Resolve(rec.Task.Purpose, rec.Task.Prompt)
 	r := row{ID: rec.ID, Kind: "run", Backend: rec.Backend, Purpose: p.Category, Rule: p.Rule}
 	r.Repo = repoOf(rec.Task.Dir)
 	r.Label = labelOf(r.ID, r.Repo, "")
