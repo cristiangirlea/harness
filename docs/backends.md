@@ -19,7 +19,7 @@ compatibility matrix for every CLI version; check your installed backend with `h
 by hand, not that a test passed. Treat the unverified rows as drafts that need one run and
 probably one fix.
 
-Default backend: `api` when credentials exist, otherwise `claude`.
+Default backend: `api` when credentials exist, otherwise `claude`, or the route table's row for the prompt's purpose, when one exists.
 
 The `claude` backend uses the plan login only. If Claude Code's init line reports an
 `apiKeySource` other than `none`, hrn stops the worker as soon as that init line arrives
