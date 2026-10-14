@@ -100,6 +100,11 @@ func eventOf(l Line, prev time.Time) (eventView, time.Time) {
 			v.Class, v.Label = "ev-result ev-failed", "failed"
 		}
 		v.Body, v.More = capText(e.Text, resultHead, resultTail)
+	case agent.EventCompaction:
+		v.Class, v.Label, v.Summary = "ev-info ev-compaction", "compaction", tools.OneLine(e.Text, 60)
+		if e.Usage != nil && e.Usage.ContextTokens > 0 {
+			v.Summary = strings.TrimPrefix(v.Summary+" · context was "+tokens(e.Usage.ContextTokens), " · ")
+		}
 	default: // info, error, and any kind added later
 		v.Class, v.Label, v.Summary = "ev-info", string(e.Kind), tools.OneLine(e.Text, 300)
 		if e.Kind == agent.EventError {
@@ -293,6 +298,7 @@ type runPage struct {
 	Since         string // the start, for the live clock while the run goes
 	Last          string // the last event's time, for "last step … ago"
 	Events        []eventView
+	Usage         usageView
 	Result        *resultView
 	Stream        string // where the rest comes from; empty once it ended
 }

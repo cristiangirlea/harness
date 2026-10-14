@@ -34,6 +34,9 @@ type CLIBackend struct {
 	promptStdin bool
 	// parse handles one stdout line. Nil means stdout is plain text.
 	parse func(line []byte, emit func(Event), res *Result) bool
+	// newParse, when set, makes a parse for one run, for a stream whose lines
+	// are read in the light of earlier ones; Run uses it instead of parse.
+	newParse func() func(line []byte, emit func(Event), res *Result) bool
 	// finalize runs after exit with all of stdout, for single-JSON outputs.
 	finalize func(stdout []byte, emit func(Event), res *Result)
 	// forks is set when args honours Task.ForkSession and parse records
@@ -241,14 +244,18 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	var plain strings.Builder
 	var session string
+	parse := c.parse
+	if c.newParse != nil {
+		parse = c.newParse()
+	}
 	for sc.Scan() {
 		line := sc.Bytes()
 		if c.finalize != nil {
 			all = append(append(all, line...), '\n')
 			continue
 		}
-		if c.parse != nil {
-			parsed := c.parse(line, emit, &res)
+		if parse != nil {
+			parsed := parse(line, emit, &res)
 			if res.Session != "" && res.Session != session {
 				session = res.Session
 				emit(Event{Time: time.Now(), Kind: EventSession, Text: session})

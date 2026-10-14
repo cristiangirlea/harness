@@ -72,6 +72,18 @@ When the backend reports the last turn's context size, the run page also shows
 `Context: 285.0k tokens at the end`. This includes input served from or written to
 the cache. It is absent when that size is unknown, including on older records.
 
+When the run recorded `usage` events (the api, claude and opencode backends; see
+[Usage per turn](run-records.md#usage-per-turn)), its page opens with "Tokens per turn": a
+chart of the context each model call carried and, under it on a scale of its own, the cache
+reads so far, with the turn count, peak and median context above. A compaction the backend
+reported (Claude Code's `compact_boundary`) is a solid line between the turns it came between,
+and also a step in the timeline; a turn whose context fell by more than half with nothing
+reported is a dashed line, "probably compacted", a reading of the numbers that is never
+recorded. Hovering a point or a line says what it is, and "Turns as a table" lists every
+turn's figures. While the run goes, each new turn redraws the chart over every turn so far.
+The chart is inline SVG coloured by the page's stylesheet, so it needs no script, style or
+font beyond the page's own. Usage events themselves are not listed in the timeline.
+
 Everything from a record is escaped as text, since tool results hold whatever the agent
 read. The page loads nothing from anywhere else (one stylesheet and a script or two, all
 served by hrn, no fonts), follows the system's light or dark theme, and on a phone shows

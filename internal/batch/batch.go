@@ -1255,15 +1255,37 @@ func RemoveTasks(res Result, ids []string) ([]string, error) {
 	return removed, errors.Join(errs...)
 }
 
+// branchProbe lists the branch ref; tests replace it to make one probe fail.
+var branchProbe = func(ctx context.Context, dir, ref string) (string, error) {
+	return gitOut(ctx, dir, "for-each-ref", "--format=%(refname)", ref)
+}
+
 func removeTask(res Result, tr TaskResult) (bool, error) {
-	branchExists := func() bool {
-		_, err := gitOut(context.Background(), res.Dir, "show-ref", "--verify", "--quiet", "refs/heads/"+tr.Branch)
-		return err == nil
+	// branchState is bounded like the git calls around it, so a wedged git
+	// cannot hang the removal. for-each-ref answers a missing branch with no
+	// output, so an error means the probe failed, and a removal counts only
+	// when both probes answered: the branch was there, and now it is gone.
+	branchState := func() (exists, ok bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		ref := "refs/heads/" + tr.Branch
+		out, err := branchProbe(ctx, res.Dir, ref)
+		if err != nil {
+			return false, false
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if strings.TrimSpace(line) == ref {
+				return true, true
+			}
+		}
+		return false, true
 	}
+	hadBranch := func() bool { exists, ok := branchState(); return ok && exists }
+	branchGone := func() bool { exists, ok := branchState(); return ok && !exists }
 	if branchOnly(tr) {
-		hadBranch := branchExists()
+		had := hadBranch()
 		err := removeSlotBranch(res.Dir, tr)
-		return hadBranch && !branchExists(), err
+		return had && branchGone(), err
 	}
 	if tr.Worktree == "" || notMine(res, tr) {
 		return false, nil
@@ -1280,10 +1302,10 @@ func removeTask(res Result, tr TaskResult) (bool, error) {
 			return false, fmt.Errorf("%s has uncommitted changes; commit or discard them first", tr.Worktree)
 		}
 	}
-	hadBranch := branchExists()
+	had := hadBranch()
 	err = removeWorktree(res.Dir, tr)
 	stillRegistered, checkErr := isWorktree(res.Dir, tr.Worktree)
-	return (registered && checkErr == nil && !stillRegistered) || (hadBranch && !branchExists()), err
+	return (registered && checkErr == nil && !stillRegistered) || (had && branchGone()), err
 }
 
 // branchOnly reports whether a task's branch is all hrn batch rm removes of
@@ -1775,6 +1797,11 @@ func LoadResult(id string) (Result, error) {
 		return res, err
 	}
 	return res, json.Unmarshal(data, &res)
+}
+
+// Head returns the repository's current commit before a batch merge starts.
+func Head(ctx context.Context, dir string) (string, error) {
+	return gitOut(ctx, dir, "rev-parse", "HEAD")
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {

@@ -13,6 +13,8 @@
   and, for exec runs, the supervisor's `attempt_id`
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
+  and, where the backend reports them, each model call's `usage` and each `compaction`
+  (see [Usage per turn](#usage-per-turn))
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
@@ -59,3 +61,35 @@ the last hour is taken to be still running and stays; a directory in `runs/` tha
 a run id is never touched. If any batch or eval record cannot be read, prune refuses:
 that record may cite anything. Records go before the runs they cite, so a failure partway
 never leaves a record pointing at nothing.
+
+## Usage per turn
+
+A `usage` event in `events.jsonl` is one model call's tokens, written when the backend
+reports it, so a run's context can be followed turn by turn:
+
+```json
+{"t":"...","kind":"usage","usage":{"model":"claude-opus-5","input_tokens":5,"output_tokens":40,
+ "cache_read_tokens":12000,"cache_write_tokens":30000,"context_tokens":42005}}
+```
+
+`context_tokens` is what that call carried: its input plus cache reads and writes. Zero
+fields are left out. Which backends write them:
+
+- **api**: one per request, as the response reports it.
+- **claude**: one per main-loop assistant message. stream-json writes each content block of a
+  message as a line of its own and repeats the message's usage on each, so hrn writes the
+  event once per message id, with the first line's figures (the output count there can be
+  lower than the message's final one). A sub-agent's messages fill its own context and are
+  left out; they still count in the run's totals.
+- **opencode**: one per step (`step_finish`).
+- **codex** and **gemini**: none. Codex's `turn.completed` totals every model call of an
+  agent turn and gemini reports the run's totals, so neither says what one call carried.
+
+A `compaction` event is a compaction the backend reported: Claude Code's `compact_boundary`
+line (from `compact_window`, or its own threshold). `text` says what set it off (`auto` or
+`manual`) and `usage.context_tokens` holds the context just before it. No other backend
+reports one. `hrn watch` and `hrn show --usage` also mark a turn whose context fell by more
+than half from the turn before as a *probable* compaction; that is a reading of the
+numbers, never written to the record.
+
+Runs recorded before these events existed have none; the result's totals still hold.
