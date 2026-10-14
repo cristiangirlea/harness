@@ -28,6 +28,7 @@ import (
 // calls), a desc tag (the one-line help the flag and the MCP schema show) and,
 // where the flag is not the json name with dashes, a flag tag.
 type Options struct {
+	ShapeTools        bool   `json:"shape_tools,omitempty" flag:"shape-tools" desc:"Summarise large terminal, log and test results and keep the original behind a handle (api backend; default off)."`
 	Retrieval         string `json:"retrieval,omitempty" desc:"Project retrieval: off | optional | required (default off)."`
 	RetrievalTenant   string `json:"retrieval_tenant,omitempty" flag:"retrieval-tenant" desc:"Authorized retrieval tenant ID; no credentials."`
 	RetrievalProject  string `json:"retrieval_project,omitempty" flag:"retrieval-project" desc:"Authorized retrieval project ID."`

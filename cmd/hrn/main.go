@@ -121,6 +121,7 @@ Run flags:
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
+      --shape-tools    summarises large terminal, log and test results and keeps the original behind a handle (api backend; off by default)
       --retrieval MODE  off | optional | required
       --retrieval-tenant ID
       --retrieval-project ID

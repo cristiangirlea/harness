@@ -27,6 +27,22 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
+- `originals/<handle>.txt` — with `--shape-tools`, the full text of a shell or MCP
+  result over 30,000 bytes. The handle is the first 16 lowercase hex characters of
+  its SHA-256; files are created on demand with mode `0644`.
+  Originals are written and closed in temporary files inside `originals/` before
+  being renamed to the handle; failed writes remove the temporary file.
+  A checked summary or a cut after failed checks ends with
+  `original: <handle> (<n> bytes); read_original reads it` whenever the original was saved. The `read_original`
+  tool returns the whole original or a byte range (`range: "a-b"`, zero-based,
+  end exclusive). Tool-result events and messages contain the summary the model
+  saw. If checks fail or the original cannot be saved, the existing head-and-tail
+  cut is used; without a run record directory, nothing is saved. File reads are
+  not shaped. Old records without this directory or `shape_tools` still load.
+  A continuation has a new run record directory, so it cannot reach the earlier run's originals (#337).
+  Shell capture keeps the whole output up to 8 MiB, including on nonzero exit
+  and timeout. Above that ceiling it uses the existing head-and-tail cut, says
+  the original is unavailable, and saves no incomplete original.
 - `retrieval.json` — the opt-in packet, scope and version pin, saved before a backend
   starts. An unfinished run keeps this pin; a continuation checks it against the
   conversation before reuse.
