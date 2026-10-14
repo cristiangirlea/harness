@@ -10,9 +10,60 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    # Standard hosted runners are free for public repositories. Refuse private-minute usage.
+  changes:
+    # Whether this event changes anything but documentation Markdown (the allowlist below).
+    # Such a change builds and tests nothing: the required test jobs still run and report,
+    # skipping their steps, so the ruleset's checks pass; the other jobs are skipped. Anything
+    # unclear counts as code.
     if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          # Only documentation counts as Markdown here, by an allowlist: Markdown at the top
+          # level except AGENTS.md, under docs/, and the two server READMEs. Other .md files can
+          # be inputs (the check skill's commands, embedded watch assets, chart templates).
+          # --no-renames shows both sides of a rename; -z keeps every name unquoted and whole.
+          code=true
+          case "$EVENT" in
+            pull_request) range="$BASE...$HEAD" ;;
+            push) range="$BEFORE..$AFTER" ;;
+            *) range="" ;;
+          esac
+          list="$RUNNER_TEMP/changed"
+          if [ -n "$range" ] && git -c core.quotePath=false diff --no-renames --name-only -z "$range" > "$list" && [ -s "$list" ]; then
+            code=false
+            while IFS= read -r -d '' f; do
+              case "$f" in
+                AGENTS.md) code=true ;;
+                */*) case "$f" in
+                       docs/*.md | server/README.md | server/deploy/README.md) ;;
+                       *) code=true ;;
+                     esac ;;
+                *.md) ;;
+                *) code=true ;;
+              esac
+            done < "$list"
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "changes beyond documentation Markdown: $code"
+
+  test:
+    needs: changes
+    # Standard hosted runners are free for public repositories. Refuse private-minute usage.
+    # always(): if the changes job fails, these required checks fail rather than go missing.
+    if: ${{ always() && github.event.repository.private == false }}
     strategy:
       fail-fast: false
       matrix:
@@ -23,15 +74,28 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: the changes job decided
+        if: needs.changes.result != 'success' || (needs.changes.outputs.code != 'true' && needs.changes.outputs.code != 'false')
+        run: |
+          echo "The changes job did not decide (result: ${{ needs.changes.result }}); failing closed."
+          exit 1
+      - name: Markdown only, nothing to build or test
+        if: needs.changes.outputs.code == 'false'
+        run: echo "This change touches only Markdown; the build and tests are skipped."
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.code == 'true'
       - uses: actions/setup-go@v5
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
-      - run: go vet ./...
-      - run: go build ./...
-      - run: go test -count=1 ./...
+      - if: needs.changes.outputs.code == 'true'
+        run: go vet ./...
+      - if: needs.changes.outputs.code == 'true'
+        run: go build ./...
+      - if: needs.changes.outputs.code == 'true'
+        run: go test -count=1 ./...
       - name: test with the race detector
-        if: matrix.os == 'ubuntu-latest'
+        if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: go test -race -count=1 ./...
       - name: fuzz the SSE parser
         # Bound the number of fuzz workers independently of the runner's CPU count.
@@ -43,12 +107,12 @@ jobs:
         # A count is the only bound left, and Go has no per-input hang detection, so a
         # hanging input would hold a runner slot: each step stops at 5 minutes, and fails,
         # so the next step and the crasher upload still run.
-        if: matrix.os == 'ubuntu-latest'
+        if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         timeout-minutes: 5
         run: go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -parallel=4 ./internal/agent
       - name: fuzz the MCP codec
         # always(), so a crash in the parser fuzzer does not hide this one.
-        if: always() && matrix.os == 'ubuntu-latest'
+        if: always() && needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         timeout-minutes: 5
         run: go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
       - name: keep any input a fuzzer crashed on
@@ -59,21 +123,23 @@ jobs:
           path: "**/testdata/fuzz/**"
           if-no-files-found: ignore
       - name: shell scripts parse
-        if: matrix.os == 'ubuntu-latest'
+        if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: bash -n .github/release.sh && bash -n scripts/api-check.sh
       - name: kept scripts verify
-        if: matrix.os == 'ubuntu-latest'
+        if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: bash scripts/verify.sh --check
       - name: release dry run
         # The release job only runs on a tag, so its script is exercised here.
-        if: matrix.os == 'ubuntu-latest'
+        if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: bash .github/release.sh
       - name: gofmt
+        if: needs.changes.outputs.code == 'true'
         shell: bash
         run: test -z "$(gofmt -l .)"
 
   server-unit:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.code == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -93,7 +159,8 @@ jobs:
       - run: go test -count=1 ./...
 
   server-postgres:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -122,7 +189,8 @@ jobs:
       - run: go test -race -count=1 ./...
 
   charts:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

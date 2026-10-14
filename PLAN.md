@@ -722,6 +722,10 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: CI skips a Markdown-only change (#341, PR #353). Owner's request: a change
+  touching only documentation Markdown (an allowlist: top-level `*.md` but AGENTS.md, `docs/`,
+  the server READMEs) runs no build or test. The required `test` jobs still report, skipping
+  their steps, so the ruleset's checks pass.
 - 2026-10-14: a codex reconnect notice is not the run's error (#342, PR #343). `Reconnecting...
   n/5` is the CLI retrying its model stream: an `info` event that stands as the error only until
   the turn completes, so a run whose work finished is `ok` with its usage, and a stream that
