@@ -72,8 +72,8 @@ func (s *server) clean(text string) string {
 
 func (s *server) cleanEvent(e agent.Event) agent.Event {
 	e.Text = s.clean(e.Text)
-	if len(e.Input) > 0 {
-		e.Input = json.RawMessage(s.clean(string(e.Input)))
+	if len(e.Input) > 0 && s.redact != nil {
+		e.Input = json.RawMessage(s.redact.Replace(string(e.Input)))
 	}
 	if e.Usage != nil {
 		u := *e.Usage

@@ -35,8 +35,8 @@ func render(name string, data any) (string, error) {
 	return b.String(), err
 }
 
-// Upper bounds for page excerpts, after secret masking limits text to 1 KiB.
-// The whole original text stays in events.jsonl.
+// How much of a long text a page shows: the start and the end, where a
+// command's errors usually are. The whole text stays in events.jsonl.
 const (
 	textHead, textTail     = 24 << 10, 8 << 10
 	resultHead, resultTail = 12 << 10, 4 << 10
@@ -125,9 +125,6 @@ func eventOf(l Line, prev time.Time) (eventView, time.Time) {
 // callSummary is the one line a tool call shows: the backend's own summary,
 // the input field that says what it does, or the input itself.
 func callSummary(e agent.Event) string {
-	if len(e.Input) > 0 {
-		e.Input = json.RawMessage(mask.Text(string(e.Input)))
-	}
 	s := e.Text
 	if s == "" {
 		s = tools.InputSummary(e.Input)

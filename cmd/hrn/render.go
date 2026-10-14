@@ -93,7 +93,7 @@ func (r *renderer) Event(e agent.Event) {
 		r.newline()
 		summary := e.Text
 		if summary == "" && len(e.Input) > 0 {
-			summary = printable(compactJSON(json.RawMessage(mask.Text(string(e.Input))), 120))
+			summary = printable(compactJSON(e.Input, 120))
 		}
 		r.write(r.c(cyan, "→ "+e.Tool) + " " + tools.OneLine(summary, 160) + "\n")
 	case agent.EventToolResult:
@@ -146,10 +146,10 @@ func (r *renderer) Summary(runID string, res agent.Result) {
 func compactJSON(raw json.RawMessage, n int) string {
 	var v any
 	if json.Unmarshal(raw, &v) != nil {
-		return tools.OneLine(string(raw), n)
+		return tools.OneLine(mask.Text(string(raw)), n)
 	}
 	b, _ := json.Marshal(v)
-	return tools.OneLine(string(b), n)
+	return tools.OneLine(mask.Text(string(b)), n)
 }
 
 func human(n int64) string {

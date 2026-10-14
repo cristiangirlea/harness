@@ -4,7 +4,6 @@ package mask
 import (
 	"regexp"
 	"strings"
-	"unicode/utf8"
 )
 
 const hidden = "••••"
@@ -31,33 +30,11 @@ var rules = []*regexp.Regexp{
 	regexp.MustCompile(`(?i:--(?:password|passwd|token|api[-_]key|secret|auth|credentials|cookie|session))\b(?:=|\s+)(?P<secret>(?:\\[^"']|[^\s"'\\,;])+)`),
 }
 
-var cutToken = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/-])(?P<secret>(?:AKIA[A-Za-z0-9]*|eyJ[A-Za-z0-9_.-]*))$`)
-
-var cutURL = regexp.MustCompile(`(?i:[a-z][a-z0-9+.-]*://)(?P<secret>[^\s/@"'<>]+:[^\s/@"'<>]*)$`)
-
-// Text scans at most the first 1 KiB, on a rune boundary. Values reaching the
-// boundary are masked as well, before any caller shortens the resulting text.
-// The ellipsis marks omitted input; records must never be passed back to storage.
+// Text masks secret-looking values throughout s without shortening it.
+// Callers may shorten the masked text for display; records stay unchanged.
 func Text(s string) string {
-	cut := len(s) > 1024
-	if cut {
-		n := 1024
-		for n > 0 && !utf8.RuneStart(s[n]) {
-			n--
-		}
-		s = s[:n]
-	}
-	for i, rule := range rules {
+	for _, rule := range rules {
 		s = replace(s, rule)
-		if cut && i == 0 {
-			s = replace(s, cutURL)
-		}
-		if cut && i == 7 {
-			s = replace(s, cutToken)
-		}
-	}
-	if cut {
-		s += "…"
 	}
 	return s
 }

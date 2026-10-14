@@ -3,7 +3,6 @@ package mask
 import (
 	"strings"
 	"testing"
-	"unicode/utf8"
 )
 
 func TestTextRules(t *testing.T) {
@@ -43,22 +42,15 @@ func TestTextRules(t *testing.T) {
 }
 
 func TestTextBound(t *testing.T) {
-	for _, secret := range []string{"API_KEY=", "Authorization: Bearer ", "--password ", `{"password":"`, "sk-", "https://user:password", "--user user:", "AKIA", "eyJ"} {
-		prefix := strings.Repeat("a", 950) + " " + secret
-		got := Text(prefix + strings.Repeat("z", 2000))
-		if strings.Contains(got, "zz") || !strings.Contains(got, "••••") || !strings.HasSuffix(got, "…") {
-			t.Errorf("boundary leak: %q", got)
+	prefix := strings.Repeat("a", 2048) + " "
+	for _, secret := range []string{"API_KEY=value", "Authorization: Bearer value", "--password value", `{"password":"value"}`, "sk-test-value", "https://user:password@example.test", "--user user:password", "AKIAIOSFODNN7EXAMPLE", "eyJheader.payload.signature"} {
+		if got, want := Text(prefix+secret), prefix+Text(secret); got != want {
+			t.Errorf("long text was cut or left unmasked for %q", secret)
 		}
 	}
-	got := Text(strings.Repeat("界", 400))
-	if !utf8.ValidString(got) || got != strings.Repeat("界", 341)+"…" {
-		t.Fatalf("split rune: %q", got)
-	}
-	got = Text(strings.Repeat("é", 600))
-	if !utf8.ValidString(got) || got != strings.Repeat("é", 512)+"…" {
-		t.Fatalf("rune bound: %q", got)
-	}
-	if got := Text(strings.Repeat("a", 1024)); len(got) != 1024 {
-		t.Fatal("exact bound cut")
+	for _, text := range []string{strings.Repeat("界", 400), strings.Repeat("é", 600), strings.Repeat("a", 2048)} {
+		if got := Text(text); got != text {
+			t.Error("ordinary long text was cut")
+		}
 	}
 }

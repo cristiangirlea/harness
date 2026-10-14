@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -80,5 +81,26 @@ func TestRendererMasksBeforeShortening(t *testing.T) {
 	showHeader(r, runlog.Record{Task: agent.Task{Prompt: secret}})
 	if strings.Contains(b.String(), "zz") || strings.Count(b.String(), "••••") != 2 {
 		t.Errorf("lines leak: %q", b.String())
+	}
+}
+
+func TestRendererLongToolInputMasksAfterCompacting(t *testing.T) {
+	// Compacting sorts the command before the large content field.
+	input := json.RawMessage(`{"content":"` + strings.Repeat("x", 2048) + `","command":"echo sk-test-long-input"}`)
+	var b strings.Builder
+	r := &renderer{out: &b}
+	r.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Input: input})
+	if !strings.Contains(b.String(), `"command":"echo ••••"`) || strings.Contains(b.String(), "sk-test-long-input") {
+		t.Error("tool line must show the command with its token masked")
+	}
+}
+
+func TestRendererLongResultKeepsLineCount(t *testing.T) {
+	text := strings.Repeat(strings.Repeat("x", 99)+"\n", 512)
+	var b strings.Builder
+	r := &renderer{out: &b}
+	r.Event(agent.Event{Kind: agent.EventToolResult, Text: text})
+	if !strings.Contains(b.String(), " (+511 lines)") {
+		t.Errorf("result line count = %q", b.String())
 	}
 }

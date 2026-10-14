@@ -28,8 +28,8 @@ to three of its tasks' names, then "and N more". Every attempt of a batch's task
 run; its row links to the batch under the run's id, even when that batch is older than the
 ones listed. A run's page is its
 timeline as it happens: the assistant's text, each tool call with its input in one line
-(the input itself folded under it), each result folded and capped
-(all of it stays in `events.jsonl`), how long each
+(the input itself folded under it, its first 6 KB and last 2 KB), each result folded and
+capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each
 step waited, and, once the
 run ends, its status, tokens, cost and final answer (and, for a `limited` run, when the
 limit lifts). A batch's page shows each task with a link to each attempt's run, the
@@ -230,9 +230,8 @@ terminal progress lines and Ada's speech and notifications masks secret values a
 authorization, API-key and cookie headers; bare Bearer tokens; recognised `sk-`,
 `ghp_`, `github_pat_`, `xox`, `AKIA` and JWT tokens; assignments whose names contain
 KEY, TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or SESSION; and secret flags
-such as `--password`, `--token` and `--api-key`. Each text scans and shows only its
-first 1 KiB, ending on a rune boundary and marking omitted text with an ellipsis.
-Values reaching that boundary are masked before any shorter excerpt is made.
+such as `--password`, `--token` and `--api-key`. Masking scans the whole text before
+any display excerpt is shortened; it does not cut the text itself.
 The existing environment-value redaction also runs. Records remain unchanged,
 and JSON record output retains the original text. These rules recognise common
 secret shapes; they cannot identify every possible secret.
