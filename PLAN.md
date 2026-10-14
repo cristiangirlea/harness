@@ -667,7 +667,7 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
-- 2026-10-14: the guard matches Windows program names in any case (#211, PR #N).
+- 2026-10-14: the guard matches Windows program names in any case (#211, PR #268).
   Decided: scope case-insensitive names in disk, pipe-to-shell and sudo; refuse iex and Invoke-Expression sinks too.
 - 2026-10-13: issue #233 (PR #241): hrn watch shows a run's workspace by name (`repoOf`,
   as the index does) and a batch's repository too, the whole path as a hover title for this
