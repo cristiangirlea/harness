@@ -73,6 +73,7 @@ continues and the transcript says what was stopped. It is decided before any app
 prompt, so `ask` mode never asks for a yes it would then ignore. Matching is textual and
 leans towards refusing too much: `echo "git push"` and `git commit -m "push later"` are
 refused as well, which costs a turn and is the trade this makes on purpose.
+Separators inside quotes do not end a pipeline stage for the guard.
 
 This is a guard rail, not a sandbox — an agent that wants around a pattern can get
 around it. What decides whether commands run at all is the [permission mode](#permission-modes);

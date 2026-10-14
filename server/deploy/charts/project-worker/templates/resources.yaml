@@ -1,0 +1,234 @@
+{{- $tenant := required "tenant.id is required" .Values.tenant.id -}}
+{{- $project := required "project.id is required" .Values.project.id -}}
+{{- if not (regexMatch "^t_[0-9a-f]{32}$" $tenant) -}}
+{{- fail "tenant.id must be a server-issued t_ ID" -}}
+{{- end -}}
+{{- if not (regexMatch "^p_[0-9a-f]{32}$" $project) -}}
+{{- fail "project.id must be a server-issued p_ ID" -}}
+{{- end -}}
+{{- $namespace := printf "hrn-%s" ($tenant | replace "_" "-") -}}
+{{- if ne .Release.Namespace $namespace -}}
+{{- fail (printf "install in tenant namespace %s" $namespace) -}}
+{{- end -}}
+{{- $image := required "image.ref must be an immutable digest" .Values.image.ref -}}
+{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) -}}
+{{- fail "image.ref must end in @sha256:<64 lowercase hex characters>" -}}
+{{- end -}}
+{{- $control := .Values.control.url -}}
+{{- if not (regexMatch "^https://[^/]+$" $control) -}}
+{{- fail "control.url must be an HTTPS origin without a path" -}}
+{{- end -}}
+{{- $_ := required "secrets.workerName is required" .Values.secrets.workerName -}}
+{{- $_ := required "secrets.scalerName is required" .Values.secrets.scalerName -}}
+{{- $_ := required "secrets.caName is required" .Values.secrets.caName -}}
+{{- $_ := required "secrets.scalerTLSName is required" .Values.secrets.scalerTLSName -}}
+{{- $_ := required "storage.className is required" .Values.storage.className -}}
+{{- $name := printf "hrn-%s" ($project | replace "_" "-") -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+spec:
+  clusterIP: None
+  ports:
+    - name: fixture-health
+      port: 9090
+      targetPort: 9090
+  selector:
+    app.kubernetes.io/name: hrn-project-worker
+    harness.dev/project-id: {{ $project | quote }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    app.kubernetes.io/name: hrn-project-worker
+    harness.dev/tenant-id: {{ $tenant | quote }}
+    harness.dev/project-id: {{ $project | quote }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hrn-project-worker
+      harness.dev/project-id: {{ $project | quote }}
+  updateStrategy:
+    type: OnDelete
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hrn-project-worker
+        harness.dev/tenant-id: {{ $tenant | quote }}
+        harness.dev/project-id: {{ $project | quote }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/hrn-worker"]
+          env:
+            - name: HRN_CONTROL_URL
+              value: {{ $control | quote }}
+            - name: HRN_PROJECT_ID
+              value: {{ $project | quote }}
+            - name: HRN_WORKSPACE_ROOT
+              value: /workspace
+            - name: HRN_FIXTURE_API_URL
+              value: http://127.0.0.1:9090
+            - name: HRN_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.workerName | quote }}
+                  key: {{ .Values.secrets.workerKey | quote }}
+          {{- if .Values.secrets.caName }}
+            - name: SSL_CERT_FILE
+              value: /etc/hrn-control-ca/ca.crt
+          {{- end }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: tmp
+              mountPath: /tmp
+          {{- if .Values.secrets.caName }}
+            - name: control-ca
+              mountPath: /etc/hrn-control-ca
+              readOnly: true
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+{{ toYaml .Values.resources.worker | indent 12 }}
+        - name: fake-model
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/hrn-fixture-model"]
+          env:
+            - name: HRN_FIXTURE_LISTEN
+              value: 127.0.0.1:9090
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+{{ toYaml .Values.resources.fixture | indent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+      {{- if .Values.secrets.caName }}
+        - name: control-ca
+          secret:
+            secretName: {{ .Values.secrets.caName | quote }}
+            items:
+              - key: {{ .Values.secrets.caKey | quote }}
+                path: ca.crt
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: {{ .Values.storage.className | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size | quote }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+spec:
+  secretTargetRef:
+    - parameter: token
+      name: {{ .Values.secrets.scalerName | quote }}
+      key: {{ .Values.secrets.scalerKey | quote }}
+    - parameter: ca
+      name: {{ .Values.secrets.caName | quote }}
+      key: {{ .Values.secrets.caKey | quote }}
+    - parameter: cert
+      name: {{ .Values.secrets.scalerTLSName | quote }}
+      key: {{ .Values.secrets.scalerTLSCertKey | quote }}
+    - parameter: key
+      name: {{ .Values.secrets.scalerTLSName | quote }}
+      key: {{ .Values.secrets.scalerTLSKeyKey | quote }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+spec:
+  scaleTargetRef:
+    name: {{ $name }}
+    kind: StatefulSet
+  pollingInterval: 10
+  cooldownPeriod: 300
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  triggers:
+    - type: metrics-api
+      metadata:
+        url: {{ printf "%s/internal/scaling/projects/%s" $control $project | quote }}
+        format: json
+        valueLocation: value
+        targetValue: "1"
+        activationTargetValue: "0"
+        timeout: "1000"
+        authMode: "bearer,tls"
+      authenticationRef:
+        name: {{ $name }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-egress
+  namespace: {{ $namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hrn-project-worker
+      harness.dev/project-id: {{ $project | quote }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.control.namespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.control.podLabelName | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.control.port }}

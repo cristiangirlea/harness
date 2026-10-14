@@ -6,7 +6,9 @@
 
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 
-- `task.json` — prompt, dir, backend, and the run options by their flag names
+- `task.json` — prompt, dir, backend, and the run options by their flag names; when retrieval
+  rewrote the prompt the run started with, `original_prompt` holds the task as typed, read back
+  by a continuation and by `hrn retrieval compare`
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
   off, or absent; `compact_window` is a number or `"auto"`)
@@ -18,12 +20,30 @@
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
+- `retrieval.json` — the opt-in packet, scope and version pin, saved before a backend
+  starts. An unfinished run keeps this pin; a continuation checks it against the
+  conversation before reuse.
 - `handoff.md` — for a follow-up, the transcript of earlier turns its backend was
   given before the prompt (see [Continuing a run](backends.md#continuing-a-run))
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled|limited`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration, the
   claude or codex `session` id, and for a `limited` run `limit_resets`, when its plan's
   limit lifts
+
+`result.json` includes `recovery_required: true` when a durable api operation needs
+reconciliation before it can resume; the field is omitted otherwise.
+
+For opted-in retrieval, `result.json` includes `retrieval` with its packet or
+failure, and `messages.json` includes the conversation's retrieval pin. Older
+records without these fields still load.
+
+`result.json` includes `usage_metadata` when the adapter supplies it. Its
+`input_semantics` is `inclusive_cache` (Codex input already includes cached input)
+or `exclusive_cache` (api and Claude cache counters are separate). `status` is
+`reported`, `estimated`, or `missing`; `cost_status` distinguishes a reported
+zero from missing cost and may also be `estimated` or `missing`. Older results
+without metadata still load; known backends infer token semantics from their
+existing counters.
 
 `result.json` also includes `context_tokens` when known: the last model call's input
 tokens, including cache reads and writes, rather than the sum across the run. The

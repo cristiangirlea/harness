@@ -24,6 +24,12 @@ import (
 // calls), a desc tag (the one-line help the flag and the MCP schema show) and,
 // where the flag is not the json name with dashes, a flag tag.
 type Options struct {
+	Retrieval         string `json:"retrieval,omitempty" desc:"Project retrieval: off | optional | required (default off)."`
+	RetrievalTenant   string `json:"retrieval_tenant,omitempty" flag:"retrieval-tenant" desc:"Authorized retrieval tenant ID; no credentials."`
+	RetrievalProject  string `json:"retrieval_project,omitempty" flag:"retrieval-project" desc:"Authorized retrieval project ID."`
+	RetrievalRevision string `json:"retrieval_revision,omitempty" flag:"retrieval-revision" desc:"Exact repository revision for approved knowledge."`
+	RetrievalVersion  string `json:"retrieval_version,omitempty" flag:"retrieval-version" desc:"Pin an approved knowledge version; empty resolves active once."`
+
 	Model    string `json:"model,omitempty" desc:"Model id for the backend (api default: claude-opus-5)."`
 	Mode     Mode   `json:"mode,omitempty" desc:"Permission mode: readonly | ask | auto | yolo."`
 	MaxTurns int    `json:"max_turns,omitempty" flag:"max-turns" desc:"Stop after this many model turns (api default 50)."`
@@ -89,6 +95,12 @@ func Bool(v bool) *bool { return &v }
 // rather than after an agent has started. An empty mode passes: each entry
 // point has its own default.
 func (o Options) Validate() error {
+	if o.Retrieval != "" && o.Retrieval != "off" && o.Retrieval != "optional" && o.Retrieval != "required" {
+		return fmt.Errorf("invalid retrieval mode")
+	}
+	if o.Retrieval != "" && o.Retrieval != "off" && (o.RetrievalTenant == "" || o.RetrievalProject == "" || o.RetrievalRevision == "" || o.Model == "") {
+		return fmt.Errorf("retrieval requires explicit tenant, project, revision and model")
+	}
 	if o.Mode != "" {
 		if _, err := ParseMode(string(o.Mode)); err != nil {
 			return err

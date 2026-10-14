@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -233,6 +234,29 @@ func TestTheAPIConversationIsResumed(t *testing.T) {
 	p, err = Make(Request{RunID: w.ID(), Model: "claude-sonnet-5"})
 	if err != nil || p.Model != "claude-sonnet-5" || !strings.Contains(strings.Join(p.Notes, "\n"), "drops the earlier thinking") {
 		t.Errorf("another model should be warned about: %+v err=%v", p, err)
+	}
+}
+
+func TestARejectedRetrievalPinRefusesContinuation(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	w, err := runlog.Create("api", agent.Task{Prompt: "task", Dir: dir, Options: agent.Options{Retrieval: "required"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, _ := json.Marshal(agent.Conversation{Model: "fixture"})
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), conv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	badPin, _ := json.Marshal(retrieval.Record{Mode: "required"})
+	if err := os.WriteFile(filepath.Join(w.Dir(), "retrieval.json"), badPin, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Make(Request{RunID: w.ID()}); err == nil || !strings.Contains(err.Error(), "saved retrieval pin missing from conversation") {
+		t.Fatalf("invalid pin should refuse continuation, got %v", err)
 	}
 }
 

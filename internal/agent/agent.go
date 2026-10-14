@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -39,9 +40,16 @@ type ApprovalRequest struct {
 }
 
 type Task struct {
-	Prompt    string `json:"prompt"`
-	Dir       string `json:"dir"`
-	AttemptID string `json:"attempt_id,omitempty"`
+	OriginalPrompt  string            `json:"original_prompt,omitempty"`
+	RetrievalState  *retrieval.Record `json:"-"`
+	RetrievalRepair bool              `json:"-"`
+
+	// Durable is supplied only by trusted execution coordinators. Callers cannot
+	// configure persistence or resume snapshots through task JSON.
+	Durable   *DurableExecution `json:"-"`
+	Prompt    string            `json:"prompt"`
+	Dir       string            `json:"dir"`
+	AttemptID string            `json:"attempt_id,omitempty"`
 
 	// Options is everything a caller may set besides the prompt and the
 	// workspace: the one struct the run flags, a batch spec and the MCP run
@@ -69,8 +77,9 @@ type Task struct {
 // transcript so a follow-up can carry on from it. Thinking blocks are bound to
 // the model that produced them, which is why the model is recorded with them.
 type Conversation struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
+	Model     string            `json:"model"`
+	Messages  []Message         `json:"messages"`
 }
 
 // Message is one turn of a Conversation: the role and the content blocks
@@ -136,8 +145,13 @@ const (
 )
 
 type Result struct {
-	Backend string `json:"backend"`
-	Model   string `json:"model,omitempty"`
+	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
+	Usage     *UsageMetadata    `json:"usage_metadata,omitempty"`
+	// RecoveryRequired is execution evidence for the scheduler, not success or
+	// permission to replay. Orchestration states remain separate from Status.
+	RecoveryRequired bool   `json:"recovery_required,omitempty"`
+	Backend          string `json:"backend"`
+	Model            string `json:"model,omitempty"`
 	// ModelReported distinguishes a backend report from a requested/default model.
 	ModelReported bool   `json:"model_reported,omitempty"`
 	Status        Status `json:"status"`
@@ -151,8 +165,8 @@ type Result struct {
 	// ContextTokens is the last model call's input, including cache reads and
 	// writes. Absent when the backend reports only run totals or no usage.
 	ContextTokens int64 `json:"context_tokens,omitempty"`
-	// ToolCalls counts the tool calls the agent made. Set by Run, so it is the
-	// same count on every backend.
+	// ToolCalls counts the tool calls the agent made. Run counts event calls for
+	// ordinary backends; durable api checkpoints count committed outcomes.
 	ToolCalls    int           `json:"tool_calls,omitempty"`
 	CostUSD      float64       `json:"cost_usd,omitempty"`
 	CostEstimate bool          `json:"cost_is_estimate,omitempty"`
@@ -260,6 +274,14 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		emit(Event{Time: time.Now(), Kind: EventError, Text: ErrGuardedRun.Error()})
 		return Result{Backend: b.Name(), Status: StatusRefused, Error: ErrGuardedRun.Error()}
 	}
+	prepared, state, err := prepareRetrieval(ctx, b.Name(), task)
+	if err != nil {
+		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state}
+	}
+	task = prepared
+	if state != nil {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
+	}
 	calls := 0
 	res := b.Run(ctx, task, func(e Event) {
 		if e.Kind == EventToolCall && !e.Partial {
@@ -267,7 +289,10 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		}
 		emit(e)
 	})
-	res.ToolCalls = calls
+	res.Retrieval = state
+	if task.Durable == nil {
+		res.ToolCalls = calls
+	}
 	return res
 }
 

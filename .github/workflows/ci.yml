@@ -68,3 +68,70 @@ jobs:
       - name: gofmt
         shell: bash
         run: test -z "$(gofmt -l .)"
+
+  server-unit:
+    if: ${{ github.event.repository.private == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -count=1 ./...
+
+  server-postgres:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+        env:
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: harness_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d harness_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      HRN_TEST_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:5432/harness_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - run: go test -race -count=1 ./...
+
+  charts:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: azure/setup-helm@v4.3.1
+        with:
+          version: v4.3.0
+      - name: install chart verifier
+        run: python -m pip install PyYAML==6.0.3
+      - name: render and verify tenant and project charts
+        run: python server/deploy/verify_charts.py
+      - name: build development image
+        run: docker build -f server/Dockerfile -t hrn-durable-fixture:ci .

@@ -262,7 +262,7 @@ func (s *Spec) normalize() error {
 			return fmt.Errorf("duplicate task id %q", t.ID)
 		}
 		seen[t.ID] = true
-		if err := t.Options.Validate(); err != nil {
+		if err := t.Options.Over(s.Options).Validate(); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkBackends(t.Backend, t.Retry); err != nil {
@@ -603,7 +603,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 	}
 
-	task := agent.Task{Options: opts} // Dir is the worktree, once there is one
+	task := agent.Task{Options: opts, OriginalPrompt: t.Prompt} // Dir is the worktree, once there is one
 	expect, err := compileExpect(t.Expect)
 	if err != nil {
 		return fail(err)
@@ -740,6 +740,13 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, gates, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
+		task.RetrievalState = out.att.Result.Retrieval
+		task.RetrievalRepair = false
+		for _, g := range out.att.Gates {
+			if g.ExitCode != 0 {
+				task.RetrievalRepair = true
+			}
+		}
 		if out.commit != "" {
 			tr.Commit = out.commit
 		}
