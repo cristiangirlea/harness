@@ -44,7 +44,7 @@ func cmdBot(args []string) error {
 		url := "http://" + bind + "/bot"
 		serves, status := probeBot(url)
 		if status == http.StatusForbidden {
-			return fmt.Errorf("public watch holds %s; hrn bot needs a plain watch: use --addr for another loopback port", bind)
+			return fmt.Errorf("%s answered 403: another program holds the port, possibly an hrn watch --public (which refuses this computer's browser); start the bot on another port with --addr", bind)
 		}
 		if !serves {
 			return err
@@ -71,7 +71,7 @@ func servesBot(url string) bool {
 }
 
 // probeBot is servesBot that also returns the status code, 0 when nothing
-// answered: a 403 means a public watch, which refuses a loopback Host.
+// answered: a 403 may be a public watch refusing a loopback Host.
 func probeBot(url string) (bool, int) {
 	c := http.Client{Timeout: 2 * time.Second}
 	resp, err := c.Get(url)

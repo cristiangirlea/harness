@@ -87,7 +87,8 @@ all backends.
 
 Run records can contain source code, prompts, and tool output. The dashboard listens
 on loopback by default. `--lan` lets anyone on the selected network read them without a login.
-`--public` exposes them through a Cloudflare Tunnel with Access login; see [watch exposure](docs/watch.md#behind-cloudflare-access).
+With `--public`, the page is available beyond loopback only through a Cloudflare Tunnel
+and Access application you set up; the flag makes hrn accept that route. See [watch exposure](docs/watch.md#behind-cloudflare-access).
 See [security boundaries and vulnerability reporting](SECURITY.md).
 
 ## Contributing

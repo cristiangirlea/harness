@@ -9,7 +9,8 @@ permission limits and use an isolated environment for untrusted repositories or 
 
 The watch dashboard listens on loopback by default. `--lan` lets others on the selected network
 read run records without logging in, including prompts, paths and command output.
-`--public` exposes those records through a Cloudflare Tunnel with Access login; see [watch exposure](docs/watch.md#behind-cloudflare-access).
+With `--public`, the page is available beyond loopback only through a Cloudflare Tunnel
+and Access application you set up; the flag makes hrn accept that route. See [watch exposure](docs/watch.md#behind-cloudflare-access).
 Keep `--lan` on trusted networks and do not expose it to the public Internet.
 
 CI and releases use standard GitHub-hosted runners. Public contributions must not run on
