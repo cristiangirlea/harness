@@ -18,6 +18,9 @@ import (
 func TestClassify(t *testing.T) {
 	for _, tt := range []struct{ text, tool, want string }{
 		{"go test ./...\nok pkg 1s", "shell", "test"}, {"FAIL pkg", "", "test"}, {"--- PASS: TestX", "", "test"},
+		{"--- a/main.go\n+++ b/main.go", "shell", "terminal"},
+		{"=== RUN TestX", "shell", "test"}, {"--- FAIL: TestX", "shell", "test"},
+		{"--- SKIP: TestX", "shell", "test"}, {"--- BENCH: BenchmarkX", "shell", "test"},
 		{"2026-10-14T12:00:00Z ready", "", "log"}, {"[INFO] ready", "", "log"}, {"ERROR: failed", "", "log"},
 		{`{"a":1}`, "shell", "json"}, {`[1,2]`, "", "json"}, {"a,b\n1,2", "", "table"}, {"a\tb\n1\t2", "", "table"},
 		{"a,b\n1,2,3", "shell", "terminal"}, {"hello", "Bash", "terminal"}, {"hello", "exec_command", "terminal"},

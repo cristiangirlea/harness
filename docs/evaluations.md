@@ -67,7 +67,8 @@ excluded; unreadable finished records in the window are counted and excluded.
 
 `shapes` classifies UTF-8 tool-result bytes as `test`, `log`, `json`, `table`,
 `terminal`, or `other`, in that priority order. Tests have `go test`, `ok`, `FAIL`,
-or `--- ` lines; logs have timestamp or level prefixes; JSON must parse; CSV/TSV
+`=== RUN`, or `--- PASS|FAIL|SKIP|BENCH` lines; unified diff headers do not match.
+Logs have timestamp or level prefixes; JSON must parse; CSV/TSV
 needs at least two rows with a consistent field count. Shell results otherwise
 count as terminal output. For unnamed results, a pending shell call (or a batch
 entirely of shell calls) establishes that origin; mixed pending calls remain

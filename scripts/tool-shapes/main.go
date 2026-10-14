@@ -22,7 +22,7 @@ import (
 )
 
 var shapeNames = []string{"test", "log", "json", "table", "terminal", "other"}
-var testLine = regexp.MustCompile(`(?m)^(?:go test\b|ok\s|FAIL\b|--- )`)
+var testLine = regexp.MustCompile(`(?m)^(?:go test\b|ok\s|FAIL\b|=== RUN\b|--- (?:PASS|FAIL|SKIP|BENCH)\b)`)
 var logLine = regexp.MustCompile(`(?mi)^(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}|\d{2}:\d{2}:\d{2}|\[?(?:trace|debug|info|warn|warning|error|fatal)\b)`)
 
 func shellTool(tool string) bool {
