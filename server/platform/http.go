@@ -1,9 +1,11 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,9 +19,11 @@ import (
 )
 
 type HTTPServer struct {
-	Store         *Store
-	OperatorToken string
-	ScalerToken   string
+	Store                *Store
+	OperatorToken        string
+	ScalerToken          string
+	submissionAuthorized func(context.Context, string, string) (bool, error)
+	workerAuthorized     func(context.Context, string, string) (bool, error)
 }
 
 func (h *HTTPServer) Handler() http.Handler {
@@ -81,7 +85,11 @@ func (h *HTTPServer) tenant(w http.ResponseWriter, r *http.Request, id string) b
 }
 
 func (h *HTTPServer) project(w http.ResponseWriter, r *http.Request, id string) bool {
-	allowed, err := h.Store.WorkerAuthorized(r.Context(), id, token(r))
+	check := h.workerAuthorized
+	if check == nil {
+		check = h.Store.WorkerAuthorized
+	}
+	allowed, err := check(r.Context(), id, token(r))
 	if err != nil {
 		failure(w, 500, "storage_error", "authorization storage unavailable")
 		return false
@@ -192,11 +200,34 @@ func (h *HTTPServer) projects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("project")
+	check := h.submissionAuthorized
+	if check == nil {
+		check = func(ctx context.Context, projectID, candidate string) (bool, error) {
+			tenantID, err := h.Store.ProjectTenant(ctx, projectID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			return h.Store.TenantAuthorized(ctx, tenantID, candidate)
+		}
+	}
+	allowed, err := check(r.Context(), projectID, token(r))
+	if err != nil {
+		failure(w, 500, "storage_error", "authorization storage unavailable")
+		return
+	}
+	if !allowed {
+		failure(w, 404, "not_found", "tenant or resource not found")
+		return
+	}
 	var input Submission
 	if !decode(w, r, &input) {
 		return
 	}
-	if input.ProjectID != r.PathValue("project") {
+	if input.ProjectID != projectID {
 		failure(w, 400, "invalid_request", "project ID mismatch")
 		return
 	}
@@ -340,6 +371,46 @@ type finishRequest struct {
 	Result agent.Result `json:"result"`
 }
 
+func workerProjectID(body []byte) string {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return ""
+	}
+	var projectID string
+	for decoder.More() {
+		field, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		if name, ok := field.(string); ok && strings.EqualFold(name, "project_id") {
+			if err := decoder.Decode(&projectID); err != nil {
+				break
+			}
+			continue
+		}
+		var ignored json.RawMessage
+		if err := decoder.Decode(&ignored); err != nil {
+			break
+		}
+	}
+	return projectID
+}
+
+func (h *HTTPServer) decodeWorkerRequest(w http.ResponseWriter, r *http.Request, destination any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	body, readErr := io.ReadAll(r.Body)
+	if !h.project(w, r, workerProjectID(body)) {
+		return false
+	}
+	if readErr != nil {
+		failure(w, 400, "invalid_json", readErr.Error())
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return decode(w, r, destination)
+}
+
 func (h *HTTPServer) claim(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("project")
 	if !h.project(w, r, projectID) {
@@ -369,10 +440,7 @@ func (h *HTTPServer) claim(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) heartbeat(w http.ResponseWriter, r *http.Request) {
 	var request workerRequest
-	if !decode(w, r, &request) {
-		return
-	}
-	if !h.project(w, r, request.ProjectID) {
+	if !h.decodeWorkerRequest(w, r, &request) {
 		return
 	}
 	ok, cancel, err := h.Store.Heartbeat(r.Context(), request.ProjectID, r.PathValue("job"), request.WorkerID, request.Generation)
@@ -389,10 +457,7 @@ func (h *HTTPServer) heartbeat(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) checkpoint(w http.ResponseWriter, r *http.Request) {
 	var request checkpointRequest
-	if !decode(w, r, &request) {
-		return
-	}
-	if !h.project(w, r, request.ProjectID) {
+	if !h.decodeWorkerRequest(w, r, &request) {
 		return
 	}
 	if err := h.Store.SaveCheckpoint(r.Context(), request.ProjectID, r.PathValue("job"), request.WorkerID, request.Generation, request.Checkpoint); err != nil {
@@ -404,10 +469,7 @@ func (h *HTTPServer) checkpoint(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) finish(w http.ResponseWriter, r *http.Request) {
 	var request finishRequest
-	if !decode(w, r, &request) {
-		return
-	}
-	if !h.project(w, r, request.ProjectID) {
+	if !h.decodeWorkerRequest(w, r, &request) {
 		return
 	}
 	if err := h.Store.Finish(r.Context(), request.ProjectID, r.PathValue("job"), request.WorkerID, request.Generation, request.Result); err != nil {
