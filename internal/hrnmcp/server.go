@@ -22,7 +22,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-const instructions = `hrn runs coding tasks on an agent backend of your choice (its own API loop, or the claude, codex, gemini or opencode CLIs) and records every run.
+const instructions = `hrn runs coding tasks on an agent backend of your choice (its own API loop, or the claude, codex, gemini, opencode or agy CLIs) and records every run.
 
 Use "run" to delegate a task. It blocks until the task finishes and returns the final answer, a summary line and a run id; "show" replays a run, "runs" lists recent ones, "backends" says which backends are usable. Several "run" calls may be in flight at once.
 
@@ -70,7 +70,11 @@ func runProperties(backends []any, defaultDir string) map[string]any {
 		" Default readonly here. ask puts each write and command to you when this host supports elicitation, and denies it otherwise."
 	props["prompt"] = str("The task, as you would brief an engineer.")
 	props["purpose"] = str("Optional declared purpose: review, debug, implement, refactor, test, research, plan, ops; otherwise a leading Purpose: category header is used.")
-	props["backend"] = map[string]any{"type": "string", "enum": backends, "description": "Default: api when API credentials exist, otherwise claude, or the route table's row for the prompt's purpose, when one exists."}
+	backend := map[string]any{"type": "string", "description": "Default: the backend preference, or api when credentials exist, otherwise claude; an enabled route for the prompt's purpose takes precedence."}
+	if len(backends) > 0 { // an empty enum would make every value invalid; the handler reports why
+		backend["enum"] = backends
+	}
+	props["backend"] = backend
 	props["dir"] = str("Workspace directory. Default: " + defaultDir)
 	props["continue_run_id"] = str("Continue a finished run, in its workspace and mode unless dir or mode say otherwise. " +
 		"On the same backend it carries on from that run's conversation (api) or a fork of its session (claude, codex). " +
@@ -99,6 +103,11 @@ func text(s string, structured any, isError bool) mcp.CallResult {
 
 func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	names := agent.Names()
+	if p, err := agent.BackendPreferences(runlog.Home()); err == nil {
+		names = p.Filter(names)
+	} else {
+		names = nil // Invalid preferences offer no backends; the handler reports the error.
+	}
 	enum := make([]any, len(names))
 	for i, n := range names {
 		enum[i] = n
@@ -113,7 +122,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 		Description: "Run a coding task with an agent backend in a workspace directory and wait for it to finish. " +
 			"Optionally declare its purpose; this is recorded without changing the prompt. " +
 			"Returns the final answer, a summary line (status, tokens, cost, duration) and the run id. " +
-			"A claude or codex run that reaches its plan's usage limit is carried on by the other one, " +
+			"A run that reaches its usage limit is carried on by a ready enabled partner (claude and codex pair by default), " +
 			"which then sees the workspace, unless no_switch is set.",
 		InputSchema: map[string]any{
 			"type":       "object",
@@ -151,6 +160,13 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			if err := args.Options.Validate(); err != nil {
 				return mcp.CallResult{}, err
+			}
+			preference, err := agent.BackendPreferences(runlog.Home())
+			if err != nil {
+				return text("run: "+err.Error(), nil, true), nil
+			}
+			if err := preference.Check(args.Backend); err != nil {
+				return text("run: "+err.Error(), nil, true), nil
 			}
 			// As hrn run does: a backend whose limit is remembered hands
 			// the run to its partner before anything is planned.
@@ -192,7 +208,10 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				}
 			}
 			if args.Backend == "" {
-				args.Backend = agent.DefaultBackendName()
+				args.Backend = agent.DefaultBackendNameIn(runlog.Home())
+			}
+			if err := preference.Check(args.Backend); err != nil {
+				return text("run: "+err.Error(), nil, true), nil
 			}
 			b, err := agent.Get(args.Backend)
 			if err != nil {
@@ -428,25 +447,42 @@ func backendsTool() mcp.Tool {
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			var b strings.Builder
 			var list []map[string]any
+			p, err := agent.BackendPreferences(runlog.Home())
+			if err != nil {
+				return text(err.Error(), nil, true), nil
+			}
+			def := p.Default()
+			if def == "" {
+				def = agent.DefaultBackendNameIn(runlog.Home())
+			}
 			now := time.Now()
 			for _, name := range agent.Names() {
+				state := "disabled"
+				if p.Enabled(name) {
+					state = "enabled"
+				}
+				if name == def {
+					state += " (default)"
+				}
 				be, _ := agent.Get(name)
 				src, err := be.Detect()
 				var entry map[string]any
 				if err != nil {
-					fmt.Fprintf(&b, "✗ %-9s %s\n", name, err)
+					fmt.Fprintf(&b, "✗ %-9s %s: %s\n", name, state, err)
 					entry = map[string]any{"name": name, "available": false, "detail": err.Error()}
 				} else {
-					fmt.Fprintf(&b, "✓ %-9s %s\n", name, src)
+					fmt.Fprintf(&b, "✓ %-9s %s: %s\n", name, state, src)
 					entry = map[string]any{"name": name, "available": true, "detail": src}
 				}
 				if s := limits.Status(name, now); s != "" {
 					fmt.Fprintf(&b, "  %-9s %s\n", "", s)
 					entry["limited_until"] = limits.Until(name, now)
 				}
+				entry["enabled"] = p.Enabled(name)
+				entry["default"] = name == def
 				list = append(list, entry)
 			}
-			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendName()}, false), nil
+			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendNameIn(runlog.Home())}, false), nil
 		},
 	}
 }

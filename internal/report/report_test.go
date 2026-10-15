@@ -16,6 +16,26 @@ import (
 
 var t0 = time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 
+func TestCodexEstimatedCostMark(t *testing.T) {
+	d := Data{Runs: []runlog.Record{rec("codex", "gpt-6.1-sol", "/repo", 0, agent.Result{
+		Status: agent.StatusOK, CostUSD: 2.24, CostEstimate: true,
+		Usage: &agent.UsageMetadata{InputSemantics: "inclusive_cache", Status: "reported", CostStatus: "estimated"},
+	})}}
+	rows, all, err := d.RunRows(ByBackend)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %+v, err = %v", rows, err)
+	}
+	for _, row := range []Row{rows[0], all} {
+		if got := Money(row.TotalCost, row.CostEstimated); got != "~$2.24" {
+			t.Errorf("cost = %q, want ~$2.24", got)
+		}
+		data, err := json.Marshal(row)
+		if err != nil || !strings.Contains(string(data), `"cost_is_estimate":true`) {
+			t.Errorf("estimate flag missing: %s, %v", data, err)
+		}
+	}
+}
+
 func TestRowsByRouted(t *testing.T) {
 	runs := sample()
 	runs[0].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1"}

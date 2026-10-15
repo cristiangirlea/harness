@@ -8,7 +8,9 @@
 |---|---|
 | `hrn run [flags] [--purpose CATEGORY] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`; optionally declare its purpose (see [Declared purpose](#declared-purpose)). |
 | `hrn exec --protocol v1` | Run one recorded task over the supervisor JSONL protocol (see [hrn exec](#hrn-exec)). |
-| `hrn backends` | Show which backends are usable and where they were found. |
+| `hrn backends` | Show enabled/disabled, default, availability and remembered limits (see [Backend preferences](backends.md#choosing-which-backends-hrn-may-use)). |
+| `hrn backends set --only NAMES [--default NAME]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. |
+| `hrn backends reset` | Remove the preference file and restore unrestricted backend selection. |
 | `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
 | `hrn remote show --tenant ID --project ID JOB_ID` | Show a remote job's state and result. |
 | `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream and resume from the last durable event ID. |
@@ -22,7 +24,7 @@
 | `hrn show [--json] <id>` | Replay a recorded run. |
 | `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](watch.md#watching-runs-live)). |
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
-| `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]` | Follow runs and batches live. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). |
+| `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
@@ -42,8 +44,8 @@
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
 | `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it (see [List](workspaces.md#list)). |
 
-Run flags: `-b/--backend`, `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
-`--effort` (api, codex and claude: low, medium, high, xhigh, max; unset uses the
+Run flags: `-b/--backend` (api, claude, codex, gemini, opencode, agy), `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
+`--effort` (api, codex, claude and agy: low, medium, high, xhigh, max; unset uses the
 backend default; gemini and opencode report it as not enforced),
 `--json` (JSONL event stream for scripts), `--thinking`,
 `--mcp FILE` (repeatable), `--no-instructions`, `--lean` (claude: only the run's
@@ -173,7 +175,7 @@ optimistic.
 
 Where a cost comes from depends on the backend. The claude and opencode CLIs report one
 themselves; on a subscription that figure is what the run would cost at API list
-prices, not a charge. codex and gemini report none. The API returns token counts only,
+prices, not a charge. codex, gemini and agy report none. The API returns token counts only,
 so the api backend prices them from a table in `internal/agent/api.go`: Anthropic's
 first-party list prices per model, including the newer models' own cache-read prices,
 with cache writes at 1.25x input. A dated snapshot id such as

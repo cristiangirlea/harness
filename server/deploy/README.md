@@ -36,7 +36,10 @@ in that tenant's namespace:
 
 Use distinct tokens for operator, tenant, project worker, and scaler. Never
 place token values in Helm values or source control. The control service
-supports TLS by setting both `HRN_TLS_CERT_FILE` and `HRN_TLS_KEY_FILE`.
+requires both `HRN_TLS_CERT_FILE` and `HRN_TLS_KEY_FILE` unless `HRN_LISTEN`
+uses a loopback IP literal (`127.0.0.0/8` or `::1`). Host names (including
+`localhost`) and wildcard addresses require TLS. The control chart binds
+`0.0.0.0:8443` with both TLS files set.
 The included control chart installs it in `harness-system` with Pod label
 `app.kubernetes.io/name=hrn-control`, a Service reachable on the configured
 TLS port, and network ingress from tenant workers and KEDA. The project chart

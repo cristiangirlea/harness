@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +12,20 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func TestWatchIssuesAFreshWriteKeyAtStart(t *testing.T) {
+	first := watchOptions(nil)
+	second := watchOptions(nil)
+	for _, key := range []string{first.Key, second.Key} {
+		decoded, err := hex.DecodeString(key)
+		if err != nil || len(decoded) != 32 {
+			t.Fatalf("watch key must encode 32 random bytes: length %d, error %v", len(decoded), err)
+		}
+	}
+	if first.Key == second.Key {
+		t.Fatal("two starts issued the same key")
+	}
+}
 
 // lockedBuffer is a renderer's output that a test reads while it writes.
 type lockedBuffer struct {

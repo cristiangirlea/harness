@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -40,7 +42,10 @@ const usage = `hrn — personal agent harness
 Usage:
   hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
   hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
-  hrn backends                    show which backends are usable
+  hrn backends                    show enabled backends, default, availability and limits
+  hrn backends set --only NAMES [--default NAME]
+                                  replace the backend preference (comma-separated names)
+  hrn backends reset              remove the backend preference
   hrn remote submit|show|events|cancel [flags]
                                  use the durable control API
   hrn knowledge import|search|inspect|active|activate|disable|rollback request.json
@@ -97,7 +102,8 @@ Usage:
 
 Run flags:
   When backend, model and effort are all unset, use the purpose row in route.json before falling back to defaults.
-  -b, --backend NAME   api | claude | codex | gemini | opencode (default: api if credentials exist, else claude)
+  -b, --backend NAME   api | claude | codex | gemini | opencode | agy, an enabled one once hrn backends set
+                       a preference (default: the preference, else api if credentials exist, else claude)
   -m, --model NAME     model id (api default: claude-opus-5)
   -C, --dir PATH       workspace directory (default: current directory)
       --mode MODE      readonly | ask | auto | yolo (default: ask)
@@ -130,8 +136,7 @@ Run flags:
       --allow-dangerous
                        lift the guard: agents may push, merge and deploy with your credentials
                        (every backend), and run_command may run sudo, rm -rf / and the like
-      --no-switch      stay on claude or codex when it reaches its plan's usage limit, instead of
-                       carrying on on the other one
+      --no-switch      stay on this backend at its usage limit instead of using an enabled partner
 
 Eval flags:
       --parallel N     cells at once (default: the file's value, else 4)
@@ -168,7 +173,7 @@ func main() {
 	case "exec":
 		code, err = cmdExec(os.Args[2:])
 	case "backends":
-		err = cmdBackends()
+		err = cmdBackends(os.Args[2:])
 	case "remote":
 		err = runRemote(os.Args[2:], os.Stdout)
 	case "knowledge":
@@ -237,6 +242,13 @@ func cmdRun(args []string) (int, error) {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
+	}
+	preference, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return 2, fmt.Errorf("run: %w", err)
+	}
+	if err := preference.Check(backend); err != nil {
+		return 2, fmt.Errorf("run: %w", err)
 	}
 
 	set := map[string]bool{}
@@ -314,7 +326,10 @@ func cmdRun(args []string) (int, error) {
 		}
 	}
 	if backend == "" {
-		backend = agent.DefaultBackendName()
+		backend = agent.DefaultBackendNameIn(runlog.Home())
+	}
+	if err := preference.Check(backend); err != nil {
+		return 2, fmt.Errorf("run: %w", err)
 	}
 	b, err := agent.Get(backend)
 	if err != nil {
@@ -422,15 +437,69 @@ func cmdRun(args []string) (int, error) {
 	return 0, nil
 }
 
-func cmdBackends() error {
+func cmdBackends(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "set":
+			fs := flag.NewFlagSet("backends set", flag.ContinueOnError)
+			only := fs.String("only", "", "comma-separated enabled backends, in preference order")
+			def := fs.String("default", "", "default backend, from --only")
+			if err := fs.Parse(args[1:]); err != nil {
+				return err
+			}
+			if *only == "" || fs.NArg() != 0 {
+				return errors.New("usage: hrn backends set --only claude,codex [--default claude]")
+			}
+			p := prefs.Prefs{DefaultName: *def}
+			for _, name := range strings.Split(*only, ",") {
+				name = strings.TrimSpace(name)
+				if _, err := agent.Get(name); err != nil {
+					return err
+				}
+				p.EnabledNames = append(p.EnabledNames, name)
+			}
+			if *def != "" {
+				if _, err := agent.Get(*def); err != nil {
+					return err
+				}
+			}
+			if err := prefs.Save(runlog.Home(), p); err != nil {
+				return err
+			}
+		case "reset":
+			if len(args) != 1 {
+				return errors.New("usage: hrn backends reset")
+			}
+			if err := os.Remove(filepath.Join(runlog.Home(), "backends.json")); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		default:
+			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] | reset]")
+		}
+	}
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return err
+	}
+	def := p.Default()
+	if def == "" {
+		def = agent.DefaultBackendNameIn(runlog.Home())
+	}
 	now := time.Now()
 	for _, name := range agent.Names() {
+		state := "disabled"
+		if p.Enabled(name) {
+			state = "enabled"
+		}
+		if name == def {
+			state += " (default)"
+		}
 		b, _ := agent.Get(name)
 		src, err := b.Detect()
 		if err != nil {
-			fmt.Printf("  ✗ %-9s %s\n", name, err)
+			fmt.Printf("  ✗ %-9s %s: %s\n", name, state, err)
 		} else {
-			fmt.Printf("  ✓ %-9s %s\n", name, src)
+			fmt.Printf("  ✓ %-9s %s: %s\n", name, state, src)
 		}
 		if s := limits.Status(name, now); s != "" {
 			fmt.Printf("    %-9s %s\n", "", s)

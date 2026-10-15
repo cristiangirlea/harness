@@ -332,9 +332,10 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 
 type indexPage struct {
 	page
-	Lists lists
-	Local bool        // seen from this computer, not a phone on the network
-	Phone []phoneLink // where a phone opens it, with hrn watch --lan
+	Backends backendCard
+	Lists    lists
+	Local    bool        // seen from this computer, not a phone on the network
+	Phone    []phoneLink // where a phone opens it, with hrn watch --lan
 }
 
 // phoneLink is one network address of the page, with a QR code of it to scan.
