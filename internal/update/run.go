@@ -62,20 +62,21 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 	if len(targets) == 0 {
 		return 2, errors.New("no hrn binary found to update")
 	}
+	// hrn holds the copies that answer version; a stranger named hrn (another
+	// tool first on PATH) is listed and left alone, never counted or rolled back.
 	versions := map[string]Version{}
-	var hrn []string
+	var hrn, strangers []string
 	for _, t := range targets {
 		v, err := o.Version(ctx, t)
 		if err != nil {
 			if errors.Is(err, ErrNotHrn) {
-				versions[t] = Version{}
+				strangers = append(strangers, t)
 			} else {
 				fmt.Fprintf(out, "%s  version failed: %v\n", t, err)
-				continue
 			}
-		} else {
-			versions[t] = v
+			continue
 		}
+		versions[t] = v
 		hrn = append(hrn, t)
 	}
 	if len(hrn) == 0 {
@@ -132,15 +133,17 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		}
 		fmt.Fprintln(out, "targets:")
 		for _, t := range hrn {
-			if versions[t].Line == "" {
-				fmt.Fprintf(out, "  %s  not hrn, left alone\n", t)
-				continue
-			}
 			fmt.Fprintf(out, "  %s  %s\n", t, versions[t].Line)
 		}
+		for _, t := range strangers {
+			fmt.Fprintf(out, "  %s  not hrn, left alone\n", t)
+		}
 		for _, t := range hrn {
-			old, ok := versions[t]
-			if !ok || old.Line == "" {
+			old := versions[t]
+			if isSameFile(candidate, t) {
+				// --file named this copy: renaming it aside would remove the source.
+				fmt.Fprintf(out, "  %s is the candidate itself\n", t)
+				done[t] = true
 				continue
 			}
 			if o.DryRun {
@@ -302,4 +305,18 @@ func boolCount(bs ...bool) int {
 		}
 	}
 	return n
+}
+
+// isSameFile reports whether two paths name one file, through symlinks and
+// case-insensitive file systems alike.
+func isSameFile(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
 }

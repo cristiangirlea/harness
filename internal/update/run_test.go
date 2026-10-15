@@ -380,3 +380,63 @@ func TestRunCarriesOnWhenTheProcessListIsUnavailable(t *testing.T) {
 type failingLister struct{}
 
 func (failingLister) Processes() ([]Process, error) { return nil, fmt.Errorf("ps: not found") }
+
+func TestRunReadsTheInstalledVersionFromARealHrnWhenAStrangerComesFirst(t *testing.T) {
+	s := newSite(t)
+	git := filepath.Join(t.TempDir(), exe("hrn"))
+	os.WriteFile(git, []byte("#!/bin/sh\necho git version 2.47\n"), 0o755)
+	// Both copies already are the new build: the fake version keys by file size.
+	fakeHrn(t, s.a, "new build")
+	fakeHrn(t, s.b, "new build")
+	o := s.options()
+	o.Targets = []string{git, s.a, s.b}
+	code, err := s.run(o)
+	if err != nil || code != 0 {
+		t.Fatalf("code %d, err %v\n%s", code, err, s.out.String())
+	}
+	wantLines(t, s.out.String(), "installed: "+newLine, "already current")
+	if strings.Contains(s.out.String(), "installed: \n") {
+		t.Error("the stranger's empty version was taken as the installed one")
+	}
+}
+
+func TestRunRollbackLeavesAStrangerAloneAndSucceeds(t *testing.T) {
+	s := newSite(t)
+	if code, err := s.run(s.options()); code != 0 || err != nil {
+		t.Fatalf("update: %d %v\n%s", code, err, s.out.String())
+	}
+	git := filepath.Join(t.TempDir(), exe("hrn"))
+	os.WriteFile(git, []byte("#!/bin/sh\necho git version 2.47\n"), 0o755)
+	o := s.options()
+	o.Rollback, o.Source = true, Source{}
+	o.Targets = []string{git, s.a, s.b}
+	o.Now = func() time.Time { return stamp.Add(time.Hour) }
+	code, err := s.run(o)
+	if err != nil || code != 0 {
+		t.Fatalf("code %d, err %v\n%s", code, err, s.out.String())
+	}
+	if strings.Contains(s.out.String(), "failed "+git) {
+		t.Error("the rollback counted the stranger as a failure")
+	}
+	wantLines(t, s.out.String(), "rolled back "+s.a, "rolled back "+s.b)
+}
+
+func TestRunSkipsATargetThatIsTheCandidateItself(t *testing.T) {
+	s := newSite(t)
+	fakeHrn(t, s.a, "new build")
+	s.versionMap[s.a] = newLine
+	o := s.options()
+	o.Source = Source{File: s.a}
+	o.Targets = []string{s.b, s.a}
+	code, err := s.run(o)
+	if err != nil || code != 0 {
+		t.Fatalf("code %d, err %v\n%s", code, err, s.out.String())
+	}
+	if strings.Contains(s.out.String(), "failed "+s.a) {
+		t.Error("the candidate was swapped over itself and failed")
+	}
+	wantLines(t, s.out.String(), "updated "+s.b)
+	if v, err := s.version(context.Background(), s.a); err != nil || v.Line != newLine {
+		t.Errorf("the candidate itself changed: %q, %v", v.Line, err)
+	}
+}
