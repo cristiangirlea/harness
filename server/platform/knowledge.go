@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,7 +20,35 @@ import (
 
 var knowledgeID = regexp.MustCompile(`^[a-z]_[0-9a-f]{32,64}$`)
 var exactWords = regexp.MustCompile(`[A-Za-z0-9_./:\\-]+`)
+var knowledgeIdentifier = regexp.MustCompile(`^[A-Za-z0-9_./:\\-]+( +[A-Za-z0-9_./:\\-]+)*$`)
+var knowledgeToken = regexp.MustCompile(`\bakia[a-z0-9]{16}\b|\beyj[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+\b`)
 var ErrRetrievalBusy = errors.New("retrieval capacity unavailable")
+
+func knowledgeQueryIdentifiers(query string) []string {
+	words := []string{}
+	seen := map[string]bool{}
+	spans := exactWords.FindAllStringIndex(query, -1)
+	for i, start := range spans {
+		for j := i; j < len(spans); j++ {
+			end := spans[j]
+			if end[1]-start[0] > retrieval.MaxIdentifierBytes {
+				break
+			}
+			if j > i && strings.Trim(query[spans[j-1][1]:end[0]], " ") != "" {
+				break
+			}
+			word := query[start[0]:end[1]]
+			// Preserve literal identifiers while also dropping sentence punctuation.
+			for _, candidate := range []string{word, strings.TrimRight(word, ".:")} {
+				if candidate != "" && !seen[candidate] {
+					seen[candidate] = true
+					words = append(words, candidate)
+				}
+			}
+		}
+	}
+	return words
+}
 
 func digestKnowledge(v any) string {
 	b, _ := json.Marshal(v)
@@ -40,22 +69,36 @@ func unsafeKnowledgeFrame(v string) bool {
 	return false
 }
 func unsafeKnowledgeSource(e retrieval.Entry) bool {
-	if unsafeKnowledgeFrame(e.Content) || unsafeKnowledgeFrame(e.Source) || unsafeKnowledgeFrame(e.Evidence) {
-		return true
-	}
-	source := strings.ToLower(strings.ReplaceAll(e.Source, `\`, "/"))
-	for _, private := range []string{".codex/auth.json", ".ssh/", ".aws/credentials", ".env", "credentials.json"} {
-		if strings.Contains(source, private) {
-			return true
-		}
-	}
-	text := strings.ToLower(e.Content)
-	for _, secret := range []string{"-----begin private key-----", "-----begin rsa private key-----", "authorization: bearer ", "ignore previous instructions", "disable permission checks"} {
-		if strings.Contains(text, secret) {
+	for _, text := range append([]string{e.ID, e.Key, e.Content, e.Source, e.Evidence}, e.Identifiers...) {
+		if unsafeKnowledgeText(text) {
 			return true
 		}
 	}
 	return false
+}
+func unsafeKnowledgeText(text string) bool {
+	if unsafeKnowledgeFrame(text) {
+		return true
+	}
+	text = strings.ToLower(strings.ReplaceAll(text, `\`, "/"))
+	for _, private := range []string{".codex/auth.json", ".ssh/", ".aws/credentials", "credentials.json"} {
+		if strings.Contains(text, private) {
+			return true
+		}
+	}
+	for _, segment := range strings.FieldsFunc(text, func(r rune) bool {
+		return r == '/' || r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '"' || r == '\'' || r == '`'
+	}) {
+		if segment == ".env" || (strings.HasPrefix(segment, ".env.") && len(segment) > len(".env.")) {
+			return true
+		}
+	}
+	for _, secret := range []string{"-----begin private key-----", "-----begin rsa private key-----", "-----begin openssh private key-----", "-----begin ec private key-----", "-----begin encrypted private key-----", "sk-ant-", "ghp_", "github_pat_", "authorization: bearer ", "ignore previous instructions", "disable permission checks"} {
+		if strings.Contains(text, secret) {
+			return true
+		}
+	}
+	return knowledgeToken.MatchString(text)
 }
 func validKnowledgeScope(s retrieval.Scope) bool {
 	return knowledgeID.MatchString(s.TenantID) && knowledgeID.MatchString(s.ProjectID) && refPattern.MatchString(s.Revision) && len(s.Backend) > 0 && len(s.Backend) <= 64 && len(s.Model) > 0 && len(s.Model) <= 128
@@ -87,6 +130,11 @@ func knowledgeProject(ctx context.Context, tx pgx.Tx, sc retrieval.Scope) error 
 }
 
 func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (string, error) {
+	for _, text := range []string{in.TenantID, in.ProjectID, in.Backend, in.Model, in.Revision, in.Origin, in.ReviewedBy, in.ReviewEvidence} {
+		if unsafeKnowledgeText(text) {
+			return "", ErrUnsupported
+		}
+	}
 	if !validKnowledgeScope(in.Scope) || in.Origin != "reviewed_source" || strings.TrimSpace(in.ReviewedBy) == "" || strings.TrimSpace(in.ReviewEvidence) == "" || len(in.ReviewedBy) > 256 || len(in.ReviewEvidence) > 2048 || unsafeKnowledgeFrame(in.ReviewEvidence) || len(in.Entries) > 100 || len(in.Entries) == 0 {
 		return "", ErrUnsupported
 	}
@@ -99,7 +147,7 @@ func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (strin
 			return "", ErrUnsupported
 		}
 		for _, id := range e.Identifiers {
-			if len(id) == 0 || len(id) > retrieval.MaxIdentifierBytes || exactWords.FindString(id) != id {
+			if len(id) == 0 || len(id) > retrieval.MaxIdentifierBytes || !knowledgeIdentifier.MatchString(id) {
 				return "", ErrUnsupported
 			}
 		}
@@ -262,7 +310,7 @@ func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retri
 func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retrieval.Packet, error) {
 	started := time.Now()
 	out := retrieval.Packet{Entries: []retrieval.Entry{}, Ranking: retrieval.RankingVersion, QueryDigest: retrieval.TextDigest(in.Query)}
-	if len(in.Query) > 2048 || len(in.RunRef) > 256 || in.Attempt < 0 || !utf8.ValidString(in.Query) {
+	if len(in.Query) > 2048 || len(in.RunRef) > 256 || in.Attempt < 0 || in.Attempt > math.MaxInt32 || !utf8.ValidString(in.Query) {
 		return out, ErrUnsupported
 	}
 	ctx, done, err := s.knowledgeContext(ctx)
@@ -291,10 +339,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 		if err = checkKnowledgeVersion(ctx, tx, in.Scope, out.VersionID); err != nil {
 			return out, err
 		}
-		words := exactWords.FindAllString(in.Query, -1)
-		if words == nil {
-			words = []string{}
-		}
+		words := knowledgeQueryIdentifiers(in.Query)
 		rows, err := tx.Query(ctx, `SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
  FROM knowledge_members m JOIN knowledge_entries e ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id)
  WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3
