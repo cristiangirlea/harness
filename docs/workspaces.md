@@ -30,6 +30,9 @@ Git commands used by slot takes and batches can also inspect worktrees outside
 that lock. If Git fails to read `.git/worktrees/<name>/commondir` while another
 worktree is being created, hrn waits 250 ms and retries the command once. Other
 errors, or a second failure, are returned as usual; cancellation stops the wait.
+These commands use `LC_ALL=C` and an empty `LANGUAGE` so the retry recognises
+Git's error text. Batch task creation (`worktree add -b`) is not retried: Git
+may already have created the branch before failing to read another worktree.
 
 Who holds a slot is a lease file beside it, `<n>.lease`:
 `{"holder": "...", "taken": "...", "branch": "..."}`. It is created so that two callers

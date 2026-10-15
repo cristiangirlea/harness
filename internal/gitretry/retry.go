@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// TestHookBeforeRetry, when non-nil, runs between attempts. Tests must set it
+// only while no other Output calls are running and restore it afterward.
+var TestHookBeforeRetry func()
+
 // Output runs a Git command, retrying once after a short pause if Git could
 // not read a worktree's commondir while another process was creating it.
 // run must create a fresh command on each call.
@@ -39,6 +43,9 @@ func Output(ctx context.Context, run func() ([]byte, error)) ([]byte, error) {
 	case <-timer.C:
 		if ctx.Err() != nil {
 			return out, ctx.Err()
+		}
+		if TestHookBeforeRetry != nil {
+			TestHookBeforeRetry()
 		}
 		return run()
 	}

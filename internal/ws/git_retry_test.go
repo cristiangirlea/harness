@@ -5,29 +5,39 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/cristiangirlea/harness/internal/gitretry"
 )
+
+func TestGitOutUsesEnglishLocale(t *testing.T) {
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+	t.Setenv("LANGUAGE", "de")
+	f := newFixture(t)
+	out, err := gitOut(context.Background(), f.repo, "-c", `alias.retry-env=!printf '%s/%s' "$LC_ALL" "$LANGUAGE"`, "retry-env")
+	if err != nil || out != "C/" {
+		t.Fatalf("output = %q, error = %v", out, err)
+	}
+}
 
 func TestSwitchRetriesWhileAnotherWorktreeIsBeingCreated(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	f := newFixture(t)
 	git(t, f.repo, "branch", "existing")
 	admin := f.halfAddedWorktree()
-	done := make(chan error, 1)
-	go func() {
-		_, err := gitOut(context.Background(), f.repo, "switch", "existing")
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		t.Fatalf("switch returned before the other worktree finished: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	oldHook := gitretry.TestHookBeforeRetry
+	t.Cleanup(func() { gitretry.TestHookBeforeRetry = oldHook })
+	retries := 0
+	gitretry.TestHookBeforeRetry = func() {
+		retries++
+		if err := os.RemoveAll(admin); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.RemoveAll(admin); err != nil {
+	if _, err := gitOut(context.Background(), f.repo, "switch", "existing"); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	if retries != 1 {
+		t.Fatalf("retries = %d, want 1", retries)
 	}
 	if got := git(t, f.repo, "symbolic-ref", "--short", "HEAD"); strings.TrimSpace(got) != "existing" {
 		t.Fatalf("branch = %q", got)

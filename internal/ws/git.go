@@ -54,7 +54,9 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	out, err := gitretry.Output(ctx, func() ([]byte, error) {
-		return gitCommand(ctx, dir, args...).CombinedOutput()
+		cmd := gitCommand(ctx, dir, args...)
+		cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANGUAGE=")
+		return cmd.CombinedOutput()
 	})
 	text := strings.TrimSpace(string(out))
 	if err != nil {
