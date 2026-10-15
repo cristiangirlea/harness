@@ -59,6 +59,30 @@ func TestFileToolsDoNotFollowAJunctionOutOfTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestAStreamSuffixOnAJunctionCannotEscapeTheWorkspace(t *testing.T) {
+	ws, tl := setup(t)
+	outside := outsideWithJunction(t, ws)
+	path := `out::$INDEX_ALLOCATION\secret.txt`
+	// Check the OS really accepts this spelling, so a refusal is not merely
+	// testing a nonexistent path on this filesystem.
+	data, err := os.ReadFile(filepath.Join(ws.Root, path))
+	if err != nil || string(data) != "outside TODO\n" {
+		t.Fatalf("read through stream-suffixed junction = %q, %v", data, err)
+	}
+	if _, err := ws.Resolve(path); err == nil {
+		t.Error("Resolve accepted a stream-suffixed junction out of the workspace")
+	}
+	if out, err := call(t, ws, tl["read_file"], map[string]any{"path": path}); err == nil {
+		t.Errorf("read_file escaped through stream-suffixed junction: %q", out)
+	}
+	if _, err := call(t, ws, tl["write_file"], map[string]any{"path": `out::$INDEX_ALLOCATION\new.txt`, "content": "x"}); err == nil {
+		t.Error("write_file escaped through stream-suffixed junction")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new.txt")); !os.IsNotExist(err) {
+		t.Errorf("outside file created or could not be checked: %v", err)
+	}
+}
+
 func TestJunctionsThatLoopLeadNowhereOrTakeTwoHopsAreJudged(t *testing.T) {
 	ws, tl := setup(t)
 	outside := outsideWithJunction(t, ws)

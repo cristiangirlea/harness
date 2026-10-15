@@ -1294,7 +1294,14 @@ func commitChanges(wt, message string) (string, error) {
 	if _, err := gitOut(ctx, wt, "add", "-A"); err != nil {
 		return "", err
 	}
-	if _, err := gitOut(ctx, wt, "commit", "-q", "-m", message); err != nil {
+	// An agent can set core.hooksPath in the shared repository config. Our
+	// commit keeps the operator's environment, so it must not run those hooks.
+	hooks, err := os.MkdirTemp("", "hrn-empty-hooks-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(hooks)
+	if _, err := gitOut(ctx, wt, "-c", "core.hooksPath="+hooks, "commit", "-q", "-m", message); err != nil {
 		return "", err
 	}
 	return gitOut(ctx, wt, "rev-parse", "HEAD")
