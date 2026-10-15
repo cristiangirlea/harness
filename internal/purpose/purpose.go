@@ -188,8 +188,9 @@ func firstNonBlankLine(prompt string) (line, rest string) {
 	return "", ""
 }
 
-// paragraphs gathers at most maxLead runes from each of the first two non-blank
-// paragraphs. CRLF, LF and bare CR end lines; whitespace-only lines separate paragraphs.
+// paragraphs gathers leading label lines and at most maxLead instruction runes
+// from each of the first two non-blank paragraphs. CRLF, LF and bare CR end lines;
+// whitespace-only lines separate paragraphs.
 func paragraphs(prompt string) []string {
 	var result []string
 	var paragraph strings.Builder
@@ -200,7 +201,7 @@ func paragraphs(prompt string) []string {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			if paragraph.Len() > 0 {
-				result = append(result, paragraph.String())
+				result = append(result, strings.TrimSuffix(paragraph.String(), "\n"))
 				if len(result) == 2 {
 					return result
 				}
@@ -214,7 +215,15 @@ func paragraphs(prompt string) []string {
 		}
 		if paragraph.Len() > 0 {
 			paragraph.WriteByte('\n')
-			runes++
+			if runes > 0 {
+				runes++
+			}
+		}
+		// Leading labels are removed by unlabel, so they do not use the
+		// instruction's budget. Error lines remain part of the instruction.
+		if runes == 0 && strings.Contains(line, ":") && !errorLine.MatchString(line) && label.MatchString(line) {
+			paragraph.WriteString(line)
+			continue
 		}
 		for _, r := range line {
 			if runes == maxLead {
@@ -228,7 +237,7 @@ func paragraphs(prompt string) []string {
 		}
 	}
 	if paragraph.Len() > 0 {
-		result = append(result, paragraph.String())
+		result = append(result, strings.TrimSuffix(paragraph.String(), "\n"))
 	}
 	return result
 }

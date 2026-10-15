@@ -146,6 +146,8 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 		{"repository line before instruction", "Repository: hrn\nImplement the purpose classifier.", "implement", "implement.build"},
 		{"repository keywords before instruction", "Repository: hrn (Go, CI on GitHub)\nImplement the purpose classifier.", "implement", "implement.build"},
 		{"context keywords before instruction", "Context: deploy notes\nExplain the classifier.", "research", "research.explain"},
+		{"labels exceed cap before instruction", strings.Repeat("Context: "+strings.Repeat("x", 80)+"\n", 8) + "Refactor the loader.", "refactor", "refactor.refactor"},
+		{"labels exceed cap before long instruction", strings.Repeat("Context: "+strings.Repeat("x", 80)+"\n", 8) + "Refactor the loader. " + strings.Repeat("X", 4<<20), "refactor", "refactor.refactor"},
 		{"instruction keeps test precedence", "Repository: hrn (CI)\nAdd a test.", "test", "test.write-tests"},
 		{"url lead stays intact", "https://example.org/x", "unknown", ""},
 		{"windows path lead stays intact", `C:\repo\x`, "unknown", ""},
@@ -277,6 +279,35 @@ func TestParagraphsBoundGathering(t *testing.T) {
 		got := paragraphs(text + "\n\nImplement it.")
 		if len(got) != 2 || len(got[0]) > maxLead*utf8.UTFMax || got[1] != "Implement it." {
 			t.Errorf("paragraphs did not bound the first paragraph and preserve the second")
+		}
+	}
+}
+
+func TestParagraphsBoundGatheringAfterLabels(t *testing.T) {
+	header := strings.Repeat("Context: "+strings.Repeat("x", 80)+"\n", 8)
+	prefix := header + "Refactor the loader. " + strings.Repeat("X", maxLead-len("Refactor the loader. "))
+	prompt := prefix + strings.Repeat("X", 4<<20)
+	if got := paragraphs(prompt); !slices.Equal(got, []string{prefix}) {
+		t.Error("paragraphs did not preserve labels and cap the instruction")
+	}
+	baseline := testing.AllocsPerRun(10, func() { paragraphs(prefix) })
+	if got := testing.AllocsPerRun(10, func() { paragraphs(prompt) }); got > baseline {
+		t.Errorf("long instruction allocated %g times, bounded prefix allocated %g", got, baseline)
+	}
+}
+
+func TestParagraphsTrimNewlineAtCap(t *testing.T) {
+	for _, prefix := range []string{"", "Hello.\n\n"} {
+		for _, suffix := range []string{"", "\n\nHello."} {
+			want := strings.Repeat("x", maxLead-1)
+			got := paragraphs(prefix + want + "\nx" + suffix)
+			index := 0
+			if prefix != "" {
+				index = 1
+			}
+			if got[index] != want {
+				t.Errorf("paragraph with prefix %q and suffix %q retained a trailing newline", prefix, suffix)
+			}
 		}
 	}
 }
