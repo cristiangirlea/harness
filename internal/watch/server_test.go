@@ -582,6 +582,10 @@ func TestTheBatchPageShowsEachTasksRunAndGates(t *testing.T) {
 				Backend: "claude", RunID: "20261010-120003-333333", Result: agent.Result{Status: agent.StatusOK, Turns: 2},
 				Gates: []batch.GateResult{{Command: "go test -count=1 ./...", ExitCode: -1, Killed: batch.KilledTimeout, Timeout: agent.Duration(15 * time.Minute), Output: "[timed out after 15m0s]", Duration: 15 * time.Minute}},
 			}}},
+			{ID: "t4", Prompt: "cut", Status: batch.StatusCanceled, Branch: "hrn/t4", Attempts: []batch.Attempt{{
+				Backend: "claude", RunID: "20261010-120004-444444", Result: agent.Result{Status: agent.StatusOK, Turns: 1},
+				Gates: []batch.GateResult{{Command: "go vet ./...", ExitCode: -1, Killed: batch.KilledCanceled, Output: "[canceled]", Duration: time.Second}},
+			}}},
 		}}
 	saveBatch(t, res)
 	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
@@ -593,13 +597,16 @@ func TestTheBatchPageShowsEachTasksRunAndGates(t *testing.T) {
 	}
 	for _, want := range []string{`href="/run/20261010-120001-111111"`, `href="/run/20261010-120002-222222"`,
 		"go vet ./...", "go test ./...", ">1<", "<details", "first line", "running", `data-stream="/stream/batch/` + res.ID,
-		`<span class="badge bad">killed after 15m0s (gate_timeout; set &#34;gate_timeout&#34; in the spec to allow more)</span>`} {
+		// The badge is short, since .badge and .num never wrap; the full text
+		// the batch tool prints is its title.
+		`<span class="badge bad" title="killed after 15m0s (gate_timeout; set &#34;gate_timeout&#34; in the spec to allow more)">killed · gate_timeout 15m0s</span>`,
+		`<span class="badge bad">canceled</span>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the batch page lacks %q", want)
 		}
 	}
-	if strings.Contains(body, ">-1<") || strings.Contains(body, ">killed<") {
-		t.Error("a timed-out gate shows only its exit code or a bare killed badge")
+	if strings.Contains(body, ">-1<") || strings.Contains(body, ">killed<") || strings.Contains(body, "in the spec to allow more</span>") {
+		t.Error("a killed gate shows only its exit code, a bare killed badge, or the full text as the badge")
 	}
 
 	if !strings.Contains(body, "--- FAIL &lt;/pre&gt;&lt;script&gt;") || strings.Contains(body, "<script>alert") {

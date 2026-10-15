@@ -158,6 +158,9 @@ support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
 for the corresponding tools.
 Remote jobs refuse enabled retrieval options until the worker can honor their
 version pin; use a local run for opted-in retrieval.
+MCP servers and `allow_dangerous` are refused at submission and again by the
+durable API run path; a stored job with either option fails with a clear result
+error before any model call.
 
 ### Project knowledge
 

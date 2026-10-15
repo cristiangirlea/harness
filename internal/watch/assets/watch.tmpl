@@ -184,7 +184,7 @@
 <thead><tr><th scope="col">Gate</th><th scope="col" class="num">Exit</th><th scope="col" class="num">Took</th></tr></thead>
 <tbody>{{range .Gates}}<tr>
 <td><code>{{.Command}}</code>{{if .Output}}<details data-key="{{.Key}}"><summary>output</summary><pre>{{.Output}}</pre>{{with .More}}<p class="more">{{.}}</p>{{end}}</details>{{end}}</td>
-<td class="num"><span class="badge {{.Class}}">{{.Exit}}</span></td>
+<td class="num"><span class="badge {{.Class}}"{{with .Title}} title="{{.}}"{{end}}>{{.Exit}}</span></td>
 <td class="num">{{.Took}}</td>
 </tr>{{end}}</tbody></table></div>
 {{else if .Running}}<p class="muted">The gates run when the agent is done.</p>{{end}}
