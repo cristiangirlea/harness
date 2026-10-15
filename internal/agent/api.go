@@ -143,12 +143,16 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, err)
 	}
 	ws.AllowDangerous = task.AllowDangerous
+	ws.ShapeTools, ws.RunDir = task.ShapeTools, task.RunDir
 	maxTurns := task.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 50
 	}
 
 	toolset := b.Tools
+	if task.ShapeTools {
+		toolset = append(append([]tools.Tool(nil), toolset...), tools.ReadOriginal())
+	}
 	if len(task.MCP) > 0 {
 		clients, extra := startMCP(ctx, task, ws.Root, emit)
 		defer func() {

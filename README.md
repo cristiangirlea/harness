@@ -1,6 +1,6 @@
 # hrn — a small agent harness
 
-Run coding tasks with Claude Code, Codex, Gemini, opencode, or hrn's own Anthropic API
+Run coding tasks with Claude Code, Codex, Gemini, opencode, agy (Antigravity), or hrn's own Anthropic API
 loop. Keep a consistent record of each run, follow its progress, and compare results —
 from one Go binary.
 
@@ -36,7 +36,7 @@ cd path/to/your/project
 hrn run -b codex --mode readonly "Explain this project and its main entry points."
 ```
 
-Use `-b claude`, `-b gemini`, `-b opencode`, or `-b api` to choose another backend.
+Use `-b claude`, `-b gemini`, `-b opencode`, `-b agy`, or `-b api` to choose another backend.
 Each uses its own login or credentials and consumes that provider's plan or API usage.
 See [backend setup and behavior](docs/backends.md).
 

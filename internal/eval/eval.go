@@ -39,6 +39,7 @@ type Spec struct {
 
 // Variant is one cell of the matrix: what to run the task set with.
 type Variant struct {
+	ShapeTools       bool   `json:"shape_tools,omitempty"`
 	Retrieval        string `json:"retrieval,omitempty"`
 	RetrievalVersion string `json:"retrieval_version,omitempty"`
 	Name             string `json:"name,omitempty"` // default: backend[-model][-effort]
@@ -138,6 +139,8 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	}
 
 	bs := spec.Spec // the batch fields carry through unchanged
+	// Shaping is the measured variant's choice, including its false value.
+	bs.ShapeTools = false
 	if bs.Worktrees == "" {
 		// Each cell keeps its own worktree until the eval is done with it.
 		bs.Worktrees = batch.WorktreesFresh
@@ -155,9 +158,10 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 		for _, v := range spec.Matrix {
 			for r := 1; r <= spec.Repeats; r++ {
 				cell := t
+				cell.ShapeTools = v.ShapeTools
 				cell.ID = fmt.Sprintf("%s.%s.%s.r%d", evalID, t.ID, v.name(), r)
 				// Pin the measured backend so purpose routing cannot change a cell.
-				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendName())
+				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
 				cell.Model = firstOf(v.Model, t.Model)
 				cell.Effort = firstOf(v.Effort, t.Effort)
 				cell.Retrieval = firstOf(v.Retrieval, t.Retrieval)

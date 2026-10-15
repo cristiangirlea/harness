@@ -14,6 +14,24 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
+func TestExpandShapeToolsVariants(t *testing.T) {
+	spec := testSpec("somewhere")
+	spec.ShapeTools = true
+	for i := range spec.Tasks {
+		spec.Tasks[i].ShapeTools = true
+	}
+	spec.Matrix = []Variant{{Name: "raw", Backend: "ev-ok"}, {Name: "shaped", Backend: "ev-ok", ShapeTools: true}}
+	bs, err := Expand(spec, "abc12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range bs.Tasks {
+		if task.ShapeTools != strings.Contains(task.ID, ".shaped.") {
+			t.Errorf("%s: ShapeTools=%v", task.ID, task.ShapeTools)
+		}
+	}
+}
+
 // Two stubs: one does the work the gate checks for, the other does nothing.
 type stub struct {
 	name  string

@@ -57,12 +57,12 @@ func FromMCP(server string, c MCPCaller) []Tool {
 				}
 				return compactJSON(in, 120)
 			},
-			Run: func(ctx context.Context, _ *Workspace, in json.RawMessage) (string, error) {
+			Run: func(ctx context.Context, ws *Workspace, in json.RawMessage) (string, error) {
 				res, err := c.CallTool(ctx, mcpName, in)
 				if err != nil {
 					return "", err
 				}
-				text := Truncate(res.Text())
+				text := ws.toolOutput(res.Text())
 				if res.IsError {
 					if text == "" {
 						text = "tool reported an error"

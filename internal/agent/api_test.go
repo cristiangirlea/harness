@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,7 +15,84 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/tools"
 )
+
+type shapeMCPOutput string
+
+func (s shapeMCPOutput) Tools() []mcp.ToolInfo {
+	return []mcp.ToolInfo{{Name: "output"}}
+}
+
+func (s shapeMCPOutput) CallTool(context.Context, string, json.RawMessage) (mcp.CallResult, error) {
+	return mcp.CallResult{Content: []mcp.Content{mcp.TextContent(string(s))}}, nil
+}
+
+func TestAPIShapingStoresAndReadsOriginal(t *testing.T) {
+	text := "count 10000\n" + strings.Repeat("working\n", 10000) + "done\n"
+	hash := sha256.Sum256([]byte(text))
+	handle := fmt.Sprintf("%x", hash)[:16]
+	fake := &fakeAPI{turns: [][]string{
+		toolTurn("output", "mcp__test__output", `{}`),
+		toolTurn("original", "read_original", fmt.Sprintf(`{"handle":%q}`, handle)),
+		textTurn("done"),
+	}}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	b := NewAPIBackend()
+	b.BaseURL, b.APIKey = srv.URL, "test"
+	b.Tools = append(b.Tools, tools.FromMCP("test", shapeMCPOutput(text))...)
+	runDir := t.TempDir()
+	var results []Event
+	res := b.Run(t.Context(), Task{Prompt: "inspect output", Dir: t.TempDir(), RunDir: runDir,
+		Options: Options{ShapeTools: true, Mode: ModeYolo}}, func(e Event) {
+		if e.Kind == EventToolResult {
+			results = append(results, e)
+		}
+	})
+	if res.Status != StatusOK || len(results) != 2 || len(fake.requests) != 3 {
+		t.Fatalf("status=%s error=%s results=%d requests=%d", res.Status, res.Error, len(results), len(fake.requests))
+	}
+	summary := fmt.Sprintf("count 10000\nworking\n[repeated 10000 times]\ndone\n\noriginal: %s (%d bytes); read_original reads it", handle, len(text))
+	if results[0].IsError || results[0].Text != summary {
+		t.Fatalf("shaped event: bytes=%d error=%v", len(results[0].Text), results[0].IsError)
+	}
+	if got := lastToolResult(t, fake.requests[1]); got["content"] != summary || got["is_error"] == true {
+		t.Fatal("next request did not carry the summary")
+	}
+	if results[1].IsError || results[1].Text != text || lastToolResult(t, fake.requests[2])["content"] != text {
+		t.Fatal("read_original did not return the whole original")
+	}
+	data, err := os.ReadFile(filepath.Join(runDir, "originals", handle+".txt"))
+	if err != nil || string(data) != text {
+		t.Fatalf("saved original changed: %v", err)
+	}
+}
+
+func TestAPIShapingToolSchemaIsOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, mode := range []Mode{ModeYolo, ModeReadOnly} {
+			_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "look", Dir: t.TempDir(),
+				Options: Options{Mode: mode, ShapeTools: enabled}})
+			var names []string
+			for _, tool := range fake.requests[0]["tools"].([]any) {
+				names = append(names, tool.(map[string]any)["name"].(string))
+			}
+			want := []string{"read_file", "list_files", "grep"}
+			if mode != ModeReadOnly {
+				want = append(want, "write_file", "edit_file", "run_command")
+			}
+			if enabled {
+				want = append(want, "read_original")
+			}
+			if !slices.Equal(names, want) {
+				t.Errorf("shape=%v mode=%s tools=%v want=%v", enabled, mode, names, want)
+			}
+		}
+	}
+}
 
 // fakeAPI replays scripted SSE turns and records each request body and headers.
 // A turn of nil answers 529 overloaded without consuming a scripted turn.
