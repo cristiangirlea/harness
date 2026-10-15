@@ -108,6 +108,9 @@ func StartDetached(exe string, args []string, stdout, stderr string) (int, error
 	defer out.Close()
 	errf := out
 	if stderr != stdout {
+		if err := os.MkdirAll(filepath.Dir(stderr), 0o755); err != nil {
+			return 0, err
+		}
 		if errf, err = os.OpenFile(stderr, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err != nil {
 			return 0, err
 		}
