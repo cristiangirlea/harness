@@ -200,6 +200,18 @@ else, gates and mode and the budgets, `lean` and `compact_window`, carries throu
 spec; cells on claude are lean unless the spec or task says `"lean": false` (see
 [Lean claude workers](backends.md#lean-claude-workers)).
 
+A variant may set `"lean": true` or `"lean": false`, overriding the task and spec.
+Omitting it preserves the task/spec setting and the claude batch default. A variant's
+`lean` field is refused if any of its cells resolves to a backend other than `claude`.
+Give variants distinct names to compare lean within one eval, for example:
+
+```json
+"matrix": [
+  {"name": "lean", "backend": "claude", "lean": true},
+  {"name": "full", "backend": "claude", "lean": false}
+]
+```
+
 Variants may set `retrieval` (`off`, `optional` or `required`) and
 `retrieval_version`. An eval record may include `retrieval_manifest` and
 `retrieval_comparison`: held-out tasks, coverage, preparation and online overhead,

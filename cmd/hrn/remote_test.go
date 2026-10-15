@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -259,4 +260,40 @@ func TestRemoteWatchReconnectsWithDurableCursor(t *testing.T) {
 	if output.String() != "{\"id\":1}\n{\"id\":2}\n" {
 		t.Fatalf("unexpected watch output %q", output.String())
 	}
+}
+
+func TestRemoteEventsWatchExitsSuccessfullyWhenJobEnds(t *testing.T) {
+	for _, kind := range []string{"succeeded", "failed", "canceled"} {
+		t.Run(kind, func(t *testing.T) {
+			tenant, project, job := remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintf(w, "id: 1\nevent: %s\ndata: {\"kind\":%q}\n\n", kind, kind)
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			}))
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperRemoteEventsWatch$", "--",
+				"events", "--tenant", tenant, "--project", project, "--watch", job)
+			cmd.Env = append(os.Environ(), "HRN_TEST_REMOTE_EVENTS_WATCH=1")
+			output, err := cmd.CombinedOutput()
+			if err != nil || ctx.Err() != nil {
+				t.Fatalf("watch process error = %v, context = %v, output = %s", err, ctx.Err(), output)
+			}
+			if want := fmt.Sprintf("{\"kind\":%q}\n", kind); string(output) != want {
+				t.Fatalf("output = %q, want %q", output, want)
+			}
+		})
+	}
+}
+
+func TestHelperRemoteEventsWatch(t *testing.T) {
+	if os.Getenv("HRN_TEST_REMOTE_EVENTS_WATCH") != "1" {
+		return
+	}
+	if err := runRemote(os.Args[3:], os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
 }

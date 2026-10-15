@@ -2,6 +2,8 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,73 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func TestVariantsOverrideLeanAndPreserveUnsetValues(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, taskLean := range []*bool{nil, agent.Bool(false), agent.Bool(true)} {
+		var spec Spec
+		if err := json.Unmarshal([]byte(`{"backend":"claude","lean":true,"matrix":[{"name":"inherit"},{"name":"lean","lean":true},{"name":"full","lean":false}],"tasks":[{"id":"one","prompt":"test"}]}`), &spec); err != nil {
+			t.Fatal(err)
+		}
+		spec.Tasks[0].Lean = taskLean
+		bs, err := Expand(spec, "abc12")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, want := range []*bool{taskLean, agent.Bool(true), agent.Bool(false)} {
+			got := bs.Tasks[i].Lean
+			if (got == nil) != (want == nil) || got != nil && want != nil && *got != *want {
+				t.Errorf("task lean %v, variant %s: lean = %v, want %v", taskLean, spec.Matrix[i].Name, got, want)
+			}
+		}
+		if !bs.IsLean() {
+			t.Error("spec lean default was lost")
+		}
+		data, err := json.Marshal(spec.Matrix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var variants []map[string]any
+		if err := json.Unmarshal(data, &variants); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := variants[0]["lean"]; present || variants[1]["lean"] != true || variants[2]["lean"] != false {
+			t.Errorf("variant lean values did not round-trip: %s", data)
+		}
+	}
+}
+
+func TestVariantLeanRequiresTheResolvedClaudeBackend(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, source := range []string{"variant", "task", "spec", "default"} {
+		for _, backend := range []string{"claude", "codex", "api", "gemini", "opencode", "agy"} {
+			for _, lean := range []bool{false, true} {
+				var spec Spec
+				if err := json.Unmarshal([]byte(`{"matrix":[{"name":"test","lean":`+fmt.Sprint(lean)+`}],"tasks":[{"id":"one","prompt":"test"}]}`), &spec); err != nil {
+					t.Fatal(err)
+				}
+				switch source {
+				case "variant":
+					spec.Matrix[0].Backend = backend
+				case "task":
+					spec.Tasks[0].Backend = backend
+				case "spec":
+					spec.Backend = backend
+				case "default":
+					backend = agent.DefaultBackendNameIn(runlog.Home())
+				}
+				_, err := Expand(spec, "abc12")
+				if backend == "claude" {
+					if err != nil {
+						t.Errorf("%s lean=%v: %v", source, lean, err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), "lean") || !strings.Contains(err.Error(), "claude") {
+					t.Errorf("%s backend=%s lean=%v: got %v, want claude-only lean error", source, backend, lean, err)
+				}
+			}
+		}
+	}
+}
 
 func TestExpandShapeToolsVariants(t *testing.T) {
 	spec := testSpec("somewhere")
