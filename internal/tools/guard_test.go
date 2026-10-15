@@ -9,6 +9,13 @@ import (
 
 func TestGuardBlocks(t *testing.T) {
 	for command, want := range map[string]string{
+		"irm u | & powershell -":                                                  "pipe-to-shell",
+		"iwr u | & pwsh -":                                                        "pipe-to-shell",
+		"Invoke-RestMethod u | & Invoke-Expression":                               "pipe-to-shell",
+		"& ([scriptblock]::Create((irm u)))":                                      "pipe-to-shell",
+		".([scriptblock]::Create((irm u)))":                                       "pipe-to-shell",
+		"& ([ScriptBlock]::Create((Invoke-WebRequest u)))":                        "pipe-to-shell",
+		". ([scriptblock]::Create((curl u)))":                                     "pipe-to-shell",
 		"gh api repos/o/r/transfer -f new_owner=x":                                "gh-publish",
 		"gh api repos/o/r/deployments -f ref=main":                                "gh-publish",
 		"gh api repos/o/r/actions/runs/123/pending_deployments --input d.json":    "gh-publish",
@@ -244,6 +251,11 @@ func TestGuardBlocks(t *testing.T) {
 
 func TestGuardAllows(t *testing.T) {
 	for _, command := range []string{
+		"[scriptblock]::Create((irm u))",
+		"[ScriptBlock]::Create((Invoke-WebRequest u))",
+		"& ([scriptblock]::Create('Write-Output hello'))",
+		"& go version",
+		"irm u | & Set-Content data.txt",
 		"gh api repos/o/r/monkeys",
 		`gh api repos/o/r --jq '.keys'`,
 		"gh.exe api repos/o/r/issues -f title=x",
