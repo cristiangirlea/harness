@@ -1671,8 +1671,120 @@ func TestGateTimeoutIsPerTask(t *testing.T) {
 	if g := quick.Attempts[0].Gates[0]; g.ExitCode == 0 || !strings.Contains(g.Output, "timed out after 1s") || g.Duration > 3*time.Second {
 		t.Errorf("gate = %+v, want it killed after the task's 1s, not the spec's 20s", g)
 	}
+	if g := quick.Attempts[0].Gates[0]; g.Killed != KilledTimeout || g.Timeout != agent.Duration(time.Second) {
+		t.Errorf("gate = %+v, want the record to say the task's 1s limit killed it", g)
+	}
 	if res.Tasks[1].Status != StatusPass {
 		t.Errorf("patient = %+v", res.Tasks[1])
+	}
+}
+
+const killedAfter1s = `killed after 1s (gate_timeout; set "gate_timeout" in the spec to allow more)`
+
+func TestGateTimeoutIsReportedAsSuchAndTellsTheRetry(t *testing.T) {
+	dir := initRepo(t)
+	res, events := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok"},
+		Gate: []string{"echo still going; sleep 5"}, GateTimeout: agent.Duration(time.Second),
+		Tasks: []Task{{ID: "slow", Prompt: "do the thing"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusFail || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	// The retry is told the limit killed the gate, not that the code failed,
+	// and the history line for the first attempt says the same.
+	second := tr.Attempts[1]
+	for _, want := range []string{"The gate command `echo still going; sleep 5` " + killedAfter1s, "still going",
+		"The gate did not fail", "time limit of 1s", "only the\noperator can raise \"gate_timeout\""} {
+		if !strings.Contains(second.Prompt, want) {
+			t.Errorf("attempt 2 prompt is missing %q:\n%s", want, second.Prompt)
+		}
+	}
+	if strings.Contains(second.Prompt, "exited -1") || !second.Continued {
+		t.Errorf("attempt 2 = continued %v, prompt:\n%s", second.Continued, second.Prompt)
+	}
+	if gates := eventTexts(events, "gate"); !strings.Contains(gates, "✗ echo still going; sleep 5 ("+killedAfter1s+")") || strings.Contains(gates, "exit -1") {
+		t.Errorf("gate events = %q", gates)
+	}
+	if got := outcomeOf(tr.Attempts[0]); got != "(gate `echo still going; sleep 5` "+killedAfter1s+")" {
+		t.Errorf("outcomeOf = %q", got)
+	}
+}
+
+func TestGateCanceledIsRecordedAsSuch(t *testing.T) {
+	dir := initRepo(t)
+	flag := filepath.ToSlash(filepath.Join(t.TempDir(), "gate.started"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			if _, err := os.Stat(flag); err == nil {
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}()
+	res, err := Run(ctx, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok"}, Gate: []string{"touch " + flag + " && sleep 30"},
+		Tasks: []Task{{ID: "cut", Prompt: "do the thing"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Tasks[0]
+	if tr.Status == StatusPass || len(tr.Attempts) != 1 || len(tr.Attempts[0].Gates) != 1 {
+		t.Fatalf("task = %+v", tr)
+	}
+	g := tr.Attempts[0].Gates[0]
+	if g.ExitCode != -1 || g.Killed != KilledCanceled || g.Timeout != 0 || !strings.HasSuffix(g.Output, "[canceled]") || g.Outcome() != "canceled" {
+		t.Errorf("gate = %+v, want it recorded as canceled", g)
+	}
+}
+
+func TestGateOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		g    GateResult
+		want string
+	}{
+		{GateResult{ExitCode: 0}, "exited 0"},
+		{GateResult{ExitCode: 3}, "exited 3"},
+		{GateResult{ExitCode: -1}, "exited -1"}, // a record from before the field, or a shell that could not start
+		{GateResult{ExitCode: -1, Killed: KilledTimeout, Timeout: agent.Duration(15 * time.Minute)}, `killed after 15m0s (gate_timeout; set "gate_timeout" in the spec to allow more)`},
+		{GateResult{ExitCode: -1, Killed: KilledCanceled}, "canceled"},
+	} {
+		if got := tc.g.Outcome(); got != tc.want {
+			t.Errorf("%+v: Outcome() = %q, want %q", tc.g, got, tc.want)
+		}
+	}
+}
+
+func TestGateResultRecordStaysLoadable(t *testing.T) {
+	// A record written before the field existed loads with it empty.
+	var old GateResult
+	if err := json.Unmarshal([]byte(`{"command":"go test ./...","exit_code":-1,"output":"[timed out after 15m0s]","duration_ns":900000000000}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.Killed != "" || old.Timeout != 0 || old.Outcome() != "exited -1" {
+		t.Errorf("old record = %+v", old)
+	}
+	// A new record carries the reason and the limit as text, and nothing when
+	// the gate exited on its own.
+	killed := GateResult{Command: "go test ./...", ExitCode: -1, Killed: KilledTimeout, Timeout: agent.Duration(15 * time.Minute)}
+	data, err := json.Marshal(killed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"killed":"timeout","timeout":"15m0s"`) {
+		t.Errorf("record = %s", data)
+	}
+	var back GateResult
+	if err := json.Unmarshal(data, &back); err != nil || back != killed {
+		t.Errorf("round trip = %+v (%v), want %+v", back, err, killed)
+	}
+	if data, _ := json.Marshal(GateResult{Command: "go vet", ExitCode: 0}); strings.Contains(string(data), "killed") || strings.Contains(string(data), "timeout") {
+		t.Errorf("a gate that exited carries the fields: %s", data)
 	}
 }
 

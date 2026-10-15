@@ -159,7 +159,11 @@ a limit the spec set.
 Each gate command gets 15 minutes before it is killed with its whole process tree;
 `gate_timeout` (e.g. `"90s"`, `"45m"`, at most `24h`) changes that on the spec or on one
 task, so a slow integration suite and a quick lint can share a batch. A killed gate fails
-with `[timed out after …]` in its output, which a retry then sees.
+with `[timed out after …]` in its output, and its record says why it was killed (`killed`,
+`"timeout"` with the `timeout` that applied, or `"canceled"` when the batch was
+interrupted), so every report of it says `killed after 15m0s (gate_timeout; set
+"gate_timeout" in the spec to allow more)` or `canceled` rather than `exited -1`. A
+retry is told the same, so it does not search the output for a failing test.
 
 The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts,
 again each time a task moves on (an attempt's run starts or ends, a gate finishes, a task
