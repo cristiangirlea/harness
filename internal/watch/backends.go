@@ -10,6 +10,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/quota"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -80,6 +81,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 type backendRow struct {
 	Name, Limit                 string
 	Installed, Enabled, Default bool
+	Quota                       []quota.Part // what is left of the plan, as last reported
 }
 
 // In public mode guard has verified the viewer before calling the handler.
@@ -117,6 +119,7 @@ func (s *server) backendsCard(w http.ResponseWriter, r *http.Request) backendCar
 		if until := limits.Until(name, now); !until.IsZero() {
 			row.Limit = "limited until " + until.Format(time.RFC3339)
 		}
+		row.Quota = quota.For(name, now).Parts(now)
 		c.Rows = append(c.Rows, row)
 	}
 	return c

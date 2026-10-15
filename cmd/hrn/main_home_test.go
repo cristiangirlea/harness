@@ -21,6 +21,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("HRN_HOME", home)
+	// The Backends card and hrn backends read codex's sessions for its quota.
+	os.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)

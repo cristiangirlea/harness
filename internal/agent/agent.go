@@ -102,7 +102,24 @@ const (
 	// EventCompaction is a compaction the backend reported: Text is what set
 	// it off (auto, manual), Usage.ContextTokens the context before it.
 	EventCompaction EventKind = "compaction"
+	// EventQuota is how much of the plan's quota the backend reported used,
+	// in Event.Quota: the numbers only.
+	EventQuota EventKind = "quota"
 )
+
+// Quota is a plan's usage per window as a backend reported it. A window the
+// report did not carry is nil.
+type Quota struct {
+	FiveHour *QuotaWindow `json:"five_hour,omitempty"`
+	Week     *QuotaWindow `json:"week,omitempty"`
+}
+
+// QuotaWindow is one window: the percent of it used, 0 to 100, and when it
+// resets, in Unix seconds.
+type QuotaWindow struct {
+	UsedPercent float64 `json:"used_percent"`
+	ResetsAt    int64   `json:"resets_at"`
+}
 
 // Usage is the tokens one model call used. ContextTokens is what that call
 // carried: its input including cache reads and writes.
@@ -123,6 +140,7 @@ type Event struct {
 	Input   json.RawMessage `json:"input,omitempty"`
 	IsError bool            `json:"is_error,omitempty"`
 	Usage   *Usage          `json:"usage,omitempty"`
+	Quota   *Quota          `json:"quota,omitempty"`
 
 	// Partial marks a streaming fragment. Renderers print it; transcripts skip it.
 	Partial bool `json:"-"`

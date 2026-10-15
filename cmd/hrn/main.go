@@ -32,6 +32,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/purpose"
+	"github.com/cristiangirlea/harness/internal/quota"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -507,6 +508,9 @@ func cmdBackends(args []string) error {
 			fmt.Printf("  ✗ %-9s %s: %s\n", name, state, err)
 		} else {
 			fmt.Printf("  ✓ %-9s %s: %s\n", name, state, src)
+			if q := quota.For(name, now).String(now); q != "" {
+				fmt.Printf("    %-9s %s\n", "", q)
+			}
 		}
 		if s := limits.Status(name, now); s != "" {
 			fmt.Printf("    %-9s %s\n", "", s)

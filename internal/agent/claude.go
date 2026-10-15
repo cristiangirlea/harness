@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -149,6 +150,15 @@ type claudeLine struct {
 		Trigger   string `json:"trigger"`
 		PreTokens int64  `json:"pre_tokens"`
 	} `json:"compact_metadata"`
+	RateLimitInfo struct {
+		RateLimitType  string   `json:"rateLimitType"`
+		Utilization    *float64 `json:"utilization"`
+		ResetsAt       int64    `json:"resetsAt"`
+		UnifiedWindows struct {
+			FiveHour *claudeWindow `json:"five_hour"`
+			SevenDay *claudeWindow `json:"seven_day"`
+		} `json:"unifiedWindows"`
+	} `json:"rate_limit_info"`
 	Result       string  `json:"result"`
 	IsError      bool    `json:"is_error"`
 	NumTurns     int     `json:"num_turns"`
@@ -238,6 +248,10 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, seen map[string
 				emit(Event{Time: now, Kind: EventToolResult, Text: contentText(c.Content), IsError: c.IsError})
 			}
 		}
+	case "rate_limit_event":
+		if q := claudeQuota(l); q != nil {
+			emit(Event{Time: now, Kind: EventQuota, Quota: q})
+		}
 	case "result":
 		res.Final = l.Result
 		res.Turns = l.NumTurns
@@ -269,6 +283,41 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, seen map[string
 	}
 	return true
 }
+
+// claudeWindow is one window of a rate_limit_event: utilization is the
+// fraction used, 0 to 1, and resetsAt is in Unix seconds.
+type claudeWindow struct {
+	Utilization float64 `json:"utilization"`
+	ResetsAt    int64   `json:"resetsAt"`
+}
+
+func (w *claudeWindow) quota() *QuotaWindow {
+	if w == nil || w.ResetsAt <= 0 || math.IsNaN(w.Utilization) || math.IsInf(w.Utilization, 0) || w.Utilization < 0 {
+		return nil
+	}
+	return &QuotaWindow{UsedPercent: math.Round(w.Utilization*10000) / 100, ResetsAt: w.ResetsAt}
+}
+
+// claudeQuota reads a rate_limit_event: its per-window figures when it carries
+// them, otherwise the one window the event itself is about.
+func claudeQuota(l claudeLine) *Quota {
+	info := l.RateLimitInfo
+	q := Quota{FiveHour: info.UnifiedWindows.FiveHour.quota(), Week: info.UnifiedWindows.SevenDay.quota()}
+	if q.FiveHour == nil && q.Week == nil && info.Utilization != nil {
+		w := &claudeWindow{Utilization: *info.Utilization, ResetsAt: info.ResetsAt}
+		switch info.RateLimitType {
+		case "five_hour":
+			q.FiveHour = w.quota()
+		case "seven_day":
+			q.Week = w.quota()
+		}
+	}
+	if q.FiveHour == nil && q.Week == nil {
+		return nil
+	}
+	return &q
+}
+
 func contentText(raw json.RawMessage) string {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {

@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"fmt"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -277,5 +278,56 @@ func TestBackendsControlsAreNotForViewersBehindAProxyOrOnTheLAN(t *testing.T) {
 				t.Fatalf("POST = %d %s, file exists = %v; want 403 and no file", w.Code, w.Body, err == nil)
 			}
 		})
+	}
+}
+
+func TestBackendsCardShowsEachPlanBackendsQuotaMarkingLowAndStaleWindows(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	now := time.Now()
+	day := filepath.Join(codexHome, "sessions", now.Format("2006"), now.Format("01"), now.Format("02"))
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codex := fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":95,"window_minutes":10080,"resets_at":%d},"secondary":{"used_percent":20,"window_minutes":300,"resets_at":%d}}}}`+"\n",
+		now.UTC().Format(time.RFC3339Nano), now.Add(50*time.Hour).Unix(), now.Add(-5*time.Minute).Unix())
+	if err := os.WriteFile(filepath.Join(day, "rollout-card.jsonl"), []byte(codex), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := filepath.Join(runlog.Root(), "20261015-120000-abcdef")
+	if err := os.MkdirAll(run, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(run, "task.json"), []byte(`{"id":"20261015-120000-abcdef","backend":"claude"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	claude := fmt.Sprintf(`{"t":%q,"kind":"quota","quota":{"five_hour":{"used_percent":38,"resets_at":%d},"week":{"used_percent":20,"resets_at":%d}}}`+"\n",
+		now.Format(time.RFC3339Nano), now.Add(72*time.Minute+30*time.Second).Unix(), now.Add(76*time.Hour+30*time.Minute).Unix())
+	if err := os.WriteFile(filepath.Join(run, "events.jsonl"), []byte(claude), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	card := backendCardHTML(t, backendRequest(New(context.Background(), Options{}), "GET", "/", "127.0.0.1:1234", "127.0.0.1:8089", "", "", ""))
+	row := func(name string) string {
+		_, r, ok := strings.Cut(card, `data-backend="`+name+`"`)
+		if !ok {
+			t.Fatalf("no %s row: %s", name, card)
+		}
+		r, _, _ = strings.Cut(r, "</tr>")
+		return html.UnescapeString(r)
+	}
+	if r := row("claude"); !strings.Contains(r, "5h: 62% left, resets in 1h 12m") || !strings.Contains(r, "week: 80% left, resets in 3d 4h") || strings.Contains(r, "quota-low") || strings.Contains(r, "quota-stale") {
+		t.Fatalf("claude row = %s", r)
+	}
+	r := row("codex")
+	if !strings.Contains(r, `class="quota-low">week: 5% left, resets in 2d 1h`) && !strings.Contains(r, `class="quota-low">week: 5% left, resets in 2d 2h`) {
+		t.Fatalf("codex row has no low weekly window: %s", r)
+	}
+	if !strings.Contains(r, `class="quota-stale">5h: 80% left before its reset 5m ago (stale)`) {
+		t.Fatalf("codex row has no stale five-hour window: %s", r)
+	}
+	if r := row("gemini"); strings.Contains(r, "left") {
+		t.Fatalf("gemini has no plan quota to show: %s", r)
 	}
 }
