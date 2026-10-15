@@ -5,7 +5,8 @@ import (
 	"math"
 )
 
-// UsageMetadata disambiguates provider counters without changing old records.
+// UsageMetadata describes the run-level token and cost accounting in Result.Usage.
+// Usage in Event.Usage holds per-call token counters instead.
 // Empty metadata on historical records is inferred only for known adapters.
 type UsageMetadata struct {
 	InputSemantics string `json:"input_semantics"`       // inclusive_cache or exclusive_cache
