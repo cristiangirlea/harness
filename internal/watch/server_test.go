@@ -656,6 +656,45 @@ func TestTheIndexListsRunsAndBatchesNewestFirst(t *testing.T) {
 	assertEscaped(t, "the index", body)
 }
 
+func TestTheIndexStreamSendsANewRunAfterItsFirstReplace(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	srv := httptest.NewServer(New(ctx, Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	s, stop := openStream(t, srv.URL+"/stream/index", "")
+	defer stop()
+
+	first, ok := s.next(t)
+	if !ok || first.event != "replace" || strings.Contains(first.data, `href="/run/`) {
+		t.Fatalf("first message = %+v, %v; want an index without runs", first, ok)
+	}
+	// Create the run only after the first fragment has arrived, so only a
+	// later poll on this same connection can show it.
+	const prompt = "a run created after the index stream opened"
+	w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(agent.Result{})
+	for {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatalf("index stream ended before a later replace showed run %s (context: %v)", w.ID(), ctx.Err())
+		}
+		if m.event != "replace" {
+			t.Fatalf("later message = %+v; want replace", m)
+		}
+		if !strings.Contains(m.data, `href="/run/`+w.ID()+`"`) {
+			continue // A poll may have rendered before the new record was readable.
+		}
+		if row := runRowOf(t, m.data, w.ID()); !strings.Contains(row, prompt) {
+			t.Fatalf("later replace lacks the new run's prompt: %s", row)
+		}
+		break
+	}
+}
+
 // runRowOf is the index row of one run: from its link to the end of the row.
 func runRowOf(t *testing.T, body, id string) string {
 	t.Helper()

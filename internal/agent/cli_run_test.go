@@ -30,6 +30,20 @@ func TestHelperCLIError(t *testing.T) {
 		fmt.Println(`{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 16th, 2099 3:29 PM."}`)
 		fmt.Println(`{"type":"turn.failed","error":{"message":""}}`)
 		os.Exit(1)
+	case "codexreconnect", "codexreconnectend":
+		// What codex printed in run 20261014-180728-7102ef: a dropped model
+		// stream is an error line the CLI retries by itself, and the turn
+		// went on to complete. "codexreconnectend" stops at the notice.
+		fmt.Println(`{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000002"}`)
+		fmt.Println(`{"type":"item.started","item":{"type":"command_execution","command":"go test ./..."}}`)
+		fmt.Println(`{"type":"item.completed","item":{"type":"command_execution","command":"go test ./...","aggregated_output":"ok\n","exit_code":0}}`)
+		fmt.Println(`{"type":"error","message":"Reconnecting... 2/5 (We’re currently experiencing high demand, which may cause temporary errors.)"}`)
+		if os.Getenv("HRN_CLI_HELPER") == "codexreconnectend" {
+			os.Exit(0)
+		}
+		fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"done"}}`)
+		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`)
+		os.Exit(0)
 	case "claudelimit":
 		// The test picks the reset time, so the run does not depend on the hour.
 		msg, _ := json.Marshal(os.Getenv("HRN_CLI_LIMIT_MSG"))
@@ -281,6 +295,38 @@ func TestCodexReportsItsUsageLimitAsLimited(t *testing.T) {
 	// the time is not believed, but the message itself is kept.
 	if !strings.Contains(res.Error, "hit your usage limit") {
 		t.Errorf("error = %q, want codex's own message rather than the exit status", res.Error)
+	}
+}
+
+func TestCodexATurnThatCompletesAfterAReconnectNoticeIsOK(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "codexreconnect")
+	var notices, errs []string
+	res := helperCLI(parseCodexStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(e Event) {
+		switch {
+		case e.Kind == EventError:
+			errs = append(errs, e.Text)
+		case e.Kind == EventInfo && strings.HasPrefix(e.Text, "Reconnecting..."):
+			notices = append(notices, e.Text)
+		}
+	})
+	if res.Status != StatusOK || res.Error != "" || res.Final != "done" {
+		t.Fatalf("status %s, error %q, final %q: the CLI retried its model stream and the turn completed", res.Status, res.Error, res.Final)
+	}
+	if res.Usage == nil || res.Usage.Status != "reported" || res.InputTokens != 10 || res.CacheRead != 4 || res.OutputTokens != 2 {
+		t.Errorf("usage %+v, tokens %d/%d/%d: the notice must not lose the turn's counters", res.Usage, res.InputTokens, res.CacheRead, res.OutputTokens)
+	}
+	if len(errs) != 0 || len(notices) != 1 {
+		t.Errorf("error events %q, notices %q: the notice is an info event and no error", errs, notices)
+	}
+}
+
+func TestCodexAStreamThatEndsOnAReconnectNoticeIsAnError(t *testing.T) {
+	// The CLI exits clean with no turn.completed: the notice is the only word
+	// on why the turn never finished.
+	t.Setenv("HRN_CLI_HELPER", "codexreconnectend")
+	res := helperCLI(parseCodexStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
+	if res.Status != StatusError || !strings.HasPrefix(res.Error, "Reconnecting...") {
+		t.Fatalf("status %s, error %q: a turn that never completed after the notice failed", res.Status, res.Error)
 	}
 }
 

@@ -700,12 +700,17 @@ order they are worth taking:
       PR #313, 2026-10-14. #264 done: PR #321, 2026-10-14.
     - [#296](https://github.com/cristiangirlea/harness/issues/296): large tool results shaped
       per kind (tests, logs, JSON, tables, terminal), the original kept behind a handle,
-      invariants checked, measured by an eval in hrn-evals.
+      invariants checked, measured by an eval in hrn-evals. Done: PR #335, 2026-10-14, for
+      terminal, log and test output, off by default; the eval and its run wait for the owner.
     - [#297](https://github.com/cristiangirlea/harness/issues/297): a routing table from eval
       results (purpose to backend, model and effort), applied when a run names none and
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
       local models once a hrn-evals suite has measured them (the eval #224 asks for). Done:
-      PR #329, 2026-10-14, without the first table: that eval run waits for the owner.
+      PR #329, 2026-10-14. The first table: hrn-evals eval `b123c` (six tasks, four codex
+      variants, one repeat), five rows, all Luna since codex reports no cost data and the
+      rules then take the lower effort; recorded in hrn-evals PR #11
+      (`results/2026-10-14-routing.md`). The claude rows and three repetitions follow the
+      limit reset of 2026-10-18, on the owner's yes.
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
       CI-verified index for the scripts agents write twice, kept under `scripts/`. Done:
       PR #317, 2026-10-14.
@@ -721,6 +726,36 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-14: A Backends card on hrn watch (#346, PR #373). Every viewer sees backend availability, preferences and remembered limits; loopback and Access-verified public viewers can save preferences using a fresh startup key. Changes atomically replace backends.json for later runs, while LAN viewers remain read-only and running MCP servers keep their backend enum until their host restarts them.
+- 2026-10-14: codex usage totals cannot wrap (#152, PR #370). Check each turn's
+  counters before adding them and mark usage missing on overflow, retaining the
+  last representable totals. Later turns cannot restore reported usage.
+- 2026-10-14: Backend preferences (#345, PR #371). `backends.json` stores the enabled names in preference order and an optional default, with no record changes and unchanged selection when absent. Runs, MCP, batch retries, evals and supervisor execution respect the preference; routing skips disabled rows and carry-on uses an enabled installed partner.
+- 2026-10-14: An agy backend (#344, PR #369). Antigravity's CLI receives the prompt
+  as stream-json on stdin, maps modes/model/effort, and records streamed text, result
+  usage and conversation IDs using a parser per run. Continuation uses `--conversation`
+  in place through the existing session hook; no usage-limit wording is guessed.
+- 2026-10-14: watch matches quoted program path delimiters (#237, PR #363). Only the
+  matching quote ends a quoted program path, so apostrophes in double-quoted Windows
+  folder names survive the scan, including JSON-escaped text. In single quotes a
+  double quote that no backslash escapes still ends the scan, since in JSON text it
+  closes the string. Unquoted delimiters and the line-end and input-end bounds stay.
+- 2026-10-14: index stream sends later changes (#66, PR #362). Test a new run
+  appearing in a later replace on the same connection, after reading the first
+  fragment, with a short poll interval and a generous deadline. Suppressing every
+  replace after the first makes the test fail; production code is unchanged.
+- 2026-10-14: CI skips a Markdown-only change (#341, PR #353). Owner's request: a change
+  touching only documentation Markdown (an allowlist: top-level `*.md` but AGENTS.md, `docs/`,
+  the server READMEs) runs no build or test. The required `test` jobs still report, skipping
+  their steps, so the ruleset's checks pass.
+- 2026-10-14: a codex reconnect notice is not the run's error (#342, PR #343). `Reconnecting...
+  n/5` is the CLI retrying its model stream: an `info` event that stands as the error only until
+  the turn completes, so a run whose work finished is `ok` with its usage, and a stream that
+  ends on the notice still reports it.
+- 2026-10-14: a take stopped by its context says so (#257, PR #339). The git commands
+  before the create lock run under the take's context, so on a loaded machine its deadline
+  could kill one and the take reported a broken repository. Decided: `ws.Take` wraps any
+  error with the context's once the context has ended, keeping both for `errors.Is`/`As`.
 - 2026-10-14: purpose reads past labels and context (#118, PR #319). Leading label
   lines are skipped, a final label contributes its value, and the second non-blank
   paragraph is tried only when the first matches no rule, with the cap applied to each.
@@ -2208,3 +2243,14 @@ neither of them follows a run while it happens.
   (usage events, else result totals; codex input already holds its cached tokens). Left open
   as #328: interpreter groups in the table, the verifier and subdirectories, cache writes in
   the denominator, the shape of `go test -json`.
+- 2026-10-14: PR #335 (closes #296): large tool results shaped. `internal/shape` summarises
+  terminal, log and test output (the shapes #295's page ranks first; JSON and tabular are 0.3%
+  of the bytes and wait for their own issue), and a summary replaces the cut only when its
+  invariants hold against the original (numbers, negations, error strings, paths, every
+  failing test with its own diagnostics in order), else the head-and-tail cut as before. The
+  original is kept whole under the run's `originals/` behind a hash handle that `read_original`
+  reads back, read-only. All of it is behind `--shape-tools` (`shape_tools` on a run, batch
+  task, MCP run or eval variant), off by default: the issue says on by default only once the
+  hrn-evals eval shows it pays, and that run spends plan quota, so it waits for the owner's
+  word, with the suite as a slice of its own in hrn-evals. With the flag off the tool schema
+  and every byte of behaviour are as before.

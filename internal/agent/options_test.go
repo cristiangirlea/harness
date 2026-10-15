@@ -11,6 +11,28 @@ import (
 	"time"
 )
 
+func TestShapeToolsOption(t *testing.T) {
+	var o Options
+	if err := json.Unmarshal([]byte(`{}`), &o); err != nil || o.ShapeTools {
+		t.Fatal("old records must leave shaping off")
+	}
+	fs := flag.NewFlagSet("shape", flag.ContinueOnError)
+	BindFlags(fs, &o)
+	if err := fs.Parse([]string{"--shape-tools"}); err != nil || !o.ShapeTools {
+		t.Fatalf("shape flag: %v", err)
+	}
+	b, err := json.Marshal(o)
+	if err != nil || !strings.Contains(string(b), `"shape_tools":true`) {
+		t.Fatalf("record: %s %v", b, err)
+	}
+	if b, err := json.Marshal(Options{}); err != nil || strings.Contains(string(b), "shape_tools") {
+		t.Fatalf("default record: %s %v", b, err)
+	}
+	if !(Options{}).Over(o).ShapeTools {
+		t.Fatal("batch option did not inherit")
+	}
+}
+
 // Every option must be settable from every entry point. The flags and the MCP
 // schema are derived from the struct, so this test is what makes forgetting
 // one impossible rather than merely unlikely.
