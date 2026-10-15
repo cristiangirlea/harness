@@ -1693,7 +1693,8 @@ func TestGateTimeoutIsReportedAsSuchAndTellsTheRetry(t *testing.T) {
 	// The retry is told the limit killed the gate, not that the code failed,
 	// and the history line for the first attempt says the same.
 	second := tr.Attempts[1]
-	for _, want := range []string{"The gate command `echo still going; sleep 10` was killed after 2s by gate_timeout.", "still going",
+	for _, want := range []string{"did not pass its gate. Its changes\nare already applied", "Build on\nthem rather than starting over",
+		"The gate command `echo still going; sleep 10` was killed after 2s by gate_timeout.", "still going",
 		"The gate did not fail", "time limit of 2s", "a failure it shows from before the kill still needs fixing",
 		"only the operator\ncan raise \"gate_timeout\""} {
 		if !strings.Contains(second.Prompt, want) {
