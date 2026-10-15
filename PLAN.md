@@ -719,6 +719,22 @@ order they are worth taking:
     The gate side lives in adanext-exec (output shaping, and the hint when a kept script covers
     a command: adanext-exec #1 and #2); the rule for claiming a saving and the page of where
     each model loses live in hrn-evals (#3 and #4).
+    Second round (the owner, 2026-10-16: follow the more mature patterns where they beat ours),
+    each its own PR, in this order:
+    - [#436](https://github.com/cristiangirlea/harness/issues/436): adversarial probes and a fuzz
+      target for the summary invariants, before shaping runs by default.
+    - [#437](https://github.com/cristiangirlea/harness/issues/437): a bounded originals store
+      that refuses rather than evicts, and `read_original` by line range or JSON pointer;
+      with [#337](https://github.com/cristiangirlea/harness/issues/337).
+    - [#336](https://github.com/cristiangirlea/harness/issues/336): JSON and tabular summaries.
+    - [#435](https://github.com/cristiangirlea/harness/issues/435): hrn owns the terminal for
+      every backend, so shaped output reaches claude, codex and agy runs too.
+    - [#439](https://github.com/cristiangirlea/harness/issues/439): an advisory hook that names a
+      kept script covering a command, until the gate does it (adanext-exec #2).
+    - [#438](https://github.com/cristiangirlea/harness/issues/438): measure what tool definitions
+      cost per api turn, and trim them only if it pays.
+    - hrn-evals #30: a routing suite of real tasks, two or more per purpose, with multi-step
+      requirements, so the table rests on more than ten small fixtures.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
