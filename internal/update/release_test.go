@@ -172,3 +172,38 @@ func TestFetchReleaseReportsAnAPIFailure(t *testing.T) {
 		t.Fatalf("err = %v; want the status", err)
 	}
 }
+
+func TestFetchReleaseRefusesAssetsOffGitHubAndKeepsTheTokenForTheAPI(t *testing.T) {
+	for _, u := range []string{"http://203.0.113.9/hrn_0.2.0_windows_amd64.exe", "https://evil.example/hrn_0.2.0_windows_amd64.exe", "ftp://github.com/x"} {
+		var auth []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth = append(auth, r.Header.Get("Authorization"))
+			json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0", "assets": []map[string]any{
+				{"name": "hrn_0.2.0_windows_amd64.exe", "browser_download_url": u},
+				{"name": "SHA256SUMS", "browser_download_url": u + ".sums"},
+			}})
+		}))
+		src := ReleaseSource{API: srv.URL + "/latest", Client: srv.Client(), GOOS: "windows", GOARCH: "amd64", Token: "ghp_secret123"}
+		_, _, err := src.Fetch(context.Background(), t.TempDir())
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "not a GitHub") {
+			t.Fatalf("%s: err = %v; want a refusal naming GitHub", u, err)
+		}
+		if len(auth) != 1 || auth[0] != "Bearer ghp_secret123" {
+			t.Fatalf("%s: Authorization headers %q; want one, on the API call only", u, auth)
+		}
+	}
+}
+
+func TestFetchReleaseSendsNoTokenToTheAssetHost(t *testing.T) {
+	binary := []byte("binary bytes")
+	sum := sha256.Sum256(binary)
+	srv, auth := fakeGitHub(t, binary, hex.EncodeToString(sum[:])+"  hrn_0.2.0_windows_amd64.exe\n")
+	src := ReleaseSource{API: srv.URL + "/repos/cristiangirlea/harness/releases/latest", Client: srv.Client(), GOOS: "windows", GOARCH: "amd64", Token: "ghp_secret123"}
+	if _, _, err := src.Fetch(context.Background(), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if len(*auth) != 3 || (*auth)[0] != "Bearer ghp_secret123" || (*auth)[1] != "" || (*auth)[2] != "" {
+		t.Fatalf("Authorization headers %q; want the bearer on the API call and none on the two downloads", *auth)
+	}
+}

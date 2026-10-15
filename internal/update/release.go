@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,8 +66,8 @@ func VerifyChecksum(sums []byte, name string, data []byte) error {
 
 // ReleaseSource fetches the newest GitHub release's binary for one platform.
 // Client and API are set by tests; the zero values mean GitHub over the
-// default client. Token, when set, goes into the Authorization header and
-// nowhere else.
+// default client. Token, when set, goes into the Authorization header of
+// the API call and nowhere else.
 type ReleaseSource struct {
 	API    string
 	Client *http.Client
@@ -100,7 +101,7 @@ func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string,
 	if goarch == "" {
 		goarch = runtime.GOARCH
 	}
-	body, err := s.get(ctx, client, api, "application/vnd.github+json")
+	body, err := s.get(ctx, client, api, "application/vnd.github+json", true)
 	if err != nil {
 		return "", "", fmt.Errorf("latest release: %w", err)
 	}
@@ -127,11 +128,16 @@ func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string,
 	if sumsURL == "" {
 		return "", "", fmt.Errorf("release %s has no SHA256SUMS", doc.TagName)
 	}
-	sums, err := s.get(ctx, client, sumsURL, "application/octet-stream")
+	for _, u := range []string{sumsURL, binURL} {
+		if err := assetURLAllowed(api, u); err != nil {
+			return "", "", err
+		}
+	}
+	sums, err := s.get(ctx, client, sumsURL, "application/octet-stream", false)
 	if err != nil {
 		return "", "", fmt.Errorf("SHA256SUMS: %w", err)
 	}
-	data, err := s.get(ctx, client, binURL, "application/octet-stream")
+	data, err := s.get(ctx, client, binURL, "application/octet-stream", false)
 	if err != nil {
 		return "", "", fmt.Errorf("%s: %w", name, err)
 	}
@@ -145,17 +151,40 @@ func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string,
 	return path, doc.TagName, nil
 }
 
-// get reads one URL whole. The token is sent on every request: the release
-// assets redirect to a CDN that ignores it, the API needs it for a private
-// repository or a tight rate limit.
-func (s ReleaseSource) get(ctx context.Context, client *http.Client, url, accept string) ([]byte, error) {
+// assetURLAllowed keeps downloads on GitHub: an asset URL the API named must
+// share the API's host (tests), or be https on github.com or
+// githubusercontent.com. Anything else could be a tampered response.
+func assetURLAllowed(api, asset string) error {
+	a, err := url.Parse(api)
+	if err != nil {
+		return err
+	}
+	u, err := url.Parse(asset)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("asset %q is not a GitHub URL", asset)
+	}
+	if u.Host == a.Host && u.Scheme == a.Scheme {
+		return nil
+	}
+	host := strings.ToLower(u.Hostname())
+	github := host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".githubusercontent.com")
+	if u.Scheme != "https" || !github {
+		return fmt.Errorf("asset %q is not a GitHub URL over https", asset)
+	}
+	return nil
+}
+
+// get reads one URL whole. The token goes to the API call only, where a
+// private repository or a tight rate limit needs it; the asset downloads
+// are on a CDN that must never see it.
+func (s ReleaseSource) get(ctx context.Context, client *http.Client, url, accept string, withToken bool) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", "hrn-update")
-	if s.Token != "" {
+	if withToken && s.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+s.Token)
 	}
 	resp, err := client.Do(req)
