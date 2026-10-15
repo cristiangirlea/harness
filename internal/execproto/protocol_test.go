@@ -398,7 +398,8 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	}}})
 	// Recorded as hrn records a run's directory: in long names, where the
 	// temp dir can be spelt in short ones (the Windows runner's is).
-	dir, err := filepath.EvalSymlinks(t.TempDir())
+	rawDir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(rawDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +412,7 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	}
 	h := openHarness(t, nil)
 	h.next(t, "hello")
-	req := start(dir, "fake-exec")
+	req := start(rawDir, "fake-exec")
 	req["task"].(map[string]any)["continue_run_id"] = prev.ID()
 	h.send(t, req)
 	msg := h.next(t, "accepted")
@@ -422,7 +423,7 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	h.next(t, "result")
 	h.exit(t, 0)
 	rec, err := runlog.Load(msg["run_id"].(string))
-	if err != nil || rec.Continues != prev.ID() {
+	if err != nil || rec.Continues != prev.ID() || rec.Task.Dir != dir {
 		t.Fatalf("bad continuation record: %+v %v", rec, err)
 	}
 }
@@ -435,7 +436,11 @@ func TestContinuationWarnsInAcceptedNotesAndRecordsOneInfoEventOnlyAboveTheThres
 			name := registerFake(t, func(context.Context, agent.Task, func(agent.Event)) agent.Result {
 				return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
 			})
-			dir := t.TempDir()
+			rawDir := t.TempDir()
+			dir, err := filepath.EvalSymlinks(rawDir)
+			if err != nil {
+				t.Fatal(err)
+			}
 			prev, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: dir})
 			if err != nil {
 				t.Fatal(err)
@@ -448,7 +453,7 @@ func TestContinuationWarnsInAcceptedNotesAndRecordsOneInfoEventOnlyAboveTheThres
 			}
 			h := openHarness(t, nil)
 			h.next(t, "hello")
-			req := start(dir, name)
+			req := start(rawDir, name)
 			req["task"].(map[string]any)["continue_run_id"] = prev.ID()
 			h.send(t, req)
 			accepted := h.next(t, "accepted")
