@@ -541,11 +541,10 @@ const (
 	// A killed gate says nothing about the code: the retry is told so, or it
 	// hunts the output for a failing test that is not there.
 	gateTimeoutContext = "\nThe gate did not fail: hrn killed it when its time limit of %s ran out, so its\n" +
-		"output above is incomplete and names no failing test. The command must finish within\n" +
-		"that limit; make it faster, or leave it and say so in your answer, since only the\n" +
-		"operator can raise \"gate_timeout\" in the batch spec.\n"
-	gateCanceledContext = "\nThe gate did not fail: it was canceled before it finished, so its output above is\n" +
-		"incomplete and says nothing about the code.\n"
+		"output above is incomplete; a failure it shows from before the kill still needs fixing,\n" +
+		"but do not search it for one that is not there. The command must finish within that\n" +
+		"limit; make it faster, or leave it and say so in your answer, since only the operator\n" +
+		"can raise \"gate_timeout\" in the batch spec.\n"
 	runFailureContext = "\n\n---\n" +
 		"A previous attempt on %s ended with %s: %s\n" +
 		"This workspace is a fresh copy; nothing from that attempt is in it.\n"
@@ -571,11 +570,8 @@ func retryContext(attempts []Attempt) (text string, continued bool) {
 	case last.Result.Status == agent.StatusOK && g != nil:
 		f := fence(g.Output)
 		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.Outcome(), f, g.Output, f)
-		switch g.Killed {
-		case KilledTimeout:
+		if g.Killed == KilledTimeout {
 			text += fmt.Sprintf(gateTimeoutContext, g.Timeout)
-		case KilledCanceled:
-			text += gateCanceledContext
 		}
 		continued = true
 	case last.Result.Status == agent.StatusLimited:
@@ -1253,9 +1249,10 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 	case err != nil:
 		gr.ExitCode = -1
 		gr.Output = strings.TrimSpace(gr.Output + "\n" + err.Error())
-	case ctx.Err() != nil:
-		// The batch's own context ended: the gate went with it, whatever the
-		// per-gate limit was.
+	case gr.ExitCode == -1 && ctx.Err() != nil:
+		// The batch's own context ended and the gate went with it, whatever
+		// the per-gate limit was. A gate that finished just before keeps its
+		// exit code: Killed is only ever set beside -1.
 		gr.Killed = KilledCanceled
 		gr.Output = strings.TrimSpace(gr.Output + "\n[canceled]")
 	case res.TimedOut:

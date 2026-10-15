@@ -1679,12 +1679,12 @@ func TestGateTimeoutIsPerTask(t *testing.T) {
 	}
 }
 
-const killedAfter1s = `killed after 1s (gate_timeout; set "gate_timeout" in the spec to allow more)`
+const killedAfter2s = `killed after 2s (gate_timeout; set "gate_timeout" in the spec to allow more)`
 
 func TestGateTimeoutIsReportedAsSuchAndTellsTheRetry(t *testing.T) {
 	dir := initRepo(t)
 	res, events := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok"},
-		Gate: []string{"echo still going; sleep 5"}, GateTimeout: agent.Duration(time.Second),
+		Gate: []string{"echo still going; sleep 10"}, GateTimeout: agent.Duration(2 * time.Second),
 		Tasks: []Task{{ID: "slow", Prompt: "do the thing"}}})
 	tr := res.Tasks[0]
 	if tr.Status != StatusFail || len(tr.Attempts) != 2 {
@@ -1693,8 +1693,9 @@ func TestGateTimeoutIsReportedAsSuchAndTellsTheRetry(t *testing.T) {
 	// The retry is told the limit killed the gate, not that the code failed,
 	// and the history line for the first attempt says the same.
 	second := tr.Attempts[1]
-	for _, want := range []string{"The gate command `echo still going; sleep 5` " + killedAfter1s, "still going",
-		"The gate did not fail", "time limit of 1s", "only the\noperator can raise \"gate_timeout\""} {
+	for _, want := range []string{"The gate command `echo still going; sleep 10` " + killedAfter2s, "still going",
+		"The gate did not fail", "time limit of 2s", "a failure it shows from before the kill still needs fixing",
+		"only the operator\ncan raise \"gate_timeout\""} {
 		if !strings.Contains(second.Prompt, want) {
 			t.Errorf("attempt 2 prompt is missing %q:\n%s", want, second.Prompt)
 		}
@@ -1702,10 +1703,10 @@ func TestGateTimeoutIsReportedAsSuchAndTellsTheRetry(t *testing.T) {
 	if strings.Contains(second.Prompt, "exited -1") || !second.Continued {
 		t.Errorf("attempt 2 = continued %v, prompt:\n%s", second.Continued, second.Prompt)
 	}
-	if gates := eventTexts(events, "gate"); !strings.Contains(gates, "✗ echo still going; sleep 5 ("+killedAfter1s+")") || strings.Contains(gates, "exit -1") {
+	if gates := eventTexts(events, "gate"); !strings.Contains(gates, "✗ echo still going; sleep 10 ("+killedAfter2s+")") || strings.Contains(gates, "exit -1") {
 		t.Errorf("gate events = %q", gates)
 	}
-	if got := outcomeOf(tr.Attempts[0]); got != "(gate `echo still going; sleep 5` "+killedAfter1s+")" {
+	if got := outcomeOf(tr.Attempts[0]); got != "(gate `echo still going; sleep 10` "+killedAfter2s+")" {
 		t.Errorf("outcomeOf = %q", got)
 	}
 }
