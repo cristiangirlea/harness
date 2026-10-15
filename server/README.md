@@ -14,6 +14,10 @@ or native CLI execution. It does not fetch the registered repository or provide
 an isolation boundary. Its workspace manifests detect identity drift; they do
 not make filesystem changes and database checkpoints atomic.
 
+Both submission and the durable API run path refuse MCP servers and
+`allow_dangerous`. A stored job that bypassed submission with either option
+finishes as `failed`, with the refusal in its result, before any model call.
+
 ## Local checks
 
 Run from `server/`:
@@ -39,7 +43,11 @@ schemas. Stop the fixture with `docker compose -f server/compose.dev.yaml down`.
 For a private local control service, set `HRN_DATABASE_URL` and distinct random
 `HRN_OPERATOR_TOKEN` and `HRN_SCALER_TOKEN` values of at least 32 characters.
 Run `go run ./cmd/hrn-server migrate`, then `go run ./cmd/hrn-server serve`
-from `server/`. The default address is `127.0.0.1:8088`. Run
+from `server/`. The default `HRN_LISTEN` address is `127.0.0.1:8088`.
+Without TLS, only loopback IP literals (`127.0.0.0/8` or `::1`, for example
+`[::1]:8088`) are allowed. Host names (including `localhost`), empty hosts
+such as `:8088`, and non-loopback addresses require both `HRN_TLS_CERT_FILE`
+and `HRN_TLS_KEY_FILE`; otherwise startup is refused before listening. Run
 `go run ./cmd/hrn-fixture-model` for the local model and configure the worker
 with `HRN_CONTROL_URL`, `HRN_FIXTURE_API_URL`, `HRN_PROJECT_ID`,
 `HRN_WORKER_TOKEN`, and an existing absolute `HRN_WORKSPACE_ROOT`. The worker

@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
 )
 
 // writer writes <first word of the prompt>.txt, so two tasks never touch the
@@ -161,3 +163,26 @@ func TestDecodeSpecResolvesDirAgainstTheWorkspace(t *testing.T) {
 }
 
 func quote(s string) string { return `"` + strings.ReplaceAll(s, `\`, `\\`) + `"` }
+
+func TestBatchReportsAKilledGateAsSuch(t *testing.T) {
+	timedOut := batch.GateResult{Command: "go test -count=1 ./...", ExitCode: -1, Killed: batch.KilledTimeout, Timeout: agent.Duration(15 * time.Minute), Output: "[timed out after 15m0s]"}
+	canceled := batch.GateResult{Command: "go vet ./...", ExitCode: -1, Killed: batch.KilledCanceled}
+	res := batch.Result{ID: "20261014-180529-f2b9c8", Tasks: []batch.TaskResult{
+		{ID: "slow", Status: batch.StatusFail, Attempts: []batch.Attempt{{Backend: "claude", Result: agent.Result{Status: agent.StatusOK}, Gates: []batch.GateResult{timedOut}}}},
+		{ID: "cut", Status: batch.StatusCanceled, Attempts: []batch.Attempt{{Backend: "codex", Result: agent.Result{Status: agent.StatusOK}, Gates: []batch.GateResult{canceled}}}},
+	}}
+	const timeoutLine = "gate `go test -count=1 ./...` killed after 15m0s (gate_timeout; set \"gate_timeout\" in the spec to allow more)"
+	summary := batchSummary(res)
+	for _, want := range []string{"slow: fail on claude after 1 attempt(s); " + timeoutLine, "cut: canceled on codex after 1 attempt(s); gate `go vet ./...` canceled"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary lacks %q:\n%s", want, summary)
+		}
+	}
+	if strings.Contains(summary, "exited -1") {
+		t.Errorf("summary still says exited -1:\n%s", summary)
+	}
+	b := brief(res)
+	if b.Tasks[0].Failed != timeoutLine || b.Tasks[1].Failed != "gate `go vet ./...` canceled" {
+		t.Errorf("failed = %q, %q", b.Tasks[0].Failed, b.Tasks[1].Failed)
+	}
+}

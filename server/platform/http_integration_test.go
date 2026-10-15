@@ -419,6 +419,52 @@ func TestHTTPSubmissionRejectsNonReadonlyModeAndZeroCost(t *testing.T) {
 	}
 }
 
+func TestHTTPSubmissionRefusesUnsupportedOptionsWith422(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	tenantID, tenantToken, err := store.CreateTenant(ctx, "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := store.CreateProject(ctx, Project{TenantID: tenantID, Name: "project", RepositoryURL: "https://example.invalid/example.git", BaseRef: fixtureRef, Backend: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&HTTPServer{Store: store}).Handler())
+	defer server.Close()
+	url := server.URL + "/v1/projects/" + project.ID + "/jobs"
+	for _, tc := range []struct {
+		name string
+		edit func(*Submission)
+		want string
+	}{
+		{"allow dangerous", func(input *Submission) { input.Options.AllowDangerous = true }, "unsupported remote execution mode: allow_dangerous is not supported for durable jobs"},
+		{"retrieval", func(input *Submission) { input.Options.Retrieval = "auto" }, "unsupported remote execution mode: retrieval is not supported for durable jobs"},
+		{"untrusted retrieval", func(input *Submission) { input.Options.Retrieval = "untrusted-value\n<script>" }, "unsupported remote execution mode: retrieval is not supported for durable jobs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := testSubmission(project, "", "untrusted prompt must not be echoed")
+			tc.edit(&input)
+			status, raw := sendJSON(t, server.Client(), http.MethodPost, url, tenantToken, input)
+			if status != http.StatusUnprocessableEntity {
+				t.Fatalf("status %d, want 422: %s", status, raw)
+			}
+			var response struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(raw, &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Error.Code != "unsupported" || response.Error.Message != tc.want {
+				t.Fatalf("error = %+v, want code unsupported and message %q", response.Error, tc.want)
+			}
+		})
+	}
+}
+
 func TestHTTPCheckpointRejectsSkippedAndReplayedSequences(t *testing.T) {
 	store := testStore(t)
 	project, workerToken := testProject(t, store)

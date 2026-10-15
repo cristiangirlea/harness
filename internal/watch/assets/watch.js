@@ -30,6 +30,28 @@
   tick();
   setInterval(tick, 1000);
 
+  const backends = document.getElementById('backends');
+  const apply = document.getElementById('backends-apply');
+  if (backends && apply) apply.addEventListener('click', async () => {
+    const status = document.getElementById('backends-status');
+    const enabled = [...backends.querySelectorAll('input[name="enabled"]:checked')].map((input) => input.value);
+    const choice = backends.querySelector('input[name="default"]:checked');
+    apply.disabled = true;
+    status.textContent = 'Saving...';
+    try {
+      const response = await fetch('/backends', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Hrn-Watch-Key': backends.dataset.key },
+        body: JSON.stringify({ enabled, default: choice ? choice.value : '' })
+      });
+      if (response.status !== 204) throw new Error((await response.text()).trim() || 'Backend preferences could not be saved');
+      window.location.reload();
+    } catch (error) {
+      status.textContent = error.message;
+      apply.disabled = false;
+    }
+  });
+
   const box = document.querySelector('[data-stream]');
   if (!box || !window.EventSource) return;
 

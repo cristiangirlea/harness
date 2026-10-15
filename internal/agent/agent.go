@@ -65,7 +65,7 @@ type Task struct {
 	// The api backend seeds its history with it, then appends Prompt.
 	Resume *Conversation `json:"-"`
 
-	// ForkSession is the session id an earlier claude or codex run reported.
+	// ForkSession is the session id an earlier claude, codex or agy run reported.
 	// The CLI starts from a copy of that session, so the earlier run's own
 	// session stays as it was and the same run can be continued twice.
 	ForkSession string `json:"fork_session,omitempty"`

@@ -27,7 +27,7 @@ func (r Result) ModelTokens() (int64, bool, bool) {
 		switch r.Backend {
 		case "codex":
 			semantics = "inclusive_cache"
-		case "api", "claude":
+		case "api", "claude", "agy":
 			semantics = "exclusive_cache"
 		}
 	}

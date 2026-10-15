@@ -30,15 +30,26 @@ func TestHelperCLIError(t *testing.T) {
 		fmt.Println(`{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 16th, 2099 3:29 PM."}`)
 		fmt.Println(`{"type":"turn.failed","error":{"message":""}}`)
 		os.Exit(1)
-	case "codexreconnect", "codexreconnectend":
+	case "codexreconnect", "codexreconnectend", "codexreconnectfailed", "codexreconnectafterturn":
 		// What codex printed in run 20261014-180728-7102ef: a dropped model
 		// stream is an error line the CLI retries by itself, and the turn
-		// went on to complete. "codexreconnectend" stops at the notice.
+		// went on to complete. "codexreconnectend" stops at the notice;
+		// "codexreconnectfailed" fails the turn with no text of its own;
+		// "codexreconnectafterturn" completes a turn with usage first and
+		// then stops at the notice.
 		fmt.Println(`{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000002"}`)
+		if os.Getenv("HRN_CLI_HELPER") == "codexreconnectafterturn" {
+			fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"first"}}`)
+			fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`)
+		}
 		fmt.Println(`{"type":"item.started","item":{"type":"command_execution","command":"go test ./..."}}`)
 		fmt.Println(`{"type":"item.completed","item":{"type":"command_execution","command":"go test ./...","aggregated_output":"ok\n","exit_code":0}}`)
 		fmt.Println(`{"type":"error","message":"Reconnecting... 2/5 (We’re currently experiencing high demand, which may cause temporary errors.)"}`)
-		if os.Getenv("HRN_CLI_HELPER") == "codexreconnectend" {
+		if os.Getenv("HRN_CLI_HELPER") == "codexreconnectend" || os.Getenv("HRN_CLI_HELPER") == "codexreconnectafterturn" {
+			os.Exit(0)
+		}
+		if os.Getenv("HRN_CLI_HELPER") == "codexreconnectfailed" {
+			fmt.Println(`{"type":"turn.failed","error":{"message":""}}`)
 			os.Exit(0)
 		}
 		fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"done"}}`)
@@ -300,8 +311,10 @@ func TestCodexReportsItsUsageLimitAsLimited(t *testing.T) {
 
 func TestCodexATurnThatCompletesAfterAReconnectNoticeIsOK(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "codexreconnect")
+	b := helperCLI(parseCodexStream)
+	b.end = NewCodexBackend().end
 	var notices, errs []string
-	res := helperCLI(parseCodexStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(e Event) {
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(e Event) {
 		switch {
 		case e.Kind == EventError:
 			errs = append(errs, e.Text)
@@ -324,9 +337,73 @@ func TestCodexAStreamThatEndsOnAReconnectNoticeIsAnError(t *testing.T) {
 	// The CLI exits clean with no turn.completed: the notice is the only word
 	// on why the turn never finished.
 	t.Setenv("HRN_CLI_HELPER", "codexreconnectend")
-	res := helperCLI(parseCodexStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
+	b := helperCLI(parseCodexStream)
+	// The real backend's end-of-stream step, so the test fails if it is unwired.
+	b.end = NewCodexBackend().end
+	var errs []string
+	var last Event
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(e Event) {
+		last = e
+		if e.Kind == EventError {
+			errs = append(errs, e.Text)
+		}
+	})
 	if res.Status != StatusError || !strings.HasPrefix(res.Error, "Reconnecting...") {
 		t.Fatalf("status %s, error %q: a turn that never completed after the notice failed", res.Status, res.Error)
+	}
+	// The notice itself was shown as information and the CLI exited 0, so
+	// without this event the transcript would never say the run failed.
+	if len(errs) != 1 || errs[0] != res.Error || last.Kind != EventError {
+		t.Errorf("error events %q (last event %s), want one with the run's error %q, at the end", errs, last.Kind, res.Error)
+	}
+	if res.Usage == nil || res.Usage.InputSemantics != "inclusive_cache" || res.Usage.Status != "missing" || res.Usage.CostStatus != "missing" {
+		t.Errorf("usage %+v: no turn reported any, as after turn.failed", res.Usage)
+	}
+}
+
+func TestCodexAStreamThatEndsOnAReconnectNoticeLosesItsUsage(t *testing.T) {
+	// A turn reported its usage, then the next one died on the notice: the
+	// run's counters are not whole, the way turn.failed marks them.
+	t.Setenv("HRN_CLI_HELPER", "codexreconnectafterturn")
+	b := helperCLI(parseCodexStream)
+	b.end = NewCodexBackend().end
+	var errs []string
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto, Model: "gpt-6-luna"}}, func(e Event) {
+		if e.Kind == EventError {
+			errs = append(errs, e.Text)
+		}
+	})
+	if res.Status != StatusError || !strings.HasPrefix(res.Error, "Reconnecting...") || len(errs) != 1 || errs[0] != res.Error {
+		t.Fatalf("status %s, error %q, error events %q: the second turn never completed", res.Status, res.Error, errs)
+	}
+	if res.Usage == nil || res.Usage.InputSemantics != "inclusive_cache" || res.Usage.Status != "missing" || res.Usage.CostStatus != "missing" || res.CostUSD != 0 || res.CostEstimate {
+		t.Errorf("usage %+v, cost %v (estimate %v): the last turn's tokens were never reported", res.Usage, res.CostUSD, res.CostEstimate)
+	}
+	if res.InputTokens != 10 || res.CacheRead != 4 || res.OutputTokens != 2 {
+		t.Errorf("tokens %d/%d/%d: the first turn's counters are kept, as after turn.failed", res.InputTokens, res.CacheRead, res.OutputTokens)
+	}
+}
+
+func TestCodexAFailedTurnAfterAReconnectNoticeIsReportedOnce(t *testing.T) {
+	// The turn.failed line already reported the notice as the failure; the
+	// end of the stream must not say it again.
+	t.Setenv("HRN_CLI_HELPER", "codexreconnectfailed")
+	b := helperCLI(parseCodexStream)
+	b.end = NewCodexBackend().end
+	var errs []string
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(e Event) {
+		if e.Kind == EventError {
+			errs = append(errs, e.Text)
+		}
+	})
+	if res.Status != StatusError || !strings.HasPrefix(res.Error, "Reconnecting...") {
+		t.Fatalf("status %s, error %q: the failed turn's reason is the notice", res.Status, res.Error)
+	}
+	if len(errs) != 1 || errs[0] != res.Error {
+		t.Errorf("error events %q, want exactly one with %q", errs, res.Error)
+	}
+	if res.Usage == nil || res.Usage.Status != "missing" || res.Usage.CostStatus != "missing" {
+		t.Errorf("usage %+v, want missing once the turn failed", res.Usage)
 	}
 }
 

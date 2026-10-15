@@ -38,6 +38,20 @@ func TestPathsInAWindowsRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *test
 		{`"C:\Program Files\Git (Preview)\bin\bash.exe" -lc ls`, `"bash.exe" -lc ls`},
 		{`{"command":"\"C:\\Program Files\\Git (Preview)\\bin\\bash.exe\" -lc ls"}`, `{"command":"\"bash.exe\" -lc ls"}`},
 		{`'C:\Program Files\Tools [x64]\rg.exe' -n x`, `'rg.exe' -n x`},
+		// Only the matching quote ends a quoted path.
+		{`"C:\Program Files\Bob's Tools\tool.exe" --help`, `"tool.exe" --help`},
+		{`{"command":"\"C:\\Program Files\\Bob's Tools\\tool.exe\" --help"}`, `{"command":"\"tool.exe\" --help"}`},
+		// Double quotes cannot occur in Windows folder names; single quoting stays the same.
+		{`'C:\Program Files\Other Tools\tool.exe' --help`, `'tool.exe' --help`},
+		{`{"command":"'C:\\Program Files\\Other Tools\\tool.exe' --help"}`, `{"command":"'tool.exe' --help"}`},
+		{`C:\Program Files\Bob's Tools\tool.exe --help`, `C:\Program Files\Bob's Tools\tool.exe --help`},
+		// Unterminated quotes stop at the input's end or a line end.
+		{`"C:\Program Files\Bob's Tools\tool.exe`, `"tool.exe`},
+		{"\"C:\\Program Files\\Bob's Tools\nnext", "\"C:\\Program Files\\Bob's Tools\nnext"},
+		// An unterminated single quote in JSON text stops at the string's end, keeping the next field.
+		{`{"command":"'C:\\Windows\\System32\\cmd.exe","cwd":"D:\\work.dir"}`, `{"command":"'cmd.exe","cwd":"D:\\work.dir"}`},
+		// Two backslashes before the quote are an escaped backslash: the quote still ends the string.
+		{`["'C:\\Windows\\System32\\cmd.exe\\",1.5]`, `["'cmd.exe\\",1.5]`},
 		{`run(C:\Windows\System32\where.exe,git)`, `run(where.exe,git)`},
 		// A folder, not a program, and a program outside them, stay.
 		{`C:\Windows\System32`, `C:\Windows\System32`},
@@ -67,6 +81,9 @@ func TestPathsInAUnixRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *testing
 		{"/opt/home/ana/x", "/opt/home/ana/x"},
 		{"/usr/local/bin/node script.js", "node script.js"},
 		{`exec "/bin/sh" -c true`, `exec "sh" -c true`},
+		// A bare double quote ends a single-quoted path even so: in JSON text it closes the
+		// string. Escaped, as JSON writes one inside a string, it is part of the path.
+		{`{"command":"'/usr/bin/Bob\"s/tool' --help"}`, `{"command":"'tool' --help"}`},
 		{"$(/usr/bin/env)", "$(env)"},
 		{"/usr/bin", "/usr/bin"},
 		{"/usr/binx/tool", "/usr/binx/tool"},

@@ -1,6 +1,6 @@
 # hrn — a small agent harness
 
-Run coding tasks with Claude Code, Codex, Gemini, opencode, or hrn's own Anthropic API
+Run coding tasks with Claude Code, Codex, Gemini, opencode, agy (Antigravity), or hrn's own Anthropic API
 loop. Keep a consistent record of each run, follow its progress, and compare results —
 from one Go binary.
 
@@ -31,12 +31,19 @@ hrn backends
 
 Make sure Go's binary directory is on your `PATH`. Then run a task from your project:
 
+**Updating.** `hrn update` moves every hrn copy on this computer to the newest
+[release](https://github.com/cristiangirlea/harness/releases) in one step, checksum verified:
+each copy is renamed aside as a backup, the new binary copied in and checked with `version`, and
+a running `hrn watch` restarted with its flags. `--main` builds from source instead,
+`--dry-run` only shows the plan, and `--rollback` puts the backups back. See
+[hrn update](docs/commands.md#hrn-update).
+
 ```bash
 cd path/to/your/project
 hrn run -b codex --mode readonly "Explain this project and its main entry points."
 ```
 
-Use `-b claude`, `-b gemini`, `-b opencode`, or `-b api` to choose another backend.
+Use `-b claude`, `-b gemini`, `-b opencode`, `-b agy`, or `-b api` to choose another backend.
 Each uses its own login or credentials and consumes that provider's plan or API usage.
 See [backend setup and behavior](docs/backends.md).
 

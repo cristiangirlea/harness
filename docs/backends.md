@@ -14,12 +14,75 @@ compatibility matrix for every CLI version; check your installed backend with `h
 | `codex` | your ChatGPT subscription | `codex exec --json`. Found on PATH, npm, or the Codex desktop app's bundled build. | `run` and `--continue` (fork, and handing a claude run over) verified on codex-cli 0.155; not exercised by `batch` or `eval`. |
 | `gemini` | your Google login | `gemini -o json` (single JSON result, no live stream). | Not yet run for real. |
 | `opencode` | whatever opencode is configured with | `opencode run --format json`, prompt attached as a file. | `run` verified; not exercised by the later layers. |
+| `agy` | your Antigravity plan (Google) | `agy --input-format stream-json --output-format stream-json`, the prompt as one stream-json event on stdin. Found on PATH or `%LOCALAPPDATA%\agy\bin` (Windows), or `~/.local/bin` elsewhere. | Parser tested against an anonymised agy 1.3.3 sample; `run` and `--continue` verified once each on agy 1.3.3 (2026-10-14); not exercised by `batch` or `eval`. |
 
 "Verified" means a real agent did real work through that path and the result was checked
 by hand, not that a test passed. Treat the unverified rows as drafts that need one run and
 probably one fix.
 
-Default backend: `api` when credentials exist, otherwise `claude`, or the route table's row for the prompt's purpose, when one exists.
+Without preferences, the default backend is `api` when credentials exist, otherwise
+`claude`, or the route table's row for the prompt's purpose, when one exists.
+
+### Choosing which backends hrn may use
+
+The [Backends card in hrn watch](watch.md#backends) can also change the enabled backends and default.
+
+Set the enabled backends once for runs, MCP calls, batches, eval cells and judges,
+and the supervisor protocol:
+
+```bash
+hrn backends set --only claude,codex --default claude
+hrn backends
+hrn backends reset
+```
+
+`set` validates names against the backends registered in this hrn binary and writes
+`$HRN_HOME/backends.json` (normally `~/.hrn/backends.json`) atomically:
+
+```json
+{"enabled":["claude","codex"],"default":"claude"}
+```
+
+For a build that registers `agy`, use `--only claude,agy` instead. A name need not
+be installed to be enabled, but it must be registered. `--default` is optional;
+when supplied it must appear in `--only`. `set` replaces the whole preference.
+`reset` removes the file, including a malformed one, and restores today's default
+selection. A missing file or an empty enabled list with no default leaves all
+backends enabled. A nonempty default without an enabled list is refused.
+
+The configured default wins when installed; otherwise hrn chooses enabled `api`
+when credentials exist, then the first installed enabled backend in preference
+order, falling back to `claude`. If that fallback is disabled, the run is refused.
+`hrn backends` shows enabled/disabled, the configured default (or the selected default
+when none is configured), availability and remembered limits beside each backend.
+
+An explicit disabled backend is refused before execution (`hrn run` exits 2).
+Purpose routing ignores disabled rows with a warning and records no routing evidence.
+Batch retry lists lose disabled entries while keeping their original order and
+repetitions; a nonempty list with no enabled entries is refused.
+
+At a usage limit the carry-on partner is the first other installed enabled backend
+in preference order, subject to the existing readiness and billing checks. With no
+preference, the claude/codex pairing is unchanged. With no ready enabled partner,
+the run stays limited. `--no-switch` still disables carry-on.
+
+The `agy` adapter sends one `{"event":"user","message":{"content":"..."}}` line on
+stdin with `--input-format stream-json --output-format stream-json`, which selects
+print mode without putting a long prompt in Windows' command line. The `antigravity`
+IDE launcher is not the CLI. `-m` passes `--model` (use `agy models` to list IDs), and
+all hrn effort levels pass through as `--effort`: low, medium, high, xhigh and max.
+Usage comes from the result event; output tokens already include thinking tokens,
+and input tokens exclude cache reads. A requested model is retained, but marked as
+reported only if an event names one.
+
+| hrn mode | agy flags |
+|---|---|
+| `readonly` | `--mode plan` |
+| `ask` | `--mode plan` (no interactive approval) |
+| `auto` | `--mode accept-edits` |
+| `yolo` | `--dangerously-skip-permissions` |
+
+These are agy's permission modes; `plan` is not a filesystem sandbox.
 
 The `claude` backend uses the plan login only. If Claude Code's init line reports an
 `apiKeySource` other than `none`, hrn stops the worker as soon as that init line arrives
@@ -66,7 +129,7 @@ spec's `true`). The record of an attempt says `"lean": true` when the default ap
 run` and the MCP `run` tool stay as they were: lean only with `--lean` or `"lean": true`.
 Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
 `apiKeyHelper`, never the subscription. The api loop never reads Claude Code's settings, so
-lean changes nothing there; codex, gemini and opencode say `lean: not enforced` when it is
+lean changes nothing there; codex, gemini, opencode and agy say `lean: not enforced` when it is
 asked for and run as usual (a batch's default does not ask them).
 
 Measured on 2026-10-13 (Claude Code 2.1.284, claude-sonnet-5-5, the owner's setup, one
@@ -107,7 +170,24 @@ summary), and the summary loses detail the model may later want (exact error tex
 it read early). A lower window means smaller turns and more compactions. Set it for long
 runs whose early history matters little; leave it unset for short ones, which never reach
 it anyway. Only the claude backend applies it; the api loop (whose context editing does a
-similar job, see above), codex, gemini and opencode say `compact_window: not enforced`.
+similar job, see above), codex, gemini, opencode and agy say `compact_window: not enforced`.
+
+### Codex cost estimates
+
+Codex costs are list-price estimates from the OpenAI table in
+`internal/agent/prices_openai.go`, never a bill or subscription charge. The table
+records its source URL and date and uses standard short-context rates; service
+tiers, long-context rates and regional uplifts are not represented. Reported input
+includes cached input: cache reads use the cached-input rate, the remaining input
+uses the input rate, and output uses the output rate.
+
+The model the run asked for (`-m` or the routing table) selects the price, with
+the same dated-snapshot suffix rule as the Claude table. The adapter records no
+CLI default model: a run with neither keeps cost marked `missing`, as does an
+unknown model or missing usage. `gpt-6-sol`
+is omitted because the pricing page fetched on 2026-10-15 did not list it.
+Known models with reported usage carry `cost_is_estimate` and an `estimated`
+usage cost status, including an explicitly reported zero.
 
 ### Continuing a run
 
@@ -141,6 +221,7 @@ What the backend carries on from:
 | `api` | its message history, `messages.json` | resumes that conversation |
 | `claude` | the session id the CLI reports | `--resume <id> --fork-session` |
 | `codex` | the thread id the CLI reports | `codex exec … fork <id>` |
+| `agy` | the conversation id the CLI reports | `--conversation <id>` (resumes in place) |
 | `gemini`, `opencode` | nothing yet | starts a new session |
 
 A follow-up looks back along the chain for the latest run on its own backend that saved
@@ -152,12 +233,17 @@ starts fresh with claude's turn, and claude then forks its own session and is to
 what codex did. The run records the prompt as you typed it; what went before it is saved
 beside the run as `handoff.md`, and the run's first info lines say what was picked up.
 
-A session is forked, never resumed in place, so every run keeps a session of its own
+A claude or codex session is forked, never resumed in place, so every run keeps a session of its own
 that nothing appends to later, and continuing the same run twice gives two separate
 branches, the way api runs do. `hrn show` prints the session id, so a run can also be
 opened by hand: `claude --resume <id>` from the run's workspace, or `codex resume <id>`.
 A session is only forked in the workspace it ran in: claude finds a session from the
 directory it started in, and the session refers to that workspace's files.
+
+agy uses the same continuation hook but resumes the saved conversation in place:
+continuing the same run twice appends to that conversation instead of creating two
+branches. Its session capability is `resume`, and the continuation note says
+`resuming`.
 
 Continuing on the same backend refuses rather than quietly starting over when that
 backend saved nothing: a run from before session ids were recorded, a gemini run, or an
@@ -171,8 +257,9 @@ thinking.
 
 ### When a plan's usage limit is reached
 
-The claude and codex CLIs bill to subscriptions with usage limits, and each stands in for
-the other. A run that ends because its CLI said the limit was reached ("You've hit your
+Without preferences, the claude and codex CLIs stand in for each other at subscription
+usage limits. With preferences, the partner follows the enabled list described above.
+A run that ends because its CLI said the limit was reached ("You've hit your
 session limit · resets 10:10pm (Europe/Bucharest)", "You've hit your usage limit ... try
 again at Oct 16th, 2026 3:29 PM") is `limited`, not `error`, and its result keeps the
 time the limit lifts as `limit_resets` when the message gives one. Then:
@@ -187,8 +274,10 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
   tool) shows each limit it remembers. A limit can lift early (codex sells credits);
   deleting the file forgets it.
-- Nothing moves to `api`, which is billed per token, or to gemini or opencode. If the
-  other CLI is not installed, or is limited too, the run stays `limited` and says so.
+- Nothing moves automatically to `api`, which is billed per token. Without preferences,
+  gemini, opencode and agy are not partners either; with one, the enabled installed plan
+  backends stand in, in preference order. If no enabled partner is installed, or the
+  selected partner is limited too, the run stays `limited` and says so.
 - Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
   the plan, and so does codex with `CODEX_API_KEY` or `OPENAI_API_KEY`; that CLI does not

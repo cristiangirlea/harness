@@ -21,7 +21,7 @@ import (
 // This file holds the machinery every agent CLI shares: finding the binary,
 // running it, reading its stdout and turning a non-zero exit into a Result.
 // Each backend's arguments and stream format live in its own file, claude.go,
-// codex.go, gemini.go and opencode.go.
+// codex.go, gemini.go, opencode.go and agy.go.
 
 // CLIBackend drives an installed agent CLI non-interactively, so the work is
 // billed to that CLI's own subscription login rather than per API token.
@@ -33,6 +33,8 @@ type CLIBackend struct {
 	// passed as an attachment instead of on stdin.
 	args        func(t Task, promptFile string) []string
 	promptStdin bool
+	// encodePrompt wraps stdin for CLIs that require structured input.
+	encodePrompt func(string) string
 	// parse handles one stdout line. Nil means stdout is plain text.
 	parse func(line []byte, emit func(Event), res *Result) bool
 	// newParse, when set, makes a parse for one run, for a stream whose lines
@@ -42,9 +44,16 @@ type CLIBackend struct {
 	stopWhen func(*Result) bool
 	// finalize runs after exit with all of stdout, for single-JSON outputs.
 	finalize func(stdout []byte, emit func(Event), res *Result)
+	// end, when set, runs once the stream has ended and the CLI exited clean,
+	// for a parser whose last line left something only the end of the
+	// stream can settle (an error line no later line resolved). errored says
+	// whether the stream wrote an error event, so the step does not repeat one.
+	end func(emit func(Event), res *Result, errored bool)
 	// forks is set when args honours Task.ForkSession and parse records
 	// Result.Session.
 	forks bool
+	// resumesInPlace distinguishes a continuation that does not copy the session.
+	resumesInPlace bool
 	// loginEnv names the secret-looking variables the CLI logs in with on a
 	// plan; the guard passes them on to this CLI and no other.
 	loginEnv []string
@@ -97,12 +106,15 @@ func (c *CLIBackend) Capabilities() Capabilities {
 	}
 	if c.forks {
 		caps.Sessions = "fork"
+		if c.resumesInPlace {
+			caps.Sessions = "resume"
+		}
 	}
 	return caps
 }
 
-// ForksSessions reports whether the CLI can start from a copy of an earlier
-// run's session.
+// ForksSessions reports whether the CLI honours Task.ForkSession. Capabilities
+// distinguishes a copied session from one resumed in place.
 func (c *CLIBackend) ForksSessions() bool { return c.forks }
 
 var sessionID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
@@ -195,7 +207,11 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
 	}
 	if c.promptStdin {
-		cmd.Stdin = strings.NewReader(task.Prompt)
+		prompt := task.Prompt
+		if c.encodePrompt != nil {
+			prompt = c.encodePrompt(prompt)
+		}
+		cmd.Stdin = strings.NewReader(prompt)
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -252,6 +268,11 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if c.newParse != nil {
 		parse = c.newParse()
 	}
+	var errored bool
+	parseEmit := func(e Event) {
+		errored = errored || e.Kind == EventError
+		emit(e)
+	}
 	for sc.Scan() {
 		line := sc.Bytes()
 		if c.finalize != nil {
@@ -259,7 +280,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 			continue
 		}
 		if parse != nil {
-			parsed := parse(line, emit, &res)
+			parsed := parse(line, parseEmit, &res)
 			if c.stopWhen != nil && c.stopWhen(&res) {
 				cancel()
 				stopErr := stopCLITree(tree, errors.New(res.Error))
@@ -313,8 +334,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 			status = res.Status
 		}
 		return fail(status, errors.New(lastLines(msg, 20)))
-	case res.Status == "":
-		res.Status = StatusOK
+	default:
+		if c.end != nil {
+			c.end(emit, &res, errored)
+		}
+		if res.Status == "" {
+			res.Status = StatusOK
+		}
 	}
 	return finish(&res, started)
 }
@@ -382,6 +408,7 @@ func init() {
 	Register(NewCodexBackend())
 	Register(NewGeminiBackend())
 	Register(NewOpencodeBackend())
+	Register(NewAgyBackend())
 }
 
 // guardLine is what a guarded run says about the guard, with what this CLI
