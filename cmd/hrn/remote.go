@@ -90,7 +90,7 @@ func runRemote(args []string, out io.Writer) error {
 		fs.IntVar(&turns, "max-turns", 3, "maximum model turns")
 	case "events":
 		fs.Int64Var(&after, "after", 0, "last durable event ID")
-		fs.BoolVar(&watch, "watch", false, "stream and reconnect using durable event IDs")
+		fs.BoolVar(&watch, "watch", false, "stream until the job ends, reconnecting using durable event IDs")
 	case "show", "cancel":
 	default:
 		return fmt.Errorf("unknown remote action %q", action)
