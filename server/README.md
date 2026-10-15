@@ -65,6 +65,22 @@ manifests. An uncertain operation enters `recovery_required` instead of being
 silently replayed. The control service does not independently verify that an
 old worker or node has stopped.
 
+The checkpoint store is a trust boundary: it must commit before acknowledging a
+save, fence stale owners, and preserve immutable versions. The API checkpoint's
+task digest binds task settings, not the stored `Result.CostUSD`, `Started`, or
+`Deadline`. Recovery trusts those values from the store; changing them can reset
+spent budget or the clock. Keep checkpoint write access and store credentials
+outside execution tools and untrusted workspace/model content.
+
+The cost ceiling prevents the next model request. Tools from an already paid,
+checkpointed response still run on recovery even if that response reached the
+ceiling; their committed outcomes are not repeated. The original deadline still
+applies. Cancellation or timeout between committed operations reports `canceled`
+or `timeout` without `recovery_required`. A definite non-retryable HTTP 4xx is
+an error without recovery; a context-management 400 retries without that feature
+after saving a new model intent. Interrupted requests, retryable HTTP errors,
+and failed checkpoint saves remain uncertain and require recovery.
+
 ## Approved project knowledge
 
 Only the control service connects to PostgreSQL. Operators import reviewed
