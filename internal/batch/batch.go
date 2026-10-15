@@ -1598,7 +1598,7 @@ func removeWorktree(root string, tr TaskResult) error {
 		// remove the directory if nothing is in it, and still delete the branch,
 		// which is all the batch committed.
 		_, _ = gitOut(ctx, root, "worktree", "prune")
-		leftover = removeEmptyDir(tr.Worktree)
+		leftover = RemoveEmptyDir(tr.Worktree)
 	}
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
 		if _, err := gitOut(ctx, root, "branch", "-D", tr.Branch); err != nil {
@@ -1608,9 +1608,9 @@ func removeWorktree(root string, tr TaskResult) error {
 	return leftover
 }
 
-// removeEmptyDir removes dir if it is empty and reports it if it is not: files
+// RemoveEmptyDir removes dir if it is empty and reports it if it is not: files
 // in a directory git no longer tracks are in no branch, so they are not deleted.
-func removeEmptyDir(dir string) error {
+func RemoveEmptyDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
