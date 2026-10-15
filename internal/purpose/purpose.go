@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -218,7 +219,7 @@ func paragraphs(prompt string) []string {
 		// Keep only the latest leading label, bounded separately so labels
 		// cannot exhaust the instruction's budget or grow the gathered text.
 		// Error lines remain part of the instruction.
-		if runes == 0 && strings.Contains(line, ":") && !errorLine.MatchString(line) && label.MatchString(line) {
+		if runes == 0 && leadingLabel(line) {
 			labelRunes := 0
 			for i := range line {
 				if labelRunes == maxLead {
@@ -256,6 +257,68 @@ func paragraphs(prompt string) []string {
 var errorLine = regexp.MustCompile(`(?i)^([a-z]*(error|exception)|panic)\s*:`)
 
 var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?:(?: +|$)`)
+
+// leadingLabel recognizes label's prefix without per-line regexp scratch
+// allocations (sync.Pool may discard that scratch, especially under -race).
+// Only the bounded gathered text needs regexp matching in unlabel.
+func leadingLabel(line string) bool {
+	i := 0
+	for words := 0; words < 3; words++ {
+		start := i
+		for i < len(line) {
+			r, size := utf8.DecodeRuneInString(line[i:])
+			if !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '/' && r != '-' {
+				break
+			}
+			i += size
+		}
+		if i == start {
+			return false
+		}
+		if i < len(line) && line[i] == ':' {
+			if words == 0 && errorLabel(line[:i]) {
+				return false
+			}
+			return i+1 == len(line) || line[i+1] == ' '
+		}
+		if i == len(line) || line[i] != ' ' {
+			return false
+		}
+		for i < len(line) && line[i] == ' ' {
+			i++
+		}
+		if i < len(line) && line[i] == '(' {
+			i++
+			end := strings.IndexAny(line[i:], "()")
+			if end < 0 || line[i+end] != ')' {
+				return false
+			}
+			i += end + 1
+			return i < len(line) && line[i] == ':' && (i+1 == len(line) || line[i+1] == ' ')
+		}
+	}
+	return false
+}
+
+// errorLabel is errorLine's name check for a single label word. Only ASCII
+// letters and their Unicode case-fold equivalents can precede error/exception.
+func errorLabel(name string) bool {
+	if strings.EqualFold(name, "panic") {
+		return true
+	}
+	for _, suffix := range []string{"error", "exception"} {
+		if len(name) < len(suffix) || !strings.EqualFold(name[len(name)-len(suffix):], suffix) {
+			continue
+		}
+		for _, r := range name[:len(name)-len(suffix)] {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r == '\u212a' || r == '\u017f') {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
 
 // unlabel drops a paragraph's leading label lines ("Repository: hrn", "Goal
 // (issue #82): ..."); a last line that is itself a label keeps its value.

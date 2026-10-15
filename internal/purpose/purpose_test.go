@@ -1,11 +1,32 @@
 package purpose
 
 import (
+	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func BenchmarkParagraphsLabels(b *testing.B) {
+	for _, mib := range []int{1, 4, 16} {
+		b.Run(fmt.Sprintf("short/%dMiB", mib), func(b *testing.B) {
+			prompt := strings.Repeat("A: b\n", (mib<<20)/len("A: b\n"))
+			b.ReportAllocs()
+			for b.Loop() {
+				paragraphs(prompt)
+			}
+		})
+	}
+	b.Run("label-and-text/4MiB", func(b *testing.B) {
+		prompt := strings.Repeat("A: b\ntext\n", (4<<20)/len("A: b\ntext\n"))
+		b.ReportAllocs()
+		for b.Loop() {
+			paragraphs(prompt)
+		}
+	})
+}
 
 func TestValidAcceptsOnlyDeclaredCategories(t *testing.T) {
 	for _, c := range Categories {
@@ -290,9 +311,16 @@ func TestParagraphsBoundGatheringAfterLabels(t *testing.T) {
 	if got := paragraphs(prompt); !slices.Equal(got, []string{prefix}) {
 		t.Error("paragraphs did not preserve the latest label and cap the instruction")
 	}
-	baseline := testing.AllocsPerRun(10, func() { paragraphs(prefix) })
-	if got := testing.AllocsPerRun(10, func() { paragraphs(prompt) }); got > baseline {
-		t.Errorf("long instruction allocated %g times, bounded prefix allocated %g", got, baseline)
+	if got := allocatedBytes(func() { paragraphs(prompt) }); got > 64<<10 {
+		t.Errorf("long instruction allocated %d bytes, want at most 64 KiB", got)
+	}
+	// Race mode randomly discards sync.Pool entries used by regexp, so exact
+	// allocation counts are unstable. The byte bound above still runs there.
+	if !raceEnabled {
+		baseline := testing.AllocsPerRun(10, func() { paragraphs(prefix) })
+		if got := testing.AllocsPerRun(10, func() { paragraphs(prompt) }); got > baseline {
+			t.Errorf("long instruction allocated %g times, bounded prefix allocated %g", got, baseline)
+		}
 	}
 }
 
@@ -313,16 +341,50 @@ func TestParagraphsBoundLabelGathering(t *testing.T) {
 					t.Error("paragraphs did not cap the latest label and preserve the instruction budget")
 				}
 			}
-			allocated := testing.Benchmark(func(b *testing.B) {
-				for b.Loop() {
-					paragraphs(tc.prompt)
-				}
-			}).AllocedBytesPerOp()
+			allocated := allocatedBytes(func() { paragraphs(tc.prompt) })
 			if allocated > 64<<10 {
 				t.Errorf("paragraphs allocated %d bytes per call, want at most 64 KiB", allocated)
 			}
 		})
 	}
+}
+
+func TestLeadingLabelsMatchTheGrammarWithoutScratchAllocations(t *testing.T) {
+	lines := []string{
+		"", "A: b", "A:", "A:two", "A:\tb", "A : b", "A  B: c",
+		"A B C: d", "A B C D: e", "A (note: value): b", "A (): b",
+		"A (nested (note)): b", "A (unclosed: b", "A (note) : b",
+		"A B C (note): d", "A B C D (note): e", "A\tB: c",
+		"Task 2 Build/Goal-x: b", "\u00e9 \u2160: b", "\ufffd: b", "\xff: b",
+		"Error: b", "TypeError: b", "EXCEPTION: b", "panic: b",
+		"\u212aError: b", "\u017fException: b", "\u00e9Error: b", "1Error: b",
+		"A-Error: b", "A/Error: b", "A Error: b", "Error (note): b",
+	}
+	for _, line := range lines {
+		want := !errorLine.MatchString(line) && label.MatchString(line)
+		if got := leadingLabel(line); got != want {
+			t.Errorf("leadingLabel(%q) = %v, want %v", line, got, want)
+		}
+	}
+	if got := allocatedBytes(func() {
+		for _, line := range lines {
+			leadingLabel(line)
+		}
+	}); got > 1<<10 {
+		t.Errorf("label checks allocated %d bytes, want at most 1 KiB", got)
+	}
+}
+
+// allocatedBytes measures a cold call: two GCs evict regexp's pooled scratch
+// space so a warm pool cannot hide allocations. Do not use in parallel tests.
+func allocatedBytes(f func()) uint64 {
+	runtime.GC()
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
 }
 
 func TestParagraphsTrimNewlineAtCap(t *testing.T) {
@@ -355,9 +417,18 @@ func TestDeclaredDoesNotCopyLongPrompts(t *testing.T) {
 func TestResolveDoesNotCopyThePromptBody(t *testing.T) {
 	prompt := "Purpose: deploy notes\r\nImplement it.\r\n\r\n" + strings.Repeat("X", 4<<20)
 	body := strings.TrimPrefix(prompt, "Purpose: deploy notes\r\n")
-	baseline := testing.AllocsPerRun(10, func() { Classify(body) })
-	if got := testing.AllocsPerRun(10, func() { Resolve("", prompt) }); got > baseline {
-		t.Errorf("Resolve allocated %g times, Classify allocated %g", got, baseline)
+	// Allow cold regexp scratch for every rule (race mode can discard every
+	// pooled matcher), but never a copy of the 4 MiB body.
+	if got := allocatedBytes(func() { Resolve("", prompt) }); got > 2<<20 {
+		t.Errorf("Resolve allocated %d bytes, want at most 2 MiB", got)
+	}
+	// Race mode randomly drops regexp's sync.Pool entries; compare counts only
+	// without instrumentation, keeping the byte bound active in both builds.
+	if !raceEnabled {
+		baseline := testing.AllocsPerRun(10, func() { Classify(body) })
+		if got := testing.AllocsPerRun(10, func() { Resolve("", prompt) }); got > baseline {
+			t.Errorf("Resolve allocated %g times, Classify allocated %g", got, baseline)
+		}
 	}
 	if got := Resolve("", prompt); got != Classify("Implement it.") {
 		t.Errorf("Resolve = %+v, want implement.build", got)
