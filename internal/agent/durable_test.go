@@ -181,6 +181,68 @@ func TestDurableResumeRefusesInvalidToolOutcomesBeforeRunningTools(t *testing.T)
 	}
 }
 
+func TestDurableToolCallFollowsSavedIntent(t *testing.T) {
+	for _, boundary := range []string{"", "tool_intent"} {
+		t.Run("fail="+boundary, func(t *testing.T) {
+			store := &checkpointStore{failBoundary: boundary}
+			backend, task, _, effects := durableFixture(t, store)
+			calls, outcomes := 0, 0
+			result := backend.Run(context.Background(), task, func(e Event) {
+				switch e.Kind {
+				case EventToolCall:
+					calls++
+					if store.latest.Boundary != "tool_intent" {
+						t.Errorf("call emitted before saved intent: boundary=%s", store.latest.Boundary)
+					}
+				case EventToolResult:
+					outcomes++
+				}
+			})
+			if boundary != "" {
+				if result.Status != StatusError || !result.RecoveryRequired || calls != 0 || outcomes != 0 || *effects != 0 {
+					t.Fatalf("failed intent emitted a call or ran a tool: result=%+v calls=%d outcomes=%d effects=%d", result, calls, outcomes, *effects)
+				}
+			} else if result.Status != StatusOK || calls != 1 || outcomes != 1 || *effects != 1 {
+				t.Fatalf("saved intent lost tool events: result=%+v calls=%d outcomes=%d effects=%d", result, calls, outcomes, *effects)
+			}
+		})
+	}
+}
+
+func TestDurableStoppedContextPreservesCheckpointErrors(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		for _, corruption := range []string{"outcome ID", "response JSON"} {
+			t.Run(fmt.Sprintf("deadline=%t/%s", deadline, corruption), func(t *testing.T) {
+				store := &checkpointStore{failBoundary: "model_response", commitThenFail: true}
+				backend, task, fake, effects := durableFixture(t, store)
+				first := backend.Run(context.Background(), task, func(Event) {})
+				if !first.RecoveryRequired || store.latest == nil {
+					t.Fatalf("response was not checkpointed: %+v", first)
+				}
+				want := "tool outcome ID mismatch"
+				if corruption == "outcome ID" {
+					store.latest.ToolResults = []map[string]any{{"tool_use_id": "wrong"}}
+				} else {
+					store.latest.Response = json.RawMessage(`"invalid response"`)
+					want = "cannot unmarshal"
+				}
+				task.Durable.Resume = store.latest
+				store.failBoundary = ""
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				if deadline {
+					ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+					defer cancel()
+				}
+				result := backend.Run(ctx, task, func(Event) {})
+				if result.Status != StatusError || !result.RecoveryRequired || !strings.Contains(result.Error, want) || fake.served != 1 || *effects != 0 {
+					t.Fatalf("stopped context hid checkpoint error: result=%+v requests=%d effects=%d", result, fake.served, *effects)
+				}
+			})
+		}
+	}
+}
+
 func TestDurableResumeKeepsDeadline(t *testing.T) {
 	store := &checkpointStore{failBoundary: "turn_complete", commitThenFail: true}
 	backend, task, fake, effects := durableFixture(t, store)

@@ -289,7 +289,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 	}
 	durableFailure := func(err error) Result {
-		if durable.checkpoint.Pending == nil && !errors.Is(err, ErrRecoveryRequired) && ctx.Err() != nil {
+		if durable.checkpoint.Pending == nil && ctx.Err() != nil && err == ctx.Err() {
 			return fail(stopStatus(ctx), ctx.Err())
 		}
 		res.RecoveryRequired = true
