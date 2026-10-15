@@ -124,8 +124,11 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 			stays = append(stays, w.Path)
 			continue
 		}
-		if _, err := gitOut(ctx, w.Repo, "worktree", "remove", w.Path); err != nil {
+		gone, err := removeWorktree(ctx, w)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", w.Path, err))
+		}
+		if !gone {
 			stays = append(stays, w.Path)
 			continue
 		}
@@ -138,6 +141,130 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 		}
 	}
 	return removed, errs
+}
+
+// removeGitWorktree is replaceable by tests to simulate git deregistering a
+// worktree before Windows refuses the final directory removal.
+var removeGitWorktree = func(ctx context.Context, w Worktree) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	cmd := gitCommand(ctx, w.Repo, "worktree", "remove", w.Path)
+	// The fallback recognizes Git's English submodule refusal.
+	cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree remove: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func removeWorktree(ctx context.Context, w Worktree) (bool, error) {
+	err := removeGitWorktree(ctx, w)
+	if err == nil {
+		return true, nil
+	}
+	entries, listErr := listWorktrees(ctx, w.Repo)
+	if listErr != nil {
+		return false, errors.Join(err, listErr)
+	}
+	if !listed(w.Path, entryPaths(entries)) {
+		// Git can deregister a worktree after emptying it, even when Windows
+		// refuses the last directory removal. Only an empty or absent folder
+		// permits branch cleanup; a remaining handle is reported separately.
+		files, readErr := os.ReadDir(w.Path)
+		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+			return false, errors.Join(err, readErr)
+		}
+		if len(files) != 0 {
+			return false, errors.Join(err, batch.RemoveEmptyDir(w.Path))
+		}
+		if _, pruneErr := gitOut(ctx, w.Repo, "worktree", "prune"); pruneErr != nil {
+			return false, errors.Join(err, pruneErr)
+		}
+		return true, batch.RemoveEmptyDir(w.Path)
+	}
+	if !strings.Contains(err.Error(), "working trees containing submodules cannot be moved or removed") {
+		return false, err
+	}
+	// foreach skips deinitialized submodules, whose repositories can still
+	// hold work. Keep them rather than deleting a repository we cannot check.
+	status, subErr := gitStdout(ctx, w.Path, "submodule", "status", "--recursive")
+	if subErr != nil {
+		return false, errors.Join(err, subErr)
+	}
+	for _, line := range strings.Split(status, "\n") {
+		if strings.HasPrefix(line, "-") {
+			return false, fmt.Errorf("submodules are not initialized: %w", err)
+		}
+	}
+	// Parent status can hide submodule changes. Check files, recorded HEADs,
+	// stashes and commits not held by remote-tracking refs before deleting
+	// their only repository. Any failed command also keeps the worktree.
+	out, subErr := gitStdout(ctx, w.Path, "submodule", "foreach", "--quiet", "--recursive",
+		`test "$(git rev-parse HEAD)" = "$sha1" &&
+changes=$(git status --porcelain --untracked-files=all --ignored &&
+git stash list &&
+git log --oneline HEAD --branches --not --remotes) && test -z "$changes" &&
+dir=$(git rev-parse --absolute-git-dir) && printf '%s\0' "$dir"`)
+	if subErr != nil {
+		return false, errors.Join(err, subErr)
+	}
+	if subErr := checkSubmoduleRepositories(ctx, w.Path, out); subErr != nil {
+		return false, errors.Join(err, subErr)
+	}
+	// Another process can change the parent while its submodules are checked.
+	if why := recheck(ctx, w); why != "" {
+		return false, fmt.Errorf("kept, %s", why)
+	}
+	if removeErr := os.RemoveAll(w.Path); removeErr != nil {
+		return false, removeErr
+	}
+	_, pruneErr := gitOut(ctx, w.Repo, "worktree", "prune")
+	return pruneErr == nil, pruneErr
+}
+
+// status and foreach only see indexed submodules. A removed submodule can
+// leave its repository (and private history) under the worktree's gitdir.
+func checkSubmoduleRepositories(ctx context.Context, wt, checked string) error {
+	modules, err := gitOut(ctx, wt, "rev-parse", "--git-path", "modules")
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(modules) {
+		modules = filepath.Join(wt, modules)
+	}
+	indexed := make(map[string]bool)
+	for _, dir := range strings.Split(checked, "\x00") {
+		if dir != "" {
+			indexed[samePath(dir)] = true
+		}
+	}
+	var walk func(string) error
+	walk = func(root string) error {
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if errors.Is(err, fs.ErrNotExist) && path == root {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && !d.Type().IsRegular() {
+				return fmt.Errorf("submodule repository contains a link: %s", path)
+			}
+			if d.IsDir() && isBare(path) {
+				if !indexed[samePath(path)] {
+					return fmt.Errorf("submodule repository is not indexed: %s", path)
+				}
+				// Skip the object store, but not repositories nested below it.
+				if err := walk(filepath.Join(path, "modules")); err != nil {
+					return err
+				}
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+	return walk(modules)
 }
 
 // deleteBranch deletes a branch only if it still points at the commit that
