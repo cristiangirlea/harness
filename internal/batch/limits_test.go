@@ -206,3 +206,49 @@ func TestALimitedAttemptIsNotCarriedOnToAPartnerThatBillsPerToken(t *testing.T) 
 		t.Errorf("an event shows the key's value: %q", switches)
 	}
 }
+
+func TestABatchExplainsAMeteredPartnerBeforeTheAttemptStarts(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+	if err := limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	_, events := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "kept", Prompt: "p"}}})
+	said := false
+	for _, e := range events {
+		if e.Kind == "start" {
+			if !said {
+				t.Fatal("no metered partner reason before the attempt started")
+			}
+			return
+		}
+		said = said || e.Kind == "switch" && strings.Contains(e.Text, "ANTHROPIC_API_KEY") && strings.Contains(e.Text, "per token")
+		if strings.Contains(e.Text, "fake-secret-value") {
+			t.Error("event exposed the key value")
+		}
+	}
+	t.Fatal("no attempt started")
+}
+
+func TestABatchDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		cancel()
+		return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "usage limit"}
+	}})
+	res, err := Run(ctx, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "stopped", Prompt: "p"}}}, func(Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Tasks) != 1 || res.Tasks[0].Status != StatusCanceled || len(res.Tasks[0].Attempts) != 1 {
+		t.Fatalf("tasks = %+v, want one canceled task with one attempt", res.Tasks)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" {
+		t.Fatalf("records = %+v, err=%v; want only the limited run", recs, err)
+	}
+}

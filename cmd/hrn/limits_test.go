@@ -110,6 +110,78 @@ func TestRunStartsOnTheOtherBackendWhileALimitIsRemembered(t *testing.T) {
 	}
 }
 
+func TestRunExplainsAMeteredPartnerBeforeStartingAndKeepsItsModel(t *testing.T) {
+	for _, continuing := range []bool{false, true} {
+		t.Run(fmt.Sprint(continuing), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t)
+			t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+			dir := t.TempDir()
+			args := []string{"-b", "codex", "-m", "requested-model", "-C", dir}
+			if continuing {
+				rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := rec.Close(agent.Result{Backend: "codex", Status: agent.StatusOK}); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(rec.Dir(), "messages.json"), []byte(`{"model":"previous-model"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--continue", rec.ID())
+			}
+			if err := limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			agent.Register(scripted{"codex", func(task agent.Task) agent.Result {
+				called = true
+				if task.Model != "requested-model" {
+					t.Errorf("model = %q, want requested-model", task.Model)
+				}
+				events, err := runlog.Events(filepath.Base(task.RunDir))
+				if err != nil {
+					t.Fatal(err)
+				}
+				said := false
+				for _, e := range events {
+					said = said || e.Kind == agent.EventInfo && strings.Contains(e.Text, "ANTHROPIC_API_KEY") && strings.Contains(e.Text, "per token")
+					if strings.Contains(e.Text, "fake-secret-value") {
+						t.Error("event exposed the key value")
+					}
+				}
+				if !said {
+					t.Error("no metered partner reason before the backend started")
+				}
+				return agent.Result{Status: agent.StatusOK}
+			}})
+			if code, err := cmdRun(append(args, "fix it")); code != 0 || err != nil || !called {
+				t.Fatalf("code=%d err=%v called=%v", code, err, called)
+			}
+		})
+	}
+}
+
+func TestRunDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		cancel()
+		return agent.Result{Status: agent.StatusLimited, Error: "usage limit"}
+	}})
+	code, err := cmdRunContext(ctx, []string{"-b", "codex", "-C", t.TempDir(), "fix it"})
+	if code != 1 || err != nil {
+		t.Errorf("code=%d err=%v, want the limited run's exit code", code, err)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" || recs[0].Result.Status != agent.StatusLimited {
+		t.Fatalf("records = %+v, err=%v; want only the limited run", recs, err)
+	}
+}
+
 func TestNoSwitchKeepsTheRunOnItsBackend(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	standIn(t)

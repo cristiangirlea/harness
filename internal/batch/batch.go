@@ -719,8 +719,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				notify(Event{Task: t.ID, Kind: "switch", Text: "skipping an attempt on " + name + ": " + why})
 				continue
 			}
-			if pick != name {
+			if why != "" {
 				notify(Event{Task: t.ID, Kind: "switch", Text: why})
+			}
+			if pick != name {
 				plan.switchedFrom, name = name, pick
 			}
 		}
