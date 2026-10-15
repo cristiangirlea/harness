@@ -4,8 +4,8 @@
 // hrn prompts are long briefs whose later paragraphs mention every keyword
 // ("review the diff", "CI", "deploy"), so only the first two non-blank paragraphs
 // can supply the lead: the second is tried only if no rule matches the first.
-// A paragraph is read as written, then with its leading label lines
-// ("Repository: hrn") skipped. Each lead is lowercased and capped at maxLead bytes.
+// An instruction after leading label lines ("Repository: hrn") is tried before
+// the paragraph as written. Each lead is lowercased and capped at maxLead bytes.
 package purpose
 
 import (
@@ -24,6 +24,17 @@ const Unknown = "unknown"
 // Valid reports whether c is a category that callers may declare.
 func Valid(c string) bool {
 	return c != Unknown && slices.Contains(Categories, c)
+}
+
+// Declarable returns the categories callers may declare, in listing order.
+func Declarable() []string {
+	var categories []string
+	for _, c := range Categories {
+		if c != Unknown {
+			categories = append(categories, c)
+		}
+	}
+	return categories
 }
 
 // Declared reads a Purpose: <category> header on the first non-blank line.
@@ -48,11 +59,17 @@ func Declared(prompt string) string {
 
 // Resolve prefers an explicit declaration, then a header, then keyword rules.
 func Resolve(declared, prompt string) Result {
-	if declared == "" {
+	if !Valid(declared) {
 		declared = Declared(prompt)
 	}
 	if declared != "" {
 		return Result{Category: declared, Rule: "declared"}
+	}
+	// A free-text Purpose header is metadata, not classifier input.
+	normalized := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(strings.TrimSpace(prompt))
+	first, rest, _ := strings.Cut(normalized, "\n")
+	if label, _, ok := strings.Cut(first, ":"); ok && strings.EqualFold(label, "Purpose") {
+		prompt = rest
 	}
 	return Classify(prompt)
 }
@@ -107,15 +124,31 @@ var rules = []rule{
 }
 
 // Classify names what a prompt asks for, from its lead: the first of at most
-// two paragraphs that a rule matches, each read as written first (so "panic:"
-// and "C:\" stay what they are) and then with its leading label lines skipped.
+// two paragraphs that a rule matches. An anchored instruction after leading
+// labels is tried first, then the raw lead, then the lead with labels skipped.
 func Classify(prompt string) Result {
 	for _, paragraph := range paragraphs(prompt) {
+		u := unlabel(paragraph)
+		var stripped string
+		if u != paragraph {
+			stripped = lead(u)
+			for _, rl := range rules {
+				if !strings.HasPrefix(rl.re.String(), "^") {
+					continue
+				}
+				if loc := rl.re.FindStringIndex(stripped); loc != nil && loc[0] == 0 {
+					// Keep rule precedence within the instruction ("Add a test"
+					// is test, although the anchored add rule also matches).
+					r, _ := match(stripped)
+					return r
+				}
+			}
+		}
 		if r, ok := match(lead(paragraph)); ok {
 			return r
 		}
-		if u := unlabel(paragraph); u != paragraph {
-			if r, ok := match(lead(u)); ok {
+		if u != paragraph {
+			if r, ok := match(stripped); ok {
 				return r
 			}
 		}
@@ -162,7 +195,7 @@ func paragraphs(prompt string) []string {
 	return result
 }
 
-var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?: *`)
+var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?:(?: +|$)`)
 
 // unlabel drops a paragraph's leading label lines ("Repository: hrn", "Goal
 // (issue #82): ..."); a last line that is itself a label keeps its value.
@@ -186,6 +219,16 @@ func unlabel(paragraph string) string {
 // lead is a paragraph's lines joined by spaces, lowercased and cut to maxLead
 // bytes without splitting a rune.
 func lead(paragraph string) string {
+	// At most maxLead runes can contribute to maxLead lowercased bytes,
+	// even when lowercasing shrinks a rune's UTF-8 encoding.
+	runes := 0
+	for i := range paragraph {
+		if runes == maxLead {
+			paragraph = paragraph[:i]
+			break
+		}
+		runes++
+	}
 	l := strings.ToLower(strings.ReplaceAll(paragraph, "\n", " "))
 	if len(l) <= maxLead {
 		return l

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cristiangirlea/harness/internal/purpose"
 )
 
 func TestLoadSpecValidatesPurposeBeforeAnyTaskRuns(t *testing.T) {
@@ -18,7 +20,7 @@ func TestLoadSpecValidatesPurposeBeforeAnyTaskRuns(t *testing.T) {
 		}
 		spec, err := LoadSpec(path)
 		if value != "plan" && value != "" {
-			if err == nil || !strings.Contains(err.Error(), "one of review, debug, implement, refactor, test, research, plan, ops") {
+			if err == nil || !strings.Contains(err.Error(), "one of "+strings.Join(purpose.Declarable(), ", ")) {
 				t.Errorf("purpose %q: error=%v", value, err)
 			}
 			continue

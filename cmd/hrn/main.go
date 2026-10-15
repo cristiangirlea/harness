@@ -261,7 +261,7 @@ func cmdRun(args []string) (int, error) {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if set["purpose"] && !purpose.Valid(*declared) {
-		return 2, fmt.Errorf("run: --purpose %s: one of %s", *declared, strings.Join(purpose.Categories[:len(purpose.Categories)-1], ", "))
+		return 2, fmt.Errorf("run: --purpose %s: one of %s", *declared, strings.Join(purpose.Declarable(), ", "))
 	}
 
 	// A backend whose plan limit is remembered hands the run to its partner

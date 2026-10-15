@@ -57,6 +57,14 @@ func TestResolvePrefersDeclarationsAndKeepsTheFallbackRule(t *testing.T) {
 		{"", "Purpose: free text\nReview the diff.", Classify("Purpose: free text\nReview the diff.")},
 		{"", "Purpose: unknown\nReview the diff.", Classify("Purpose: unknown\nReview the diff.")},
 		{"", "", Result{Category: Unknown}},
+		{"free text", "Purpose: review\nFix it.", Result{Category: "review", Rule: "declared"}},
+		{"free text", "Implement it.", Classify("Implement it.")},
+		{"unknown", "Fix it.", Classify("Fix it.")},
+		{"", "Purpose: deploy notes\nAdd a test.", Classify("Add a test.")},
+		{"", "\r\n pUrPoSe: deploy notes\r\nAdd a test.", Classify("Add a test.")},
+		{"", "Purpose: deploy notes", Result{Category: Unknown}},
+		{"", "Purposeful: deploy notes", Classify("Purposeful: deploy notes")},
+		{"", "Purpose : deploy notes", Classify("Purpose : deploy notes")},
 	} {
 		if got := Resolve(tc.declared, tc.prompt); got != tc.want {
 			t.Errorf("Resolve(%q, %q) = %+v, want %+v", tc.declared, tc.prompt, got, tc.want)
@@ -132,6 +140,14 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 		name, prompt, category, rule string
 	}{
 		{"repository line before instruction", "Repository: hrn\nImplement the purpose classifier.", "implement", "implement.build"},
+		{"repository keywords before instruction", "Repository: hrn (Go, CI on GitHub)\nImplement the purpose classifier.", "implement", "implement.build"},
+		{"context keywords before instruction", "Context: deploy notes\nExplain the classifier.", "research", "research.explain"},
+		{"instruction keeps test precedence", "Repository: hrn (CI)\nAdd a test.", "test", "test.write-tests"},
+		{"url lead stays intact", "https://example.org/x", "unknown", ""},
+		{"windows path lead stays intact", `C:\repo\x`, "unknown", ""},
+		{"fix windows path", `fix C:\repo\x`, "debug", "debug.fix"},
+		{"panic value keeps diagnostic precedence", "panic: deployment failed", "debug", "debug.error-message"},
+		{"exception value keeps diagnostic precedence", "TypeError: cannot compare values", "debug", "debug.error-message"},
 		{"batch context before goal", "Repository: hrn (harness), Go, standard library only. Read AGENTS.md, CLAUDE.md and .claude/rules/ first; they are the house rules.\n\nGoal (issue #82): on hrn watch's index, each run and each batch leads with its repository and its task, not its id. Add a repository column ...", "implement", "implement.add"},
 		{"goal with note", "Goal (issue #82): fix the flaky ws create-lock test", "debug", "debug.fix"},
 		{"reviewer role in first paragraph wins", "You are an independent, read-only senior reviewer. Your job is to find real defects.\n\nSecond round on branch x: review the diff", "review", "review.reviewer-role"},
@@ -166,6 +182,56 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 func TestUnlabelKeepsASingleLabelValue(t *testing.T) {
 	if got := unlabel("Repository: hrn"); got != "hrn" {
 		t.Errorf("unlabel = %q, want hrn", got)
+	}
+}
+
+func TestUnlabelRequiresSpaceOrEndAfterTheColon(t *testing.T) {
+	for _, tc := range []struct{ prompt, want string }{
+		{"https://example.org/x\nHello.", "https://example.org/x\nHello."},
+		{`C:\repo\x` + "\nHello.", `C:\repo\x` + "\nHello."},
+		{"E:/repo/x\nHello.", "E:/repo/x\nHello."},
+		{"Repository: hrn\nHello.", "Hello."},
+		{"Repository:\nHello.", "Hello."},
+	} {
+		if got := unlabel(tc.prompt); got != tc.want {
+			t.Errorf("unlabel(%q) = %q, want %q", tc.prompt, got, tc.want)
+		}
+	}
+}
+
+func TestDeclarableExcludesUnknownRegardlessOfItsPosition(t *testing.T) {
+	original := Categories
+	t.Cleanup(func() { Categories = original })
+	Categories = []string{Unknown, "review", "debug"}
+	if got := Declarable(); !slices.Equal(got, []string{"review", "debug"}) {
+		t.Errorf("Declarable = %v, want review and debug", got)
+	}
+}
+
+func TestLeadBoundsWorkForALongFirstLine(t *testing.T) {
+	prompt := "Implement " + strings.Repeat("X", 4<<20)
+	if got, want := Classify(prompt), Classify(prompt[:maxLead]); got != want {
+		t.Errorf("long prompt = %+v, prefix = %+v", got, want)
+	}
+	result := testing.Benchmark(func(b *testing.B) {
+		for b.Loop() {
+			lead(prompt)
+		}
+	})
+	if got := result.AllocedBytesPerOp(); got > maxLead*utf8.UTFMax*4 {
+		t.Errorf("lead allocated %d bytes per call, want bounded prefix allocations", got)
+	}
+}
+
+func TestLeadCutsAfterLowercasingABoundedPrefix(t *testing.T) {
+	for _, tc := range []struct{ prompt, want string }{
+		{strings.Repeat("İ", maxLead) + "REVIEW", strings.Repeat("i", maxLead)},
+		{strings.Repeat("Ⱥ", maxLead) + "REVIEW", strings.Repeat("ⱥ", maxLead/3)},
+		{strings.Repeat("x\n", maxLead), strings.Repeat("x ", maxLead/2)},
+	} {
+		if got := lead(tc.prompt); got != tc.want || !utf8.ValidString(got) {
+			t.Errorf("lead = %q, want %q", got, tc.want)
+		}
 	}
 }
 

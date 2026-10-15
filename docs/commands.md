@@ -81,15 +81,18 @@ active version is resolved once and saved with the run.
 `implement`, `refactor`, `test`, `research`, `plan` or `ops`. An invalid flag value
 is refused with exit 2 before the run starts. The MCP `run` tool takes the same
 optional `purpose` string, and each task in a CLI or MCP batch spec may set it;
-invalid values are refused before any task runs.
+invalid values are refused before any task runs. Flag and MCP/batch field values
+are case-sensitive and must use the lowercase spellings above (`Review` is refused).
 
 Without an explicit value, a `Purpose: <category>` header on the prompt's first
 non-blank line supplies the declaration. The header label and category are
 case-insensitive; a non-category value, including free text or `unknown`, is
-ignored as a declaration and is never an error. The explicit value takes
+ignored as a declaration and is never an error; that header line is also excluded
+from keyword classification. The explicit value takes
 precedence over the header. The effective declaration is saved in `task.purpose`;
 no prompt text is added, removed or changed. Watch and reports use it before
-falling back to the keyword classifier.
+falling back to the keyword classifier. An invalid stored `task.purpose` is ignored,
+falling back to a valid header or the classifier.
 
 ### hrn exec
 

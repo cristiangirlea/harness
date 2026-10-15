@@ -146,7 +146,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, errors.New("prompt is required")
 			}
 			if args.Purpose != "" && !purpose.Valid(args.Purpose) {
-				return mcp.CallResult{}, fmt.Errorf("purpose %q: one of %s", args.Purpose, strings.Join(purpose.Categories[:len(purpose.Categories)-1], ", "))
+				return mcp.CallResult{}, fmt.Errorf("purpose %q: one of %s", args.Purpose, strings.Join(purpose.Declarable(), ", "))
 			}
 			if args.Purpose == "" {
 				args.Purpose = purpose.Declared(args.Prompt)
