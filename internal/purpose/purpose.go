@@ -41,18 +41,15 @@ func Declarable() []string {
 // The label and category are case-insensitive. A non-category value, including
 // unknown or free text, is ignored rather than treated as an error.
 func Declared(prompt string) string {
-	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
-	for line := range strings.Lines(prompt) {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	line, _ := firstNonBlankLine(prompt)
+	label, value, ok := strings.Cut(line, ":")
+	if ok && strings.EqualFold(label, "Purpose") {
+		value = strings.TrimSpace(value)
+		for _, category := range Categories {
+			if category != Unknown && strings.EqualFold(value, category) {
+				return category
+			}
 		}
-		label, value, ok := strings.Cut(line, ":")
-		value = strings.ToLower(strings.TrimSpace(value))
-		if ok && strings.EqualFold(label, "Purpose") && Valid(value) {
-			return value
-		}
-		break
 	}
 	return ""
 }
@@ -66,8 +63,7 @@ func Resolve(declared, prompt string) Result {
 		return Result{Category: declared, Rule: "declared"}
 	}
 	// A free-text Purpose header is metadata, not classifier input.
-	normalized := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(strings.TrimSpace(prompt))
-	first, rest, _ := strings.Cut(normalized, "\n")
+	first, rest := firstNonBlankLine(prompt)
 	if label, _, ok := strings.Cut(first, ":"); ok && strings.EqualFold(label, "Purpose") {
 		prompt = rest
 	}
@@ -169,31 +165,75 @@ func match(l string) (Result, bool) {
 	return Result{}, false
 }
 
-// paragraphs returns at most the first two non-blank paragraphs. "\r\n", "\n"
-// and a bare "\r" each end a line; whitespace-only lines separate paragraphs.
+// nextLine slices a line without copying or normalizing the remaining prompt.
+func nextLine(prompt string) (line, rest string) {
+	if i := strings.IndexAny(prompt, "\r\n"); i >= 0 {
+		end := i + 1
+		if prompt[i] == '\r' && end < len(prompt) && prompt[end] == '\n' {
+			end++
+		}
+		return prompt[:i], prompt[end:]
+	}
+	return prompt, ""
+}
+
+func firstNonBlankLine(prompt string) (line, rest string) {
+	for prompt != "" {
+		line, prompt = nextLine(prompt)
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line, prompt
+		}
+	}
+	return "", ""
+}
+
+// paragraphs gathers at most maxLead runes from each of the first two non-blank
+// paragraphs. CRLF, LF and bare CR end lines; whitespace-only lines separate paragraphs.
 func paragraphs(prompt string) []string {
 	var result []string
-	var lines []string
-	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
-	for line := range strings.Lines(prompt) {
+	var paragraph strings.Builder
+	runes := 0
+	for prompt != "" {
+		var line string
+		line, prompt = nextLine(prompt)
 		line = strings.TrimSpace(line)
 		if line == "" {
-			if len(lines) > 0 {
-				result = append(result, strings.Join(lines, "\n"))
+			if paragraph.Len() > 0 {
+				result = append(result, paragraph.String())
 				if len(result) == 2 {
 					return result
 				}
-				lines = nil
+				paragraph.Reset()
+				runes = 0
 			}
 			continue
 		}
-		lines = append(lines, line)
+		if runes == maxLead {
+			continue
+		}
+		if paragraph.Len() > 0 {
+			paragraph.WriteByte('\n')
+			runes++
+		}
+		for _, r := range line {
+			if runes == maxLead {
+				break
+			}
+			paragraph.WriteRune(r)
+			runes++
+		}
+		if runes == maxLead && len(result) == 1 {
+			break
+		}
 	}
-	if len(lines) > 0 {
-		result = append(result, strings.Join(lines, "\n"))
+	if paragraph.Len() > 0 {
+		result = append(result, paragraph.String())
 	}
 	return result
 }
+
+var errorLine = regexp.MustCompile(`(?i)^([a-z]*(error|exception)|panic)\s*:`)
 
 var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?:(?: +|$)`)
 
@@ -203,6 +243,9 @@ var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\
 func unlabel(paragraph string) string {
 	lines := strings.Split(paragraph, "\n")
 	for len(lines) > 0 {
+		if errorLine.MatchString(lines[0]) {
+			break
+		}
 		end := label.FindStringIndex(lines[0])
 		if end == nil {
 			break

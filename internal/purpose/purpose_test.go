@@ -88,6 +88,10 @@ func TestClassifyNamesTheRuleThatFired(t *testing.T) {
 		{"review", "Review the diff on this branch.", "review", "review.review"},
 		{"why does", "Why does the watcher drop the last event?", "debug", "debug.why-does"},
 		{"error message", "Got this: TypeError: x is undefined on the watch page", "debug", "debug.error-message"},
+		{"error before build verb", "Error: build failed", "debug", "debug.error-message"},
+		{"type error before make verb", "TypeError: make is not a function", "debug", "debug.error-message"},
+		{"panic before split verb", "panic: split slice out of range", "debug", "debug.error-message"},
+		{"panic before instruction", "panic: nil map write\nAdd a nil check to the loader.", "debug", "debug.error-message"},
 		{"how does", "How does the guard handle a symlinked workspace?", "research", "research.how-does"},
 		{"explain", "Explain the batch retry logic.", "research", "research.explain"},
 		{"compare", "Compare bufio.Scanner and bufio.Reader for the codec.", "research", "research.compare"},
@@ -213,13 +217,8 @@ func TestLeadBoundsWorkForALongFirstLine(t *testing.T) {
 	if got, want := Classify(prompt), Classify(prompt[:maxLead]); got != want {
 		t.Errorf("long prompt = %+v, prefix = %+v", got, want)
 	}
-	result := testing.Benchmark(func(b *testing.B) {
-		for b.Loop() {
-			lead(prompt)
-		}
-	})
-	if got := result.AllocedBytesPerOp(); got > maxLead*utf8.UTFMax*4 {
-		t.Errorf("lead allocated %d bytes per call, want bounded prefix allocations", got)
+	if got := testing.AllocsPerRun(10, func() { lead(prompt) }); got > 2 {
+		t.Errorf("lead allocated %g times per call, want at most 2", got)
 	}
 }
 
@@ -270,5 +269,37 @@ func TestALongLeadIsCutOnARuneBoundary(t *testing.T) {
 	}
 	if got := Classify(prompt); got.Category != "implement" {
 		t.Errorf("Classify = %+v, want implement", got)
+	}
+}
+
+func TestParagraphsBoundGathering(t *testing.T) {
+	for _, text := range []string{strings.Repeat("X", 4<<20), strings.Repeat("X\n", 2<<20)} {
+		got := paragraphs(text + "\n\nImplement it.")
+		if len(got) != 2 || len(got[0]) > maxLead*utf8.UTFMax || got[1] != "Implement it." {
+			t.Errorf("paragraphs did not bound the first paragraph and preserve the second")
+		}
+	}
+}
+
+func TestDeclaredDoesNotCopyLongPrompts(t *testing.T) {
+	for _, prompt := range []string{
+		"Purpose: review\r\n" + strings.Repeat("X", 4<<20),
+		"Purpose: " + strings.Repeat("X", 4<<20) + "\r\n",
+	} {
+		if got := testing.AllocsPerRun(10, func() { Declared(prompt) }); got != 0 {
+			t.Errorf("Declared allocated %g times, want no copies", got)
+		}
+	}
+}
+
+func TestResolveDoesNotCopyThePromptBody(t *testing.T) {
+	prompt := "Purpose: deploy notes\r\nImplement it.\r\n\r\n" + strings.Repeat("X", 4<<20)
+	body := strings.TrimPrefix(prompt, "Purpose: deploy notes\r\n")
+	baseline := testing.AllocsPerRun(10, func() { Classify(body) })
+	if got := testing.AllocsPerRun(10, func() { Resolve("", prompt) }); got > baseline {
+		t.Errorf("Resolve allocated %g times, Classify allocated %g", got, baseline)
+	}
+	if got := Resolve("", prompt); got != Classify("Implement it.") {
+		t.Errorf("Resolve = %+v, want implement.build", got)
 	}
 }
