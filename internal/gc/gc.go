@@ -124,8 +124,11 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 			stays = append(stays, w.Path)
 			continue
 		}
-		if _, err := gitOut(ctx, w.Repo, "worktree", "remove", w.Path); err != nil {
+		gone, err := removeWorktree(ctx, w)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", w.Path, err))
+		}
+		if !gone {
 			stays = append(stays, w.Path)
 			continue
 		}
@@ -138,6 +141,62 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 		}
 	}
 	return removed, errs
+}
+
+// removeGitWorktree is replaceable by tests to simulate git deregistering a
+// worktree before Windows refuses the final directory removal.
+var removeGitWorktree = func(ctx context.Context, w Worktree) error {
+	_, err := gitOut(ctx, w.Repo, "worktree", "remove", w.Path)
+	return err
+}
+
+func removeWorktree(ctx context.Context, w Worktree) (bool, error) {
+	err := removeGitWorktree(ctx, w)
+	if err == nil {
+		return true, nil
+	}
+	entries, listErr := listWorktrees(ctx, w.Repo)
+	if listErr != nil {
+		return false, errors.Join(err, listErr)
+	}
+	if !listed(w.Path, entryPaths(entries)) {
+		// Git can deregister a worktree after emptying it, even when Windows
+		// refuses the last directory removal. Only an empty or absent folder
+		// permits branch cleanup; a remaining handle is reported separately.
+		files, readErr := os.ReadDir(w.Path)
+		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+			return false, errors.Join(err, readErr)
+		}
+		if len(files) != 0 {
+			return false, errors.Join(err, batch.RemoveEmptyDir(w.Path))
+		}
+		if _, pruneErr := gitOut(ctx, w.Repo, "worktree", "prune"); pruneErr != nil {
+			return false, errors.Join(err, pruneErr)
+		}
+		return true, batch.RemoveEmptyDir(w.Path)
+	}
+	if !strings.Contains(err.Error(), "working trees containing submodules cannot be moved or removed") {
+		return false, err
+	}
+	// Git refuses even clean submodules. Check their own trees recursively:
+	// parent status can be configured to hide their changes. Ignored files
+	// count too, since removing the folder would delete them.
+	out, subErr := gitStdout(ctx, w.Path, "submodule", "foreach", "--quiet", "--recursive",
+		"git status --porcelain --untracked-files=all --ignored")
+	if subErr != nil {
+		return false, errors.Join(err, subErr)
+	}
+	if strings.TrimSpace(out) != "" {
+		return false, fmt.Errorf("submodules have uncommitted or ignored files: %w", err)
+	}
+	if why := recheck(ctx, w); why != "" {
+		return false, fmt.Errorf("kept, %s", why)
+	}
+	if removeErr := os.RemoveAll(w.Path); removeErr != nil {
+		return false, removeErr
+	}
+	_, pruneErr := gitOut(ctx, w.Repo, "worktree", "prune")
+	return pruneErr == nil, pruneErr
 }
 
 // deleteBranch deletes a branch only if it still points at the commit that
