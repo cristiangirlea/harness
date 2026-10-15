@@ -175,7 +175,8 @@ func assetURLAllowed(api, asset string) error {
 		return nil
 	}
 	host := strings.ToLower(u.Hostname())
-	github := host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".githubusercontent.com")
+	github := host == "github.com" || strings.HasSuffix(host, ".github.com") ||
+		host == "githubusercontent.com" || strings.HasSuffix(host, ".githubusercontent.com")
 	if u.Scheme != "https" || !github {
 		return fmt.Errorf("asset %q is not a GitHub URL over https", asset)
 	}

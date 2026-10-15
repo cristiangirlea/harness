@@ -229,3 +229,22 @@ func TestFetchReleaseRefusesATagThatLeavesTheDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestAssetURLAllowedAcceptsGitHubHostsOverHTTPSOnly(t *testing.T) {
+	api := "https://api.github.com/repos/cristiangirlea/harness/releases/latest"
+	for _, u := range []string{
+		"https://github.com/cristiangirlea/harness/releases/download/v0.2.0/hrn_0.2.0_linux_amd64",
+		"https://objects.githubusercontent.com/x",
+		"https://githubusercontent.com/x",
+		"https://release-assets.github.com/x",
+	} {
+		if err := assetURLAllowed(api, u); err != nil {
+			t.Errorf("%s refused: %v", u, err)
+		}
+	}
+	for _, u := range []string{"http://github.com/x", "https://github.com.evil.example/x", "https://notgithub.com/x", "x"} {
+		if err := assetURLAllowed(api, u); err == nil {
+			t.Errorf("%s accepted", u)
+		}
+	}
+}
