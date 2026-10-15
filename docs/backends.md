@@ -181,9 +181,10 @@ tiers, long-context rates and regional uplifts are not represented. Reported inp
 includes cached input: cache reads use the cached-input rate, the remaining input
 uses the input rate, and output uses the output rate.
 
-The model recorded in the result (`-m`, or a recorded CLI default) selects the
-price, with the same dated-snapshot suffix rule as the Claude table. An unknown
-or unrecorded model, or missing usage, keeps cost marked `missing`. `gpt-6-sol`
+The model the run asked for (`-m` or the routing table) selects the price, with
+the same dated-snapshot suffix rule as the Claude table. The adapter records no
+CLI default model: a run with neither keeps cost marked `missing`, as does an
+unknown model or missing usage. `gpt-6-sol`
 is omitted because the pricing page fetched on 2026-10-15 did not list it.
 Known models with reported usage carry `cost_is_estimate` and an `estimated`
 usage cost status, including an explicitly reported zero.

@@ -34,7 +34,7 @@ then lower effort, with variant names breaking remaining ties. Cost is the
 variant's recorded median across the eval, since task rows do not store separate
 costs. Variant choices inherit task and spec defaults as in the measured run;
 evidence that mixes different choices within one purpose/variant is skipped.
-The row carries the eval's id and date. Codex list-price estimates now participate
+The row carries the eval's id and date. Codex list-price estimates participate
 in eval cost comparisons and routing through the same cost fields as api estimates.
 Older records are not repriced.
 

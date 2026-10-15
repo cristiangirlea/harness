@@ -10,7 +10,7 @@ var openAIPrices = map[string]price{
 	"gpt-6-astra": {in: 10, cacheRead: 1, out: 50},
 }
 
-func finalizeCodexCost(_ []byte, _ func(Event), res *Result) {
+func estimateCodexCost(res *Result) {
 	res.CostUSD, res.CostEstimate = 0, false
 	if res.Usage == nil {
 		res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing"}
