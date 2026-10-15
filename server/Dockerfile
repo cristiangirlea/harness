@@ -4,6 +4,7 @@ WORKDIR /src
 COPY go.mod ./
 COPY internal/ ./internal/
 COPY server/go.mod server/go.sum ./server/
+RUN cd server && go mod download
 COPY server/ ./server/
 RUN cd server && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/hrn-server ./cmd/hrn-server && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/hrn-worker ./cmd/hrn-worker && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/hrn-fixture-model ./cmd/hrn-fixture-model
 FROM scratch
