@@ -161,7 +161,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 				cell.ShapeTools = v.ShapeTools
 				cell.ID = fmt.Sprintf("%s.%s.%s.r%d", evalID, t.ID, v.name(), r)
 				// Pin the measured backend so purpose routing cannot change a cell.
-				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendName())
+				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
 				cell.Model = firstOf(v.Model, t.Model)
 				cell.Effort = firstOf(v.Effort, t.Effort)
 				cell.Retrieval = firstOf(v.Retrieval, t.Retrieval)

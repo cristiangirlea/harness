@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -61,7 +63,7 @@ func cmdWatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	lns, opt := []net.Listener{ln}, watch.Options{Public: access}
+	lns, opt := []net.Listener{ln}, watchOptions(access)
 	if lan.on {
 		// The same port on the network as on this computer, when it was named.
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
@@ -80,6 +82,12 @@ func cmdWatch(args []string) error {
 		printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
 	}
 	return watch.Serve(ctx, opt, lns...)
+}
+
+func watchOptions(access *watch.PublicAccess) watch.Options {
+	var key [32]byte
+	rand.Read(key[:])
+	return watch.Options{Public: access, Key: hex.EncodeToString(key[:])}
 }
 
 func printPublicWatchStart(w io.Writer, origin, local, accessLog string) {

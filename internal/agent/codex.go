@@ -3,6 +3,7 @@ package agent
 import (
 	"cmp"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -143,6 +144,17 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 		} else {
 			if res.Usage == nil {
 				res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "reported", CostStatus: "missing"}
+			}
+			// Check the whole turn before adding it; missing usage stays missing.
+			for _, counter := range [][2]int64{
+				{res.InputTokens, *l.Usage.InputTokens},
+				{res.CacheRead, *l.Usage.CachedInputTokens},
+				{res.OutputTokens, *l.Usage.OutputTokens},
+			} {
+				if counter[0] < 0 || counter[1] < 0 || counter[1] > math.MaxInt64-counter[0] {
+					res.Usage.Status = "missing"
+					return true
+				}
 			}
 			res.InputTokens += *l.Usage.InputTokens
 			res.CacheRead += *l.Usage.CachedInputTokens
