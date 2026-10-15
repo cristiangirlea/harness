@@ -725,12 +725,13 @@ order they are worth taking:
       target for the summary invariants, before shaping runs by default.
     - [#437](https://github.com/cristiangirlea/harness/issues/437): a bounded originals store
       that refuses rather than evicts, and `read_original` by line range or JSON pointer;
-      with [#337](https://github.com/cristiangirlea/harness/issues/337).
+      in the same PR as [#337](https://github.com/cristiangirlea/harness/issues/337), which
+      touches the same lookup (originals across a continuation).
     - [#336](https://github.com/cristiangirlea/harness/issues/336): JSON and tabular summaries.
     - [#435](https://github.com/cristiangirlea/harness/issues/435): hrn owns the terminal for
       every backend, so shaped output reaches claude, codex and agy runs too.
-    - [#439](https://github.com/cristiangirlea/harness/issues/439): an advisory hook that names a
-      kept script covering a command, until the gate does it (adanext-exec #2).
+    - [#439](https://github.com/cristiangirlea/harness/issues/439): an advisory Claude Code hook
+      that names a kept script covering a command, until the gate does it (adanext-exec #2).
     - [#438](https://github.com/cristiangirlea/harness/issues/438): measure what tool definitions
       cost per api turn, and trim them only if it pays.
     - hrn-evals #30: a routing suite of real tasks, two or more per purpose, with multi-step
