@@ -167,15 +167,28 @@ const (
 	KilledCanceled = "canceled"
 )
 
-// Outcome says how the gate ended, for every line that reports a failed gate:
-// "exited 3", or for a killed gate why it was killed, so a timed-out suite is
-// never mistaken for failing code.
+// Outcome says how the gate ended, for every line that reports a failed gate
+// to the operator: "exited 3", or for a killed gate why it was killed and what
+// to do about it, so a timed-out suite is never mistaken for failing code.
 func (g GateResult) Outcome() string {
 	switch g.Killed {
 	case KilledTimeout:
 		return fmt.Sprintf("killed after %s (gate_timeout; set %q in the spec to allow more)", g.Timeout, "gate_timeout")
 	case KilledCanceled:
 		return "canceled"
+	}
+	return fmt.Sprintf("exited %d", g.ExitCode)
+}
+
+// Brief is Outcome for the retry prompt, as the predicate of "The gate command
+// `...` ...": it leaves out the advice to set gate_timeout, which the agent
+// cannot follow and the prompt says is the operator's.
+func (g GateResult) Brief() string {
+	switch g.Killed {
+	case KilledTimeout:
+		return fmt.Sprintf("was killed after %s by gate_timeout", g.Timeout)
+	case KilledCanceled:
+		return "was canceled"
 	}
 	return fmt.Sprintf("exited %d", g.ExitCode)
 }
@@ -533,9 +546,9 @@ const (
 		"in this workspace. Carry on from where it stopped rather than starting over.\n"
 	limitLastMessage   = "\nIts last message:\n%s\n%s\n%s\n"
 	gateFailureContext = "\n\n---\n" +
-		"A previous attempt at this task (attempt %d on %s) did not pass. Its changes are\n" +
-		"already applied in this workspace and committed on the current branch. Fix them\n" +
-		"rather than starting over.\n\n" +
+		"A previous attempt at this task (attempt %d on %s) did not pass its gate. Its changes\n" +
+		"are already applied in this workspace and committed on the current branch. Build on\n" +
+		"them rather than starting over.\n\n" +
 		"The gate command `%s` %s. Output (tail):\n" +
 		"%s\n%s\n%s\n"
 	// A killed gate says nothing about the code: the retry is told so, or it
@@ -569,7 +582,7 @@ func retryContext(attempts []Attempt) (text string, continued bool) {
 	switch g := failedGate(last); {
 	case last.Result.Status == agent.StatusOK && g != nil:
 		f := fence(g.Output)
-		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.Outcome(), f, g.Output, f)
+		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.Brief(), f, g.Output, f)
 		if g.Killed == KilledTimeout {
 			text += fmt.Sprintf(gateTimeoutContext, g.Timeout)
 		}
@@ -594,10 +607,10 @@ func retryContext(attempts []Attempt) (text string, continued bool) {
 	return text, continued
 }
 
-// outcomeOf is one attempt's fate in a few words.
+// outcomeOf is one attempt's fate in a few words, for the retry prompt's history.
 func outcomeOf(att Attempt) string {
 	if g := failedGate(att); g != nil {
-		return fmt.Sprintf("(gate `%s` %s)", tools.OneLine(g.Command, 60), g.Outcome())
+		return fmt.Sprintf("(gate `%s` %s)", tools.OneLine(g.Command, 60), g.Brief())
 	}
 	if att.Result.Status != agent.StatusOK {
 		return fmt.Sprintf("(%s: %s)", att.Result.Status, tools.OneLine(att.Result.Error, 80))
@@ -1249,6 +1262,11 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 	case err != nil:
 		gr.ExitCode = -1
 		gr.Output = strings.TrimSpace(gr.Output + "\n" + err.Error())
+		if ctx.Err() != nil {
+			// The batch's context had ended before the shell could start:
+			// the same cancellation as below, not a shell that failed.
+			gr.Killed = KilledCanceled
+		}
 	case gr.ExitCode == -1 && ctx.Err() != nil:
 		// The batch's own context ended and the gate went with it, whatever
 		// the per-gate limit was. A gate that finished just before keeps its
