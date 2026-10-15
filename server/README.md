@@ -80,6 +80,8 @@ repository URL when a job is accepted. It refuses to upgrade a schema 1
 database that contains jobs, because their accepted URLs cannot be recovered
 safely. Migration 003 adds scoped, immutable project knowledge and retrieval
 records. The integration tests cover both refusal and the empty schema upgrade.
+Opening an older schema requests the explicit `migrate` command; startup never
+migrates it automatically.
 The worker uses version 2 workspace manifests and refuses older or mismatched
 manifests. An uncertain operation enters `recovery_required` instead of being
 silently replayed. The control service does not independently verify that an
@@ -109,6 +111,13 @@ rejected. Read clients use `HRN_SERVER_URL`, `HRN_TENANT_TOKEN` (or the exact
 project's worker token), and optionally `HRN_SERVER_CA_FILE`. Knowledge
 commands use `HRN_OPERATOR_TOKEN` for mutations and never fall back to the
 read credential. Credentials stay outside request files and packets.
+Operator review is the control: the import deny list screens every text field
+but catches obvious mistakes only, including private credential paths, key
+headers, common token shapes, and a few instruction-injection phrases.
+The `.env` path check matches whole segments and `.env.<suffix>` files;
+`.envrc` and `docs/.environment.md` are allowed.
+Import refusals name the field and deny-list pattern that matched, without
+including the submitted text.
 
 The API uses these scoped JSON operations:
 
@@ -153,6 +162,11 @@ rollback need scope and expected_generation. `search.json` adds query and
 optionally version_id; `inspect.json` adds version_id. Inputs reject unknown
 fields, including credential fields. Search matches exact scope and ranks
 identifiers, paths, and errors before `simple` text matches, with stable ties.
+Identifiers may include spaces for multi-word errors. Exact query candidates
+also omit trailing sentence periods and colons, preserving internal path punctuation.
+Joined candidates contain at most 8 words; each search sends at most 256 exact
+candidates, each limited to 256 bytes.
+The optional search `attempt` must be between 0 and 2147483647 inclusive.
 An empty or no-match packet is valid; packets contain at most 8192 bytes of
 reference text and an audit ID.
 
