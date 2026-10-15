@@ -6,11 +6,23 @@ class AdaCapture extends AudioWorkletProcessor {
     super();
     this.block = new Float32Array(2048);
     this.used = 0;
+    this.recording = false;
+    this.port.onmessage = ({ data }) => {
+      if (data === 'start') {
+        this.used = 0;
+        this.recording = true;
+      } else if (data === 'stop') {
+        this.recording = false;
+        if (this.used) this.port.postMessage(this.block.slice(0, this.used));
+        this.used = 0;
+        this.port.postMessage(null); // all samples precede the Stop acknowledgement
+      }
+    };
   }
 
   process(inputs) {
     const ch = inputs[0] && inputs[0][0];
-    if (ch) {
+    if (ch && this.recording) {
       let i = 0;
       while (i < ch.length) {
         const n = Math.min(ch.length - i, this.block.length - this.used);

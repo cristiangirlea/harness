@@ -239,16 +239,30 @@ the microphone, and the recordings are that person's voice.
   quiet, or good.
 - **Just record me**: one long recording for talking, to someone or to ChatGPT's voice mode,
   with headphones, so that only the speaker's voice reaches the microphone. It is saved in
-  parts of five minutes and when it stops.
+  parts of five minutes and when it stops. A failed save keeps the audio for another try;
+  the warning clears once that part is saved.
 
 The page asks for the microphone as it is (echo cancellation, noise suppression and
 automatic gain off, one channel) and says so if the browser filters it anyway, as it may
 while another tab uses the microphone. Takes are 16-bit mono WAV at the browser's audio rate (usually 48 kHz).
+Record starts a fresh capture; Stop includes the last partial audio block, releases the
+microphone and suspends the audio context. Playback wakes the context without opening the
+microphone; the next Record opens it again. Switching modes stops the current recording
+and cancels one still opening the microphone. Keep and Retake wait until opening finishes.
 They are saved by the browser into a folder the person picks (`0001.wav`, … with
 `metadata.csv` as `id|text`, and `talk-<time>-<part>.wav`), never sent to hrn watch, which
 only serves the page; picking the same folder again carries on at the first line not kept.
+Recording shortcuts wait while the folder loads. Unrecognised metadata rows (such as a
+header or notes) are preserved when saving; unreadable metadata is reported rather than
+overwritten.
 A browser without folder access (Firefox) downloads each take instead, named by its line.
+**Download metadata.csv** downloads the text for the lines kept in this page session;
+save it alongside those WAV files. Download it before closing or reloading the page.
 A line's number never changes, so takes from different sessions line up.
+
+The recorder's browser-API unit tests run locally with
+`node --test internal/watch/testdata/voice.test.cjs` (Node.js, no browser download).
+They use mocked audio and folder APIs; they do not replace a real browser microphone check.
 
 ## Secret masking
 
