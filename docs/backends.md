@@ -25,6 +25,8 @@ Without preferences, the default backend is `api` when credentials exist, otherw
 
 ### Choosing which backends hrn may use
 
+The [Backends card in hrn watch](watch.md#backends) can also change the enabled backends and default.
+
 Set the enabled backends once for runs, MCP calls, batches, eval cells and judges,
 and the supervisor protocol:
 
