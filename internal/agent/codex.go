@@ -153,6 +153,7 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			} {
 				if counter[0] < 0 || counter[1] < 0 || counter[1] > math.MaxInt64-counter[0] {
 					res.Usage.Status = "missing"
+					estimateCodexCost(res)
 					return true
 				}
 			}
@@ -160,6 +161,7 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			res.CacheRead += *l.Usage.CachedInputTokens
 			res.OutputTokens += *l.Usage.OutputTokens
 		}
+		estimateCodexCost(res)
 	case "error", "turn.failed":
 		msg := cmp.Or(l.Message, l.Error.Message)
 		if l.Type == "error" && codexReconnecting(msg) {
@@ -172,6 +174,7 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			break
 		}
 		res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
+		estimateCodexCost(res)
 		if msg == "" || msg == res.Error {
 			// A turn.failed after the error line that said why: keep that text,
 			// which is what a reader and the limit check need. A reconnect

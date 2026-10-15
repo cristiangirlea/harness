@@ -1,11 +1,166 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"testing"
 )
+
+func TestHelperCodexCostStream(t *testing.T) {
+	if os.Getenv("HRN_CODEX_COST_HELPER") != "1" {
+		return
+	}
+	fmt.Println(`{"type":"thread.started","thread_id":"cost-session"}`)
+	for range 2 {
+		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":500000,"cached_input_tokens":200000,"output_tokens":50000}}`)
+	}
+	fmt.Println(`{"type":"item.completed","item":{"type":"agent_message","text":"done"}}`)
+	os.Exit(0)
+}
+
+func TestCodexRunStreamCost(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-sol", "unknown", ""} {
+		t.Run(model, func(t *testing.T) {
+			t.Setenv("HRN_CODEX_COST_HELPER", "1")
+			b := NewCodexBackend()
+			b.name, b.candidates = os.Args[0], nil
+			b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexCostStream$", "--"} }
+			var events []Event
+			res := b.Run(context.Background(), Task{Prompt: "work", Dir: t.TempDir(), Options: Options{Model: model}}, func(e Event) { events = append(events, e) })
+			if res.Status != StatusOK || res.Final != "done" || res.Session != "cost-session" || res.Turns != 2 {
+				t.Fatalf("stream result = %+v", res)
+			}
+			if res.InputTokens != 1000000 || res.CacheRead != 400000 || res.OutputTokens != 100000 || res.Usage == nil || res.Usage.Status != "reported" {
+				t.Fatalf("usage result = %+v", res)
+			}
+			if !slices.ContainsFunc(events, func(e Event) bool { return e.Kind == EventText && e.Text == "done" }) ||
+				!slices.ContainsFunc(events, func(e Event) bool { return e.Kind == EventSession && e.Text == "cost-session" }) {
+				t.Fatalf("missing stream events: %+v", events)
+			}
+			want, status := 0.0, "missing"
+			if model == "gpt-6.1-sol" {
+				want, status = 2.24, "estimated"
+			}
+			if math.Abs(res.CostUSD-want) > 1e-12 || res.CostEstimate != (want > 0) || res.Usage.CostStatus != status {
+				t.Fatalf("cost = %v, estimate = %v, status = %s; want %v, %s", res.CostUSD, res.CostEstimate, res.Usage.CostStatus, want, status)
+			}
+		})
+	}
+}
+
+func TestCodexStreamClearsEstimateWhenUsageBecomesMissing(t *testing.T) {
+	for _, line := range []string{
+		`{"type":"turn.completed"}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":-1,"cached_input_tokens":0,"output_tokens":0}}`,
+		fmt.Sprintf(`{"type":"turn.completed","usage":{"input_tokens":%d,"cached_input_tokens":0,"output_tokens":0}}`, int64(math.MaxInt64)),
+		`{"type":"error","message":"failed"}`,
+		`{"type":"turn.failed","error":{"message":"failed"}}`,
+	} {
+		t.Run(line, func(t *testing.T) {
+			res := Result{Model: "gpt-6.1-sol"}
+			valid := []byte(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`)
+			parseCodexStream(valid, func(Event) {}, &res)
+			if !res.CostEstimate || res.CostUSD <= 0 {
+				t.Fatalf("first turn was not estimated: %+v", res)
+			}
+			parseCodexStream([]byte(line), func(Event) {}, &res)
+			for range 2 {
+				if res.CostUSD != 0 || res.CostEstimate || res.Usage.Status != "missing" || res.Usage.CostStatus != "missing" {
+					t.Fatalf("missing usage retained cost: %+v, usage %+v", res, res.Usage)
+				}
+				parseCodexStream(valid, func(Event) {}, &res)
+			}
+		})
+	}
+}
+
+func TestCodexListPriceEstimate(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  float64
+	}{
+		// Two turns total 1M input (400k cached) and 100k output.
+		// Sol: 0.6*2 + 0.4*0.10 + 0.1*10 = $2.24.
+		{"gpt-6.1-sol", 2.24},
+		{"gpt-6.1-sol-20261015", 2.24},
+		{"gpt-6.1-sol@20261015", 2.24},
+		// Luna: 0.6*0.10 + 0.4*0.01 + 0.1*0.50 = $0.114.
+		{"gpt-6-luna", 0.114},
+		// Astra: 0.6*10 + 0.4*1 + 0.1*50 = $11.40.
+		{"gpt-6-astra", 11.4},
+		{"unknown", 0},
+		{"", 0},
+		{"gpt-6-sol", 0}, // Not listed on the fetched pricing page.
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			b := NewCodexBackend()
+			res := Result{Backend: "codex", Model: tc.model}
+			for range 2 {
+				b.parse([]byte(`{"type":"turn.completed","usage":{"input_tokens":500000,"cached_input_tokens":200000,"output_tokens":50000}}`), func(Event) {}, &res)
+			}
+			wantStatus := "missing"
+			if tc.want > 0 {
+				wantStatus = "estimated"
+			}
+			if math.Abs(res.CostUSD-tc.want) > 1e-12 || res.CostEstimate != (tc.want > 0) || res.Usage.CostStatus != wantStatus {
+				t.Fatalf("result = %+v, usage = %+v; want cost %v, status %s", res, res.Usage, tc.want, wantStatus)
+			}
+		})
+	}
+}
+
+func TestCodexEstimateRequiresReportedUsage(t *testing.T) {
+	for _, line := range []string{
+		`{"type":"thread.started","thread_id":"test"}`,
+		`{"type":"turn.completed"}`,
+		`{"type":"turn.failed","error":{"message":"failed"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":2,"output_tokens":1}}`,
+	} {
+		b := NewCodexBackend()
+		res := Result{Backend: "codex", Model: "gpt-6.1-sol"}
+		b.parse([]byte(line), func(Event) {}, &res)
+		if res.CostUSD != 0 || res.CostEstimate || (res.Usage != nil && res.Usage.CostStatus != "missing") {
+			t.Fatalf("invalid or missing usage was priced: %+v", res)
+		}
+	}
+}
+
+func TestCodexReportedZeroCostIsEstimated(t *testing.T) {
+	b := NewCodexBackend()
+	res := Result{Backend: "codex", Model: "gpt-6.1-sol"}
+	b.parse([]byte(`{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}`), func(Event) {}, &res)
+	if cost, known, estimated := res.KnownCost(); cost != 0 || !known || !estimated || !res.CostEstimate {
+		t.Fatalf("reported zero: %+v, known=%v estimated=%v", res, known, estimated)
+	}
+}
+
+func TestCodexOldResultLoads(t *testing.T) {
+	var res Result
+	if err := json.Unmarshal([]byte(`{"backend":"codex","model":"gpt-6.1-sol","status":"ok","turns":1,"input_tokens":100,"output_tokens":10,"duration_ns":1}`), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Backend != "codex" || res.InputTokens != 100 || res.CostUSD != 0 || res.CostEstimate || res.Usage != nil {
+		t.Fatalf("old result = %+v", res)
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"cost_usd", "cost_is_estimate", "usage_metadata"} {
+		if _, ok := fields[key]; ok {
+			t.Errorf("empty field %s was not omitted", key)
+		}
+	}
+}
 
 func TestCodexUsageOverflowStaysMissingAfterAnotherTurn(t *testing.T) {
 	for _, field := range []string{"input_tokens", "cached_input_tokens", "output_tokens"} {
