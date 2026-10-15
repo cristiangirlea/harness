@@ -168,6 +168,19 @@ gate_timeout 15m0s`, the full text as its tooltip), and a retry is told the gate
 killed after 15m0s by gate_timeout` without the advice, which is the operator's, so it
 does not search the output for a failing test.
 
+If the gate shell cannot start, the task fails with an infrastructure reason and
+does not use any remaining `retry` backends. This covers a process start error
+(including a missing shell interpreter), or a nonzero exit whose output contains
+an `HCS_E_*` error code or `The Windows Subsystem for Linux` launcher diagnostic.
+The gate records the reason in `infrastructure_error`; the agent's work is still
+committed for inspection. Other nonzero exits, including a command not found
+inside a running shell, keep the normal retry behavior. Cancellation and
+`gate_timeout` keep the behavior described above.
+
+Gate output is decoded from UTF-16 to UTF-8 before it is checked, shortened,
+recorded or shown. A little- or big-endian BOM identifies UTF-16; without a BOM,
+alternating NUL bytes over the first few code units identify the byte order.
+
 The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts,
 again each time a task moves on (an attempt's run starts or ends, a gate finishes, a task
 ends) and at the end, so `hrn watch` and `hrn batch show` can follow it; `--json` prints
