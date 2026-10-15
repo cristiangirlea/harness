@@ -173,6 +173,7 @@ func (d *durableAPI) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 		if ok && tool.Summary != nil {
 			summary = tool.Summary(input)
 		}
+		emit(Event{Time: time.Now(), Kind: EventToolCall, Tool: name, Input: input, Text: summary})
 		var out string
 		var runErr error
 		switch {
@@ -189,7 +190,6 @@ func (d *durableAPI) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 			if err := d.persist(ctx, "tool_intent", req, *res); err != nil {
 				return nil, err
 			}
-			emit(Event{Time: time.Now(), Kind: EventToolCall, Tool: name, Input: input, Text: summary})
 			out, runErr = tool.Run(ctx, ws, input)
 		}
 		if runErr != nil {

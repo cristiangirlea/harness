@@ -350,9 +350,24 @@ func TestDurableAndLocalRunsCountUnknownGuardedAndDeniedToolCallsTheSame(t *test
 			task.Mode = ModeAsk
 			approvals := 0
 			task.Approve = func(ApprovalRequest) bool { approvals++; return false }
-			result := Run(context.Background(), backend, task, func(Event) {})
+			var events []Event
+			result := Run(context.Background(), backend, task, func(e Event) {
+				if e.Kind == EventToolCall || e.Kind == EventToolResult {
+					events = append(events, e)
+				}
+			})
 			if result.Status != StatusOK || result.ToolCalls != 3 || fake.served != 2 || approvals != 1 {
 				t.Fatalf("tool calls were not counted: result=%+v requests=%d approvals=%d", result, fake.served, approvals)
+			}
+			if len(events) != 2*result.ToolCalls {
+				t.Fatalf("tool events = %d, want %d", len(events), 2*result.ToolCalls)
+			}
+			for i, tool := range []string{"missing_tool", "run_command", "write_file"} {
+				call, outcome := events[2*i], events[2*i+1]
+				if call.Kind != EventToolCall || call.Tool != tool || len(call.Input) == 0 || call.Text == "" ||
+					outcome.Kind != EventToolResult || outcome.Tool != tool || !outcome.IsError {
+					t.Fatalf("unmatched tool events: call=%+v outcome=%+v", call, outcome)
+				}
 			}
 			messages := fake.requests[1]["messages"].([]any)
 			outcomes := messages[len(messages)-1].(map[string]any)["content"].([]any)
