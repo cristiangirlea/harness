@@ -101,6 +101,25 @@ func TestHandingALongContextToAnotherBackendAsATranscriptGivesNoWarning(t *testi
 	}
 }
 
+func TestWalkingBackPastASameBackendRunWithoutASessionWarnsAboutTheSavedSession(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "one", Dir: dir},
+		agent.Result{Backend: "claude", Session: "s1", ContextTokens: 285000})
+	second := finished(t, first, agent.Task{Prompt: "two", Dir: dir},
+		agent.Result{Backend: "claude", Status: agent.StatusError})
+	p, err := Make(Request{RunID: second, Backend: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ForkSession != "s1" || len(p.Handoff) != 1 || p.Handoff[0].ID != second {
+		t.Fatalf("expected the earlier session and the unsaved turn's transcript: %+v", p)
+	}
+	if warning := p.ContextWarning(); !strings.Contains(warning, first) || !strings.Contains(warning, "285000 tokens") || strings.Contains(warning, second) {
+		t.Errorf("warning should name the saved session's run: %s", warning)
+	}
+}
+
 func TestSwitchingBackWarnsAboutTheEarlierLongSessionBeingForked(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)

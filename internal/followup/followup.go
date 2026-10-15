@@ -44,7 +44,8 @@ type Plan struct {
 	// chain, when it saved anything it can pick up again here.
 	Resume      *agent.Conversation
 	ForkSession string
-	carried     *runlog.Record
+	// carried is the run Resume or ForkSession comes from; the context warning's subject.
+	carried *runlog.Record
 
 	// Handoff is the runs of the chain after that one, or all of them, oldest
 	// first: the turns this backend has not seen.
@@ -179,6 +180,9 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.Resume, task.ForkSession = p.Resume, p.ForkSession
 	for _, n := range p.Notes {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: n})
+	}
+	if warning := p.ContextWarning(); warning != "" {
+		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: warning})
 	}
 	if len(p.Handoff) == 0 {
 		return

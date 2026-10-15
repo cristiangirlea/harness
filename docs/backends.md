@@ -210,8 +210,9 @@ tokens of context at its last turn, hrn warns with its run id and context size a
 suggests a fresh run with a short hand-over. This may be the named run or an earlier
 run in the chain on the same backend; a transcript-only hand-over to another backend
 gets no warning.
-The CLI prints the warning to stderr before starting, including with `--json`;
-the MCP tool includes it in its answer. Continuing is still allowed. Unknown
+The CLI shows the warning before starting: as an info line in plain mode, on stderr
+with `--json`; the MCP tool includes it in its answer and `hrn exec` in the `accepted`
+frame's notes, and every path records it once as an info event in the new run. Continuing is still allowed. Unknown
 context sizes and sizes at or below the threshold produce no warning.
 
 What the backend carries on from:
