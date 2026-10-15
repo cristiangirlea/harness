@@ -172,6 +172,23 @@ runs whose early history matters little; leave it unset for short ones, which ne
 it anyway. Only the claude backend applies it; the api loop (whose context editing does a
 similar job, see above), codex, gemini, opencode and agy say `compact_window: not enforced`.
 
+### Codex cost estimates
+
+Codex costs are list-price estimates from the OpenAI table in
+`internal/agent/prices_openai.go`, never a bill or subscription charge. The table
+records its source URL and date and uses standard short-context rates; service
+tiers, long-context rates and regional uplifts are not represented. Reported input
+includes cached input: cache reads use the cached-input rate, the remaining input
+uses the input rate, and output uses the output rate.
+
+The model the run asked for (`-m` or the routing table) selects the price, with
+the same dated-snapshot suffix rule as the Claude table. The adapter records no
+CLI default model: a run with neither keeps cost marked `missing`, as does an
+unknown model or missing usage. `gpt-6-sol`
+is omitted because the pricing page fetched on 2026-10-15 did not list it.
+Known models with reported usage carry `cost_is_estimate` and an `estimated`
+usage cost status, including an explicitly reported zero.
+
 ### Continuing a run
 
 A finished run can be picked up where it stopped, on the backend that ran it or on
