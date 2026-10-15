@@ -727,6 +727,17 @@ batch show answer the questions") until the owner asked for a live view on 2026-
 neither of them follows a run while it happens.
 
 ## Decisions log
+- 2026-10-15: a stream that ends on a codex reconnect notice loses its usage (#348, PR #393).
+  A `turn.completed` that reported usage, then a notice, then the end of the stream left the
+  usage `reported` although the last turn's tokens never were. Decided: the end-of-stream step
+  marks it `missing` as `turn.failed` does, keeps the counters so far and clears the estimate.
+- 2026-10-15: a stream that ends on a codex reconnect notice writes an error event (#347, PR
+  #392). With exit 0 `fail()` writes none, so the transcript held only the dim info line.
+  Decided: `CLIBackend.end`, an optional step run once on a clean exit after the stream, told
+  whether the stream wrote an error event so it never repeats one (a `turn.failed` after the
+  notice already reports it); codex's reports the pending notice. A generic rule in the run
+  loop was dropped: claude, gemini and agy also end in error on a clean exit without an event,
+  and their transcripts were not this slice's.
 - 2026-10-15: list-price estimates for the codex models (#378, PR #383). A second price
   table (OpenAI's list prices, source and date in the file) and an estimate computed in
   the codex stream after each turn with reported usage, cleared on every missing path;
