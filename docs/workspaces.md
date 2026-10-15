@@ -26,6 +26,10 @@ Takes add, list and lock slot worktrees one at a time, holding an OS file lock o
 `.hrn/slots/.create.lock` while they do; a take waits up to two minutes for it. The
 system releases the lock when its holder exits or crashes, so the file itself stays and
 is harmless: it never needs deleting.
+Git commands used by slot takes and batches can also inspect worktrees outside
+that lock. If Git fails to read `.git/worktrees/<name>/commondir` while another
+worktree is being created, hrn waits 250 ms and retries the command once. Other
+errors, or a second failure, are returned as usual; cancellation stops the wait.
 
 Who holds a slot is a lease file beside it, `<n>.lease`:
 `{"holder": "...", "taken": "...", "branch": "..."}`. It is created so that two callers

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/gitretry"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/purpose"
@@ -1920,8 +1921,10 @@ func Head(ctx context.Context, dir string) (string, error) {
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.CombinedOutput()
+	out, err := gitretry.Output(ctx, func() ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+		return cmd.CombinedOutput()
+	})
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		if text == "" {
