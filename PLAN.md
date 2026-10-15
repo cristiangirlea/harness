@@ -706,11 +706,13 @@ order they are worth taking:
       results (purpose to backend, model and effort), applied when a run names none and
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
       local models once a hrn-evals suite has measured them (the eval #224 asks for). Done:
-      PR #329, 2026-10-14. The first table: hrn-evals eval `b123c` (six tasks, four codex
-      variants, one repeat), five rows, all Luna since codex reports no cost data and the
-      rules then take the lower effort; recorded in hrn-evals PR #11
-      (`results/2026-10-14-routing.md`). The claude rows and three repetitions follow the
-      limit reset of 2026-10-18, on the owner's yes.
+      PR #329, 2026-10-14. The table in force: hrn-evals eval `f353a` of 2026-10-15 (six tasks,
+      Sol and Sonnet at medium, Luna and Haiku at low, three repeats, 64 of 72 passed): Sol for
+      debug, implement and research, Luna low for test and unknown; recorded in hrn-evals
+      PR #12 (`results/2026-10-15-routing.md`), after the codex-only first table of eval
+      `b123c` (PR #11). Claude never wins a tie because codex stores no cost data and the
+      eval table reads that as zero: a codex price is the gap to close before the table can
+      rank Claude against codex.
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
       CI-verified index for the scripts agents write twice, kept under `scripts/`. Done:
       PR #317, 2026-10-14.
