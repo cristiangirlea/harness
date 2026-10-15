@@ -2256,7 +2256,7 @@ neither of them follows a run while it happens.
   hrn-evals eval shows it pays, and that run spends plan quota, so it waits for the owner's
   word, with the suite as a slice of its own in hrn-evals. With the flag off the tool schema
   and every byte of behaviour are as before.
-- 2026-10-15: hrn update (#377, PR #TBD). `hrn update` replaces every hrn copy on this
+- 2026-10-15: hrn update (#377, PR #389). `hrn update` replaces every hrn copy on this
   computer (the running one, PATH, Go's bin, `%LOCALAPPDATA%\hrn`) with the newest release
   (checksum verified), a `go install` of `--ref` or a `--file`, renaming each aside as
   `hrn-<build>-<stamp>.prev` first because Windows allows that and not an overwrite, and
