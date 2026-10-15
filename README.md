@@ -85,6 +85,10 @@ hrn show -f <run-id>      # follow a run live
 | Inspect or prune saved data | [Run records](docs/run-records.md) |
 | Integrate hrn with a supervising program | [Exec protocol](docs/exec-protocol.md) |
 
+Exec continuation includes the CLI/MCP context warning in `accepted.notes` when the saved
+session or conversation being carried over exceeds 150,000 tokens. The new run records the
+warning once as an info event; a transcript hand-over alone does not warn.
+
 ## Permissions and privacy
 
 Start with `--mode readonly` and review the [backend-specific permission

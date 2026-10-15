@@ -25,8 +25,12 @@ func (r contextWarningBackend) Run(ctx context.Context, task agent.Task, emit fu
 func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *testing.T) {
 	agent.Register(contextWarningBackend{recorder{name: "stub-context"}})
 	for _, jsonOut := range []bool{false, true} {
-		for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
-			t.Run(fmt.Sprintf("json=%v/context=%d", jsonOut, n), func(t *testing.T) {
+		for _, tc := range []struct {
+			tokens  int64
+			handoff bool
+		}{{0, false}, {149999, false}, {150000, false}, {150001, false}, {285000, false}, {285000, true}} {
+			n := tc.tokens
+			t.Run(fmt.Sprintf("json=%v/context=%d/handoff=%v", jsonOut, n, tc.handoff), func(t *testing.T) {
 				t.Setenv("HRN_HOME", t.TempDir())
 				w, err := runlog.Create("stub-context", agent.Task{Prompt: "first", Dir: t.TempDir()})
 				if err != nil {
@@ -47,12 +51,47 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 				os.Stderr = capture
 				defer func() { os.Stderr = prev }()
 				args := []string{"--continue", w.ID(), "-b", "stub-context", "--no-switch"}
+				if tc.handoff {
+					agent.Register(contextWarningBackend{recorder{name: "stub-context-other"}})
+					args[3] = "stub-context-other"
+				}
 				if jsonOut {
 					args = append(args, "--json")
 				}
 				code, err := cmdRun(append(args, "again"))
 				if code != 0 || err != nil {
 					t.Fatalf("continuation refused: code=%d error=%v", code, err)
+				}
+				records, err := runlog.List(0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := 0
+				for _, rec := range records {
+					if rec.Continues != w.ID() {
+						continue
+					}
+					found++
+					events, err := runlog.Events(rec.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					count := 0
+					for _, e := range events {
+						if e.Kind == agent.EventInfo && strings.Contains(e.Text, "short hand-over") {
+							count++
+						}
+					}
+					want := 0
+					if n > 150000 && !tc.handoff {
+						want = 1
+					}
+					if count != want {
+						t.Errorf("recorded warnings = %d, want %d", count, want)
+					}
+				}
+				if found != 1 {
+					t.Fatalf("continued records = %d, want 1", found)
 				}
 				data, err := os.ReadFile(capture.Name())
 				if err != nil {
@@ -63,7 +102,7 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 				if start < 0 {
 					t.Fatal("backend never started")
 				}
-				if n > 150000 {
+				if n > 150000 && !tc.handoff {
 					for _, want := range []string{"warning:", w.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
 						if !strings.Contains(got[:start], want) {
 							t.Errorf("stderr before start lacks %q: %q", want, got[:start])

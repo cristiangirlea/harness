@@ -81,6 +81,11 @@ usage totals the model calls in its agent turn, and gemini's final stats total t
 run, so neither supplies a last model call's context size. A backend with no usage
 leaves it unset too. The field is omitted when zero; older records still load.
 
+When a continuation carries a saved session or conversation with more than 150,000 tokens
+of context, the new run records the fresh-run warning once as an `info` event on every
+entry path (CLI, MCP and exec). It appears in `hrn show` and the run page like other info
+events. Passing earlier turns only as a transcript does not produce this warning.
+
 Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
 force, which every run consults before it starts. Deleting it forgets them.
 
