@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
+	"time"
 )
 
 // TestHelperVersion is the fake hrn's `version` subcommand: the test binary,
@@ -33,12 +35,18 @@ func TestHelperVersion(t *testing.T) {
 }
 
 // TestHelperSleep keeps a copy of the test binary running until its stdin
-// closes, so a test can swap a file that a process is executing.
+// closes, so a test can swap a file that a process is executing. With
+// `-- sleep` (a detached child has no stdin pipe) it sleeps for a while.
 func TestHelperSleep(t *testing.T) {
 	if os.Getenv("HRN_UPDATE_HELPER_SLEEP") != "1" {
 		return
 	}
-	io.Copy(io.Discard, os.Stdin)
+	fmt.Println("sleeping")
+	if i := slices.Index(os.Args, "--"); i >= 0 && i+1 < len(os.Args) && os.Args[i+1] == "sleep" {
+		time.Sleep(30 * time.Second)
+	} else {
+		io.Copy(io.Discard, os.Stdin)
+	}
 	os.Exit(0)
 }
 
