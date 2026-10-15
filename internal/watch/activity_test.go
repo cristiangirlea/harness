@@ -131,14 +131,54 @@ func assertStoppedBot(t *testing.T, runs []runlog.Record, batches []batch.Result
 	}
 }
 
+func TestAStoppedRunCanResumeAndLaterReportItsRealEnding(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	rec := activityRun(t, time.Now().Add(-61*time.Minute), false)
+	stopped := botLook([]runlog.Record{rec}, nil, nil, time.Now())
+	ageFile(t, filepath.Join(runlog.Root(), rec.ID, "events.jsonl"), time.Now())
+	if r := runRow(rec); r.Status != "running" || r.Since == "" {
+		t.Errorf("a resumed run is still stopped: %+v", r)
+	}
+	resumed := botLook([]runlog.Record{rec}, nil, nil, time.Now())
+	if len(resumed.items) != 1 || !resumed.items[0].Going {
+		t.Errorf("Ada lost the resumed run: %+v", resumed)
+	}
+	rec.Done = true
+	rec.Result = agent.Result{Status: agent.StatusOK, Duration: 3 * time.Hour}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runlog.Root(), rec.ID, "result.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := runlog.Load(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := runRow(loaded); r.Status != "ok" {
+		t.Errorf("the saved ending does not win: %+v", r)
+	}
+	ended := botLook([]runlog.Record{loaded}, nil, nil, time.Now())
+	for _, prev := range []botSnapshot{stopped, resumed} {
+		says := announce(prev, ended, false)
+		if len(says) == 0 || says[0].Kind != "done" {
+			t.Errorf("Ada missed the real ending: %+v", says)
+		}
+	}
+}
+
 func TestABatchUsesItsRecordAndEveryRunsLatestWrite(t *testing.T) {
 	for _, tc := range []struct {
 		name                         string
 		recordFresh, runFresh, ended bool
+		resultFresh, otherRunFresh   bool
 	}{
 		{name: "quiet first attempt"},
 		{name: "long first attempt still writes", runFresh: true},
 		{name: "batch still writes", recordFresh: true},
+		{name: "run just saved its result", resultFresh: true},
+		{name: "another task still writes", otherRunFresh: true},
 		{name: "finished batch stays finished", ended: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,11 +191,20 @@ func TestABatchUsesItsRecordAndEveryRunsLatestWrite(t *testing.T) {
 			if tc.recordFresh {
 				recordTime = time.Now()
 			}
-			rec := activityRun(t, runTime, tc.ended)
+			rec := activityRun(t, runTime, tc.ended || tc.resultFresh)
+			if tc.resultFresh {
+				ageFile(t, filepath.Join(runlog.Root(), rec.ID, "result.json"), time.Now())
+			}
+			runs := []runlog.Record{rec}
 			b := batch.Result{ID: runlog.NewID(), Started: rec.Started, Tasks: []batch.TaskResult{
 				{ID: "first", Status: batch.StatusRunning, Attempts: []batch.Attempt{{RunID: rec.ID, Backend: rec.Backend}}},
 				{ID: "queued", Status: batch.StatusRunning},
 			}}
+			if tc.otherRunFresh {
+				other := activityRun(t, time.Now(), false)
+				runs = append(runs, other)
+				b.Tasks[1].Attempts = []batch.Attempt{{RunID: other.ID, Backend: other.Backend}}
+			}
 			if tc.ended {
 				b.Duration = time.Hour
 				for i := range b.Tasks {
@@ -170,7 +219,7 @@ func TestABatchUsesItsRecordAndEveryRunsLatestWrite(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := "stopped"
-			if tc.recordFresh || tc.runFresh {
+			if tc.recordFresh || tc.runFresh || tc.resultFresh || tc.otherRunFresh {
 				want = "running"
 			} else if tc.ended {
 				want = "done"
@@ -206,7 +255,7 @@ func TestABatchUsesItsRecordAndEveryRunsLatestWrite(t *testing.T) {
 				}
 				assertStoppedBot(t, []runlog.Record{rec}, []batch.Result{b})
 			} else if want == "running" {
-				snap := botLook([]runlog.Record{rec}, []batch.Result{b}, nil, time.Now())
+				snap := botLook(runs, []batch.Result{b}, nil, time.Now())
 				if len(snap.items) != 1 || !snap.items[0].Going {
 					t.Errorf("Ada lost the live batch: %+v", snap)
 				}
