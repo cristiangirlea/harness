@@ -1,0 +1,5 @@
+{"event":"init","conversation_id":"example-conversation","init":{"cwd":"/workspace/example","tools":["view_file","run_command"],"permission_mode":"proceed-in-sandbox","expanded_commands":[{"name":"plan","type":"system"}]}}
+{"event":"step_update","step_update":{"conversation_id":"example-conversation","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"example-conversation","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"ok"}}
+{"event":"step_update","step_update":{"conversation_id":"example-conversation","step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"\n","duration_seconds":11.4167118,"usage":{"input_tokens":13789,"output_tokens":1052,"thinking_tokens":1051,"cache_read_tokens":0,"total_tokens":14841}}}
+{"event":"result","result":{"conversation_id":"example-conversation","status":"SUCCESS","response":"ok\n","duration_seconds":11.5625886,"num_turns":1,"usage":{"input_tokens":13789,"output_tokens":1052,"thinking_tokens":1051,"cache_read_tokens":0,"total_tokens":14841}}}

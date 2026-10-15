@@ -1,9 +1,6 @@
 // Package limits keeps work going when a CLI backend reaches its plan's usage
-// limit. claude and codex bill to the owner's subscriptions, and each stands in
-// for the other: a run that ends limited is carried on by the other one, and
-// the time the limit lifts is remembered, so runs meanwhile start on the other
-// one directly. No other backend takes part: api is billed per token, and
-// gemini and opencode are not the plans this is for.
+// limit. By default claude and codex stand in for each other. A preference
+// selects partners among enabled, installed backends in preference order.
 package limits
 
 import (
@@ -26,6 +23,23 @@ import (
 // Partner is the backend that takes over from one at its usage limit, or ""
 // when none does.
 func Partner(backend string) string {
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return ""
+	}
+	if len(p.EnabledNames) > 0 {
+		for _, name := range p.Filter(agent.Names()) {
+			// api bills per token, never a plan: it is no stand-in even when enabled.
+			if name == backend || name == "api" {
+				continue
+			}
+			b, _ := agent.Get(name)
+			if _, err := b.Detect(); err == nil {
+				return name
+			}
+		}
+		return ""
+	}
 	switch backend {
 	case "claude":
 		return "codex"
@@ -82,7 +96,16 @@ func load() map[string]entry {
 // Note remembers when backend's limit lifts, from a run's result. A result
 // that is not limited, or does not say when the limit lifts, changes nothing.
 func Note(backend string, res agent.Result) error {
-	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() || Partner(backend) == "" {
+	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() {
+		return nil
+	}
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return err
+	}
+	// A preference may leave no installed partner today. Still remember the
+	// limit for the listing and for a partner enabled or installed later.
+	if len(p.EnabledNames) == 0 && Partner(backend) == "" {
 		return nil
 	}
 	mu.Lock()
@@ -191,6 +214,9 @@ func meteredBy(backend string) string {
 // chose the backend that takes over, so it must bill to a plan as the one it
 // stands in for does.
 func Ready(backend string, now time.Time, spent Spent) (bool, string) {
+	if backend == "api" {
+		return false, "api would bill per token, not to a plan"
+	}
 	b, err := agent.Get(backend)
 	if err != nil {
 		return false, err.Error()
@@ -241,7 +267,7 @@ func Choose(backend, continueID string) (string, string) {
 		}
 	}
 	if meant == "" {
-		meant = agent.DefaultBackendName()
+		meant = agent.DefaultBackendNameIn(runlog.Home())
 	}
 	if pick, why, _ := Pick(meant, time.Now(), nil); pick != meant {
 		return pick, why

@@ -15,6 +15,8 @@ hrn bot                    # Ada, the bot, in a small window: what hrn is doing,
 ```
 
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
+`hrn update` restarts a running watch on the new binary with the same flags (see
+[hrn update](commands.md#hrn-update)).
 Each row leads with the repository the work is in (its workspace folder's name; for a batch
 task's worktree, `<repo>/.hrn/worktrees/<task>` or a slot, `<repo>/.hrn/slots/<n>`, the folder
 above `.hrn`) and, for a run a
@@ -92,7 +94,8 @@ served by hrn, no fonts), follows the system's light or dark theme, and on a pho
 each run and batch as a small card instead of a table. It cannot start, stop or merge
 anything: a request other than GET or HEAD must carry hrn watch's key in
 `X-Hrn-Watch-Key`, from this computer or the network alike (a custom header is also the
-CSRF check), and as no action exists yet, hrn watch sets no key and refuses them all.
+CSRF check). Each start issues a fresh key, shared only with viewers allowed to change
+backend preferences, as described below.
 
 It listens on a loopback address and refuses any other `--addr`, and it answers only
 requests whose Host header names it, so a DNS name rebound to 127.0.0.1 cannot read it
@@ -117,6 +120,29 @@ codes nor the hints meant for this computer.
 second or more, and ends with the summary line once the run's result is saved. Ctrl+C
 stops following and leaves the run alone. A run killed before it saved its result never
 ends, on the page or in the terminal: hrn cannot tell it from a long step.
+
+### Backends
+
+The index's Backends card, above "What the runs were for", shows every registered
+backend to every viewer: installed or not, enabled or disabled, the configured
+default (or "chosen: X" when none is configured), and any remembered limit's end
+time. Unreadable or malformed preferences show a single notice without a path.
+Reload the index to refresh the card.
+
+Loopback viewers can change the enabled checkboxes and default radio buttons,
+then click Apply. In public mode every Cloudflare Access-verified viewer can do
+the same. LAN viewers see the state only, without controls or the write key, and so
+does any viewer whose request carries a forwarding header (`Forwarded`, `X-Forwarded-For`,
+`Cf-Connecting-Ip`): a proxy in front of watch belongs in public mode, where Access says
+who the viewer is.
+Apply uses a same-origin request carrying the startup key; it writes
+`$HRN_HOME/backends.json` atomically and reloads the index. Runs started afterwards
+follow those preferences. Choose "No configured default" to let hrn choose;
+leaving all backends unchecked with no default restores all backends. A configured
+default must be enabled, and unknown backend names are refused.
+
+Running MCP servers keep their backend enum until their host restarts them;
+the handler still refuses a disabled backend.
 
 ### Behind Cloudflare Access
 

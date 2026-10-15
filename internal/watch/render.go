@@ -332,9 +332,10 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 
 type indexPage struct {
 	page
-	Lists lists
-	Local bool        // seen from this computer, not a phone on the network
-	Phone []phoneLink // where a phone opens it, with hrn watch --lan
+	Backends backendCard
+	Lists    lists
+	Local    bool        // seen from this computer, not a phone on the network
+	Phone    []phoneLink // where a phone opens it, with hrn watch --lan
 }
 
 // phoneLink is one network address of the page, with a QR code of it to scan.
@@ -586,6 +587,10 @@ func batchBodyOf(res batch.Result, v viewer) batchBody {
 				gv := gateView{Key: fmt.Sprintf("%s/%d/%d", t.ID, i+1, j+1), Command: g.Command, Exit: fmt.Sprint(g.ExitCode), Took: short(g.Duration)}
 				gv.Class = "ok"
 				switch {
+				case g.Killed != "":
+					// The badge says why, as the batch tool does: a suite the
+					// limit killed is not failing code.
+					gv.Exit, gv.Class = g.Outcome(), "bad"
 				case g.ExitCode == -1:
 					gv.Exit, gv.Class = "killed", "bad"
 				case g.ExitCode != 0:

@@ -230,3 +230,50 @@ func TestCodexTurnFailedKeepsTheErrorBeforeIt(t *testing.T) {
 		t.Errorf("turn.failed's own text is under error.message: %+v", res)
 	}
 }
+
+func TestCodexTurnFailedAfterAReconnectNoticeIsAnError(t *testing.T) {
+	var res Result
+	var errs []string
+	emit := func(e Event) {
+		if e.Kind == EventError {
+			errs = append(errs, e.Text)
+		}
+	}
+	parseCodexStream([]byte(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`), emit, &res)
+	parseCodexStream([]byte(`{"type":"error","message":"Reconnecting... 5/5 (high demand)"}`), emit, &res)
+	if len(errs) != 0 {
+		t.Errorf("error events = %q after the notice alone, want none", errs)
+	}
+	parseCodexStream([]byte(`{"type":"turn.failed","error":{"message":""}}`), emit, &res)
+	if res.Status != StatusError || res.Error != "Reconnecting... 5/5 (high demand)" {
+		t.Errorf("status %s, error %q: the notice says why the turn failed", res.Status, res.Error)
+	}
+	if len(errs) != 1 {
+		t.Errorf("error events = %q, want one, at the failed turn", errs)
+	}
+	if res.Usage == nil || res.Usage.Status != "missing" {
+		t.Errorf("usage = %+v, want missing once the turn failed", res.Usage)
+	}
+}
+
+func TestCodexAReconnectNoticeKeepsTheErrorBeforeIt(t *testing.T) {
+	var res Result
+	emit := func(Event) {}
+	parseCodexStream([]byte(`{"type":"error","message":"You've hit your usage limit."}`), emit, &res)
+	parseCodexStream([]byte(`{"type":"error","message":"Reconnecting... 1/5 (high demand)"}`), emit, &res)
+	if res.Status != StatusError || res.Error != "You've hit your usage limit." {
+		t.Fatalf("status %s, error %q: the notice must not replace the error that came first", res.Status, res.Error)
+	}
+	parseCodexStream([]byte(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`), emit, &res)
+	if res.Status != StatusError || res.Error != "You've hit your usage limit." {
+		t.Errorf("status %s, error %q: a completed turn clears a notice, not an error", res.Status, res.Error)
+	}
+
+	// With no error before them, a later notice replaces the earlier one.
+	res = Result{}
+	parseCodexStream([]byte(`{"type":"error","message":"Reconnecting... 1/5 (high demand)"}`), emit, &res)
+	parseCodexStream([]byte(`{"type":"error","message":"Reconnecting... 2/5 (high demand)"}`), emit, &res)
+	if res.Error != "Reconnecting... 2/5 (high demand)" {
+		t.Errorf("error %q: the latest notice is the pending one", res.Error)
+	}
+}

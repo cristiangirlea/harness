@@ -151,9 +151,33 @@ type Attempt struct {
 
 type GateResult struct {
 	Command  string        `json:"command"`
-	ExitCode int           `json:"exit_code"` // -1 when killed (timeout or cancellation)
+	ExitCode int           `json:"exit_code"` // -1 when killed: Killed says why
 	Output   string        `json:"output"`    // last part of combined stdout/stderr
 	Duration time.Duration `json:"duration_ns"`
+	// Killed is why a gate with exit code -1 never finished: KilledTimeout when
+	// hrn's own gate_timeout ran out (Timeout is the limit that applied), or
+	// KilledCanceled when the batch was interrupted. Empty for a gate that
+	// exited on its own, and in records written before the field existed.
+	Killed  string         `json:"killed,omitempty"`
+	Timeout agent.Duration `json:"timeout,omitempty"`
+}
+
+const (
+	KilledTimeout  = "timeout"
+	KilledCanceled = "canceled"
+)
+
+// Outcome says how the gate ended, for every line that reports a failed gate:
+// "exited 3", or for a killed gate why it was killed, so a timed-out suite is
+// never mistaken for failing code.
+func (g GateResult) Outcome() string {
+	switch g.Killed {
+	case KilledTimeout:
+		return fmt.Sprintf("killed after %s (gate_timeout; set %q in the spec to allow more)", g.Timeout, "gate_timeout")
+	case KilledCanceled:
+		return "canceled"
+	}
+	return fmt.Sprintf("exited %d", g.ExitCode)
 }
 
 // Event is progress for a caller to print. Kind is one of start, tool, run,
@@ -237,7 +261,7 @@ func (s *Spec) normalize() error {
 	if err := s.Options.Validate(); err != nil {
 		return err
 	}
-	if err := checkBackends(s.Backend, s.Retry); err != nil {
+	if err := checkBackends(s.Backend, &s.Retry); err != nil {
 		return err
 	}
 	if err := checkGates(s.Gate); err != nil {
@@ -274,7 +298,7 @@ func (s *Spec) normalize() error {
 		if err := t.Options.Over(s.Options).Validate(); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
-		if err := checkBackends(t.Backend, t.Retry); err != nil {
+		if err := checkBackends(t.Backend, &t.Retry); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkGates(t.Gate); err != nil {
@@ -305,14 +329,33 @@ func compileExpect(expr string) (*regexp.Regexp, error) {
 // expectCommand is how an expect check is named where a gate command would be.
 func expectCommand(expr string) string { return "expect /" + expr + "/" }
 
-func checkBackends(backend string, retry []string) error {
-	for _, name := range append([]string{backend}, retry...) {
+func checkBackends(backend string, retry *[]string) error {
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return err
+	}
+	if err := p.Check(backend); err != nil {
+		return err
+	}
+	for _, name := range append([]string{backend}, (*retry)...) {
 		if name == "" {
 			continue
 		}
 		if _, err := agent.Get(name); err != nil {
 			return err
 		}
+	}
+	if len(*retry) > 0 {
+		filtered := make([]string, 0, len(*retry))
+		for _, name := range *retry {
+			if p.Enabled(name) {
+				filtered = append(filtered, name)
+			}
+		}
+		if len(filtered) == 0 {
+			return fmt.Errorf("retry has no enabled backends; enabled: %s (hrn backends set)", strings.Join(p.EnabledNames, ", "))
+		}
+		*retry = filtered
 	}
 	return nil
 }
@@ -493,8 +536,15 @@ const (
 		"A previous attempt at this task (attempt %d on %s) did not pass. Its changes are\n" +
 		"already applied in this workspace and committed on the current branch. Fix them\n" +
 		"rather than starting over.\n\n" +
-		"The gate command `%s` exited %d. Output (tail):\n" +
+		"The gate command `%s` %s. Output (tail):\n" +
 		"%s\n%s\n%s\n"
+	// A killed gate says nothing about the code: the retry is told so, or it
+	// hunts the output for a failing test that is not there.
+	gateTimeoutContext = "\nThe gate did not fail: hrn killed it when its time limit of %s ran out, so its\n" +
+		"output above is incomplete; a failure it shows from before the kill still needs fixing,\n" +
+		"but do not search it for one that is not there. The command must finish within that\n" +
+		"limit; make it faster, or leave it and say so in your answer, since only the operator\n" +
+		"can raise \"gate_timeout\" in the batch spec.\n"
 	runFailureContext = "\n\n---\n" +
 		"A previous attempt on %s ended with %s: %s\n" +
 		"This workspace is a fresh copy; nothing from that attempt is in it.\n"
@@ -519,7 +569,10 @@ func retryContext(attempts []Attempt) (text string, continued bool) {
 	switch g := failedGate(last); {
 	case last.Result.Status == agent.StatusOK && g != nil:
 		f := fence(g.Output)
-		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.ExitCode, f, g.Output, f)
+		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.Outcome(), f, g.Output, f)
+		if g.Killed == KilledTimeout {
+			text += fmt.Sprintf(gateTimeoutContext, g.Timeout)
+		}
 		continued = true
 	case last.Result.Status == agent.StatusLimited:
 		text = fmt.Sprintf(limitContext, len(attempts), last.Backend)
@@ -544,7 +597,7 @@ func retryContext(attempts []Attempt) (text string, continued bool) {
 // outcomeOf is one attempt's fate in a few words.
 func outcomeOf(att Attempt) string {
 	if g := failedGate(att); g != nil {
-		return fmt.Sprintf("(gate `%s` exited %d)", tools.OneLine(g.Command, 60), g.ExitCode)
+		return fmt.Sprintf("(gate `%s` %s)", tools.OneLine(g.Command, 60), g.Outcome())
 	}
 	if att.Result.Status != agent.StatusOK {
 		return fmt.Sprintf("(%s: %s)", att.Result.Status, tools.OneLine(att.Result.Error, 80))
@@ -601,7 +654,14 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	if err != nil {
 		return fail(err)
 	}
-	backends := []string{firstOf(backend, agent.DefaultBackendName())}
+	backends := []string{firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))}
+	p, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return fail(err)
+	}
+	if err := p.Check(backends[0]); err != nil {
+		return fail(err)
+	}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
 	gateTimeout := defaultGateTimeout
@@ -1149,7 +1209,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			report(att)
 			if gr.ExitCode != 0 {
 				pass = false
-				notify(Event{Task: id, Kind: "gate", Text: fmt.Sprintf("✗ %s (exit %d)", g, gr.ExitCode)})
+				notify(Event{Task: id, Kind: "gate", Text: fmt.Sprintf("✗ %s (%s)", g, gr.Outcome())})
 				break
 			}
 			notify(Event{Task: id, Kind: "gate", Text: "✓ " + g})
@@ -1189,7 +1249,14 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 	case err != nil:
 		gr.ExitCode = -1
 		gr.Output = strings.TrimSpace(gr.Output + "\n" + err.Error())
+	case gr.ExitCode == -1 && ctx.Err() != nil:
+		// The batch's own context ended and the gate went with it, whatever
+		// the per-gate limit was. A gate that finished just before keeps its
+		// exit code: Killed is only ever set beside -1.
+		gr.Killed = KilledCanceled
+		gr.Output = strings.TrimSpace(gr.Output + "\n[canceled]")
 	case res.TimedOut:
+		gr.Killed, gr.Timeout = KilledTimeout, agent.Duration(timeout)
 		gr.Output = strings.TrimSpace(gr.Output + fmt.Sprintf("\n[timed out after %s]", timeout))
 	}
 	return gr

@@ -37,8 +37,30 @@
 <p class="notice warn">Viewing needs no login: while hrn watch --lan runs, anyone on each of these networks can read your runs. Nothing here can start, stop or merge anything; acting on hrn will need hrn watch's key.</p>
 </section>
 {{else if .Local}}<p class="muted small">Only this computer can open this page. Run <code>hrn watch --lan</code> to open it from a phone on the same network.</p>{{end}}
+{{template "backends" .Backends}}
 <div id="live" data-stream="/stream/index" data-replace>{{template "lists" .Lists}}</div>
 {{template "foot" .}}{{end}}
+
+{{define "backends"}}<section id="backends" class="card" aria-labelledby="backends-h"{{if .Editable}} data-key="{{.Key}}"{{end}}>
+<h2 id="backends-h">Backends</h2>
+{{with .Problem}}<p class="notice bad">{{.}}</p>{{end}}
+{{with .Chosen}}<p class="muted small">chosen: {{.}}</p>{{end}}
+<div class="table-wrap" tabindex="0" role="region" aria-label="Backends"><table>
+<thead><tr><th scope="col">Backend</th><th scope="col">Installed</th><th scope="col">Enabled</th><th scope="col">Default</th><th scope="col">Limit</th>{{if .Editable}}<th scope="col">Enable</th><th scope="col">Choose default</th>{{end}}</tr></thead>
+<tbody>{{range .Rows}}<tr data-backend="{{.Name}}">
+<th scope="row">{{.Name}}</th>
+<td>{{if .Installed}}installed{{else}}not installed{{end}}</td>
+<td>{{if .Enabled}}enabled{{else}}disabled{{end}}</td>
+<td>{{if .Default}}default{{end}}</td>
+<td>{{.Limit}}</td>
+{{if $.Editable}}<td><input type="checkbox" name="enabled" value="{{.Name}}" aria-label="Enable {{.Name}}"{{if .Enabled}} checked{{end}}></td>
+<td><input type="radio" name="default" value="{{.Name}}" aria-label="Default {{.Name}}"{{if .Default}} checked{{end}}></td>{{end}}
+</tr>{{end}}</tbody></table></div>
+{{if .Editable}}<p><label><input type="radio" name="default" value=""{{if not .Default}} checked{{end}}> No configured default</label></p>
+<p class="muted small">Leaving every backend unchecked with no default restores all backends.</p>
+<button type="button" id="backends-apply">Apply</button>
+<p id="backends-status" role="status" aria-live="polite"></p>{{end}}
+</section>{{end}}
 
 {{define "lists"}}
 {{range .Problems}}<p class="notice bad">{{.}}</p>{{end}}
