@@ -289,6 +289,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 	}
 	durableFailure := func(err error) Result {
+		if durable.checkpoint.Pending == nil && ctx.Err() != nil && err == ctx.Err() {
+			return fail(stopStatus(ctx), ctx.Err())
+		}
 		res.RecoveryRequired = true
 		return fail(StatusError, fmt.Errorf("durable execution: %w", err))
 	}
@@ -319,12 +322,33 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 					return durableFailure(err)
 				}
 			}
-			msg, err = client.stream(ctx, req, onDelta, onBlock)
-		}
-		if err != nil && durable == nil && dropContextEdits(&req, err) {
-			// A beta hrn sends by default must never make every run fail.
-			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
-			msg, err = client.stream(ctx, req, onDelta, onBlock)
+			for {
+				msg, err = client.stream(ctx, req, onDelta, onBlock)
+				if err != nil && durable != nil {
+					var apiErr *apiError
+					if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && !apiErr.retryable() {
+						// A definite rejection has no model effect to reconcile.
+						durable.checkpoint.Pending = nil
+						if saveErr := durable.persist(ctx, "model_rejected", req, res); saveErr != nil {
+							return durableFailure(saveErr)
+						}
+					}
+				}
+				if err == nil || !dropContextEdits(&req, err) {
+					break
+				}
+				// A beta hrn sends by default must never make every run fail.
+				emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
+				if durable != nil {
+					if err := ctx.Err(); err != nil {
+						return fail(stopStatus(ctx), err)
+					}
+					durable.checkpoint.Pending = &PendingOperation{Kind: "model", ID: fmt.Sprintf("turn-%d", turn)}
+					if err := durable.persist(ctx, "model_intent", req, res); err != nil {
+						return durableFailure(err)
+					}
+				}
+			}
 		}
 		if msg != nil && !restoredResponse {
 			turn := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens,
@@ -341,7 +365,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			// fallback can answer a refused turn with another model.
 			res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
 		}
-		if err != nil && durable != nil {
+		if err != nil && durable != nil && durable.checkpoint.Pending != nil {
 			return durableFailure(err)
 		}
 		if err != nil {
