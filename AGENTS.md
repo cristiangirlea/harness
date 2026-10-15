@@ -1,7 +1,7 @@
 # hrn, a small agent harness
 
 One Go binary, `hrn`, runs tasks via Anthropic API (`-b api`) or installed CLIs (claude, codex,
-gemini, opencode), saving runs under `~/.hrn` or `$HRN_HOME`. Its api loop uses stdio MCP tools;
+gemini, opencode, agy), saving runs under `~/.hrn` or `$HRN_HOME`. Its api loop uses stdio MCP tools;
 `hrn mcp` serves hosts; `hrn batch` uses gated git worktrees; `hrn eval` scores backends and models.
 
 README has the quick start and guide index; `docs/commands.md`, `docs/permissions.md`, and

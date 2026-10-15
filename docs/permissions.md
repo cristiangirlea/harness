@@ -4,12 +4,15 @@
 
 ### Permission modes
 
-| Mode | api backend | claude | codex | gemini | opencode |
-|---|---|---|---|---|---|
-| `readonly` | read tools only (write tools not offered) | `plan` | `--sandbox read-only` | `default` | its config |
-| `ask` (default) | reads auto; writes + commands prompt y/N | `default` | `--sandbox read-only` | `default` | its config |
-| `auto` | reads + edits auto; commands prompt | `acceptEdits` | `--sandbox workspace-write` | `auto_edit` | its config |
-| `yolo` | everything | `bypassPermissions` | bypass sandbox | `yolo` | `--auto` |
+| Mode | api backend | claude | codex | gemini | opencode | agy |
+|---|---|---|---|---|---|---|
+| `readonly` | read tools only (write tools not offered) | `plan` | `--sandbox read-only` | `default` | its config | `--mode plan` |
+| `ask` (default) | reads auto; writes + commands prompt y/N | `default` | `--sandbox read-only` | `default` | its config | `--mode plan` |
+| `auto` | reads + edits auto; commands prompt | `acceptEdits` | `--sandbox workspace-write` | `auto_edit` | its config | `--mode accept-edits` |
+| `yolo` | everything | `bypassPermissions` | bypass sandbox | `yolo` | `--auto` | `--dangerously-skip-permissions` |
+
+agy maps `ask` to plan mode without interactive approval. Its `plan` mode is not a
+filesystem sandbox; see [agy's mappings](backends.md#backends).
 
 When the prompt comes from stdin there is no terminal to ask, so anything needing
 approval is denied.
@@ -28,6 +31,16 @@ target too, so `write_file` cannot create one outside through it. On Linux and m
 target with a `..` after a name (`a/../b`) is refused: the system takes that `..` after
 following `a`, which may itself be a link.
 Read-only calls in one turn run in parallel; writes and commands run in order.
+
+`read_original` is a read-only api tool, offered only when `--shape-tools` is on,
+and allowed in `readonly` mode like `read_file`. It reads saved shell/MCP output from this run's record directory,
+rather than a workspace path. Its required `handle` is exactly 16 lowercase hex
+characters, with no path separators; an unknown handle is an error naming it.
+An optional `range` is `a-b` in zero-based byte offsets, start inclusive and end
+exclusive; invalid or out-of-bounds ranges are refused. Without a range it returns
+all bytes without truncating or shaping them. Links that leave `originals/` are
+refused. The harness stores originals as run records when `--shape-tools` is on;
+the tool itself never writes them.
 
 #### The command guard
 
