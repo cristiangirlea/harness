@@ -69,11 +69,11 @@ func TestGateInfrastructureFailuresStopRetriesAndKeepTheReason(t *testing.T) {
 	}{
 		{"start error", "", errors.New("process failed to start: permission denied"), "permission denied"},
 		{"missing interpreter", "", &exec.Error{Name: "missing-shell", Err: exec.ErrNotFound}, "missing-shell"},
-		{"WSL code", "Error code: Wsl/Service/CreateInstance/CreateVm/HCS_E_CONNECTION_TIMEOUT", nil, "HCS_E_CONNECTION_TIMEOUT"},
-		{"WSL launcher", "The Windows Subsystem for Linux has no installed distributions.", nil, "The Windows Subsystem for Linux"},
+		{"WSL code", gateUTF16("Error code: Wsl/Service/CreateInstance/CreateVm/HCS_E_CONNECTION_TIMEOUT", binary.LittleEndian, true), nil, "HCS_E_CONNECTION_TIMEOUT"},
+		{"WSL launcher", gateUTF16("The Windows Subsystem for Linux has no installed distributions.", binary.LittleEndian, true), nil, "The Windows Subsystem for Linux"},
 		{"UTF16 WSL BOM", gateUTF16("Error code: HCS_E_CONNECTION_TIMEOUT", binary.LittleEndian, true), nil, "HCS_E_CONNECTION_TIMEOUT"},
 		{"UTF16 WSL no BOM", gateUTF16("The Windows Subsystem for Linux failed to start.", binary.LittleEndian, false), nil, "The Windows Subsystem for Linux"},
-		{"WSL code before tail", "HCS_E_CONNECTION_TIMEOUT\n" + strings.Repeat("detail\n", 800), nil, "HCS_E_CONNECTION_TIMEOUT"},
+		{"WSL code before tail", gateUTF16("HCS_E_CONNECTION_TIMEOUT\n"+strings.Repeat("detail\n", 800), binary.LittleEndian, true), nil, "HCS_E_CONNECTION_TIMEOUT"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := initRepo(t)
@@ -133,6 +133,40 @@ func TestNormalGateFailuresStillRetryWithDecodedOutput(t *testing.T) {
 				t.Errorf("normal failure did not retry with decoded output: %+v", tr)
 			}
 		})
+	}
+}
+
+func TestGateLauncherMentionsAfterTestFailuresStillRetry(t *testing.T) {
+	for _, phrase := range []string{"HCS_E_CONNECTION_TIMEOUT", "The Windows Subsystem for Linux"} {
+		for _, encoding := range []string{"UTF8", "UTF16"} {
+			t.Run(encoding+"/"+phrase, func(t *testing.T) {
+				dir := initRepo(t)
+				output := "--- FAIL: TestLauncher (0.00s)\n"
+				if encoding == "UTF16" {
+					output += strings.Repeat("ordinary failing test output\n", 40)
+				}
+				output += "    gate_test.go:1: unexpected " + phrase + "\nFAIL\n"
+				captured := output
+				if encoding == "UTF16" {
+					captured = gateUTF16(output, binary.LittleEndian, true)
+				}
+				fakeGate(t, tools.ShellResult{Output: captured, ExitCode: 1}, nil)
+				res, events := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Retry: []string{"wb-ok"},
+					Gate: []string{"fake gate"}, Tasks: []Task{{ID: "code", Prompt: "do the thing"}}})
+				tr := res.Tasks[0]
+				if tr.Status != StatusFail || len(tr.Attempts) != 2 {
+					t.Fatalf("status = %s, attempts = %d, want failure with retry", tr.Status, len(tr.Attempts))
+				}
+				if tr.Error != "" || eventTexts(events, "retry") == "" || !strings.Contains(tr.Attempts[1].Prompt, output) {
+					t.Errorf("ordinary test failure did not retry with its output: %+v", tr)
+				}
+				for _, att := range tr.Attempts {
+					if g := att.Gates[0]; g.InfrastructureError != "" {
+						t.Errorf("ordinary test failure classified as infrastructure: %+v", g)
+					}
+				}
+			})
+		}
 	}
 }
 

@@ -170,8 +170,9 @@ does not search the output for a failing test.
 
 If the gate shell cannot start, the task fails with an infrastructure reason and
 does not use any remaining `retry` backends. This covers a process start error
-(including a missing shell interpreter), or a nonzero exit whose output contains
-an `HCS_E_*` error code or `The Windows Subsystem for Linux` launcher diagnostic.
+(including a missing shell interpreter), or a nonzero exit whose output was decoded
+from UTF-16 and contains an `HCS_E_*` error code or `The Windows Subsystem for Linux`
+launcher diagnostic within the first 1 KiB of decoded output.
 The gate records the reason in `infrastructure_error`; the agent's work is still
 committed for inspection. Other nonzero exits, including a command not found
 inside a running shell, keep the normal retry behavior. Cancellation and

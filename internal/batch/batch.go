@@ -1272,7 +1272,8 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 	started := time.Now()
 	// A gate is the operator's own command: it keeps hrn's environment.
 	res, err := runGateShell(ctx, dir, command, timeout, nil)
-	res.Output = decodeGateOutput(res.Output)
+	output, decodedUTF16 := decodeGateOutput(res.Output)
+	res.Output = output
 	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}
 	switch {
 	case err != nil:
@@ -1294,10 +1295,13 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 	case res.TimedOut:
 		gr.Killed, gr.Timeout = KilledTimeout, agent.Duration(timeout)
 		gr.Output = strings.TrimSpace(gr.Output + fmt.Sprintf("\n[timed out after %s]", timeout))
-	case gr.ExitCode != 0:
-		if code := gateHCSError.FindString(res.Output); code != "" {
+	case gr.ExitCode != 0 && decodedUTF16:
+		// Launcher diagnostics precede shell output; later mentions can be
+		// ordinary test failures and must not suppress retries.
+		prefix := res.Output[:min(len(res.Output), 1024)]
+		if code := gateHCSError.FindString(prefix); code != "" {
 			gr.InfrastructureError = "WSL launcher: " + code
-		} else if strings.Contains(res.Output, "The Windows Subsystem for Linux") {
+		} else if strings.Contains(prefix, "The Windows Subsystem for Linux") {
 			gr.InfrastructureError = "The Windows Subsystem for Linux launcher could not start"
 		}
 	}
@@ -1308,7 +1312,7 @@ var gateHCSError = regexp.MustCompile(`\bHCS_E_[A-Z][A-Z0-9_]*\b`)
 
 // WSL's launcher can write UTF-16 even when stdout is a pipe. Decode at the
 // gate capture boundary, before taking a tail or checking launcher diagnostics.
-func decodeGateOutput(s string) string {
+func decodeGateOutput(s string) (string, bool) {
 	var order binary.ByteOrder
 	switch {
 	case strings.HasPrefix(s, "\xff\xfe"):
@@ -1320,7 +1324,7 @@ func decodeGateOutput(s string) string {
 		// at least two code units, examining up to the first 32 bytes.
 		n := min(len(s)/2, 16)
 		if n < 2 {
-			return s
+			return s, false
 		}
 		le, be := true, true
 		for i := 0; i < n*2; i += 2 {
@@ -1333,7 +1337,7 @@ func decodeGateOutput(s string) string {
 		case be:
 			order = binary.BigEndian
 		default:
-			return s
+			return s, false
 		}
 	}
 	units := make([]uint16, 0, (len(s)+1)/2)
@@ -1343,7 +1347,7 @@ func decodeGateOutput(s string) string {
 	if len(s)%2 != 0 {
 		units = append(units, '\ufffd')
 	}
-	return string(utf16.Decode(units))
+	return string(utf16.Decode(units)), true
 }
 
 // commitChanges commits everything the agent left in the worktree and returns
