@@ -737,9 +737,9 @@ order they are worth taking:
     - hrn-evals #30: a routing suite of real tasks, two or more per purpose, with multi-step
       requirements, so the table rests on more than ten small fixtures.
     - [#441](https://github.com/cristiangirlea/harness/issues/441) (the owner, 2026-10-16): comments
-      are 19% of non-test source bytes, paid by every agent that reads a file. The rule and
-      a comment check with a baseline land first, so new code stops growing them; the
-      package-by-package cleanup lands last, after the slices above that touch the same files.
+      (whole-line comments are 19% of non-test Go bytes, paid by every agent that reads a
+      file). The rule and a comment check with a baseline land before every slice above, so
+      new code stops growing them; the package-by-package cleanup lands after all of them.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
