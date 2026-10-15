@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -48,6 +50,7 @@ func (s *checkpointStore) save(_ context.Context, cp APICheckpoint) error {
 
 func durableFixture(t *testing.T, store *checkpointStore) (*APIBackend, Task, *fakeAPI, *int) {
 	t.Helper()
+	t.Setenv("HRN_HOME", t.TempDir())
 	fake := &fakeAPI{turns: [][]string{toolTurn("effect-1", "effect", `{}`), textTurn("done")}}
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
@@ -361,6 +364,163 @@ func TestDurableAndLocalRunsCountUnknownGuardedAndDeniedToolCallsTheSame(t *test
 				if outcome["is_error"] != true || !strings.Contains(fmt.Sprint(outcome["content"]), want) {
 					t.Fatalf("outcome %d was not refused as expected: %v", i, outcome)
 				}
+			}
+		})
+	}
+}
+
+func TestDurableStopsBetweenToolCallsWithoutRequiringRecovery(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deadline=%t", deadline), func(t *testing.T) {
+			store := &checkpointStore{}
+			backend, task, fake, effects := durableFixture(t, store)
+			turn := toolTurn("effect-1", "effect", `{}`)[:4]
+			for _, event := range toolTurn("effect-2", "effect", `{}`)[1:4] {
+				turn = append(turn, strings.ReplaceAll(event, `"index":0`, `"index":1`))
+			}
+			turn = append(turn, messageEnd("tool_use")...)
+			fake.turns = [][]string{turn}
+			ctx, cancel := context.WithCancel(context.Background())
+			want := StatusCanceled
+			if deadline {
+				cancel()
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+				task.Timeout = Duration(500 * time.Millisecond)
+				want = StatusTimeout
+			}
+			defer cancel()
+			result := backend.Run(ctx, task, func(e Event) {
+				if e.Kind == EventToolResult {
+					if deadline {
+						<-ctx.Done()
+					} else {
+						cancel()
+					}
+				}
+			})
+			if result.Status != want || result.RecoveryRequired || result.ToolCalls != 1 || *effects != 1 || fake.served != 1 {
+				t.Fatalf("stop between tools was uncertain or started second effect: result=%+v effects=%d requests=%d", result, *effects, fake.served)
+			}
+			if store.latest.Pending != nil || len(store.latest.ToolResults) != 1 {
+				t.Fatalf("checkpoint is not resumable: %+v", store.latest)
+			}
+			task.Durable.Resume = store.latest
+			fake.turns = append(fake.turns, textTurn("done"))
+			resumed := backend.Run(context.Background(), task, func(Event) {})
+			if deadline {
+				if resumed.Status != StatusTimeout || resumed.RecoveryRequired || *effects != 1 || fake.served != 1 {
+					t.Fatalf("expired resume started second effect: result=%+v effects=%d requests=%d", resumed, *effects, fake.served)
+				}
+			} else if resumed.Status != StatusOK || resumed.RecoveryRequired || resumed.ToolCalls != 2 || *effects != 2 || fake.served != 2 {
+				t.Fatalf("resume repeated confirmed effect: result=%+v effects=%d requests=%d", resumed, *effects, fake.served)
+			}
+		})
+	}
+}
+
+func TestDurableDistinguishesCertainHTTPFailuresFromUncertainRequests(t *testing.T) {
+	for _, status := range []int{400, 401, 403, 408, 409, 429, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			store := &checkpointStore{}
+			backend, task, _, effects := durableFixture(t, store)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				http.Error(w, "request refused", status)
+			}))
+			t.Cleanup(server.Close)
+			backend.BaseURL = server.URL
+			result := backend.Run(context.Background(), task, func(Event) {})
+			uncertain := status == 408 || status == 409 || status == 429 || status >= 500
+			if result.Status != StatusError || result.RecoveryRequired != uncertain || requests != 1 || *effects != 0 {
+				t.Fatalf("HTTP failure misclassified or retried: result=%+v requests=%d effects=%d", result, requests, *effects)
+			}
+			if (store.latest.Pending != nil) != uncertain {
+				t.Fatalf("pending operation disagrees with certainty: %+v", store.latest)
+			}
+		})
+	}
+}
+
+func TestDurableFailedRejectionSaveStillRequiresRecovery(t *testing.T) {
+	store := &checkpointStore{failBoundary: "model_rejected"}
+	backend, task, _, effects := durableFixture(t, store)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "context_management is unsupported", 400)
+	}))
+	t.Cleanup(server.Close)
+	backend.BaseURL = server.URL
+	result := backend.Run(context.Background(), task, func(Event) {})
+	if result.Status != StatusError || !result.RecoveryRequired || requests != 1 || *effects != 0 || store.latest.Pending == nil {
+		t.Fatalf("failed rejection save was certain or retried: result=%+v requests=%d effects=%d", result, requests, *effects)
+	}
+}
+
+func TestDurableCanceledOutcomeSaveStillRequiresRecovery(t *testing.T) {
+	store := &checkpointStore{}
+	backend, task, _, effects := durableFixture(t, store)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	task.Durable.Save = func(ctx context.Context, cp APICheckpoint) error {
+		if cp.Boundary == "tool_outcome" {
+			cancel()
+			return ctx.Err()
+		}
+		return store.save(ctx, cp)
+	}
+	result := backend.Run(ctx, task, func(Event) {})
+	if result.Status != StatusError || !result.RecoveryRequired || *effects != 1 || store.latest.Pending == nil {
+		t.Fatalf("failed outcome save was treated as safe cancellation: result=%+v effects=%d", result, *effects)
+	}
+}
+
+func TestDurableRetriesRefusedContextManagementWithANewSavedIntent(t *testing.T) {
+	for _, failRetrySave := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fail_retry_save=%t", failRetrySave), func(t *testing.T) {
+			store := &checkpointStore{}
+			backend, task, fake, effects := durableFixture(t, store)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				var req apiRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+				}
+				if req.ContextManagement != nil {
+					http.Error(w, "context_management is unsupported", 400)
+					return
+				}
+				var saved apiRequest
+				if err := json.Unmarshal(store.latest.Request, &saved); err != nil {
+					t.Error(err)
+				}
+				if store.latest.Boundary != "model_intent" || store.latest.Pending == nil || saved.ContextManagement != nil ||
+					strings.Contains(strings.Join(store.latest.Betas, ","), betaContextEdits) || strings.Contains(r.Header.Get("anthropic-beta"), betaContextEdits) {
+					t.Error("retry did not save and send an intent without context management")
+				}
+				data, _ := json.Marshal(req)
+				r.Body = io.NopCloser(strings.NewReader(string(data)))
+				fake.ServeHTTP(w, r)
+			}))
+			t.Cleanup(server.Close)
+			backend.BaseURL = server.URL
+			if failRetrySave {
+				task.Durable.Save = func(ctx context.Context, cp APICheckpoint) error {
+					if cp.Boundary == "model_intent" && cp.Sequence > 1 {
+						return errors.New("retry intent save failed")
+					}
+					return store.save(ctx, cp)
+				}
+			}
+			result := backend.Run(context.Background(), task, func(Event) {})
+			if failRetrySave {
+				if result.Status != StatusError || !result.RecoveryRequired || requests != 1 || *effects != 0 {
+					t.Fatalf("retry crossed failed save: result=%+v requests=%d effects=%d", result, requests, *effects)
+				}
+			} else if result.Status != StatusOK || result.RecoveryRequired || requests != 3 || *effects != 1 {
+				t.Fatalf("refused context management stopped the run: result=%+v requests=%d effects=%d", result, requests, *effects)
 			}
 		})
 	}
