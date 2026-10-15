@@ -49,7 +49,9 @@ figures, nothing for codex and gemini, and only once the run has ended.
 Each run on the index also says what it was for (review, debug, implement, refactor, test,
 research, plan, ops or unknown), from `internal/purpose`'s keyword rules on its prompt's
 first paragraph, or its second when the first matches no rule, with leading `Label: value`
-lines skipped, unless the run declared one; hover the word for the rule that decided it
+lines skipped for an anchored instruction before trying the paragraph as written
+and then with labels skipped as a fallback, unless the run declared one;
+hover the word for the rule that decided it
 (or `declared` for an explicit purpose or valid leading header). Above the batches, a card,
 "What the runs were for", sums up the newest 50 runs, the ones listed below, not all time:
 one row per purpose that occurs, then "all", each with its runs, how many are running,
