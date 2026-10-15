@@ -304,7 +304,7 @@ func (s *Spec) normalize() error {
 		}
 		seen[t.ID] = true
 		if t.Purpose != "" && !purpose.Valid(t.Purpose) {
-			return fmt.Errorf("task %s: purpose %q: one of %s", t.ID, t.Purpose, strings.Join(purpose.Categories[:len(purpose.Categories)-1], ", "))
+			return fmt.Errorf("task %s: purpose %q: one of %s", t.ID, t.Purpose, strings.Join(purpose.Declarable(), ", "))
 		}
 		if t.Purpose == "" {
 			t.Purpose = purpose.Declared(t.Prompt)
