@@ -199,12 +199,18 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 // pending reconnect notice never completed its turn: parseCodexStream showed
 // the notice as information, and a clean exit writes no error event, so the
 // failure is reported here with the notice as its text, unless a turn.failed
-// after the notice already reported it.
+// after the notice already reported it. The turn's usage was never reported
+// either, so what an earlier turn reported is marked missing, as turn.failed
+// marks it; the counters so far are kept.
 func codexStreamEnded(emit func(Event), res *Result, errored bool) {
-	if errored || res.Status != StatusError || !codexReconnecting(res.Error) {
+	if res.Status != StatusError || !codexReconnecting(res.Error) {
 		return
 	}
-	emit(Event{Time: time.Now(), Kind: EventError, Text: res.Error})
+	res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
+	estimateCodexCost(res)
+	if !errored {
+		emit(Event{Time: time.Now(), Kind: EventError, Text: res.Error})
+	}
 }
 
 // codexReconnecting reports whether a codex error line is the CLI saying it is
