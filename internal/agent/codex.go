@@ -50,6 +50,7 @@ func NewCodexBackend() *CLIBackend {
 			return append(a, "-")
 		},
 		parse:      parseCodexStream,
+		end:        codexStreamEnded,
 		forks:      true,
 		mapsEffort: true,
 		mapsModes:  []Mode{ModeReadOnly, ModeAuto, ModeYolo},
@@ -192,6 +193,18 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 		res.Status, res.Error = StatusError, msg
 	}
 	return true
+}
+
+// codexStreamEnded runs when the CLI exited clean. A stream that ends on a
+// pending reconnect notice never completed its turn: parseCodexStream showed
+// the notice as information, and a clean exit writes no error event, so the
+// failure is reported here with the notice as its text, unless a turn.failed
+// after the notice already reported it.
+func codexStreamEnded(emit func(Event), res *Result, errored bool) {
+	if errored || res.Status != StatusError || !codexReconnecting(res.Error) {
+		return
+	}
+	emit(Event{Time: time.Now(), Kind: EventError, Text: res.Error})
 }
 
 // codexReconnecting reports whether a codex error line is the CLI saying it is
