@@ -544,9 +544,10 @@ where such a typo lives.
 - [ ] CI green on ubuntu and windows.
 - [ ] The relevant guide in `docs/` updated for any new flag, field, command or status, and
       README when the overview changes.
-- [ ] This file: box ticked, `Done: PR #n, <date>` under the PR heading, deviations in
-      the *Decisions log*; a fix with no item here gets a Decisions-log entry naming the
-      issue and the PR.
+- [ ] This file, in a separate Markdown-only PR once the change has merged (never in the
+      code PR): box ticked, `Done: PR #n, <date>` under the PR heading, deviations in the
+      *Decisions log*; a fix with no item here gets a Decisions-log entry naming the issue
+      and the PR.
 - [ ] Merged with a merge commit; branch deleted.
 
 ## Model guidance
