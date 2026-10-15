@@ -164,13 +164,10 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 
 	// The watch, from the binary it was running.
 	for _, w := range watches {
-		exe, err := filepath.EvalSymlinks(w.Exe)
-		if err != nil {
-			exe = w.Exe
-		}
+		exe := Resolved(w.Exe)
 		target := ""
 		for _, t := range hrn {
-			if samePath(exe, t) {
+			if samePath(exe, Resolved(t)) {
 				target = t
 			}
 		}

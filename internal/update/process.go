@@ -61,15 +61,16 @@ func DescribeProcess(p Process) string {
 // paths) and whose first argument is sub.
 func fromTargets(procs []Process, targets []string, sub string) []Process {
 	var out []Process
+	resolved := make([]string, len(targets))
+	for i, t := range targets {
+		resolved[i] = Resolved(t)
+	}
 	for _, p := range procs {
 		if len(p.Args) == 0 || p.Args[0] != sub || !filepath.IsAbs(p.Exe) {
 			continue
 		}
-		exe, err := filepath.EvalSymlinks(p.Exe)
-		if err != nil {
-			exe = p.Exe
-		}
-		for _, t := range targets {
+		exe := Resolved(p.Exe)
+		for _, t := range resolved {
 			if samePath(exe, t) {
 				out = append(out, p)
 				break
@@ -77,6 +78,16 @@ func fromTargets(procs []Process, targets []string, sub string) []Process {
 		}
 	}
 	return out
+}
+
+// Resolved is the path with symlinks and Windows 8.3 short names expanded,
+// or the path itself when that fails. Two paths name one file only when
+// their resolved forms agree.
+func Resolved(path string) string {
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r
+	}
+	return path
 }
 
 // splitCommandLine takes a Windows command line apart the way
@@ -190,6 +201,8 @@ func Stop(lister ProcessLister) func(ctx context.Context, pid int) error {
 		if err := p.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return err
 		}
+		// A child of this process stays a zombie until it is reaped.
+		p.Wait()
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		return waitGone(ctx, lister, pid)
