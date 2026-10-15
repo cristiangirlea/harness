@@ -134,6 +134,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	if task.Durable != nil && len(task.MCP) != 0 {
 		return fail(StatusError, errors.New("durable MCP execution requires an isolated executor; local MCP subprocesses are unsupported"))
 	}
+	if task.Durable != nil && task.AllowDangerous {
+		return fail(StatusError, errors.New("allow_dangerous is not supported for durable jobs"))
+	}
 	client, err := b.client()
 	if err != nil {
 		return fail(StatusError, err)
