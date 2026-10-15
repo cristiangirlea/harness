@@ -408,6 +408,24 @@ func TestDurableRejectsLocalMCPBeforeStartingAnOperation(t *testing.T) {
 	}
 }
 
+func TestDurableRejectsAllowDangerousBeforeStartingAnOperation(t *testing.T) {
+	store := &checkpointStore{}
+	backend, task, fake, effects := durableFixture(t, store)
+	task.AllowDangerous = true
+	var errorEvent string
+	result := backend.Run(context.Background(), task, func(event Event) {
+		if event.Kind == EventError {
+			errorEvent = event.Text
+		}
+	})
+	if result.Status != StatusError || result.RecoveryRequired || !strings.Contains(result.Error, "allow_dangerous is not supported for durable jobs") {
+		t.Fatalf("dangerous durable run was not terminally refused: %+v", result)
+	}
+	if errorEvent != result.Error || fake.served != 0 || *effects != 0 || len(store.records) != 0 {
+		t.Fatalf("refusal crossed an operation boundary: event=%q requests=%d effects=%d checkpoints=%d", errorEvent, fake.served, *effects, len(store.records))
+	}
+}
+
 func TestDurableUsesCheckpointsInsteadOfAConversationFile(t *testing.T) {
 	store := &checkpointStore{}
 	backend, task, _, _ := durableFixture(t, store)
