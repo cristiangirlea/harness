@@ -107,6 +107,15 @@ a run id is never touched. If any batch or eval record cannot be read, prune ref
 that record may cite anything. Records go before the runs they cite, so a failure partway
 never leaves a record pointing at nothing.
 
+The one-hour activity rule lives in `internal/runlog/activity.go` and is shared by
+prune and watch. It uses `events.jsonl`'s modification time, falling back to the run
+directory when the transcript is absent. Watch displays an unfinished quiet run as
+`stopped`; this adds no stored status or fields and leaves older records unchanged.
+For an unfinished batch, watch considers the newest write to its record or any of
+its referenced runs, including a run's result: an active first attempt keeps the
+batch running even when the batch record itself is over an hour old. See
+[watch states](watch.md) for the display and Ada behaviour.
+
 ## Usage per turn
 
 A `usage` event in `events.jsonl` is one model call's tokens, written when the backend

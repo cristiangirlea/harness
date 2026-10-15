@@ -614,7 +614,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	p := runPageOf(sh.record(s.cleanRecord(rec)), events, prev, vw)
 	p.Usage = usageOf(usage)
 	p.Home = s.homeFor(r)
-	if !done {
+	if !done && p.Stopped == "" {
 		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
 	}
 	s.page(w, http.StatusOK, "run", p)
@@ -745,11 +745,11 @@ func (s *server) loop(r *http.Request, st *stream, every time.Duration, step fun
 }
 
 // streamChanges sends the part a template renders whenever it changes, and
-// ends once it says nothing more will.
-func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration, next func() (data any, final bool, err error), name string) {
+// ends once next supplies an ending ("done" or "stopped").
+func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration, next func() (data any, end string, err error), name string) {
 	last := ""
 	s.loop(r, st, every, func() (bool, error) {
-		data, final, err := next()
+		data, end, err := next()
 		if err != nil {
 			return true, s.problem(r, st, err)
 		}
@@ -763,8 +763,8 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 				return true, err
 			}
 		}
-		if final {
-			return true, st.send("end", "", "done")
+		if end != "" {
+			return true, st.send("end", "", end)
 		}
 		return false, nil
 	})
@@ -782,7 +782,7 @@ func (s *server) problem(r *http.Request, st *stream, err error) error {
 
 func (s *server) streamIndex(w http.ResponseWriter, r *http.Request) {
 	st := s.startStream(w)
-	s.streamChanges(r, st, 4*s.opt.Poll, func() (any, bool, error) { return s.lists(), false, nil }, "lists")
+	s.streamChanges(r, st, 4*s.opt.Poll, func() (any, string, error) { return s.lists(), "", nil }, "lists")
 }
 
 func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
@@ -798,17 +798,24 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	vw := s.viewerOf(r)
 	st := s.startStream(w)
-	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, bool, error) {
+	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, string, error) {
 		res, err := batch.LoadResult(id)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
-			return nil, true, fmt.Errorf("batch %s was removed", id)
+			return nil, "", fmt.Errorf("batch %s was removed", id)
 		case err != nil:
 			// Caught mid-save (a rename on Windows): show the last good copy.
 			res = last
 		}
 		last = res
-		return batchBodyOf(vw.batch(s.cleanBatch(res)), vw), !batchGoing(res), nil
+		body := batchBodyOf(vw.batch(s.cleanBatch(res)), vw)
+		end := ""
+		if body.Stopped != "" {
+			end = "stopped"
+		} else if !batchUnfinished(res) {
+			end = "done"
+		}
+		return body, end, nil
 	}, "batchbody")
 }
 
@@ -885,6 +892,16 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 			return true, s.problem(r, st, err)
 		}
 		if !done {
+			if at := runStopped(rec); !at.IsZero() {
+				html, err := s.render("stopped", noWord(at))
+				if err != nil {
+					return true, s.problem(r, st, err)
+				}
+				if err := st.send("result", "", html); err != nil {
+					return true, err
+				}
+				return true, st.send("end", "", "stopped")
+			}
 			return false, nil
 		}
 		html, err := s.render("result", resultOf(sh.record(s.cleanRecord(rec)).Result))

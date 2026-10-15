@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,9 @@ func TestAQuietUnfinishedRunShowsStoppedOnEverySurface(t *testing.T) {
 		if !strings.Contains(body, "stopped") || !strings.Contains(body, want) || strings.Contains(body, "Running. New steps") || strings.Contains(body, "Running for") {
 			t.Errorf("%s does not show stopped with %q", path, want)
 		}
+		if path != "/" && strings.Contains(body, "data-stream=") {
+			t.Error("a stopped run's page still opens a live stream")
+		}
 	}
 	card := purposesOf([]runlog.Record{rec})
 	if card.Rows[0].Running != "0" || card.Rows[0].NoCost != "" {
@@ -73,6 +77,33 @@ func TestAQuietUnfinishedRunShowsStoppedOnEverySurface(t *testing.T) {
 	loaded, err := runlog.Load(rec.ID)
 	if err != nil || loaded.Done {
 		t.Fatalf("watch changed the unfinished record: %+v, %v", loaded, err)
+	}
+}
+
+func TestQuietStreamsShowStoppedWithoutReportingFinished(t *testing.T) {
+	for _, kind := range []string{"run", "batch"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			quiet := time.Now().Add(-61 * time.Minute)
+			rec := activityRun(t, quiet, false)
+			id := rec.ID
+			if kind == "batch" {
+				id = runlog.NewID()
+				saveBatch(t, batch.Result{ID: id, Started: rec.Started, Tasks: []batch.TaskResult{
+					{ID: "first", Status: batch.StatusRunning, Attempts: []batch.Attempt{{RunID: rec.ID}}},
+				}})
+				ageFile(t, filepath.Join(runlog.Home(), "batches", id+".json"), quiet)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			req := httptest.NewRequest("GET", "http://127.0.0.1:8089/stream/"+kind+"/"+id, nil).WithContext(ctx)
+			out := httptest.NewRecorder()
+			New(context.Background(), Options{Poll: time.Millisecond}).ServeHTTP(out, req)
+			body := out.Body.String()
+			if !strings.Contains(body, "stopped") || !strings.Contains(body, "no word since ") || !strings.Contains(body, "event: end\ndata: stopped\n") || strings.Contains(body, "Finished") {
+				t.Errorf("quiet %s stream = %s", kind, body)
+			}
+		})
 	}
 }
 

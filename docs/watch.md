@@ -39,6 +39,22 @@ second; a browser that loses the connection picks up where it left off. Cost is 
 the backend reports: the api backend's estimate (`~`), the claude and opencode CLIs' own
 figures, nothing for codex and gemini, and only once the run has ended.
 
+An unfinished run whose transcript has not been written to for an hour shows
+`stopped · no word since 21:36` on the index and its page. This uses the same
+file-modification-time rule as `runs prune`, not the timestamp of an event or
+the run's age. With no transcript, the run directory's modification time is used.
+An unfinished batch is stopped only when its record and all its attempts' runs
+have been quiet for an hour. A first attempt can run for hours without rewriting
+the batch record and still count as running while its transcript is written to.
+Stopped tasks and unfinished attempts show as stopped too; the running clock ends.
+Open pages update to stopped through their streams. Reload a stopped page to see
+later activity if the writer resumes.
+
+This is a display inference, not a saved result: watch never rewrites or deletes
+records, and a saved result still determines how a run ended. An unreadable
+modification time alone is not evidence that a writer stopped. Ada excludes stopped
+records from what is going and does not announce them as starting or finished.
+
 Each run on the index also says what it was for (review, debug, implement, refactor, test,
 research, plan, ops or unknown), from `internal/purpose`'s keyword rules on its prompt's
 first paragraph, or its second when the first matches no rule, with leading `Label: value`
@@ -53,9 +69,9 @@ run is left out of the sum, not counted as $0. A row whose finished runs all rep
 cost shows their sum; a row where some did not shows "≥ $X", a lower bound over those that
 did, with how many runs report no cost under it; a row where none did shows "-". A sum
 that includes the api backend's estimate keeps its `~`. Running runs count only as
-running: they have no cost yet, known or unknown. A run killed before it saved its result
-has no result and stays running on the page (#96), so it counts as running, not as no
-cost.
+running: they have no cost yet, known or unknown. A stopped run still counts towards
+the number of runs, but not the running count or the count of finished runs with no
+reported cost.
 
 A run's page names its workspace by the same name as its row (`ada-os-ipc`, the repository
 for a batch task's worktree), and a batch's page its repository; a task's worktree shows
@@ -115,8 +131,8 @@ codes nor the hints meant for this computer.
 
 `hrn show -f` prints the same steps in the terminal, with a line for each wait of a
 second or more, and ends with the summary line once the run's result is saved. Ctrl+C
-stops following and leaves the run alone. A run killed before it saved its result never
-ends, on the page or in the terminal: hrn cannot tell it from a long step.
+stops following and leaves the run alone. The terminal waits for a saved result even
+when watch's one-hour quiet rule displays the run as stopped.
 
 ### Behind Cloudflare Access
 
