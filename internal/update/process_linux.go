@@ -49,6 +49,9 @@ func systemProcesses() ([]Process, error) {
 			// fields after it start with the state, then the parent pid.
 			if i := bytes.LastIndexByte(stat, ')'); i >= 0 {
 				f := strings.Fields(string(stat[i+1:]))
+				if len(f) > 0 && f[0] == "Z" {
+					continue // exited, not yet reaped: not running
+				}
 				if len(f) > 1 {
 					p.PPID, _ = strconv.Atoi(f[1])
 				}
