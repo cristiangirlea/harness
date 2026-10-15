@@ -168,9 +168,13 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			// The CLI lost its model stream and retries by itself; the turn
 			// goes on. The notice is shown as information and stands as the
 			// run's error only until turn.completed, so a stream that ends on
-			// it still says why. The usage the turn reports later is whole.
+			// it still says why. An error already recorded (a usage limit)
+			// stays: it is what the reader and the limit check need. The
+			// usage the turn reports later is whole.
 			emit(Event{Time: now, Kind: EventInfo, Text: msg})
-			res.Status, res.Error = StatusError, msg
+			if res.Error == "" || codexReconnecting(res.Error) {
+				res.Status, res.Error = StatusError, msg
+			}
 			break
 		}
 		res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}

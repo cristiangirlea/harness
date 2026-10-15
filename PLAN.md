@@ -727,7 +727,6 @@ batch show answer the questions") until the owner asked for a live view on 2026-
 neither of them follows a run while it happens.
 
 ## Decisions log
-
 - 2026-10-15: list-price estimates for the codex models (#378, PR #383). A second price
   table (OpenAI's list prices, source and date in the file) and an estimate computed in
   the codex stream after each turn with reported usage, cleared on every missing path;
@@ -735,6 +734,10 @@ neither of them follows a run while it happens.
   list-price estimate, never a bill. The first attempt wired it through `finalize`, which
   switches a CLI's stream parsing off: the review caught it, and a Run-level test with a
   helper-process stream now covers the wiring.
+- 2026-10-14: a reconnect notice keeps the error before it (#349, PR #350). #343 stored the notice
+  as the pending error even over a usage limit, and the completed turn cleared it. Decided: the
+  notice is stored only when nothing else is, so an earlier error stays the run's error and its
+  `limited` status.
 - 2026-10-14: A Backends card on hrn watch (#346, PR #373). Every viewer sees backend availability, preferences and remembered limits; loopback and Access-verified public viewers can save preferences using a fresh startup key. Changes atomically replace backends.json for later runs, while LAN viewers remain read-only and running MCP servers keep their backend enum until their host restarts them.
 - 2026-10-14: codex usage totals cannot wrap (#152, PR #370). Check each turn's
   counters before adding them and mark usage missing on overflow, retaining the
