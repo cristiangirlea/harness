@@ -128,7 +128,8 @@ func install(src, dst string) error {
 func restore(backup, target string, cause error) error {
 	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
 		// A new file that cannot be removed (it may be running) is renamed
-		// out of the way instead.
+		// out of the way instead; a .failed left by an earlier run gives way.
+		os.Remove(target + ".failed")
 		if err := os.Rename(target, target+".failed"); err != nil {
 			return fmt.Errorf("%w; and the failed file could not be moved: %v; the old binary is %s", cause, err, backup)
 		}
