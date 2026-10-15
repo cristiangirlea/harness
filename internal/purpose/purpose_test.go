@@ -284,15 +284,44 @@ func TestParagraphsBoundGathering(t *testing.T) {
 }
 
 func TestParagraphsBoundGatheringAfterLabels(t *testing.T) {
-	header := strings.Repeat("Context: "+strings.Repeat("x", 80)+"\n", 8)
+	header := "Context: " + strings.Repeat("x", 80) + "\n"
 	prefix := header + "Refactor the loader. " + strings.Repeat("X", maxLead-len("Refactor the loader. "))
-	prompt := prefix + strings.Repeat("X", 4<<20)
+	prompt := strings.Repeat(header, 8) + strings.TrimPrefix(prefix, header) + strings.Repeat("X", 4<<20)
 	if got := paragraphs(prompt); !slices.Equal(got, []string{prefix}) {
-		t.Error("paragraphs did not preserve labels and cap the instruction")
+		t.Error("paragraphs did not preserve the latest label and cap the instruction")
 	}
 	baseline := testing.AllocsPerRun(10, func() { paragraphs(prefix) })
 	if got := testing.AllocsPerRun(10, func() { paragraphs(prompt) }); got > baseline {
 		t.Errorf("long instruction allocated %g times, bounded prefix allocated %g", got, baseline)
+	}
+}
+
+func TestParagraphsBoundLabelGathering(t *testing.T) {
+	for _, tc := range []struct{ name, prompt, want string }{
+		{"one long label", "Context: " + strings.Repeat("X", 4<<20), "Context: " + strings.Repeat("X", maxLead-len("Context: "))},
+		{"many short labels", strings.Repeat("A: b\n", (4<<20)/len("A: b\n")) + "Last: value", "Last: value"},
+		{"unicode label", "Context: " + strings.Repeat("\U0001f600", maxLead), "Context: " + strings.Repeat("\U0001f600", maxLead-len("Context: "))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, suffix := range []string{"", "\n" + strings.Repeat("x", maxLead*2) + "\n\nImplement it."} {
+				prompt := tc.prompt + suffix
+				want := []string{tc.want}
+				if suffix != "" {
+					want = []string{tc.want + "\n" + strings.Repeat("x", maxLead), "Implement it."}
+				}
+				if got := paragraphs(prompt); !slices.Equal(got, want) {
+					t.Error("paragraphs did not cap the latest label and preserve the instruction budget")
+				}
+			}
+			allocated := testing.Benchmark(func(b *testing.B) {
+				for b.Loop() {
+					paragraphs(tc.prompt)
+				}
+			}).AllocedBytesPerOp()
+			if allocated > 64<<10 {
+				t.Errorf("paragraphs allocated %d bytes per call, want at most 64 KiB", allocated)
+			}
+		})
 	}
 }
 

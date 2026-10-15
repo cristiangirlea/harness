@@ -188,24 +188,26 @@ func firstNonBlankLine(prompt string) (line, rest string) {
 	return "", ""
 }
 
-// paragraphs gathers leading label lines and at most maxLead instruction runes
-// from each of the first two non-blank paragraphs. CRLF, LF and bare CR end lines;
-// whitespace-only lines separate paragraphs.
+// paragraphs gathers the latest leading label and the instruction, each capped
+// at maxLead runes, from each of the first two non-blank paragraphs. CRLF, LF and
+// bare CR end lines; whitespace-only lines separate paragraphs.
 func paragraphs(prompt string) []string {
 	var result []string
 	var paragraph strings.Builder
+	var lastLabel string
 	runes := 0
 	for prompt != "" {
 		var line string
 		line, prompt = nextLine(prompt)
 		line = strings.TrimSpace(line)
 		if line == "" {
-			if paragraph.Len() > 0 {
-				result = append(result, strings.TrimSuffix(paragraph.String(), "\n"))
+			if paragraph.Len() > 0 || lastLabel != "" {
+				result = append(result, strings.TrimSuffix(lastLabel+paragraph.String(), "\n"))
 				if len(result) == 2 {
 					return result
 				}
 				paragraph.Reset()
+				lastLabel = ""
 				runes = 0
 			}
 			continue
@@ -213,17 +215,26 @@ func paragraphs(prompt string) []string {
 		if runes == maxLead {
 			continue
 		}
-		if paragraph.Len() > 0 {
+		// Keep only the latest leading label, bounded separately so labels
+		// cannot exhaust the instruction's budget or grow the gathered text.
+		// Error lines remain part of the instruction.
+		if runes == 0 && strings.Contains(line, ":") && !errorLine.MatchString(line) && label.MatchString(line) {
+			labelRunes := 0
+			for i := range line {
+				if labelRunes == maxLead {
+					line = line[:i]
+					break
+				}
+				labelRunes++
+			}
+			lastLabel = line
+			continue
+		}
+		if paragraph.Len() > 0 || lastLabel != "" {
 			paragraph.WriteByte('\n')
 			if runes > 0 {
 				runes++
 			}
-		}
-		// Leading labels are removed by unlabel, so they do not use the
-		// instruction's budget. Error lines remain part of the instruction.
-		if runes == 0 && strings.Contains(line, ":") && !errorLine.MatchString(line) && label.MatchString(line) {
-			paragraph.WriteString(line)
-			continue
 		}
 		for _, r := range line {
 			if runes == maxLead {
@@ -236,8 +247,8 @@ func paragraphs(prompt string) []string {
 			break
 		}
 	}
-	if paragraph.Len() > 0 {
-		result = append(result, strings.TrimSuffix(paragraph.String(), "\n"))
+	if paragraph.Len() > 0 || lastLabel != "" {
+		result = append(result, strings.TrimSuffix(lastLabel+paragraph.String(), "\n"))
 	}
 	return result
 }
