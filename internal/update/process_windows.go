@@ -125,10 +125,14 @@ func inspect(pid uint32) (path string, args []string, start time.Time) {
 	}
 	defer syscall.CloseHandle(syscall.Handle(h))
 
-	buf := make([]uint16, 32768)
-	size := uint32(len(buf))
-	if ok, _, _ := procQueryFullProcessImageNameW.Call(h, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size))); ok != 0 {
-		path = syscall.UTF16ToString(buf[:size])
+	// Most paths fit MAX_PATH; a long one gets the full long-path buffer.
+	for _, n := range []int{syscall.MAX_PATH, syscall.MAX_LONG_PATH} {
+		buf := make([]uint16, n)
+		size := uint32(len(buf))
+		if ok, _, _ := procQueryFullProcessImageNameW.Call(h, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size))); ok != 0 {
+			path = syscall.UTF16ToString(buf[:size])
+			break
+		}
 	}
 	var created, exited, kernel, user syscall.Filetime
 	if ok, _, _ := procGetProcessTimes.Call(h, uintptr(unsafe.Pointer(&created)), uintptr(unsafe.Pointer(&exited)), uintptr(unsafe.Pointer(&kernel)), uintptr(unsafe.Pointer(&user))); ok != 0 {

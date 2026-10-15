@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -186,7 +187,7 @@ func Stop(lister ProcessLister) func(ctx context.Context, pid int) error {
 		if err != nil {
 			return err
 		}
-		if err := p.Kill(); err != nil && !strings.Contains(err.Error(), "already finished") {
+		if err := p.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return err
 		}
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
