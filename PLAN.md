@@ -727,6 +727,14 @@ batch show answer the questions") until the owner asked for a live view on 2026-
 neither of them follows a run while it happens.
 
 ## Decisions log
+- 2026-10-15: a gate killed by gate_timeout says so (#395, PR #399). A gate hrn killed at its
+  per-gate limit, or at a cancellation, was `exited -1` everywhere, and a retry hunted its
+  output for a failing test; five batches on 2026-10-14 failed that way while the code was
+  fine. Decided: `GateResult.killed` ("timeout" with the `timeout` that applied, or "canceled"),
+  additive, and one `Outcome()` every printer uses: `killed after 15m0s (gate_timeout; set
+  "gate_timeout" in the spec to allow more)` or `canceled`. The retry prompt says the gate did
+  not fail and that only the operator can raise the limit. Whether to skip the retry after a
+  timeout is left to the owner in #395; the review's smaller follow-ups are #396.
 - 2026-10-15: a stream that ends on a codex reconnect notice loses its usage (#348, PR #393).
   A `turn.completed` that reported usage, then a notice, then the end of the stream left the
   usage `reported` although the last turn's tokens never were. Decided: the end-of-stream step
