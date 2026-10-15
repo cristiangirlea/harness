@@ -194,6 +194,12 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	// inside another one.
 	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
 	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
+	envLine := "environment: inherited (--inherit-env)"
+	if !task.InheritEnv {
+		var dropped int
+		cmd.Env, dropped = sanitizedEnv(cmd.Env, runtime.GOOS, c.loginEnv...)
+		envLine = fmt.Sprintf("environment: sanitized, %d variables dropped (--inherit-env keeps them)", dropped)
+	}
 	guarded := !task.AllowDangerous
 	var withheld []string
 	if guarded {
@@ -225,6 +231,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
+	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
 	if guarded {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: c.guardLine(withheld)})
 	} else {

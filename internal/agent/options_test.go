@@ -74,13 +74,13 @@ func TestFlagsSetTheOptions(t *testing.T) {
 	o := Options{Mode: ModeAsk} // the caller's default shows through
 	BindFlags(fs, &o)
 	err := fs.Parse([]string{"--model", "claude-sonnet-5", "--mode", "yolo", "--max-turns", "7", "--effort", "low",
-		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--lean", "--compact-window", "300000", "--allow-dangerous",
+		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--lean", "--compact-window", "300000", "--allow-dangerous", "--inherit-env",
 		"--timeout", "90s", "--max-cost", "2.5", "--task-budget", "30000"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Options{Model: "claude-sonnet-5", Mode: ModeYolo, MaxTurns: 7, Effort: "low", MCP: []string{"a.json", "b.json"},
-		NoInstructions: true, NoContextEdits: true, Lean: Bool(true), CompactWindow: "300000", AllowDangerous: true,
+		NoInstructions: true, NoContextEdits: true, Lean: Bool(true), CompactWindow: "300000", AllowDangerous: true, InheritEnv: true,
 		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000}
 	if !reflect.DeepEqual(o, want) {
 		t.Errorf("parsed = %+v\nwant     %+v", o, want)

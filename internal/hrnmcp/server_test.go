@@ -352,6 +352,26 @@ func TestRunPassesAllowDangerous(t *testing.T) {
 	}
 }
 
+// inherit_env is an ordinary run argument: it reverts to the operator's
+// environment, and the guard still applies, so a server without
+// --allow-dangerous-runs offers it too. The record says which one ran.
+func TestRunRecordsInheritEnv(t *testing.T) {
+	s := connect(t, t.TempDir())
+	for _, tc := range []struct {
+		args string
+		want bool
+	}{
+		{`{"prompt":"x","backend":"stub"}`, false},
+		{`{"prompt":"x","backend":"stub","inherit_env":true}`, true},
+	} {
+		res := s.call(t, "run", tc.args)
+		id := res.StructuredContent.(map[string]any)["run_id"].(string)
+		if rec, err := runlog.Load(id); err != nil || rec.Task.InheritEnv != tc.want {
+			t.Errorf("%s: InheritEnv = %v, want %v (err=%v)", tc.args, rec.Task.InheritEnv, tc.want, err)
+		}
+	}
+}
+
 func TestRunPassesLimits(t *testing.T) {
 	s := connect(t, t.TempDir())
 	res := s.call(t, "run", `{"prompt":"x","backend":"stub","timeout":"90s","max_cost_usd":1.5,"task_budget":30000}`)

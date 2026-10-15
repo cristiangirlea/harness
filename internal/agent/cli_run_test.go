@@ -62,9 +62,9 @@ func TestHelperCLIError(t *testing.T) {
 		os.Exit(1)
 	case "env":
 		// What the CLI was started with, as its final answer.
-		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s",
+		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s;OPERATOR_SETTING=%s;PATH_SET=%t",
 			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
-			os.Getenv("HRN_GUARDED"))
+			os.Getenv("HRN_GUARDED"), os.Getenv("OPERATOR_SETTING"), os.Getenv("PATH") != "")
 		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
 		fmt.Println(string(out))
 		os.Exit(0)
@@ -109,7 +109,7 @@ func TestACLIRunsUnderTheGuard(t *testing.T) {
 		t.Errorf("the claude CLI lost its plan login under the guard: %v", got)
 	}
 
-	got = saw(helperCLI(parseClaudeStream), Options{Mode: ModeYolo, AllowDangerous: true})
+	got = saw(helperCLI(parseClaudeStream), Options{Mode: ModeYolo, AllowDangerous: true, InheritEnv: true})
 	if got["GH_TOKEN"] != "ghp_secret" || got["GH_CONFIG_DIR"] != "operator-gh" || got["HRN_GUARDED"] != "" {
 		t.Fatalf("with --allow-dangerous the CLI saw %v; want the operator's environment as it is", got)
 	}

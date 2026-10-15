@@ -53,7 +53,10 @@ backend default; gemini and opencode report it as not enforced),
 `--mcp` servers, your settings, rules and skills still load; see [Lean claude workers](backends.md#lean-claude-workers)),
 `--compact-window N` (claude: compact at N tokens, 100000 to 1000000, or `auto`; see
 [Compaction window](backends.md#compaction-window)),
-`--allow-dangerous`, `--no-switch` (see
+`--allow-dangerous`, `--inherit-env` (CLI backends: your whole environment and, for claude,
+your own settings and MCP servers; see
+[A clean environment for CLI workers](backends.md#a-clean-environment-for-cli-workers)),
+`--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
 budgets below.
 `--shape-tools` opts the api backend into summaries of large terminal, log and

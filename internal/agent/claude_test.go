@@ -163,7 +163,8 @@ func TestClaudePassesCompactWindowOnlyWhenSet(t *testing.T) {
 }
 
 func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
-	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}}
+	// With the environment inherited, as lean on its own is about MCP servers only.
+	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}, InheritEnv: true}
 	plain := NewClaudeBackend().args(Task{Options: opts}, "")
 	opts.Lean = Bool(true)
 	lean := NewClaudeBackend().args(Task{Options: opts}, "")

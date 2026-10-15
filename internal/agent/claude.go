@@ -50,12 +50,18 @@ func NewClaudeBackend() *CLIBackend {
 			if mode != "" {
 				a = append(a, "--permission-mode", mode)
 			}
-			if t.IsLean() {
+			if !t.InheritEnv {
+				// Only the repository's own settings: the operator's user and
+				// local settings, with their hooks, plugins and permission
+				// rules, stay out of an unattended run (#411).
+				a = append(a, "--setting-sources", "project")
+			}
+			if t.IsLean() || !t.InheritEnv {
 				// Only the --mcp-config files below: none of the user's other
-				// MCP servers, plugin servers or claude.ai connectors. Every
-				// setting source still loads, so the user's CLAUDE.md, rules,
-				// hooks, plugins and skills do too (#204). Not --bare: it logs
-				// in only with an API key, never the subscription.
+				// MCP servers, plugin servers or claude.ai connectors. Lean on
+				// its own keeps every setting source, so the user's CLAUDE.md,
+				// rules, hooks, plugins and skills load too (#204). Not --bare:
+				// it logs in only with an API key, never the subscription.
 				a = append(a, "--strict-mcp-config")
 			}
 			if t.CompactWindow != "" {

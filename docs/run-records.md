@@ -15,7 +15,8 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
   by a continuation and by `hrn retrieval compare`
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
-  off, or absent; `compact_window` is a number or `"auto"`)
+  off, or absent; `compact_window` is a number or `"auto"`; `inherit_env` is `true` when the
+  CLI got the operator's whole environment, absent otherwise)
   and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
   the declared category from `--purpose`, MCP `purpose`, a batch task's `purpose`,
   or a valid leading `Purpose: <category>` header. It is omitted when undeclared;

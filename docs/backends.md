@@ -110,7 +110,10 @@ it. Nothing about it goes back into the history.
 
 ### Lean claude workers
 
-By default a claude worker starts the way Claude Code starts for you, with every MCP
+A claude worker runs with only hrn's MCP servers anyway unless its environment is
+inherited (see [A clean environment for CLI workers](#a-clean-environment-for-cli-workers));
+lean is what keeps that with `--inherit-env`. With the environment inherited, a claude
+worker starts the way Claude Code starts for you, with every MCP
 server you have: your user-scope servers, the project's `.mcp.json`, the servers your
 plugins bring and your claude.ai connectors. Their tool definitions are context on every
 turn (#200). A lean worker starts with only the MCP servers in the run's `--mcp` files
@@ -153,6 +156,53 @@ recorded command line) and the run succeeded.
 Before #204, lean also passed `--setting-sources project`, which kept the user's
 `CLAUDE.md`, rules, plugins and skills out as well; workers then lost the owner's rules,
 which is why it was dropped.
+
+### A clean environment for CLI workers
+
+claude, codex, gemini, opencode and agy start from an allowlisted environment, not
+yours as a whole (#411). They get:
+
+- the shell, the user and the terminal: `HOME`, `USER`/`USERNAME`, `LOGNAME`, `PATH`,
+  `SHELL`, `TERM`, `COLORTERM`, `LANG`, `LC_*`, `TZ`, `TMP`/`TEMP`/`TMPDIR` and the
+  `XDG_*` directories;
+- the proxies (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, any case) and the
+  certificates they need (`SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`);
+- where each CLI keeps its login and settings (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+  `GEMINI_CLI_HOME`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`), and claude's plan login
+  `CLAUDE_CODE_OAUTH_TOKEN`, for claude only;
+- where the usual toolchains are (`GOPATH`, `GOROOT`, `GOCACHE`, `GOMODCACHE`,
+  `GOTOOLCHAIN`, `GOPROXY`, `GOPRIVATE`, `GONOSUMDB`, `GOFLAGS`, `JAVA_HOME`,
+  `CARGO_HOME`, `RUSTUP_HOME`, `NVM_DIR`, `PNPM_HOME`, `BUN_INSTALL`, `VIRTUAL_ENV`,
+  `PYENV_ROOT`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`), Git Credential Manager's `GCM_*`
+  settings and hrn's own `HRN_*`;
+- on Windows also what nothing starts without and where programs find their files:
+  `SystemRoot`, `windir`, `SystemDrive`, `ComSpec`, `PATHEXT`, `APPDATA`,
+  `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, the `ProgramFiles`,
+  `CommonProgramFiles` and `ProgramData` family, `ALLUSERSPROFILE`, `PUBLIC`, `OS`,
+  `COMPUTERNAME`, `USERDOMAIN`, `PROCESSOR_ARCHITECTURE`, `NUMBER_OF_PROCESSORS`,
+  `PSModulePath` and `CLAUDE_CODE_GIT_BASH_PATH`.
+
+Anything else stays out: `GH_*`, `GIT_CONFIG_GLOBAL` and your own `GIT_CONFIG_*`
+entries, `SSH_AUTH_SOCK`, a `DATABASE_URL`, editor and tool settings. A name that says it
+holds a secret ([the guard's patterns](permissions.md#the-guard-for-every-backend))
+stays out even when it matches the list, `ANTHROPIC_API_KEY` among them: the api backend
+uses that key in-process, and the CLIs log in on their own. The guard still applies on
+top. The run's info events say `environment: sanitized, N variables dropped`, never
+which.
+
+The claude backend also loads only the repository's own settings (`--setting-sources
+project`): your user and local settings, with their hooks, plugins and permission rules,
+stay out of an unattended run, while the repository's `.claude/settings.json` and
+`CLAUDE.md` still apply. It gets only hrn's MCP servers (`--strict-mcp-config`), so the
+run's `--mcp` files and `~/.hrn/mcp.json` keep working and nothing else is started.
+
+`--inherit-env` (spec or task field `inherit_env`, MCP `run` argument of the same name,
+recorded in `task.json`) turns all of this off: the CLI gets your environment as before,
+and claude loads every setting source and MCP server. Use it for a repository whose
+installs or tests need something from your environment, a package registry token or a
+database address. The guard still applies, so a secret-looking token stays withheld
+without `--allow-dangerous` as well. The api backend does not start a CLI, so the option
+changes nothing there.
 
 ### Compaction window
 
