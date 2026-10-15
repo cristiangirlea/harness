@@ -53,6 +53,11 @@ Usage:
   hrn retrieval fixture|compare [flags]
                                  compare saved evidence without model calls
   hrn version                     print the hrn version, Go version and commit
+  hrn update [--main | --ref REF | --file PATH] [--dry-run] [--rollback]
+                                 replace every hrn on this computer with the newest release (default), a
+                                 go install of REF (--main is --ref main) or a binary already built, each
+                                 under a backup beside it, and restart a running hrn watch; --rollback puts
+                                 the backups back
   hrn runs [-n N]                 list recent runs
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
@@ -202,6 +207,8 @@ func main() {
 		code, err = cmdGC(os.Args[2:])
 	case "ws":
 		code, err = cmdWS(os.Args[2:])
+	case "update":
+		code, err = cmdUpdate(os.Args[2:])
 	case "version", "--version", "-V":
 		info, _ := debug.ReadBuildInfo()
 		fmt.Println(versionLine(info))

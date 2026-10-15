@@ -15,6 +15,8 @@ hrn bot                    # Ada, the bot, in a small window: what hrn is doing,
 ```
 
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
+`hrn update` restarts a running watch on the new binary with the same flags (see
+[hrn update](commands.md#hrn-update)).
 Each row leads with the repository the work is in (its workspace folder's name; for a batch
 task's worktree, `<repo>/.hrn/worktrees/<task>` or a slot, `<repo>/.hrn/slots/<n>`, the folder
 above `.hrn`) and, for a run a

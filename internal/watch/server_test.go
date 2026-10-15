@@ -578,6 +578,10 @@ func TestTheBatchPageShowsEachTasksRunAndGates(t *testing.T) {
 			{ID: "t2", Prompt: "other", Status: batch.StatusRunning, Branch: "hrn/t2", Attempts: []batch.Attempt{{
 				Backend: "codex", RunID: "20261010-120002-222222",
 			}}},
+			{ID: "t3", Prompt: "slow", Status: batch.StatusFail, Branch: "hrn/t3", Attempts: []batch.Attempt{{
+				Backend: "claude", RunID: "20261010-120003-333333", Result: agent.Result{Status: agent.StatusOK, Turns: 2},
+				Gates: []batch.GateResult{{Command: "go test -count=1 ./...", ExitCode: -1, Killed: batch.KilledTimeout, Timeout: agent.Duration(15 * time.Minute), Output: "[timed out after 15m0s]", Duration: 15 * time.Minute}},
+			}}},
 		}}
 	saveBatch(t, res)
 	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
@@ -588,11 +592,16 @@ func TestTheBatchPageShowsEachTasksRunAndGates(t *testing.T) {
 		t.Fatalf("status %d", code)
 	}
 	for _, want := range []string{`href="/run/20261010-120001-111111"`, `href="/run/20261010-120002-222222"`,
-		"go vet ./...", "go test ./...", ">1<", "<details", "first line", "running", `data-stream="/stream/batch/` + res.ID} {
+		"go vet ./...", "go test ./...", ">1<", "<details", "first line", "running", `data-stream="/stream/batch/` + res.ID,
+		`<span class="badge bad">killed after 15m0s (gate_timeout; set &#34;gate_timeout&#34; in the spec to allow more)</span>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the batch page lacks %q", want)
 		}
 	}
+	if strings.Contains(body, ">-1<") || strings.Contains(body, ">killed<") {
+		t.Error("a timed-out gate shows only its exit code or a bare killed badge")
+	}
+
 	if !strings.Contains(body, "--- FAIL &lt;/pre&gt;&lt;script&gt;") || strings.Contains(body, "<script>alert") {
 		t.Error("gate output is not escaped")
 	}
