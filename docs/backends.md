@@ -123,6 +123,12 @@ subscription login. What it drops: every MCP server hrn did not pass, including 
 plugin or a claude.ai connector provides (the plugin's skills stay). hrn's guard is the same
 either way: its `--disallowedTools` rules are command-line flags, not settings.
 
+Loading `CLAUDE.local.md` under lean was not checked against Claude Code 2.1.284.
+To check it, put a unique harmless instruction in `CLAUDE.local.md` in a temporary
+repository, then compare a normal run with `hrn run -b claude --lean` using the same
+prompt that exercises that instruction. These runs use your Claude plan; record the
+Claude Code version and whether each run follows the instruction.
+
 Lean is the default for `hrn batch` and `hrn eval` tasks that run on claude; a spec or task
 sets `"lean": false` to give its workers every MCP server (a task's `false` wins over a
 spec's `true`). The record of an attempt says `"lean": true` when the default applied. `hrn

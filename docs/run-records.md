@@ -6,6 +6,9 @@
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 
+Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
+or `false` when explicitly set, omitted otherwise. Older records without it still load.
+
 Routed runs include `routed_by` (`category`, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
 
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
