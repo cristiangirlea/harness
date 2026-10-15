@@ -87,6 +87,7 @@
       await loadKept();
     } catch (e) {
       dir = null;
+      folderName.textContent = 'Each take downloads; the number in its name is its line.';
       warn('The folder metadata could not be read: ' + e.message);
       return;
     } finally {
@@ -126,10 +127,20 @@
   };
   const stopAudio = async () => {
     if (node && onBlock) {
-      await new Promise((resolve) => {
-        stopped = resolve;
-        node.port.postMessage('stop');
-      });
+      let timer;
+      try {
+        await Promise.race([
+          new Promise((resolve) => {
+            stopped = resolve;
+            node.port.postMessage('stop');
+          }),
+          // An interrupted audio thread may never acknowledge Stop.
+          new Promise((resolve) => { timer = setTimeout(resolve, 400); }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+        stopped = null;
+      }
     }
     onBlock = null;
     await release();
@@ -291,12 +302,15 @@
     if (stopping) return;
     stopping = true;
     show();
-    await stopAudio();
-    recording = false;
-    stopping = false;
-    $('voice-meter').value = 0;
-    $('voice-note').textContent = take ? judge(take) : '';
-    show();
+    try {
+      await stopAudio();
+    } finally {
+      recording = false;
+      stopping = false;
+      $('voice-meter').value = 0;
+      $('voice-note').textContent = take ? judge(take) : '';
+      show();
+    }
   };
   const keep = async () => {
     if (!take || recording || saving || starting || stopping || loading || switching) return;

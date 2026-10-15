@@ -13,7 +13,7 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-function page({ folder, permission, script = asset('voice.js') } = {}) {
+function page({ folder, permission, ignoreStop = false, script = asset('voice.js') } = {}) {
   const elements = new Map();
   const downloads = [];
   const tracks = [];
@@ -58,7 +58,8 @@ function page({ folder, permission, script = asset('voice.js') } = {}) {
   if (folder) window.showDirectoryPicker = async () => folder;
   const sandbox = vm.createContext({
     document, window, Blob, URL: { createObjectURL: (blob) => blob, revokeObjectURL() {} },
-    setTimeout() {}, setInterval() {}, clearInterval() {},
+    setTimeout(fn, ms) { if (ms <= 1000) return setTimeout(fn, ms); },
+    clearTimeout, setInterval() {}, clearInterval() {},
     navigator: { mediaDevices: { getUserMedia: async () => {
       if (permission) await permission.promise;
       const track = { stopped: false, stop() { this.stopped = true; }, getSettings: () => ({}) };
@@ -67,7 +68,10 @@ function page({ folder, permission, script = asset('voice.js') } = {}) {
     } } },
     AudioContext,
     AudioWorkletNode: class {
-      constructor() { processor.node = this; this.port = { postMessage: (data) => queueMicrotask(() => processor.port.onmessage?.({ data })) }; }
+      constructor() { processor.node = this; this.port = { postMessage: (data) => {
+        if (ignoreStop && data === 'stop') return;
+        queueMicrotask(() => processor.port.onmessage?.({ data }));
+      } }; }
       connect() { return { connect() {} }; }
       disconnect() {}
     },
@@ -108,6 +112,39 @@ test('playback resumes the context without reopening the microphone', async () =
   assert.equal(p.contexts[0].suspended, false);
   p.contexts[0].playbacks[1].onended();
   assert.equal(p.contexts[0].suspended, true);
+});
+
+for (const mode of ['read', 'talk']) test('Stop finishes when the worklet ignores stop in ' + mode + ' mode', async () => {
+  const p = page({ ignoreStop: true });
+  if (mode === 'talk') await p.click('voice-mode-talk');
+  const button = mode === 'read' ? 'voice-rec' : 'voice-talk-rec';
+  await p.click(button);
+  p.audio(2048);
+  let timer;
+  try {
+    await Promise.race([
+      p.click(button),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Stop did not finish')), 1000); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+  assert.equal(p.tracks[0].stopped, true);
+  assert.equal(p.element(button).disabled, false);
+  if (mode === 'read') {
+    assert.equal(p.element('voice-keep').disabled, false);
+    await p.click('voice-keep');
+  }
+  assert.equal(p.downloads.length, 1);
+  assert.equal((await p.downloads[0].href.arrayBuffer()).byteLength, 44 + 2048 * 2);
+});
+
+test('a failed audio release clears the read Stop busy state', async () => {
+  const p = page();
+  await p.click('voice-rec'); p.audio(2048);
+  p.contexts[0].suspend = async () => { throw new Error('interrupted'); };
+  await assert.rejects(p.click('voice-rec'), /interrupted/);
+  assert.equal(p.element('voice-rec').disabled, false);
 });
 
 test('download mode offers metadata for the takes kept in this session', async () => {
@@ -205,12 +242,18 @@ test('leaving a running talk flushes its partial block and releases the micropho
 
 test('unreadable metadata is reported and never overwritten', async () => {
   let writes = 0;
-  const folder = { getFileHandle: async (_, options) => {
+  let readable = true;
+  const folder = { name: 'old folder', getFileHandle: async (_, options) => {
     if (options?.create) writes++;
+    if (readable) return { getFile: async () => ({ text: async () => '' }) };
     throw new Error('cannot read');
   } };
   const p = page({ folder }); await p.click('voice-folder');
+  assert.match(p.element('voice-folder-name').textContent, /Saving into "old folder"/);
+  readable = false;
+  await p.click('voice-folder');
   assert.match(p.element('voice-warn').textContent, /metadata could not be read/);
+  assert.equal(p.element('voice-folder-name').textContent, 'Each take downloads; the number in its name is its line.');
   await p.click('voice-rec'); p.audio(2048); await p.click('voice-rec'); await p.click('voice-keep');
   assert.equal(writes, 0);
   assert.equal(p.downloads[0].download, '0001.wav');
