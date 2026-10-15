@@ -50,6 +50,7 @@ func NewCodexBackend() *CLIBackend {
 			return append(a, "-")
 		},
 		parse:      parseCodexStream,
+		finalize:   finalizeCodexCost,
 		forks:      true,
 		mapsEffort: true,
 		mapsModes:  []Mode{ModeReadOnly, ModeAuto, ModeYolo},
