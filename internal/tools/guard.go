@@ -57,9 +57,9 @@ var guardRules = []struct {
 	// refusing every method keeps implicit POSTs from fields and --input covered.
 	{"gh-publish", matches(
 		`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b` +
-			`|\bgh\s+api\b[^|&;]*(?:-X|--method)[\s="'\\$]*(?i:PUT|PATCH|DELETE)\b` +
-			`|\bgh\s+api\b[^|&;]*/(?:releases|git/(?:refs|tags)|rulesets|keys|hooks|collaborators|dispatches|merges|environments|actions/(?:secrets|variables))(?:/|[\s"'?]|$)` +
-			`|\bgh\s+api\b[^|&;]*(?:\bgraphql\b[^|&;]*(?i:mutation)\b|(?i:mutation)\b[^|&;]*\bgraphql\b)`,
+			`|\b(?i:gh(?:\.exe)?)["']?\s+api\b[^|&;]*(?:-X|--method)[\s="'\\$]*(?i:PUT|PATCH|DELETE)\b` +
+			`|\b(?i:gh(?:\.exe)?)["']?\s+api\b[^|&;]*(?:/(?:releases|git/(?:refs|tags)|rulesets|keys|hooks|collaborators|dispatches|merges|environments|transfer|deployments|statuses|branches/[^/\s"'?]+/rename|merge-upstream|forks|pages|actions/(?:secrets|variables|runs/[^/\s"'?]+/pending_deployments|runners/registration-token))|\b(?:user/repos|orgs/[^/\s"'?]+/repos|gists))(?:/|[\s"'?]|$)` +
+			`|\b(?i:gh(?:\.exe)?)["']?\s+api\b[^|&;]*(?:\bgraphql\b[^|&;]*(?i:mutation)\b|(?i:mutation)\b[^|&;]*\bgraphql\b)`,
 	)},
 	// gh's login in the system's credential store, which no variable hides:
 	// printing it, or handing it to git as a credential helper.

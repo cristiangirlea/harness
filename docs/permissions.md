@@ -55,7 +55,7 @@ the tool itself never writes them.
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
 | `pipe-to-shell` | `curl`/`wget`/`irm`/`iwr`/`Invoke-RestMethod`/`Invoke-WebRequest` piped into a shell, `iex` or `Invoke-Expression`, however many stages the pipe has; also `iex` or `Invoke-Expression` (with or without `-Command`) given a parenthesized or `$(...)` download from those commands or `(New-Object Net.WebClient).DownloadString(...)` (`System.Net.WebClient` too); names match in any case. Non-download arguments such as `iex $script` stay allowed |
 | `disk` | `mkfs`, `format X:`, `dd of=/dev/…`; program names match in any case |
-| `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`; `gh api` with PUT, PATCH or DELETE (any case, quoted or escaped); and `gh api` to `/releases`, `/git/refs`, `/git/tags`, `/rulesets`, `/keys`, `/hooks`, `/collaborators`, `/actions/workflows/<x>/dispatches`, `/dispatches`, `/merges`, `/environments`, `/actions/secrets` or `/actions/variables` (including paths below them), or `gh api graphql` with a mutation in the line (any case). Endpoint refusals include GET to keep implicit POSTs covered; ordinary POSTs such as issue and pull request creation or comments stay allowed |
+| `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`; `gh api` with PUT, PATCH or DELETE (any case, quoted or escaped); and `gh api` to `/releases`, `/git/refs`, `/git/tags`, `/rulesets`, `/keys`, `/hooks`, `/collaborators`, `/actions/workflows/<x>/dispatches`, `/dispatches`, `/merges`, `/environments`, `/actions/secrets`, `/actions/variables`, `/transfer`, `/deployments`, `/actions/runs/<id>/pending_deployments`, `/statuses/<sha>`, `/actions/runners/registration-token`, `/branches/<b>/rename`, `/merge-upstream`, `/forks`, `user/repos`, `orgs/<org>/repos`, `gists` or `/pages` (including paths below them), or `gh api graphql` with a mutation in the line (any case). All `gh api` patterns also match `gh.exe`, any case of the executable name, and full paths (quoted too). Endpoint refusals include GET to keep implicit POSTs covered; ordinary POSTs such as issue and pull request creation or comments stay allowed |
 | `gh-token` | `gh auth token` (with `--user` too), `gh auth git-credential` and `gh auth status --show-token`/`-t`: gh keeps its login in the system's credential store, which no variable hides, and these hand it out |
 | `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`bun`/`cargo publish`, a project's deploy script (`npm run deploy`, `deploy:prod`, `deploy-docs`, with `pnpm`, `yarn` or `bun` too), `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `terraform`/`tofu apply/destroy`, `helm install/upgrade/uninstall`, `vercel --prod`, `fly`/`netlify deploy` |
 
@@ -87,6 +87,8 @@ prompt, so `ask` mode never asks for a yes it would then ignore. Matching is tex
 leans towards refusing too much: `echo "git push"` and `git commit -m "push later"` are
 refused as well, which costs a turn and is the trade this makes on purpose.
 Separators inside quotes do not end a pipeline stage for the guard.
+A GraphQL query read from a file (`-F query=@m.graphql`) is outside this textual
+guard: it does not inspect the file contents.
 
 This is a guard rail, not a sandbox — an agent that wants around a pattern can get
 around it. What decides whether commands run at all is the [permission mode](#permission-modes);
