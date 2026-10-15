@@ -146,8 +146,16 @@ func Apply(ctx context.Context, wts []Worktree) (removed []Worktree, errs []erro
 // removeGitWorktree is replaceable by tests to simulate git deregistering a
 // worktree before Windows refuses the final directory removal.
 var removeGitWorktree = func(ctx context.Context, w Worktree) error {
-	_, err := gitOut(ctx, w.Repo, "worktree", "remove", w.Path)
-	return err
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	cmd := gitCommand(ctx, w.Repo, "worktree", "remove", w.Path)
+	// The fallback recognizes Git's English submodule refusal.
+	cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree remove: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func removeWorktree(ctx context.Context, w Worktree) (bool, error) {
@@ -178,17 +186,32 @@ func removeWorktree(ctx context.Context, w Worktree) (bool, error) {
 	if !strings.Contains(err.Error(), "working trees containing submodules cannot be moved or removed") {
 		return false, err
 	}
-	// Git refuses even clean submodules. Check their own trees recursively:
-	// parent status can be configured to hide their changes. Ignored files
-	// count too, since removing the folder would delete them.
+	// foreach skips deinitialized submodules, whose repositories can still
+	// hold work. Keep them rather than deleting a repository we cannot check.
+	status, subErr := gitStdout(ctx, w.Path, "submodule", "status", "--recursive")
+	if subErr != nil {
+		return false, errors.Join(err, subErr)
+	}
+	for _, line := range strings.Split(status, "\n") {
+		if strings.HasPrefix(line, "-") {
+			return false, fmt.Errorf("submodules are not initialized: %w", err)
+		}
+	}
+	// Parent status can hide submodule changes. Check files, recorded HEADs,
+	// stashes and commits not held by remote-tracking refs before deleting
+	// their only repository. Any failed command also keeps the worktree.
 	out, subErr := gitStdout(ctx, w.Path, "submodule", "foreach", "--quiet", "--recursive",
-		"git status --porcelain --untracked-files=all --ignored")
+		`test "$(git rev-parse HEAD)" = "$sha1" &&
+git status --porcelain --untracked-files=all --ignored &&
+git stash list &&
+git log --oneline HEAD --branches --not --remotes`)
 	if subErr != nil {
 		return false, errors.Join(err, subErr)
 	}
 	if strings.TrimSpace(out) != "" {
-		return false, fmt.Errorf("submodules have uncommitted or ignored files: %w", err)
+		return false, fmt.Errorf("submodules have files, stashes or local commits to keep: %w", err)
 	}
+	// Another process can change the parent while its submodules are checked.
 	if why := recheck(ctx, w); why != "" {
 		return false, fmt.Errorf("kept, %s", why)
 	}

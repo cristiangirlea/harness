@@ -281,9 +281,13 @@ folder deleted. Only merged, clean worktrees get that far. If git no longer list
 and its folder is empty or gone, hrn prunes git's entries, tries to remove the empty folder, and
 deletes the branch; a handle that still prevents deleting the empty folder is reported.
 Otherwise the branch stays. When git refuses removal because the worktree contains submodules,
-hrn checks their trees recursively (including untracked and ignored files). If they are clean
-and the worktree still passes its checks, hrn removes the folder, prunes git's entries, and
-deletes the branch. A failed submodule check keeps the worktree and branch.
+hrn checks their trees recursively (including untracked and ignored files). Each submodule's
+HEAD must match the commit its parent recorded, it must have no stash, and HEAD and local
+branches must have no commits absent from its remote-tracking refs. Deinitialized submodules
+keep the worktree because their repositories cannot be checked by this pass. If all checks
+pass, hrn removes the folder, prunes git's entries, and deletes the branch. A failed submodule
+check keeps the worktree and branch. A failure partway through folder removal is reported;
+the branch and registration stay, but files already removed cannot be restored by hrn.
 A batch's record stays (`hrn runs prune` can drop
 it once its worktrees are gone). Open pull requests are read on their own, so a long history
 cannot hide one; with 1000 or more open, no worktree on a branch is removed. Up to 1000 pull
