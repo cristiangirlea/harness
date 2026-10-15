@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -168,5 +171,67 @@ func TestWhenBothReachTheirLimitBothAreRemembered(t *testing.T) {
 		if limits.Until(name, time.Now()).IsZero() {
 			t.Errorf("%s's limit was not remembered", name)
 		}
+	}
+}
+
+func TestLimitCarryOnRecordsContextWarning(t *testing.T) {
+	for _, tokens := range []int64{150000, 150001} {
+		t.Run(fmt.Sprint(tokens), func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t)
+			w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, ContextTokens: tokens}); err != nil {
+				t.Fatal(err)
+			}
+			code, err := cmdRun([]string{"--continue", w.ID(), "-b", "codex", "again"})
+			if code != 0 || err != nil {
+				t.Fatalf("carry-on: code=%d err=%v", code, err)
+			}
+			recs, err := runlog.List(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := 0
+			for _, rec := range recs {
+				if rec.Backend != "claude" || rec.ID == w.ID() {
+					continue
+				}
+				found++
+				prev, err := runlog.Load(rec.Continues)
+				if err != nil || prev.Backend != "codex" || prev.Result.Status != agent.StatusLimited || prev.Continues != w.ID() {
+					t.Fatalf("carry-on predecessor = %+v, err=%v", prev, err)
+				}
+				events, err := runlog.Events(rec.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				for _, e := range events {
+					if e.Kind == agent.EventInfo && strings.Contains(e.Text, "short hand-over") {
+						count++
+						if !strings.Contains(e.Text, w.ID()) || !strings.Contains(e.Text, fmt.Sprintf("%d tokens", tokens)) {
+							t.Errorf("wrong warning: %q", e.Text)
+						}
+					}
+				}
+				want := 0
+				if tokens > 150000 {
+					want = 1
+				}
+				if count != want {
+					t.Errorf("carry-on recorded warnings = %d, want %d", count, want)
+				}
+			}
+			if found != 1 {
+				t.Fatalf("carry-on records = %d, want 1", found)
+			}
+		})
 	}
 }

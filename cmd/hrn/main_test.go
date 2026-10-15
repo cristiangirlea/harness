@@ -19,10 +19,11 @@ type contextWarningBackend struct{ recorder }
 
 func (r contextWarningBackend) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
 	fmt.Fprintln(os.Stderr, "context test backend started")
+	fmt.Fprintln(os.Stdout, "context test backend started")
 	return r.recorder.Run(ctx, task, emit)
 }
 
-func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *testing.T) {
+func TestContinueWarnsOnceBeforeStartingOnlyAboveTheContextThreshold(t *testing.T) {
 	agent.Register(contextWarningBackend{recorder{name: "stub-context"}})
 	for _, jsonOut := range []bool{false, true} {
 		for _, tc := range []struct {
@@ -47,9 +48,14 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 					t.Fatal(err)
 				}
 				defer capture.Close()
-				prev := os.Stderr
-				os.Stderr = capture
-				defer func() { os.Stderr = prev }()
+				stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer stdout.Close()
+				prev, prevOut := os.Stderr, os.Stdout
+				os.Stderr, os.Stdout = capture, stdout
+				defer func() { os.Stderr, os.Stdout = prev, prevOut }()
 				args := []string{"--continue", w.ID(), "-b", "stub-context", "--no-switch"}
 				if tc.handoff {
 					agent.Register(contextWarningBackend{recorder{name: "stub-context-other"}})
@@ -97,18 +103,31 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 				if err != nil {
 					t.Fatal(err)
 				}
-				got := string(data)
+				out, err := os.ReadFile(stdout.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, other := string(data), string(out)
+				if !jsonOut {
+					got, other = other, got
+				}
+				if !jsonOut && strings.Contains(other, "warning: run ") {
+					t.Errorf("plain warning also printed on stderr: %q", other)
+				}
 				start := strings.Index(got, "context test backend started")
 				if start < 0 {
 					t.Fatal("backend never started")
 				}
 				if n > 150000 && !tc.handoff {
+					if count := strings.Count(got, "warning: run "); count != 1 {
+						t.Errorf("displayed warnings = %d, want 1: %q", count, got)
+					}
 					for _, want := range []string{"warning:", w.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
 						if !strings.Contains(got[:start], want) {
-							t.Errorf("stderr before start lacks %q: %q", want, got[:start])
+							t.Errorf("output before start lacks %q: %q", want, got[:start])
 						}
 					}
-				} else if strings.Contains(got, "short hand-over") {
+				} else if strings.Contains(got+other, "warning: run ") {
 					t.Errorf("unneeded warning: %q", got)
 				}
 			})

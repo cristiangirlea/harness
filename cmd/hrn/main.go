@@ -390,7 +390,7 @@ func cmdRun(args []string) (int, error) {
 	if routed != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
 	}
-	if warning := plan.ContextWarning(); warning != "" {
+	if warning := plan.ContextWarning(); jsonOut && warning != "" {
 		fmt.Fprintln(os.Stderr, warning)
 	}
 	plan.Apply(&task, rec.Dir(), emit)
