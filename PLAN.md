@@ -711,8 +711,8 @@ order they are worth taking:
       debug, implement and research, Luna low for test and unknown; recorded in hrn-evals
       PR #12 (`results/2026-10-15-routing.md`), after the codex-only first table of eval
       `b123c` (PR #11). Claude never wins a tie because codex stores no cost data and the
-      eval table reads that as zero: a codex price is the gap to close before the table can
-      rank Claude against codex.
+      eval table read that as zero until #378 (PR #383) priced codex at list price too; the
+      next hrn-evals run ranks the two on the same footing.
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
       CI-verified index for the scripts agents write twice, kept under `scripts/`. Done:
       PR #317, 2026-10-14.
@@ -728,6 +728,13 @@ neither of them follows a run while it happens.
 
 ## Decisions log
 
+- 2026-10-15: list-price estimates for the codex models (#378, PR #383). A second price
+  table (OpenAI's list prices, source and date in the file) and an estimate computed in
+  the codex stream after each turn with reported usage, cleared on every missing path;
+  `cost_is_estimate` and the `~` mark as for the api backend. Every cost hrn shows is a
+  list-price estimate, never a bill. The first attempt wired it through `finalize`, which
+  switches a CLI's stream parsing off: the review caught it, and a Run-level test with a
+  helper-process stream now covers the wiring.
 - 2026-10-14: A Backends card on hrn watch (#346, PR #373). Every viewer sees backend availability, preferences and remembered limits; loopback and Access-verified public viewers can save preferences using a fresh startup key. Changes atomically replace backends.json for later runs, while LAN viewers remain read-only and running MCP servers keep their backend enum until their host restarts them.
 - 2026-10-14: codex usage totals cannot wrap (#152, PR #370). Check each turn's
   counters before adding them and mark usage missing on overflow, retaining the
