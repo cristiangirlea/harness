@@ -207,3 +207,25 @@ func TestFetchReleaseSendsNoTokenToTheAssetHost(t *testing.T) {
 		t.Fatalf("Authorization headers %q; want the bearer on the API call and none on the two downloads", *auth)
 	}
 }
+
+func TestFetchReleaseRefusesATagThatLeavesTheDirectory(t *testing.T) {
+	for _, tag := range []string{"../../evil", "v..", "a/b", `a\b`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			name := AssetName(tag, "windows", "amd64")
+			json.NewEncoder(w).Encode(map[string]any{"tag_name": tag, "assets": []map[string]any{
+				{"name": name, "browser_download_url": "http://" + r.Host + "/dl/x"},
+				{"name": "SHA256SUMS", "browser_download_url": "http://" + r.Host + "/dl/SHA256SUMS"},
+			}})
+		}))
+		src := ReleaseSource{API: srv.URL + "/latest", Client: srv.Client(), GOOS: "windows", GOARCH: "amd64"}
+		dir := t.TempDir()
+		_, _, err := src.Fetch(context.Background(), dir)
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "tag") {
+			t.Fatalf("%q: err = %v; want a refusal naming the tag", tag, err)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Fatalf("%q: something was written into the download directory: %v", tag, entries)
+		}
+	}
+}

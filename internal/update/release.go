@@ -112,7 +112,15 @@ func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string,
 	if doc.TagName == "" {
 		return "", "", errors.New("latest release: no tag_name in the response")
 	}
+	// The tag names the file written into dir; a tag with a separator or ".."
+	// would write elsewhere.
+	if strings.ContainsAny(doc.TagName, "/"+string(os.PathSeparator)) || strings.Contains(doc.TagName, "..") {
+		return "", "", fmt.Errorf("latest release: tag %q is not a plain version tag", doc.TagName)
+	}
 	name := AssetName(doc.TagName, goos, goarch)
+	if filepath.Base(name) != name {
+		return "", "", fmt.Errorf("latest release: tag %q is not a plain version tag", doc.TagName)
+	}
 	var binURL, sumsURL string
 	for _, a := range doc.Assets {
 		switch a.Name {
