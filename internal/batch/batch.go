@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/gitretry"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/purpose"
@@ -1529,8 +1530,14 @@ func comparablePath(p string) string {
 func addWorktree(ctx context.Context, root string, tr TaskResult, base string) error {
 	worktreeMu.Lock()
 	defer worktreeMu.Unlock()
-	_, err := gitOut(ctx, root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
-	return err
+	// Git may create the branch before failing to read another worktree's
+	// metadata, so this command cannot safely be retried.
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
 
 // stillMade says whether anything a fresh task made outlived a removeWorktree
@@ -1920,8 +1927,11 @@ func Head(ctx context.Context, dir string) (string, error) {
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.CombinedOutput()
+	out, err := gitretry.Output(ctx, func() ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANGUAGE=")
+		return cmd.CombinedOutput()
+	})
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		if text == "" {

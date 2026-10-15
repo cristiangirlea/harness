@@ -25,6 +25,16 @@ type Store struct {
 	retrievalSlots chan struct{}
 }
 
+func checkSchemaVersion(version int) error {
+	if version < 3 {
+		return fmt.Errorf("unsupported schema version %d: run the explicit migrate command", version)
+	}
+	if version != 3 {
+		return fmt.Errorf("unsupported schema version %d", version)
+	}
+	return nil
+}
+
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -39,9 +49,9 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("database is not initialized: run the explicit migrate command: %w", err)
 	}
-	if version != 3 {
+	if err := checkSchemaVersion(version); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("unsupported schema version %d", version)
+		return nil, err
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
