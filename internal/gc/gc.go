@@ -202,14 +202,15 @@ func removeWorktree(ctx context.Context, w Worktree) (bool, error) {
 	// their only repository. Any failed command also keeps the worktree.
 	out, subErr := gitStdout(ctx, w.Path, "submodule", "foreach", "--quiet", "--recursive",
 		`test "$(git rev-parse HEAD)" = "$sha1" &&
-git status --porcelain --untracked-files=all --ignored &&
+changes=$(git status --porcelain --untracked-files=all --ignored &&
 git stash list &&
-git log --oneline HEAD --branches --not --remotes`)
+git log --oneline HEAD --branches --not --remotes) && test -z "$changes" &&
+dir=$(git rev-parse --absolute-git-dir) && printf '%s\0' "$dir"`)
 	if subErr != nil {
 		return false, errors.Join(err, subErr)
 	}
-	if strings.TrimSpace(out) != "" {
-		return false, fmt.Errorf("submodules have files, stashes or local commits to keep: %w", err)
+	if subErr := checkSubmoduleRepositories(ctx, w.Path, out); subErr != nil {
+		return false, errors.Join(err, subErr)
 	}
 	// Another process can change the parent while its submodules are checked.
 	if why := recheck(ctx, w); why != "" {
@@ -220,6 +221,50 @@ git log --oneline HEAD --branches --not --remotes`)
 	}
 	_, pruneErr := gitOut(ctx, w.Repo, "worktree", "prune")
 	return pruneErr == nil, pruneErr
+}
+
+// status and foreach only see indexed submodules. A removed submodule can
+// leave its repository (and private history) under the worktree's gitdir.
+func checkSubmoduleRepositories(ctx context.Context, wt, checked string) error {
+	modules, err := gitOut(ctx, wt, "rev-parse", "--git-path", "modules")
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(modules) {
+		modules = filepath.Join(wt, modules)
+	}
+	indexed := make(map[string]bool)
+	for _, dir := range strings.Split(checked, "\x00") {
+		if dir != "" {
+			indexed[samePath(dir)] = true
+		}
+	}
+	var walk func(string) error
+	walk = func(root string) error {
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if errors.Is(err, fs.ErrNotExist) && path == root {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && !d.Type().IsRegular() {
+				return fmt.Errorf("submodule repository contains a link: %s", path)
+			}
+			if d.IsDir() && isBare(path) {
+				if !indexed[samePath(path)] {
+					return fmt.Errorf("submodule repository is not indexed: %s", path)
+				}
+				// Skip the object store, but not repositories nested below it.
+				if err := walk(filepath.Join(path, "modules")); err != nil {
+					return err
+				}
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+	return walk(modules)
 }
 
 // deleteBranch deletes a branch only if it still points at the commit that
