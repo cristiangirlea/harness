@@ -80,6 +80,8 @@ but catches obvious mistakes only, including private credential paths, key
 headers, common token shapes, and a few instruction-injection phrases.
 The `.env` path check matches whole segments and `.env.<suffix>` files;
 `.envrc` and `docs/.environment.md` are allowed.
+Import refusals name the field and deny-list pattern that matched, without
+including the submitted text.
 
 The API uses these scoped JSON operations:
 
@@ -126,6 +128,8 @@ fields, including credential fields. Search matches exact scope and ranks
 identifiers, paths, and errors before `simple` text matches, with stable ties.
 Identifiers may include spaces for multi-word errors. Exact query candidates
 also omit trailing sentence periods and colons, preserving internal path punctuation.
+Joined candidates contain at most 8 words; each search sends at most 256 exact
+candidates, each limited to 256 bytes.
 The optional search `attempt` must be between 0 and 2147483647 inclusive.
 An empty or no-match packet is valid; packets contain at most 8192 bytes of
 reference text and an audit ID.

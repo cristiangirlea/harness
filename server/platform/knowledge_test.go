@@ -3,8 +3,10 @@ package platform
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -82,15 +84,60 @@ func TestKnowledgeImportScreensEveryTextFieldBeforeStorage(t *testing.T) {
 				set(&in, marker)
 				if _, err := (&Store{}).ImportKnowledge(context.Background(), in); !errors.Is(err, ErrUnsupported) {
 					t.Fatalf("unsafe field reached storage: %v", err)
+				} else {
+					pattern := marker
+					if marker == "config/.env.local" {
+						pattern = ".env.*"
+					} else if marker == "sk-ant-fixture" {
+						pattern = "sk-ant-"
+					} else {
+						pattern = "[/reference]"
+					}
+					if !strings.Contains(err.Error(), field) || !strings.Contains(err.Error(), pattern) {
+						t.Fatalf("refusal must name field %q and pattern %q: %v", field, pattern, err)
+					}
 				}
 			})
 		}
 	}
 }
 
+func TestKnowledgeQueryBoundsWorstCaseCandidatesAndJoinedWords(t *testing.T) {
+	unique := make([]string, 400)
+	for i := range unique {
+		unique[i] = fmt.Sprintf("%x.", i)
+	}
+	for name, query := range map[string]string{
+		"repeated":          strings.Repeat("a ", 1024),
+		"punctuated":        strings.Repeat("a. ", 682) + "a.",
+		"unique punctuated": strings.Join(unique, " "),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if len(query) > 2048 {
+				t.Fatalf("fixture exceeds query limit: %d", len(query))
+			}
+			candidates := knowledgeQueryIdentifiers(query)
+			if len(candidates) > 256 {
+				t.Errorf("got %d candidates, limit 256", len(candidates))
+			}
+			for _, candidate := range candidates {
+				if len(strings.Fields(candidate)) > 8 {
+					t.Fatalf("candidate exceeds 8 words: %q", candidate)
+				}
+				if len(candidate) > retrieval.MaxIdentifierBytes {
+					t.Fatalf("candidate exceeds byte limit: %d", len(candidate))
+				}
+			}
+		})
+	}
+}
+
 func TestKnowledgeSearchValidatesAttemptBeforeStorage(t *testing.T) {
-	for _, attempt := range []int{-1, 0, math.MaxInt32, math.MaxInt32 + 1} {
-		_, err := (&Store{}).SearchKnowledge(context.Background(), retrieval.Search{Attempt: attempt})
+	for _, attempt := range []int64{-1, 0, math.MaxInt32, math.MaxInt32 + 1} {
+		if strconv.IntSize == 32 && attempt > math.MaxInt32 {
+			continue // This value cannot be represented by Search.Attempt on 32-bit.
+		}
+		_, err := (&Store{}).SearchKnowledge(context.Background(), retrieval.Search{Attempt: int(attempt)})
 		want := ErrRetrievalBusy
 		if attempt < 0 || attempt > math.MaxInt32 {
 			want = ErrUnsupported

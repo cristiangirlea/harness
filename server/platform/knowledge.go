@@ -29,7 +29,7 @@ func knowledgeQueryIdentifiers(query string) []string {
 	seen := map[string]bool{}
 	spans := exactWords.FindAllStringIndex(query, -1)
 	for i, start := range spans {
-		for j := i; j < len(spans); j++ {
+		for j := i; j < len(spans) && j < i+8; j++ {
 			end := spans[j]
 			if end[1]-start[0] > retrieval.MaxIdentifierBytes {
 				break
@@ -43,6 +43,9 @@ func knowledgeQueryIdentifiers(query string) []string {
 				if candidate != "" && !seen[candidate] {
 					seen[candidate] = true
 					words = append(words, candidate)
+					if len(words) == 256 {
+						return words
+					}
 				}
 			}
 		}
@@ -70,35 +73,57 @@ func unsafeKnowledgeFrame(v string) bool {
 }
 func unsafeKnowledgeSource(e retrieval.Entry) bool {
 	for _, text := range append([]string{e.ID, e.Key, e.Content, e.Source, e.Evidence}, e.Identifiers...) {
-		if unsafeKnowledgeText(text) {
+		if unsafeKnowledgePattern(text) != "" {
 			return true
 		}
 	}
 	return false
 }
-func unsafeKnowledgeText(text string) bool {
-	if unsafeKnowledgeFrame(text) {
-		return true
+func unsafeKnowledgePattern(text string) string {
+	text = strings.ToLower(text)
+	for _, marker := range []string{"<project-reference", "</project-reference>", "[reference ", "[/reference]"} {
+		if strings.Contains(text, marker) {
+			return marker
+		}
 	}
-	text = strings.ToLower(strings.ReplaceAll(text, `\`, "/"))
+	text = strings.ReplaceAll(text, `\`, "/")
 	for _, private := range []string{".codex/auth.json", ".ssh/", ".aws/credentials", "credentials.json"} {
 		if strings.Contains(text, private) {
-			return true
+			return private
 		}
 	}
 	for _, segment := range strings.FieldsFunc(text, func(r rune) bool {
 		return r == '/' || r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '"' || r == '\'' || r == '`'
 	}) {
-		if segment == ".env" || (strings.HasPrefix(segment, ".env.") && len(segment) > len(".env.")) {
-			return true
+		if segment == ".env" {
+			return ".env"
+		}
+		if strings.HasPrefix(segment, ".env.") && len(segment) > len(".env.") {
+			return ".env.*"
 		}
 	}
 	for _, secret := range []string{"-----begin private key-----", "-----begin rsa private key-----", "-----begin openssh private key-----", "-----begin ec private key-----", "-----begin encrypted private key-----", "sk-ant-", "ghp_", "github_pat_", "authorization: bearer ", "ignore previous instructions", "disable permission checks"} {
 		if strings.Contains(text, secret) {
-			return true
+			return secret
 		}
 	}
-	return knowledgeToken.MatchString(text)
+	if knowledgeToken.MatchString(text) {
+		return knowledgeToken.String()
+	}
+	return ""
+}
+
+type knowledgeTextField struct {
+	name, text string
+}
+
+func knowledgeTextRefusal(fields ...knowledgeTextField) error {
+	for _, field := range fields {
+		if pattern := unsafeKnowledgePattern(field.text); pattern != "" {
+			return fmt.Errorf("%w: field %s matched pattern %q", ErrUnsupported, field.name, pattern)
+		}
+	}
+	return nil
 }
 func validKnowledgeScope(s retrieval.Scope) bool {
 	return knowledgeID.MatchString(s.TenantID) && knowledgeID.MatchString(s.ProjectID) && refPattern.MatchString(s.Revision) && len(s.Backend) > 0 && len(s.Backend) <= 64 && len(s.Model) > 0 && len(s.Model) <= 128
@@ -130,10 +155,13 @@ func knowledgeProject(ctx context.Context, tx pgx.Tx, sc retrieval.Scope) error 
 }
 
 func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (string, error) {
-	for _, text := range []string{in.TenantID, in.ProjectID, in.Backend, in.Model, in.Revision, in.Origin, in.ReviewedBy, in.ReviewEvidence} {
-		if unsafeKnowledgeText(text) {
-			return "", ErrUnsupported
-		}
+	if err := knowledgeTextRefusal(
+		knowledgeTextField{"tenant_id", in.TenantID}, knowledgeTextField{"project_id", in.ProjectID},
+		knowledgeTextField{"backend", in.Backend}, knowledgeTextField{"model", in.Model},
+		knowledgeTextField{"revision", in.Revision}, knowledgeTextField{"origin", in.Origin},
+		knowledgeTextField{"reviewed_by", in.ReviewedBy}, knowledgeTextField{"review_evidence", in.ReviewEvidence},
+	); err != nil {
+		return "", err
 	}
 	if !validKnowledgeScope(in.Scope) || in.Origin != "reviewed_source" || strings.TrimSpace(in.ReviewedBy) == "" || strings.TrimSpace(in.ReviewEvidence) == "" || len(in.ReviewedBy) > 256 || len(in.ReviewEvidence) > 2048 || unsafeKnowledgeFrame(in.ReviewEvidence) || len(in.Entries) > 100 || len(in.Entries) == 0 {
 		return "", ErrUnsupported
@@ -143,7 +171,19 @@ func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (strin
 	seen := map[string]bool{}
 	for i := range entries {
 		e := &entries[i]
-		if unsafeKnowledgeSource(*e) || e.Key == "" || len(e.Key) > retrieval.MaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > retrieval.MaxEntryIdentifiers || !utf8.ValidString(e.Content) {
+		if err := knowledgeTextRefusal(
+			knowledgeTextField{"id", e.ID}, knowledgeTextField{"key", e.Key},
+			knowledgeTextField{"content", e.Content}, knowledgeTextField{"source", e.Source},
+			knowledgeTextField{"evidence", e.Evidence},
+		); err != nil {
+			return "", fmt.Errorf("entries[%d]: %w", i, err)
+		}
+		for j, id := range e.Identifiers {
+			if err := knowledgeTextRefusal(knowledgeTextField{"identifiers", id}); err != nil {
+				return "", fmt.Errorf("entries[%d].identifiers[%d]: %w", i, j, err)
+			}
+		}
+		if e.Key == "" || len(e.Key) > retrieval.MaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > retrieval.MaxEntryIdentifiers || !utf8.ValidString(e.Content) {
 			return "", ErrUnsupported
 		}
 		for _, id := range e.Identifiers {
