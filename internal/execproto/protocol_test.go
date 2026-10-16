@@ -372,8 +372,8 @@ func TestStorageFailureCancelsAndStillReportsTheRecordError(t *testing.T) {
 		<-ctx.Done()
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusCanceled}
 	})
-	h := openHarness(t, func(backend string, task agent.Task, continues string) (record, error) {
-		w, err := runlog.CreateContinuing(backend, task, continues)
+	h := openHarness(t, func(backend string, task agent.Task, continues, route string) (record, error) {
+		w, err := runlog.CreateContinuingRoute(backend, task, continues, route)
 		return &closedEvents{Writer: w}, err
 	})
 	h.next(t, "hello")
