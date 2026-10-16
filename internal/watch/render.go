@@ -562,6 +562,9 @@ func batchBodyOf(res batch.Result, v viewer) batchBody {
 		}
 		tv.PromptLine, tv.PromptMore = firstLine(t.Prompt)
 		tv.Facts = []fact{{Label: "Branch", Value: t.Branch}}
+		if t.Purpose != "" {
+			tv.Facts = append(tv.Facts, fact{Label: "Purpose", Value: t.Purpose})
+		}
 		if t.Commit != "" {
 			tv.Facts = append(tv.Facts, fact{Label: "Commit", Value: tools.ShortSHA(t.Commit)})
 		}

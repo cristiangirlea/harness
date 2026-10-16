@@ -855,21 +855,26 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	sh := s.viewerOf(r).shortener(rec.Task.Dir)
 	// The chart is drawn over every turn, so a stream that starts partway
 	// reads the turns before it first.
-	before := Tail{Path: filepath.Join(runlog.Root(), id, "events.jsonl")}
-	earlier, err := before.Read()
-	if err != nil {
-		http.Error(w, "run not readable", http.StatusInternalServerError)
-		return
-	}
 	var usage []agent.Event
-	for _, l := range earlier {
-		if l.End <= cur.off && feedsChart(l) {
-			usage = append(usage, sh.event(s.cleanEvent(l.Event)))
+	if cur.off > 0 {
+		ef, err := os.Open(filepath.Join(runlog.Root(), id, "events.jsonl"))
+		var earlier []agent.Event
+		if err == nil {
+			earlier, err = runlog.UsageEvents(io.LimitReader(ef, cur.off))
+			ef.Close()
+		}
+		if err != nil {
+			http.Error(w, "run not readable", http.StatusInternalServerError)
+			return
+		}
+		for _, e := range earlier {
+			usage = append(usage, sh.event(s.cleanEvent(e)))
 		}
 	}
 	st := s.startStream(w)
 	s.loop(r, st, s.opt.Poll, func() (bool, error) {
 		lines, rec, done, err := f.Poll()
+		redraw := false
 		for _, l := range lines {
 			if backendStart(l.Event, rec.Result.Backend) {
 				continue
@@ -878,13 +883,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 			l.Event = sh.event(s.cleanEvent(l.Event))
 			if feedsChart(l) {
 				usage = append(usage, l.Event)
-				html, rerr := s.render("usage", usageOf(usage))
-				if rerr != nil {
-					return true, s.problem(r, st, rerr)
-				}
-				if werr := st.send("usage", cursor{l.End, prev}.String(), html); werr != nil {
-					return true, werr
-				}
+				redraw = true
 			}
 			if isUsage(l) {
 				continue
@@ -895,6 +894,17 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 				return true, s.problem(r, st, rerr)
 			}
 			if werr := st.send("item", cursor{l.End, prev}.String(), html); werr != nil {
+				return true, werr
+			}
+		}
+		// Drawn once a poll, as a long run's chart is large, and after the
+		// steps, so its cursor is the last of them.
+		if redraw {
+			html, rerr := s.render("usage", usageOf(usage))
+			if rerr != nil {
+				return true, s.problem(r, st, rerr)
+			}
+			if werr := st.send("usage", cursor{lines[len(lines)-1].End, prev}.String(), html); werr != nil {
 				return true, werr
 			}
 		}

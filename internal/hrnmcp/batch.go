@@ -109,6 +109,9 @@ func batchSummary(res batch.Result) string {
 	running := 0
 	for _, t := range res.Tasks {
 		fmt.Fprintf(&b, "%s: %s", t.ID, t.Status)
+		if t.Purpose != "" {
+			fmt.Fprintf(&b, " (purpose %s)", t.Purpose)
+		}
 		if n := len(t.Attempts); n > 0 {
 			last := t.Attempts[n-1]
 			fmt.Fprintf(&b, " on %s after %d attempt(s)", last.Backend, n)

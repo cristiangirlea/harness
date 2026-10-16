@@ -15,7 +15,12 @@ that count as infrastructure failures.
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.
 
-Routed runs include `routed_by` (`category`, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
+Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
+
+A follow-up names the run it continues in `continues`. One started with `--fresh` (MCP
+`fresh`, exec `fresh`) also has `continue_route: "fresh_handover"`: it started a new
+session with a hand-over instead of resuming or forking one. The field is omitted for
+an ordinary follow-up, and old records without it still load.
 
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 
@@ -61,7 +66,9 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
   starts. An unfinished run keeps this pin; a continuation checks it against the
   conversation before reuse.
 - `handoff.md` — for a follow-up, the transcript of earlier turns its backend was
-  given before the prompt (see [Continuing a run](backends.md#continuing-a-run))
+  given before the prompt (see [Continuing a run](backends.md#continuing-a-run)), or for
+  a fresh hand-over the brief built from the earlier run's record
+  ([A fresh hand-over](backends.md#a-fresh-hand-over))
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled|limited`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration, the
   claude, codex or agy `session` id, and for a `limited` run `limit_resets`, when its plan's
@@ -151,9 +158,10 @@ fields are left out. Which backends write them:
 - **api**: one per request, as the response reports it.
 - **claude**: one per main-loop assistant message. stream-json writes each content block of a
   message as a line of its own and repeats the message's usage on each, so hrn writes the
-  event once per message id, with the first line's figures (the output count there can be
-  lower than the message's final one). A sub-agent's messages fill its own context and are
-  left out; they still count in the run's totals.
+  event once per message id, after the message's last line, with the first line's figures
+  and the largest output count of its lines (the count grows as the message is written).
+  A sub-agent's messages fill its own context and are left out; they still count in the
+  run's totals.
 - **opencode**: one per step (`step_finish`).
 - **codex** and **gemini**: none. Codex's `turn.completed` totals every model call of an
   agent turn and gemini reports the run's totals, so neither says what one call carried.
