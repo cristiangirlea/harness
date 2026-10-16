@@ -21,6 +21,7 @@ type writer struct{}
 func (writer) Name() string            { return "mcp-writer" }
 func (writer) Detect() (string, error) { return "stub", nil }
 func (writer) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	task.Prompt = typed(task.Prompt)
 	name := strings.Fields(task.Prompt)[0] + ".txt"
 	emit(agent.Event{Kind: agent.EventToolCall, Tool: "write_file", Text: name})
 	_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(task.Prompt+"\n"), 0o644)
