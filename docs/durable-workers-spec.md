@@ -155,7 +155,7 @@ Permit automatic replay only when an operation is verified to be side-effect-fre
 
 Recovery must preserve spent budget and unresolved reservations. It must not reset the clock, retry count, cost ceiling, or approval state to obtain a fresh allowance.
 
-The API checkpoint store is the trust boundary for recovery. It must commit before acknowledging saves, reject stale owners, and preserve immutable versions. The task digest binds task settings; it does not authenticate checkpoint `Result.CostUSD`, `Deadline`, or `Started`. Recovery trusts these stored values, so changing them can reset spent budget or the clock. Untrusted execution tools and workspace/model content must not be able to modify stored checkpoints or access store credentials.
+The API checkpoint store is the trust boundary for recovery. It must commit before acknowledging saves, reject stale owners, and preserve immutable versions. The task digest binds task settings while omitting `AttemptID`, which names an attempt rather than the task so a retry with a new attempt ID can resume the checkpoint; it does not authenticate checkpoint `Result.CostUSD`, `Deadline`, or `Started`. Recovery trusts these stored values, so changing them can reset spent budget or the clock. Untrusted execution tools and workspace/model content must not be able to modify stored checkpoints or access store credentials.
 
 The API cost ceiling gates new model requests. A restored, already paid response may finish its requested tools even when its cost has reached the ceiling; committed tool outcomes are skipped and no further model request starts. The original deadline still applies to those tools.
 
