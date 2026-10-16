@@ -45,10 +45,15 @@ def set_args(values):
 def render(chart, namespace, values):
     output = helm("template", "fixture", str(ROOT / chart), "--namespace",
                   namespace, *set_args(values))
-    return {doc["kind"]: doc for doc in yaml.safe_load_all(output) if doc}
+    docs = [doc for doc in yaml.safe_load_all(output) if doc]
+    kinds = {doc["kind"]: doc for doc in docs}
+    assert len(docs) == len(kinds), f"{chart}: repeated document kind"
+    return kinds
 
 
 def main():
+    # Consume every document so syntax errors after a separator also fail.
+    list(yaml.safe_load_all((ROOT.parent / "fixtures/postgres.yaml").read_text()))
     worker_template = (ROOT / "project-worker/templates/resources.yaml").read_text()
     assert "if .Values.secrets.caName" not in worker_template, "required CA must be unconditional"
     dockerfile = (ROOT.parent.parent / "Dockerfile").read_text().splitlines()
@@ -79,6 +84,15 @@ def main():
     assert deployment["strategy"]["type"] == "Recreate"
     assert control_pod["automountServiceAccountToken"] is False
     assert control_pod["securityContext"]["runAsNonRoot"] is True
+    assert control_pod["securityContext"]["seccompProfile"]["type"] == "RuntimeDefault"
+    control_container = control_pod["containers"][0]
+    security = control_container["securityContext"]
+    assert security["readOnlyRootFilesystem"] is True
+    assert security["allowPrivilegeEscalation"] is False
+    assert security["capabilities"]["drop"] == ["ALL"]
+    assert security.get("seccompProfile", control_pod["securityContext"][
+        "seccompProfile"])["type"] == "RuntimeDefault"
+    assert control_container["image"] == IMAGE
     assert control["Service"]["spec"]["ports"][0]["port"] == 8443
     control_env = {item["name"]: item for item in control_pod["containers"][0]["env"]}
     for name in ("HRN_DATABASE_URL", "HRN_OPERATOR_TOKEN", "HRN_SCALER_TOKEN"):
@@ -88,6 +102,20 @@ def main():
     assert control["NetworkPolicy"]["spec"]["policyTypes"] == ["Ingress", "Egress"]
     assert len(control["NetworkPolicy"]["spec"]["ingress"]) == 1
     assert len(control["NetworkPolicy"]["spec"]["egress"]) == 2
+    dns_egress = {
+        "to": [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+        }],
+        "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}],
+    }
+    assert control["NetworkPolicy"]["spec"]["egress"] == [dns_egress, {
+        "to": [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "harness-system"}},
+            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "hrn-postgres"}},
+        }],
+        "ports": [{"protocol": "TCP", "port": 5432}],
+    }]
     docs = render("project-worker", NAMESPACE, SETS)
     assert set(docs) == {"StatefulSet", "Service", "ScaledObject",
                          "TriggerAuthentication", "NetworkPolicy"}
@@ -106,6 +134,7 @@ def main():
     assert pod["securityContext"]["seccompProfile"]["type"] == "RuntimeDefault"
     assert [c["name"] for c in pod["containers"]] == ["worker", "fake-model"]
     for container in pod["containers"]:
+        assert "envFrom" not in container
         security = container["securityContext"]
         assert security["allowPrivilegeEscalation"] is False
         assert security["readOnlyRootFilesystem"] is True
@@ -136,6 +165,7 @@ def main():
     assert trigger["metadata"]["valueLocation"] == "value"
     assert trigger["metadata"]["url"].endswith("/internal/scaling/projects/" + PROJECT)
     auth = docs["TriggerAuthentication"]["spec"]["secretTargetRef"]
+    assert len(auth) == 4
     assert auth[0]["name"] == "scaler-token" and auth[0]["parameter"] == "token"
     assert auth[1]["name"] == "control-ca" and auth[1]["parameter"] == "ca"
     assert auth[1]["key"] == "ca.crt"
@@ -146,19 +176,38 @@ def main():
     net = docs["NetworkPolicy"]["spec"]
     assert "ingress" not in net
     assert len(net["egress"]) == 2
+    assert net["egress"] == [dns_egress, {
+        "to": [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "harness-system"}},
+            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "hrn-control"}},
+        }],
+        "ports": [{"protocol": "TCP", "port": 8443}],
+    }]
 
     bad = [
         ("default", SETS),
         (NAMESPACE, {**SETS, "image.ref": "hrn:latest"}),
         (NAMESPACE, {**SETS, "control.url": "http://hrn-control:8088"}),
+        (NAMESPACE, {**SETS, "control.url": "https://host:8443/x"}),
         (NAMESPACE, {**SETS, "secrets.workerName": ""}),
         (NAMESPACE, {**SETS, "secrets.caName": ""}),
+        (NAMESPACE, {**SETS, "project.id": "p_ABC"}),
+        (NAMESPACE, {**SETS, "project.id": "p_" + "a" * 31}),
     ]
+    for tenant_id in ("t_ABC", "t_" + "a" * 31):
+        helm("template", "fixture", str(ROOT / "tenant-namespace"),
+             *set_args({"tenant.id": tenant_id}), ok=False)
+        # Match the derived namespace so its guard cannot mask a bad ID.
+        bad.append(("hrn-" + tenant_id.replace("_", "-"), {**SETS, "tenant.id": tenant_id}))
     for namespace, values in bad:
         helm("template", "fixture", str(ROOT / "project-worker"),
              "--namespace", namespace, *set_args(values), ok=False)
     helm("template", "fixture", str(ROOT / "control"), "--namespace",
          "default", *set_args(CONTROL_SETS), ok=False)
+    for key, value in (("image.ref", "hrn:latest"), ("secrets.databaseName", ""),
+                       ("secrets.authName", ""), ("secrets.tlsName", "")):
+        helm("template", "fixture", str(ROOT / "control"), "--namespace",
+             "harness-system", *set_args({**CONTROL_SETS, key: value}), ok=False)
     print("chart rendering, isolation, scaling and negative checks passed")
 
 
