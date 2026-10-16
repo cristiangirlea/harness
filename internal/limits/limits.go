@@ -96,16 +96,9 @@ func load() map[string]entry {
 // Note remembers when backend's limit lifts, from a run's result. A result
 // that is not limited, or does not say when the limit lifts, changes nothing.
 func Note(backend string, res agent.Result) error {
+	// A backend without a partner today is still remembered, for the listing
+	// and for a partner enabled or installed later.
 	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() {
-		return nil
-	}
-	p, err := agent.BackendPreferences(runlog.Home())
-	if err != nil {
-		return err
-	}
-	// A preference may leave no installed partner today. Still remember the
-	// limit for the listing and for a partner enabled or installed later.
-	if len(p.EnabledNames) == 0 && Partner(backend) == "" {
 		return nil
 	}
 	mu.Lock()

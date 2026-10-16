@@ -60,6 +60,7 @@ func NewAgyBackend() *CLIBackend {
 		mapsModes:      []Mode{ModeReadOnly, ModeAuto, ModeYolo},
 		mapsModel:      true,
 		mapsEffort:     true,
+		limits:         true,
 	}
 }
 

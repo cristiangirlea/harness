@@ -35,15 +35,15 @@ var blockStarted = make(chan struct{}, 8)
 
 func init() {
 	agent.Register(stub{"wb-ok", func(_ context.Context, task agent.Task) agent.Result {
-		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt+"\n"), 0o644)
+		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(typed(task)+"\n"), 0o644)
 		return agent.Result{Backend: "wb-ok", Status: agent.StatusOK, Final: "wrote out.txt", Turns: 2}
 	}})
 	agent.Register(leanStub{stub{"wb-lean", func(_ context.Context, task agent.Task) agent.Result {
 		return agent.Result{Backend: "wb-lean", Status: agent.StatusOK, Final: "nothing", Turns: 1}
 	}}})
 	agent.Register(stub{"wb-file", func(_ context.Context, task agent.Task) agent.Result {
-		name := strings.Fields(task.Prompt)[0] + ".txt"
-		_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(task.Prompt+"\n"), 0o644)
+		name := strings.Fields(typed(task))[0] + ".txt"
+		_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(typed(task)+"\n"), 0o644)
 		return agent.Result{Backend: "wb-file", Status: agent.StatusOK, Final: "wrote " + name, Turns: 1}
 	}})
 	agent.Register(stub{"wb-noop", func(context.Context, agent.Task) agent.Result {
@@ -73,6 +73,34 @@ func init() {
 
 // peek is what wb-peek does while it "works"; a test sets it.
 var peek = func() {}
+
+// typed is the task's prompt without the commit block agent.Run puts first.
+func typed(task agent.Task) string {
+	rest, ok := strings.CutPrefix(task.Prompt, "# How to commit\n\n")
+	if !ok {
+		return task.Prompt
+	}
+	_, after, _ := strings.Cut(rest, "\n\n")
+	return after
+}
+
+func TestABatchTasksAgentIsToldHowToCommit(t *testing.T) {
+	var seen string
+	agent.Register(stub{"wb-seen", func(_ context.Context, task agent.Task) agent.Result {
+		seen = task.Prompt
+		return agent.Result{Backend: "wb-seen", Status: agent.StatusOK, Final: "looked", Turns: 1}
+	}})
+	dir := initRepo(t)
+	if _, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-seen", Tasks: []Task{{ID: "one", Prompt: "do it"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(seen, "# How to commit\n\nReviews are text, commits are changes.") || !strings.HasSuffix(seen, "\n\ndo it") {
+		t.Errorf("the batch task's agent got %q, want the commit block before the prompt", seen)
+	}
+	if strings.Contains(seen, "fix round") {
+		t.Errorf("a batch task is not a fix round: %q", seen)
+	}
+}
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()

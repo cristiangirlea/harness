@@ -70,6 +70,10 @@ type Task struct {
 	// session stays as it was and the same run can be continued twice.
 	ForkSession string `json:"fork_session,omitempty"`
 
+	// FixRound marks a run that continues an earlier one; its commit block
+	// asks for every fix in one commit.
+	FixRound bool `json:"-"`
+
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
 }
@@ -144,7 +148,7 @@ const (
 	StatusTimeout  Status = "timeout" // the task's own deadline passed
 	StatusBudget   Status = "budget"  // a cost or token ceiling was reached
 	StatusCanceled Status = "canceled"
-	// StatusLimited is a claude or codex run stopped by the plan the CLI bills
+	// StatusLimited is a claude, codex or agy run stopped by the plan the CLI bills
 	// to: its usage limit was reached. Result.LimitResets says when it lifts.
 	StatusLimited Status = "limited"
 )
@@ -287,6 +291,8 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state}
 	}
 	task = prepared
+	// After retrieval, so the block is not part of its query.
+	task.Prompt = commitBlock(task) + task.Prompt
 	if state != nil {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
 	}
