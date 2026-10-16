@@ -163,9 +163,9 @@ func TestClaudePassesCompactWindowOnlyWhenSet(t *testing.T) {
 }
 
 func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
-	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}}
+	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}, Lean: Bool(false)}
 	plain := NewClaudeBackend().args(Task{Options: opts}, "")
-	opts.Lean = Bool(true)
+	opts.Lean, opts.Skills = Bool(true), Bool(true)
 	lean := NewClaudeBackend().args(Task{Options: opts}, "")
 	for _, flag := range []string{"--strict-mcp-config", "--setting-sources", "--bare"} {
 		if slices.Contains(plain, flag) {

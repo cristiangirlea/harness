@@ -377,7 +377,7 @@ func unenforced(task Task, mapsEffort, mapsLean, mapsCompact bool) []string {
 	if task.Effort != "" && !mapsEffort {
 		out = append(out, "effort")
 	}
-	if task.IsLean() && !mapsLean {
+	if task.Lean != nil && *task.Lean && !mapsLean { // the default is not a request
 		out = append(out, "lean")
 	}
 	if task.CompactWindow != "" && !mapsCompact {

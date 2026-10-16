@@ -108,39 +108,59 @@ Whatever the server reports about the edits it applied is recorded as an info ev
 shape was not documented where this was written, so hrn keeps it rather than guessing at
 it. Nothing about it goes back into the history.
 
-### Lean claude workers
+### What a run loads
 
-By default a claude worker starts the way Claude Code starts for you, with every MCP
-server you have: your user-scope servers, the project's `.mcp.json`, the servers your
-plugins bring and your claude.ai connectors. Their tool definitions are context on every
-turn (#200). A lean worker starts with only the MCP servers in the run's `--mcp` files
-(and `~/.hrn/mcp.json`): hrn adds `--strict-mcp-config`, and nothing else changes.
+Every run on claude or codex is lean unless it says `--lean=false` (`"lean": false` in a
+batch or eval spec or task, or on the MCP `run` tool; a task's `false` wins over a spec's
+`true`). Lean means the worker starts with the MCP servers its task names and nothing else:
+the run's `--mcp` files, `~/.hrn/mcp.json`, or a batch or eval task's `mcp` list. A task that
+names none gets none, on every backend. A record keeps `lean` as written: absent when the run
+did not set it (the default applied), `false` or `true` when it did. Records from before lean
+was the default load unchanged; one without `lean` now reads as lean, which only matters if it
+is continued.
 
-What a lean worker keeps: all of your settings (user, project and local), so your
-`~/.claude/CLAUDE.md` and `~/.claude/rules`, the repository's `CLAUDE.md` and `.claude/rules`,
-your hooks, your plugins and their skills and commands, your own skills, and your
-subscription login. What it drops: every MCP server hrn did not pass, including the ones a
-plugin or a claude.ai connector provides (the plugin's skills stay). hrn's guard is the same
-either way: its `--disallowedTools` rules are command-line flags, not settings.
+**claude.** A lean worker gets `--strict-mcp-config`, so none of your user-scope servers, the
+project's `.mcp.json`, plugin servers or claude.ai connectors start, and
+`--disable-slash-commands`, so no skills or slash commands load. `--skills` (`"skills": true`)
+keeps the skills in a lean run; `--lean=false` drops both flags and loads everything. Every
+setting source still loads: your `~/.claude/CLAUDE.md` and rules, the repository's `CLAUDE.md`
+and `.claude/rules`, your hooks and permission rules, and your subscription login. hrn's guard
+is the same either way: its `--disallowedTools` rules are command-line flags, not settings.
+Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
+`apiKeyHelper`, never the subscription.
+
+**codex.** codex cannot be told to start without its servers (`-c mcp_servers={}` merges
+rather than replaces), so hrn reads the table headers of your `config.toml`
+(`$CODEX_HOME/config.toml`, else `~/.codex/config.toml`; only `[mcp_servers.<name>]` headers,
+never values) and passes `-c mcp_servers.<name>.enabled=false` for each server the run does
+not name. A server that a codex plugin provides (not in `config.toml`) still starts: codex
+refuses to start when such a server is disabled by name. Servers written as inline tables
+under `[mcp_servers]` are not seen either. `--lean=false` passes no overrides, and
+`--ignore-user-config` is never used, so your settings and login stay.
+
+The run's `--mcp` files (Claude Code's `.mcp.json` format) reach codex as `-c` overrides on
+any run: a stdio server as `mcp_servers.<name>.command` and `.args`, a server with a `url` as
+`mcp_servers.<name>.url` (its `headers` are not passed). `${VAR}` expands as for the api
+backend. Environment values never go on the command line, where the process list and the
+run's start line would show them: hrn sets them in codex's own environment and names them in
+`mcp_servers.<name>.env_vars`, which codex passes on to the server. Two servers that set one
+variable to different values are refused, since codex has one environment for all of them.
+A server's `command` and `args` are on codex's command line, so keep secrets in `env`.
+
+gemini, opencode and agy load what they always load; they say `lean: not enforced` only when
+a run asks for lean explicitly, and the api loop never reads a CLI's settings.
+
+To add back what a task needs, name it: put the server in an MCP config and pass it with
+`--mcp` (or the task's `mcp` list), add `--skills` for a claude task that needs skills, or run
+with `--lean=false` to load everything as your CLI is set up.
 
 Loading `CLAUDE.local.md` under lean was not checked against Claude Code 2.1.284.
 To check it, put a unique harmless instruction in `CLAUDE.local.md` in a temporary
-repository, then compare a normal run with `hrn run -b claude --lean` using the same
+repository, then compare `hrn run -b claude --lean=false` with a default run using the same
 prompt that exercises that instruction. These runs use your Claude plan; record the
 Claude Code version and whether each run follows the instruction.
 
-Lean is the default for `hrn batch` and `hrn eval` tasks that run on claude; a spec or task
-sets `"lean": false` to give its workers every MCP server (a task's `false` wins over a
-spec's `true`). The record of an attempt says `"lean": true` when the default applied. `hrn
-run` and the MCP `run` tool stay as they were: lean only with `--lean` or `"lean": true`.
-Continuing a lean batch run with `hrn run --continue <run-id>` also runs without lean
-unless you pass `--lean`; the MCP `run` tool likewise needs `"lean": true` on the follow-up.
-Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
-`apiKeyHelper`, never the subscription. The api loop never reads Claude Code's settings, so
-lean changes nothing there; codex, gemini, opencode and agy say `lean: not enforced` when it is
-asked for and run as usual (a batch's default does not ask them).
-
-Measured on 2026-10-13 (Claude Code 2.1.284, claude-sonnet-5-5, the owner's setup, one
+Measured on 2026-10-13, when lean meant `--strict-mcp-config` alone (Claude Code 2.1.284, claude-sonnet-5-5, the owner's setup, one
 read-only question on this repository, two runs each; `context_tokens` is the context of the
 last turn):
 
@@ -214,8 +234,8 @@ conversation is a chain of runs. It inherits the earlier run's backend, workspac
 mode unless you pass those flags, and its model only from runs on the same backend: a
 claude model name means nothing to codex. The MCP `run` tool takes the same thing as
 `continue_run_id`.
-Lean is not inherited: even after a lean batch run, pass `--lean` (or `"lean": true`
-on the MCP tool) to enable it for the follow-up.
+Lean is not inherited: a follow-up is lean by default whatever the earlier run was, so pass
+`--lean=false` (or `"lean": false` on the MCP tool) again to load everything.
 
 If the run whose conversation or session is carried on recorded more than 150,000
 tokens of context at its last turn, hrn warns with its run id and context size and

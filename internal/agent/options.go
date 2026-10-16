@@ -54,13 +54,13 @@ type Options struct {
 	// instead of being resent every turn.
 	NoContextEdits bool `json:"no_context_edits,omitempty" desc:"Keep every tool result in the request instead of letting the server clear old ones (api backend)."`
 
-	// Lean starts the claude CLI with only this run's MCP configs, so the
-	// operator's other MCP servers stay out of every turn's context. Settings,
-	// rules, hooks, plugins and skills still load. The guard is unchanged.
-	// Unset (nil) takes the entry point's default: on for a batch or eval
-	// task on a backend that applies it, off for hrn run and the MCP run tool;
-	// an explicit false is kept, also over a spec's true.
-	Lean *bool `json:"lean,omitempty" desc:"Start the claude CLI with only this run's --mcp servers: none of your other MCP servers, plugin servers or claude.ai connectors; your settings, rules, plugins and skills still load (claude backend)."`
+	// Lean trims what the claude and codex CLIs load to what the run names:
+	// its --mcp servers, and on claude no skills. Unset (nil) is on, so a
+	// record keeps lean only as written; an explicit false loads everything.
+	Lean *bool `json:"lean,omitempty" desc:"Load only this run's --mcp servers, and on claude no skills (default on; claude and codex backends). false loads every MCP server, plugin and skill your CLI is set up with."`
+
+	// Skills lets a lean claude run keep its skills and slash commands.
+	Skills *bool `json:"skills,omitempty" desc:"Keep the claude CLI's skills and slash commands in a lean run (default off; claude backend)."`
 
 	// CompactWindow is the context size, in tokens, at which the claude CLI
 	// compacts the conversation (--autocompact): 100000 to 1000000, or
@@ -129,8 +129,8 @@ func (o *Options) Route(prompt string, backend *string, home string) (*table.Rou
 	return &table.RoutedBy{Category: category, Eval: r.Eval, Set: r.Set}, nil
 }
 
-// IsLean reports whether lean is on: set, and true.
-func (o Options) IsLean() bool { return o.Lean != nil && *o.Lean }
+// IsLean reports whether lean is on: unset or true.
+func (o Options) IsLean() bool { return o.Lean == nil || *o.Lean }
 
 // Bool returns a pointer to v, for an option that is set or left unset.
 func Bool(v bool) *bool { return &v }
@@ -173,7 +173,7 @@ var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run:
 
 // Over returns o with every unset field taken from base: a task's options over
 // its spec's. A switch left off inherits the spec's, so a task can turn one on
-// but not back off, except lean, which is unset only when nil; a list left nil
+// but not back off, except lean and skills, which are unset only when nil; a list left nil
 // inherits, and an empty list stays empty.
 func (o Options) Over(base Options) Options {
 	ov, bv := reflect.ValueOf(&o).Elem(), reflect.ValueOf(base)

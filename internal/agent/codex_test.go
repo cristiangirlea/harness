@@ -228,6 +228,7 @@ func TestCodexUsageSumsRemainReportedWithinInt64(t *testing.T) {
 }
 
 func TestCodexPassesEffortBeforeForkAndPrompt(t *testing.T) {
+	codexHome(t, "")
 	for _, fork := range []string{"", "session-123"} {
 		for _, effort := range []string{"", "high"} {
 			t.Run("fork="+fork+"/effort="+effort, func(t *testing.T) {

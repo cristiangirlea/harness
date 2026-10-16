@@ -51,12 +51,13 @@ func NewClaudeBackend() *CLIBackend {
 				a = append(a, "--permission-mode", mode)
 			}
 			if t.IsLean() {
-				// Only the --mcp-config files below: none of the user's other
-				// MCP servers, plugin servers or claude.ai connectors. Every
-				// setting source still loads, so the user's CLAUDE.md, rules,
-				// hooks, plugins and skills do too (#204). Not --bare: it logs
-				// in only with an API key, never the subscription.
+				// Only the --mcp-config files below. Every setting source still
+				// loads, so the user's rules, hooks and deny rules hold. Not
+				// --bare: it logs in only with an API key, never the subscription.
 				a = append(a, "--strict-mcp-config")
+				if t.Skills == nil || !*t.Skills {
+					a = append(a, "--disable-slash-commands")
+				}
 			}
 			if t.CompactWindow != "" {
 				a = append(a, "--autocompact", string(t.CompactWindow))

@@ -164,8 +164,8 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 				// Pin the measured backend so purpose routing cannot change a cell.
 				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
 				if v.Lean != nil {
-					if cell.Backend != "claude" {
-						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude backend (task %s uses %s)", v.name(), t.ID, cell.Backend)
+					if cell.Backend != "claude" && cell.Backend != "codex" {
+						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude and codex backends (task %s uses %s)", v.name(), t.ID, cell.Backend)
 					}
 					cell.Lean = v.Lean
 				}

@@ -125,6 +125,7 @@ func TestClaudeForksTheSessionItIsGiven(t *testing.T) {
 }
 
 func TestCodexArgs(t *testing.T) {
+	codexHome(t, "")
 	b := NewCodexBackend()
 	for _, tc := range []struct {
 		task Task

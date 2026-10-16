@@ -51,7 +51,7 @@ func TestVariantsOverrideLeanAndPreserveUnsetValues(t *testing.T) {
 	}
 }
 
-func TestVariantLeanRequiresTheResolvedClaudeBackend(t *testing.T) {
+func TestVariantLeanRequiresAResolvedBackendThatAppliesIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, source := range []string{"variant", "task", "spec", "default"} {
 		for _, backend := range []string{"claude", "codex", "api", "gemini", "opencode", "agy"} {
@@ -71,12 +71,12 @@ func TestVariantLeanRequiresTheResolvedClaudeBackend(t *testing.T) {
 					backend = agent.DefaultBackendNameIn(runlog.Home())
 				}
 				_, err := Expand(spec, "abc12")
-				if backend == "claude" {
+				if backend == "claude" || backend == "codex" {
 					if err != nil {
 						t.Errorf("%s lean=%v: %v", source, lean, err)
 					}
-				} else if err == nil || !strings.Contains(err.Error(), "lean") || !strings.Contains(err.Error(), "claude") {
-					t.Errorf("%s backend=%s lean=%v: got %v, want claude-only lean error", source, backend, lean, err)
+				} else if err == nil || !strings.Contains(err.Error(), "lean") || !strings.Contains(err.Error(), "claude and codex") {
+					t.Errorf("%s backend=%s lean=%v: got %v, want a claude-and-codex-only lean error", source, backend, lean, err)
 				}
 			}
 		}

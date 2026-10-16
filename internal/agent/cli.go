@@ -33,6 +33,9 @@ type CLIBackend struct {
 	// passed as an attachment instead of on stdin.
 	args        func(t Task, promptFile string) []string
 	promptStdin bool
+	// env, when set, adds variables to the child's environment after the
+	// guard: values that must not show on its command line.
+	env func(t Task) ([]string, error)
 	// encodePrompt wraps stdin for CLIs that require structured input.
 	encodePrompt func(string) string
 	// parse handles one stdout line. Nil means stdout is plain text.
@@ -205,6 +208,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		defer os.RemoveAll(guardDir)
 		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
+	}
+	if c.env != nil {
+		extra, err := c.env(task)
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		cmd.Env = append(cmd.Env, extra...)
 	}
 	if c.promptStdin {
 		prompt := task.Prompt

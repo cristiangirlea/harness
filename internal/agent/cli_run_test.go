@@ -167,7 +167,7 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 		// mapsCompact: the adapter passes compact_window on.
 		mapsCompact bool
 	}{
-		{NewCodexBackend, true, false, false},
+		{NewCodexBackend, true, true, false},
 		{NewClaudeBackend, true, true, true},
 		{NewGeminiBackend, false, false, false},
 		{NewOpencodeBackend, false, false, false},
@@ -209,7 +209,7 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				if options.Effort != "" && !adapter.mapsEffort {
 					want = append(want, "effort")
 				}
-				if options.IsLean() && !adapter.mapsLean {
+				if options.Lean != nil && *options.Lean && !adapter.mapsLean {
 					want = append(want, "lean")
 				}
 				if options.CompactWindow != "" && !adapter.mapsCompact {
