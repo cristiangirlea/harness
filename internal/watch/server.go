@@ -254,6 +254,8 @@ type server struct {
 	system []string          // folders whose programs are shown by name; see systemFolders
 	access *accessVerifier
 	logMu  sync.Mutex
+
+	batches batchCache
 }
 
 // New is the watch page's handler. Streams end when ctx does, so a server
@@ -485,12 +487,12 @@ func (s *server) lists() lists {
 		l.Runs = append(l.Runs, r)
 	}
 	l.Purposes = purposesOf(runs)
-	batches, unreadable, err := batch.List()
+	batches, unreadable, err := s.listBatches()
 	if unreadable > 0 {
 		// Most likely one caught mid-save: on Windows a read can land on
 		// the rename. Look again before calling it unreadable.
 		time.Sleep(50 * time.Millisecond)
-		batches, unreadable, err = batch.List()
+		batches, unreadable, err = s.listBatches()
 	}
 	if err != nil {
 		msg := "Batches could not be listed."
@@ -503,7 +505,7 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, fmt.Sprintf("%d batch record(s) could not be read.", unreadable))
 	}
 	for i, res := range batches {
-		batches[i] = vw.batch(s.cleanBatch(res)) // the task names below come from these too
+		batches[i] = vw.batch(res) // the task names below come from these too
 		if i < 20 {
 			l.Batches = append(l.Batches, batchRow(batches[i]))
 		}
