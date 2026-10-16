@@ -211,5 +211,7 @@ jobs:
         run: python -m pip install PyYAML==6.0.3
       - name: render and verify tenant and project charts
         run: python server/deploy/verify_charts.py
+      - name: verifier regression tests
+        run: python -m unittest discover -s server/deploy -p test_verify_charts.py
       - name: build development image
         run: docker build -f server/Dockerfile -t hrn-durable-fixture:ci .
