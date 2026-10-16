@@ -166,7 +166,7 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 
 // WatchJob watches one job's events. It reads the job's state first: a job that has already
 // ended may have no terminal event left after the cursor, so it prints the remaining events
-// page by page and returns instead of streaming (#361).
+// page by page and returns instead of streaming.
 func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, after int64, out io.Writer) error {
 	data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"?"+scope.Encode(), nil)
 	if err != nil && watchRetries(err) {
