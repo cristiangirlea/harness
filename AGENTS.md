@@ -122,7 +122,7 @@ machines. See `CONTRIBUTING.md` for CI and release details.
 - `scripts/check.sh`: Run the check skill commands in order, stopping on failure.
 - `scripts/comment-check.sh`: Check Go comments against the repository rule and baseline.
 - `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
-- `scripts/tool-shapes.sh`: Measure recorded tool output and repeated inline scripts without exposing text.
+- `scripts/tool-shapes.sh`: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
 - `scripts/verify.sh`: Run kept examples and synchronize script hashes and the AGENTS index. (not verified: the runner)
 - `scripts/verify_test.sh`: Test verifier stamping, exclusions, errors and read-only checks in fixtures.
 - `scripts/wait-for.sh`: Wait for a TCP port with a bounded timeout.

@@ -1,9 +1,9 @@
 // name: tool-shapes-main
-// summary: Measure recorded tool output and repeated inline scripts without exposing text.
+// summary: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
 // effects: read, exec
-// parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true
+// parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true; --definitions:bool=false
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 28d7a78f2d8a8dca670aac738a0a7bd898811ee446455422a215bc05e4f7ea9b
+// hash: 1ae7f90b2b080a19db22bc0b537842a087d0e834c8bf01941a541ee4287b844f
 package main
 
 import (
@@ -135,6 +135,7 @@ type report struct {
 		WithTokens int `json:"with_tokens"`
 		Unreadable int `json:"skipped_unreadable"`
 	} `json:"runs"`
+	calls callContexts
 }
 type event struct {
 	Kind  string          `json:"kind"`
@@ -405,7 +406,8 @@ func measure(home string, days int, now time.Time) (*report, error) {
 			continue
 		}
 		var task struct {
-			Backend string `json:"backend"`
+			Backend string   `json:"backend"`
+			MCP     []string `json:"mcp"`
 		}
 		if readJSON(filepath.Join(dir, "task.json"), &task) != nil {
 			r.Runs.Unreadable++
@@ -451,6 +453,7 @@ func measure(home string, days int, now time.Time) (*report, error) {
 		if tokenFigure != nil {
 			r.Runs.WithTokens++
 		}
+		r.calls.add(backend, len(task.MCP) > 0, events, tokenFigure, result.Turns)
 		r.stats.add(events, tokenFigure, result.Turns)
 		if backend == "claude" && hasCalls {
 			r.Claude.add(events, tokenFigure, result.Turns)
@@ -498,16 +501,21 @@ func options(args []string) (string, int, error) {
 	return home, days, nil
 }
 func main() {
-	home, days, err := options(os.Args[1:])
+	defs, args := definitionsFlag(os.Args[1:])
+	home, days, err := options(args)
 	var r *report
 	if err == nil {
 		r, err = measure(home, days, time.Now())
+	}
+	var out any = r
+	if err == nil && defs {
+		out, err = definitions(r, days)
 	}
 	if err != nil {
 		_ = json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
 		os.Exit(1)
 	}
-	if err = json.NewEncoder(os.Stdout).Encode(r); err != nil {
+	if err = json.NewEncoder(os.Stdout).Encode(out); err != nil {
 		fmt.Fprintln(os.Stderr, `{"error":"cannot write report"}`)
 		os.Exit(1)
 	}

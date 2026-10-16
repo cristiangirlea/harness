@@ -3,16 +3,21 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 45da13a459d56a51c4aeab57cd99dcad82ae09d7077208355a47996c2e76551a
+// hash: a3cf1a597d24d28c14b7e895454e45d0c4538feb1947fdc92ec9bc518f334317
 package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func TestClassify(t *testing.T) {
@@ -365,5 +370,97 @@ func TestUnreadableAndClaudeFilter(t *testing.T) {
 	r, err := measure(home, 30, now)
 	if err != nil || r.Runs.Read != 1 || r.Runs.Unreadable != 2 || r.Claude.ToolResultBytes != 0 {
 		t.Fatalf("filter %+v %v", r, err)
+	}
+}
+
+func writeFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDefinitionsCompareTheToolsWithTheMedianCallPerBackend(t *testing.T) {
+	home := t.TempDir()
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.Local)
+	usage := func(in, cache int) string {
+		return fmt.Sprintf(`{"kind":"usage","usage":{"input_tokens":%d,"cache_read_tokens":%d}}`+"\n", in, cache)
+	}
+	writeFiles(t, filepath.Join(home, "runs", "20261014-100000-api"), map[string]string{
+		"task.json": `{"backend":"api","prompt":"private","mcp":["secret.mcp.json"]}`, "result.json": `{"status":"ok"}`,
+		"events.jsonl": usage(100, 900) + usage(100, 2900) + usage(100, 3900)})
+	writeFiles(t, filepath.Join(home, "runs", "20261014-100001-api"), map[string]string{
+		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","input_tokens":1000,"cache_read_tokens":5000,"turns":3}`,
+		"events.jsonl": ""})
+	writeFiles(t, filepath.Join(home, "runs", "20261014-100002-codex"), map[string]string{
+		"task.json": `{"backend":"codex"}`, "result.json": `{"status":"ok"}`, "events.jsonl": usage(50000, 99999)})
+	writeFiles(t, filepath.Join(home, "runs", "20261014-100003-api-no-figures"), map[string]string{
+		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","turns":4}`, "events.jsonl": ""})
+	r, err := measure(home, 30, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := definitions(r, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// api calls: 1000, 3000, 4000 from usage and three of 2000 from totals; codex counts input only.
+	if d.API.Runs != 2 || d.API.UsageRuns != 1 || d.API.Calls != 6 || *d.API.Tokens != 2000 {
+		t.Fatalf("api %+v", d.API)
+	}
+	if d.All.Runs != 3 || d.All.Calls != 7 || *d.All.Tokens != 2000 || slices.Max(r.calls.all) != 50000 {
+		t.Fatalf("all %+v", d.All)
+	}
+	if d.MCPDefinitions != "not recorded" || d.APIRunsWithMCP != 1 {
+		t.Fatalf("mcp %q %d", d.MCPDefinitions, d.APIRunsWithMCP)
+	}
+	want, err := agent.NewAPIBackend().ToolDefinitions(agent.Task{Options: agent.Options{Mode: agent.ModeYolo, ShapeTools: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shaping := d.Definitions["shaping"]
+	if shaping.Bytes != len(want) || shaping.Tokens != float64(len(want))/4 || *shaping.CallShare != shaping.Tokens/2000 {
+		t.Fatalf("shaping %+v", shaping)
+	}
+	if d.Definitions["readonly"].Tools != 3 || d.Definitions["auto_yolo"].Tools != 6 || shaping.Tools != 7 {
+		t.Fatalf("tool counts %+v", d.Definitions)
+	}
+	if len(d.Largest) != 5 || !sort.SliceIsSorted(d.Largest, func(i, j int) bool { return d.Largest[i].Bytes > d.Largest[j].Bytes }) {
+		t.Fatalf("largest %+v", d.Largest)
+	}
+	data, _ := json.Marshal(d)
+	if strings.Contains(string(data), "secret") || strings.Contains(string(data), "private") || strings.Contains(string(data), home) {
+		t.Fatal("record text leaked")
+	}
+}
+
+func TestDefinitionsLeaveTheShareUnsetWithoutApiCalls(t *testing.T) {
+	home := t.TempDir()
+	writeFiles(t, filepath.Join(home, "runs"), nil)
+	r, err := measure(home, 30, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := definitions(r, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.API.Tokens != nil || d.Definitions["auto_yolo"].CallShare != nil || d.Definitions["auto_yolo"].Bytes == 0 {
+		t.Fatalf("%+v", d)
+	}
+}
+
+func TestDefinitionsFlagIsTakenOutBeforeTheSharedOptions(t *testing.T) {
+	on, rest := definitionsFlag([]string{"--home", "h", "--definitions", "--days", "2"})
+	if !on || strings.Join(rest, " ") != "--home h --days 2" {
+		t.Fatal(on, rest)
+	}
+	if on, _ := definitionsFlag([]string{"--json"}); on {
+		t.Fatal("flag found where none was given")
 	}
 }

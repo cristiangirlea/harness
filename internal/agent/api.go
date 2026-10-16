@@ -38,6 +38,40 @@ func NewAPIBackend() *APIBackend {
 
 func (b *APIBackend) Name() string { return "api" }
 
+// offeredTools is what a run offers the model, by name and as the request's
+// tools field: the built-ins, read_original when shaping, then MCP tools.
+func (b *APIBackend) offeredTools(task Task, mcpTools []tools.Tool) (map[string]tools.Tool, []apiTool) {
+	toolset := b.Tools
+	if task.ShapeTools {
+		toolset = append(append([]tools.Tool(nil), toolset...), tools.ReadOriginal())
+	}
+	toolset = append(append([]tools.Tool(nil), toolset...), mcpTools...)
+	byName := map[string]tools.Tool{}
+	var apiTools []apiTool
+	for _, t := range toolset {
+		if task.Mode == ModeReadOnly && t.Effect != tools.EffectRead {
+			continue // don't offer tools the mode can never allow
+		}
+		byName[t.Name] = t
+		schema := t.Schema
+		if schema == nil {
+			schema = map[string]any{"type": "object", "properties": t.Properties}
+			if len(t.Required) > 0 {
+				schema["required"] = t.Required
+			}
+		}
+		apiTools = append(apiTools, apiTool{Name: t.Name, Description: t.Description, InputSchema: schema})
+	}
+	return byName, apiTools
+}
+
+// ToolDefinitions is the JSON a request's tools field carries for task. It
+// leaves out MCP tools, which only a started server can list.
+func (b *APIBackend) ToolDefinitions(task Task) ([]byte, error) {
+	_, apiTools := b.offeredTools(task, nil)
+	return json.Marshal(apiTools)
+}
+
 func (b *APIBackend) Detect() (string, error) {
 	if b.APIKey != "" {
 		return "configured key", nil
@@ -152,10 +186,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		maxTurns = 50
 	}
 
-	toolset := b.Tools
-	if task.ShapeTools {
-		toolset = append(append([]tools.Tool(nil), toolset...), tools.ReadOriginal())
-	}
+	var mcpTools []tools.Tool
 	if len(task.MCP) > 0 {
 		clients, extra := startMCP(ctx, task, ws.Root, emit)
 		defer func() {
@@ -163,25 +194,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 				_ = c.Close()
 			}
 		}()
-		toolset = append(append([]tools.Tool(nil), toolset...), extra...)
+		mcpTools = extra
 	}
-
-	byName := map[string]tools.Tool{}
-	var apiTools []apiTool
-	for _, t := range toolset {
-		if task.Mode == ModeReadOnly && t.Effect != tools.EffectRead {
-			continue // don't offer tools the mode can never allow
-		}
-		byName[t.Name] = t
-		schema := t.Schema
-		if schema == nil {
-			schema = map[string]any{"type": "object", "properties": t.Properties}
-			if len(t.Required) > 0 {
-				schema["required"] = t.Required
-			}
-		}
-		apiTools = append(apiTools, apiTool{Name: t.Name, Description: t.Description, InputSchema: schema})
-	}
+	byName, apiTools := b.offeredTools(task, mcpTools)
 
 	shell, _ := tools.Shell()
 	guard := "on (a few destructive or publishing command lines are refused)"
