@@ -252,7 +252,7 @@ func readOwnOriginal(root *os.Root, name, handle string, limit int64) (string, b
 	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() > limit {
 		return "", false
 	}
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	data, err := io.ReadAll(io.LimitReader(f, min(limit, 1<<62)+1))
 	if err != nil || int64(len(data)) > limit || originalHandleOf(string(data)) != handle {
 		return "", false
 	}

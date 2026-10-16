@@ -400,6 +400,7 @@ func TestCopyOriginalsCopiesOnlyFilesNamedForTheirContent(t *testing.T) {
 }
 
 func TestAnOriginalLargerThanAShellCaptureIsCarriedOver(t *testing.T) {
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "1")
 	from, to := t.TempDir(), t.TempDir()
 	text := strings.Repeat("m", maxCapture+1)
 	writeOriginalFile(t, from, originalHandleOf(text), text)
@@ -580,5 +581,15 @@ func BenchmarkShapeNearCeiling(b *testing.B) {
 		if out := ws.toolOutput(text); !strings.Contains(out, "original: ") {
 			b.Fatal("near-ceiling output was not stored")
 		}
+	}
+}
+
+func TestTheLargestRunCapStillCopiesOriginals(t *testing.T) {
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "9223372036854775807")
+	from, to := t.TempDir(), t.TempDir()
+	text := "small original"
+	writeOriginalFile(t, from, originalHandleOf(text), text)
+	if n, skipped, err := CopyOriginals(from, to); err != nil || n != 1 || skipped != 0 {
+		t.Fatalf("copied %d, skipped %d: %v", n, skipped, err)
 	}
 }
