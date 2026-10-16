@@ -63,7 +63,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
+| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `fresh` (with `continue_run_id`: a new session with a hand-over, see [backends](backends.md#a-fresh-hand-over)), `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Availability and remembered limits, plus per-backend `enabled` and `default` booleans. The top-level `default` string names the backend selected for a fresh run. |
