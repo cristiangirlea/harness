@@ -187,19 +187,20 @@ func originalsCap(name string, def int64) int64 {
 
 // CopyOriginals copies record directory from's originals into record directory
 // to, past the caps: their handles are already in the continued conversation.
-// Only regular files named for the SHA-256 of their own content are copied.
-func CopyOriginals(from, to string) (int, error) {
+// Only regular files named for the SHA-256 of their own content are copied;
+// other files with a handle's name are skipped and counted.
+func CopyOriginals(from, to string) (copied, skipped int, err error) {
 	src, err := (&Workspace{RunDir: from}).originals(false)
 	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
+		return 0, 0, nil
 	}
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer src.Close()
 	entries, err := fs.ReadDir(src.FS(), ".")
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	var dst *os.Root
 	defer func() {
@@ -207,47 +208,52 @@ func CopyOriginals(from, to string) (int, error) {
 			dst.Close()
 		}
 	}()
+	// A lowered cap must not drop originals a run stored under the default.
+	limit := max(originalsCap("HRN_ORIGINALS_RUN_MAX", defaultOriginalsRunMax), defaultOriginalsRunMax)
 	originalWrites.Lock()
 	defer originalWrites.Unlock()
-	copied := 0
 	for _, e := range entries {
 		handle, ok := strings.CutSuffix(e.Name(), ".txt")
-		if !ok || !originalHandle.MatchString(handle) || !e.Type().IsRegular() {
+		if !ok || !originalHandle.MatchString(handle) {
 			continue
 		}
-		text, ok := readOwnOriginal(src, e.Name(), handle)
+		text, ok := "", e.Type().IsRegular()
+		if ok {
+			text, ok = readOwnOriginal(src, e.Name(), handle, limit)
+		}
 		if !ok {
+			skipped++
 			continue
 		}
 		if dst == nil {
 			if dst, err = (&Workspace{RunDir: to}).originals(true); err != nil {
-				return copied, err
+				return copied, skipped, err
 			}
 		}
 		if _, err := dst.Lstat(e.Name()); err == nil {
 			continue // never overwrite what the new run already holds
 		}
 		if err := writeOriginal(dst, e.Name(), text, io.WriteString); err != nil {
-			return copied, err
+			return copied, skipped, err
 		}
 		copied++
 	}
-	return copied, nil
+	return copied, skipped, nil
 }
 
-// readOwnOriginal reads name if it is a regular file no larger than a capture
+// readOwnOriginal reads name if it is a regular file no larger than limit
 // and its content hashes to handle.
-func readOwnOriginal(root *os.Root, name, handle string) (string, bool) {
+func readOwnOriginal(root *os.Root, name, handle string, limit int64) (string, bool) {
 	f, err := root.Open(name)
 	if err != nil {
 		return "", false
 	}
 	defer f.Close()
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() > maxCapture {
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() > limit {
 		return "", false
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxCapture+1))
-	if err != nil || len(data) > maxCapture || originalHandleOf(string(data)) != handle {
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(data)) > limit || originalHandleOf(string(data)) != handle {
 		return "", false
 	}
 	return string(data), true

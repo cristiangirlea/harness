@@ -149,6 +149,27 @@ func TestParallelSubtestsStillFallBack(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsBesideAResumedParallelSiblingFallBack(t *testing.T) {
+	text := "counts 0 2\n=== RUN   TestA\n=== RUN   TestA/one\n=== PAUSE TestA/one\n=== RUN   TestA/two\n=== PAUSE TestA/two\n" +
+		"=== CONT  TestA/one\n=== CONT  TestA/two\n=== RUN   TestA/one/x\n    whose diagnostic\n" +
+		"        --- FAIL: TestA/one/x (0.00s)\n    --- FAIL: TestA/one (0.00s)\n    --- PASS: TestA/two (0.00s)\n--- FAIL: TestA (0.00s)\nFAIL\n"
+	if _, ok := Summarize(Test, text); ok {
+		t.Fatal("accepted unmarked text while a parallel sibling ran")
+	}
+}
+
+func TestAPausedParallelChildLeavesASequentialSiblingItsDiagnostics(t *testing.T) {
+	text := "counts 1 2\n=== RUN   TestA\n=== RUN   TestA/one\n=== PAUSE TestA/one\n=== RUN   TestA/two\n    a_test.go:9: got 3\n" +
+		"=== CONT  TestA/one\n    --- PASS: TestA/one (0.00s)\n    --- FAIL: TestA/two (0.00s)\n--- FAIL: TestA (0.00s)\nFAIL\n"
+	failures, ok := testFailures(strings.Split(text, "\n"))
+	if !ok || failures["TestA/two"] == nil || len(failures["TestA/two"].messages) != 1 || len(failures["TestA"].messages) != 0 {
+		t.Fatalf("the sibling's diagnostics were not its own: ok=%v %+v", ok, failures)
+	}
+	if s, ok := Summarize(Test, text); !ok || !strings.Contains(s, "a_test.go:9: got 3") {
+		t.Fatalf("fell back: %q ok=%v", s, ok)
+	}
+}
+
 func TestParallelFailuresWithContextMarkers(t *testing.T) {
 	text := "counts 0 2\n=== RUN   TestA\n=== PAUSE TestA\n=== RUN   TestB\n=== PAUSE TestB\n=== CONT  TestA\n    first message\n=== CONT  TestB\n    second message\n--- FAIL: TestB (0.00s)\n=== CONT  TestA\n    final message\n--- FAIL: TestA (0.00s)\nFAIL\n"
 	if s, ok := Summarize(Test, text); !ok || !strings.Contains(s, "    first message") || !strings.Contains(s, "    second message") || !strings.Contains(s, "    final message") {

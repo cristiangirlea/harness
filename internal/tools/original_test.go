@@ -346,7 +346,7 @@ func TestCopiedOriginalsAreNeverRefusedButCountTowardTheRunCap(t *testing.T) {
 	ws, _ := setup(t)
 	ws.ShapeTools, ws.RunDir = true, filepath.Join(runs, "next")
 	must(t, os.MkdirAll(ws.RunDir, 0o755))
-	n, err := CopyOriginals(filepath.Join(runs, "earlier"), ws.RunDir)
+	n, _, err := CopyOriginals(filepath.Join(runs, "earlier"), ws.RunDir)
 	if err != nil || n != 1 {
 		t.Fatalf("copied %d: %v", n, err)
 	}
@@ -372,35 +372,62 @@ func TestCopyOriginalsCopiesOnlyFilesNamedForTheirContent(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "outside.txt")
 	must(t, os.WriteFile(outside, []byte("outside"), 0o644))
 	linked := os.Symlink(outside, filepath.Join(from, "originals", originalHandleOf("outside")+".txt")) == nil
-	n, err := CopyOriginals(from, to)
+	n, skipped, err := CopyOriginals(from, to)
 	must(t, err)
 	entries, err := os.ReadDir(filepath.Join(to, "originals"))
 	must(t, err)
 	if n != 1 || len(entries) != 1 || entries[0].Name() != originalHandleOf(good)+".txt" {
 		t.Fatalf("copied %d, left %v (link made: %v)", n, entries, linked)
 	}
+	wantSkipped := 2 // the wrong hash and the directory; notes and temporary files are not originals
+	if linked {
+		wantSkipped++
+	}
+	if skipped != wantSkipped {
+		t.Fatalf("skipped %d, want %d (link made: %v)", skipped, wantSkipped, linked)
+	}
 	data, err := os.ReadFile(filepath.Join(to, "originals", entries[0].Name()))
 	must(t, err)
 	if string(data) != good {
 		t.Fatal("copy changed the bytes")
 	}
-	if n, err := CopyOriginals(from, to); err != nil || n != 0 {
+	if n, _, err := CopyOriginals(from, to); err != nil || n != 0 {
 		t.Fatalf("a second copy wrote %d: %v", n, err)
 	}
-	if n, err := CopyOriginals(t.TempDir(), t.TempDir()); err != nil || n != 0 {
+	if n, _, err := CopyOriginals(t.TempDir(), t.TempDir()); err != nil || n != 0 {
 		t.Fatalf("a run without originals copied %d: %v", n, err)
 	}
 }
 
-func TestReadOriginalByLines(t *testing.T) {
+func TestAnOriginalLargerThanAShellCaptureIsCarriedOver(t *testing.T) {
+	from, to := t.TempDir(), t.TempDir()
+	text := strings.Repeat("m", maxCapture+1)
+	writeOriginalFile(t, from, originalHandleOf(text), text)
+	n, skipped, err := CopyOriginals(from, to)
+	if err != nil || n != 1 || skipped != 0 {
+		t.Fatalf("copied %d, skipped %d: %v", n, skipped, err)
+	}
+	ws, _ := setup(t)
+	ws.RunDir = to
+	out, err := call(t, ws, ReadOriginal(), map[string]any{"handle": originalHandleOf(text), "range": fmt.Sprintf("%d-%d", maxCapture-2, maxCapture+1)})
+	must(t, err)
+	if out != "mmm" {
+		t.Fatalf("the continued run read %q", out)
+	}
+}
+
+func TestReadOriginalReturnsTheAskedLinesWithTheirEndings(t *testing.T) {
 	ws, _ := setup(t)
 	ws.RunDir = t.TempDir()
 	withNewline, without := "0000000000000001", "0000000000000002"
 	writeOriginalFile(t, ws.RunDir, withNewline, "one\ntwo\nthree\n")
 	writeOriginalFile(t, ws.RunDir, without, "one\ntwo\nthree")
+	crlf := "0000000000000006"
+	writeOriginalFile(t, ws.RunDir, crlf, "a\r\nb\r\n")
 	for _, tc := range []struct{ handle, lines, want string }{
 		{withNewline, "1-1", "one\n"}, {withNewline, "3-3", "three\n"}, {withNewline, "1-3", "one\ntwo\nthree\n"},
 		{without, "3-3", "three"}, {without, "2-3", "two\nthree"}, {without, "1-1", "one\n"},
+		{crlf, "1-1", "a\r\n"}, {crlf, "2-2", "b\r\n"},
 	} {
 		out, err := call(t, ws, ReadOriginal(), map[string]any{"handle": tc.handle, "lines": tc.lines})
 		must(t, err)
@@ -416,15 +443,16 @@ func TestReadOriginalByLines(t *testing.T) {
 	}
 }
 
-func TestReadOriginalByJSONPointer(t *testing.T) {
+func TestReadOriginalReturnsTheValueAtAJSONPointerAsWritten(t *testing.T) {
 	ws, _ := setup(t)
 	ws.RunDir = t.TempDir()
 	handle := "0000000000000003"
 	writeOriginalFile(t, ws.RunDir, handle, `{"items": [ {"name": "a"}, {"name": "b", "n": 1.50} ],
-  "a/b": 1, "m~n": 2, "e": 1E3, "": "empty key"}`)
+  "a/b": 1, "m~n": 2, "e": 1E3, "": "empty key", "~1": "tilde one", "/": "slash"}`)
 	for pointer, want := range map[string]string{
 		"/items/1": `{"name":"b","n":1.50}`, "/items/0/name": `"a"`, "/items/1/n": "1.50",
 		"/a~1b": "1", "/m~0n": "2", "/e": "1E3", "/": `"empty key"`,
+		"/~01": `"tilde one"`, "/~1": `"slash"`,
 	} {
 		out, err := call(t, ws, ReadOriginal(), map[string]any{"handle": handle, "pointer": pointer})
 		must(t, err)
@@ -441,6 +469,9 @@ func TestReadOriginalByJSONPointer(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), says) || !strings.Contains(err.Error(), fmt.Sprintf("%q", pointer)) {
 			t.Errorf("pointer %q: error %v, want one naming it and saying %q", pointer, err, says)
 		}
+	}
+	if out, err := call(t, ws, ReadOriginal(), map[string]any{"handle": handle, "pointer": ""}); err != nil || !strings.HasPrefix(out, `{"items": [`) {
+		t.Fatalf("an empty pointer did not return the whole original: %q %v", out, err)
 	}
 	writeOriginalFile(t, ws.RunDir, "0000000000000004", "not json\n")
 	if _, err := call(t, ws, ReadOriginal(), map[string]any{"handle": "0000000000000004", "pointer": "/a"}); err == nil || !strings.Contains(err.Error(), "not one JSON value") {

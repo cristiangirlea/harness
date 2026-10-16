@@ -246,9 +246,9 @@ func (p Plan) carryOriginals(runDir string, emit func(agent.Event)) {
 	}
 	from, err := runlog.Dir(p.Prev.ID)
 	if err == nil {
-		var n int
-		if n, err = tools.CopyOriginals(from, runDir); err == nil && n > 0 {
-			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: fmt.Sprintf("copied %d tool-result originals from run %s", n, p.Prev.ID)})
+		var n, skipped int
+		if n, skipped, err = tools.CopyOriginals(from, runDir); err == nil && n+skipped > 0 {
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: fmt.Sprintf("copied %d tool-result originals from run %s, skipped %d that were not regular files matching their hash within the size cap", n, p.Prev.ID, skipped)})
 		}
 	}
 	if err != nil {

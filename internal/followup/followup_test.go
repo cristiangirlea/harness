@@ -265,7 +265,11 @@ func TestAContinuationCarriesTheChainsOriginalsOver(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(w.Dir(), "originals", "0123456789abcdef.txt")); !os.IsNotExist(err) {
 			t.Fatalf("hop %d: copied a file whose name is not its hash", hop)
 		}
-		if !strings.Contains(strings.Join(notes, "\n"), "copied 1 tool-result originals from run "+prev) {
+		skipped := 0
+		if hop == 0 {
+			skipped = 1 // the file whose name is not its hash
+		}
+		if want := fmt.Sprintf("copied 1 tool-result originals from run %s, skipped %d", prev, skipped); !strings.Contains(strings.Join(notes, "\n"), want) {
 			t.Errorf("hop %d: notes do not say what was copied: %q", hop, notes)
 		}
 		must(w.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, Session: "s2", Final: "b"}))

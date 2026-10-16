@@ -58,7 +58,8 @@ an ordinary follow-up, and old records without it still load.
   last line without a newline still counts), or, for an original that is one JSON
   value, an RFC 6901 pointer (`pointer: "/items/3/name"`, `~1` for `/` and `~0` for
   `~` in a key), which returns that value's own bytes with the whitespace removed,
-  numbers spelt as they were. At most one of the three; a range or line range
+  numbers spelt as they were. An empty `pointer` means the whole original, as the
+  empty pointer does in RFC 6901. At most one of the three; a range or line range
   outside the original, or a pointer that does not resolve, is an error naming
   what was asked. Tool-result events and messages contain the summary the model
   saw. If checks fail or the original cannot be saved, the existing head-and-tail
@@ -75,13 +76,16 @@ an ordinary follow-up, and old records without it still load.
   up to date in memory, so runs going at the same time do not see each other's
   saves and together may pass the cap a little.
   A continuation (`hrn run --continue`, the MCP `run` tool's `continue_run_id`,
-  and a limited run carried on by its partner) first copies the continued run's
+  the exec protocol's continuation, and a limited run carried on by its partner)
+  first copies the continued run's
   originals into its own `originals/`, so the handles in the carried conversation
   still read. hrn picks that run from the continuation, never from a path the
   model gives; only regular files named for their content's SHA-256 prefix are
-  copied, never links. The continued run holds its own predecessor's copies, so
-  one hop covers the chain. Copies count toward the new run's cap but are never
-  refused.
+  copied, never links. The run's events say how many were copied and how many
+  were skipped (a link or other non-regular file, bytes that do not match the
+  name, or a file larger than the run cap, or than 64 MiB when the cap is set
+  lower). The continued run holds its own predecessor's copies, so one hop covers
+  the chain. Copies count toward the new run's cap but are never refused.
   Shell capture keeps the whole output up to 8 MiB, including on nonzero exit
   and timeout. Above that ceiling it uses the existing head-and-tail cut, says
   the original is unavailable, and saves no incomplete original.
