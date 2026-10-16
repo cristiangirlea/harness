@@ -223,7 +223,8 @@
   // Listening: one sentence each time the button is pressed, for commands
   // that steer the bot. Quiet is tried before unmute, so "quiet until I
   // unmute" keeps her quiet; a plain "unmute" is not heard as quiet, as
-  // \bmute\b does not match inside it.
+  // \bmute\b does not match inside it. A recogniser may hear "un mute" as
+  // two words, so that is made one before matching.
   const commands = [
     [/\b(status|what are you doing|what'?s (going on|happening|running)|anything running)\b/, () => reply(lastStatus)],
     [/\b(quiet|snooze|mute|silence|hush)\b/, (said) => {
@@ -249,7 +250,7 @@
   // What the recogniser heard arrives as an event, so the commands can be
   // tried without a microphone.
   document.addEventListener('hrn:heard', (e) => {
-    if (Array.isArray(e.detail)) act(e.detail.map((s) => String(s).toLowerCase()));
+    if (Array.isArray(e.detail)) act(e.detail.map((s) => String(s).toLowerCase().replace(/\bun[\s-]+mute\b/g, 'unmute')));
   });
   const Recogniser = window.SpeechRecognition || window.webkitSpeechRecognition;
   const listen = $('bot-listen');

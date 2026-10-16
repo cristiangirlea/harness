@@ -5,7 +5,10 @@ import (
 	"math"
 )
 
-// UsageMetadata disambiguates provider counters without changing old records.
+// UsageMetadata, in Result.Usage, describes how to interpret the run's totals;
+// the counts themselves are Result's InputTokens, OutputTokens, CacheRead,
+// CacheWrite and CostUSD.
+// Usage in Event.Usage holds per-call token counters instead.
 // Empty metadata on historical records is inferred only for known adapters.
 type UsageMetadata struct {
 	InputSemantics string `json:"input_semantics"`       // inclusive_cache or exclusive_cache
