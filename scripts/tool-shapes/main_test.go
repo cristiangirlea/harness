@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: a3cf1a597d24d28c14b7e895454e45d0c4538feb1947fdc92ec9bc518f334317
+// hash: e0a5fdbbeeeb2e7b681416ee107f33562b459c2b83f87e13e95d9fe8a3cd3e94
 package main
 
 import (
@@ -388,17 +388,17 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 func TestDefinitionsCompareTheToolsWithTheMedianCallPerBackend(t *testing.T) {
 	home := t.TempDir()
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.Local)
-	usage := func(in, cache int) string {
-		return fmt.Sprintf(`{"kind":"usage","usage":{"input_tokens":%d,"cache_read_tokens":%d}}`+"\n", in, cache)
+	usage := func(in, read, write int) string {
+		return fmt.Sprintf(`{"kind":"usage","usage":{"input_tokens":%d,"cache_read_tokens":%d,"cache_write_tokens":%d}}`+"\n", in, read, write)
 	}
 	writeFiles(t, filepath.Join(home, "runs", "20261014-100000-api"), map[string]string{
 		"task.json": `{"backend":"api","prompt":"private","mcp":["secret.mcp.json"]}`, "result.json": `{"status":"ok"}`,
-		"events.jsonl": usage(100, 900) + usage(100, 2900) + usage(100, 3900)})
+		"events.jsonl": usage(100, 0, 2900) + usage(100, 2900, 0) + usage(100, 3900, 0)})
 	writeFiles(t, filepath.Join(home, "runs", "20261014-100001-api"), map[string]string{
-		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","input_tokens":1000,"cache_read_tokens":5000,"turns":3}`,
+		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","input_tokens":1000,"cache_read_tokens":5000,"cache_write_tokens":3000,"turns":3}`,
 		"events.jsonl": ""})
 	writeFiles(t, filepath.Join(home, "runs", "20261014-100002-codex"), map[string]string{
-		"task.json": `{"backend":"codex"}`, "result.json": `{"status":"ok"}`, "events.jsonl": usage(50000, 99999)})
+		"task.json": `{"backend":"codex"}`, "result.json": `{"status":"ok"}`, "events.jsonl": usage(50000, 99999, 99999)})
 	writeFiles(t, filepath.Join(home, "runs", "20261014-100003-api-no-figures"), map[string]string{
 		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","turns":4}`, "events.jsonl": ""})
 	r, err := measure(home, 30, now)
@@ -409,11 +409,11 @@ func TestDefinitionsCompareTheToolsWithTheMedianCallPerBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// api calls: 1000, 3000, 4000 from usage and three of 2000 from totals; codex counts input only.
-	if d.API.Runs != 2 || d.API.UsageRuns != 1 || d.API.Calls != 6 || *d.API.Tokens != 2000 {
+	// api calls: 3000, 3000, 4000 from usage and three of 3000 from totals; codex counts input only.
+	if d.API.Runs != 2 || d.API.UsageRuns != 1 || d.API.Calls != 6 || *d.API.Tokens != 3000 {
 		t.Fatalf("api %+v", d.API)
 	}
-	if d.All.Runs != 3 || d.All.Calls != 7 || *d.All.Tokens != 2000 || slices.Max(r.calls.all) != 50000 {
+	if d.All.Runs != 3 || d.All.Calls != 7 || *d.All.Tokens != 3000 || slices.Max(r.calls.all) != 50000 {
 		t.Fatalf("all %+v", d.All)
 	}
 	if d.MCPDefinitions != "not recorded" || d.APIRunsWithMCP != 1 {
@@ -424,13 +424,13 @@ func TestDefinitionsCompareTheToolsWithTheMedianCallPerBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	shaping := d.Definitions["shaping"]
-	if shaping.Bytes != len(want) || shaping.Tokens != float64(len(want))/4 || *shaping.CallShare != shaping.Tokens/2000 {
+	if shaping.Bytes != len(want) || shaping.Tokens != float64(len(want))/4 || *shaping.CallShare != shaping.Tokens/3000 {
 		t.Fatalf("shaping %+v", shaping)
 	}
-	if d.Definitions["readonly"].Tools != 3 || d.Definitions["auto_yolo"].Tools != 6 || shaping.Tools != 7 {
+	if d.Definitions["readonly"].Tools != 3 || d.Definitions["auto"].Tools != 6 || d.Definitions["yolo"].Tools != 6 || shaping.Tools != 7 {
 		t.Fatalf("tool counts %+v", d.Definitions)
 	}
-	if len(d.Largest) != 5 || !sort.SliceIsSorted(d.Largest, func(i, j int) bool { return d.Largest[i].Bytes > d.Largest[j].Bytes }) {
+	if len(d.Largest) != 5 || !slices.ContainsFunc(d.Largest, func(s toolSize) bool { return s.Tool == "read_original" }) || !sort.SliceIsSorted(d.Largest, func(i, j int) bool { return d.Largest[i].Bytes > d.Largest[j].Bytes }) {
 		t.Fatalf("largest %+v", d.Largest)
 	}
 	data, _ := json.Marshal(d)
@@ -450,7 +450,7 @@ func TestDefinitionsLeaveTheShareUnsetWithoutApiCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.API.Tokens != nil || d.Definitions["auto_yolo"].CallShare != nil || d.Definitions["auto_yolo"].Bytes == 0 {
+	if d.API.Tokens != nil || d.Definitions["auto"].CallShare != nil || d.Definitions["auto"].Bytes == 0 {
 		t.Fatalf("%+v", d)
 	}
 }

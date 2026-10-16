@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true; --definitions:bool=false
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 1ae7f90b2b080a19db22bc0b537842a087d0e834c8bf01941a541ee4287b844f
+// hash: 68520ed1cd80387054c12ee6a7371bd65c83b80ea444e42059a31220b2459c47
 package main
 
 import (
@@ -143,8 +143,9 @@ type event struct {
 	Text  string          `json:"text"`
 	Input json.RawMessage `json:"input"`
 	Usage *struct {
-		Input int64 `json:"input_tokens"`
-		Cache int64 `json:"cache_read_tokens"`
+		Input      int64 `json:"input_tokens"`
+		Cache      int64 `json:"cache_read_tokens"`
+		CacheWrite int64 `json:"cache_write_tokens"`
 	} `json:"usage"`
 }
 
@@ -370,11 +371,12 @@ func measure(home string, days int, now time.Time) (*report, error) {
 		}
 		dir := filepath.Join(home, "runs", name)
 		type totals struct {
-			Status  string `json:"status"`
-			Backend string `json:"backend"`
-			Input   *int64 `json:"input_tokens"`
-			Cache   int64  `json:"cache_read_tokens"`
-			Turns   int    `json:"turns"`
+			Status     string `json:"status"`
+			Backend    string `json:"backend"`
+			Input      *int64 `json:"input_tokens"`
+			Cache      int64  `json:"cache_read_tokens"`
+			CacheWrite int64  `json:"cache_write_tokens"`
+			Turns      int    `json:"turns"`
 		}
 		var result struct {
 			totals
@@ -453,7 +455,7 @@ func measure(home string, days int, now time.Time) (*report, error) {
 		if tokenFigure != nil {
 			r.Runs.WithTokens++
 		}
-		r.calls.add(backend, len(task.MCP) > 0, events, tokenFigure, result.Turns)
+		r.calls.add(backend, len(task.MCP) > 0, events, tokenFigure, result.CacheWrite, result.Turns)
 		r.stats.add(events, tokenFigure, result.Turns)
 		if backend == "claude" && hasCalls {
 			r.Claude.add(events, tokenFigure, result.Turns)

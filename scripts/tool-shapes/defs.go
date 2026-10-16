@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 -run Definitions ./scripts/tool-shapes
-// hash: 31202757b1e804f89c75a3fb11d2777c8a1ae3cafa5b93fb8c8d337ff9728957
+// hash: 938f1ed984269db325f50ba0ead7ea062f5274cc89a38710e63cb1a52519c276
 package main
 
 import (
@@ -14,8 +14,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
-// callContexts holds input-plus-cache-read tokens per model call, as tool
-// shapes counts them, for api runs and for all runs.
+// callContexts holds each model call's context (input, cache read and cache
+// write tokens) for api runs and for all runs.
 type callContexts struct {
 	api, all           []float64
 	apiRuns, allRuns   int
@@ -23,24 +23,32 @@ type callContexts struct {
 	apiRunsWithMCP     int
 }
 
-// add takes a run's calls from its usage events, or else spreads its totals
-// evenly over its turns, which is what hrn report does for older records.
-func (c *callContexts) add(backend string, withMCP bool, events []event, total *int64, turns int) {
+// add counts one value per call, as hrn report's median context does, but reads
+// usage events, or else spreads the run's totals over its turns. Codex input
+// already includes its cache, so its cache figures are not added.
+func (c *callContexts) add(backend string, withMCP bool, events []event, total *int64, cacheWrite int64, turns int) {
 	var calls []float64
 	fromUsage := false
 	for _, e := range events {
 		if e.Kind == "usage" && e.Usage != nil {
 			v := e.Usage.Input
 			if backend != "codex" {
-				v += e.Usage.Cache
+				v += e.Usage.Cache + e.Usage.CacheWrite
 			}
 			calls = append(calls, float64(v))
 			fromUsage = true
 		}
 	}
-	if !fromUsage && total != nil && turns > 0 {
+	if backend == "codex" {
+		cacheWrite = 0
+	}
+	if !fromUsage && (total != nil || cacheWrite > 0) && turns > 0 {
+		run := cacheWrite
+		if total != nil {
+			run += *total
+		}
 		for range turns {
-			calls = append(calls, float64(*total)/float64(turns))
+			calls = append(calls, float64(run)/float64(turns))
 		}
 	}
 	if len(calls) == 0 {
@@ -96,7 +104,7 @@ type toolSize struct {
 type definitionsReport struct {
 	Days           int                       `json:"days"`
 	Definitions    map[string]definitionSize `json:"definitions"`
-	Largest        []toolSize                `json:"largest"`
+	Largest        []toolSize                `json:"largest_with_shaping"`
 	MCPDefinitions string                    `json:"mcp_definitions"`
 	APIRunsWithMCP int                       `json:"api_runs_with_mcp"`
 	API            callMedian                `json:"api"`
@@ -108,7 +116,8 @@ var definitionModes = []struct {
 	opts agent.Options
 }{
 	{"readonly", agent.Options{Mode: agent.ModeReadOnly}},
-	{"auto_yolo", agent.Options{Mode: agent.ModeYolo}},
+	{"auto", agent.Options{Mode: agent.ModeAuto}},
+	{"yolo", agent.Options{Mode: agent.ModeYolo}},
 	{"shaping", agent.Options{Mode: agent.ModeYolo, ShapeTools: true}},
 }
 
@@ -135,7 +144,9 @@ func definitions(r *report, days int) (*definitionsReport, error) {
 			size.CallShare = &share
 		}
 		d.Definitions[m.name] = size
-		widest = defs
+		if m.name == "shaping" {
+			widest = defs
+		}
 	}
 	var each []json.RawMessage
 	_ = json.Unmarshal(widest, &each)
