@@ -49,9 +49,13 @@ type Record struct {
 	Result   agent.Result `json:"result"`
 	// Continues names the run this one follows, when it was started with
 	// hrn run --continue.
-	Continues   string `json:"continues,omitempty"`
-	RecordError string `json:"record_error,omitempty"`
-	Done        bool   `json:"-"`
+	Continues string `json:"continues,omitempty"`
+	// ContinueRoute says how a continuing run took the earlier one over, when
+	// that is not the default: RouteFreshHandover for a new session briefed
+	// by a hand-over built from the record.
+	ContinueRoute string `json:"continue_route,omitempty"`
+	RecordError   string `json:"record_error,omitempty"`
+	Done          bool   `json:"-"`
 }
 
 type Writer struct {
@@ -67,12 +71,22 @@ type Writer struct {
 
 // Create starts a run record.
 func Create(backend string, task agent.Task) (*Writer, error) {
-	return create(backend, task, "")
+	return create(backend, task, "", "")
 }
 
 // CreateContinuing starts a run record that follows an earlier run.
 func CreateContinuing(backend string, task agent.Task, continues string, routed ...*RoutedBy) (*Writer, error) {
-	return create(backend, task, continues, routed...)
+	return create(backend, task, continues, "", routed...)
+}
+
+// RouteFreshHandover is the ContinueRoute of a run that started a new session
+// with a hand-over instead of resuming or forking the earlier one's.
+const RouteFreshHandover = "fresh_handover"
+
+// CreateContinuingRoute is CreateContinuing that also records the route the
+// run took the earlier one over by; an empty route is CreateContinuing.
+func CreateContinuingRoute(backend string, task agent.Task, continues, route string, routed ...*RoutedBy) (*Writer, error) {
+	return create(backend, task, continues, route, routed...)
 }
 
 // createEventsFile opens a new run's events.jsonl; tests replace it to make the open fail.
@@ -81,7 +95,7 @@ var createEventsFile = func(path string) (io.WriteCloser, error) { return os.Cre
 // create starts a run record. If it fails after making the run's directory, it removes the
 // directory again, so a run that never started leaves no half record behind (hrn exec promises a
 // rejected start creates none).
-func create(backend string, task agent.Task, continues string, routed ...*RoutedBy) (w *Writer, err error) {
+func create(backend string, task agent.Task, continues, route string, routed ...*RoutedBy) (w *Writer, err error) {
 	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -92,7 +106,7 @@ func create(backend string, task agent.Task, continues string, routed ...*Routed
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues}}
+	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route}}
 	if len(routed) > 0 && routed[0] != nil {
 		by := *routed[0]
 		w.rec.RoutedBy = &by
