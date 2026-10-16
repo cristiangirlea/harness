@@ -22,10 +22,72 @@ return (head-and-tail cut) always passes. Attack classes:
 - repeated lines whose numbers differ in one digit (`exit 1`/`exit 11`, ports `8081`/`8082`);
 - error strings wrapped across lines, colour codes inside `error` and `FAIL`, CRLF, NUL, invalid UTF-8;
 - panics with goroutine dumps, stack traces, and log lines repeated with changing timestamps;
-- output at exactly 28,000 bytes, one byte over, and single lines longer than that.
+- output at exactly 28,000 bytes, one byte over, and single lines longer than that;
+- JSON: hand-made summaries with a wrong item or key count, a count of the other kind, a changed
+  number, an invented path or negation in the sample, a dropped error line, or an error invented
+  in the sample; values holding error lines (also in the first item), deep nesting (and nesting
+  past the parser's limit), exponent and negative numbers, and a single huge string;
+- tables: a wrong row or column count, a table first line over JSON or over text that is not a
+  table, an error row in the omitted middle or the last row, a changed number in a kept row, and
+  CSV with quoted commas;
+- a summary of one kind's shape presented for the other kind, and NDJSON from `go test -json`.
 
-`FuzzSummarize` checks the same oracle on random input in CI and in `/check`. Inputs holding an
-escape byte are also placed in the dropped middle of a head-and-tail cut.
+The oracle recounts a `json:` or `table:` first line itself (with `encoding/json`, and by counting
+delimiters) and exempts only a true one from its digit check. It ends path chunks at `"` as
+well as at whitespace, so a sample joined without spaces keeps the original's string chunks.
+
+`FuzzSummarize` checks the same oracle on random input in CI and in `/check`. It covers all five
+kinds. Inputs holding an escape byte are also placed in the dropped middle of a head-and-tail cut.
+
+## JSON and table summaries
+
+`Classify` checks JSON first, then test, table, log and terminal. Text is JSON when, trimmed, it
+is one valid object or array. It is a table when at least five non-blank lines all have the same
+count (at least one) of tabs, or else of commas, unless most of them start like log lines
+(log4j and Python timestamps hold a comma): those stay logs, whose summary keeps warnings. Its
+summaries:
+
+```
+json: array of 500 items
+keys: "id","name","tags","owner"
+sample: {"id":0,"name":"item-0","tags":["a","b"],"owner":{"login":"dev","meta":{...}}}
+```
+
+```
+table: 1000 rows, 4 columns
+id,name,status,ms
+1,job-1,ok,10
+2,job-2,ok,20
+3,job-3,ok,30
+[... omitted ...]
+600,job-600,error: timeout,6000
+[... omitted ...]
+999,job-999,ok,9990
+1000,job-1000,ok,10000
+```
+
+The JSON sample is the first item (or the object itself), re-joined from the original's raw
+bytes, never re-encoded. So every key, string and number keeps its spelling (`1e5`, `-0`,
+escapes). Containers below the second level become `{...}` or `[...]`. Every original line
+containing an error follows verbatim. A keys or sample line that would contain one is left out:
+it is not an original line. Minified JSON is a single line, so if that line holds an error the
+summary cannot be smaller and the cut is used. A table summary keeps the header, the first three
+and last two rows, and every error row, in order. Either summary is used only when it is smaller
+than the original and within 28,000 bytes. `valid` recomputes the first line from the original
+for the kind it was given. Only that exact line may hold numbers the original lacks. A `json:` or
+`table:` line anywhere else, or with any other count, fails, so an ordinary output line that
+looks like one of these first lines makes the summary fall back to the cut.
+
+NDJSON, such as `go test -json`, is neither: the text is not one JSON value, and lines that are
+each a JSON object or array are refused as a table even when their comma counts agree. It falls
+to the line-based kinds, usually terminal, because its test lines start with `{`. Turning it back
+into test text would be a converter with its own invariants, not a summary, so it waits for a
+measured need.
+
+The measurement in `scripts/tool-shapes` is broader: it checks test and log first, counts any
+valid JSON value, and counts a table when `encoding/csv` parses at least two rows of two or more
+fields (quoted commas allowed). Its `json` and `table` bytes are an upper bound on what these
+summaries can take.
 
 ## Tool definitions
 

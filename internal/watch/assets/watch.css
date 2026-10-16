@@ -61,6 +61,7 @@ td { overflow-wrap: anywhere; }
 tbody tr:last-child td { border-bottom: 0; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.mono { white-space: nowrap; }
+td.purpose { white-space: nowrap; }
 td.name { min-width: 11em; }
 .of-batch, .row-id { display: block; font-size: .78rem; color: var(--muted); }
 .row-id { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; }
