@@ -228,6 +228,10 @@ func main() {
 }
 
 func cmdRun(args []string) (int, error) {
+	return cmdRunContext(context.Background(), args)
+}
+
+func cmdRunContext(parent context.Context, args []string) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	var backend, dir string
 	var jsonOut, thinking bool
@@ -269,7 +273,8 @@ func cmdRun(args []string) (int, error) {
 	// plan. A model typed for it means nothing to the partner.
 	var routed string
 	if !opts.NoSwitch && *continueID != "" {
-		if backend, routed = limits.Choose(backend, *continueID); routed != "" {
+		meant := backend
+		if backend, routed = limits.Choose(backend, *continueID); backend != meant {
 			opts.Model = ""
 		}
 	}
@@ -283,7 +288,7 @@ func cmdRun(args []string) (int, error) {
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}
-		if (set["m"] || set["model"]) && routed == "" {
+		if set["m"] || set["model"] {
 			req.Model = opts.Model
 		}
 		var err error
@@ -328,7 +333,8 @@ func cmdRun(args []string) (int, error) {
 		return 2, err
 	}
 	if !opts.NoSwitch && *continueID == "" {
-		if backend, routed = limits.Choose(backend, ""); routed != "" {
+		meant := backend
+		if backend, routed = limits.Choose(backend, ""); backend != meant {
 			opts.Model = ""
 		}
 	}
@@ -366,7 +372,7 @@ func cmdRun(args []string) (int, error) {
 	// The api backend saves the conversation here, so this run can be continued.
 	task.RunDir = rec.Dir()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	var emit func(agent.Event)
@@ -409,7 +415,13 @@ func cmdRun(args []string) (int, error) {
 
 	// A run stopped by its plan's limit is carried on by the partner backend,
 	// once: a partner that is limited too would only hand it back.
-	next, why, err := limits.After(rec.ID(), backend, task, res)
+	var next *limits.CarryOn
+	var why string
+	if ctx.Err() == nil {
+		next, why, err = limits.After(rec.ID(), backend, task, res)
+	} else if err := limits.Note(backend, res); err != nil {
+		fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
+	}
 	switch {
 	case err != nil:
 		fmt.Fprintln(os.Stderr, "hrn:", err)
