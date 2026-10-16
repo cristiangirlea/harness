@@ -672,6 +672,18 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 	}
 }
 
+func TestRunSummarySaysWhenUsageIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		usage *agent.UsageMetadata
+		want  bool
+	}{{nil, false}, {&agent.UsageMetadata{Status: "missing"}, true}} {
+		s := summary("r1", agent.Result{Status: agent.StatusOK, Backend: "codex", InputTokens: 5, Usage: tc.usage})
+		if got := strings.Contains(s, "usage missing"); got != tc.want || !strings.Contains(s, "5 in") {
+			t.Errorf("usage %+v: summary = %q", tc.usage, s)
+		}
+	}
+}
+
 func TestMCPRoutesByTheDeclaredPurpose(t *testing.T) {
 	s := connect(t, t.TempDir())
 	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"nope"},"review":{"backend":"stub","model":"routed"}}`), 0600); err != nil {
