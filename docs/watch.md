@@ -178,7 +178,9 @@ Watch checks the Cloudflare Access signing keys at start and refuses to serve if
 Watch still listens only on loopback. In this mode it accepts only the public Host
 and verifies the Access JWT on every request, including static assets and event
 streams. A top-level page load from elsewhere, such as the Access login redirect or an
-email link, opens the page; cross-site embedded loads and other cross-site requests remain refused.
+email link, opens the page when it carries no `Origin` header or `Origin: null`; any other
+Origin goes through the normal check and must be the public origin. Cross-site embedded loads
+and other cross-site requests remain refused.
 It treats visitors as remote even though `cloudflared`
 connects from the same computer: the page omits the hrn home path and phone hints,
 and `/voice` is unavailable. You cannot open this public watch at its loopback URL
@@ -190,7 +192,9 @@ terminal; its default `127.0.0.1:8089` port works alongside the public watch on 
 loopback address for the tunnel, and the access log path. Each request appends one
 JSON line to `$HRN_HOME/watch-access.log`
 (or `~/.hrn/watch-access.log`), with the time, email when allowed, method, path,
-status, Cloudflare connecting IP, and a short reason when refused. Cloudflare's
+status, Cloudflare connecting IP, and a short reason when refused. An event stream
+writes two lines: one when it starts, marked `"stream":"start"`, and one when it
+ends, marked `"stream":"end"`, each with its own time. Cloudflare's
 own Access logs record logins; this file records requests that reached watch.
 
 ### Ada, the bot

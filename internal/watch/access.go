@@ -313,60 +313,85 @@ type accessWriter struct {
 	status int
 	email  string
 	reason string
+	stream bool   // the response is an event stream
+	start  func() // writes the stream's start row
 }
 
 func (w *accessWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 func (w *accessWriter) WriteHeader(status int) {
-	if w.status == 0 {
-		w.status = status
-	}
+	w.begin(status)
 	w.ResponseWriter.WriteHeader(status)
 }
 func (w *accessWriter) Write(p []byte) (int, error) {
-	if w.status == 0 {
-		w.status = http.StatusOK
-	}
+	w.begin(http.StatusOK)
 	return w.ResponseWriter.Write(p)
+}
+
+// begin records the status once; an event stream logs a row here, since its
+// end row waits until the browser leaves.
+func (w *accessWriter) begin(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	if strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+		w.stream = true
+		if w.start != nil {
+			w.start()
+		}
+	}
 }
 
 func (s *server) publicLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		aw := &accessWriter{ResponseWriter: w}
+		aw.start = func() { s.writeAccessRow(r, aw, "start") }
 		defer func() {
 			if aw.status == 0 {
 				aw.status = http.StatusOK
 			}
-			if aw.status == http.StatusForbidden {
-				aw.email = ""
-				if aw.reason == "" {
-					aw.reason = "forbidden"
-				}
+			stream := ""
+			if aw.stream {
+				stream = "end"
 			}
-			row := struct {
-				Time   string `json:"time"`
-				Email  string `json:"email"`
-				Method string `json:"method"`
-				Path   string `json:"path"`
-				Status int    `json:"status"`
-				IP     string `json:"ip"`
-				Reason string `json:"reason,omitempty"`
-			}{time.Now().UTC().Format(time.RFC3339), aw.email, r.Method, r.URL.Path, aw.status, r.Header.Get("Cf-Connecting-IP"), aw.reason}
-			b, err := json.Marshal(row)
-			if err != nil {
-				return
-			}
-			s.logMu.Lock()
-			defer s.logMu.Unlock()
-			if err := os.MkdirAll(runlog.Home(), 0700); err != nil {
-				return
-			}
-			f, err := os.OpenFile(filepath.Join(runlog.Home(), "watch-access.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-			if err != nil {
-				return
-			}
-			defer f.Close()
-			_, _ = f.Write(append(b, '\n'))
+			s.writeAccessRow(r, aw, stream)
 		}()
 		next.ServeHTTP(aw, r)
 	})
+}
+
+// writeAccessRow appends one JSON line to watch-access.log. stream is "start"
+// or "end" for an event stream's two rows, empty for any other request.
+func (s *server) writeAccessRow(r *http.Request, aw *accessWriter, stream string) {
+	if aw.status == http.StatusForbidden {
+		aw.email = ""
+		if aw.reason == "" {
+			aw.reason = "forbidden"
+		}
+	}
+	row := struct {
+		Time   string `json:"time"`
+		Email  string `json:"email"`
+		Method string `json:"method"`
+		Path   string `json:"path"`
+		Status int    `json:"status"`
+		IP     string `json:"ip"`
+		Reason string `json:"reason,omitempty"`
+		Stream string `json:"stream,omitempty"`
+	}{time.Now().UTC().Format(time.RFC3339), aw.email, r.Method, r.URL.Path, aw.status, r.Header.Get("Cf-Connecting-IP"), aw.reason, stream}
+	b, err := json.Marshal(row)
+	if err != nil {
+		return
+	}
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	if err := os.MkdirAll(runlog.Home(), 0700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(runlog.Home(), "watch-access.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(b, '\n'))
 }
