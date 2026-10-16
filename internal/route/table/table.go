@@ -21,6 +21,7 @@ type Table map[string]Row
 
 type RoutedBy struct {
 	Category string `json:"category"`
+	Declared bool   `json:"declared,omitempty"` // the run named its purpose; false means classified
 	Eval     string `json:"eval,omitempty"`
 	Set      string `json:"set"`
 }

@@ -216,6 +216,35 @@ func TestAcceptedRunStreamsCompleteEventsAndRecordsTheAttempt(t *testing.T) {
 	}
 }
 
+func TestStartRecordsADeclaredPurposeOrTheHeader(t *testing.T) {
+	name := registerFake(t, func(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
+	})
+	for _, tc := range []struct{ name, prompt, declared, want string }{
+		{name: "declared", prompt: "Purpose: debug\nwork", declared: "review", want: "review"},
+		{name: "header", prompt: "Purpose: debug\nwork", want: "debug"},
+		{name: "neither", prompt: "work", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := openHarness(t, nil)
+			h.next(t, "hello")
+			req := start(t.TempDir(), name)
+			req["task"].(map[string]any)["prompt"] = tc.prompt
+			if tc.declared != "" {
+				req["task"].(map[string]any)["purpose"] = tc.declared
+			}
+			h.send(t, req)
+			accepted := h.next(t, "accepted")
+			h.next(t, "result")
+			h.exit(t, 0)
+			rec, err := runlog.Load(accepted["run_id"].(string))
+			if err != nil || rec.Task.Purpose != tc.want {
+				t.Fatalf("purpose = %q, want %q (%v)", rec.Task.Purpose, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestInvalidStartsAreRejectedWithoutRecords(t *testing.T) {
 	name := registerFake(t, nil)
 	agent.Register(fakeBackend{name: "fake-no-effort", caps: agent.Capabilities{Modes: []agent.Mode{agent.ModeAuto}, Sessions: "none", Options: []string{"model", "mode", "timeout"}}})
@@ -233,6 +262,8 @@ func TestInvalidStartsAreRejectedWithoutRecords(t *testing.T) {
 		{name: "missing backend", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "backend") }},
 		{name: "missing mode", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "mode") }},
 		{name: "missing task", code: "bad_request", edit: func(m map[string]any) { delete(m, "task") }},
+		{name: "unknown purpose", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["purpose"] = "unknown" }},
+		{name: "purpose typo", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["purpose"] = "Review" }},
 		{name: "bad attempt", code: "bad_request", edit: func(m map[string]any) { m["attempt_id"] = "bad/attempt" }},
 		{name: "long attempt", code: "bad_request", edit: func(m map[string]any) { m["attempt_id"] = strings.Repeat("a", 129) }},
 		{name: "empty attempt", code: "bad_request", edit: func(m map[string]any) { m["attempt_id"] = "" }},

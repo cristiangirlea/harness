@@ -4,7 +4,6 @@ package route
 import (
 	"math"
 	"slices"
-	"strings"
 
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/purpose"
@@ -80,17 +79,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 		}
 		families := map[string]candidate{}
 		for _, v := range rec.Spec.Matrix {
-			name := v.Name
-			if name == "" {
-				parts := []string{v.Backend}
-				if v.Model != "" {
-					parts = append(parts, v.Model)
-				}
-				if v.Effort != "" {
-					parts = append(parts, v.Effort)
-				}
-				name = strings.Join(parts, "-")
-			}
+			name := v.Key()
 			r, ok := rows[name]
 			if !ok || r.Attempts == 0 || r.PassRate()+margin+1e-12 < best {
 				continue

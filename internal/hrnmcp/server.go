@@ -195,6 +195,10 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if !modeGiven && plan.Prev.Task.Mode != "" {
 					args.Mode = plan.Prev.Task.Mode
 				}
+				// And its purpose, unless the call or the prompt's header names one.
+				if args.Purpose == "" && purpose.Valid(plan.Prev.Task.Purpose) {
+					args.Purpose = plan.Prev.Task.Purpose
+				}
 			}
 			// The inherited workspace is checked like any other.
 			dir := args.Dir
@@ -206,14 +210,17 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
 			dir = ws.Root
-			routedBy, err := args.Options.Route(args.Prompt, &args.Backend, runlog.Home())
+			routedBy, err := args.Options.Route(args.Purpose, args.Prompt, &args.Backend, runlog.Home())
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
 			if !args.NoSwitch && args.ContinueRunID == "" {
 				meant := args.Backend
 				if args.Backend, routed = limits.Choose(args.Backend, ""); args.Backend != meant {
-					args.Model = ""
+					if routedBy != nil {
+						args.Options.Effort = "" // the row measured the limited backend, not its partner
+					}
+					args.Model, routedBy = "", nil
 				}
 			}
 			if args.Backend == "" {
