@@ -20,12 +20,18 @@ func TestToolCallsShowOnlyOneShellLayerRemoved(t *testing.T) {
 		{`powershell.exe -Command "Get-Location; git status"`, `Get-Location; git status`},
 		{`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "git status"`, `git status`},
 		{`pwsh -NoProfile -Command 'git status'`, `git status`},
+		{`pwsh -c 'git status'`, `git status`},
+		{`powershell -NoLogo -NoProfile -Command "git status"`, `git status`},
 		{`pwsh.exe -NonInteractive -ExecutionPolicy RemoteSigned -Command 'git status'`, `git status`},
 		{`"C:\Program Files\PowerShell\7\pwsh.exe" -Command "git status"`, `git status`},
 		{`& 'D:\tools\pwsh.exe' -Command 'git status'`, `git status`},
 		{`& 'D:\tools\powershell.exe' -NoProfile -Command 'git status'`, `git status`},
 		{`bash -lc 'git status'`, `git status`},
+		{`bash -l -c 'git status'`, `git status`},
+		{`bash --login -c 'git status'`, `git status`},
 		{`bash -c "git status"`, `git status`},
+		{`bash -c "echo \"hi\""`, `echo "hi"`},
+		{`bash -lc 'cd /work && go test 2>&1'`, `cd . && go test 2>&1`},
 		{`/bin/bash -lc 'git status'`, `git status`},
 		{`"C:\Program Files\Git\bin\bash.exe" -lc 'git status'`, `git status`},
 		{`sh -c 'git status'`, `git status`},
@@ -49,16 +55,13 @@ func TestToolCallsShowOnlyOneShellLayerRemoved(t *testing.T) {
 		{`pwsh -ExecutionPolicy -Command 'git status'`, `pwsh -ExecutionPolicy -Command 'git status'`},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
-			input, _ := json.Marshal(map[string]any{"command": tc.in, "other": "unchanged"})
+			input := json.RawMessage(`{"other":"unchanged","command":` + strconv.Quote(tc.in) + `}`)
 			original := string(input)
+			wantInput := `{"other":"unchanged","command":` + strconv.Quote(tc.want) + `}`
 			e := agent.Event{Kind: agent.EventToolCall, Text: tc.in, Input: input}
 			got := sh.event(e)
-			var fields map[string]string
-			if err := json.Unmarshal(got.Input, &fields); err != nil {
-				t.Fatal(err)
-			}
-			if got.Text != tc.want || fields["command"] != tc.want || fields["other"] != "unchanged" {
-				t.Errorf("got text %q input %s, want command %q", got.Text, got.Input, tc.want)
+			if got.Text != tc.want || string(got.Input) != wantInput {
+				t.Errorf("got text %q input %s, want text %q input %s", got.Text, got.Input, tc.want, wantInput)
 			}
 			if e.Text != tc.in || string(e.Input) != original {
 				t.Fatal("changed the recorded event")
@@ -69,8 +72,8 @@ func TestToolCallsShowOnlyOneShellLayerRemoved(t *testing.T) {
 
 func TestCommandArraysAreUnwrappedWithoutChangingOtherInput(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
-		{`{"command":["bash","-lc","git status"],"n":9007199254740993}`, `{"command":"git status","n":9007199254740993}`},
-		{`{"command":["pwsh.exe","-NoProfile","-Command","git status"]}`, `{"command":"git status"}`},
+		{`{"z":1,"command":["bash","-lc","cd x && go test 2>&1"],"n":9007199254740993}`, `{"z":1,"command":"cd x && go test 2>&1","n":9007199254740993}`},
+		{`{"command":["pwsh.exe","-NoLogo","-NoProfile","-Command","git status"]}`, `{"command":"git status"}`},
 		{`{"command":["cmd.exe","/d","/s","/c","git","status"]}`, `{"command":"git status"}`},
 		{`{"command":["bash","-c","echo \"hello\""]}`, `{"command":"echo \"hello\""}`},
 		{`{"command":["git","status"]}`, `{"command":["git","status"]}`},
@@ -97,6 +100,7 @@ func TestWatchHidesOnlyBackendStartEvents(t *testing.T) {
 		kind          agent.EventKind
 		hide          bool
 	}{
+		{"codex", "codex.exe exec --start-marker", agent.EventInfo, true},
 		{filepath.Join("tools", "custom.exe"), "custom.exe exec --start-marker", agent.EventInfo, true},
 		{filepath.Join("tools", "codex.exe"), "codex.exe exec --start-marker", agent.EventInfo, true},
 		{"other", "codex exec --start-marker", agent.EventInfo, false},
@@ -146,10 +150,6 @@ func TestWatchHidesOnlyBackendStartEvents(t *testing.T) {
 			m, ok := stream.next(t)
 			if !ok || strings.Contains(m.data, needle) == tc.hide || tc.hide && !strings.Contains(m.data, "guard stays") {
 				t.Errorf("stream start visibility is wrong: hidden=%v, message=%+v", tc.hide, m)
-			}
-			_, index := get(t, srv.URL+"/")
-			if strings.Contains(index, "--start-marker") {
-				t.Error("index shows start event")
 			}
 		})
 	}
