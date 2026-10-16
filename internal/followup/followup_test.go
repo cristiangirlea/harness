@@ -374,6 +374,59 @@ func TestAMissingWorkspaceSaysHowToGoOn(t *testing.T) {
 	}
 }
 
+func pinnedAPIRun(t *testing.T, dir string) string {
+	t.Helper()
+	pin := &retrieval.Record{Mode: "required", Scope: retrieval.Scope{TenantID: "t", ProjectID: "p", Revision: "r", Backend: "api", Model: "m"},
+		Packet: &retrieval.Packet{VersionID: "kv-7"}}
+	return finished(t, "", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}},
+		agent.Result{Backend: "api", Final: "a", Retrieval: pin})
+}
+
+func TestRetrievalOnAnotherBackendThanThePinIsRefused(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	id := pinnedAPIRun(t, dir)
+	for _, mode := range []string{"optional", "required"} {
+		_, err := Make(Request{RunID: id, Backend: "codex", Retrieval: mode})
+		if err == nil {
+			t.Fatalf("%s: a new opt-in on codex would repin silently", mode)
+		}
+		for _, want := range []string{id, "kv-7", "on api", "fresh run"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: refusal should mention %q: %v", mode, want, err)
+			}
+		}
+	}
+	// Further down the chain the pin still holds.
+	next := finished(t, id, agent.Task{Prompt: "q", Dir: dir}, agent.Result{Backend: "codex", Session: "t1", Final: "b"})
+	if _, err := Make(Request{RunID: next, Retrieval: "optional"}); err == nil || !strings.Contains(err.Error(), "kv-7") {
+		t.Fatalf("a pin earlier in the chain should refuse the opt-in: %v", err)
+	}
+}
+
+func TestAPinWithoutAKnowledgeVersionIsNamedPlainlyInTheRefusal(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	pin := &retrieval.Record{Mode: "optional", Scope: retrieval.Scope{Backend: "api", Model: "m"}}
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "optional"}},
+		agent.Result{Backend: "api", Final: "a", Retrieval: pin})
+	_, err := Make(Request{RunID: id, Backend: "codex", Retrieval: "optional"})
+	if err == nil || !strings.Contains(err.Error(), "run "+id+" recorded a retrieval pin with no knowledge version on api") {
+		t.Fatalf("refusal: %v", err)
+	}
+}
+
+func TestRetrievalOffOnAnotherBackendStillHandsThePinnedRunOver(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	id := pinnedAPIRun(t, workspace(t))
+	for _, mode := range []string{"", "off"} {
+		p, err := Make(Request{RunID: id, Backend: "codex", Retrieval: mode})
+		if err != nil || len(p.Handoff) != 1 {
+			t.Fatalf("retrieval %q: %+v %v", mode, p, err)
+		}
+	}
+}
+
 func TestAFreshHandoverStartsANewSessionOnTheSameBackend(t *testing.T) {
 	for _, backend := range []string{"claude", "codex", "agy"} {
 		t.Run(backend, func(t *testing.T) {

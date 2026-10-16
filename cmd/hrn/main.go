@@ -294,7 +294,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	// the backend picks up and what it is handed as a transcript.
 	var plan followup.Plan
 	if *continueID != "" {
-		req := followup.Request{RunID: *continueID, Backend: backend, Fresh: *fresh}
+		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, Fresh: *fresh}
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}

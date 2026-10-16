@@ -74,7 +74,12 @@ give the variants distinct names. This flag does not change CLI backend tools.
 `--retrieval off|optional|required` opts into project references; enabled modes
 require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and
 an explicit `--model`. `--retrieval-version` pins a version; otherwise the
-active version is resolved once and saved with the run.
+active version is resolved once and saved with the run. A pin stays with its
+backend: `--continue` with `--retrieval optional|required` on another backend than
+the chain's latest pin is refused with exit 2 before anything runs, naming the
+pinned run and its version. Continue on the pin's backend, start a fresh run, or
+continue with retrieval off to hand the transcript over (see
+[Continuing a run](backends.md#continuing-a-run)).
 
 ### Declared purpose
 

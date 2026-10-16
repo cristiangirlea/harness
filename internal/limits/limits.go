@@ -312,9 +312,9 @@ func After(prevID, backend string, prev agent.Task, res agent.Result) (next *Car
 	if ok, reason := Ready(other, time.Now(), nil); !ok {
 		return nil, why + reason + ", so the run stays " + string(agent.StatusLimited), nil
 	}
-	plan, err := followup.Make(followup.Request{RunID: prevID, Backend: other, Dir: prev.Dir})
+	plan, err := followup.Make(followup.Request{RunID: prevID, Backend: other, Dir: prev.Dir, Retrieval: prev.Retrieval})
 	if err != nil {
-		return nil, "", fmt.Errorf("carrying run %s on on %s: %w", prevID, other, err)
+		return nil, "", fmt.Errorf("carrying run %s on %s: %w", prevID, other, err)
 	}
 	task := agent.Task{Prompt: fmt.Sprintf(carryOnPrompt, backend), Purpose: prev.Purpose, Dir: plan.Dir, Options: prev.Options, Approve: prev.Approve}
 	task.Model = plan.Model
