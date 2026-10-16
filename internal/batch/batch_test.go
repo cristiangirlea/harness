@@ -101,34 +101,171 @@ func initRepo(t *testing.T) string {
 }
 
 func TestCommitChangesDoesNotRunRepositoryHooks(t *testing.T) {
-	dir := initRepo(t)
-	wt := filepath.Join(t.TempDir(), "worktree")
-	git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
-	hooks := t.TempDir()
-	marker := filepath.Join(t.TempDir(), "hook-ran")
-	t.Setenv("HRN_TEST_HOOK_MARKER", marker)
-	if err := os.WriteFile(filepath.Join(hooks, "post-commit"), []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\n"), 0o755); err != nil {
-		t.Fatal(err)
+	writeMarkerScript := func(t *testing.T, path string, passStdin bool) string {
+		t.Helper()
+		body := "#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\n"
+		if passStdin {
+			body += "cat\n"
+		}
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.ToSlash(path)
 	}
-	// Worktree config is shared with the repository; an agent can set this.
-	git(t, wt, "config", "core.hooksPath", filepath.ToSlash(hooks))
-	if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name      string
+		passStdin bool
+		setup     func(t *testing.T, wt, script string)
+		control   func(t *testing.T, wt string)
+	}{
+		{
+			name: "core.hooksPath",
+			setup: func(t *testing.T, wt, _ string) {
+				hooks := t.TempDir()
+				writeMarkerScript(t, filepath.Join(hooks, "post-commit"), false)
+				git(t, wt, "config", "core.hooksPath", filepath.ToSlash(hooks))
+			},
+		},
+		{
+			name: "core.fsmonitor",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "core.fsmonitor", script)
+			},
+		},
+		{
+			name:      "filter.clean",
+			passStdin: true,
+			setup: func(t *testing.T, wt, script string) {
+				if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				git(t, wt, "config", "filter.drv.clean", script)
+				git(t, wt, "config", "filter.drv.required", "true")
+			},
+		},
+		{
+			name: "filter.process",
+			setup: func(t *testing.T, wt, script string) {
+				if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				git(t, wt, "config", "filter.drv.process", script)
+				git(t, wt, "config", "filter.drv.required", "true")
+			},
+		},
+		{
+			name:      "filter.smudge",
+			passStdin: true,
+			setup: func(t *testing.T, wt, script string) {
+				if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				git(t, wt, "config", "filter.drv.smudge", script)
+				git(t, wt, "config", "filter.drv.required", "true")
+			},
+			control: func(t *testing.T, wt string) {
+				_ = os.Remove(filepath.Join(wt, "result.txt"))
+				_ = exec.Command("git", "-C", wt, "checkout", "-f", "HEAD", "--", "result.txt").Run()
+			},
+		},
+		{
+			name: "gpg.program",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.program", script)
+			},
+		},
+		{
+			name: "gpg.openpgp.program",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.format", "openpgp")
+				git(t, wt, "config", "gpg.openpgp.program", script)
+			},
+		},
+		{
+			name: "gpg.x509.program",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.format", "x509")
+				git(t, wt, "config", "gpg.x509.program", script)
+			},
+		},
+		{
+			name: "gpg.ssh.program",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.format", "ssh")
+				git(t, wt, "config", "user.signingKey", "key::ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl")
+				git(t, wt, "config", "gpg.ssh.program", script)
+			},
+		},
+		{
+			name: "gpg.ssh.defaultKeyCommand",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.format", "ssh")
+				git(t, wt, "config", "gpg.ssh.defaultKeyCommand", script)
+			},
+		},
+		{
+			name: "gc.recentObjectsHook",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "repack", "-d", "-q")
+				if err := os.WriteFile(filepath.Join(wt, "README.md"), []byte("hello 2\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				git(t, wt, "commit", "-q", "-a", "-m", "second pack")
+				git(t, wt, "repack", "-q")
+				cmd := exec.Command("git", "-C", wt, "hash-object", "-w", "--stdin")
+				cmd.Stdin = strings.NewReader("unreachable\n")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("hash-object: %v\n%s", err, out)
+				}
+				git(t, wt, "config", "gc.auto", "1")
+				git(t, wt, "config", "gc.autoPackLimit", "1")
+				git(t, wt, "config", "gc.autoDetach", "false")
+				git(t, wt, "config", "gc.pruneExpire", "now")
+				git(t, wt, "config", "gc.recentObjectsHook", script)
+			},
+		},
 	}
-	sha, err := commitChanges(wt, "task result")
-	if err != nil || sha == "" {
-		t.Fatalf("commitChanges = %q, %v", sha, err)
-	}
-	if got := git(t, wt, "show", "HEAD:result.txt"); got != "done" {
-		t.Errorf("committed result = %q", got)
-	}
-	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("post-commit hook ran or marker could not be checked: %v", err)
-	}
-	// Prove the hook is executable and the override did not change shared config.
-	git(t, wt, "commit", "-q", "--allow-empty", "-m", "hook control")
-	if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
-		t.Fatalf("control hook = %q, %v", data, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "hook-ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			script := writeMarkerScript(t, filepath.Join(t.TempDir(), "marker.sh"), tc.passStdin)
+			// Worktree config is shared with the repository; an agent can set this.
+			tc.setup(t, wt, script)
+			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := commitChanges(wt, "task result")
+			if err != nil || sha == "" {
+				t.Fatalf("commitChanges = %q, %v", sha, err)
+			}
+			if got := git(t, wt, "show", "HEAD:result.txt"); got != "done" {
+				t.Errorf("committed result = %q", got)
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s ran during commitChanges or marker could not be checked: %v", tc.name, err)
+			}
+			// Prove the configured program is runnable and the override did not change shared config.
+			if tc.control != nil {
+				tc.control(t, wt)
+			} else {
+				if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("again\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				_ = exec.Command("git", "-C", wt, "commit", "-q", "-a", "--allow-empty", "-m", "control").Run()
+			}
+			if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
+				t.Fatalf("control %s = %q, %v", tc.name, data, err)
+			}
+		})
 	}
 }
 
@@ -1661,7 +1798,7 @@ func TestDiffShowsWhatATaskChanged(t *testing.T) {
 
 func TestDiffFallsBackToTheWorktree(t *testing.T) {
 	dir := initRepo(t)
-	// A signing failure leaves the work in the worktree, staged but
+	// A commit failure leaves the work in the worktree, staged but
 	// never committed, which is the case the fallback is for.
 	failCommits(t, dir)
 	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-file", Tasks: []Task{{ID: "alpha", Prompt: "alpha"}}})

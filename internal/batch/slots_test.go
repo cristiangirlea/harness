@@ -659,14 +659,13 @@ func TestSessionsAtLimitLeaveBatchWithoutASlot(t *testing.T) {
 	}
 }
 
-// failCommits requires an unavailable signer for every commit, so each task's
-// slot is kept, or only for the branches named. Batch commits disable hooks.
+// failCommits sets an invalid commit.cleanup for every commit, so each task's
+// slot is kept, or only for the branches named. Batch commits disable hooks
+// and commit signing.
 func failCommits(t *testing.T, dir string, branches ...string) {
 	t.Helper()
-	config := filepath.Join(t.TempDir(), "signing.config")
-	git(t, dir, "config", "--file", config, "commit.gpgsign", "true")
-	git(t, dir, "config", "--file", config, "gpg.format", "openpgp")
-	git(t, dir, "config", "--file", config, "gpg.openpgp.program", filepath.ToSlash(filepath.Join(t.TempDir(), "missing-signer")))
+	config := filepath.Join(t.TempDir(), "commit.config")
+	git(t, dir, "config", "--file", config, "commit.cleanup", "invalid")
 	if len(branches) == 0 {
 		git(t, dir, "config", "include.path", filepath.ToSlash(config))
 		return

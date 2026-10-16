@@ -1285,26 +1285,73 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 // the commit, or "" when nothing changed. It runs after the agent, so it uses
 // its own context: a cancelled batch must still leave a consistent branch.
 func commitChanges(wt, message string) (string, error) {
-	dirty, err := hasChanges(wt)
-	if err != nil || !dirty {
-		return "", err
+	if _, err := os.Stat(wt); err != nil {
+		return "", nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if _, err := gitOut(ctx, wt, "add", "-A"); err != nil {
-		return "", err
-	}
-	// An agent can set core.hooksPath in the shared repository config. Our
-	// commit keeps the operator's environment, so it must not run those hooks.
+	// An agent can configure hooks, fsmonitor, filter drivers, commit signing,
+	// or auto-maintenance in the shared repository config. Our status, add, and
+	// commit keep the operator's environment, so they must not run those commands.
 	hooks, err := os.MkdirTemp("", "hrn-empty-hooks-")
 	if err != nil {
 		return "", err
 	}
 	defer os.RemoveAll(hooks)
-	if _, err := gitOut(ctx, wt, "-c", "core.hooksPath="+hooks, "commit", "-q", "-m", message); err != nil {
+	overrides := commitConfigOverrides(ctx, wt, hooks)
+	status, err := gitOut(ctx, wt, append(slices.Clone(overrides), "status", "--porcelain")...)
+	if err != nil || status == "" {
+		return "", err
+	}
+	if _, err := gitOut(ctx, wt, append(slices.Clone(overrides), "add", "-A")...); err != nil {
+		return "", err
+	}
+	if _, err := gitOut(ctx, wt, append(slices.Clone(overrides), "commit", "-q", "-m", message)...); err != nil {
 		return "", err
 	}
 	return gitOut(ctx, wt, "rev-parse", "HEAD")
+}
+
+func commitConfigOverrides(ctx context.Context, dir, hooks string) []string {
+	args := []string{
+		"-c", "core.hooksPath=" + hooks,
+		"-c", "core.fsmonitor=false",
+		"-c", "commit.gpgSign=false",
+		"-c", "maintenance.auto=false",
+		"-c", "gc.auto=0",
+	}
+	out, err := gitOut(ctx, dir, "config", "--get-regexp", `^filter\..*\.(clean|smudge|process)$`)
+	if err != nil {
+		return args
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		key, _, _ := strings.Cut(line, " ")
+		rest, ok := strings.CutPrefix(key, "filter.")
+		if !ok {
+			continue
+		}
+		dot := strings.LastIndexByte(rest, '.')
+		if dot <= 0 {
+			continue
+		}
+		switch rest[dot+1:] {
+		case "clean", "smudge", "process":
+		default:
+			continue
+		}
+		name := rest[:dot]
+		if !seen[name] {
+			seen[name] = true
+			args = append(args,
+				"-c", "filter."+name+".clean=",
+				"-c", "filter."+name+".smudge=",
+				"-c", "filter."+name+".process=",
+				"-c", "filter."+name+".required=false",
+			)
+		}
+	}
+	return args
 }
 
 // hasChanges reports whether a worktree holds uncommitted work. A missing

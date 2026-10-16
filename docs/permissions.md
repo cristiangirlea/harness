@@ -109,11 +109,17 @@ the model only that the operator can lift the guard.
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.
 Gates keep hrn's full environment and execute the code the agent wrote, including
-tests, so that code can use the operator's credentials. hrn's own batch commit disables
-repository hooks with `-c core.hooksPath=<empty temporary directory>`; an agent-set
-`core.hooksPath` in the shared repository config cannot make that commit run a hook.
-Neither command guard refuses `git config core.hooksPath h`, and the setting remains
-in the shared config for other git commands, including the operator's later commits.
+tests, so that code can use the operator's credentials. hrn's own batch `git status`,
+`git add` and `git commit` neutralise repository config keys that run programs
+(`-c core.hooksPath=<empty temporary directory>`, `-c core.fsmonitor=false`,
+`-c commit.gpgSign=false`, `-c maintenance.auto=false`, `-c gc.auto=0`, and empty
+`filter.<name>.clean`, `filter.<name>.smudge`, `filter.<name>.process` with
+`filter.<name>.required=false` for every configured filter driver), so settings an
+agent writes to the shared repository config (`core.hooksPath`, `core.fsmonitor`,
+filter drivers, `commit.gpgSign` with `gpg.*`, `gc.recentObjectsHook`) cannot make
+that commit run a command. Neither command guard refuses `git config` for those keys,
+and the settings remain in the shared config for other git commands, including the
+operator's later commits.
 The agent CLIs run their own shells; the next section is their guard.
 
 #### The guard for every backend
