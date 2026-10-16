@@ -216,6 +216,39 @@ func TestAWatchOfAJobStillRunningStreamsUntilTheTerminalEvent(t *testing.T) {
 	}
 }
 
+func TestAWatchStreamsWhenTheJobStateIsBrieflyUnavailable(t *testing.T) {
+	const job = "j_cccccccccccccccccccccccccccccccc"
+	for _, test := range []struct {
+		status  int
+		streams int32
+	}{{http.StatusServiceUnavailable, 1}, {http.StatusForbidden, 0}} {
+		t.Run(strconv.Itoa(test.status), func(t *testing.T) {
+			var streams atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/jobs/"+job {
+					w.WriteHeader(test.status)
+					return
+				}
+				streams.Add(1)
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "id: 2\nevent: succeeded\ndata: {\"id\":2}\n\n")
+			}))
+			defer server.Close()
+			client := &Client{origin: server.URL, http: server.Client()}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			err := client.WatchJob(ctx, job, url.Values{}, 1, io.Discard)
+			var httpErr *HTTPError
+			if test.status >= 500 && err != nil || test.status < 500 && (!errors.As(err, &httpErr) || httpErr.Status != test.status) {
+				t.Fatalf("WatchJob error = %v", err)
+			}
+			if ctx.Err() != nil || streams.Load() != test.streams {
+				t.Fatalf("streams = %d, want %d; context = %v", streams.Load(), test.streams, ctx.Err())
+			}
+		})
+	}
+}
+
 func TestAWatchOfAnEndedJobRefusesAPageThatDoesNotAdvanceTheCursor(t *testing.T) {
 	const job = "j_cccccccccccccccccccccccccccccccc"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

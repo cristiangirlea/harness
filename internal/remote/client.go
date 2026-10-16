@@ -169,6 +169,9 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 // page by page and returns instead of streaming (#361).
 func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, after int64, out io.Writer) error {
 	data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"?"+scope.Encode(), nil)
+	if err != nil && watchRetries(err) {
+		return c.Watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)
+	}
 	if err != nil {
 		return err
 	}
@@ -215,6 +218,23 @@ func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, aft
 			after = event.ID
 		}
 	}
+}
+
+// watchRetries reports whether Watch would retry err rather than return it: a 5xx, or a transport
+// error that is not a certificate error.
+func watchRetries(err error) bool {
+	var status *HTTPError
+	if errors.As(err, &status) {
+		return status.Status >= 500
+	}
+	var unknown x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &unknown) || errors.As(err, &hostname) || errors.As(err, &invalid) {
+		return false
+	}
+	var transport *url.Error
+	return errors.As(err, &transport)
 }
 
 func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
