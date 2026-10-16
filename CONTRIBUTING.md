@@ -36,8 +36,8 @@ See [SECURITY.md](SECURITY.md) for the security boundaries and private vulnerabi
   dependencies.
 - **Tests first, seen failing.** Process-spawning code is tested by re-running the test
   binary as a helper; the API loop against a fake SSE server; MCP over in-memory pipes.
-- **One pull request per increment**, small enough to review, with the plan updated in
-  the same PR.
+- **One pull request per increment**, small enough to review, with the plan updated in its
+  own Markdown-only PR once the increment has merged.
 
 ## Release development
 

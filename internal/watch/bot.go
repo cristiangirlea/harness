@@ -582,7 +582,7 @@ func (b *botWatcher) look() botSnapshot {
 		for _, l := range lines {
 			if l.Err == nil && l.Event.Kind == agent.EventToolCall {
 				e := b.s.cleanEvent(l.Event)
-				b.doing[rec.ID] = activity(e.Tool, e.Text)
+				b.doing[rec.ID] = activity(e.Tool, unwrapCommand(e.Text))
 			}
 		}
 	}

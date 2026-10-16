@@ -728,8 +728,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				continue
 			}
 			if pick != name {
-				notify(Event{Task: t.ID, Kind: "switch", Text: why})
 				plan.switchedFrom, name = name, pick
+				notify(Event{Task: t.ID, Kind: "switch", Text: why})
+			} else if why != "" {
+				notify(Event{Task: t.ID, Kind: "info", Text: why})
 			}
 		}
 		b, err := agent.Get(name)
