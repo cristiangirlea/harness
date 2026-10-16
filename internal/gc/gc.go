@@ -514,6 +514,7 @@ type repoFacts struct {
 	prs       []PR
 	ghErr     error
 	ghDone    bool
+	landed    map[string][]patchID // landedPatchIDs by merge base, for the run
 }
 
 func (r *repoFacts) pullRequests(ctx context.Context) ([]PR, error) {
@@ -572,7 +573,7 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		case facts.fetchErr != nil:
 			return Keep, "fetch failed: " + firstLine(facts.fetchErr.Error())
 		case !isAncestor(ctx, facts.repo, w.Head, facts.def):
-			if landed := landedBatchChange(ctx, facts.repo, w.Head, facts.def); landed != "" {
+			if landed := landedBatchChange(ctx, facts, w.Head); landed != "" {
 				if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
 					return Keep, why
 				}
@@ -1066,24 +1067,27 @@ var maxCommits = 2000
 // landedBatchChange proves that the whole task diff is one commit on the
 // default branch. A missing base, empty diff, git error or a history at the
 // comparison limit gives no proof.
-func landedBatchChange(ctx context.Context, repo, head, def string) string {
-	base, err := gitOut(ctx, repo, "merge-base", head, def)
+func landedBatchChange(ctx context.Context, facts *repoFacts, head string) string {
+	base, err := gitOut(ctx, facts.repo, "merge-base", head, facts.def)
 	if err != nil || base == "" {
 		return ""
 	}
-	countText, err := gitOut(ctx, repo, "rev-list", "--count", "--max-count="+strconv.Itoa(maxCommits), "--no-merges", base+".."+def)
-	if err != nil {
+	landed, ok := facts.landed[base]
+	if !ok {
+		landed = landedPatchIDs(ctx, facts.repo, base, facts.def)
+		if facts.landed == nil {
+			facts.landed = map[string][]patchID{}
+		}
+		facts.landed[base] = landed
+	}
+	if len(landed) == 0 {
 		return ""
 	}
-	count, err := strconv.Atoi(countText)
-	if err != nil || count == 0 || count >= maxCommits {
-		return ""
-	}
-	taskDiff, err := gitStdout(ctx, repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", base, head)
+	taskDiff, err := gitStdout(ctx, facts.repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", base, head)
 	if err != nil || taskDiff == "" {
 		return ""
 	}
-	taskID, err := gitStdoutInput(ctx, repo, taskDiff, "patch-id", "--verbatim")
+	taskID, err := gitStdoutInput(ctx, facts.repo, taskDiff, "patch-id", "--verbatim")
 	if err != nil {
 		return ""
 	}
@@ -1091,24 +1095,72 @@ func landedBatchChange(ctx context.Context, repo, head, def string) string {
 	if len(taskFields) != 2 {
 		return ""
 	}
-	patches, err := gitStdout(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
-	if err != nil {
-		return ""
-	}
-	landedIDs, err := gitStdoutInput(ctx, repo, patches, "patch-id", "--verbatim")
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(strings.TrimSpace(landedIDs), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 || len(fields[1]) < 7 {
-			return ""
-		}
-		if fields[0] == taskFields[0] {
-			return fields[1]
+	for _, p := range landed {
+		if p.id == taskFields[0] {
+			return p.commit
 		}
 	}
 	return ""
+}
+
+// patchID is one default branch commit and the patch id of its change.
+type patchID struct{ id, commit string }
+
+// landedPatchIDs gives the patch ids of the default branch's commits since
+// base, or none when they cannot prove anything; tests wrap it to count runs.
+var landedPatchIDs = func(ctx context.Context, repo, base, def string) []patchID {
+	countText, err := gitOut(ctx, repo, "rev-list", "--count", "--max-count="+strconv.Itoa(maxCommits), "--no-merges", base+".."+def)
+	if err != nil {
+		return nil
+	}
+	count, err := strconv.Atoi(countText)
+	if err != nil || count == 0 || count >= maxCommits {
+		return nil
+	}
+	out, err := logPatchIDs(ctx, repo, base, def)
+	if err != nil {
+		return nil
+	}
+	var ids []patchID
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || len(fields[1]) < 7 {
+			return nil
+		}
+		ids = append(ids, patchID{id: fields[0], commit: fields[1]})
+	}
+	return ids
+}
+
+// logPatchIDs pipes the default branch's log since base into git patch-id,
+// so a history with large binaries is never held in memory.
+func logPatchIDs(ctx context.Context, repo, base, def string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	log := gitCommand(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
+	var logErr bytes.Buffer
+	log.Stderr = &logErr
+	patches, err := log.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	ids := gitCommand(ctx, repo, "patch-id", "--verbatim")
+	ids.Stdin = patches
+	var out, idsErr bytes.Buffer
+	ids.Stdout, ids.Stderr = &out, &idsErr
+	if err := log.Start(); err != nil {
+		return "", err
+	}
+	if err := ids.Run(); err != nil {
+		// A git log blocked on a full pipe would otherwise never exit.
+		cancel()
+		_ = log.Wait()
+		return "", fmt.Errorf("git patch-id: %v: %s", err, strings.TrimSpace(idsErr.String()))
+	}
+	if err := log.Wait(); err != nil {
+		return "", fmt.Errorf("git log: %v: %s", err, strings.TrimSpace(logErr.String()))
+	}
+	return out.String(), nil
 }
 
 // listPRs reads the repository's pull requests: the open ones on their own,

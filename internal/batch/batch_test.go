@@ -2513,3 +2513,36 @@ func TestSavesSucceedWhileManyReadersReadTheRecord(t *testing.T) {
 		t.Fatalf("the last save is not the record: %v", err)
 	}
 }
+
+func TestBatchRetryOnAnotherBackendDropsTheRoutedModelAndEffort(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"wb-bad","model":"routed","effort":"medium"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Options: agent.Options{NoSwitch: true},
+		Tasks: []Task{{ID: "retry", Prompt: "Implement a widget", Retry: []string{"wb-ok"}}}})
+	tr := res.Tasks[0]
+	if len(tr.Attempts) != 2 {
+		t.Fatalf("attempts: %+v", tr.Attempts)
+	}
+	first, second := firstRun(t, tr), firstRun(t, TaskResult{ID: tr.ID, Attempts: tr.Attempts[1:]})
+	if first.Task.Model != "routed" || first.Task.Effort != "medium" || first.RoutedBy == nil {
+		t.Fatalf("first attempt: %+v", first)
+	}
+	if second.Backend != "wb-ok" || second.Task.Model != "" || second.Task.Effort != "" || second.RoutedBy != nil {
+		t.Fatalf("retry kept the routed choice: %+v", second)
+	}
+}
+
+func TestBatchRoutesByTheTasksDeclaredPurpose(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"wb-ok"},"review":{"backend":"wb-noop","model":"routed"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Options: agent.Options{NoSwitch: true},
+		Tasks: []Task{{ID: "declared", Prompt: "Implement a widget", Purpose: "review"}}})
+	rec := firstRun(t, res.Tasks[0])
+	if rec.Backend != "wb-noop" || rec.Task.Model != "routed" || rec.RoutedBy == nil || rec.RoutedBy.Category != "review" || !rec.RoutedBy.Declared {
+		t.Fatalf("declared purpose did not route: %+v %+v", rec, rec.RoutedBy)
+	}
+}

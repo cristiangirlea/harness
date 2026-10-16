@@ -92,7 +92,7 @@ type Options struct {
 
 // Route fills a wholly unspecified backend/model/effort choice from evidence.
 // Backend lives beside Options in the callers, so it is passed separately.
-func (o *Options) Route(prompt string, backend *string, home string) (*table.RoutedBy, error) {
+func (o *Options) Route(declared, prompt string, backend *string, home string) (*table.RoutedBy, error) {
 	if *backend != "" || o.Model != "" || o.Effort != "" {
 		return nil, nil
 	}
@@ -100,7 +100,8 @@ func (o *Options) Route(prompt string, backend *string, home string) (*table.Rou
 	if err != nil {
 		return nil, err
 	}
-	category := purpose.Classify(prompt).Category
+	resolved := purpose.Resolve(declared, prompt)
+	category := resolved.Category
 	r, ok := t.Pick(category)
 	if !ok {
 		return nil, nil
@@ -120,13 +121,14 @@ func (o *Options) Route(prompt string, backend *string, home string) (*table.Rou
 		}
 	}
 	if err := (Options{Effort: r.Effort}).Validate(); err != nil {
-		return nil, fmt.Errorf("route for %s: %w", category, err)
+		fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: %v\n", category, err)
+		return nil, nil
 	}
 	if r.Backend == "" && r.Model == "" && r.Effort == "" {
 		return nil, nil
 	}
 	*backend, o.Model, o.Effort = r.Backend, r.Model, r.Effort
-	return &table.RoutedBy{Category: category, Eval: r.Eval, Set: r.Set}, nil
+	return &table.RoutedBy{Category: category, Declared: resolved.Rule == "declared", Eval: r.Eval, Set: r.Set}, nil
 }
 
 // IsLean reports whether lean is on: set, and true.

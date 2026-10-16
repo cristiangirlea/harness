@@ -99,7 +99,7 @@
 <tbody>{{range .Runs}}<tr>
 <td class="name">{{template "name" .}}{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
 <td class="meta">{{.Backend}}</td>
-<td class="meta"{{with .Rule}} title="{{.}}"{{end}}>{{.Purpose}}</td>
+<td class="meta purpose"{{with .Rule}} title="{{.}}"{{end}}>{{.Purpose}}</td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
 <td class="num meta">{{template "took" .}}</td>
 <td class="num meta">{{.Cost}}</td>
@@ -147,6 +147,7 @@
 <text class="chart-axis chart-end" x="{{.Right}}" y="{{.AxisY}}">{{.Last}}</text>
 </svg>
 {{if .Keyed}}<p class="chart-key small"><span class="key-mark">compacted, as the backend reported</span> <span class="key-mark probable">probably compacted: the context fell by more than half</span></p>{{end}}
+{{if gt .Every 1}}<p class="small muted">One turn in {{.Every}} has a point and a row, with the last and each compaction; the line runs through every turn.</p>{{end}}
 <details data-key="usage-table"><summary>Turns as a table</summary><div class="table-wrap"><table>
 <thead><tr><th scope="col" class="num">Turn</th><th scope="col">Model</th><th scope="col" class="num">Input</th><th scope="col" class="num">Output</th><th scope="col" class="num">Cache read</th><th scope="col" class="num">Cache write</th><th scope="col" class="num">Context</th><th scope="col" class="num">Cache read so far</th><th scope="col">Compaction</th></tr></thead>
 <tbody>{{range .Rows}}<tr><td class="num">{{.N}}</td><td>{{.Model}}</td><td class="num">{{.Input}}</td><td class="num">{{.Output}}</td><td class="num">{{.CacheRead}}</td><td class="num">{{.CacheWrite}}</td><td class="num">{{.Context}}</td><td class="num">{{.SoFar}}</td><td>{{.Note}}</td></tr>
@@ -242,8 +243,9 @@
 {{/* Ada, a robot scarlet macaw, drawn with gradients for a lit, rounded
      look. Colours are attributes, not style, as the page's policy allows no
      inline style; watch.css moves her: the lower beak while she talks, a
-     blink, a slow bob of the head, and the glow of her lights. */}}
-{{define "ada"}}<svg class="bot-face ada" viewBox="0 0 240 240" role="img" aria-label="Ada, a robot parrot">
+     blink, a slow bob of the head, and the glow of her lights. Hidden from
+     screen readers: the heading beside her already names her. */}}
+{{define "ada"}}<svg class="bot-face ada" viewBox="0 0 240 240" aria-hidden="true">
 <defs>
 <radialGradient id="ada-head" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#ff8273"/><stop offset=".42" stop-color="#ea3540"/><stop offset=".85" stop-color="#b3192c"/><stop offset="1" stop-color="#851021"/></radialGradient>
 <radialGradient id="ada-body" cx=".42" cy=".28" r=".85"><stop offset="0" stop-color="#f4504a"/><stop offset=".55" stop-color="#cc2131"/><stop offset="1" stop-color="#7a0e1c"/></radialGradient>

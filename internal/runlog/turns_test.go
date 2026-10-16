@@ -1,6 +1,7 @@
 package runlog
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -75,5 +76,21 @@ func TestTurnsOfReadsARecordedRun(t *testing.T) {
 	}
 	if len(turns) != 1 || turns[0].ContextTokens != 1000 || !turns[0].Time.Equal(at) {
 		t.Errorf("turns = %+v", turns)
+	}
+}
+
+// A tool's input is recorded as given, so it can hold the usage kind as
+// written; only events of the two kinds come back.
+func TestUsageEventsKeepsOnlyUsageAndCompactionEvents(t *testing.T) {
+	stream := `{"t":"2026-10-13T09:00:00Z","kind":"tool_call","tool":"x","input":{"kind":"usage"}}` + "\n" +
+		`{"t":"2026-10-13T09:00:01Z","kind":"usage","usage":{"context_tokens":1000}}` + "\n" +
+		`{"t":"2026-10-13T09:00:02Z","kind":"text","text":"no"}` + "\n" +
+		`{"t":"2026-10-13T09:00:03Z","kind":"compaction","text":"auto"}` + "\n"
+	events, err := UsageEvents(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Kind != agent.EventUsage || events[1].Kind != agent.EventCompaction {
+		t.Errorf("events = %+v", events)
 	}
 }

@@ -30,6 +30,14 @@ func FuzzSummarize(f *testing.F) {
 		"--- FAIL: TestA (0.00s)\n    a_test.go:1: got 0 of 2 values\n--- FAIL: TestB (0.00s)\n    b_test.go:2: got missing\nFAIL\n",
 		"counts 0 1\n--- FAIL: TestOuter (0.00s)\n    detail: not ready\nFAIL\n",
 		"hello\n[repeated 2 times]\nhello\nhello\n",
+		// Structured output.
+		"[\n  {\"id\": 1, \"path\": \"/tmp/a\", \"n\": {\"m\": {\"k\": -1.5e-3}}},\n  {\"id\": 2},\n  {\"id\": 3, \"error\": \"not found\"},\n  {\"id\": 4}\n]\n",
+		"{\n  \"name\": \"hrn\",\n  \"deep\": {\"a\": {\"b\": [1, 2E+10]}},\n  \"s\": \"a\\\"b/c\\\\d\"\n}\n",
+		"id,name,status\n1,a,ok\n2,b,ok\n3,c,error: timeout\n4,d,ok\n5,e,ok\n6,f,ok\n7,g,ok\n",
+		"host\tport\n\x1b[31mnode1\x1b[0m\t8001\nnode2\t8002\nnode3\t8003\nnode4\t8004\nnode5\t8005\n",
+		"{\"Action\":\"run\",\"Test\":\"TestA\"}\n{\"Action\":\"output\",\"Output\":\"--- FAIL: TestA (0.00s)\\n\"}\n",
+		"id,name\n1,\"Smith, J\"\n2,Lee\n3,Ode\n4,Ng\n",
+		"[                                        ]",
 	} {
 		f.Add(seed)
 	}
@@ -51,7 +59,7 @@ func FuzzSummarize(f *testing.F) {
 		}
 	}
 	f.Fuzz(func(t *testing.T, text string) {
-		for _, kind := range []Kind{Classify(text), Test, Log, Terminal} {
+		for _, kind := range []Kind{Classify(text), Test, Log, Terminal, JSON, Table} {
 			check(t, kind, text)
 		}
 		if strings.Contains(text, "\x1b") {

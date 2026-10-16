@@ -34,7 +34,8 @@ func TestRunRowsByDayGoInDateOrder(t *testing.T) {
 }
 
 // Context per turn comes from a run's usage events when it has them, from its
-// totals otherwise (one average a run), and a row says which.
+// totals otherwise (one average a run), and a row says which. A row with both
+// takes one average a run from each, never turns and averages together.
 func TestRunRowsSumTokensAndReadContextFromTurnsOrTotals(t *testing.T) {
 	withTurns := rec("api", "m", "/r", 0, agent.Result{Status: agent.StatusOK, Turns: 3,
 		InputTokens: 300, OutputTokens: 60, CacheRead: 80000, CacheWrite: 9700, ContextTokens: 50000})
@@ -44,8 +45,8 @@ func TestRunRowsSumTokensAndReadContextFromTurnsOrTotals(t *testing.T) {
 	d := Select([]runlog.Record{withTurns, fromTotals, noTokens}, nil, time.Time{})
 	d.Turns = map[string][]runlog.Turn{withTurns.ID: {
 		{N: 1, Usage: agent.Usage{ContextTokens: 10000}},
-		{N: 2, Usage: agent.Usage{ContextTokens: 30000}},
-		{N: 3, Usage: agent.Usage{ContextTokens: 50000}},
+		{N: 2, Usage: agent.Usage{ContextTokens: 10000}},
+		{N: 3, Usage: agent.Usage{ContextTokens: 70000}},
 	}}
 	rows, all, err := d.RunRows(ByBackend)
 	if err != nil {
@@ -62,11 +63,12 @@ func TestRunRowsSumTokensAndReadContextFromTurnsOrTotals(t *testing.T) {
 		peak         int64
 		input, reads int64
 	}{
-		{byKey["api"], ContextFromTurns, 30000, 50000, 300, 80000},
+		{byKey["api"], ContextFromTurns, 10000, 70000, 300, 80000},
 		// (1000 + 39000) / 2 turns; the peak is the last call's 25000, above that average.
 		{byKey["claude"], ContextFromTotals, 20000, 25000, 1000, 39000},
 		{byKey["codex"], "", 0, 0, 0, 0},
-		{all, ContextFromMixed, 25000, 50000, 1300, 119000},
+		// The api run's average, 30000, and the claude run's, 20000.
+		{all, ContextFromMixed, 25000, 70000, 1300, 119000},
 	} {
 		r := tc.row
 		if r.ContextFrom != tc.from || r.MedianContext != tc.median || r.PeakContext != tc.peak || r.InputTokens != tc.input || r.CacheRead != tc.reads {

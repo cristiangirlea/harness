@@ -77,6 +77,7 @@ func (s *server) cleanEvent(e agent.Event) agent.Event {
 	}
 	if e.Usage != nil {
 		u := *e.Usage
+		// Not left to the page's pass: that blanks the environment's values, not what mask finds.
 		u.Model = s.clean(u.Model)
 		e.Usage = &u
 	}
