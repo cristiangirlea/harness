@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -56,6 +57,37 @@ func TestClaudeRecordsOneUsageEventPerMainLoopMessage(t *testing.T) {
 	}
 	if res.ContextTokens != 9004 {
 		t.Errorf("context = %d, want the last main-loop message's 9004", res.ContextTokens)
+	}
+}
+
+// A message's output count grows over its lines, so its usage event carries
+// the largest, the last message's included when the stream ends on it.
+func TestClaudeKeepsTheLargestOutputAcrossAMessagesLines(t *testing.T) {
+	line := func(id string, output int) string {
+		return `{"type":"assistant","parent_tool_use_id":null,"session_id":"s","message":{"id":"` + id +
+			`","model":"m","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":` +
+			strconv.Itoa(output) + `,"cache_read_input_tokens":0,"cache_creation_input_tokens":100}}}`
+	}
+	fixture := filepath.Join(t.TempDir(), "stream.jsonl")
+	stream := line("msg_01", 8) + "\n" + line("msg_01", 30) + "\n" + line("msg_01", 20) + "\n" +
+		`{"type":"user","parent_tool_use_id":null,"session_id":"s","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}` + "\n" +
+		line("msg_02", 5) + "\n" + line("msg_02", 12) + "\n"
+	if err := os.WriteFile(fixture, []byte(stream), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HRN_USAGE_HELPER", fixture)
+	claude := NewClaudeBackend()
+	b := helperCLI(claude.parse)
+	b.newParse = claude.newParse
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCLIUsage$", "--"} }
+	var events []Event
+	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir()}, func(e Event) { events = append(events, e) })
+	got := usageOf(events)
+	if len(got) != 2 || got[0].Usage.OutputTokens != 30 || got[1].Usage.OutputTokens != 12 {
+		for _, e := range got {
+			t.Logf("%+v", *e.Usage)
+		}
+		t.Fatalf("got %d usage events, want two with outputs 30 and 12", len(got))
 	}
 }
 

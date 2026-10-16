@@ -186,3 +186,17 @@ func TestBatchReportsAKilledGateAsSuch(t *testing.T) {
 		t.Errorf("failed = %q, %q", b.Tasks[0].Failed, b.Tasks[1].Failed)
 	}
 }
+
+func TestBatchSummaryShowsADeclaredPurpose(t *testing.T) {
+	res := batch.Result{ID: "b1", Tasks: []batch.TaskResult{
+		{ID: "a", Purpose: "review", Status: batch.StatusPass},
+		{ID: "b", Status: batch.StatusPass},
+	}}
+	summary := batchSummary(res)
+	if !strings.Contains(summary, "a: pass (purpose review)") {
+		t.Errorf("summary lacks the declared purpose:\n%s", summary)
+	}
+	if strings.Contains(summary, "b: pass (") {
+		t.Errorf("a task with no declared purpose shows one:\n%s", summary)
+	}
+}

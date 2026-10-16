@@ -23,6 +23,9 @@ const (
 	contextTop      = 30
 	cacheTop        = 148
 	chartAxisLabelY = 246
+	// Past this many turns only about this many get a point and a row; the
+	// page is redrawn whole on every poll.
+	chartShown = 500
 )
 
 type usageView struct {
@@ -39,6 +42,7 @@ type usageView struct {
 	Marks   []markView
 	Keyed   bool // a compaction is marked, so the key is shown
 	Rows    []turnRow
+	Every   int // one turn in Every has a point and a row, with the last and each compaction
 }
 
 type panelView struct {
@@ -121,6 +125,10 @@ func usageOf(events []agent.Event) usageView {
 	v.Summary = strings.Join(parts, " · ")
 	v.Label = "Context per turn and cache reads so far over " + v.Summary
 	v.First, v.Last = "turn 1", fmt.Sprintf("turn %d", len(turns))
+	v.Every = (len(turns) + chartShown - 1) / chartShown
+	shown := func(t runlog.Turn) bool {
+		return (t.N-1)%v.Every == 0 || t.N == len(turns) || t.Compaction != ""
+	}
 
 	plotW := float64(chartW - chartLeft - chartRight)
 	x := func(n int) float64 {
@@ -139,7 +147,9 @@ func usageOf(events []agent.Event) usageView {
 			}
 			xs, ys := fmt.Sprintf("%.1f", x(t.N)), fmt.Sprintf("%.1f", y)
 			pts = append(pts, xs+","+ys)
-			p.Dots = append(p.Dots, dotView{X: xs, Y: ys, Tip: tip(t)})
+			if shown(t) {
+				p.Dots = append(p.Dots, dotView{X: xs, Y: ys, Tip: tip(t)})
+			}
 		}
 		p.Points = strings.Join(pts, " ")
 		return p
@@ -180,7 +190,9 @@ func usageOf(events []agent.Event) usageView {
 			row.Note = m.Tip
 			v.Marks = append(v.Marks, m)
 		}
-		v.Rows = append(v.Rows, row)
+		if shown(t) {
+			v.Rows = append(v.Rows, row)
+		}
 	}
 	v.Keyed = len(v.Marks) > 0
 	return v

@@ -114,12 +114,21 @@ there a race here? answer yes or no". A retry after a miss is shown the answer i
 
 A failed attempt is retried on each backend named in `retry`, in order. The same name
 may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common case: a
-second try with the same model, told what went wrong. How the retry starts depends on
-how the attempt failed.
+second try with the same model, told what went wrong. A retry on a backend other than
+the first attempt's drops the model and effort named or routed for that first backend,
+and its record carries no `routed_by`. How the retry starts depends on how the attempt
+failed.
 
 With retrieval enabled, a same-scope retry after a failed gate searches again using
 bounded failure evidence and the first attempt's pinned knowledge version. A change
-of backend, model or retrieval scope is refused rather than silently repinned.
+of backend, model or retrieval scope is refused rather than silently repinned: a spec
+or task with retrieval on whose `retry` names a backend other than the task's is refused
+when the batch starts. When an attempt reaches its usage limit, or the first attempt or a
+retry would move to the partner because the backend's limit is remembered, the task ends
+there (status `fail`, its error saying the switch to the partner was skipped because
+retrieval is bound to the task's backend) and nothing runs on the partner. A retry after required
+retrieval failed before anything was pinned (the control service was unreachable, say)
+searches afresh; once a pin is recorded, every retry honours it.
 
 | Previous attempt | Next attempt |
 |---|---|
@@ -270,8 +279,9 @@ worktree only on proof that its work is merged:
   is also recognised when the patch id of the task's whole diff, whitespace included but
   line numbers ignored, exactly matches one commit on that branch since their merge base.
   The comparison checks fewer than 2000 non-merge commits; if it reaches that bound, or
-  cannot prove an exact match, the worktree stays. Git older than 2.40 does not support
-  `patch-id --verbatim` and keeps these worktrees. With `--apply`, hrn deletes the task's
+  cannot prove an exact match, the worktree stays. The branch's patch ids are read once per
+  merge base in a run, streamed from `git log` so large binaries are not held in memory.
+  Git older than 2.40 does not support `patch-id --verbatim` and keeps these worktrees. With `--apply`, hrn deletes the task's
   branch with its worktree, including its own commits and messages; the change itself is
   on the default branch.
 
