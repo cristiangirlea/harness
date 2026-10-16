@@ -38,7 +38,7 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 		return nil, fmt.Errorf("HRN_SERVER_URL and %s (at least 32 characters) are required", credentialEnv)
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.ForceQuery ||
+	if err != nil || parsed == nil || parsed.Hostname() == "" || parsed.User != nil || parsed.ForceQuery ||
 		parsed.RawQuery != "" || parsed.Opaque != "" || parsed.RawPath != "" || strings.Contains(raw, "#") ||
 		parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 		return nil, errors.New("HRN_SERVER_URL must be an origin without credentials, path, query or fragment")
@@ -53,11 +53,7 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 		if parsed.Scheme != "https" {
 			return nil, errors.New("HRN_SERVER_CA_FILE requires HTTPS")
 		}
-		info, err := os.Stat(caFile)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
-			return nil, errors.New("HRN_SERVER_CA_FILE must name a regular PEM CA file of at most 1 MiB")
-		}
-		pem, err := os.ReadFile(caFile)
+		pem, err := readCAFile(caFile)
 		if err != nil {
 			return nil, err
 		}
@@ -66,11 +62,11 @@ func newFromCredentialEnv(credentialEnv string) (*Client, error) {
 			pool = x509.NewCertPool()
 		}
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, errors.New("remote CA file contains no certificates")
+			return nil, errors.New("HRN_SERVER_CA_FILE contains no certificates")
 		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
-	return &Client{origin: strings.TrimRight(raw, "/"), token: token,
+	return &Client{origin: (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host}).String(), token: token,
 		http: &http.Client{Transport: transport, Timeout: 20 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
@@ -132,8 +128,12 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 				}
 			} else {
 				failures = 0
-				after, err = ReadEvents(response.Body, after, out)
+				var terminal bool
+				after, terminal, err = readEvents(response.Body, after, out, true)
 				response.Body.Close()
+				if terminal {
+					return nil
+				}
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -164,10 +164,41 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 }
 
 func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
+	after, _, err := readEvents(input, after, out, false)
+	return after, err
+}
+
+// terminalEvent follows the State constants in server/platform/types.go.
+// queue.go and recovery.go also emit state transitions in details.state.
+func terminalEvent(kind, data string) bool {
+	state := kind
+	if kind == "admission_timeout" || kind == "recovery_resolved" {
+		var event struct {
+			Details struct {
+				State string `json:"state"`
+			} `json:"details"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return false
+		}
+		state = event.Details.State
+	}
+	switch state {
+	case "succeeded", "failed", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+// readEvents prints the events after the cursor and reports whether one ended the job; with
+// stop it returns at that event, as a watch does, otherwise it reads to the end.
+func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, bool, error) {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	var currentID int64
-	var data string
+	var kind, data string
+	var terminal bool
 	emit := func() error {
 		if data == "" {
 			return nil
@@ -185,23 +216,29 @@ func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 			return fmt.Errorf("%w: %w", ErrEventOutput, err)
 		}
 		after = currentID
+		terminal = terminalEvent(kind, data)
 		return nil
 	}
 	for scanner.Scan() {
 		line := strings.TrimSuffix(scanner.Text(), "\r")
 		if line == "" {
 			if err := emit(); err != nil {
-				return after, err
+				return after, false, err
 			}
-			currentID, data = 0, ""
+			if terminal && stop {
+				return after, true, nil
+			}
+			currentID, kind, data = 0, "", ""
 			continue
 		}
 		if value, ok := strings.CutPrefix(line, "id: "); ok {
 			id, err := strconv.ParseInt(value, 10, 64)
 			if err != nil || id < 0 {
-				return after, fmt.Errorf("%w: invalid ID", ErrMalformedEvent)
+				return after, false, fmt.Errorf("%w: invalid ID", ErrMalformedEvent)
 			}
 			currentID = id
+		} else if value, ok := strings.CutPrefix(line, "event: "); ok {
+			kind = value
 		} else if value, ok := strings.CutPrefix(line, "data: "); ok {
 			if data != "" {
 				data += "\n"
@@ -211,16 +248,16 @@ func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
-			return after, fmt.Errorf("event line exceeds 1 MiB limit: %w", err)
+			return after, false, fmt.Errorf("event line exceeds 1 MiB limit: %w", err)
 		}
-		return after, err
+		return after, false, err
 	}
 	if data != "" {
 		if err := emit(); err != nil {
-			return after, err
+			return after, false, err
 		}
 	}
-	return after, nil
+	return after, terminal, nil
 }
 
 // HTTPError omits untrusted error bodies, which could echo credentials.

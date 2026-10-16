@@ -543,8 +543,12 @@ func TestRunContinueHandsTheConversationToAnotherBackend(t *testing.T) {
 }
 
 func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T) {
-	for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
+	for _, tc := range []struct {
+		tokens  int64
+		handoff bool
+	}{{0, false}, {149999, false}, {150000, false}, {150001, false}, {285000, false}, {285000, true}} {
+		n := tc.tokens
+		t.Run(fmt.Sprintf("context=%d/handoff=%v", n, tc.handoff), func(t *testing.T) {
 			dir := t.TempDir()
 			s := connect(t, dir)
 			w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir})
@@ -554,14 +558,35 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 			if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub-1"}`), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			backend := "stub"
+			if tc.handoff {
+				backend = "stub-ask"
+			}
 			if err := w.Close(agent.Result{Backend: "stub", Status: agent.StatusOK, ContextTokens: n}); err != nil {
 				t.Fatal(err)
 			}
-			r := s.call(t, "run", `{"prompt":"again","backend":"stub","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)
+			r := s.call(t, "run", `{"prompt":"again","backend":"`+backend+`","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)
 			if r.IsError {
 				t.Fatalf("continuation refused: %s", r.Text())
 			}
-			if n > 150000 {
+			events, err := runlog.Events(r.StructuredContent.(map[string]any)["run_id"].(string))
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, e := range events {
+				if e.Kind == agent.EventInfo && strings.Contains(e.Text, "short hand-over") {
+					count++
+				}
+			}
+			want := 0
+			if n > 150000 && !tc.handoff {
+				want = 1
+			}
+			if count != want {
+				t.Errorf("recorded warnings = %d, want %d", count, want)
+			}
+			if n > 150000 && !tc.handoff {
 				for _, want := range []string{"warning:", w.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
 					if !strings.Contains(r.Text(), want) {
 						t.Errorf("answer lacks %q: %s", want, r.Text())

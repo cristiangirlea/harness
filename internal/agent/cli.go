@@ -44,6 +44,11 @@ type CLIBackend struct {
 	stopWhen func(*Result) bool
 	// finalize runs after exit with all of stdout, for single-JSON outputs.
 	finalize func(stdout []byte, emit func(Event), res *Result)
+	// end, when set, runs once the stream has ended and the CLI exited clean,
+	// for a parser whose last line left something only the end of the
+	// stream can settle (an error line no later line resolved). errored says
+	// whether the stream wrote an error event, so the step does not repeat one.
+	end func(emit func(Event), res *Result, errored bool)
 	// forks is set when args honours Task.ForkSession and parse records
 	// Result.Session.
 	forks bool
@@ -263,6 +268,11 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if c.newParse != nil {
 		parse = c.newParse()
 	}
+	var errored bool
+	parseEmit := func(e Event) {
+		errored = errored || e.Kind == EventError
+		emit(e)
+	}
 	for sc.Scan() {
 		line := sc.Bytes()
 		if c.finalize != nil {
@@ -270,7 +280,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 			continue
 		}
 		if parse != nil {
-			parsed := parse(line, emit, &res)
+			parsed := parse(line, parseEmit, &res)
 			if c.stopWhen != nil && c.stopWhen(&res) {
 				cancel()
 				stopErr := stopCLITree(tree, errors.New(res.Error))
@@ -324,8 +334,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 			status = res.Status
 		}
 		return fail(status, errors.New(lastLines(msg, 20)))
-	case res.Status == "":
-		res.Status = StatusOK
+	default:
+		if c.end != nil {
+			c.end(emit, &res, errored)
+		}
+		if res.Status == "" {
+			res.Status = StatusOK
+		}
 	}
 	return finish(&res, started)
 }

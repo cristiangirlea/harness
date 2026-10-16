@@ -398,7 +398,8 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	}}})
 	// Recorded as hrn records a run's directory: in long names, where the
 	// temp dir can be spelt in short ones (the Windows runner's is).
-	dir, err := filepath.EvalSymlinks(t.TempDir())
+	rawDir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(rawDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +412,7 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	}
 	h := openHarness(t, nil)
 	h.next(t, "hello")
-	req := start(dir, "fake-exec")
+	req := start(rawDir, "fake-exec")
 	req["task"].(map[string]any)["continue_run_id"] = prev.ID()
 	h.send(t, req)
 	msg := h.next(t, "accepted")
@@ -422,12 +423,92 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	h.next(t, "result")
 	h.exit(t, 0)
 	rec, err := runlog.Load(msg["run_id"].(string))
-	if err != nil || rec.Continues != prev.ID() {
+	if err != nil || rec.Continues != prev.ID() || rec.Task.Dir != dir {
 		t.Fatalf("bad continuation record: %+v %v", rec, err)
 	}
 }
 
 type forkingFake struct{ fakeBackend }
+
+func TestContinuationWarnsInAcceptedNotesAndRecordsOneInfoEventOnlyAboveTheThreshold(t *testing.T) {
+	for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			name := registerFake(t, func(context.Context, agent.Task, func(agent.Event)) agent.Result {
+				return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
+			})
+			rawDir := t.TempDir()
+			dir, err := filepath.EvalSymlinks(rawDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prev, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(prev.Dir(), "messages.json"), []byte(`{"model":"fake"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := prev.Close(agent.Result{Backend: name, Status: agent.StatusOK, ContextTokens: n}); err != nil {
+				t.Fatal(err)
+			}
+			h := openHarness(t, nil)
+			h.next(t, "hello")
+			req := start(rawDir, name)
+			req["task"].(map[string]any)["continue_run_id"] = prev.ID()
+			h.send(t, req)
+			accepted := h.next(t, "accepted")
+			warning := ""
+			for _, note := range accepted["notes"].([]any) {
+				if strings.Contains(note.(string), "short hand-over") {
+					if warning != "" {
+						t.Error("warning repeated in accepted notes")
+					}
+					warning = note.(string)
+				}
+			}
+			if n > 150000 {
+				for _, want := range []string{"warning:", prev.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
+					if !strings.Contains(warning, want) {
+						t.Errorf("accepted warning lacks %q: %s", want, warning)
+					}
+				}
+			} else if warning != "" {
+				t.Errorf("unneeded accepted warning: %s", warning)
+			}
+			// Apply emits the plan notes followed by the optional warning.
+			h.next(t, "event")
+			if warning != "" {
+				msg := h.next(t, "event")
+				e := msg["event"].(map[string]any)
+				if e["kind"] != string(agent.EventInfo) || e["text"] != warning {
+					t.Errorf("warning event = %+v", e)
+				}
+			}
+			h.next(t, "result")
+			h.exit(t, 0)
+			events, err := runlog.Events(accepted["run_id"].(string))
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, e := range events {
+				if e.Kind == agent.EventInfo && strings.Contains(e.Text, "short hand-over") {
+					count++
+					if e.Text != warning {
+						t.Errorf("record warning differs from accepted notes: %s", e.Text)
+					}
+				}
+			}
+			want := 0
+			if n > 150000 {
+				want = 1
+			}
+			if count != want {
+				t.Errorf("recorded warnings = %d, want %d", count, want)
+			}
+		})
+	}
+}
 
 func (forkingFake) ForksSessions() bool { return true }
 

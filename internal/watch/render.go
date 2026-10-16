@@ -332,9 +332,10 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 
 type indexPage struct {
 	page
-	Lists lists
-	Local bool        // seen from this computer, not a phone on the network
-	Phone []phoneLink // where a phone opens it, with hrn watch --lan
+	Backends backendCard
+	Lists    lists
+	Local    bool        // seen from this computer, not a phone on the network
+	Phone    []phoneLink // where a phone opens it, with hrn watch --lan
 }
 
 // phoneLink is one network address of the page, with a QR code of it to scan.
@@ -534,6 +535,7 @@ type attemptView struct {
 
 type gateView struct {
 	Key, Command, Exit, Class, Took string
+	Title                           string // the badge's full text, when Exit is a short form of it
 	Output, More                    string
 }
 
@@ -586,6 +588,14 @@ func batchBodyOf(res batch.Result, v viewer) batchBody {
 				gv := gateView{Key: fmt.Sprintf("%s/%d/%d", t.ID, i+1, j+1), Command: g.Command, Exit: fmt.Sprint(g.ExitCode), Took: short(g.Duration)}
 				gv.Class = "ok"
 				switch {
+				case g.Killed == batch.KilledTimeout:
+					// The badge says why, so a suite the limit killed is not
+					// taken for failing code, but in a few words: badges never
+					// wrap. The full text, as the batch tool prints it, is the
+					// title.
+					gv.Exit, gv.Class, gv.Title = fmt.Sprintf("killed · gate_timeout %s", g.Timeout), "bad", g.Outcome()
+				case g.Killed != "":
+					gv.Exit, gv.Class = g.Outcome(), "bad"
 				case g.ExitCode == -1:
 					gv.Exit, gv.Class = "killed", "bad"
 				case g.ExitCode != 0:

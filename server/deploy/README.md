@@ -34,9 +34,15 @@ in that tenant's namespace:
   scaler combines bearer and TLS authentication. Do not copy the control
   server private key into a tenant namespace.
 
+`secrets.caName` is required. The worker always mounts that Secret at
+`/etc/hrn-control-ca` and sets `SSL_CERT_FILE` to its `ca.crt` file.
+
 Use distinct tokens for operator, tenant, project worker, and scaler. Never
 place token values in Helm values or source control. The control service
-supports TLS by setting both `HRN_TLS_CERT_FILE` and `HRN_TLS_KEY_FILE`.
+requires both `HRN_TLS_CERT_FILE` and `HRN_TLS_KEY_FILE` unless `HRN_LISTEN`
+uses a loopback IP literal (`127.0.0.0/8` or `::1`). Host names (including
+`localhost`) and wildcard addresses require TLS. The control chart binds
+`0.0.0.0:8443` with both TLS files set.
 The included control chart installs it in `harness-system` with Pod label
 `app.kubernetes.io/name=hrn-control`, a Service reachable on the configured
 TLS port, and network ingress from tenant workers and KEDA. The project chart
@@ -47,6 +53,9 @@ namespace is scoped to the named project.
 Build the development image from the repository root:
 
     docker build -f server/Dockerfile -t hrn-durable-fixture:local .
+
+The image downloads server modules before copying the remaining server sources,
+so server source changes can reuse the dependency download layer.
 
 The chart requires an immutable image digest. In a disposable single-node
 k3d cluster, the local image can be imported and aliased by digest in
@@ -64,7 +73,8 @@ other namespace. Example render validation:
     python -m pip install PyYAML==6.0.3
     python server/deploy/verify_charts.py
 
-`HELM_BIN` can point to a Helm 4.3.0 binary. The verifier runs Helm lint,
+`HELM_BIN` can point to a Helm 4.3.0 binary. The verifier checks the module
+download layer and unconditional CA wiring, runs Helm lint,
 renders all three charts, checks scaling, storage, isolation, credential references,
 and rejects unsafe values. It does not query a Kubernetes API or prove KEDA
 activation. A live disposable-cluster test must observe 0 -> 1 -> 0 replicas,

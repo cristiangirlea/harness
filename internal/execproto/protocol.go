@@ -147,6 +147,9 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	task.RunDir = rec.Dir()
 	w.attempt, w.runID = req.AttemptID, rec.ID()
 	notes := append([]string{}, plan.Notes...)
+	if warning := plan.ContextWarning(); warning != "" {
+		notes = append(notes, warning)
+	}
 	if !w.write("accepted", map[string]any{
 		"requested": map[string]any{"backend": t.Backend, "model": task.Model, "mode": t.Mode, "effort": t.Effort},
 		"continues": t.ContinueRunID, "notes": notes,

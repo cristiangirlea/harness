@@ -707,17 +707,40 @@ order they are worth taking:
       results (purpose to backend, model and effort), applied when a run names none and
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
       local models once a hrn-evals suite has measured them (the eval #224 asks for). Done:
-      PR #329, 2026-10-14. The first table: hrn-evals eval `b123c` (six tasks, four codex
-      variants, one repeat), five rows, all Luna since codex reports no cost data and the
-      rules then take the lower effort; recorded in hrn-evals PR #11
-      (`results/2026-10-14-routing.md`). The claude rows and three repetitions follow the
-      limit reset of 2026-10-18, on the owner's yes.
+      PR #329, 2026-10-14. The table in force: hrn-evals eval `f353a` of 2026-10-15 (six tasks,
+      Sol and Sonnet at medium, Luna and Haiku at low, three repeats, 64 of 72 passed): Sol for
+      debug, implement and research, Luna low for test and unknown; recorded in hrn-evals
+      PR #12 (`results/2026-10-15-routing.md`), after the codex-only first table of eval
+      `b123c` (PR #11). Claude never wins a tie because codex stores no cost data and the
+      eval table read that as zero until #378 (PR #383) priced codex at list price too; the
+      next hrn-evals run ranks the two on the same footing.
     - [#298](https://github.com/cristiangirlea/harness/issues/298): a header, rules and a
       CI-verified index for the scripts agents write twice, kept under `scripts/`. Done:
       PR #317, 2026-10-14.
     The gate side lives in adanext-exec (output shaping, and the hint when a kept script covers
     a command: adanext-exec #1 and #2); the rule for claiming a saving and the page of where
     each model loses live in hrn-evals (#3 and #4).
+    Second round (the owner, 2026-10-16: follow the more mature patterns where they beat ours),
+    each its own PR, in this order:
+    - [#436](https://github.com/cristiangirlea/harness/issues/436): adversarial probes and a fuzz
+      target for the summary invariants, before shaping runs by default.
+    - [#437](https://github.com/cristiangirlea/harness/issues/437): a bounded originals store
+      that refuses rather than evicts, and `read_original` by line range or JSON pointer;
+      in the same PR as [#337](https://github.com/cristiangirlea/harness/issues/337), which
+      touches the same lookup (originals across a continuation).
+    - [#336](https://github.com/cristiangirlea/harness/issues/336): JSON and tabular summaries.
+    - [#435](https://github.com/cristiangirlea/harness/issues/435): hrn owns the terminal for
+      every backend, so shaped output reaches claude, codex and agy runs too.
+    - [#439](https://github.com/cristiangirlea/harness/issues/439): an advisory Claude Code hook
+      that names a kept script covering a command, until the gate does it (adanext-exec #2).
+    - [#438](https://github.com/cristiangirlea/harness/issues/438): measure what tool definitions
+      cost per api turn, and trim them only if it pays.
+    - hrn-evals #30: a routing suite of real tasks, two or more per purpose, with multi-step
+      requirements, so the table rests on more than ten small fixtures.
+    - [#441](https://github.com/cristiangirlea/harness/issues/441) (the owner, 2026-10-16): comments
+      (whole-line comments are 19% of non-test Go bytes, paid by every agent that reads a
+      file). The rule and a comment check with a baseline land before every slice above, so
+      new code stops growing them; the package-by-package cleanup lands after all of them.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -726,7 +749,37 @@ batch show answer the questions") until the owner asked for a live view on 2026-
 neither of them follows a run while it happens.
 
 ## Decisions log
-
+- 2026-10-15: a gate killed by gate_timeout says so (#395, PR #399). A gate hrn killed at its
+  per-gate limit, or at a cancellation, was `exited -1` everywhere, and a retry hunted its
+  output for a failing test; five batches on 2026-10-14 failed that way while the code was
+  fine. Decided: `GateResult.killed` ("timeout" with the `timeout` that applied, or "canceled"),
+  additive, and one `Outcome()` every printer uses: `killed after 15m0s (gate_timeout; set
+  "gate_timeout" in the spec to allow more)` or `canceled`. The retry prompt says the gate did
+  not fail and that only the operator can raise the limit. Whether to skip the retry after a
+  timeout is left to the owner in #395; the review's smaller follow-ups are #396.
+- 2026-10-15: a stream that ends on a codex reconnect notice loses its usage (#348, PR #393).
+  A `turn.completed` that reported usage, then a notice, then the end of the stream left the
+  usage `reported` although the last turn's tokens never were. Decided: the end-of-stream step
+  marks it `missing` as `turn.failed` does, keeps the counters so far and clears the estimate.
+- 2026-10-15: a stream that ends on a codex reconnect notice writes an error event (#347, PR
+  #392). With exit 0 `fail()` writes none, so the transcript held only the dim info line.
+  Decided: `CLIBackend.end`, an optional step run once on a clean exit after the stream, told
+  whether the stream wrote an error event so it never repeats one (a `turn.failed` after the
+  notice already reports it); codex's reports the pending notice. A generic rule in the run
+  loop was dropped: claude, gemini and agy also end in error on a clean exit without an event,
+  and their transcripts were not this slice's.
+- 2026-10-15: list-price estimates for the codex models (#378, PR #383). A second price
+  table (OpenAI's list prices, source and date in the file) and an estimate computed in
+  the codex stream after each turn with reported usage, cleared on every missing path;
+  `cost_is_estimate` and the `~` mark as for the api backend. Every cost hrn shows is a
+  list-price estimate, never a bill. The first attempt wired it through `finalize`, which
+  switches a CLI's stream parsing off: the review caught it, and a Run-level test with a
+  helper-process stream now covers the wiring.
+- 2026-10-14: a reconnect notice keeps the error before it (#349, PR #350). #343 stored the notice
+  as the pending error even over a usage limit, and the completed turn cleared it. Decided: the
+  notice is stored only when nothing else is, so an earlier error stays the run's error and its
+  `limited` status.
+- 2026-10-14: A Backends card on hrn watch (#346, PR #373). Every viewer sees backend availability, preferences and remembered limits; loopback and Access-verified public viewers can save preferences using a fresh startup key. Changes atomically replace backends.json for later runs, while LAN viewers remain read-only and running MCP servers keep their backend enum until their host restarts them.
 - 2026-10-14: codex usage totals cannot wrap (#152, PR #370). Check each turn's
   counters before adding them and mark usage missing on overflow, retaining the
   last representable totals. Later turns cannot restore reported usage.
@@ -2254,3 +2307,10 @@ neither of them follows a run while it happens.
   hrn-evals eval shows it pays, and that run spends plan quota, so it waits for the owner's
   word, with the suite as a slice of its own in hrn-evals. With the flag off the tool schema
   and every byte of behaviour are as before.
+- 2026-10-15: hrn update (#377, PR #389). `hrn update` replaces every hrn copy on this
+  computer (the running one, PATH, Go's bin, `%LOCALAPPDATA%\hrn`) with the newest release
+  (checksum verified), a `go install` of `--ref` or a `--file`, renaming each aside as
+  `hrn-<build>-<stamp>.prev` first because Windows allows that and not an overwrite, and
+  restarts a running `hrn watch` with its arguments while `hrn mcp` servers are only listed.
+  The process list is read with the standard library alone: Toolhelp and the PEB on Windows,
+  /proc on Linux, ps on macOS; `--rollback` swaps the newest backup back.

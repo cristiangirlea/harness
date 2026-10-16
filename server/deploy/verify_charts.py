@@ -1,4 +1,4 @@
-"""Validate the rendered development charts. Requires Helm 4.3.0 and PyYAML 6.0.3."""
+"""Validate development image layering and charts. Requires Helm 4.3.0 and PyYAML 6.0.3."""
 import os
 import subprocess
 import sys
@@ -49,6 +49,12 @@ def render(chart, namespace, values):
 
 
 def main():
+    worker_template = (ROOT / "project-worker/templates/resources.yaml").read_text()
+    assert "if .Values.secrets.caName" not in worker_template, "required CA must be unconditional"
+    dockerfile = (ROOT.parent.parent / "Dockerfile").read_text().splitlines()
+    assert dockerfile.index("COPY server/go.mod server/go.sum ./server/") < dockerfile.index(
+        "RUN cd server && go mod download") < dockerfile.index("COPY server/ ./server/"), (
+        "download server modules before copying server sources")
     helm("lint", str(ROOT / "tenant-namespace"), *set_args({"tenant.id": TENANT}))
     helm("lint", str(ROOT / "project-worker"), "--namespace",
          NAMESPACE, *set_args(SETS))
@@ -113,6 +119,9 @@ def main():
     env = {item["name"]: item for item in pod["containers"][0]["env"]}
     assert env["HRN_WORKER_TOKEN"]["valueFrom"]["secretKeyRef"]["name"] == "worker-token"
     assert env["SSL_CERT_FILE"]["value"] == "/etc/hrn-control-ca/ca.crt"
+    mounts = {item["name"]: item for item in pod["containers"][0]["volumeMounts"]}
+    assert mounts["control-ca"]["mountPath"] == "/etc/hrn-control-ca"
+    assert mounts["control-ca"]["readOnly"] is True
     assert not any("DATABASE" in name or "SCALER" in name for name in env)
     assert pod["volumes"][1]["secret"]["secretName"] == "control-ca"
     assert pod["volumes"][1]["secret"]["items"][0]["key"] == "ca.crt"
@@ -143,6 +152,7 @@ def main():
         (NAMESPACE, {**SETS, "image.ref": "hrn:latest"}),
         (NAMESPACE, {**SETS, "control.url": "http://hrn-control:8088"}),
         (NAMESPACE, {**SETS, "secrets.workerName": ""}),
+        (NAMESPACE, {**SETS, "secrets.caName": ""}),
     ]
     for namespace, values in bad:
         helm("template", "fixture", str(ROOT / "project-worker"),

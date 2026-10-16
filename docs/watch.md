@@ -15,6 +15,8 @@ hrn bot                    # Ada, the bot, in a small window: what hrn is doing,
 ```
 
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
+`hrn update` restarts a running watch on the new binary with the same flags (see
+[hrn update](commands.md#hrn-update)).
 Each row leads with the repository the work is in (its workspace folder's name; for a batch
 task's worktree, `<repo>/.hrn/worktrees/<task>` or a slot, `<repo>/.hrn/slots/<n>`, the folder
 above `.hrn`) and, for a run a
@@ -42,7 +44,9 @@ figures, nothing for codex and gemini, and only once the run has ended.
 Each run on the index also says what it was for (review, debug, implement, refactor, test,
 research, plan, ops or unknown), from `internal/purpose`'s keyword rules on its prompt's
 first paragraph, or its second when the first matches no rule, with leading `Label: value`
-lines skipped, unless the run declared one; hover the word for the rule that decided it
+lines skipped for an anchored instruction before trying the paragraph as written
+and then with labels skipped as a fallback, unless the run declared one;
+hover the word for the rule that decided it
 (or `declared` for an explicit purpose or valid leading header). Above the batches, a card,
 "What the runs were for", sums up the newest 50 runs, the ones listed below, not all time:
 one row per purpose that occurs, then "all", each with its runs, how many are running,
@@ -92,7 +96,8 @@ served by hrn, no fonts), follows the system's light or dark theme, and on a pho
 each run and batch as a small card instead of a table. It cannot start, stop or merge
 anything: a request other than GET or HEAD must carry hrn watch's key in
 `X-Hrn-Watch-Key`, from this computer or the network alike (a custom header is also the
-CSRF check), and as no action exists yet, hrn watch sets no key and refuses them all.
+CSRF check). Each start issues a fresh key, shared only with viewers allowed to change
+backend preferences, as described below.
 
 It listens on a loopback address and refuses any other `--addr`, and it answers only
 requests whose Host header names it, so a DNS name rebound to 127.0.0.1 cannot read it
@@ -117,6 +122,29 @@ codes nor the hints meant for this computer.
 second or more, and ends with the summary line once the run's result is saved. Ctrl+C
 stops following and leaves the run alone. A run killed before it saved its result never
 ends, on the page or in the terminal: hrn cannot tell it from a long step.
+
+### Backends
+
+The index's Backends card, above "What the runs were for", shows every registered
+backend to every viewer: installed or not, enabled or disabled, the configured
+default (or "chosen: X" when none is configured), and any remembered limit's end
+time. Unreadable or malformed preferences show a single notice without a path.
+Reload the index to refresh the card.
+
+Loopback viewers can change the enabled checkboxes and default radio buttons,
+then click Apply. In public mode every Cloudflare Access-verified viewer can do
+the same. LAN viewers see the state only, without controls or the write key, and so
+does any viewer whose request carries a forwarding header (`Forwarded`, `X-Forwarded-For`,
+`Cf-Connecting-Ip`): a proxy in front of watch belongs in public mode, where Access says
+who the viewer is.
+Apply uses a same-origin request carrying the startup key; it writes
+`$HRN_HOME/backends.json` atomically and reloads the index. Runs started afterwards
+follow those preferences. Choose "No configured default" to let hrn choose;
+leaving all backends unchecked with no default restores all backends. A configured
+default must be enabled, and unknown backend names are refused.
+
+Running MCP servers keep their backend enum until their host restarts them;
+the handler still refuses a disabled backend.
 
 ### Behind Cloudflare Access
 
@@ -213,16 +241,30 @@ the microphone, and the recordings are that person's voice.
   quiet, or good.
 - **Just record me**: one long recording for talking, to someone or to ChatGPT's voice mode,
   with headphones, so that only the speaker's voice reaches the microphone. It is saved in
-  parts of five minutes and when it stops.
+  parts of five minutes and when it stops. A failed save keeps the audio for another try;
+  the warning clears once that part is saved.
 
 The page asks for the microphone as it is (echo cancellation, noise suppression and
 automatic gain off, one channel) and says so if the browser filters it anyway, as it may
 while another tab uses the microphone. Takes are 16-bit mono WAV at the browser's audio rate (usually 48 kHz).
+Record starts a fresh capture; Stop includes the last partial audio block, releases the
+microphone and suspends the audio context. Playback wakes the context without opening the
+microphone; the next Record opens it again. Switching modes stops the current recording
+and cancels one still opening the microphone. Keep and Retake wait until opening finishes.
 They are saved by the browser into a folder the person picks (`0001.wav`, … with
 `metadata.csv` as `id|text`, and `talk-<time>-<part>.wav`), never sent to hrn watch, which
 only serves the page; picking the same folder again carries on at the first line not kept.
+Recording shortcuts wait while the folder loads. Unrecognised metadata rows (such as a
+header or notes) are preserved when saving; unreadable metadata is reported rather than
+overwritten.
 A browser without folder access (Firefox) downloads each take instead, named by its line.
+**Download metadata.csv** downloads the text for the lines kept in this page session;
+save it alongside those WAV files. Download it before closing or reloading the page.
 A line's number never changes, so takes from different sessions line up.
+
+The recorder's browser-API unit tests run locally with
+`node --test internal/watch/testdata/voice.test.cjs` (Node.js, no browser download).
+They use mocked audio and folder APIs; they do not replace a real browser microphone check.
 
 ## Secret masking
 

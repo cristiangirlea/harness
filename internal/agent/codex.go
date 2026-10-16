@@ -50,6 +50,7 @@ func NewCodexBackend() *CLIBackend {
 			return append(a, "-")
 		},
 		parse:      parseCodexStream,
+		end:        codexStreamEnded,
 		forks:      true,
 		mapsEffort: true,
 		mapsModes:  []Mode{ModeReadOnly, ModeAuto, ModeYolo},
@@ -153,6 +154,7 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			} {
 				if counter[0] < 0 || counter[1] < 0 || counter[1] > math.MaxInt64-counter[0] {
 					res.Usage.Status = "missing"
+					estimateCodexCost(res)
 					return true
 				}
 			}
@@ -160,18 +162,24 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			res.CacheRead += *l.Usage.CachedInputTokens
 			res.OutputTokens += *l.Usage.OutputTokens
 		}
+		estimateCodexCost(res)
 	case "error", "turn.failed":
 		msg := cmp.Or(l.Message, l.Error.Message)
 		if l.Type == "error" && codexReconnecting(msg) {
 			// The CLI lost its model stream and retries by itself; the turn
 			// goes on. The notice is shown as information and stands as the
 			// run's error only until turn.completed, so a stream that ends on
-			// it still says why. The usage the turn reports later is whole.
+			// it still says why. An error already recorded (a usage limit)
+			// stays: it is what the reader and the limit check need. The
+			// usage the turn reports later is whole.
 			emit(Event{Time: now, Kind: EventInfo, Text: msg})
-			res.Status, res.Error = StatusError, msg
+			if res.Error == "" || codexReconnecting(res.Error) {
+				res.Status, res.Error = StatusError, msg
+			}
 			break
 		}
 		res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
+		estimateCodexCost(res)
 		if msg == "" || msg == res.Error {
 			// A turn.failed after the error line that said why: keep that text,
 			// which is what a reader and the limit check need. A reconnect
@@ -185,6 +193,24 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 		res.Status, res.Error = StatusError, msg
 	}
 	return true
+}
+
+// codexStreamEnded runs when the CLI exited clean. A stream that ends on a
+// pending reconnect notice never completed its turn: parseCodexStream showed
+// the notice as information, and a clean exit writes no error event, so the
+// failure is reported here with the notice as its text, unless a turn.failed
+// after the notice already reported it. The turn's usage was never reported
+// either, so what an earlier turn reported is marked missing, as turn.failed
+// marks it; the counters so far are kept.
+func codexStreamEnded(emit func(Event), res *Result, errored bool) {
+	if res.Status != StatusError || !codexReconnecting(res.Error) {
+		return
+	}
+	res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
+	estimateCodexCost(res)
+	if !errored {
+		emit(Event{Time: time.Now(), Kind: EventError, Text: res.Error})
+	}
 }
 
 // codexReconnecting reports whether a codex error line is the CLI saying it is

@@ -8,6 +8,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,8 +24,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/gitretry"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/purpose"
@@ -151,9 +154,52 @@ type Attempt struct {
 
 type GateResult struct {
 	Command  string        `json:"command"`
-	ExitCode int           `json:"exit_code"` // -1 when killed (timeout or cancellation)
+	ExitCode int           `json:"exit_code"` // -1 when killed: Killed says why
 	Output   string        `json:"output"`    // last part of combined stdout/stderr
 	Duration time.Duration `json:"duration_ns"`
+	// Killed is why a gate with exit code -1 never finished: KilledTimeout when
+	// hrn's own gate_timeout ran out (Timeout is the limit that applied), or
+	// KilledCanceled when the batch was interrupted. Empty for a gate that
+	// exited on its own, and in records written before the field existed.
+	Killed  string         `json:"killed,omitempty"`
+	Timeout agent.Duration `json:"timeout,omitempty"`
+	// InfrastructureError identifies a shell that could not start its gate.
+	// Such a failure is for the operator, not a code repair by a retry backend.
+	InfrastructureError string `json:"infrastructure_error,omitempty"`
+}
+
+const (
+	KilledTimeout  = "timeout"
+	KilledCanceled = "canceled"
+)
+
+// Outcome says how the gate ended, for every line that reports a failed gate
+// to the operator: "exited 3", or for a killed gate why it was killed and what
+// to do about it, so a timed-out suite is never mistaken for failing code.
+func (g GateResult) Outcome() string {
+	if g.InfrastructureError != "" {
+		return "infrastructure failure: " + g.InfrastructureError
+	}
+	switch g.Killed {
+	case KilledTimeout:
+		return fmt.Sprintf("killed after %s (gate_timeout; set %q in the spec to allow more)", g.Timeout, "gate_timeout")
+	case KilledCanceled:
+		return "canceled"
+	}
+	return fmt.Sprintf("exited %d", g.ExitCode)
+}
+
+// Brief is Outcome for the retry prompt, as the predicate of "The gate command
+// `...` ...": it leaves out the advice to set gate_timeout, which the agent
+// cannot follow and the prompt says is the operator's.
+func (g GateResult) Brief() string {
+	switch g.Killed {
+	case KilledTimeout:
+		return fmt.Sprintf("was killed after %s by gate_timeout", g.Timeout)
+	case KilledCanceled:
+		return "was canceled"
+	}
+	return fmt.Sprintf("exited %d", g.ExitCode)
 }
 
 // Event is progress for a caller to print. Kind is one of start, tool, run,
@@ -266,7 +312,7 @@ func (s *Spec) normalize() error {
 		}
 		seen[t.ID] = true
 		if t.Purpose != "" && !purpose.Valid(t.Purpose) {
-			return fmt.Errorf("task %s: purpose %q: one of %s", t.ID, t.Purpose, strings.Join(purpose.Categories[:len(purpose.Categories)-1], ", "))
+			return fmt.Errorf("task %s: purpose %q: one of %s", t.ID, t.Purpose, strings.Join(purpose.Declarable(), ", "))
 		}
 		if t.Purpose == "" {
 			t.Purpose = purpose.Declared(t.Prompt)
@@ -509,11 +555,18 @@ const (
 		"in this workspace. Carry on from where it stopped rather than starting over.\n"
 	limitLastMessage   = "\nIts last message:\n%s\n%s\n%s\n"
 	gateFailureContext = "\n\n---\n" +
-		"A previous attempt at this task (attempt %d on %s) did not pass. Its changes are\n" +
-		"already applied in this workspace and committed on the current branch. Fix them\n" +
-		"rather than starting over.\n\n" +
-		"The gate command `%s` exited %d. Output (tail):\n" +
+		"A previous attempt at this task (attempt %d on %s) did not pass its gate. Its changes\n" +
+		"are already applied in this workspace and committed on the current branch. Build on\n" +
+		"them rather than starting over.\n\n" +
+		"The gate command `%s` %s. Output (tail):\n" +
 		"%s\n%s\n%s\n"
+	// A killed gate says nothing about the code: the retry is told so, or it
+	// hunts the output for a failing test that is not there.
+	gateTimeoutContext = "\nThe gate did not fail: hrn killed it when its time limit of %s ran out, so its\n" +
+		"output above is incomplete; a failure it shows from before the kill still needs fixing,\n" +
+		"but do not search it for one that is not there. The command must finish within that\n" +
+		"limit; make it faster, or leave it and say so in your answer, since only the operator\n" +
+		"can raise \"gate_timeout\" in the batch spec.\n"
 	runFailureContext = "\n\n---\n" +
 		"A previous attempt on %s ended with %s: %s\n" +
 		"This workspace is a fresh copy; nothing from that attempt is in it.\n"
@@ -538,7 +591,10 @@ func retryContext(attempts []Attempt) (text string, continued bool) {
 	switch g := failedGate(last); {
 	case last.Result.Status == agent.StatusOK && g != nil:
 		f := fence(g.Output)
-		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.ExitCode, f, g.Output, f)
+		text = fmt.Sprintf(gateFailureContext, len(attempts), last.Backend, g.Command, g.Brief(), f, g.Output, f)
+		if g.Killed == KilledTimeout {
+			text += fmt.Sprintf(gateTimeoutContext, g.Timeout)
+		}
 		continued = true
 	case last.Result.Status == agent.StatusLimited:
 		text = fmt.Sprintf(limitContext, len(attempts), last.Backend)
@@ -560,10 +616,10 @@ func retryContext(attempts []Attempt) (text string, continued bool) {
 	return text, continued
 }
 
-// outcomeOf is one attempt's fate in a few words.
+// outcomeOf is one attempt's fate in a few words, for the retry prompt's history.
 func outcomeOf(att Attempt) string {
 	if g := failedGate(att); g != nil {
-		return fmt.Sprintf("(gate `%s` exited %d)", tools.OneLine(g.Command, 60), g.ExitCode)
+		return fmt.Sprintf("(gate `%s` %s)", tools.OneLine(g.Command, 60), g.Brief())
 	}
 	if att.Result.Status != agent.StatusOK {
 		return fmt.Sprintf("(%s: %s)", att.Result.Status, tools.OneLine(att.Result.Error, 80))
@@ -804,6 +860,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			return finish(StatusPass, text)
 		case ctx.Err() != nil:
 			return finish(StatusCanceled, "canceled")
+		}
+		if g := failedGate(out.att); g != nil && g.InfrastructureError != "" {
+			tr.Error = fmt.Sprintf("gate %q: %s", g.Command, g.Outcome())
+			return finish(StatusFail, tr.Error)
 		}
 		if att := out.att; att.Result.Status == agent.StatusLimited {
 			spent[att.Backend] = true
@@ -1175,7 +1235,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			report(att)
 			if gr.ExitCode != 0 {
 				pass = false
-				notify(Event{Task: id, Kind: "gate", Text: fmt.Sprintf("✗ %s (exit %d)", g, gr.ExitCode)})
+				notify(Event{Task: id, Kind: "gate", Text: fmt.Sprintf("✗ %s (%s)", g, gr.Outcome())})
 				break
 			}
 			notify(Event{Task: id, Kind: "gate", Text: "✓ " + g})
@@ -1206,19 +1266,88 @@ func checkExpect(re *regexp.Regexp, final string) GateResult {
 	return gr
 }
 
+var runGateShell = tools.RunShell
+
 func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
 	started := time.Now()
 	// A gate is the operator's own command: it keeps hrn's environment.
-	res, err := tools.RunShell(ctx, dir, command, timeout, nil)
+	res, err := runGateShell(ctx, dir, command, timeout, nil)
+	output, decodedUTF16 := decodeGateOutput(res.Output)
+	res.Output = output
 	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}
 	switch {
 	case err != nil:
 		gr.ExitCode = -1
 		gr.Output = strings.TrimSpace(gr.Output + "\n" + err.Error())
+		if ctx.Err() != nil {
+			// The batch's context had ended before the shell could start:
+			// the same cancellation as below, not a shell that failed.
+			gr.Killed = KilledCanceled
+		} else {
+			gr.InfrastructureError = "shell could not start: " + err.Error()
+		}
+	case gr.ExitCode == -1 && ctx.Err() != nil:
+		// The batch's own context ended and the gate went with it, whatever
+		// the per-gate limit was. A gate that finished just before keeps its
+		// exit code: Killed is only ever set beside -1.
+		gr.Killed = KilledCanceled
+		gr.Output = strings.TrimSpace(gr.Output + "\n[canceled]")
 	case res.TimedOut:
+		gr.Killed, gr.Timeout = KilledTimeout, agent.Duration(timeout)
 		gr.Output = strings.TrimSpace(gr.Output + fmt.Sprintf("\n[timed out after %s]", timeout))
+	case gr.ExitCode != 0 && decodedUTF16:
+		// Launcher diagnostics precede shell output; later mentions can be
+		// ordinary test failures and must not suppress retries.
+		prefix := res.Output[:min(len(res.Output), 1024)]
+		if code := gateHCSError.FindString(prefix); code != "" {
+			gr.InfrastructureError = "WSL launcher: " + code
+		} else if strings.Contains(prefix, "The Windows Subsystem for Linux") {
+			gr.InfrastructureError = "The Windows Subsystem for Linux launcher could not start"
+		}
 	}
 	return gr
+}
+
+var gateHCSError = regexp.MustCompile(`\bHCS_E_[A-Z][A-Z0-9_]*\b`)
+
+// WSL's launcher can write UTF-16 even when stdout is a pipe. Decode at the
+// gate capture boundary, before taking a tail or checking launcher diagnostics.
+func decodeGateOutput(s string) (string, bool) {
+	var order binary.ByteOrder
+	switch {
+	case strings.HasPrefix(s, "\xff\xfe"):
+		order, s = binary.LittleEndian, s[2:]
+	case strings.HasPrefix(s, "\xfe\xff"):
+		order, s = binary.BigEndian, s[2:]
+	default:
+		// Without a BOM, require alternating NUL and non-NUL bytes in
+		// at least two code units, examining up to the first 32 bytes.
+		n := min(len(s)/2, 16)
+		if n < 2 {
+			return s, false
+		}
+		le, be := true, true
+		for i := 0; i < n*2; i += 2 {
+			le = le && s[i] != 0 && s[i+1] == 0
+			be = be && s[i] == 0 && s[i+1] != 0
+		}
+		switch {
+		case le:
+			order = binary.LittleEndian
+		case be:
+			order = binary.BigEndian
+		default:
+			return s, false
+		}
+	}
+	units := make([]uint16, 0, (len(s)+1)/2)
+	for i := 0; i+1 < len(s); i += 2 {
+		units = append(units, order.Uint16([]byte(s[i:i+2])))
+	}
+	if len(s)%2 != 0 {
+		units = append(units, '\ufffd')
+	}
+	return string(utf16.Decode(units)), true
 }
 
 // commitChanges commits everything the agent left in the worktree and returns
@@ -1470,8 +1599,14 @@ func comparablePath(p string) string {
 func addWorktree(ctx context.Context, root string, tr TaskResult, base string) error {
 	worktreeMu.Lock()
 	defer worktreeMu.Unlock()
-	_, err := gitOut(ctx, root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
-	return err
+	// Git may create the branch before failing to read another worktree's
+	// metadata, so this command cannot safely be retried.
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
 
 // stillMade says whether anything a fresh task made outlived a removeWorktree
@@ -1530,7 +1665,7 @@ func removeWorktree(root string, tr TaskResult) error {
 		// remove the directory if nothing is in it, and still delete the branch,
 		// which is all the batch committed.
 		_, _ = gitOut(ctx, root, "worktree", "prune")
-		leftover = removeEmptyDir(tr.Worktree)
+		leftover = RemoveEmptyDir(tr.Worktree)
 	}
 	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
 		if _, err := gitOut(ctx, root, "branch", "-D", tr.Branch); err != nil {
@@ -1540,9 +1675,9 @@ func removeWorktree(root string, tr TaskResult) error {
 	return leftover
 }
 
-// removeEmptyDir removes dir if it is empty and reports it if it is not: files
+// RemoveEmptyDir removes dir if it is empty and reports it if it is not: files
 // in a directory git no longer tracks are in no branch, so they are not deleted.
-func removeEmptyDir(dir string) error {
+func RemoveEmptyDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -1861,8 +1996,11 @@ func Head(ctx context.Context, dir string) (string, error) {
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.CombinedOutput()
+	out, err := gitretry.Output(ctx, func() ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANGUAGE=")
+		return cmd.CombinedOutput()
+	})
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		if text == "" {

@@ -95,20 +95,16 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.workerName | quote }}
                   key: {{ .Values.secrets.workerKey | quote }}
-          {{- if .Values.secrets.caName }}
             - name: SSL_CERT_FILE
               value: /etc/hrn-control-ca/ca.crt
-          {{- end }}
           volumeMounts:
             - name: workspace
               mountPath: /workspace
             - name: tmp
               mountPath: /tmp
-          {{- if .Values.secrets.caName }}
             - name: control-ca
               mountPath: /etc/hrn-control-ca
               readOnly: true
-          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -134,14 +130,12 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
-      {{- if .Values.secrets.caName }}
         - name: control-ca
           secret:
             secretName: {{ .Values.secrets.caName | quote }}
             items:
               - key: {{ .Values.secrets.caKey | quote }}
                 path: ca.crt
-      {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: workspace

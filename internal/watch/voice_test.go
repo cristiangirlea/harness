@@ -6,6 +6,7 @@ import (
 	"html"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +15,18 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 )
+
+func TestVoiceJavaScript(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, node, "--test", "testdata/voice.test.cjs").CombinedOutput(); err != nil {
+		t.Fatalf("voice JavaScript tests: %v\n%s", err, out)
+	}
+}
 
 func agentResultOK(minutes int) agent.Result {
 	return agent.Result{Status: agent.StatusOK, Duration: time.Duration(minutes) * time.Minute}

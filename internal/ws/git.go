@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/gitretry"
 )
 
 // repoVars point git at a repository, index or object store other than the
@@ -51,7 +53,11 @@ func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	out, err := gitCommand(ctx, dir, args...).CombinedOutput()
+	out, err := gitretry.Output(ctx, func() ([]byte, error) {
+		cmd := gitCommand(ctx, dir, args...)
+		cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANGUAGE=")
+		return cmd.CombinedOutput()
+	})
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		if text == "" {
