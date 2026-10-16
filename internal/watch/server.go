@@ -324,13 +324,20 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		if s.opt.Public != nil {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
-			aw := w.(*accessWriter)
+			aw, ok := w.(*accessWriter)
+			if !ok {
+				http.Error(w, "Public watch needs its access log", http.StatusInternalServerError)
+				return
+			}
 			publicHost := strings.TrimPrefix(s.opt.Public.Origin, "https://")
 			if !publicHostMatches(r.Host, publicHost) {
 				aw.reason = "bad host"
 			}
-			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document")
-			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.opt.Public.Origin) {
+			// A top-level page load from elsewhere may skip the Origin check only
+			// when it carries no Origin or `null`; any other Origin is checked.
+			origin := r.Header.Get("Origin")
+			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document") && (origin == "" || origin == "null")
+			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || origin != "" && origin != s.opt.Public.Origin) {
 				aw.reason = "bad origin"
 			}
 			if aw.reason == "" {
