@@ -111,13 +111,16 @@ business, and batch gate commands are not checked, because the operator wrote th
 Gates keep hrn's full environment and execute the code the agent wrote, including
 tests, so that code can use the operator's credentials. hrn's own batch `git status`,
 `git add` and `git commit` neutralise repository config keys that run programs
-(`-c core.hooksPath=<empty temporary directory>`, `-c core.fsmonitor=false`,
-`-c commit.gpgSign=false`, `-c maintenance.auto=false`, `-c gc.auto=0`, and empty
-`filter.<name>.clean`, `filter.<name>.smudge`, `filter.<name>.process` with
-`filter.<name>.required=false` for every configured filter driver), so settings an
-agent writes to the shared repository config (`core.hooksPath`, `core.fsmonitor`,
-filter drivers, `commit.gpgSign` with `gpg.*`, `gc.recentObjectsHook`) cannot make
-that commit run a command. Neither command guard refuses `git config` for those keys,
+(`-c core.hooksPath=<empty temporary directory>`, `-c maintenance.auto=false`,
+`-c gc.auto=0`; `-c core.fsmonitor=false` when the repository config sets
+`core.fsmonitor`; `-c commit.gpgSign=false` when it sets a `gpg.*program` or
+`gpg.ssh.defaultKeyCommand`; and empty `filter.<name>.clean`, `filter.<name>.smudge`,
+`filter.<name>.process` with `filter.<name>.required=false` for every filter driver it
+defines), so settings an agent writes to the shared repository config
+(`core.hooksPath`, `core.fsmonitor`, filter drivers, `gpg.*`, `gc.recentObjectsHook`)
+cannot make that commit run a command. "Repository config" is the local and worktree
+scope (`git config --show-scope`): what the operator's global or system config defines,
+such as the Git LFS filter, still runs, unless the repository config redefines it. Neither command guard refuses `git config` for those keys,
 and the settings remain in the shared config for other git commands, including the
 operator's later commits.
 The agent CLIs run their own shells; the next section is their guard.

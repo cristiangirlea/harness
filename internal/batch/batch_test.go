@@ -269,6 +269,119 @@ func TestCommitChangesDoesNotRunRepositoryHooks(t *testing.T) {
 	}
 }
 
+// The operator's own global config (a Git LFS filter, an fsmonitor, a commit
+// signer) is not the agent's to write, so hrn's commit keeps using it.
+func TestCommitChangesKeepsProgramsFromTheOperatorsGlobalConfig(t *testing.T) {
+	writeScript := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "script.sh")
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.ToSlash(path)
+	}
+	cases := []struct {
+		name      string
+		global    func(t *testing.T, wt string) []string
+		committed string
+	}{
+		{
+			name: "filter.clean",
+			global: func(t *testing.T, wt string) []string {
+				if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return []string{"filter.drv.clean", writeScript(t, "sed s/done/cleaned/\n"), "filter.drv.required", "true"}
+			},
+			committed: "cleaned",
+		},
+		{
+			name: "core.fsmonitor",
+			global: func(t *testing.T, _ string) []string {
+				return []string{"core.fsmonitor", writeScript(t, "")}
+			},
+		},
+		{
+			name: "gpg.program",
+			global: func(t *testing.T, _ string) []string {
+				signer := writeScript(t, "cat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 X\\n' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nx\\n-----END PGP SIGNATURE-----\\n'\n")
+				return []string{"commit.gpgSign", "true", "gpg.program", signer}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			global := filepath.Join(t.TempDir(), "gitconfig")
+			pairs := tc.global(t, wt)
+			for i := 0; i < len(pairs); i += 2 {
+				git(t, wt, "config", "--file", global, pairs[i], pairs[i+1])
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", global)
+			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := commitChanges(wt, "task result")
+			if err != nil || sha == "" {
+				t.Fatalf("commitChanges = %q, %v", sha, err)
+			}
+			want := tc.committed
+			if want == "" {
+				want = "done"
+			}
+			if got := git(t, wt, "show", "HEAD:result.txt"); got != want {
+				t.Errorf("committed result = %q, want %q", got, want)
+			}
+			if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
+				t.Fatalf("global %s did not run during commitChanges: %q, %v", tc.name, data, err)
+			}
+		})
+	}
+}
+
+// An agent that redefines the operator's filter (lfs, say) in the repository
+// config gets neither its own program nor the operator's run by hrn's commit.
+func TestCommitChangesIgnoresARepositoryRedefinitionOfAGlobalFilter(t *testing.T) {
+	dir := initRepo(t)
+	wt := filepath.Join(t.TempDir(), "worktree")
+	git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+	marker := filepath.Join(t.TempDir(), "ran")
+	t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+	scripts := t.TempDir()
+	cleaner := filepath.Join(scripts, "cleaner.sh")
+	agentFilter := filepath.Join(scripts, "agent.sh")
+	if err := os.WriteFile(cleaner, []byte("#!/bin/sh\nsed s/done/cleaned/\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentFilter, []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\ncat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	git(t, wt, "config", "--file", global, "filter.drv.clean", filepath.ToSlash(cleaner))
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, "config", "filter.drv.clean", filepath.ToSlash(agentFilter))
+	if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := commitChanges(wt, "task result")
+	if err != nil || sha == "" {
+		t.Fatalf("commitChanges = %q, %v", sha, err)
+	}
+	if got := git(t, wt, "show", "HEAD:result.txt"); got != "done" {
+		t.Errorf("committed result = %q, want the unfiltered file", got)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository filter ran during commitChanges or marker could not be checked: %v", err)
+	}
+}
+
 // canon resolves symlinks and Windows 8.3 short names, which git expands.
 func canon(t *testing.T, p string) string {
 	t.Helper()

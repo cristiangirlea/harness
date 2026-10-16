@@ -1312,21 +1312,43 @@ func commitChanges(wt, message string) (string, error) {
 	return gitOut(ctx, wt, "rev-parse", "HEAD")
 }
 
+// commitConfigOverrides turns off the fsmonitor, commit signing and filter
+// drivers only where the repository's own config (local or worktree) defines
+// them: the operator's global and system config, a Git LFS filter for one,
+// keep working.
 func commitConfigOverrides(ctx context.Context, dir, hooks string) []string {
 	args := []string{
 		"-c", "core.hooksPath=" + hooks,
-		"-c", "core.fsmonitor=false",
-		"-c", "commit.gpgSign=false",
 		"-c", "maintenance.auto=false",
 		"-c", "gc.auto=0",
 	}
-	out, err := gitOut(ctx, dir, "config", "--get-regexp", `^filter\..*\.(clean|smudge|process)$`)
+	out, err := gitOut(ctx, dir, "config", "--show-scope", "--get-regexp",
+		`^(filter\..*\.(clean|smudge|process)|core\.fsmonitor|gpg\..*program|gpg\.ssh\.defaultkeycommand)$`)
 	if err != nil {
 		return args
 	}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
-		key, _, _ := strings.Cut(line, " ")
+		scope, entry, _ := strings.Cut(line, "\t")
+		switch scope {
+		case "global", "system", "command":
+			continue
+		}
+		key, _, _ := strings.Cut(entry, " ")
+		switch {
+		case key == "core.fsmonitor":
+			if !seen[key] {
+				seen[key] = true
+				args = append(args, "-c", "core.fsmonitor=false")
+			}
+			continue
+		case strings.HasPrefix(key, "gpg."):
+			if !seen["gpg."] {
+				seen["gpg."] = true
+				args = append(args, "-c", "commit.gpgSign=false")
+			}
+			continue
+		}
 		rest, ok := strings.CutPrefix(key, "filter.")
 		if !ok {
 			continue
