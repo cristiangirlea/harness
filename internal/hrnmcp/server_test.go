@@ -572,6 +572,26 @@ func TestRunContinueHandsTheConversationToAnotherBackend(t *testing.T) {
 	}
 }
 
+func TestRunContinueInheritsThePurposeUnlessTheCallOrHeaderNamesOne(t *testing.T) {
+	s := connect(t, t.TempDir())
+	first := s.call(t, "run", `{"prompt":"look","backend":"stub-ask","mode":"auto","purpose":"review"}`)
+	id := first.StructuredContent.(map[string]any)["run_id"].(string)
+	for _, tc := range []struct{ extra, prompt, want string }{
+		{"", "now fix what you found", "review"},
+		{`"purpose":"debug",`, "now fix what you found", "debug"},
+		{"", `Purpose: test\nnow fix what you found`, "test"},
+	} {
+		r := s.call(t, "run", `{`+tc.extra+`"prompt":"`+tc.prompt+`","backend":"stub","continue_run_id":"`+id+`"}`)
+		if r.IsError {
+			t.Fatalf("continue: %s", r.Text())
+		}
+		rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string))
+		if err != nil || rec.Task.Purpose != tc.want {
+			t.Errorf("%s%s: purpose = %q, want %q (%v)", tc.extra, tc.prompt, rec.Task.Purpose, tc.want, err)
+		}
+	}
+}
+
 func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T) {
 	for _, tc := range []struct {
 		tokens  int64

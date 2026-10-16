@@ -22,6 +22,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -116,11 +117,17 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if t.Timeout < 0 || t.MaxTurns < 0 {
 		return w.reject(req.AttemptID, "bad_request", "timeout and max_turns must not be negative")
 	}
+	if t.Purpose != "" && !purpose.Valid(t.Purpose) {
+		return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("purpose %q: one of %s", t.Purpose, strings.Join(purpose.Declarable(), ", ")))
+	}
+	if t.Purpose == "" {
+		t.Purpose = purpose.Declared(t.Prompt)
+	}
 	ws, err := tools.NewWorkspace(t.Dir)
 	if err != nil {
 		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
-	task := agent.Task{Prompt: t.Prompt, Dir: ws.Root, AttemptID: req.AttemptID, Options: agent.Options{
+	task := agent.Task{Prompt: t.Prompt, Purpose: t.Purpose, Dir: ws.Root, AttemptID: req.AttemptID, Options: agent.Options{
 		Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP,
 	}}
 	// A backend without MCP support must not inherit the default config.
@@ -272,6 +279,7 @@ type taskRequest struct {
 	MaxTurns      int            `json:"max_turns"`
 	MCP           []string       `json:"mcp"`
 	ContinueRunID string         `json:"continue_run_id"`
+	Purpose       string         `json:"purpose"`
 }
 
 type cancelRequest struct {
@@ -322,7 +330,7 @@ func checkTaskKeys(data json.RawMessage) error {
 	if len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil
 	}
-	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id")
+	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose")
 	return err
 }
 

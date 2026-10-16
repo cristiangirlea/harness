@@ -387,6 +387,35 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	}
 }
 
+func TestContinueInheritsThePurposeUnlessTheFlagOrHeaderNamesOne(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "--purpose", "review", "first"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"now fix what you found"}, "review"},
+		{[]string{"--purpose", "debug", "now fix what you found"}, "debug"},
+		{[]string{"Purpose: test\nnow fix what you found"}, "test"},
+	} {
+		args := append([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b"}, tc.args...)
+		if code, err := cmdRun(args); code != 0 || err != nil {
+			t.Fatalf("%q: code=%d err=%v", tc.args, code, err)
+		}
+		if task := <-recorded; task.Purpose != tc.want {
+			t.Errorf("%q: purpose = %q, want %q", tc.args, task.Purpose, tc.want)
+		}
+	}
+}
+
 func TestShowMasksHumanOutputOnly(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const prompt = "API_KEY=fake-show-secret task"

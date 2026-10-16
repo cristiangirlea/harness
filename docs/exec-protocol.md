@@ -83,6 +83,12 @@ hrn       -> result                (always the last line after accepted; then ex
   context, these notes include the same fresh-run warning as the CLI and MCP. The new run
   also records it once as an `info` event. A transcript hand-over alone does not warn.
   It is accepted for every backend independently of `options` and is not listed there.
+- `purpose` optionally declares what the run is for: `review`, `debug`, `implement`, `refactor`,
+  `test`, `research`, `plan` or `ops`, lowercase. Any other value is rejected as `bad_request`.
+  Without it, a `Purpose: <category>` header on the prompt's first non-blank line is used, as
+  for `hrn run`; either is recorded in `task.purpose`. A continuation does not inherit the
+  earlier run's purpose here: the supervisor states it, as it states the mode. Like
+  `continue_run_id`, it is accepted for every backend and is not listed in `options`.
 
 ### `accepted` or `rejected` (hrn)
 

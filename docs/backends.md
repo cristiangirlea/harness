@@ -210,8 +210,9 @@ hrn run --continue 20260921-095628-f18a6d -b codex "review what claude just did"
 ```
 
 The follow-up is a new run whose `task.json` says which run it continues, so a
-conversation is a chain of runs. It inherits the earlier run's backend, workspace and
-mode unless you pass those flags, and its model only from runs on the same backend: a
+conversation is a chain of runs. It inherits the earlier run's backend, workspace,
+mode and declared purpose unless you pass those flags (or, for the purpose, a
+`Purpose:` header), and its model only from runs on the same backend: a
 claude model name means nothing to codex. The MCP `run` tool takes the same thing as
 `continue_run_id`.
 Lean is not inherited: even after a lean batch run, pass `--lean` (or `"lean": true`
