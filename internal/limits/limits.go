@@ -99,14 +99,10 @@ func Note(backend string, res agent.Result) error {
 	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() {
 		return nil
 	}
-	p, err := agent.BackendPreferences(runlog.Home())
-	if err != nil {
+	// A backend without a partner today is still remembered, for the listing
+	// and for a partner enabled or installed later; a broken preference file is reported.
+	if _, err := agent.BackendPreferences(runlog.Home()); err != nil {
 		return err
-	}
-	// A preference may leave no installed partner today. Still remember the
-	// limit for the listing and for a partner enabled or installed later.
-	if len(p.EnabledNames) == 0 && Partner(backend) == "" {
-		return nil
 	}
 	mu.Lock()
 	defer mu.Unlock()
