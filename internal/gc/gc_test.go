@@ -1059,6 +1059,70 @@ func TestGCReadsLandedPatchIDsOncePerMergeBaseAsBefore(t *testing.T) {
 	})
 }
 
+// landedTask lands a batch task's change on origin/main as a squash, after a
+// commit large enough to fill the pipe between git log and git patch-id.
+func landedTask(t *testing.T, f *fixture) string {
+	t.Helper()
+	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+	f.write(task, "task.txt", "task\n")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "task")
+	saveBatch(t, "landed", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "big.txt", strings.Repeat("a line of the big file\n", 1<<16))
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "big file")
+	f.write(f.repo, "task.txt", "task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land task")
+	git(t, f.repo, "push", "-q", "origin", "main")
+	return task
+}
+
+// logPatchIDsWithin calls logPatchIDs and fails the test if it outlasts a
+// minute, well inside its own two-minute limit.
+func logPatchIDsWithin(t *testing.T, repo, base string) error {
+	t.Helper()
+	start := time.Now()
+	_, err := logPatchIDs(context.Background(), repo, base, "refs/remotes/origin/main")
+	if d := time.Since(start); d > time.Minute {
+		t.Fatalf("logPatchIDs took %s", d)
+	}
+	return err
+}
+
+func TestGCKeepsLandedBatchChangeWhenGitLogFails(t *testing.T) {
+	f := newFixture(t)
+	task := landedTask(t, f)
+
+	err := logPatchIDsWithin(t, f.repo, "refs/heads/no-such-base")
+	if err == nil || !strings.Contains(err.Error(), "git log") {
+		t.Fatalf("logPatchIDs with a bad base: %v, want a git log error", err)
+	}
+
+	// rev-list and merge-base ignore log.* settings, so only git log fails.
+	git(t, f.repo, "config", "log.showRoot", "bogus")
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+	git(t, f.repo, "config", "--unset", "log.showRoot")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
+}
+
+func TestGCKeepsLandedBatchChangeWhenGitPatchIDFails(t *testing.T) {
+	f := newFixture(t)
+	task := landedTask(t, f)
+	git(t, f.repo, "config", "patchid.stable", "bogus")
+	base := git(t, f.repo, "merge-base", "hrn/task", "main")
+
+	err := logPatchIDsWithin(t, f.repo, base)
+	if err == nil || !strings.Contains(err.Error(), "git patch-id") {
+		t.Fatalf("logPatchIDs with a failing patch-id: %v, want a git patch-id error", err)
+	}
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+	git(t, f.repo, "config", "--unset", "patchid.stable")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
+}
+
 func TestGCRemovesBinaryBatchChangeLandedAsSquash(t *testing.T) {
 	f := newFixture(t)
 	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")

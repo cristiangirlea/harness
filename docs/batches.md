@@ -271,8 +271,8 @@ worktree only on proof that its work is merged:
   line numbers ignored, exactly matches one commit on that branch since their merge base.
   The comparison checks fewer than 2000 non-merge commits; if it reaches that bound, or
   cannot prove an exact match, the worktree stays. The branch's patch ids are read once per
-  merge base in a run, streamed from `git log` so large binaries are not held in memory. Git older than 2.40 does not support
-  `patch-id --verbatim` and keeps these worktrees. With `--apply`, hrn deletes the task's
+  merge base in a run, streamed from `git log` so large binaries are not held in memory.
+  Git older than 2.40 does not support `patch-id --verbatim` and keeps these worktrees. With `--apply`, hrn deletes the task's
   branch with its worktree, including its own commits and messages; the change itself is
   on the default branch.
 
