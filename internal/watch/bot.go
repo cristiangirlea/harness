@@ -540,12 +540,10 @@ func (s *server) newBotWatcher() *botWatcher {
 	return &botWatcher{s: s, followers: map[string]*Follower{}, doing: map[string]string{}, missed: map[string]int{}, late: map[string]bool{}}
 }
 
-// keepUnread keeps the last look's batches that this look could not read. A
-// running batch rewrites its record as each task moves on, and on Windows a
-// read can land on the rename: the batch would vanish for one look, then it
-// and its runs would be announced again as new. A batch removed for good is
-// not kept once every record reads, and at most keepLooks looks in a row
-// while some other record never reads. missed counts those looks.
+// keepUnread keeps last look's batches this look could not read: on Windows a
+// read can land on a record's rename, and the batch would vanish for a look and
+// be announced again as new. A removed batch goes once every record reads, or
+// after keepLooks looks while another never reads; missed counts those looks.
 func keepUnread(prev, cur []batch.Result, unreadable int, missed map[string]int) []batch.Result {
 	have := map[string]bool{}
 	for _, b := range cur {
