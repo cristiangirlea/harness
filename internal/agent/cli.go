@@ -119,6 +119,14 @@ func (c *CLIBackend) ForksSessions() bool { return c.forks }
 
 var sessionID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
 
+var modelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,127}$`)
+
+// ValidModel reports whether model may become a CLI argument. On Windows the
+// CLIs are npm .cmd shims run through cmd.exe, whose quoting does not
+// neutralise &, |, ^, % or quotes, and a leading dash would read as a flag.
+// Brackets stay allowed for ids such as claude-opus-5[1m].
+func ValidModel(model string) bool { return modelID.MatchString(model) }
+
 // ForksSessions reports whether b honours Task.ForkSession.
 func ForksSessions(b Backend) bool {
 	f, ok := b.(interface{ ForksSessions() bool })
@@ -167,6 +175,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	// starting with a dash would be read as a flag. Both CLIs issue UUIDs.
 	if task.ForkSession != "" && !sessionID.MatchString(task.ForkSession) {
 		return fail(StatusError, fmt.Errorf("session id %q is not one the %s CLI issues", task.ForkSession, c.name))
+	}
+	if task.Model != "" && !ValidModel(task.Model) {
+		return fail(StatusError, fmt.Errorf("model %q is not a model id", task.Model))
 	}
 
 	bin, err := c.Detect()
@@ -394,15 +405,25 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// appData joins parts under %APPDATA%, or returns "" when APPDATA is not an
+// absolute path: a relative candidate would resolve against the working
+// directory, which for a run is the task's workspace.
 func appData(parts ...string) string {
-	return filepath.Join(append([]string{os.Getenv("APPDATA")}, parts...)...)
+	root := os.Getenv("APPDATA")
+	if !filepath.IsAbs(root) {
+		return ""
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func npmShim(name string) []string {
 	if runtime.GOOS != "windows" {
 		return nil
 	}
-	return []string{appData("npm", name+".cmd")}
+	if shim := appData("npm", name+".cmd"); shim != "" {
+		return []string{shim}
+	}
+	return nil
 }
 
 func init() {

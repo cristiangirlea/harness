@@ -95,6 +95,9 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if t.Fresh && t.ContinueRunID == "" {
 		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
 	}
+	if t.Model != "" && !agent.ValidModel(t.Model) {
+		return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("model %q is not a model id", t.Model))
+	}
 	b, err := agent.Get(t.Backend)
 	if err != nil {
 		return w.reject(req.AttemptID, "unsupported", err.Error())
