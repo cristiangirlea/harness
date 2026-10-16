@@ -1,10 +1,14 @@
 package watch
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +61,9 @@ func TestTheBotNamesBackendsAndPlacesAsPeopleSayThem(t *testing.T) {
 		"I want the guard on every backend":     "I want the guard on every backend",
 		"I'm adding the budget":                 "I'm adding the budget",
 		"A flag for prune":                      "a flag for prune",
+		"C++ build":                             "C++ build",
+		"A/B test the page":                     "A/B test the page",
+		"Q&A for the docs":                      "Q&A for the docs",
 		"one two three four five six seven eight nine ten eleven twelve thirteen": "one two three four five six seven eight nine ten eleven twelve…",
 		"   ": "",
 	} {
@@ -236,13 +243,91 @@ func TestABatchCaughtMidSaveIsNotAnnouncedAgain(t *testing.T) {
 		{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning, Attempts: []batch.Attempt{{Backend: "claude", RunID: runID}}}}}
 	run := runRec(runID, noon.Add(-time.Minute), false, agent.Result{})
 	prev := lookAt([]runlog.Record{run}, []batch.Result{b}, nil)
-	caught := lookAt([]runlog.Record{run}, keepUnread([]batch.Result{b}, nil, 1), nil)
+	caught := lookAt([]runlog.Record{run}, keepUnread([]batch.Result{b}, nil, 1, map[string]int{}), nil)
 	if says := announce(prev, caught, false); len(says) != 0 {
 		t.Fatalf("a batch that could not be read for one look was announced again: %+v", says)
 	}
 	// Removed for good (hrn batch rm): every record reads, and it is not kept.
-	if got := keepUnread([]batch.Result{b}, nil, 0); len(got) != 0 {
+	if got := keepUnread([]batch.Result{b}, nil, 0, map[string]int{}); len(got) != 0 {
 		t.Errorf("a batch gone for good was kept: %+v", got)
+	}
+}
+
+// A record that never reads (a zero-byte file, a newer format) keeps some
+// record unreadable on every look. A batch removed meanwhile is kept a few
+// looks at most, not frozen at its last state for the life of the stream.
+func TestABatchMissingWhileAnotherRecordNeverReadsIsKeptAFewLooksAtMost(t *testing.T) {
+	b := batch.Result{ID: "20261011-114959-bbbbbb", Tasks: []batch.TaskResult{{ID: "guard", Status: batch.StatusRunning}}}
+	missed := map[string]int{}
+	kept := []batch.Result{b}
+	for look := 1; look <= keepLooks; look++ {
+		if kept = keepUnread(kept, nil, 1, missed); len(kept) != 1 {
+			t.Fatalf("look %d: a batch caught mid-save was dropped", look)
+		}
+	}
+	if kept = keepUnread(kept, nil, 1, missed); len(kept) != 0 {
+		t.Fatalf("a batch missing for %d looks is still kept: %+v", keepLooks+1, kept)
+	}
+	// One that reads again starts its count afresh.
+	kept = keepUnread(nil, []batch.Result{b}, 1, missed)
+	for look := 1; look <= keepLooks; look++ {
+		if kept = keepUnread(kept, nil, 1, missed); len(kept) != 1 {
+			t.Fatalf("after reading again, look %d: dropped too soon", look)
+		}
+	}
+}
+
+// A batch that could not be read on a stream's first look was there before the
+// stream began: when it reads, it is not announced as new. One that starts
+// later still is.
+func TestABatchUnreadableOnTheFirstLookIsNotAnnouncedAsNew(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	res := batch.Result{ID: "20261011-114959-bbbbbb", Started: time.Now().Add(-time.Minute), Dir: "/repo/harness",
+		Tasks: []batch.TaskResult{{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning}}}
+	dir := filepath.Join(runlog.Home(), "batches")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, res.ID+".json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	first := b.look()
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	cur := b.look()
+	if says := announce(b.baseline(first, cur), cur, false); len(says) != 0 {
+		t.Fatalf("a batch that was there before the stream was announced: %+v", says)
+	}
+	later := res
+	later.ID = "20261011-120000-cccccc"
+	if err := batch.SaveResult(later); err != nil {
+		t.Fatal(err)
+	}
+	next := b.look()
+	if says := announce(b.baseline(cur, next), next, false); len(says) == 0 || says[0].Kind != "started" || says[0].Ref != later.ID {
+		t.Fatalf("a batch started after the first look: %+v", says)
+	}
+}
+
+// A run quiet for the hour shows stopped: the bot holds no follower for it,
+// and picks it up again if the run writes again.
+func TestTheBotHoldsNoFollowerForAStoppedRunUntilItWritesAgain(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	rec := activityRun(t, time.Now(), false)
+	events := filepath.Join(runlog.Root(), rec.ID, "events.jsonl")
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	for _, step := range []struct {
+		name string
+		at   time.Time
+		want bool
+	}{{"running", time.Now(), true}, {"stopped", time.Now().Add(-61 * time.Minute), false}, {"writing again", time.Now(), true}} {
+		ageFile(t, events, step.at)
+		b.look()
+		if _, ok := b.followers[rec.ID]; ok != step.want {
+			t.Errorf("%s: follower held = %v, want %v", step.name, ok, step.want)
+		}
 	}
 }
 
@@ -376,6 +461,34 @@ func TestOnlyTheBotPageMayUseTheMicrophone(t *testing.T) {
 	}
 	if code, js := get(t, srv.URL+"/static/bot.js"); code != 200 || !strings.Contains(js, "speechSynthesis") {
 		t.Errorf("bot.js: %d", code)
+	}
+}
+
+// The drawing is decoration next to the heading that names her: a screen
+// reader should not say Ada's name twice.
+func TestTheBotPageNamesAdaOnceToAScreenReader(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(New(t.Context(), Options{}))
+	defer srv.Close()
+	_, body := get(t, srv.URL+"/bot")
+	svg := regexp.MustCompile(`<svg class="bot-face ada"[^>]*>`).FindString(body)
+	if !strings.Contains(svg, `aria-hidden="true"`) || strings.Contains(svg, "aria-label") || strings.Contains(svg, `role="img"`) {
+		t.Errorf("the drawing is announced: %s", svg)
+	}
+	if !strings.Contains(body, `<h1 id="bot-h">Ada</h1>`) {
+		t.Error("the page lost its heading")
+	}
+}
+
+func TestBotJavaScript(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, node, "--test", "testdata/bot.test.cjs").CombinedOutput(); err != nil {
+		t.Fatalf("bot JavaScript tests: %v\n%s", err, out)
 	}
 }
 
