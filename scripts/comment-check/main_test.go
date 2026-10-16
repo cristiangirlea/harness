@@ -34,7 +34,7 @@ func runCheck(t *testing.T, args ...string) (report, string, int) {
 	return r, stderr.String(), code
 }
 
-func TestBlockLengthsAndSplit(t *testing.T) {
+func TestABlockOfSixLinesFailsAndABlankLineSplitsBlocks(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "ok.go", strings.Join([]string{
 		"package p",
@@ -76,25 +76,36 @@ func TestBlockLengthsAndSplit(t *testing.T) {
 		"// six",
 		"var c = 3",
 		"",
+		"/* block one",
+		"   block two",
+		"   block three",
+		"   block four",
+		"   block five",
+		"   block six */",
+		"var d = 4",
+		"",
 	}, "\n"))
 
 	r, stderr, code = runCheck(t, "--root", dir)
 	if code != 1 || !strings.Contains(stderr, `"error"`) {
-		t.Fatalf("expected exit 1 with error JSON, got %d: %s", code, stderr)
+		t.Fatalf("expected exit 1 with error JSON when default baseline is missing, got %d: %s", code, stderr)
 	}
-	if r.Violations != 1 || len(r.New) != 1 {
-		t.Fatalf("expected 1 violation, got %+v", r)
+	if r.Violations != 2 || len(r.New) != 2 {
+		t.Fatalf("expected 2 violations, got %+v", r)
 	}
 	if r.New[0].File != "bad.go" || r.New[0].Line != 3 || r.New[0].Lines != 6 || r.New[0].Reasons != "long" {
-		t.Fatalf("unexpected violation entry: %+v", r.New[0])
+		t.Fatalf("unexpected first violation entry: %+v", r.New[0])
+	}
+	if r.New[1].File != "bad.go" || r.New[1].Line != 11 || r.New[1].Lines != 6 || r.New[1].Reasons != "long" {
+		t.Fatalf("unexpected block comment violation entry: %+v", r.New[1])
 	}
 }
 
-func TestDirectivesAndKeptHeaderExempt(t *testing.T) {
+func TestDirectivesAndTheLeadingKeptHeaderAreExemptWithoutSplittingBlocks(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "script.go", strings.Join([]string{
 		"// name: example-main",
-		"// summary: Check #12 on 2026-10-16 after review.",
+		"// summary: Check #12 on 2026-10-16 after the review.",
 		"// effects: read",
 		"// parameters: none",
 		"// example: go test ./...",
@@ -105,9 +116,9 @@ func TestDirectivesAndKeptHeaderExempt(t *testing.T) {
 		"// +build linux",
 		"//line foo.go:1",
 		"//export Foo",
-		"//nolint:errcheck // reviewed #12 on 2026-10-16",
 		"// one",
 		"// two",
+		"//nolint:errcheck // reviewed in #12 on 2026-10-16",
 		"// three",
 		"// four",
 		"// five",
@@ -122,15 +133,37 @@ func TestDirectivesAndKeptHeaderExempt(t *testing.T) {
 	if r.Violations != 0 || r.Blocks != 1 {
 		t.Fatalf("expected 0 violations and 1 counted block, got %+v", r)
 	}
+
+	writeFile(t, dir, "after_pkg.go", strings.Join([]string{
+		"package main",
+		"",
+		"// name: not-a-leading-header",
+		"// two",
+		"// three",
+		"//go:noinline",
+		"// four",
+		"// five",
+		"// six",
+		"func helper() {}",
+		"",
+	}, "\n"))
+
+	r, _, code = runCheck(t, "--root", dir)
+	if code != 1 || len(r.New) != 1 {
+		t.Fatalf("expected 1 long violation when directive is inside a 6-line block with post-package // name:, got code=%d report=%+v", code, r)
+	}
+	if r.New[0].File != "after_pkg.go" || r.New[0].Line != 3 || r.New[0].Lines != 6 || r.New[0].Reasons != "long" {
+		t.Fatalf("unexpected violation: %+v", r.New[0])
+	}
 }
 
-func TestRawStringAndCitations(t *testing.T) {
+func TestCitationsAndReviewNarrationFailWhileProductReviewTermsAndRawStringsPass(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "clean.go", strings.Join([]string{
 		"package p",
 		"",
 		"var s = `",
-		"// not a comment #12 2026-10-16 review",
+		"// not a comment #12 2026-10-16 after the review",
 		"// line 2",
 		"// line 3",
 		"// line 4",
@@ -139,6 +172,10 @@ func TestRawStringAndCitations(t *testing.T) {
 		"`",
 		"// Color #1e1e1e is dark grey.",
 		"var color = \"#1e1e1e\"",
+		"// Use the review purpose for code inspection.",
+		"var purpose = \"review\"",
+		"// Reviewed file hashes bind retrieval evidence to the worktree.",
+		"var hashes = 1",
 		"",
 	}, "\n"))
 
@@ -146,8 +183,8 @@ func TestRawStringAndCitations(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected clean exit 0, got %d (%s): %+v", code, stderr, r.New)
 	}
-	if r.Blocks != 1 || r.Violations != 0 {
-		t.Fatalf("expected 1 block and 0 violations, got %+v", r)
+	if r.Blocks != 3 || r.Violations != 0 {
+		t.Fatalf("expected 3 blocks and 0 violations, got %+v", r)
 	}
 
 	writeFile(t, dir, "cite.go", strings.Join([]string{
@@ -156,6 +193,9 @@ func TestRawStringAndCitations(t *testing.T) {
 		"var a = 1 // see #12 for background",
 		"var b = 2 // added on 2026-10-16",
 		"var c = 3 // Reviewed by owner",
+		"var d = 4 // Fixed after the review",
+		"var e = 5 // adjusted per review finding",
+		"var f = 6 // what the reviewer asked for",
 		"",
 	}, "\n"))
 
@@ -163,19 +203,19 @@ func TestRawStringAndCitations(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d", code)
 	}
-	if len(r.New) != 3 {
-		t.Fatalf("expected 3 cite violations, got %+v", r.New)
+	if len(r.New) != 6 {
+		t.Fatalf("expected 6 cite violations, got %+v", r.New)
 	}
-	for i, wantLine := range []int{3, 4, 5} {
+	for i, wantLine := range []int{3, 4, 5, 6, 7, 8} {
 		if r.New[i].File != "cite.go" || r.New[i].Line != wantLine || r.New[i].Lines != 1 || r.New[i].Reasons != "cite" {
 			t.Fatalf("entry %d: got %+v", i, r.New[i])
 		}
 	}
 }
 
-func TestIgnoredFilesAndDirs(t *testing.T) {
+func TestTestFilesHiddenDirectoriesAndVendorTreesAreSkipped(t *testing.T) {
 	dir := t.TempDir()
-	bad := "package p\n// #12 reviewed 2026-10-16\n"
+	bad := "package p\n// #12 reviewed by owner 2026-10-16\n"
 	writeFile(t, dir, "main_test.go", bad)
 	writeFile(t, dir, ".hidden/x.go", bad)
 	writeFile(t, dir, "testdata/x.go", bad)
@@ -193,7 +233,7 @@ func TestIgnoredFilesAndDirs(t *testing.T) {
 	}
 }
 
-func TestBaselineInitPruneAndMultiset(t *testing.T) {
+func TestBaselineInitPruneAndDuplicateFingerprintsTrackViolationsAsAMultiset(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", strings.Join([]string{
 		"package p",
@@ -217,13 +257,11 @@ func TestBaselineInitPruneAndMultiset(t *testing.T) {
 		t.Fatalf("unexpected report after --init: %+v", r)
 	}
 
-	// --init refuses when baseline already exists.
 	_, stderr, code = runCheck(t, "--root", dir, "--init")
 	if code != 2 || !strings.Contains(stderr, `"error"`) {
 		t.Fatalf("expected exit 2 when baseline exists, got %d: %s", code, stderr)
 	}
 
-	// Passing check with the baseline in place.
 	r, stderr, code = runCheck(t, "--root", dir)
 	if code != 0 {
 		t.Fatalf("expected exit 0 with baseline, got %d: %s", code, stderr)
@@ -232,14 +270,12 @@ func TestBaselineInitPruneAndMultiset(t *testing.T) {
 		t.Fatalf("unexpected report with baseline: %+v", r)
 	}
 
-	// Remove one of the two identical blocks from baseline: identical blocks need two entries.
 	basePath := filepath.Join(dir, "scripts", "comment-baseline.txt")
 	rawBase, err := os.ReadFile(basePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(string(rawBase), "\n"), "\n")
-	// Keep header + one duplicate entry + the #34 entry (drop the first duplicate entry).
 	if len(lines) != 4 {
 		t.Fatalf("expected 4 baseline lines, got %d: %v", len(lines), lines)
 	}
@@ -252,7 +288,6 @@ func TestBaselineInitPruneAndMultiset(t *testing.T) {
 		t.Fatalf("expected second identical block to fail as new: code=%d report=%+v", code, r)
 	}
 
-	// Restore full 3-entry baseline, then edit the #34 block: edited block is new and old entry stale.
 	if err := os.WriteFile(basePath, rawBase, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +309,6 @@ func TestBaselineInitPruneAndMultiset(t *testing.T) {
 		t.Fatalf("expected 1 new and 1 stale, got code=%d report=%+v", code, r)
 	}
 
-	// --prune removes only the stale entry and never adds the new #99 entry.
 	r, _, code = runCheck(t, "--root", dir, "--prune")
 	if code != 1 || r.Baselined != 2 || len(r.New) != 1 || len(r.Stale) != 0 {
 		t.Fatalf("expected --prune to clear stale but keep new failing: code=%d report=%+v", code, r)
@@ -289,12 +323,31 @@ func TestBaselineInitPruneAndMultiset(t *testing.T) {
 	}
 }
 
-func TestByteCounts(t *testing.T) {
+func TestCRLFAndLFFilesProduceTheSameViolationFingerprint(t *testing.T) {
+	lfContent := "package p\n\n// first #12\n// second\nvar x = 1 // trailing #34\n"
+	crlfContent := strings.ReplaceAll(lfContent, "\n", "\r\n")
+
+	_, _, lfViolations, err := scanFile("a.go", []byte(lfContent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, crlfViolations, err := scanFile("a.go", []byte(crlfContent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lfViolations) != 2 || len(crlfViolations) != 2 {
+		t.Fatalf("expected 2 violations each, got lf=%+v crlf=%+v", lfViolations, crlfViolations)
+	}
+	for i := range lfViolations {
+		if lfViolations[i].fingerprint != crlfViolations[i].fingerprint {
+			t.Fatalf("violation %d fingerprint mismatch: lf=%s crlf=%s", i, lfViolations[i].fingerprint, crlfViolations[i].fingerprint)
+		}
+	}
+}
+
+func TestWholeLineCommentsCountTowardCommentBytesAndTrailingCommentsDoNot(t *testing.T) {
 	dir := t.TempDir()
-	// Line 1: "package p\n" (10 bytes)
-	// Line 2: "// whole\n" (9 bytes, whole-line comment)
-	// Line 3: "var x = 1 // trail\n" (19 bytes, trailing comment -> not in comment_bytes)
-	// Total source_bytes = 38, comment_bytes = 9, comment_share = round(9/38, 4) = 0.2368
+	// only the 9-byte whole-line comment of the 38 source bytes counts
 	content := "package p\n// whole\nvar x = 1 // trail\n"
 	writeFile(t, dir, "bytes.go", content)
 
@@ -307,7 +360,7 @@ func TestByteCounts(t *testing.T) {
 	}
 }
 
-func TestOutputCapAt20WithTruncated(t *testing.T) {
+func TestReportCapsNewAndStaleListsAtTwentyEntriesAndSetsTruncated(t *testing.T) {
 	dir := t.TempDir()
 	var b strings.Builder
 	b.WriteString("package p\n")
@@ -325,13 +378,43 @@ func TestOutputCapAt20WithTruncated(t *testing.T) {
 	}
 }
 
-func TestUnparsableFileAndUsageError(t *testing.T) {
+func TestInvalidFlagsMalformedBaselinesAndUnparsableFilesReturnJSONErrors(t *testing.T) {
 	_, stderr, code := runCheck(t, "--unknown")
 	if code != 2 || !strings.Contains(stderr, `"error"`) {
 		t.Fatalf("expected exit 2 on unknown flag, got %d: %s", code, stderr)
 	}
 
+	_, stderr, code = runCheck(t, "--prune", "--init")
+	if code != 2 || !strings.Contains(stderr, `"error"`) {
+		t.Fatalf("expected exit 2 on --prune --init, got %d: %s", code, stderr)
+	}
+
 	dir := t.TempDir()
+	writeFile(t, dir, "ok.go", "package p\n")
+
+	_, stderr, code = runCheck(t, "--root", dir, "--baseline", filepath.Join(dir, "missing.txt"))
+	if code != 1 || !strings.Contains(stderr, `"error"`) {
+		t.Fatalf("expected exit 1 on missing explicit --baseline, got %d: %s", code, stderr)
+	}
+
+	badFields := filepath.Join(dir, "bad-fields.txt")
+	if err := os.WriteFile(badFields, []byte("ok.go\tabcdef012345\t6\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code = runCheck(t, "--root", dir, "--baseline", badFields)
+	if code != 1 || !strings.Contains(stderr, `"error"`) {
+		t.Fatalf("expected exit 1 on malformed baseline line, got %d: %s", code, stderr)
+	}
+
+	badCount := filepath.Join(dir, "bad-count.txt")
+	if err := os.WriteFile(badCount, []byte("ok.go\tabcdef012345\tnan\tlong\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code = runCheck(t, "--root", dir, "--baseline", badCount)
+	if code != 1 || !strings.Contains(stderr, `"error"`) {
+		t.Fatalf("expected exit 1 on non-numeric baseline line count, got %d: %s", code, stderr)
+	}
+
 	writeFile(t, dir, "broken.go", "package p\nfunc (\n")
 	_, stderr, code = runCheck(t, "--root", dir)
 	if code != 1 || !strings.Contains(stderr, `"error"`) {

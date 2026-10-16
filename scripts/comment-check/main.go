@@ -3,7 +3,7 @@
 // effects: read, write-workspace
 // parameters: --root:path=.; --baseline:path=scripts/comment-baseline.txt; --prune:bool=false; --init:bool=false
 // example: go test -count=1 ./scripts/comment-check
-// hash: 30098d53f3872c7cdf1c325590f84c2e66c91474b6929e62c9213369e828149b
+// hash: 7d29f5f3eaaedcfc798d23adee4107a875d903b1d393a5187df6584e26eb1a28
 package main
 
 import (
@@ -29,13 +29,13 @@ import (
 const (
 	maxBlockLines  = 5
 	maxReportItems = 20
-	baselineHeader = "# Existing comment-rule violations; only --prune should change this file.\n"
+	baselineHeader = "# Existing comment-rule violations: only --prune removes lines; a renamed file may have its path edited.\n"
 )
 
 var (
 	citeIssueRe  = regexp.MustCompile(`#[0-9]+\b`)
 	citeDateRe   = regexp.MustCompile(`\b(?:19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}\b`)
-	citeReviewRe = regexp.MustCompile(`(?i)\breview(?:s|ed|er)?\b`)
+	citeReviewRe = regexp.MustCompile(`(?i)\b(?:review\s+(?:rounds?|findings?|comments?)|(?:after|per|from|during|in)\s+(?:the|a|this|that)\s+(?:code\s+)?review|(?:the\s+)?review(?:er)?\s+(?:said|asked|found|noted|flagged|suggested)|as\s+reviewed|reviewed\s+(?:in|on|by))\b`)
 )
 
 type newEntry struct {
