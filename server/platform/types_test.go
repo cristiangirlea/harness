@@ -53,3 +53,17 @@ func TestValidateSubmissionRefusesUnsupportedDurableOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckCostLimitRefusesCeilingsAboveTheServiceLimit(t *testing.T) {
+	s := Submission{Options: agent.Options{MaxCostUSD: 5}}
+	if err := checkCostLimit(s, 0); err != nil {
+		t.Fatalf("no limit refused: %v", err)
+	}
+	if err := checkCostLimit(s, 5); err != nil {
+		t.Fatalf("ceiling at the limit refused: %v", err)
+	}
+	err := checkCostLimit(s, 2)
+	if !errors.Is(err, ErrCostLimit) || !strings.Contains(err.Error(), "HRN_MAX_COST_USD_PER_JOB") || !strings.Contains(err.Error(), "2") {
+		t.Fatalf("ceiling above the limit: err = %v, want ErrCostLimit naming the limit", err)
+	}
+}

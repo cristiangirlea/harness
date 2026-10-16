@@ -23,6 +23,7 @@ type HTTPServer struct {
 	Store                *Store
 	OperatorToken        string
 	ScalerToken          string
+	MaxCostUSDPerJob     float64
 	submissionAuthorized func(context.Context, string, string) (bool, error)
 	workerAuthorized     func(context.Context, string, string) (bool, error)
 }
@@ -255,6 +256,10 @@ func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
 		} else {
 			failure(w, 400, "invalid_request", err.Error())
 		}
+		return
+	}
+	if err := checkCostLimit(input, h.MaxCostUSDPerJob); err != nil {
+		failure(w, 422, "cost_limit", err.Error())
 		return
 	}
 	job, reused, err := h.Store.Submit(r.Context(), input)

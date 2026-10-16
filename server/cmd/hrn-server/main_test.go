@@ -74,3 +74,17 @@ func TestServeRefusesPlainNetworkHTTPBeforeOpeningDatabase(t *testing.T) {
 		t.Fatalf("run() = %v, want listen configuration error before database access", err)
 	}
 }
+
+func TestMaxCostPerJobParsesThePerJobLimit(t *testing.T) {
+	if limit, err := maxCostPerJob(""); err != nil || limit != 0 {
+		t.Fatalf("unset = %v, %v; want no limit", limit, err)
+	}
+	if limit, err := maxCostPerJob("2.5"); err != nil || limit != 2.5 {
+		t.Fatalf("2.5 = %v, %v", limit, err)
+	}
+	for _, raw := range []string{"abc", "0", "-1", "NaN", "+Inf"} {
+		if _, err := maxCostPerJob(raw); err == nil || !strings.Contains(err.Error(), "HRN_MAX_COST_USD_PER_JOB") {
+			t.Errorf("%q: err = %v, want the variable named", raw, err)
+		}
+	}
+}

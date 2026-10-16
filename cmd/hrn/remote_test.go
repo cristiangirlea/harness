@@ -297,3 +297,29 @@ func TestHelperRemoteEventsWatch(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+func TestRemoteSubmitRefusesCostAboveTheClientCapBeforeSending(t *testing.T) {
+	var calls atomic.Int32
+	tenant, project, _ := remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"state":"queued"}`)
+	}))
+	t.Setenv("HRN_REMOTE_MAX_COST_USD", "2")
+	args := []string{"submit", "--tenant", tenant, "--project", project,
+		"--base-ref", strings.Repeat("a", 40), "--key", "stable-key", "--max-cost", "5", "inspect"}
+	err := runRemote(args, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "HRN_REMOTE_MAX_COST_USD") {
+		t.Fatalf("cost above the cap: err = %v, want the limit named", err)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("cost above the cap sent %d requests", got)
+	}
+	args[len(args)-2] = "2"
+	if err := runRemote(args, io.Discard); err != nil {
+		t.Fatalf("cost at the cap: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("cost at the cap sent %d requests, want 1", got)
+	}
+}

@@ -53,6 +53,13 @@ with `HRN_CONTROL_URL`, `HRN_FIXTURE_API_URL`, `HRN_PROJECT_ID`,
 `HRN_WORKER_TOKEN`, and an existing absolute `HRN_WORKSPACE_ROOT`. The worker
 command is `go run ./cmd/hrn-worker`.
 
+Tenant budgets and spending reservation are not enforced yet (still open in
+the durable workers spec): any tenant can queue any number of jobs, each up to
+its own `max_cost_usd`. Set `HRN_MAX_COST_USD_PER_JOB` (a positive number of
+USD) to cap that ceiling: a submission above it is refused with 422
+`cost_limit` naming the limit, and an invalid value stops startup. Unset means
+no server cap. Clients can add their own with `HRN_REMOTE_MAX_COST_USD`.
+
 ## Schema and recovery
 
 Migration 001 creates the control schema. Migration 002 snapshots the project
