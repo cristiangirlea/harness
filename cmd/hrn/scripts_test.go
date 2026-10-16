@@ -158,8 +158,9 @@ func TestScriptsHintFindsTheRootFromASubdirectory(t *testing.T) {
 	}
 }
 
-func TestScriptsHintRejectsAnUnknownSubcommand(t *testing.T) {
-	if code, err := cmdScripts([]string{"list"}); code != 2 || err == nil {
+// Claude Code reads exit 2 from a PreToolUse hook as a block.
+func TestScriptsHintRejectsAnUnknownSubcommandWithoutBlocking(t *testing.T) {
+	if code, err := cmdScripts([]string{"list"}); code != 1 || err == nil {
 		t.Fatalf("exit %d, %v", code, err)
 	}
 }

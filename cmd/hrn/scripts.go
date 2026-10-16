@@ -18,7 +18,8 @@ const maxHintPayload = 1 << 20
 
 func cmdScripts(args []string) (int, error) {
 	if len(args) != 1 || args[0] != "hint" {
-		return 2, fmt.Errorf("%s", scriptsUsage)
+		// Not 2: Claude Code reads exit 2 from a PreToolUse hook as a block.
+		return 1, fmt.Errorf("%s", scriptsUsage)
 	}
 	return scriptsHint(os.Stdin, os.Stdout, time.Now())
 }

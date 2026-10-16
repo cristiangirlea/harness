@@ -94,13 +94,19 @@ a permission decision. It stays silent and exits 0 on anything it does not
 understand (malformed or oversized input, another tool, no inline script, no
 repository or `scripts/` directory), skips a header whose pattern does not
 compile, and gives no hint when the command already runs a kept script.
+Since any repository you open can commit scripts, hint text is limited to a
+file name of `[A-Za-z0-9._-]` and a `parameters:` value of at most 200 bytes
+of `[A-Za-z0-9_:=;.,[]|/ -]`; a script outside either is never hinted.
 
 To opt in, add it to your `~/.claude/settings.json` or a repository's
 `.claude/settings.json` (this repository does not turn it on for itself):
 
 ```json
-{"hooks":{"PreToolUse":[{"matcher":"Bash|PowerShell","hooks":[{"type":"command","command":"hrn scripts hint"}]}]}}
+{"hooks":{"PreToolUse":[{"matcher":"Bash|PowerShell","hooks":[{"type":"command","command":"hrn scripts hint || true"}]}]}}
 ```
+
+The `|| true` is there because an `hrn` that predates the command exits 2 on
+it, which Claude Code treats as a block of the tool call.
 
 Each hint shown appends one line, `{"time":"<RFC 3339>","script":"scripts/<file>","repo":"<root>"}`,
 to `$HRN_HOME/script-hints.jsonl` (`~/.hrn` by default); a failed write is

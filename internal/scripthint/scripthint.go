@@ -93,12 +93,23 @@ func Load(root string) []Script {
 	for _, file := range keptFiles(root) {
 		header := readHeader(file)
 		re, err := regexp.Compile(header["matches"])
-		if header["matches"] == "" || err != nil {
+		if header["matches"] == "" || err != nil || !hintSafe(filepath.Base(file), header["parameters"]) {
 			continue
 		}
 		scripts = append(scripts, Script{File: filepath.Base(file), Parameters: header["parameters"], Matches: re})
 	}
 	return scripts
+}
+
+var (
+	safeFile       = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	safeParameters = regexp.MustCompile(`^[A-Za-z0-9_:=;.,\[\]|/ -]*$`)
+)
+
+// hintSafe reports whether a header's text may reach the agent: any repository
+// can commit scripts, so only a plain file name and a short parameters grammar pass.
+func hintSafe(file, parameters string) bool {
+	return safeFile.MatchString(file) && len(parameters) <= 200 && safeParameters.MatchString(parameters)
 }
 
 // keptFiles lists root/scripts/*.sh and *.go together, sorted by file name.
