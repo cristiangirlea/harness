@@ -147,6 +147,7 @@
 <text class="chart-axis chart-end" x="{{.Right}}" y="{{.AxisY}}">{{.Last}}</text>
 </svg>
 {{if .Keyed}}<p class="chart-key small"><span class="key-mark">compacted, as the backend reported</span> <span class="key-mark probable">probably compacted: the context fell by more than half</span></p>{{end}}
+{{if gt .Every 1}}<p class="small muted">One turn in {{.Every}} has a point and a row, with the last and each compaction; the line runs through every turn.</p>{{end}}
 <details data-key="usage-table"><summary>Turns as a table</summary><div class="table-wrap"><table>
 <thead><tr><th scope="col" class="num">Turn</th><th scope="col">Model</th><th scope="col" class="num">Input</th><th scope="col" class="num">Output</th><th scope="col" class="num">Cache read</th><th scope="col" class="num">Cache write</th><th scope="col" class="num">Context</th><th scope="col" class="num">Cache read so far</th><th scope="col">Compaction</th></tr></thead>
 <tbody>{{range .Rows}}<tr><td class="num">{{.N}}</td><td>{{.Model}}</td><td class="num">{{.Input}}</td><td class="num">{{.Output}}</td><td class="num">{{.CacheRead}}</td><td class="num">{{.CacheWrite}}</td><td class="num">{{.Context}}</td><td class="num">{{.SoFar}}</td><td>{{.Note}}</td></tr>

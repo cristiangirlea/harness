@@ -108,7 +108,10 @@ reported (Claude Code's `compact_boundary`) is a solid line between the turns it
 and also a step in the timeline; a turn whose context fell by more than half with nothing
 reported is a dashed line, "probably compacted", a reading of the numbers that is never
 recorded. Hovering a point or a line says what it is, and "Turns as a table" lists every
-turn's figures. While the run goes, each new turn redraws the chart over every turn so far.
+turn's figures. Past 500 turns the line still runs through every turn, but only one turn in
+every few (enough to stay near 500) has a point and a row, with the last turn and each
+compaction always kept; a line under the chart says so. While the run goes, the chart is
+redrawn over every turn so far once a poll in which turns arrived.
 The chart is inline SVG coloured by the page's stylesheet, so it needs no script, style or
 font beyond the page's own. Usage events themselves are not listed in the timeline.
 
