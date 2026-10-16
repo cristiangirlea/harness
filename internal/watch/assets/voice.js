@@ -17,6 +17,8 @@
   // Chrome), with metadata.csv as id|text; else each take downloads, named by
   // its line number, which is fixed for each line.
   let dir = null;
+  let loading = false;
+  let unknownRows = '';
   const kept = new Map(); // line number -> text
   const canPick = typeof window.showDirectoryPicker === 'function';
   const folderName = $('voice-folder-name');
@@ -26,15 +28,20 @@
   }
   const loadKept = async () => {
     kept.clear();
+    unknownRows = '';
     try {
       const file = await (await dir.getFileHandle('metadata.csv')).getFile();
-      for (const row of (await file.text()).split(/\r?\n/)) {
+      for (const raw of (await file.text()).match(/[^\n]*(?:\n|$)/g)) {
+        if (!raw) continue;
+        const row = raw.replace(/\r?\n$/, '');
         const bar = row.indexOf('|');
         const n = Number(row.slice(0, bar));
-        if (bar > 0 && n > 0) kept.set(n, row.slice(bar + 1));
+        if (bar > 0 && Number.isInteger(n) && n > 0) kept.set(n, row.slice(bar + 1));
+        else unknownRows += raw;
       }
     } catch (e) {
-      // A new folder: nothing kept yet.
+      // Only a missing file means a new folder; never overwrite an unread one.
+      if (e.name !== 'NotFoundError') throw e;
     }
   };
   const save = async (name, blob) => {
@@ -52,21 +59,41 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   };
   const saveKept = () => save('metadata.csv', new Blob(
-    [[...kept].sort((a, b) => a[0] - b[0]).map(([n, t]) => pad(n) + '|' + t + '\n').join('')],
+    [unknownRows, unknownRows && !unknownRows.endsWith('\n') ? '\n' : '',
+      [...kept].sort((a, b) => a[0] - b[0]).map(([n, t]) => pad(n) + '|' + t + '\n').join('')],
     { type: 'text/csv' }));
+  const metadata = document.createElement('button');
+  metadata.id = 'voice-metadata';
+  metadata.textContent = 'Download metadata.csv';
+  metadata.addEventListener('click', saveKept);
+  folderName.after(metadata);
   $('voice-folder').addEventListener('click', async () => {
-    if (saving) return;
+    if (saving || loading || starting || stopping || switching || talking) return;
+    loading = true;
+    show();
     try {
       dir = await window.showDirectoryPicker({ id: 'ada-voice', mode: 'readwrite' });
     } catch (e) {
+      loading = false;
+      show();
       return; // cancelled
     }
     // The page moves to another line now: a take held for this one must not
     // be kept under that one.
-    if (recording) stopTake();
+    if (recording) await stopTake();
     take = null;
     $('voice-note').textContent = '';
-    await loadKept();
+    try {
+      await loadKept();
+    } catch (e) {
+      dir = null;
+      folderName.textContent = 'Each take downloads; the number in its name is its line.';
+      warn('The folder metadata could not be read: ' + e.message);
+      return;
+    } finally {
+      loading = false;
+      show();
+    }
     folderName.textContent = 'Saving into "' + dir.name + '": ' + kept.size + ' of ' + lines.length + ' lines kept so far.';
     // A take finds its text by its number: if the lines have changed since,
     // say so rather than mix old takes with new words.
@@ -81,13 +108,45 @@
   // ---- The microphone, as it is: the browser's echo cancellation, noise
   // suppression and automatic gain off, one channel, through an AudioWorklet.
   let ctx = null;
+  let playing = 0;
+  let stream = null;
+  let source = null;
+  let node = null;
   let onBlock = null; // where the samples go while something records
-  const open = async () => {
-    if (ctx) {
-      await ctx.resume();
-      return;
+  let stopped = null;
+  let stopping = false;
+  let switching = false;
+  let generation = 0; // changing mode invalidates an asynchronous start
+  const release = async () => {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    if (source) source.disconnect();
+    if (node) node.disconnect();
+    source = node = null;
+    if (ctx) await ctx.suspend();
+  };
+  const stopAudio = async () => {
+    if (node && onBlock) {
+      let timer;
+      try {
+        await Promise.race([
+          new Promise((resolve) => {
+            stopped = resolve;
+            node.port.postMessage('stop');
+          }),
+          // An interrupted audio thread may never acknowledge Stop.
+          new Promise((resolve) => { timer = setTimeout(resolve, 400); }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+        stopped = null;
+      }
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
+    onBlock = null;
+    await release();
+  };
+  const open = async () => {
+    stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
     });
     const s = stream.getAudioTracks()[0].getSettings();
@@ -96,17 +155,25 @@
     }
     // Kept only once the whole graph stands: a half-built one would make
     // every later take silently empty. On failure the microphone is let go.
-    const c = new AudioContext();
+    const c = ctx || new AudioContext();
     try {
-      await c.audioWorklet.addModule('/static/voice-worklet.js');
-      const node = new AudioWorkletNode(c, 'ada-capture');
+      if (!ctx) await c.audioWorklet.addModule('/static/voice-worklet.js');
+      await c.resume();
+      node = new AudioWorkletNode(c, 'ada-capture');
       const silent = c.createGain();
       silent.gain.value = 0; // the graph must reach the speakers to run; nothing is heard
-      c.createMediaStreamSource(stream).connect(node).connect(silent).connect(c.destination);
-      node.port.onmessage = (e) => { if (onBlock) onBlock(e.data); };
+      source = c.createMediaStreamSource(stream);
+      source.connect(node).connect(silent).connect(c.destination);
+      node.port.onmessage = (e) => {
+        if (e.data === null) {
+          if (stopped) { const done = stopped; stopped = null; done(); }
+        } else if (onBlock) onBlock(e.data);
+      };
     } catch (e) {
       stream.getTracks().forEach((t) => t.stop());
+      stream = null;
       c.close();
+      ctx = null;
       throw e;
     }
     ctx = c;
@@ -116,16 +183,23 @@
   // graph, and every take after would hold both streams' blocks.
   let starting = false;
   const ready = async () => {
-    if (starting) return false;
+    if (starting || stopping || loading || switching) return false;
     starting = true;
+    const requested = generation;
+    show();
     try {
       await open();
+      if (requested !== generation) {
+        await release();
+        return false;
+      }
       return true;
     } catch (e) {
       warn('The microphone could not be opened: ' + e.message);
       return false;
     } finally {
       starting = false;
+      show();
     }
   };
   const levelOf = (block) => {
@@ -190,9 +264,15 @@
     $('voice-count').textContent = 'Line ' + l.n + ' of ' + lines.length + ' · ' + kept.size + ' kept' +
       (kept.has(l.n) ? ' · this one is kept already: keeping a new take replaces it' : '');
     $('voice-rec').textContent = recording ? 'Stop (Space)' : 'Record (Space)';
-    $('voice-play').disabled = !take || recording;
-    $('voice-keep').disabled = !take || recording || saving;
-    $('voice-retake').disabled = !take || recording || saving;
+    const busy = starting || stopping || loading || switching;
+    $('voice-rec').disabled = busy || saving;
+    $('voice-play').disabled = !take || recording || busy;
+    $('voice-keep').disabled = !take || recording || saving || busy;
+    $('voice-retake').disabled = !take || recording || saving || busy;
+    $('voice-folder').disabled = busy || saving || !!talking;
+    $('voice-talk-rec').disabled = busy;
+    metadata.hidden = !!dir;
+    metadata.disabled = saving || loading;
     document.body.classList.toggle('recording', recording || !!talking);
   };
   const judge = (t) => {
@@ -204,7 +284,7 @@
     return 'Sounds good: Keep (Enter), or Play back (P) first.';
   };
   const startTake = async () => {
-    if (saving || !(await ready())) return;
+    if (saving || recording || $('voice-read').hidden || !(await ready())) return;
     take = { chunks: [], rate: ctx.sampleRate, peak: 0 };
     const t = take;
     onBlock = (b) => {
@@ -214,18 +294,26 @@
       meter($('voice-meter'), m.rms);
     };
     recording = true;
+    node.port.postMessage('start');
     $('voice-note').textContent = 'Recording…';
     show();
   };
-  const stopTake = () => {
-    onBlock = null;
-    recording = false;
-    $('voice-meter').value = 0;
-    $('voice-note').textContent = take ? judge(take) : '';
+  const stopTake = async () => {
+    if (stopping) return;
+    stopping = true;
     show();
+    try {
+      await stopAudio();
+    } finally {
+      recording = false;
+      stopping = false;
+      $('voice-meter').value = 0;
+      $('voice-note').textContent = take ? judge(take) : '';
+      show();
+    }
   };
   const keep = async () => {
-    if (!take || recording || saving || starting) return;
+    if (!take || recording || saving || starting || stopping || loading || switching) return;
     const l = lines[at];
     saving = true;
     show();
@@ -246,7 +334,8 @@
     show();
   };
   const play = () => {
-    if (!take || recording || !ctx) return;
+    if (!take || recording || !ctx || starting || stopping || loading || switching) return;
+    ctx.resume();
     const buf = ctx.createBuffer(1, samples(take.chunks), take.rate);
     const data = buf.getChannelData(0);
     let o = 0;
@@ -257,11 +346,13 @@
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.connect(ctx.destination);
+    playing++;
+    src.onended = () => { if (--playing === 0 && !onBlock && !starting) ctx.suspend(); };
     src.start();
   };
-  const move = (d) => {
-    if (saving) return;
-    if (recording) stopTake();
+  const move = async (d) => {
+    if (saving || starting || stopping || loading || switching) return;
+    if (recording) await stopTake();
     take = null;
     $('voice-note').textContent = '';
     at = (at + d + lines.length) % lines.length;
@@ -285,6 +376,7 @@
     const name = 'talk-' + talking.stamp + '-' + String(talking.part++).padStart(2, '0') + '.wav';
     try {
       await save(name, wav(chunks, ctx.sampleRate));
+      warn('');
       $('voice-talk-note').textContent = 'Saved ' + name + '.';
     } catch (e) {
       // Put the audio back: the next part, or Save again, carries it.
@@ -298,9 +390,9 @@
   // One part after another: a part that fails puts its audio and its number
   // back before the next is named, and Stop waits for every part before it.
   let flushing = Promise.resolve();
-  const flush = () => (flushing = flushing.then(savePart));
+  const flush = () => (flushing = flushing.then(savePart, savePart));
   const talkStart = async () => {
-    if (!(await ready())) return;
+    if ($('voice-talk').hidden || talking || !(await ready())) return;
     talking = { chunks: [], part: 1, stamp: stamp(), started: Date.now() };
     const limit = ctx.sampleRate * 300;
     let held = 0;
@@ -313,6 +405,7 @@
         flush();
       }
     };
+    node.port.postMessage('start');
     $('voice-talk-rec').textContent = 'Stop';
     clock = setInterval(() => {
       const s = Math.floor((Date.now() - talking.started) / 1000);
@@ -321,10 +414,18 @@
     show();
   };
   const talkStop = async () => {
-    onBlock = null;
+    if (stopping) return;
+    stopping = true;
+    show();
+    await stopAudio();
     clearInterval(clock);
     $('voice-talk-meter').value = 0;
-    await flush();
+    try {
+      await flush();
+    } finally {
+      stopping = false;
+      show();
+    }
     if (talking && talking.chunks.length) {
       $('voice-talk-rec').textContent = 'Save again'; // the last part is still only in memory
       return;
@@ -337,16 +438,29 @@
 
   // ---- Modes and keys.
   const setMode = async (read) => {
-    if (recording) stopTake();
-    if (talking) await talkStop();
+    if (switching || stopping || loading) return;
+    generation++;
+    switching = true;
+    show();
+    try {
+      if (recording) await stopTake();
+      if (talking) await talkStop();
+    } finally {
+      switching = false;
+    }
     $('voice-read').hidden = !read;
     $('voice-talk').hidden = read;
     $('voice-mode-read').setAttribute('aria-pressed', String(read));
     $('voice-mode-talk').setAttribute('aria-pressed', String(!read));
+    show();
   };
   $('voice-mode-read').addEventListener('click', () => setMode(true));
   $('voice-mode-talk').addEventListener('click', () => setMode(false));
   document.addEventListener('keydown', (e) => {
+    if (loading || switching || stopping) {
+      if ([' ', 'Enter', 'r', 'R', 'p', 'P', 's', 'S', 'ArrowRight', 'ArrowLeft'].includes(e.key)) e.preventDefault();
+      return;
+    }
     // A held key repeats: it must not start and stop a take over and over.
     if ($('voice-read').hidden || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
     // A control outside the reading card (the folder, the modes, the help)

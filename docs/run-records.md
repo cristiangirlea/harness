@@ -6,6 +6,15 @@
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 
+Batch gate output is stored as UTF-8 after decoding detected UTF-16 shell output.
+A gate whose shell cannot start includes an optional `infrastructure_error`
+reason; the task fails with that reason without retrying. Older gate records
+without the field still load. See [Batches](batches.md) for the launcher errors
+that count as infrastructure failures.
+
+Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
+or `false` when explicitly set, omitted otherwise. Older records without it still load.
+
 Routed runs include `routed_by` (`category`, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
 
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
@@ -25,7 +34,10 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
   and, where the backend reports them, each model call's `usage` and each `compaction`
   (see [Usage per turn](#usage-per-turn)). Codex's `Reconnecting... n/5` line is an `info`
   event: the CLI retries its dropped model stream itself, and the run's status is what the
-  turn's end says. It is the run's error only when the stream ends on it
+  turn's end says. It is the run's error only when the stream ends on it (an `error`
+  event with the notice is then written at the end, since the CLI exits clean, and the
+  usage is `missing` as after `turn.failed`), or the turn then fails with no word of its
+  own; an error before it stays the run's error
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
@@ -77,6 +89,11 @@ message's usage; opencode records the last step's usage. Codex's `turn.completed
 usage totals the model calls in its agent turn, and gemini's final stats total the
 run, so neither supplies a last model call's context size. A backend with no usage
 leaves it unset too. The field is omitted when zero; older records still load.
+
+When a continuation carries a saved session or conversation with more than 150,000 tokens
+of context, the new run records the fresh-run warning once as an `info` event on every
+entry path (CLI, MCP and exec). It appears in `hrn show` and the run page like other info
+events. Passing earlier turns only as a transcript does not produce this warning.
 
 Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
 force, which every run consults before it starts. Deleting it forgets them.

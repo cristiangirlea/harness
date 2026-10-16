@@ -13,18 +13,19 @@
 | `hrn backends reset` | Remove the preference file and restore unrestricted backend selection. |
 | `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
 | `hrn remote show --tenant ID --project ID JOB_ID` | Show a remote job's state and result. |
-| `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream and resume from the last durable event ID. |
+| `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream until the job ends and resume from the last durable event ID after a disconnect. |
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
 | `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
 | `hrn retrieval compare --manifest FILE --samples FILE [--baseline-preparation FILE] [--candidate-preparation FILE] [--reuse N] [--runs] [--json]` | Compare saved retrieval evidence and verify measured run references locally, without a model call. Match each run on the requested model in `task.json`; a run without a requested model matches only when its reported result model exactly equals the variant model. Text output shows a differing provider-reported model. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
+| `hrn update [--main \| --ref REF \| --file PATH] [--dry-run] [--rollback]` | Replace every hrn copy on this computer with the newest release, a build of a ref or a file, each under a backup, and restart a running `hrn watch`; `--rollback` puts the backups back (see [hrn update](#hrn-update)). |
 | `hrn runs [-n N]` | List recent runs. |
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](run-records.md#run-records)). |
 | `hrn show [--json] <id>` | Replay a recorded run. |
 | `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](watch.md#watching-runs-live)). |
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
-| `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]` | Follow runs and batches live. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). |
+| `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
@@ -80,15 +81,18 @@ active version is resolved once and saved with the run.
 `implement`, `refactor`, `test`, `research`, `plan` or `ops`. An invalid flag value
 is refused with exit 2 before the run starts. The MCP `run` tool takes the same
 optional `purpose` string, and each task in a CLI or MCP batch spec may set it;
-invalid values are refused before any task runs.
+invalid values are refused before any task runs. Flag and MCP/batch field values
+are case-sensitive and must use the lowercase spellings above (`Review` is refused).
 
 Without an explicit value, a `Purpose: <category>` header on the prompt's first
 non-blank line supplies the declaration. The header label and category are
 case-insensitive; a non-category value, including free text or `unknown`, is
-ignored as a declaration and is never an error. The explicit value takes
+ignored as a declaration and is never an error; that header line is also excluded
+from keyword classification. The explicit value takes
 precedence over the header. The effective declaration is saved in `task.purpose`;
 no prompt text is added, removed or changed. Watch and reports use it before
-falling back to the keyword classifier.
+falling back to the keyword classifier. An invalid stored `task.purpose` is ignored,
+falling back to a valid header or the classifier.
 
 ### hrn exec
 
@@ -97,6 +101,50 @@ one run per process without parsing terminal output. stdin and stdout carry JSON
 lines: hrn sends `hello` first, then accepts one `start`, streams complete events,
 and ends with `result`. Closing stdin or interrupting hrn cancels the run. See
 [the v1 protocol](exec-protocol.md) for messages, capabilities, limits and exit codes.
+
+### hrn update
+
+`hrn update` moves every hrn on this computer to another build in one step, the routine
+that used to be done by hand after a merge.
+
+**Sources.** Without a flag it takes the newest GitHub release of `cristiangirlea/harness`:
+the asset for this platform (`hrn_<version>_<os>_<arch>[.exe]`, as `.github/release.sh`
+names them) and `SHA256SUMS`, and refuses to go on when the checksum does not match. A
+`GITHUB_TOKEN` in the environment is sent to the API when present and never printed.
+`--ref REF` runs `go install github.com/cristiangirlea/harness/cmd/hrn@REF` into a temporary
+`GOBIN` (with `GOFLAGS` unset and `GOPROXY` as configured); `--main` is `--ref main`; both
+need Go on `PATH` and say so otherwise. `--file PATH` takes a binary already built, say the
+one a session built in a scratch folder. Whatever the source, the candidate is run once with
+`version` and nothing else, after the checksum. The command prints `installed:` and
+`candidate:` lines and stops with `already current` when they name the same commit or module
+version.
+
+**Targets.** The running executable (resolved through symlinks) and every `hrn` (`hrn.exe`) on
+`PATH`, in `$GOPATH/bin` or `~/go/bin` and, on Windows, in `%LOCALAPPDATA%\hrn`, each listed
+once with its version line. A file called hrn that does not answer `version` like hrn is left
+alone.
+
+**Backups.** Each target is renamed to `hrn-<build>-<yyyymmdd-hhmm>.prev[.exe]` beside it
+(`<build>` is its short commit or module version, else `unknown`): Windows refuses to overwrite
+a running binary but allows the rename. The candidate is copied in under the original name
+with mode 0755 and run with `version`; when that fails or says something else, the backup goes
+back and the target is reported as failed. The others are still done, and the exit code is 1
+when any failed. `--dry-run` prints the plan and changes nothing.
+
+**Rollback.** `hrn update --rollback` finds the newest `hrn-*.prev` beside each target and swaps
+it back the same way, the current binary becoming `hrn-<build>-<stamp>.rolledback[.exe]`. A
+target without a backup is reported as failed.
+
+**The watch.** A running `hrn watch` started from one of the targets is stopped after the swap
+and the new binary started detached with the same arguments, so `--lan`, `--addr` and
+`--public` settings survive. Its output goes to the files the old one wrote to where the
+system can tell (Linux), else to `watch-<port>.log` under `HRN_HOME`. The command prints
+`watch restarted on <addr>` with the new pid. A watch whose binary could not be replaced is
+left running.
+
+**MCP servers.** Running `hrn mcp` processes are listed under "still on the old build until their
+host restarts them", with pid, parent and start time, and never stopped: the host (Claude Code,
+Codex) that started them owns them and respawns them on its next start.
 
 ### Remote development jobs
 
@@ -113,6 +161,16 @@ support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
 for the corresponding tools.
 Remote jobs refuse enabled retrieval options until the worker can honor their
 version pin; use a local run for opted-in retrieval.
+MCP servers and `allow_dangerous` are refused at submission and again by the
+durable API run path; a stored job with either option fails with a clear result
+error before any model call.
+
+`hrn remote events --watch` prints events until it prints one that ends the job,
+then exits with status 0, including when the job failed or was canceled. Terminal
+event kinds are `succeeded`, `failed`, and `canceled`; `admission_timeout` and
+`recovery_resolved` also end the watch when their `details.state` is terminal.
+The watch reconnects from the last printed event ID if a stream ends before a
+terminal event. Ctrl-C ends the watch early.
 
 ### Project knowledge
 

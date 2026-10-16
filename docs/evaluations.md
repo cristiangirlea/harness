@@ -34,7 +34,9 @@ then lower effort, with variant names breaking remaining ties. Cost is the
 variant's recorded median across the eval, since task rows do not store separate
 costs. Variant choices inherit task and spec defaults as in the measured run;
 evidence that mixes different choices within one purpose/variant is skipped.
-The row carries the eval's id and date.
+The row carries the eval's id and date. Codex list-price estimates participate
+in eval cost comparisons and routing through the same cost fields as api estimates.
+Older records are not repriced.
 
 `hrn run`, batch tasks (after inheriting spec options), and MCP `run` apply the
 classified purpose's row only when backend, model **and** effort are all empty.
@@ -78,10 +80,19 @@ research, plan, ops or unknown) or `--by day` (the day the run started, on this 
 calendar; days are listed in date order rather than largest first). The purpose is the one the run declared (`--purpose`, the MCP `purpose`
 field, or a valid leading `Purpose: <category>` header); otherwise it comes from ordered keyword
 rules on the prompt's first paragraph, or its second when the first matches no rule, with leading
-`Label: value` lines skipped, since a brief's later paragraphs mention every keyword; the first rule
+`Label: value` lines skipped for an anchored instruction before trying the paragraph
+as written, then with labels skipped as a fallback. A label's colon must be followed by a space or the
+end of the line; URLs and Windows drive paths stay intact. Each lead is lowercased
+from a bounded prefix and capped at 600 bytes without splitting a UTF-8 rune.
+Since a brief's later paragraphs mention every keyword, the first rule
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
 median cost, and the cache share (cache-read tokens over every input token, cache writes included;
-`-` when the backend reported no token counts). A `~` marks a cost that is the api backend's estimate.
+`-` when the backend reported no token counts). A `~` marks a list-price estimate
+computed by hrn. The api and codex estimates come from the Claude table in
+`internal/agent/api.go` and the OpenAI table in `internal/agent/prices_openai.go`.
+Every cost hrn shows should be treated as an estimate, never a bill; other CLIs
+may supply their own cost figures rather than use either hrn table. Codex uses
+standard short-context prices, without service-tier or regional adjustments.
 It also shows `-` when Codex usage is marked missing; Codex's cache share divides
 cache reads by input tokens that already include those reads.
 Unknown costs are never summed as zero or included in the cost median. When no cost
@@ -192,6 +203,18 @@ does, and a retried attempt would score the harness rather than the backend. Eve
 else, gates and mode and the budgets, `lean` and `compact_window`, carries through from the
 spec; cells on claude are lean unless the spec or task says `"lean": false` (see
 [Lean claude workers](backends.md#lean-claude-workers)).
+
+A variant may set `"lean": true` or `"lean": false`, overriding the task and spec.
+Omitting it preserves the task/spec setting and the claude batch default. A variant's
+`lean` field is refused if any of its cells resolves to a backend other than `claude`.
+Give variants distinct names to compare lean within one eval, for example:
+
+```json
+"matrix": [
+  {"name": "lean", "backend": "claude", "lean": true},
+  {"name": "full", "backend": "claude", "lean": false}
+]
+```
 
 Variants may set `retrieval` (`off`, `optional` or `required`) and
 `retrieval_version`. An eval record may include `retrieval_manifest` and

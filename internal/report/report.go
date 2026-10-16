@@ -188,7 +188,7 @@ type Row struct {
 	MedianCost     float64       `json:"median_cost_usd"`
 	// RunsWithoutCost counts results whose cost is unknown.
 	RunsWithoutCost int `json:"runs_without_cost,omitempty"`
-	// CostEstimated is set when any run's cost is the api backend's estimate
+	// CostEstimated is set when any run's cost is a backend's list-price estimate
 	// rather than a figure the backend reported.
 	CostEstimated bool `json:"cost_is_estimate,omitempty"`
 	// CacheShare is the cache-read tokens over every input token the model

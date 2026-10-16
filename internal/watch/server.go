@@ -40,7 +40,7 @@ type Options struct {
 	Public *PublicAccess
 	// Key is what a request that would act on hrn (anything but GET and
 	// HEAD) must send in X-Hrn-Watch-Key, from this computer or the network
-	// alike. Viewing needs none. Empty refuses every action; none exists yet.
+	// alike. Viewing needs none. Empty refuses every action.
 	Key string
 }
 
@@ -279,6 +279,7 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
+	mux.HandleFunc("POST /backends", s.saveBackends)
 	mux.HandleFunc("GET /run/{id}", s.run)
 	mux.HandleFunc("GET /batch/{id}", s.batch)
 	mux.HandleFunc("GET /stream/index", s.streamIndex)
@@ -550,6 +551,7 @@ func batchOf(batches []batch.Result) map[string]string {
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists()}
+	p.Backends = s.backendsCard(w, r)
 	// The phone links and the hints about --lan are for the person at this
 	// computer; a phone that came in over the network needs neither.
 	if s.fromThisComputer(r) {

@@ -155,6 +155,12 @@ Permit automatic replay only when an operation is verified to be side-effect-fre
 
 Recovery must preserve spent budget and unresolved reservations. It must not reset the clock, retry count, cost ceiling, or approval state to obtain a fresh allowance.
 
+The API checkpoint store is the trust boundary for recovery. It must commit before acknowledging saves, reject stale owners, and preserve immutable versions. The task digest binds task settings; it does not authenticate checkpoint `Result.CostUSD`, `Deadline`, or `Started`. Recovery trusts these stored values, so changing them can reset spent budget or the clock. Untrusted execution tools and workspace/model content must not be able to modify stored checkpoints or access store credentials.
+
+The API cost ceiling gates new model requests. A restored, already paid response may finish its requested tools even when its cost has reached the ceiling; committed tool outcomes are skipped and no further model request starts. The original deadline still applies to those tools.
+
+A deadline or cancellation between confirmed operations reports `timeout` or `canceled` without `recovery_required` and leaves the checkpoint resumable. A definite, non-retryable HTTP 4xx clears the pending model operation at a `model_rejected` checkpoint and reports an error. A context-management 400 instead permits one retry without context management, with a new saved model intent. Retryable HTTP errors, interrupted requests, and failed persistence acknowledgements remain uncertain. Every newly handled tool call emits a call event before its result, including unknown, guard-refused, invalid-input, and permission-denied calls; durable `tool_calls` counts committed outcomes.
+
 For native CLI backends:
 
 - Capture explicit session identifiers from verified output.

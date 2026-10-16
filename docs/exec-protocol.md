@@ -79,6 +79,9 @@ hrn       -> result                (always the last line after accepted; then ex
   mode: a supervisor states both.
 - `continue_run_id` continues a finished run, as `hrn run --continue` does; `accepted` says how
   (`notes`).
+  When the saved session or conversation being carried over ended above 150,000 tokens of
+  context, these notes include the same fresh-run warning as the CLI and MCP. The new run
+  also records it once as an `info` event. A transcript hand-over alone does not warn.
   It is accepted for every backend independently of `options` and is not listed there.
 
 ### `accepted` or `rejected` (hrn)

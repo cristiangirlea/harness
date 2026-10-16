@@ -25,6 +25,8 @@ Without preferences, the default backend is `api` when credentials exist, otherw
 
 ### Choosing which backends hrn may use
 
+The [Backends card in hrn watch](watch.md#backends) can also change the enabled backends and default.
+
 Set the enabled backends once for runs, MCP calls, batches, eval cells and judges,
 and the supervisor protocol:
 
@@ -121,6 +123,12 @@ subscription login. What it drops: every MCP server hrn did not pass, including 
 plugin or a claude.ai connector provides (the plugin's skills stay). hrn's guard is the same
 either way: its `--disallowedTools` rules are command-line flags, not settings.
 
+Loading `CLAUDE.local.md` under lean was not checked against Claude Code 2.1.284.
+To check it, put a unique harmless instruction in `CLAUDE.local.md` in a temporary
+repository, then compare a normal run with `hrn run -b claude --lean` using the same
+prompt that exercises that instruction. These runs use your Claude plan; record the
+Claude Code version and whether each run follows the instruction.
+
 Lean is the default for `hrn batch` and `hrn eval` tasks that run on claude; a spec or task
 sets `"lean": false` to give its workers every MCP server (a task's `false` wins over a
 spec's `true`). The record of an attempt says `"lean": true` when the default applied. `hrn
@@ -170,6 +178,23 @@ runs whose early history matters little; leave it unset for short ones, which ne
 it anyway. Only the claude backend applies it; the api loop (whose context editing does a
 similar job, see above), codex, gemini, opencode and agy say `compact_window: not enforced`.
 
+### Codex cost estimates
+
+Codex costs are list-price estimates from the OpenAI table in
+`internal/agent/prices_openai.go`, never a bill or subscription charge. The table
+records its source URL and date and uses standard short-context rates; service
+tiers, long-context rates and regional uplifts are not represented. Reported input
+includes cached input: cache reads use the cached-input rate, the remaining input
+uses the input rate, and output uses the output rate.
+
+The model the run asked for (`-m` or the routing table) selects the price, with
+the same dated-snapshot suffix rule as the Claude table. The adapter records no
+CLI default model: a run with neither keeps cost marked `missing`, as does an
+unknown model or missing usage. `gpt-6-sol`
+is omitted because the pricing page fetched on 2026-10-15 did not list it.
+Known models with reported usage carry `cost_is_estimate` and an `estimated`
+usage cost status, including an explicitly reported zero.
+
 ### Continuing a run
 
 A finished run can be picked up where it stopped, on the backend that ran it or on
@@ -191,8 +216,9 @@ tokens of context at its last turn, hrn warns with its run id and context size a
 suggests a fresh run with a short hand-over. This may be the named run or an earlier
 run in the chain on the same backend; a transcript-only hand-over to another backend
 gets no warning.
-The CLI prints the warning to stderr before starting, including with `--json`;
-the MCP tool includes it in its answer. Continuing is still allowed. Unknown
+The CLI shows the warning before starting: as an info line in plain mode, on stderr
+with `--json`; the MCP tool includes it in its answer and `hrn exec` in the `accepted`
+frame's notes, and every path records it once as an info event in the new run. Continuing is still allowed. Unknown
 context sizes and sizes at or below the threshold produce no warning.
 
 What the backend carries on from:

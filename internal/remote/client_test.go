@@ -8,10 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -84,6 +83,7 @@ func TestNewFromEnvRejectsNonOriginServerURL(t *testing.T) {
 		"https://host?", "https:host", "https://host/a%2Fb", "https://host/%2F",
 		"https://host#", "https://host/#",
 		"https://user@host", "https://host/#fragment", "https://host/?q=1",
+		"https://:443", "https://host/prefix",
 	} {
 		t.Run(origin, func(t *testing.T) {
 			t.Setenv("HRN_SERVER_URL", origin)
@@ -91,6 +91,40 @@ func TestNewFromEnvRejectsNonOriginServerURL(t *testing.T) {
 				t.Fatalf("NewFromEnv(%q) error = %v, want HRN_SERVER_URL refusal", origin, err)
 			}
 		})
+	}
+}
+
+func TestNewFromEnvBuildsOriginFromParsedURL(t *testing.T) {
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	for _, raw := range []string{"HTTPS://host", "HTTPS://host/"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("HRN_SERVER_URL", raw)
+			client, err := NewFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if client.origin != "https://host" {
+				t.Fatalf("origin = %q, want https://host", client.origin)
+			}
+		})
+	}
+}
+
+func TestAScopedIPv6OriginStaysEscapedInRequestURLs(t *testing.T) {
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	t.Setenv("HRN_SERVER_URL", "https://[fe80::1%25en0]:443")
+	client, err := NewFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(client.origin + "/v1/jobs")
+	if err != nil {
+		t.Fatalf("a request URL from origin %q does not parse: %v", client.origin, err)
+	}
+	if u.Hostname() != "fe80::1%en0" || u.Port() != "443" {
+		t.Fatalf("request host = %q port %q, want fe80::1%%en0 and 443", u.Hostname(), u.Port())
 	}
 }
 
@@ -104,20 +138,21 @@ func TestNewFromEnvRejectsNonRegularCAFile(t *testing.T) {
 		}
 	})
 	t.Run("FIFO", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("mkfifo is unavailable on Windows")
-		}
-		mkfifo, err := exec.LookPath("mkfifo")
-		if err != nil {
-			t.Skip("mkfifo is unavailable")
-		}
 		path := filepath.Join(t.TempDir(), "ca.fifo")
-		if output, err := exec.Command(mkfifo, path).CombinedOutput(); err != nil {
-			t.Fatalf("mkfifo: %v: %s", err, output)
-		}
+		makeCAFIFO(t, path)
 		t.Setenv("HRN_SERVER_CA_FILE", path)
-		if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "HRN_SERVER_CA_FILE") {
-			t.Fatalf("NewFromEnv() error = %v, want HRN_SERVER_CA_FILE refusal", err)
+		done := make(chan error, 1)
+		go func() {
+			_, err := NewFromEnv()
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "HRN_SERVER_CA_FILE") {
+				t.Fatalf("NewFromEnv() error = %v, want HRN_SERVER_CA_FILE refusal", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("opening a FIFO blocked")
 		}
 	})
 }

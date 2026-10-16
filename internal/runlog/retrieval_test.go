@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -17,12 +18,15 @@ func testRetrievalText(content, source, revision string) string {
 
 func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		unfinished bool
-		mutate     func(*Record, *agent.Conversation, **retrieval.Record)
-		reject     bool
+		name        string
+		unfinished  bool
+		unavailable bool
+		mutate      func(*Record, *agent.Conversation, **retrieval.Record)
+		reject      bool
 	}{
 		{name: "complete"}, {name: "unfinished", unfinished: true},
+		{name: "optional_unavailable", unavailable: true},
+		{name: "optional_unavailable_unfinished", unavailable: true, unfinished: true},
 		{name: "missing_result_pin", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { r.Result.Retrieval = nil }, reject: true},
 		{name: "missing_conversation_pin", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval = nil }, reject: true},
 		{name: "missing_persisted_pin", unfinished: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { *p = nil }, reject: true},
@@ -48,6 +52,9 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			text := testRetrievalText("ref", "fixture", "revision")
 			pin := retrieval.Record{Mode: "required", OriginalPrompt: "task", Scope: retrieval.Scope{TenantID: "tenant", ProjectID: "project", Backend: "api", Model: "fixture", Revision: "revision"}, Packet: &retrieval.Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), Entries: []retrieval.Entry{{ID: "entry", Source: "fixture", Content: "ref"}}}}
+			if tc.unavailable {
+				pin.Mode, pin.Failure, pin.Packet = "optional", "optional retrieval unavailable", nil
+			}
 			clone := func() *retrieval.Record {
 				b, _ := json.Marshal(pin)
 				var p retrieval.Record
@@ -55,6 +62,9 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 				return &p
 			}
 			rec := Record{ID: "fixture", Backend: "api", Task: agent.Task{Prompt: "task", Options: agent.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalRevision: "revision", RetrievalVersion: "v_fixture"}}, Result: agent.Result{Retrieval: clone()}}
+			if tc.unavailable {
+				rec.Task.Retrieval, rec.Task.RetrievalVersion = "optional", ""
+			}
 			conv := agent.Conversation{Model: "fixture", Retrieval: clone()}
 			persisted := clone()
 			if tc.mutate != nil {
@@ -86,6 +96,9 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 			}
 			if err == nil && (got.Done == tc.unfinished || got.Result.Retrieval == nil || history.Retrieval == nil) {
 				t.Fatal("lost pin or completion state")
+			}
+			if err == nil && tc.unavailable && (!reflect.DeepEqual(got.Result.Retrieval, &pin) || !reflect.DeepEqual(history.Retrieval, &pin)) {
+				t.Fatal("optional retrieval failure, scope or absent packet changed on load")
 			}
 		})
 	}

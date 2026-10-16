@@ -18,6 +18,9 @@ func TestValidateSubmissionRefusesUnsupportedDurableOptions(t *testing.T) {
 		{name: "mcp server", options: `{"mcp":["fixture"]}`, wantOption: "mcp"},
 		{name: "allow dangerous", options: `{"allow_dangerous":true}`, wantOption: "allow_dangerous"},
 		{name: "both", options: `{"mcp":["fixture"],"allow_dangerous":true}`, wantOption: "mcp"},
+		{name: "retrieval", options: `{"retrieval":"auto"}`, wantOption: "retrieval"},
+		{name: "untrusted retrieval", options: `{"retrieval":"untrusted-value\n<script>"}`, wantOption: "retrieval"},
+		{name: "retrieval off", options: `{"retrieval":"off"}`},
 		{name: "empty mcp and safe", options: `{"mcp":[],"allow_dangerous":false}`},
 	}
 	for _, tt := range tests {
@@ -40,6 +43,12 @@ func TestValidateSubmissionRefusesUnsupportedDurableOptions(t *testing.T) {
 			}
 			if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), tt.wantOption) {
 				t.Fatalf("submission with %s: %v, want ErrUnsupported naming option", tt.wantOption, err)
+			}
+			if tt.wantOption == "retrieval" {
+				want := "unsupported remote execution mode: retrieval is not supported for durable jobs"
+				if err.Error() != want {
+					t.Fatalf("retrieval refusal = %q, want %q", err.Error(), want)
+				}
 			}
 		})
 	}

@@ -19,14 +19,19 @@ type contextWarningBackend struct{ recorder }
 
 func (r contextWarningBackend) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
 	fmt.Fprintln(os.Stderr, "context test backend started")
+	fmt.Fprintln(os.Stdout, "context test backend started")
 	return r.recorder.Run(ctx, task, emit)
 }
 
-func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *testing.T) {
+func TestContinueWarnsOnceBeforeStartingOnlyAboveTheContextThreshold(t *testing.T) {
 	agent.Register(contextWarningBackend{recorder{name: "stub-context"}})
 	for _, jsonOut := range []bool{false, true} {
-		for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
-			t.Run(fmt.Sprintf("json=%v/context=%d", jsonOut, n), func(t *testing.T) {
+		for _, tc := range []struct {
+			tokens  int64
+			handoff bool
+		}{{0, false}, {149999, false}, {150000, false}, {150001, false}, {285000, false}, {285000, true}} {
+			n := tc.tokens
+			t.Run(fmt.Sprintf("json=%v/context=%d/handoff=%v", jsonOut, n, tc.handoff), func(t *testing.T) {
 				t.Setenv("HRN_HOME", t.TempDir())
 				w, err := runlog.Create("stub-context", agent.Task{Prompt: "first", Dir: t.TempDir()})
 				if err != nil {
@@ -43,10 +48,19 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 					t.Fatal(err)
 				}
 				defer capture.Close()
-				prev := os.Stderr
-				os.Stderr = capture
-				defer func() { os.Stderr = prev }()
+				stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer stdout.Close()
+				prev, prevOut := os.Stderr, os.Stdout
+				os.Stderr, os.Stdout = capture, stdout
+				defer func() { os.Stderr, os.Stdout = prev, prevOut }()
 				args := []string{"--continue", w.ID(), "-b", "stub-context", "--no-switch"}
+				if tc.handoff {
+					agent.Register(contextWarningBackend{recorder{name: "stub-context-other"}})
+					args[3] = "stub-context-other"
+				}
 				if jsonOut {
 					args = append(args, "--json")
 				}
@@ -54,22 +68,66 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 				if code != 0 || err != nil {
 					t.Fatalf("continuation refused: code=%d error=%v", code, err)
 				}
+				records, err := runlog.List(0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := 0
+				for _, rec := range records {
+					if rec.Continues != w.ID() {
+						continue
+					}
+					found++
+					events, err := runlog.Events(rec.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					count := 0
+					for _, e := range events {
+						if e.Kind == agent.EventInfo && strings.Contains(e.Text, "short hand-over") {
+							count++
+						}
+					}
+					want := 0
+					if n > 150000 && !tc.handoff {
+						want = 1
+					}
+					if count != want {
+						t.Errorf("recorded warnings = %d, want %d", count, want)
+					}
+				}
+				if found != 1 {
+					t.Fatalf("continued records = %d, want 1", found)
+				}
 				data, err := os.ReadFile(capture.Name())
 				if err != nil {
 					t.Fatal(err)
 				}
-				got := string(data)
+				out, err := os.ReadFile(stdout.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, other := string(data), string(out)
+				if !jsonOut {
+					got, other = other, got
+				}
+				if !jsonOut && strings.Contains(other, "warning: run ") {
+					t.Errorf("plain warning also printed on stderr: %q", other)
+				}
 				start := strings.Index(got, "context test backend started")
 				if start < 0 {
 					t.Fatal("backend never started")
 				}
-				if n > 150000 {
+				if n > 150000 && !tc.handoff {
+					if count := strings.Count(got, "warning: run "); count != 1 {
+						t.Errorf("displayed warnings = %d, want 1: %q", count, got)
+					}
 					for _, want := range []string{"warning:", w.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
 						if !strings.Contains(got[:start], want) {
-							t.Errorf("stderr before start lacks %q: %q", want, got[:start])
+							t.Errorf("output before start lacks %q: %q", want, got[:start])
 						}
 					}
-				} else if strings.Contains(got, "short hand-over") {
+				} else if strings.Contains(got+other, "warning: run ") {
 					t.Errorf("unneeded warning: %q", got)
 				}
 			})

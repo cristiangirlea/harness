@@ -1,11 +1,32 @@
 package purpose
 
 import (
+	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func BenchmarkParagraphsLabels(b *testing.B) {
+	for _, mib := range []int{1, 4, 16} {
+		b.Run(fmt.Sprintf("short/%dMiB", mib), func(b *testing.B) {
+			prompt := strings.Repeat("A: b\n", (mib<<20)/len("A: b\n"))
+			b.ReportAllocs()
+			for b.Loop() {
+				paragraphs(prompt)
+			}
+		})
+	}
+	b.Run("label-and-text/4MiB", func(b *testing.B) {
+		prompt := strings.Repeat("A: b\ntext\n", (4<<20)/len("A: b\ntext\n"))
+		b.ReportAllocs()
+		for b.Loop() {
+			paragraphs(prompt)
+		}
+	})
+}
 
 func TestValidAcceptsOnlyDeclaredCategories(t *testing.T) {
 	for _, c := range Categories {
@@ -57,6 +78,14 @@ func TestResolvePrefersDeclarationsAndKeepsTheFallbackRule(t *testing.T) {
 		{"", "Purpose: free text\nReview the diff.", Classify("Purpose: free text\nReview the diff.")},
 		{"", "Purpose: unknown\nReview the diff.", Classify("Purpose: unknown\nReview the diff.")},
 		{"", "", Result{Category: Unknown}},
+		{"free text", "Purpose: review\nFix it.", Result{Category: "review", Rule: "declared"}},
+		{"free text", "Implement it.", Classify("Implement it.")},
+		{"unknown", "Fix it.", Classify("Fix it.")},
+		{"", "Purpose: deploy notes\nAdd a test.", Classify("Add a test.")},
+		{"", "\r\n pUrPoSe: deploy notes\r\nAdd a test.", Classify("Add a test.")},
+		{"", "Purpose: deploy notes", Result{Category: Unknown}},
+		{"", "Purposeful: deploy notes", Classify("Purposeful: deploy notes")},
+		{"", "Purpose : deploy notes", Classify("Purpose : deploy notes")},
 	} {
 		if got := Resolve(tc.declared, tc.prompt); got != tc.want {
 			t.Errorf("Resolve(%q, %q) = %+v, want %+v", tc.declared, tc.prompt, got, tc.want)
@@ -80,6 +109,10 @@ func TestClassifyNamesTheRuleThatFired(t *testing.T) {
 		{"review", "Review the diff on this branch.", "review", "review.review"},
 		{"why does", "Why does the watcher drop the last event?", "debug", "debug.why-does"},
 		{"error message", "Got this: TypeError: x is undefined on the watch page", "debug", "debug.error-message"},
+		{"error before build verb", "Error: build failed", "debug", "debug.error-message"},
+		{"type error before make verb", "TypeError: make is not a function", "debug", "debug.error-message"},
+		{"panic before split verb", "panic: split slice out of range", "debug", "debug.error-message"},
+		{"panic before instruction", "panic: nil map write\nAdd a nil check to the loader.", "debug", "debug.error-message"},
 		{"how does", "How does the guard handle a symlinked workspace?", "research", "research.how-does"},
 		{"explain", "Explain the batch retry logic.", "research", "research.explain"},
 		{"compare", "Compare bufio.Scanner and bufio.Reader for the codec.", "research", "research.compare"},
@@ -132,6 +165,16 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 		name, prompt, category, rule string
 	}{
 		{"repository line before instruction", "Repository: hrn\nImplement the purpose classifier.", "implement", "implement.build"},
+		{"repository keywords before instruction", "Repository: hrn (Go, CI on GitHub)\nImplement the purpose classifier.", "implement", "implement.build"},
+		{"context keywords before instruction", "Context: deploy notes\nExplain the classifier.", "research", "research.explain"},
+		{"labels exceed cap before instruction", strings.Repeat("Context: "+strings.Repeat("x", 80)+"\n", 8) + "Refactor the loader.", "refactor", "refactor.refactor"},
+		{"labels exceed cap before long instruction", strings.Repeat("Context: "+strings.Repeat("x", 80)+"\n", 8) + "Refactor the loader. " + strings.Repeat("X", 4<<20), "refactor", "refactor.refactor"},
+		{"instruction keeps test precedence", "Repository: hrn (CI)\nAdd a test.", "test", "test.write-tests"},
+		{"url lead stays intact", "https://example.org/x", "unknown", ""},
+		{"windows path lead stays intact", `C:\repo\x`, "unknown", ""},
+		{"fix windows path", `fix C:\repo\x`, "debug", "debug.fix"},
+		{"panic value keeps diagnostic precedence", "panic: deployment failed", "debug", "debug.error-message"},
+		{"exception value keeps diagnostic precedence", "TypeError: cannot compare values", "debug", "debug.error-message"},
 		{"batch context before goal", "Repository: hrn (harness), Go, standard library only. Read AGENTS.md, CLAUDE.md and .claude/rules/ first; they are the house rules.\n\nGoal (issue #82): on hrn watch's index, each run and each batch leads with its repository and its task, not its id. Add a repository column ...", "implement", "implement.add"},
 		{"goal with note", "Goal (issue #82): fix the flaky ws create-lock test", "debug", "debug.fix"},
 		{"reviewer role in first paragraph wins", "You are an independent, read-only senior reviewer. Your job is to find real defects.\n\nSecond round on branch x: review the diff", "review", "review.reviewer-role"},
@@ -166,6 +209,51 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 func TestUnlabelKeepsASingleLabelValue(t *testing.T) {
 	if got := unlabel("Repository: hrn"); got != "hrn" {
 		t.Errorf("unlabel = %q, want hrn", got)
+	}
+}
+
+func TestUnlabelRequiresSpaceOrEndAfterTheColon(t *testing.T) {
+	for _, tc := range []struct{ prompt, want string }{
+		{"https://example.org/x\nHello.", "https://example.org/x\nHello."},
+		{`C:\repo\x` + "\nHello.", `C:\repo\x` + "\nHello."},
+		{"E:/repo/x\nHello.", "E:/repo/x\nHello."},
+		{"Repository: hrn\nHello.", "Hello."},
+		{"Repository:\nHello.", "Hello."},
+	} {
+		if got := unlabel(tc.prompt); got != tc.want {
+			t.Errorf("unlabel(%q) = %q, want %q", tc.prompt, got, tc.want)
+		}
+	}
+}
+
+func TestDeclarableExcludesUnknownRegardlessOfItsPosition(t *testing.T) {
+	original := Categories
+	t.Cleanup(func() { Categories = original })
+	Categories = []string{Unknown, "review", "debug"}
+	if got := Declarable(); !slices.Equal(got, []string{"review", "debug"}) {
+		t.Errorf("Declarable = %v, want review and debug", got)
+	}
+}
+
+func TestLeadBoundsWorkForALongFirstLine(t *testing.T) {
+	prompt := "Implement " + strings.Repeat("X", 4<<20)
+	if got, want := Classify(prompt), Classify(prompt[:maxLead]); got != want {
+		t.Errorf("long prompt = %+v, prefix = %+v", got, want)
+	}
+	if got := testing.AllocsPerRun(10, func() { lead(prompt) }); got > 2 {
+		t.Errorf("lead allocated %g times per call, want at most 2", got)
+	}
+}
+
+func TestLeadCutsAfterLowercasingABoundedPrefix(t *testing.T) {
+	for _, tc := range []struct{ prompt, want string }{
+		{strings.Repeat("İ", maxLead) + "REVIEW", strings.Repeat("i", maxLead)},
+		{strings.Repeat("Ⱥ", maxLead) + "REVIEW", strings.Repeat("ⱥ", maxLead/3)},
+		{strings.Repeat("x\n", maxLead), strings.Repeat("x ", maxLead/2)},
+	} {
+		if got := lead(tc.prompt); got != tc.want || !utf8.ValidString(got) {
+			t.Errorf("lead = %q, want %q", got, tc.want)
+		}
 	}
 }
 
@@ -204,5 +292,145 @@ func TestALongLeadIsCutOnARuneBoundary(t *testing.T) {
 	}
 	if got := Classify(prompt); got.Category != "implement" {
 		t.Errorf("Classify = %+v, want implement", got)
+	}
+}
+
+func TestParagraphsBoundGathering(t *testing.T) {
+	for _, text := range []string{strings.Repeat("X", 4<<20), strings.Repeat("X\n", 2<<20)} {
+		got := paragraphs(text + "\n\nImplement it.")
+		if len(got) != 2 || len(got[0]) > maxLead*utf8.UTFMax || got[1] != "Implement it." {
+			t.Errorf("paragraphs did not bound the first paragraph and preserve the second")
+		}
+	}
+}
+
+func TestParagraphsBoundGatheringAfterLabels(t *testing.T) {
+	header := "Context: " + strings.Repeat("x", 80) + "\n"
+	prefix := header + "Refactor the loader. " + strings.Repeat("X", maxLead-len("Refactor the loader. "))
+	prompt := strings.Repeat(header, 8) + strings.TrimPrefix(prefix, header) + strings.Repeat("X", 4<<20)
+	if got := paragraphs(prompt); !slices.Equal(got, []string{prefix}) {
+		t.Error("paragraphs did not preserve the latest label and cap the instruction")
+	}
+	if got := allocatedBytes(func() { paragraphs(prompt) }); got > 64<<10 {
+		t.Errorf("long instruction allocated %d bytes, want at most 64 KiB", got)
+	}
+	// Race mode randomly discards sync.Pool entries used by regexp, so exact
+	// allocation counts are unstable. The byte bound above still runs there.
+	if !raceEnabled {
+		baseline := testing.AllocsPerRun(10, func() { paragraphs(prefix) })
+		if got := testing.AllocsPerRun(10, func() { paragraphs(prompt) }); got > baseline {
+			t.Errorf("long instruction allocated %g times, bounded prefix allocated %g", got, baseline)
+		}
+	}
+}
+
+func TestParagraphsBoundLabelGathering(t *testing.T) {
+	for _, tc := range []struct{ name, prompt, want string }{
+		{"one long label", "Context: " + strings.Repeat("X", 4<<20), "Context: " + strings.Repeat("X", maxLead-len("Context: "))},
+		{"many short labels", strings.Repeat("A: b\n", (4<<20)/len("A: b\n")) + "Last: value", "Last: value"},
+		{"unicode label", "Context: " + strings.Repeat("\U0001f600", maxLead), "Context: " + strings.Repeat("\U0001f600", maxLead-len("Context: "))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, suffix := range []string{"", "\n" + strings.Repeat("x", maxLead*2) + "\n\nImplement it."} {
+				prompt := tc.prompt + suffix
+				want := []string{tc.want}
+				if suffix != "" {
+					want = []string{tc.want + "\n" + strings.Repeat("x", maxLead), "Implement it."}
+				}
+				if got := paragraphs(prompt); !slices.Equal(got, want) {
+					t.Error("paragraphs did not cap the latest label and preserve the instruction budget")
+				}
+			}
+			allocated := allocatedBytes(func() { paragraphs(tc.prompt) })
+			if allocated > 64<<10 {
+				t.Errorf("paragraphs allocated %d bytes per call, want at most 64 KiB", allocated)
+			}
+		})
+	}
+}
+
+func TestLeadingLabelsMatchTheGrammarWithoutScratchAllocations(t *testing.T) {
+	lines := []string{
+		"", "A: b", "A:", "A:two", "A:\tb", "A : b", "A  B: c",
+		"A B C: d", "A B C D: e", "A (note: value): b", "A (): b",
+		"A (nested (note)): b", "A (unclosed: b", "A (note) : b",
+		"A B C (note): d", "A B C D (note): e", "A\tB: c",
+		"Task 2 Build/Goal-x: b", "\u00e9 \u2160: b", "\ufffd: b", "\xff: b",
+		"Error: b", "TypeError: b", "EXCEPTION: b", "panic: b",
+		"\u212aError: b", "\u017fException: b", "\u00e9Error: b", "1Error: b",
+		"A-Error: b", "A/Error: b", "A Error: b", "Error (note): b",
+	}
+	for _, line := range lines {
+		want := !errorLine.MatchString(line) && label.MatchString(line)
+		if got := leadingLabel(line); got != want {
+			t.Errorf("leadingLabel(%q) = %v, want %v", line, got, want)
+		}
+	}
+	if got := allocatedBytes(func() {
+		for _, line := range lines {
+			leadingLabel(line)
+		}
+	}); got > 1<<10 {
+		t.Errorf("label checks allocated %d bytes, want at most 1 KiB", got)
+	}
+}
+
+// allocatedBytes measures a cold call: two GCs evict regexp's pooled scratch
+// space so a warm pool cannot hide allocations. Do not use in parallel tests.
+func allocatedBytes(f func()) uint64 {
+	runtime.GC()
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+func TestParagraphsTrimNewlineAtCap(t *testing.T) {
+	for _, prefix := range []string{"", "Hello.\n\n"} {
+		for _, suffix := range []string{"", "\n\nHello."} {
+			want := strings.Repeat("x", maxLead-1)
+			got := paragraphs(prefix + want + "\nx" + suffix)
+			index := 0
+			if prefix != "" {
+				index = 1
+			}
+			if got[index] != want {
+				t.Errorf("paragraph with prefix %q and suffix %q retained a trailing newline", prefix, suffix)
+			}
+		}
+	}
+}
+
+func TestDeclaredDoesNotCopyLongPrompts(t *testing.T) {
+	for _, prompt := range []string{
+		"Purpose: review\r\n" + strings.Repeat("X", 4<<20),
+		"Purpose: " + strings.Repeat("X", 4<<20) + "\r\n",
+	} {
+		if got := testing.AllocsPerRun(10, func() { Declared(prompt) }); got != 0 {
+			t.Errorf("Declared allocated %g times, want no copies", got)
+		}
+	}
+}
+
+func TestResolveDoesNotCopyThePromptBody(t *testing.T) {
+	prompt := "Purpose: deploy notes\r\nImplement it.\r\n\r\n" + strings.Repeat("X", 4<<20)
+	body := strings.TrimPrefix(prompt, "Purpose: deploy notes\r\n")
+	// Allow cold regexp scratch for every rule (race mode can discard every
+	// pooled matcher), but never a copy of the 4 MiB body.
+	if got := allocatedBytes(func() { Resolve("", prompt) }); got > 2<<20 {
+		t.Errorf("Resolve allocated %d bytes, want at most 2 MiB", got)
+	}
+	// Race mode randomly drops regexp's sync.Pool entries; compare counts only
+	// without instrumentation, keeping the byte bound active in both builds.
+	if !raceEnabled {
+		baseline := testing.AllocsPerRun(10, func() { Classify(body) })
+		if got := testing.AllocsPerRun(10, func() { Resolve("", prompt) }); got > baseline {
+			t.Errorf("Resolve allocated %g times, Classify allocated %g", got, baseline)
+		}
+	}
+	if got := Resolve("", prompt); got != Classify("Implement it.") {
+		t.Errorf("Resolve = %+v, want implement.build", got)
 	}
 }

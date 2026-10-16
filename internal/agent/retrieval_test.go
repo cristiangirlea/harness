@@ -145,12 +145,27 @@ func TestRetrievalRejectsUnsafePacketsAndKeepsTheVersionPinOnRepair(t *testing.T
 	if calls != before {
 		t.Fatal("scope change accepted")
 	}
-	task = Task{Prompt: "durable", Options: retrievalOptions(), Durable: &DurableExecution{}, RunDir: t.TempDir()}
-	Run(context.Background(), b, task, func(Event) {})
-	if calls != before {
-		t.Fatal("durable retrieval accepted")
+}
+
+func TestRetrievalRefusesDurableExecutionBeforeAnyRequest(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("durable retrieval made an HTTP request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	t.Setenv("HRN_SERVER_URL", srv.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	var seen Task
+	calls := 0
+	task := Task{Prompt: "durable", Options: retrievalOptions(), Durable: &DurableExecution{}, RunDir: t.TempDir()}
+	result := Run(context.Background(), retrievalBackend{"api", &seen, &calls}, task, func(Event) {})
+	if result.Status != StatusError || !strings.Contains(result.Error, "retrieval is unsupported for durable execution") || calls != 0 {
+		t.Fatalf("durable retrieval was not refused: result=%+v backend calls=%d", result, calls)
 	}
 }
+
 func TestRetrievalAPIContinuationAppendOnly(t *testing.T) {
 	_, network := retrievalServer(t, 200, "fixture source")
 	fake := &fakeAPI{turns: [][]string{textTurn("first"), textTurn("second")}}

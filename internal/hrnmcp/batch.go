@@ -113,7 +113,7 @@ func batchSummary(res batch.Result) string {
 			last := t.Attempts[n-1]
 			fmt.Fprintf(&b, " on %s after %d attempt(s)", last.Backend, n)
 			if g := failedGateOf(last); g != nil {
-				fmt.Fprintf(&b, "; gate `%s` exited %d", tools.OneLine(g.Command, 80), g.ExitCode)
+				fmt.Fprintf(&b, "; gate `%s` %s", tools.OneLine(g.Command, 80), g.Outcome())
 			} else if last.Result.Error != "" {
 				fmt.Fprintf(&b, "; %s", tools.OneLine(last.Result.Error, 160))
 			}
@@ -185,7 +185,7 @@ func brief(res batch.Result) batchBrief {
 			last := t.Attempts[n-1]
 			tb.Backend = last.Backend
 			if g := failedGateOf(last); g != nil {
-				tb.Failed = fmt.Sprintf("gate `%s` exited %d", tools.OneLine(g.Command, 80), g.ExitCode)
+				tb.Failed = fmt.Sprintf("gate `%s` %s", tools.OneLine(g.Command, 80), g.Outcome())
 			} else if t.Status != batch.StatusPass && last.Result.Error != "" {
 				tb.Failed = tools.OneLine(last.Result.Error, 200)
 			}

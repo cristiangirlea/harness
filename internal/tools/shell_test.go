@@ -29,9 +29,15 @@ func TestRunCommandShapesLargeOutput(t *testing.T) {
 					} else {
 						command += "; sleep 60"
 					}
-					suffix = "\n[timed out after 2s]"
+					suffix = "\n[timed out after 10s]"
 				}
-				out, err := call(t, ws, tl["run_command"], map[string]any{"command": command, "timeout_sec": 2})
+				// Every case leaves room for a slow shell start on a loaded machine: the
+				// timeout case must still print the file before it is killed (#380, #401).
+				limit := 60
+				if outcome == "timeout" {
+					limit = 10
+				}
+				out, err := call(t, ws, tl["run_command"], map[string]any{"command": command, "timeout_sec": limit})
 				if (err != nil) != (outcome != "success") {
 					t.Fatalf("unexpected error: %v", err)
 				}

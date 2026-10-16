@@ -4,14 +4,15 @@
 // hrn prompts are long briefs whose later paragraphs mention every keyword
 // ("review the diff", "CI", "deploy"), so only the first two non-blank paragraphs
 // can supply the lead: the second is tried only if no rule matches the first.
-// A paragraph is read as written, then with its leading label lines
-// ("Repository: hrn") skipped. Each lead is lowercased and capped at maxLead bytes.
+// An instruction after leading label lines ("Repository: hrn") is tried before
+// the paragraph as written. Each lead is lowercased and capped at maxLead bytes.
 package purpose
 
 import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -26,33 +27,46 @@ func Valid(c string) bool {
 	return c != Unknown && slices.Contains(Categories, c)
 }
 
+// Declarable returns the categories callers may declare, in listing order.
+func Declarable() []string {
+	var categories []string
+	for _, c := range Categories {
+		if c != Unknown {
+			categories = append(categories, c)
+		}
+	}
+	return categories
+}
+
 // Declared reads a Purpose: <category> header on the first non-blank line.
 // The label and category are case-insensitive. A non-category value, including
 // unknown or free text, is ignored rather than treated as an error.
 func Declared(prompt string) string {
-	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
-	for line := range strings.Lines(prompt) {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	line, _ := firstNonBlankLine(prompt)
+	label, value, ok := strings.Cut(line, ":")
+	if ok && strings.EqualFold(label, "Purpose") {
+		value = strings.TrimSpace(value)
+		for _, category := range Categories {
+			if category != Unknown && strings.EqualFold(value, category) {
+				return category
+			}
 		}
-		label, value, ok := strings.Cut(line, ":")
-		value = strings.ToLower(strings.TrimSpace(value))
-		if ok && strings.EqualFold(label, "Purpose") && Valid(value) {
-			return value
-		}
-		break
 	}
 	return ""
 }
 
 // Resolve prefers an explicit declaration, then a header, then keyword rules.
 func Resolve(declared, prompt string) Result {
-	if declared == "" {
+	if !Valid(declared) {
 		declared = Declared(prompt)
 	}
 	if declared != "" {
 		return Result{Category: declared, Rule: "declared"}
+	}
+	// A free-text Purpose header is metadata, not classifier input.
+	first, rest := firstNonBlankLine(prompt)
+	if label, _, ok := strings.Cut(first, ":"); ok && strings.EqualFold(label, "Purpose") {
+		prompt = rest
 	}
 	return Classify(prompt)
 }
@@ -107,15 +121,31 @@ var rules = []rule{
 }
 
 // Classify names what a prompt asks for, from its lead: the first of at most
-// two paragraphs that a rule matches, each read as written first (so "panic:"
-// and "C:\" stay what they are) and then with its leading label lines skipped.
+// two paragraphs that a rule matches. An anchored instruction after leading
+// labels is tried first, then the raw lead, then the lead with labels skipped.
 func Classify(prompt string) Result {
 	for _, paragraph := range paragraphs(prompt) {
+		u := unlabel(paragraph)
+		var stripped string
+		if u != paragraph {
+			stripped = lead(u)
+			for _, rl := range rules {
+				if !strings.HasPrefix(rl.re.String(), "^") {
+					continue
+				}
+				if loc := rl.re.FindStringIndex(stripped); loc != nil && loc[0] == 0 {
+					// Keep rule precedence within the instruction ("Add a test"
+					// is test, although the anchored add rule also matches).
+					r, _ := match(stripped)
+					return r
+				}
+			}
+		}
 		if r, ok := match(lead(paragraph)); ok {
 			return r
 		}
-		if u := unlabel(paragraph); u != paragraph {
-			if r, ok := match(lead(u)); ok {
+		if u != paragraph {
+			if r, ok := match(stripped); ok {
 				return r
 			}
 		}
@@ -136,33 +166,159 @@ func match(l string) (Result, bool) {
 	return Result{}, false
 }
 
-// paragraphs returns at most the first two non-blank paragraphs. "\r\n", "\n"
-// and a bare "\r" each end a line; whitespace-only lines separate paragraphs.
+// nextLine slices a line without copying or normalizing the remaining prompt.
+func nextLine(prompt string) (line, rest string) {
+	if i := strings.IndexAny(prompt, "\r\n"); i >= 0 {
+		end := i + 1
+		if prompt[i] == '\r' && end < len(prompt) && prompt[end] == '\n' {
+			end++
+		}
+		return prompt[:i], prompt[end:]
+	}
+	return prompt, ""
+}
+
+func firstNonBlankLine(prompt string) (line, rest string) {
+	for prompt != "" {
+		line, prompt = nextLine(prompt)
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line, prompt
+		}
+	}
+	return "", ""
+}
+
+// paragraphs gathers the latest leading label and the instruction, each capped
+// at maxLead runes, from each of the first two non-blank paragraphs. CRLF, LF and
+// bare CR end lines; whitespace-only lines separate paragraphs.
 func paragraphs(prompt string) []string {
 	var result []string
-	var lines []string
-	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
-	for line := range strings.Lines(prompt) {
+	var paragraph strings.Builder
+	var lastLabel string
+	runes := 0
+	for prompt != "" {
+		var line string
+		line, prompt = nextLine(prompt)
 		line = strings.TrimSpace(line)
 		if line == "" {
-			if len(lines) > 0 {
-				result = append(result, strings.Join(lines, "\n"))
+			if paragraph.Len() > 0 || lastLabel != "" {
+				result = append(result, strings.TrimSuffix(lastLabel+paragraph.String(), "\n"))
 				if len(result) == 2 {
 					return result
 				}
-				lines = nil
+				paragraph.Reset()
+				lastLabel = ""
+				runes = 0
 			}
 			continue
 		}
-		lines = append(lines, line)
+		if runes == maxLead {
+			continue
+		}
+		// Keep only the latest leading label, bounded separately so labels
+		// cannot exhaust the instruction's budget or grow the gathered text.
+		// Error lines remain part of the instruction.
+		if runes == 0 && leadingLabel(line) {
+			labelRunes := 0
+			for i := range line {
+				if labelRunes == maxLead {
+					line = line[:i]
+					break
+				}
+				labelRunes++
+			}
+			lastLabel = line
+			continue
+		}
+		if paragraph.Len() > 0 || lastLabel != "" {
+			paragraph.WriteByte('\n')
+			if runes > 0 {
+				runes++
+			}
+		}
+		for _, r := range line {
+			if runes == maxLead {
+				break
+			}
+			paragraph.WriteRune(r)
+			runes++
+		}
+		if runes == maxLead && len(result) == 1 {
+			break
+		}
 	}
-	if len(lines) > 0 {
-		result = append(result, strings.Join(lines, "\n"))
+	if paragraph.Len() > 0 || lastLabel != "" {
+		result = append(result, strings.TrimSuffix(lastLabel+paragraph.String(), "\n"))
 	}
 	return result
 }
 
-var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?: *`)
+var errorLine = regexp.MustCompile(`(?i)^([a-z]*(error|exception)|panic)\s*:`)
+
+var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?:(?: +|$)`)
+
+// leadingLabel recognizes label's prefix without per-line regexp scratch
+// allocations (sync.Pool may discard that scratch, especially under -race).
+// Only the bounded gathered text needs regexp matching in unlabel.
+func leadingLabel(line string) bool {
+	i := 0
+	for words := 0; words < 3; words++ {
+		start := i
+		for i < len(line) {
+			r, size := utf8.DecodeRuneInString(line[i:])
+			if !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '/' && r != '-' {
+				break
+			}
+			i += size
+		}
+		if i == start {
+			return false
+		}
+		if i < len(line) && line[i] == ':' {
+			if words == 0 && errorLabel(line[:i]) {
+				return false
+			}
+			return i+1 == len(line) || line[i+1] == ' '
+		}
+		if i == len(line) || line[i] != ' ' {
+			return false
+		}
+		for i < len(line) && line[i] == ' ' {
+			i++
+		}
+		if i < len(line) && line[i] == '(' {
+			i++
+			end := strings.IndexAny(line[i:], "()")
+			if end < 0 || line[i+end] != ')' {
+				return false
+			}
+			i += end + 1
+			return i < len(line) && line[i] == ':' && (i+1 == len(line) || line[i+1] == ' ')
+		}
+	}
+	return false
+}
+
+// errorLabel is errorLine's name check for a single label word. Only ASCII
+// letters and their Unicode case-fold equivalents can precede error/exception.
+func errorLabel(name string) bool {
+	if strings.EqualFold(name, "panic") {
+		return true
+	}
+	for _, suffix := range []string{"error", "exception"} {
+		if len(name) < len(suffix) || !strings.EqualFold(name[len(name)-len(suffix):], suffix) {
+			continue
+		}
+		for _, r := range name[:len(name)-len(suffix)] {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r == '\u212a' || r == '\u017f') {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
 
 // unlabel drops a paragraph's leading label lines ("Repository: hrn", "Goal
 // (issue #82): ..."); a last line that is itself a label keeps its value.
@@ -170,6 +326,9 @@ var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\
 func unlabel(paragraph string) string {
 	lines := strings.Split(paragraph, "\n")
 	for len(lines) > 0 {
+		if errorLine.MatchString(lines[0]) {
+			break
+		}
 		end := label.FindStringIndex(lines[0])
 		if end == nil {
 			break
@@ -186,6 +345,16 @@ func unlabel(paragraph string) string {
 // lead is a paragraph's lines joined by spaces, lowercased and cut to maxLead
 // bytes without splitting a rune.
 func lead(paragraph string) string {
+	// At most maxLead runes can contribute to maxLead lowercased bytes,
+	// even when lowercasing shrinks a rune's UTF-8 encoding.
+	runes := 0
+	for i := range paragraph {
+		if runes == maxLead {
+			paragraph = paragraph[:i]
+			break
+		}
+		runes++
+	}
 	l := strings.ToLower(strings.ReplaceAll(paragraph, "\n", " "))
 	if len(l) <= maxLead {
 		return l

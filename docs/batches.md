@@ -159,7 +159,28 @@ a limit the spec set.
 Each gate command gets 15 minutes before it is killed with its whole process tree;
 `gate_timeout` (e.g. `"90s"`, `"45m"`, at most `24h`) changes that on the spec or on one
 task, so a slow integration suite and a quick lint can share a batch. A killed gate fails
-with `[timed out after …]` in its output, which a retry then sees.
+with `[timed out after …]` in its output, and its record says why it was killed (`killed`,
+`"timeout"` with the `timeout` that applied, or `"canceled"` when the batch was
+interrupted, even one that could not start because of it), so every report of it says
+`killed after 15m0s (gate_timeout; set "gate_timeout" in the spec to allow more)` or
+`canceled` rather than `exited -1`. The watch page's badge keeps that short (`killed ·
+gate_timeout 15m0s`, the full text as its tooltip), and a retry is told the gate `was
+killed after 15m0s by gate_timeout` without the advice, which is the operator's, so it
+does not search the output for a failing test.
+
+If the gate shell cannot start, the task fails with an infrastructure reason and
+does not use any remaining `retry` backends. This covers a process start error
+(including a missing shell interpreter), or a nonzero exit whose output was decoded
+from UTF-16 and contains an `HCS_E_*` error code or `The Windows Subsystem for Linux`
+launcher diagnostic within the first 1 KiB of decoded output.
+The gate records the reason in `infrastructure_error`; the agent's work is still
+committed for inspection. Other nonzero exits, including a command not found
+inside a running shell, keep the normal retry behavior. Cancellation and
+`gate_timeout` keep the behavior described above.
+
+Gate output is decoded from UTF-16 to UTF-8 before it is checked, shortened,
+recorded or shown. A little- or big-endian BOM identifies UTF-16; without a BOM,
+alternating NUL bytes over the first few code units identify the byte order.
 
 The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts,
 again each time a task moves on (an attempt's run starts or ends, a gate finishes, a task
@@ -256,7 +277,8 @@ folder carrying `CACHEDIR.TAG`, with no repository and no link out of the worktr
 git on Windows deletes through a junction; an ignored `.env` or notes keep it, because `git
 worktree remove` deletes ignored files; its `.hrn/` may hold only the worktrees git lists there), it is
 not locked (so a slot always stays, even one a batch record names), it holds no worktree that
-stays and no repository, it has no link (symlink or junction) leading out of it anywhere in it,
+stays and no separate repository (submodules are checked below), it has no link (symlink or
+junction) leading out of it anywhere in it,
 and the current directory is not inside it. Everything else stays and the listing says why: an open or
 closed pull request, none at all, commits after the merged one, a detached `HEAD`, uncommitted
 files. When `gh` fails (not installed, not logged in) or the fetch does, the worktrees that
@@ -269,7 +291,18 @@ which is the record once the folder is gone. `--apply` checks each one again jus
 scan, or that holds a worktree that stays, then removes it with `git worktree remove` (never
 `--force`) and deletes the branch if it still points at the commit that was checked. git's
 removal is not all-or-nothing: one that fails (a file held open on Windows) can leave part of the
-folder deleted. Only merged, clean worktrees get that far, and the branch then stays. A batch's record stays (`hrn runs prune` can drop
+folder deleted. Only merged, clean worktrees get that far. If git no longer lists the worktree
+and its folder is empty or gone, hrn prunes git's entries, tries to remove the empty folder, and
+deletes the branch; a handle that still prevents deleting the empty folder is reported.
+Otherwise the branch stays. When git refuses removal because the worktree contains submodules,
+hrn checks their trees recursively (including untracked and ignored files). Each submodule's
+HEAD must match the commit its parent recorded, it must have no stash, and HEAD and local
+branches must have no commits absent from its remote-tracking refs. Deinitialized submodules
+keep the worktree because their repositories cannot be checked by this pass. If all checks
+pass, hrn removes the folder, prunes git's entries, and deletes the branch. A failed submodule
+check keeps the worktree and branch. A failure partway through folder removal is reported;
+the branch and registration stay, but files already removed cannot be restored by hrn.
+A batch's record stays (`hrn runs prune` can drop
 it once its worktrees are gone). Open pull requests are read on their own, so a long history
 cannot hide one; with 1000 or more open, no worktree on a branch is removed. Up to 1000 pull
 requests of every state are read besides; a branch whose pull request is older stays.

@@ -39,6 +39,7 @@ type Spec struct {
 
 // Variant is one cell of the matrix: what to run the task set with.
 type Variant struct {
+	Lean             *bool  `json:"lean,omitempty"`
 	ShapeTools       bool   `json:"shape_tools,omitempty"`
 	Retrieval        string `json:"retrieval,omitempty"`
 	RetrievalVersion string `json:"retrieval_version,omitempty"`
@@ -162,6 +163,12 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 				cell.ID = fmt.Sprintf("%s.%s.%s.r%d", evalID, t.ID, v.name(), r)
 				// Pin the measured backend so purpose routing cannot change a cell.
 				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
+				if v.Lean != nil {
+					if cell.Backend != "claude" {
+						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude backend (task %s uses %s)", v.name(), t.ID, cell.Backend)
+					}
+					cell.Lean = v.Lean
+				}
 				cell.Model = firstOf(v.Model, t.Model)
 				cell.Effort = firstOf(v.Effort, t.Effort)
 				cell.Retrieval = firstOf(v.Retrieval, t.Retrieval)
