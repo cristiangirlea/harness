@@ -203,9 +203,11 @@ func MeteredEnv(backend string) []string { return slices.Clone(metered[backend])
 // Only its name is ever shown.
 func meteredBy(backend string) string {
 	for _, name := range metered[backend] {
-		if v := os.Getenv(name); v != "" && v != "0" && !strings.EqualFold(v, "false") {
-			return name
+		v := os.Getenv(name)
+		if v == "" || strings.HasPrefix(name, "CLAUDE_CODE_USE_") && (v == "0" || strings.EqualFold(v, "false")) {
+			continue
 		}
+		return name
 	}
 	return ""
 }
@@ -236,8 +238,8 @@ func Ready(backend string, now time.Time, spent Spent) (bool, string) {
 func when(t time.Time) string { return t.Local().Format("Jan 2 15:04") }
 
 // Pick is the backend a run meant for backend starts on: backend itself,
-// unless it is limited and its partner can take over. why says what moved it,
-// for the run's transcript, and is empty when nothing did. When both are
+// unless it is limited and its partner can take over. why says what moved it
+// or why the partner cannot take over, for the run's transcript. When both are
 // limited, pick is backend, why says so, and bothOut is set: a caller with
 // other work to do can skip this; one without runs it and lets it say so.
 func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
@@ -247,18 +249,15 @@ func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut
 		return backend, "", false
 	}
 	if ok, reason := Ready(other, now, spent); !ok {
-		if spent.out(other, now) != "" {
-			return backend, gone + "; " + reason, true
-		}
-		return backend, "", false // not installed: nothing else to start on
+		return backend, gone + "; " + reason, spent.out(other, now) != ""
 	}
 	return other, fmt.Sprintf("%s; starting on %s instead", gone, other), false
 }
 
 // Choose is Pick for a run as its caller asked for it: backend as typed, empty
 // for the default or for a continued run's own, continuing continueID when that
-// is set. It returns backend unchanged, and no why, when nothing moves it; a
-// continued run is planned after this, on whatever it returns.
+// is set. It returns backend unchanged when nothing moves it, keeping Pick's
+// reason; a continued run is planned after this, on whatever it returns.
 func Choose(backend, continueID string) (string, string) {
 	meant := backend
 	if meant == "" && continueID != "" {
@@ -269,10 +268,11 @@ func Choose(backend, continueID string) (string, string) {
 	if meant == "" {
 		meant = agent.DefaultBackendNameIn(runlog.Home())
 	}
-	if pick, why, _ := Pick(meant, time.Now(), nil); pick != meant {
+	pick, why, _ := Pick(meant, time.Now(), nil)
+	if pick != meant {
 		return pick, why
 	}
-	return backend, ""
+	return backend, why
 }
 
 // carryOnPrompt is what the partner is asked, below the transcript of the

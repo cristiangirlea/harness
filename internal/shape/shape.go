@@ -283,10 +283,11 @@ func valid(kind Kind, original, summary string) bool {
 			}
 		}
 	}
-	origLines := strings.Split(original, "\n")
+	// Summaries are built from stripped lines; an escape inside a word must not hide it.
+	cleanLines := strings.Split(ansi.ReplaceAllString(original, ""), "\n")
 	sumLines := strings.Split(summary, "\n")
 	origSet, sumSet := map[string]bool{}, map[string]bool{}
-	for _, line := range origLines {
+	for _, line := range cleanLines {
 		origSet[line] = true
 	}
 	for _, line := range sumLines {
@@ -295,7 +296,7 @@ func valid(kind Kind, original, summary string) bool {
 			return false
 		}
 	}
-	for _, line := range origLines {
+	for _, line := range cleanLines {
 		if errorLine(line) && !sumSet[line] {
 			return false
 		}
@@ -309,7 +310,6 @@ func valid(kind Kind, original, summary string) bool {
 			}
 		}
 	}
-	cleanLines := strings.Split(ansi.ReplaceAllString(original, ""), "\n")
 	if kind == Test {
 		origFailures, origOK := testFailures(cleanLines)
 		sumFailures, sumOK := testFailures(sumLines)

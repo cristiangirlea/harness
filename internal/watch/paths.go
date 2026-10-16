@@ -246,6 +246,10 @@ func (v viewer) place(label, name, full string) fact {
 // cleanBatch), on what a record says, before any cut.
 
 func (sh shortener) event(e agent.Event) agent.Event {
+	if e.Kind == agent.EventToolCall {
+		e.Text = unwrapCommand(e.Text)
+		e.Input = unwrapInput(e.Input)
+	}
 	e.Text = sh.shorten(e.Text)
 	if len(e.Input) > 0 {
 		e.Input = json.RawMessage(sh.shorten(string(e.Input)))

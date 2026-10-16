@@ -9,3 +9,20 @@ Command: `bash scripts/tool-shapes.sh --home "$HOME/.hrn" --days 30 --json`
 Output shaping (#296) has a once-counted input-token share of 1.5616% and a replayed share of 10.4365% under the four-bytes-per-token estimate (0.7449% once-counted and 15.8009% replayed for Claude). The replayed share bounds the estimated context budget shaping could touch if every eligible result byte were removed from every later call. The window contains 86,656,323 tool-result bytes and 1,354,994,072 input tokens; 1158 of 1196 finished runs have token figures, including 9 with usage events, and 0 were skipped as unreadable. Token shares use bytes from those same runs. Terminal output dominates the all-runs result budget at 77.15%, while test output accounts for 5.83%. These are maximal removable byte estimates, not measured savings: classification is heuristic, replacements retain useful output, and replay assumes retained context; the ordinal fallback is approximate when model calls and tool results are not one to one.
 
 Kept scripts (#298) have a once-counted input-token share of 0.025777% and a replayed share of 0.425757% before allowing for replacement invocations (0.038297% once-counted and 0.644196% replayed for Claude). The replayed share bounds the estimated context budget kept scripts could touch. The detector finds 1,447,040 inline command bytes across all runs; repeated normalised groups contain 13,777 bytes and account for 0.000254% once-counted and 0.001003% replayed when restricted to runs with token figures. Totals include groups beyond the top 20 printed. Repeated command text offers a much smaller replayed token budget than output shaping, so keeping scripts is supported chiefly by reuse and maintainability here. Normalisation can merge different scripts, the detector covers only the documented forms, and the call-ordinal fallback is approximate; scripts still cost their invocations and results. Result bytes belong to shaping and are not added again.
+
+## Invariant probes
+
+`internal/shape/adversarial_test.go` attacks the rule that `Summarize` returns true only when the
+summary keeps every error, `FAIL` and `panic` line, every failing test and its diagnostics, and
+invents no number, path or negation. An oracle written in the test checks each case; a false
+return (head-and-tail cut) always passes. Attack classes:
+
+- one failure buried in thousands of passing tests, and one test name failing in two packages;
+- negations ("not found", "no such file", "only on Windows") on lines the summary drops;
+- repeated lines whose numbers differ in one digit (`exit 1`/`exit 11`, ports `8081`/`8082`);
+- error strings wrapped across lines, colour codes inside `error` and `FAIL`, CRLF, NUL, invalid UTF-8;
+- panics with goroutine dumps, stack traces, and log lines repeated with changing timestamps;
+- output at exactly 28,000 bytes, one byte over, and single lines longer than that.
+
+`FuzzSummarize` checks the same oracle on random input in CI and in `/check`. Inputs holding an
+escape byte are also placed in the dropped middle of a head-and-tail cut.

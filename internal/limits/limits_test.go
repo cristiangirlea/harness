@@ -414,6 +414,54 @@ func TestAPartnerThatWouldBillPerTokenDoesNotStandIn(t *testing.T) {
 	}
 }
 
+func TestMeteredKeysTreatEveryNonEmptyValueAsSet(t *testing.T) {
+	for backend, names := range metered {
+		for _, name := range names {
+			for _, value := range []string{"", "0", "false", "FALSE", "1", "fake-secret-value"} {
+				t.Run(name+"/"+value, func(t *testing.T) {
+					t.Setenv("HRN_HOME", t.TempDir())
+					standIn(t, true, true)
+					t.Setenv(name, value)
+					want := value != ""
+					if strings.HasPrefix(name, "CLAUDE_CODE_USE_") && (value == "0" || strings.EqualFold(value, "false")) {
+						want = false
+					}
+					got := meteredBy(backend)
+					if want && got != name || !want && got != "" {
+						t.Errorf("meteredBy(%q) = %q, want set=%v for %s", backend, got, want, name)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestPickAndChooseExplainWhyAMeteredPartnerWasSkipped(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+	now := time.Now()
+	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	pick, why, both := Pick("codex", now, nil)
+	if pick != "codex" || both || !strings.Contains(why, "ANTHROPIC_API_KEY") || !strings.Contains(why, "per token") {
+		t.Errorf("Pick = %q, %q, %v; want codex and the refusal reason", pick, why, both)
+	}
+	for _, backend := range []string{"codex", ""} {
+		// An implicit backend comes from the continued record, without changing
+		// the caller's empty selection when the partner cannot take over.
+		id := limitedRun(t, agent.Task{Prompt: "p", Dir: t.TempDir()})
+		chosen, reason := Choose(backend, id)
+		if chosen != backend || !strings.Contains(reason, "ANTHROPIC_API_KEY") || !strings.Contains(reason, "per token") {
+			t.Errorf("Choose = %q, %q; want %q and the refusal reason", chosen, reason, backend)
+		}
+		if strings.Contains(reason, "fake-secret-value") {
+			t.Error("Choose exposed the key value")
+		}
+	}
+}
+
 // A time hrn would not have believed from a CLI is not believed from the file.
 func TestARememberedLimitFurtherAheadThanACLICouldSayIsIgnored(t *testing.T) {
 	home := t.TempDir()

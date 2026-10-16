@@ -34,7 +34,12 @@ timeline as it happens: the assistant's text, each tool call with its input in o
 capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each
 step waited, and, once the
 run ends, its status, tokens, cost and final answer (and, for a `limited` run, when the
-limit lifts). A batch's page shows each task with a link to each attempt's run, the
+limit lifts). Watch hides the backend's startup command and shows tool commands without
+one outer PowerShell, bash, sh, zsh or cmd invocation, in both summaries and folded
+input. Commands with unbalanced quotes keep their wrapper. Workspace and home paths
+still show as `.` and `~`. These display rules also apply to live streams, `--lan`
+and `--public`; records on disk and `hrn show` keep the full commands.
+A batch's page shows each task with a link to each attempt's run, the
 backend a usage limit moved it from, and its gates (command, exit code, folded output) as
 they finish. Steps arrive over Server-Sent Events that check the run's `events.jsonl` twice a
 second; a browser that loses the connection picks up where it left off. Cost is whatever
