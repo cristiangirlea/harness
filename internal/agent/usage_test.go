@@ -213,11 +213,15 @@ func TestModelTokensRejectInvalidCounters(t *testing.T) {
 func TestAdaptersMarkUsageMissingInsteadOfOverflowing(t *testing.T) {
 	huge := int64(math.MaxInt64)
 	t.Run("api", func(t *testing.T) {
+		// The totals stay valid; only the second turn's 100 input tokens would overflow.
 		first := toolTurn("list", "list_files", `{"pattern":"*"}`)
-		first[0] = fmt.Sprintf(`{"type":"message_start","message":{"id":"first","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":%d}}}`, huge)
+		first[0] = fmt.Sprintf(`{"type":"message_start","message":{"id":"first","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":%d}}}`, huge-50)
 		res, _, _ := runFake(t, [][]string{first, textTurn("done")}, Task{Prompt: "list", Dir: t.TempDir()})
-		if res.Usage == nil || res.Usage.Status != "missing" || res.Usage.InputSemantics != "exclusive_cache" || res.InputTokens != huge {
+		if res.Usage == nil || res.Usage.Status != "missing" || res.Usage.InputSemantics != "exclusive_cache" || res.InputTokens != huge-50 {
 			t.Errorf("result = %+v, usage %+v; want the first turn kept and usage missing", res, res.Usage)
+		}
+		if err := res.ValidateUsage(); err != nil || res.Usage == nil || res.Usage.CostStatus != "missing" {
+			t.Errorf("validate = %v, usage %+v; want valid totals and the cost missing", err, res.Usage)
 		}
 		if _, known, _ := res.ModelTokens(); known {
 			t.Error("overflowing api usage counted as known")
