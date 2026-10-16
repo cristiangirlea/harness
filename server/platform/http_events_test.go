@@ -6,7 +6,6 @@ import (
 )
 
 func TestEventStreamsLimitEachTenantAndReleaseSlots(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
 	var streams eventStreams
 	for i := 0; i < 4; i++ {
 		if !streams.acquire("tenant-a") {
@@ -33,7 +32,6 @@ func TestEventStreamsLimitEachTenantAndReleaseSlots(t *testing.T) {
 }
 
 func TestEventStreamsEnforceTheCapUnderConcurrentRequests(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
 	var streams eventStreams
 	var wg sync.WaitGroup
 	accepted := make(chan bool, 32)
@@ -54,7 +52,6 @@ func TestEventStreamsEnforceTheCapUnderConcurrentRequests(t *testing.T) {
 }
 
 func TestOnlyCompletedJobStatesAreTerminal(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
 	for _, state := range []State{Succeeded, Failed, Canceled, Queued, Admitted, Running, WaitingApproval, RecoveryRequired, "", "unknown"} {
 		t.Run(string(state), func(t *testing.T) {
 			want := state == Succeeded || state == Failed || state == Canceled

@@ -99,7 +99,6 @@ func waitForEventStreams(t *testing.T, h *HTTPServer, tenant string, want int) {
 }
 
 func TestHTTPEventStreamsCapTenantsAndReleaseDisconnectedStreams(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
 	store := testStore(t)
 	job, token := eventJob(t, store)
 	other, otherToken := eventJob(t, store)
@@ -141,7 +140,7 @@ func TestHTTPEventStreamsCapTenantsAndReleaseDisconnectedStreams(t *testing.T) {
 }
 
 // Match the store's atomic state/event commit without executing a model.
-func finishEventJob(t *testing.T, store *Store, job Job, state State, backlog int) {
+func finishEventJob(t *testing.T, store *Store, job Job, state State, kind string, backlog int) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := store.db.Begin(ctx)
@@ -157,7 +156,7 @@ func finishEventJob(t *testing.T, store *Store, job Job, state State, backlog in
 	if _, err := tx.Exec(ctx, "UPDATE jobs SET state=$2 WHERE id=$1", job.ID, state); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendEvent(ctx, tx, job.TenantID, job.ProjectID, job.ID, string(state), nil); err != nil {
+	if err := appendEvent(ctx, tx, job.TenantID, job.ProjectID, job.ID, kind, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -166,7 +165,6 @@ func finishEventJob(t *testing.T, store *Store, job Job, state State, backlog in
 }
 
 func TestHTTPEventStreamsDrainTerminalBacklogsAndClose(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
 	store := testStore(t)
 	h := &HTTPServer{Store: store}
 	server := httptest.NewServer(h.Handler())
@@ -174,7 +172,7 @@ func TestHTTPEventStreamsDrainTerminalBacklogsAndClose(t *testing.T) {
 	for _, state := range []State{Succeeded, Failed, Canceled} {
 		t.Run(string(state), func(t *testing.T) {
 			job, token := eventJob(t, store)
-			finishEventJob(t, store, job, state, 105)
+			finishEventJob(t, store, job, state, string(state), 105)
 			want, err := store.Events(context.Background(), job.TenantID, job.ProjectID, job.ID, 0, 1000)
 			if err != nil {
 				t.Fatal(err)
@@ -198,18 +196,26 @@ func TestHTTPEventStreamsDrainTerminalBacklogsAndClose(t *testing.T) {
 }
 
 func TestHTTPEventStreamsSendLiveTerminalEventsBeforeClosing(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
 	store := testStore(t)
 	h := &HTTPServer{Store: store}
 	server := httptest.NewServer(h.Handler())
 	t.Cleanup(server.Close)
-	for _, state := range []State{Succeeded, Failed, Canceled} {
-		t.Run(string(state), func(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state State
+		kind  string
+	}{
+		{string(Succeeded), Succeeded, string(Succeeded)},
+		{string(Failed), Failed, string(Failed)},
+		{string(Canceled), Canceled, string(Canceled)},
+		{"recovery_resolved", Failed, "recovery_resolved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			job, token := eventJob(t, store)
 			response := openEventStream(t, server, job, token, "")
-			finishEventJob(t, store, job, state, 0)
+			finishEventJob(t, store, job, tc.state, tc.kind, 0)
 			events := readEventStream(t, response)
-			if len(events) != 2 || events[len(events)-1].Kind != string(state) {
+			if len(events) != 2 || events[len(events)-1].Kind != tc.kind {
 				t.Fatalf("live events: %+v", events)
 			}
 			waitForEventStreams(t, h, job.TenantID, 0)
@@ -218,7 +224,6 @@ func TestHTTPEventStreamsSendLiveTerminalEventsBeforeClosing(t *testing.T) {
 }
 
 func TestHTTPEventStreamsExpireAndReconnectWithTheirCursor(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
 	store := testStore(t)
 	job, token := eventJob(t, store)
 	h := &HTTPServer{Store: store, eventStreamDuration: 250 * time.Millisecond}
@@ -229,7 +234,7 @@ func TestHTTPEventStreamsExpireAndReconnectWithTheirCursor(t *testing.T) {
 		t.Fatalf("initial events: %+v", events)
 	}
 	waitForEventStreams(t, h, job.TenantID, 0)
-	finishEventJob(t, store, job, Canceled, 0)
+	finishEventJob(t, store, job, Canceled, string(Canceled), 0)
 	resumed := readEventStream(t, openEventStream(t, server, job, token, fmt.Sprint(events[0].ID)))
 	if len(resumed) != 1 || resumed[0].Kind != string(Canceled) || resumed[0].ID <= events[0].ID {
 		t.Fatalf("resumed events: %+v", resumed)
