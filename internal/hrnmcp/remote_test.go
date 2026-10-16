@@ -150,6 +150,24 @@ func TestRemoteMCPRejectsUnsupportedInput(t *testing.T) {
 	}
 }
 
+func TestRemoteStatusAndCancelRejectABadJobIDBeforeSending(t *testing.T) {
+	session, requests := remoteFixture(t)
+	for _, tool := range []string{"remote_status", "remote_cancel"} {
+		for _, job := range []string{"", "j_../x", "j_" + strings.Repeat("C", 32), "j_" + strings.Repeat("c", 31), testRemoteProject} {
+			t.Run(tool+"/"+job, func(t *testing.T) {
+				args := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"job_id":%q}`, testRemoteTenant, testRemoteProject, job)
+				result := session.call(t, tool, args)
+				if !result.IsError || !strings.Contains(result.Text(), "job_id must be a server-issued ID") {
+					t.Fatalf("bad job_id result: %+v", result)
+				}
+			})
+		}
+	}
+	if len(*requests) != 0 {
+		t.Fatalf("bad job IDs sent %d requests", len(*requests))
+	}
+}
+
 func TestRemoteToolsRejectCredentialFieldsBeforeSendingRequests(t *testing.T) {
 	session, requests := remoteFixture(t)
 	submit := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"prompt":"inspect","base_ref":%q,"idempotency_key":"mcp-credential","max_cost_usd":0.25`,

@@ -170,7 +170,7 @@ func runRemote(args []string, out io.Writer) error {
 			return errors.New("--after must be nonnegative")
 		}
 		if watch {
-			return connection.watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)
+			return connection.WatchJob(ctx, job, scope, after, out)
 		}
 		scope.Set("after", strconv.FormatInt(after, 10))
 		data, err := connection.request(ctx, http.MethodGet, "/v1/jobs/"+job+"/events?"+scope.Encode(), nil)

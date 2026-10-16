@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -163,6 +164,59 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 	}
 }
 
+// WatchJob watches one job's events. It reads the job's state first: a job that has already
+// ended may have no terminal event left after the cursor, so it prints the remaining events
+// page by page and returns instead of streaming (#361).
+func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, after int64, out io.Writer) error {
+	data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"?"+scope.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	var current struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &current); err != nil {
+		return errors.New("invalid job from control service")
+	}
+	if !terminalState(current.State) {
+		return c.Watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)
+	}
+	query := url.Values{}
+	maps.Copy(query, scope)
+	for {
+		query.Set("after", strconv.FormatInt(after, 10))
+		data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"/events?"+query.Encode(), nil)
+		if err != nil {
+			return err
+		}
+		var page struct {
+			Events []json.RawMessage `json:"events"`
+		}
+		if err := json.Unmarshal(data, &page); err != nil {
+			return fmt.Errorf("%w: invalid event page", ErrMalformedEvent)
+		}
+		if len(page.Events) == 0 {
+			return nil
+		}
+		for _, raw := range page.Events {
+			var event struct {
+				ID int64 `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &event); err != nil || event.ID <= after {
+				return fmt.Errorf("%w: event ID does not follow the cursor", ErrMalformedEvent)
+			}
+			var line bytes.Buffer
+			if err := json.Compact(&line, raw); err != nil {
+				return fmt.Errorf("%w: invalid JSON", ErrMalformedEvent)
+			}
+			if _, err := fmt.Fprintln(out, line.String()); err != nil {
+				return fmt.Errorf("%w: %w", ErrEventOutput, err)
+			}
+			after = event.ID
+		}
+	}
+}
+
 func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 	after, _, err := readEvents(input, after, out, false)
 	return after, err
@@ -183,6 +237,10 @@ func terminalEvent(kind, data string) bool {
 		}
 		state = event.Details.State
 	}
+	return terminalState(state)
+}
+
+func terminalState(state string) bool {
 	switch state {
 	case "succeeded", "failed", "canceled":
 		return true
