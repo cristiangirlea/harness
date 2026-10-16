@@ -168,7 +168,9 @@ func TestLeanIsTriState(t *testing.T) {
 func TestCompactWindow(t *testing.T) {
 	for _, tc := range []struct {
 		json, want string
-	}{{`{}`, ""}, {`{"compact_window":200000}`, "200000"}, {`{"compact_window":"auto"}`, "auto"}} {
+	}{{`{}`, ""}, {`{"compact_window":200000}`, "200000"}, {`{"compact_window":"200000"}`, "200000"},
+		{`{"compact_window":"100000"}`, "100000"}, {`{"compact_window":"1000000"}`, "1000000"},
+		{`{"compact_window":"auto"}`, "auto"}} {
 		var o Options
 		if err := json.Unmarshal([]byte(tc.json), &o); err != nil {
 			t.Fatalf("%s: %v", tc.json, err)
@@ -188,7 +190,9 @@ func TestCompactWindow(t *testing.T) {
 	if b, _ := json.Marshal(Options{CompactWindow: "200000"}); !strings.Contains(string(b), `"compact_window":200000`) {
 		t.Errorf("a window is written as a number: %s", b)
 	}
-	for _, bad := range []string{`{"compact_window":"200000"}`, `{"compact_window":"200k"}`, `{"compact_window":true}`, `{"compact_window":2.5e5}`} {
+	for _, bad := range []string{`{"compact_window":"200k"}`, `{"compact_window":true}`, `{"compact_window":2.5e5}`,
+		`{"compact_window":"99999"}`, `{"compact_window":"1000001"}`, `{"compact_window":"0200000"}`,
+		`{"compact_window":"+200000"}`, `{"compact_window":"2.5e5"}`, `{"compact_window":""}`} {
 		var o Options
 		if err := json.Unmarshal([]byte(bad), &o); err == nil {
 			t.Errorf("%s must be refused, got %q", bad, o.CompactWindow)

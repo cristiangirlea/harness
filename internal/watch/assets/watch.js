@@ -101,8 +101,8 @@
     es.close();
     setState('stopped', 'lost');
   });
-  es.addEventListener('end', () => {
+  es.addEventListener('end', (m) => {
     es.close();
-    setState('finished');
+    setState(m.data === 'stopped' ? 'stopped' : 'finished');
   });
 })();

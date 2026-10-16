@@ -121,7 +121,7 @@
 {{if .Since}}<p class="muted clock">Running for <span data-since="{{.Since}}">a while</span>{{if .Last}} · last step <span data-ago="{{.Last}}">a moment</span> ago{{end}}</p>{{end}}
 <div id="usage">{{template "usage" .Usage}}</div>
 <ol id="timeline" class="timeline"{{with .Stream}} data-stream="{{.}}"{{end}}>{{range .Events}}{{template "event" .}}{{end}}</ol>
-<div id="result">{{with .Result}}{{template "result" .}}{{else}}<p class="muted">Running. New steps appear above as hrn records them.</p>{{end}}</div>
+<div id="result">{{if .Stopped}}{{template "stopped" .Stopped}}{{else}}{{with .Result}}{{template "result" .}}{{else}}<p class="muted">Running. New steps appear above as hrn records them.</p>{{end}}{{end}}</div>
 {{template "foot" .}}{{end}}
 
 {{define "event"}}<li class="ev {{.Class}}"{{with .When}} data-at="{{.}}"{{end}}>
@@ -153,6 +153,8 @@
 {{end}}</tbody></table></div></details>
 </section>{{end}}{{end}}
 
+{{define "stopped"}}<p class="muted">stopped · {{.}}</p>{{end}}
+
 {{define "result"}}<section class="card result" aria-labelledby="result-h">
 <h2 id="result-h">Finished <span class="badge {{.Class}}">{{.Status}}</span></h2>
 {{template "facts" .Facts}}
@@ -167,7 +169,7 @@
 {{template "foot" .}}{{end}}
 
 {{define "batchbody"}}
-<p><span class="badge {{.Class}}">{{.Status}}</span>{{with .Since}} · running for <span data-since="{{.}}">a while</span>{{end}}</p>
+<p><span class="badge {{.Class}}">{{.Status}}</span>{{with .Stopped}} · {{.}}{{end}}{{with .Since}} · running for <span data-since="{{.}}">a while</span>{{end}}</p>
 {{template "facts" .Facts}}
 {{range .Tasks}}<section class="card task" aria-labelledby="task-{{.ID}}">
 <h2 id="task-{{.ID}}"><span class="mono">{{.ID}}</span> <span class="badge {{.Class}}">{{.Status}}</span></h2>

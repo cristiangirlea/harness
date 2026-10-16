@@ -133,6 +133,8 @@ Lean is the default for `hrn batch` and `hrn eval` tasks that run on claude; a s
 sets `"lean": false` to give its workers every MCP server (a task's `false` wins over a
 spec's `true`). The record of an attempt says `"lean": true` when the default applied. `hrn
 run` and the MCP `run` tool stay as they were: lean only with `--lean` or `"lean": true`.
+Continuing a lean batch run with `hrn run --continue <run-id>` also runs without lean
+unless you pass `--lean`; the MCP `run` tool likewise needs `"lean": true` on the follow-up.
 Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
 `apiKeyHelper`, never the subscription. The api loop never reads Claude Code's settings, so
 lean changes nothing there; codex, gemini, opencode and agy say `lean: not enforced` when it is
@@ -167,8 +169,10 @@ context nears the model's window. On a 1M-token model that is only at about 967K
 long run carries 300-400K tokens of context into every turn well before it compacts, and
 each of those turns reads them back from the cache. `compact_window` sets the threshold
 instead: `hrn run --compact-window 200000`, or `"compact_window": 200000` on a batch or eval
-spec or task and on the MCP `run` tool. It takes an integer from 100000 to 1000000, or
-`"auto"` (Claude Code's own choice), and is checked before the run starts; hrn passes it as
+spec or task (a quoted `"200000"` works too). The MCP `run` tool advertises a string:
+`"compact_window": "200000"` or `"compact_window": "auto"`; it also accepts unquoted integers
+for existing callers. It takes an integer from 100000 to 1000000, or `"auto"` (Claude Code's
+own choice), and is checked before the run starts; hrn passes it as
 `claude --autocompact <value>`. Unset, nothing is passed.
 
 The trade: every compaction is one expensive turn (the whole history is read to write the
@@ -210,6 +214,8 @@ conversation is a chain of runs. It inherits the earlier run's backend, workspac
 mode unless you pass those flags, and its model only from runs on the same backend: a
 claude model name means nothing to codex. The MCP `run` tool takes the same thing as
 `continue_run_id`.
+Lean is not inherited: even after a lean batch run, pass `--lean` (or `"lean": true`
+on the MCP tool) to enable it for the follow-up.
 
 If the run whose conversation or session is carried on recorded more than 150,000
 tokens of context at its last turn, hrn warns with its run id and context size and
