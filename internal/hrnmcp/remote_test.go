@@ -177,3 +177,23 @@ func TestRemoteToolsRejectCredentialFieldsBeforeSendingRequests(t *testing.T) {
 		t.Fatalf("credential fields sent %d requests", len(*requests))
 	}
 }
+
+func TestRemoteSubmitRefusesCostAboveTheClientCapBeforeSending(t *testing.T) {
+	session, requests := remoteFixture(t)
+	t.Setenv("HRN_REMOTE_MAX_COST_USD", "1")
+	args := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"prompt":"inspect","base_ref":%q,"idempotency_key":"mcp-cap","max_cost_usd":%%s}`,
+		testRemoteTenant, testRemoteProject, testRemoteRef)
+	result := session.call(t, "remote_submit", fmt.Sprintf(args, "5"))
+	if !result.IsError || !strings.Contains(fmt.Sprint(result.Content), "HRN_REMOTE_MAX_COST_USD") {
+		t.Fatalf("cost above the cap: %+v", result)
+	}
+	if len(*requests) != 0 {
+		t.Fatalf("cost above the cap reached control: %+v", *requests)
+	}
+	if result := session.call(t, "remote_submit", fmt.Sprintf(args, "1")); result.IsError {
+		t.Fatalf("cost at the cap: %+v", result)
+	}
+	if len(*requests) != 1 {
+		t.Fatalf("cost at the cap sent %d requests, want 1", len(*requests))
+	}
+}

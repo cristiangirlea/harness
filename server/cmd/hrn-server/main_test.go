@@ -74,3 +74,33 @@ func TestServeRefusesPlainNetworkHTTPBeforeOpeningDatabase(t *testing.T) {
 		t.Fatalf("run() = %v, want listen configuration error before database access", err)
 	}
 }
+
+func TestServeRefusesAnInvalidCostLimitBeforeOpeningDatabase(t *testing.T) {
+	args := os.Args
+	os.Args = []string{"hrn-server", "serve"}
+	t.Cleanup(func() { os.Args = args })
+	t.Setenv("HRN_DATABASE_URL", "://invalid")
+	t.Setenv("HRN_OPERATOR_TOKEN", strings.Repeat("o", 32))
+	t.Setenv("HRN_SCALER_TOKEN", strings.Repeat("s", 32))
+	t.Setenv("HRN_LISTEN", "127.0.0.1:8088")
+	t.Setenv("HRN_TLS_CERT_FILE", "")
+	t.Setenv("HRN_TLS_KEY_FILE", "")
+	t.Setenv("HRN_MAX_COST_USD_PER_JOB", "abc")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "HRN_MAX_COST_USD_PER_JOB") {
+		t.Fatalf("run() = %v, want cost limit error before database access", err)
+	}
+}
+
+func TestMaxCostPerJobParsesThePerJobLimit(t *testing.T) {
+	if limit, err := maxCostPerJob(""); err != nil || limit != 0 {
+		t.Fatalf("unset = %v, %v; want no limit", limit, err)
+	}
+	if limit, err := maxCostPerJob("2.5"); err != nil || limit != 2.5 {
+		t.Fatalf("2.5 = %v, %v", limit, err)
+	}
+	for _, raw := range []string{"abc", "0", "-1", "NaN", "+Inf"} {
+		if _, err := maxCostPerJob(raw); err == nil || !strings.Contains(err.Error(), "HRN_MAX_COST_USD_PER_JOB") {
+			t.Errorf("%q: err = %v, want the variable named", raw, err)
+		}
+	}
+}

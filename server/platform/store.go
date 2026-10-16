@@ -213,6 +213,13 @@ func (s *Store) WorkerAuthorized(ctx context.Context, projectID, token string) (
 	return subtle.ConstantTimeCompare(wanted, digest[:]) == 1, nil
 }
 
+// IdempotentJobExists reports whether a job was already submitted under this idempotency key.
+func (s *Store) IdempotentJobExists(ctx context.Context, tenantID, projectID, key string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM jobs WHERE tenant_id=$1 AND project_id=$2 AND idempotency_key=$3)", tenantID, projectID, key).Scan(&exists)
+	return exists, err
+}
+
 func (s *Store) Submit(ctx context.Context, input Submission) (Job, bool, error) {
 	if err := validateSubmission(input); err != nil {
 		return Job{}, false, err

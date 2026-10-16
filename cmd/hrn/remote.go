@@ -127,6 +127,9 @@ func runRemote(args []string, out io.Writer) error {
 		if err := options.Validate(); err != nil {
 			return err
 		}
+		if err := remote.CheckCostCap(cost); err != nil {
+			return err
+		}
 		input := struct {
 			TenantID       string        `json:"tenant_id"`
 			ProjectID      string        `json:"project_id"`
