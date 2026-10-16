@@ -39,10 +39,6 @@ func (c *remoteConnection) request(ctx context.Context, method, path string, inp
 	return c.Client.Request(ctx, method, path, input)
 }
 
-func (c *remoteConnection) watch(ctx context.Context, path string, after int64, out io.Writer) error {
-	return c.Client.Watch(ctx, path, after, out)
-}
-
 func readRemoteEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 	return remote.ReadEvents(input, after, out)
 }
@@ -173,7 +169,7 @@ func runRemote(args []string, out io.Writer) error {
 			return errors.New("--after must be nonnegative")
 		}
 		if watch {
-			return connection.watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)
+			return connection.WatchJob(ctx, job, scope, after, out)
 		}
 		scope.Set("after", strconv.FormatInt(after, 10))
 		data, err := connection.request(ctx, http.MethodGet, "/v1/jobs/"+job+"/events?"+scope.Encode(), nil)

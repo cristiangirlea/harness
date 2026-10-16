@@ -183,7 +183,9 @@ then exits with status 0, including when the job failed or was canceled. Termina
 event kinds are `succeeded`, `failed`, and `canceled`; `admission_timeout` and
 `recovery_resolved` also end the watch when their `details.state` is terminal.
 The watch reconnects from the last printed event ID if a stream ends before a
-terminal event. Ctrl-C ends the watch early.
+terminal event. Before streaming it reads the job's state (the request `hrn remote
+show` makes): if the job has already ended, it prints the events after `--after`, if
+any, and exits with status 0 without waiting. Ctrl-C ends the watch early.
 
 ### Project knowledge
 

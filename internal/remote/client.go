@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +23,8 @@ import (
 
 var ErrMalformedEvent = errors.New("malformed event from control service")
 var ErrEventOutput = errors.New("failed to write event output")
+
+var jobID = regexp.MustCompile("^j_[0-9a-f]{32}$")
 
 // Client uses tenant credentials only. It never sends a token to a redirect.
 type Client struct {
@@ -163,6 +167,82 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 	}
 }
 
+// WatchJob watches one job's events. It reads the job's state first: a job that has already
+// ended may have no terminal event left after the cursor, so it prints the remaining events
+// page by page and returns instead of streaming.
+func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, after int64, out io.Writer) error {
+	if !jobID.MatchString(job) {
+		return errors.New("job must be a server-issued ID")
+	}
+	data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"?"+scope.Encode(), nil)
+	if err != nil && watchRetries(err) {
+		return c.Watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)
+	}
+	if err != nil {
+		return err
+	}
+	var current struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &current); err != nil {
+		return errors.New("invalid job from control service")
+	}
+	if !terminalState(current.State) {
+		return c.Watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)
+	}
+	query := url.Values{}
+	maps.Copy(query, scope)
+	for {
+		query.Set("after", strconv.FormatInt(after, 10))
+		data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"/events?"+query.Encode(), nil)
+		if err != nil {
+			return err
+		}
+		var page struct {
+			Events []json.RawMessage `json:"events"`
+		}
+		if err := json.Unmarshal(data, &page); err != nil {
+			return fmt.Errorf("%w: invalid event page", ErrMalformedEvent)
+		}
+		if len(page.Events) == 0 {
+			return nil
+		}
+		for _, raw := range page.Events {
+			var event struct {
+				ID int64 `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &event); err != nil || event.ID <= after {
+				return fmt.Errorf("%w: event ID does not follow the cursor", ErrMalformedEvent)
+			}
+			var line bytes.Buffer
+			if err := json.Compact(&line, raw); err != nil {
+				return fmt.Errorf("%w: invalid JSON", ErrMalformedEvent)
+			}
+			if _, err := fmt.Fprintln(out, line.String()); err != nil {
+				return fmt.Errorf("%w: %w", ErrEventOutput, err)
+			}
+			after = event.ID
+		}
+	}
+}
+
+// watchRetries reports whether Watch would retry err rather than return it: a 5xx, or a transport
+// error that is not a certificate error.
+func watchRetries(err error) bool {
+	var status *HTTPError
+	if errors.As(err, &status) {
+		return status.Status >= 500
+	}
+	var unknown x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &unknown) || errors.As(err, &hostname) || errors.As(err, &invalid) {
+		return false
+	}
+	var transport *url.Error
+	return errors.As(err, &transport)
+}
+
 func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 	after, _, err := readEvents(input, after, out, false)
 	return after, err
@@ -183,6 +263,10 @@ func terminalEvent(kind, data string) bool {
 		}
 		state = event.Details.State
 	}
+	return terminalState(state)
+}
+
+func terminalState(state string) bool {
 	switch state {
 	case "succeeded", "failed", "canceled":
 		return true
