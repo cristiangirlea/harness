@@ -357,10 +357,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			emit(Event{Time: time.Now(), Kind: EventUsage, Usage: &Usage{Model: servedModel(msg.Model, model),
 				InputTokens: turn.InputTokens, OutputTokens: turn.OutputTokens,
 				CacheRead: turn.CacheRead, CacheWrite: turn.CacheWrite, ContextTokens: res.ContextTokens}})
-			res.InputTokens += turn.InputTokens
-			res.OutputTokens += turn.OutputTokens
-			res.CacheRead += turn.CacheRead
-			res.CacheWrite += turn.CacheWrite
+			res.addUsage("exclusive_cache", turn.InputTokens, turn.OutputTokens, turn.CacheRead, turn.CacheWrite)
 			// Each turn at the price of the model that served it: a server-side
 			// fallback can answer a refused turn with another model.
 			res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)

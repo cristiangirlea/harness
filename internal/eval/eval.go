@@ -376,7 +376,9 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				costs = append(costs, a.Result.CostUSD)
 				turns = append(turns, float64(a.Result.Turns))
 				calls = append(calls, float64(a.Result.ToolCalls))
-				inputs = append(inputs, float64(a.Result.InputTokens+a.Result.CacheRead))
+				if !a.Result.UsageMissing() {
+					inputs = append(inputs, float64(a.Result.InputTokens+a.Result.CacheRead))
+				}
 				row.TotalCostUSD += a.Result.CostUSD
 				row.CostEstimate = row.CostEstimate || a.Result.CostEstimate
 			}

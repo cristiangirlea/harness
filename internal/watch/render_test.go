@@ -72,3 +72,21 @@ func TestLongResultKeepsCountsAndPageCaps(t *testing.T) {
 		t.Error("long result must use the page head and tail caps")
 	}
 }
+
+func TestResultTokensSayWhenUsageIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		usage *agent.UsageMetadata
+		want  bool
+	}{{nil, false}, {&agent.UsageMetadata{Status: "missing"}, true}} {
+		v := resultOf(agent.Result{Status: agent.StatusOK, InputTokens: 5, Usage: tc.usage})
+		tokens := ""
+		for _, f := range v.Facts {
+			if f.Label == "Tokens" {
+				tokens = f.Value
+			}
+		}
+		if got := strings.Contains(tokens, "usage missing"); got != tc.want || !strings.Contains(tokens, "5 in") {
+			t.Errorf("usage %+v: tokens = %q", tc.usage, tokens)
+		}
+	}
+}

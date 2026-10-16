@@ -562,7 +562,11 @@ func summary(runID string, res agent.Result) string {
 		}
 		cost = fmt.Sprintf(" · %s$%.4f", approx, res.CostUSD)
 	}
-	return fmt.Sprintf("── %s · %s · %s · %d turns · %d in / %d out (cache %d read)%s · %s ── run %s",
-		res.Status, res.Backend, res.Model, res.Turns, res.InputTokens, res.OutputTokens, res.CacheRead,
+	missing := ""
+	if res.UsageMissing() {
+		missing = ", usage missing"
+	}
+	return fmt.Sprintf("── %s · %s · %s · %d turns · %d in / %d out (cache %d read%s)%s · %s ── run %s",
+		res.Status, res.Backend, res.Model, res.Turns, res.InputTokens, res.OutputTokens, res.CacheRead, missing,
 		cost, res.Duration.Round(100*time.Millisecond), runID)
 }

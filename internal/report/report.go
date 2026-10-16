@@ -195,11 +195,13 @@ type Row struct {
 	// saw (uncached input, cache writes and cache reads), or -1 when the group
 	// reported no tokens at all (the CLI backends that do not count them).
 	CacheShare float64 `json:"cache_share"`
-	// Token totals, from each run's result.
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	CacheRead    int64 `json:"cache_read_tokens"`
-	CacheWrite   int64 `json:"cache_write_tokens"`
+	// Token totals, from each run's result; RunsWithoutTokens counts the runs
+	// left out because their usage is missing.
+	InputTokens       int64 `json:"input_tokens"`
+	OutputTokens      int64 `json:"output_tokens"`
+	CacheRead         int64 `json:"cache_read_tokens"`
+	CacheWrite        int64 `json:"cache_write_tokens"`
+	RunsWithoutTokens int   `json:"runs_without_tokens,omitempty"`
 	// The median and peak context a model call carried. ContextFrom says
 	// where they come from (ContextFromTurns, ContextFromTotals or
 	// ContextFromMixed); empty when no run in the group reported tokens.
@@ -301,10 +303,14 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		if res.Backend == "" {
 			res.Backend = r.Backend
 		}
-		row.InputTokens += res.InputTokens
-		row.OutputTokens += res.OutputTokens
-		row.CacheRead += res.CacheRead
-		row.CacheWrite += res.CacheWrite
+		if res.UsageMissing() {
+			row.RunsWithoutTokens++
+		} else {
+			row.InputTokens += res.InputTokens
+			row.OutputTokens += res.OutputTokens
+			row.CacheRead += res.CacheRead
+			row.CacheWrite += res.CacheWrite
+		}
 		if calls := turnsOf[r.ID]; len(calls) > 0 {
 			fromTurns = true
 			for _, c := range calls {

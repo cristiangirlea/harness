@@ -276,3 +276,19 @@ func TestJudgeUsesTheBatchDefaultParallelism(t *testing.T) {
 		t.Errorf("at most %d verdict(s) ran at once; an unset parallel must mean the batch default, %d", peak, batch.DefaultParallel)
 	}
 }
+
+func TestSummarizeLeavesMissingUsageOutOfTheContextMedian(t *testing.T) {
+	spec := Spec{Matrix: []Variant{{Backend: "ev-ok"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	att := func(input int64, usage *agent.UsageMetadata) []batch.Attempt {
+		return []batch.Attempt{{Result: agent.Result{Status: agent.StatusOK, InputTokens: input, Usage: usage}}}
+	}
+	res := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "e.a.ev-ok.r1", Status: batch.StatusPass, Attempts: att(100, nil)},
+		{ID: "e.a.ev-ok.r2", Status: batch.StatusPass, Attempts: att(5, &agent.UsageMetadata{Status: "missing"})},
+		{ID: "e.a.ev-ok.r3", Status: batch.StatusPass, Attempts: att(5, &agent.UsageMetadata{Status: "missing"})},
+	}}
+	if row := Summarize(spec, res, nil).Variants[0]; row.MedianContext != 100 {
+		t.Errorf("median context = %v, want 100 from the one run whose usage is known", row.MedianContext)
+	}
+}

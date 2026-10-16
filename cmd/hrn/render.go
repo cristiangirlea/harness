@@ -137,8 +137,12 @@ func (r *renderer) Summary(runID string, res agent.Result) {
 	if res.Status != agent.StatusOK {
 		status = r.c(red, status)
 	}
-	r.write(r.c(dim, fmt.Sprintf("── %s · %s · %s · %d turns · %s in / %s out (cache %s read)%s · %s ──",
-		status, res.Backend, res.Model, res.Turns, human(res.InputTokens), human(res.OutputTokens), human(res.CacheRead),
+	missing := ""
+	if res.UsageMissing() {
+		missing = ", usage missing"
+	}
+	r.write(r.c(dim, fmt.Sprintf("── %s · %s · %s · %d turns · %s in / %s out (cache %s read%s)%s · %s ──",
+		status, res.Backend, res.Model, res.Turns, human(res.InputTokens), human(res.OutputTokens), human(res.CacheRead), missing,
 		cost, res.Duration.Round(100_000_000))) + "\n")
 	r.write(r.c(dim, "run "+runID) + "\n")
 }
