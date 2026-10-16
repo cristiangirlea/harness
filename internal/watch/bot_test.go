@@ -415,6 +415,49 @@ func TestTheBotStreamSaysWhatHappensAndBlanksSecrets(t *testing.T) {
 	}
 }
 
+// A batch prompt is blanked before Ada shortens it: a secret with spaces cut
+// in half would no longer match the value the page's last pass blanks.
+func TestTheBotStreamBlanksASecretInABatchPrompt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("BATCH_SECRET", "alpha-secret bravo-secret charlie")
+	srv := httptest.NewServer(New(t.Context(), Options{Poll: 20 * time.Millisecond}))
+	defer srv.Close()
+	s, closeStream := openStream(t, srv.URL+"/stream/bot", "")
+	defer closeStream()
+	if first := nextSay(t, s); first.Text != "Nothing is running." {
+		t.Fatalf("first message %+v", first)
+	}
+
+	res := batch.Result{ID: "20261016-120000-abcdef", Started: time.Now(), Dir: "/repo/harness", Tasks: []batch.TaskResult{
+		{ID: "t1", Prompt: "Add the guard with one two three four five six seven alpha-secret bravo-secret charlie", Status: batch.StatusRunning}}}
+	saveBatch(t, res)
+	seen := func(want string) say {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			m, ok := s.next(t)
+			if !ok {
+				t.Fatal("the stream ended")
+			}
+			if strings.Contains(m.data, "alpha-secret") || strings.Contains(m.data, "bravo-secret") {
+				t.Fatalf("part of a secret reached the stream: %s %q", m.event, m.data)
+			}
+			var v say
+			if m.event == want || m.event == "say" && json.Unmarshal([]byte(m.data), &v) == nil && v.Kind == want {
+				return v
+			}
+		}
+		t.Fatalf("no %s in time", want)
+		return say{}
+	}
+	seen("replace")
+	res.Tasks[0].Status, res.Duration = batch.StatusPass, time.Minute
+	saveBatch(t, res)
+	if v := seen("task"); !strings.Contains(v.Text, "add the guard") || !strings.Contains(v.Text, "[redacted]") {
+		t.Fatalf("task: %+v", v)
+	}
+}
+
 // nextSay reads messages until the next one the page would speak, checking on
 // the way that the visible parts are escaped and hold no secret.
 func nextSay(t *testing.T, s sse) say {

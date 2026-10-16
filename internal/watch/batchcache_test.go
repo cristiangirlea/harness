@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,5 +84,34 @@ func TestABatchIsCleanedAgainOnlyWhenItsRecordChanges(t *testing.T) {
 	s.batches.mu.Unlock()
 	if kept || size != 1 {
 		t.Fatalf("a removed batch stays in the cache (%v, %d entries)", kept, size)
+	}
+}
+
+// A record names its own id, and a copied or hand-edited file may name
+// another file's: each file still shows its own record.
+func TestABatchFileHoldingAnotherFilesIDShowsItsOwnRecord(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	s := &server{}
+	start := time.Now()
+	first := batch.Result{ID: "20261012-170000-abcdef", Started: start.Add(-time.Hour),
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: "first record"}}}
+	saveBatch(t, first)
+	copied := batch.Result{ID: first.ID, Started: start,
+		Tasks: []batch.TaskResult{{ID: "t1", Prompt: "copied record"}}}
+	data, _ := json.Marshal(copied)
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "batches", "20261012-180000-abcdef.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for look := 1; look <= 2; look++ {
+		got, unreadable, err := s.listBatches()
+		if err != nil || unreadable != 0 || len(got) != 2 {
+			t.Fatalf("look %d: %d batches, %d unreadable, %v; want 2", look, len(got), unreadable, err)
+		}
+		if got[0].Tasks[0].Prompt != "copied record" || got[1].Tasks[0].Prompt != "first record" {
+			t.Fatalf("look %d shows %q and %q, want each file's own record", look, got[0].Tasks[0].Prompt, got[1].Tasks[0].Prompt)
+		}
+	}
+	if s.batches.cleans != 2 {
+		t.Fatalf("%d cleanings, want 2: an unchanged file was cleaned again", s.batches.cleans)
 	}
 }
