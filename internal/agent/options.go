@@ -204,7 +204,7 @@ func (Options) Schema() map[string]any {
 		case reflect.TypeOf(Duration(0)):
 			p["type"] = "string"
 		case reflect.TypeOf(CompactWindow("")):
-			p["type"] = []any{"integer", "string"} // a token count, or "auto"
+			p["type"] = "string" // a decimal token count, or "auto"
 		default:
 			switch f.Type.Kind() {
 			case reflect.String:
@@ -352,8 +352,8 @@ func (b setBool) Set(s string) error {
 func (setBool) IsBoolFlag() bool { return true }
 
 // CompactWindow is "auto" or a token count from 100000 to 1000000 in decimal,
-// as claude --autocompact takes it. A spec or call writes the count as a
-// number, and a record stores it the same way.
+// as claude --autocompact takes it. A spec or call may quote the count;
+// a record always stores the count as a number.
 type CompactWindow string
 
 const minCompactWindow, maxCompactWindow = 100000, 1000000
@@ -397,11 +397,10 @@ func (w *CompactWindow) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	var s string
-	if err := json.Unmarshal(data, &s); err != nil || s != "auto" {
+	if err := json.Unmarshal(data, &s); err != nil || s == "" {
 		return fmt.Errorf("compact_window %s: want an integer from %d to %d, or \"auto\"", data, minCompactWindow, maxCompactWindow)
 	}
-	*w = "auto"
-	return nil
+	return w.Set(s)
 }
 
 // stringList collects a repeatable string flag.
