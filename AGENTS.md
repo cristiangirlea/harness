@@ -78,16 +78,16 @@ machines. See `CONTRIBUTING.md` for CI and release details.
   item; short name, as in `fix-batch-rm-deregistered`) and one PR, whose description lists the files
   it touches and why. Larger work is a feature branch: each piece is a branch whose PR targets the
   feature branch under every condition below, and the feature branch reaches `main` through one PR
-  reviewed for how the pieces fit. A problem found on the way is fixed here only if this branch
-  caused it or it stops the change meeting its acceptance criteria; otherwise it gets an issue and a
+  reviewed for how the pieces fit. The branch finishes everything its issue asks. A defect found
+  in code the branch touches is fixed here; one elsewhere, already on `main`, gets an issue and a
   branch of its own. No refactors, renames or extras the item did not ask for.
 - **Everything is tested before a merge**: the full local checks (`/check`), tests for every
   behaviour the change adds or alters, and CI green on GitHub's standard hosted runners. Only then
   may an agent merge its PR, and only through the PR (`gh pr merge <n> --merge --delete-branch
-  --match-head-commit <sha>`), when an independent review ran and its blocking findings are fixed, a
+  --match-head-commit <sha>`), when an independent review ran and every defect it found is fixed, a
   security read of the diff has nothing open, and the head being merged is the commit all of that
-  ran on. Merge the base branch in only for a conflict, or once before those final checks and
-  review. What could not be tested is said in the PR and waits for the owner. Never auto-merge
+  ran on. Merge the base branch in once before those final checks and review (CI tests the merge
+  with `main`, so local checks must too), or for a conflict. What could not be tested is said in the PR and waits for the owner. Never auto-merge
   (`--auto`) or `--admin`, never push to `main`, never tag or release: hand over the command.
   PLAN.md's merge step (merge commit, delete the branch) is done through the PR under these
   conditions. Rulesets with no bypass protect `main` and `v*` tags: GitHub itself refuses a direct
@@ -99,10 +99,11 @@ machines. See `CONTRIBUTING.md` for CI and release details.
   anywhere (no `Co-Authored-By`, `Assisted-by` or "Generated with", in commits, PR text, comments or
   docs). Commits are `Cristian Girlea <cristiangirlea@gmail.com>`: check `git config user.email`
   first.
-- Self-review with `/code-review`. A finding is blocking when it is a defect this branch brings in,
-  a missing test for what it changes, a broken house rule, or a security hole: fix each as its own
-  commit, with the smallest change that closes it, and don't squash. Everything else (problems
-  already on `main`, improvements, style) becomes an issue linked from the PR.
+- Self-review with `/code-review`. Every defect, missing test, broken house rule or security hole in
+  what the branch touches is fixed before the push, blocking or not, with the smallest change; the
+  fixes of one review round go in one commit, never a commit per finding. Nits (wording, naming,
+  style) are dropped, at most a line in the PR. Only a defect elsewhere on `main`, or a choice for
+  the owner, becomes an issue; a follow-up branch files no follow-ups of its own nits.
 - Tests first, seen failing. On Windows the temp dir has 8.3 short names: compare paths after
   `filepath.EvalSymlinks`. Files are LF (`.gitattributes`).
 - Secrets are never read, printed or committed. Small diffs: don't restyle what you didn't change.
