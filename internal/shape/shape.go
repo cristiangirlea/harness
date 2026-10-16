@@ -46,17 +46,23 @@ func Classify(text string) Kind {
 		return JSON
 	}
 	lines := strings.Split(ansi.ReplaceAllString(text, ""), "\n")
-	log := false
+	logged, filled := 0, 0
 	for _, line := range lines {
 		if testLine.MatchString(line) {
 			return Test
 		}
-		log = log || logLine.MatchString(line)
+		if logLine.MatchString(line) {
+			logged++
+		}
+		if strings.TrimSpace(line) != "" {
+			filled++
+		}
 	}
-	if _, _, _, ok := tableShape(lines); ok {
+	// Comma timestamps make every log line one column wider; the log summary keeps warnings.
+	if _, _, _, ok := tableShape(lines); ok && 2*logged <= filled {
 		return Table
 	}
-	if log {
+	if logged > 0 {
 		return Log
 	}
 	return Terminal
@@ -196,7 +202,7 @@ func jsonMembers(s string) (keys, values []string) {
 	return keys, values
 }
 
-// jsonHead also returns the top-level values, so a summary walks them once.
+// jsonHead also returns the top-level values, so jsonSummary takes its sample without a second walk.
 func jsonHead(text string) (string, []string) {
 	s := strings.Trim(text, jsonSpace)
 	if !isJSON(s) {
@@ -238,8 +244,8 @@ func jsonSample(v string, depth int) string {
 	return b.String()
 }
 
-// A keys or sample line naming an error would be an error line absent from the
-// original; it is left out, and the original's error lines follow verbatim.
+// jsonSummary leaves out a keys or sample line naming an error, since it would be
+// an error line absent from the original; the original's error lines follow verbatim.
 func jsonSummary(text string, lines []string) string {
 	s := strings.Trim(text, jsonSpace)
 	head, values := jsonHead(s)

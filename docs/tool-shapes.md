@@ -43,7 +43,9 @@ kinds. Inputs holding an escape byte are also placed in the dropped middle of a 
 
 `Classify` checks JSON first, then test, table, log and terminal. Text is JSON when, trimmed, it
 is one valid object or array. It is a table when at least five non-blank lines all have the same
-count (at least one) of tabs, or else of commas. Its summaries:
+count (at least one) of tabs, or else of commas, unless most of them start like log lines
+(log4j and Python timestamps hold a comma): those stay logs, whose summary keeps warnings. Its
+summaries:
 
 ```
 json: array of 500 items
@@ -73,7 +75,8 @@ summary cannot be smaller and the cut is used. A table summary keeps the header,
 and last two rows, and every error row, in order. Either summary is used only when it is smaller
 than the original and within 28,000 bytes. `valid` recomputes the first line from the original
 for the kind it was given. Only that exact line may hold numbers the original lacks. A `json:` or
-`table:` line anywhere else, or with any other count, fails.
+`table:` line anywhere else, or with any other count, fails, so an ordinary output line that
+looks like one of these first lines makes the summary fall back to the cut.
 
 NDJSON, such as `go test -json`, is neither: the text is not one JSON value, and lines that are
 each a JSON object or array are refused as a table even when their comma counts agree. It falls

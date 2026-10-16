@@ -239,6 +239,8 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 		{"table whose omitted middle row holds an error", csvRows(1000, 500), Table, true,
 			[]string{"[... omitted ...]\n500,job-500,error: timeout,5000\n[... omitted ...]"}},
 		{"CSV with quoted commas", "id,name\n" + strings.Repeat("1,\"Smith, J\"\n2,Lee\n", 300), Terminal, true, nil},
+		{"CRLF JSON", strings.ReplaceAll(jsonItems(500), "\n", "\r\n"), JSON, true, []string{"json: array of 500 items"}},
+		{"CRLF table", strings.ReplaceAll(csvRows(1000, 500), "\n", "\r\n"), Table, true, []string{"500,job-500,error: timeout,5000\r"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Classify(tc.text); got != tc.kind {

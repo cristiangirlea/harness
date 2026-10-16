@@ -53,6 +53,20 @@ func tsvRows(n int) string {
 	return b.String()
 }
 
+// Log4j ISO8601 and Python asctime put one comma in every line.
+const commaLog = `2026-10-16 10:00:00,101 INFO start
+2026-10-16 10:00:01,102 INFO tick a
+2026-10-16 10:00:02,103 INFO tick b
+2026-10-16 10:00:03,104 INFO tick c
+2026-10-16 10:00:04,105 INFO tick d
+2026-10-16 10:00:05,106 WARN disk 91% full
+2026-10-16 10:00:06,107 INFO tock a
+2026-10-16 10:00:07,108 INFO tock b
+2026-10-16 10:00:08,109 INFO tock c
+2026-10-16 10:00:09,110 INFO tock d
+2026-10-16 10:00:10,111 INFO stop
+`
+
 const goTestJSON = `{"Time":"2026-10-16T10:00:00Z","Action":"start","Package":"example/pkg"}
 {"Time":"2026-10-16T10:00:00Z","Action":"run","Package":"example/pkg","Test":"TestA"}
 {"Time":"2026-10-16T10:00:00Z","Action":"output","Package":"example/pkg","Test":"TestA","Output":"=== RUN   TestA\n"}
@@ -81,7 +95,8 @@ func TestClassifyRecognisesJSONAndTables(t *testing.T) {
 		// Order: JSON, then Test, Table, Log, Terminal.
 		{"json array of log lines", `["2026-10-16 10:00:00 ERROR one", "2026-10-16 10:00:01 INFO two"]`, JSON},
 		{"csv with an ERROR column", "level,msg\nINFO,start\nERROR,broken\nINFO,retry\nERROR,gave up\n", Table},
-		{"tsv log", "2026-10-16 10:00:00\tINFO\tstart\n2026-10-16 10:00:01\tWARN\tslow\n2026-10-16 10:00:02\tERROR\tbroken\n2026-10-16 10:00:03\tINFO\tretry\n2026-10-16 10:00:04\tINFO\tdone\n", Table},
+		{"tsv log", "2026-10-16 10:00:00\tINFO\tstart\n2026-10-16 10:00:01\tWARN\tslow\n2026-10-16 10:00:02\tERROR\tbroken\n2026-10-16 10:00:03\tINFO\tretry\n2026-10-16 10:00:04\tINFO\tdone\n", Log},
+		{"log with commas in its timestamps", commaLog, Log},
 		{"test output with consistent tabs", "ok\texample/a\t0.1s\nok\texample/b\t0.1s\nok\texample/c\t0.1s\nok\texample/d\t0.1s\nFAIL\texample/e\t0.1s\n", Test},
 		{"go test json", goTestJSON, Terminal},
 	} {
@@ -229,5 +244,62 @@ func TestStructuredInvariantsRejectAdversarialSummaries(t *testing.T) {
 				t.Fatal("accepted an invalid summary")
 			}
 		})
+	}
+}
+
+func TestLogWithCommasInItsTimestampsKeepsItsWarnings(t *testing.T) {
+	s, ok := Summarize(Classify(commaLog), commaLog)
+	if !ok || !strings.Contains(s, "2026-10-16 10:00:05,106 WARN disk 91% full") {
+		t.Fatalf("summary ok=%v:\n%s", ok, s)
+	}
+}
+
+func TestJSONSummaryKeepsEscapesInKeysAndValues(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("[\n")
+	for i := range 50 {
+		if i > 0 {
+			b.WriteString(",\n")
+		}
+		fmt.Fprintf(&b, `  {
+    "k\u0022ey": "v\u005c",
+    "q\"": "a\\",
+    "id": %d
+  }`, i)
+	}
+	b.WriteString("\n]\n")
+	text := b.String()
+	want := "json: array of 50 items\n" +
+		`keys: "k\u0022ey","q\"","id"` + "\n" +
+		`sample: {"k\u0022ey":"v\u005c","q\"":"a\\","id":0}`
+	s, ok := Summarize(JSON, text)
+	if !ok || s != want {
+		t.Fatalf("summary ok=%v:\n%s", ok, s)
+	}
+	if lost := lostFact(text, s); lost != "" {
+		t.Fatal(lost)
+	}
+}
+
+func TestJSONKeyNamingAnErrorDropsKeysAndSampleButKeepsItsLine(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("[\n  {\n    \"id\": 0,\n    \"error_code\": 0\n  }")
+	for i := 1; i < 50; i++ {
+		fmt.Fprintf(&b, ",\n  {\"id\": %d}", i)
+	}
+	b.WriteString("\n]\n")
+	want := "json: array of 50 items\n    \"error_code\": 0"
+	if s, ok := Summarize(JSON, b.String()); !ok || s != want {
+		t.Fatalf("summary ok=%v:\n%s", ok, s)
+	}
+}
+
+func TestMinifiedJSONHoldingAnErrorFallsBack(t *testing.T) {
+	text := "[" + strings.Repeat(`{"id":1,"status":"ok"},`, 100) + `{"id":2,"status":"error: disk full"}]`
+	if got := Classify(text); got != JSON {
+		t.Fatalf("Classify = %v", got)
+	}
+	if s, ok := Summarize(JSON, text); ok {
+		t.Fatalf("accepted %q", s)
 	}
 }
