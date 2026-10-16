@@ -698,3 +698,20 @@ func TestCacheShareCountsGeminiCacheInsideItsInput(t *testing.T) {
 		t.Errorf("rows=%+v err=%v, want cache share 300/400", rows, err)
 	}
 }
+
+// Runs that are each valid can still wrap a group total: the one that would
+// overflow is left out and counted.
+func TestTokenTotalsLeaveOverflowingRunOut(t *testing.T) {
+	huge := int64(math.MaxInt64 - 10)
+	recs := []runlog.Record{
+		rec("api", "m", "/repo", 0, agent.Result{InputTokens: huge, OutputTokens: 1}),
+		rec("api", "m", "/repo", time.Hour, agent.Result{InputTokens: huge, OutputTokens: 1}),
+	}
+	_, all, err := Select(recs, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.InputTokens != huge || all.OutputTokens != 1 || all.RunsWithoutTokens != 1 {
+		t.Errorf("all = %+v, want the first run's totals and one run without tokens", all)
+	}
+}

@@ -303,7 +303,8 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		if res.Backend == "" {
 			res.Backend = r.Backend
 		}
-		if res.UsageMissing() {
+		if res.UsageMissing() || res.InputTokens > math.MaxInt64-row.InputTokens || res.OutputTokens > math.MaxInt64-row.OutputTokens ||
+			res.CacheRead > math.MaxInt64-row.CacheRead || res.CacheWrite > math.MaxInt64-row.CacheWrite {
 			row.RunsWithoutTokens++
 		} else {
 			row.InputTokens += res.InputTokens

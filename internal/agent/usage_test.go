@@ -222,6 +222,9 @@ func TestAdaptersMarkUsageMissingInsteadOfOverflowing(t *testing.T) {
 		if _, known, _ := res.ModelTokens(); known {
 			t.Error("overflowing api usage counted as known")
 		}
+		if _, known, _ := res.KnownCost(); known {
+			t.Error("cost of an api run with overflowing usage counted as known")
+		}
 	})
 	t.Run("gemini", func(t *testing.T) {
 		var res Result

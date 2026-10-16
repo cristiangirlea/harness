@@ -89,20 +89,21 @@ func (r Result) UsageMissing() bool {
 	return r.ValidateUsage() != nil || (r.Usage != nil && r.Usage.Status == "missing")
 }
 
-// addUsage adds one turn's counters; a negative one or a total that would
-// overflow is not added and marks the run's usage missing instead.
-func (r *Result) addUsage(semantics string, input, output, cacheRead, cacheWrite int64) {
+// addUsage adds one turn's counters and reports whether it did; a negative one
+// or a total that would overflow is not added and marks the usage missing.
+func (r *Result) addUsage(semantics string, input, output, cacheRead, cacheWrite int64) bool {
 	for _, c := range [][2]int64{{r.InputTokens, input}, {r.OutputTokens, output}, {r.CacheRead, cacheRead}, {r.CacheWrite, cacheWrite}} {
 		if c[0] < 0 || c[1] < 0 || c[1] > math.MaxInt64-c[0] {
 			if r.Usage == nil {
 				r.Usage = &UsageMetadata{InputSemantics: semantics}
 			}
 			r.Usage.Status = "missing"
-			return
+			return false
 		}
 	}
 	r.InputTokens += input
 	r.OutputTokens += output
 	r.CacheRead += cacheRead
 	r.CacheWrite += cacheWrite
+	return true
 }
