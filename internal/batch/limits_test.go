@@ -223,7 +223,10 @@ func TestABatchExplainsAMeteredPartnerBeforeTheAttemptStarts(t *testing.T) {
 			}
 			return
 		}
-		said = said || e.Kind == "switch" && strings.Contains(e.Text, "ANTHROPIC_API_KEY") && strings.Contains(e.Text, "per token")
+		if e.Kind == "switch" {
+			t.Errorf("unexpected switch event when nothing switched: %+v", e)
+		}
+		said = said || e.Kind == "info" && strings.Contains(e.Text, "ANTHROPIC_API_KEY") && strings.Contains(e.Text, "per token")
 		if strings.Contains(e.Text, "fake-secret-value") {
 			t.Error("event exposed the key value")
 		}

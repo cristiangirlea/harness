@@ -268,6 +268,8 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			var why string
 			if ctx.Err() == nil {
 				next, why, err = limits.After(rec.ID(), args.Backend, task, res)
+			} else if err := limits.Note(args.Backend, res); err != nil {
+				notes = append(notes, "the limit was not remembered: "+err.Error())
 			}
 			switch {
 			case err != nil:

@@ -249,10 +249,7 @@ func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut
 		return backend, "", false
 	}
 	if ok, reason := Ready(other, now, spent); !ok {
-		if spent.out(other, now) != "" {
-			return backend, gone + "; " + reason, true
-		}
-		return backend, gone + "; " + reason, false
+		return backend, gone + "; " + reason, spent.out(other, now) != ""
 	}
 	return other, fmt.Sprintf("%s; starting on %s instead", gone, other), false
 }

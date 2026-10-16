@@ -170,7 +170,7 @@ func TestRunDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
 	defer cancel()
 	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
 		cancel()
-		return agent.Result{Status: agent.StatusLimited, Error: "usage limit"}
+		return agent.Result{Status: agent.StatusLimited, Error: "usage limit", LimitResets: time.Now().Add(time.Hour)}
 	}})
 	code, err := cmdRunContext(ctx, []string{"-b", "codex", "-C", t.TempDir(), "fix it"})
 	if code != 1 || err != nil {
@@ -179,6 +179,9 @@ func TestRunDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
 	recs, err := runlog.List(5)
 	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" || recs[0].Result.Status != agent.StatusLimited {
 		t.Fatalf("records = %+v, err=%v; want only the limited run", recs, err)
+	}
+	if limits.Until("codex", time.Now()).IsZero() {
+		t.Error("codex's limit was not remembered in limits.json")
 	}
 }
 

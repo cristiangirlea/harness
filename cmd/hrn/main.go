@@ -419,6 +419,8 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	var why string
 	if ctx.Err() == nil {
 		next, why, err = limits.After(rec.ID(), backend, task, res)
+	} else if err := limits.Note(backend, res); err != nil {
+		fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
 	}
 	switch {
 	case err != nil:
