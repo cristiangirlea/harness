@@ -13,6 +13,7 @@ go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -p
 go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
 bash -n .github/release.sh && bash -n scripts/api-check.sh
 bash scripts/verify.sh --check
+bash scripts/comment-check.sh
 bash .github/release.sh
 test -z "$(git ls-files -co --exclude-standard -- '*.go' | xargs -r gofmt -l)"
 ```

@@ -36,6 +36,7 @@ go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -p
 go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
 bash -n .github/release.sh && bash -n scripts/api-check.sh
 bash scripts/verify.sh --check
+bash scripts/comment-check.sh
 bash .github/release.sh                                       # release dry run, writes dist/
 test -z "$(gofmt -l .)"                                       # /check: tracked files only
 ```
@@ -56,6 +57,10 @@ machines. See `CONTRIBUTING.md` for CI and release details.
   additive with `omitempty`; old records on disk must still load.
 - **The api history is append-only** (`api.go`): assistant turns go back exactly as received. Never
   trim, rewrite or reorder earlier messages; context is reduced server-side.
+- **Comments say why, not what**: one line, three at most (a doc comment: one sentence, plus one
+  for a non-obvious contract); no issue numbers, dates or review history (git and PLAN.md hold
+  them); long explanations go to `docs/`. `scripts/comment-check.sh` enforces it; its baseline
+  only shrinks.
 - The api loop puts this file and `CLAUDE.md` into its system prompt when it runs on this repo
   (`instructions.go`, 32 KiB cap): keep them short.
 - A release tag must match `Version` in `internal/agent/agent.go`; tags and releases are the
@@ -114,6 +119,7 @@ machines. See `CONTRIBUTING.md` for CI and release details.
 - `scripts/answers.go`: Provide JSON test summaries and bounded TCP probes for Bash entry points.
 - `scripts/api-check.sh`: Exercise real API runs, continuation and context editing at the owner's expense. (not verified: spends money)
 - `scripts/check.sh`: Run the check skill commands in order, stopping on failure.
+- `scripts/comment-check.sh`: Check Go comments against the repository rule and baseline.
 - `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
 - `scripts/tool-shapes.sh`: Measure recorded tool output and repeated inline scripts without exposing text.
 - `scripts/verify.sh`: Run kept examples and synchronize script hashes and the AGENTS index. (not verified: the runner)
