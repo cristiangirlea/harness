@@ -80,7 +80,11 @@ research, plan, ops or unknown) or `--by day` (the day the run started, on this 
 calendar; days are listed in date order rather than largest first). The purpose is the one the run declared (`--purpose`, the MCP `purpose`
 field, or a valid leading `Purpose: <category>` header); otherwise it comes from ordered keyword
 rules on the prompt's first paragraph, or its second when the first matches no rule, with leading
-`Label: value` lines skipped, since a brief's later paragraphs mention every keyword; the first rule
+`Label: value` lines skipped for an anchored instruction before trying the paragraph
+as written, then with labels skipped as a fallback. A label's colon must be followed by a space or the
+end of the line; URLs and Windows drive paths stay intact. Each lead is lowercased
+from a bounded prefix and capped at 600 bytes without splitting a UTF-8 rune.
+Since a brief's later paragraphs mention every keyword, the first rule
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
 median cost, and the cache share (cache-read tokens over every input token, cache writes included;
 `-` when the backend reported no token counts). A `~` marks a list-price estimate

@@ -61,6 +61,7 @@ type botItem struct {
 	Who, Where string // who is working (a backend, or "a batch of four tasks"), and in which workspace
 	What       string // the task, in a few words
 	Going      bool
+	Stopped    bool // quiet without a recorded ending
 	Started    time.Time
 	Doing      string // the latest activity of a run, or of a batch's running task
 	ending     func() (kind, text string)
@@ -91,6 +92,7 @@ func botLook(runs []runlog.Record, batches []batch.Result, doing map[string]stri
 	var snap botSnapshot
 	for _, b := range batches {
 		it := botItem{ID: b.ID, Kind: "batch", Where: place(b.Dir), Going: batchGoing(b), Started: b.Started}
+		it.Stopped = !it.Going && batchUnfinished(b)
 		it.Who = "a batch of " + count(len(b.Tasks), "task")
 		for _, t := range b.Tasks {
 			it.tasks = append(it.tasks, botTask{t.ID, taskName(t), t.Status})
@@ -111,6 +113,8 @@ func botLook(runs []runlog.Record, batches []batch.Result, doing map[string]stri
 		}
 		it := botItem{ID: rec.ID, Kind: "run", Who: backendName(rec.Backend), Where: place(rec.Task.Dir),
 			What: topic(rec.Task.Prompt), Going: !rec.Done, Started: rec.Started}
+		it.Stopped = !runStopped(rec).IsZero()
+		it.Going = it.Going && !it.Stopped
 		if it.Going {
 			it.Doing = doing[rec.ID]
 		}
@@ -133,6 +137,9 @@ func announce(prev, cur botSnapshot, first bool) []say {
 	var out []say
 	for i := len(cur.items) - 1; i >= 0; i-- {
 		it := cur.items[i]
+		if it.Stopped {
+			continue // silence is neither a start nor a recorded ending
+		}
 		ref, url := it.ID, "/"+it.Kind+"/"+it.ID
 		was, seen := prev.find(it.ID)
 		switch {
@@ -153,7 +160,7 @@ func announce(prev, cur botSnapshot, first bool) []say {
 			}
 			out = append(out, say{"task", taskOf(it, n), ref, url})
 		}
-		if !it.Going && (!seen || was.Going) {
+		if !it.Going && (!seen || was.Going || was.Stopped) {
 			kind, text := it.ending()
 			out = append(out, say{kind, text, ref, url})
 		}
@@ -575,7 +582,7 @@ func (b *botWatcher) look() botSnapshot {
 		for _, l := range lines {
 			if l.Err == nil && l.Event.Kind == agent.EventToolCall {
 				e := b.s.cleanEvent(l.Event)
-				b.doing[rec.ID] = activity(e.Tool, e.Text)
+				b.doing[rec.ID] = activity(e.Tool, unwrapCommand(e.Text))
 			}
 		}
 	}

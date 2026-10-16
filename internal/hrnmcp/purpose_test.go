@@ -5,10 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-const purposeList = "review, debug, implement, refactor, test, research, plan, ops"
+var purposeList = strings.Join(purpose.Declarable(), ", ")
 
 func TestRunPurposeIsValidatedAndStored(t *testing.T) {
 	s := connect(t, t.TempDir())

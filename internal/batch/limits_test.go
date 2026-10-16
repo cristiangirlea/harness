@@ -85,6 +85,42 @@ func TestALimitedAttemptIsCarriedOnInTheSameWorktree(t *testing.T) {
 	}
 }
 
+func TestALeanClaudeAttemptCarriesOnToCodexWithoutLean(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	agent.Register(leanStub{stub{"claude", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "claude", Status: agent.StatusLimited, Error: "You've hit your usage limit."}
+	}}})
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "codex", Status: agent.StatusOK, Final: "finished", Turns: 1}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "claude", Tasks: []Task{{Prompt: "finish the work"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v, want a limited claude attempt followed by codex", tr)
+	}
+	a1, a2 := tr.Attempts[0], tr.Attempts[1]
+	if a1.Backend != "claude" || a1.Result.Status != agent.StatusLimited {
+		t.Fatalf("first attempt = %+v, want limited claude", a1)
+	}
+	if rec := firstRun(t, tr); !rec.Task.IsLean() {
+		t.Fatal("the claude attempt must record the batch's lean default")
+	}
+	if a2.Backend != "codex" || !a2.Continued || a2.SwitchedFrom != "claude" {
+		t.Fatalf("second attempt = %+v, want a carry-on on codex", a2)
+	}
+	rec, err := runlog.Load(a2.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Continues != a1.RunID || rec.Result.Backend != "codex" {
+		t.Errorf("codex record must continue the limited claude run: %+v", rec)
+	}
+	if rec.Task.Lean != nil {
+		t.Errorf("codex record must leave lean unset, got %v", rec.Task.Lean)
+	}
+}
+
 func TestACarryOnDoesNotUseUpARetry(t *testing.T) {
 	dir := initRepo(t)
 	standIn(t)
@@ -204,5 +240,54 @@ func TestALimitedAttemptIsNotCarriedOnToAPartnerThatBillsPerToken(t *testing.T) 
 	}
 	if strings.Contains(switches, "fake-secret-value") {
 		t.Errorf("an event shows the key's value: %q", switches)
+	}
+}
+
+func TestABatchExplainsAMeteredPartnerBeforeTheAttemptStarts(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+	if err := limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	_, events := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "kept", Prompt: "p"}}})
+	said := false
+	for _, e := range events {
+		if e.Kind == "start" {
+			if !said {
+				t.Fatal("no metered partner reason before the attempt started")
+			}
+			return
+		}
+		if e.Kind == "switch" {
+			t.Errorf("unexpected switch event when nothing switched: %+v", e)
+		}
+		said = said || e.Kind == "info" && strings.Contains(e.Text, "ANTHROPIC_API_KEY") && strings.Contains(e.Text, "per token")
+		if strings.Contains(e.Text, "fake-secret-value") {
+			t.Error("event exposed the key value")
+		}
+	}
+	t.Fatal("no attempt started")
+}
+
+func TestABatchDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		cancel()
+		return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "usage limit"}
+	}})
+	res, err := Run(ctx, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "stopped", Prompt: "p"}}}, func(Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Tasks) != 1 || res.Tasks[0].Status != StatusCanceled || len(res.Tasks[0].Attempts) != 1 {
+		t.Fatalf("tasks = %+v, want one canceled task with one attempt", res.Tasks)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" {
+		t.Fatalf("records = %+v, err=%v; want only the limited run", recs, err)
 	}
 }

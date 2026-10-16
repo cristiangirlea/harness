@@ -133,6 +133,8 @@ Lean is the default for `hrn batch` and `hrn eval` tasks that run on claude; a s
 sets `"lean": false` to give its workers every MCP server (a task's `false` wins over a
 spec's `true`). The record of an attempt says `"lean": true` when the default applied. `hrn
 run` and the MCP `run` tool stay as they were: lean only with `--lean` or `"lean": true`.
+Continuing a lean batch run with `hrn run --continue <run-id>` also runs without lean
+unless you pass `--lean`; the MCP `run` tool likewise needs `"lean": true` on the follow-up.
 Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
 `apiKeyHelper`, never the subscription. The api loop never reads Claude Code's settings, so
 lean changes nothing there; codex, gemini, opencode and agy say `lean: not enforced` when it is
@@ -167,8 +169,10 @@ context nears the model's window. On a 1M-token model that is only at about 967K
 long run carries 300-400K tokens of context into every turn well before it compacts, and
 each of those turns reads them back from the cache. `compact_window` sets the threshold
 instead: `hrn run --compact-window 200000`, or `"compact_window": 200000` on a batch or eval
-spec or task and on the MCP `run` tool. It takes an integer from 100000 to 1000000, or
-`"auto"` (Claude Code's own choice), and is checked before the run starts; hrn passes it as
+spec or task (a quoted `"200000"` works too). The MCP `run` tool advertises a string:
+`"compact_window": "200000"` or `"compact_window": "auto"`; it also accepts unquoted integers
+for existing callers. It takes an integer from 100000 to 1000000, or `"auto"` (Claude Code's
+own choice), and is checked before the run starts; hrn passes it as
 `claude --autocompact <value>`. Unset, nothing is passed.
 
 The trade: every compaction is one expensive turn (the whole history is read to write the
@@ -210,6 +214,8 @@ conversation is a chain of runs. It inherits the earlier run's backend, workspac
 mode unless you pass those flags, and its model only from runs on the same backend: a
 claude model name means nothing to codex. The MCP `run` tool takes the same thing as
 `continue_run_id`.
+Lean is not inherited: even after a lean batch run, pass `--lean` (or `"lean": true`
+on the MCP tool) to enable it for the follow-up.
 
 If the run whose conversation or session is carried on recorded more than 150,000
 tokens of context at its last turn, hrn warns with its run id and context size and
@@ -276,6 +282,8 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
   mode. A model is never carried from one backend to the other: the new backend runs the
   model chosen for it earlier in the same chain, as any follow-up does, or its default. `hrn run` and the MCP `run` tool answer
   with that run; the MCP result names the limited one as `limited_run_id`.
+  Cancellation before a carry-on is planned stops it without creating another run
+  record, including in a batch.
 - The reset time is kept in `~/.hrn/limits.json`. Until it passes, a run, a batch
   attempt or a retry meant for that backend starts on the other one, and its transcript
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
@@ -287,10 +295,23 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
   selected partner is limited too, the run stays `limited` and says so.
 - Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
-  the plan, and so does codex with `CODEX_API_KEY` or `OPENAI_API_KEY`; that CLI does not
-  stand in, and the run says which variable stopped it. hrn cannot see a CLI logged in with
-  an API key in its own files (`codex login --with-api-key`, claude's `apiKeyHelper`): use
-  `--no-switch` there.
+  the plan. Codex uses `CODEX_API_KEY` in API-key mode; older releases or API-key mode
+  can use `OPENAI_API_KEY`, which hrn treats as metered to be safe. Any non-empty key
+  or token counts as set, including `0` and `false`; only the `CLAUDE_CODE_USE_*`
+  switches treat `0` or `false` (case-insensitive) as off. That CLI does not stand in,
+  and the run names the variable, never its value. When a remembered limit would
+  otherwise move the run, this reason is recorded before it starts; a batch reports
+  it before the attempt starts.
+
+hrn cannot see these API-billed configurations; use `--no-switch` with them:
+
+- Credentials in a CLI's own files (`codex login --with-api-key`, claude's
+  `apiKeyHelper`), or claude logged in to an Anthropic Console (API) account through
+  `/login`.
+- A Claude Code settings `env` block setting one of these variables, in the user's
+  settings or the workspace's `.claude/settings.json`.
+- Codex's `config.toml` `model_provider` or a profile pointing at an API-billed
+  provider (OpenAI API with `env_key`, Azure, OpenRouter), or a `CODEX_HOME` elsewhere.
 
 The same mode is not the same permissions on both: `auto` lets codex run commands in its
 sandbox but claude only edit files, and codex's `readonly` reads the whole disk (see the

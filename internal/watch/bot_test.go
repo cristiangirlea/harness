@@ -119,6 +119,7 @@ func kinds(says []say) []string {
 }
 
 func TestTheFirstLookOnlySaysWhatIsGoing(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	cur := lookAt([]runlog.Record{
 		runRec("20261011-115000-aaaaaa", noon.Add(-10*time.Minute), false, agent.Result{}),
 		runRec("20261011-110000-bbbbbb", noon.Add(-time.Hour), true, agent.Result{Status: agent.StatusOK, Duration: time.Minute}),
@@ -136,6 +137,7 @@ func TestTheFirstLookOnlySaysWhatIsGoing(t *testing.T) {
 }
 
 func TestTheBotAnnouncesARunStartingWorkingAndEnding(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	id := "20261011-115950-aaaaaa"
 	before := lookAt(nil, nil, nil)
 	going := lookAt([]runlog.Record{runRec(id, noon.Add(-10*time.Second), false, agent.Result{})}, nil, nil)
@@ -161,6 +163,7 @@ func TestTheBotAnnouncesARunStartingWorkingAndEnding(t *testing.T) {
 // A run younger than one look may be a batch's attempt whose record the batch
 // has not saved yet: it is held back one look rather than announced twice.
 func TestAJustStartedRunWaitsALookAndABatchsRunsAreNotItsOwn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	runID, batchID := "20261011-115959-aaaaaa", "20261011-115958-bbbbbb"
 	young := lookAt([]runlog.Record{runRec(runID, noon.Add(-time.Second), false, agent.Result{})}, nil, nil)
 	if says := announce(lookAt(nil, nil, nil), young, false); len(says) != 0 {
@@ -188,6 +191,7 @@ func TestAJustStartedRunWaitsALookAndABatchsRunsAreNotItsOwn(t *testing.T) {
 // A batch first seen already over (it ran between two looks) is told by its
 // ending alone, not task by task.
 func TestABatchFirstSeenOverIsToldByItsEnding(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	b := batch.Result{ID: "20261011-115959-cccccc", Started: noon.Add(-5 * time.Second), Dir: "/repo/harness", Duration: 4 * time.Second, Tasks: []batch.TaskResult{
 		{ID: "t1", Prompt: "Add the guard", Status: batch.StatusPass}, {ID: "t2", Prompt: "Add the budget", Status: batch.StatusPass}}}
 	says := announce(lookAt(nil, nil, nil), lookAt(nil, []batch.Result{b}, nil), false)
@@ -202,6 +206,7 @@ func TestABatchFirstSeenOverIsToldByItsEnding(t *testing.T) {
 
 // What a batch's agent is doing is told as the batch's, in a whole sentence.
 func TestTheBotSaysWhatABatchsAgentIsDoing(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	runID := "20261011-115000-aaaaaa"
 	b := batch.Result{ID: "20261011-114959-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/repo/harness", Tasks: []batch.TaskResult{
 		{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning, Attempts: []batch.Attempt{{Backend: "codex", RunID: runID}}},
@@ -225,6 +230,7 @@ func TestTheBotSaysWhatABatchsAgentIsDoing(t *testing.T) {
 // The batch is kept from the look before, or it and its runs would be
 // announced again as new.
 func TestABatchCaughtMidSaveIsNotAnnouncedAgain(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	runID := "20261011-115000-aaaaaa"
 	b := batch.Result{ID: "20261011-114959-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/repo/harness", Tasks: []batch.TaskResult{
 		{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning, Attempts: []batch.Attempt{{Backend: "claude", RunID: runID}}}}}
@@ -241,6 +247,7 @@ func TestABatchCaughtMidSaveIsNotAnnouncedAgain(t *testing.T) {
 }
 
 func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	id := "20261011-110000-cccccc"
 	mk := func(s1, s2 batch.Status, d time.Duration) batch.Result {
 		return batch.Result{ID: id, Started: noon.Add(-time.Hour), Dir: "/repo/harness", Duration: d, Tasks: []batch.TaskResult{
@@ -294,6 +301,16 @@ func TestTheBotStreamSaysWhatHappensAndBlanksSecrets(t *testing.T) {
 		m := nextSay(t, s)
 		if m.Kind == "working" {
 			if m.Text != "Claude is editing bot.go in harness." {
+				t.Fatalf("working: %+v", m)
+			}
+			break
+		}
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Text: `powershell.exe -NoProfile -Command "go test ./..."`})
+	for {
+		m := nextSay(t, s)
+		if m.Kind == "working" {
+			if m.Text != "Claude is running go test in harness." {
 				t.Fatalf("working: %+v", m)
 			}
 			break
@@ -375,6 +392,7 @@ func TestOnlyTheBotPageMayUseTheMicrophone(t *testing.T) {
 // The card of what is going names who works where, as a heading, not a
 // sentence: no full stop in the middle of a line.
 func TestTheCardOfWhatIsGoingNamesWhoWorksWhere(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	b := batch.Result{ID: "20261011-115900-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/work/tidedesk", Tasks: []batch.TaskResult{
 		{ID: "t1", Prompt: "Fix it", Status: batch.StatusRunning}, {ID: "t2", Prompt: "Test it", Status: batch.StatusRunning}}}
 	snap := lookAt([]runlog.Record{runRec("20261011-115000-aaaaaa", noon.Add(-10*time.Minute), false, agent.Result{})}, []batch.Result{b}, nil)
@@ -393,6 +411,7 @@ func TestTheCardOfWhatIsGoingNamesWhoWorksWhere(t *testing.T) {
 // so the bot names a task by its id, as the spec did, rather than read the
 // shared opening out four times.
 func TestTheBotNamesABatchsTasksByTheirNames(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	const preamble = "You are working in a git worktree of jobpilot. First read AGENTS.md and follow it.\n\n"
 	mk := func(s batch.Status) batch.Result {
 		return batch.Result{ID: "20261011-213338-c6fe69", Started: noon.Add(-time.Hour), Dir: "/work/jobpilot", Tasks: []batch.TaskResult{

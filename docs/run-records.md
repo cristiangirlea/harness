@@ -6,6 +6,12 @@
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 
+Batch gate output is stored as UTF-8 after decoding detected UTF-16 shell output.
+A gate whose shell cannot start includes an optional `infrastructure_error`
+reason; the task fails with that reason without retrying. Older gate records
+without the field still load. See [Batches](batches.md) for the launcher errors
+that count as infrastructure failures.
+
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.
 
@@ -90,7 +96,9 @@ entry path (CLI, MCP and exec). It appears in `hrn show` and the run page like o
 events. Passing earlier turns only as a transcript does not produce this warning.
 
 Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
-force, which every run consults before it starts. Deleting it forgets them.
+force. `hrn run`, the MCP `run` tool and batch attempts consult it before starting when
+switching is enabled. `hrn exec` neither reads nor writes it. Deleting it forgets the
+remembered limits.
 
 `result.json` includes `model_reported: true` only when the backend reports its
 model: api responses, claude init lines and gemini model stats. A requested/default
@@ -117,6 +125,15 @@ the last hour is taken to be still running and stays; a directory in `runs/` tha
 a run id is never touched. If any batch or eval record cannot be read, prune refuses:
 that record may cite anything. Records go before the runs they cite, so a failure partway
 never leaves a record pointing at nothing.
+
+The one-hour activity rule lives in `internal/runlog/activity.go` and is shared by
+prune and watch. It uses `events.jsonl`'s modification time, falling back to the run
+directory when the transcript is absent. Watch displays an unfinished quiet run as
+`stopped`; this adds no stored status or fields and leaves older records unchanged.
+For an unfinished batch, watch considers the newest write to its record or any of
+its referenced runs, including a run's result: an active first attempt keeps the
+batch running even when the batch record itself is over an hour old. See
+[watch states](watch.md) for the display and Ada behaviour.
 
 ## Usage per turn
 

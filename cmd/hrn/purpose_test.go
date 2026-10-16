@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -30,7 +31,7 @@ func TestRunRefusesInvalidPurposeBeforeStarting(t *testing.T) {
 		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 {
 			t.Fatalf("purpose %q: error=%v, stderr=%s", value, err, &stderr)
 		}
-		if !strings.Contains(stderr.String(), "run: --purpose "+value+": one of review, debug, implement, refactor, test, research, plan, ops") {
+		if !strings.Contains(stderr.String(), "run: --purpose "+value+": one of "+strings.Join(purpose.Declarable(), ", ")) {
 			t.Errorf("purpose %q: stderr=%s", value, &stderr)
 		}
 	}

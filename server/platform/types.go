@@ -28,6 +28,10 @@ const (
 	Canceled         State = "canceled"
 )
 
+func (s State) terminal() bool {
+	return s == Succeeded || s == Failed || s == Canceled
+}
+
 const (
 	GlobalSlots       = 2
 	TenantSlots       = 2

@@ -44,6 +44,10 @@ An invalid value is refused before any task starts. If omitted or empty, a valid
 saved on the batch task result and each attempt's `agent.Task`, without changing
 the prompt.
 
+When writing implementation prompts for this repository, include the comment rule in
+one line: "Comments say why, not what: one line, three at most; no issue numbers,
+dates or review history in code."
+
 For each task hrn creates branch `hrn/<id>` from the current `HEAD` (uncommitted changes
 in the main worktree are not included) and gives it a worktree (see below), runs the
 agent there, then the gates in order, stopping at the first non-zero exit or after 15
@@ -167,6 +171,20 @@ interrupted, even one that could not start because of it), so every report of it
 gate_timeout 15m0s`, the full text as its tooltip), and a retry is told the gate `was
 killed after 15m0s by gate_timeout` without the advice, which is the operator's, so it
 does not search the output for a failing test.
+
+If the gate shell cannot start, the task fails with an infrastructure reason and
+does not use any remaining `retry` backends. This covers a process start error
+(including a missing shell interpreter), or a nonzero exit whose output was decoded
+from UTF-16 and contains an `HCS_E_*` error code or `The Windows Subsystem for Linux`
+launcher diagnostic within the first 1 KiB of decoded output.
+The gate records the reason in `infrastructure_error`; the agent's work is still
+committed for inspection. Other nonzero exits, including a command not found
+inside a running shell, keep the normal retry behavior. Cancellation and
+`gate_timeout` keep the behavior described above.
+
+Gate output is decoded from UTF-16 to UTF-8 before it is checked, shortened,
+recorded or shown. A little- or big-endian BOM identifies UTF-16; without a BOM,
+alternating NUL bytes over the first few code units identify the byte order.
 
 The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts,
 again each time a task moves on (an attempt's run starts or ends, a gate finishes, a task

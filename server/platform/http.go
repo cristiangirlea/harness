@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -25,6 +26,41 @@ type HTTPServer struct {
 	ScalerToken          string
 	submissionAuthorized func(context.Context, string, string) (bool, error)
 	workerAuthorized     func(context.Context, string, string) (bool, error)
+	eventStreams         eventStreams
+	eventStreamDuration  time.Duration // Zero uses the production maximum.
+}
+
+const (
+	maxTenantEventStreams  = 4
+	maxEventStreamDuration = 30 * time.Minute
+)
+
+type eventStreams struct {
+	mu     sync.Mutex
+	active map[string]int
+}
+
+func (s *eventStreams) acquire(tenant string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active[tenant] >= maxTenantEventStreams {
+		return false
+	}
+	if s.active == nil {
+		s.active = make(map[string]int)
+	}
+	s.active[tenant]++
+	return true
+}
+
+func (s *eventStreams) release(tenant string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active[tenant] <= 1 {
+		delete(s.active, tenant)
+	} else {
+		s.active[tenant]--
+	}
 }
 
 func (h *HTTPServer) Handler() http.Handler {
@@ -338,21 +374,40 @@ func (h *HTTPServer) events(w http.ResponseWriter, r *http.Request) {
 		invalid(w, err)
 		return
 	}
+	if !h.eventStreams.acquire(tenantID) {
+		failure(w, http.StatusTooManyRequests, "stream_limit", "too many open event streams for tenant")
+		return
+	}
+	defer h.eventStreams.release(tenantID)
+	duration := h.eventStreamDuration
+	if duration <= 0 {
+		duration = maxEventStreamDuration
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), duration)
+	defer cancel()
+	// Bound blocked writes as well as polling and database calls.
+	controller := http.NewResponseController(w)
+	deadline, _ := ctx.Deadline()
+	_ = controller.SetWriteDeadline(deadline)
+	defer controller.SetWriteDeadline(time.Time{})
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(200)
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		return
-	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		entries, err := h.Store.Events(r.Context(), tenantID, projectID, jobID, after, 100)
+		// Read state first: a terminal state and its event commit together, so
+		// the following event query cannot miss the event that closes the job.
+		job, err := h.Store.GetJob(ctx, tenantID, projectID, jobID)
 		if err != nil {
 			return
 		}
+		entries, err := h.Store.Events(ctx, tenantID, projectID, jobID, after, 100)
+		if err != nil {
+			return
+		}
+		terminal := job.State.terminal()
 		for _, entry := range entries {
 			encoded, err := json.Marshal(entry)
 			if err != nil {
@@ -362,10 +417,19 @@ func (h *HTTPServer) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			after = entry.ID
+			terminal = terminal || State(entry.Kind).terminal()
 		}
-		flusher.Flush()
+		if err := controller.Flush(); err != nil {
+			return
+		}
+		if len(entries) == 100 {
+			continue // Drain every backlog page before closing or waiting.
+		}
+		if terminal {
+			return
+		}
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}

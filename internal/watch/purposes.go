@@ -36,7 +36,9 @@ type purposeSum struct {
 func (s *purposeSum) add(rec runlog.Record) {
 	s.runs++
 	if !rec.Done {
-		s.running++
+		if runStopped(rec).IsZero() {
+			s.running++
+		}
 		return
 	}
 	res := rec.Result

@@ -106,6 +106,8 @@ const (
 
 // Usage is the tokens one model call used. ContextTokens is what that call
 // carried: its input including cache reads and writes.
+// Event.Usage carries these counters; UsageMetadata in Result.Usage describes
+// how to interpret the run's totals.
 type Usage struct {
 	Model         string `json:"model,omitempty"`
 	InputTokens   int64  `json:"input_tokens,omitempty"`
@@ -122,7 +124,9 @@ type Event struct {
 	Tool    string          `json:"tool,omitempty"`
 	Input   json.RawMessage `json:"input,omitempty"`
 	IsError bool            `json:"is_error,omitempty"`
-	Usage   *Usage          `json:"usage,omitempty"`
+	// Usage holds per-call token counters; Result.Usage holds run-level
+	// UsageMetadata describing how to interpret the totals.
+	Usage *Usage `json:"usage,omitempty"`
 
 	// Partial marks a streaming fragment. Renderers print it; transcripts skip it.
 	Partial bool `json:"-"`
@@ -147,7 +151,10 @@ const (
 
 type Result struct {
 	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
-	Usage     *UsageMetadata    `json:"usage_metadata,omitempty"`
+	// Usage describes how to interpret the run's totals (the counts are the fields
+	// above), saved as usage_metadata.
+	// Event.Usage holds per-call token counters of type Usage.
+	Usage *UsageMetadata `json:"usage_metadata,omitempty"`
 	// RecoveryRequired is execution evidence for the scheduler, not success or
 	// permission to replay. Orchestration states remain separate from Status.
 	RecoveryRequired bool   `json:"recovery_required,omitempty"`

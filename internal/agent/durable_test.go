@@ -135,12 +135,46 @@ func TestDurableStopsAtFailedSavesAndResumesOnlyConfirmedOperations(t *testing.T
 func TestDurableResumeRejectsChangedTask(t *testing.T) {
 	store := &checkpointStore{failBoundary: "model_response", commitThenFail: true}
 	backend, task, fake, effects := durableFixture(t, store)
+	task.AttemptID = "attempt-1"
 	backend.Run(context.Background(), task, func(Event) {})
+	for _, mutate := range []func(*Task){
+		func(t *Task) { t.Prompt = "other" },
+		func(t *Task) { t.Mode = ModeReadOnly },
+		func(t *Task) { t.Model = "other-model" },
+	} {
+		changed := task
+		changed.AttemptID = "attempt-2"
+		changed.Durable = &DurableExecution{Resume: store.latest, Save: store.save}
+		mutate(&changed)
+		result := backend.Run(context.Background(), changed, func(Event) {})
+		if result.Status != StatusError || !strings.Contains(result.Error, "task identity does not match") || fake.served != 1 || *effects != 0 {
+			t.Fatalf("changed task accepted: %+v", result)
+		}
+	}
+}
+
+func TestDurableResumeAcceptsChangedAttemptIDAndOldCheckpoint(t *testing.T) {
+	store := &checkpointStore{failBoundary: "model_response", commitThenFail: true}
+	backend, task, fake, effects := durableFixture(t, store)
+	// Old-format checkpoint written when the task had no AttemptID.
+	first := Run(context.Background(), backend, task, func(Event) {})
+	if !first.RecoveryRequired || store.latest == nil {
+		t.Fatalf("response was not checkpointed: %+v", first)
+	}
+	withoutAttemptDigest := store.latest.TaskDigest
+	store.failBoundary = "turn_complete"
+	task.AttemptID = "attempt-1"
 	task.Durable.Resume = store.latest
-	task.Mode = ModeReadOnly
-	result := backend.Run(context.Background(), task, func(Event) {})
-	if result.Status != StatusError || !strings.Contains(result.Error, "identity") || fake.served != 1 || *effects != 0 {
-		t.Fatalf("changed permissions accepted: %+v", result)
+	second := Run(context.Background(), backend, task, func(Event) {})
+	if !second.RecoveryRequired || store.latest == nil || store.latest.TaskDigest != withoutAttemptDigest || fake.served != 1 || *effects != 1 {
+		t.Fatalf("old checkpoint was not resumed with attempt_id: result=%+v digest=%s want=%s requests=%d effects=%d", second, store.latest.TaskDigest, withoutAttemptDigest, fake.served, *effects)
+	}
+	store.failBoundary = ""
+	task.AttemptID = "attempt-2"
+	task.Durable.Resume = store.latest
+	third := Run(context.Background(), backend, task, func(Event) {})
+	if third.Status != StatusOK || third.RecoveryRequired || third.Final != "done" || fake.served != 2 || *effects != 1 {
+		t.Fatalf("retry with a new attempt_id did not resume checkpoint: result=%+v requests=%d effects=%d", third, fake.served, *effects)
 	}
 }
 
