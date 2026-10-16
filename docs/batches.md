@@ -287,12 +287,14 @@ worktree only on proof that its work is merged:
 
 And only when nothing would be lost with it: the tree is clean (untracked files count), its
 ignored files are build output (`target`, `node_modules`, `dist`, `.venv` and the like, or any
-folder carrying `CACHEDIR.TAG`, with no repository and no link out of the worktree inside, since
-git on Windows deletes through a junction; an ignored `.env` or notes keep it, because `git
+folder carrying `CACHEDIR.TAG`, with no repository and no link (symlink or junction) out of the
+worktree inside, on every system, since git on Windows deletes through a junction; an ignored `.env` or notes keep it, because `git
 worktree remove` deletes ignored files; its `.hrn/` may hold only the worktrees git lists there), it is
 not locked (so a slot always stays, even one a batch record names), it holds no worktree that
-stays and no separate repository (submodules are checked below), it has no link (symlink or
-junction) leading out of it anywhere in it,
+stays and no separate repository (submodules are checked below), on Windows it has no junction
+or directory symlink leading out of it anywhere in it (git deletes through those; on Linux and
+macOS it unlinks a link, so a tracked `config -> ../shared/config` does not keep it, and a
+tracked folder swapped for a link already shows as a change),
 and the current directory is not inside it. Everything else stays and the listing says why: an open or
 closed pull request, none at all, commits after the merged one, a detached `HEAD`, uncommitted
 files. When `gh` fails (not installed, not logged in) or the fetch does, the worktrees that
