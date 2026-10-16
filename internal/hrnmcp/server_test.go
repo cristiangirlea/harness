@@ -395,14 +395,44 @@ func TestRunPassesLean(t *testing.T) {
 }
 
 func TestRunPassesCompactWindow(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	s := connect(t, t.TempDir())
-	res := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":200000}`)
-	id := res.StructuredContent.(map[string]any)["run_id"].(string)
-	if rec, err := runlog.Load(id); err != nil || rec.Task.CompactWindow != "200000" {
-		t.Fatalf("compact_window should reach the task: %+v err=%v", rec.Task, err)
+	for _, value := range []string{`200000`, `"200000"`, `"100000"`, `"1000000"`, `"auto"`} {
+		t.Run(value, func(t *testing.T) {
+			res := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":`+value+`}`)
+			if res.IsError {
+				t.Fatal(res.Text())
+			}
+			id := res.StructuredContent.(map[string]any)["run_id"].(string)
+			if rec, err := runlog.Load(id); err != nil || string(rec.Task.CompactWindow) != strings.Trim(value, `"`) {
+				t.Fatalf("compact_window should reach the task: %+v err=%v", rec.Task, err)
+			}
+		})
 	}
-	if r := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":50000}`); !r.IsError || !strings.Contains(r.Text(), "compact_window") {
-		t.Errorf("an out-of-range window must be refused before the run: %s", r.Text())
+	for _, value := range []string{`50000`, `"99999"`, `"1000001"`, `"200k"`, `""`} {
+		if r := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":`+value+`}`); !r.IsError || !strings.Contains(r.Text(), "compact_window") {
+			t.Errorf("invalid window %s must be refused before the run: %s", value, r.Text())
+		}
+	}
+}
+
+func TestRunAdvertisesCompactWindowAsAString(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	props := runTool(t.TempDir(), false).InputSchema["properties"].(map[string]any)
+	window := props["compact_window"].(map[string]any)
+	if typ, ok := window["type"].(string); !ok || typ != "string" {
+		t.Errorf("compact_window schema type = %v, want string", window["type"])
+	}
+}
+
+func TestBatchReadsQuotedCompactWindowsOnSpecsAndTasks(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	spec, err := decodeSpec(json.RawMessage(`{"compact_window":"200000","tasks":[{"prompt":"x","compact_window":"200000"}]}`), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.CompactWindow != "200000" || len(spec.Tasks) != 1 || spec.Tasks[0].CompactWindow != "200000" {
+		t.Fatalf("quoted compact_window must reach the spec and task: %+v", spec)
 	}
 }
 

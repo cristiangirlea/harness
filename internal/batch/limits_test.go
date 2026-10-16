@@ -85,6 +85,42 @@ func TestALimitedAttemptIsCarriedOnInTheSameWorktree(t *testing.T) {
 	}
 }
 
+func TestALeanClaudeAttemptCarriesOnToCodexWithoutLean(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	agent.Register(leanStub{stub{"claude", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "claude", Status: agent.StatusLimited, Error: "You've hit your usage limit."}
+	}}})
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "codex", Status: agent.StatusOK, Final: "finished", Turns: 1}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "claude", Tasks: []Task{{Prompt: "finish the work"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v, want a limited claude attempt followed by codex", tr)
+	}
+	a1, a2 := tr.Attempts[0], tr.Attempts[1]
+	if a1.Backend != "claude" || a1.Result.Status != agent.StatusLimited {
+		t.Fatalf("first attempt = %+v, want limited claude", a1)
+	}
+	if rec := firstRun(t, tr); !rec.Task.IsLean() {
+		t.Fatal("the claude attempt must record the batch's lean default")
+	}
+	if a2.Backend != "codex" || !a2.Continued || a2.SwitchedFrom != "claude" {
+		t.Fatalf("second attempt = %+v, want a carry-on on codex", a2)
+	}
+	rec, err := runlog.Load(a2.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Continues != a1.RunID || rec.Result.Backend != "codex" {
+		t.Errorf("codex record must continue the limited claude run: %+v", rec)
+	}
+	if rec.Task.Lean != nil {
+		t.Errorf("codex record must leave lean unset, got %v", rec.Task.Lean)
+	}
+}
+
 func TestACarryOnDoesNotUseUpARetry(t *testing.T) {
 	dir := initRepo(t)
 	standIn(t)

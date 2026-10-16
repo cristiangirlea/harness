@@ -16,10 +16,6 @@ type PruneResult struct {
 	Bytes   int64    `json:"bytes"`
 }
 
-// activeWindow is how recently an unfinished run must have written to count as
-// still running rather than crashed.
-const activeWindow = time.Hour
-
 // Prune removes the run directories whose id says they started before cutoff.
 // These stay whatever their age: the newest keep runs; any run in protect,
 // because a record that is being kept still cites it; a run with no result
@@ -82,21 +78,6 @@ func Prune(cutoff time.Time, keep int, protect map[string]bool, dryRun bool) (Pr
 		res.Bytes += size
 	}
 	return res, nil
-}
-
-// stillRunning reports whether a run has no result yet and wrote to its
-// transcript recently: removing it would pull the directory out from under its
-// writer. An unfinished run that went quiet long ago crashed, and can go.
-func stillRunning(id string) bool {
-	dir := filepath.Join(Root(), id)
-	if _, err := os.Stat(filepath.Join(dir, "result.json")); err == nil {
-		return false
-	}
-	info, err := os.Stat(filepath.Join(dir, "events.jsonl"))
-	if err != nil {
-		info, err = os.Stat(dir)
-	}
-	return err == nil && time.Since(info.ModTime()) < activeWindow
 }
 
 // isRunID reports whether name is shaped like an id NewID makes, so its age

@@ -302,6 +302,7 @@ type runPage struct {
 	Events        []eventView
 	Usage         usageView
 	Result        *resultView
+	Stopped       string // last write when an unfinished run went quiet
 	Stream        string // where the rest comes from; empty once it ended
 }
 
@@ -321,6 +322,8 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 	if rec.Done {
 		r := resultOf(rec.Result)
 		p.Result = &r
+	} else if at := runStopped(rec); !at.IsZero() {
+		p.Stopped = noWord(at)
 	} else {
 		p.Since = rec.Started.Format(time.RFC3339Nano)
 		if !last.IsZero() {
@@ -416,6 +419,8 @@ func runRow(rec runlog.Record) row {
 	r.Prompt, _ = firstLine(rec.Task.Prompt)
 	if rec.Done {
 		r.Status, r.Took, r.Cost = string(rec.Result.Status), short(rec.Result.Duration), cost(rec.Result.CostUSD, rec.Result.CostEstimate)
+	} else if at := runStopped(rec); !at.IsZero() {
+		r.Status, r.Took = "stopped", noWord(at)
 	} else {
 		r.Status, r.Took, r.Since = "running", "since "+rec.Started.Local().Format("15:04"), rec.Started.Format(time.RFC3339Nano)
 	}
@@ -425,6 +430,7 @@ func runRow(rec runlog.Record) row {
 
 func batchRow(res batch.Result) row {
 	r := row{ID: res.ID, Kind: "batch"}
+	stopped := batchStopped(res)
 	r.Repo = repoOf(res.Dir)
 	r.Label = labelOf(r.ID, r.Repo, "")
 	pass, going := 0, 0
@@ -450,9 +456,15 @@ func batchRow(res batch.Result) row {
 	r.Cost = cost(usd, estimate)
 	r.Tasks = fmt.Sprintf("%d/%d passed", pass, len(res.Tasks))
 	if going > 0 {
-		r.Tasks += fmt.Sprintf(" · %d running", going)
+		state := "running"
+		if !stopped.IsZero() {
+			state = "stopped"
+		}
+		r.Tasks += fmt.Sprintf(" · %d %s", going, state)
 	}
-	if batchGoing(res) {
+	if !stopped.IsZero() {
+		r.Status, r.Took = "stopped", noWord(stopped)
+	} else if batchUnfinished(res) {
 		r.Status, r.Took, r.Since = "running", "since "+res.Started.Local().Format("15:04"), res.Started.Format(time.RFC3339Nano)
 	} else {
 		r.Status, r.Took = "done", short(res.Duration)
@@ -489,16 +501,6 @@ func contains(xs []string, s string) bool {
 	return false
 }
 
-// batchGoing: a task is still running, or the batch has not written its end.
-func batchGoing(res batch.Result) bool {
-	for _, t := range res.Tasks {
-		if t.Status == batch.StatusRunning {
-			return true
-		}
-	}
-	return res.Duration == 0
-}
-
 type batchPage struct {
 	page
 	ID     string
@@ -508,6 +510,7 @@ type batchPage struct {
 
 type batchBody struct {
 	Status, Class string
+	Stopped       string
 	Facts         []fact
 	Since         string
 	Tasks         []taskView
@@ -542,15 +545,21 @@ type gateView struct {
 func batchBodyOf(res batch.Result, v viewer) batchBody {
 	r := batchRow(res)
 	b := batchBody{Status: r.Status, Class: r.Class, Since: r.Since}
+	if r.Status == "stopped" {
+		b.Stopped = r.Took
+	}
 	b.Facts = []fact{v.place("Repository", repoOf(res.Dir), res.Dir), {Label: "Base", Value: tools.ShortSHA(res.Base)}, {Label: "Tasks", Value: r.Tasks},
 		{Label: "Parallel", Value: fmt.Sprint(res.Parallel)}, {Label: "Started", Value: res.Started.Local().Format("2006-01-02 15:04:05")}}
-	if !batchGoing(res) {
+	if !batchUnfinished(res) {
 		b.Facts = append(b.Facts, fact{Label: "Duration", Value: short(res.Duration)})
 	}
 	repo := v.shortener(res.Dir)
 	for _, t := range res.Tasks {
 		tv := taskView{ID: t.ID, Status: string(t.Status), Class: statusClass(string(t.Status)), Prompt: mask.Text(t.Prompt), Error: mask.Text(t.Error),
 			Waiting: t.Status == batch.StatusRunning && len(t.Attempts) == 0}
+		if b.Stopped != "" && t.Status == batch.StatusRunning {
+			tv.Status, tv.Class, tv.Waiting = "stopped", statusClass("stopped"), false
+		}
 		tv.PromptLine, tv.PromptMore = firstLine(t.Prompt)
 		tv.Facts = []fact{{Label: "Branch", Value: t.Branch}}
 		if t.Commit != "" {
@@ -567,6 +576,8 @@ func batchBodyOf(res batch.Result, v viewer) batchBody {
 				SwitchedFrom: a.SwitchedFrom, Running: a.Result.Status == "" && t.Status == batch.StatusRunning}
 			av.Status = string(a.Result.Status)
 			switch {
+			case av.Running && b.Stopped != "":
+				av.Status, av.Running = "stopped", false
 			case av.Running:
 				av.Status = "running"
 			case av.Status == "":
