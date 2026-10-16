@@ -307,8 +307,10 @@ Without preferences, the claude and codex CLIs stand in for each other at subscr
 usage limits. With preferences, the partner follows the enabled list described above.
 A run that ends because its CLI said the limit was reached ("You've hit your
 session limit · resets 10:10pm (Europe/Bucharest)", "You've hit your usage limit ... try
-again at Oct 16th, 2026 3:29 PM") is `limited`, not `error`, and its result keeps the
-time the limit lifts as `limit_resets` when the message gives one. Then:
+again at Oct 16th, 2026 3:29 PM", or agy's `AGY_ERROR` object with status
+`RESOURCE_EXHAUSTED` and error code 429, its reset read from "Resets in 167h4m51s") is
+`limited`, not `error`, and its result keeps the time the limit lifts as `limit_resets` when
+the message gives one. Then:
 
 - The other CLI carries it on, once, as a follow-up run (see above): a new record that
   continues the limited one, with the transcript handed over, the same workspace and
@@ -320,8 +322,8 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
 - The reset time is kept in `~/.hrn/limits.json`. Until it passes, a run, a batch
   attempt or a retry meant for that backend starts on the other one, and its transcript
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
-  tool) shows each limit it remembers. A limit can lift early (codex sells credits);
-  deleting the file forgets it.
+  tool) shows each limit it remembers, also for a backend with no partner (agy without
+  preferences). A limit can lift early (codex sells credits); deleting the file forgets it.
 - Nothing moves automatically to `api`, which is billed per token. Without preferences,
   gemini, opencode and agy are not partners either; with one, the enabled installed plan
   backends stand in, in preference order. If no enabled partner is installed, or the
@@ -351,8 +353,8 @@ sandbox but claude only edit files, and codex's `readonly` reads the whole disk 
 [permission table](permissions.md#permission-modes)). A carried-on run's `--timeout` starts again, so the two runs together can
 take twice as long. `--no-switch` (field `no_switch`) keeps a run on its backend, and on the
 vendor it was meant for. `hrn eval` always sets it: a cell measures its own backend. `hrn
-exec` never switches; its supervisor decides. Limits are recognised by the CLIs' wording,
-which is matched in `internal/agent/limit.go` against messages seen in real runs; a new
+exec` never switches; its supervisor decides. Limits are recognised by the CLIs' wording
+(agy's by its error object), which is matched in `internal/agent/limit.go` against messages seen in real runs; a new
 wording is an `error` until it is added there. A remembered time more than eight days ahead
 is ignored, as a CLI's would be.
 

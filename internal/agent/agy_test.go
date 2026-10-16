@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHelperAgy(t *testing.T) {
@@ -42,6 +43,10 @@ func TestHelperAgy(t *testing.T) {
 		os.Exit(2)
 	}
 	fmt.Print(string(data))
+	if msg := os.Getenv("HRN_AGY_STDERR"); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		os.Exit(1)
+	}
 	os.Exit(0)
 }
 
@@ -103,6 +108,32 @@ func TestAgyKeepsFailureStatusAndMessageThroughTheRunner(t *testing.T) {
 	res := b.Run(context.Background(), Task{Prompt: "work", Dir: t.TempDir(), ForkSession: "previous-session", Options: Options{Mode: ModeReadOnly, Model: "requested-model", Effort: "high"}}, func(Event) {})
 	if res.Status != StatusError || !strings.Contains(res.Error, "FAILED") || !strings.Contains(res.Error, "permission denied") || res.Final != "partial" {
 		t.Fatalf("result: %+v", res)
+	}
+}
+
+func TestAgyEndsLimitedAtItsPlanQuotaWithTheResetTime(t *testing.T) {
+	t.Setenv("HRN_AGY_HELPER", "1")
+	t.Setenv("HRN_AGY_PROMPT", "work")
+	fixture := filepath.Join(t.TempDir(), "empty.jsonl")
+	if err := os.WriteFile(fixture, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HRN_AGY_FIXTURE", fixture)
+	t.Setenv("HRN_AGY_STDERR", agyQuotaMessage)
+	b := NewAgyBackend()
+	args := b.args
+	b.name, b.candidates = os.Args[0], nil
+	b.args = func(task Task, file string) []string {
+		return append([]string{"-test.run=^TestHelperAgy$", "--"}, args(task, file)...)
+	}
+	before := time.Now()
+	res := b.Run(context.Background(), Task{Prompt: "work", Dir: t.TempDir(), ForkSession: "previous-session", Options: Options{Mode: ModeReadOnly, Model: "requested-model", Effort: "high"}}, func(Event) {})
+	window := 167*time.Hour + 4*time.Minute + 51*time.Second
+	if res.Status != StatusLimited || !strings.Contains(res.Error, "RESOURCE_EXHAUSTED") {
+		t.Fatalf("result: %+v", res)
+	}
+	if res.LimitResets.Before(before.Add(window)) || res.LimitResets.After(time.Now().Add(window)) {
+		t.Fatalf("resets %v, want about %v from now", res.LimitResets, window)
 	}
 }
 
