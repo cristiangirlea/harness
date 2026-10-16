@@ -1362,9 +1362,11 @@ func commitConfigOverrides(ctx context.Context, dir, hooks string) []string {
 		default:
 			continue
 		}
+		// Filter names get their own prefix so a filter called "gpg." or
+		// "core.fsmonitor" is not taken for the marker entries above.
 		name := rest[:dot]
-		if !seen[name] {
-			seen[name] = true
+		if !seen["filter:"+name] {
+			seen["filter:"+name] = true
 			args = append(args,
 				"-c", "filter."+name+".clean=",
 				"-c", "filter."+name+".smudge=",

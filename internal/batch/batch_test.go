@@ -382,6 +382,42 @@ func TestCommitChangesIgnoresARepositoryRedefinitionOfAGlobalFilter(t *testing.T
 	}
 }
 
+// A filter driver named like one of the other settings hrn neutralises
+// ("gpg.", "core.fsmonitor") is still turned off when that setting comes first.
+func TestCommitChangesNeutralisesAFilterNamedLikeAnotherSetting(t *testing.T) {
+	for _, tc := range []struct{ filter, key, value string }{
+		{"gpg.", "gpg.program", "/nonexistent/gpg"},
+		{"core.fsmonitor", "core.fsmonitor", "/nonexistent/fsmonitor"},
+	} {
+		t.Run(tc.filter, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			agentFilter := filepath.Join(t.TempDir(), "agent.sh")
+			if err := os.WriteFile(agentFilter, []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\ncat\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			git(t, wt, "config", tc.key, tc.value)
+			git(t, wt, "config", "filter."+tc.filter+".clean", filepath.ToSlash(agentFilter))
+			if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("* filter="+tc.filter+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := commitChanges(wt, "task result")
+			if err != nil || sha == "" {
+				t.Fatalf("commitChanges = %q, %v", sha, err)
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("filter %q ran during commitChanges or marker could not be checked: %v", tc.filter, err)
+			}
+		})
+	}
+}
+
 // canon resolves symlinks and Windows 8.3 short names, which git expands.
 func canon(t *testing.T, p string) string {
 	t.Helper()
