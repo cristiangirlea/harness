@@ -120,7 +120,10 @@ defines), so settings an agent writes to the shared repository config
 (`core.hooksPath`, `core.fsmonitor`, filter drivers, `gpg.*`, `gc.recentObjectsHook`)
 cannot make that commit run a command. "Repository config" is the local and worktree
 scope (`git config --show-scope`): what the operator's global or system config defines,
-such as the Git LFS filter, still runs, unless the repository config redefines it. Neither command guard refuses `git config` for those keys,
+such as the Git LFS filter, still runs, unless the repository config redefines it.
+`hrn batch diff` runs `git diff --no-ext-diff --no-textconv --ignore-submodules=all`, so
+`diff.external`, a diff driver's command or textconv, and a submodule's config cannot make
+it run a command either. Neither command guard refuses `git config` for those keys,
 and the settings remain in the shared config for other git commands, including the
 operator's later commits.
 The agent CLIs run their own shells; the next section is their guard.
