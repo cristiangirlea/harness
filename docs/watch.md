@@ -298,8 +298,8 @@ TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or SESSION as a whole segment
 (separated by `_`, `-` or the name's ends); and secret flags
 such as `--password`, `--token` and `--api-key`. Masking scans the whole text before
 any display excerpt is shortened; it does not cut the text itself.
-A URL whose user is the literal `git` with no password (`ssh://git@host/...`, as on
-git remotes) keeps it; any other user part, including a bare token, is masked.
+A URL whose user is the literal lower-case `git` with no password (`ssh://git@host/...`, as on
+git remotes) keeps it; any other user part, including `GIT` or a bare token, is masked.
 Live `hrn run` output is masked per streamed fragment, so a secret split across two
 fragments can show in halves while it streams; `hrn show` and `hrn watch` mask the
 assembled text from the record.
