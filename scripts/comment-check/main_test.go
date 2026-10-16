@@ -88,7 +88,7 @@ func TestABlockOfSixLinesFailsAndABlankLineSplitsBlocks(t *testing.T) {
 
 	r, stderr, code = runCheck(t, "--root", dir)
 	if code != 1 || !strings.Contains(stderr, `"error"`) {
-		t.Fatalf("expected exit 1 with error JSON when default baseline is missing, got %d: %s", code, stderr)
+		t.Fatalf("expected exit 1 for the two violations with no default baseline, got %d: %s", code, stderr)
 	}
 	if r.Violations != 2 || len(r.New) != 2 {
 		t.Fatalf("expected 2 violations, got %+v", r)
@@ -402,7 +402,7 @@ func TestInvalidFlagsMalformedBaselinesAndUnparsableFilesReturnJSONErrors(t *tes
 		t.Fatal(err)
 	}
 	_, stderr, code = runCheck(t, "--root", dir, "--baseline", badFields)
-	if code != 1 || !strings.Contains(stderr, `"error"`) {
+	if code != 1 || !strings.Contains(stderr, `invalid baseline line:`) {
 		t.Fatalf("expected exit 1 on malformed baseline line, got %d: %s", code, stderr)
 	}
 
@@ -411,7 +411,7 @@ func TestInvalidFlagsMalformedBaselinesAndUnparsableFilesReturnJSONErrors(t *tes
 		t.Fatal(err)
 	}
 	_, stderr, code = runCheck(t, "--root", dir, "--baseline", badCount)
-	if code != 1 || !strings.Contains(stderr, `"error"`) {
+	if code != 1 || !strings.Contains(stderr, `invalid baseline line count`) {
 		t.Fatalf("expected exit 1 on non-numeric baseline line count, got %d: %s", code, stderr)
 	}
 
