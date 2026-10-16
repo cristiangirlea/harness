@@ -141,7 +141,7 @@ func TestParallelTasksGetASlotEachAndTheirBranchesMerge(t *testing.T) {
 	arrived := 0
 	both := make(chan struct{})
 	setHook(t, func(task agent.Task) {
-		name := strings.Fields(task.Prompt)[0]
+		name := strings.Fields(typed(task))[0]
 		writeFile(t, filepath.Join(task.Dir, name+".txt"), name+"\n")
 		mu.Lock()
 		if arrived++; arrived == 2 {
@@ -864,7 +864,7 @@ func TestATaskAtTheBatchsBoundWaitsForItsRunningTasksNotItsKeptSlots(t *testing.
 	t6Waited := make(chan struct{})
 	setHook(t, func(task agent.Task) {
 		writeFile(t, filepath.Join(task.Dir, "out.txt"), "ok\n")
-		if strings.HasPrefix(task.Prompt, "t1") {
+		if strings.HasPrefix(typed(task), "t1") {
 			return // its commit fails, so its slot is kept
 		}
 		select {

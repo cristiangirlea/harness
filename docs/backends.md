@@ -307,8 +307,10 @@ Without preferences, the claude and codex CLIs stand in for each other at subscr
 usage limits. With preferences, the partner follows the enabled list described above.
 A run that ends because its CLI said the limit was reached ("You've hit your
 session limit · resets 10:10pm (Europe/Bucharest)", "You've hit your usage limit ... try
-again at Oct 16th, 2026 3:29 PM") is `limited`, not `error`, and its result keeps the
-time the limit lifts as `limit_resets` when the message gives one. Then:
+again at Oct 16th, 2026 3:29 PM", or agy's `AGY_ERROR` object with status
+`RESOURCE_EXHAUSTED` and error code 429, its reset read from "Resets in 167h4m51s") is
+`limited`, not `error`, and its result keeps the time the limit lifts as `limit_resets` when
+the message gives one. Then:
 
 - The other CLI carries it on, once, as a follow-up run (see above): a new record that
   continues the limited one, with the transcript handed over, the same workspace and
@@ -320,8 +322,8 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
 - The reset time is kept in `~/.hrn/limits.json`. Until it passes, a run, a batch
   attempt or a retry meant for that backend starts on the other one, and its transcript
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
-  tool) shows each limit it remembers. A limit can lift early (codex sells credits);
-  deleting the file forgets it.
+  tool) shows each limit it remembers, also for a backend with no partner (agy without
+  preferences). A limit can lift early (codex sells credits); deleting the file forgets it.
 - Nothing moves automatically to `api`, which is billed per token. Without preferences,
   gemini, opencode and agy are not partners either; with one, the enabled installed plan
   backends stand in, in preference order. If no enabled partner is installed, or the
@@ -351,8 +353,8 @@ sandbox but claude only edit files, and codex's `readonly` reads the whole disk 
 [permission table](permissions.md#permission-modes)). A carried-on run's `--timeout` starts again, so the two runs together can
 take twice as long. `--no-switch` (field `no_switch`) keeps a run on its backend, and on the
 vendor it was meant for. `hrn eval` always sets it: a cell measures its own backend. `hrn
-exec` never switches; its supervisor decides. Limits are recognised by the CLIs' wording,
-which is matched in `internal/agent/limit.go` against messages seen in real runs; a new
+exec` never switches; its supervisor decides. Limits are recognised by the CLIs' wording
+(agy's by its error object), which is matched in `internal/agent/limit.go` against messages seen in real runs; a new
 wording is an `error` until it is added there. A remembered time more than eight days ahead
 is ignored, as a CLI's would be.
 
@@ -365,3 +367,24 @@ the total is capped at 32 KiB; the run says what it loaded and whether the cap c
 anything. A file that is a symlink out of the workspace is refused, like any other
 path. `hrn run --no-instructions` skips them, as do the `no_instructions` field on a
 batch spec or task and the MCP `run` argument of the same name.
+
+### How to commit
+
+Every run that may write, on every backend and in batches too, gets a short "How to commit"
+block before its prompt. By default it says: "Reviews are text, commits are changes. Review
+findings and the reason for a fix go into the review on the pull request, not into commit
+messages and not into a commit per round or per finding. Before a commit exists, everything
+found goes into that one commit; no fix-round commits for work that was never pushed. After a
+commit, a new finding means one more review entry and one more commit for all of it. Every
+defect a review finds in what this run changes is fixed before the push; nits are dropped."
+It adds that these rules take precedence over a repository instruction such as "one logical
+change per commit" when the two conflict. A repository replaces both with its own
+`.hrn/rules.md` in the checkout (read up to 4 KiB; only a regular file is read, so a symlink,
+a FIFO or a directory by that name is ignored). hrn ignores `.hrn/` in git, so commit it with
+`git add -f`; only a committed file reaches batch worktrees. Either way the block then says
+"Commit your work before you finish, as one clean commit for this task; leave the working tree
+clean." A run that continues another (`--continue`, the MCP `continue_run_id`, or a carry-on
+after a usage limit), the usual fix round, gets one more line: "This is a fix round: one
+review, one commit; every fix from this review goes into one commit." Read-only runs, such as an eval's judge, get no block. The run record keeps the prompt as typed. A batch's own commit of
+whatever a task left behind (`<id>: <prompt>`) stays the fallback for an agent that did not
+commit.

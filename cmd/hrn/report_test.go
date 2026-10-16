@@ -356,3 +356,46 @@ func TestReportByDayPrintsTokensAndContextPerTurn(t *testing.T) {
 		t.Errorf("first row is %q, want the run's day, %s", f[0], day)
 	}
 }
+
+// The tokens table shows "-" for a group whose every run lost its usage,
+// and counts the runs it left out of a total beside it.
+func TestReportTokensMarkRunsWithMissingUsage(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, res := range []agent.Result{
+		{Status: agent.StatusOK, InputTokens: 90000, OutputTokens: 700, Usage: &agent.UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing"}},
+		{Status: agent.StatusOK, InputTokens: 1000, OutputTokens: 70},
+	} {
+		backend := "codex"
+		if res.Usage == nil {
+			backend = "api"
+		}
+		w, err := runlog.Create(backend, agent.Task{Prompt: "p", Dir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(res); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := captureStdout(t, func() error { return cmdReport([]string{"--by", "backend"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	i := strings.Index(text, "tokens by backend")
+	if i < 0 {
+		t.Fatalf("report =\n%s", text)
+	}
+	rows := map[string][]string{}
+	for _, line := range strings.Split(text[i:], "\n") {
+		if f := strings.Fields(line); len(f) > 0 {
+			rows[f[0]] = f
+		}
+	}
+	if f := rows["codex"]; len(f) < 5 || f[1] != "-" || f[2] != "-" || f[3] != "-" || f[4] != "-" {
+		t.Errorf("codex row = %q, want every total unknown", f)
+	}
+	if f := rows["all"]; len(f) < 4 || f[1] != "1.0k" || f[2] != "(1" || f[3] != "unknown)" {
+		t.Errorf("all row = %q, want the api total and one run unknown", f)
+	}
+}

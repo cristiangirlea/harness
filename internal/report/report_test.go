@@ -661,3 +661,60 @@ func TestBytes(t *testing.T) {
 		}
 	}
 }
+
+// A run whose usage is missing has only partial counters: the token totals
+// leave it out and count it, so a partial total never reads as known.
+func TestTokenTotalsLeaveMissingUsageOut(t *testing.T) {
+	recs := []runlog.Record{
+		rec("api", "m", "/repo", 0, agent.Result{InputTokens: 100, OutputTokens: 10, CacheRead: 20, CacheWrite: 5}),
+		rec("codex", "m", "/repo", time.Hour, agent.Result{InputTokens: 50, OutputTokens: 7, CacheRead: 30,
+			Usage: &agent.UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing"}}),
+		rec("gemini", "m", "/repo", 2*time.Hour, agent.Result{InputTokens: -1}),
+	}
+	rows, all, err := Select(recs, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	for _, r := range rows {
+		if r.Key != "api" && (r.InputTokens != 0 || r.OutputTokens != 0 || r.CacheRead != 0 || r.RunsWithoutTokens != 1) {
+			t.Errorf("%s row = %+v, want no totals and one run without tokens", r.Key, r)
+		}
+	}
+	if all.InputTokens != 100 || all.OutputTokens != 10 || all.CacheRead != 20 || all.CacheWrite != 5 || all.RunsWithoutTokens != 2 {
+		t.Errorf("all = %+v, want the api run's totals and two runs without tokens", all)
+	}
+	data, err := json.Marshal(all)
+	if err != nil || !strings.Contains(string(data), `"runs_without_tokens":2`) {
+		t.Errorf("json = %s, %v", data, err)
+	}
+	if data, _ := json.Marshal(rows[0]); rows[0].Key == "api" && strings.Contains(string(data), "runs_without_tokens") {
+		t.Errorf("a row with every total known names no missing runs: %s", data)
+	}
+}
+
+// gemini's prompt count includes its cached tokens, so its cache share
+// divides by the prompt count alone.
+func TestCacheShareCountsGeminiCacheInsideItsInput(t *testing.T) {
+	r := rec("gemini", "m", "/repo", 0, agent.Result{InputTokens: 400, CacheRead: 300, OutputTokens: 10})
+	rows, _, err := Select([]runlog.Record{r}, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil || len(rows) != 1 || !near(rows[0].CacheShare, 0.75) {
+		t.Errorf("rows=%+v err=%v, want cache share 300/400", rows, err)
+	}
+}
+
+// Runs that are each valid can still wrap a group total: the one that would
+// overflow is left out and counted.
+func TestTokenTotalsLeaveOverflowingRunOut(t *testing.T) {
+	huge := int64(math.MaxInt64 - 10)
+	recs := []runlog.Record{
+		rec("api", "m", "/repo", 0, agent.Result{InputTokens: huge, OutputTokens: 1}),
+		rec("api", "m", "/repo", time.Hour, agent.Result{InputTokens: huge, OutputTokens: 1}),
+	}
+	_, all, err := Select(recs, nil, time.Time{}).RunRows(ByBackend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.InputTokens != huge || all.OutputTokens != 1 || all.RunsWithoutTokens != 1 {
+		t.Errorf("all = %+v, want the first run's totals and one run without tokens", all)
+	}
+}

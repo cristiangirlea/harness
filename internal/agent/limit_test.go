@@ -116,3 +116,36 @@ func TestAClockTimeJustPassedIsNotTomorrow(t *testing.T) {
 		t.Errorf("a quarter of an hour after: resets %v, want tomorrow %v", resets, want)
 	}
 }
+
+// agyQuotaMessage is the captured agy message, error_id faked.
+const agyQuotaMessage = "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 167h4m51s.\n" +
+	`AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 167h4m51s.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true,"error_id":"00000000-fake"}`
+
+func TestUsageLimitReadsAgysErrorObject(t *testing.T) {
+	now := time.Date(2026, 10, 16, 10, 57, 45, 0, time.UTC)
+	limited, resets := usageLimit(agyQuotaMessage, now)
+	if !limited {
+		t.Fatal("agy's RESOURCE_EXHAUSTED 429 should read as a usage limit")
+	}
+	if want := now.Add(167*time.Hour + 4*time.Minute + 51*time.Second); !resets.Equal(want) {
+		t.Errorf("resets = %v, want %v", resets, want)
+	}
+	// The object decides, not its words: other statuses are errors.
+	for _, msg := range []string{
+		`AGY_ERROR: {"short_error":"PERMISSION_DENIED (code 403): Resets in 1h.","status":"PERMISSION_DENIED","error_code":403}`,
+		`AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 500): Resets in 1h.","status":"RESOURCE_EXHAUSTED","error_code":500}`,
+		`AGY_ERROR: not json`,
+	} {
+		if limited, _ := usageLimit(msg, now); limited {
+			t.Errorf("%q is not agy's usage limit", msg)
+		}
+	}
+	if limited, resets := usageLimit(`AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): quota reached.","status":"RESOURCE_EXHAUSTED","error_code":429}`, now); !limited || !resets.IsZero() {
+		t.Errorf("without a reset: limited %v, resets %v; want limited with no time", limited, resets)
+	}
+	// agy retries, so another error may come before the quota one.
+	retried := `AGY_ERROR: {"short_error":"UNAVAILABLE (code 503): try again.","status":"UNAVAILABLE","error_code":503,"retryable":true}` + "\n" + agyQuotaMessage
+	if limited, resets := usageLimit(retried, now); !limited || resets.IsZero() {
+		t.Errorf("a 503 before the quota error: limited %v, resets %v; want limited with a time", limited, resets)
+	}
+}

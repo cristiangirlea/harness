@@ -78,8 +78,14 @@ func cmdReport(args []string) error {
 			if r.ContextFrom != "" {
 				median, peak, from = report.Tokens(int64(math.Round(r.MedianContext))), report.Tokens(r.PeakContext), r.ContextFrom
 			}
-			t = append(t, []string{shortKey(r.Key, 48), report.Tokens(r.InputTokens), report.Tokens(r.OutputTokens),
-				report.Tokens(r.CacheRead), report.Tokens(r.CacheWrite), median, peak, from})
+			in, out, read, write := "-", "-", "-", "-"
+			if r.Runs > r.RunsWithoutTokens {
+				in, out, read, write = report.Tokens(r.InputTokens), report.Tokens(r.OutputTokens), report.Tokens(r.CacheRead), report.Tokens(r.CacheWrite)
+				if r.RunsWithoutTokens > 0 {
+					in += fmt.Sprintf(" (%d unknown)", r.RunsWithoutTokens)
+				}
+			}
+			t = append(t, []string{shortKey(r.Key, 48), in, out, read, write, median, peak, from})
 		}
 		fmt.Print(table(t, 1))
 	}

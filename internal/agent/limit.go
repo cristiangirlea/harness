@@ -1,16 +1,17 @@
 package agent
 
 import (
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// A plan's usage limit is the claude or codex CLI saying that the subscription
-// it bills to has run out for now. Neither says so in a field of its own, only
-// in words, so the words are matched here: one pattern per wording seen in a
-// real run, with the time the limit lifts read back where the message gives one.
+// A plan's usage limit is a CLI saying that the subscription it bills to has
+// run out for now. claude and codex say so only in words, so the words are
+// matched here: one pattern per wording seen in a real run, with the time the
+// limit lifts read back where the message gives one. agy says so in an object.
 
 var (
 	limitWords = regexp.MustCompile(`(?i)hit your (?:[\w-]+ )?limit|reached your (?:[\w.-]+ ){1,3}limit|usage limit reached|requires usage credits|limit reached\W+resets`)
@@ -28,6 +29,10 @@ var (
 	resetAt = regexp.MustCompile(`(?i)try again at (?:` + monthName + ` (\d{4}),? )?(\d{1,2}):(\d{2})\s*([ap])\.?m`)
 	// claude: "resets 10:10pm (Europe/Bucharest)", "resets 1pm", "resets Oct 14, 9am (...)".
 	resetClock = regexp.MustCompile(`(?i)resets (?:on )?(?:` + monthName + ` (?:at )?)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m(?:\s*\(([^)]+)\))?`)
+
+	// agy: `AGY_ERROR: {"short_error":"... Resets in 167h4m51s.","status":"RESOURCE_EXHAUSTED","error_code":429}`.
+	agyError  = regexp.MustCompile(`AGY_ERROR: (\{.*\})`)
+	agyResets = regexp.MustCompile(`Resets in ((?:\d+(?:\.\d+)?(?:h|ms|m|s))+)`)
 )
 
 // MaxLimitWindow is the furthest ahead a reset time is believed. The longest
@@ -39,15 +44,40 @@ const MaxLimitWindow = 8 * 24 * time.Hour
 // time, or one that cannot be right: long past, or further off than any plan's
 // window. A clock time without a date is the next one after now.
 func usageLimit(msg string, now time.Time) (limited bool, resets time.Time) {
-	if !limitWords.MatchString(msg) || notPlanWords.MatchString(limitWords.FindString(msg)) {
+	t, agy := agyLimit(msg, now)
+	if !agy && (!limitWords.MatchString(msg) || notPlanWords.MatchString(limitWords.FindString(msg))) {
 		return false, time.Time{}
 	}
-	t := resetTime(msg, now)
+	if !agy {
+		t = resetTime(msg, now)
+	}
 	// A minute's grace: the CLI works the time out a moment before hrn reads it.
 	if t.Before(now.Add(-time.Minute)) || t.After(now.Add(MaxLimitWindow)) {
 		return true, time.Time{}
 	}
 	return true, t
+}
+
+// agyLimit reports whether msg holds agy's quota error, and the reset it names.
+func agyLimit(msg string, now time.Time) (time.Time, bool) {
+	// agy retries, so the quota error may follow others.
+	for _, m := range agyError.FindAllStringSubmatch(msg, -1) {
+		var e struct {
+			ShortError string `json:"short_error"`
+			Status     string `json:"status"`
+			ErrorCode  int    `json:"error_code"`
+		}
+		if json.Unmarshal([]byte(m[1]), &e) != nil || e.Status != "RESOURCE_EXHAUSTED" || e.ErrorCode != 429 {
+			continue
+		}
+		if r := agyResets.FindStringSubmatch(e.ShortError); r != nil {
+			if d, err := time.ParseDuration(r[1]); err == nil {
+				return now.Add(d), true
+			}
+		}
+		return time.Time{}, true
+	}
+	return time.Time{}, false
 }
 
 func resetTime(msg string, now time.Time) time.Time {

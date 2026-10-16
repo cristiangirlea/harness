@@ -26,6 +26,19 @@ func continued(t *testing.T, id string) runlog.Record {
 	return runlog.Record{}
 }
 
+// withCommitBlock is prompt behind the default commit block agent.Run puts
+// first, with the fix-round line a continue adds.
+func withCommitBlock(prompt string, fixRound bool) string {
+	b := "# How to commit\n\n" +
+		"Reviews are text, commits are changes. Review findings and the reason for a fix go into the review on the pull request, not into commit messages and not into a commit per round or per finding. Before a commit exists, everything found goes into that one commit; no fix-round commits for work that was never pushed. After a commit, a new finding means one more review entry and one more commit for all of it. Every defect a review finds in what this run changes is fixed before the push; nits are dropped.\n" +
+		"These commit rules take precedence over a repository instruction such as \"one logical change per commit\" when the two conflict.\n" +
+		"Commit your work before you finish, as one clean commit for this task; leave the working tree clean.\n"
+	if fixRound {
+		b += "This is a fix round: one review, one commit; every fix from this review goes into one commit.\n"
+	}
+	return b + "\n" + prompt
+}
+
 func TestRunFreshStartsANewSessionWithAHandover(t *testing.T) {
 	for _, backend := range []string{"claude", "codex", "agy"} {
 		t.Run(backend, func(t *testing.T) {
@@ -64,7 +77,7 @@ func TestRunFreshStartsANewSessionWithAHandover(t *testing.T) {
 				t.Errorf("record: route=%q prompt=%q backend=%q", rec.ContinueRoute, rec.Task.Prompt, rec.Backend)
 			}
 			saved, err := os.ReadFile(filepath.Join(runlog.Root(), rec.ID, "handoff.md"))
-			if err != nil || string(saved)+"review it" != task.Prompt {
+			if err != nil || withCommitBlock(string(saved)+"review it", true) != task.Prompt {
 				t.Errorf("handoff.md: %v", err)
 			}
 		})
@@ -87,7 +100,7 @@ func TestRunWithoutFreshStillResumes(t *testing.T) {
 	if code, err := cmdRun([]string{"--continue", w.ID(), "--no-switch", "again"}); code != 0 || err != nil {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
-	if task := <-recorded; task.Resume == nil || task.Prompt != "again" {
+	if task := <-recorded; task.Resume == nil || task.Prompt != withCommitBlock("again", true) {
 		t.Errorf("ordinary continue should resume the conversation as before: resume=%v prompt=%q", task.Resume, task.Prompt)
 	}
 	if rec := continued(t, w.ID()); rec.ContinueRoute != "" {

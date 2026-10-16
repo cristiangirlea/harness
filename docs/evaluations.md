@@ -103,7 +103,7 @@ computed by hrn. The api and codex estimates come from the Claude table in
 Every cost hrn shows should be treated as an estimate, never a bill; other CLIs
 may supply their own cost figures rather than use either hrn table. Codex uses
 standard short-context prices, without service-tier or regional adjustments.
-It also shows `-` when Codex usage is marked missing; Codex's cache share divides
+It also shows `-` when Codex usage is marked missing; Codex's and gemini's cache share divides
 cache reads by input tokens that already include those reads.
 Unknown costs are never summed as zero or included in the cost median. When no cost
 is known, cost cells show `-`; otherwise the total counts runs without a known cost
@@ -115,11 +115,16 @@ Batches group by repository; their cost sums every attempt, passed or not. Runs 
 a result (still running or killed), batches with a task still running, and records that
 cannot be read are counted under the tables and left out of them.
 The tokens table sums each group's input, output, cache-read and cache-write tokens from the
-runs' results, and gives the median and peak context a model call carried (input including cache
+runs' results. A run whose usage is missing has only partial counters, so it is left out of those
+totals and counted beside the input total, for example `1.2k (1 unknown)`; the cells show `-` when
+no run in the group has known usage, and JSON rows carry `runs_without_tokens` when nonzero.
+The table also gives the median and peak context a model call carried (input including cache
 reads and writes, counted once). Those come from a run's `usage` events when it has them (see
-[Usage per turn](run-records.md#usage-per-turn)): every turn counts. A run without them (codex,
-gemini, older records) counts once, as its average, its totals over its turns, and its peak
-is the larger of that average and its recorded last-call context. `from` says which: `turns`,
+[Usage per turn](run-records.md#usage-per-turn)): every turn counts. A codex run or an older
+record without them counts once, as its average, its totals over its turns, and its peak
+is the larger of that average and its recorded last-call context. gemini records carry no turn
+count, so a gemini run adds no context figure; its prompt count already includes its cached
+tokens, which its cache share and totals count once, as codex's do. `from` says which: `turns`,
 `totals`, `mixed`, or `-` when no run in the group reported tokens. In a `mixed` row the
 median is over one average a run (a run with `usage` events gives the mean of its turns), so
 per-turn values and per-run averages are never counted together; the peak is still the

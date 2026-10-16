@@ -222,7 +222,7 @@ type VariantRow struct {
 	MedianDuration time.Duration `json:"median_duration_ns"`
 	MedianTurns    float64       `json:"median_turns"`
 	MedianTools    float64       `json:"median_tool_calls"`
-	// MedianContext counts prompt tokens and cache reads together: what the
+	// MedianContext counts every input token once, cached or not: what the
 	// model was given, not what was billed at full rate.
 	MedianContext float64 `json:"median_context_tokens"`
 	// Judged counts the cells the judge scored; MeanScore is their mean, 0-10.
@@ -401,7 +401,13 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				}
 				turns = append(turns, float64(a.Result.Turns))
 				calls = append(calls, float64(a.Result.ToolCalls))
-				inputs = append(inputs, float64(a.Result.InputTokens+a.Result.CacheRead))
+				r := a.Result
+				if r.Backend == "" {
+					r.Backend = v.Backend
+				}
+				if total, known, _ := r.ModelTokens(); known {
+					inputs = append(inputs, float64(total-r.OutputTokens))
+				}
 			}
 			if !costKnown {
 				row.CellsWithoutCost++

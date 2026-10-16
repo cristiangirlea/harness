@@ -20,9 +20,20 @@ import (
 
 type stubBackend struct{}
 
+// typed is a prompt without the commit block agent.Run puts first.
+func typed(prompt string) string {
+	rest, ok := strings.CutPrefix(prompt, "# How to commit\n\n")
+	if !ok {
+		return prompt
+	}
+	_, after, _ := strings.Cut(rest, "\n\n")
+	return after
+}
+
 func (stubBackend) Name() string            { return "stub" }
 func (stubBackend) Detect() (string, error) { return "built-in stub", nil }
 func (stubBackend) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	task.Prompt = typed(task.Prompt)
 	if task.Prompt == "record-write-failure" {
 		// Invalid tool input forces event encoding to fail without a real backend.
 		for range 2 {
@@ -669,6 +680,18 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 				t.Errorf("unneeded warning: %s", r.Text())
 			}
 		})
+	}
+}
+
+func TestRunSummarySaysWhenUsageIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		usage *agent.UsageMetadata
+		want  bool
+	}{{nil, false}, {&agent.UsageMetadata{Status: "missing"}, true}} {
+		s := summary("r1", agent.Result{Status: agent.StatusOK, Backend: "codex", InputTokens: 5, Usage: tc.usage})
+		if got := strings.Contains(s, "usage missing"); got != tc.want || !strings.Contains(s, "5 in") {
+			t.Errorf("usage %+v: summary = %q", tc.usage, s)
+		}
 	}
 }
 

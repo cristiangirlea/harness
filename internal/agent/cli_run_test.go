@@ -30,6 +30,17 @@ func TestHelperCLIError(t *testing.T) {
 		fmt.Println(`{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 16th, 2099 3:29 PM."}`)
 		fmt.Println(`{"type":"turn.failed","error":{"message":""}}`)
 		os.Exit(1)
+	case "codexlimitreconnect", "codexlimitreconnectok":
+		// A usage limit, then the CLI's reconnect notice: the limit is what
+		// ended the run. "codexlimitreconnectok" completes the turn and exits 0.
+		fmt.Println(`{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000003"}`)
+		fmt.Println(`{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 16th, 2099 3:29 PM."}`)
+		fmt.Println(`{"type":"error","message":"Reconnecting... 1/5 (We’re currently experiencing high demand, which may cause temporary errors.)"}`)
+		if os.Getenv("HRN_CLI_HELPER") == "codexlimitreconnectok" {
+			fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`)
+			os.Exit(0)
+		}
+		os.Exit(1)
 	case "codexreconnect", "codexreconnectend", "codexreconnectfailed", "codexreconnectafterturn":
 		// What codex printed in run 20261014-180728-7102ef: a dropped model
 		// stream is an error line the CLI retries by itself, and the turn
@@ -306,6 +317,32 @@ func TestCodexReportsItsUsageLimitAsLimited(t *testing.T) {
 	// the time is not believed, but the message itself is kept.
 	if !strings.Contains(res.Error, "hit your usage limit") {
 		t.Errorf("error = %q, want codex's own message rather than the exit status", res.Error)
+	}
+}
+
+func TestCodexAUsageLimitFollowedByAReconnectNoticeEndsLimited(t *testing.T) {
+	for _, helper := range []string{"codexlimitreconnect", "codexlimitreconnectok"} {
+		t.Run(helper, func(t *testing.T) {
+			t.Setenv("HRN_CLI_HELPER", helper)
+			b := helperCLI(parseCodexStream)
+			b.limits = true
+			b.end = NewCodexBackend().end
+			var notices, errsAfter []string
+			res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(e Event) {
+				switch {
+				case e.Kind == EventInfo && strings.HasPrefix(e.Text, "Reconnecting..."):
+					notices = append(notices, e.Text)
+				case e.Kind == EventError && len(notices) > 0:
+					errsAfter = append(errsAfter, e.Text)
+				}
+			})
+			if res.Status != StatusLimited || !strings.Contains(res.Error, "hit your usage limit") {
+				t.Fatalf("status %s, error %q: the limit came first and is what ended the run", res.Status, res.Error)
+			}
+			if len(notices) != 1 || len(errsAfter) != 0 {
+				t.Errorf("notices %q, error events after the notice %q: want the notice once as info and no error after it", notices, errsAfter)
+			}
+		})
 	}
 }
 

@@ -45,7 +45,9 @@ an ordinary follow-up, and old records without it still load.
   turn's end says. It is the run's error only when the stream ends on it (an `error`
   event with the notice is then written at the end, since the CLI exits clean, and the
   usage is `missing` as after `turn.failed`), or the turn then fails with no word of its
-  own; an error before it stays the run's error
+  own; an error before it stays the run's error (a usage limit then ends the run `limited`).
+  When a CLI exits non-zero with the same text as the stream's last `error` event, that
+  event is not written a second time
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
   twice the disk of its transcript
@@ -85,8 +87,10 @@ failure, and `messages.json` includes the conversation's retrieval pin. Older
 records without these fields still load.
 
 `result.json` includes `usage_metadata` when the adapter supplies it. Its
-`input_semantics` is `inclusive_cache` (Codex input already includes cached input)
-or `exclusive_cache` (api and Claude cache counters are separate). `status` is
+`input_semantics` is `inclusive_cache` (Codex and gemini input already includes cached
+input) or `exclusive_cache` (api, Claude and opencode cache counters are separate). The api,
+gemini and opencode adapters write it only to mark usage `missing`, when a turn's counter is
+negative or would overflow the run's total; that turn is not added. `status` is
 `reported`, `estimated`, or `missing`; `cost_status` distinguishes a reported
 zero from missing cost and may also be `estimated` or `missing`. Older results
 without metadata still load; known backends infer token semantics from their

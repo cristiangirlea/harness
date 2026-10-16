@@ -73,9 +73,9 @@ type CLIBackend struct {
 	// mapsCompact is set when args honours Options.CompactWindow; like
 	// mapsLean, not a capability.
 	mapsCompact bool
-	// limits is set when the CLI bills to a plan and says in words that its
-	// usage limit was reached (usageLimit knows the words): such a run ends
-	// limited rather than in an error.
+	// limits is set when the CLI bills to a plan and says, in a way usageLimit
+	// knows, that its usage limit was reached: such a run ends limited rather
+	// than in an error.
 	limits bool
 }
 
@@ -269,8 +269,11 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		parse = c.newParse()
 	}
 	var errored bool
+	var lastErr string
 	parseEmit := func(e Event) {
-		errored = errored || e.Kind == EventError
+		if e.Kind == EventError {
+			errored, lastErr = true, e.Text
+		}
 		emit(e)
 	}
 	for sc.Scan() {
@@ -336,7 +339,12 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		if res.Status != "" && res.Status != StatusOK {
 			status = res.Status
 		}
-		return fail(status, errors.New(lastLines(msg, 20)))
+		if msg = lastLines(msg, 20); msg == lastErr {
+			// The stream's last error event already said it.
+			res.Status, res.Error = status, msg
+			return finish(&res, started)
+		}
+		return fail(status, errors.New(msg))
 	default:
 		if c.end != nil {
 			c.end(emit, &res, errored)
