@@ -628,3 +628,18 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 		})
 	}
 }
+
+func TestMCPRoutesByTheDeclaredPurpose(t *testing.T) {
+	s := connect(t, t.TempDir())
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"nope"},"review":{"backend":"stub","model":"routed"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "run", `{"prompt":"Implement a widget","purpose":"review","no_switch":true}`)
+	if res.IsError {
+		t.Fatal(res.Text())
+	}
+	rec, err := runlog.Load(res.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Backend != "stub" || rec.RoutedBy == nil || rec.RoutedBy.Category != "review" || !rec.RoutedBy.Declared {
+		t.Fatalf("declared purpose did not route: %+v %v", rec, err)
+	}
+}

@@ -338,14 +338,17 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("empty prompt")
 	}
 
-	routedBy, err := opts.Route(prompt, &backend, runlog.Home())
+	routedBy, err := opts.Route(*declared, prompt, &backend, runlog.Home())
 	if err != nil {
 		return 2, err
 	}
 	if !opts.NoSwitch && *continueID == "" {
 		meant := backend
 		if backend, routed = limits.Choose(backend, ""); backend != meant {
-			opts.Model = ""
+			if routedBy != nil {
+				opts.Effort = "" // the row measured the limited backend, not its partner
+			}
+			opts.Model, routedBy = "", nil
 		}
 	}
 	if backend == "" {

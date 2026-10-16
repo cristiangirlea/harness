@@ -15,7 +15,7 @@ that count as infrastructure failures.
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.
 
-Routed runs include `routed_by` (`category`, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
+Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
 
 A follow-up names the run it continues in `continues`. One started with `--fresh` (MCP
 `fresh`, exec `fresh`) also has `continue_route: "fresh_handover"`: it started a new
