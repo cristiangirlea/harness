@@ -478,6 +478,20 @@ func Money(v float64, estimated bool) string {
 	return fmt.Sprintf("%s$%.2f", prefix, v)
 }
 
+// KnownMoney is Money for a cost that may be unknown: "-" only when it is,
+// so a known zero shows as "$0.00".
+func KnownMoney(v float64, known, estimated bool) string {
+	switch {
+	case !known:
+		return "-"
+	case v == 0 && estimated:
+		return "~$0.00"
+	case v == 0:
+		return "$0.00"
+	}
+	return Money(v, estimated)
+}
+
 // Number renders a median without trailing zeros: 9, not 9.0; 6.5 stays.
 func Number(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)

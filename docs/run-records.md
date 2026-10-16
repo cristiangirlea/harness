@@ -14,6 +14,9 @@ that count as infrastructure failures.
 
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.
+Each `table.variants` row also holds `cells_without_cost`, the cells whose cost is
+unknown (left out of the total and median), and `cost_counted`, set when the row was
+counted that way. Older records have neither and show a zero median cost as `-`.
 
 Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
 

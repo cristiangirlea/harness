@@ -34,7 +34,7 @@
 | `hrn batch rm <id>` | Remove what a batch created: its branches, and its worktrees when they were fresh (a slot stays; see [Batches](batches.md#reading-and-landing-the-work)). |
 | `hrn eval [flags] <eval.json>` | Run a task set across a matrix of backends, models and efforts (see [Evals](evaluations.md#evals)). |
 | `hrn eval show <id>` | Reprint a saved eval. |
-| `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge. |
+| `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge (`-` when none is known; cells without a cost are counted). |
 | `hrn eval diff [--json] <a> <b>` | Two evals side by side, variant by variant and task by task. |
 | `hrn route show` | List purpose routing rows, or `(empty)` (see [Routing by evidence](evaluations.md#routing-by-evidence)). |
 | `hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]` | Replace one routing row by hand; accepts any nonempty subset of the three choices. |

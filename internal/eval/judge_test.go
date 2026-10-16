@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -223,6 +224,53 @@ func TestSummarizeCountsUnchangedPassesAndToolCalls(t *testing.T) {
 	}
 	if row.MedianTools != 5 {
 		t.Errorf("median tool calls = %v, want 5", row.MedianTools)
+	}
+}
+
+func TestSummarizeLeavesUnknownCostsOutOfTheTotalAndMedian(t *testing.T) {
+	spec := Spec{Matrix: []Variant{{Backend: "codex"}, {Backend: "claude"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	att := func(cost float64, status string, estimate bool) []batch.Attempt {
+		return []batch.Attempt{{Result: agent.Result{Status: agent.StatusOK, CostUSD: cost, CostEstimate: estimate,
+			Usage: &agent.UsageMetadata{CostStatus: status}}}}
+	}
+	res := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "e.a.codex.r1", Status: batch.StatusPass, Attempts: att(9, "missing", true)},
+		{ID: "e.a.codex.r2", Status: batch.StatusPass, Attempts: att(0, "missing", false)},
+		{ID: "e.a.codex.r3", Status: batch.StatusFail},
+		{ID: "e.a.claude.r1", Status: batch.StatusPass, Attempts: att(0, "reported", false)},
+		{ID: "e.a.claude.r2", Status: batch.StatusPass, Attempts: att(0, "reported", false)},
+		{ID: "e.a.claude.r3", Status: batch.StatusPass, Attempts: att(3, "reported", false)},
+		{ID: "e.a.claude.r4", Status: batch.StatusPass, Attempts: att(5, "missing", true)},
+	}}
+	rows := Summarize(spec, res, nil).Variants
+	codex, claude := rows[0], rows[1]
+	if codex.CellsWithoutCost != 3 || codex.TotalCostUSD != 0 || codex.MedianCostUSD != 0 || codex.CostEstimate {
+		t.Errorf("codex = %+v: a missing cost and a cell with no attempt are unknown, not zero", codex)
+	}
+	if claude.CellsWithoutCost != 1 || claude.TotalCostUSD != 3 || claude.MedianCostUSD != 0 || claude.CostEstimate {
+		t.Errorf("claude = %+v: want total 3 and median 0 over the three known costs", claude)
+	}
+}
+
+func TestCostKnownFallsBackToTheMedianForRowsSummarizeDidNotCount(t *testing.T) {
+	var old VariantRow
+	if err := json.Unmarshal([]byte(`{"name":"codex","attempts":3,"median_cost_usd":0}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.CostKnown() {
+		t.Errorf("an old row with a zero median should show no known cost: %+v", old)
+	}
+	old.MedianCostUSD = 0.2
+	if !old.CostKnown() {
+		t.Errorf("an old row with a median should show a known cost: %+v", old)
+	}
+	spec := Spec{Matrix: []Variant{{Backend: "claude"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	res := batch.Result{Tasks: []batch.TaskResult{{ID: "e.a.claude.r1", Status: batch.StatusPass,
+		Attempts: []batch.Attempt{{Result: agent.Result{Status: agent.StatusOK, Usage: &agent.UsageMetadata{CostStatus: "reported"}}}}}}}
+	if row := Summarize(spec, res, nil).Variants[0]; !row.CostCounted || !row.CostKnown() {
+		t.Errorf("a counted row with a known zero cost should show it: %+v", row)
 	}
 }
 

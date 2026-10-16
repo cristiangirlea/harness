@@ -97,6 +97,23 @@ func TestEvalListShowsTheNewestFirst(t *testing.T) {
 	}
 }
 
+func TestEvalListShowsAKnownZeroTotalAndCountsCellsWithoutACost(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	_, b := diffPair()
+	b.JudgeCostUSD = 0
+	v := &b.Table.Variants[0]
+	v.MedianCostUSD, v.TotalCostUSD, v.CostCounted, v.CellsWithoutCost = 0, 0, true, 1
+	savedEval(t, b)
+
+	var buf bytes.Buffer
+	if err := listEvals(&buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "$0.00") || !strings.Contains(out, "(1 of 2 cells without a cost)") {
+		t.Errorf("list should show a known zero total and flag the cell without a cost:\n%s", out)
+	}
+}
+
 func TestEvalDiffAndListRefuseBadArguments(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	a, _ := diffPair()
@@ -148,5 +165,24 @@ func TestEvalListSaysWhatItCouldNotRead(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "aaaaa") || !strings.Contains(out, "1 eval record could not be read") {
 		t.Errorf("the list should name what it skipped:\n%s", out)
+	}
+}
+
+func TestEvalTablesShowAKnownZeroCostAndDashOnlyWhenNoCostIsKnown(t *testing.T) {
+	a, b := diffPair()
+	a.Table.Variants[0].MedianCostUSD, a.Table.Variants[0].CellsWithoutCost = 0, 2
+	b.Table.Variants[0].MedianCostUSD, b.Table.Variants[0].CellsWithoutCost = 0, 1
+	a.Table.Variants[0].CostCounted, b.Table.Variants[0].CostCounted = true, true
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEvalDiff(r, eval.Compare(a, b))
+	if out := buf.String(); !strings.Contains(out, "- → $0.00") {
+		t.Errorf("diff should show no known cost as - and a known zero as $0.00:\n%s", out)
+	}
+	buf.Reset()
+	printEval(r, b)
+	if out := buf.String(); !strings.Contains(out, "$0.00") || !strings.Contains(out, "1 of 2 cells without a cost") {
+		t.Errorf("eval table should show a known zero median and count the cells without a cost:\n%s", out)
 	}
 }
