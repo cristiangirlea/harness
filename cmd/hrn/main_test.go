@@ -307,6 +307,34 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 	}
 }
 
+func TestRunLeanFalseAndSkillsFlagsReachTheTask(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "--lean=false", "--skills", "hello"})
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	select {
+	case task := <-recorded:
+		if task.Lean == nil || *task.Lean || task.Skills == nil || !*task.Skills {
+			t.Errorf("lean = %v, skills = %v; want false and true", task.Lean, task.Skills)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the backend was never run")
+	}
+}
+
+func TestHelpDescribesLeanAndSkillsForClaudeAndCodex(t *testing.T) {
+	for _, want := range []string{"--lean=false", "--skills", "claude and codex"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("hrn --help lacks %q", want)
+		}
+	}
+	if strings.Contains(usage, "skills still load") {
+		t.Error("hrn --help still says skills load in a lean run")
+	}
+}
+
 func TestRunRejectsBadFlagCombinations(t *testing.T) {
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())

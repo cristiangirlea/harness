@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -130,7 +131,6 @@ func TestCodexDisablesEachServerInTheUsersConfigByDefault(t *testing.T) {
 	got := strings.Join(NewCodexBackend().args(Task{Dir: "/w", Options: Options{Mode: ModeReadOnly}}, ""), " ")
 	want := "exec --json --skip-git-repo-check -C /w" +
 		" -c mcp_servers.github.enabled=false" +
-		` -c mcp_servers."my server".enabled=false` +
 		" -c mcp_servers.lit.enabled=false" +
 		" --sandbox read-only -"
 	if got != want {
@@ -145,11 +145,12 @@ func TestCodexTranslatesTheRunsMCPServersInsteadOfDisablingThem(t *testing.T) {
 	args := NewCodexBackend().args(Task{Dir: "/w", Options: Options{MCP: []string{file}}}, "")
 	got := strings.Join(args, " ")
 	want := "exec --json --skip-git-repo-check -C /w" +
-		` -c mcp_servers."my server".enabled=false` +
 		" -c mcp_servers.lit.enabled=false" +
+		" -c mcp_servers.github.enabled=true" +
 		` -c mcp_servers.github.command="npx"` +
 		` -c mcp_servers.github.args=["-y","@x/gh"]` +
 		` -c mcp_servers.github.env_vars=["GH_LEVEL"]` +
+		" -c mcp_servers.docs.enabled=true" +
 		` -c mcp_servers.docs.url="https://example.test/mcp"` +
 		" -"
 	if got != want {
@@ -183,6 +184,9 @@ func TestHelperCodexMCPEnv(t *testing.T) {
 		return
 	}
 	fmt.Println("GH_LEVEL=" + os.Getenv("GH_LEVEL"))
+	token, set := os.LookupEnv("GITHUB_TOKEN")
+	fmt.Printf("GITHUB_TOKEN set=%v %s\n", set, token)
+	fmt.Println("GIT_CONFIG_COUNT=" + os.Getenv("GIT_CONFIG_COUNT"))
 	os.Exit(0)
 }
 
@@ -214,5 +218,116 @@ func TestCodexRefusesTwoServersThatSetOneVariableDifferently(t *testing.T) {
 	file := mcpFile(t, `"a":{"command":"x","env":{"K":"1"}},"b":{"command":"y","env":{"K":"2"}}`)
 	if _, err := codexMCPEnv(Task{Options: Options{MCP: []string{file}}}); err == nil || !strings.Contains(err.Error(), "K") {
 		t.Errorf("want an error naming K, got %v", err)
+	}
+}
+
+func TestCodexMCPEnvIsGuardedLikeTheRestOfTheEnvironment(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "")
+	t.Setenv("HRN_TEST_WITHHELD", "withheld-token-value")
+	file := mcpFile(t, `"github":{"command":"npx","env":{"GITHUB_TOKEN":"${HRN_TEST_WITHHELD}","GIT_CONFIG_COUNT":"0"}}`)
+	b := NewCodexBackend()
+	b.name, b.candidates = os.Args[0], nil
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+	b.parse = nil
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{MCP: []string{file}}}, func(Event) {})
+	if res.Status != StatusOK {
+		t.Fatalf("run: %+v", res)
+	}
+	if strings.Contains(res.Final, "withheld-token-value") || !strings.Contains(res.Final, "GITHUB_TOKEN set=false") {
+		t.Errorf("a secret-named server variable must be withheld: %q", res.Final)
+	}
+	if !regexp.MustCompile(`(?m)^GIT_CONFIG_COUNT=6\r?$`).MatchString(res.Final) {
+		t.Errorf("the guard's GIT_CONFIG_COUNT must win over a server's: %q", res.Final)
+	}
+}
+
+func TestCodexKeepsExpandedMCPValuesOffTheStartLine(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	t.Setenv("HRN_TEST_EXPANDED", "expanded-secret")
+	file := mcpFile(t, `"tool":{"command":"${HRN_TEST_EXPANDED}","args":["--k=${HRN_TEST_EXPANDED}"],"env":{"E":"1"}},`+
+		`"web":{"url":"https://example.test/${HRN_TEST_EXPANDED}"}`)
+	b := NewCodexBackend()
+	b.name, b.candidates = os.Args[0], nil
+	b.args = func(t Task, _ string) []string {
+		return append([]string{"-test.run=^TestHelperCodexMCPEnv$", "--"}, codexMCPArgs(t)...)
+	}
+	b.parse = nil
+	var events []string
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{MCP: []string{file}}}, func(e Event) {
+		events = append(events, e.Text)
+	})
+	if res.Status != StatusOK {
+		t.Fatalf("run: %+v", res)
+	}
+	start := ""
+	for _, text := range events {
+		if strings.Contains(text, "expanded-secret") {
+			t.Errorf("an event shows an expanded value: %q", text)
+		}
+		if strings.Contains(text, "mcp_servers.tool.command=") {
+			start = text
+		}
+	}
+	for _, field := range []string{"tool.command", "tool.args", "tool.env_vars", "web.url"} {
+		if !strings.Contains(start, "mcp_servers."+field+"=<hidden>") {
+			t.Errorf("the start line must name %s with its value hidden: %q", field, start)
+		}
+	}
+	if !strings.Contains(start, "mcp_servers.tool.enabled=true") {
+		t.Errorf("enabled carries no secret and stays shown: %q", start)
+	}
+}
+
+func TestCodexSkipsConfigServersWhoseNameIsNotABareKey(t *testing.T) {
+	codexHome(t, "[mcp_servers.\"my server\"]\ncommand = \"x\"\n[mcp_servers.ok]\ncommand = \"y\"\n")
+	got := strings.Join(codexMCPArgs(Task{}), " ")
+	if want := "-c mcp_servers.ok.enabled=false"; got != want {
+		t.Errorf("args = %q, want %q", got, want)
+	}
+}
+
+func TestCodexRefusesARunServerWhoseNameIsNotABareKey(t *testing.T) {
+	for _, servers := range []string{`"my server":{"command":"x"}`, `"a.b":{"url":"https://example.test"}`} {
+		file := mcpFile(t, servers)
+		if _, err := codexMCPEnv(Task{Options: Options{MCP: []string{file}}}); err == nil || !strings.Contains(err.Error(), "letters, digits") {
+			t.Errorf("%s: want a refusal naming the allowed characters, got %v", servers, err)
+		}
+	}
+}
+
+func TestCodexEnablesARunServerTheConfigDisables(t *testing.T) {
+	codexHome(t, "[mcp_servers.github]\ncommand = \"npx\"\nenabled = false\n")
+	file := mcpFile(t, `"github":{"command":"npx"},"docs":{"url":"https://example.test/mcp"}`)
+	got := strings.Join(codexMCPArgs(Task{Options: Options{MCP: []string{file}}}), " ")
+	for _, want := range []string{"mcp_servers.github.enabled=true", "mcp_servers.docs.enabled=true"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("args lack %s: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "enabled=false") {
+		t.Errorf("a run server must not be disabled: %q", got)
+	}
+}
+
+func TestCodexGivesAnEmptyArgsListSoTheConfigsArgsDoNotMergeIn(t *testing.T) {
+	codexHome(t, "")
+	file := mcpFile(t, `"github":{"command":"npx","args":[]}`)
+	got := strings.Join(codexMCPArgs(Task{Options: Options{MCP: []string{file}}}), " ")
+	if !strings.Contains(got, "-c mcp_servers.github.args=[]") {
+		t.Errorf("an empty args must still be set: %q", got)
+	}
+}
+
+func TestCodexEscapesAWindowsCommandPath(t *testing.T) {
+	codexHome(t, "")
+	file := mcpFile(t, `"gh":{"command":"C:\\Tools\\gh.exe","args":["D:\\x"]}`)
+	got := strings.Join(codexMCPArgs(Task{Options: Options{MCP: []string{file}}}), " ")
+	for _, want := range []string{`mcp_servers.gh.command="C:\\Tools\\gh.exe"`, `mcp_servers.gh.args=["D:\\x"]`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("args lack %s: %q", want, got)
+		}
 	}
 }

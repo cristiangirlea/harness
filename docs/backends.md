@@ -134,18 +134,27 @@ rather than replaces), so hrn reads the table headers of your `config.toml`
 (`$CODEX_HOME/config.toml`, else `~/.codex/config.toml`; only `[mcp_servers.<name>]` headers,
 never values) and passes `-c mcp_servers.<name>.enabled=false` for each server the run does
 not name. A server that a codex plugin provides (not in `config.toml`) still starts: codex
-refuses to start when such a server is disabled by name. Servers written as inline tables
-under `[mcp_servers]` are not seen either. `--lean=false` passes no overrides, and
+refuses to start when such a server is disabled by name. So does a `config.toml` server whose
+name is not a bare key (letters, digits, `_` and `-`, as in `[mcp_servers."my server"]`):
+codex reads a quoted `-c` key as a name with its quotes in it, so it cannot be disabled by
+name and stays loaded. Servers written as inline tables under `[mcp_servers]` are not seen
+either. `--lean=false` passes no overrides, and
 `--ignore-user-config` is never used, so your settings and login stay.
 
 The run's `--mcp` files (Claude Code's `.mcp.json` format) reach codex as `-c` overrides on
-any run: a stdio server as `mcp_servers.<name>.command` and `.args`, a server with a `url` as
-`mcp_servers.<name>.url` (its `headers` are not passed). `${VAR}` expands as for the api
-backend. Environment values never go on the command line, where the process list and the
-run's start line would show them: hrn sets them in codex's own environment and names them in
-`mcp_servers.<name>.env_vars`, which codex passes on to the server. Two servers that set one
-variable to different values are refused, since codex has one environment for all of them.
-A server's `command` and `args` are on codex's command line, so keep secrets in `env`.
+any run: a stdio server as `mcp_servers.<name>.command` and `.args` (an empty `args` too), a
+server with a `url` as `mcp_servers.<name>.url` (its `headers` are not passed), each with
+`.enabled=true`, since the overrides merge into a `config.toml` server of the same name. A
+run server whose name is not a bare key is refused before codex starts. `${VAR}` expands as
+for the api backend. Environment values never go on the command line, where the process list
+and the run's start line would show them: hrn sets them in codex's own environment and names
+them in `mcp_servers.<name>.env_vars`, which codex passes on to the server. They pass hrn's
+guard like the rest of that environment: a secret-named variable is withheld and the guard's
+own variables (`GIT_CONFIG_COUNT`, `GH_CONFIG_DIR` and the others) keep the guard's values.
+Two servers that set one variable to different values are refused, since codex has one
+environment for all of them. A server's `command`, `args` and `url` are on codex's command
+line, where the process list shows them, so keep secrets in `env`; the run's start line shows
+them as `<hidden>`.
 
 gemini, opencode and agy load what they always load; they say `lean: not enforced` only when
 a run asks for lean explicitly, and the api loop never reads a CLI's settings.

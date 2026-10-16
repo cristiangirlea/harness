@@ -15,8 +15,8 @@ import (
 
 // codexMCPArgs are the -c overrides that give a codex run the run's --mcp
 // servers and, when lean, none of the servers in the user's config.toml.
-// codex merges -c mcp_servers={} instead of replacing the table, and a
-// plugin's server cannot be disabled by name, so only config.toml's are.
+// codex merges -c mcp_servers={} rather than replacing it, and refuses a
+// plugin's server or a quoted name by name, so only config.toml's bare ones go.
 func codexMCPArgs(t Task) []string {
 	// A config that does not load is reported by codexMCPEnv before the start.
 	servers, _, _ := mcp.LoadConfigs(t.MCP)
@@ -30,26 +30,28 @@ func codexMCPArgs(t Task) []string {
 	}
 	var a []string
 	set := func(name, field, value string) {
-		a = append(a, "-c", "mcp_servers."+tomlKey(name)+"."+field+"="+value)
+		a = append(a, "-c", "mcp_servers."+name+"."+field+"="+value)
 	}
 	if t.IsLean() {
 		for _, name := range codexConfigServers(codexConfigPath()) {
-			if !ours[name] {
+			if !ours[name] && isBareKey(name) {
 				set(name, "enabled", "false")
 			}
 		}
 	}
+	// Overrides merge into a config.toml entry of the same name, which may
+	// be disabled or carry args of its own.
 	for _, s := range servers {
+		set(s.Name, "enabled", "true")
 		set(s.Name, "command", tomlString(s.Command))
-		if len(s.Args) > 0 {
-			set(s.Name, "args", tomlArray(s.Args))
-		}
+		set(s.Name, "args", tomlArray(s.Args))
 		if len(s.Env) > 0 {
 			set(s.Name, "env_vars", tomlArray(sortedKeys(s.Env)))
 		}
 	}
 	for _, r := range remotes {
 		if !slices.ContainsFunc(servers, func(s mcp.ServerConfig) bool { return s.Name == r.Name }) {
+			set(r.Name, "enabled", "true")
 			set(r.Name, "url", tomlString(r.URL))
 		}
 	}
@@ -64,8 +66,21 @@ func codexMCPEnv(t Task) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mcp config: %w", err)
 	}
-	if _, err := mcp.LoadRemotes(t.MCP); err != nil {
+	remotes, err := mcp.LoadRemotes(t.MCP)
+	if err != nil {
 		return nil, fmt.Errorf("mcp config: %w", err)
+	}
+	names := make([]string, 0, len(servers)+len(remotes))
+	for _, s := range servers {
+		names = append(names, s.Name)
+	}
+	for _, r := range remotes {
+		names = append(names, r.Name)
+	}
+	for _, name := range names {
+		if !isBareKey(name) {
+			return nil, fmt.Errorf("mcp server %q: codex takes only names of letters, digits, '_' and '-'", name)
+		}
 	}
 	type setBy struct{ value, server string }
 	vars := map[string]setBy{}
@@ -172,12 +187,8 @@ func tomlHeader(s string) ([]string, bool) {
 
 var bareKey = regexp.MustCompile(`^[A-Za-z0-9_-]+`)
 
-// tomlKey is name as one segment of a dotted TOML key.
-func tomlKey(name string) string {
-	if name != "" && len(bareKey.FindString(name)) == len(name) {
-		return name
-	}
-	return tomlString(name)
+func isBareKey(name string) bool {
+	return name != "" && len(bareKey.FindString(name)) == len(name)
 }
 
 // tomlString quotes s as a TOML basic string, whose escapes differ from Go's.

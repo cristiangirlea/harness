@@ -33,8 +33,8 @@ type CLIBackend struct {
 	// passed as an attachment instead of on stdin.
 	args        func(t Task, promptFile string) []string
 	promptStdin bool
-	// env, when set, adds variables to the child's environment after the
-	// guard: values that must not show on its command line.
+	// env, when set, adds variables to the child's environment, values that
+	// must not show on its command line; the guard filters them like the rest.
 	env func(t Task) ([]string, error)
 	// encodePrompt wraps stdin for CLIs that require structured input.
 	encodePrompt func(string) string
@@ -197,6 +197,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	// inside another one.
 	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
 	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
+	if c.env != nil {
+		extra, err := c.env(task)
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		cmd.Env = append(cmd.Env, extra...)
+	}
 	guarded := !task.AllowDangerous
 	var withheld []string
 	if guarded {
@@ -208,13 +215,6 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		defer os.RemoveAll(guardDir)
 		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
-	}
-	if c.env != nil {
-		extra, err := c.env(task)
-		if err != nil {
-			return fail(StatusError, err)
-		}
-		cmd.Env = append(cmd.Env, extra...)
 	}
 	if c.promptStdin {
 		prompt := task.Prompt
@@ -440,10 +440,15 @@ func (c *CLIBackend) guardLine(withheld []string) string {
 }
 
 // shownArgs is a command line as a run's info line shows it: the guard's
-// deny rules, dozens of them, are counted rather than listed.
+// deny rules, dozens of them, are counted rather than listed, and MCP server
+// values, which may hold expanded secrets, are hidden.
 func shownArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
+		if m := mcpValueArg.FindStringSubmatch(args[i]); m != nil && i > 0 && args[i-1] == "-c" {
+			out = append(out, m[1]+"<hidden>")
+			continue
+		}
 		out = append(out, args[i])
 		if args[i] != "--disallowedTools" {
 			continue
@@ -457,3 +462,5 @@ func shownArgs(args []string) []string {
 	}
 	return out
 }
+
+var mcpValueArg = regexp.MustCompile(`^(mcp_servers\.[^.=]+\.(?:command|args|url|env_vars)=)`)
