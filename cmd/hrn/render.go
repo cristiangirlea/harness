@@ -60,6 +60,7 @@ func (r *renderer) newline() {
 func (r *renderer) Event(e agent.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Live text is masked per fragment, so a token split across two can show in halves.
 	e.Text, e.Tool = printable(mask.Text(e.Text)), printable(mask.Text(e.Tool))
 	if e.Kind != agent.EventThinking && r.inThought {
 		r.newline()

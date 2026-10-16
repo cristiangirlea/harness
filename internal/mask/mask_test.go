@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestTextRules(t *testing.T) {
+func TestTextMasksSecretValuesAndKeepsOrdinaryText(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"url", "https://user:password@example.test/a", "https://••••@example.test/a"},
 		{"user", `curl -u "user:password" --user=other:secret`, `curl -u "••••" --user=••••`},
@@ -25,6 +25,11 @@ func TestTextRules(t *testing.T) {
 		{"idempotent", "API_KEY=••••", "API_KEY=••••"},
 
 		{"url user only", "https://user@example.test", "https://••••@example.test"},
+		{"url token as user", "https://ghp_abc123@github.com/x", "https://••••@github.com/x"},
+		{"ssh git user", "ssh://git@github.com/x git+ssh://git@example.test/y", "ssh://git@github.com/x git+ssh://git@example.test/y"},
+		{"scp git user", "git@github.com:x/y.git", "git@github.com:x/y.git"},
+		{"git user with password", "https://git:password@example.test/a", "https://••••@example.test/a"},
+		{"git-like user", "ssh://gitlab@example.test/a ssh://GIT@example.test/b", "ssh://••••@example.test/a ssh://••••@example.test/b"},
 		{"user escaped", `{"command":"curl -u \"user:password\""}`, `{"command":"curl -u \"••••\""}`},
 		{"empty and ordinary", "", ""},
 		{"ordinary url port", "https://example.test:443/path", "https://example.test:443/path"},
@@ -47,7 +52,7 @@ func TestTextRules(t *testing.T) {
 	}
 }
 
-func TestTextBound(t *testing.T) {
+func TestTextMasksLongTextWithoutCuttingIt(t *testing.T) {
 	prefix := strings.Repeat("a", 2048) + " "
 	for _, secret := range []string{"API_KEY=value", "Authorization: Bearer value", "--password value", `{"password":"value"}`, "sk-test-value", "https://user:password@example.test", "--user user:password", "AKIAIOSFODNN7EXAMPLE", "eyJheader.payload.signature"} {
 		if got, want := Text(prefix+secret), prefix+Text(secret); got != want {
