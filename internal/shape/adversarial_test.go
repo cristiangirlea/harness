@@ -1,8 +1,11 @@
 package shape
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -16,14 +19,77 @@ var (
 	oracleFail     = regexp.MustCompile(`--- FAIL:[^\S\n]+(\S+)`)
 	oracleDigits   = regexp.MustCompile(`\d+`)
 	oracleNegation = regexp.MustCompile(`(?i)\b(?:not|no|never|only|none|cannot|without)\b`)
-	oraclePath     = regexp.MustCompile(`\S*[/\\]\S*`)
+	// Quotes end a path chunk, so a JSON sample joined without spaces keeps its strings' chunks.
+	oraclePath      = regexp.MustCompile(`[^\s"]*[/\\][^\s"]*`)
+	oracleJSONHead  = regexp.MustCompile(`^json: (array of|object with) (\d+) (items|keys)$`)
+	oracleTableHead = regexp.MustCompile(`^table: (\d+) rows, (\d+) columns$`)
 )
+
+// oracleHead reports whether a generated first line states true counts,
+// recounting with encoding/json and plain delimiter counts.
+func oracleHead(clean, line string) bool {
+	if m := oracleJSONHead.FindStringSubmatch(line); m != nil {
+		d := json.NewDecoder(strings.NewReader(clean))
+		tok, err := d.Token()
+		open, ok := tok.(json.Delim)
+		array := m[1] == "array of"
+		if err != nil || !ok || (open == '[') != array || array != (m[3] == "items") {
+			return false
+		}
+		n := 0
+		for ; d.More(); n++ {
+			if open == '{' {
+				if _, err := d.Token(); err != nil {
+					return false
+				}
+			}
+			var raw json.RawMessage
+			if d.Decode(&raw) != nil {
+				return false
+			}
+		}
+		if _, err := d.Token(); err != nil {
+			return false
+		}
+		if _, err := d.Token(); err != io.EOF {
+			return false
+		}
+		return strconv.Itoa(n) == m[2]
+	}
+	m := oracleTableHead.FindStringSubmatch(line)
+	if m == nil {
+		return false
+	}
+	var rows []string
+	for _, l := range strings.Split(clean, "\n") {
+		if strings.TrimSpace(l) != "" {
+			rows = append(rows, l)
+		}
+	}
+	cols, _ := strconv.Atoi(m[2])
+	for _, sep := range []string{"\t", ","} {
+		same := cols >= 2
+		for _, l := range rows {
+			same = same && strings.Count(l, sep) == cols-1
+		}
+		if same && strconv.Itoa(len(rows)-1) == m[1] {
+			return true
+		}
+	}
+	return false
+}
 
 // lostFact checks a summary independently of valid and names the first fact it
 // lost or invented, or returns "". Stripping uses the package's own escape
 // pattern: the oracle judges what is kept, not how escapes are parsed.
 func lostFact(original, summary string) string {
 	clean := ansi.ReplaceAllString(original, "")
+	if first, rest, _ := strings.Cut(summary, "\n"); oracleJSONHead.MatchString(first) || oracleTableHead.MatchString(first) {
+		if !oracleHead(clean, first) {
+			return fmt.Sprintf("invented %q", first)
+		}
+		summary = rest // a recounted first line is the one generated number allowed
+	}
 	kept := map[string]bool{}
 	for _, line := range strings.Split(summary, "\n") {
 		kept[line] = true
@@ -156,12 +222,29 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 		{"error output one byte over the limit", filler("ERROR", summaryLimit+1), Log, false, nil},
 		{"single line longer than the limit", strings.Repeat("y", summaryLimit+1), Terminal, false, nil},
 		{"single error line longer than the limit", "ERROR " + strings.Repeat("y", summaryLimit), Log, false, nil},
+		{"JSON array of 500 objects", jsonItems(500), JSON, true,
+			[]string{"json: array of 500 items\n", `"owner":{"login":"dev","meta":{...}}`}},
+		{"JSON whose values hold error lines", strings.Replace(jsonItems(300), `"name": "item-150"`, `"name": "error: disk full in item-150"`, 1), JSON, true,
+			[]string{"\n    \"name\": \"error: disk full in item-150\","}},
+		{"JSON whose first item holds an error", strings.Replace(jsonItems(300), `"name": "item-0"`, `"name": "panic in item-0"`, 1), JSON, true,
+			[]string{"json: array of 300 items\nkeys: \"id\",\"name\",\"tags\",\"owner\"\n    \"name\": \"panic in item-0\","}},
+		{"deeply nested JSON", strings.Repeat(`{"a":`, 500) + "1" + strings.Repeat("}", 500), JSON, true,
+			[]string{`sample: {"a":{"a":{...}}}`}},
+		{"JSON nested past the parser's depth limit", strings.Repeat("[", 20000) + strings.Repeat("]", 20000), Terminal, false, nil},
+		{"JSON numbers in exponent form and negative", "[" + strings.Repeat(`{"v": -1.5e-3, "w": 2E+10, "n": -0}, `, 200) + `{"v": 1}]`, JSON, true,
+			[]string{`sample: {"v":-1.5e-3,"w":2E+10,"n":-0}`}},
+		{"single huge JSON string", `"` + strings.Repeat("x", 40000) + `"`, Terminal, false, nil},
+		{"JSON object holding one huge string", `{"blob": "` + strings.Repeat("x", 40000) + `"}`, JSON, false, nil},
+		{"go test -json output", goTestJSON, Terminal, true, nil},
+		{"table whose omitted middle row holds an error", csvRows(1000, 500), Table, true,
+			[]string{"[... omitted ...]\n500,job-500,error: timeout,5000\n[... omitted ...]"}},
+		{"CSV with quoted commas", "id,name\n" + strings.Repeat("1,\"Smith, J\"\n2,Lee\n", 300), Terminal, true, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Classify(tc.text); got != tc.kind {
 				t.Fatalf("Classify = %v, want %v", got, tc.kind)
 			}
-			for _, kind := range []Kind{Test, Log, Terminal} {
+			for _, kind := range []Kind{Test, Log, Terminal, JSON, Table} {
 				s, ok := Summarize(kind, tc.text)
 				if !ok {
 					if kind == tc.kind && tc.keeps {
