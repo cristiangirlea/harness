@@ -35,7 +35,7 @@ var SecretDirs = []string{".private", ".ssh", ".aws", ".kube", ".azure"}
 // .wrangler holds only local state. Spelt as on disk, for claude's rules;
 // matching ignores case.
 var SecretPaths = []string{
-	".claude/.credentials.json", ".codex/auth.json", ".gemini/oauth_creds.json",
+	".claude/.credentials.json", ".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",
 	".config/gh/", "GitHub CLI/", ".config/gcloud/", ".docker/config.json", ".cargo/credentials*",
 	".wrangler/config/",
 }

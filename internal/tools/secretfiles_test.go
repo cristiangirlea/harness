@@ -41,6 +41,9 @@ func TestSecretFileKnowsTheSecretNamesAndOnlyThem(t *testing.T) {
 		// Logins secret only with the directories above them.
 		"home/me/.claude/.credentials.json":                        true,
 		"C:/Users/me/.codex/auth.json":                             true,
+		"home/me/.local/share/opencode/auth.json":                  true,
+		`C:\Users\me\.local\share\opencode\auth.json.::$DATA`:      true,
+		"home/me/.local/share/opencode/config.json":                false,
 		"AppData/Roaming/GitHub CLI/hosts.yml":                     true,
 		"home/me/.config/gh/hosts.yml":                             true,
 		"home/me/.docker/config.json":                              true,
@@ -77,12 +80,17 @@ func TestTheFileToolsRefuseSecretFiles(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(ws.Root, ".private", "plan.md"), []byte("hunter2-private\n"), 0o644))
 	must(t, os.MkdirAll(filepath.Join(ws.Root, "src", "deep", ".ssh"), 0o755)) // deeper down, too
 	must(t, os.WriteFile(filepath.Join(ws.Root, "src", "deep", ".ssh", "id_ed25519"), []byte("hunter2-nested\n"), 0o644))
+	must(t, os.MkdirAll(filepath.Join(ws.Root, ".local", "share", "opencode"), 0o755))
+	must(t, os.WriteFile(filepath.Join(ws.Root, ".local", "share", "opencode", "auth.json"), []byte("hunter2-opencode\n"), 0o644))
 
 	calls := []struct {
 		tool string
 		in   map[string]any
 	}{
 		{"read_file", map[string]any{"path": ".env"}},
+		{"read_file", map[string]any{"path": ".local/share/opencode/auth.json"}},
+		{"write_file", map[string]any{"path": ".local/share/opencode/auth.json", "content": "x"}},
+		{"edit_file", map[string]any{"path": ".local/share/opencode/auth.json", "old_string": "hunter2", "new_string": "x"}},
 		{"read_file", map[string]any{"path": ".private/plan.md"}},
 		{"write_file", map[string]any{"path": ".env.production", "content": "X=1"}},
 		{"write_file", map[string]any{"path": "certs/new.pem", "content": "-----BEGIN"}},

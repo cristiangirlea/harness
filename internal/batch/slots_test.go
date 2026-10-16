@@ -360,11 +360,7 @@ func TestATaskWaitingForASlotIsCanceledWhenTheContextEnds(t *testing.T) {
 
 func TestACommitFailureInASlotKeepsItLeasedAndSaysSo(t *testing.T) {
 	dir := initRepo(t)
-	hookFile := filepath.Join(dir, ".git", "hooks", "pre-commit")
-	writeFile(t, hookFile, "#!/bin/sh\nexit 1\n")
-	if err := os.Chmod(hookFile, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	failCommits(t, dir)
 	res, events := run(t, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{ID: "hooked", Prompt: "a"}}})
 	tr := res.Tasks[0]
 	if tr.Status != StatusError || !strings.Contains(tr.Error, "uncommitted") || !strings.Contains(tr.Error, "slot 1 kept") {
@@ -592,11 +588,7 @@ func TestRemoveLeavesTheBranchThatFailedATaskWithoutAWorktree(t *testing.T) {
 func TestATaskFailsRatherThanWaitForSlotsOnlyItsBatchKept(t *testing.T) {
 	dir := initRepo(t)
 	quickPoll(t)
-	hookFile := filepath.Join(dir, ".git", "hooks", "pre-commit")
-	writeFile(t, hookFile, "#!/bin/sh\nexit 1\n")
-	if err := os.Chmod(hookFile, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	failCommits(t, dir)
 	var tasks []Task
 	for i := range ws.DefaultMax + 1 {
 		tasks = append(tasks, Task{ID: "t" + strconv.Itoa(i+1), Prompt: "p"})
@@ -667,18 +659,19 @@ func TestSessionsAtLimitLeaveBatchWithoutASlot(t *testing.T) {
 	}
 }
 
-// failCommits installs a pre-commit hook that refuses every commit, so each
-// task's slot is kept, or only the commits on the branches named.
+// failCommits sets an invalid commit.cleanup for every commit, so each task's
+// slot is kept, or only for the branches named. Batch commits disable hooks
+// and commit signing.
 func failCommits(t *testing.T, dir string, branches ...string) {
 	t.Helper()
-	script := "#!/bin/sh\nexit 1\n"
-	if len(branches) > 0 {
-		script = "#!/bin/sh\ncase \"$(git symbolic-ref --short HEAD)\" in " + strings.Join(branches, "|") + ") exit 1;; esac\n"
+	config := filepath.Join(t.TempDir(), "commit.config")
+	git(t, dir, "config", "--file", config, "commit.cleanup", "invalid")
+	if len(branches) == 0 {
+		git(t, dir, "config", "include.path", filepath.ToSlash(config))
+		return
 	}
-	hookFile := filepath.Join(dir, ".git", "hooks", "pre-commit")
-	writeFile(t, hookFile, script)
-	if err := os.Chmod(hookFile, 0o755); err != nil {
-		t.Fatal(err)
+	for _, branch := range branches {
+		git(t, dir, "config", "includeIf.onbranch:"+branch+".path", filepath.ToSlash(config))
 	}
 }
 
