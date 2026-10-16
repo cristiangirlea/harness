@@ -233,6 +233,12 @@ func TestHelperMCPServer(t *testing.T) {
 		if os.Getenv("HRN_WORKER_TOKEN") != "" || os.Getenv("HRN_SCALER_TOKEN") != "" {
 			os.Exit(4)
 		}
+		for _, key := range []string{"HRN_TENANT_TOKEN", "HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL"} {
+			if _, present := os.LookupEnv(key); present {
+				fmt.Fprintln(os.Stderr, "executor environment leaked", key)
+				os.Exit(4)
+			}
+		}
 		_ = echoServer().Serve(context.Background(), os.Stdin, os.Stdout)
 		os.Exit(0)
 	}
@@ -272,6 +278,33 @@ func TestChildMCPServerCannotSeeWorkerOrScalerTokens(t *testing.T) {
 	}
 	if err := cl.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestChildMCPServerCannotSeeRetrievalCredentials(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, key := range []string{"HRN_TENANT_TOKEN", "HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL"} {
+		t.Setenv(key, "inherited-fixture")
+	}
+	for _, override := range []bool{false, true} {
+		t.Run(fmt.Sprintf("configured_overrides=%t", override), func(t *testing.T) {
+			cfg := helperConfig("env")
+			cfg.Dir = t.TempDir()
+			if override {
+				for _, key := range []string{"HRN_TENANT_TOKEN", "HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL"} {
+					cfg.Env[key] = "configured-fixture"
+				}
+			}
+			cl := &Client{}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := cl.Start(ctx, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := cl.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
