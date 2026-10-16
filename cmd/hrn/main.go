@@ -104,6 +104,8 @@ Usage:
   hrn ws free [PATH]              give the slot back once its work is pushed: HEAD detached, lease removed
   hrn ws list [--repo DIR] [--json]
                                  the slots: who holds each, since when, its branch and what is in it
+  hrn scripts hint                a Claude Code PreToolUse hook: names the kept script (a matches: header)
+                                 that covers the inline script a command is about to run; advice only
 
 Run flags:
   When backend, model and effort are all unset, use the purpose row in route.json before falling back to defaults.
@@ -207,6 +209,8 @@ func main() {
 		code, err = cmdGC(os.Args[2:])
 	case "ws":
 		code, err = cmdWS(os.Args[2:])
+	case "scripts":
+		code, err = cmdScripts(os.Args[2:])
 	case "update":
 		code, err = cmdUpdate(os.Args[2:])
 	case "version", "--version", "-V":
