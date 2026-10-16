@@ -95,6 +95,14 @@ no prompt text is added, removed or changed. Watch and reports use it before
 falling back to the keyword classifier. An invalid stored `task.purpose` is ignored,
 falling back to a valid header or the classifier.
 
+A continued run (`hrn run --continue`, or the MCP `run` tool with `continue_run_id`)
+keeps the earlier run's declared purpose when neither `--purpose`/`purpose` nor a
+header names one, as it keeps the mode; a short follow-up such as "now fix what you
+found" is therefore not re-classified. `hrn exec` takes the same optional `purpose`
+on `start` (see [the exec protocol](exec-protocol.md#start-caller-exactly-one-the-first-line)).
+A batch task's declared purpose shows in `hrn batch show`'s table, the MCP
+`batch_show` text and the task list on the watch batch page.
+
 ### hrn exec
 
 `hrn exec --protocol v1` lets a supervising program start, follow, cancel and record

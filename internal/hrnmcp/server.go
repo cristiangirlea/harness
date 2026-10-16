@@ -195,6 +195,10 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if !modeGiven && plan.Prev.Task.Mode != "" {
 					args.Mode = plan.Prev.Task.Mode
 				}
+				// And its purpose, unless the call or the prompt's header names one.
+				if args.Purpose == "" && purpose.Valid(plan.Prev.Task.Purpose) {
+					args.Purpose = plan.Prev.Task.Purpose
+				}
 			}
 			// The inherited workspace is checked like any other.
 			dir := args.Dir

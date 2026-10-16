@@ -362,6 +362,10 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if *declared == "" {
 		*declared = purpose.Declared(prompt)
 	}
+	// Like the mode, a continued run keeps the earlier purpose unless this one names its own.
+	if *declared == "" && purpose.Valid(plan.Prev.Task.Purpose) {
+		*declared = plan.Prev.Task.Purpose
+	}
 	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts}
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
