@@ -127,6 +127,28 @@ func TestAmbiguousParallelDiagnosticsFallBack(t *testing.T) {
 	}
 }
 
+func TestSequentialSubtestDiagnosticsStayWithTheSubtest(t *testing.T) {
+	text := "counts 0 2\n=== RUN   TestA\n=== RUN   TestA/sub\n    a_test.go:5: got 1\n    a_test.go:6: want 2\n    --- FAIL: TestA/sub (0.00s)\n--- FAIL: TestA (0.00s)\nFAIL\n"
+	s, ok := Summarize(Test, text)
+	if !ok || !strings.Contains(s, "    a_test.go:5: got 1\n    a_test.go:6: want 2\n    --- FAIL: TestA/sub") {
+		t.Fatalf("sequential subtest output fell back: %q ok=%v", s, ok)
+	}
+	failures, ok := testFailures(strings.Split(text, "\n"))
+	if !ok || len(failures["TestA/sub"].messages) != 2 || len(failures["TestA"].messages) != 0 {
+		t.Fatalf("subtest diagnostics moved: ok=%v %+v", ok, failures)
+	}
+	if valid(Test, text, strings.Replace(s, "=== RUN   TestA/sub\n", "", 1)) {
+		t.Fatal("accepted a summary that gives the subtest's diagnostics to its parent")
+	}
+}
+
+func TestParallelSubtestsStillFallBack(t *testing.T) {
+	text := "counts 0 3\n=== RUN   TestA\n=== RUN   TestA/one\n=== RUN   TestA/two\n    unattributed diagnostic\n    --- FAIL: TestA/one (0.00s)\n    --- FAIL: TestA/two (0.00s)\n--- FAIL: TestA (0.00s)\nFAIL\n"
+	if _, ok := Summarize(Test, text); ok {
+		t.Fatal("accepted diagnostics while two sibling subtests ran")
+	}
+}
+
 func TestParallelFailuresWithContextMarkers(t *testing.T) {
 	text := "counts 0 2\n=== RUN   TestA\n=== PAUSE TestA\n=== RUN   TestB\n=== PAUSE TestB\n=== CONT  TestA\n    first message\n=== CONT  TestB\n    second message\n--- FAIL: TestB (0.00s)\n=== CONT  TestA\n    final message\n--- FAIL: TestA (0.00s)\nFAIL\n"
 	if s, ok := Summarize(Test, text); !ok || !strings.Contains(s, "    first message") || !strings.Contains(s, "    second message") || !strings.Contains(s, "    final message") {

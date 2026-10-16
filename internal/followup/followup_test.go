@@ -1,6 +1,7 @@
 package followup
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -223,6 +224,52 @@ func TestSwitchingBackendsHandsTheChainOver(t *testing.T) {
 	}
 	if joined := strings.Join(notes, "\n"); !strings.Contains(joined, "starting a new one") || !strings.Contains(joined, "handing 1 earlier turn to codex") {
 		t.Errorf("notes should say what was carried over: %q", notes)
+	}
+}
+
+func TestAContinuationCarriesTheChainsOriginalsOver(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "1")
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "claude", Session: "s1", Final: "a"})
+	text := "the whole tool result"
+	sum := sha256.Sum256([]byte(text))
+	handle := fmt.Sprintf("%x", sum)[:16]
+	firstDir, err := runlog.Dir(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.MkdirAll(filepath.Join(firstDir, "originals"), 0o755))
+	must(os.WriteFile(filepath.Join(firstDir, "originals", handle+".txt"), []byte(text), 0o644))
+	must(os.WriteFile(filepath.Join(firstDir, "originals", "0123456789abcdef.txt"), []byte("not its hash"), 0o644))
+
+	prev := first
+	for hop := range 2 {
+		p, err := Make(Request{RunID: prev})
+		must(err)
+		w, err := runlog.CreateContinuing("claude", agent.Task{Prompt: "go on", Dir: dir}, prev)
+		must(err)
+		var notes []string
+		task := agent.Task{Prompt: "go on"}
+		p.Apply(&task, w.Dir(), func(e agent.Event) { notes = append(notes, e.Text) })
+		data, err := os.ReadFile(filepath.Join(w.Dir(), "originals", handle+".txt"))
+		if err != nil || string(data) != text {
+			t.Fatalf("hop %d: original not carried over: %v", hop, err)
+		}
+		if _, err := os.Stat(filepath.Join(w.Dir(), "originals", "0123456789abcdef.txt")); !os.IsNotExist(err) {
+			t.Fatalf("hop %d: copied a file whose name is not its hash", hop)
+		}
+		if !strings.Contains(strings.Join(notes, "\n"), "copied 1 tool-result originals from run "+prev) {
+			t.Errorf("hop %d: notes do not say what was copied: %q", hop, notes)
+		}
+		must(w.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, Session: "s2", Final: "b"}))
+		prev = w.ID()
 	}
 }
 

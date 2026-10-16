@@ -572,6 +572,28 @@ func TestRunContinueHandsTheConversationToAnotherBackend(t *testing.T) {
 	}
 }
 
+func TestRunContinueCopiesTheEarlierRunsOriginals(t *testing.T) {
+	s := connect(t, t.TempDir())
+	first := s.call(t, "run", `{"prompt":"look","backend":"stub-ask"}`)
+	id := first.StructuredContent.(map[string]any)["run_id"].(string)
+	const text, handle = "abc", "ba7816bf8f01cfea" // the SHA-256 prefix of text
+	originals := filepath.Join(runlog.Root(), id, "originals")
+	if err := os.MkdirAll(originals, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(originals, handle+".txt"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := s.call(t, "run", `{"prompt":"and now?","backend":"stub","continue_run_id":"`+id+`"}`)
+	if r.IsError {
+		t.Fatalf("continue: %s", r.Text())
+	}
+	next := r.StructuredContent.(map[string]any)["run_id"].(string)
+	if data, err := os.ReadFile(filepath.Join(runlog.Root(), next, "originals", handle+".txt")); err != nil || string(data) != text {
+		t.Fatalf("the continued run cannot read the earlier original: %q %v", data, err)
+	}
+}
+
 func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T) {
 	for _, tc := range []struct {
 		tokens  int64

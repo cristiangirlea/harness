@@ -361,8 +361,8 @@ type testFailure struct {
 }
 
 // A RUN, CONT or NAME owns following diagnostics until PAUSE or a result. Keep
-// paused tests' earlier diagnostics, and refuse unmarked output while more
-// than one test is running: its owner cannot be recovered from plain text.
+// paused tests' earlier diagnostics, and refuse unmarked output while a test
+// other than its parents runs beside it: plain text cannot name the owner.
 // Non-verbose Go output also prints diagnostics immediately after FAIL.
 func testFailures(lines []string) (map[string]*testFailure, bool) {
 	tests := map[string]*testFailure{}
@@ -422,7 +422,7 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		if (len(running) > 1 && !markedOwner) || (len(running) > 0 && !running[current]) {
+		if (len(running) > 1 && !markedOwner && !nested(running, current)) || (len(running) > 0 && !running[current]) {
 			return nil, false
 		}
 		if current != "" {
@@ -447,6 +447,17 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 		return nil, false // diagnostics before unmarked failures have no owner
 	}
 	return tests, true
+}
+
+// nested reports whether every running test but current is one of its
+// parents: a subtest running inside them, not tests running side by side.
+func nested(running map[string]bool, current string) bool {
+	for name := range running {
+		if name != current && !strings.HasPrefix(current, name+"/") {
+			return false
+		}
+	}
+	return true
 }
 
 func collapse(lines []string) []string {

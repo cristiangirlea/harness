@@ -215,6 +215,7 @@ func latestModel(chain []runlog.Record, backend string) string {
 // hand-over first, which is also saved beside the record as handoff.md.
 func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.Resume, task.ForkSession = p.Resume, p.ForkSession
+	p.carryOriginals(runDir, emit)
 	for _, n := range p.Notes {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: n})
 	}
@@ -234,6 +235,25 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "handoff.md not saved: " + err.Error()})
 	}
 	task.Prompt = h + task.Prompt
+}
+
+// carryOriginals copies the continued run's originals into runDir, so handles
+// in the carried conversation still read. The earlier run holds its own
+// predecessor's copies, so one hop covers the chain.
+func (p Plan) carryOriginals(runDir string, emit func(agent.Event)) {
+	if p.Prev.ID == "" {
+		return
+	}
+	from, err := runlog.Dir(p.Prev.ID)
+	if err == nil {
+		var n int
+		if n, err = tools.CopyOriginals(from, runDir); err == nil && n > 0 {
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: fmt.Sprintf("copied %d tool-result originals from run %s", n, p.Prev.ID)})
+		}
+	}
+	if err != nil {
+		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: fmt.Sprintf("originals of run %s not copied: %v", p.Prev.ID, err)})
+	}
 }
 
 // The transcript is capped like the project instruction files: room for a long

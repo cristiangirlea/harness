@@ -387,6 +387,38 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	}
 }
 
+func TestContinueCopiesTheEarlierRunsOriginals(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "first"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	const text, handle = "abc", "ba7816bf8f01cfea" // the SHA-256 prefix of text
+	originals := filepath.Join(runlog.Root(), recs[0].ID, "originals")
+	if err := os.MkdirAll(originals, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(originals, handle+".txt"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := cmdRun([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b", "second"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	<-recorded
+	next, err := runlog.List(1)
+	if err != nil || len(next) != 1 || next[0].ID == recs[0].ID {
+		t.Fatalf("recs=%+v err=%v", next, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(runlog.Root(), next[0].ID, "originals", handle+".txt")); err != nil || string(data) != text {
+		t.Fatalf("the continued run cannot read the earlier original: %q %v", data, err)
+	}
+}
+
 func TestShowMasksHumanOutputOnly(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const prompt = "API_KEY=fake-show-secret task"

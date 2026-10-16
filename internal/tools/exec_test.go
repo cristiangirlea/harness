@@ -24,6 +24,21 @@ func TestBoundedBufferKeepsHeadAndTail(t *testing.T) {
 	}
 }
 
+func TestFullCaptureKeepsExactlyTheCeilingAndDropsOneByteMore(t *testing.T) {
+	chunk := []byte(strings.Repeat("x", 1<<16))
+	at := &boundedBuffer{keepHead: 10, keepTail: 5, fullLimit: maxCapture}
+	for range maxCapture / len(chunk) {
+		_, _ = at.Write(chunk)
+	}
+	if at.fullDropped || len(at.String()) != maxCapture {
+		t.Fatalf("dropped=%v at exactly %d bytes", at.fullDropped, maxCapture)
+	}
+	_, _ = at.Write([]byte("y"))
+	if !at.fullDropped || len(at.String()) > 100 || !strings.HasSuffix(at.String(), "xxxxy") {
+		t.Fatal("one byte past the ceiling kept the full capture")
+	}
+}
+
 func TestRunShellExitCodeAndOutput(t *testing.T) {
 	res, err := RunShell(context.Background(), t.TempDir(), "echo hi && exit 3", 0, nil)
 	if err != nil || res.ExitCode != 3 || res.TimedOut || !strings.Contains(res.Output, "hi") {

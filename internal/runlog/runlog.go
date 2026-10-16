@@ -306,6 +306,14 @@ func validID(id string) error {
 	return nil
 }
 
+// Dir is run id's record directory, for an id that stays inside the runs directory.
+func Dir(id string) (string, error) {
+	if err := validID(id); err != nil {
+		return "", err
+	}
+	return filepath.Join(Root(), id), nil
+}
+
 func Load(id string) (Record, error) {
 	if err := validID(id); err != nil {
 		return Record{}, err

@@ -88,3 +88,19 @@ The measurement in `scripts/tool-shapes` is broader: it checks test and log firs
 valid JSON value, and counts a table when `encoding/csv` parses at least two rows of two or more
 fields (quoted commas allowed). Its `json` and `table` bytes are an upper bound on what these
 summaries can take.
+
+## Reading part of an original
+
+A shaped result names its original's handle. `read_original` returns the whole original, or one
+part: a byte range (`range`), a line range (`lines`, 1-based and inclusive), or, when the original
+is one JSON value, the value at an RFC 6901 pointer (`pointer`), copied from the original's bytes
+with only whitespace removed. So a model that sees `json: array of 500 items` can ask for
+`/412/status` instead of the whole array. [Run records](run-records.md) describes the store's
+caps and how originals follow a continuation.
+
+## Memory of whole-output capture
+
+`BenchmarkShapeNearCeiling` in `internal/tools` shapes a log just under 8 MiB (over 150,000
+short lines) through `toolOutput`, saving the original and summarising it. On 2026-10-16 on the
+owner's Windows PC (AMD Ryzen 9 9950X, `-benchtime=3x -benchmem`) it took 260,988,837 B/op and
+1,703,821 allocs/op, about 31 times the output's size; the 8 MiB ceiling is unchanged.
