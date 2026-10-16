@@ -40,6 +40,9 @@ func TestGCRemovesOnlySafeSubmoduleWorktrees(t *testing.T) {
 			}
 			copy.write(copy.repo, name, strings.ReplaceAll(string(data), filepath.ToSlash(f.root), filepath.ToSlash(root)))
 		}
+		// The rewrite above can miss the submodule's remote when Git spelt the path
+		// differently; a push to the shared original would race the other copies.
+		git(t, filepath.Join(path, "module"), "remote", "set-url", "origin", filepath.Join(root, "sub"))
 		cw := w
 		cw.Repo, cw.Path = copy.repo, path
 		return copy, path, []Worktree{cw}
