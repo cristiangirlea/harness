@@ -8,6 +8,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/gitretry"
@@ -161,6 +163,9 @@ type GateResult struct {
 	// exited on its own, and in records written before the field existed.
 	Killed  string         `json:"killed,omitempty"`
 	Timeout agent.Duration `json:"timeout,omitempty"`
+	// InfrastructureError identifies a shell that could not start its gate.
+	// Such a failure is for the operator, not a code repair by a retry backend.
+	InfrastructureError string `json:"infrastructure_error,omitempty"`
 }
 
 const (
@@ -172,6 +177,9 @@ const (
 // to the operator: "exited 3", or for a killed gate why it was killed and what
 // to do about it, so a timed-out suite is never mistaken for failing code.
 func (g GateResult) Outcome() string {
+	if g.InfrastructureError != "" {
+		return "infrastructure failure: " + g.InfrastructureError
+	}
 	switch g.Killed {
 	case KilledTimeout:
 		return fmt.Sprintf("killed after %s (gate_timeout; set %q in the spec to allow more)", g.Timeout, "gate_timeout")
@@ -853,6 +861,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		case ctx.Err() != nil:
 			return finish(StatusCanceled, "canceled")
 		}
+		if g := failedGate(out.att); g != nil && g.InfrastructureError != "" {
+			tr.Error = fmt.Sprintf("gate %q: %s", g.Command, g.Outcome())
+			return finish(StatusFail, tr.Error)
+		}
 		if att := out.att; att.Result.Status == agent.StatusLimited {
 			spent[att.Backend] = true
 			if err := limits.Note(att.Backend, att.Result); err != nil {
@@ -1254,10 +1266,14 @@ func checkExpect(re *regexp.Regexp, final string) GateResult {
 	return gr
 }
 
+var runGateShell = tools.RunShell
+
 func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
 	started := time.Now()
 	// A gate is the operator's own command: it keeps hrn's environment.
-	res, err := tools.RunShell(ctx, dir, command, timeout, nil)
+	res, err := runGateShell(ctx, dir, command, timeout, nil)
+	output, decodedUTF16 := decodeGateOutput(res.Output)
+	res.Output = output
 	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}
 	switch {
 	case err != nil:
@@ -1267,6 +1283,8 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 			// The batch's context had ended before the shell could start:
 			// the same cancellation as below, not a shell that failed.
 			gr.Killed = KilledCanceled
+		} else {
+			gr.InfrastructureError = "shell could not start: " + err.Error()
 		}
 	case gr.ExitCode == -1 && ctx.Err() != nil:
 		// The batch's own context ended and the gate went with it, whatever
@@ -1277,8 +1295,59 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 	case res.TimedOut:
 		gr.Killed, gr.Timeout = KilledTimeout, agent.Duration(timeout)
 		gr.Output = strings.TrimSpace(gr.Output + fmt.Sprintf("\n[timed out after %s]", timeout))
+	case gr.ExitCode != 0 && decodedUTF16:
+		// Launcher diagnostics precede shell output; later mentions can be
+		// ordinary test failures and must not suppress retries.
+		prefix := res.Output[:min(len(res.Output), 1024)]
+		if code := gateHCSError.FindString(prefix); code != "" {
+			gr.InfrastructureError = "WSL launcher: " + code
+		} else if strings.Contains(prefix, "The Windows Subsystem for Linux") {
+			gr.InfrastructureError = "The Windows Subsystem for Linux launcher could not start"
+		}
 	}
 	return gr
+}
+
+var gateHCSError = regexp.MustCompile(`\bHCS_E_[A-Z][A-Z0-9_]*\b`)
+
+// WSL's launcher can write UTF-16 even when stdout is a pipe. Decode at the
+// gate capture boundary, before taking a tail or checking launcher diagnostics.
+func decodeGateOutput(s string) (string, bool) {
+	var order binary.ByteOrder
+	switch {
+	case strings.HasPrefix(s, "\xff\xfe"):
+		order, s = binary.LittleEndian, s[2:]
+	case strings.HasPrefix(s, "\xfe\xff"):
+		order, s = binary.BigEndian, s[2:]
+	default:
+		// Without a BOM, require alternating NUL and non-NUL bytes in
+		// at least two code units, examining up to the first 32 bytes.
+		n := min(len(s)/2, 16)
+		if n < 2 {
+			return s, false
+		}
+		le, be := true, true
+		for i := 0; i < n*2; i += 2 {
+			le = le && s[i] != 0 && s[i+1] == 0
+			be = be && s[i] == 0 && s[i+1] != 0
+		}
+		switch {
+		case le:
+			order = binary.LittleEndian
+		case be:
+			order = binary.BigEndian
+		default:
+			return s, false
+		}
+	}
+	units := make([]uint16, 0, (len(s)+1)/2)
+	for i := 0; i+1 < len(s); i += 2 {
+		units = append(units, order.Uint16([]byte(s[i:i+2])))
+	}
+	if len(s)%2 != 0 {
+		units = append(units, '\ufffd')
+	}
+	return string(utf16.Decode(units)), true
 }
 
 // commitChanges commits everything the agent left in the worktree and returns

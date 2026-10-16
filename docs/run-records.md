@@ -6,6 +6,12 @@
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 
+Batch gate output is stored as UTF-8 after decoding detected UTF-16 shell output.
+A gate whose shell cannot start includes an optional `infrastructure_error`
+reason; the task fails with that reason without retrying. Older gate records
+without the field still load. See [Batches](batches.md) for the launcher errors
+that count as infrastructure failures.
+
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.
 
