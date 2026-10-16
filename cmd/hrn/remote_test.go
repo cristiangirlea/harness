@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -230,7 +231,12 @@ func (w *cancelOnSecondEvent) Write(data []byte) (int, error) {
 func TestRemoteWatchReconnectsWithDurableCursor(t *testing.T) {
 	var mu sync.Mutex
 	var cursors []string
-	remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var job string
+	_, _, job = remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/jobs/"+job {
+			fmt.Fprint(w, `{"state":"running"}`)
+			return
+		}
 		mu.Lock()
 		cursors = append(cursors, r.Header.Get("Last-Event-ID"))
 		count := len(cursors)
@@ -249,7 +255,7 @@ func TestRemoteWatchReconnectsWithDurableCursor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	output := &cancelOnSecondEvent{cancel: cancel}
-	if err := connection.watch(ctx, "/v1/jobs/j_fixture/events", 0, output); err != nil {
+	if err := connection.WatchJob(ctx, job, url.Values{}, 0, output); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()

@@ -313,3 +313,35 @@ func TestReadEventsRefusesALineOver1MiB(t *testing.T) {
 		t.Fatalf("ReadEvents error = %v, want bufio.ErrTooLong", err)
 	}
 }
+
+func TestWatchJobRefusesAJobIDThatIsNotServerIssuedWithoutARequest(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	client := &Client{origin: server.URL, http: server.Client()}
+	for _, job := range []string{"", "j_../x", "j_" + strings.Repeat("A", 32), "p_" + strings.Repeat("a", 32), "j_" + strings.Repeat("a", 32) + "/events"} {
+		if err := client.WatchJob(context.Background(), job, url.Values{}, 0, io.Discard); err == nil || !strings.Contains(err.Error(), "server-issued") {
+			t.Errorf("WatchJob(%q) error = %v", job, err)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("an invalid job ID reached the server in %d requests", requests.Load())
+	}
+}
+
+func TestWatchJobRefusesAJobWhoseStateIsNotAString(t *testing.T) {
+	const job = "j_cccccccccccccccccccccccccccccccc"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/jobs/"+job {
+			t.Errorf("unexpected request %s", r.URL)
+		}
+		fmt.Fprint(w, `{"state":5}`)
+	}))
+	defer server.Close()
+	client := &Client{origin: server.URL, http: server.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := client.WatchJob(ctx, job, url.Values{}, 0, io.Discard); err == nil || err.Error() != "invalid job from control service" {
+		t.Fatalf("WatchJob error = %v", err)
+	}
+}

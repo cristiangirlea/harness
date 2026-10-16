@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,8 @@ import (
 
 var ErrMalformedEvent = errors.New("malformed event from control service")
 var ErrEventOutput = errors.New("failed to write event output")
+
+var jobID = regexp.MustCompile("^j_[0-9a-f]{32}$")
 
 // Client uses tenant credentials only. It never sends a token to a redirect.
 type Client struct {
@@ -168,6 +171,9 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 // ended may have no terminal event left after the cursor, so it prints the remaining events
 // page by page and returns instead of streaming.
 func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, after int64, out io.Writer) error {
+	if !jobID.MatchString(job) {
+		return errors.New("job must be a server-issued ID")
+	}
 	data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"?"+scope.Encode(), nil)
 	if err != nil && watchRetries(err) {
 		return c.Watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)

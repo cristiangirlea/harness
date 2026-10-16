@@ -39,10 +39,6 @@ func (c *remoteConnection) request(ctx context.Context, method, path string, inp
 	return c.Client.Request(ctx, method, path, input)
 }
 
-func (c *remoteConnection) watch(ctx context.Context, path string, after int64, out io.Writer) error {
-	return c.Client.Watch(ctx, path, after, out)
-}
-
 func readRemoteEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 	return remote.ReadEvents(input, after, out)
 }
