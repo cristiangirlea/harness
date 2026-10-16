@@ -36,9 +36,9 @@ func TestOldTaskRecordsLoadWithoutAPurpose(t *testing.T) {
 	}
 }
 
-func TestRoutingRecordAndLegacy(t *testing.T) {
+func TestARoutedRunKeepsItsRowAndAnOldRecordLoadsWithoutOne(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	by := &RoutedBy{Category: "implement", Eval: "e1", Set: "2026-10-12"}
+	by := &RoutedBy{Category: "implement", Declared: true, Eval: "e1", Set: "2026-10-12"}
 	w, err := CreateContinuing("codex", agent.Task{Prompt: "Implement widget"}, "", by)
 	if err != nil {
 		t.Fatal(err)

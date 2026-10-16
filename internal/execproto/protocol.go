@@ -22,6 +22,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -38,13 +39,13 @@ type record interface {
 	Err() error
 	Close(agent.Result) error
 }
-type recordFactory func(string, agent.Task, string) (record, error)
+type recordFactory func(string, agent.Task, string, string) (record, error)
 
 // Run writes hello before reading input, runs at most one task, and returns the
 // protocol exit code. ctx carries interrupts; nil now uses the real clock.
 func Run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
-	return run(ctx, in, out, now, func(b string, t agent.Task, id string) (record, error) {
-		return runlog.CreateContinuing(b, t, id)
+	return run(ctx, in, out, now, func(b string, t agent.Task, id, route string) (record, error) {
+		return runlog.CreateContinuingRoute(b, t, id, route)
 	})
 }
 
@@ -91,6 +92,9 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if strings.TrimSpace(t.Prompt) == "" || strings.TrimSpace(t.Dir) == "" || t.Backend == "" || t.Mode == "" {
 		return w.reject(req.AttemptID, "bad_request", "prompt, dir, backend and mode are required")
 	}
+	if t.Fresh && t.ContinueRunID == "" {
+		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
+	}
 	b, err := agent.Get(t.Backend)
 	if err != nil {
 		return w.reject(req.AttemptID, "unsupported", err.Error())
@@ -116,11 +120,17 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if t.Timeout < 0 || t.MaxTurns < 0 {
 		return w.reject(req.AttemptID, "bad_request", "timeout and max_turns must not be negative")
 	}
+	if t.Purpose != "" && !purpose.Valid(t.Purpose) {
+		return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("purpose %q: one of %s", t.Purpose, strings.Join(purpose.Declarable(), ", ")))
+	}
+	if t.Purpose == "" {
+		t.Purpose = purpose.Declared(t.Prompt)
+	}
 	ws, err := tools.NewWorkspace(t.Dir)
 	if err != nil {
 		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
-	task := agent.Task{Prompt: t.Prompt, Dir: ws.Root, AttemptID: req.AttemptID, Options: agent.Options{
+	task := agent.Task{Prompt: t.Prompt, Purpose: t.Purpose, Dir: ws.Root, AttemptID: req.AttemptID, Options: agent.Options{
 		Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP,
 	}}
 	// A backend without MCP support must not inherit the default config.
@@ -131,7 +141,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	}
 	var plan followup.Plan
 	if t.ContinueRunID != "" {
-		plan, err = followup.Make(followup.Request{RunID: t.ContinueRunID, Backend: t.Backend, Dir: task.Dir, Model: t.Model})
+		plan, err = followup.Make(followup.Request{RunID: t.ContinueRunID, Backend: t.Backend, Dir: task.Dir, Model: t.Model, Fresh: t.Fresh})
 		if err != nil {
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
@@ -140,7 +150,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if _, err := b.Detect(); err != nil {
 		return w.reject(req.AttemptID, "unavailable", err.Error())
 	}
-	rec, err := create(t.Backend, task, t.ContinueRunID)
+	rec, err := create(t.Backend, task, t.ContinueRunID, plan.Route())
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", err.Error())
 	}
@@ -272,6 +282,8 @@ type taskRequest struct {
 	MaxTurns      int            `json:"max_turns"`
 	MCP           []string       `json:"mcp"`
 	ContinueRunID string         `json:"continue_run_id"`
+	Purpose       string         `json:"purpose"`
+	Fresh         bool           `json:"fresh"`
 }
 
 type cancelRequest struct {
@@ -322,7 +334,7 @@ func checkTaskKeys(data json.RawMessage) error {
 	if len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil
 	}
-	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id")
+	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh")
 	return err
 }
 

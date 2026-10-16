@@ -111,11 +111,11 @@ func Compare(a, b Record) Diff {
 	}
 	defs := map[string]Variant{}
 	for _, v := range a.Spec.Matrix {
-		defs[v.name()] = v
+		defs[v.Key()] = v
 	}
 	for _, v := range b.Spec.Matrix {
-		if was, ok := defs[v.name()]; ok && (was.Backend != v.Backend || was.Model != v.Model || was.Effort != v.Effort) {
-			d.VariantChanged = append(d.VariantChanged, v.name())
+		if was, ok := defs[v.Key()]; ok && (was.Backend != v.Backend || was.Model != v.Model || was.Effort != v.Effort) {
+			d.VariantChanged = append(d.VariantChanged, v.Key())
 		}
 	}
 	ja, _ := json.Marshal(a.Spec.Judge)
