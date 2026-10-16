@@ -42,7 +42,8 @@ An invalid value is refused before any task starts. If omitted or empty, a valid
 `Purpose: <category>` header on the first non-blank prompt line supplies it (see
 [Declared purpose](commands.md#declared-purpose)). The effective declaration is
 saved on the batch task result and each attempt's `agent.Task`, without changing
-the prompt.
+the prompt. Implementation prompts carry the repository's comment rule in one
+line: "Comments say why, not what: one line, three at most; no issue numbers, dates or review history in code."
 
 For each task hrn creates branch `hrn/<id>` from the current `HEAD` (uncommitted changes
 in the main worktree are not included) and gives it a worktree (see below), runs the

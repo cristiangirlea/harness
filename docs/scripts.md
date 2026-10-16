@@ -58,3 +58,12 @@ each at most 200 characters, plus `truncated`. Invalid input is an error.
 `wait-for.sh host port [timeout]` waits for TCP connection success; timeout
 defaults to 10 seconds. Zero timeout makes one immediate probe. Invalid inputs
 and timeouts return error objects. Successful probes return `{"ready":true}`.
+
+`comment-check.sh [--root DIR] [--baseline PATH] [--prune] [--init]` scans
+non-test `.go` files with `go/scanner`, flagging comment blocks over five
+counted lines (`long`) and comments citing `#<digits>`, `YYYY-MM-DD` dates, or
+`review`/`reviews`/`reviewed`/`reviewer` (`cite`). Directives and leading
+kept-script headers are exempt. It compares violations by `(path, fingerprint)`
+against `scripts/comment-baseline.txt`, prints a JSON summary, and exits 1 when
+any new violation or stale baseline entry is found (`--prune` drops stale
+entries without adding new ones).
