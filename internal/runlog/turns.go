@@ -76,24 +76,35 @@ func TurnsOf(id string) ([]Turn, error) {
 		return nil, err
 	}
 	defer f.Close()
-	// hrn writes compact JSON, and a quote inside any text is escaped, so
-	// only an event of these kinds holds either string as written.
+	events, err := UsageEvents(f)
+	if err != nil {
+		return nil, err
+	}
+	return Turns(events), nil
+}
+
+// UsageEvents reads the usage and compaction events of an events.jsonl
+// stream, decoding no other line; one that does not decode is skipped.
+func UsageEvents(r io.Reader) ([]agent.Event, error) {
+	// hrn writes compact JSON with every quote inside a text escaped, so these
+	// strings appear as written only in an event of these kinds or a tool's
+	// input, which is recorded as given; the kind is checked once decoded.
 	usage, compaction := []byte(`"kind":"usage"`), []byte(`"kind":"compaction"`)
 	var events []agent.Event
-	r := bufio.NewReader(f)
+	br := bufio.NewReader(r)
 	for {
-		line, readErr := r.ReadBytes('\n')
+		line, readErr := br.ReadBytes('\n')
 		if readErr != nil && readErr != io.EOF {
 			return nil, readErr
 		}
 		if bytes.Contains(line, usage) || bytes.Contains(line, compaction) {
 			var e agent.Event
-			if json.Unmarshal(line, &e) == nil {
+			if json.Unmarshal(line, &e) == nil && (e.Kind == agent.EventUsage || e.Kind == agent.EventCompaction) {
 				events = append(events, e)
 			}
 		}
 		if readErr == io.EOF {
-			return Turns(events), nil
+			return events, nil
 		}
 	}
 }

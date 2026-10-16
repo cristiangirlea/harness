@@ -14,7 +14,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/eval"
 )
 
-func TestStorage(t *testing.T) {
+func TestRouteTableRoundTripsAndNamesTheFileWhenBroken(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
 	tab, err := Load()
@@ -153,7 +153,7 @@ func TestApplyOnlyWhenAllChoicesEmpty(t *testing.T) {
 	for _, tc := range []struct{ backend, model, effort string }{{}, {backend: "claude"}, {model: "mine"}, {effort: "high"}} {
 		b := tc.backend
 		o := agent.Options{Model: tc.model, Effort: tc.effort}
-		by, err := o.Route("Implement a widget", &b, os.Getenv("HRN_HOME"))
+		by, err := o.Route("", "Implement a widget", &b, os.Getenv("HRN_HOME"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,7 +172,7 @@ func TestApplyMissingUnknownAndBroken(t *testing.T) {
 	t.Setenv("HRN_HOME", home)
 	o := agent.Options{}
 	b := ""
-	if by, err := o.Route("Review patch", &b, home); by != nil || err != nil {
+	if by, err := o.Route("", "Review patch", &b, home); by != nil || err != nil {
 		t.Fatalf("missing: %v %v", by, err)
 	}
 	if err := Save(Table{"review": {Backend: "not-a-backend"}}); err != nil {
@@ -186,7 +186,7 @@ func TestApplyMissingUnknownAndBroken(t *testing.T) {
 	prev := os.Stderr
 	os.Stderr = f
 	defer func() { os.Stderr = prev }()
-	if by, err := o.Route("Review patch", &b, home); by != nil || err != nil || b != "" {
+	if by, err := o.Route("", "Review patch", &b, home); by != nil || err != nil || b != "" {
 		t.Fatalf("unknown: %v %v %s", by, err, b)
 	}
 	data, _ := os.ReadFile(f.Name())
@@ -196,11 +196,65 @@ func TestApplyMissingUnknownAndBroken(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "route.json"), []byte("{"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := o.Route("Review patch", &b, home); err == nil {
+	if _, err := o.Route("", "Review patch", &b, home); err == nil {
 		t.Fatal("broken table accepted")
 	}
 	b = "codex"
-	if _, err := o.Route("Review patch", &b, home); err != nil {
+	if _, err := o.Route("", "Review patch", &b, home); err != nil {
 		t.Fatalf("explicit choice read table: %v", err)
+	}
+}
+
+func TestRouteSkipsARowWithAnInvalidEffortAndWarns(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := Save(Table{"review": {Backend: "codex", Effort: "enormous"}}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	prev := os.Stderr
+	os.Stderr = f
+	defer func() { os.Stderr = prev }()
+	o, b := agent.Options{}, ""
+	if by, err := o.Route("", "Review patch", &b, home); by != nil || err != nil || b != "" || o.Effort != "" {
+		t.Fatalf("invalid row: %v %v %s %+v", by, err, b, o)
+	}
+	data, _ := os.ReadFile(f.Name())
+	if !strings.Contains(string(data), "warning: ignoring route for review") || !strings.Contains(string(data), "enormous") {
+		t.Fatalf("warning: %s", data)
+	}
+}
+
+func TestRouteUsesADeclaredPurposeAndSaysSo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := Save(Table{"implement": {Backend: "codex", Model: "sol"}, "review": {Backend: "claude", Model: "opus"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ declared, prompt, want, backend string }{
+		{"review", "Implement a widget", "review", "claude"},
+		{"", "Purpose: review\nImplement a widget", "review", "claude"},
+		{"", "Implement a widget", "implement", "codex"},
+	} {
+		o, b := agent.Options{}, ""
+		by, err := o.Route(tc.declared, tc.prompt, &b, home)
+		if err != nil || by == nil || by.Category != tc.want || b != tc.backend || by.Declared != (tc.want == "review") {
+			t.Fatalf("%q %q: %+v %v %s", tc.declared, tc.prompt, by, err, b)
+		}
+	}
+}
+
+func TestFromEvalFindsAnUnnamedVariantByEvalsOwnName(t *testing.T) {
+	r := evidence()
+	r.Spec.Matrix = []eval.Variant{{Backend: "codex", Model: "sol", Effort: "low"}}
+	name := r.Spec.Matrix[0].Key()
+	r.Table.Variants = []eval.VariantRow{{Name: name, MedianCostUSD: 1}}
+	r.Table.Tasks = []eval.TaskRow{{Task: "build", Variant: name, Passed: 1, Total: 1}}
+	if row := FromEval(r, 0)["implement"]; row.Backend != "codex" || row.Effort != "low" {
+		t.Fatalf("unnamed variant: %+v", row)
 	}
 }

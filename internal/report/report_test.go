@@ -36,7 +36,7 @@ func TestCodexEstimatedCostMark(t *testing.T) {
 	}
 }
 
-func TestRowsByRouted(t *testing.T) {
+func TestReportByRoutedGroupsRunsByCategoryAndEval(t *testing.T) {
 	runs := sample()
 	runs[0].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1"}
 	runs[1].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1"}

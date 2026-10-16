@@ -46,7 +46,7 @@ func (m RetrievalManifest) Validate() error {
 		return fmt.Errorf("retrieval comparison requires fixed identity, held-out tasks, two variants, >=10 tasks and >=3 repeats")
 	}
 	a, b := m.Spec.Matrix[0], m.Spec.Matrix[1]
-	if a.name() == b.name() || a.Backend == "" || a.Backend != b.Backend || a.Model == "" || a.Model != b.Model || a.Effort != b.Effort {
+	if a.Key() == b.Key() || a.Backend == "" || a.Backend != b.Backend || a.Model == "" || a.Model != b.Model || a.Effort != b.Effort {
 		return fmt.Errorf("variants must use identical explicit backend/model/effort")
 	}
 	if a.Retrieval != "off" || (b.Retrieval != "optional" && b.Retrieval != "required") {
@@ -72,7 +72,7 @@ func CompareRetrieval(m RetrievalManifest, samples []RetrievalSample, basePrep, 
 	if err := m.Validate(); err != nil {
 		return out, err
 	}
-	variants := []string{m.Spec.Matrix[0].name(), m.Spec.Matrix[1].name()}
+	variants := []string{m.Spec.Matrix[0].Key(), m.Spec.Matrix[1].Key()}
 	tasks := map[string]bool{}
 	for _, t := range m.Spec.Tasks {
 		tasks[t.ID] = true
