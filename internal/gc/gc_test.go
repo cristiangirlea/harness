@@ -992,6 +992,73 @@ func TestGCKeepsBatchTaskWithEmptyDiff(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
 }
 
+func TestGCReadsLandedPatchIDsOncePerMergeBaseAsBefore(t *testing.T) {
+	f := newFixture(t)
+	a, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "a"), "hrn/a")
+	b, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "b"), "hrn/b")
+	f.write(f.repo, "hrn/a.txt", "hrn/a\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land a")
+	landedA := git(t, f.repo, "rev-parse", "HEAD")
+	c, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "c"), "hrn/c")
+	f.write(c, "asset.bin", "\x00\x01\x02\xff")
+	git(t, c, "add", ".")
+	git(t, c, "commit", "-q", "-m", "c binary")
+	f.write(f.repo, "asset.bin", "\x00\x01\x02\xff")
+	f.write(f.repo, "hrn/c.txt", "hrn/c\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land c with a binary")
+	git(t, f.repo, "push", "-q", "origin", "main")
+	saveBatch(t, "shared", f.repo,
+		batch.TaskResult{ID: "a", Status: batch.StatusPass, Branch: "hrn/a", Worktree: a},
+		batch.TaskResult{ID: "b", Status: batch.StatusPass, Branch: "hrn/b", Worktree: b},
+		batch.TaskResult{ID: "c", Status: batch.StatusPass, Branch: "hrn/c", Worktree: c})
+
+	previous := landedPatchIDs
+	t.Cleanup(func() { landedPatchIDs = previous })
+	calls := map[string]int{}
+	landedPatchIDs = func(ctx context.Context, repo, base, def string) []patchID {
+		calls[base]++
+		return previous(ctx, repo, base, def)
+	}
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, a), Remove, "landed on origin/main as "+landedA[:7])
+	wantVerdict(t, find(t, wts, b), Keep, "not on origin/main")
+	wantVerdict(t, find(t, wts, c), Remove, "landed on origin/main as")
+
+	t.Run("once per merge base", func(t *testing.T) {
+		if len(calls) != 2 {
+			t.Fatalf("patch ids read for %d merge bases, want 2: %v", len(calls), calls)
+		}
+		for base, n := range calls {
+			if n != 1 {
+				t.Errorf("patch ids for %s read %d times, want once", base, n)
+			}
+		}
+	})
+	t.Run("same ids as the whole log read at once", func(t *testing.T) {
+		ctx := context.Background()
+		def := "refs/remotes/origin/main"
+		for base := range calls {
+			patches, err := gitStdout(ctx, f.repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+fmt.Sprint(maxCommits), base+".."+def)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := gitStdoutInput(ctx, f.repo, patches, "patch-id", "--verbatim")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := logPatchIDs(ctx, f.repo, base, def)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want || strings.TrimSpace(got) == "" {
+				t.Errorf("base %s: streamed ids\n%s\nwant\n%s", base, got, want)
+			}
+		}
+	})
+}
+
 func TestGCRemovesBinaryBatchChangeLandedAsSquash(t *testing.T) {
 	f := newFixture(t)
 	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
