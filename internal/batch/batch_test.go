@@ -418,6 +418,136 @@ func TestCommitChangesNeutralisesAFilterNamedLikeAnotherSetting(t *testing.T) {
 	}
 }
 
+// markerScript writes a script that records it ran and passes stdin through.
+func markerScript(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "marker.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\ncat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.ToSlash(path)
+}
+
+// assertNotRan fails when the marker script ran, then proves it can run.
+func assertNotRan(t *testing.T, marker, what string, control func()) {
+	t.Helper()
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("%s ran or marker could not be checked: %v", what, err)
+	}
+	control()
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
+		t.Fatalf("control %s = %q, %v", what, data, err)
+	}
+}
+
+// git -c splits its argument at the first '=', so a filter whose name holds
+// one must still be turned off.
+func TestCommitChangesNeutralisesAFilterWhoseNameHoldsAnEqualsSign(t *testing.T) {
+	for _, name := range []string{"x=y", "=", "a=b=c"} {
+		t.Run(name, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			git(t, wt, "config", "filter."+name+".clean", markerScript(t))
+			if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("* filter="+name+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := commitChanges(wt, "task result")
+			if err != nil || sha == "" {
+				t.Fatalf("commitChanges = %q, %v", sha, err)
+			}
+			assertNotRan(t, marker, "filter "+name, func() {
+				if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("again\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				_ = exec.Command("git", "-C", wt, "add", "result.txt").Run()
+			})
+		})
+	}
+}
+
+// addSubmodule puts a repository at wt/sub, records it as a submodule, and
+// sets the submodule's own core.fsmonitor to the marker script.
+func addSubmodule(t *testing.T, wt string) {
+	t.Helper()
+	sub := filepath.Join(wt, "sub")
+	git(t, wt, "init", "-q", "-b", "main", "sub")
+	git(t, sub, "config", "user.email", "test@example.com")
+	git(t, sub, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(sub, "f.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, sub, "add", "f.txt")
+	git(t, sub, "commit", "-q", "-m", "sub")
+	git(t, wt, "add", "sub")
+	git(t, wt, "commit", "-q", "-m", "add sub")
+	git(t, sub, "config", "core.fsmonitor", markerScript(t))
+}
+
+// A submodule's own config is the agent's to write too; hrn's status and
+// commit never descend into it.
+func TestCommitChangesDoesNotRunASubmodulesFsmonitor(t *testing.T) {
+	dir := initRepo(t)
+	wt := filepath.Join(t.TempDir(), "worktree")
+	git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+	marker := filepath.Join(t.TempDir(), "ran")
+	t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+	addSubmodule(t, wt)
+	if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := commitChanges(wt, "task result")
+	if err != nil || sha == "" {
+		t.Fatalf("commitChanges = %q, %v", sha, err)
+	}
+	assertNotRan(t, marker, "submodule fsmonitor", func() {
+		_ = exec.Command("git", "-C", wt, "status", "--porcelain").Run()
+	})
+}
+
+func TestHasChangesDoesNotRunARepositoryOrSubmoduleFsmonitor(t *testing.T) {
+	for _, where := range []string{"repository", "submodule"} {
+		t.Run(where, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			if where == "submodule" {
+				addSubmodule(t, wt)
+			} else {
+				git(t, wt, "config", "core.fsmonitor", markerScript(t))
+			}
+			if dirty, err := hasChanges(wt); err != nil || dirty {
+				t.Fatalf("hasChanges = %v, %v", dirty, err)
+			}
+			assertNotRan(t, marker, where+" fsmonitor", func() {
+				_ = exec.Command("git", "-C", wt, "status", "--porcelain").Run()
+			})
+		})
+	}
+}
+
+func TestDirtyPathsDoesNotRunARepositoryFsmonitor(t *testing.T) {
+	for _, untracked := range []bool{true, false} {
+		dir := initRepo(t)
+		marker := filepath.Join(t.TempDir(), "ran")
+		t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+		git(t, dir, "config", "core.fsmonitor", markerScript(t))
+		if lines, err := dirtyPaths(context.Background(), dir, untracked); err != nil || len(lines) != 0 {
+			t.Fatalf("dirtyPaths(untracked=%v) = %q, %v", untracked, lines, err)
+		}
+		assertNotRan(t, marker, "repository fsmonitor", func() {
+			_ = exec.Command("git", "-C", dir, "status", "--porcelain").Run()
+		})
+	}
+}
+
 // canon resolves symlinks and Windows 8.3 short names, which git expands.
 func canon(t *testing.T, p string) string {
 	t.Helper()
