@@ -1871,7 +1871,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 			return "", nil, fmt.Errorf("task %s: commit %s is no longer in %s, so its branch was removed",
 				taskID, tools.ShortSHA(tr.Commit), res.Dir)
 		}
-		out, err := gitStdout(ctx, res.Dir, "diff", res.Base+".."+tr.Commit)
+		out, err := gitStdout(ctx, res.Dir, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", res.Base+".."+tr.Commit)
 		return out, nil, err
 	}
 	if tr.Slot != 0 {
@@ -1887,7 +1887,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 		return "", nil, err
 	}
 	defer g.close()
-	out, err := g.stdout(ctx, "diff", "HEAD")
+	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD")
 	if err != nil {
 		return "", nil, err
 	}

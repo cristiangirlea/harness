@@ -2090,6 +2090,95 @@ func TestDiffFallsBackToTheWorktree(t *testing.T) {
 	}
 }
 
+// The repository config and attributes are the agent's to write, so neither
+// the committed-task diff nor the worktree fallback runs an external diff, a
+// diff driver's command or textconv, or a dirty submodule's fsmonitor that an
+// agent-written .gitmodules ignore=none would reach.
+func TestDiffDoesNotRunAgentDiffPrograms(t *testing.T) {
+	attributes := func(t *testing.T, path string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("* diff=tc\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name      string
+		committed bool // the worktree fallback is checked otherwise
+		setup     func(t *testing.T, dir, wt string)
+	}{
+		{"diff.external", true, func(t *testing.T, _, wt string) {
+			git(t, wt, "config", "diff.external", markerScript(t))
+		}},
+		{"diff.external", false, func(t *testing.T, _, wt string) {
+			git(t, wt, "config", "diff.external", markerScript(t))
+		}},
+		// A diff between two commits reads attributes from the repository's
+		// info/attributes, which a worktree shares.
+		{"diff driver command", true, func(t *testing.T, dir, wt string) {
+			attributes(t, filepath.Join(dir, ".git", "info", "attributes"))
+			git(t, wt, "config", "diff.tc.command", markerScript(t))
+		}},
+		{"diff driver command", false, func(t *testing.T, _, wt string) {
+			attributes(t, filepath.Join(wt, ".gitattributes"))
+			git(t, wt, "config", "diff.tc.command", markerScript(t))
+		}},
+		{"textconv", true, func(t *testing.T, dir, wt string) {
+			attributes(t, filepath.Join(dir, ".git", "info", "attributes"))
+			git(t, wt, "config", "diff.tc.textconv", markerScript(t))
+		}},
+		{"textconv", false, func(t *testing.T, _, wt string) {
+			attributes(t, filepath.Join(wt, ".gitattributes"))
+			git(t, wt, "config", "diff.tc.textconv", markerScript(t))
+		}},
+		{"submodule fsmonitor", false, func(t *testing.T, _, wt string) {
+			addSubmodule(t, wt)
+			if err := os.WriteFile(filepath.Join(wt, ".gitmodules"),
+				[]byte("[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n\tignore = none\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(wt, "sub", "f.txt"), []byte("two\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		where := "worktree"
+		if tc.committed {
+			where = "commit"
+		}
+		t.Run(tc.name+"/"+where, func(t *testing.T) {
+			dir := initRepo(t)
+			base := git(t, dir, "rev-parse", "HEAD")
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			if err := os.WriteFile(filepath.Join(wt, "README.md"), []byte("changed\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			task := TaskResult{ID: "alpha", Worktree: wt}
+			control := []string{"-C", wt, "diff", "HEAD"}
+			if tc.committed {
+				git(t, wt, "commit", "-q", "-am", "task result")
+				task.Commit = git(t, wt, "rev-parse", "HEAD")
+				control = []string{"-C", dir, "diff", base + ".." + task.Commit}
+			}
+			tc.setup(t, dir, wt)
+			res := Result{ID: "b", Dir: dir, Base: base, Tasks: []TaskResult{task}}
+			diff, _, err := Diff(context.Background(), res, "alpha")
+			if err != nil || !strings.Contains(diff, "+changed") {
+				t.Fatalf("Diff = %q, %v", diff, err)
+			}
+			assertNotRan(t, marker, tc.name, func() {
+				_ = exec.Command("git", control...).Run()
+			})
+		})
+	}
+}
+
 func TestGateTimeoutIsPerTask(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{
