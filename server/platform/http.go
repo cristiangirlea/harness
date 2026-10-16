@@ -295,8 +295,20 @@ func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := checkCostLimit(input, h.MaxCostUSDPerJob); err != nil {
-		failure(w, 422, "cost_limit", err.Error())
-		return
+		// A retry of a job accepted before the limit was lowered must still get that job back.
+		existing := false
+		if input.IdempotencyKey != "" {
+			var lookupErr error
+			existing, lookupErr = h.Store.IdempotentJobExists(r.Context(), input.TenantID, input.ProjectID, input.IdempotencyKey)
+			if lookupErr != nil {
+				failure(w, 500, "storage_error", "job storage unavailable")
+				return
+			}
+		}
+		if !existing {
+			failure(w, 422, "cost_limit", err.Error())
+			return
+		}
 	}
 	job, reused, err := h.Store.Submit(r.Context(), input)
 	if err != nil {
