@@ -28,7 +28,8 @@ id as its label. Then come a run's backend, purpose, status, duration, cost and 
 first line, and a batch's status, how many tasks passed, its backends, duration, cost and up
 to three of its tasks' names, then "and N more". Every attempt of a batch's task is also a
 run; its row links to the batch under the run's id, even when that batch is older than the
-ones listed. A run's page is its
+ones listed. Watch blanks a batch record's secrets once and reuses that copy, for the index and
+for Ada, until the record's file changes time or size. A run's page is its
 timeline as it happens: the assistant's text, each tool call with its input in one line
 (the input itself folded under it, its first 6 KB and last 2 KB), each result folded and
 capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each

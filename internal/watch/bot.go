@@ -613,11 +613,11 @@ func unread(batches []batch.Result) map[string]bool {
 func (b *botWatcher) look() botSnapshot {
 	runs, _ := runlog.List(b.s.opt.Runs)
 	// Every batch on disk: an attempt of an old batch is still its run.
-	batches, unreadable, _ := batch.List()
+	batches, unreadable, _ := b.s.listBatches()
 	if unreadable > 0 {
 		// As the index does: most likely one caught mid-save. Look again.
 		time.Sleep(50 * time.Millisecond)
-		batches, unreadable, _ = batch.List()
+		batches, unreadable, _ = b.s.listBatches()
 	}
 	if !b.looked && unreadable > 0 {
 		b.late = unread(batches)
@@ -651,9 +651,6 @@ func (b *botWatcher) look() botSnapshot {
 			delete(b.followers, id)
 			delete(b.doing, id)
 		}
-	}
-	for i, res := range batches {
-		batches[i] = b.s.cleanBatch(res)
 	}
 	b.batches = keepUnread(b.batches, batches, unreadable, b.missed)
 	return botLook(runs, b.batches, b.doing, time.Now())
