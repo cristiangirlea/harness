@@ -151,7 +151,8 @@ const (
 
 type Result struct {
 	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
-	// Usage describes the run's token and cost accounting, saved as usage_metadata.
+	// Usage describes how to interpret the run's totals (the counts are the fields
+	// above), saved as usage_metadata.
 	// Event.Usage holds per-call token counters of type Usage.
 	Usage *UsageMetadata `json:"usage_metadata,omitempty"`
 	// RecoveryRequired is execution evidence for the scheduler, not success or

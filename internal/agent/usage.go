@@ -5,7 +5,9 @@ import (
 	"math"
 )
 
-// UsageMetadata describes the run-level token and cost accounting in Result.Usage.
+// UsageMetadata, in Result.Usage, describes how to interpret the run's totals;
+// the counts themselves are Result's InputTokens, OutputTokens, CacheRead,
+// CacheWrite and CostUSD.
 // Usage in Event.Usage holds per-call token counters instead.
 // Empty metadata on historical records is inferred only for known adapters.
 type UsageMetadata struct {
