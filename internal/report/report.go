@@ -29,7 +29,8 @@ const (
 )
 
 // Where a row's context per turn comes from: every run's usage events, every
-// run's totals (an average a run), or some of each.
+// run's totals (an average a run), or some of each, whose median is then over
+// one average a run.
 const (
 	ContextFromTurns  = "turns"
 	ContextFromTotals = "totals"
@@ -295,7 +296,7 @@ func canonDir(p string) string {
 
 func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Turn) Row {
 	row := Row{Key: key, Runs: len(recs), CacheShare: -1}
-	var durations, turns, costs, contexts []float64
+	var durations, turns, costs, contexts, runAverages []float64
 	var input, cached int64
 	fromTurns, fromTotals := false, false
 	for _, r := range recs {
@@ -314,16 +315,19 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		}
 		if calls := turnsOf[r.ID]; len(calls) > 0 {
 			fromTurns = true
+			var sum float64
 			for _, c := range calls {
 				contexts = append(contexts, float64(c.ContextTokens))
+				sum += float64(c.ContextTokens)
 				row.PeakContext = max(row.PeakContext, c.ContextTokens)
 			}
+			runAverages = append(runAverages, sum/float64(len(calls)))
 		} else if total, known, _ := res.ModelTokens(); known && total > res.OutputTokens && res.Turns > 0 {
 			// Without the calls, a run's turns are its average; the last
 			// call's context, where known, may be above it.
 			fromTotals = true
 			avg := (total - res.OutputTokens) / int64(res.Turns)
-			contexts = append(contexts, float64(avg))
+			runAverages = append(runAverages, float64(avg))
 			row.PeakContext = max(row.PeakContext, avg, res.ContextTokens)
 		}
 		if res.Status == agent.StatusOK {
@@ -351,7 +355,10 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 	row.MedianDuration = time.Duration(Median(durations))
 	row.MedianTurns = Median(turns)
 	row.MedianCost = Median(costs)
-	row.MedianContext = Median(contexts)
+	row.MedianContext = Median(runAverages)
+	if fromTurns && !fromTotals {
+		row.MedianContext = Median(contexts)
+	}
 	switch {
 	case fromTurns && fromTotals:
 		row.ContextFrom = ContextFromMixed

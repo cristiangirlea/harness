@@ -319,11 +319,24 @@ func TestReportByDayPrintsTokensAndContextPerTurn(t *testing.T) {
 	if err := w.Close(agent.Result{Status: agent.StatusOK, Turns: 3, InputTokens: 90000, OutputTokens: 700, CacheRead: 1500, CacheWrite: 250}); err != nil {
 		t.Fatal(err)
 	}
+	// A fixed start, so the row's day does not depend on when the test runs.
+	rec, err := runlog.Load(w.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Started = time.Date(2026, 9, 21, 12, 0, 0, 0, time.Local)
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runlog.Root(), w.ID(), "result.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	out, err := captureStdout(t, func() error { return cmdReport([]string{"--by", "day"}) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	day := time.Now().Format("2006-01-02")
+	const day = "2026-09-21"
 	text := string(out)
 	i := strings.Index(text, "tokens by day, all time\n")
 	if !strings.HasPrefix(text, "runs by day, all time\n") || i < 0 {
@@ -340,7 +353,7 @@ func TestReportByDayPrintsTokensAndContextPerTurn(t *testing.T) {
 		}
 	}
 	if f := strings.Fields(lines[2]); f[0] != day {
-		t.Errorf("first row is %q, want today, %s", f[0], day)
+		t.Errorf("first row is %q, want the run's day, %s", f[0], day)
 	}
 }
 
