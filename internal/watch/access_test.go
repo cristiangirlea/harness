@@ -201,17 +201,22 @@ func TestPublicAccessChecksEveryRequestAndKeepsItRemote(t *testing.T) {
 	if cookieResponse.Code != 200 {
 		t.Fatalf("cookie fallback = %d", cookieResponse.Code)
 	}
-	for _, tc := range []struct{ name, host, origin, token string }{
-		{"missing token", "harness.example.com", "", ""},
-		{"wrong host", "other.example", "", token},
-		{"loopback host", "127.0.0.1:8089", "", token},
-		{"wrong origin scheme", "harness.example.com", "http://harness.example.com", token},
-		{"wrong origin host", "harness.example.com", "https://other.example", token},
-		{"host with a trailing dot", "harness.example.com.", "", token},
+	for _, tc := range []struct{ name, host, origin, token, reason string }{
+		{"missing token", "harness.example.com", "", "", ""},
+		{"wrong host", "other.example", "", token, "bad host"},
+		{"loopback host", "127.0.0.1:8089", "", token, "bad host"},
+		{"wrong origin scheme", "harness.example.com", "http://harness.example.com", token, "bad origin"},
+		{"wrong origin host", "harness.example.com", "https://other.example", token, "bad origin"},
+		{"host with a trailing dot", "harness.example.com.", "", token, "bad host"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := f.request(h, "/", tc.host, tc.origin, tc.token); got.Code != 403 {
 				t.Fatalf("status = %d", got.Code)
+			}
+			if tc.reason != "" {
+				if got := lastAccessRow(t)["reason"]; got != tc.reason {
+					t.Fatalf("access log reason = %v, want %s", got, tc.reason)
+				}
 			}
 		})
 	}
@@ -735,7 +740,7 @@ func TestPublicAccessLogsAStreamRowAtStartAndAtEnd(t *testing.T) {
 	if _, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil {
 		t.Fatal(err)
 	}
-	row := lastAccessRow(t)
+	row := waitAccessRow(t)
 	if row["stream"] != "start" || row["status"] != float64(200) || row["path"] != "/stream/index" || row["email"] != "owner@example.com" {
 		t.Fatalf("row while the stream is open = %v", row)
 	}
@@ -762,6 +767,68 @@ func TestPublicAccessLogsAStreamRowAtStartAndAtEnd(t *testing.T) {
 			t.Fatalf("log after the stream ends: %s", data)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// waitAccessRow returns the last access row once one exists: a stream's start
+// row follows its first flush, so the browser may read before it is written.
+func waitAccessRow(t *testing.T) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if data, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-access.log")); err == nil && len(bytes.TrimSpace(data)) > 0 {
+			return lastAccessRow(t)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no access row")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPublicAccessSendsAStreamsFirstByteWhileTheLogIsBusy(t *testing.T) {
+	f := newAccessFixture(t)
+	s := &server{opt: f.opt}
+	done := make(chan struct{})
+	h := s.publicLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "retry: 2000\n\n")
+		_ = http.NewResponseController(w).Flush()
+		<-done
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	defer close(done)
+	s.logMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.logMu.Unlock()
+		}
+	}()
+	line := make(chan string, 1)
+	go func() {
+		resp, err := srv.Client().Get(srv.URL + "/stream/index")
+		if err != nil {
+			line <- err.Error()
+			return
+		}
+		defer resp.Body.Close()
+		l, _ := bufio.NewReader(resp.Body).ReadString('\n')
+		line <- l
+	}()
+	select {
+	case l := <-line:
+		if l != "retry: 2000\n" {
+			t.Fatalf("first line = %q", l)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream's first byte waited for the access log")
+	}
+	locked = false
+	s.logMu.Unlock()
+	if row := waitAccessRow(t); row["stream"] != "start" || row["path"] != "/stream/index" {
+		t.Fatalf("start row = %v", row)
 	}
 }
 

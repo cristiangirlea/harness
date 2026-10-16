@@ -310,11 +310,12 @@ func (v *accessVerifier) fetch() (map[string]*rsa.PublicKey, error) {
 
 type accessWriter struct {
 	http.ResponseWriter
-	status int
-	email  string
-	reason string
-	stream bool   // the response is an event stream
-	start  func() // writes the stream's start row
+	status  int
+	email   string
+	reason  string
+	stream  bool   // the response is an event stream
+	started bool   // the stream's start row is written
+	start   func() // writes the stream's start row
 }
 
 func (w *accessWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -327,19 +328,27 @@ func (w *accessWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
-// begin records the status once; an event stream logs a row here, since its
-// end row waits until the browser leaves.
+// FlushError logs an event stream's start row after its first flush, so a slow
+// log never holds back the first byte; the end row waits for the browser to leave.
+func (w *accessWriter) FlushError() error {
+	w.begin(http.StatusOK)
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	if w.stream && !w.started {
+		w.started = true
+		if w.start != nil {
+			w.start()
+		}
+	}
+	return err
+}
+
+// begin records the status once.
 func (w *accessWriter) begin(status int) {
 	if w.status != 0 {
 		return
 	}
 	w.status = status
-	if strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
-		w.stream = true
-		if w.start != nil {
-			w.start()
-		}
-	}
+	w.stream = strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream")
 }
 
 func (s *server) publicLog(next http.Handler) http.Handler {
@@ -351,7 +360,7 @@ func (s *server) publicLog(next http.Handler) http.Handler {
 				aw.status = http.StatusOK
 			}
 			stream := ""
-			if aw.stream {
+			if aw.started {
 				stream = "end"
 			}
 			s.writeAccessRow(r, aw, stream)
