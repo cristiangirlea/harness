@@ -182,7 +182,7 @@ func TestRunChecksLimitsOnTheRoutedBackend(t *testing.T) {
 	}
 	<-recorded
 	recs, err := runlog.List(1)
-	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].RoutedBy == nil {
+	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].Task.Model != "" || recs[0].Task.Effort != "" || recs[0].RoutedBy != nil {
 		t.Fatalf("limit after routing: %+v %v", recs, err)
 	}
 }
@@ -222,6 +222,23 @@ func TestRunUsesRoutingAndKeepsNamedModel(t *testing.T) {
 				t.Fatalf("route: %+v %+v", task, recs[0])
 			}
 		})
+	}
+}
+
+func TestRunRoutesByTheDeclaredPurpose(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := route.Save(route.Table{"implement": {Backend: "stub-cmd-b"}, "review": {Backend: "stub-cmd", Model: "routed"}}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"--no-switch", "--purpose", "review", "-C", t.TempDir(), "Implement a widget"})
+	if code != 0 || err != nil {
+		t.Fatalf("run: %d %v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "stub-cmd" || recs[0].RoutedBy == nil || recs[0].RoutedBy.Category != "review" || !recs[0].RoutedBy.Declared {
+		t.Fatalf("declared purpose did not route: %+v %v", recs, err)
 	}
 }
 

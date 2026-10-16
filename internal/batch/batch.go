@@ -562,6 +562,8 @@ type attemptPlan struct {
 	// switchedFrom is the backend a usage limit moved this attempt from;
 	// continues is the run of the limited attempt it carries on, if any.
 	switchedFrom, continues string
+	// chosenFor is the backend the task's model and effort were named or routed for.
+	chosenFor string
 }
 
 // The prompt a retry gets. A gate failure is recoverable in place, so the next
@@ -692,7 +694,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	// both MCP lists already.
 	opts := t.Options.Over(spec.Options)
 	backend := firstOf(t.Backend, spec.Backend)
-	routedBy, err := opts.Route(t.Prompt, &backend, runlog.Home())
+	routedBy, err := opts.Route(t.Purpose, t.Prompt, &backend, runlog.Home())
 	if err != nil {
 		return fail(err)
 	}
@@ -732,7 +734,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	var carry *Attempt    // the limited attempt the next one carries on
 	for i := 0; i < len(backends); i++ {
 		name := backends[i]
-		plan := attemptPlan{number: len(tr.Attempts) + 1, prompt: t.Prompt, gateTimeout: gateTimeout}
+		plan := attemptPlan{number: len(tr.Attempts) + 1, prompt: t.Prompt, gateTimeout: gateTimeout, chosenFor: backends[0]}
 		if i == 0 {
 			plan.routedBy = routedBy
 		}
@@ -1226,6 +1228,9 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
 	if plan.switchedFrom != "" {
 		task.Model = "" // the model named for the other backend means nothing here
+	}
+	if b.Name() != plan.chosenFor {
+		task.Model, task.Effort, plan.routedBy = "", "", nil
 	}
 
 	// A carry-on's record continues the limited run, so the chain shows.

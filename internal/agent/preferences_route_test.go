@@ -27,7 +27,7 @@ func TestRouteIgnoresADisabledBackendWithoutRecordingEvidence(t *testing.T) {
 	defer func() { os.Stderr = old }()
 	var o Options
 	var backend string
-	routed, err := o.Route("Purpose: review\nReview the change", &backend, home)
+	routed, err := o.Route("", "Purpose: review\nReview the change", &backend, home)
 	if err != nil || routed != nil || backend != "" || o.Model != "" || o.Effort != "" {
 		t.Fatalf("got %+v, %s, %+v, %v", routed, backend, o, err)
 	}

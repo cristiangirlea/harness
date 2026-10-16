@@ -39,14 +39,24 @@ in eval cost comparisons and routing through the same cost fields as api estimat
 Older records are not repriced.
 
 `hrn run`, batch tasks (after inheriting spec options), and MCP `run` apply the
-classified purpose's row only when backend, model **and** effort are all empty.
+purpose's row only when backend, model **and** effort are all empty. The purpose is
+the declared one (`--purpose`, the MCP `purpose` field, a batch task's `purpose`,
+or a leading `Purpose: <category>` header), else the prompt's classified category.
 Naming any of the three disables routing: routing never substitutes a named
-model. Missing rows keep the existing backend default. A row naming an unknown
-backend is ignored with a warning on stderr. Continued runs retain inherited
-choices, and the existing plan-limit switching rules still apply.
+model. Missing rows keep the existing backend default. An invalid row, whether it
+names an unknown or disabled backend or an unknown effort, is skipped with a
+warning on stderr and the run goes on unrouted; it never refuses the run.
+Continued runs retain inherited choices, and the existing plan-limit switching
+rules still apply. When a plan limit moves a routed run to the partner backend,
+the routed model and effort are dropped and the run records no `routed_by`, so the
+partner's results are not credited to the row. A batch attempt on any backend other
+than the one its model and effort were chosen for (a limit switch or a retry) drops
+them and `routed_by` the same way, whether they were routed or named.
 
-The additive `routed_by` record field contains `category`, `eval` (absent for a
-manual row), and `set`. It is omitted for unrouted runs; older records still load.
+The additive `routed_by` record field contains `category`, `declared` (true when
+the purpose was declared rather than classified; omitted otherwise), `eval`
+(absent for a manual row), and `set`. It is omitted for unrouted runs; older
+records still load.
 `hrn report --by routed` groups them as `<category> via <eval id>` or
 `<category> via hand`, with unrouted runs under `-`, using the usual runs, ok,
 and cost columns.

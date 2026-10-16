@@ -49,7 +49,8 @@ type Variant struct {
 	Effort           string `json:"effort,omitempty"`
 }
 
-func (v Variant) name() string {
+// Key is the name a variant's rows are filed under: its name, else backend[-model][-effort].
+func (v Variant) Key() string {
 	if v.Name != "" {
 		return v.Name
 	}
@@ -121,7 +122,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 
 	seen := map[string]bool{}
 	for i, v := range spec.Matrix {
-		name := v.name()
+		name := v.Key()
 		if name == "" {
 			return batch.Spec{}, fmt.Errorf("variant %d has no name and no backend", i+1)
 		}
@@ -160,12 +161,12 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 			for r := 1; r <= spec.Repeats; r++ {
 				cell := t
 				cell.ShapeTools = v.ShapeTools
-				cell.ID = fmt.Sprintf("%s.%s.%s.r%d", evalID, t.ID, v.name(), r)
+				cell.ID = fmt.Sprintf("%s.%s.%s.r%d", evalID, t.ID, v.Key(), r)
 				// Pin the measured backend so purpose routing cannot change a cell.
 				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
 				if v.Lean != nil {
 					if cell.Backend != "claude" {
-						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude backend (task %s uses %s)", v.name(), t.ID, cell.Backend)
+						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude backend (task %s uses %s)", v.Key(), t.ID, cell.Backend)
 					}
 					cell.Lean = v.Lean
 				}
@@ -350,7 +351,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	// Variant order follows the matrix, so the table reads like the spec.
 	var table Table
 	for _, v := range spec.Matrix {
-		name := v.name()
+		name := v.Key()
 		row := VariantRow{Name: name, Statuses: map[string]int{}}
 		var costs, durations, turns, calls, inputs []float64
 		total := 0
@@ -397,7 +398,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	// One row per task and variant, in spec order.
 	for _, t := range spec.Tasks {
 		for _, v := range spec.Matrix {
-			name := v.name()
+			name := v.Key()
 			row := TaskRow{Task: t.ID, Variant: name}
 			total := 0
 			for _, c := range cells {

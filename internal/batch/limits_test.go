@@ -159,6 +159,23 @@ func TestAnAttemptMeantForALimitedBackendStartsOnItsPartner(t *testing.T) {
 	}
 }
 
+func TestARoutedAttemptMovedByALimitDropsTheRoutedChoice(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	_ = limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"codex","model":"routed","effort":"medium","eval":"e1"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Tasks: []Task{{ID: "moved", Prompt: "Implement a widget"}}})
+	tr := res.Tasks[0]
+	if len(tr.Attempts) != 1 || tr.Attempts[0].Backend != "claude" || tr.Attempts[0].SwitchedFrom != "codex" {
+		t.Fatalf("attempts = %+v, want one moved from codex to claude", tr.Attempts)
+	}
+	if rec := firstRun(t, tr); rec.Task.Model != "" || rec.Task.Effort != "" || rec.RoutedBy != nil {
+		t.Errorf("moved attempt kept model %q, effort %q, routed by %+v", rec.Task.Model, rec.Task.Effort, rec.RoutedBy)
+	}
+}
+
 func TestATaskStopsWhenBothAreLimited(t *testing.T) {
 	dir := initRepo(t)
 	standIn(t)

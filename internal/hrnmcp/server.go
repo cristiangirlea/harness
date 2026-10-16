@@ -210,14 +210,17 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
 			dir = ws.Root
-			routedBy, err := args.Options.Route(args.Prompt, &args.Backend, runlog.Home())
+			routedBy, err := args.Options.Route(args.Purpose, args.Prompt, &args.Backend, runlog.Home())
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
 			if !args.NoSwitch && args.ContinueRunID == "" {
 				meant := args.Backend
 				if args.Backend, routed = limits.Choose(args.Backend, ""); args.Backend != meant {
-					args.Model = ""
+					if routedBy != nil {
+						args.Options.Effort = "" // the row measured the limited backend, not its partner
+					}
+					args.Model, routedBy = "", nil
 				}
 			}
 			if args.Backend == "" {
