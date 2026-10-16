@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -181,7 +182,7 @@ func TestRunChecksLimitsOnTheRoutedBackend(t *testing.T) {
 	}
 	<-recorded
 	recs, err := runlog.List(1)
-	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].RoutedBy == nil {
+	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].Task.Model != "" || recs[0].Task.Effort != "" || recs[0].RoutedBy != nil {
 		t.Fatalf("limit after routing: %+v %v", recs, err)
 	}
 }
@@ -221,6 +222,23 @@ func TestRunUsesRoutingAndKeepsNamedModel(t *testing.T) {
 				t.Fatalf("route: %+v %+v", task, recs[0])
 			}
 		})
+	}
+}
+
+func TestRunRoutesByTheDeclaredPurpose(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := route.Save(route.Table{"implement": {Backend: "stub-cmd-b"}, "review": {Backend: "stub-cmd", Model: "routed"}}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"--no-switch", "--purpose", "review", "-C", t.TempDir(), "Implement a widget"})
+	if code != 0 || err != nil {
+		t.Fatalf("run: %d %v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "stub-cmd" || recs[0].RoutedBy == nil || recs[0].RoutedBy.Category != "review" || !recs[0].RoutedBy.Declared {
+		t.Fatalf("declared purpose did not route: %+v %v", recs, err)
 	}
 }
 
@@ -384,6 +402,55 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	// The stub saves no session, so the same backend has nothing to resume.
 	if code, err := cmdRun([]string{"--continue", first, "x"}); code != 2 || err == nil || !strings.Contains(err.Error(), "no saved conversation") {
 		t.Errorf("code=%d err=%v", code, err)
+	}
+}
+
+func TestContinueInheritsThePurposeUnlessTheFlagOrHeaderNamesOne(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "--purpose", "review", "first"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"now fix what you found"}, "review"},
+		{[]string{"--purpose", "debug", "now fix what you found"}, "debug"},
+		{[]string{"Purpose: test\nnow fix what you found"}, "test"},
+	} {
+		args := append([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b"}, tc.args...)
+		if code, err := cmdRun(args); code != 0 || err != nil {
+			t.Fatalf("%q: code=%d err=%v", tc.args, code, err)
+		}
+		if task := <-recorded; task.Purpose != tc.want {
+			t.Errorf("%q: purpose = %q, want %q", tc.args, task.Purpose, tc.want)
+		}
+	}
+	for _, name := range []string{"task.json", "result.json"} {
+		path := filepath.Join(runlog.Root(), recs[0].ID, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad := regexp.MustCompile(`("purpose":\s*)"review"`).ReplaceAll(data, []byte(`$1"Bogus"`))
+		if err := os.WriteFile(path, bad, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec, err := runlog.Load(recs[0].ID); err != nil || rec.Task.Purpose != "Bogus" {
+		t.Fatalf("stored purpose = %q, err=%v", rec.Task.Purpose, err)
+	}
+	if code, err := cmdRun([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b", "again"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if task := <-recorded; task.Purpose != "" {
+		t.Errorf("an invalid stored purpose was inherited: %q", task.Purpose)
 	}
 }
 

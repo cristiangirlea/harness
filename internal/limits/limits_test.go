@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -241,6 +242,38 @@ func TestAfterCarriesALimitedRunOnToItsPartner(t *testing.T) {
 	// The limit is remembered, so the next run goes straight to claude.
 	if Until("codex", time.Now()).IsZero() {
 		t.Error("After did not remember codex's limit")
+	}
+}
+
+func TestACarryOnAfterAFreshHandoverDoesNotReachPastIt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := runlog.Create("claude", agent.Task{Prompt: "one", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, Session: "s1", Final: "a1"}); err != nil {
+		t.Fatal(err)
+	}
+	prev := agent.Task{Prompt: "two", Dir: dir}
+	rec, err := runlog.CreateContinuingRoute("codex", prev, old.ID(), runlog.RouteFreshHandover)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
+	if err := rec.Close(res); err != nil {
+		t.Fatal(err)
+	}
+	next, why, err := After(rec.ID(), "codex", prev, res)
+	if err != nil || next == nil {
+		t.Fatalf("no carry-on: %s err=%v", why, err)
+	}
+	if next.Plan.ForkSession != "" || len(next.Plan.Handoff) != 1 || next.Plan.Handoff[0].ID != rec.ID() {
+		t.Errorf("claude must not fork the session the fresh run left behind: %+v", next.Plan)
 	}
 }
 

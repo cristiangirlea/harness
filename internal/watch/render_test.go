@@ -72,3 +72,26 @@ func TestLongResultKeepsCountsAndPageCaps(t *testing.T) {
 		t.Error("long result must use the page head and tail caps")
 	}
 }
+
+func TestBatchPageShowsATaskDeclaredPurpose(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	res := batch.Result{ID: "b1", Tasks: []batch.TaskResult{
+		{ID: "declared", Purpose: "review", Status: batch.StatusPass, Branch: "hrn/declared"},
+		{ID: "plain", Status: batch.StatusPass, Branch: "hrn/plain"},
+	}}
+	body := batchBodyOf(res, viewer{})
+	purposeOf := func(tv taskView) string {
+		for _, f := range tv.Facts {
+			if f.Label == "Purpose" {
+				return f.Value
+			}
+		}
+		return ""
+	}
+	if got := purposeOf(body.Tasks[0]); got != "review" {
+		t.Errorf("declared task purpose = %q, want review: %+v", got, body.Tasks[0].Facts)
+	}
+	if got := purposeOf(body.Tasks[1]); got != "" {
+		t.Errorf("a task with no declared purpose shows %q", got)
+	}
+}

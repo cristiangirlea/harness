@@ -29,7 +29,7 @@ type purposeRow struct {
 type purposeSum struct {
 	runs, running, noCost int
 	tokens                int64
-	usd                   float64
+	usd                   int64 // in 1e-8 USD, so that the sum is exact
 	known, estimate       bool
 }
 
@@ -54,7 +54,7 @@ func (s *purposeSum) add(rec runlog.Record) {
 		s.noCost++
 		return
 	}
-	s.usd += res.CostUSD
+	s.usd += int64(math.Round(res.CostUSD * 1e8))
 	s.known = true
 	s.estimate = s.estimate || res.CostEstimate
 }
@@ -70,19 +70,19 @@ func (s purposeSum) row(name string) purposeRow {
 	if !s.known {
 		return r
 	}
-	r.Cost = cost(s.usd, s.estimate)
 	if s.noCost > 0 {
 		r.Cost = "≥ " + lowerBound(s.usd, s.estimate)
+	} else {
+		r.Cost = cost(float64(s.usd)/1e8, s.estimate)
 	}
 	return r
 }
 
-// lowerBound prints a partial sum rounded down to four decimals, so that it
-// never claims more than is known; a floored zero is still a number. The
-// nudge keeps a sum that falls a hair short, such as 0.1+0.7, from flooring
-// to 0.7999.
-func lowerBound(usd float64, estimate bool) string {
-	str := fmt.Sprintf("$%.4f", math.Floor(usd*1e4+1e-9)/1e4)
+// lowerBound prints a partial sum of 1e-8 USD units rounded down to four
+// decimals, so that it never claims more than is known; a floored zero is
+// still a number. The sum is exact, so 0.1+0.7 floors to 0.8000, not 0.7999.
+func lowerBound(usd int64, estimate bool) string {
+	str := fmt.Sprintf("$%d.%04d", usd/1e8, usd/1e4%1e4)
 	if estimate {
 		return "~" + str
 	}

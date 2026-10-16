@@ -34,11 +34,11 @@
 | `hrn batch rm <id>` | Remove what a batch created: its branches, and its worktrees when they were fresh (a slot stays; see [Batches](batches.md#reading-and-landing-the-work)). |
 | `hrn eval [flags] <eval.json>` | Run a task set across a matrix of backends, models and efforts (see [Evals](evaluations.md#evals)). |
 | `hrn eval show <id>` | Reprint a saved eval. |
+| `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge. |
+| `hrn eval diff [--json] <a> <b>` | Two evals side by side, variant by variant and task by task. |
 | `hrn route show` | List purpose routing rows, or `(empty)` (see [Routing by evidence](evaluations.md#routing-by-evidence)). |
 | `hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]` | Replace one routing row by hand; accepts any nonempty subset of the three choices. |
 | `hrn route from-eval <id> [--margin 0.05]` | Print and save the cheapest qualifying rows from saved eval results. |
-| `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge. |
-| `hrn eval diff [--json] <a> <b>` | Two evals side by side, variant by variant and task by task. |
 | `hrn report [--since 7d] [--by backend\|model\|dir\|purpose\|routed\|day] [--json]` | Tables over the finished runs, their tokens and context per turn, and the batches; `routed` groups by the source routing row (see [Reports](evaluations.md#reports)). |
 | `hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [PATH…]` | Remove worktrees whose work is merged, with their build output, and build caches (`CACHEDIR.TAG`) idle past `--idle`, or past `--min-idle` on a drive below `--free-below` (see [Clearing merged worktrees](batches.md#clearing-merged-worktrees) and [Build caches](batches.md#build-caches)). |
 | `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch (see [Reusable workspaces](workspaces.md#take)). |
@@ -94,6 +94,14 @@ precedence over the header. The effective declaration is saved in `task.purpose`
 no prompt text is added, removed or changed. Watch and reports use it before
 falling back to the keyword classifier. An invalid stored `task.purpose` is ignored,
 falling back to a valid header or the classifier.
+
+A continued run (`hrn run --continue`, or the MCP `run` tool with `continue_run_id`)
+keeps the earlier run's declared purpose when neither `--purpose`/`purpose` nor a
+header names one, as it keeps the mode; a short follow-up such as "now fix what you
+found" is therefore not re-classified. `hrn exec` takes the same optional `purpose`
+on `start` (see [the exec protocol](exec-protocol.md#start-caller-exactly-one-the-first-line)).
+A batch task's declared purpose shows in `hrn batch show`'s table, the MCP
+`batch_show` text and the task list on the watch batch page.
 
 ### hrn exec
 

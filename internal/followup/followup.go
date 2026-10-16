@@ -29,6 +29,9 @@ type Request struct {
 	Backend string
 	Dir     string
 	Model   string
+	// Fresh starts a new session briefed by a hand-over built from the
+	// earlier run's record, instead of resuming or forking anything.
+	Fresh bool
 }
 
 // Plan is how a follow-up run starts.
@@ -51,8 +54,20 @@ type Plan struct {
 	// first: the turns this backend has not seen.
 	Handoff []runlog.Record
 
+	// Fresh is set for a fresh hand-over: Resume, ForkSession and Handoff stay
+	// empty and the backend is told about Prev by freshHandoff instead.
+	Fresh bool
+
 	// Notes say what was carried over and how, for the run's transcript.
 	Notes []string
+}
+
+// Route is what the run record keeps as its continue_route.
+func (p Plan) Route() string {
+	if p.Fresh {
+		return runlog.RouteFreshHandover
+	}
+	return ""
 }
 
 const contextWarningThreshold = 150000
@@ -73,6 +88,13 @@ func Make(req Request) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	// A fresh hand-over left everything before it behind, sessions included.
+	for i := len(chain) - 1; i > 0; i-- {
+		if chain[i].ContinueRoute == runlog.RouteFreshHandover {
+			chain, missing = chain[i:], ""
+			break
+		}
+	}
 	prev := chain[len(chain)-1]
 	if !prev.Done {
 		return Plan{}, fmt.Errorf("run %s has no result: it is still running, or it stopped before it could record one", prev.ID)
@@ -90,6 +112,16 @@ func Make(req Request) (Plan, error) {
 	}
 	if missing != "" {
 		p.Notes = append(p.Notes, fmt.Sprintf("run %s continues %s, which is gone, so the chain starts at %[1]s", chain[0].ID, missing))
+	}
+	if req.Fresh {
+		// Nothing any run saved is picked up, not even on the same backend:
+		// the record is all the new session learns of the chain.
+		p.Fresh = true
+		if p.Model == "" {
+			p.Model = latestModel(chain, p.Backend)
+		}
+		p.Notes = append(p.Notes, fmt.Sprintf("starting a new %s session, handed run %s over from its record; no session or conversation is resumed or forked", p.Backend, prev.ID))
+		return p, nil
 	}
 
 	// The latest run of the chain that left this backend something to pick up.
@@ -141,14 +173,7 @@ func Make(req Request) (Plan, error) {
 			p.Model = conv.Model
 		}
 	default:
-		// A model chosen for this backend earlier in the chain still applies;
-		// another backend's model name would not.
-		for i := len(chain) - 1; i >= 0; i-- {
-			if chain[i].Backend == p.Backend {
-				p.Model = chain[i].Task.Model
-				break
-			}
-		}
+		p.Model = latestModel(chain, p.Backend)
 	}
 
 	switch {
@@ -173,9 +198,21 @@ func Make(req Request) (Plan, error) {
 	return p, nil
 }
 
+// latestModel is the model the latest run on backend in the chain asked for:
+// a model chosen for this backend earlier in the chain still applies;
+// another backend's model name would not.
+func latestModel(chain []runlog.Record, backend string) string {
+	for i := len(chain) - 1; i >= 0; i-- {
+		if chain[i].Backend == backend {
+			return chain[i].Task.Model
+		}
+	}
+	return ""
+}
+
 // Apply readies task once its run record exists, so the record keeps the
-// prompt as it was typed: the backend gets the transcript first, which is
-// also saved beside the record as handoff.md.
+// prompt as it was typed: the backend gets the transcript or the fresh
+// hand-over first, which is also saved beside the record as handoff.md.
 func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.Resume, task.ForkSession = p.Resume, p.ForkSession
 	for _, n := range p.Notes {
@@ -184,10 +221,15 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	if warning := p.ContextWarning(); warning != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: warning})
 	}
-	if len(p.Handoff) == 0 {
+	var h string
+	switch {
+	case p.Fresh:
+		h = p.freshHandoff()
+	case len(p.Handoff) > 0:
+		h = p.handoff()
+	default:
 		return
 	}
-	h := p.handoff()
 	if err := os.WriteFile(filepath.Join(runDir, "handoff.md"), []byte(h), 0o644); err != nil {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "handoff.md not saved: " + err.Error()})
 	}
@@ -260,11 +302,14 @@ func quote(s string) string {
 }
 
 // clip keeps the start and the end of a long text, cut on rune boundaries.
-func clip(s string) string {
-	if len(s) <= maxTurnText {
+func clip(s string) string { return clipTo(s, maxTurnText) }
+
+// clipTo is clip with a limit of limit bytes, plus the note on what was left out.
+func clipTo(s string, limit int) string {
+	if len(s) <= limit {
 		return s
 	}
-	head, tail := maxTurnText*2/3, len(s)-maxTurnText/3
+	head, tail := limit*2/3, len(s)-limit/3
 	for head > 0 && !utf8.RuneStart(s[head]) {
 		head--
 	}

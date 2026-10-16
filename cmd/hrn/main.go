@@ -129,6 +129,8 @@ Run flags:
                        compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
                        (claude backend; unset keeps Claude Code's own threshold)
       --continue ID    continue a finished run, on its backend or, with -b, on another one
+      --fresh          with --continue: start a new session, handed the earlier run over from its record
+                       (task, outcome, changed files, gate results) instead of resuming or forking its session
       --purpose CATEGORY
                        review | debug | implement | refactor | test | research | plan | ops
       --timeout D      stop the run after D (e.g. 20m)
@@ -253,6 +255,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	fs.BoolVar(&jsonOut, "json", false, "")
 	fs.BoolVar(&thinking, "thinking", false, "")
 	continueID := fs.String("continue", "", "")
+	fresh := fs.Bool("fresh", false, "")
 	declared := fs.String("purpose", "", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
@@ -271,6 +274,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if set["purpose"] && !purpose.Valid(*declared) {
 		return 2, fmt.Errorf("run: --purpose %s: one of %s", *declared, strings.Join(purpose.Declarable(), ", "))
 	}
+	if *fresh && *continueID == "" {
+		return 2, errors.New("run: --fresh needs --continue: it starts a new session handed an earlier run over")
+	}
 
 	// A backend whose plan limit is remembered hands the run to its partner
 	// from the start, a continued one too, so this is settled before the
@@ -288,7 +294,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	// the backend picks up and what it is handed as a transcript.
 	var plan followup.Plan
 	if *continueID != "" {
-		req := followup.Request{RunID: *continueID, Backend: backend}
+		req := followup.Request{RunID: *continueID, Backend: backend, Fresh: *fresh}
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}
@@ -332,14 +338,17 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("empty prompt")
 	}
 
-	routedBy, err := opts.Route(prompt, &backend, runlog.Home())
+	routedBy, err := opts.Route(*declared, prompt, &backend, runlog.Home())
 	if err != nil {
 		return 2, err
 	}
 	if !opts.NoSwitch && *continueID == "" {
 		meant := backend
 		if backend, routed = limits.Choose(backend, ""); backend != meant {
-			opts.Model = ""
+			if routedBy != nil {
+				opts.Effort = "" // the row measured the limited backend, not its partner
+			}
+			opts.Model, routedBy = "", nil
 		}
 	}
 	if backend == "" {
@@ -356,6 +365,10 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if *declared == "" {
 		*declared = purpose.Declared(prompt)
 	}
+	// Like the mode, a continued run keeps the earlier purpose unless this one names its own.
+	if *declared == "" && purpose.Valid(plan.Prev.Task.Purpose) {
+		*declared = plan.Prev.Task.Purpose
+	}
 	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts}
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
@@ -369,7 +382,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 
-	rec, err := runlog.CreateContinuing(backend, task, *continueID, routedBy)
+	rec, err := runlog.CreateContinuingRoute(backend, task, *continueID, plan.Route(), routedBy)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}
