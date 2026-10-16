@@ -158,9 +158,10 @@ fields are left out. Which backends write them:
 - **api**: one per request, as the response reports it.
 - **claude**: one per main-loop assistant message. stream-json writes each content block of a
   message as a line of its own and repeats the message's usage on each, so hrn writes the
-  event once per message id, with the first line's figures (the output count there can be
-  lower than the message's final one). A sub-agent's messages fill its own context and are
-  left out; they still count in the run's totals.
+  event once per message id, after the message's last line, with the first line's figures
+  and the largest output count of its lines (the count grows as the message is written).
+  A sub-agent's messages fill its own context and are left out; they still count in the
+  run's totals.
 - **opencode**: one per step (`step_finish`).
 - **codex** and **gemini**: none. Codex's `turn.completed` totals every model call of an
   agent turn and gemini reports the run's totals, so neither says what one call carried.
