@@ -387,6 +387,24 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	}
 }
 
+func TestRunsMasksPromptExcerpts(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("fake", agent.Task{Prompt: "API_KEY=fake-runs-secret task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdRuns(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); strings.Contains(got, "fake-runs-secret") || !strings.Contains(got, "API_KEY=•••• task") {
+		t.Fatalf("runs did not mask the prompt:\n%s", got)
+	}
+}
+
 func TestShowMasksHumanOutputOnly(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const prompt = "API_KEY=fake-show-secret task"

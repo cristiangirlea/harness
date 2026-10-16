@@ -290,7 +290,7 @@ They use mocked audio and folder APIs; they do not replace a real browser microp
 ## Secret masking
 
 Human-facing text in watch rows, pages and streams (local and `--lan`), `hrn show`,
-terminal progress lines and Ada's speech and notifications masks secret values as
+`hrn runs` prompt excerpts, terminal progress lines and Ada's speech and notifications masks secret values as
 `••••`: URL credentials; `-u`/`--user` user:password flags; JSON secret fields;
 authorization, API-key and cookie headers; bare Bearer tokens; recognised `sk-`,
 `ghp_`, `github_pat_`, `xox`, `AKIA` and JWT tokens; assignments whose names have KEY,
@@ -298,6 +298,11 @@ TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or SESSION as a whole segment
 (separated by `_`, `-` or the name's ends); and secret flags
 such as `--password`, `--token` and `--api-key`. Masking scans the whole text before
 any display excerpt is shortened; it does not cut the text itself.
+A URL whose user is the literal `git` with no password (`ssh://git@host/...`, as on
+git remotes) keeps it; any other user part, including a bare token, is masked.
+Live `hrn run` output is masked per streamed fragment, so a secret split across two
+fragments can show in halves while it streams; records, `hrn show` and `hrn watch`
+mask the assembled text.
 The existing environment-value redaction also runs. Records remain unchanged,
 and JSON record output retains the original text. These rules recognise common
 secret shapes; they cannot identify every possible secret.
