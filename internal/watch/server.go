@@ -853,16 +853,20 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	sh := s.viewerOf(r).shortener(rec.Task.Dir)
 	// The chart is drawn over every turn, so a stream that starts partway
 	// reads the turns before it first.
-	before := Tail{Path: filepath.Join(runlog.Root(), id, "events.jsonl")}
-	earlier, err := before.Read()
-	if err != nil {
-		http.Error(w, "run not readable", http.StatusInternalServerError)
-		return
-	}
 	var usage []agent.Event
-	for _, l := range earlier {
-		if l.End <= cur.off && feedsChart(l) {
-			usage = append(usage, sh.event(s.cleanEvent(l.Event)))
+	if cur.off > 0 {
+		ef, err := os.Open(filepath.Join(runlog.Root(), id, "events.jsonl"))
+		var earlier []agent.Event
+		if err == nil {
+			earlier, err = runlog.UsageEvents(io.LimitReader(ef, cur.off))
+			ef.Close()
+		}
+		if err != nil {
+			http.Error(w, "run not readable", http.StatusInternalServerError)
+			return
+		}
+		for _, e := range earlier {
+			usage = append(usage, sh.event(s.cleanEvent(e)))
 		}
 	}
 	st := s.startStream(w)
