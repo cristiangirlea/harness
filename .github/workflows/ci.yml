@@ -132,6 +132,9 @@ jobs:
       - name: kept scripts verify
         if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: bash scripts/verify.sh --check
+      - name: comment check
+        if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
+        run: bash scripts/comment-check.sh
       - name: release dry run
         # The release job only runs on a tag, so its script is exercised here.
         if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'

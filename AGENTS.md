@@ -37,6 +37,7 @@ go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -para
 go test -run='^$' -fuzz=FuzzSummarize -fuzztime=14000x -fuzzminimizetime=200x -parallel=4 ./internal/shape
 bash -n .github/release.sh && bash -n scripts/api-check.sh
 bash scripts/verify.sh --check
+bash scripts/comment-check.sh
 bash .github/release.sh                                       # release dry run, writes dist/
 test -z "$(gofmt -l .)"                                       # /check: tracked files only
 ```
@@ -57,6 +58,10 @@ machines. See `CONTRIBUTING.md` for CI and release details.
   additive with `omitempty`; old records on disk must still load.
 - **The api history is append-only** (`api.go`): assistant turns go back exactly as received. Never
   trim, rewrite or reorder earlier messages; context is reduced server-side.
+- **Comments say why, not what**: one line, three at most (a doc comment: one sentence, plus one
+  for a non-obvious contract); no issue numbers, dates or review history (git and PLAN.md hold
+  them); long explanations go to `docs/`. `scripts/comment-check.sh` enforces it; its baseline
+  only shrinks.
 - The api loop puts this file and `CLAUDE.md` into its system prompt when it runs on this repo
   (`instructions.go`, 32 KiB cap): keep them short.
 - A release tag must match `Version` in `internal/agent/agent.go`; tags and releases are the
@@ -64,6 +69,8 @@ machines. See `CONTRIBUTING.md` for CI and release details.
 - For every new flag, field, command or status, update the relevant `docs/` guide (and README
   if its overview changes). For a PLAN.md item, tick its box, add `Done: PR #n, <date>`, and
   log deviations; for an issue-only fix, add a Decisions-log entry naming the issue and PR.
+  These PLAN.md changes land in a separate Markdown-only PR once the change has merged (CI skips
+  it), never in the code PR: an entry at the top of the log conflicts with every open PR (#374).
 
 ## Working rules
 
@@ -113,6 +120,7 @@ machines. See `CONTRIBUTING.md` for CI and release details.
 - `scripts/answers.go`: Provide JSON test summaries and bounded TCP probes for Bash entry points.
 - `scripts/api-check.sh`: Exercise real API runs, continuation and context editing at the owner's expense. (not verified: spends money)
 - `scripts/check.sh`: Run the check skill commands in order, stopping on failure.
+- `scripts/comment-check.sh`: Check Go comments against the repository rule and baseline.
 - `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
 - `scripts/tool-shapes.sh`: Measure recorded tool output and repeated inline scripts without exposing text.
 - `scripts/verify.sh`: Run kept examples and synchronize script hashes and the AGENTS index. (not verified: the runner)
