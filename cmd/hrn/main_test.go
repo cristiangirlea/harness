@@ -296,8 +296,8 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the backend was never run")
 	}
-	if task.Prompt != "hello world" {
-		t.Errorf("prompt = %q", task.Prompt)
+	if !strings.HasPrefix(task.Prompt, "# How to commit\n\n") || !strings.HasSuffix(task.Prompt, "\n\nhello world") {
+		t.Errorf("prompt = %q, want the commit block, then the prompt", task.Prompt)
 	}
 	for name, ok := range map[string]bool{
 		"mode":             task.Mode == agent.ModeAuto,
@@ -379,7 +379,9 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", dir, "--mode", "auto", "-m", "stub-model", "first"}); code != 0 || err != nil {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
-	<-recorded
+	if task := <-recorded; strings.Contains(task.Prompt, "fix round") {
+		t.Errorf("a first run is told it is a fix round:\n%s", task.Prompt)
+	}
 	recs, err := runlog.List(1)
 	if err != nil || len(recs) != 1 {
 		t.Fatalf("recs=%+v err=%v", recs, err)
@@ -397,6 +399,9 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	}
 	if !strings.Contains(task.Prompt, "--- request\n> first\n--- answer\n> done") || !strings.HasSuffix(task.Prompt, "second") {
 		t.Errorf("prompt:\n%s", task.Prompt)
+	}
+	if !strings.HasPrefix(task.Prompt, "# How to commit\n\n") || !strings.Contains(task.Prompt, "\nThis is a fix round: one review, one commit; every fix from this review goes into one commit.\n") {
+		t.Errorf("a continued run should get the commit block with the fix-round line:\n%s", task.Prompt)
 	}
 
 	// The stub saves no session, so the same backend has nothing to resume.

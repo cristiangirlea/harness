@@ -60,8 +60,8 @@ func TestRunStoresTheDeclarationWithoutChangingThePrompt(t *testing.T) {
 				t.Fatalf("code=%d error=%v", code, err)
 			}
 			task := <-recorded
-			if task.Prompt != tc.prompt {
-				t.Errorf("backend prompt = %q, want %q", task.Prompt, tc.prompt)
+			if !strings.HasSuffix(task.Prompt, "\n\n"+tc.prompt) {
+				t.Errorf("backend prompt = %q, want it to end with %q", task.Prompt, tc.prompt)
 			}
 			recs, err := runlog.List(0)
 			if err != nil || len(recs) != 1 {

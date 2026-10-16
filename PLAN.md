@@ -540,8 +540,14 @@ where such a typo lives.
 ## Definition of done (every PR)
 
 - [ ] The full local checks, as AGENTS.md's "Build and test" lists them (`/check` runs them).
-- [ ] `/code-review` on the PR; every blocking finding fixed as its own commit, the rest
-      filed as issues.
+- [ ] The default branch merged in once and the full checks run on that merge before the push (CI
+      tests the merge with `main`).
+- [ ] An independent review (`/code-review`): every defect, security point or missing test it
+      finds in the branch's own code fixed in the branch before the push, blocking or not. Nits
+      dropped (at most a line in the PR); only work outside the branch or an owner decision
+      becomes an issue, never a follow-up of a follow-up. Reviews are text and commits are
+      changes: everything found before a commit exists goes into that one commit, and each later
+      round's fixes into one more.
 - [ ] CI green on ubuntu and windows.
 - [ ] The relevant guide in `docs/` updated for any new flag, field, command or status, and
       README when the overview changes.
@@ -569,18 +575,12 @@ Every lettered increment is done. These are the threads the log leaves behind, i
 order they are worth taking:
 
 1. ~~**One options struct.**~~ Done as PR L (#16).
-2. **Measure the context-editing default.** Server-side clearing is on by default and its
-   interaction with the two cache breakpoints is unmeasured; a clear invalidates the
-   cached prefix from that point. One long api run with and without it, compared on
-   `cache_read_tokens`, settles whether the default is right.
+2. **Measure the context-editing default.** Under consideration, with item 5 (#116).
 3. ~~**Record what the server cleared.**~~ Done as PR R, verbatim, since the shape is
    undocumented here. Read the first real reports and decide whether to parse them.
 4. ~~**The eval judge.**~~ Done as PR M, with `expect`, a tool-call column and the count
    of passes that changed nothing.
-5. **A real api run.** The backend has never run against the API: no credentials on this
-   machine. Everything in it is covered by a fake server. `scripts/api-check.sh` (PR R)
-   does this and item 2 in one command once a key is set. The price table is current as
-   of PR S; compare the first real runs' estimates with the console's bill.
+5. **A real api run.** Under consideration, with item 2 (#116).
 6. ~~**A `batch` tool in `hrn mcp`.**~~ Done as PR N: `batch`, `batch_show` and
    `batch_merge`.
 7. ~~**Release binaries.**~~ Done as PR P. No release has been cut: that, and making the
@@ -630,8 +630,8 @@ order they are worth taking:
       deny rules, and the api loop's guard extended to secret files and the guard's own
       variables. Left: codex's own sandbox under the guard, and per-CLI rules for gemini
       and opencode (their runs say what is unguarded).
-    - [#37](https://github.com/cristiangirlea/harness/issues/37): spending. A daily and weekly
-      budget across all runs, refused when reached, shown on hrn watch.
+    - ~~[#37](https://github.com/cristiangirlea/harness/issues/37): spending.~~ Closed
+      2026-10-16 as not needed while every run is on a plan backend (Decisions log).
     - [#38](https://github.com/cristiangirlea/harness/issues/38): control. Confirmations,
       an allow-list and an audit log for the bot's and the phone's actions, before item 11.
 
@@ -748,7 +748,349 @@ HTTP (every host met so far speaks stdio). A web dashboard was on this list ("re
 batch show answer the questions") until the owner asked for a live view on 2026-10-10:
 neither of them follows a run while it happens.
 
+## Under consideration
+
+Things kept but not active (the owner, 2026-10-16). Each says what would bring it back.
+
+- **Context editing against the prompt cache**
+  ([#116](https://github.com/cristiangirlea/harness/issues/116)), with What is open items 2 and 5.
+  The api backend asks for server-side clearing of old tool results by default, and a clear
+  invalidates the cached prefix from that point; the balance has never been measured on a real
+  long run, and the backend has never run against Anthropic's API (everything in it is covered by
+  a fake server). #116 asks for the same long task with edits on and off, a fixed model and
+  settings, and a cost cap and decision criteria set before any real call, judged on modelled
+  usage and cost, task success and the context trajectory, then a published decision on the
+  default. `scripts/api-check.sh` runs that comparison and the first real run in one command once
+  a key is set; compare the first real estimates with the console's bill. Back when an API key or
+  a real Anthropic endpoint is used: today every run is on plan backends (the claude, codex and
+  agy CLIs).
+- **Measuring `compact_window`**, the last item of
+  [#208](https://github.com/cristiangirlea/harness/issues/208) (closed by PR #450): measure it on
+  a long real task (cache reads, turns, result checks) before recommending a default. Back when
+  the owner approves the plan usage for that run.
+
 ## Decisions log
+- 2026-10-16: four issues closed in the triage without a code PR. #388 (tests reading the
+  developer's `backends.json`) was fixed by PR #386, its timing half by PRs #387 and #413. #190
+  (no `syscall.Flock` on solaris and aix) is not worth doing while neither is a release or CI
+  target; reopen it with an fcntl lock if one becomes one. #360 (a model id starting with a dash
+  reaches the CLI as a flag) is a duplicate of #397, an allow-list of model ids before
+  any CLI argument. #37 (a budget across runs) is not needed: the owner uses plan backends only
+  (claude, codex, agy), `api` is disabled in `backends.json`, no API key is set, and none of 1,498
+  run records spent real money; reopen it if a metered backend is ever enabled.
+- 2026-10-16: gemini and opencode cache semantics, and totals that carry their missing status
+  (#320, #334, PR #506). Gemini counts cached tokens inside its input and opencode apart from it;
+  `ModelTokens` now knows both, so their runs are no longer "unknown". Token totals are summed
+  with their missing status: MCP rows, the report and eval's context median leave out runs whose
+  usage is missing instead of adding zeros, and an adapter turn that would overflow marks the
+  usage missing. For the api backend that turn's cost is left out too (`CostStatus: "missing"`),
+  so the cost reads unknown rather than absurd. The review found the overflowing turn's cost still
+  counted as known and eval counting cached tokens twice; both fixed.
+- 2026-10-16: `hrn runs` masks prompts, and the `git` URL user stays (#311, PR #511). What #304's
+  display masking left out, decided on the issue (the owner delegated the calls). `hrn runs` masks
+  prompt excerpts as `hrn show`'s header does. Live `hrn run` output stays masked per fragment,
+  and `docs/watch.md` says a secret split across two fragments can show in halves while it
+  streams; `hrn show` and hrn watch mask the assembled text, and records keep the original. A
+  URL's user part stays masked except the literal lower-case `git` with no password, a protocol
+  name rather than a credential.
+- 2026-10-16: stopped runs, Ada's watcher and one cache of cleaned batch records; all of #88 done
+  (#96, #124, #88, #403, PRs #456, #486, #510). A record with no write for an hour shows as
+  stopped instead of running for ever, worked out at render time and never written to records (PR
+  #456). Ada forgets a batch she cannot read after three looks, announces no late-reading batch as
+  new, hears "un mute" and drops the follower of a stopped run (PR #486). The watch index and Ada
+  share one cache, so a batch record is cleaned again only when its file changes (PR #510). Left
+  open in #403: a gate running over an hour shows its batch as stopped.
+- 2026-10-16: a remote watch started after the job ended ends (#361, #169, PR #509). `WatchJob`
+  reads the job's state first; for a finished job with the cursor at or past its last event it
+  prints what remains and returns, instead of waiting for a terminal event that never comes. A 5xx
+  or network error on that read falls through to the streaming watch, which retries as before (the
+  review caught the first version dropping that retry), and `WatchJob` validates the job id
+  itself. The client tests #169 named (TLS, 3xx and 4xx, malformed and oversized events, `--after
+  -1`, the MCP `job_id` cases) landed with it.
+- 2026-10-16: a remote job's cost ceiling is capped from the environment (#168, PR #508). Anyone
+  with a client could queue remote jobs at any cost ceiling. Decided on the issue (the owner
+  delegated the call): caps read from the environment, unset keeping today's behaviour. The
+  control service refuses `max_cost_usd` above `HRN_MAX_COST_USD_PER_JOB` with 422 `cost_limit`
+  after the token and tenant checks, an invalid value stops it before it opens the database, and
+  an idempotent retry of an existing job still returns it after the limit is lowered. `hrn remote
+  submit` and the MCP `remote_submit` tool refuse a cost above `HRN_REMOTE_MAX_COST_USD` before
+  any request. Tenant budgets are still not enforced, as `server/README.md` says.
+- 2026-10-16: `hrn watch --public`: token, Host and Origin cases (#219, #229, PR #507). Tests pin
+  what the code already handled: an absent, null or numeric `aud` is refused, an upper-case Host
+  accepted and one with a trailing dot refused as `bad host`. A stream's access-log row is now
+  written at its start (after the first flush) as well as its end, and the `*accessWriter`
+  assertion checks `, ok` instead of panicking. The navigation exemption is narrowed to what the
+  docs said: no Origin or `Origin: null`; any other Origin takes the normal check.
+- 2026-10-16: the #44 security follow-ups, and hrn's own git in a task worktree runs nothing the
+  agent configured (#56, PR #479). The guard refuses more deploy spellings (`npm -w`, `yarn
+  workspace`, `wrangler publish`) and protects opencode's `auth.json`. Every git command hrn runs
+  in a worktree an agent touched goes through one helper that neutralises hooks, fsmonitor, gpg
+  signing and repository-scope filters through `GIT_CONFIG_COUNT`, skips submodules and diffs with
+  `--no-ext-diff --no-textconv`; five review rounds, three adversarial, each closed an escape.
+  Left as #467: an agent can set `core.worktree` so hrn's add commits files from outside the
+  worktree, a read escape already on main.
+- 2026-10-16: routing by the declared purpose, and routed choices dropped off their backend (#327,
+  #332, PR #505). Routing uses `purpose.Resolve(declared, prompt)`, and `routed_by` says when the
+  category was declared. A retry on another backend clears the routed model and effort, and a
+  usage-limit switch also clears `routed_by`, in run, MCP and batch alike, so `hrn report --by
+  routed` no longer credits a partner's results to a row. An invalid route row warns and is
+  skipped instead of refusing every run of its purpose (the owner's decision on #327).
+- 2026-10-16: a declared purpose follows continuations and exec (#322, #325, PR #504). A continued
+  run inherits the earlier run's declared purpose unless given a new one, as mode is; an invalid
+  stored purpose is not inherited (a review finding). `hrn exec`'s `start` accepts a `purpose`,
+  checked with `purpose.Declarable()`, and a batch task's declared purpose shows on the batch page
+  and in `hrn batch show`.
+- 2026-10-16: `hrn gc` streams the default branch's log into patch-id (#225, PR #503). gc read the
+  whole `git log -p`, binaries included, into memory and fed it to `git patch-id` again for every
+  batch worktree. Now the log is piped straight in and the landed patch ids are kept per merge
+  base for the run, with the same arguments and results; any failure still leaves gc without
+  proof, so the worktree is kept. If patch-id fails, gc cancels before waiting on `git log`, so a
+  full pipe cannot hang it.
+- 2026-10-16: the review rule: fix every defect in the branch, drop the nits (PR #502, AGENTS.md).
+  The owner's rule of 2026-10-16, after a backlog run in which every merged PR spawned a follow-up
+  issue of non-blocking findings (59 opened against 47 closed). A branch finishes everything its
+  issue asks; every defect, missing test, broken house rule or security hole a review finds in the
+  branch's code is fixed before the push, blocking or not, one commit per review round. Nits are
+  dropped; only a defect elsewhere on `main` or an owner decision becomes an issue, never a
+  follow-up of a follow-up. The base branch is merged in once before the final checks, since CI
+  tests the merge with `main`. The Definition of done says the same.
+- 2026-10-16: the usage chart's review follow-ups (#243, PR #501). claude's per-turn output keeps
+  the largest count across a message's lines instead of undercounting; a stream connect decodes
+  only usage and compaction lines; the live chart is drawn once a poll and thinned past 500 turns,
+  so a long run no longer sends about 1.5 MB per update. A mixed report row's median context takes
+  one average per run, and the day-row test no longer flakes at midnight.
+- 2026-10-16: a retry can recover from a failed required retrieval (#182, #262, PR #500). When the
+  search itself failed and no pin was recorded, a retry retrieves afresh instead of failing every
+  attempt with "pin cannot be resumed"; a recorded pin is honoured as before and kept after a
+  refused replay, so no attempt falls back to an unpinned search. The spec check refuses retrieval
+  with a retry on another backend, and the automatic switch at a usage limit is skipped when
+  retrieval is on: a switch clears the model, which retrieval needs, so the task ends `limited`
+  with the reason. Both decided on the issues (the owner delegated the calls).
+- 2026-10-16: the api tool definitions measured per mode and held to a byte budget (Refs #438, PR
+  #492). Steps 1 and 3 of #438: hrn's own definitions are 1,409 bytes read-only, 2,836 in auto and
+  yolo and 3,295 with shaping, about 16%, 32% and 37% of the median api call (2,211 tokens over
+  1,110 calls); those calls were local models without cache writes, so a call to Anthropic's API
+  would be larger. A test holds each mode under its budget, and `scripts/tool-shapes.sh
+  --definitions` reports the figures (`docs/tool-shapes.md`). Nothing is trimmed: a third less
+  would save about 240 tokens a call, mostly at the cache-read rate, and step 2 waits for the
+  owner's decision and an eval, so #438 stays open.
+- 2026-10-16: a fresh continuation with a bounded hand-over (Refs #117, PR #494). `hrn run
+  --continue <id> --fresh`, MCP `fresh: true` and exec `fresh` start a new session instead of
+  forking the old one, in the earlier run's workspace and mode, carrying a hand-over built from
+  the record with no model call (task, status, error, final answer, changed files, gate results),
+  each part capped and saved as `handoff.md`. A later ordinary continue, the limit carry-on
+  included, never reaches back past a fresh hand-over. The first slice of #117, which stays open
+  for retrieval pins, adamap identity and the long-chain eval.
+- 2026-10-16: the purpose card's costs summed exactly, and a purpose kept on one line (#122, #125,
+  PR #490). Costs are summed as integer micro-dollars before the lower bound is floored to four
+  decimals; floating-point sums printed an exact sum $0.0001 low past about $100. The runs table's
+  purpose cell no longer breaks its word at medium widths; the phone layout is unchanged.
+- 2026-10-16: JSON and table summaries (#336, PR #487). `internal/shape` gains the kinds `JSON`
+  and `Table` (`Classify` tries JSON, Test, Table, Log, Terminal in that order), held to the same
+  invariant: the summaries copy raw spans of the original rather than re-encoding it, which would
+  add numbers the original never held, and `valid` rebuilds the one generated first line and
+  compares it exactly. Error, `FAIL` and `panic` lines are kept verbatim. `go test -json` output
+  stays line-based, and logs with comma timestamps stay logs.
+- 2026-10-16: `hrn scripts hint`, an advisory hook that names a kept script (#439, PR #481). An
+  opt-in Claude Code PreToolUse hook: when an inline script (a heredoc, `python -c`, `node -e`,
+  `bash -c`, a PowerShell block) matches a kept script's `matches:` header, it adds one line of
+  context naming the script. It never makes a permission decision and never exits 2; anything it
+  does not understand is silent with exit 0, and the hint is limited to a plain file name and 200
+  bytes of parameters, so a repository cannot put arbitrary text in an agent's context. It stands
+  in until the gate does this (adanext-exec #2).
+- 2026-10-16: the attempt id is left out of the durable task identity digest (#147, PR #478).
+  `Task.AttemptID` was part of the digest that binds a checkpoint to its task, so a coordinator
+  giving each retry a new id would fail every resume with "task identity does not match". Decided
+  (the owner delegated the call): the attempt id names an attempt, not the task. Existing
+  checkpoints still resume, since `attempt_id` is `omitempty` and no stored checkpoint had one.
+- 2026-10-16: stronger chart verifier assertions, with regression tests in CI (#173, PR #473).
+  `server/deploy/verify_charts.py` makes the ten assertions #139's review listed (a pinned control
+  image, Secret names, tenant and project ids, the control container's securityContext,
+  NetworkPolicy egress contents, no repeated kinds, no `envFrom`), and `test_verify_charts.py`
+  breaks each on purpose. The review found nothing ran those tests; the charts job in CI now does.
+  No chart changed.
+- 2026-10-16: adversarial probes and a fuzz target for the summary invariants (#436, PR #468).
+  They found one defect: `valid` compared error lines with the raw original while summaries are
+  built from colour-stripped text, so a colour code inside `error` or `FAIL` let a long terminal
+  result drop that line and still pass; it now compares stripped lines. Left open, each needing a
+  mechanism of its own: #461 (digits in escape codes satisfy the number check), #462 (an error
+  word wrapped across two lines), #463 (the oracle does not catch invented error lines), #464 (a
+  stack frame far after a log error; an owner decision) and #465 (one test name in two packages
+  always falls back).
+- 2026-10-16: which `Usage` is which on `Result` and `Event` (#265, PR #471). `Result.Usage`
+  (`*UsageMetadata`, how to read the run's totals) and `Event.Usage` (the per-call `*Usage`) now
+  say what they are and name each other. The issue's smaller option: no rename, since
+  `Result.Usage` is a stored field.
+- 2026-10-16: live event streams bounded per tenant and closed at a terminal state (#156, PR
+  #470). The control service's SSE route had no limits. Now each instance allows at most four open
+  streams per tenant (a fifth gets 429 `stream_limit`), a slot is taken only after the token and
+  job-scope checks and released on every exit, a stream closes once its job is terminal whichever
+  event made it so, and a stream lasts at most 30 minutes before the client reconnects with its
+  cursor. An event-ordering problem already on main is in #469.
+- 2026-10-16: the #46 security follow-ups for the limit carry-on (#54, PR #466). Key variables
+  count as set on any non-empty value (only the `CLAUDE_CODE_USE_*` switches keep "`0` or `false`
+  is unset"), so `ANTHROPIC_API_KEY=0` refuses the carry-on with a reason. When a run stays on its
+  backend, run, MCP and batch record why before it starts, and a batch no longer sends a `switch`
+  event when nothing switched. A cancel stops the carry-on, but a real limit is still remembered
+  in `limits.json`. `docs/backends.md` names what hrn cannot see (a Console login, a settings
+  `env` block, codex profiles).
+- 2026-10-16: hrn watch hides the backend start line and the shell wrapper around commands (Refs
+  #435, PR #460). The display-only first step the owner asked for on 2026-10-16. A run's first
+  info event, the backend's own command line, is hidden when its first word is the recorded
+  backend; command calls lose one outer `powershell -Command`, `bash -lc`, `sh -c` or `cmd /c`
+  layer and its quotes, in the event text, the tool input and Ada's "running" line, and a command
+  that cannot be unquoted cleanly is shown as it was. Records and `hrn show` keep the full text.
+  The gate itself is #435, re-scoped by the owner to run every agent command through adanext-exec.
+- 2026-10-16: the comment rule, and a check with a baseline that only shrinks (Refs #441, PR
+  #457). Part one of #441: AGENTS.md's rule, and `scripts/comment-check.sh` over the whole tree
+  with a baseline of today's comments, so new code is held to the rule without a base ref. Today
+  0.1859 of non-test bytes are whole-line comments; the target is under 0.10. A stale baseline
+  entry fails the check and editing a baselined block changes its fingerprint, so a touched
+  comment comes up to the rule. "Review" matches review narration, not the bare word, which hrn
+  uses as a purpose. The cleanup, part two, comes after item 18's slices.
+- 2026-10-16: quoted compact windows over MCP, and the lean carry-on and `--continue` covered
+  (#208, PR #450). `compact_window`'s MCP schema is one type every host accepts, and a quoted
+  `"200000"` passes the same check as a number; a test checks that a lean claude attempt carried
+  on on codex records no `lean`; `hrn run --continue` of a lean batch run runs without lean unless
+  asked, as `docs/backends.md` now says; `.claude/rules/records.md` forbids changing a stored
+  field's JSON type. The issue's last item, measuring `compact_window` on a long real task, needs
+  the owner's plan usage and moves to *Under consideration*.
+- 2026-10-16: the incomplete-worktree test skips where git adds the worktree anyway (#451, PR
+  #452). git 2.55.0 on GitHub's ubuntu runner adds a worktree beside a half-written
+  `.git/worktrees/<n>` entry, so the test from PR #426 found no error and turned every PR's ubuntu
+  job red. It now checks the kept error only when git fails, and skips with the reason otherwise.
+  Test only.
+- 2026-10-16: retrieval tests for a continuation without a packet, child MCP credentials and the
+  durable refusal (#185, PR #448). Tests only, the ones #141's review named: a child MCP server
+  cannot see retrieval credentials, `LoadConversation` keeps a failed optional retrieval's scope
+  with no packet, and the durable refusal makes no request. Two of the cases were already on main.
+  Each new one was seen failing against a temporary regression; no bug was found.
+- 2026-10-16: UTF-16 gate output decoded, and a gate whose shell never started is not retried
+  (#84, PR #446). WSL's launcher writes UTF-16, which was stored and handed to a retry as
+  NUL-interleaved text; it is decoded to UTF-8 first. A gate whose process fails to start, or
+  whose decoded output begins with a WSL or HCS launcher error, records `infrastructure_error` and
+  fails the task instead of asking a backend to fix working code. The review narrowed the check to
+  the start of the output, so a real failure that merely prints `HCS_E_` still retries.
+- 2026-10-16: tests pin how a run's folder is spelt when recorded and continued (#75, PR #444).
+  Windows-only where 8.3 names are needed: a session recorded under a short name is refused when
+  continued from the long one; exec records the long spelling when sent the raw temp dir; a batch
+  run reached through a short name records the long worktree path, for `fresh` and `slots`, and is
+  continued (no test had continued a batch run). Tests only.
+- 2026-10-15: purpose classifier follow-ups (#119, #315, #316, #323, #324, #326, PR #432). The
+  lead is bounded (600 runes, cut on a rune boundary) before it is lowercased, and only the latest
+  label line is kept, itself capped. A label needs `: ` or the line end, so `https:` and `C:\` are
+  no longer labels; the instruction after leading labels is classified first, and error first
+  lines (`Error:`, `panic:`) stay `debug.error-message`. A free-text `Purpose:` header no longer
+  feeds the classifier, `Resolve` trusts a stored purpose only when it is a category, and
+  `purpose.Declarable()` replaces three copies of the category list.
+- 2026-10-15: `hrn gc` removes worktrees holding clean submodules, and finishes a folder Windows
+  will not delete (#128, PR #434). `git worktree remove` refuses a worktree with submodules; gc
+  now removes one itself once its usual proof holds and no submodule would lose anything: a clean
+  tree, HEAD at the recorded commit, no stash, no unpushed branch. A deinitialised or orphaned
+  module repository keeps the worktree; the reviews found the first versions would lose a
+  submodule's unrecorded commits, then an orphaned module's, both fixed. When git emptied the
+  folder but could not delete it, gc prunes, removes the empty folder if it can and goes on to the
+  branch.
+- 2026-10-15: the guard refuses more gh api publishing endpoints, and downloads run through `&` or
+  a scriptblock (#285, #338, PR #430). gh-publish also refuses transfers, deployments, statuses,
+  runner registration tokens, branch renames, `merge-upstream`, forks, repository creation, gists
+  and pages, and matches `gh.exe`, any case of gh and a full path to it. pipe-to-shell refuses
+  `irm u | & powershell -` and an invoked `[scriptblock]::Create((irm u))`; building a scriptblock
+  alone stays allowed. A GraphQL query read from a file stays out of reach of a textual guard;
+  further spellings are #429.
+- 2026-10-15: an eval variant can set `lean` (#203, PR #428). A variant's `lean` beats the task's
+  and the spec's, so an A/B of lean fits in one eval; it is refused when the variant's resolved
+  backend is not claude. Whether `CLAUDE.local.md` is read under lean could not be checked without
+  real Claude runs, so `docs/backends.md` says it was not checked and how to check it.
+- 2026-10-15: `hrn remote events --watch` ends at the event that ends the job (#165, PR #414). The
+  client reconnected whenever a stream ended cleanly, so the watch never exited. It now returns
+  with status 0 after printing a `succeeded`, `failed` or `canceled` event, or an
+  `admission_timeout` or `recovery_resolved` whose `details.state` is one of those;
+  `recovery_required` waits for a person and is not terminal. The plain `events` command and
+  `ReadEvents` read to the end as before. A watch started after the job ended was left as #361 (PR
+  #509); the server-side close is #156 (PR #470).
+- 2026-10-15: a git command is retried once when a slot being created makes it fail (#189, PR
+  #426). While `git worktree add` creates a slot, a git command that lists worktrees can die on
+  the missing `commondir`; `internal/gitretry` re-runs it once after a short pause, for the batch
+  and ws commands outside the create lock, which all fail before changing anything. `worktree add
+  -b` is not retried: git creates the branch before dying, so a retry could only fail with
+  "already exists" (the review reproduced this on git 2.49). Retried commands run with `LC_ALL=C`.
+- 2026-10-15: the knowledge import screen checks every field for keys and tokens (#176, #179, PR
+  #424). Private key headers (OPENSSH, EC, ENCRYPTED, generic) and token shapes (`sk-ant-`,
+  `ghp_`, `github_pat_`, `AKIA`, JWTs) are refused in every text field, and `.env` matches only as
+  a path segment or a `.env.<suffix>` file; a refusal names the field and the pattern, never the
+  text. Operator review stays the control, as `server/README.md` says. The smaller points: an
+  `Attempt` above int32 refused, multi-word exact matching, `main.go.` matching `main.go`, and a
+  schema-2 database told to migrate. The review found a query could build about 17 MB of
+  multi-word candidates; capped at 8 words and 256 candidates.
+- 2026-10-15: dead CA conditionals dropped and a module download layer added (#171, PR #422). The
+  project-worker chart's three `secrets.caName` guards are gone, since the value is already
+  required; the server Dockerfile runs `go mod download` right after copying `go.mod`, so
+  `server/` changes reuse a cached layer. `verify_charts.py` checks both, and that an empty
+  `caName` fails to render.
+- 2026-10-15: certain durable failures end without recovery, and every call is recorded (#145,
+  #146, #148, PR #420). A definite model rejection (a 4xx other than 408, 409 or 429) saves a
+  `model_rejected` checkpoint and ends as an error without `recovery_required`; a
+  context-management 400 retries once in durable mode as it does locally. Every tool result in the
+  durable transcript has its call event, emitted after the saved `tool_intent`. The docs say the
+  checkpoint store is the trust boundary for budget, deadline and start, and that a restored,
+  already-paid response may finish its tools over the ceiling. #147 waited for the owner's call
+  (PR #478).
+- 2026-10-15: the continue context warning reaches exec and every new run's record (#102, #104,
+  #108, PR #418). Over 150,000 tokens of carried context, exec's `accepted` frame carries the
+  warning in its notes, and `followup.Plan.Apply` records it once as an info event in the new run
+  on every path, the limit carry-on included. A transcript hand-over to another backend starts
+  with no warning. The review found it printed twice in plain mode; it now shows once, and with
+  `--json` still goes to stderr.
+- 2026-10-15: the recording page's review follow-ups (#92, PR #416). The microphone is released
+  after Stop, download mode gets a `metadata.csv` button, Stop posts the last partial block
+  (waiting at most 400 ms) so a take ends exactly, unknown `metadata.csv` rows are kept, and
+  several races around retakes and mode switches are closed. Item 5, a headless browser check in
+  CI, moves to #415.
+- 2026-10-15: the shaping test's slow shell start (#380, #401, PRs #387, #413).
+  `TestRunCommandShapesLargeOutput` gave every case 2 seconds, and on the owner's loaded PC
+  PowerShell took longer to start. The success and failure cases got 60 seconds (PR #387); the
+  timeout case then failed before printing, so it gets 10 seconds while the command still sleeps
+  60 (PR #413). The failures depend on load, so neither could be shown failing on demand;
+  `TestRunShellTimeoutKillsTheTree`, with 3 seconds, is the next likely flake.
+- 2026-10-15: the remote server origin built from the parsed URL, and the CA file read through a
+  checked handle (#282, PR #408). A query, fragment or `%2F` in the server URL can no longer reach
+  request paths, a scoped IPv6 host stays escaped, and an empty host is refused.
+  `HRN_SERVER_CA_FILE` is opened once and checked on the handle (a regular file, at most 1 MiB),
+  so a swap between check and read no longer works; on unix a FIFO is refused instead of blocking.
+- 2026-10-15: a durable task with `allow_dangerous` is refused on the run path too (#276, PR
+  #407). `APIBackend.Run` refuses it before the client, the workspace, any tool or any checkpoint,
+  so a stored job that never passed `validateSubmission` ends as one `failed` result rather than
+  `recovery_required`, and the worker goes on to the next job.
+- 2026-10-15: a killed gate in a few words for the retry prompt and the watch badge (#396, PR
+  #402). A killed gate is reported in three forms: `Outcome()`, with the operator's advice, for
+  the batch tool, `batch_show`, the `-v` event and the badge's title; `Brief()` (`was killed after
+  15m0s by gate_timeout`) for the retry prompt, which cannot act on the advice; and a short badge
+  (`killed · gate_timeout 15m0s`), since badges never wrap. A gate that could not start after a
+  cancellation is `canceled` too.
+- 2026-10-15: an unsupported retrieval submission says so, and the 422 is tested through the route
+  (#275, #274, PR #391). `validateSubmission` now says "retrieval is not supported for durable
+  jobs", still `ErrUnsupported`, without echoing the value. A PostgreSQL route test checks that
+  `allow_dangerous`, retrieval and a retrieval value holding a newline and markup each get 422
+  `unsupported`; it skips locally, first ran in CI's `server-postgres` job, and the merge waited
+  for it.
+- 2026-10-15: `hrn-server` refuses plain HTTP outside a loopback IP literal (#263, PR #390). A
+  network `HRN_LISTEN` without TLS let bearer tokens cross the network unencrypted. Without TLS
+  files it must now be in `127.0.0.0/8`, `::1` or an IPv4-mapped loopback, checked before the
+  database opens; `localhost`, `0.0.0.0` and host names are refused. This follows
+  `internal/remote`, the stricter client (the worker still accepts `localhost`). The control chart
+  always sets TLS, so nothing deployed changes.
+- 2026-10-15: tests run against a temporary `HRN_HOME`, never the owner's (#379, #381, PR #386).
+  Since PR #371 added `~/.hrn/backends.json`, tests that set no `HRN_HOME` read the owner's file,
+  and with only claude and agy enabled four tests, and so every full local check, failed; CI has
+  no such file. All nine packages that can reach the home get a TestMain that sets a fresh
+  temporary one, with a guard test that fails if it is not under the temp directory.
+- 2026-10-15: the guard refuses PowerShell's long download names and `iex` given a download (#267,
+  PR #375). pipe-to-shell knew only `curl`, `wget`, `irm` and `iwr` piped into an evaluator. It
+  now knows `Invoke-RestMethod`, `Invoke-WebRequest` and the WebClient download, and refuses `iex`
+  or `Invoke-Expression` given a download as its argument, in parentheses or `$(...)`, with or
+  without `-Command`; `iex $script` stays allowed. The call operator and scriptblock spellings
+  followed as #338 (PR #430).
 - 2026-10-15: a gate killed by gate_timeout says so (#395, PR #399). A gate hrn killed at its
   per-gate limit, or at a cancellation, was `exited -1` everywhere, and a retry hunted its
   output for a failing test; five batches on 2026-10-14 failed that way while the code was
