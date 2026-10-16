@@ -20,9 +20,20 @@ import (
 
 type stubBackend struct{}
 
+// typed is a prompt without the commit block agent.Run puts first.
+func typed(prompt string) string {
+	rest, ok := strings.CutPrefix(prompt, "# How to commit\n\n")
+	if !ok {
+		return prompt
+	}
+	_, after, _ := strings.Cut(rest, "\n\n")
+	return after
+}
+
 func (stubBackend) Name() string            { return "stub" }
 func (stubBackend) Detect() (string, error) { return "built-in stub", nil }
 func (stubBackend) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	task.Prompt = typed(task.Prompt)
 	if task.Prompt == "record-write-failure" {
 		// Invalid tool input forces event encoding to fail without a real backend.
 		for range 2 {

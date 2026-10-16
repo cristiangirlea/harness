@@ -215,6 +215,7 @@ func latestModel(chain []runlog.Record, backend string) string {
 // hand-over first, which is also saved beside the record as handoff.md.
 func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.Resume, task.ForkSession = p.Resume, p.ForkSession
+	task.FixRound = p.Prev.ID != ""
 	for _, n := range p.Notes {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: n})
 	}
