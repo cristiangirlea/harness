@@ -114,7 +114,8 @@ func (s stub) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent
 		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt), 0o644)
 	}
 	return agent.Result{Backend: s.name, Model: task.Model, Status: agent.StatusOK,
-		Final: "done", Turns: 2, InputTokens: 100, OutputTokens: 10, CostUSD: 0.25, CostEstimate: true}
+		Final: "done", Turns: 2, InputTokens: 100, OutputTokens: 10, CostUSD: 0.25, CostEstimate: true,
+		Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "reported"}}
 }
 
 func init() {
@@ -272,7 +273,7 @@ func TestRunScoresEachVariant(t *testing.T) {
 		t.Errorf("ok = %+v, lazy = %+v", ok, lazy)
 	}
 	if ok.MedianContext != 100 {
-		t.Errorf("context should count prompt tokens and cache reads: %+v", ok)
+		t.Errorf("context should count every input token once: %+v", ok)
 	}
 	if ok.MedianCostUSD != 0.25 || !ok.CostEstimate {
 		t.Errorf("cost should come from the attempts: %+v", ok)
