@@ -301,6 +301,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		plain.WriteString(text)
 		emit(Event{Kind: EventText, Text: text, Partial: true})
 	}
+	if c.newParse != nil && c.finalize == nil {
+		parse(nil, parseEmit, &res) // a parser holding a line back lets it go
+	}
 	_, _ = io.Copy(io.Discard, stdout)
 	waitErr := cmd.Wait()
 

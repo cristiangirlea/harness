@@ -76,7 +76,14 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 	if task.ForkSession != "" {
 		return fail(fmt.Errorf("retrieval is unsupported for native session continuation"))
 	}
+	// A retry after a search that failed before pinning anything has no pin to honour.
+	if previous != nil && enabled && task.Resume == nil && task.Retrieval == previous.Mode && !previous.Replayed && previous.Packet == nil && previous.Failure != "" && previous.Failure != "optional retrieval unavailable" {
+		previous = nil
+	}
 	if previous != nil {
+		state.Scope = previous.Scope // a refused replay still records the pin
+		state.Mode = previous.Mode
+		state.Packet = previous.Packet
 		if task.Resume != nil {
 			if err := ValidateContinuationPin(previous, task.Resume); err != nil {
 				return fail(err)
@@ -91,9 +98,6 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		if previous.Failure != "" && previous.Failure != "optional retrieval unavailable" {
 			return fail(fmt.Errorf("previous retrieval failed; pin cannot be resumed"))
 		}
-		state.Scope = previous.Scope
-		state.Mode = previous.Mode
-		state.Packet = previous.Packet
 		state.Failure = previous.Failure
 		state.Replayed = true
 		sc := state.Scope
