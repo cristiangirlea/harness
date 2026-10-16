@@ -81,6 +81,9 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		previous = nil
 	}
 	if previous != nil {
+		state.Scope = previous.Scope // a refused replay still records the pin
+		state.Mode = previous.Mode
+		state.Packet = previous.Packet
 		if task.Resume != nil {
 			if err := ValidateContinuationPin(previous, task.Resume); err != nil {
 				return fail(err)
@@ -95,9 +98,6 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		if previous.Failure != "" && previous.Failure != "optional retrieval unavailable" {
 			return fail(fmt.Errorf("previous retrieval failed; pin cannot be resumed"))
 		}
-		state.Scope = previous.Scope
-		state.Mode = previous.Mode
-		state.Packet = previous.Packet
 		state.Failure = previous.Failure
 		state.Replayed = true
 		sc := state.Scope
