@@ -120,7 +120,10 @@ reads and writes, counted once). Those come from a run's `usage` events when it 
 [Usage per turn](run-records.md#usage-per-turn)): every turn counts. A run without them (codex,
 gemini, older records) counts once, as its average, its totals over its turns, and its peak
 is the larger of that average and its recorded last-call context. `from` says which: `turns`,
-`totals`, `mixed`, or `-` when no run in the group reported tokens.
+`totals`, `mixed`, or `-` when no run in the group reported tokens. In a `mixed` row the
+median is over one average a run (a run with `usage` events gives the mean of its turns), so
+per-turn values and per-run averages are never counted together; the peak is still the
+largest of any run.
 `--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
 JSON for scripts.
 
