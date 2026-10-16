@@ -323,6 +323,9 @@ func (s *Spec) normalize() error {
 		if err := checkBackends(t.Backend, &t.Retry); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
+		if err := checkRetrievalRetry(t.Options.Over(s.Options), firstOf(t.Backend, s.Backend), firstList(t.Retry, s.Retry)); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
 		if err := checkGates(t.Gate); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
@@ -350,6 +353,23 @@ func compileExpect(expr string) (*regexp.Regexp, error) {
 
 // expectCommand is how an expect check is named where a gate command would be.
 func expectCommand(expr string) string { return "expect /" + expr + "/" }
+
+// checkRetrievalRetry refuses a retry on another backend when retrieval is on:
+// the pin is scoped to the backend the first attempt ran on.
+func checkRetrievalRetry(opts agent.Options, backend string, retry []string) error {
+	if !retrievalOn(opts) {
+		return nil
+	}
+	backend = firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	for _, name := range retry {
+		if name != backend {
+			return fmt.Errorf("retry names %s, but retrieval pins the task to its backend %s: retry on %s only, or turn retrieval off", name, backend, backend)
+		}
+	}
+	return nil
+}
+
+func retrievalOn(opts agent.Options) bool { return opts.Retrieval != "" && opts.Retrieval != "off" }
 
 func checkBackends(backend string, retry *[]string) error {
 	p, err := agent.BackendPreferences(runlog.Home())
@@ -727,6 +747,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				notify(Event{Task: t.ID, Kind: "switch", Text: "skipping an attempt on " + name + ": " + why})
 				continue
 			}
+			if pick != name && task.RetrievalState != nil {
+				tr.Error = pinnedSwitch(name, pick)
+				return finish(StatusFail, "limited: "+tr.Error)
+			}
 			if pick != name {
 				plan.switchedFrom, name = name, pick
 				notify(Event{Task: t.ID, Kind: "switch", Text: why})
@@ -875,7 +899,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			// The partner carries the attempt on in this worktree, as one
 			// more attempt that does not use up a retry.
 			if other := limits.Partner(att.Backend); other != "" && !opts.NoSwitch {
-				if ok, why := limits.Ready(other, time.Now(), spent); ok {
+				if ok, why := limits.Ready(other, time.Now(), spent); ok && retrievalOn(opts) {
+					tr.Error = pinnedSwitch(att.Backend, other)
+					return finish(StatusFail, "limited: "+tr.Error)
+				} else if ok {
 					backends = slices.Insert(backends, i+1, other)
 					carry = &att
 				} else {
@@ -893,6 +920,12 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		left = "branch " + tr.Branch + " kept"
 	}
 	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · %s", len(tr.Attempts), left))
+}
+
+// pinnedSwitch is why a task with retrieval on ends at a usage limit instead
+// of carrying on on the partner, where the pin's backend scope would refuse it.
+func pinnedSwitch(from, to string) string {
+	return fmt.Sprintf("%s reached its usage limit; switch to %s skipped: the retrieval pin is bound to %s", from, to, from)
 }
 
 // takeSlot leases a slot of the repository for a task. The branch is made
