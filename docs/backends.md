@@ -256,6 +256,38 @@ with `--json`; the MCP tool includes it in its answer and `hrn exec` in the `acc
 frame's notes, and every path records it once as an info event in the new run. Continuing is still allowed. Unknown
 context sizes and sizes at or below the threshold produce no warning.
 
+#### A fresh hand-over
+
+`--fresh` with `--continue` (MCP `fresh: true` beside `continue_run_id`, `hrn exec`'s
+`fresh` in `start`) starts a new session instead: nothing any run saved is picked up,
+not a claude or codex fork, not agy's `--conversation`, not an api `messages.json`,
+on the same backend or another, and no context warning applies. It is for a phase
+boundary (implementation, then review, then fixes) where the next step needs a short
+brief, not the whole earlier context:
+
+```bash
+hrn run --continue 20260921-095628-f18a6d --fresh "review the parser change"
+```
+
+The new run inherits backend, workspace, mode and model as an ordinary follow-up
+does, and its prompt is yours preceded by a hand-over that hrn builds from the
+earlier run's record, with no model call: that run's task (up to 6 KiB), its
+status and error, its final answer (up to 6 KiB), the workspace's changes as a
+`git diff --stat` plus untracked files when it is a git repository (against the
+batch's base commit for a batch attempt, otherwise against `HEAD`, so only what is
+uncommitted), and for a batch attempt its gate results. git runs there with the
+repository's fsmonitor, filter drivers, external diff drivers and textconv turned off,
+since the earlier run could have set them to any command; files under a filter (git
+lfs) may then show as changed. The whole is capped at
+16 KiB, cut from the end with a note saying so; a fact the record lacks is said to
+be missing. It describes only the run named, not the turns before it, and points to
+the full record (`hrn show <id>`). As with a transcript, it is saved as `handoff.md`
+and quoted line by line. The record keeps `continues` and adds `continue_route:
+"fresh_handover"`, and a later follow-up, on any backend, never looks back past that run:
+no session or conversation before it is picked up, handed over or measured for the
+warning. Without `--fresh`, `--continue` behaves as above: prefer it when
+the next step needs the earlier session's reasoning or tool results.
+
 What the backend carries on from:
 
 | Backend | Saves | A follow-up on it |

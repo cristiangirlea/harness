@@ -17,6 +17,11 @@ or `false` when explicitly set, omitted otherwise. Older records without it stil
 
 Routed runs include `routed_by` (`category`, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
 
+A follow-up names the run it continues in `continues`. One started with `--fresh` (MCP
+`fresh`, exec `fresh`) also has `continue_route: "fresh_handover"`: it started a new
+session with a hand-over instead of resuming or forking one. The field is omitted for
+an ordinary follow-up, and old records without it still load.
+
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 
 - `task.json` — prompt, dir, backend, and the run options by their flag names; when retrieval
@@ -62,7 +67,9 @@ Routed runs include `routed_by` (`category`, source `eval` when present, and `se
   starts. An unfinished run keeps this pin; a continuation checks it against the
   conversation before reuse.
 - `handoff.md` — for a follow-up, the transcript of earlier turns its backend was
-  given before the prompt (see [Continuing a run](backends.md#continuing-a-run))
+  given before the prompt (see [Continuing a run](backends.md#continuing-a-run)), or for
+  a fresh hand-over the brief built from the earlier run's record
+  ([A fresh hand-over](backends.md#a-fresh-hand-over))
 - `result.json` — status (`ok|error|refused|max_turns|timeout|budget|canceled|limited`), final answer, turns,
   tokens, cache, cost (`cost_is_estimate` for the api backend), duration, the
   claude, codex or agy `session` id, and for a `limited` run `limit_resets`, when its plan's

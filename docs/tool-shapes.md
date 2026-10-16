@@ -88,3 +88,39 @@ The measurement in `scripts/tool-shapes` is broader: it checks test and log firs
 valid JSON value, and counts a table when `encoding/csv` parses at least two rows of two or more
 fields (quoted commas allowed). Its `json` and `table` bytes are an upper bound on what these
 summaries can take.
+
+## Tool definitions
+
+2026-10-16, runs from the 30 days before (2026-09-16 to 2026-10-16).
+
+Command: `bash scripts/tool-shapes.sh --home "$HOME/.hrn" --days 30 --definitions`
+
+```json
+{"days":30,"definitions":{"auto":{"tools":6,"bytes":2836,"tokens_estimate":709,"median_api_call_share":0.3206452099193488},"readonly":{"tools":3,"bytes":1409,"tokens_estimate":352.25,"median_api_call_share":0.1593050425868697},"shaping":{"tools":7,"bytes":3295,"tokens_estimate":823.75,"median_api_call_share":0.3725408909323887},"yolo":{"tools":6,"bytes":2836,"tokens_estimate":709,"median_api_call_share":0.3206452099193488}},"largest_with_shaping":[{"tool":"edit_file","bytes":554,"share":0.16813353566009104},{"tool":"grep","bytes":518,"share":0.15720789074355082},{"tool":"run_command","bytes":477,"share":0.14476479514415783},{"tool":"read_file","bytes":472,"share":0.14324734446130502},{"tool":"read_original","bytes":458,"share":0.13899848254931715}],"mcp_definitions":"not recorded","api_runs_with_mcp":0,"api":{"runs":176,"runs_from_usage":0,"calls":1110,"median_tokens":2211.1666666666665},"all":{"runs":1565,"runs_from_usage":181,"calls":13303,"median_tokens":81585.41379310345}}
+```
+
+`--definitions` sizes the `tools` field the api loop sends (`APIBackend.ToolDefinitions`) for
+each mode and compares it with the median context per model call: input, cache read and cache
+write tokens (codex input already includes its cache). A run without usage events counts its
+totals spread evenly over its turns. The median is per call, so long runs weigh more than short
+ones. Four bytes per token is a rough estimate for JSON schemas, whose punctuation and names can
+split into more tokens than prose. The tool-use system prompt the API adds when tools are present
+is not counted. With those caveats, hrn's own definitions (709 tokens in auto and in yolo, which offer
+the same six tools, 352 read-only, 824 with shaping) are 32%, 16% and 37% of the median api call
+of 2,211 tokens. That median comes from 1,110 calls in 176 api runs, none with usage events, so
+every figure is a run average. All 176 ran local GGUF models through an Anthropic-compatible
+local server, not Anthropic's API, and none recorded a cache write, so counting cache writes
+leaves the median where it was; a run against Anthropic's API, which writes the system prompt
+and definitions to the cache on its first call, would have a larger median and a smaller share.
+`largest_with_shaping` lists the shaping set's tools: `edit_file`, `grep`, `run_command`,
+`read_file` and `read_original` each hold 14% to 17%, so no one tool dominates. The 81,585-token
+median over all runs is mostly CLI backends, which send their own tools. MCP servers'
+definitions are not recorded (run records keep only the config file names), and no api run in
+the window loaded one.
+
+Trimming would pay by share on these local runs: cutting a third of the text would save about
+240 tokens per call, about 11% of a median api call there, and less on Anthropic's API where the
+prompt is larger. The definitions sit in the cached prefix, so most of those tokens are billed at
+the cache-read rate, and the money saved is smaller than the share.
+`TestToolDefinitionsStayUnderTheirByteBudget` (`internal/agent/tooldefs_test.go`) holds each
+mode under its size rounded up to 512 bytes: 1,536 read-only, 3,072 auto and yolo, 3,584 with shaping.

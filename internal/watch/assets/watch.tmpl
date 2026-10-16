@@ -99,7 +99,7 @@
 <tbody>{{range .Runs}}<tr>
 <td class="name">{{template "name" .}}{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
 <td class="meta">{{.Backend}}</td>
-<td class="meta"{{with .Rule}} title="{{.}}"{{end}}>{{.Purpose}}</td>
+<td class="meta purpose"{{with .Rule}} title="{{.}}"{{end}}>{{.Purpose}}</td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
 <td class="num meta">{{template "took" .}}</td>
 <td class="num meta">{{.Cost}}</td>

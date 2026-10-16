@@ -83,6 +83,10 @@ hrn       -> result                (always the last line after accepted; then ex
   context, these notes include the same fresh-run warning as the CLI and MCP. The new run
   also records it once as an `info` event. A transcript hand-over alone does not warn.
   It is accepted for every backend independently of `options` and is not listed there.
+- `fresh: true` with `continue_run_id` starts a new session handed the earlier run over
+  from its record instead of resuming or forking anything, as `hrn run --continue --fresh`
+  does (see [A fresh hand-over](backends.md#a-fresh-hand-over)). Without `continue_run_id`
+  it is rejected with `bad_request`.
 
 ### `accepted` or `rejected` (hrn)
 
