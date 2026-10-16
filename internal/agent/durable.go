@@ -68,7 +68,9 @@ func prepareDurable(task Task, req *apiRequest, res *Result) (*durableAPI, error
 	if task.Resume != nil {
 		return nil, errors.New("conversation continuation and durable recovery cannot be combined")
 	}
-	identity, err := json.Marshal(task)
+	identityTask := task
+	identityTask.AttemptID = ""
+	identity, err := json.Marshal(identityTask)
 	if err != nil {
 		return nil, err
 	}

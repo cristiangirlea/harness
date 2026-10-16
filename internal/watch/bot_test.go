@@ -306,6 +306,16 @@ func TestTheBotStreamSaysWhatHappensAndBlanksSecrets(t *testing.T) {
 			break
 		}
 	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Text: `powershell.exe -NoProfile -Command "go test ./..."`})
+	for {
+		m := nextSay(t, s)
+		if m.Kind == "working" {
+			if m.Text != "Claude is running go test in harness." {
+				t.Fatalf("working: %+v", m)
+			}
+			break
+		}
+	}
 	if err := w.Close(agent.Result{Status: agent.StatusOK, Duration: time.Minute}); err != nil {
 		t.Fatal(err)
 	}

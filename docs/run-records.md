@@ -96,7 +96,9 @@ entry path (CLI, MCP and exec). It appears in `hrn show` and the run page like o
 events. Passing earlier turns only as a transcript does not produce this warning.
 
 Beside `runs/`, `limits.json` holds the reset time of each backend whose usage limit is in
-force, which every run consults before it starts. Deleting it forgets them.
+force. `hrn run`, the MCP `run` tool and batch attempts consult it before starting when
+switching is enabled. `hrn exec` neither reads nor writes it. Deleting it forgets the
+remembered limits.
 
 `result.json` includes `model_reported: true` only when the backend reports its
 model: api responses, claude init lines and gemini model stats. A requested/default

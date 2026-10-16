@@ -44,6 +44,7 @@
 | `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch (see [Reusable workspaces](workspaces.md#take)). |
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
 | `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it (see [List](workspaces.md#list)). |
+| `hrn scripts hint` | A Claude Code PreToolUse hook that reads the payload on stdin and names the kept script whose `matches:` header covers the inline script a command is about to run; advice only, silent otherwise (see [The hint hook](scripts.md#the-hint-hook)). |
 
 Run flags: `-b/--backend` (api, claude, codex, gemini, opencode, agy), `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api, codex, claude and agy: low, medium, high, xhigh, max; unset uses the
