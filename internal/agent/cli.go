@@ -73,9 +73,9 @@ type CLIBackend struct {
 	// mapsCompact is set when args honours Options.CompactWindow; like
 	// mapsLean, not a capability.
 	mapsCompact bool
-	// limits is set when the CLI bills to a plan and says in words that its
-	// usage limit was reached (usageLimit knows the words): such a run ends
-	// limited rather than in an error.
+	// limits is set when the CLI bills to a plan and says, in a way usageLimit
+	// knows, that its usage limit was reached: such a run ends limited rather
+	// than in an error.
 	limits bool
 }
 
