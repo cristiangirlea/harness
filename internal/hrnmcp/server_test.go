@@ -592,6 +592,29 @@ func TestRunContinueInheritsThePurposeUnlessTheCallOrHeaderNamesOne(t *testing.T
 	}
 }
 
+func TestRunContinueIgnoresAnInvalidStoredPurpose(t *testing.T) {
+	dir := t.TempDir()
+	s := connect(t, dir)
+	w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir, Purpose: "Bogus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub-1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "stub", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	r := s.call(t, "run", `{"prompt":"again","backend":"stub","continue_run_id":"`+w.ID()+`"}`)
+	if r.IsError {
+		t.Fatalf("continue: %s", r.Text())
+	}
+	rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Task.Purpose != "" {
+		t.Errorf("an invalid stored purpose was inherited: %q (%v)", rec.Task.Purpose, err)
+	}
+}
+
 func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T) {
 	for _, tc := range []struct {
 		tokens  int64

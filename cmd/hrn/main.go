@@ -363,7 +363,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		*declared = purpose.Declared(prompt)
 	}
 	// Like the mode, a continued run keeps the earlier purpose unless this one names its own.
-	if *declared == "" {
+	if *declared == "" && purpose.Valid(plan.Prev.Task.Purpose) {
 		*declared = plan.Prev.Task.Purpose
 	}
 	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -413,6 +414,26 @@ func TestContinueInheritsThePurposeUnlessTheFlagOrHeaderNamesOne(t *testing.T) {
 		if task := <-recorded; task.Purpose != tc.want {
 			t.Errorf("%q: purpose = %q, want %q", tc.args, task.Purpose, tc.want)
 		}
+	}
+	for _, name := range []string{"task.json", "result.json"} {
+		path := filepath.Join(runlog.Root(), recs[0].ID, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad := regexp.MustCompile(`("purpose":\s*)"review"`).ReplaceAll(data, []byte(`$1"Bogus"`))
+		if err := os.WriteFile(path, bad, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec, err := runlog.Load(recs[0].ID); err != nil || rec.Task.Purpose != "Bogus" {
+		t.Fatalf("stored purpose = %q, err=%v", rec.Task.Purpose, err)
+	}
+	if code, err := cmdRun([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b", "again"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if task := <-recorded; task.Purpose != "" {
+		t.Errorf("an invalid stored purpose was inherited: %q", task.Purpose)
 	}
 }
 

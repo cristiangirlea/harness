@@ -196,7 +196,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 					args.Mode = plan.Prev.Task.Mode
 				}
 				// And its purpose, unless the call or the prompt's header names one.
-				if args.Purpose == "" {
+				if args.Purpose == "" && purpose.Valid(plan.Prev.Task.Purpose) {
 					args.Purpose = plan.Prev.Task.Purpose
 				}
 			}
