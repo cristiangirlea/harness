@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -418,13 +420,15 @@ func in(where string) string {
 
 // topic is a task in a few words: its first line, without markdown in front
 // or a full stop behind, starting small unless it starts with a name, an
-// acronym or "I".
+// acronym, "I", or a capital before a symbol ("C++", "A/B", "Q&A").
 func topic(prompt string) string {
 	line, _ := firstLine(strings.TrimSpace(prompt))
 	line = strings.TrimLeft(line, "#*->` \t")
 	line = strings.TrimRight(words(line, 12), ".!:; ")
 	r, size := utf8.DecodeRuneInString(line)
-	if next, _ := utf8.DecodeRuneInString(line[size:]); size > 0 && unicode.IsUpper(r) && !unicode.IsUpper(next) && !(r == 'I' && !unicode.IsLetter(next)) {
+	next, _ := utf8.DecodeRuneInString(line[size:])
+	word := unicode.IsLower(next) || r != 'I' && (len(line) == size || unicode.IsSpace(next))
+	if size > 0 && unicode.IsUpper(r) && word {
 		line = string(unicode.ToLower(r)) + line[size:]
 	}
 	return line
@@ -526,32 +530,84 @@ type botWatcher struct {
 	s         *server
 	followers map[string]*Follower
 	doing     map[string]string
-	batches   []batch.Result // the last look's, cleaned
+	batches   []batch.Result  // the last look's, cleaned
+	missed    map[string]int  // looks in a row each kept batch could not be read
+	looked    bool            // the first look is done
+	late      map[string]bool // batches on disk the first look could not read
 }
 
 func (s *server) newBotWatcher() *botWatcher {
-	return &botWatcher{s: s, followers: map[string]*Follower{}, doing: map[string]string{}}
+	return &botWatcher{s: s, followers: map[string]*Follower{}, doing: map[string]string{}, missed: map[string]int{}, late: map[string]bool{}}
 }
 
-// keepUnread keeps the last look's batches that this look could not read. A
-// running batch rewrites its record as each task moves on, and on Windows a
-// read can land on the rename: the batch would vanish for one look, then it
-// and its runs would be announced again as new. A batch removed for good is
-// not kept, as then every record reads.
-func keepUnread(prev, cur []batch.Result, unreadable int) []batch.Result {
-	if unreadable == 0 {
-		return cur
-	}
+// keepUnread keeps last look's batches this look could not read: on Windows a
+// read can land on a record's rename, and the batch would vanish for a look and
+// be announced again as new. A removed batch goes once every record reads, or
+// after keepLooks looks while another never reads; missed counts those looks.
+func keepUnread(prev, cur []batch.Result, unreadable int, missed map[string]int) []batch.Result {
 	have := map[string]bool{}
 	for _, b := range cur {
 		have[b.ID] = true
 	}
+	for id := range missed {
+		if have[id] || unreadable == 0 {
+			delete(missed, id)
+		}
+	}
+	if unreadable == 0 {
+		return cur
+	}
 	for _, b := range prev {
-		if !have[b.ID] {
+		if have[b.ID] {
+			continue
+		}
+		if missed[b.ID]++; missed[b.ID] <= keepLooks {
 			cur = append(cur, b)
+		} else {
+			delete(missed, b.ID)
 		}
 	}
 	return cur
+}
+
+// keepLooks is how many looks in a row a batch is kept while it cannot be read.
+const keepLooks = 3
+
+// baseline adds to prev the batches the first look could not read, on the
+// look that first reads them: they were there before the stream began, so
+// they are not news.
+func (b *botWatcher) baseline(prev, cur botSnapshot) botSnapshot {
+	if len(b.late) == 0 {
+		return prev
+	}
+	items := slices.Clip(prev.items)
+	for id := range b.late {
+		it, ok := cur.find(id)
+		if !ok {
+			continue
+		}
+		delete(b.late, id)
+		if _, seen := prev.find(id); !seen {
+			items = append(items, it)
+		}
+	}
+	return botSnapshot{items: items}
+}
+
+// unread are the batches on disk that batches does not hold.
+func unread(batches []batch.Result) map[string]bool {
+	entries, _ := os.ReadDir(filepath.Join(runlog.Home(), "batches"))
+	read := map[string]bool{}
+	for _, b := range batches {
+		read[b.ID] = true
+	}
+	out := map[string]bool{}
+	for _, e := range entries {
+		if id, ok := strings.CutSuffix(e.Name(), ".json"); ok && !e.IsDir() && !read[id] {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 func (b *botWatcher) look() botSnapshot {
@@ -563,11 +619,15 @@ func (b *botWatcher) look() botSnapshot {
 		time.Sleep(50 * time.Millisecond)
 		batches, unreadable, _ = b.s.listBatches()
 	}
+	if !b.looked && unreadable > 0 {
+		b.late = unread(batches)
+	}
+	b.looked = true
 	going := map[string]bool{}
 	for i, rec := range runs {
 		runs[i] = b.s.cleanRecord(rec)
-		if rec.Done {
-			continue
+		if rec.Done || !runStopped(rec).IsZero() {
+			continue // a stopped run is picked up again if it writes again
 		}
 		going[rec.ID] = true
 		f := b.followers[rec.ID]
@@ -592,7 +652,7 @@ func (b *botWatcher) look() botSnapshot {
 			delete(b.doing, id)
 		}
 	}
-	b.batches = keepUnread(b.batches, batches, unreadable)
+	b.batches = keepUnread(b.batches, batches, unreadable, b.missed)
 	return botLook(runs, b.batches, b.doing, time.Now())
 }
 
@@ -622,7 +682,7 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 				return true, err
 			}
 		}
-		for _, m := range announce(prev, cur, first) {
+		for _, m := range announce(b.baseline(prev, cur), cur, first) {
 			m.Text = s.clean(m.Text)
 			data, _ := json.Marshal(m)
 			text := string(data)

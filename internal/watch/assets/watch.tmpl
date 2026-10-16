@@ -242,8 +242,9 @@
 {{/* Ada, a robot scarlet macaw, drawn with gradients for a lit, rounded
      look. Colours are attributes, not style, as the page's policy allows no
      inline style; watch.css moves her: the lower beak while she talks, a
-     blink, a slow bob of the head, and the glow of her lights. */}}
-{{define "ada"}}<svg class="bot-face ada" viewBox="0 0 240 240" role="img" aria-label="Ada, a robot parrot">
+     blink, a slow bob of the head, and the glow of her lights. Hidden from
+     screen readers: the heading beside her already names her. */}}
+{{define "ada"}}<svg class="bot-face ada" viewBox="0 0 240 240" aria-hidden="true">
 <defs>
 <radialGradient id="ada-head" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#ff8273"/><stop offset=".42" stop-color="#ea3540"/><stop offset=".85" stop-color="#b3192c"/><stop offset="1" stop-color="#851021"/></radialGradient>
 <radialGradient id="ada-body" cx=".42" cy=".28" r=".85"><stop offset="0" stop-color="#f4504a"/><stop offset=".55" stop-color="#cc2131"/><stop offset="1" stop-color="#7a0e1c"/></radialGradient>

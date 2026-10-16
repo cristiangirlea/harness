@@ -61,7 +61,8 @@ later activity if the writer resumes.
 This is a display inference, not a saved result: watch never rewrites or deletes
 records, and a saved result still determines how a run ended. An unreadable
 modification time alone is not evidence that a writer stopped. Ada excludes stopped
-records from what is going and does not announce them as starting or finished.
+records from what is going and does not announce them as starting or finished; she stops
+reading a stopped run's transcript and picks it up again if the run writes again.
 
 Each run on the index also says what it was for (review, debug, implement, refactor, test,
 research, plan, ops or unknown), from `internal/purpose`'s keyword rules on its prompt's
@@ -227,10 +228,13 @@ clicking one opens its run or batch. Skip (or Esc) stops talking; Snooze keeps i
 agent is doing" comes from its latest tool call (reading, editing, searching, running a
 command and the like), across the backends' different tool names. Ada opens quietly:
 what ended before it was opened is not news, and the first thing it says is what is going.
+A batch whose record could not be read on that first look (caught mid-save) is not
+announced as new when it reads.
 A batch's own runs are told as the batch's, not twice.
 
 Talk to me listens for one sentence each time it is pressed: "status" (or "what are you
-doing?"), "skip", "quiet" ("for an hour", "until I unmute"), "unmute" and "repeat". These
+doing?"), "skip", "quiet" ("for an hour", "until I unmute"), "unmute" (also heard as "un
+mute") and "repeat". These
 steer the bot only; nothing it hears or shows acts on hrn, which waits for the
 confirmations and audit log of #38.
 
