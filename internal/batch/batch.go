@@ -1388,14 +1388,11 @@ func commitChanges(wt, message string) (string, error) {
 	return g.out(ctx, "rev-parse", "HEAD")
 }
 
-// agentGit runs git in a working tree whose repository config an agent may
-// have written: hooks, fsmonitor, filter drivers, commit signing or
-// auto-maintenance there would run programs under the operator's environment.
-// Every status, diff, add and commit hrn runs in such a tree goes through it.
-// The overrides travel as GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n>, which git
-// takes as given; `-c key=value` splits at the first '=', and a filter name
-// may hold one. Git never descends into submodules, whose own config is the
-// agent's to write as well.
+// agentGit runs every status, diff, add and commit hrn makes in a tree whose config an
+// agent may have written, so its hooks, fsmonitor, filters, signing or auto-maintenance
+// never run programs under the operator's environment. Overrides travel as
+// GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> because `-c` splits at the first '=' and a filter
+// name may hold one; git never enters submodules, whose config is the agent's to write too.
 type agentGit struct {
 	dir   string
 	hooks string // an empty hooks directory, removed by close
