@@ -190,3 +190,31 @@ func TestRetrievalBatchSkipsTheSwitchFromABackendAlreadyLimited(t *testing.T) {
 		t.Fatalf("task = %+v", tr)
 	}
 }
+
+func TestRetrievalBatchSkipsTheSwitchBeforeTheFirstAttempt(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	retrievalServer(t, nil)
+	if err := limits.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	codex, err := agent.Get("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	agent.Register(stub{"codex", func(_ context.Context, task agent.Task) agent.Result {
+		calls++
+		return agent.Result{Backend: "codex", Status: agent.StatusOK, Final: "finished"}
+	}})
+	t.Cleanup(func() { agent.Register(codex) })
+	opts := agent.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "t_fixture", RetrievalProject: "p_fixture", RetrievalRevision: strings.Repeat("a", 40)}
+	res, _ := run(t, Spec{Dir: dir, Backend: "claude", Options: opts, Retry: []string{"claude"}, Tasks: []Task{{ID: "pinned", Prompt: "answer"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusFail || len(tr.Attempts) != 0 || calls != 0 {
+		t.Fatalf("task = %+v, codex calls = %d", tr, calls)
+	}
+	if !strings.Contains(tr.Error, "switch to codex skipped") || !strings.Contains(tr.Error, "bound to claude") {
+		t.Fatalf("reason = %q", tr.Error)
+	}
+}

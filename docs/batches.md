@@ -121,10 +121,10 @@ With retrieval enabled, a same-scope retry after a failed gate searches again us
 bounded failure evidence and the first attempt's pinned knowledge version. A change
 of backend, model or retrieval scope is refused rather than silently repinned: a spec
 or task with retrieval on whose `retry` names a backend other than the task's is refused
-when the batch starts, and when an attempt reaches its usage limit (or a retry would move
-to the partner because its backend's limit is remembered) the task ends there
-(status `fail`, its error saying the switch to the partner was skipped because the pin is
-bound to the backend) instead of carrying on on the partner. A retry after required
+when the batch starts. When an attempt reaches its usage limit, or the first attempt or a
+retry would move to the partner because the backend's limit is remembered, the task ends
+there (status `fail`, its error saying the switch to the partner was skipped because
+retrieval is bound to the task's backend) and nothing runs on the partner. A retry after required
 retrieval failed before anything was pinned (the control service was unreachable, say)
 searches afresh; once a pin is recorded, every retry honours it.
 

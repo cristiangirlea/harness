@@ -747,8 +747,12 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				notify(Event{Task: t.ID, Kind: "switch", Text: "skipping an attempt on " + name + ": " + why})
 				continue
 			}
-			if pick != name && task.RetrievalState != nil {
-				tr.Error = pinnedSwitch(name, pick)
+			if pick != name && retrievalOn(opts) {
+				bound := name
+				if task.RetrievalState != nil && task.RetrievalState.Scope.Backend != "" {
+					bound = task.RetrievalState.Scope.Backend
+				}
+				tr.Error = pinnedSwitch(name, pick, bound)
 				return finish(StatusFail, "limited: "+tr.Error)
 			}
 			if pick != name {
@@ -900,7 +904,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			// more attempt that does not use up a retry.
 			if other := limits.Partner(att.Backend); other != "" && !opts.NoSwitch {
 				if ok, why := limits.Ready(other, time.Now(), spent); ok && retrievalOn(opts) {
-					tr.Error = pinnedSwitch(att.Backend, other)
+					tr.Error = pinnedSwitch(att.Backend, other, att.Backend)
 					return finish(StatusFail, "limited: "+tr.Error)
 				} else if ok {
 					backends = slices.Insert(backends, i+1, other)
@@ -924,8 +928,8 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 
 // pinnedSwitch is why a task with retrieval on ends at a usage limit instead
 // of carrying on on the partner, where the pin's backend scope would refuse it.
-func pinnedSwitch(from, to string) string {
-	return fmt.Sprintf("%s reached its usage limit; switch to %s skipped: the retrieval pin is bound to %s", from, to, from)
+func pinnedSwitch(from, to, bound string) string {
+	return fmt.Sprintf("%s reached its usage limit; switch to %s skipped: the retrieval pin is bound to %s", from, to, bound)
 }
 
 // takeSlot leases a slot of the repository for a task. The branch is made
