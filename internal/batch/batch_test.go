@@ -262,7 +262,14 @@ func TestCommitChangesDoesNotRunRepositoryHooks(t *testing.T) {
 				}
 				_ = exec.Command("git", "-C", wt, "commit", "-q", "-a", "--allow-empty", "-m", "control").Run()
 			}
-			if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
+			data, err := os.ReadFile(marker)
+			if errors.Is(err, os.ErrNotExist) && tc.name == "gc.recentObjectsHook" {
+				// Whether a commit's auto gc consults this hook depends on git's
+				// version (GitHub's runners do not); without the control the case
+				// proves nothing either way, and the other keys still do.
+				t.Skip("this git's auto gc does not run gc.recentObjectsHook")
+			}
+			if err != nil || string(data) != "ran" {
 				t.Fatalf("control %s = %q, %v", tc.name, data, err)
 			}
 		})
