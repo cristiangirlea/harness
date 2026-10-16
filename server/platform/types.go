@@ -46,6 +46,7 @@ var (
 	ErrConflict    = errors.New("conflicting idempotency key")
 	ErrNotOwner    = errors.New("stale or expired execution owner")
 	ErrUnsupported = errors.New("unsupported remote execution mode")
+	ErrCostLimit   = errors.New("cost ceiling above the per-job limit")
 	refPattern     = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
 )
 
@@ -160,6 +161,15 @@ func validateSubmission(s Submission) error {
 	}
 	if !refPattern.MatchString(s.BaseRef) {
 		return errors.New("base ref must be a full Git commit hash")
+	}
+	return nil
+}
+
+// checkCostLimit refuses a ceiling above the service's per-job limit; zero
+// means no limit. Tenant budgets are not reserved yet, so this is the control.
+func checkCostLimit(s Submission, limit float64) error {
+	if limit > 0 && s.Options.MaxCostUSD > limit {
+		return fmt.Errorf("%w: max_cost_usd %g exceeds this service's per-job limit of %g USD (HRN_MAX_COST_USD_PER_JOB)", ErrCostLimit, s.Options.MaxCostUSD, limit)
 	}
 	return nil
 }

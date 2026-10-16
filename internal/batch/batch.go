@@ -1398,19 +1398,155 @@ func decodeGateOutput(s string) (string, bool) {
 // the commit, or "" when nothing changed. It runs after the agent, so it uses
 // its own context: a cancelled batch must still leave a consistent branch.
 func commitChanges(wt, message string) (string, error) {
-	dirty, err := hasChanges(wt)
-	if err != nil || !dirty {
-		return "", err
+	if _, err := os.Stat(wt); err != nil {
+		return "", nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if _, err := gitOut(ctx, wt, "add", "-A"); err != nil {
+	g, err := newAgentGit(ctx, wt)
+	if err != nil {
 		return "", err
 	}
-	if _, err := gitOut(ctx, wt, "commit", "-q", "-m", message); err != nil {
+	defer g.close()
+	status, err := g.stdout(ctx, "status", "--porcelain", "-z", "--no-renames", "--ignore-submodules=all")
+	if err != nil || status == "" {
 		return "", err
 	}
-	return gitOut(ctx, wt, "rev-parse", "HEAD")
+	// A bare `git add -A` runs status inside every submodule, whatever
+	// diff.ignoreSubmodules says; stage exactly the paths status reported.
+	var paths []string
+	for _, entry := range strings.Split(status, "\x00") {
+		if len(entry) > 3 {
+			paths = append(paths, entry[3:])
+		}
+	}
+	if _, err := g.in(ctx, strings.Join(paths, "\x00"),
+		"--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+		return "", err
+	}
+	if _, err := g.out(ctx, "commit", "-q", "-m", message); err != nil {
+		return "", err
+	}
+	return g.out(ctx, "rev-parse", "HEAD")
+}
+
+// agentGit runs every status, diff, add and commit hrn makes in a tree whose config an
+// agent may have written, so its hooks, fsmonitor, filters, signing or auto-maintenance
+// never run programs under the operator's environment. Overrides travel as
+// GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> because `-c` splits at the first '=' and a filter
+// name may hold one; git never enters submodules, whose config is the agent's to write too.
+type agentGit struct {
+	dir   string
+	hooks string // an empty hooks directory, removed by close
+	env   []string
+}
+
+func newAgentGit(ctx context.Context, dir string) (*agentGit, error) {
+	hooks, err := os.MkdirTemp("", "hrn-empty-hooks-")
+	if err != nil {
+		return nil, err
+	}
+	return &agentGit{dir: dir, hooks: hooks, env: configEnv(agentConfigOverrides(ctx, dir, hooks))}, nil
+}
+
+func (g *agentGit) close() { _ = os.RemoveAll(g.hooks) }
+
+func (g *agentGit) out(ctx context.Context, args ...string) (string, error) {
+	return gitOutEnv(ctx, g.dir, g.env, "", args...)
+}
+
+// in is out with stdin.
+func (g *agentGit) in(ctx context.Context, stdin string, args ...string) (string, error) {
+	return gitOutEnv(ctx, g.dir, g.env, stdin, args...)
+}
+
+func (g *agentGit) stdout(ctx context.Context, args ...string) (string, error) {
+	return gitStdoutEnv(ctx, g.dir, g.env, args...)
+}
+
+// configEnv numbers the overrides after any GIT_CONFIG_COUNT entries the
+// operator already set, so theirs still apply and ours, coming later, win.
+func configEnv(pairs [][2]string) []string {
+	n, err := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
+	if err != nil || n < 0 {
+		n = 0
+	}
+	env := make([]string, 0, 2*len(pairs)+1)
+	for i, p := range pairs {
+		env = append(env,
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", n+i, p[0]),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", n+i, p[1]))
+	}
+	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", n+len(pairs)))
+}
+
+// agentConfigOverrides turns off hooks and auto-maintenance, keeps git out of
+// submodules, and turns off the fsmonitor, commit signing and filter drivers
+// only where the repository's own config (local or worktree) defines them: the
+// operator's global and system config, a Git LFS filter for one, keep working.
+func agentConfigOverrides(ctx context.Context, dir, hooks string) [][2]string {
+	pairs := [][2]string{
+		{"core.hooksPath", hooks},
+		{"maintenance.auto", "false"},
+		{"gc.auto", "0"},
+		{"diff.ignoreSubmodules", "all"},
+		{"status.submoduleSummary", "false"},
+		{"submodule.recurse", "false"},
+	}
+	out, err := gitOut(ctx, dir, "config", "--show-scope", "--get-regexp",
+		`^(filter\..*\.(clean|smudge|process)|core\.fsmonitor|gpg\..*program|gpg\.ssh\.defaultkeycommand)$`)
+	if err != nil {
+		return pairs
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		scope, entry, _ := strings.Cut(line, "\t")
+		switch scope {
+		case "global", "system", "command":
+			continue
+		}
+		key, _, _ := strings.Cut(entry, " ")
+		switch {
+		case key == "core.fsmonitor":
+			if !seen[key] {
+				seen[key] = true
+				pairs = append(pairs, [2]string{"core.fsmonitor", "false"})
+			}
+			continue
+		case strings.HasPrefix(key, "gpg."):
+			if !seen["gpg."] {
+				seen["gpg."] = true
+				pairs = append(pairs, [2]string{"commit.gpgSign", "false"})
+			}
+			continue
+		}
+		rest, ok := strings.CutPrefix(key, "filter.")
+		if !ok {
+			continue
+		}
+		dot := strings.LastIndexByte(rest, '.')
+		if dot <= 0 {
+			continue
+		}
+		switch rest[dot+1:] {
+		case "clean", "smudge", "process":
+		default:
+			continue
+		}
+		// Filter names get their own prefix so a filter called "gpg." or
+		// "core.fsmonitor" is not taken for the marker entries above.
+		name := rest[:dot]
+		if !seen["filter:"+name] {
+			seen["filter:"+name] = true
+			pairs = append(pairs,
+				[2]string{"filter." + name + ".clean", ""},
+				[2]string{"filter." + name + ".smudge", ""},
+				[2]string{"filter." + name + ".process", ""},
+				[2]string{"filter." + name + ".required", "false"},
+			)
+		}
+	}
+	return pairs
 }
 
 // hasChanges reports whether a worktree holds uncommitted work. A missing
@@ -1431,11 +1567,16 @@ func hasChanges(wt string) (bool, error) {
 // dirtyPaths lists the porcelain status lines of a working tree, with or
 // without untracked files. One place decides what "dirty" means.
 func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, error) {
-	args := []string{"status", "--porcelain"}
+	g, err := newAgentGit(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer g.close()
+	args := []string{"status", "--porcelain", "--ignore-submodules=all"}
 	if !untracked {
 		args = append(args, "--untracked-files=no")
 	}
-	status, err := gitOut(ctx, dir, args...)
+	status, err := g.out(ctx, args...)
 	if err != nil || status == "" {
 		return nil, err
 	}
@@ -1840,7 +1981,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 			return "", nil, fmt.Errorf("task %s: commit %s is no longer in %s, so its branch was removed",
 				taskID, tools.ShortSHA(tr.Commit), res.Dir)
 		}
-		out, err := gitStdout(ctx, res.Dir, "diff", res.Base+".."+tr.Commit)
+		out, err := gitStdout(ctx, res.Dir, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", res.Base+".."+tr.Commit)
 		return out, nil, err
 	}
 	if tr.Slot != 0 {
@@ -1851,7 +1992,12 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 	if _, err := os.Stat(tr.Worktree); err != nil {
 		return "", nil, fmt.Errorf("task %s committed nothing and its worktree is gone", taskID)
 	}
-	out, err := gitStdout(ctx, tr.Worktree, "diff", "HEAD")
+	g, err := newAgentGit(ctx, tr.Worktree)
+	if err != nil {
+		return "", nil, err
+	}
+	defer g.close()
+	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD")
 	if err != nil {
 		return "", nil, err
 	}
@@ -2040,9 +2186,16 @@ func Head(ctx context.Context, dir string) (string, error) {
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitOutEnv(ctx, dir, nil, "", args...)
+}
+
+// gitOutEnv is gitOut with extra environment entries, which win over the
+// process's own, and standard input.
+func gitOutEnv(ctx context.Context, dir string, env []string, stdin string, args ...string) (string, error) {
 	out, err := gitretry.Output(ctx, func() ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANGUAGE=")
+		cmd.Env = append(append(cmd.Environ(), env...), "LC_ALL=C", "LANGUAGE=")
+		cmd.Stdin = strings.NewReader(stdin)
 		return cmd.CombinedOutput()
 	})
 	text := strings.TrimSpace(string(out))
@@ -2059,7 +2212,12 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 // gitOut merges stderr into the result, which makes a good error message and a
 // corrupt patch; a diff is data and goes through here.
 func gitStdout(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitStdoutEnv(ctx, dir, nil, args...)
+}
+
+func gitStdoutEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(cmd.Environ(), env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

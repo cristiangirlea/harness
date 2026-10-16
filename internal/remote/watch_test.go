@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -124,5 +127,221 @@ func TestReadEventsStillReadsPastATerminalEvent(t *testing.T) {
 	after, err := ReadEvents(strings.NewReader(stream), 0, io.Discard)
 	if err != nil || after != 2 {
 		t.Fatalf("ReadEvents = after %d, err %v; want 2, nil", after, err)
+	}
+}
+
+func TestAWatchStartedAfterTheJobEndedPrintsWhatRemainsAndReturns(t *testing.T) {
+	const job = "j_cccccccccccccccccccccccccccccccc"
+	events := []string{`{"id":1,"kind":"running"}`, `{"id":2,"kind":"checkpoint"}`, `{"id":3,"kind":"succeeded"}`}
+	for _, test := range []struct {
+		after int64
+		want  string
+	}{
+		{3, ""},
+		{9, ""},
+		{1, events[1] + "\n" + events[2] + "\n"},
+	} {
+		t.Run(fmt.Sprint(test.after), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("tenant_id") != "t_1" {
+					t.Errorf("request %s lacks the scope", r.URL)
+				}
+				switch r.URL.Path {
+				case "/v1/jobs/" + job:
+					fmt.Fprintf(w, `{"id":%q,"state":"canceled"}`, job)
+				case "/v1/jobs/" + job + "/events":
+					if r.Header.Get("Accept") == "text/event-stream" {
+						t.Error("a watch of an ended job opened a stream")
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					after, _ := strconv.Atoi(r.URL.Query().Get("after"))
+					// Pages of one event make the client ask again until a page is empty.
+					if after < len(events) {
+						fmt.Fprintf(w, `{"events":[%s]}`, events[after])
+						return
+					}
+					fmt.Fprint(w, `{"events":[]}`)
+				default:
+					t.Errorf("unexpected request %s", r.URL)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			client := &Client{origin: server.URL, http: server.Client()}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			var output bytes.Buffer
+			err := client.WatchJob(ctx, job, url.Values{"tenant_id": {"t_1"}}, test.after, &output)
+			if err != nil || ctx.Err() != nil {
+				t.Fatalf("WatchJob error = %v, context = %v; want completion before deadline", err, ctx.Err())
+			}
+			if output.String() != test.want {
+				t.Fatalf("output = %q, want %q", output.String(), test.want)
+			}
+		})
+	}
+}
+
+func TestAWatchOfAJobStillRunningStreamsUntilTheTerminalEvent(t *testing.T) {
+	const job = "j_cccccccccccccccccccccccccccccccc"
+	var streams atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/jobs/" + job:
+			fmt.Fprint(w, `{"state":"running"}`)
+		case "/v1/jobs/" + job + "/events":
+			streams.Add(1)
+			if r.Header.Get("Last-Event-ID") != "1" || r.URL.Query().Get("tenant_id") != "t_1" {
+				t.Errorf("stream request %s, cursor %q", r.URL, r.Header.Get("Last-Event-ID"))
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "id: 2\nevent: succeeded\ndata: {\"id\":2}\n\n")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	}))
+	defer server.Close()
+	client := &Client{origin: server.URL, http: server.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var output bytes.Buffer
+	if err := client.WatchJob(ctx, job, url.Values{"tenant_id": {"t_1"}}, 1, &output); err != nil || ctx.Err() != nil {
+		t.Fatalf("WatchJob error = %v, context = %v", err, ctx.Err())
+	}
+	if output.String() != "{\"id\":2}\n" || streams.Load() != 1 {
+		t.Fatalf("output = %q, streams = %d", output.String(), streams.Load())
+	}
+}
+
+func TestAWatchStreamsWhenTheJobStateIsBrieflyUnavailable(t *testing.T) {
+	const job = "j_cccccccccccccccccccccccccccccccc"
+	for _, test := range []struct {
+		status  int
+		streams int32
+	}{{http.StatusServiceUnavailable, 1}, {http.StatusForbidden, 0}} {
+		t.Run(strconv.Itoa(test.status), func(t *testing.T) {
+			var streams atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/jobs/"+job {
+					w.WriteHeader(test.status)
+					return
+				}
+				streams.Add(1)
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "id: 2\nevent: succeeded\ndata: {\"id\":2}\n\n")
+			}))
+			defer server.Close()
+			client := &Client{origin: server.URL, http: server.Client()}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			err := client.WatchJob(ctx, job, url.Values{}, 1, io.Discard)
+			var httpErr *HTTPError
+			if test.status >= 500 && err != nil || test.status < 500 && (!errors.As(err, &httpErr) || httpErr.Status != test.status) {
+				t.Fatalf("WatchJob error = %v", err)
+			}
+			if ctx.Err() != nil || streams.Load() != test.streams {
+				t.Fatalf("streams = %d, want %d; context = %v", streams.Load(), test.streams, ctx.Err())
+			}
+		})
+	}
+}
+
+func TestAWatchOfAnEndedJobRefusesAPageThatDoesNotAdvanceTheCursor(t *testing.T) {
+	const job = "j_cccccccccccccccccccccccccccccccc"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/jobs/"+job {
+			fmt.Fprint(w, `{"state":"failed"}`)
+			return
+		}
+		fmt.Fprint(w, `{"events":[{"id":2}]}`)
+	}))
+	defer server.Close()
+	client := &Client{origin: server.URL, http: server.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := client.WatchJob(ctx, job, url.Values{}, 2, io.Discard); !errors.Is(err, ErrMalformedEvent) || ctx.Err() != nil {
+		t.Fatalf("WatchJob error = %v, context = %v; want ErrMalformedEvent", err, ctx.Err())
+	}
+}
+
+func TestWatchReturnsOnARedirectWithoutFollowingIt(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	}))
+	defer server.Close()
+	t.Setenv("HRN_SERVER_URL", server.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	client, err := NewFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err = client.Watch(ctx, "/events", 0, io.Discard)
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusFound || requests.Load() != 1 || ctx.Err() != nil {
+		t.Fatalf("Watch error = %v, requests = %d, context = %v; want one HTTP 302", err, requests.Load(), ctx.Err())
+	}
+}
+
+func TestWatchReturnsOnAMalformedEventWithoutReconnecting(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "id: 1\nevent: running\ndata: not json\n\n")
+	}))
+	defer server.Close()
+	client := &Client{origin: server.URL, http: server.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err := client.Watch(ctx, "/events", 0, io.Discard)
+	if !errors.Is(err, ErrMalformedEvent) || requests.Load() != 1 || ctx.Err() != nil {
+		t.Fatalf("Watch error = %v, requests = %d, context = %v; want one ErrMalformedEvent", err, requests.Load(), ctx.Err())
+	}
+}
+
+func TestReadEventsRefusesALineOver1MiB(t *testing.T) {
+	stream := "id: 1\ndata: \"" + strings.Repeat("x", 1<<20) + "\"\n\n"
+	if _, err := ReadEvents(strings.NewReader(stream), 0, io.Discard); !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("ReadEvents error = %v, want bufio.ErrTooLong", err)
+	}
+}
+
+func TestWatchJobRefusesAJobIDThatIsNotServerIssuedWithoutARequest(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	client := &Client{origin: server.URL, http: server.Client()}
+	for _, job := range []string{"", "j_../x", "j_" + strings.Repeat("A", 32), "p_" + strings.Repeat("a", 32), "j_" + strings.Repeat("a", 32) + "/events"} {
+		if err := client.WatchJob(context.Background(), job, url.Values{}, 0, io.Discard); err == nil || !strings.Contains(err.Error(), "server-issued") {
+			t.Errorf("WatchJob(%q) error = %v", job, err)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("an invalid job ID reached the server in %d requests", requests.Load())
+	}
+}
+
+func TestWatchJobRefusesAJobWhoseStateIsNotAString(t *testing.T) {
+	const job = "j_cccccccccccccccccccccccccccccccc"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/jobs/"+job {
+			t.Errorf("unexpected request %s", r.URL)
+		}
+		fmt.Fprint(w, `{"state":5}`)
+	}))
+	defer server.Close()
+	client := &Client{origin: server.URL, http: server.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := client.WatchJob(ctx, job, url.Values{}, 0, io.Discard); err == nil || err.Error() != "invalid job from control service" {
+		t.Fatalf("WatchJob error = %v", err)
 	}
 }

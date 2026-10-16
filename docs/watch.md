@@ -28,7 +28,8 @@ id as its label. Then come a run's backend, purpose, status, duration, cost and 
 first line, and a batch's status, how many tasks passed, its backends, duration, cost and up
 to three of its tasks' names, then "and N more". Every attempt of a batch's task is also a
 run; its row links to the batch under the run's id, even when that batch is older than the
-ones listed. A run's page is its
+ones listed. Watch blanks a batch record's secrets once and reuses that copy, for the index and
+for Ada, until the record's file changes time or size. A run's page is its
 timeline as it happens: the assistant's text, each tool call with its input in one line
 (the input itself folded under it, its first 6 KB and last 2 KB), each result folded and
 capped (its first 12 KB and last 4 KB; all of it stays in `events.jsonl`), how long each
@@ -187,7 +188,9 @@ Watch checks the Cloudflare Access signing keys at start and refuses to serve if
 Watch still listens only on loopback. In this mode it accepts only the public Host
 and verifies the Access JWT on every request, including static assets and event
 streams. A top-level page load from elsewhere, such as the Access login redirect or an
-email link, opens the page; cross-site embedded loads and other cross-site requests remain refused.
+email link, opens the page when it carries no `Origin` header or `Origin: null`; any other
+Origin goes through the normal check and must be the public origin. Cross-site embedded loads
+and other cross-site requests remain refused.
 It treats visitors as remote even though `cloudflared`
 connects from the same computer: the page omits the hrn home path and phone hints,
 and `/voice` is unavailable. You cannot open this public watch at its loopback URL
@@ -199,7 +202,10 @@ terminal; its default `127.0.0.1:8089` port works alongside the public watch on 
 loopback address for the tunnel, and the access log path. Each request appends one
 JSON line to `$HRN_HOME/watch-access.log`
 (or `~/.hrn/watch-access.log`), with the time, email when allowed, method, path,
-status, Cloudflare connecting IP, and a short reason when refused. Cloudflare's
+status, Cloudflare connecting IP, and a short reason when refused. An event stream
+writes two lines: one after its first bytes reach the browser, marked
+`"stream":"start"`, and one when it ends, marked `"stream":"end"`, each with its
+own time; a stream that ends before sending anything writes one plain line. Cloudflare's
 own Access logs record logins; this file records requests that reached watch.
 
 ### Ada, the bot
@@ -297,7 +303,7 @@ They use mocked audio and folder APIs; they do not replace a real browser microp
 ## Secret masking
 
 Human-facing text in watch rows, pages and streams (local and `--lan`), `hrn show`,
-terminal progress lines and Ada's speech and notifications masks secret values as
+`hrn runs` prompt excerpts, terminal progress lines and Ada's speech and notifications masks secret values as
 `••••`: URL credentials; `-u`/`--user` user:password flags; JSON secret fields;
 authorization, API-key and cookie headers; bare Bearer tokens; recognised `sk-`,
 `ghp_`, `github_pat_`, `xox`, `AKIA` and JWT tokens; assignments whose names have KEY,
@@ -305,6 +311,11 @@ TOKEN, SECRET, PASSWORD, AUTH, CREDENTIALS, COOKIE or SESSION as a whole segment
 (separated by `_`, `-` or the name's ends); and secret flags
 such as `--password`, `--token` and `--api-key`. Masking scans the whole text before
 any display excerpt is shortened; it does not cut the text itself.
+A URL whose user is the literal lower-case `git` with no password (`ssh://git@host/...`, as on
+git remotes) keeps it; any other user part, including `GIT` or a bare token, is masked.
+Live `hrn run` output is masked per streamed fragment, so a secret split across two
+fragments can show in halves while it streams; `hrn show` and `hrn watch` mask the
+assembled text from the record.
 The existing environment-value redaction also runs. Records remain unchanged,
 and JSON record output retains the original text. These rules recognise common
 secret shapes; they cannot identify every possible secret.

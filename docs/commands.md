@@ -170,6 +170,10 @@ The origin may have a trailing `/`, but no credentials, other path, query
 (including an empty `?`), or fragment. The CA path must name a regular file;
 symlinks to regular files are accepted.
 Submission requires a stable idempotency key and a positive USD cost ceiling.
+When `HRN_REMOTE_MAX_COST_USD` is set, a `--max-cost` above it is refused before
+any request; unset means no client cap. The control service does not reserve
+tenant budgets yet, so this and the server's `HRN_MAX_COST_USD_PER_JOB` (see
+[server/README.md](../server/README.md)) are the spending control.
 The prompt can be supplied as arguments or on stdin. Remote jobs currently
 support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
 for the corresponding tools.
@@ -184,7 +188,9 @@ then exits with status 0, including when the job failed or was canceled. Termina
 event kinds are `succeeded`, `failed`, and `canceled`; `admission_timeout` and
 `recovery_resolved` also end the watch when their `details.state` is terminal.
 The watch reconnects from the last printed event ID if a stream ends before a
-terminal event. Ctrl-C ends the watch early.
+terminal event. Before streaming it reads the job's state (the request `hrn remote
+show` makes): if the job has already ended, it prints the events after `--after`, if
+any, and exits with status 0 without waiting. Ctrl-C ends the watch early.
 
 ### Project knowledge
 

@@ -254,6 +254,8 @@ type server struct {
 	system []string          // folders whose programs are shown by name; see systemFolders
 	access *accessVerifier
 	logMu  sync.Mutex
+
+	batches batchCache
 }
 
 // New is the watch page's handler. Streams end when ctx does, so a server
@@ -324,13 +326,20 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		if s.opt.Public != nil {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
-			aw := w.(*accessWriter)
+			aw, ok := w.(*accessWriter)
+			if !ok {
+				http.Error(w, "Public watch needs its access log", http.StatusInternalServerError)
+				return
+			}
 			publicHost := strings.TrimPrefix(s.opt.Public.Origin, "https://")
 			if !publicHostMatches(r.Host, publicHost) {
 				aw.reason = "bad host"
 			}
-			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document")
-			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.opt.Public.Origin) {
+			// A top-level page load from elsewhere may skip the Origin check only
+			// when it carries no Origin or `null`; any other Origin is checked.
+			origin := r.Header.Get("Origin")
+			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document") && (origin == "" || origin == "null")
+			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || origin != "" && origin != s.opt.Public.Origin) {
 				aw.reason = "bad origin"
 			}
 			if aw.reason == "" {
@@ -485,12 +494,12 @@ func (s *server) lists() lists {
 		l.Runs = append(l.Runs, r)
 	}
 	l.Purposes = purposesOf(runs)
-	batches, unreadable, err := batch.List()
+	batches, unreadable, err := s.listBatches()
 	if unreadable > 0 {
 		// Most likely one caught mid-save: on Windows a read can land on
 		// the rename. Look again before calling it unreadable.
 		time.Sleep(50 * time.Millisecond)
-		batches, unreadable, err = batch.List()
+		batches, unreadable, err = s.listBatches()
 	}
 	if err != nil {
 		msg := "Batches could not be listed."
@@ -503,7 +512,7 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, fmt.Sprintf("%d batch record(s) could not be read.", unreadable))
 	}
 	for i, res := range batches {
-		batches[i] = vw.batch(s.cleanBatch(res)) // the task names below come from these too
+		batches[i] = vw.batch(res) // the task names below come from these too
 		if i < 20 {
 			l.Batches = append(l.Batches, batchRow(batches[i]))
 		}

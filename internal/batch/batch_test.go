@@ -35,15 +35,15 @@ var blockStarted = make(chan struct{}, 8)
 
 func init() {
 	agent.Register(stub{"wb-ok", func(_ context.Context, task agent.Task) agent.Result {
-		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt+"\n"), 0o644)
+		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(typed(task)+"\n"), 0o644)
 		return agent.Result{Backend: "wb-ok", Status: agent.StatusOK, Final: "wrote out.txt", Turns: 2}
 	}})
 	agent.Register(leanStub{stub{"wb-lean", func(_ context.Context, task agent.Task) agent.Result {
 		return agent.Result{Backend: "wb-lean", Status: agent.StatusOK, Final: "nothing", Turns: 1}
 	}}})
 	agent.Register(stub{"wb-file", func(_ context.Context, task agent.Task) agent.Result {
-		name := strings.Fields(task.Prompt)[0] + ".txt"
-		_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(task.Prompt+"\n"), 0o644)
+		name := strings.Fields(typed(task))[0] + ".txt"
+		_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(typed(task)+"\n"), 0o644)
 		return agent.Result{Backend: "wb-file", Status: agent.StatusOK, Final: "wrote " + name, Turns: 1}
 	}})
 	agent.Register(stub{"wb-noop", func(context.Context, agent.Task) agent.Result {
@@ -74,6 +74,34 @@ func init() {
 // peek is what wb-peek does while it "works"; a test sets it.
 var peek = func() {}
 
+// typed is the task's prompt without the commit block agent.Run puts first.
+func typed(task agent.Task) string {
+	rest, ok := strings.CutPrefix(task.Prompt, "# How to commit\n\n")
+	if !ok {
+		return task.Prompt
+	}
+	_, after, _ := strings.Cut(rest, "\n\n")
+	return after
+}
+
+func TestABatchTasksAgentIsToldHowToCommit(t *testing.T) {
+	var seen string
+	agent.Register(stub{"wb-seen", func(_ context.Context, task agent.Task) agent.Result {
+		seen = task.Prompt
+		return agent.Result{Backend: "wb-seen", Status: agent.StatusOK, Final: "looked", Turns: 1}
+	}})
+	dir := initRepo(t)
+	if _, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-seen", Tasks: []Task{{ID: "one", Prompt: "do it"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(seen, "# How to commit\n\nReviews are text, commits are changes.") || !strings.HasSuffix(seen, "\n\ndo it") {
+		t.Errorf("the batch task's agent got %q, want the commit block before the prompt", seen)
+	}
+	if strings.Contains(seen, "fix round") {
+		t.Errorf("a batch task is not a fix round: %q", seen)
+	}
+}
+
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -98,6 +126,461 @@ func initRepo(t *testing.T) string {
 	git(t, dir, "add", "README.md")
 	git(t, dir, "commit", "-q", "-m", "init")
 	return dir
+}
+
+func TestCommitChangesDoesNotRunRepositoryHooks(t *testing.T) {
+	writeMarkerScript := func(t *testing.T, path string, passStdin bool) string {
+		t.Helper()
+		body := "#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\n"
+		if passStdin {
+			body += "cat\n"
+		}
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.ToSlash(path)
+	}
+	cases := []struct {
+		name      string
+		passStdin bool
+		setup     func(t *testing.T, wt, script string)
+		control   func(t *testing.T, wt string)
+	}{
+		{
+			name: "core.hooksPath",
+			setup: func(t *testing.T, wt, _ string) {
+				hooks := t.TempDir()
+				writeMarkerScript(t, filepath.Join(hooks, "post-commit"), false)
+				git(t, wt, "config", "core.hooksPath", filepath.ToSlash(hooks))
+			},
+		},
+		{
+			name: "core.fsmonitor",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "core.fsmonitor", script)
+			},
+		},
+		{
+			name:      "filter.clean",
+			passStdin: true,
+			setup: func(t *testing.T, wt, script string) {
+				if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				git(t, wt, "config", "filter.drv.clean", script)
+				git(t, wt, "config", "filter.drv.required", "true")
+			},
+		},
+		{
+			name: "filter.process",
+			setup: func(t *testing.T, wt, script string) {
+				if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				git(t, wt, "config", "filter.drv.process", script)
+				git(t, wt, "config", "filter.drv.required", "true")
+			},
+		},
+		{
+			name:      "filter.smudge",
+			passStdin: true,
+			setup: func(t *testing.T, wt, script string) {
+				if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				git(t, wt, "config", "filter.drv.smudge", script)
+				git(t, wt, "config", "filter.drv.required", "true")
+			},
+			control: func(t *testing.T, wt string) {
+				_ = os.Remove(filepath.Join(wt, "result.txt"))
+				_ = exec.Command("git", "-C", wt, "checkout", "-f", "HEAD", "--", "result.txt").Run()
+			},
+		},
+		{
+			name: "gpg.program",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.program", script)
+			},
+		},
+		{
+			name: "gpg.openpgp.program",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.format", "openpgp")
+				git(t, wt, "config", "gpg.openpgp.program", script)
+			},
+		},
+		{
+			name: "gpg.x509.program",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.format", "x509")
+				git(t, wt, "config", "gpg.x509.program", script)
+			},
+		},
+		{
+			name: "gpg.ssh.program",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.format", "ssh")
+				git(t, wt, "config", "user.signingKey", "key::ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl")
+				git(t, wt, "config", "gpg.ssh.program", script)
+			},
+		},
+		{
+			name: "gpg.ssh.defaultKeyCommand",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "config", "commit.gpgSign", "true")
+				git(t, wt, "config", "gpg.format", "ssh")
+				git(t, wt, "config", "gpg.ssh.defaultKeyCommand", script)
+			},
+		},
+		{
+			name: "gc.recentObjectsHook",
+			setup: func(t *testing.T, wt, script string) {
+				git(t, wt, "repack", "-d", "-q")
+				if err := os.WriteFile(filepath.Join(wt, "README.md"), []byte("hello 2\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				git(t, wt, "commit", "-q", "-a", "-m", "second pack")
+				git(t, wt, "repack", "-q")
+				cmd := exec.Command("git", "-C", wt, "hash-object", "-w", "--stdin")
+				cmd.Stdin = strings.NewReader("unreachable\n")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("hash-object: %v\n%s", err, out)
+				}
+				git(t, wt, "config", "gc.auto", "1")
+				git(t, wt, "config", "gc.autoPackLimit", "1")
+				git(t, wt, "config", "gc.autoDetach", "false")
+				git(t, wt, "config", "gc.pruneExpire", "now")
+				git(t, wt, "config", "gc.recentObjectsHook", script)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "hook-ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			script := writeMarkerScript(t, filepath.Join(t.TempDir(), "marker.sh"), tc.passStdin)
+			// Worktree config is shared with the repository; an agent can set this.
+			tc.setup(t, wt, script)
+			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := commitChanges(wt, "task result")
+			if err != nil || sha == "" {
+				t.Fatalf("commitChanges = %q, %v", sha, err)
+			}
+			if got := git(t, wt, "show", "HEAD:result.txt"); got != "done" {
+				t.Errorf("committed result = %q", got)
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s ran during commitChanges or marker could not be checked: %v", tc.name, err)
+			}
+			// Prove the configured program is runnable and the override did not change shared config.
+			if tc.control != nil {
+				tc.control(t, wt)
+			} else {
+				if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("again\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				_ = exec.Command("git", "-C", wt, "commit", "-q", "-a", "--allow-empty", "-m", "control").Run()
+			}
+			data, err := os.ReadFile(marker)
+			if errors.Is(err, os.ErrNotExist) && tc.name == "gc.recentObjectsHook" {
+				// Whether a commit's auto gc consults this hook depends on git's
+				// version (GitHub's runners do not); without the control the case
+				// proves nothing either way, and the other keys still do.
+				t.Skip("this git's auto gc does not run gc.recentObjectsHook")
+			}
+			if err != nil || string(data) != "ran" {
+				t.Fatalf("control %s = %q, %v", tc.name, data, err)
+			}
+		})
+	}
+}
+
+// The operator's own global config (a Git LFS filter, an fsmonitor, a commit
+// signer) is not the agent's to write, so hrn's commit keeps using it.
+func TestCommitChangesKeepsProgramsFromTheOperatorsGlobalConfig(t *testing.T) {
+	writeScript := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "script.sh")
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.ToSlash(path)
+	}
+	cases := []struct {
+		name      string
+		global    func(t *testing.T, wt string) []string
+		committed string
+	}{
+		{
+			name: "filter.clean",
+			global: func(t *testing.T, wt string) []string {
+				if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return []string{"filter.drv.clean", writeScript(t, "sed s/done/cleaned/\n"), "filter.drv.required", "true"}
+			},
+			committed: "cleaned",
+		},
+		{
+			name: "core.fsmonitor",
+			global: func(t *testing.T, _ string) []string {
+				return []string{"core.fsmonitor", writeScript(t, "")}
+			},
+		},
+		{
+			name: "gpg.program",
+			global: func(t *testing.T, _ string) []string {
+				signer := writeScript(t, "cat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 X\\n' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nx\\n-----END PGP SIGNATURE-----\\n'\n")
+				return []string{"commit.gpgSign", "true", "gpg.program", signer}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			global := filepath.Join(t.TempDir(), "gitconfig")
+			pairs := tc.global(t, wt)
+			for i := 0; i < len(pairs); i += 2 {
+				git(t, wt, "config", "--file", global, pairs[i], pairs[i+1])
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", global)
+			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := commitChanges(wt, "task result")
+			if err != nil || sha == "" {
+				t.Fatalf("commitChanges = %q, %v", sha, err)
+			}
+			want := tc.committed
+			if want == "" {
+				want = "done"
+			}
+			if got := git(t, wt, "show", "HEAD:result.txt"); got != want {
+				t.Errorf("committed result = %q, want %q", got, want)
+			}
+			if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
+				t.Fatalf("global %s did not run during commitChanges: %q, %v", tc.name, data, err)
+			}
+		})
+	}
+}
+
+// An agent that redefines the operator's filter (lfs, say) in the repository
+// config gets neither its own program nor the operator's run by hrn's commit.
+func TestCommitChangesIgnoresARepositoryRedefinitionOfAGlobalFilter(t *testing.T) {
+	dir := initRepo(t)
+	wt := filepath.Join(t.TempDir(), "worktree")
+	git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+	marker := filepath.Join(t.TempDir(), "ran")
+	t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+	scripts := t.TempDir()
+	cleaner := filepath.Join(scripts, "cleaner.sh")
+	agentFilter := filepath.Join(scripts, "agent.sh")
+	if err := os.WriteFile(cleaner, []byte("#!/bin/sh\nsed s/done/cleaned/\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentFilter, []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\ncat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	git(t, wt, "config", "--file", global, "filter.drv.clean", filepath.ToSlash(cleaner))
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("*.txt filter=drv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, "config", "filter.drv.clean", filepath.ToSlash(agentFilter))
+	if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := commitChanges(wt, "task result")
+	if err != nil || sha == "" {
+		t.Fatalf("commitChanges = %q, %v", sha, err)
+	}
+	if got := git(t, wt, "show", "HEAD:result.txt"); got != "done" {
+		t.Errorf("committed result = %q, want the unfiltered file", got)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository filter ran during commitChanges or marker could not be checked: %v", err)
+	}
+}
+
+// A filter driver named like one of the other settings hrn neutralises
+// ("gpg.", "core.fsmonitor") is still turned off when that setting comes first.
+func TestCommitChangesNeutralisesAFilterNamedLikeAnotherSetting(t *testing.T) {
+	for _, tc := range []struct{ filter, key, value string }{
+		{"gpg.", "gpg.program", "/nonexistent/gpg"},
+		{"core.fsmonitor", "core.fsmonitor", "/nonexistent/fsmonitor"},
+	} {
+		t.Run(tc.filter, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			agentFilter := filepath.Join(t.TempDir(), "agent.sh")
+			if err := os.WriteFile(agentFilter, []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\ncat\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			git(t, wt, "config", tc.key, tc.value)
+			git(t, wt, "config", "filter."+tc.filter+".clean", filepath.ToSlash(agentFilter))
+			if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("* filter="+tc.filter+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := commitChanges(wt, "task result")
+			if err != nil || sha == "" {
+				t.Fatalf("commitChanges = %q, %v", sha, err)
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("filter %q ran during commitChanges or marker could not be checked: %v", tc.filter, err)
+			}
+		})
+	}
+}
+
+// markerScript writes a script that records it ran and passes stdin through.
+func markerScript(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "marker.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf ran > \"$HRN_TEST_HOOK_MARKER\"\ncat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.ToSlash(path)
+}
+
+// assertNotRan fails when the marker script ran, then proves it can run.
+func assertNotRan(t *testing.T, marker, what string, control func()) {
+	t.Helper()
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("%s ran or marker could not be checked: %v", what, err)
+	}
+	control()
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "ran" {
+		t.Fatalf("control %s = %q, %v", what, data, err)
+	}
+}
+
+// git -c splits its argument at the first '=', so a filter whose name holds
+// one must still be turned off.
+func TestCommitChangesNeutralisesAFilterWhoseNameHoldsAnEqualsSign(t *testing.T) {
+	for _, name := range []string{"x=y", "=", "a=b=c"} {
+		t.Run(name, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			git(t, wt, "config", "filter."+name+".clean", markerScript(t))
+			if err := os.WriteFile(filepath.Join(wt, ".gitattributes"), []byte("* filter="+name+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := commitChanges(wt, "task result")
+			if err != nil || sha == "" {
+				t.Fatalf("commitChanges = %q, %v", sha, err)
+			}
+			assertNotRan(t, marker, "filter "+name, func() {
+				if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("again\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				_ = exec.Command("git", "-C", wt, "add", "result.txt").Run()
+			})
+		})
+	}
+}
+
+// addSubmodule puts a repository at wt/sub, records it as a submodule, and
+// sets the submodule's own core.fsmonitor to the marker script.
+func addSubmodule(t *testing.T, wt string) {
+	t.Helper()
+	sub := filepath.Join(wt, "sub")
+	git(t, wt, "init", "-q", "-b", "main", "sub")
+	git(t, sub, "config", "user.email", "test@example.com")
+	git(t, sub, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(sub, "f.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, sub, "add", "f.txt")
+	git(t, sub, "commit", "-q", "-m", "sub")
+	git(t, wt, "add", "sub")
+	git(t, wt, "commit", "-q", "-m", "add sub")
+	git(t, sub, "config", "core.fsmonitor", markerScript(t))
+}
+
+// A submodule's own config is the agent's to write too; hrn's status and
+// commit never descend into it.
+func TestCommitChangesDoesNotRunASubmodulesFsmonitor(t *testing.T) {
+	dir := initRepo(t)
+	wt := filepath.Join(t.TempDir(), "worktree")
+	git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+	marker := filepath.Join(t.TempDir(), "ran")
+	t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+	addSubmodule(t, wt)
+	if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := commitChanges(wt, "task result")
+	if err != nil || sha == "" {
+		t.Fatalf("commitChanges = %q, %v", sha, err)
+	}
+	assertNotRan(t, marker, "submodule fsmonitor", func() {
+		_ = exec.Command("git", "-C", wt, "status", "--porcelain").Run()
+	})
+}
+
+func TestHasChangesDoesNotRunARepositoryOrSubmoduleFsmonitor(t *testing.T) {
+	for _, where := range []string{"repository", "submodule"} {
+		t.Run(where, func(t *testing.T) {
+			dir := initRepo(t)
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			if where == "submodule" {
+				addSubmodule(t, wt)
+			} else {
+				git(t, wt, "config", "core.fsmonitor", markerScript(t))
+			}
+			if dirty, err := hasChanges(wt); err != nil || dirty {
+				t.Fatalf("hasChanges = %v, %v", dirty, err)
+			}
+			assertNotRan(t, marker, where+" fsmonitor", func() {
+				_ = exec.Command("git", "-C", wt, "status", "--porcelain").Run()
+			})
+		})
+	}
+}
+
+func TestDirtyPathsDoesNotRunARepositoryFsmonitor(t *testing.T) {
+	for _, untracked := range []bool{true, false} {
+		dir := initRepo(t)
+		marker := filepath.Join(t.TempDir(), "ran")
+		t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+		git(t, dir, "config", "core.fsmonitor", markerScript(t))
+		if lines, err := dirtyPaths(context.Background(), dir, untracked); err != nil || len(lines) != 0 {
+			t.Fatalf("dirtyPaths(untracked=%v) = %q, %v", untracked, lines, err)
+		}
+		assertNotRan(t, marker, "repository fsmonitor", func() {
+			_ = exec.Command("git", "-C", dir, "status", "--porcelain").Run()
+		})
+	}
 }
 
 // canon resolves symlinks and Windows 8.3 short names, which git expands.
@@ -583,13 +1066,7 @@ func TestRemoveKeepsAndReportsANonEmptyLeftover(t *testing.T) {
 
 func TestCommitFailureIsAnErrorAndRemoveRefuses(t *testing.T) {
 	dir := initRepo(t)
-	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
-	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	failCommits(t, dir)
 	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-ok", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "hooked", Prompt: "a"}}})
 	tr := res.Tasks[0]
 	if tr.Status != StatusError || !strings.Contains(tr.Error, "uncommitted") || len(tr.Attempts) != 1 || tr.Commit != "" {
@@ -1635,15 +2112,9 @@ func TestDiffShowsWhatATaskChanged(t *testing.T) {
 
 func TestDiffFallsBackToTheWorktree(t *testing.T) {
 	dir := initRepo(t)
-	// A pre-commit hook that fails leaves the work in the worktree, staged but
+	// A commit failure leaves the work in the worktree, staged but
 	// never committed, which is the case the fallback is for.
-	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
-	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	failCommits(t, dir)
 	res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Backend: "wb-file", Tasks: []Task{{ID: "alpha", Prompt: "alpha"}}})
 	if res.Tasks[0].Commit != "" {
 		t.Fatalf("setup: the commit should have failed: %+v", res.Tasks[0])
@@ -1651,6 +2122,95 @@ func TestDiffFallsBackToTheWorktree(t *testing.T) {
 	diff, _, err := Diff(context.Background(), res, "alpha")
 	if err != nil || !strings.Contains(diff, "alpha.txt") {
 		t.Fatalf("worktree diff = %q err=%v", diff, err)
+	}
+}
+
+// The repository config and attributes are the agent's to write, so neither
+// the committed-task diff nor the worktree fallback runs an external diff, a
+// diff driver's command or textconv, or a dirty submodule's fsmonitor that an
+// agent-written .gitmodules ignore=none would reach.
+func TestDiffDoesNotRunAgentDiffPrograms(t *testing.T) {
+	attributes := func(t *testing.T, path string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("* diff=tc\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name      string
+		committed bool // the worktree fallback is checked otherwise
+		setup     func(t *testing.T, dir, wt string)
+	}{
+		{"diff.external", true, func(t *testing.T, _, wt string) {
+			git(t, wt, "config", "diff.external", markerScript(t))
+		}},
+		{"diff.external", false, func(t *testing.T, _, wt string) {
+			git(t, wt, "config", "diff.external", markerScript(t))
+		}},
+		// A diff between two commits reads attributes from the repository's
+		// info/attributes, which a worktree shares.
+		{"diff driver command", true, func(t *testing.T, dir, wt string) {
+			attributes(t, filepath.Join(dir, ".git", "info", "attributes"))
+			git(t, wt, "config", "diff.tc.command", markerScript(t))
+		}},
+		{"diff driver command", false, func(t *testing.T, _, wt string) {
+			attributes(t, filepath.Join(wt, ".gitattributes"))
+			git(t, wt, "config", "diff.tc.command", markerScript(t))
+		}},
+		{"textconv", true, func(t *testing.T, dir, wt string) {
+			attributes(t, filepath.Join(dir, ".git", "info", "attributes"))
+			git(t, wt, "config", "diff.tc.textconv", markerScript(t))
+		}},
+		{"textconv", false, func(t *testing.T, _, wt string) {
+			attributes(t, filepath.Join(wt, ".gitattributes"))
+			git(t, wt, "config", "diff.tc.textconv", markerScript(t))
+		}},
+		{"submodule fsmonitor", false, func(t *testing.T, _, wt string) {
+			addSubmodule(t, wt)
+			if err := os.WriteFile(filepath.Join(wt, ".gitmodules"),
+				[]byte("[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n\tignore = none\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(wt, "sub", "f.txt"), []byte("two\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		where := "worktree"
+		if tc.committed {
+			where = "commit"
+		}
+		t.Run(tc.name+"/"+where, func(t *testing.T) {
+			dir := initRepo(t)
+			base := git(t, dir, "rev-parse", "HEAD")
+			wt := filepath.Join(t.TempDir(), "worktree")
+			git(t, dir, "worktree", "add", "-q", "-b", "task", wt)
+			marker := filepath.Join(t.TempDir(), "ran")
+			t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+			if err := os.WriteFile(filepath.Join(wt, "README.md"), []byte("changed\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			task := TaskResult{ID: "alpha", Worktree: wt}
+			control := []string{"-C", wt, "diff", "HEAD"}
+			if tc.committed {
+				git(t, wt, "commit", "-q", "-am", "task result")
+				task.Commit = git(t, wt, "rev-parse", "HEAD")
+				control = []string{"-C", dir, "diff", base + ".." + task.Commit}
+			}
+			tc.setup(t, dir, wt)
+			res := Result{ID: "b", Dir: dir, Base: base, Tasks: []TaskResult{task}}
+			diff, _, err := Diff(context.Background(), res, "alpha")
+			if err != nil || !strings.Contains(diff, "+changed") {
+				t.Fatalf("Diff = %q, %v", diff, err)
+			}
+			assertNotRan(t, marker, tc.name, func() {
+				_ = exec.Command("git", control...).Run()
+			})
+		})
 	}
 }
 

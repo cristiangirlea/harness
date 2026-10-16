@@ -3,9 +3,11 @@ package remote
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -234,6 +236,61 @@ func TestWatchStopsOnOversizedEventLine(t *testing.T) {
 	}
 	if got := requests.Load(); got != 1 {
 		t.Errorf("requests = %d, want 1", got)
+	}
+}
+
+func TestNewFromEnvRefusesATokenShorterThan32Characters(t *testing.T) {
+	t.Setenv("HRN_SERVER_URL", "https://host")
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 31))
+	if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "at least 32 characters") {
+		t.Fatalf("31-character token error = %v", err)
+	}
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 32))
+	if _, err := NewFromEnv(); err != nil {
+		t.Fatalf("32-character token: %v", err)
+	}
+}
+
+func TestNewFromEnvRefusesACAFileWithPlainHTTP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(path, []byte("unused"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HRN_SERVER_URL", "http://127.0.0.1:1")
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", path)
+	if _, err := NewFromEnv(); err == nil || err.Error() != "HRN_SERVER_CA_FILE requires HTTPS" {
+		t.Fatalf("CA file with http error = %v", err)
+	}
+}
+
+func TestATLSServerWithoutItsCAFileFailsVerificationAndWatchReturnsAtOnce(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	server.Config.ErrorLog = log.New(io.Discard, "", 0)
+	server.StartTLS()
+	defer server.Close()
+	t.Setenv("HRN_SERVER_URL", server.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	client, err := NewFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unknown x509.UnknownAuthorityError
+	if _, err := client.Request(context.Background(), http.MethodGet, "/", nil); !errors.As(err, &unknown) {
+		t.Fatalf("Request error = %v, want x509.UnknownAuthorityError", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	started := time.Now()
+	err = client.Watch(ctx, "/v1/jobs/j_fixture/events", 0, io.Discard)
+	if elapsed := time.Since(started); !errors.As(err, &unknown) || ctx.Err() != nil || elapsed > time.Second {
+		t.Fatalf("Watch error = %v after %v, context = %v; want an immediate x509.UnknownAuthorityError", err, elapsed, ctx.Err())
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("an unverified server handled %d requests", got)
 	}
 }
 

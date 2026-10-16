@@ -12,7 +12,8 @@ const names = `(?i:(?:[A-Z0-9]+[_-])*(?:KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIA
 // Each expression names only the secret value; punctuation and field names stay.
 // Specific forms precede generic token, assignment and flag rules.
 var rules = []*regexp.Regexp{
-	regexp.MustCompile(`(?i:[a-z][a-z0-9+.-]*://)(?P<secret>[^\s/@"'<>]+)@`),
+	// The bare user git is a protocol name on git remotes, not a credential.
+	regexp.MustCompile(`(?i:[a-z][a-z0-9+.-]*://)(?:git@|(?P<secret>[^\s/@"'<>]+)@)`),
 	regexp.MustCompile(`(?:^|\s)(?:-u|--user|--proxy-user)(?:=|\s+)\\"(?P<secret>[^"'\r\n]*:[^"'\r\n]*?)(?:\\"|$)`),
 	regexp.MustCompile(`(?:^|\s)(?:-u|--user|--proxy-user)(?:=|\s+)["'](?P<secret>[^"'\r\n]*:[^"'\r\n]*)(?:["']|$)`),
 	regexp.MustCompile(`(?:^|\s)(?:-u|--user|--proxy-user)(?:=|\s+)(?P<secret>[^\s"']+:[^\s"']+)`),
@@ -47,6 +48,9 @@ func replace(s string, rule *regexp.Regexp) string {
 	for i := len(matches) - 1; i >= 0; i-- {
 		m := matches[i]
 		start, end := m[group], m[group+1]
+		if start < 0 {
+			continue
+		}
 		value := s[start:end]
 		if value == "" || strings.TrimSpace(value) == hidden || strings.TrimSpace(value) == "[redacted]" {
 			continue

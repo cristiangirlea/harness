@@ -567,7 +567,7 @@ func cmdRuns(args []string) error {
 			status = "running?"
 		}
 		fmt.Printf("%s  %-8s %-9s %7s  %s\n", rec.ID, printable(rec.Backend), status,
-			rec.Result.Duration.Round(time.Second), printable(tools.OneLine(rec.Task.Prompt, 70)))
+			rec.Result.Duration.Round(time.Second), printable(tools.OneLine(mask.Text(rec.Task.Prompt), 70)))
 	}
 	return nil
 }

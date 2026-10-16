@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -182,7 +183,7 @@ func TestModelTokensCountCacheAccordingToBackend(t *testing.T) {
 		backend string
 		want    int64
 		known   bool
-	}{{"codex", 110, true}, {"api", 190, true}, {"claude", 190, true}, {"gemini", 0, false}} {
+	}{{"codex", 110, true}, {"api", 190, true}, {"claude", 190, true}, {"gemini", 110, true}, {"opencode", 190, true}, {"cursor", 0, false}} {
 		r := Result{Backend: tc.backend, InputTokens: 100, OutputTokens: 10, CacheRead: 80}
 		n, known, estimated := r.ModelTokens()
 		if n != tc.want || known != tc.known || estimated {
@@ -235,6 +236,86 @@ func TestModelTokensRejectInvalidCounters(t *testing.T) {
 	} {
 		if _, known, _ := r.ModelTokens(); known {
 			t.Errorf("invalid counters accepted: %+v", r)
+		}
+	}
+}
+
+// A turn whose counters are negative or would overflow a total is not added,
+// and the run's usage is marked missing rather than shown as a wrapped total.
+func TestAdaptersMarkUsageMissingInsteadOfOverflowing(t *testing.T) {
+	huge := int64(math.MaxInt64)
+	t.Run("api", func(t *testing.T) {
+		// The totals stay valid; only the second turn's 100 input tokens would overflow.
+		first := toolTurn("list", "list_files", `{"pattern":"*"}`)
+		first[0] = fmt.Sprintf(`{"type":"message_start","message":{"id":"first","role":"assistant","model":"claude-opus-5","usage":{"input_tokens":%d}}}`, huge-50)
+		res, _, _ := runFake(t, [][]string{first, textTurn("done")}, Task{Prompt: "list", Dir: t.TempDir()})
+		if res.Usage == nil || res.Usage.Status != "missing" || res.Usage.InputSemantics != "exclusive_cache" || res.InputTokens != huge-50 {
+			t.Errorf("result = %+v, usage %+v; want the first turn kept and usage missing", res, res.Usage)
+		}
+		if err := res.ValidateUsage(); err != nil || res.Usage == nil || res.Usage.CostStatus != "missing" {
+			t.Errorf("validate = %v, usage %+v; want valid totals and the cost missing", err, res.Usage)
+		}
+		if _, known, _ := res.ModelTokens(); known {
+			t.Error("overflowing api usage counted as known")
+		}
+		if _, known, _ := res.KnownCost(); known {
+			t.Error("cost of an api run with overflowing usage counted as known")
+		}
+	})
+	t.Run("gemini", func(t *testing.T) {
+		var res Result
+		out := fmt.Sprintf(`{"response":"ok","stats":{"models":{"a":{"tokens":{"prompt":%d,"cached":0,"candidates":1}},"b":{"tokens":{"prompt":%d,"cached":0,"candidates":1}}}}}`, huge, huge)
+		NewGeminiBackend().finalize([]byte(out), func(Event) {}, &res)
+		if res.Usage == nil || res.Usage.Status != "missing" || res.Usage.InputSemantics != "inclusive_cache" || res.InputTokens != huge {
+			t.Errorf("result = %+v, usage %+v; want one model kept and usage missing", res, res.Usage)
+		}
+		var neg Result
+		NewGeminiBackend().finalize([]byte(`{"response":"ok","stats":{"models":{"a":{"tokens":{"prompt":-5,"cached":0,"candidates":1}}}}}`), func(Event) {}, &neg)
+		if neg.Usage == nil || neg.Usage.Status != "missing" || neg.InputTokens != 0 {
+			t.Errorf("negative counter: %+v usage %+v", neg, neg.Usage)
+		}
+	})
+	t.Run("opencode", func(t *testing.T) {
+		var res Result
+		for _, l := range []string{
+			fmt.Sprintf(`{"type":"step_finish","part":{"tokens":{"input":5,"output":1,"cache":{"read":0,"write":%d}}}}`, huge),
+			`{"type":"step_finish","part":{"tokens":{"input":5,"output":1,"cache":{"read":0,"write":1}}}}`,
+			`{"type":"step_finish","part":{"tokens":{"input":5,"output":1,"cache":{"read":0,"write":0}}}}`,
+		} {
+			parseOpencodeStream([]byte(l), func(Event) {}, &res)
+		}
+		if res.Usage == nil || res.Usage.Status != "missing" || res.Usage.InputSemantics != "exclusive_cache" || res.CacheWrite != huge || res.InputTokens != 10 {
+			t.Errorf("result = %+v, usage %+v; want the second step skipped and usage missing", res, res.Usage)
+		}
+	})
+}
+
+// Adapters that add checked leave a run with ordinary counters as before:
+// no usage metadata, its semantics inferred from the backend.
+func TestAdaptersLeaveReportedUsageUnmarked(t *testing.T) {
+	var res Result
+	NewGeminiBackend().finalize([]byte(`{"response":"ok","stats":{"models":{"a":{"tokens":{"prompt":100,"cached":80,"candidates":10}}}}}`), func(Event) {}, &res)
+	if res.Usage != nil || res.InputTokens != 100 || res.CacheRead != 80 || res.OutputTokens != 10 {
+		t.Errorf("result = %+v, usage %+v", res, res.Usage)
+	}
+	res.Backend = "gemini"
+	if n, known, _ := res.ModelTokens(); !known || n != 110 {
+		t.Errorf("gemini tokens = %d known=%t, want 110 counting cached once", n, known)
+	}
+}
+
+func TestUsageMissingCoversMarkedAndInvalidCounters(t *testing.T) {
+	for _, tc := range []struct {
+		r    Result
+		want bool
+	}{
+		{Result{InputTokens: 5}, false},
+		{Result{InputTokens: 5, Usage: &UsageMetadata{Status: "reported"}}, false},
+		{Result{InputTokens: 5, Usage: &UsageMetadata{Status: "missing"}}, true},
+		{Result{InputTokens: -1}, true},
+	} {
+		if got := tc.r.UsageMissing(); got != tc.want {
+			t.Errorf("%+v: UsageMissing = %t, want %t", tc.r, got, tc.want)
 		}
 	}
 }

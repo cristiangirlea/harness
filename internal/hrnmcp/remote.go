@@ -104,7 +104,7 @@ func remoteSubmitTool() mcp.Tool {
 	properties["prompt"] = str("Read-only task prompt, at most 100000 bytes.")
 	properties["base_ref"] = str("Full Git commit hash registered for the project.")
 	properties["idempotency_key"] = str("Stable key for safe submission retry, 1..128 bytes.")
-	properties["max_cost_usd"] = map[string]any{"type": "number", "exclusiveMinimum": 0, "description": "Positive per-job spending ceiling in USD."}
+	properties["max_cost_usd"] = map[string]any{"type": "number", "exclusiveMinimum": 0, "description": "Positive per-job spending ceiling in USD; refused above HRN_REMOTE_MAX_COST_USD when that is set on this MCP server."}
 	properties["max_turns"] = map[string]any{"type": "integer", "minimum": 1, "description": "Maximum model turns; defaults to 3."}
 	return mcp.Tool{
 		Name: "remote_submit", Title: "Submit a remote job",
@@ -137,6 +137,9 @@ func remoteSubmitTool() mcp.Tool {
 			}
 			options := agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: args.MaxCostUSD, MaxTurns: args.MaxTurns}
 			if err := options.Validate(); err != nil {
+				return mcp.CallResult{}, err
+			}
+			if err := remote.CheckCostCap(args.MaxCostUSD); err != nil {
 				return mcp.CallResult{}, err
 			}
 			client, err := remote.NewFromEnv()

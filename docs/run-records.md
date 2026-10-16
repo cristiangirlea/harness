@@ -82,8 +82,10 @@ failure, and `messages.json` includes the conversation's retrieval pin. Older
 records without these fields still load.
 
 `result.json` includes `usage_metadata` when the adapter supplies it. Its
-`input_semantics` is `inclusive_cache` (Codex input already includes cached input)
-or `exclusive_cache` (api and Claude cache counters are separate). `status` is
+`input_semantics` is `inclusive_cache` (Codex and gemini input already includes cached
+input) or `exclusive_cache` (api, Claude and opencode cache counters are separate). The api,
+gemini and opencode adapters write it only to mark usage `missing`, when a turn's counter is
+negative or would overflow the run's total; that turn is not added. `status` is
 `reported`, `estimated`, or `missing`; `cost_status` distinguishes a reported
 zero from missing cost and may also be `estimated` or `missing`. Older results
 without metadata still load; known backends infer token semantics from their

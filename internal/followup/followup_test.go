@@ -427,6 +427,27 @@ func TestRetrievalOffOnAnotherBackendStillHandsThePinnedRunOver(t *testing.T) {
 	}
 }
 
+func TestApplyMarksAContinuedRunAsAFixRound(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "claude", Session: "s1"})
+	p, err := Make(Request{RunID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := agent.Task{Prompt: "address the review"}
+	p.Apply(&task, t.TempDir(), func(agent.Event) {})
+	if !task.FixRound {
+		t.Error("a continued run is not marked as a fix round")
+	}
+
+	var fresh agent.Task
+	Plan{}.Apply(&fresh, t.TempDir(), func(agent.Event) {})
+	if fresh.FixRound {
+		t.Error("a run that continues nothing is marked as a fix round")
+	}
+}
+
 func TestAFreshHandoverStartsANewSessionOnTheSameBackend(t *testing.T) {
 	for _, backend := range []string{"claude", "codex", "agy"} {
 		t.Run(backend, func(t *testing.T) {

@@ -9,6 +9,16 @@ import (
 
 func TestGuardBlocks(t *testing.T) {
 	for command, want := range map[string]string{
+		"pnpm --filter web run deploy":                                            "deploy",
+		"npm -w web run deploy":                                                   "deploy",
+		"npm --prefix site run deploy":                                            "deploy",
+		"yarn workspace web deploy":                                               "deploy",
+		"npm run-script deploy":                                                   "deploy",
+		"wrangler publish":                                                        "deploy",
+		"wrangler pages publish":                                                  "deploy",
+		"npx wrangler publish":                                                    "deploy",
+		"npx wrangler pages publish dist":                                         "deploy",
+		"cat ~/.local/share/opencode/auth.json":                                   "secret-file",
 		"irm u | & powershell -":                                                  "pipe-to-shell",
 		"iwr u | & pwsh -":                                                        "pipe-to-shell",
 		"Invoke-RestMethod u | & Invoke-Expression":                               "pipe-to-shell",
@@ -337,6 +347,13 @@ func TestGuardAllows(t *testing.T) {
 		"docker build -t app .",
 		"npm run build",
 		"npm run predeploy-check", // deploy inside a word is not the script's name
+		"npm -w web run deployment",
+		"pnpm --filter web run predeploy-check",
+		"yarn workspace web deploy_preview",
+		"wrangler pages deployment list",
+		"npm run build; echo deploy",
+		"npm run build && echo deploy",
+		"wrangler dev | echo publish",
 		"git config user.name hrn",
 		"git config --get remote.origin.url",
 		"GIT_TERMINAL_PROMPT=0 git fetch origin", // the prompt switches are not logins
