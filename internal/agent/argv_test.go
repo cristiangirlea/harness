@@ -59,3 +59,23 @@ func TestNpmShimNeverResolvesUnderTheWorkingDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectSkipsRelativeCandidates(t *testing.T) {
+	dir := t.TempDir()
+	planted := filepath.Join(".local", "bin", "hrn-test-planted.exe")
+	if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(planted)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, planted), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	b := &CLIBackend{name: "hrn-test-planted", candidates: func() []string { return []string{planted} }}
+	if p, err := b.Detect(); err == nil {
+		t.Fatalf("Detect = %q, want the relative candidate skipped", p)
+	}
+	b.candidates = func() []string { return []string{filepath.Join(dir, planted)} }
+	if p, err := b.Detect(); err != nil || p != filepath.Join(dir, planted) {
+		t.Fatalf("Detect = %q, %v, want the absolute candidate", p, err)
+	}
+}

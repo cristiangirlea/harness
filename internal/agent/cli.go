@@ -121,10 +121,8 @@ var sessionID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
 
 var modelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,127}$`)
 
-// ValidModel reports whether model may become a CLI argument. On Windows the
-// CLIs are npm .cmd shims run through cmd.exe, whose quoting does not
-// neutralise &, |, ^, % or quotes, and a leading dash would read as a flag.
-// Brackets stay allowed for ids such as claude-opus-5[1m].
+// ValidModel reports whether model may become a CLI argument: cmd.exe, which runs
+// the npm .cmd shims, does not neutralise &, |, ^, % or quotes, and a dash is a flag.
 func ValidModel(model string) bool { return modelID.MatchString(model) }
 
 // ForksSessions reports whether b honours Task.ForkSession.
@@ -139,6 +137,11 @@ func (c *CLIBackend) Detect() (string, error) {
 	}
 	if c.candidates != nil {
 		for _, p := range c.candidates() {
+			// A relative candidate (an unset HOME, APPDATA or LOCALAPPDATA) would
+			// resolve against the working directory, the task's workspace.
+			if !filepath.IsAbs(p) {
+				continue
+			}
 			if _, err := os.Stat(p); err == nil {
 				return p, nil
 			}

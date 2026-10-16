@@ -75,6 +75,9 @@ hrn       -> result                (always the last line after accepted; then ex
 
 - `attempt_id` is the caller's identity for this attempt: 1 to 128 characters from
   `[A-Za-z0-9._-]`. hrn records it with the run and echoes it on every later line.
+- `model`, when set, is 1 to 128 characters from `[A-Za-z0-9._:/@+[]-]`, starting with a letter
+  or digit; anything else is `bad_request`, as is a continuation whose earlier run recorded such
+  a model. The model becomes a CLI argument, and on Windows the CLIs run through `cmd.exe`.
 - `prompt`, `dir`, `backend` and `mode` are required. There is no default backend and no default
   mode: a supervisor states both.
 - `continue_run_id` continues a finished run, as `hrn run --continue` does; `accepted` says how
@@ -108,7 +111,7 @@ hrn       -> result                (always the last line after accepted; then ex
 ```
 
 A rejected start creates no run record. Codes: `bad_request` (malformed line, missing or unknown
-field or bad attempt id), `unsupported` (a mode, effort or option the backend cannot
+field, bad attempt id or bad model id), `unsupported` (a mode, effort or option the backend cannot
 honour), `unavailable` (the backend's CLI or credentials are not
 found), `storage` (the run record could not be created). hrn exits 2 after `rejected`.
 

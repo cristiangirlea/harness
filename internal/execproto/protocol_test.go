@@ -464,6 +464,32 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	}
 }
 
+func TestAContinuationOfARecordWithABadModelIsRejectedWithoutARecord(t *testing.T) {
+	name := registerFake(t, nil)
+	dir := t.TempDir()
+	prev, err := runlog.Create(name, agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "x&calc"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prev.Close(agent.Result{Backend: name, Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	h := openHarness(t, nil)
+	h.next(t, "hello")
+	req := start(dir, name)
+	req["task"].(map[string]any)["continue_run_id"] = prev.ID()
+	req["task"].(map[string]any)["fresh"] = true
+	h.send(t, req)
+	msg := h.next(t, "rejected")
+	if e := msg["error"].(map[string]any); e["code"] != "bad_request" || !strings.Contains(e["message"].(string), "is not a model id") {
+		t.Fatalf("bad rejection: %+v", msg)
+	}
+	h.exit(t, 2)
+	if recs, err := runlog.List(0); err != nil || len(recs) != 1 {
+		t.Fatalf("records = %+v %v, want only the earlier run", recs, err)
+	}
+}
+
 type forkingFake struct{ fakeBackend }
 
 func TestContinuationWarnsInAcceptedNotesAndRecordsOneInfoEventOnlyAboveTheThreshold(t *testing.T) {
