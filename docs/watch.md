@@ -301,8 +301,8 @@ any display excerpt is shortened; it does not cut the text itself.
 A URL whose user is the literal `git` with no password (`ssh://git@host/...`, as on
 git remotes) keeps it; any other user part, including a bare token, is masked.
 Live `hrn run` output is masked per streamed fragment, so a secret split across two
-fragments can show in halves while it streams; records, `hrn show` and `hrn watch`
-mask the assembled text.
+fragments can show in halves while it streams; `hrn show` and `hrn watch` mask the
+assembled text from the record.
 The existing environment-value redaction also runs. Records remain unchanged,
 and JSON record output retains the original text. These rules recognise common
 secret shapes; they cannot identify every possible secret.
