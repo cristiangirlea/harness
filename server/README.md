@@ -60,6 +60,26 @@ USD) to cap that ceiling: a submission above it is refused with 422
 `cost_limit` naming the limit, and an invalid value stops startup. Unset means
 no server cap. Clients can add their own with `HRN_REMOTE_MAX_COST_USD`.
 
+## Job events
+
+`GET /v1/jobs/{job}/events?tenant_id=...&project_id=...` requires the tenant's
+bearer token. By default it returns a JSON page of up to 100 events. Set
+`Accept: text/event-stream` to receive the backlog and then live events, polled
+once per second. Resume after the last received event ID using `after` or
+`Last-Event-ID`; if both are supplied they must match.
+
+Each control service instance allows at most four open SSE streams per tenant,
+shared across its projects and jobs. Further streams receive HTTP 429 with a
+JSON `stream_limit` error. A slot is released whenever its stream ends, including
+client disconnects. JSON event requests do not consume stream slots.
+
+A stream drains the backlog and closes when the job is `succeeded`, `failed`,
+or `canceled`, including when it receives that terminal event live. An already
+terminal job with no events after the cursor closes immediately. States such as
+`waiting_approval` and `recovery_required` remain live. Streams also close after
+30 minutes; reconnect with the last received cursor to continue without replaying
+earlier events.
+
 ## Schema and recovery
 
 Migration 001 creates the control schema. Migration 002 snapshots the project

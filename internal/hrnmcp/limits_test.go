@@ -2,6 +2,7 @@ package hrnmcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -96,6 +98,86 @@ func TestRunToolStartsOnTheOtherBackendWhileALimitIsRemembered(t *testing.T) {
 	rec, _ := runlog.Load(id)
 	if rec.Backend != "claude" || rec.Task.Model != "" {
 		t.Errorf("ran on %s with model %q, want claude and no codex model", rec.Backend, rec.Task.Model)
+	}
+}
+
+func TestRunToolExplainsAMeteredPartnerBeforeStartingAndKeepsItsModel(t *testing.T) {
+	for _, continuing := range []bool{false, true} {
+		t.Run(fmt.Sprint(continuing), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t)
+			t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+			dir := t.TempDir()
+			args := map[string]any{"prompt": "fix it", "backend": "codex", "model": "requested-model"}
+			if continuing {
+				rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := rec.Close(agent.Result{Backend: "codex", Status: agent.StatusOK}); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(rec.Dir(), "messages.json"), []byte(`{"model":"previous-model"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				args["continue_run_id"] = rec.ID()
+			}
+			if err := limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			agent.Register(scripted{"codex", func(task agent.Task) agent.Result {
+				called = true
+				if task.Model != "requested-model" {
+					t.Errorf("model = %q, want requested-model", task.Model)
+				}
+				events, err := runlog.Events(filepath.Base(task.RunDir))
+				if err != nil {
+					t.Fatal(err)
+				}
+				said := false
+				for _, e := range events {
+					said = said || e.Kind == agent.EventInfo && strings.Contains(e.Text, "ANTHROPIC_API_KEY") && strings.Contains(e.Text, "per token")
+					if strings.Contains(e.Text, "fake-secret-value") {
+						t.Error("event exposed the key value")
+					}
+				}
+				if !said {
+					t.Error("no metered partner reason before the backend started")
+				}
+				return agent.Result{Status: agent.StatusOK}
+			}})
+			raw, err := json.Marshal(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := runTool(dir, false).Handler(context.Background(), mcp.Call{Arguments: raw, Progress: func(string) {}})
+			if err != nil || res.IsError || !called {
+				t.Fatalf("result=%+v err=%v called=%v", res, err, called)
+			}
+		})
+	}
+}
+
+func TestRunToolDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		cancel()
+		return agent.Result{Status: agent.StatusLimited, Error: "usage limit", LimitResets: time.Now().Add(time.Hour)}
+	}})
+	res, err := runTool(t.TempDir(), false).Handler(ctx, mcp.Call{Arguments: json.RawMessage(`{"prompt":"fix it","backend":"codex"}`), Progress: func(string) {}})
+	if err != nil || !res.IsError || !strings.Contains(res.Text(), "status: limited") {
+		t.Errorf("result=%+v err=%v, want the limited run's result", res, err)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" || recs[0].Result.Status != agent.StatusLimited {
+		t.Fatalf("records = %+v, err=%v; want only the limited run", recs, err)
+	}
+	if limits.Until("codex", time.Now()).IsZero() {
+		t.Error("codex's limit was not remembered in limits.json")
 	}
 }
 

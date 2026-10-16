@@ -602,6 +602,9 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	events := make([]eventView, 0, len(lines))
 	var usage []agent.Event
 	for _, l := range lines {
+		if backendStart(l.Event, rec.Result.Backend) {
+			continue
+		}
 		var v eventView
 		l.Event = sh.event(s.cleanEvent(l.Event))
 		if feedsChart(l) {
@@ -866,6 +869,9 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	s.loop(r, st, s.opt.Poll, func() (bool, error) {
 		lines, rec, done, err := f.Poll()
 		for _, l := range lines {
+			if backendStart(l.Event, rec.Result.Backend) {
+				continue
+			}
 			var v eventView
 			l.Event = sh.event(s.cleanEvent(l.Event))
 			if feedsChart(l) {
