@@ -4,7 +4,8 @@
 # effects: read, exec
 # parameters: file:path=stdin
 # example: test "$(printf '%s\n' '{"Action":"pass","Test":"ok"}' | bash scripts/test-summary.sh)" = '{"passed":1,"failed":0,"skipped":0,"failures":[],"truncated":false}'
-# hash: 4214943f921fff773d1c06c9d0bddebc887dca7afb392f50becfc9ed60ae919d
+# matches: (?:["']Action["']|\.Action\b).*["'](?:pass|fail)["']|["'](?:pass|fail)["'].*(?:["']Action["']|\.Action\b)
+# hash: ad7571d16e08bcc6bbd2304e8e44b15d944397af38dd52b910e0a168997c8f02
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 if (( $# > 1 )); then

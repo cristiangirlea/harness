@@ -72,11 +72,20 @@ other namespace. Example render validation:
 
     python -m pip install PyYAML==6.0.3
     python server/deploy/verify_charts.py
+    python -m unittest discover -s server/deploy -p test_verify_charts.py
 
 `HELM_BIN` can point to a Helm 4.3.0 binary. The verifier checks the module
 download layer and unconditional CA wiring, runs Helm lint,
 renders all three charts, checks scaling, storage, isolation, credential references,
-and rejects unsafe values. It does not query a Kubernetes API or prove KEDA
+and rejects unsafe values: unpinned images, missing required Secret names,
+malformed tenant/project IDs, and control URLs with HTTP or a path. It also
+rejects repeated document kinds, checks the control container's image and
+security settings (including inherited seccomp), verifies DNS/control/PostgreSQL
+egress selectors and ports, forbids `envFrom` on both worker containers, and
+requires exactly four scaler Secret references. It parses every YAML document
+in `fixtures/postgres.yaml`. The regression tests exercise broken rendered
+documents and simulate Helm accepting forbidden values, without editing charts.
+These checks do not query a Kubernetes API or prove KEDA
 activation. A live disposable-cluster test must observe 0 -> 1 -> 0 replicas,
 persisted workspace bytes, admission during scale-down, scaler outages, and
 worker/pod termination before this gate can be called complete. Never use an

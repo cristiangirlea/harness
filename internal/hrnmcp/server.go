@@ -172,7 +172,8 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			// the run to its partner before anything is planned.
 			var routed string
 			if !args.NoSwitch && args.ContinueRunID != "" {
-				if args.Backend, routed = limits.Choose(args.Backend, args.ContinueRunID); routed != "" {
+				meant := args.Backend
+				if args.Backend, routed = limits.Choose(args.Backend, args.ContinueRunID); args.Backend != meant {
 					args.Model = ""
 				}
 			}
@@ -203,7 +204,8 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			if !args.NoSwitch && args.ContinueRunID == "" {
-				if args.Backend, routed = limits.Choose(args.Backend, ""); routed != "" {
+				meant := args.Backend
+				if args.Backend, routed = limits.Choose(args.Backend, ""); args.Backend != meant {
 					args.Model = ""
 				}
 			}
@@ -262,7 +264,13 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 
 			// A run stopped by its plan's limit is carried on by the partner
 			// backend, once, and the call answers with that run.
-			next, why, err := limits.After(rec.ID(), args.Backend, task, res)
+			var next *limits.CarryOn
+			var why string
+			if ctx.Err() == nil {
+				next, why, err = limits.After(rec.ID(), args.Backend, task, res)
+			} else if err := limits.Note(args.Backend, res); err != nil {
+				notes = append(notes, "the limit was not remembered: "+err.Error())
+			}
 			switch {
 			case err != nil:
 				notes = append(notes, err.Error())
