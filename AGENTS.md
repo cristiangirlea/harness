@@ -63,6 +63,8 @@ machines. See `CONTRIBUTING.md` for CI and release details.
 - For every new flag, field, command or status, update the relevant `docs/` guide (and README
   if its overview changes). For a PLAN.md item, tick its box, add `Done: PR #n, <date>`, and
   log deviations; for an issue-only fix, add a Decisions-log entry naming the issue and PR.
+  These PLAN.md changes land in a separate Markdown-only PR once the change has merged (CI skips
+  it), never in the code PR: an entry at the top of the log conflicts with every open PR (#374).
 
 ## Working rules
 

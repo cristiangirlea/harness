@@ -2,7 +2,7 @@
 
 This file is the work queue for hx. An agent session starts by reading it, takes the
 first unchecked PR whose prerequisites are done, delivers it as one pull request, and
-updates this file in that same PR. Everything an agent needs is in this file, the
+updates this file in a Markdown-only PR once that one has merged. Everything an agent needs is in this file, the
 README and the code; no other context is assumed.
 
 Written 2026-09-21 against commit `c9769f6` (main). Plan author: Fable 5.1. Intended
@@ -30,8 +30,9 @@ These are not preferences; a PR that breaks one is not mergeable.
 4. **Commit identity** is `Cristian Girlea <cristiangirlea@gmail.com>`. It is set in
    this repo's local git config; check `git config user.email` before the first
    commit of a session.
-5. **Update this plan in the same PR.** Tick the box, add a `Done:` line with the PR
-   number, and record any deviation from the spec below under *Decisions log*.
+5. **Update this plan in its own Markdown-only PR once the change has merged** (never in
+   the code PR; #374; a branch such as `plan-371`). Tick the box, add a `Done:` line with
+   the PR number, and record any deviation from the spec below under *Decisions log*.
 6. **Testing constraints.** `go test -race` does not run on the development machine
    (no cgo); use `-count=3` locally and rely on CI for `-race` once PR K adds it.
    Code that spawns processes is tested by re-executing the test binary as a helper
@@ -544,10 +545,10 @@ where such a typo lives.
 - [ ] CI green on ubuntu and windows.
 - [ ] The relevant guide in `docs/` updated for any new flag, field, command or status, and
       README when the overview changes.
-- [ ] This file: box ticked, `Done: PR #n, <date>` under the PR heading, deviations in
-      the *Decisions log*; a fix with no item here gets a Decisions-log entry naming the
-      issue and the PR.
 - [ ] Merged with a merge commit; branch deleted.
+- [ ] Then this file, in a separate Markdown-only PR (never in the code PR): box ticked,
+      `Done: PR #n, <date>` under the PR heading, deviations in the *Decisions log*; a fix
+      with no item here gets a Decisions-log entry naming the issue and the PR.
 
 ## Model guidance
 
