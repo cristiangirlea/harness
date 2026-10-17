@@ -52,12 +52,18 @@ backends enabled. A nonempty default without an enabled list is refused.
 
 The configured default wins when installed; otherwise hrn chooses enabled `api`
 when credentials exist, then the first installed enabled backend in preference
-order, falling back to `claude`. If that fallback is disabled, the run is refused.
-`hrn backends` shows enabled/disabled, the configured default (or the selected default
-when none is configured), availability and remembered limits beside each backend.
+order. When none is installed it names the configured default, or else the first
+enabled backend, so the run fails because that backend is not installed. Without
+preferences the fallback is `claude`. `hrn backends` shows enabled/disabled, the
+configured default (or the selected default when none is configured), availability
+and remembered limits beside each backend. The MCP `backends` tool marks one default:
+the backend a run without `backend` would use.
 
-An explicit disabled backend is refused before execution (`hrn run` exits 2).
-Purpose routing ignores disabled rows with a warning and records no routing evidence.
+An explicit disabled backend is refused before execution (`hrn run` exits 2). So is
+`hrn run --continue <id>` without `-b` when that run's backend is now disabled; the
+refusal comes before a prompt is read from stdin.
+Purpose routing ignores disabled rows with a warning and records no routing evidence;
+`hrn route set` with a disabled backend saves the row and warns that runs ignore it.
 Batch retry lists lose disabled entries while keeping their original order and
 repetitions; a nonempty list with no enabled entries is refused.
 

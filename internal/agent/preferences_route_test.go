@@ -39,3 +39,16 @@ func TestRouteIgnoresADisabledBackendWithoutRecordingEvidence(t *testing.T) {
 		t.Fatalf("warning: %s", data)
 	}
 }
+
+func TestRouteUsesItsBackendWithoutAPreferenceFile(t *testing.T) {
+	home := t.TempDir()
+	if err := table.Save(home, table.Table{"review": {Backend: "codex", Model: "model", Effort: "high", Eval: "evidence"}}); err != nil {
+		t.Fatal(err)
+	}
+	var o Options
+	var backend string
+	routed, err := o.Route("", "Purpose: review\nReview the change", &backend, home)
+	if err != nil || routed == nil || backend != "codex" || o.Model != "model" || o.Effort != "high" {
+		t.Fatalf("got %+v, %s, %+v, %v", routed, backend, o, err)
+	}
+}

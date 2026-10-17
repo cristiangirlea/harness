@@ -51,12 +51,14 @@ func TestBackendsShowsSetsAndResetsPreferences(t *testing.T) {
 
 func TestRunRefusesADisabledBackendBeforeRunning(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	agent.Register(recorder{name: "prefs-disabled"})
+	orig, _ := agent.Get("codex")
+	agent.Register(recorder{name: "codex"})
+	t.Cleanup(func() { agent.Register(orig) })
 	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}}); err != nil {
 		t.Fatal(err)
 	}
-	code, err := cmdRun([]string{"-b", "prefs-disabled", "hello"})
-	want := "run: backend prefs-disabled is disabled; enabled: claude (hrn backends set)"
+	code, err := cmdRun([]string{"-b", "codex", "hello"})
+	want := "run: backend codex is disabled; enabled: claude (hrn backends set)"
 	if code != 2 || err == nil || err.Error() != want {
 		t.Fatalf("got %d, %v", code, err)
 	}
@@ -74,5 +76,87 @@ func TestRunRefusesMalformedPreferences(t *testing.T) {
 	code, err := cmdRun([]string{"-b", "unknown-preference", "hello"})
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Fatalf("got %d, %v", code, err)
+	}
+}
+
+func TestContinuingOnADisabledBackendIsRefusedBeforeReadingStdin(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	orig, _ := agent.Get("codex")
+	agent.Register(recorder{name: "codex"})
+	t.Cleanup(func() { agent.Register(orig) })
+	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "codex", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	if _, err := stdin.WriteString("the prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	os.Stdin = stdin
+	defer func() { os.Stdin = old }()
+	code, err := cmdRun([]string{"--continue", w.ID()})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "backend codex is disabled") {
+		t.Fatalf("got %d, %v", code, err)
+	}
+	if offset, _ := stdin.Seek(0, 1); offset != 0 {
+		t.Fatalf("read %d bytes of the prompt before refusing", offset)
+	}
+}
+
+func TestRouteSetWarnsAboutADisabledBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		enabled []string
+		warned  bool
+	}{
+		{"disabled", []string{"claude"}, true},
+		{"enabled", []string{"codex"}, false},
+		{"no preference", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			if tc.enabled != nil {
+				if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: tc.enabled}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f, err := os.CreateTemp(t.TempDir(), "stderr")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			old := os.Stderr
+			os.Stderr = f
+			_, code, err := routeOutput(t, "set", "review", "-b", "codex")
+			os.Stderr = old
+			if code != 0 || err != nil {
+				t.Fatalf("got %d, %v", code, err)
+			}
+			data, err := os.ReadFile(f.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "hrn: warning: backend codex is disabled; runs ignore this row until it is enabled (hrn backends set)"
+			if got := strings.Contains(string(data), want); got != tc.warned {
+				t.Fatalf("stderr: %q", data)
+			}
+		})
 	}
 }
