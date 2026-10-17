@@ -153,7 +153,8 @@ directory when the transcript is absent. Watch displays an unfinished quiet run 
 `stopped`; this adds no stored status or fields and leaves older records unchanged.
 For an unfinished batch, watch considers the newest write to its record or any of
 its referenced runs, including a run's result: an active first attempt keeps the
-batch running even when the batch record itself is over an hour old. See
+batch running even when the batch record itself is over an hour old, and a running
+gate has the batch save its record again every ten minutes. See
 [watch states](watch.md) for the display and Ada behaviour.
 
 ## Usage per turn

@@ -3,6 +3,7 @@ package watch
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -65,7 +66,8 @@ type botItem struct {
 	Going      bool
 	Stopped    bool // quiet without a recorded ending
 	Started    time.Time
-	Doing      string // the latest activity of a run, or of a batch's running task
+	ended      time.Time // when a finished batch ended
+	Doing      string    // the latest activity of a run, or of a batch's running task
 	ending     func() (kind, text string)
 	tasks      []botTask
 }
@@ -95,6 +97,9 @@ func botLook(runs []runlog.Record, batches []batch.Result, doing map[string]stri
 	for _, b := range batches {
 		it := botItem{ID: b.ID, Kind: "batch", Where: place(b.Dir), Going: batchGoing(b), Started: b.Started}
 		it.Stopped = !it.Going && batchUnfinished(b)
+		if !batchUnfinished(b) {
+			it.ended = b.Started.Add(b.Duration)
+		}
 		it.Who = "a batch of " + count(len(b.Tasks), "task")
 		for _, t := range b.Tasks {
 			it.tasks = append(it.tasks, botTask{t.ID, taskName(t), t.Status})
@@ -530,52 +535,37 @@ type botWatcher struct {
 	s         *server
 	followers map[string]*Follower
 	doing     map[string]string
-	batches   []batch.Result  // the last look's, cleaned
-	missed    map[string]int  // looks in a row each kept batch could not be read
-	looked    bool            // the first look is done
-	late      map[string]bool // batches on disk the first look could not read
+	paused    map[string]int64 // where each stopped run's transcript ended
+	batches   []batch.Result   // the last look's, cleaned
+	looked    bool             // the first look is done
+	began     time.Time        // when the first look was made
+	late      map[string]bool  // batches on disk the first look could not read
 }
 
 func (s *server) newBotWatcher() *botWatcher {
-	return &botWatcher{s: s, followers: map[string]*Follower{}, doing: map[string]string{}, missed: map[string]int{}, late: map[string]bool{}}
+	return &botWatcher{s: s, followers: map[string]*Follower{}, doing: map[string]string{}, paused: map[string]int64{}, late: map[string]bool{}}
 }
 
 // keepUnread keeps last look's batches this look could not read: on Windows a
 // read can land on a record's rename, and the batch would vanish for a look and
-// be announced again as new. A removed batch goes once every record reads, or
-// after keepLooks looks while another never reads; missed counts those looks.
-func keepUnread(prev, cur []batch.Result, unreadable int, missed map[string]int) []batch.Result {
+// be announced again as new. A batch is kept while its file is in onDisk, the
+// files on disk this look could not read, and goes once its file is gone.
+func keepUnread(prev, cur []batch.Result, onDisk map[string]bool) []batch.Result {
 	have := map[string]bool{}
 	for _, b := range cur {
 		have[b.ID] = true
 	}
-	for id := range missed {
-		if have[id] || unreadable == 0 {
-			delete(missed, id)
-		}
-	}
-	if unreadable == 0 {
-		return cur
-	}
 	for _, b := range prev {
-		if have[b.ID] {
-			continue
-		}
-		if missed[b.ID]++; missed[b.ID] <= keepLooks {
+		if !have[b.ID] && onDisk[b.ID] {
 			cur = append(cur, b)
-		} else {
-			delete(missed, b.ID)
 		}
 	}
 	return cur
 }
 
-// keepLooks is how many looks in a row a batch is kept while it cannot be read.
-const keepLooks = 3
-
 // baseline adds to prev the batches the first look could not read, on the
 // look that first reads them: they were there before the stream began, so
-// they are not news.
+// they are not news, unless one has ended since.
 func (b *botWatcher) baseline(prev, cur botSnapshot) botSnapshot {
 	if len(b.late) == 0 {
 		return prev
@@ -588,6 +578,9 @@ func (b *botWatcher) baseline(prev, cur botSnapshot) botSnapshot {
 		}
 		delete(b.late, id)
 		if _, seen := prev.find(id); !seen {
+			if !it.Going && !it.Stopped && !it.ended.Before(b.began) {
+				it.Going = true // so that its ending is said
+			}
 			items = append(items, it)
 		}
 	}
@@ -619,24 +612,37 @@ func (b *botWatcher) look() botSnapshot {
 		time.Sleep(50 * time.Millisecond)
 		batches, unreadable, _ = b.s.listBatches()
 	}
-	if !b.looked && unreadable > 0 {
-		b.late = unread(batches)
+	var onDisk map[string]bool
+	if unreadable > 0 {
+		onDisk = unread(batches)
+	}
+	if !b.looked {
+		b.began = time.Now()
+		if unreadable > 0 {
+			b.late = maps.Clone(onDisk)
+		}
 	}
 	b.looked = true
 	// Shortened as the run's and batch's own pages are, for every viewer.
 	vw := viewer{home: b.s.home, system: b.s.system}
-	going := map[string]bool{}
+	going, paused := map[string]bool{}, map[string]int64{}
 	for i, rec := range runs {
 		sh := vw.shortener(rec.Task.Dir)
 		runs[i] = sh.record(b.s.cleanRecord(rec))
-		if rec.Done || !runStopped(rec).IsZero() {
-			continue // a stopped run is picked up again if it writes again
+		if rec.Done {
+			continue
+		}
+		if !runStopped(rec).IsZero() {
+			// Picked up again where it stopped if it writes again: what it
+			// did before it stopped is not what it is doing then.
+			paused[rec.ID] = b.stoppedAt(rec.ID)
+			continue
 		}
 		going[rec.ID] = true
 		f := b.followers[rec.ID]
 		if f == nil {
 			var err error
-			if f, _, err = NewFollower(rec.ID, 0); err != nil {
+			if f, _, err = NewFollower(rec.ID, b.paused[rec.ID]); err != nil {
 				continue
 			}
 			b.followers[rec.ID] = f
@@ -655,11 +661,27 @@ func (b *botWatcher) look() botSnapshot {
 			delete(b.doing, id)
 		}
 	}
+	b.paused = paused
 	for i, res := range batches {
 		batches[i] = vw.batch(res) // listBatches cleaned them already
 	}
-	b.batches = keepUnread(b.batches, batches, unreadable, b.missed)
+	b.batches = keepUnread(b.batches, batches, onDisk)
 	return botLook(runs, b.batches, b.doing, time.Now())
+}
+
+// stoppedAt is where a stopped run's transcript ends: where its follower got
+// to, or for one never followed, the transcript's size.
+func (b *botWatcher) stoppedAt(id string) int64 {
+	if f := b.followers[id]; f != nil {
+		return f.Offset()
+	}
+	if at, ok := b.paused[id]; ok {
+		return at
+	}
+	if info, err := os.Stat(filepath.Join(runlog.Root(), id, "events.jsonl")); err == nil {
+		return info.Size()
+	}
+	return 0
 }
 
 func (s *server) bot(w http.ResponseWriter, r *http.Request) {

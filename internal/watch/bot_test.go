@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -243,37 +244,115 @@ func TestABatchCaughtMidSaveIsNotAnnouncedAgain(t *testing.T) {
 		{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning, Attempts: []batch.Attempt{{Backend: "claude", RunID: runID}}}}}
 	run := runRec(runID, noon.Add(-time.Minute), false, agent.Result{})
 	prev := lookAt([]runlog.Record{run}, []batch.Result{b}, nil)
-	caught := lookAt([]runlog.Record{run}, keepUnread([]batch.Result{b}, nil, 1, map[string]int{}), nil)
+	caught := lookAt([]runlog.Record{run}, keepUnread([]batch.Result{b}, nil, map[string]bool{b.ID: true}), nil)
 	if says := announce(prev, caught, false); len(says) != 0 {
 		t.Fatalf("a batch that could not be read for one look was announced again: %+v", says)
 	}
-	// Removed for good (hrn batch rm): every record reads, and it is not kept.
-	if got := keepUnread([]batch.Result{b}, nil, 0, map[string]int{}); len(got) != 0 {
+	// Removed for good (hrn batch rm): its file is gone, and it is not kept.
+	if got := keepUnread([]batch.Result{b}, nil, nil); len(got) != 0 {
 		t.Errorf("a batch gone for good was kept: %+v", got)
 	}
 }
 
-// A record that never reads (a zero-byte file, a newer format) keeps some
-// record unreadable on every look. A batch removed meanwhile is kept a few
-// looks at most, not frozen at its last state for the life of the stream.
-func TestABatchMissingWhileAnotherRecordNeverReadsIsKeptAFewLooksAtMost(t *testing.T) {
+// A batch is kept for as long as its file is on disk and cannot be read, and
+// not a look longer, however many other records never read.
+func TestABatchIsKeptWhileItsFileIsOnDiskAndUnread(t *testing.T) {
 	b := batch.Result{ID: "20261011-114959-bbbbbb", Tasks: []batch.TaskResult{{ID: "guard", Status: batch.StatusRunning}}}
-	missed := map[string]int{}
+	other := "20261011-100000-dddddd" // a record that never reads
 	kept := []batch.Result{b}
-	for look := 1; look <= keepLooks; look++ {
-		if kept = keepUnread(kept, nil, 1, missed); len(kept) != 1 {
-			t.Fatalf("look %d: a batch caught mid-save was dropped", look)
+	for look := 1; look <= 10; look++ {
+		if kept = keepUnread(kept, nil, map[string]bool{b.ID: true, other: true}); len(kept) != 1 {
+			t.Fatalf("look %d: a batch still on disk was dropped", look)
 		}
 	}
-	if kept = keepUnread(kept, nil, 1, missed); len(kept) != 0 {
-		t.Fatalf("a batch missing for %d looks is still kept: %+v", keepLooks+1, kept)
+	if kept = keepUnread(kept, nil, map[string]bool{other: true}); len(kept) != 0 {
+		t.Fatalf("a batch whose file is gone is still kept: %+v", kept)
 	}
-	// One that reads again starts its count afresh.
-	kept = keepUnread(nil, []batch.Result{b}, 1, missed)
-	for look := 1; look <= keepLooks; look++ {
-		if kept = keepUnread(kept, nil, 1, missed); len(kept) != 1 {
-			t.Fatalf("after reading again, look %d: dropped too soon", look)
+}
+
+// A batch unreadable on the stream's first look that ends before it first
+// reads ended after the stream began: its ending is news. One that had ended
+// before the stream began is not.
+func TestABatchUnreadableOnTheFirstLookThatEndsSince(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(runlog.Home(), "batches")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Add(-time.Hour)
+	ended := batch.Result{ID: "20261011-114959-bbbbbb", Started: started, Dir: "/repo/harness",
+		Tasks: []batch.TaskResult{{ID: "guard", Prompt: "Add the guard", Status: batch.StatusPass}}}
+	old := ended
+	old.ID, old.Duration = "20261011-104959-eeeeee", time.Minute
+	for _, id := range []string{ended.ID, old.ID} {
+		if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte("{"), 0o644); err != nil {
+			t.Fatal(err)
 		}
+	}
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	first := b.look()
+	ended.Duration = time.Since(started)
+	for _, res := range []batch.Result{ended, old} {
+		if err := batch.SaveResult(res); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cur := b.look()
+	says := announce(b.baseline(first, cur), cur, false)
+	if len(says) == 0 || says[0].Kind != "done" || says[0].Ref != ended.ID {
+		t.Fatalf("says = %+v; want the ending of the batch that ended since", says)
+	}
+	for _, m := range says {
+		if m.Ref == old.ID {
+			t.Errorf("a batch that ended before the stream was announced: %+v", m)
+		}
+	}
+}
+
+func appendEvent(t *testing.T, path string, e agent.Event) {
+	t.Helper()
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A stopped run that writes again is followed from where it stopped: what it
+// did before is not said again as what it is doing now.
+func TestARunThatWritesAgainIsNotSaidToDoWhatItDidBefore(t *testing.T) {
+	for _, followed := range []bool{true, false} {
+		t.Run(map[bool]string{true: "followed before it stopped", false: "stopped before the stream"}[followed], func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			rec := activityRun(t, time.Now(), false)
+			events := filepath.Join(runlog.Root(), rec.ID, "events.jsonl")
+			appendEvent(t, events, agent.Event{Kind: agent.EventToolCall, Tool: "Read", Text: "old.go"})
+			b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+			if followed {
+				if b.look(); b.doing[rec.ID] != "reading old.go" {
+					t.Fatalf("doing while running = %q", b.doing[rec.ID])
+				}
+			}
+			ageFile(t, events, time.Now().Add(-61*time.Minute))
+			prev := b.look()
+			appendEvent(t, events, agent.Event{Kind: agent.EventText, Text: "back"})
+			cur := b.look()
+			if says := announce(prev, cur, false); slices.Contains(kinds(says), "working") {
+				t.Errorf("a run writing again was said to be working on what it did before: %+v", says)
+			}
+			appendEvent(t, events, agent.Event{Kind: agent.EventToolCall, Tool: "Read", Text: "new.go"})
+			next := b.look()
+			if says := announce(cur, next, false); len(says) == 0 || says[0].Kind != "working" || !strings.Contains(says[0].Text, "new.go") {
+				t.Errorf("its next tool call: %+v", says)
+			}
+		})
 	}
 }
 
