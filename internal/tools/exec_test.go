@@ -34,9 +34,10 @@ func TestRunShellExitCodeAndOutput(t *testing.T) {
 func TestRunShellNilEnvironmentHidesWorkerAndScalerTokens(t *testing.T) {
 	t.Setenv("HRN_WORKER_TOKEN", "worker-fixture")
 	t.Setenv("HRN_SCALER_TOKEN", "scaler-fixture")
-	command := "if [ -n \"$HRN_WORKER_TOKEN$HRN_SCALER_TOKEN\" ]; then echo leaked; else echo clean; fi"
+	t.Setenv("HRN_DATABASE_URL", "postgres://fixture")
+	command := "if [ -n \"$HRN_WORKER_TOKEN$HRN_SCALER_TOKEN$HRN_DATABASE_URL\" ]; then echo leaked; else echo clean; fi"
 	if name, _ := Shell(); name == "powershell" {
-		command = "if ($env:HRN_WORKER_TOKEN -or $env:HRN_SCALER_TOKEN) { echo leaked } else { echo clean }"
+		command = "if ($env:HRN_WORKER_TOKEN -or $env:HRN_SCALER_TOKEN -or $env:HRN_DATABASE_URL) { echo leaked } else { echo clean }"
 	}
 	result, err := RunShell(context.Background(), t.TempDir(), command, 0, nil)
 	if err != nil || result.ExitCode != 0 || !strings.Contains(result.Output, "clean") || strings.Contains(result.Output, "leaked") {
