@@ -107,6 +107,48 @@ class VerifierTests(unittest.TestCase):
                                 rule["to"][0][field] = {}
                         self.check_mutation(chart, mutate)
 
+    def test_containers_must_not_add_capabilities(self):
+        def control(docs):
+            return docs["Deployment"]["spec"]["template"]["spec"]["containers"][0]
+
+        def worker(index):
+            return lambda docs: docs["StatefulSet"]["spec"]["template"]["spec"][
+                "containers"][index]
+
+        for chart, container in (("control", control), ("project-worker", worker(0)),
+                                 ("project-worker", worker(1))):
+            for added in ([], ["NET_ADMIN"]):
+                with self.subTest(chart=chart, added=added):
+                    def mutate(docs):
+                        container(docs)["securityContext"]["capabilities"]["add"] = added
+                    self.check_mutation(chart, mutate)
+
+    def test_control_ingress_sources_and_port_must_match(self):
+        def peer(index, field, value):
+            def mutate(docs):
+                docs["NetworkPolicy"]["spec"]["ingress"][0]["from"][index][field] = value
+            return mutate
+
+        def rule(edit):
+            def mutate(docs):
+                edit(docs["NetworkPolicy"]["spec"]["ingress"][0])
+            return mutate
+
+        cases = {
+            "worker namespace": peer(0, "namespaceSelector", {}),
+            "worker pods": peer(0, "podSelector", {}),
+            "keda namespace": peer(1, "namespaceSelector", {"matchLabels": {}}),
+            "keda pods narrowed": peer(1, "podSelector", {"matchLabels": {"x": "y"}}),
+            "admin pods": peer(2, "podSelector", {"matchLabels": {}}),
+            "extra source": rule(lambda r: r["from"].append({"ipBlock": {"cidr": "0.0.0.0/0"}})),
+            "port": rule(lambda r: r["ports"][0].update(port=9999)),
+            "protocol": rule(lambda r: r["ports"][0].update(protocol="UDP")),
+            "all ports": rule(lambda r: r.pop("ports")),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(case=name):
+                self.check_mutation("control", mutate)
+
     def test_repeated_kinds_must_not_overwrite_documents(self):
         with patch.object(verify, "helm", return_value="kind: Service\n---\nkind: Service\n"):
             with self.assertRaises(AssertionError):
