@@ -110,17 +110,45 @@ Two things it does not cover, by design: tools from an MCP server are the server
 business, and batch gate commands are not checked, because the operator wrote those.
 Gates keep hrn's full environment and execute the code the agent wrote, including
 tests, so that code can use the operator's credentials. hrn's own batch `git status`,
-`git add` and `git commit` neutralise repository config keys that run programs
+`git add` and `git commit`, and in the operator's repository `hrn batch merge` and the
+`git worktree add` of a fresh task worktree, neutralise repository config keys that run programs
 (`-c core.hooksPath=<empty temporary directory>`, `-c maintenance.auto=false`,
-`-c gc.auto=0`; `-c core.fsmonitor=false` when the repository config sets
-`core.fsmonitor`; `-c commit.gpgSign=false` when it sets a `gpg.*program` or
-`gpg.ssh.defaultKeyCommand`; and empty `filter.<name>.clean`, `filter.<name>.smudge`,
+`-c gc.auto=0`; `GIT_NO_LAZY_FETCH=1` always, and `-c protocol.allow=never` when the
+repository config names a promisor remote (`extensions.partialClone`, `remote.<name>.promisor`,
+`remote.<name>.partialCloneFilter`),
+so that remote cannot have git fetch a missing object through its `uploadpack` program; `-c core.fsmonitor=false`
+when the repository config sets `core.fsmonitor`; `-c commit.gpgSign=false` and
+`-c merge.verifySignatures=false` when it sets a `gpg.*program` or `gpg.ssh.defaultKeyCommand`,
+so neither signing the merge commit nor verifying a branch tip's signature runs that program
+(with the operator's own `gpg.program`, a `merge.verifySignatures` still applies); and empty `filter.<name>.clean`, `filter.<name>.smudge`,
 `filter.<name>.process` with `filter.<name>.required=false` for every filter driver it
-defines), so settings an agent writes to the shared repository config
-(`core.hooksPath`, `core.fsmonitor`, filter drivers, `gpg.*`, `gc.recentObjectsHook`)
-cannot make that commit run a command. "Repository config" is the local and worktree
+defines; and `merge.<name>.driver=false` for every merge driver it defines, so a path that
+driver would merge becomes a conflict and `hrn batch merge` undoes that merge), so settings
+an agent writes to the shared repository config (`core.hooksPath`, `core.fsmonitor`, filter
+and merge drivers, `gpg.*` with `merge.verifySignatures`, promisor remotes,
+`gc.recentObjectsHook`) cannot make that commit run a command. "Repository config" is the local and worktree
 scope (`git config --show-scope`): what the operator's global or system config defines,
 such as the Git LFS filter, still runs, unless the repository config redefines it.
+In the operator's repository the hooks path is the `core.hooksPath` from the operator's global
+or system config when one is set, and otherwise the repository's own hooks directory
+(`<common-dir>/hooks`), rather than an empty one: the operator's hooks still run there and a
+`core.hooksPath` in the shared config does not, which also means a hooks path set in the
+repository config by the operator (as husky does) is not followed. The limit this leaves: an
+agent that can write files outside its worktree can place a `post-merge` or `post-checkout`
+hook in `<common-dir>/hooks` (or change the operator's global config), and hrn's merge and
+worktree add run it; an agent limited to `git config` cannot. hrn reads the repository config again right before each of those commands, which leaves
+a process the agent left running only the moment between that read and the command; and it
+pins `GIT_DIR` and `GIT_WORK_TREE` to the tree it means, so a `core.worktree` the agent sets
+cannot make that commit take files from outside the task's worktree. The next `hrn batch`
+finds the repository root from the `.git` entry above its directory, not from
+`rev-parse --show-toplevel`, so that `core.worktree` cannot move the batch to another tree.
+These overrides travel as `GIT_CONFIG_*` environment variables, so they also reach the
+operator's own hooks during `hrn batch merge` and `git worktree add`: in a repository whose own
+config names a promisor remote, a hook that fetches or pushes fails there. In a partial clone
+hrn does not fetch missing objects either; if a merge reports a missing object, run
+`git fetch` (or `git backfill`) first. Slots, the default
+(`"worktrees": "slots"`), are still made and switched with plain git (`internal/ws`), so the
+shared config's hooks and filters can run there.
 `hrn batch diff` runs `git diff --no-ext-diff --no-textconv --ignore-submodules=all`, so
 `diff.external`, a diff driver's command or textconv, and a submodule's config cannot make
 it run a command either. Neither command guard refuses `git config` for those keys,

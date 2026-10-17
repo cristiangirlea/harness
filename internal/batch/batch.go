@@ -465,11 +465,10 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		report(e)
 	}
 
-	root, err := gitOut(ctx, spec.Dir, "rev-parse", "--show-toplevel")
+	root, err := repoRoot(ctx, spec.Dir)
 	if err != nil {
 		return Result{}, err
 	}
-	root = filepath.Clean(filepath.FromSlash(root))
 	base, err := gitOut(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return Result{}, err
@@ -1462,31 +1461,124 @@ func commitChanges(wt, message string) (string, error) {
 // name may hold one; git never enters submodules, whose config is the agent's to write too.
 type agentGit struct {
 	dir   string
-	hooks string // an empty hooks directory, removed by close
-	env   []string
+	hooks string
+	temp  bool // hooks is an empty directory close removes
+	pin   []string
 }
 
+// newAgentGit is for a task worktree: no hooks run at all.
 func newAgentGit(ctx context.Context, dir string) (*agentGit, error) {
-	hooks, err := os.MkdirTemp("", "hrn-empty-hooks-")
+	g, err := pinnedGit(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	return &agentGit{dir: dir, hooks: hooks, env: configEnv(agentConfigOverrides(ctx, dir, hooks))}, nil
+	if g.hooks, err = os.MkdirTemp("", "hrn-empty-hooks-"); err != nil {
+		return nil, err
+	}
+	g.temp = true
+	return g, nil
 }
 
-func (g *agentGit) close() { _ = os.RemoveAll(g.hooks) }
+// newRepoGit is for the operator's own repository: its hooks directory, or a
+// global or system core.hooksPath, still runs; one the shared config names does not.
+func newRepoGit(ctx context.Context, root string) (*agentGit, error) {
+	g, err := pinnedGit(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	if g.hooks = operatorHooksPath(ctx, g.dir, g.pin); g.hooks != "" {
+		return g, nil
+	}
+	common, err := gitStdoutEnv(ctx, g.dir, g.pin, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return nil, err
+	}
+	g.hooks = filepath.Join(strings.TrimSpace(common), "hooks")
+	return g, nil
+}
+
+// operatorHooksPath returns the last core.hooksPath set outside the repository
+// config, or "" when there is none.
+func operatorHooksPath(ctx context.Context, dir string, pin []string) string {
+	out, err := gitStdoutEnv(ctx, dir, pin, "config", "--show-scope", "--get-regexp", `^core\.hookspath$`)
+	if err != nil {
+		return ""
+	}
+	path := ""
+	for _, line := range strings.Split(out, "\n") {
+		scope, entry, _ := strings.Cut(line, "\t")
+		switch scope {
+		case "global", "system", "command":
+			_, path, _ = strings.Cut(entry, " ")
+		}
+	}
+	return path
+}
+
+// repoRoot finds the work tree that holds dir from its .git entry, since a
+// core.worktree in the shared config would send rev-parse --show-toplevel elsewhere.
+func repoRoot(ctx context.Context, dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			g, err := pinnedGit(ctx, d)
+			if err != nil {
+				return "", err
+			}
+			top, err := gitOutEnv(ctx, d, g.pin, "", "rev-parse", "--show-toplevel")
+			if err != nil {
+				return "", err
+			}
+			return filepath.Clean(filepath.FromSlash(top)), nil
+		}
+		if filepath.Dir(d) == d {
+			return "", fmt.Errorf("%s is not inside a git work tree", dir)
+		}
+	}
+}
+
+// pinnedGit sets GIT_DIR and GIT_WORK_TREE, so a core.worktree cannot point git elsewhere.
+func pinnedGit(ctx context.Context, dir string) (*agentGit, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	// GIT_WORK_TREE already here: git leaves the agent's core.worktree unread.
+	work := "GIT_WORK_TREE=" + dir
+	gitDir, err := gitStdoutEnv(ctx, dir, []string{work}, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return nil, err
+	}
+	// A promisor remote in the shared config would otherwise run its upload-pack for a missing object.
+	return &agentGit{dir: dir, pin: []string{"GIT_DIR=" + strings.TrimSpace(gitDir), work, "GIT_NO_LAZY_FETCH=1"}}, nil
+}
+
+func (g *agentGit) close() {
+	if g.temp {
+		_ = os.RemoveAll(g.hooks)
+	}
+}
 
 func (g *agentGit) out(ctx context.Context, args ...string) (string, error) {
-	return gitOutEnv(ctx, g.dir, g.env, "", args...)
+	return gitOutEnv(ctx, g.dir, g.env(ctx), "", args...)
 }
 
 // in is out with stdin.
 func (g *agentGit) in(ctx context.Context, stdin string, args ...string) (string, error) {
-	return gitOutEnv(ctx, g.dir, g.env, stdin, args...)
+	return gitOutEnv(ctx, g.dir, g.env(ctx), stdin, args...)
 }
 
 func (g *agentGit) stdout(ctx context.Context, args ...string) (string, error) {
-	return gitStdoutEnv(ctx, g.dir, g.env, args...)
+	return gitStdoutEnv(ctx, g.dir, g.env(ctx), args...)
+}
+
+// env scans the config right before each command, since a process the agent
+// left running can add a filter between one command and the next.
+func (g *agentGit) env(ctx context.Context) []string {
+	return append(slices.Clone(g.pin), configEnv(agentConfigOverrides(ctx, g.dir, g.pin, g.hooks))...)
 }
 
 // configEnv numbers the overrides after any GIT_CONFIG_COUNT entries the
@@ -1506,10 +1598,10 @@ func configEnv(pairs [][2]string) []string {
 }
 
 // agentConfigOverrides turns off hooks and auto-maintenance, keeps git out of
-// submodules, and turns off the fsmonitor, commit signing and filter drivers
-// only where the repository's own config (local or worktree) defines them: the
-// operator's global and system config, a Git LFS filter for one, keep working.
-func agentConfigOverrides(ctx context.Context, dir, hooks string) [][2]string {
+// submodules, and turns off the fsmonitor, commit signing, filter and merge drivers
+// and transports only where the repository's own config (local or worktree) defines
+// them: the operator's global and system config, a Git LFS filter for one, keep working.
+func agentConfigOverrides(ctx context.Context, dir string, pin []string, hooks string) [][2]string {
 	pairs := [][2]string{
 		{"core.hooksPath", hooks},
 		{"maintenance.auto", "false"},
@@ -1518,8 +1610,8 @@ func agentConfigOverrides(ctx context.Context, dir, hooks string) [][2]string {
 		{"status.submoduleSummary", "false"},
 		{"submodule.recurse", "false"},
 	}
-	out, err := gitOut(ctx, dir, "config", "--show-scope", "--get-regexp",
-		`^(filter\..*\.(clean|smudge|process)|core\.fsmonitor|gpg\..*program|gpg\.ssh\.defaultkeycommand)$`)
+	out, err := gitStdoutEnv(ctx, dir, pin, "config", "--show-scope", "--get-regexp",
+		`^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|core\.fsmonitor|gpg\..*program|gpg\.ssh\.defaultkeycommand|extensions\.partialclone|remote\..*\.(promisor|partialclonefilter))$`)
 	if err != nil {
 		return pairs
 	}
@@ -1532,6 +1624,13 @@ func agentConfigOverrides(ctx context.Context, dir, hooks string) [][2]string {
 		}
 		key, _, _ := strings.Cut(entry, " ")
 		switch {
+		case key == "extensions.partialclone" || strings.HasPrefix(key, "remote."):
+			// A promisor remote is the only way hrn's own git starts a transport.
+			if !seen["promisor"] {
+				seen["promisor"] = true
+				pairs = append(pairs, [2]string{"protocol.allow", "never"})
+			}
+			continue
 		case key == "core.fsmonitor":
 			if !seen[key] {
 				seen[key] = true
@@ -1541,7 +1640,15 @@ func agentConfigOverrides(ctx context.Context, dir, hooks string) [][2]string {
 		case strings.HasPrefix(key, "gpg."):
 			if !seen["gpg."] {
 				seen["gpg."] = true
-				pairs = append(pairs, [2]string{"commit.gpgSign", "false"})
+				pairs = append(pairs, [2]string{"commit.gpgSign", "false"}, [2]string{"merge.verifySignatures", "false"})
+			}
+			continue
+		}
+		if rest, ok := strings.CutPrefix(key, "merge."); ok {
+			// A driver that runs false makes git report a conflict, which the merge then undoes.
+			if name, ok := strings.CutSuffix(rest, ".driver"); ok && name != "" && !seen["merge:"+name] {
+				seen["merge:"+name] = true
+				pairs = append(pairs, [2]string{"merge." + name + ".driver", "false"})
 			}
 			continue
 		}
@@ -1809,9 +1916,15 @@ func comparablePath(p string) string {
 func addWorktree(ctx context.Context, root string, tr TaskResult, base string) error {
 	worktreeMu.Lock()
 	defer worktreeMu.Unlock()
+	g, err := newRepoGit(ctx, root)
+	if err != nil {
+		return err
+	}
+	defer g.close()
 	// Git may create the branch before failing to read another worktree's
 	// metadata, so this command cannot safely be retried.
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	cmd.Env = append(cmd.Environ(), g.env(ctx)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
@@ -2142,17 +2255,22 @@ func mergeBranch(ctx context.Context, root string, tr TaskResult, squash bool) (
 	if squash {
 		args = []string{"merge", "--squash", tr.Branch}
 	}
-	if _, err := gitOut(ctx, root, args...); err != nil {
-		return "", hasUnmerged(root), undoMerge(root, err)
+	g, err := newRepoGit(ctx, root)
+	if err != nil {
+		return "", false, err
+	}
+	defer g.close()
+	if _, err := g.out(ctx, args...); err != nil {
+		return "", hasUnmerged(g), undoMerge(root, err)
 	}
 	if squash {
-		if staged, err := hasStagedChanges(ctx, root); err != nil {
+		if staged, err := hasStagedChanges(ctx, g); err != nil {
 			return "", false, undoMerge(root, err)
 		} else if !staged {
 			return "", false, undoMerge(root, errNothingStaged)
 		}
-		if _, err := gitOut(ctx, root, "commit", "-q", "-m", tr.ID+": "+tools.OneLine(tr.Prompt, 60)); err != nil {
-			return "", hasUnmerged(root), undoMerge(root, err)
+		if _, err := g.out(ctx, "commit", "-q", "-m", tr.ID+": "+tools.OneLine(tr.Prompt, 60)); err != nil {
+			return "", hasUnmerged(g), undoMerge(root, err)
 		}
 	}
 	commit, err = gitOut(ctx, root, "rev-parse", "HEAD")
@@ -2161,17 +2279,17 @@ func mergeBranch(ctx context.Context, root string, tr TaskResult, squash bool) (
 
 // hasUnmerged reports whether the index holds conflicting paths. It takes its
 // own context because it runs while a merge is being cleaned up.
-func hasUnmerged(root string) bool {
+func hasUnmerged(g *agentGit) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	out, err := gitOut(ctx, root, "ls-files", "--unmerged")
+	out, err := g.out(ctx, "ls-files", "--unmerged")
 	return err == nil && out != ""
 }
 
-func hasStagedChanges(ctx context.Context, root string) (bool, error) {
+func hasStagedChanges(ctx context.Context, g *agentGit) (bool, error) {
 	// --quiet exits 1 when there is a difference, which gitOut reports as an
 	// error, so ask for the names instead and read them.
-	out, err := gitOut(ctx, root, "diff", "--cached", "--name-only")
+	out, err := g.out(ctx, "diff", "--cached", "--name-only")
 	return out != "", err
 }
 
@@ -2183,10 +2301,15 @@ func hasStagedChanges(ctx context.Context, root string) (bool, error) {
 func undoMerge(root string, cause error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if _, err := gitOut(ctx, root, "merge", "--abort"); err == nil {
+	g, err := newRepoGit(ctx, root)
+	if err != nil {
+		return fmt.Errorf("%w; and the tree could not be restored: %v", cause, err)
+	}
+	defer g.close()
+	if _, err := g.out(ctx, "merge", "--abort"); err == nil {
 		return cause
 	}
-	if _, err := gitOut(ctx, root, "reset", "--hard", "HEAD"); err != nil {
+	if _, err := g.out(ctx, "reset", "--hard", "HEAD"); err != nil {
 		return fmt.Errorf("%w; and the tree could not be restored: %v", cause, err)
 	}
 	return cause
