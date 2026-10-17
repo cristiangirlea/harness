@@ -371,8 +371,20 @@ func AppliesLean(b Backend) bool {
 	return ok && l.AppliesLean()
 }
 
+// AppliesSystemPrompt reports whether b honours Options.AppendSystemPrompt.
+func AppliesSystemPrompt(b Backend) bool {
+	s, ok := b.(interface{ AppliesSystemPrompt() bool })
+	return ok && s.AppliesSystemPrompt()
+}
+
+// AppliesNoSkills reports whether b honours Options.NoSkills.
+func AppliesNoSkills(b Backend) bool {
+	s, ok := b.(interface{ AppliesNoSkills() bool })
+	return ok && s.AppliesNoSkills()
+}
+
 // unenforced names the options a CLI backend cannot apply, for one warning line.
-func unenforced(task Task, mapsEffort, mapsLean, mapsCompact bool) []string {
+func unenforced(task Task, c *CLIBackend) []string {
 	var out []string
 	if task.MaxCostUSD > 0 {
 		out = append(out, "max_cost")
@@ -380,14 +392,20 @@ func unenforced(task Task, mapsEffort, mapsLean, mapsCompact bool) []string {
 	if task.TaskBudget > 0 {
 		out = append(out, "task_budget")
 	}
-	if task.Effort != "" && !mapsEffort {
+	if task.Effort != "" && !c.mapsEffort {
 		out = append(out, "effort")
 	}
-	if task.IsLean() && !mapsLean {
+	if task.IsLean() && !c.mapsLean {
 		out = append(out, "lean")
 	}
-	if task.CompactWindow != "" && !mapsCompact {
+	if task.CompactWindow != "" && !c.mapsCompact {
 		out = append(out, "compact_window")
+	}
+	if task.AppendSystemPrompt != "" && !c.mapsSystemPrompt {
+		out = append(out, "append_system_prompt")
+	}
+	if task.NoSkills && !c.mapsNoSkills {
+		out = append(out, "no_skills")
 	}
 	return out
 }

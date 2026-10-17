@@ -2,6 +2,7 @@ package eval
 
 import (
 	"encoding/json"
+	"math"
 	"slices"
 )
 
@@ -21,12 +22,13 @@ type Diff struct {
 	// like with like.
 	PromptChanged []string `json:"prompt_changed,omitempty"`
 	// VariantChanged lists the variant names that run something else in b:
-	// another backend, model or effort under the same name.
+	// another backend, model, effort or harness under the same name.
 	VariantChanged []string `json:"variant_changed,omitempty"`
 	// GateChanged lists the task ids whose gates or expect pattern differ, so
 	// passing means something else on each side.
 	GateChanged []string `json:"gate_changed,omitempty"`
-	// JudgeChanged is true when the judge or its rubric differs.
+	// JudgeChanged is true when the judge or its rubric differs; its repeats
+	// do not change the scale.
 	JudgeChanged bool `json:"judge_changed,omitempty"`
 	// Judged is true when either eval has judge scores to compare.
 	Judged bool `json:"judged,omitempty"`
@@ -37,6 +39,9 @@ type VariantPair struct {
 	Name string      `json:"name"`
 	A    *VariantRow `json:"a,omitempty"`
 	B    *VariantRow `json:"b,omitempty"`
+	// WithinNoise: the judge score moved less than the judge's own spread
+	// between repeats, on either side.
+	WithinNoise bool `json:"within_noise,omitempty"`
 }
 
 // TaskPair is one task under one variant in both evals.
@@ -45,6 +50,8 @@ type TaskPair struct {
 	Variant string   `json:"variant"`
 	A       *TaskRow `json:"a,omitempty"`
 	B       *TaskRow `json:"b,omitempty"`
+	// WithinNoise is as in VariantPair, for this task alone.
+	WithinNoise bool `json:"within_noise,omitempty"`
 }
 
 // Compare lines up a and b. Rows come in a's order, then whatever only b has,
@@ -66,8 +73,11 @@ func Compare(a, b Record) Diff {
 			d.Variants = append(d.Variants, VariantPair{Name: v.Name, B: v})
 		}
 	}
-	for _, v := range d.Variants {
+	for i, v := range d.Variants {
 		d.Judged = d.Judged || (v.A != nil && v.A.Judged > 0) || (v.B != nil && v.B.Judged > 0)
+		if v.A != nil && v.B != nil {
+			d.Variants[i].WithinNoise = withinNoise(v.A.judge(), v.B.judge())
+		}
 	}
 
 	type key struct{ task, variant string }
@@ -83,6 +93,12 @@ func Compare(a, b Record) Diff {
 			d.Tasks[j].B = t
 		} else {
 			d.Tasks = append(d.Tasks, TaskPair{Task: t.Task, Variant: t.Variant, B: t})
+		}
+	}
+
+	for i, t := range d.Tasks {
+		if t.A != nil && t.B != nil {
+			d.Tasks[i].WithinNoise = withinNoise(t.A.judge(), t.B.judge())
 		}
 	}
 
@@ -114,14 +130,35 @@ func Compare(a, b Record) Diff {
 		defs[v.Key()] = v
 	}
 	for _, v := range b.Spec.Matrix {
-		if was, ok := defs[v.Key()]; ok && (was.Backend != v.Backend || was.Model != v.Model || was.Effort != v.Effort) {
+		if was, ok := defs[v.Key()]; ok && (was.Backend != v.Backend || was.Model != v.Model || was.Effort != v.Effort ||
+			was.PromptPrefix != v.PromptPrefix || was.AppendSystemPrompt != v.AppendSystemPrompt || was.NoSkills != v.NoSkills) {
 			d.VariantChanged = append(d.VariantChanged, v.Key())
 		}
 	}
-	ja, _ := json.Marshal(a.Spec.Judge)
-	jb, _ := json.Marshal(b.Spec.Judge)
-	d.JudgeChanged = string(ja) != string(jb)
+	d.JudgeChanged = string(judgeScale(a.Spec.Judge)) != string(judgeScale(b.Spec.Judge))
 	return d
+}
+
+// judgeScale is the judge as JSON, without what does not change its scores' scale.
+func judgeScale(j *Judge) []byte {
+	if j != nil {
+		c := *j
+		c.Repeats = 0
+		j = &c
+	}
+	out, _ := json.Marshal(j)
+	return out
+}
+
+// withinNoise reports a judge-score change smaller than the judge's own
+// spread; with no repeats on either side there is no spread to compare.
+func withinNoise(a, b judgeScore) bool {
+	if a.judged == 0 || b.judged == 0 {
+		return false
+	}
+	sa, measuredA := a.spread()
+	sb, measuredB := b.spread()
+	return (measuredA || measuredB) && math.Abs(b.mean-a.mean) < max(sa, sb)
 }
 
 // firstOfList is a task's own list when it has one, else the spec's.

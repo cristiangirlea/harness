@@ -128,6 +128,9 @@ Run flags:
       --compact-window N
                        compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
                        (claude backend; unset keeps Claude Code's own threshold)
+      --append-system-prompt TEXT
+                       add TEXT after the backend's own system prompt, such as a rule (api and claude; at most 16 KiB)
+      --no-skills      start claude with skills turned off (claude backend)
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --fresh          with --continue: start a new session, handed the earlier run over from its record
                        (task, outcome, changed files, gate results) instead of resuming or forking its session
@@ -885,13 +888,17 @@ func cmdEval(args []string) (int, error) {
 func printEval(r *renderer, rec eval.Record) {
 	r.Line("")
 	judged := rec.Spec.Judge != nil
-	head := fmt.Sprintf("  %-20s %6s %9s %12s %10s %7s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "tools", "context")
+	spread := slices.ContainsFunc(rec.Table.Variants, func(v eval.VariantRow) bool { return v.JudgeRepeats > 1 })
+	head := fmt.Sprintf("  %-20s %6s %9s %12s %11s %7s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "tools", "context")
 	if judged {
 		head += fmt.Sprintf(" %6s", "judge")
 	}
+	if judged && spread {
+		head += fmt.Sprintf(" %9s", "spread")
+	}
 	r.Line(head)
 	for _, v := range rec.Table.Variants {
-		line := fmt.Sprintf("  %-20s %6s %9d %12s %10s %7s %7s %9s",
+		line := fmt.Sprintf("  %-20s %6s %9d %12s %11s %7s %7s %9s",
 			v.Name, report.Share(v.PassRate()), v.Attempts,
 			report.KnownMoney(v.MedianCostUSD, v.CostKnown(), v.CostEstimate),
 			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns),
@@ -902,6 +909,13 @@ func printEval(r *renderer, rec eval.Record) {
 				score = fmt.Sprintf("%.1f", v.MeanScore)
 			}
 			line += fmt.Sprintf(" %6s", score)
+		}
+		if judged && spread {
+			between := "-"
+			if v.Judged > 0 && v.JudgeRepeats > 1 {
+				between = fmt.Sprintf("%.1f-%.1f", v.ScoreMin, v.ScoreMax)
+			}
+			line += fmt.Sprintf(" %9s", between)
 		}
 		r.Line(line)
 		var notes []string
@@ -934,16 +948,21 @@ func printEval(r *renderer, rec eval.Record) {
 				tasks = append(tasks, row.Task)
 			}
 		}
+		// A score with its repeats' spread is wider than the usual column.
+		width := 10
+		for _, s := range scores {
+			width = max(width, len(s))
+		}
 		r.Line("")
 		head := fmt.Sprintf("  %-20s", "task")
 		for _, n := range names {
-			head += fmt.Sprintf(" %10s", n)
+			head += fmt.Sprintf(" %*s", width, n)
 		}
 		r.Line(head)
 		for _, task := range tasks {
 			line := fmt.Sprintf("  %-20s", task)
 			for _, n := range names {
-				line += fmt.Sprintf(" %10s", scores[task+"/"+n])
+				line += fmt.Sprintf(" %*s", width, scores[task+"/"+n])
 			}
 			r.Line(line)
 		}
@@ -959,6 +978,9 @@ func printEval(r *renderer, rec eval.Record) {
 			estimate = estimate || j.CostEstimate
 		}
 		note := fmt.Sprintf("judge: %d verdicts, %s", len(rec.Judgements), report.Money(rec.JudgeCostUSD, estimate))
+		if rec.Spec.Judge.Repeats > 1 {
+			note = fmt.Sprintf("judge: %d verdicts (%d per cell), %s", len(rec.Judgements), rec.Spec.Judge.Repeats, report.Money(rec.JudgeCostUSD, estimate))
+		}
 		if failed > 0 {
 			note += fmt.Sprintf(", %d could not score; see --json", failed)
 		}

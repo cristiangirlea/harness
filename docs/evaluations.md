@@ -251,8 +251,8 @@ accounting and establishes no real model savings.
 
 ```
   variant                pass  attempts  median cost median time   turns   tools   context
-  sonnet                   0%         1        $0.15        13s       2       1    101061
-  haiku                  100%         1        $0.05        14s       2       1     71814
+  sonnet                   0%         1        $0.15         13s       2       1    101061
+  haiku                  100%         1        $0.05         14s       2       1     71814
 
   task                     sonnet      haiku
   greet                       0/1        1/1
@@ -284,6 +284,42 @@ whose backend reaches its usage limit ends `limited`. The `context` column count
 reads together, which is what the model was given rather than what was billed at full
 rate.
 
+### Harness variants
+
+A variant can also change the harness around the model, so a reworded brief, a new rule
+or a skills set is scored by the same gates as a model change:
+
+- `prompt_prefix` goes before every task's prompt, separated by a blank line, on every
+  backend. The judge still grades against the task's own prompt.
+- `append_system_prompt` is added after the backend's own system prompt: a rule, or tool
+  guidance. The api backend sends it as its own system block (cached with the rest);
+  claude gets `--append-system-prompt`. At most 16 KiB.
+- `no_skills: true` starts the claude CLI with its skills off (`--disable-slash-commands`),
+  to measure what they add.
+
+```json
+"matrix": [
+  {"name": "base",  "backend": "claude"},
+  {"name": "rule",  "backend": "claude", "append_system_prompt": "Run the tests before you answer."},
+  {"name": "brief", "backend": "claude", "prompt_prefix": "Read the failing test first."},
+  {"name": "bare",  "backend": "claude", "no_skills": true}
+]
+```
+
+As with `lean`, a cell whose backend would ignore the field is refused before anything
+runs: `append_system_prompt` on anything but `api` and `claude`, `no_skills` on anything
+but `claude`. The check covers the value a cell ends up with, whether the variant, the
+task or the spec set it. The two run options work outside an eval too (`hrn run
+--append-system-prompt`, `--no-skills`, a batch spec, the MCP `run` tool); there, a backend
+that cannot apply them says `not enforced`. The claude CLI is refused the system prompt
+when it is installed as an npm `.cmd` shim, since `cmd.exe` would read the text as
+commands; the native `claude.exe` takes it.
+
+A route row holds only a backend, model and effort, so `hrn route from-eval` skips harness
+variants (and tasks or specs that set the two run options): their score would be credited to
+the model and routed without the change. A retrieval comparison refuses them for the same
+reason.
+
 ### The judge
 
 Gates prove the build and `expect` proves an answer; neither can tell a typo fix from a
@@ -310,7 +346,16 @@ The scores join the table as a `judge` column per variant (the mean) and after e
 task's pass count (`1/1 10.0`). Every verdict is in the record under `judgements`, with
 its reason and the run id of the judge's own recorded run; a judge that fails or answers
 without a `{"score": ...}` object is recorded as an error rather than a zero, and the
-footer counts those. On the `claude` backend the first verdicts cost more than the
+footer counts those.
+
+A judge is a model, and it may not give the same diff the same score twice. `"repeats": 3`
+in the judge scores every passing cell three times, on the same prompt (the diff and the
+answer are read once per cell), each verdict its own run with its `repeat` number in
+`judgements`. The mean then covers every verdict, and a `spread` column shows the lowest
+and highest mean of a single repeat, over the cells scored in every repeat (a verdict that
+failed in one repeat would otherwise move that mean by the cell's difficulty): how far the
+variant's score moves when only the judge runs again. Task rows show it too (`2/2 7.5 (7.0-8.0)`), and the footer says `(3 per cell)`.
+Repeats multiply the judge's cost, not the agents'; the default is 1. On the `claude` backend the first verdicts cost more than the
 answer: Claude Code writes its own system prompt to the cache in the read-only mode the
 judge uses, about 64k tokens, once per judge that starts before the cache exists.
 
@@ -341,3 +386,11 @@ backticks. The first prompt ended "containing exactly the line: hx rocks. Do not
 git.", and Sonnet took the sentence's full stop as part of the line; with the text fenced
 it passed. A judge score column appears when either eval was judged; `--json` prints the
 pairs as data.
+
+When either side's judge ran with repeats, the score shows its spread (`8.0 (7.0-9.0) →
+8.5`), and a change smaller than the larger of the two spreads is marked `(within noise)`
+(`within_noise` in `--json`), on variant and task rows alike: the judge disagreed with
+itself by more than that. With no repeats on either side there is no spread to compare
+and nothing is marked. A different number of judge repeats does not count as a changed
+judge; a variant that changes its backend, model, effort, `prompt_prefix`,
+`append_system_prompt` or `no_skills` under the same name gets a note.

@@ -23,6 +23,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -47,6 +48,17 @@ type Variant struct {
 	Backend          string `json:"backend,omitempty"`
 	Model            string `json:"model,omitempty"`
 	Effort           string `json:"effort,omitempty"`
+	// PromptPrefix goes before every task's prompt; the judge still grades the
+	// task's own prompt, so a brief change is measured against the same task.
+	PromptPrefix       string `json:"prompt_prefix,omitempty"`
+	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
+	NoSkills           bool   `json:"no_skills,omitempty"`
+}
+
+// ChangesHarness reports whether the variant changes the harness around the
+// model, not only which model runs.
+func (v Variant) ChangesHarness() bool {
+	return v.PromptPrefix != "" || v.AppendSystemPrompt != "" || v.NoSkills
 }
 
 // Key is the name a variant's rows are filed under: its name, else backend[-model][-effort].
@@ -170,6 +182,18 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 					}
 					cell.Lean = v.Lean
 				}
+				if v.PromptPrefix != "" {
+					// A Purpose: header on the task's first line would no longer be first.
+					if cell.Purpose == "" {
+						cell.Purpose = purpose.Declared(t.Prompt)
+					}
+					cell.Prompt = v.PromptPrefix + "\n\n" + t.Prompt
+				}
+				cell.AppendSystemPrompt = firstOf(v.AppendSystemPrompt, t.AppendSystemPrompt)
+				cell.NoSkills = v.NoSkills || t.NoSkills
+				if err := checkHarness(cell.Options.Over(spec.Options), cell.Backend); err != nil {
+					return batch.Spec{}, fmt.Errorf("variant %s: %w (task %s uses %s)", v.Key(), err, t.ID, cell.Backend)
+				}
 				cell.Model = firstOf(v.Model, t.Model)
 				cell.Effort = firstOf(v.Effort, t.Effort)
 				cell.Retrieval = firstOf(v.Retrieval, t.Retrieval)
@@ -180,6 +204,25 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 		}
 	}
 	return bs, nil
+}
+
+// checkHarness refuses a harness option the cell's backend would ignore: the
+// variant would score the same harness under another name.
+func checkHarness(o agent.Options, backend string) error {
+	if o.AppendSystemPrompt == "" && !o.NoSkills {
+		return nil
+	}
+	b, err := agent.Get(backend)
+	if err != nil {
+		return err
+	}
+	if o.AppendSystemPrompt != "" && !agent.AppliesSystemPrompt(b) {
+		return fmt.Errorf("append_system_prompt is only supported by the api and claude backends")
+	}
+	if o.NoSkills && !agent.AppliesNoSkills(b) {
+		return fmt.Errorf("no_skills is only supported by the claude backend")
+	}
+	return nil
 }
 
 // checkPart rejects anything that would break the cell id, which is read back
@@ -225,9 +268,82 @@ type VariantRow struct {
 	// MedianContext counts every input token once, cached or not: what the
 	// model was given, not what was billed at full rate.
 	MedianContext float64 `json:"median_context_tokens"`
-	// Judged counts the cells the judge scored; MeanScore is their mean, 0-10.
+	// Judged counts the cells the judge scored; MeanScore is the mean of
+	// their verdicts, 0-10.
 	Judged    int     `json:"judged,omitempty"`
 	MeanScore float64 `json:"mean_score,omitempty"`
+	// ScoreMin and ScoreMax bound the mean of each judge repeat when there
+	// were JudgeRepeats > 1: how far the score moves when only the judge reruns.
+	JudgeRepeats int     `json:"judge_repeats,omitempty"`
+	ScoreMin     float64 `json:"score_min,omitempty"`
+	ScoreMax     float64 `json:"score_max,omitempty"`
+}
+
+// judgeScore is a row's judge columns, shared by variant and task rows.
+type judgeScore struct {
+	judged   int
+	mean     float64
+	repeats  int
+	min, max float64
+}
+
+func (v VariantRow) judge() judgeScore {
+	return judgeScore{v.Judged, v.MeanScore, v.JudgeRepeats, v.ScoreMin, v.ScoreMax}
+}
+
+// spread is the judge's own spread, and whether it was measured.
+func (j judgeScore) spread() (float64, bool) {
+	return j.max - j.min, j.repeats > 1
+}
+
+// scoreOf sums a row's scored verdicts, given per cell.
+func scoreOf(cells [][]Judgement) judgeScore {
+	var out judgeScore
+	total, count := 0, 0
+	repeats := map[int]bool{}
+	for _, cell := range cells {
+		if len(cell) > 0 {
+			out.judged++
+		}
+		for _, v := range cell {
+			total += v.Score
+			count++
+			// A record from before repeats has no repeat number: it was the first.
+			repeats[max(1, v.Repeat)] = true
+		}
+	}
+	if count == 0 {
+		return out
+	}
+	out.mean = float64(total) / float64(count)
+	if len(repeats) < 2 {
+		return out
+	}
+	// Only cells scored in every repeat: a missing verdict would move one
+	// repeat's mean by that cell's difficulty, not by the judge's noise.
+	sums := map[int][2]int{}
+	for _, cell := range cells {
+		byRepeat := map[int]int{}
+		for _, v := range cell {
+			byRepeat[max(1, v.Repeat)] = v.Score
+		}
+		if len(byRepeat) != len(repeats) {
+			continue
+		}
+		for r, score := range byRepeat {
+			sums[r] = [2]int{sums[r][0] + score, sums[r][1] + 1}
+		}
+	}
+	if len(sums) == 0 {
+		return out
+	}
+	out.repeats = len(repeats)
+	out.min, out.max = 10, 0
+	for _, s := range sums {
+		m := float64(s[0]) / float64(s[1])
+		out.min, out.max = min(out.min, m), max(out.max, m)
+	}
+	return out
 }
 
 // CostKnown reports whether any cell of the variant has a known cost.
@@ -252,16 +368,27 @@ type TaskRow struct {
 	Variant string `json:"variant"`
 	Passed  int    `json:"passed"`
 	Total   int    `json:"total"`
-	// Judged and MeanScore are as in VariantRow, for this task alone.
-	Judged    int     `json:"judged,omitempty"`
-	MeanScore float64 `json:"mean_score,omitempty"`
+	// The judge fields are as in VariantRow, for this task alone.
+	Judged       int     `json:"judged,omitempty"`
+	MeanScore    float64 `json:"mean_score,omitempty"`
+	JudgeRepeats int     `json:"judge_repeats,omitempty"`
+	ScoreMin     float64 `json:"score_min,omitempty"`
+	ScoreMax     float64 `json:"score_max,omitempty"`
 }
 
-// Score reads as "2/3", or "2/3 7.5" with the judge's mean score.
+func (r TaskRow) judge() judgeScore {
+	return judgeScore{r.Judged, r.MeanScore, r.JudgeRepeats, r.ScoreMin, r.ScoreMax}
+}
+
+// Score reads as "2/3", "2/3 7.5" with the judge's mean score, or
+// "2/3 7.5 (7.0-8.0)" with the spread of its repeats.
 func (r TaskRow) Score() string {
 	s := fmt.Sprintf("%d/%d", r.Passed, r.Total)
 	if r.Judged > 0 {
 		s += fmt.Sprintf(" %.1f", r.MeanScore)
+	}
+	if r.Judged > 0 && r.JudgeRepeats > 1 {
+		s += fmt.Sprintf(" (%.1f-%.1f)", r.ScoreMin, r.ScoreMax)
 	}
 	return s
 }
@@ -302,7 +429,7 @@ type Record struct {
 	Duration            time.Duration        `json:"duration_ns"`
 	Spec                Spec                 `json:"spec"`
 	Table               Table                `json:"table"`
-	// Judgements are the judge's verdicts, one per passing cell.
+	// Judgements are the judge's verdicts, one per passing cell and judge repeat.
 	Judgements   []Judgement `json:"judgements,omitempty"`
 	JudgeCostUSD float64     `json:"judge_cost_usd,omitempty"`
 }
@@ -347,13 +474,12 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		task, variant string
 		passed        bool
 		tr            batch.TaskResult
-		score         int
-		judged        bool
+		verdicts      []Judgement // the scored ones
 	}
-	scores := map[string]Judgement{}
+	scores := map[string][]Judgement{}
 	for _, v := range verdicts {
 		if v.Scored() {
-			scores[v.Cell] = v
+			scores[v.Cell] = append(scores[v.Cell], v)
 		}
 	}
 	var cells []cell
@@ -362,8 +488,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		if !ok {
 			continue
 		}
-		v, judged := scores[tr.ID]
-		cells = append(cells, cell{task, variant, tr.Status == batch.StatusPass, tr, v.Score, judged})
+		cells = append(cells, cell{task, variant, tr.Status == batch.StatusPass, tr, scores[tr.ID]})
 	}
 
 	// Variant order follows the matrix, so the table reads like the spec.
@@ -372,7 +497,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		name := v.Key()
 		row := VariantRow{Name: name, Statuses: map[string]int{}}
 		var costs, durations, turns, calls, inputs []float64
-		total := 0
+		var judged [][]Judgement
 		for _, c := range cells {
 			if c.variant != name {
 				continue
@@ -384,10 +509,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 					row.Unchanged++
 				}
 			}
-			if c.judged {
-				row.Judged++
-				total += c.score
-			}
+			judged = append(judged, c.verdicts)
 			status := "no-attempt"
 			costKnown := false
 			if n := len(c.tr.Attempts); n > 0 {
@@ -420,9 +542,8 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		row.MedianDuration = time.Duration(report.Median(durations))
 		row.MedianTurns = report.Median(turns)
 		row.MedianTools = report.Median(calls)
-		if row.Judged > 0 {
-			row.MeanScore = float64(total) / float64(row.Judged)
-		}
+		js := scoreOf(judged)
+		row.Judged, row.MeanScore, row.JudgeRepeats, row.ScoreMin, row.ScoreMax = js.judged, js.mean, js.repeats, js.min, js.max
 		row.MedianContext = report.Median(inputs)
 		table.Variants = append(table.Variants, row)
 	}
@@ -432,7 +553,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		for _, v := range spec.Matrix {
 			name := v.Key()
 			row := TaskRow{Task: t.ID, Variant: name}
-			total := 0
+			var judged [][]Judgement
 			for _, c := range cells {
 				if c.task != t.ID || c.variant != name {
 					continue
@@ -441,14 +562,10 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				if c.passed {
 					row.Passed++
 				}
-				if c.judged {
-					row.Judged++
-					total += c.score
-				}
+				judged = append(judged, c.verdicts)
 			}
-			if row.Judged > 0 {
-				row.MeanScore = float64(total) / float64(row.Judged)
-			}
+			js := scoreOf(judged)
+			row.Judged, row.MeanScore, row.JudgeRepeats, row.ScoreMin, row.ScoreMax = js.judged, js.mean, js.repeats, js.min, js.max
 			if row.Total > 0 {
 				table.Tasks = append(table.Tasks, row)
 			}

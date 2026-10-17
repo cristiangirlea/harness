@@ -17,6 +17,12 @@ or `false` when explicitly set, omitted otherwise. Older records without it stil
 Each `table.variants` row also holds `cells_without_cost`, the cells whose cost is
 unknown (left out of the total and median), and `cost_counted`, set when the row was
 counted that way. Older records have neither and show a zero median cost as `-`.
+Variants may hold `prompt_prefix`, `append_system_prompt` and `no_skills`, and a judge
+`repeats`. With repeats, `judgements` holds one verdict per passing cell and repeat, each
+with its `repeat` number; variant and task rows add `judge_repeats`, `score_min` and
+`score_max` (the lowest and highest mean of one repeat, over the cells scored in every
+repeat). Older records have one verdict
+per cell, no repeat number and no spread, and still load.
 
 Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
 
@@ -32,7 +38,8 @@ an ordinary follow-up, and old records without it still load.
   by a continuation and by `hrn retrieval compare`
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
-  off, or absent; `compact_window` is a number or `"auto"`)
+  off, or absent; `compact_window` is a number or `"auto"`; `append_system_prompt` and
+  `no_skills` are omitted when unset)
   and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
   the declared category from `--purpose`, MCP `purpose`, a batch task's `purpose`,
   or a valid leading `Purpose: <category>` header. It is omitted when undeclared;

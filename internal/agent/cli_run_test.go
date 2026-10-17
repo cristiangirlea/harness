@@ -177,15 +177,21 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 		mapsLean   bool
 		// mapsCompact: the adapter passes compact_window on.
 		mapsCompact bool
+		// mapsHarness: the adapter passes append_system_prompt and no_skills on.
+		mapsHarness bool
 	}{
-		{NewCodexBackend, true, false, false},
-		{NewClaudeBackend, true, true, true},
-		{NewGeminiBackend, false, false, false},
-		{NewOpencodeBackend, false, false, false},
+		{NewCodexBackend, true, false, false, false},
+		{NewClaudeBackend, true, true, true, true},
+		{NewGeminiBackend, false, false, false, false},
+		{NewOpencodeBackend, false, false, false, false},
+		{NewAgyBackend, true, false, false, false},
 	} {
 		b := adapter.newBackend()
 		if AppliesLean(b) != adapter.mapsLean {
 			t.Errorf("%s: AppliesLean = %v, want %v", b.Name(), AppliesLean(b), adapter.mapsLean)
+		}
+		if AppliesSystemPrompt(b) != adapter.mapsHarness || AppliesNoSkills(b) != adapter.mapsHarness {
+			t.Errorf("%s: AppliesSystemPrompt = %v, AppliesNoSkills = %v, want %v", b.Name(), AppliesSystemPrompt(b), AppliesNoSkills(b), adapter.mapsHarness)
 		}
 		t.Run(b.Name(), func(t *testing.T) {
 			// Keep the adapter's capabilities, but run only the test binary.
@@ -201,6 +207,8 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{Lean: Bool(false)},
 				{CompactWindow: "auto"},
 				{Lean: Bool(true), CompactWindow: "200000"},
+				{AppendSystemPrompt: "rule"},
+				{NoSkills: true, Effort: "high"},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
@@ -225,6 +233,12 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				}
 				if options.CompactWindow != "" && !adapter.mapsCompact {
 					want = append(want, "compact_window")
+				}
+				if options.AppendSystemPrompt != "" && !adapter.mapsHarness {
+					want = append(want, "append_system_prompt")
+				}
+				if options.NoSkills && !adapter.mapsHarness {
+					want = append(want, "no_skills")
 				}
 				if len(want) == 0 {
 					if len(infos) != 0 {

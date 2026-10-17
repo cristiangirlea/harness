@@ -62,6 +62,13 @@ type Options struct {
 	// an explicit false is kept, also over a spec's true.
 	Lean *bool `json:"lean,omitempty" desc:"Start the claude CLI with only this run's --mcp servers: none of your other MCP servers, plugin servers or claude.ai connectors; your settings, rules, plugins and skills still load (claude backend)."`
 
+	// AppendSystemPrompt follows the backend's own system prompt, so an eval
+	// variant can measure a rule or tool-guidance change with the same gates.
+	AppendSystemPrompt string `json:"append_system_prompt,omitempty" desc:"Text added after the backend's own system prompt, such as a rule or tool guidance (api and claude backends; at most 16 KiB)."`
+
+	// NoSkills starts the claude CLI with its skills off, to measure what they add.
+	NoSkills bool `json:"no_skills,omitempty" desc:"Start the claude CLI with skills turned off (--disable-slash-commands) (claude backend)."`
+
 	// CompactWindow is the context size, in tokens, at which the claude CLI
 	// compacts the conversation (--autocompact): 100000 to 1000000, or
 	// "auto". Unset keeps Claude Code's own threshold, which on a 1M-window
@@ -155,6 +162,13 @@ func (o Options) Validate() error {
 	if o.Effort != "" && !slices.Contains(EffortLevels, o.Effort) {
 		return fmt.Errorf("unknown effort %q (want %s)", o.Effort, strings.Join(EffortLevels, ", "))
 	}
+	// Windows escapes each quote and backslash on the command line, so they count twice.
+	if n := len(o.AppendSystemPrompt) + strings.Count(o.AppendSystemPrompt, `"`) + strings.Count(o.AppendSystemPrompt, `\`); n > MaxAppendSystemPrompt {
+		return fmt.Errorf("append_system_prompt takes %d bytes on a command line; at most %d fit", n, MaxAppendSystemPrompt)
+	}
+	if strings.ContainsRune(o.AppendSystemPrompt, 0) {
+		return fmt.Errorf("append_system_prompt holds a NUL byte, which no command line can carry")
+	}
 	if err := o.CompactWindow.check(); err != nil {
 		return err
 	}
@@ -166,6 +180,10 @@ func (o Options) Validate() error {
 	}
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }
+
+// MaxAppendSystemPrompt leaves room under Windows' 32K command line for the
+// rest of the claude CLI's arguments.
+const MaxAppendSystemPrompt = 16 << 10
 
 // ErrGuardedRun refuses allow_dangerous to an hrn started inside a guarded
 // run (tools.GuardedVar is set): from an agent's shell, or from an MCP server

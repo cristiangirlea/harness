@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,7 +36,7 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 				arrow(report.KnownMoney(v.A.MedianCostUSD, v.A.CostKnown(), v.A.CostEstimate), report.KnownMoney(v.B.MedianCostUSD, v.B.CostKnown(), v.B.CostEstimate)),
 				arrow(v.A.MedianDuration.Round(time.Second).String(), v.B.MedianDuration.Round(time.Second).String()))
 			if d.Judged {
-				line += " " + arrow(score(v.A.Judged, v.A.MeanScore), score(v.B.Judged, v.B.MeanScore))
+				line += " " + arrow(score(*v.A), score(*v.B)) + noise(v.WithinNoise)
 			}
 			r.Line(strings.TrimRight(line, " "))
 		}
@@ -51,7 +52,7 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 		if t.B != nil {
 			after = t.B.Score()
 		}
-		r.Line(fmt.Sprintf("  %-20s %-20s %s", t.Task, t.Variant, arrow(before, after)))
+		r.Line(fmt.Sprintf("  %-20s %-20s %s", t.Task, t.Variant, arrow(before, after)+noise(t.WithinNoise)))
 	}
 	for _, id := range d.PromptChanged {
 		r.Line(r.c(dim, fmt.Sprintf("  note: the prompt differs for task %s, so its rows compare different tasks", id)))
@@ -60,21 +61,37 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 		r.Line(r.c(dim, fmt.Sprintf("  note: the gates or expect differ for task %s, so passing means something else on each side", id)))
 	}
 	for _, name := range d.VariantChanged {
-		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s runs a different backend, model or effort in %s", name, d.B)))
+		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s runs a different backend, model, effort or harness in %s", name, d.B)))
 	}
 	if d.JudgeChanged {
 		r.Line(r.c(dim, "  note: the judge or its rubric differs, so the scores are not on one scale"))
 	}
+	if slices.ContainsFunc(d.Variants, func(v eval.VariantPair) bool { return v.WithinNoise }) ||
+		slices.ContainsFunc(d.Tasks, func(t eval.TaskPair) bool { return t.WithinNoise }) {
+		r.Line(r.c(dim, "  note: within noise: the judge score moved less than the judge's own spread between repeats"))
+	}
+}
+
+// noise marks a judge-score change smaller than the judge's own spread.
+func noise(within bool) string {
+	if within {
+		return " (within noise)"
+	}
+	return ""
 }
 
 func arrow(before, after string) string { return before + " → " + after }
 
-// score renders a variant's mean judge score, or "-" when nothing was judged.
-func score(judged int, mean float64) string {
-	if judged == 0 {
+// score renders a variant's mean judge score, with the spread of its repeats,
+// or "-" when nothing was judged.
+func score(v eval.VariantRow) string {
+	if v.Judged == 0 {
 		return "-"
 	}
-	return fmt.Sprintf("%.1f", mean)
+	if v.JudgeRepeats > 1 {
+		return fmt.Sprintf("%.1f (%.1f-%.1f)", v.MeanScore, v.ScoreMin, v.ScoreMax)
+	}
+	return fmt.Sprintf("%.1f", v.MeanScore)
 }
 
 // listEvals prints the saved evals, newest first; n limits how many, 0 is all.
