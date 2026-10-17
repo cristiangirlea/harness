@@ -314,10 +314,14 @@ Otherwise the branch stays. When git refuses removal because the worktree contai
 hrn checks their trees recursively (including untracked and ignored files). Each submodule's
 HEAD must match the commit its parent recorded, it must have no stash, and HEAD and local
 branches must have no commits absent from its remote-tracking refs. Deinitialized submodules
-keep the worktree because their repositories cannot be checked by this pass. If all checks
-pass, hrn removes the folder, prunes git's entries, and deletes the branch. A failed submodule
-check keeps the worktree and branch. A failure partway through folder removal is reported;
-the branch and registration stay, but files already removed cannot be restored by hrn.
+keep the worktree because their repositories cannot be checked by this pass, and so does a
+submodule repository with linked worktrees of its own (they would lose their repository). If
+all checks pass, hrn moves the folder aside (a `.gc-*` sibling), prunes git's entries, deletes
+the moved folder and the branch. A failed submodule check, or a folder that cannot be moved
+(a file held open on Windows), keeps the worktree and branch whole; so does one git still
+lists after the prune (locked meanwhile), which is moved back. A failure partway through
+deleting the moved folder is reported with its path, which is left to delete by hand; the
+worktree is no longer registered by then, so no later scan sees a half-deleted worktree.
 A batch's record stays (`hrn runs prune` can drop
 it once its worktrees are gone). Open pull requests are read on their own, so a long history
 cannot hide one; with 1000 or more open, no worktree on a branch is removed. Up to 1000 pull
