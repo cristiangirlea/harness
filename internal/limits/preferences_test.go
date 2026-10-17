@@ -1,6 +1,7 @@
 package limits
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -123,5 +124,29 @@ func TestAnEnabledAPIAheadOfAPlanBackendIsSkippedAsAPartner(t *testing.T) {
 	}
 	if next == nil || next.To != "claude" {
 		t.Fatalf("carry-on %+v, %s", next, why)
+	}
+}
+
+func TestAnAgyLimitWithNoPartnerEndsLimitedAndIsRemembered(t *testing.T) {
+	for _, enabled := range [][]string{nil, {"agy"}, {"agy", "claude"}} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, false, false)
+			if enabled != nil {
+				if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: enabled}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			until := time.Now().Add(167 * time.Hour).Truncate(time.Second)
+			res := agent.Result{Backend: "agy", Status: agent.StatusLimited, LimitResets: until}
+			prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
+			next, why, err := After(limitedRun(t, prev), "agy", prev, res)
+			if err != nil || next != nil {
+				t.Fatalf("carry-on %+v, %q, %v; want none without a partner", next, why, err)
+			}
+			if got := Until("agy", time.Now()); !got.Equal(until) {
+				t.Fatalf("remembered %v, want %v", got, until)
+			}
+		})
 	}
 }

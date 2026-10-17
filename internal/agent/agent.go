@@ -148,7 +148,7 @@ const (
 	StatusTimeout  Status = "timeout" // the task's own deadline passed
 	StatusBudget   Status = "budget"  // a cost or token ceiling was reached
 	StatusCanceled Status = "canceled"
-	// StatusLimited is a claude or codex run stopped by the plan the CLI bills
+	// StatusLimited is a claude, codex or agy run stopped by the plan the CLI bills
 	// to: its usage limit was reached. Result.LimitResets says when it lifts.
 	StatusLimited Status = "limited"
 )
