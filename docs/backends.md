@@ -193,11 +193,13 @@ Codex costs are list-price estimates from the OpenAI table in
 `internal/agent/prices_openai.go`, never a bill or subscription charge. The table
 records its source URL and date and uses standard short-context rates; service
 tiers, long-context rates and regional uplifts are not represented. Reported input
-includes cached input: cache reads use the cached-input rate, the remaining input
-uses the input rate, and output uses the output rate.
+includes cached input: cache reads use the cached-input rate (0.1x input for an
+entry without one), the remaining input uses the input rate, and output uses the
+output rate.
 
 The model the run asked for (`-m` or the routing table) selects the price, with
-the same dated-snapshot suffix rule as the Claude table. The adapter records no
+a `-YYYYMMDD` or `@YYYYMMDD` snapshot suffix stripped as in the Claude table, and
+OpenAI's `-YYYY-MM-DD` suffix stripped too. The adapter records no
 CLI default model: a run with neither keeps cost marked `missing`, as does an
 unknown model or missing usage. `gpt-6-sol`
 is omitted because the pricing page fetched on 2026-10-15 did not list it.

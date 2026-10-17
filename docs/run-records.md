@@ -90,8 +90,10 @@ records without these fields still load.
 `input_semantics` is `inclusive_cache` (Codex and gemini input already includes cached
 input) or `exclusive_cache` (api, Claude and opencode cache counters are separate). The api,
 gemini and opencode adapters write it only to mark usage `missing`, when a turn's counter is
-negative or would overflow the run's total; that turn is not added. `status` is
-`reported`, `estimated`, or `missing`; `cost_status` distinguishes a reported
+negative or would overflow the run's total; that turn is not added. Codex writes it on every
+turn; usage and cost are `missing` from a turn that completes without usage, a `turn.failed`,
+a stream that ends while reconnecting, or a negative or overflowing counter, even when no
+earlier turn completed. `status` is `reported`, `estimated`, or `missing`; `cost_status` distinguishes a reported
 zero from missing cost and may also be `estimated` or `missing`. Older results
 without metadata still load; known backends infer token semantics from their
 existing counters.
