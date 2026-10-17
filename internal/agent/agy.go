@@ -54,6 +54,7 @@ func NewAgyBackend() *CLIBackend {
 			return a
 		},
 		newParse: newAgyParse,
+		end:      agyStreamEnded,
 		// The continuation hook is shared with forking CLIs; agy resumes in place.
 		forks:          true,
 		resumesInPlace: true,
@@ -71,10 +72,12 @@ type agyUsage struct {
 }
 
 type agyStep struct {
-	ConversationID string `json:"conversation_id"`
-	Model          string `json:"model"`
-	StepType       string `json:"step_type"`
-	TextDelta      string `json:"text_delta"`
+	ConversationID string    `json:"conversation_id"`
+	Model          string    `json:"model"`
+	StepType       string    `json:"step_type"`
+	State          string    `json:"state"`
+	TextDelta      string    `json:"text_delta"`
+	Usage          *agyUsage `json:"usage"`
 }
 
 func newAgyParse() func([]byte, func(Event), *Result) bool {
@@ -124,6 +127,11 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 					res.Final = answer.String()
 				}
 			}
+			// A finished step's usage stands only until the result's totals arrive.
+			if l.Step.State == "DONE" && l.Step.Usage != nil {
+				u := l.Step.Usage
+				res.addUsage("exclusive_cache", u.InputTokens, u.OutputTokens, u.CacheRead, 0)
+			}
 		case "result":
 			r := l.Result
 			if r.ConversationID != "" {
@@ -145,6 +153,7 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 					res.Error += ": " + r.Message
 				}
 			}
+			res.InputTokens, res.OutputTokens, res.CacheRead = 0, 0, 0
 			if r.Usage != nil {
 				res.InputTokens, res.OutputTokens, res.CacheRead = r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheRead
 				// output_tokens already includes thinking_tokens.
@@ -160,4 +169,14 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 		}
 		return true
 	}
+}
+
+// agyStreamEnded runs when agy exited clean. Without a result event the run
+// keeps its streamed answer, but the finished steps' usage is all it has.
+func agyStreamEnded(emit func(Event), res *Result, _ bool) {
+	if res.Status != "" {
+		return
+	}
+	res.Usage = &UsageMetadata{InputSemantics: "exclusive_cache", Status: "missing", CostStatus: "missing"}
+	emit(Event{Time: time.Now(), Kind: EventInfo, Text: "agy exited without a result event: the answer is what it streamed, and the usage is only what its finished steps reported"})
 }

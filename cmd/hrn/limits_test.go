@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -309,4 +311,68 @@ func TestLimitCarryOnRecordsContextWarning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// resumingAgy resumes its conversation in place and tries a second
+// continuation of prev while it runs.
+type resumingAgy struct {
+	scripted
+	prev    string
+	refused *error
+}
+
+func (s resumingAgy) ForksSessions() bool { return true }
+func (s resumingAgy) Capabilities() agent.Capabilities {
+	return agent.Capabilities{Modes: []agent.Mode{agent.ModeReadOnly, agent.ModeAuto, agent.ModeYolo}, Sessions: "resume"}
+}
+func (s resumingAgy) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	p, err := followup.Make(followup.Request{RunID: s.prev})
+	if err == nil {
+		p.Release()
+	}
+	*s.refused = err
+	res := s.scripted.Run(ctx, task, emit)
+	res.Session = task.ForkSession
+	return res
+}
+
+func TestRunReleasesAnAgyConversationAfterCarryingALimitedRunOn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"agy", "codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "agy", Status: agent.StatusOK, Session: "conversation-1", Final: "Parser done."}); err != nil {
+		t.Fatal(err)
+	}
+	var refused error
+	orig, err := agent.Get("agy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(resumingAgy{scripted{"agy", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusOK, Final: "finished", Turns: 1}
+	}}, w.ID(), &refused})
+	t.Cleanup(func() { agent.Register(orig) })
+
+	code, err := cmdRun([]string{"-b", "codex", "--continue", w.ID(), "again"})
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v: agy should have carried the limited run on", code, err)
+	}
+	if refused == nil || !strings.Contains(refused.Error(), "another hrn run") {
+		t.Fatalf("the carry-on did not hold the conversation: %v", refused)
+	}
+	p, err := followup.Make(followup.Request{RunID: w.ID()})
+	if err != nil {
+		t.Fatalf("the conversation was not released after the carry-on: %v", err)
+	}
+	p.Release()
 }

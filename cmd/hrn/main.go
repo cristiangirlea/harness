@@ -305,6 +305,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		if plan, err = followup.Make(req); err != nil {
 			return 2, err
 		}
+		defer plan.Release()
 		backend, dir, opts.Model = plan.Backend, plan.Dir, plan.Model
 		// The inherited backend is refused here, before a prompt is read from stdin.
 		if err := preference.Check(backend); err != nil {
@@ -449,6 +450,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	case next == nil && why != "":
 		fmt.Fprintln(os.Stderr, "hrn:", why)
 	case next != nil:
+		defer next.Plan.Release()
 		nb, err := agent.Get(next.To)
 		if err != nil {
 			return 1, err
