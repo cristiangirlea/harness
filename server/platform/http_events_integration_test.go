@@ -241,3 +241,93 @@ func TestHTTPEventStreamsExpireAndReconnectWithTheirCursor(t *testing.T) {
 	}
 	waitForEventStreams(t, h, job.TenantID, 0)
 }
+
+func TestEventCursorNeverSkipsAnEventThatCommitsLate(t *testing.T) {
+	store := testStore(t)
+	job, _ := eventJob(t, store)
+	ctx := context.Background()
+	seen, err := store.Events(ctx, job.TenantID, job.ProjectID, job.ID, 0, 1000)
+	if err != nil || len(seen) == 0 {
+		t.Fatalf("initial events: %v %v", seen, err)
+	}
+	cursor := seen[len(seen)-1].ID
+	early, err := store.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer early.Rollback(ctx)
+	if err := appendEvent(ctx, early, job.TenantID, job.ProjectID, job.ID, "first", nil); err != nil {
+		t.Fatal(err)
+	}
+	late := make(chan error, 1)
+	go func() {
+		tx, err := store.db.Begin(ctx)
+		if err != nil {
+			late <- err
+			return
+		}
+		defer tx.Rollback(ctx)
+		if err = appendEvent(ctx, tx, job.TenantID, job.ProjectID, job.ID, "second", nil); err == nil {
+			err = tx.Commit(ctx)
+		}
+		late <- err
+	}()
+	lateDone := false
+	select {
+	case err := <-late:
+		if err != nil {
+			t.Fatal(err)
+		}
+		lateDone = true
+	case <-time.After(500 * time.Millisecond):
+	}
+	var kinds []string
+	read := func() {
+		page, err := store.Events(ctx, job.TenantID, job.ProjectID, job.ID, cursor, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range page {
+			cursor = event.ID
+			kinds = append(kinds, event.Kind)
+		}
+	}
+	// A reader polls while the first transaction is still open, then after both commit.
+	read()
+	if err := early.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !lateDone {
+		if err := <-late; err != nil {
+			t.Fatal(err)
+		}
+	}
+	read()
+	if strings.Join(kinds, ",") != "first,second" {
+		t.Fatalf("cursor reader saw %v, want [first second]", kinds)
+	}
+}
+
+func TestHTTPEventStreamsStayOpenWhileAJobWaitsOrNeedsRecovery(t *testing.T) {
+	store := testStore(t)
+	const duration = 1500 * time.Millisecond
+	h := &HTTPServer{Store: store, eventStreamDuration: duration}
+	server := httptest.NewServer(h.Handler())
+	t.Cleanup(server.Close)
+	for _, state := range []State{WaitingApproval, RecoveryRequired} {
+		t.Run(string(state), func(t *testing.T) {
+			job, token := eventJob(t, store)
+			started := time.Now()
+			response := openEventStream(t, server, job, token, "")
+			finishEventJob(t, store, job, state, string(state), 0)
+			events := readEventStream(t, response)
+			if len(events) != 2 || events[1].Kind != string(state) {
+				t.Fatalf("live events: %+v", events)
+			}
+			if open := time.Since(started); open < duration {
+				t.Fatalf("stream closed after %v, want it open until the %v limit", open, duration)
+			}
+			waitForEventStreams(t, h, job.TenantID, 0)
+		})
+	}
+}

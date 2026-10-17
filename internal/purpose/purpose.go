@@ -189,8 +189,8 @@ func firstNonBlankLine(prompt string) (line, rest string) {
 	return "", ""
 }
 
-// paragraphs gathers the latest leading label and the instruction, each capped
-// at maxLead runes, from each of the first two non-blank paragraphs. CRLF, LF and
+// paragraphs gathers the latest leading label (see boundLabel) and the instruction,
+// capped at maxLead runes, from each of the first two non-blank paragraphs. CRLF, LF and
 // bare CR end lines; whitespace-only lines separate paragraphs.
 func paragraphs(prompt string) []string {
 	var result []string
@@ -219,17 +219,11 @@ func paragraphs(prompt string) []string {
 		// Keep only the latest leading label, bounded separately so labels
 		// cannot exhaust the instruction's budget or grow the gathered text.
 		// Error lines remain part of the instruction.
-		if runes == 0 && leadingLabel(line) {
-			labelRunes := 0
-			for i := range line {
-				if labelRunes == maxLead {
-					line = line[:i]
-					break
-				}
-				labelRunes++
+		if runes == 0 {
+			if colon, open := leadingLabel(line); colon >= 0 {
+				lastLabel = boundLabel(line, colon, open)
+				continue
 			}
-			lastLabel = line
-			continue
 		}
 		if paragraph.Len() > 0 || lastLabel != "" {
 			paragraph.WriteByte('\n')
@@ -258,10 +252,10 @@ var errorLine = regexp.MustCompile(`(?i)^([a-z]*(error|exception)|panic)\s*:`)
 
 var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?:(?: +|$)`)
 
-// leadingLabel recognizes label's prefix without per-line regexp scratch
-// allocations (sync.Pool may discard that scratch, especially under -race).
-// Only the bounded gathered text needs regexp matching in unlabel.
-func leadingLabel(line string) bool {
+// leadingLabel returns label's colon and bracket indexes (-1 when absent)
+// without regexp scratch allocations, which sync.Pool may discard under -race.
+// Words past maxLead runes are not a label, so a kept label stays bounded.
+func leadingLabel(line string) (colon, open int) {
 	i := 0
 	for words := 0; words < 3; words++ {
 		start := i
@@ -273,31 +267,65 @@ func leadingLabel(line string) bool {
 			i += size
 		}
 		if i == start {
-			return false
+			return -1, -1
 		}
 		if i < len(line) && line[i] == ':' {
 			if words == 0 && errorLabel(line[:i]) {
-				return false
+				return -1, -1
 			}
-			return i+1 == len(line) || line[i+1] == ' '
+			if (i+1 == len(line) || line[i+1] == ' ') && utf8.RuneCountInString(line[:i]) <= maxLead {
+				return i, -1
+			}
+			return -1, -1
 		}
 		if i == len(line) || line[i] != ' ' {
-			return false
+			return -1, -1
 		}
 		for i < len(line) && line[i] == ' ' {
 			i++
 		}
 		if i < len(line) && line[i] == '(' {
+			open = i
 			i++
 			end := strings.IndexAny(line[i:], "()")
 			if end < 0 || line[i+end] != ')' {
-				return false
+				return -1, -1
 			}
 			i += end + 1
-			return i < len(line) && line[i] == ':' && (i+1 == len(line) || line[i+1] == ' ')
+			if i < len(line) && line[i] == ':' && (i+1 == len(line) || line[i+1] == ' ') && utf8.RuneCountInString(line[:open]) <= maxLead {
+				return i, open
+			}
+			return -1, -1
 		}
 	}
-	return false
+	return -1, -1
+}
+
+// boundLabel caps a label's bracketed part and its value at maxLead runes
+// each, keeping the colon so the label stays a label and its value whole.
+func boundLabel(line string, colon, open int) string {
+	if len(line) <= maxLead {
+		return line
+	}
+	prefix := line[:colon+1]
+	if open >= 0 {
+		prefix = line[:open+1] + capRunes(line[open+1:colon-1]) + "):"
+	}
+	if value := capRunes(strings.TrimLeft(line[colon+1:], " ")); value != "" {
+		return prefix + " " + value
+	}
+	return prefix
+}
+
+func capRunes(s string) string {
+	runes := 0
+	for i := range s {
+		if runes == maxLead {
+			return s[:i]
+		}
+		runes++
+	}
+	return s
 }
 
 // errorLabel is errorLine's name check for a single label word. Only ASCII
