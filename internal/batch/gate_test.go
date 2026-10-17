@@ -5,12 +5,16 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf16"
 
+	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -203,5 +207,87 @@ func TestGateOutputDetectionHandlesShortAndIncompleteText(t *testing.T) {
 		if g.Output != tc.want {
 			t.Errorf("output for %q = %q, want %q", tc.input, g.Output, tc.want)
 		}
+	}
+}
+
+// A gate may run for hours and writes nothing of its own: while it runs, the
+// batch's record is saved again, so a reader does not take it for stopped.
+func TestABatchWhoseGateRunsPastTheQuietHourIsNotShownAsStopped(t *testing.T) {
+	dir := initRepo(t)
+	old := gateBeat
+	gateBeat = 20 * time.Millisecond
+	t.Cleanup(func() { gateBeat = old })
+	batches := filepath.Join(os.Getenv("HRN_HOME"), "batches")
+	var during Result
+	var alive bool
+	old2 := runGateShell
+	t.Cleanup(func() { runGateShell = old2 })
+	runGateShell = func(context.Context, string, string, time.Duration, []string) (tools.ShellResult, error) {
+		entries, err := os.ReadDir(batches)
+		if err != nil || len(entries) != 1 {
+			t.Errorf("batches while the gate runs: %v %v", entries, err)
+			return tools.ShellResult{}, nil
+		}
+		path := filepath.Join(batches, entries[0].Name())
+		quiet := time.Now().Add(-2 * time.Hour)
+		if err := os.Chtimes(path, quiet, quiet); err != nil {
+			t.Error(err)
+		}
+		for end := time.Now().Add(5 * time.Second); time.Now().Before(end) && !alive; time.Sleep(10 * time.Millisecond) {
+			if info, err := os.Stat(path); err == nil {
+				alive = runlog.Active(info.ModTime())
+			}
+		}
+		if data, err := os.ReadFile(path); err == nil {
+			_ = json.Unmarshal(data, &during)
+		}
+		return tools.ShellResult{}, nil
+	}
+	run(t, Spec{Dir: dir, Backend: "wb-ok", Gate: []string{"long build"}, Tasks: []Task{{ID: "slow", Prompt: "a"}}})
+	if !alive {
+		t.Fatal("the record was not saved again while the gate ran past the quiet hour")
+	}
+	if len(during.Tasks) != 1 || during.Tasks[0].Status != StatusRunning || during.Duration != 0 {
+		t.Errorf("record while the gate ran = %+v", during)
+	}
+	// A late beat would save the task as running again, without its gate.
+	time.Sleep(5 * gateBeat)
+	entries, err := os.ReadDir(batches)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("batches after the run: %v %v", entries, err)
+	}
+	data, err := os.ReadFile(filepath.Join(batches, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after Result
+	if err := json.Unmarshal(data, &after); err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Tasks) != 1 || after.Tasks[0].Status != StatusPass || len(after.Tasks[0].Attempts) != 1 || len(after.Tasks[0].Attempts[0].Gates) != 1 {
+		t.Errorf("record after the run = %+v", after)
+	}
+}
+
+func TestBeatingNeverBeatsAfterStopReturns(t *testing.T) {
+	var started, finished atomic.Int32
+	stop := beating(time.Millisecond, func() {
+		started.Add(1)
+		time.Sleep(5 * time.Millisecond)
+		finished.Add(1)
+	})
+	for end := time.Now().Add(5 * time.Second); started.Load() < 2 && time.Now().Before(end); time.Sleep(time.Millisecond) {
+	}
+	stop()
+	n := started.Load()
+	if n < 2 {
+		t.Fatalf("beats before stop = %d", n)
+	}
+	if f := finished.Load(); f != n {
+		t.Errorf("stop returned with a beat still running: %d started, %d finished", n, f)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := started.Load(); got != n {
+		t.Errorf("beats after stop = %d, want %d", got, n)
 	}
 }
