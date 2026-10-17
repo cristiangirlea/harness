@@ -1,3 +1,9 @@
+// name: comment-check-tests
+// summary: Check comment rules, baseline comparison and pruning in fixtures.
+// effects: read, write-workspace, exec
+// parameters: none
+// example: go test -count=1 ./scripts/comment-check
+// hash: 56703654dedc84d473d5c23b4aacd36097941d304017f3dda42c9b0ff563e44b
 package main
 
 import (

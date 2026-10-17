@@ -10,6 +10,12 @@ Output shaping (#296) has a once-counted input-token share of 1.5616% and a repl
 
 Kept scripts (#298) have a once-counted input-token share of 0.025777% and a replayed share of 0.425757% before allowing for replacement invocations (0.038297% once-counted and 0.644196% replayed for Claude). The replayed share bounds the estimated context budget kept scripts could touch. The detector finds 1,447,040 inline command bytes across all runs; repeated normalised groups contain 13,777 bytes and account for 0.000254% once-counted and 0.001003% replayed when restricted to runs with token figures. Totals include groups beyond the top 20 printed. Repeated command text offers a much smaller replayed token budget than output shaping, so keeping scripts is supported chiefly by reuse and maintainability here. Normalisation can merge different scripts, the detector covers only the documented forms, and the call-ordinal fallback is approximate; scripts still cost their invocations and results. Result bytes belong to shaping and are not added again.
 
+Cache writes are left out of the token denominator (`input_plus_cache_read_tokens`). For Claude a
+tool result first enters the context as a cache write, and `input_tokens` is small beside the
+writes, so the call where those bytes arrive is not counted; in this window that is about 4% of
+the input. The snapshot predates `inline_script_totals` and the `go test -json` test shape; a rerun
+would show the `python`, `node` and `perl` totals that the top 20 hides behind count-1 heredocs.
+
 ## Invariant probes
 
 `internal/shape/adversarial_test.go` attacks the rule that `Summarize` returns true only when the

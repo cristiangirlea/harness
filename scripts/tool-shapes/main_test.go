@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: e0a5fdbbeeeb2e7b681416ee107f33562b459c2b83f87e13e95d9fe8a3cd3e94
+// hash: 34cb39fddbf043c11135425564e7275ad019d815e3ee1b815f5521f8c811e293
 package main
 
 import (
@@ -20,7 +20,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
-func TestClassify(t *testing.T) {
+func TestClassifyNamesTheShapeOfEachToolResult(t *testing.T) {
 	for _, tt := range []struct{ text, tool, want string }{
 		{"go test ./...\nok pkg 1s", "shell", "test"}, {"FAIL pkg", "", "test"}, {"--- PASS: TestX", "", "test"},
 		{"--- a/main.go\n+++ b/main.go", "shell", "terminal"},
@@ -30,6 +30,8 @@ func TestClassify(t *testing.T) {
 		{`{"a":1}`, "shell", "json"}, {`[1,2]`, "", "json"}, {"a,b\n1,2", "", "table"}, {"a\tb\n1\t2", "", "table"},
 		{"a,b\n1,2,3", "shell", "terminal"}, {"hello", "Bash", "terminal"}, {"hello", "exec_command", "terminal"},
 		{"hello", "read_file", "other"}, {"", "", "other"},
+		{"{\"Action\":\"run\",\"Test\":\"TestX\"}\n{\"Action\":\"pass\",\"Test\":\"TestX\"}\n", "shell", "test"},
+		{"{\"a\":1}\n{\"b\":2}", "shell", "terminal"},
 	} {
 		t.Run(tt.want+tt.text, func(t *testing.T) {
 			if got := classify(tt.text, tt.tool); got != tt.want {
@@ -39,7 +41,7 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-func TestInline(t *testing.T) {
+func TestInlineScriptsAreDetectedAndNormalised(t *testing.T) {
 	for _, tt := range []struct{ cmd, want string }{
 		{"cat <<'EOF'\nx\nEOF", "heredoc"}, {`python -c "print(1)"`, "python"}, {`python3 -c 'print(2)'`, "python"},
 		{`node -e 'x()'`, "node"}, {`perl -e 'print 1'`, "perl"}, {"go run /tmp/a.go", "go"},
@@ -81,7 +83,7 @@ func writeRun(t *testing.T, home, id, backend, status, events string) {
 	}
 }
 
-func TestMeasure(t *testing.T) {
+func TestMeasureCountsFinishedRunsInTheWindowWithoutQuotingThem(t *testing.T) {
 	home := t.TempDir()
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.Local)
 	events := `{"t":"2026-10-14T10:00:00Z","kind":"tool_call","tool":"Bash","input":{"command":"cat <<EOF\nsecret\nEOF"}}
@@ -195,6 +197,37 @@ func TestReplayedShares(t *testing.T) {
 	}
 }
 
+func TestInlineScriptTotalsCountEveryLabelBeyondTheTopGroups(t *testing.T) {
+	s := newStats()
+	var events []event
+	for i := range 25 {
+		events = append(events, event{Kind: "tool_call", Tool: "shell", Text: fmt.Sprintf("cat <<EOF\n%c\nEOF", 'a'+i)})
+	}
+	events = append(events, event{Kind: "tool_call", Tool: "shell", Text: "python -c 'x()'"})
+	s.add(events, nil, 0)
+	s.add([]event{{Kind: "tool_call", Tool: "shell", Text: "python3 -c 'y()'"}}, nil, 0)
+	s.finish()
+	want := map[string]group{
+		"heredoc": {Count: 25, Runs: 1, Bytes: 25 * 15},
+		"python":  {Count: 2, Runs: 2, Bytes: 31},
+		"node":    {}, "perl": {}, "go": {},
+	}
+	if len(s.InlineTotals) != len(want) {
+		t.Fatalf("totals %+v", s.InlineTotals)
+	}
+	for _, g := range s.InlineTotals {
+		w := want[g.Shape]
+		if g.Count != w.Count || g.Runs != w.Runs || g.Bytes != w.Bytes {
+			t.Errorf("%s: %+v want %+v", g.Shape, g, w)
+		}
+	}
+	for _, g := range s.InlineScripts {
+		if g.Shape == "python" {
+			t.Fatal("python groups expected below the top 20")
+		}
+	}
+}
+
 func TestNoUsageAndCap(t *testing.T) {
 	s := newStats()
 	for i := 0; i < 25; i++ {
@@ -254,7 +287,7 @@ func TestTokenCoverage(t *testing.T) {
 	}
 }
 
-func TestOptions(t *testing.T) {
+func TestOptionsRejectBadFlagsAndDefaultToTheHRNHome(t *testing.T) {
 	for _, args := range [][]string{{"--days", "0"}, {"--days", "x"}, {"--home"}, {"--text"}, {"--json", "extra"}} {
 		if _, _, err := options(args); err == nil {
 			t.Fatalf("accepted %v", args)

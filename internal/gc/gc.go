@@ -16,11 +16,13 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -298,10 +300,11 @@ func recheck(ctx context.Context, w Worktree) string {
 		if held := holding(w.Path, entryPaths(entries)); held != "" {
 			return "it holds the worktree " + held + ", which nothing judged"
 		}
-		if why := unsaved(ctx, w.Path, entryPaths(entries)); why != "" {
+		walk := &worktreeWalk{wt: w.Path, registered: entryPaths(entries)}
+		if why := unsaved(ctx, walk); why != "" {
 			return why + " since the scan"
 		}
-		if why := worktreeLinkRisk(w.Path, entryPaths(entries)); why != "" {
+		if why := walk.linkRisk(); why != "" {
 			return why + " since the scan"
 		}
 		return ""
@@ -559,7 +562,8 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 	case cwd != "" && inside(cwd, w.Path):
 		return Keep, "the current directory is inside it"
 	}
-	if why := unsaved(ctx, w.Path, facts.worktrees); why != "" {
+	walk := &worktreeWalk{wt: w.Path, registered: facts.worktrees}
+	if why := unsaved(ctx, walk); why != "" {
 		return Keep, why
 	}
 	if facts.ownersErr != nil {
@@ -574,14 +578,14 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 			return Keep, "fetch failed: " + firstLine(facts.fetchErr.Error())
 		case !isAncestor(ctx, facts.repo, w.Head, facts.def):
 			if landed := landedBatchChange(ctx, facts, w.Head); landed != "" {
-				if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+				if why := walk.linkRisk(); why != "" {
 					return Keep, why
 				}
 				return Remove, fmt.Sprintf("batch %s: its change landed on %s as %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"), landed[:7])
 			}
 			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
 		}
-		if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+		if why := walk.linkRisk(); why != "" {
 			return Keep, why
 		}
 		return Remove, fmt.Sprintf("batch %s finished and its commit is on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
@@ -620,7 +624,7 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		if age := time.Since(p.MergedAt); age < grace {
 			return Keep, fmt.Sprintf("PR #%d merged %s ago, inside the %s grace period", p.Number, short(age), short(grace))
 		}
-		if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+		if why := walk.linkRisk(); why != "" {
 			return Keep, why
 		}
 		return Remove, fmt.Sprintf("PR #%d merged %s", p.Number, p.MergedAt.Local().Format("2006-01-02 15:04"))
@@ -674,10 +678,10 @@ func buildFolder(dir, path string, tracksNothing func(prefix string) bool) (stri
 }
 
 // unsaved says why a worktree holds something no branch has: tracked changes,
-// untracked files, or ignored files that are not build output. registered are
-// the paths git lists as worktrees, which may sit in .hrn/worktrees. Empty
-// means nothing.
-func unsaved(ctx context.Context, dir string, registered []string) string {
+// untracked files, or ignored files that are not build output. It gives walk
+// the build folders it finds. Empty means nothing.
+func unsaved(ctx context.Context, walk *worktreeWalk) string {
+	dir := walk.wt
 	// "matching" lists the paths an ignore pattern matched; the default mode
 	// shows a folder of nothing but ignored files as the folder, which hides
 	// what is in it.
@@ -690,7 +694,7 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 	changed := 0
 	var kept []string
 	hrn := false
-	walked := map[string]bool{} // build folders already searched for a repository
+	walked := map[string]bool{} // build folders already handed to walk
 	untracked := map[string]bool{}
 	tracksNothing := func(prefix string) bool {
 		if v, ok := untracked[prefix]; ok {
@@ -724,16 +728,14 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 			kept = append(kept, strings.TrimSuffix(path, "/"))
 		case folder != "" && !walked[folder]:
 			walked[folder] = true
-			if why := linkAbove(dir, folder); why != "" {
-				return why
-			}
-			if why := buildRisk(dir, filepath.Join(dir, filepath.FromSlash(folder))); why != "" {
-				return why
-			}
+			walk.folders = append(walk.folders, folder)
 		}
 	}
+	if why := walk.buildRisk(); why != "" {
+		return why
+	}
 	if hrn {
-		kept = append(kept, hrnLeftovers(dir, registered)...)
+		kept = append(kept, hrnLeftovers(dir, walk.registered)...)
 	}
 	if changed == 0 {
 		if n, err := hiddenFromStatus(ctx, dir); err != nil {
@@ -840,56 +842,158 @@ func buildRisk(wt, folder string) string {
 	return ""
 }
 
-// worktreeLinkRisk checks every entry that would go with wt. Git follows
-// junctions on Windows when removing a worktree, including tracked folders.
-// Inner worktrees have their own verdicts and are checked separately.
-func worktreeLinkRisk(wt string, registered []string) string {
-	root := samePath(wt)
-	listed := make(map[string]bool, len(registered))
-	for _, path := range registered {
-		listed[samePath(path)] = true
-	}
-	var link string
-	err := filepath.WalkDir(wt, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+// treeWalks counts worktree walks, so a test can see one check walks once.
+var treeWalks atomic.Int64
+
+// worktreeWalk walks a worktree at most once for a check: its build folders
+// for buildRisk's rules, the rest for links git deletes through.
+type worktreeWalk struct {
+	wt         string
+	registered []string // worktrees git lists; inner ones have their own verdicts
+	folders    []string // build folders, slash-separated, in git status order
+
+	done  bool
+	risks map[string]string // why a build folder cannot go, "" when it can
+	link  string            // why the rest of the worktree cannot go
+}
+
+// buildRisk says why a build folder keeps the worktree, checking the folders
+// in order as git status listed them.
+func (w *worktreeWalk) buildRisk() string {
+	for _, folder := range w.folders {
+		if why := linkAbove(w.wt, folder); why != "" {
+			return why
 		}
-		if p != wt && d.IsDir() {
-			rel, err := filepath.Rel(wt, p)
+		w.run()
+		why, ok := w.risks[folder]
+		if !ok { // reached only through a link that stays inside, so walk it there
+			why = buildRisk(w.wt, filepath.Join(w.wt, filepath.FromSlash(folder)))
+		}
+		if why != "" {
+			return why
+		}
+	}
+	return ""
+}
+
+// linkRisk says why the rest of the worktree cannot go: git on Windows deletes
+// through a junction or directory symlink, tracked folders included; elsewhere
+// it unlinks links, and a tracked folder swapped for one is a change unsaved sees.
+func (w *worktreeWalk) linkRisk() string {
+	w.run()
+	return w.link
+}
+
+func (w *worktreeWalk) run() {
+	if w.done {
+		return
+	}
+	w.done = true
+	treeWalks.Add(1)
+	w.risks = make(map[string]string, len(w.folders))
+	root := samePath(w.wt)
+	listed := make(map[string]bool, len(w.registered))
+	for _, reg := range w.registered {
+		listed[samePath(reg)] = true
+	}
+	build := make(map[string]bool, len(w.folders))
+	above := map[string]bool{} // folders on the way to a build folder
+	for _, f := range w.folders {
+		build[f] = true
+		for d := path.Dir(f); d != "."; d = path.Dir(d) {
+			above[d] = true
+		}
+	}
+	windows := runtime.GOOS == "windows"
+	skip := func(d fs.DirEntry) error {
+		if d != nil && d.IsDir() {
+			return fs.SkipDir
+		}
+		return nil
+	}
+	cur := ""              // the build folder the walk is in
+	left := len(w.folders) // build folders not reached yet
+	_ = filepath.WalkDir(w.wt, func(p string, d fs.DirEntry, err error) error {
+		if p == w.wt {
 			if err != nil {
+				w.link = "the worktree cannot be read: " + firstLine(err.Error())
 				return err
 			}
+			return nil
+		}
+		r, rerr := filepath.Rel(w.wt, p)
+		if rerr != nil {
+			return rerr
+		}
+		rel := filepath.ToSlash(r)
+		if cur != "" && rel != cur && !strings.HasPrefix(rel, cur+"/") {
+			cur = ""
+		}
+		if cur == "" && build[rel] {
+			cur = rel
+			w.risks[cur] = ""
+			left--
+		}
+		if cur != "" {
+			if w.risks[cur] != "" {
+				return skip(d)
+			}
+			if err != nil {
+				w.risks[cur] = "build output that cannot be read: " + cur
+				return skip(d)
+			}
+			switch kind, at := riskAt(w.wt, p, d); kind {
+			case riskRepo:
+				w.risks[cur] = "a repository inside build output: " + relSlash(w.wt, at)
+			case riskLink:
+				w.risks[cur] = "a link out of the worktree inside build output: " + relSlash(w.wt, at)
+			}
+			return nil
+		}
+		if err != nil {
+			if w.link == "" {
+				w.link = "the worktree cannot be read: " + firstLine(err.Error())
+			}
+			return skip(d)
+		}
+		if d.IsDir() {
 			// WalkDir only adds names read under wt, so no directory needs EvalSymlinks.
-			key := filepath.Join(root, rel)
-			if runtime.GOOS == "windows" {
+			key := filepath.Join(root, r)
+			if windows {
 				key = strings.ToLower(key)
 			}
-			if listed[key] {
+			if listed[key] || d.Name() == ".git" || !windows && !above[rel] {
 				return fs.SkipDir
 			}
+			return nil
 		}
-		if d.Name() == ".git" {
-			if d.Type() == fs.ModeDir {
-				return fs.SkipDir
-			}
-			if d.Type().IsRegular() {
-				return nil
-			}
+		if windows && w.link == "" && !d.Type().IsRegular() && deletesThrough(w.wt, p) {
+			w.link = "a link out of the worktree: " + rel
 		}
-		if kind, at := riskAt(wt, p, d); kind == riskLink {
-			link = at
+		if w.link != "" && left == 0 {
 			return fs.SkipAll
 		}
 		return nil
 	})
-	if link != "" {
-		rel, _ := filepath.Rel(wt, link)
-		return "a link out of the worktree: " + filepath.ToSlash(rel)
-	}
+}
+
+func relSlash(wt, p string) string {
+	r, _ := filepath.Rel(wt, p)
+	return filepath.ToSlash(r)
+}
+
+// deletesThrough reports a link that git on Windows would delete through: one
+// to a directory outside wt, or one it cannot read.
+func deletesThrough(wt, p string) bool {
+	to, err := os.Readlink(p)
 	if err != nil {
-		return "the worktree cannot be read: " + firstLine(err.Error())
+		return true
 	}
-	return ""
+	if inside(linkTarget(p, to), wt) {
+		return false
+	}
+	info, err := os.Stat(p)
+	return err != nil || info.IsDir()
 }
 
 const (

@@ -132,6 +132,7 @@ jobs:
       - name: kept scripts verify
         if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: bash scripts/verify.sh --check
+        timeout-minutes: 5
       - name: comment check
         if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: bash scripts/comment-check.sh
