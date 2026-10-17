@@ -345,3 +345,39 @@ func TestWatchJobRefusesAJobWhoseStateIsNotAString(t *testing.T) {
 		t.Fatalf("WatchJob error = %v", err)
 	}
 }
+
+func TestReadEventsRefusesAnEventWhoseJoinedDataExceeds1MiB(t *testing.T) {
+	line := "data: " + strings.Repeat(" ", 1<<10) + "\n"
+	for _, stream := range []string{
+		"id: 1\ndata: \"\"\n" + strings.Repeat(line, 1<<10) + "\n",
+		"id: 1\ndata:\"\"\n" + strings.Repeat("data:\n", (1<<20)+1) + "\n",
+	} {
+		if _, err := ReadEvents(strings.NewReader(stream), 0, io.Discard); !errors.Is(err, ErrMalformedEvent) ||
+			!strings.Contains(err.Error(), "1 MiB") {
+			t.Fatalf("ReadEvents error = %v, want ErrMalformedEvent naming the 1 MiB limit", err)
+		}
+	}
+}
+
+func TestReadEventsEscapesC1ControlCharactersBeforePrinting(t *testing.T) {
+	stream := "id: 1\ndata: {\"text\":\"a\u009b31mb\u0085c\u00a0d\x9b\ufffd\"}\n\n"
+	var output bytes.Buffer
+	if _, err := ReadEvents(strings.NewReader(stream), 0, &output); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "{\"text\":\"a\\u009b31mb\\u0085c\u00a0d\\ufffd\ufffd\"}\n"; got != want {
+		t.Fatalf("printed %q, want %q", got, want)
+	}
+}
+
+func TestReadEventsAcceptsFieldsWithoutTheSpaceAfterTheColon(t *testing.T) {
+	stream := "id:1\nevent:succeeded\ndata:{\"id\":1,\ndata:\"kind\":\"succeeded\"}\n\nid:2\ndata:{\"id\":2}\n\n"
+	var output bytes.Buffer
+	after, terminal, err := readEvents(strings.NewReader(stream), 0, &output, true)
+	if err != nil || !terminal || after != 1 {
+		t.Fatalf("readEvents = after %d, terminal %v, err %v; want 1, true, nil", after, terminal, err)
+	}
+	if got, want := output.String(), "{\"id\":1,\n\"kind\":\"succeeded\"}\n"; got != want {
+		t.Fatalf("printed %q, want %q", got, want)
+	}
+}
