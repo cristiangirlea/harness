@@ -123,8 +123,11 @@ read credential. Credentials stay outside request files and packets.
 Operator review is the control: the import deny list screens every text field
 but catches obvious mistakes only, including private credential paths, key
 headers, common token shapes, and a few instruction-injection phrases.
-The `.env` path check matches whole segments and `.env.<suffix>` files;
-`.envrc` and `docs/.environment.md` are allowed.
+The `.env` path check matches whole segments (split on `/`, whitespace, quotes,
+`=`, `,` and `;`) and `.env.<suffix>` files; `.envrc` and `docs/.environment.md`
+are allowed. Path checks apply to paths, keys and identifiers, not to the prose
+of `content`, `evidence` and `review_evidence`, so a note such as "copy
+.env.example to .env" imports; key headers and token shapes are refused in every field.
 Import refusals name the field and deny-list pattern that matched, without
 including the submitted text.
 
