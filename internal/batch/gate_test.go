@@ -238,8 +238,13 @@ func TestABatchWhoseGateRunsPastTheQuietHourIsNotShownAsStopped(t *testing.T) {
 				alive = runlog.Active(info.ModTime())
 			}
 		}
-		if data, err := os.ReadFile(path); err == nil {
-			_ = json.Unmarshal(data, &during)
+		// The beat is replacing this file meanwhile; only readRecord's sharing survives that on Windows.
+		data, err := readRecord(path)
+		if err == nil {
+			err = json.Unmarshal(data, &during)
+		}
+		if err != nil {
+			t.Errorf("record while the gate ran: %v", err)
 		}
 		return tools.ShellResult{}, nil
 	}
