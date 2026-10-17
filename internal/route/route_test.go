@@ -271,7 +271,13 @@ func TestFromEvalDoesNotCreditAHarnessChangeToTheModel(t *testing.T) {
 			t.Errorf("%+v: implement = %+v, want the plain variant", r.Spec.Matrix[1], got)
 		}
 	}
+	// A harness variant that beats every plain one does not set the bar either.
 	r := evidence()
+	r.Spec.Matrix[0].NoSkills = true // "high", the only one at 10/10 on check
+	if got := FromEval(r, .05)["review"]; got.Effort != "low" || got.Model != "sol" {
+		t.Errorf("review = %+v, want the best plain variant", got)
+	}
+	r = evidence()
 	r.Spec.AppendSystemPrompt = "Run the tests."
 	if got := FromEval(r, .05); len(got) != 0 {
 		t.Errorf("a spec-wide harness change routes nothing: %+v", got)

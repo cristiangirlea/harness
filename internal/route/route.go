@@ -42,10 +42,15 @@ func FromEval(rec eval.Record, margin float64) Table {
 		categories[t.ID] = purpose.Classify(t.Prompt).Category
 		tasks[t.ID] = struct{ backend, model, effort string }{t.Backend, t.Model, t.Effort}
 	}
+	// Left out of the bar too, so a better harness does not disqualify every plain variant.
+	harnessed := map[string]bool{}
+	for _, v := range rec.Spec.Matrix {
+		harnessed[v.Key()] = v.ChangesHarness()
+	}
 	groups := map[string]map[string]eval.VariantRow{}
 	for _, t := range rec.Table.Tasks {
 		cat, ok := categories[t.Task]
-		if !ok || t.Total <= 0 {
+		if !ok || t.Total <= 0 || harnessed[t.Variant] {
 			continue
 		}
 		if groups[cat] == nil {
@@ -89,7 +94,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 		for _, v := range rec.Spec.Matrix {
 			name := v.Key()
 			r, ok := rows[name]
-			if !ok || v.ChangesHarness() || r.Attempts == 0 || r.PassRate()+margin+1e-12 < best {
+			if !ok || r.Attempts == 0 || r.PassRate()+margin+1e-12 < best {
 				continue
 			}
 			cost, ok := costs[name]
