@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -63,12 +64,114 @@ func TestAgyContinuesItsConversationWithoutPromisingAFork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer p.Release()
 	if p.Backend != "agy" || p.ForkSession != "conversation-1" || p.Resume != nil || len(p.Handoff) != 0 || p.Model != "requested-model" || p.Dir != dir {
 		t.Fatalf("unexpected plan %+v", p)
 	}
 	notes := strings.Join(p.Notes, "\n")
 	if !strings.Contains(notes, "resuming agy session conversation-1") || strings.Contains(notes, "forking") {
 		t.Fatalf("misleading continuation: %s", notes)
+	}
+}
+
+func TestTwoContinuationsOfOneAgyConversationCannotRunAtOnce(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "a"})
+	second := finished(t, first, agent.Task{Prompt: "q", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "b"})
+
+	type outcome struct {
+		plan Plan
+		err  error
+	}
+	outcomes := make(chan outcome, 2)
+	var start sync.WaitGroup
+	start.Add(1)
+	for _, id := range []string{first, second} {
+		go func() {
+			start.Wait()
+			p, err := Make(Request{RunID: id})
+			outcomes <- outcome{p, err}
+		}()
+	}
+	start.Done()
+	var held Plan
+	var refusals []error
+	for range 2 {
+		o := <-outcomes
+		if o.err != nil {
+			refusals = append(refusals, o.err)
+		} else {
+			defer o.plan.Release()
+			held = o.plan
+		}
+	}
+	if len(refusals) != 1 || !strings.Contains(refusals[0].Error(), "conversation-1") || !strings.Contains(refusals[0].Error(), "another hrn run") {
+		t.Fatalf("one of two continuations of one conversation must be refused: %v", refusals)
+	}
+
+	// Ending the run that holds the conversation frees it, once and for all.
+	held.Release()
+	held.Release()
+	again, err := Make(Request{RunID: second})
+	if err != nil {
+		t.Fatalf("after the first run ended: %v", err)
+	}
+	again.Release()
+
+	// A forked session is a copy of its own, so claude continuations may overlap.
+	other := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "claude", Session: "s1", Final: "a"})
+	a, err := Make(Request{RunID: other})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Release()
+	b, err := Make(Request{RunID: other})
+	if err != nil {
+		t.Fatalf("two claude forks: %v", err)
+	}
+	b.Release()
+}
+
+func TestContinuingAnOlderAgyRunSaysTheConversationHoldsLaterTurns(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "a"})
+	elsewhere := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-2", Final: "a"})
+	second := finished(t, first, agent.Task{Prompt: "q", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "b"})
+
+	p, err := Make(Request{RunID: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	notes := strings.Join(p.Notes, "\n")
+	if !strings.Contains(notes, "not the newest") || !strings.Contains(notes, second) {
+		t.Fatalf("no warning about the later run %s: %s", second, notes)
+	}
+	for _, id := range []string{second, elsewhere} {
+		p, err := Make(Request{RunID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Release()
+		if notes := strings.Join(p.Notes, "\n"); strings.Contains(notes, "not the newest") {
+			t.Errorf("run %s is the newest on its conversation: %s", id, notes)
+		}
+	}
+
+	// A run that resumed the conversation but ended before naming it is handed over, not later.
+	unnamed := finished(t, second, agent.Task{Prompt: "r", Dir: dir, ForkSession: "conversation-1"}, agent.Result{Backend: "agy", Final: "c"})
+	p, err = Make(Request{RunID: unnamed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	if p.ForkSession != "conversation-1" || len(p.Handoff) != 1 || p.Handoff[0].ID != unnamed {
+		t.Fatalf("want %s handed over on conversation-1: %+v", unnamed, p)
+	}
+	if notes := strings.Join(p.Notes, "\n"); strings.Contains(notes, "not the newest") {
+		t.Errorf("the run being continued was named as a later one: %s", notes)
 	}
 }
 

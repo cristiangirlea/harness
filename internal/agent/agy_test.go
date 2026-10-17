@@ -111,6 +111,79 @@ func TestAgyKeepsFailureStatusAndMessageThroughTheRunner(t *testing.T) {
 	}
 }
 
+func TestAgyStreamThatEndsAfterTheDeltasKeepsItsAnswerButNotItsUsage(t *testing.T) {
+	data, err := os.ReadFile("testdata/agy.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.SplitAfter(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	for _, c := range []struct {
+		name          string
+		stream        string
+		input, output int64
+	}{
+		// The fixture without its result line: the DONE step reported the turn's usage.
+		{"after the DONE step", strings.Join(lines[:4], ""), 13789, 1052},
+		{"before any usage", strings.Join(lines[:3], ""), 0, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("HRN_AGY_HELPER", "1")
+			t.Setenv("HRN_AGY_PROMPT", "work")
+			fixture := filepath.Join(t.TempDir(), "truncated.jsonl")
+			if err := os.WriteFile(fixture, []byte(c.stream), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HRN_AGY_FIXTURE", fixture)
+			b := NewAgyBackend()
+			args := b.args
+			b.name, b.candidates = os.Args[0], nil
+			b.args = func(task Task, file string) []string {
+				return append([]string{"-test.run=^TestHelperAgy$", "--"}, args(task, file)...)
+			}
+			var infos []string
+			res := b.Run(context.Background(), Task{Prompt: "work", Dir: t.TempDir(), ForkSession: "previous-session", Options: Options{Mode: ModeReadOnly, Model: "requested-model", Effort: "high"}}, func(e Event) {
+				if e.Kind == EventInfo {
+					infos = append(infos, e.Text)
+				}
+			})
+			if res.Status != StatusOK || strings.TrimSpace(res.Final) != "ok" {
+				t.Fatalf("the streamed answer is the run's: %+v", res)
+			}
+			if res.Usage == nil || res.Usage.Status != "missing" || res.Usage.CostStatus != "missing" || res.Usage.InputSemantics != "exclusive_cache" || !res.UsageMissing() {
+				t.Fatalf("usage %+v: no result event reported the run's totals", res.Usage)
+			}
+			if res.InputTokens != c.input || res.OutputTokens != c.output || res.CacheRead != 0 || res.CostUSD != 0 {
+				t.Fatalf("tokens %d/%d/%d, cost %v: want what the DONE step reported", res.InputTokens, res.OutputTokens, res.CacheRead, res.CostUSD)
+			}
+			if !strings.Contains(strings.Join(infos, "\n"), "without a result event") {
+				t.Fatalf("no note that the result is missing: %q", infos)
+			}
+		})
+	}
+}
+
+func TestAgyResultTotalsReplaceTheDoneStepUsage(t *testing.T) {
+	for _, c := range []struct {
+		result        string
+		input, output int64
+	}{
+		{`{"event":"result","result":{"status":"SUCCESS","usage":{"input_tokens":30,"output_tokens":10}}}`, 30, 10},
+		{`{"event":"result","result":{"status":"SUCCESS"}}`, 0, 0},
+	} {
+		parse := NewAgyBackend().newParse()
+		res := Result{Backend: "agy"}
+		for _, line := range []string{
+			`{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"a","usage":{"input_tokens":20,"output_tokens":5}}}`,
+			c.result,
+		} {
+			parse([]byte(line), func(Event) {}, &res)
+		}
+		if res.InputTokens != c.input || res.OutputTokens != c.output {
+			t.Errorf("%s: tokens %d/%d, want %d/%d", c.result, res.InputTokens, res.OutputTokens, c.input, c.output)
+		}
+	}
+}
+
 func TestAgyEndsLimitedAtItsPlanQuotaWithTheResetTime(t *testing.T) {
 	t.Setenv("HRN_AGY_HELPER", "1")
 	t.Setenv("HRN_AGY_PROMPT", "work")

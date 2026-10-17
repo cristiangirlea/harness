@@ -190,6 +190,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if err != nil {
 					return mcp.CallResult{}, err
 				}
+				defer plan.Release()
 				args.Backend, args.Dir, args.Model = plan.Backend, plan.Dir, plan.Model
 				// As hrn run does: the earlier run's mode, unless this call names one.
 				if !modeGiven && plan.Prev.Task.Mode != "" {
@@ -291,6 +292,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			case next == nil && why != "":
 				notes = append(notes, why)
 			case next != nil:
+				defer next.Plan.Release()
 				nb, err := agent.Get(next.To)
 				if err != nil {
 					return mcp.CallResult{}, err
