@@ -266,8 +266,9 @@ status and error, its final answer (up to 6 KiB), the workspace's changes as a
 batch's base commit for a batch attempt, otherwise against `HEAD`, so only what is
 uncommitted), and for a batch attempt its gate results. git runs there with the
 repository's fsmonitor, filter drivers, external diff drivers and textconv turned off,
-since the earlier run could have set them to any command; files under a filter (git
-lfs) may then show as changed. The whole is capped at
+since the earlier run could have set them to any command, and with `GIT_NO_LAZY_FETCH=1`,
+so a partial clone fetches no missing object from its remote (the diff then fails and
+says so); files under a filter (git lfs) may then show as changed. The whole is capped at
 16 KiB, cut from the end with a note saying so; a fact the record lacks is said to
 be missing. It describes only the run named, not the turns before it, and points to
 the full record (`hrn show <id>`). As with a transcript, it is saved as `handoff.md`
