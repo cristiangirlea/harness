@@ -3,7 +3,7 @@
 // effects: read, exec, network
 // parameters: mode:string=required; arguments:string[]=mode-specific
 // example: test "$(go run scripts/answers.go self-test)" = '{"ready":true}'
-// hash: 24f76c38224733f82802396a3510e80e61c585d95bbff9a64a7498f45ae6b477
+// hash: 7cc827a3ba23e568a97f60e551a2da6fb63fe8b023c026bf9aeb912f7dedeef3
 package main
 
 import (
@@ -79,6 +79,11 @@ func summary(args []string) {
 	}
 }
 
+// probeTimeout keeps a probe inside the deadline, with a floor so a zero timeout still dials once.
+func probeTimeout(remaining time.Duration) time.Duration {
+	return max(min(remaining, 200*time.Millisecond), 10*time.Millisecond)
+}
+
 func wait(args []string) {
 	if len(args) < 2 || len(args) > 3 || args[0] == "" {
 		die("usage: wait host port [timeout seconds]")
@@ -96,12 +101,7 @@ func wait(args []string) {
 	}
 	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
 	for {
-		remaining := time.Until(deadline)
-		probe := min(remaining, 200*time.Millisecond)
-		if probe <= 0 {
-			probe = time.Millisecond
-		}
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(args[0], args[1]), probe)
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(args[0], args[1]), probeTimeout(time.Until(deadline)))
 		if err == nil {
 			conn.Close()
 			fmt.Println(`{"ready":true}`)
