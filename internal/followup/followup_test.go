@@ -1,6 +1,7 @@
 package followup
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -273,6 +274,93 @@ func TestTheAPIConversationIsResumed(t *testing.T) {
 	p, err = Make(Request{RunID: w.ID(), Model: "claude-sonnet-5"})
 	if err != nil || p.Model != "claude-sonnet-5" || !strings.Contains(strings.Join(p.Notes, "\n"), "drops the earlier thinking") {
 		t.Errorf("another model should be warned about: %+v err=%v", p, err)
+	}
+}
+
+func TestAResumedConversationCarriesItsOriginals(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, _ := json.Marshal(agent.Conversation{Model: "claude-opus-5"})
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), conv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := "earlier tool output"
+	handle := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))[:16]
+	if err := os.MkdirAll(filepath.Join(w.Dir(), "originals"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Dir(), "originals", handle+".txt"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	for _, fresh := range []bool{false, true} {
+		p, err := Make(Request{RunID: w.ID(), Fresh: fresh})
+		if err != nil {
+			t.Fatal(err)
+		}
+		next := t.TempDir()
+		task := agent.Task{Prompt: "go on"}
+		p.Apply(&task, next, func(agent.Event) {})
+		data, err := os.ReadFile(filepath.Join(next, "originals", handle+".txt"))
+		if fresh {
+			if !os.IsNotExist(err) {
+				t.Fatalf("a fresh hand-over resumes no conversation, so it carries no originals: %v", err)
+			}
+		} else if err != nil || string(data) != text {
+			t.Fatalf("original not carried over: %q %v", data, err)
+		}
+	}
+}
+
+func TestOriginalsThatCannotBeCarriedOverAreReportedAndTheRunGoesOn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, _ := json.Marshal(agent.Conversation{Model: "claude-opus-5"})
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), conv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := "earlier tool output"
+	handle := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))[:16]
+	if err := os.MkdirAll(filepath.Join(w.Dir(), "originals"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Dir(), "originals", handle+".txt"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Make(Request{RunID: w.ID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := t.TempDir()
+	// A file where the originals directory belongs makes every copy fail.
+	if err := os.WriteFile(filepath.Join(next, "originals"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task := agent.Task{Prompt: "go on"}
+	var events []string
+	p.Apply(&task, next, func(e agent.Event) { events = append(events, e.Text) })
+	reported := false
+	for _, e := range events {
+		reported = reported || strings.HasPrefix(e, "originals not carried over: ")
+	}
+	if !reported {
+		t.Fatalf("copy failure not reported: %q", events)
+	}
+	if task.Resume == nil || task.Prompt != "go on" {
+		t.Fatalf("the run should still resume the conversation: resume=%v prompt=%q", task.Resume != nil, task.Prompt)
 	}
 }
 

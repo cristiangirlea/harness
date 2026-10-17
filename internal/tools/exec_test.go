@@ -63,3 +63,19 @@ func TestRunShellTimeoutKillsTheTree(t *testing.T) {
 		t.Errorf("took %s; the process tree was not killed", elapsed)
 	}
 }
+
+func TestFullCaptureKeepsExactlyTheCeilingAndDropsOneByteMore(t *testing.T) {
+	for _, extra := range []int{0, 1} {
+		b := &boundedBuffer{keepHead: 10, keepTail: 5, fullLimit: maxCapture}
+		text := strings.Repeat("x", maxCapture-1) + "\n" + strings.Repeat("y", extra)
+		for chunk := text; chunk != ""; {
+			n := min(len(chunk), 32<<10)
+			_, _ = b.Write([]byte(chunk[:n]))
+			chunk = chunk[n:]
+		}
+		got := b.String()
+		if dropped := extra > 0; b.fullDropped != dropped || (got == text) == dropped {
+			t.Fatalf("%d bytes: dropped=%v, whole=%v", len(text), b.fullDropped, got == text)
+		}
+	}
+}
