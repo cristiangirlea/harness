@@ -215,7 +215,7 @@ func Make(req Request) (Plan, error) {
 			return Plan{}, err
 		}
 		p.release = release
-		if later := laterOn(p.Backend, p.ForkSession, chain[from], p.Handoff); later != "" {
+		if later := laterOn(p.Backend, p.ForkSession, chain[from], chain); later != "" {
 			p.Notes = append(p.Notes, fmt.Sprintf("run %s is not the newest on %s conversation %s: run %s resumed it later, so the agent also sees that run's turns", chain[from].ID, p.Backend, p.ForkSession, later))
 		}
 	}
@@ -252,15 +252,16 @@ func lockConversation(backend, id string) (func(), error) {
 	return sync.OnceFunc(unlock), nil
 }
 
-// laterOn names the newest run on backend, other than carried and the
-// handed-over runs, that ran on conversation id since carried started, or "".
-func laterOn(backend, id string, carried runlog.Record, handoff []runlog.Record) string {
+// laterOn names the newest run on backend, outside chain, that ran on
+// conversation id since carried started, or "".
+func laterOn(backend, id string, carried runlog.Record, chain []runlog.Record) string {
 	recs, _, err := runlog.ListSince(carried.Started)
 	if err != nil {
 		return ""
 	}
 	for _, r := range recs {
-		if r.ID != carried.ID && !slices.ContainsFunc(handoff, func(h runlog.Record) bool { return h.ID == r.ID }) && r.Backend == backend && !r.Started.Before(carried.Started) &&
+		// The chain's own runs are not later ones, even when the clock gave them the same start.
+		if !slices.ContainsFunc(chain, func(c runlog.Record) bool { return c.ID == r.ID }) && r.Backend == backend && !r.Started.Before(carried.Started) &&
 			(r.Result.Session == id || r.Task.ForkSession == id) {
 			return r.ID
 		}
