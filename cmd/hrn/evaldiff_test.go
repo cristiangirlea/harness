@@ -242,3 +242,37 @@ func TestEvalTableShowsTheJudgeSpreadAndRepeatsPerCell(t *testing.T) {
 		t.Errorf("the judge note names the repeats:\n%s", out)
 	}
 }
+
+func TestEvalDiffMarksATaskRowWithinNoise(t *testing.T) {
+	a, b := diffPair()
+	a.Table.Tasks[0].Judged, a.Table.Tasks[0].MeanScore = 1, 6
+	a.Table.Tasks[0].JudgeRepeats, a.Table.Tasks[0].ScoreMin, a.Table.Tasks[0].ScoreMax = 2, 5, 7
+	b.Table.Tasks[0].Judged, b.Table.Tasks[0].MeanScore = 2, 6.5
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEvalDiff(r, eval.Compare(a, b))
+	if out := buf.String(); !strings.Contains(out, "1/2 6.0 (5.0-7.0) → 2/2 6.5 (within noise)") {
+		t.Errorf("the task row should be marked:\n%s", out)
+	}
+}
+
+func TestEvalTableShowsADashForAVariantJudgedWithoutRepeats(t *testing.T) {
+	a, _ := diffPair()
+	a.Spec.Judge = &eval.Judge{Rubric: "r", Repeats: 2}
+	a.Table.Variants[0].JudgeRepeats, a.Table.Variants[0].ScoreMin, a.Table.Variants[0].ScoreMax = 2, 5, 7
+	a.Table.Variants[1].Judged, a.Table.Variants[1].MeanScore = 1, 9 // its verdicts never overlapped across repeats
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEval(r, a)
+	for _, line := range strings.Split(buf.String(), "\n") {
+		f := strings.Fields(line)
+		if len(f) > 0 && f[0] == "haiku" && (f[len(f)-1] != "-" || f[len(f)-2] != "9.0") {
+			t.Errorf("haiku row = %q, want its score and a dash for the spread", line)
+		}
+		if len(f) > 0 && f[0] == "sonnet" && f[len(f)-1] != "5.0-7.0" {
+			t.Errorf("sonnet row = %q, want its spread", line)
+		}
+	}
+}

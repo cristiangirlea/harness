@@ -96,14 +96,14 @@ func Compare(a, b Record) Diff {
 		}
 	}
 
-	// What else differs between the specs, so a moved number is not credited
-	// to the wrong change.
 	for i, t := range d.Tasks {
 		if t.A != nil && t.B != nil {
 			d.Tasks[i].WithinNoise = withinNoise(t.A.judge(), t.B.judge())
 		}
 	}
 
+	// What else differs between the specs, so a moved number is not credited
+	// to the wrong change.
 	type check struct {
 		prompt string
 		gates  []string

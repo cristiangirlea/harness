@@ -128,6 +128,9 @@ Run flags:
       --compact-window N
                        compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
                        (claude backend; unset keeps Claude Code's own threshold)
+      --append-system-prompt TEXT
+                       add TEXT after the backend's own system prompt, such as a rule (api and claude; at most 16 KiB)
+      --no-skills      start claude with skills turned off (claude backend)
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --fresh          with --continue: start a new session, handed the earlier run over from its record
                        (task, outcome, changed files, gate results) instead of resuming or forking its session

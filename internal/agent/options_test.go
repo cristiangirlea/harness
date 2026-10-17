@@ -235,7 +235,10 @@ func TestValidate(t *testing.T) {
 		{Options{MaxCostUSD: math.Inf(1)}, "finite"},
 		{Options{MaxCostUSD: math.Inf(-1)}, "finite"},
 		{Options{TaskBudget: 100}, "20000"},
-		{Options{AppendSystemPrompt: strings.Repeat("x", MaxAppendSystemPrompt+1)}, "fit on a command line"},
+		{Options{AppendSystemPrompt: strings.Repeat("x", MaxAppendSystemPrompt+1)}, "at most 16384 fit"},
+		{Options{AppendSystemPrompt: strings.Repeat(`"`, MaxAppendSystemPrompt/2+1)}, "at most 16384 fit"},
+		{Options{AppendSystemPrompt: strings.Repeat(`\`, MaxAppendSystemPrompt/2+1)}, "at most 16384 fit"},
+		{Options{AppendSystemPrompt: "a\x00b"}, "NUL"},
 	} {
 		if err := tc.o.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%+v: err = %v, want %q", tc.o, err, tc.want)

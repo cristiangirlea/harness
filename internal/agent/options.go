@@ -162,8 +162,12 @@ func (o Options) Validate() error {
 	if o.Effort != "" && !slices.Contains(EffortLevels, o.Effort) {
 		return fmt.Errorf("unknown effort %q (want %s)", o.Effort, strings.Join(EffortLevels, ", "))
 	}
-	if len(o.AppendSystemPrompt) > MaxAppendSystemPrompt {
-		return fmt.Errorf("append_system_prompt is %d bytes; at most %d fit on a command line", len(o.AppendSystemPrompt), MaxAppendSystemPrompt)
+	// Windows escapes each quote and backslash on the command line, so they count twice.
+	if n := len(o.AppendSystemPrompt) + strings.Count(o.AppendSystemPrompt, `"`) + strings.Count(o.AppendSystemPrompt, `\`); n > MaxAppendSystemPrompt {
+		return fmt.Errorf("append_system_prompt takes %d bytes on a command line; at most %d fit", n, MaxAppendSystemPrompt)
+	}
+	if strings.ContainsRune(o.AppendSystemPrompt, 0) {
+		return fmt.Errorf("append_system_prompt holds a NUL byte, which no command line can carry")
 	}
 	if err := o.CompactWindow.check(); err != nil {
 		return err

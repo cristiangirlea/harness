@@ -20,7 +20,8 @@ counted that way. Older records have neither and show a zero median cost as `-`.
 Variants may hold `prompt_prefix`, `append_system_prompt` and `no_skills`, and a judge
 `repeats`. With repeats, `judgements` holds one verdict per passing cell and repeat, each
 with its `repeat` number; variant and task rows add `judge_repeats`, `score_min` and
-`score_max` (the lowest and highest mean of one repeat). Older records have one verdict
+`score_max` (the lowest and highest mean of one repeat, over the cells scored in every
+repeat). Older records have one verdict
 per cell, no repeat number and no spread, and still load.
 
 Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.

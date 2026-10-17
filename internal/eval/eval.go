@@ -23,6 +23,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -52,6 +53,12 @@ type Variant struct {
 	PromptPrefix       string `json:"prompt_prefix,omitempty"`
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
 	NoSkills           bool   `json:"no_skills,omitempty"`
+}
+
+// ChangesHarness reports whether the variant changes the harness around the
+// model, not only which model runs.
+func (v Variant) ChangesHarness() bool {
+	return v.PromptPrefix != "" || v.AppendSystemPrompt != "" || v.NoSkills
 }
 
 // Key is the name a variant's rows are filed under: its name, else backend[-model][-effort].
@@ -176,6 +183,10 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 					cell.Lean = v.Lean
 				}
 				if v.PromptPrefix != "" {
+					// A Purpose: header on the task's first line would no longer be first.
+					if cell.Purpose == "" {
+						cell.Purpose = purpose.Declared(t.Prompt)
+					}
 					cell.Prompt = v.PromptPrefix + "\n\n" + t.Prompt
 				}
 				cell.AppendSystemPrompt = firstOf(v.AppendSystemPrompt, t.AppendSystemPrompt)
@@ -289,7 +300,7 @@ func (j judgeScore) spread() (float64, bool) {
 func scoreOf(cells [][]Judgement) judgeScore {
 	var out judgeScore
 	total, count := 0, 0
-	byRepeat := map[int][2]int{}
+	repeats := map[int]bool{}
 	for _, cell := range cells {
 		if len(cell) > 0 {
 			out.judged++
@@ -298,21 +309,39 @@ func scoreOf(cells [][]Judgement) judgeScore {
 			total += v.Score
 			count++
 			// A record from before repeats has no repeat number: it was the first.
-			r := max(1, v.Repeat)
-			byRepeat[r] = [2]int{byRepeat[r][0] + v.Score, byRepeat[r][1] + 1}
+			repeats[max(1, v.Repeat)] = true
 		}
 	}
 	if count == 0 {
 		return out
 	}
 	out.mean = float64(total) / float64(count)
-	if len(byRepeat) > 1 {
-		out.repeats = len(byRepeat)
-		out.min, out.max = 10, 0
-		for _, r := range byRepeat {
-			m := float64(r[0]) / float64(r[1])
-			out.min, out.max = min(out.min, m), max(out.max, m)
+	if len(repeats) < 2 {
+		return out
+	}
+	// Only cells scored in every repeat: a missing verdict would move one
+	// repeat's mean by that cell's difficulty, not by the judge's noise.
+	sums := map[int][2]int{}
+	for _, cell := range cells {
+		byRepeat := map[int]int{}
+		for _, v := range cell {
+			byRepeat[max(1, v.Repeat)] = v.Score
 		}
+		if len(byRepeat) != len(repeats) {
+			continue
+		}
+		for r, score := range byRepeat {
+			sums[r] = [2]int{sums[r][0] + score, sums[r][1] + 1}
+		}
+	}
+	if len(sums) == 0 {
+		return out
+	}
+	out.repeats = len(repeats)
+	out.min, out.max = 10, 0
+	for _, s := range sums {
+		m := float64(s[0]) / float64(s[1])
+		out.min, out.max = min(out.min, m), max(out.max, m)
 	}
 	return out
 }

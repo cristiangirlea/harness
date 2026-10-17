@@ -310,3 +310,79 @@ func TestHarnessVariantsReachTheirCellsOnlyOnBackendsThatApplyThem(t *testing.T)
 		t.Errorf("default backend %s: %v", agent.DefaultBackendNameIn(runlog.Home()), err)
 	}
 }
+
+func TestAPromptPrefixKeepsTheTasksDeclaredPurpose(t *testing.T) {
+	spec := testSpec("somewhere")
+	spec.Tasks = []batch.Task{{ID: "rev", Prompt: "Purpose: review\nLook at the patch."}, {ID: "own", Prompt: "Purpose: review\nx", Purpose: "debug"}}
+	spec.Matrix = []Variant{{Name: "briefed", Backend: "ev-ok", PromptPrefix: "Be brief."}}
+	bs, err := Expand(spec, "abc12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range bs.Tasks {
+		want := "review"
+		if strings.Contains(task.ID, ".own.") {
+			want = "debug" // a declared purpose field wins, as it does without a prefix
+		}
+		if task.Purpose != want || !strings.HasPrefix(task.Prompt, "Be brief.\n\nPurpose: review") {
+			t.Errorf("%s: purpose = %q, prompt = %q", task.ID, task.Purpose, task.Prompt)
+		}
+	}
+}
+
+func TestTheJudgeSpreadLeavesOutACellMissingARepeat(t *testing.T) {
+	spec := Spec{Matrix: []Variant{{Backend: "ev-ok"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	res := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "e.a.ev-ok.r1", Status: batch.StatusPass},
+		{ID: "e.a.ev-ok.r2", Status: batch.StatusPass},
+	}}
+	verdicts := []Judgement{
+		{Cell: "e.a.ev-ok.r1", Score: 7, Repeat: 1}, {Cell: "e.a.ev-ok.r1", Score: 7, Repeat: 2},
+		// A hard cell whose second verdict timed out: in the mean, not in the spread.
+		{Cell: "e.a.ev-ok.r2", Score: 1, Repeat: 1}, {Cell: "e.a.ev-ok.r2", Error: "timeout", Repeat: 2},
+	}
+	row := Summarize(spec, res, verdicts).Variants[0]
+	if row.Judged != 2 || row.MeanScore != 5 || row.JudgeRepeats != 2 || row.ScoreMin != 7 || row.ScoreMax != 7 {
+		t.Errorf("row = %+v, want a zero spread from the one cell scored in both repeats", row)
+	}
+	verdicts[0].Error = "timeout" // now no cell has both
+	if row := Summarize(spec, res, verdicts).Variants[0]; row.JudgeRepeats != 0 || row.ScoreMin != 0 || row.ScoreMax != 0 {
+		t.Errorf("row = %+v, want no spread at all", row)
+	}
+}
+
+func TestACanceledJudgeKeepsTheRepeatOfEveryVerdict(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	spec := testSpec("somewhere")
+	spec.Judge = &Judge{Backend: "ev-judge", Rubric: "r", Repeats: 2}
+	res := batch.Result{Tasks: []batch.TaskResult{{ID: "e.alpha.ev-ok.r1", Status: batch.StatusPass}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out := judgeAll(ctx, spec, res, nil)
+	if len(out) != 2 || out[0].Repeat != 1 || out[1].Repeat != 2 || out[0].Error != "canceled" || out[1].Error != "canceled" {
+		t.Errorf("verdicts = %+v", out)
+	}
+}
+
+func TestARetrievalComparisonRefusesAHarnessChange(t *testing.T) {
+	for _, edit := range []func(*Variant){
+		func(v *Variant) { v.PromptPrefix = "Be brief." },
+		func(v *Variant) { v.AppendSystemPrompt = "Run the tests." },
+		func(v *Variant) { v.NoSkills = true },
+	} {
+		for i := range 2 {
+			m, _, err := RetrievalFixture()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Validate(); err != nil {
+				t.Fatalf("the fixture must be valid before the edit: %v", err)
+			}
+			edit(&m.Spec.Matrix[i])
+			if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "must not change the harness") {
+				t.Errorf("variant %d %+v: err = %v", i, m.Spec.Matrix[i], err)
+			}
+		}
+	}
+}

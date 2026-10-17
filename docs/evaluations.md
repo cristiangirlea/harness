@@ -251,8 +251,8 @@ accounting and establishes no real model savings.
 
 ```
   variant                pass  attempts  median cost median time   turns   tools   context
-  sonnet                   0%         1        $0.15        13s       2       1    101061
-  haiku                  100%         1        $0.05        14s       2       1     71814
+  sonnet                   0%         1        $0.15         13s       2       1    101061
+  haiku                  100%         1        $0.05         14s       2       1     71814
 
   task                     sonnet      haiku
   greet                       0/1        1/1
@@ -310,10 +310,15 @@ As with `lean`, a cell whose backend would ignore the field is refused before an
 runs: `append_system_prompt` on anything but `api` and `claude`, `no_skills` on anything
 but `claude`. The check covers the value a cell ends up with, whether the variant, the
 task or the spec set it. The two run options work outside an eval too (`hrn run
---append-system-prompt`, `--no-skills`, a batch spec, the MCP `run` tool); there, a CLI
+--append-system-prompt`, `--no-skills`, a batch spec, the MCP `run` tool); there, a backend
 that cannot apply them says `not enforced`. The claude CLI is refused the system prompt
 when it is installed as an npm `.cmd` shim, since `cmd.exe` would read the text as
 commands; the native `claude.exe` takes it.
+
+A route row holds only a backend, model and effort, so `hrn route from-eval` skips harness
+variants (and tasks or specs that set the two run options): their score would be credited to
+the model and routed without the change. A retrieval comparison refuses them for the same
+reason.
 
 ### The judge
 
@@ -347,8 +352,9 @@ A judge is a model, and it may not give the same diff the same score twice. `"re
 in the judge scores every passing cell three times, on the same prompt (the diff and the
 answer are read once per cell), each verdict its own run with its `repeat` number in
 `judgements`. The mean then covers every verdict, and a `spread` column shows the lowest
-and highest mean of a single repeat: how far the variant's score moves when only the judge
-runs again. Task rows show it too (`2/2 7.5 (7.0-8.0)`), and the footer says `(3 per cell)`.
+and highest mean of a single repeat, over the cells scored in every repeat (a verdict that
+failed in one repeat would otherwise move that mean by the cell's difficulty): how far the
+variant's score moves when only the judge runs again. Task rows show it too (`2/2 7.5 (7.0-8.0)`), and the footer says `(3 per cell)`.
 Repeats multiply the judge's cost, not the agents'; the default is 1. On the `claude` backend the first verdicts cost more than the
 answer: Claude Code writes its own system prompt to the cache in the read-only mode the
 judge uses, about 64k tokens, once per judge that starts before the cache exists.

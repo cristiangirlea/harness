@@ -258,3 +258,27 @@ func TestFromEvalFindsAnUnnamedVariantByEvalsOwnName(t *testing.T) {
 		t.Fatalf("unnamed variant: %+v", row)
 	}
 }
+
+func TestFromEvalDoesNotCreditAHarnessChangeToTheModel(t *testing.T) {
+	for _, edit := range []func(*eval.Variant){
+		func(v *eval.Variant) { v.PromptPrefix = "Read the tests first." },
+		func(v *eval.Variant) { v.AppendSystemPrompt = "Run the tests." },
+		func(v *eval.Variant) { v.NoSkills = true },
+	} {
+		r := evidence()
+		edit(&r.Spec.Matrix[1]) // "low" wins implement without the change
+		if got := FromEval(r, .05)["implement"]; got.Effort != "high" {
+			t.Errorf("%+v: implement = %+v, want the plain variant", r.Spec.Matrix[1], got)
+		}
+	}
+	r := evidence()
+	r.Spec.AppendSystemPrompt = "Run the tests."
+	if got := FromEval(r, .05); len(got) != 0 {
+		t.Errorf("a spec-wide harness change routes nothing: %+v", got)
+	}
+	r = evidence()
+	r.Spec.Tasks[0].NoSkills = true
+	if got := FromEval(r, .05); len(got) != 1 || got["implement"].Backend != "" {
+		t.Errorf("the task with a harness change is left out: %+v", got)
+	}
+}

@@ -140,6 +140,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		// default, is what keeps its requests small.
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "compact_window: not enforced by the api backend"})
 	}
+	if task.NoSkills {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "no_skills: not enforced by the api backend"})
+	}
 	// req is built below; saveConversation closes over it so every exit path
 	// leaves a resumable history behind.
 	var req apiRequest
