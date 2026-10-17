@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -71,5 +72,35 @@ func TestNewFromEnvNamesCAFileInCertificateErrors(t *testing.T) {
 	t.Setenv("HRN_SERVER_CA_FILE", path)
 	if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "HRN_SERVER_CA_FILE") || !strings.Contains(err.Error(), "no certificates") {
 		t.Fatalf("invalid certificate error = %v", err)
+	}
+}
+
+func TestNewFromEnvRefusesADevicePathBeforeOpeningIt(t *testing.T) {
+	t.Setenv("HRN_SERVER_URL", "https://host")
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	opened := false
+	original := openCAFile
+	openCAFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		opened = true
+		return original(name, flag, perm)
+	}
+	t.Cleanup(func() { openCAFile = original })
+	paths := []string{os.DevNull, t.TempDir()}
+	if runtime.GOOS == "windows" {
+		paths = append(paths, `\\.\pipe\hrn-ca-test`, `\\?\`+filepath.Join(t.TempDir(), "ca.pem"),
+			`//./pipe/hrn-ca-test`, `//?/C:/ca.pem`, `\\.\NUL`, `\??\C:\ca.pem`, filepath.Join(t.TempDir(), "COM1"), "con.pem",
+			"COM1:", "NUL:", `C:\x\LPT1:`, `\\localhost\pipe\hrn-ca-test`, `//127.0.0.1/PIPE/hrn-ca-test`,
+			`\\localhost\mailslot\hrn-ca-test`)
+	} else {
+		fifo := filepath.Join(t.TempDir(), "ca.fifo")
+		makeCAFIFO(t, fifo)
+		paths = append(paths, fifo)
+	}
+	for _, path := range paths {
+		opened = false
+		t.Setenv("HRN_SERVER_CA_FILE", path)
+		if _, err := NewFromEnv(); err == nil || !strings.Contains(err.Error(), "regular PEM CA file") || opened {
+			t.Errorf("CA file %q: error = %v, opened = %v; want a refusal before any open", path, err, opened)
+		}
 	}
 }
