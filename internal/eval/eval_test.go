@@ -341,3 +341,59 @@ func TestAnEvalNeverSwitchesBackends(t *testing.T) {
 		t.Error("the batch an eval runs must set no_switch")
 	}
 }
+
+func TestAnEvalFailsACellThatChangedAProtectedFileUnlessItSaysOtherwise(t *testing.T) {
+	bs, err := Expand(testSpec("somewhere"), "abc12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bs.ProtectMode != batch.ProtectFail {
+		t.Errorf("protect_mode = %q, want %q by default in an eval", bs.ProtectMode, batch.ProtectFail)
+	}
+	spec := testSpec("somewhere")
+	spec.ProtectMode = batch.ProtectReport
+	if bs, err = Expand(spec, "abc12"); err != nil || bs.ProtectMode != batch.ProtectReport {
+		t.Errorf("protect_mode = %q (%v), want the spec's own %q", bs.ProtectMode, err, batch.ProtectReport)
+	}
+}
+
+// ev-tamper does the work and also changes README.md, which a spec may protect.
+type tamperStub struct{ stub }
+
+func (s tamperStub) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	_ = os.WriteFile(filepath.Join(task.Dir, "README.md"), []byte("weakened\n"), 0o644)
+	return s.stub.Run(ctx, task, emit)
+}
+
+func init() { agent.Register(tamperStub{stub{"ev-tamper", true}}) }
+
+func TestAnEvalCellThatChangedAProtectedFileFailsByDefault(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		protect  []string
+		specMode string
+		taskMode string
+		passed   int
+	}{
+		{"changed, eval default", []string{"README.md"}, "", "", 0},
+		{"changed, spec says report", []string{"README.md"}, batch.ProtectReport, "", 1},
+		{"changed, task says report", []string{"README.md"}, "", batch.ProtectReport, 1},
+		{"only an added file is protected", []string{"out.txt"}, "", "", 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var spec Spec
+			spec.Dir = initRepo(t)
+			spec.Gate = []string{"test -f out.txt"}
+			spec.Protect, spec.ProtectMode = c.protect, c.specMode
+			spec.Tasks = []batch.Task{{ID: "alpha", Prompt: "do alpha", ProtectMode: c.taskMode}}
+			spec.Matrix = []Variant{{Backend: "ev-tamper"}}
+			rec, res, err := Run(context.Background(), spec, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rec.Table.Variants[0].Passed; got != c.passed {
+				t.Errorf("passed = %d, want %d: %+v", got, c.passed, res.Tasks[0].Attempts)
+			}
+		})
+	}
+}
