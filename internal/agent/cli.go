@@ -119,6 +119,12 @@ func (c *CLIBackend) ForksSessions() bool { return c.forks }
 
 var sessionID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
 
+var modelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,127}$`)
+
+// ValidModel reports whether model may become a CLI argument: cmd.exe, which runs
+// the npm .cmd shims, does not neutralise &, |, ^, % or quotes, and a dash is a flag.
+func ValidModel(model string) bool { return modelID.MatchString(model) }
+
 // ForksSessions reports whether b honours Task.ForkSession.
 func ForksSessions(b Backend) bool {
 	f, ok := b.(interface{ ForksSessions() bool })
@@ -131,6 +137,11 @@ func (c *CLIBackend) Detect() (string, error) {
 	}
 	if c.candidates != nil {
 		for _, p := range c.candidates() {
+			// A relative candidate (an unset HOME, APPDATA or LOCALAPPDATA) would
+			// resolve against the working directory, the task's workspace.
+			if !filepath.IsAbs(p) {
+				continue
+			}
 			if _, err := os.Stat(p); err == nil {
 				return p, nil
 			}
@@ -167,6 +178,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	// starting with a dash would be read as a flag. Both CLIs issue UUIDs.
 	if task.ForkSession != "" && !sessionID.MatchString(task.ForkSession) {
 		return fail(StatusError, fmt.Errorf("session id %q is not one the %s CLI issues", task.ForkSession, c.name))
+	}
+	if task.Model != "" && !ValidModel(task.Model) {
+		return fail(StatusError, fmt.Errorf("model %q is not a model id", task.Model))
 	}
 
 	bin, err := c.Detect()
@@ -402,15 +416,25 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// appData joins parts under %APPDATA%, or returns "" when APPDATA is not an
+// absolute path: a relative candidate would resolve against the working
+// directory, which for a run is the task's workspace.
 func appData(parts ...string) string {
-	return filepath.Join(append([]string{os.Getenv("APPDATA")}, parts...)...)
+	root := os.Getenv("APPDATA")
+	if !filepath.IsAbs(root) {
+		return ""
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func npmShim(name string) []string {
 	if runtime.GOOS != "windows" {
 		return nil
 	}
-	return []string{appData("npm", name+".cmd")}
+	if shim := appData("npm", name+".cmd"); shim != "" {
+		return []string{shim}
+	}
+	return nil
 }
 
 func init() {

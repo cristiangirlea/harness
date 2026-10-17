@@ -95,6 +95,9 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if t.Fresh && t.ContinueRunID == "" {
 		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
 	}
+	if t.Model != "" && !agent.ValidModel(t.Model) {
+		return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("model %q is not a model id", t.Model))
+	}
 	b, err := agent.Get(t.Backend)
 	if err != nil {
 		return w.reject(req.AttemptID, "unsupported", err.Error())
@@ -146,6 +149,9 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
 		task.Dir, task.Model = plan.Dir, plan.Model
+		if task.Model != "" && !agent.ValidModel(task.Model) {
+			return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("model %q from run %s is not a model id", task.Model, t.ContinueRunID))
+		}
 	}
 	if _, err := b.Detect(); err != nil {
 		return w.reject(req.AttemptID, "unavailable", err.Error())
