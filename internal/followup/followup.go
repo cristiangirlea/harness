@@ -29,6 +29,8 @@ type Request struct {
 	Backend string
 	Dir     string
 	Model   string
+	// Retrieval is the follow-up's retrieval mode; a pin from another backend refuses an opt-in.
+	Retrieval string
 	// Fresh starts a new session briefed by a hand-over built from the
 	// earlier run's record, instead of resuming or forking anything.
 	Fresh bool
@@ -108,6 +110,9 @@ func Make(req Request) (Plan, error) {
 	p.Dir = ws.Root
 	b, err := agent.Get(p.Backend)
 	if err != nil {
+		return Plan{}, err
+	}
+	if err := checkRetrievalPin(chain, p.Backend, req.Retrieval); err != nil {
 		return Plan{}, err
 	}
 	if missing != "" {
@@ -196,6 +201,31 @@ func Make(req Request) (Plan, error) {
 		p.Notes = append(p.Notes, fmt.Sprintf("handing %d earlier %s to %s as a transcript: requests and final answers, not tool calls or reasoning", n, turns, p.Backend))
 	}
 	return p, nil
+}
+
+// checkRetrievalPin refuses a retrieval opt-in that would resolve a new version
+// while the chain's latest pin belongs to another backend, which cannot carry it.
+func checkRetrievalPin(chain []runlog.Record, backend, mode string) error {
+	if mode == "" || mode == "off" {
+		return nil
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		r := chain[i]
+		pin := r.Result.Retrieval
+		if pin == nil {
+			continue
+		}
+		if r.Backend == backend {
+			return nil
+		}
+		pinned := "recorded a retrieval pin with no knowledge version"
+		if pin.Packet != nil && pin.Packet.VersionID != "" {
+			pinned = "pinned retrieval to knowledge version " + pin.Packet.VersionID
+		}
+		return fmt.Errorf("run %s %s on %s, which %s cannot carry over; continue on %[3]s to keep that pin, start a fresh run to retrieve again, or continue on %[4]s with retrieval off",
+			r.ID, pinned, r.Backend, backend)
+	}
+	return nil
 }
 
 // latestModel is the model the latest run on backend in the chain asked for:

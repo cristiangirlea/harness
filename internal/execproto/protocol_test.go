@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -775,5 +776,51 @@ func TestWrongCancelAndSecondStartLeaveTheRunRunning(t *testing.T) {
 	h.exit(t, 0)
 	if recs, err := runlog.List(0); err != nil || len(recs) != 1 {
 		t.Fatalf("second start must not create another record: %+v %v", recs, err)
+	}
+}
+
+func TestExecTakesNoRetrievalOptInAndHandsAPinnedRunToAnotherBackend(t *testing.T) {
+	var got agent.Task
+	registerFake(t, func(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+		got = task
+		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
+	})
+	dir := t.TempDir()
+	prev, err := runlog.Create("api", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := &retrieval.Record{Mode: "required", Scope: retrieval.Scope{Backend: "api", Model: "m"}, Packet: &retrieval.Packet{VersionID: "kv-7"}}
+	if err := prev.Close(agent.Result{Backend: "api", Status: agent.StatusOK, Final: "a", Retrieval: pin}); err != nil {
+		t.Fatal(err)
+	}
+
+	// exec has no retrieval field, so it never reaches followup's pin refusal.
+	h := openHarness(t, nil)
+	h.next(t, "hello")
+	req := start(dir, "fake-exec")
+	req["task"].(map[string]any)["continue_run_id"] = prev.ID()
+	req["task"].(map[string]any)["retrieval"] = "required"
+	h.send(t, req)
+	if e := h.next(t, "rejected")["error"].(map[string]any); e["code"] != "bad_request" || !strings.Contains(fmt.Sprint(e["message"]), `unknown field "retrieval"`) {
+		t.Fatalf("bad rejection: %+v", e)
+	}
+	h.exit(t, 2)
+	if recs, err := runlog.List(0); err != nil || len(recs) != 1 {
+		t.Fatalf("rejected start created records: %+v %v", recs, err)
+	}
+
+	// With retrieval off the transcript is handed over as before.
+	h = openHarness(t, nil)
+	h.next(t, "hello")
+	delete(req["task"].(map[string]any), "retrieval")
+	h.send(t, req)
+	h.next(t, "accepted")
+	h.next(t, "event") // the plan's notes: a new session, and the turn handed over
+	h.next(t, "event")
+	h.next(t, "result")
+	h.exit(t, 0)
+	if !strings.Contains(got.Prompt, "--- request\n> earlier") || got.RetrievalState != nil {
+		t.Fatalf("the hand-over should carry the transcript and no pin: %+v", got)
 	}
 }
