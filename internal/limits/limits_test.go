@@ -54,7 +54,7 @@ func standIn(t *testing.T, claudeInstalled, codexInstalled bool) {
 
 func TestOnlyClaudeAndCodexStandInForEachOther(t *testing.T) {
 	for backend, want := range map[string]string{"claude": "codex", "codex": "claude", "api": "", "gemini": "", "opencode": "", "": ""} {
-		if got := Partner(backend); got != want {
+		if got := Partner(backend, time.Now(), nil); got != want {
 			t.Errorf("Partner(%q) = %q, want %q", backend, got, want)
 		}
 	}

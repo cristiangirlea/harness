@@ -339,17 +339,24 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			}
 			for {
 				msg, err = client.stream(ctx, req, onDelta, onBlock)
+				retry := err != nil && dropContextEdits(&req, err)
 				if err != nil && durable != nil {
 					var apiErr *apiError
 					if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && !apiErr.retryable() {
 						// A definite rejection has no model effect to reconcile.
 						durable.checkpoint.Pending = nil
-						if saveErr := durable.persist(ctx, "model_rejected", req, res); saveErr != nil {
+						rejected := res
+						if !retry {
+							// Finished, so a resume never resends the rejected request.
+							durable.checkpoint.Finished = true
+							rejected.Status, rejected.Error = StatusError, err.Error()
+						}
+						if saveErr := durable.persist(ctx, "model_rejected", req, rejected); saveErr != nil {
 							return durableFailure(saveErr)
 						}
 					}
 				}
-				if err == nil || !dropContextEdits(&req, err) {
+				if !retry {
 					break
 				}
 				// A beta hrn sends by default must never make every run fail.
