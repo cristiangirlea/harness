@@ -473,10 +473,8 @@ func backendsTool() mcp.Tool {
 			if err != nil {
 				return text(err.Error(), nil, true), nil
 			}
-			def := p.Default()
-			if def == "" {
-				def = agent.DefaultBackendNameIn(runlog.Home())
-			}
+			// The backend a run without one would use, which is the configured default when it is installed.
+			def := agent.DefaultBackendNameIn(runlog.Home())
 			now := time.Now()
 			for _, name := range agent.Names() {
 				state := "disabled"
@@ -504,7 +502,7 @@ func backendsTool() mcp.Tool {
 				entry["default"] = name == def
 				list = append(list, entry)
 			}
-			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendNameIn(runlog.Home())}, false), nil
+			return text(b.String(), map[string]any{"backends": list, "default": def}, false), nil
 		},
 	}
 }

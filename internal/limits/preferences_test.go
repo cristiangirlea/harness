@@ -2,6 +2,9 @@ package limits
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +127,17 @@ func TestAnEnabledAPIAheadOfAPlanBackendIsSkippedAsAPartner(t *testing.T) {
 	}
 	if next == nil || next.To != "claude" {
 		t.Fatalf("carry-on %+v, %s", next, why)
+	}
+}
+
+func TestNoteReportsAMalformedPreferenceFile(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "backends.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	if err == nil || !strings.Contains(err.Error(), "backends.json") {
+		t.Fatalf("got %v", err)
 	}
 }
 
