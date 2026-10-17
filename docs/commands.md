@@ -173,8 +173,11 @@ issued tenant token, and optionally `HRN_SERVER_CA_FILE` to a PEM CA file. HTTP
 is accepted only for loopback fixtures. The tenant and project IDs are issued
 by the server; `--base-ref` is a full Git commit registered for the project.
 The origin may have a trailing `/`, but no credentials, other path, query
-(including an empty `?`), or fragment. The CA path must name a regular file;
-symlinks to regular files are accepted.
+(including an empty `?`), or fragment, and its hostname may not be empty. The CA
+path must name a regular file of at most 1 MiB; symlinks to regular files are
+accepted. Devices, FIFOs and pipes are refused before they are opened, and on
+Windows so are `\\.\`, `\\?\` and `\??\` paths and reserved device names such as
+`NUL` or `COM1`.
 Submission requires a stable idempotency key and a positive USD cost ceiling.
 When `HRN_REMOTE_MAX_COST_USD` is set, a `--max-cost` above it is refused before
 any request; unset means no client cap. The control service does not reserve
@@ -197,6 +200,10 @@ The watch reconnects from the last printed event ID if a stream ends before a
 terminal event. Before streaming it reads the job's state (the request `hrn remote
 show` makes): if the job has already ended, it prints the events after `--after`, if
 any, and exits with status 0 without waiting. Ctrl-C ends the watch early.
+Each event's data must be JSON of at most 1 MiB in total, however many `data:`
+lines carry it; the space after a field's colon is optional. C1 control
+characters (U+0080 to U+009F) and invalid UTF-8 are printed as `\u` escapes, so
+the terminal never reads them as control sequences.
 
 ### Project knowledge
 

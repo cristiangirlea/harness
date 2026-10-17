@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var ErrMalformedEvent = errors.New("malformed event from control service")
@@ -275,16 +276,34 @@ func terminalState(state string) bool {
 	}
 }
 
+const maxEventData = 1 << 20
+
+// escapeC1 writes C1 controls and invalid UTF-8 as JSON escapes, which valid JSON holds only in
+// strings, so a terminal never reads one as a control sequence such as U+009B (CSI).
+func escapeC1(data string) string {
+	var out strings.Builder
+	for i, r := range data {
+		invalid := r == utf8.RuneError && !strings.HasPrefix(data[i:], string(utf8.RuneError))
+		if r >= 0x80 && r <= 0x9f || invalid {
+			fmt.Fprintf(&out, `\u%04x`, r)
+		} else {
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
+}
+
 // readEvents prints the events after the cursor and reports whether one ended the job; with
 // stop it returns at that event, as a watch does, otherwise it reads to the end.
 func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, bool, error) {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	var currentID int64
-	var kind, data string
+	var kind string
+	var data []byte
 	var terminal bool
 	emit := func() error {
-		if data == "" {
+		if len(data) == 0 {
 			return nil
 		}
 		if currentID <= 0 {
@@ -293,14 +312,14 @@ func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, 
 		if currentID <= after {
 			return nil
 		}
-		if !json.Valid([]byte(data)) {
+		if !json.Valid(data) {
 			return fmt.Errorf("%w: invalid JSON", ErrMalformedEvent)
 		}
-		if _, err := fmt.Fprintln(out, data); err != nil {
+		if _, err := fmt.Fprintln(out, escapeC1(string(data))); err != nil {
 			return fmt.Errorf("%w: %w", ErrEventOutput, err)
 		}
 		after = currentID
-		terminal = terminalEvent(kind, data)
+		terminal = terminalEvent(kind, string(data))
 		return nil
 	}
 	for scanner.Scan() {
@@ -312,22 +331,29 @@ func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, 
 			if terminal && stop {
 				return after, true, nil
 			}
-			currentID, kind, data = 0, "", ""
+			currentID, kind, data = 0, "", data[:0]
 			continue
 		}
-		if value, ok := strings.CutPrefix(line, "id: "); ok {
+		// The space after the colon is optional in SSE.
+		field, value, _ := strings.Cut(line, ":")
+		value = strings.TrimPrefix(value, " ")
+		switch field {
+		case "id":
 			id, err := strconv.ParseInt(value, 10, 64)
 			if err != nil || id < 0 {
 				return after, false, fmt.Errorf("%w: invalid ID", ErrMalformedEvent)
 			}
 			currentID = id
-		} else if value, ok := strings.CutPrefix(line, "event: "); ok {
+		case "event":
 			kind = value
-		} else if value, ok := strings.CutPrefix(line, "data: "); ok {
-			if data != "" {
-				data += "\n"
+		case "data":
+			if len(data)+1+len(value) > maxEventData {
+				return after, false, fmt.Errorf("%w: event data exceeds 1 MiB", ErrMalformedEvent)
 			}
-			data += value
+			if len(data) > 0 {
+				data = append(data, '\n')
+			}
+			data = append(data, value...)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -336,7 +362,7 @@ func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, 
 		}
 		return after, false, err
 	}
-	if data != "" {
+	if len(data) > 0 {
 		if err := emit(); err != nil {
 			return after, false, err
 		}
