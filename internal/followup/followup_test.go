@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -173,6 +174,51 @@ func TestContinuingAnOlderAgyRunSaysTheConversationHoldsLaterTurns(t *testing.T)
 	}
 	if notes := strings.Join(p.Notes, "\n"); strings.Contains(notes, "not the newest") {
 		t.Errorf("the run being continued was named as a later one: %s", notes)
+	}
+}
+
+func TestAnEarlierRunOfTheChainWithTheSameStartIsNotALaterOne(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "a"})
+	second := finished(t, first, agent.Task{Prompt: "q", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "b"})
+	// A coarse clock gives both runs the same start.
+	rec, err := runlog.Load(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(runlog.Root(), first, "result.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["started"] = rec.Started.Format(time.RFC3339Nano)
+	if data, err = json.Marshal(doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Make(Request{RunID: second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	if notes := strings.Join(p.Notes, "\n"); strings.Contains(notes, "not the newest") {
+		t.Errorf("the run it continues was named as a later one: %s", notes)
+	}
+	// Outside the chain the same start still counts: continuing first names second.
+	p, err = Make(Request{RunID: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	if notes := strings.Join(p.Notes, "\n"); !strings.Contains(notes, "not the newest") || !strings.Contains(notes, second) {
+		t.Errorf("a later run with the same start was not named: %s", notes)
 	}
 }
 
