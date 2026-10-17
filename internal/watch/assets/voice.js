@@ -121,9 +121,13 @@
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null;
     if (source) source.disconnect();
-    if (node) node.disconnect();
+    if (node) {
+      // A Stop given up on may still post its last block once the context resumes.
+      node.port.onmessage = null;
+      node.disconnect();
+    }
     source = node = null;
-    if (ctx) await ctx.suspend();
+    if (ctx && !playing) await ctx.suspend(); // a playback suspends it when it ends
   };
   const stopAudio = async () => {
     if (node && onBlock) {
@@ -156,27 +160,34 @@
     // Kept only once the whole graph stands: a half-built one would make
     // every later take silently empty. On failure the microphone is let go.
     const c = ctx || new AudioContext();
+    let capture = null;
+    let input = null;
     try {
       if (!ctx) await c.audioWorklet.addModule('/static/voice-worklet.js');
       await c.resume();
-      node = new AudioWorkletNode(c, 'ada-capture');
+      capture = new AudioWorkletNode(c, 'ada-capture');
       const silent = c.createGain();
       silent.gain.value = 0; // the graph must reach the speakers to run; nothing is heard
-      source = c.createMediaStreamSource(stream);
-      source.connect(node).connect(silent).connect(c.destination);
-      node.port.onmessage = (e) => {
+      input = c.createMediaStreamSource(stream);
+      input.connect(capture).connect(silent).connect(c.destination);
+      capture.port.onmessage = (e) => {
         if (e.data === null) {
           if (stopped) { const done = stopped; stopped = null; done(); }
         } else if (onBlock) onBlock(e.data);
       };
     } catch (e) {
+      if (input) input.disconnect();
+      if (capture) capture.disconnect();
       stream.getTracks().forEach((t) => t.stop());
       stream = null;
-      c.close();
-      ctx = null;
+      // A reused context may be playing a take back: only a new one is closed.
+      if (c !== ctx) c.close();
+      else if (!playing) c.suspend().catch(() => {});
       throw e;
     }
     ctx = c;
+    node = capture;
+    source = input;
   };
   // Starting a recording, once however fast Record is pressed: a second press
   // while the first is still opening the microphone would build a second
@@ -417,22 +428,21 @@
     if (stopping) return;
     stopping = true;
     show();
-    await stopAudio();
-    clearInterval(clock);
-    $('voice-talk-meter').value = 0;
     try {
-      await flush();
+      await stopAudio();
     } finally {
-      stopping = false;
+      clearInterval(clock);
+      $('voice-talk-meter').value = 0;
+      try {
+        await flush();
+      } finally {
+        stopping = false;
+        show();
+      }
+      if (talking && !talking.chunks.length) talking = null;
+      $('voice-talk-rec').textContent = talking ? 'Save again' : 'Start'; // a kept part is still only in memory
       show();
     }
-    if (talking && talking.chunks.length) {
-      $('voice-talk-rec').textContent = 'Save again'; // the last part is still only in memory
-      return;
-    }
-    talking = null;
-    $('voice-talk-rec').textContent = 'Start';
-    show();
   };
   $('voice-talk-rec').addEventListener('click', () => (talking ? talkStop() : talkStart()));
 
