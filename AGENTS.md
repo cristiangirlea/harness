@@ -108,6 +108,7 @@ machines. See `CONTRIBUTING.md` for CI and release details.
   `filepath.EvalSymlinks`. Files are LF (`.gitattributes`).
 - Secrets are never read, printed or committed. Small diffs: don't restyle what you didn't change.
   Not sure? Ask, with one proposal.
+
 ## Scripts
 - Index first: run a fitting script; add a parameter if it almost fits.
 - Keep scripts you would run twice or that exceed ten lines.
@@ -119,11 +120,17 @@ machines. See `CONTRIBUTING.md` for CI and release details.
 - Compose by calling scripts, never copying their code.
 <!-- scripts index: start -->
 - `scripts/answers.go`: Provide JSON test summaries and bounded TCP probes for Bash entry points.
+- `scripts/answers_test.go`: Check that TCP probes stay within the wait deadline.
 - `scripts/api-check.sh`: Exercise real API runs, continuation and context editing at the owner's expense. (not verified: spends money)
 - `scripts/check.sh`: Run the check skill commands in order, stopping on failure.
 - `scripts/comment-check.sh`: Check Go comments against the repository rule and baseline.
+- `scripts/comment-check/main.go`: Check Go comments against the repository rule and baseline.
+- `scripts/comment-check/main_test.go`: Check comment rules, baseline comparison and pruning in fixtures.
 - `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
 - `scripts/tool-shapes.sh`: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
+- `scripts/tool-shapes/defs.go`: Measure the api loop's tool definitions against the recorded context per model call.
+- `scripts/tool-shapes/main.go`: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
+- `scripts/tool-shapes/main_test.go`: Check tool shape classification, normalisation and record accounting.
 - `scripts/verify.sh`: Run kept examples and synchronize script hashes and the AGENTS index. (not verified: the runner)
 - `scripts/verify_test.sh`: Test verifier stamping, exclusions, errors and read-only checks in fixtures.
 - `scripts/wait-for.sh`: Wait for a TCP port with a bounded timeout.

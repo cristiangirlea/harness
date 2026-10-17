@@ -70,7 +70,12 @@ repetitions; a nonempty list with no enabled entries is refused.
 At a usage limit the carry-on partner is the first other installed enabled backend
 in preference order, subject to the existing readiness and billing checks. With no
 preference, the claude/codex pairing is unchanged. With no ready enabled partner,
-the run stays limited. `--no-switch` still disables carry-on.
+the run stays limited. `--no-switch` still disables carry-on. A limited run with
+retrieval on is not carried on when its chain's latest retrieval pin was recorded on
+another backend than the partner (usually the limited one): the partner would resolve
+a new knowledge version, so the run stays limited and hrn prints the refusal, naming
+the pinned run and version (see
+[Continuing a run](#continuing-a-run)).
 
 The `agy` adapter sends one `{"event":"user","message":{"content":"..."}}` line on
 stdin with `--input-format stream-json --output-format stream-json`, which selects
@@ -302,6 +307,14 @@ backend saved nothing: a run from before session ids were recorded, a gemini run
 api history that ended on a tool call the model never got an answer for, which the API
 refuses to resume from. Batch attempts save their conversations too, so a failed attempt
 can be picked up by hand.
+
+A retrieval pin stays with the backend that recorded it. Continuing a chain whose
+latest pin (`--retrieval`) was recorded on another backend refuses an opt-in on the new
+one before anything runs, since that would resolve a new knowledge version: the message
+names the pinned run and version. Continue on the pin's backend to keep it, or start a
+fresh run to retrieve again. With retrieval off (`--retrieval off` or not set, and
+always over `hrn exec`, which takes no retrieval option) the follow-up on another backend
+gets the transcript hand-over as usual. The MCP `run` tool follows the same rule.
 
 Thinking blocks belong to the model that produced them. Continuing an api conversation
 on a different model is allowed and warned about: the API serves it without the earlier

@@ -137,24 +137,31 @@ func TestTwoBatchesInARowReuseTheSlotAndKeepItsBuildOutput(t *testing.T) {
 func TestParallelTasksGetASlotEachAndTheirBranchesMerge(t *testing.T) {
 	dir := initRepo(t)
 	// Both agents work at once, so each needs a slot of its own.
+	// A task holds its slot until the other arrives too, or until one waits
+	// or ends without arriving, which fails the test rather than hang it.
 	var mu sync.Mutex
 	arrived := 0
 	both := make(chan struct{})
+	release := sync.OnceFunc(func() { close(both) })
 	setHook(t, func(task agent.Task) {
 		name := strings.Fields(typed(task))[0]
 		writeFile(t, filepath.Join(task.Dir, name+".txt"), name+"\n")
 		mu.Lock()
 		if arrived++; arrived == 2 {
-			close(both)
+			release()
 		}
 		mu.Unlock()
-		select {
-		case <-both:
-		case <-time.After(10 * time.Second):
+		<-both
+	})
+	res, err := Run(context.Background(), Spec{Dir: dir, Parallel: 2, Backend: "wb-hook",
+		Tasks: []Task{{ID: "alpha", Prompt: "alpha"}, {ID: "beta", Prompt: "beta"}}}, func(e Event) {
+		if e.Kind == "wait" || e.Kind == "done" {
+			release()
 		}
 	})
-	res, _ := run(t, Spec{Dir: dir, Parallel: 2, Backend: "wb-hook",
-		Tasks: []Task{{ID: "alpha", Prompt: "alpha"}, {ID: "beta", Prompt: "beta"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	slots := map[int]bool{}
 	for _, tr := range res.Tasks {
 		if tr.Status != StatusPass {
@@ -277,28 +284,33 @@ func TestABatchRunsBesideSlotsSessionsHoldWithoutWaiting(t *testing.T) {
 	}
 	var mu sync.Mutex
 	arrived := 0
+	// A task holds its slot until the other arrives too, or until one waits
+	// or ends without arriving, which fails the test rather than hang it.
 	both := make(chan struct{})
+	release := sync.OnceFunc(func() { close(both) })
 	setHook(t, func(agent.Task) {
 		mu.Lock()
 		if arrived++; arrived == 2 {
-			close(both)
+			release()
 		}
 		mu.Unlock()
-		select {
-		case <-both:
-		case <-time.After(10 * time.Second):
+		<-both
+		mu.Lock()
+		defer mu.Unlock()
+		if arrived != 2 {
 			t.Error("the two tasks did not run at once")
 		}
 	})
 	var waits []string
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	res, err := Run(ctx, Spec{Dir: dir, Parallel: 2, Backend: "wb-hook",
+	res, err := Run(context.Background(), Spec{Dir: dir, Parallel: 2, Backend: "wb-hook",
 		Tasks: []Task{{ID: "alpha", Prompt: "a"}, {ID: "beta", Prompt: "b"}}}, func(e Event) {
 		if e.Kind == "wait" {
 			mu.Lock()
 			waits = append(waits, e.Text)
 			mu.Unlock()
+		}
+		if e.Kind == "wait" || e.Kind == "done" {
+			release()
 		}
 	})
 	if err != nil {
@@ -593,12 +605,7 @@ func TestATaskFailsRatherThanWaitForSlotsOnlyItsBatchKept(t *testing.T) {
 	for i := range ws.DefaultMax + 1 {
 		tasks = append(tasks, Task{ID: "t" + strconv.Itoa(i+1), Prompt: "p"})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: tasks}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	res := runWithoutWaits(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: tasks}, nil)
 	last := res.Tasks[len(res.Tasks)-1]
 	if last.Status != StatusError || !strings.Contains(last.Error, "already holds 5 slots") || !strings.Contains(last.Error, "none will come free") {
 		t.Fatalf("last task = %s: %s", last.Status, last.Error)
@@ -608,16 +615,17 @@ func TestATaskFailsRatherThanWaitForSlotsOnlyItsBatchKept(t *testing.T) {
 	}
 }
 
+// The eleventh task may find the other ten still running and wait for them;
+// once their slots are all kept it fails, since none will come free.
 func TestParallelAboveTenNeverTakesSlotEleven(t *testing.T) {
 	dir := initRepo(t)
+	quickPoll(t)
 	failCommits(t, dir)
 	var tasks []Task
 	for i := range 11 {
 		tasks = append(tasks, Task{ID: "t" + strconv.Itoa(i+1), Prompt: "p"})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	res, err := Run(ctx, Spec{Dir: dir, Parallel: 12, Backend: "wb-ok", Tasks: tasks}, nil)
+	res, err := Run(context.Background(), Spec{Dir: dir, Parallel: 12, Backend: "wb-ok", Tasks: tasks}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -699,6 +707,31 @@ func leaseHolder(t *testing.T, dir string, n int) (ws.Lease, bool) {
 	return l, true
 }
 
+// runWithoutWaits runs a batch in which no slot a task finds can come free, so
+// a wait would never end: the first one fails the test and cancels the batch,
+// which is otherwise given all the time it takes.
+func runWithoutWaits(t *testing.T, spec Spec, notify func(Event)) Result {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var once sync.Once
+	res, err := Run(ctx, spec, func(e Event) {
+		if e.Kind == "wait" {
+			once.Do(func() {
+				t.Errorf("%s waited, though nothing could come free: %s", e.Task, e.Text)
+				cancel()
+			})
+		}
+		if notify != nil {
+			notify(e)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
 // A session's slot never comes free while a batch runs, and neither do the
 // slots the batch kept: a task that finds only those fails at once rather
 // than wait for a lease no one will give back.
@@ -711,17 +744,7 @@ func TestATaskFailsRatherThanWaitOnASessionOnceItsBatchHoldsItsBound(t *testing.
 	for i := range ws.DefaultMax + 1 {
 		tasks = append(tasks, Task{ID: "t" + strconv.Itoa(i+1), Prompt: "p"})
 	}
-	var waits []string
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: tasks}, func(e Event) {
-		if e.Kind == "wait" {
-			waits = append(waits, e.Text)
-		}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	res := runWithoutWaits(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: tasks}, nil)
 	for _, tr := range res.Tasks[:ws.DefaultMax] {
 		if tr.Status != StatusError || tr.Slot < 2 || tr.Slot > ws.DefaultMax+1 || !strings.Contains(tr.Error, "kept") {
 			t.Errorf("%s = %+v, want a kept slot past the session's", tr.ID, tr)
@@ -730,9 +753,6 @@ func TestATaskFailsRatherThanWaitOnASessionOnceItsBatchHoldsItsBound(t *testing.
 	last := res.Tasks[ws.DefaultMax]
 	if last.Status != StatusError || !strings.Contains(last.Error, "already holds 5 slots") {
 		t.Errorf("last task = %s: %s, want it to fail on the batch's bound", last.Status, last.Error)
-	}
-	if len(waits) != 0 {
-		t.Errorf("nothing could come free, so the task should not have waited: %q", waits)
 	}
 }
 
@@ -750,9 +770,7 @@ func TestABatchHoldsNoMoreThanItsBoundWhenSessionsFreeTheirSlots(t *testing.T) {
 	for i := range 2 * ws.DefaultMax {
 		tasks = append(tasks, Task{ID: "t" + strconv.Itoa(i+1), Prompt: "p"})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: tasks}, func(e Event) {
+	res := runWithoutWaits(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok", Tasks: tasks}, func(e Event) {
 		if e.Kind == "done" && e.Task == "t"+strconv.Itoa(ws.DefaultMax) {
 			for n := 1; n <= ws.DefaultMax; n++ { // as hrn ws free does
 				if err := os.Remove(filepath.Join(dir, ".hrn", "slots", strconv.Itoa(n)+".lease")); err != nil {
@@ -761,9 +779,6 @@ func TestABatchHoldsNoMoreThanItsBoundWhenSessionsFreeTheirSlots(t *testing.T) {
 			}
 		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, tr := range res.Tasks[:ws.DefaultMax] {
 		if tr.Status != StatusError || tr.Slot <= ws.DefaultMax || !strings.Contains(tr.Error, "kept") {
 			t.Errorf("%s = %+v, want a kept slot past the sessions'", tr.ID, tr)
@@ -861,28 +876,39 @@ func TestATaskAtTheBatchsBoundWaitsForItsRunningTasksNotItsKeptSlots(t *testing.
 	failCommits(t, dir, "hrn/t1")
 	var mu sync.Mutex
 	var waits []string
+	// t2 to t5 hold their slots until t6 has waited on them, or has ended
+	// without waiting, which the checks below then fail on rather than hang.
+	// t1 ends only once t2 to t5 are in the hook, so t6, which starts when t1
+	// ends, finds every slot of the batch taken.
 	t6Waited := make(chan struct{})
+	waited := sync.OnceFunc(func() { close(t6Waited) })
+	inHook := make(chan struct{}, ws.DefaultMax-1)
 	setHook(t, func(task agent.Task) {
 		writeFile(t, filepath.Join(task.Dir, "out.txt"), "ok\n")
-		if strings.HasPrefix(typed(task), "t1") {
-			return // its commit fails, so its slot is kept
+		switch {
+		case strings.HasPrefix(typed(task), "t1"):
+			for range ws.DefaultMax - 1 {
+				<-inHook
+			}
+			return // t1's commit fails, so its slot is kept
+		case strings.HasPrefix(typed(task), "t6"):
+			return
 		}
-		select {
-		case <-t6Waited:
-		case <-time.After(10 * time.Second):
-			t.Error("t6 did not wait for a running task's slot")
-		}
+		inHook <- struct{}{}
+		<-t6Waited
 	})
 	tasks := []Task{{ID: "t1", Prompt: "t1"}, {ID: "t2", Prompt: "t2"}, {ID: "t3", Prompt: "t3"}, {ID: "t4", Prompt: "t4"}, {ID: "t5", Prompt: "t5"}, {ID: "t6", Prompt: "t6"}}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	var once sync.Once
-	res, err := Run(ctx, Spec{Dir: dir, Parallel: ws.DefaultMax, Backend: "wb-hook", Tasks: tasks}, func(e Event) {
-		if e.Kind == "wait" && e.Task == "t6" {
+	res, err := Run(context.Background(), Spec{Dir: dir, Parallel: ws.DefaultMax, Backend: "wb-hook", Tasks: tasks}, func(e Event) {
+		if e.Task != "t6" {
+			return
+		}
+		if e.Kind == "wait" {
 			mu.Lock()
 			waits = append(waits, e.Text)
 			mu.Unlock()
-			once.Do(func() { close(t6Waited) })
+		}
+		if e.Kind == "wait" || e.Kind == "done" {
+			waited()
 		}
 	})
 	if err != nil {
@@ -1073,11 +1099,11 @@ func quickUnreadableWait(t *testing.T) time.Duration {
 }
 
 // runStuck runs a batch of one task against slots the test filled, and
-// returns the task once it gave up, checking it did so after the bound and
-// before the context ends, with no slot, no attempt and no branch.
+// returns the task once it gave up, checking it did so after the bound with
+// no slot, no attempt and no branch.
 func runStuck(t *testing.T, dir string, bound time.Duration) TaskResult {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	started := time.Now()
 	res, err := Run(ctx, Spec{Dir: dir, Parallel: 1, Backend: "wb-ok",
@@ -1196,7 +1222,7 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 			<-rewritten
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var res Result
 	done := make(chan error, 1)
@@ -1254,7 +1280,6 @@ func TestATaskKeepsWaitingOnALeaseBeingWrittenThatBecomesValid(t *testing.T) {
 // first.
 func awaitWait(t *testing.T, waits <-chan string, done <-chan error, text string) {
 	t.Helper()
-	deadline := time.After(10 * time.Second)
 	for {
 		select {
 		case w := <-waits:
@@ -1263,8 +1288,6 @@ func awaitWait(t *testing.T, waits <-chan string, done <-chan error, text string
 			}
 		case err := <-done:
 			t.Fatalf("the take ended with %v before it waited saying %q", err, text)
-		case <-deadline:
-			t.Fatalf("no wait said %q", text)
 		}
 	}
 }
@@ -1306,7 +1329,7 @@ func TestATasksWaitOnUnreadableLeasesStartsOverAfterAWaitAtTheBatchsBound(t *tes
 		}
 	}
 	t.Cleanup(func() { rangeComputed = nil })
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
@@ -1327,19 +1350,14 @@ func TestATasksWaitOnUnreadableLeasesStartsOverAfterAWaitAtTheBatchsBound(t *tes
 	again := time.Now()
 	counting.Store(true)
 	broken()
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "could not be read") {
-			t.Fatalf("err = %v, want the task to give up on the unreadable leases", err)
-		}
-		if since := time.Since(again); since < bound {
-			t.Errorf("the task gave up %s after the leases were unreadable again, before the %s bound", since, bound)
-		}
-		if n := scans.Load(); n < 2 {
-			t.Errorf("the task gave up after %d look at the leases unreadable again, want the clocks set by one look and run out at a later one", n)
-		}
-	case <-ctx.Done():
-		t.Fatal("the task did not give up on the unreadable leases")
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("err = %v, want the task to give up on the unreadable leases", err)
+	}
+	if since := time.Since(again); since < bound {
+		t.Errorf("the task gave up %s after the leases were unreadable again, before the %s bound", since, bound)
+	}
+	if n := scans.Load(); n < 2 {
+		t.Errorf("the task gave up after %d look at the leases unreadable again, want the clocks set by one look and run out at a later one", n)
 	}
 	if b := git(t, dir, "branch", "--list", "hrn/t"); b != "" {
 		t.Errorf("a task that never got a slot leaves no branch: %q", b)

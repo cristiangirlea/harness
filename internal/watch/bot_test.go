@@ -597,3 +597,109 @@ func TestTheBotIsReachableFromTheIndex(t *testing.T) {
 		t.Error("the index does not link to the bot")
 	}
 }
+
+// A phone on the network hears and sees Ada with the paths shortened as the
+// run's own page shows them: the workspace as ".", the home as "~".
+func TestALANViewerOfTheBotSeesNoFullWorkspaceOrHomePath(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	home, ws := filepath.Join(t.TempDir(), "Jane Doe"), t.TempDir()
+	if err := os.Mkdir(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	h := New(t.Context(), Options{Poll: 20 * time.Millisecond, LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Host, r.RemoteAddr = "192.168.1.20:8089", "192.168.1.50:6000"
+		h.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	leaks := func(where, text string) {
+		t.Helper()
+		for _, full := range []string{ws, home, filepath.ToSlash(ws), filepath.ToSlash(home)} {
+			if strings.Contains(text, full) {
+				t.Fatalf("%s shows the full path %s: %q", where, full, text)
+			}
+		}
+	}
+
+	s, closeStream := openStream(t, srv.URL+"/stream/bot", "")
+	defer closeStream()
+	nextSay(t, s)
+	w, err := runlog.Create("claude", agent.Task{Prompt: "Fix " + filepath.Join(ws, "main.go") + " from " + filepath.Join(home, "notes.txt"), Dir: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var said []string
+	for {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("the stream ended")
+		}
+		leaks("the stream's "+m.event, m.data)
+		if m.event == "say" {
+			var v say
+			_ = json.Unmarshal([]byte(m.data), &v)
+			leaks("a sentence", v.Text)
+			said = append(said, v.Text)
+			if v.Kind == "started" {
+				break
+			}
+		}
+	}
+	if want := "fix ." + string(filepath.Separator) + "main.go" + " from " + filepath.Join("~", "notes.txt"); !strings.Contains(said[len(said)-1], want) {
+		t.Errorf("started: %q, want it to say %q", said[len(said)-1], want)
+	}
+	_, body := get(t, srv.URL+"/bot")
+	leaks("the bot page", body)
+
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Edit", Text: filepath.Join(home, "f.go")})
+	for {
+		m := nextSay(t, s)
+		leaks("a sentence", m.Text)
+		if m.Kind == "working" {
+			if !strings.Contains(m.Text, "editing f.go") {
+				t.Errorf("working: %q, want it to say editing f.go", m.Text)
+			}
+			break
+		}
+	}
+
+	if err := w.Close(agent.Result{Status: agent.StatusError, Error: "open " + filepath.Join(ws, "main.go") + ": denied", Duration: time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	b := batch.Result{ID: "20261011-120000-dddddd", Started: time.Now(), Dir: ws, Tasks: []batch.TaskResult{
+		{ID: "t1", Prompt: "Tidy " + filepath.Join(home, "notes.txt"), Status: batch.StatusRunning},
+		{ID: "t2", Prompt: "Wait", Status: batch.StatusRunning}}}
+	if err := batch.SaveResult(b); err != nil {
+		t.Fatal(err)
+	}
+	var ended, task bool
+	for !ended || !task {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("the stream ended")
+		}
+		leaks("the stream's "+m.event, m.data)
+		if m.event != "say" {
+			continue
+		}
+		var v say
+		_ = json.Unmarshal([]byte(m.data), &v)
+		leaks("a sentence", v.Text)
+		switch {
+		case v.Kind == "failed":
+			ended = true
+		case v.Kind == "started" && v.Ref == b.ID:
+			b.Tasks[0].Status = batch.StatusPass
+			if err := batch.SaveResult(b); err != nil {
+				t.Fatal(err)
+			}
+		case v.Kind == "task":
+			task = true
+			if want := "tidy " + filepath.Join("~", "notes.txt"); !strings.Contains(v.Text, want) {
+				t.Errorf("task: %q, want it to say %q", v.Text, want)
+			}
+		}
+	}
+}

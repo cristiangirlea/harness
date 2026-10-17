@@ -623,9 +623,12 @@ func (b *botWatcher) look() botSnapshot {
 		b.late = unread(batches)
 	}
 	b.looked = true
+	// Shortened as the run's and batch's own pages are, for every viewer.
+	vw := viewer{home: b.s.home, system: b.s.system}
 	going := map[string]bool{}
 	for i, rec := range runs {
-		runs[i] = b.s.cleanRecord(rec)
+		sh := vw.shortener(rec.Task.Dir)
+		runs[i] = sh.record(b.s.cleanRecord(rec))
 		if rec.Done || !runStopped(rec).IsZero() {
 			continue // a stopped run is picked up again if it writes again
 		}
@@ -641,8 +644,8 @@ func (b *botWatcher) look() botSnapshot {
 		lines, _, _, _ := f.Poll()
 		for _, l := range lines {
 			if l.Err == nil && l.Event.Kind == agent.EventToolCall {
-				e := b.s.cleanEvent(l.Event)
-				b.doing[rec.ID] = activity(e.Tool, unwrapCommand(e.Text))
+				e := sh.event(b.s.cleanEvent(l.Event))
+				b.doing[rec.ID] = activity(e.Tool, e.Text)
 			}
 		}
 	}
@@ -651,6 +654,9 @@ func (b *botWatcher) look() botSnapshot {
 			delete(b.followers, id)
 			delete(b.doing, id)
 		}
+	}
+	for i, res := range batches {
+		batches[i] = vw.batch(res) // listBatches cleaned them already
 	}
 	b.batches = keepUnread(b.batches, batches, unreadable, b.missed)
 	return botLook(runs, b.batches, b.doing, time.Now())

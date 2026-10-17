@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true; --definitions:bool=false
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 68520ed1cd80387054c12ee6a7371bd65c83b80ea444e42059a31220b2459c47
+// hash: 128d060e01c141fbd10a62a381f88a78753f88e10835c26473a73f02c04bc9ee
 package main
 
 import (
@@ -35,7 +35,7 @@ func shellTool(tool string) bool {
 
 func classify(text, tool string) string {
 	text = strings.TrimSpace(text)
-	if testLine.MatchString(text) {
+	if testLine.MatchString(text) || testEvents(text) {
 		return "test"
 	}
 	if logLine.MatchString(text) {
@@ -58,6 +58,24 @@ func classify(text, tool string) string {
 	return "other"
 }
 
+// testEvents reports `go test -json` output: every non-empty line is an object with an Action.
+func testEvents(text string) bool {
+	found := false
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var e struct{ Action *string }
+		if json.Unmarshal([]byte(line), &e) != nil || e.Action == nil {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+var inlineLabels = []string{"heredoc", "python", "node", "perl", "go"}
 var interpreter = regexp.MustCompile(`(?:^\s*|[;|&\n]\s*|\b(?:sudo|env)\s+)(python3?|node|perl)\s+(-c|-e)(?:\s|$)`)
 var goTemp = regexp.MustCompile(`(?i)(?:^\s*|[;|&\n]\s*)go\s+run\s+["']?(?:[^\s"']*[/\\](?:tmp|temp)[/\\]|\$\{?TMPDIR\}?[/\\]|\$\{?TEMP\}?[/\\]|%TEMP%[/\\])[^\s"']*\.go\b`)
 
@@ -112,6 +130,7 @@ type group struct {
 type stats struct {
 	Shapes                []shape  `json:"shapes"`
 	InlineScripts         []group  `json:"inline_scripts"`
+	InlineTotals          []group  `json:"inline_script_totals"`
 	ToolResultBytes       int64    `json:"tool_result_bytes"`
 	InputTokens           int64    `json:"input_plus_cache_read_tokens"`
 	InlineBytes           int64    `json:"inline_script_bytes"`
@@ -153,6 +172,9 @@ func newStats() *stats {
 	s := &stats{InlineScripts: []group{}, groups: map[string]*group{}}
 	for _, name := range shapeNames {
 		s.Shapes = append(s.Shapes, shape{Shape: name})
+	}
+	for _, name := range inlineLabels {
+		s.InlineTotals = append(s.InlineTotals, group{Shape: name})
 	}
 	return s
 }
@@ -277,6 +299,16 @@ func (s *stats) add(events []event, tokens *int64, turns int) {
 			if !seen[key] {
 				g.Runs++
 				seen[key] = true
+			}
+			for i := range s.InlineTotals {
+				if total := &s.InlineTotals[i]; total.Shape == label {
+					total.Count++
+					total.Bytes += int64(len(command))
+					if !seen[label] {
+						total.Runs++
+						seen[label] = true
+					}
+				}
 			}
 		}
 	}

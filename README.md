@@ -84,6 +84,7 @@ hrn show -f <run-id>      # follow a run live
 | Score tasks or compare models | [Evaluations and reports](docs/evaluations.md) |
 | Inspect or prune saved data | [Run records](docs/run-records.md) |
 | Integrate hrn with a supervising program | [Exec protocol](docs/exec-protocol.md) |
+| Find, write or verify a kept script | [Kept scripts](docs/scripts.md) |
 
 ## Permissions and privacy
 
