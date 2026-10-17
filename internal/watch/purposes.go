@@ -25,6 +25,10 @@ type purposeRow struct {
 	Cost, NoCost          string
 }
 
+// maxRunUSD is more than any one run costs: a larger CostUSD is a corrupted
+// record, and would overflow the sum in 1e-8 USD units.
+const maxRunUSD = 1e6
+
 // purposeSum adds up the runs of one row.
 type purposeSum struct {
 	runs, running, noCost int
@@ -50,7 +54,7 @@ func (s *purposeSum) add(rec runlog.Record) {
 	} else if res.Usage == nil {
 		s.tokens += res.InputTokens + res.OutputTokens + res.CacheRead + res.CacheWrite
 	}
-	if res.CostUSD <= 0 {
+	if res.CostUSD <= 0 || res.CostUSD > maxRunUSD {
 		s.noCost++
 		return
 	}
@@ -72,6 +76,8 @@ func (s purposeSum) row(name string) purposeRow {
 	}
 	if s.noCost > 0 {
 		r.Cost = "≥ " + lowerBound(s.usd, s.estimate)
+	} else if s.usd == 0 {
+		r.Cost = lowerBound(0, s.estimate) // known, only too small to round to a unit
 	} else {
 		r.Cost = cost(float64(s.usd)/1e8, s.estimate)
 	}

@@ -53,7 +53,9 @@ file-modification-time rule as `runs prune`, not the timestamp of an event or
 the run's age. With no transcript, the run directory's modification time is used.
 An unfinished batch is stopped only when its record and all its attempts' runs
 have been quiet for an hour. A first attempt can run for hours without rewriting
-the batch record and still count as running while its transcript is written to.
+the batch record and still count as running while its transcript is written to;
+a gate writes nothing itself, so `hrn batch` saves the record again every ten
+minutes while one runs.
 Stopped tasks and unfinished attempts show as stopped too; the running clock ends.
 Open pages update to stopped through their streams. Reload a stopped page to see
 later activity if the writer resumes.
@@ -62,7 +64,8 @@ This is a display inference, not a saved result: watch never rewrites or deletes
 records, and a saved result still determines how a run ended. An unreadable
 modification time alone is not evidence that a writer stopped. Ada excludes stopped
 records from what is going and does not announce them as starting or finished; she stops
-reading a stopped run's transcript and picks it up again if the run writes again.
+reading a stopped run's transcript and picks it up again, from where it stopped, if the
+run writes again: what it did before is not said again as what it is doing.
 
 Each run on the index also says what it was for (review, debug, implement, refactor, test,
 research, plan, ops or unknown), from `internal/purpose`'s keyword rules on its prompt's
@@ -78,7 +81,9 @@ tokens (input, output, cache reads and writes, counted once) and known cost.
 That cost is honest about what it does not know. codex and gemini report no cost; such a
 run is left out of the sum, not counted as $0. A row whose finished runs all reported a
 cost shows their sum; a row where some did not shows "≥ $X", a lower bound over those that
-did, with how many runs report no cost under it; a row where none did shows "-". A sum
+did, with how many runs report no cost under it; a row where none did shows "-". A known
+cost too small to round still shows "$0.0000", and a cost above $1,000,000 (only a corrupted
+record holds one) counts as no cost reported. A sum
 that includes the api backend's estimate keeps its `~`. Running runs count only as
 running: they have no cost yet, known or unknown. A stopped run still counts towards
 the number of runs, but not the running count or the count of finished runs with no
@@ -238,7 +243,8 @@ agent is doing" comes from its latest tool call (reading, editing, searching, ru
 command and the like), across the backends' different tool names. Ada opens quietly:
 what ended before it was opened is not news, and the first thing it says is what is going.
 A batch whose record could not be read on that first look (caught mid-save) is not
-announced as new when it reads.
+announced as new when it reads, but its ending is if it ended after Ada opened. A batch
+whose record cannot be read for a look is kept as it was while its file is on disk.
 A batch's own runs are told as the batch's, not twice.
 
 Talk to me listens for one sentence each time it is pressed: "status" (or "what are you
