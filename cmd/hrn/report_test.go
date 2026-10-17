@@ -15,7 +15,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-func TestReportCostCells(t *testing.T) {
+func TestReportCostCellsKeepAKnownZeroAndCountMissingCosts(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		results       []agent.Result

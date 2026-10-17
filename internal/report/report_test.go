@@ -147,7 +147,7 @@ func TestContextFromTotalsCombinesBackendSemantics(t *testing.T) {
 	}
 }
 
-func TestRowsKnownCost(t *testing.T) {
+func TestRowsLeaveUnknownCostsOutOfTotalsAndMedians(t *testing.T) {
 	result := func(cost float64, status string, estimate bool) agent.Result {
 		return agent.Result{CostUSD: cost, CostEstimate: estimate, Usage: &agent.UsageMetadata{CostStatus: status}}
 	}
@@ -532,6 +532,9 @@ func TestFormatting(t *testing.T) {
 	}
 	if Money(0, true) != "-" || Money(1.034, false) != "$1.03" || Money(1.034, true) != "~$1.03" || Money(0.0042, false) != "$0.0042" {
 		t.Errorf("Money: %q %q %q %q", Money(0, true), Money(1.034, false), Money(1.034, true), Money(0.0042, false))
+	}
+	if KnownMoney(0, false, true) != "-" || KnownMoney(0, true, false) != "$0.00" || KnownMoney(0, true, true) != "~$0.00" || KnownMoney(1.034, true, true) != "~$1.03" || KnownMoney(0.0042, true, false) != "$0.0042" {
+		t.Errorf("KnownMoney: %q %q %q %q %q", KnownMoney(0, false, true), KnownMoney(0, true, false), KnownMoney(0, true, true), KnownMoney(1.034, true, true), KnownMoney(0.0042, true, false))
 	}
 	if Number(9) != "9" || Number(6.5) != "6.5" {
 		t.Error("Number")

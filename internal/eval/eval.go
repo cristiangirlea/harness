@@ -209,20 +209,33 @@ type VariantRow struct {
 	Passed   int    `json:"passed"`
 	// Unchanged counts the passes that committed nothing: right for "find
 	// the bug, if any", suspicious for "fix the typos".
-	Unchanged      int            `json:"passed_unchanged,omitempty"`
-	Statuses       map[string]int `json:"statuses"` // run status histogram
-	MedianCostUSD  float64        `json:"median_cost_usd"`
-	TotalCostUSD   float64        `json:"total_cost_usd"`
-	CostEstimate   bool           `json:"cost_is_estimate,omitempty"`
-	MedianDuration time.Duration  `json:"median_duration_ns"`
-	MedianTurns    float64        `json:"median_turns"`
-	MedianTools    float64        `json:"median_tool_calls"`
+	Unchanged     int            `json:"passed_unchanged,omitempty"`
+	Statuses      map[string]int `json:"statuses"` // run status histogram
+	MedianCostUSD float64        `json:"median_cost_usd"`
+	TotalCostUSD  float64        `json:"total_cost_usd"`
+	CostEstimate  bool           `json:"cost_is_estimate,omitempty"`
+	// CellsWithoutCost counts cells whose cost is unknown; the total and
+	// median cover the rest.
+	CellsWithoutCost int `json:"cells_without_cost,omitempty"`
+	// CostCounted marks rows Summarize counted; older rows lack it and fall back to the median.
+	CostCounted    bool          `json:"cost_counted,omitempty"`
+	MedianDuration time.Duration `json:"median_duration_ns"`
+	MedianTurns    float64       `json:"median_turns"`
+	MedianTools    float64       `json:"median_tool_calls"`
 	// MedianContext counts every input token once, cached or not: what the
 	// model was given, not what was billed at full rate.
 	MedianContext float64 `json:"median_context_tokens"`
 	// Judged counts the cells the judge scored; MeanScore is their mean, 0-10.
 	Judged    int     `json:"judged,omitempty"`
 	MeanScore float64 `json:"mean_score,omitempty"`
+}
+
+// CostKnown reports whether any cell of the variant has a known cost.
+func (v VariantRow) CostKnown() bool {
+	if !v.CostCounted {
+		return v.MedianCostUSD != 0
+	}
+	return v.Attempts > v.CellsWithoutCost
 }
 
 // PassRate is the share of cells that passed, as a share of attempts.
@@ -259,19 +272,24 @@ type Table struct {
 }
 
 // Totals sums the whole eval: cells run, cells passed, and what it cost,
-// judge included, with whether any of that cost is an estimate.
-func (r Record) Totals() (cells, passed int, costUSD float64, estimate bool) {
+// judge included, with whether any cost is known or an estimate and how many
+// cells' costs are unknown.
+func (r Record) Totals() (cells, passed int, costUSD float64, known, estimate bool, withoutCost int) {
 	costUSD = r.JudgeCostUSD
+	known = r.JudgeCostUSD != 0
 	for _, v := range r.Table.Variants {
 		cells += v.Attempts
 		passed += v.Passed
 		costUSD += v.TotalCostUSD
+		// An old row's zero median can hide a costed cell; a non-zero total cannot.
+		known = known || v.CostKnown() || v.TotalCostUSD != 0
 		estimate = estimate || v.CostEstimate
+		withoutCost += v.CellsWithoutCost
 	}
 	for _, j := range r.Judgements {
 		estimate = estimate || j.CostEstimate
 	}
-	return cells, passed, costUSD, estimate
+	return cells, passed, costUSD, known, estimate, withoutCost
 }
 
 // Record is one eval, saved under $HRN_HOME/evals.
@@ -371,10 +389,16 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				total += c.score
 			}
 			status := "no-attempt"
+			costKnown := false
 			if n := len(c.tr.Attempts); n > 0 {
 				a := c.tr.Attempts[n-1]
 				status = string(a.Result.Status)
-				costs = append(costs, a.Result.CostUSD)
+				if cost, known, estimated := a.Result.KnownCost(); known {
+					costKnown = true
+					costs = append(costs, cost)
+					row.TotalCostUSD += cost
+					row.CostEstimate = row.CostEstimate || estimated
+				}
 				turns = append(turns, float64(a.Result.Turns))
 				calls = append(calls, float64(a.Result.ToolCalls))
 				r := a.Result
@@ -384,13 +408,15 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				if total, known, _ := r.ModelTokens(); known {
 					inputs = append(inputs, float64(total-r.OutputTokens))
 				}
-				row.TotalCostUSD += a.Result.CostUSD
-				row.CostEstimate = row.CostEstimate || a.Result.CostEstimate
+			}
+			if !costKnown {
+				row.CellsWithoutCost++
 			}
 			row.Statuses[status]++
 			durations = append(durations, float64(c.tr.Duration))
 		}
 		row.MedianCostUSD = report.Median(costs)
+		row.CostCounted = true
 		row.MedianDuration = time.Duration(report.Median(durations))
 		row.MedianTurns = report.Median(turns)
 		row.MedianTools = report.Median(calls)

@@ -887,7 +887,7 @@ func printEval(r *renderer, rec eval.Record) {
 	for _, v := range rec.Table.Variants {
 		line := fmt.Sprintf("  %-20s %6s %9d %12s %10s %7s %7s %9s",
 			v.Name, report.Share(v.PassRate()), v.Attempts,
-			report.Money(v.MedianCostUSD, v.CostEstimate),
+			report.KnownMoney(v.MedianCostUSD, v.CostKnown(), v.CostEstimate),
 			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns),
 			report.Number(v.MedianTools), report.Number(v.MedianContext))
 		if judged {
@@ -904,6 +904,9 @@ func printEval(r *renderer, rec eval.Record) {
 		}
 		if v.Unchanged > 0 {
 			notes = append(notes, fmt.Sprintf("%d of %d passes changed nothing", v.Unchanged, v.Passed))
+		}
+		if v.CellsWithoutCost > 0 {
+			notes = append(notes, fmt.Sprintf("%d of %d cells without a cost", v.CellsWithoutCost, v.Attempts))
 		}
 		if len(notes) > 0 {
 			r.Line(r.c(dim, "  "+strings.Repeat(" ", 20)+strings.Join(notes, " · ")))
@@ -940,7 +943,7 @@ func printEval(r *renderer, rec eval.Record) {
 		}
 	}
 
-	cells, _, _, _ := rec.Totals()
+	cells, _, _, _, _, _ := rec.Totals()
 	if judged {
 		failed, estimate := 0, false
 		for _, j := range rec.Judgements {

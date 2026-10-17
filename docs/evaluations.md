@@ -265,7 +265,10 @@ there to say why, which is the point of keeping them.
 that takes eight greps to read one file shows up here and not in `turns`. Under a variant,
 a dim line gives the run statuses when any cell did not finish `ok`, and how many passes
 changed nothing: right for "find the bug, if there is one", suspicious for "fix the
-typos".
+typos", and how many cells have no known cost. As in `hrn report`, an unknown cost (a
+codex cell marked missing, a cell with no attempt) is never counted as zero: the median
+cost and `total_cost_usd` cover the known costs, `cells_without_cost` counts the rest,
+`median cost` is `-` only when no cell's cost is known, and a known zero shows `$0.00`.
 
 The record goes to `~/.hrn/evals/<id>.json`; `--json` prints it, `hrn eval show <id>`
 reprints it, `hrn eval list` finds it, `-v` streams every agent's tool calls. The worktrees are removed once the

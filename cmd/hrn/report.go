@@ -112,17 +112,8 @@ func cmdReport(args []string) error {
 
 // reportCost preserves a known zero and counts missing costs beside a partial total.
 func reportCost(cost float64, known, estimated bool, unknown int) string {
-	if !known {
-		return "-"
-	}
-	value := report.Money(cost, estimated)
-	if cost == 0 {
-		value = "$0.00"
-		if estimated {
-			value = "~" + value
-		}
-	}
-	if unknown > 0 {
+	value := report.KnownMoney(cost, known, estimated)
+	if known && unknown > 0 {
 		value += fmt.Sprintf(" (%d unknown)", unknown)
 	}
 	return value
