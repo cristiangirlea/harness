@@ -137,6 +137,28 @@ func TestRunStopsWhenTheCandidateIsAlreadyCurrent(t *testing.T) {
 	}
 }
 
+// The running copy is older, another on PATH already is the candidate: only
+// the old one is swapped, and the current one keeps its watch and has no backup.
+func TestRunLeavesAloneATargetThatAlreadyIsTheCandidate(t *testing.T) {
+	s := newSite(t)
+	fakeHrn(t, s.b, "new build")
+	s.procs = append(s.procs, Process{PID: 15, Exe: s.b, Args: []string{"watch", "--addr", "127.0.0.1:9001"}})
+	code, err := s.run(s.options())
+	if err != nil || code != 0 {
+		t.Fatalf("code %d, err %v\n%s", code, err, s.out.String())
+	}
+	wantLines(t, s.out.String(), "updated "+s.a, s.b+" already current", "watch restarted on 127.0.0.1:9000")
+	if strings.Contains(s.out.String(), "updated "+s.b) {
+		t.Errorf("the current copy was swapped:\n%s", s.out.String())
+	}
+	if backups, _ := Backups(s.b); len(backups) != 0 {
+		t.Errorf("backups beside the current copy: %v", backups)
+	}
+	if len(s.starter.stopped) != 1 || s.starter.stopped[0] != 11 {
+		t.Errorf("stopped %v; want the old copy's watch only", s.starter.stopped)
+	}
+}
+
 func TestRunContinuesPastAFailedTargetAndExitsOne(t *testing.T) {
 	s := newSite(t)
 	candidateSize, _ := os.Stat(s.candidate)
@@ -435,8 +457,11 @@ func TestRunSkipsATargetThatIsTheCandidateItself(t *testing.T) {
 	if strings.Contains(s.out.String(), "failed "+s.a) {
 		t.Error("the candidate was swapped over itself and failed")
 	}
-	wantLines(t, s.out.String(), "updated "+s.b)
+	wantLines(t, s.out.String(), "updated "+s.b, s.a+" is the candidate itself", "watch restarted on 127.0.0.1:9000")
 	if v, err := s.version(context.Background(), s.a); err != nil || v.Line != newLine {
 		t.Errorf("the candidate itself changed: %q, %v", v.Line, err)
+	}
+	if len(s.starter.stopped) != 1 || s.starter.stopped[0] != 11 || s.starter.exe != s.a {
+		t.Errorf("the watch on the candidate was not restarted: stopped %v, started %q", s.starter.stopped, s.starter.exe)
 	}
 }
