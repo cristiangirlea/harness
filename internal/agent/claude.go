@@ -16,6 +16,8 @@ import (
 
 const perTokenRefusal = "claude would bill per token"
 
+const appendSystemPromptFlag = "--append-system-prompt"
+
 // ---- claude ---------------------------------------------------------------
 func NewClaudeBackend() *CLIBackend {
 	return &CLIBackend{
@@ -61,6 +63,13 @@ func NewClaudeBackend() *CLIBackend {
 			if t.CompactWindow != "" {
 				a = append(a, "--autocompact", string(t.CompactWindow))
 			}
+			if t.AppendSystemPrompt != "" {
+				// One argument, so text starting with a dash is never read as a flag.
+				a = append(a, appendSystemPromptFlag+"="+t.AppendSystemPrompt)
+			}
+			if t.NoSkills {
+				a = append(a, "--disable-slash-commands")
+			}
 			if !t.AllowDangerous {
 				a = append(append(a, "--disallowedTools"), claudeDenyRules()...)
 			}
@@ -72,20 +81,22 @@ func NewClaudeBackend() *CLIBackend {
 			}
 			return a
 		},
-		parse:        parseClaudeStream,
-		newParse:     newClaudeParse,
-		stopWhen:     func(r *Result) bool { return strings.HasPrefix(r.Error, perTokenRefusal) },
-		forks:        true,
-		mapsEffort:   true,
-		mapsModes:    []Mode{ModeReadOnly, ModeAuto, ModeYolo},
-		mapsModel:    true,
-		mapsMaxTurns: true,
-		mapsMCP:      true,
-		mapsLean:     true,
-		mapsCompact:  true,
-		limits:       true,
-		loginEnv:     []string{"CLAUDE_CODE_OAUTH_TOKEN"},
-		fileRules:    true,
+		parse:            parseClaudeStream,
+		newParse:         newClaudeParse,
+		stopWhen:         func(r *Result) bool { return strings.HasPrefix(r.Error, perTokenRefusal) },
+		forks:            true,
+		mapsEffort:       true,
+		mapsModes:        []Mode{ModeReadOnly, ModeAuto, ModeYolo},
+		mapsModel:        true,
+		mapsMaxTurns:     true,
+		mapsMCP:          true,
+		mapsLean:         true,
+		mapsCompact:      true,
+		mapsSystemPrompt: true,
+		mapsNoSkills:     true,
+		limits:           true,
+		loginEnv:         []string{"CLAUDE_CODE_OAUTH_TOKEN"},
+		fileRules:        true,
 	}
 }
 func newestVersionDir(root, exe string) []string {

@@ -38,6 +38,9 @@ func NewAPIBackend() *APIBackend {
 
 func (b *APIBackend) Name() string { return "api" }
 
+// AppliesSystemPrompt: the api loop builds its own system prompt.
+func (b *APIBackend) AppliesSystemPrompt() bool { return true }
+
 // offeredTools is what a run offers the model, by name and as the request's
 // tools field: the built-ins, read_original when shaping, then MCP tools.
 func (b *APIBackend) offeredTools(task Task, mcpTools []tools.Tool) (map[string]tools.Tool, []apiTool) {
@@ -222,6 +225,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			emit(Event{Time: time.Now(), Kind: EventInfo,
 				Text: fmt.Sprintf("instructions: %s (%.1f KB%s)", strings.Join(names, ", "), float64(len(text))/1024, note)})
 		}
+	}
+	if task.AppendSystemPrompt != "" {
+		system = append(system, block{"type": "text", "text": task.AppendSystemPrompt})
 	}
 	// Constant for the whole run, so this breakpoint caches tools, prompt and
 	// instructions together.

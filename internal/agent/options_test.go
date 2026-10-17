@@ -75,13 +75,13 @@ func TestFlagsSetTheOptions(t *testing.T) {
 	BindFlags(fs, &o)
 	err := fs.Parse([]string{"--model", "claude-sonnet-5", "--mode", "yolo", "--max-turns", "7", "--effort", "low",
 		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--lean", "--compact-window", "300000", "--allow-dangerous",
-		"--timeout", "90s", "--max-cost", "2.5", "--task-budget", "30000"})
+		"--timeout", "90s", "--max-cost", "2.5", "--task-budget", "30000", "--append-system-prompt", "be brief", "--no-skills"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Options{Model: "claude-sonnet-5", Mode: ModeYolo, MaxTurns: 7, Effort: "low", MCP: []string{"a.json", "b.json"},
 		NoInstructions: true, NoContextEdits: true, Lean: Bool(true), CompactWindow: "300000", AllowDangerous: true,
-		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000}
+		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000, AppendSystemPrompt: "be brief", NoSkills: true}
 	if !reflect.DeepEqual(o, want) {
 		t.Errorf("parsed = %+v\nwant     %+v", o, want)
 	}
@@ -235,6 +235,7 @@ func TestValidate(t *testing.T) {
 		{Options{MaxCostUSD: math.Inf(1)}, "finite"},
 		{Options{MaxCostUSD: math.Inf(-1)}, "finite"},
 		{Options{TaskBudget: 100}, "20000"},
+		{Options{AppendSystemPrompt: strings.Repeat("x", MaxAppendSystemPrompt+1)}, "fit on a command line"},
 	} {
 		if err := tc.o.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%+v: err = %v, want %q", tc.o, err, tc.want)

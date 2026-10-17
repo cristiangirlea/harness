@@ -73,6 +73,9 @@ type CLIBackend struct {
 	// mapsCompact is set when args honours Options.CompactWindow; like
 	// mapsLean, not a capability.
 	mapsCompact bool
+	// mapsSystemPrompt and mapsNoSkills: args honours AppendSystemPrompt and NoSkills.
+	mapsSystemPrompt bool
+	mapsNoSkills     bool
 	// limits is set when the CLI bills to a plan and says, in a way usageLimit
 	// knows, that its usage limit was reached: such a run ends limited rather
 	// than in an error.
@@ -83,6 +86,12 @@ func (c *CLIBackend) Name() string { return c.name }
 
 // AppliesLean reports whether this CLI honours Options.Lean (see AppliesLean).
 func (c *CLIBackend) AppliesLean() bool { return c.mapsLean }
+
+// AppliesSystemPrompt reports whether this CLI honours Options.AppendSystemPrompt.
+func (c *CLIBackend) AppliesSystemPrompt() bool { return c.mapsSystemPrompt }
+
+// AppliesNoSkills reports whether this CLI honours Options.NoSkills.
+func (c *CLIBackend) AppliesNoSkills() bool { return c.mapsNoSkills }
 
 func (c *CLIBackend) Capabilities() Capabilities {
 	caps := Capabilities{Modes: append([]Mode{}, c.mapsModes...), Efforts: []string{}, Sessions: "none", Options: []string{}}
@@ -187,6 +196,10 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if err != nil {
 		return fail(StatusError, err)
 	}
+	// cmd.exe, which runs an npm .cmd shim, would read &, |, % and newlines in free text as its own syntax.
+	if task.AppendSystemPrompt != "" && c.mapsSystemPrompt && isBatchFile(bin) {
+		return fail(StatusError, fmt.Errorf("append_system_prompt cannot be passed safely through %s; install the native %s CLI", filepath.Base(bin), c.name))
+	}
 	var promptFile string
 	if !c.promptStdin {
 		f, err := os.CreateTemp("", "hrn-prompt-*.md")
@@ -235,7 +248,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, err)
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(shownArgs(cmd.Args[1:]), " "))})
-	if limits := unenforced(task, c.mapsEffort, c.mapsLean, c.mapsCompact); len(limits) > 0 {
+	if limits := unenforced(task, c); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
@@ -469,6 +482,10 @@ func (c *CLIBackend) guardLine(withheld []string) string {
 func shownArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
+		if text, ok := strings.CutPrefix(args[i], appendSystemPromptFlag+"="); ok {
+			out = append(out, fmt.Sprintf("%s=<%d bytes>", appendSystemPromptFlag, len(text)))
+			continue
+		}
 		out = append(out, args[i])
 		if args[i] != "--disallowedTools" {
 			continue
@@ -481,4 +498,10 @@ func shownArgs(args []string) []string {
 		out = append(out, fmt.Sprintf("<%d guard rules>", n))
 	}
 	return out
+}
+
+// isBatchFile reports whether bin runs through cmd.exe.
+func isBatchFile(bin string) bool {
+	ext := strings.ToLower(filepath.Ext(bin))
+	return ext == ".cmd" || ext == ".bat"
 }

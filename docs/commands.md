@@ -54,6 +54,9 @@ backend default; gemini and opencode report it as not enforced),
 `--mcp` servers, your settings, rules and skills still load; see [Lean claude workers](backends.md#lean-claude-workers)),
 `--compact-window N` (claude: compact at N tokens, 100000 to 1000000, or `auto`; see
 [Compaction window](backends.md#compaction-window)),
+`--append-system-prompt TEXT` (api and claude: added after the backend's own system prompt,
+at most 16 KiB), `--no-skills` (claude: skills off; see
+[Harness variants](evaluations.md#harness-variants)),
 `--allow-dangerous`, `--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
 budgets below.

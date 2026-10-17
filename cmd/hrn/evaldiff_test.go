@@ -186,3 +186,59 @@ func TestEvalTablesShowAKnownZeroCostAndDashOnlyWhenNoCostIsKnown(t *testing.T) 
 		t.Errorf("eval table should show a known zero median and count the cells without a cost:\n%s", out)
 	}
 }
+
+func TestEvalDiffMarksAJudgeChangeWithinTheJudgesSpread(t *testing.T) {
+	a, b := diffPair()
+	a.Table.Variants[0].MeanScore, a.Table.Variants[0].JudgeRepeats, a.Table.Variants[0].ScoreMin, a.Table.Variants[0].ScoreMax = 8, 3, 7, 9
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEvalDiff(r, eval.Compare(a, b))
+	out := buf.String()
+	if !strings.Contains(out, "8.0 (7.0-9.0) → 8.5 (within noise)") || !strings.Contains(out, "note: within noise:") {
+		t.Errorf("a 0.5 move inside a 2-point spread should be marked:\n%s", out)
+	}
+
+	a.Table.Variants[0].ScoreMin, a.Table.Variants[0].ScoreMax = 7.9, 8.1
+	buf.Reset()
+	printEvalDiff(r, eval.Compare(a, b))
+	if out := buf.String(); strings.Contains(out, "within noise") || !strings.Contains(out, "8.0 (7.9-8.1) → 8.5") {
+		t.Errorf("a move larger than the spread is not noise:\n%s", out)
+	}
+}
+
+func TestEvalTableShowsTheJudgeSpreadAndRepeatsPerCell(t *testing.T) {
+	_, b := diffPair()
+	b.Spec.Judge = &eval.Judge{Rubric: "r", Repeats: 3}
+	b.Judgements = make([]eval.Judgement, 6)
+	b.Table.Variants[0].JudgeRepeats, b.Table.Variants[0].ScoreMin, b.Table.Variants[0].ScoreMax = 3, 8, 9
+	b.Table.Tasks[0].Judged, b.Table.Tasks[0].MeanScore = 2, 8.5
+	b.Table.Tasks[0].JudgeRepeats, b.Table.Tasks[0].ScoreMin, b.Table.Tasks[0].ScoreMax = 3, 8, 9
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEval(r, b)
+	out := buf.String()
+	var head, row, taskHead, taskRow string
+	for _, line := range strings.Split(out, "\n") {
+		switch f := strings.Fields(line); {
+		case len(f) > 0 && f[0] == "variant":
+			head = line
+		case len(f) > 0 && f[0] == "sonnet":
+			row = line
+		case len(f) > 0 && f[0] == "task":
+			taskHead = line
+		case len(f) > 0 && f[0] == "greet":
+			taskRow = line
+		}
+	}
+	if !strings.HasSuffix(head, "spread") || !strings.HasSuffix(row, "8.0-9.0") || len(head) != len(row) {
+		t.Errorf("the spread column lines up at the end:\n%s\n%s", head, row)
+	}
+	if !strings.HasSuffix(taskRow, "2/2 8.5 (8.0-9.0)") || len(taskHead) != len(taskRow) {
+		t.Errorf("the task column widens to its score:\n%s\n%s", taskHead, taskRow)
+	}
+	if !strings.Contains(out, "judge: 6 verdicts (3 per cell)") {
+		t.Errorf("the judge note names the repeats:\n%s", out)
+	}
+}

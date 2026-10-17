@@ -447,6 +447,19 @@ func TestAPILoopWithoutProjectInstructions(t *testing.T) {
 	}
 }
 
+func TestAPILoopAppendsTheSystemPromptBeforeTheCachedEnvBlock(t *testing.T) {
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(),
+		Options: Options{Mode: ModeAsk, NoInstructions: true, AppendSystemPrompt: "Run the tests before you answer."}})
+	sys := systemText(t, fake.requests[0])
+	if len(sys) != 3 || sys[1] != "Run the tests before you answer." {
+		t.Fatalf("system = %q, want the text as its own block after the harness prompt", sys)
+	}
+	blocks := fake.requests[0]["system"].([]any)
+	if _, cached := blocks[2].(map[string]any)["cache_control"]; !cached {
+		t.Error("the env block after it keeps the breakpoint, so the added text is cached too")
+	}
+}
+
 func TestAPILoopReportsUnreadableInstructions(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "CLAUDE.md"), 0o755); err != nil {
