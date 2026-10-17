@@ -325,6 +325,11 @@ func appendEvent(ctx context.Context, tx pgx.Tx, tenantID, projectID, jobID, kin
 	if err != nil {
 		return err
 	}
+	// Holding the job row until commit makes one job's event IDs commit in order,
+	// so a reader's after cursor cannot pass an ID that is still uncommitted.
+	if _, err = tx.Exec(ctx, "SELECT 1 FROM jobs WHERE id=$1 FOR NO KEY UPDATE", jobID); err != nil {
+		return err
+	}
 	_, err = tx.Exec(ctx, "INSERT INTO job_events(tenant_id,project_id,job_id,kind,details) VALUES($1,$2,$3,$4,$5)",
 		tenantID, projectID, jobID, kind, payload)
 	return err
