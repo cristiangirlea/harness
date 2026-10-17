@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -135,11 +138,17 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 			cells = append(cells, tr)
 		}
 	}
-	// Built once per cell, so every repeat judges the same evidence.
-	shown := make([]evidence, len(cells))
+	// Built once per cell, so every repeat judges the same evidence, and only
+	// when first asked for, so no copy is on disk before its cell's turn.
+	dirs := make([]string, len(cells)) // each written once, by its cell's first verdict
+	shown := make([]func() evidence, len(cells))
 	for i, tr := range cells {
 		task, _, _ := splitID(tr.ID)
-		shown[i] = evidenceOf(ctx, res, tr, prompts[task], j.rubricFor(task))
+		shown[i] = sync.OnceValue(func() evidence {
+			ev := evidenceOf(ctx, res, tr, prompts[task], j.rubricFor(task))
+			dirs[i] = ev.dir
+			return ev
+		})
 	}
 	repeats := max(1, j.Repeats)
 	out := make([]Judgement, len(cells)*repeats)
@@ -151,8 +160,24 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 	}
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
-	for n := range out {
-		tr, ev := cells[n/repeats], shown[n/repeats]
+	// A checkout goes once its cell's last repeat is in, so copies do not pile up.
+	left := make([]atomic.Int32, len(cells))
+	for i := range left {
+		left[i].Store(int32(repeats))
+	}
+	// After a cancel, the copies of cells whose last verdict never came.
+	defer func() {
+		for i, dir := range dirs {
+			if dir == "" || left[i].Load() == 0 {
+				continue
+			}
+			if err := os.RemoveAll(dir); err != nil {
+				notify(batch.Event{Task: cells[i].ID, Kind: "judge", Text: "judge: leaving its checkout behind: " + err.Error()})
+			}
+		}
+	}()
+	for _, n := range judgeOrder(len(out), res.ID) {
+		tr, evidenceFor := cells[n/repeats], shown[n/repeats]
 		repeat, label := 0, "judge"
 		if repeats > 1 {
 			repeat = n%repeats + 1
@@ -166,8 +191,19 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 		wg.Add(1)
 		go func() {
 			defer func() { <-sem; wg.Done() }()
+			// A cancel may land while this verdict waited for its turn.
+			if ctx.Err() != nil {
+				out[n] = Judgement{Cell: tr.ID, Error: "canceled", Repeat: repeat}
+				return
+			}
+			ev := canceledOr(ctx, evidenceFor())
 			out[n] = judgeCell(ctx, b, j, tr, ev)
 			out[n].Repeat = repeat
+			if left[n/repeats].Add(-1) == 0 && ev.dir != "" {
+				if err := os.RemoveAll(ev.dir); err != nil {
+					notify(batch.Event{Task: tr.ID, Kind: "judge", Text: "judge: leaving its checkout behind: " + err.Error()})
+				}
+			}
 			text := fmt.Sprintf("%s: %d/10 · %s", label, out[n].Score, tools.OneLine(out[n].Reason, 120))
 			if !out[n].Scored() {
 				text = label + ": " + tools.OneLine(out[n].Error, 160)
@@ -179,13 +215,32 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 	return out
 }
 
-// evidence is the judge's prompt for one cell, or why it could not be built.
+// evidence is the judge's prompt and checkout for one cell, or why they could not be built.
 type evidence struct {
 	prompt string
+	dir    string
 	err    error
 }
 
+// canceledOr says canceled when a cancel is why the evidence could not be
+// built, rather than whichever git command it cut short.
+func canceledOr(ctx context.Context, ev evidence) evidence {
+	if ev.err != nil && ctx.Err() != nil {
+		ev.err = errors.New("canceled")
+	}
+	return ev
+}
+
 func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prompt, rubric string) evidence {
+	if head := worktreeHead(ctx, tr); head != "" && head != res.Base {
+		tr.Commit = head
+		res.Tasks = slices.Clone(res.Tasks)
+		for i := range res.Tasks {
+			if res.Tasks[i].ID == tr.ID {
+				res.Tasks[i].Commit = head
+			}
+		}
+	}
 	diff, untracked, err := batch.Diff(ctx, res, tr.ID)
 	if err != nil {
 		return evidence{err: fmt.Errorf("reading the diff: %w", err)}
@@ -194,7 +249,24 @@ func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prom
 	if n := len(tr.Attempts); n > 0 {
 		final = tr.Attempts[n-1].Result.Final
 	}
-	return evidence{prompt: judgePrompt(prompt, rubric, final, diff, untracked)}
+	dir, err := blindCheckout(ctx, res.Dir, res.Base, firstOf(tr.Commit, res.Base))
+	if err != nil {
+		return evidence{err: fmt.Errorf("preparing the judge's checkout: %w", err)}
+	}
+	return evidence{prompt: judgePrompt(prompt, rubric, final, diff, untracked), dir: dir}
+}
+
+// worktreeHead is where an agent that committed its own work left the cell,
+// since hrn records a commit only for changes it committed itself.
+func worktreeHead(ctx context.Context, tr batch.TaskResult) string {
+	if tr.Commit != "" || tr.Worktree == "" {
+		return ""
+	}
+	head, err := batch.Head(ctx, tr.Worktree)
+	if err != nil {
+		return ""
+	}
+	return head
 }
 
 func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResult, ev evidence) Judgement {
@@ -210,9 +282,9 @@ func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResu
 	}
 	task := agent.Task{
 		Prompt: ev.prompt,
-		// The worktree, read-only: the judge may open a file the diff only
-		// touches, but it cannot change the evidence.
-		Dir: tr.Worktree,
+		// A copy of the cell's tree, read-only: the judge may open a file the
+		// diff only touches, but nothing there names the variant.
+		Dir: ev.dir,
 		Options: agent.Options{Mode: agent.ModeReadOnly, Model: j.Model, Effort: j.Effort,
 			Timeout: agent.Duration(timeout), NoInstructions: true},
 	}

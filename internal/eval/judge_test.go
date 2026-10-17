@@ -94,8 +94,8 @@ func TestJudgeScoresPassingCells(t *testing.T) {
 		if task.Mode != agent.ModeReadOnly || task.Model != "haiku" || !task.NoInstructions {
 			t.Errorf("judge options = %+v: read-only, the judge's model, no house rules", task.Options)
 		}
-		if !strings.Contains(task.Dir, "worktrees") {
-			t.Errorf("judge dir = %s, want the cell's worktree", task.Dir)
+		if task.Dir == "" || strings.Contains(task.Dir, "worktrees") {
+			t.Errorf("judge dir = %s, want a checkout of its own", task.Dir)
 		}
 		if !strings.Contains(task.Prompt, "+++ b/out.txt") || !strings.Contains(task.Prompt, "## Agent's final answer") {
 			t.Errorf("the judge must see the diff and the answer:\n%s", task.Prompt)
