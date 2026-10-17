@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestPreferencesLoadSaveAndFilter(t *testing.T) {
@@ -53,4 +55,51 @@ func TestPreferencesRefuseMalformedFilesAndDefaultsOutsideTheList(t *testing.T) 
 			t.Errorf("saved %+v", p)
 		}
 	}
+}
+
+func TestSaveWaitsForAReaderThatHoldsTheFile(t *testing.T) {
+	home := t.TempDir()
+	if err := Save(home, Prefs{EnabledNames: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Windows refuses to replace a file another process has open.
+	f, err := os.Open(filepath.Join(home, "backends.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() { time.Sleep(100 * time.Millisecond); f.Close(); close(released) }()
+	want := Prefs{EnabledNames: []string{"codex"}}
+	err = Save(home, want)
+	<-released
+	if err != nil {
+		t.Fatalf("save while the file was open: %v", err)
+	}
+	if p, err := Load(home); err != nil || !reflect.DeepEqual(p, want) {
+		t.Fatalf("after save: %+v, %v", p, err)
+	}
+}
+
+func TestLoadsDuringSavesDoNotFail(t *testing.T) {
+	home := t.TempDir()
+	if err := Save(home, Prefs{EnabledNames: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := Save(home, Prefs{EnabledNames: []string{"claude", "codex"}}); err != nil {
+				t.Errorf("save: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := Load(home); err != nil {
+				t.Errorf("load: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
 }

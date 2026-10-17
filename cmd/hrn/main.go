@@ -306,6 +306,10 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 			return 2, err
 		}
 		backend, dir, opts.Model = plan.Backend, plan.Dir, plan.Model
+		// The inherited backend is refused here, before a prompt is read from stdin.
+		if err := preference.Check(backend); err != nil {
+			return 2, fmt.Errorf("run: %w", err)
+		}
 		if !set["mode"] && plan.Prev.Task.Mode != "" {
 			opts.Mode = plan.Prev.Task.Mode
 		}
