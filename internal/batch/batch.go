@@ -904,7 +904,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			}
 			// The partner carries the attempt on in this worktree, as one
 			// more attempt that does not use up a retry.
-			if other := limits.Partner(att.Backend); other != "" && !opts.NoSwitch {
+			if other := limits.Partner(att.Backend, time.Now(), spent); other != "" && !opts.NoSwitch {
 				if ok, why := limits.Ready(other, time.Now(), spent); ok && retrievalOn(opts) {
 					tr.Error = pinnedSwitch(att.Backend, other, att.Backend)
 					return finish(StatusFail, "limited: "+tr.Error)

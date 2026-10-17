@@ -21,24 +21,32 @@ import (
 )
 
 // Partner is the backend that takes over from one at its usage limit, or ""
-// when none does.
-func Partner(backend string) string {
+// when none does. With a preference it is the first enabled, installed one that
+// is Ready at now, or else the first installed one, so Ready can say why not.
+func Partner(backend string, now time.Time, spent Spent) string {
 	p, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {
 		return ""
 	}
 	if len(p.EnabledNames) > 0 {
+		first := ""
 		for _, name := range p.Filter(agent.Names()) {
 			// api bills per token, never a plan: it is no stand-in even when enabled.
 			if name == backend || name == "api" {
 				continue
 			}
 			b, _ := agent.Get(name)
-			if _, err := b.Detect(); err == nil {
+			if _, err := b.Detect(); err != nil {
+				continue
+			}
+			if ok, _ := Ready(name, now, spent); ok {
 				return name
 			}
+			if first == "" {
+				first = name
+			}
 		}
-		return ""
+		return first
 	}
 	switch backend {
 	case "claude":
@@ -239,7 +247,7 @@ func when(t time.Time) string { return t.Local().Format("Jan 2 15:04") }
 // limited, pick is backend, why says so, and bothOut is set: a caller with
 // other work to do can skip this; one without runs it and lets it say so.
 func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
-	other := Partner(backend)
+	other := Partner(backend, now, spent)
 	gone := spent.out(backend, now)
 	if gone == "" || other == "" {
 		return backend, "", false
@@ -301,7 +309,7 @@ func After(prevID, backend string, prev agent.Task, res agent.Result) (next *Car
 		// Not remembering costs the next run a limited start; this one goes on.
 		why = "the limit was not remembered: " + err.Error() + "; "
 	}
-	other := Partner(backend)
+	other := Partner(backend, time.Now(), nil)
 	if prev.NoSwitch || other == "" {
 		return nil, "", nil
 	}
