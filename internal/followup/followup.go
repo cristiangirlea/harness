@@ -252,6 +252,12 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	if warning := p.ContextWarning(); warning != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: warning})
 	}
+	if p.Resume != nil && p.carried != nil {
+		// The resumed conversation cites these handles; read_original looks only in runDir.
+		if err := tools.CopyOriginals(filepath.Join(runlog.Root(), p.carried.ID), runDir); err != nil {
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "originals not carried over: " + err.Error()})
+		}
+	}
 	var h string
 	switch {
 	case p.Fresh:

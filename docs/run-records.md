@@ -63,10 +63,15 @@ an ordinary follow-up, and old records without it still load.
   saw. If checks fail or the original cannot be saved, the existing head-and-tail
   cut is used; without a run record directory, nothing is saved. File reads are
   not shaped. Old records without this directory or `shape_tools` still load.
-  A continuation has a new run record directory, so it cannot reach the earlier run's originals (#337).
+  A continuation that resumes an api conversation copies that run's originals into
+  its own `originals/` before it starts, so the handles in the conversation still
+  read; only regular files whose bytes hash to their handle are copied.
   Shell capture keeps the whole output up to 8 MiB, including on nonzero exit
   and timeout. Above that ceiling it uses the existing head-and-tail cut, says
   the original is unavailable, and saves no incomplete original.
+  Capturing and shaping one output just under that ceiling peaks at about 75–90 MiB of
+  heap beyond the input itself, with 270 MB allocated in total (`go test -bench
+  NearCeiling ./internal/tools`, which reports `peak-heap-MiB`; Go 1.26, Ryzen 9 9950X).
 - `retrieval.json` — the opt-in packet, scope and version pin, saved before a backend
   starts. An unfinished run keeps this pin; a continuation checks it against the
   conversation before reuse.
