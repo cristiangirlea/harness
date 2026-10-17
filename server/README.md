@@ -66,7 +66,9 @@ no server cap. Clients can add their own with `HRN_REMOTE_MAX_COST_USD`.
 bearer token. By default it returns a JSON page of up to 100 events. Set
 `Accept: text/event-stream` to receive the backlog and then live events, polled
 once per second. Resume after the last received event ID using `after` or
-`Last-Event-ID`; if both are supplied they must match.
+`Last-Event-ID`; if both are supplied they must match. A job's event IDs
+become visible in increasing order, because each event is written while its job's
+row is locked, so a cursor never skips an event that commits later.
 
 Each control service instance allows at most four open SSE streams per tenant,
 shared across its projects and jobs. Further streams receive HTTP 429 with a

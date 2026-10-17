@@ -90,6 +90,7 @@ def main():
     assert security["readOnlyRootFilesystem"] is True
     assert security["allowPrivilegeEscalation"] is False
     assert security["capabilities"]["drop"] == ["ALL"]
+    assert "add" not in security["capabilities"]
     assert security.get("seccompProfile", control_pod["securityContext"][
         "seccompProfile"])["type"] == "RuntimeDefault"
     assert control_container["image"] == IMAGE
@@ -100,7 +101,15 @@ def main():
     assert control_env["HRN_TLS_CERT_FILE"]["value"] == "/etc/hrn-tls/tls.crt"
     assert control_env["HRN_TLS_KEY_FILE"]["value"] == "/etc/hrn-tls/tls.key"
     assert control["NetworkPolicy"]["spec"]["policyTypes"] == ["Ingress", "Egress"]
-    assert len(control["NetworkPolicy"]["spec"]["ingress"]) == 1
+    assert control["NetworkPolicy"]["spec"]["ingress"] == [{
+        "from": [
+            {"namespaceSelector": {"matchLabels": {"app.kubernetes.io/part-of": "harness"}},
+             "podSelector": {"matchLabels": {"app.kubernetes.io/name": "hrn-project-worker"}}},
+            {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "keda"}}},
+            {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "hrn-admin"}}},
+        ],
+        "ports": [{"protocol": "TCP", "port": 8443}],
+    }]
     assert len(control["NetworkPolicy"]["spec"]["egress"]) == 2
     dns_egress = {
         "to": [{
@@ -139,6 +148,7 @@ def main():
         assert security["allowPrivilegeEscalation"] is False
         assert security["readOnlyRootFilesystem"] is True
         assert security["capabilities"]["drop"] == ["ALL"]
+        assert "add" not in security["capabilities"]
         assert container["image"] == IMAGE
         assert container["resources"]["requests"]
         assert container["resources"]["limits"]

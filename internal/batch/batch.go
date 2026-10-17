@@ -216,6 +216,10 @@ const defaultGateTimeout = 15 * time.Minute
 // maxGateTimeout is where a gate stops being a check and becomes a job.
 const maxGateTimeout = 24 * time.Hour
 
+// gateBeat is how often a running gate saves its batch's record again: a gate
+// writes nothing itself, and a reader takes an hour of quiet for a stopped batch.
+var gateBeat = 10 * time.Minute
+
 // worktreeMu serialises `git worktree add`, `remove` and `prune` for this
 // process. They all rewrite the repository's shared worktree metadata, and git
 // takes no lock of its own around it, so two workers doing it at once can fail
@@ -1274,7 +1278,9 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 	if pass {
 		for _, g := range gates {
+			stop := beating(gateBeat, func() { report(att) })
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
+			stop()
 			att.Gates = append(att.Gates, gr)
 			report(att)
 			if gr.ExitCode != 0 {
@@ -1295,6 +1301,25 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		return attemptOutcome{att: att}, fmt.Errorf("commit failed, changes are uncommitted in %s: %v", task.Dir, commitErr)
 	}
 	return attemptOutcome{att: att, commit: sha, pass: pass}, nil
+}
+
+// beating calls beat every interval until stop returns; beat never runs after.
+func beating(every time.Duration, beat func()) (stop func()) {
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		tick := time.NewTicker(every)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				beat()
+			}
+		}
+	})
+	return func() { close(done); wg.Wait() }
 }
 
 // checkExpect is the expect pattern run as a gate: exit 0 on a match, 1

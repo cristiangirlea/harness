@@ -160,6 +160,13 @@ var removeGitWorktree = func(ctx context.Context, w Worktree) error {
 	return nil
 }
 
+// removeMovedWorktree is replaceable by tests to make deletion fail partway
+// after the worktree has been moved aside and deregistered.
+var removeMovedWorktree = os.RemoveAll
+
+// renameWorktree is replaceable by tests that make only the move back fail.
+var renameWorktree = os.Rename
+
 func removeWorktree(ctx context.Context, w Worktree) (bool, error) {
 	err := removeGitWorktree(ctx, w)
 	if err == nil {
@@ -218,11 +225,30 @@ dir=$(git rev-parse --absolute-git-dir) && printf '%s\0' "$dir"`)
 	if why := recheck(ctx, w); why != "" {
 		return false, fmt.Errorf("kept, %s", why)
 	}
-	if removeErr := os.RemoveAll(w.Path); removeErr != nil {
-		return false, removeErr
+	// Moved aside and deregistered first, a deletion that fails partway leaves
+	// an unregistered folder, never a registered worktree missing files.
+	moved := movedCachePath(w.Path)
+	if err := renameWorktree(w.Path, moved); err != nil {
+		return false, fmt.Errorf("kept, it could not be moved aside: %s", firstLine(err.Error()))
 	}
+	// Prune skips a lock taken since the recheck and can fail after pruning
+	// this entry, so git's listing decides whether the folder goes back.
 	_, pruneErr := gitOut(ctx, w.Repo, "worktree", "prune")
-	return pruneErr == nil, pruneErr
+	entries, listErr = listWorktrees(ctx, w.Repo)
+	if listErr != nil || listed(w.Path, entryPaths(entries)) {
+		keptErr := errors.Join(pruneErr, listErr)
+		if keptErr == nil {
+			keptErr = errors.New("still registered after git worktree prune")
+		}
+		if err := renameWorktree(moved, w.Path); err != nil {
+			return false, fmt.Errorf("moved to %s, which could not be moved back: %w", moved, errors.Join(keptErr, err))
+		}
+		return false, fmt.Errorf("kept, %w", keptErr)
+	}
+	if err := removeMovedWorktree(moved); err != nil {
+		return true, fmt.Errorf("worktree removed, but %s (moved aside) remains: %w", moved, errors.Join(pruneErr, err))
+	}
+	return true, pruneErr
 }
 
 // status and foreach only see indexed submodules. A removed submodule can
@@ -256,6 +282,14 @@ func checkSubmoduleRepositories(ctx context.Context, wt, checked string) error {
 			if d.IsDir() && isBare(path) {
 				if !indexed[samePath(path)] {
 					return fmt.Errorf("submodule repository is not indexed: %s", path)
+				}
+				// Its linked worktrees live elsewhere and would lose their repository.
+				linked, err := os.ReadDir(filepath.Join(path, "worktrees"))
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+				if len(linked) != 0 {
+					return fmt.Errorf("submodule repository has linked worktrees: %s", path)
 				}
 				// Skip the object store, but not repositories nested below it.
 				if err := walk(filepath.Join(path, "modules")); err != nil {
