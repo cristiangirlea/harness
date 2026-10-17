@@ -291,7 +291,8 @@ func TestABatchUnreadableOnTheFirstLookThatEndsSince(t *testing.T) {
 	}
 	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
 	first := b.look()
-	ended.Duration = time.Since(started)
+	// Clearly after the first look: a coarse wall clock may otherwise put a just-now end before it.
+	ended.Duration = time.Since(started) + time.Second
 	for _, res := range []batch.Result{ended, old} {
 		if err := batch.SaveResult(res); err != nil {
 			t.Fatal(err)
@@ -300,7 +301,7 @@ func TestABatchUnreadableOnTheFirstLookThatEndsSince(t *testing.T) {
 	cur := b.look()
 	says := announce(b.baseline(first, cur), cur, false)
 	if len(says) == 0 || says[0].Kind != "done" || says[0].Ref != ended.ID {
-		t.Fatalf("says = %+v; want the ending of the batch that ended since", says)
+		t.Fatalf("says = %+v; want the ending of the batch that ended since (began %v, now %+v)", says, b.began, cur.items)
 	}
 	for _, m := range says {
 		if m.Ref == old.ID {
