@@ -92,7 +92,9 @@ field, or a valid leading `Purpose: <category>` header); otherwise it comes from
 rules on the prompt's first paragraph, or its second when the first matches no rule, with leading
 `Label: value` lines skipped for an anchored instruction before trying the paragraph
 as written, then with labels skipped as a fallback. A label's colon must be followed by a space or the
-end of the line; URLs and Windows drive paths stay intact. Each lead is lowercased
+end of the line; URLs and Windows drive paths stay intact. A label's bracketed part and its
+value are each kept to 600 characters, so a long note stays a label and a long value is not
+cut short by its label. Each lead is lowercased
 from a bounded prefix and capped at 600 bytes without splitting a UTF-8 rune.
 Since a brief's later paragraphs mention every keyword, the first rule
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
