@@ -633,6 +633,11 @@ func TestDurableRetriesRefusedContextManagementWithANewSavedIntent(t *testing.T)
 			} else if result.Status != StatusOK || result.RecoveryRequired || requests != 3 || *effects != 1 {
 				t.Fatalf("refused context management stopped the run: result=%+v requests=%d effects=%d", result, requests, *effects)
 			}
+			for _, cp := range store.records {
+				if cp.Boundary == "model_rejected" && cp.Finished {
+					t.Fatal("a rejection that is retried finished the checkpoint")
+				}
+			}
 		})
 	}
 }
@@ -707,5 +712,41 @@ func TestDurableUsesCheckpointsInsteadOfAConversationFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(task.RunDir, "messages.json")); !os.IsNotExist(err) {
 		t.Fatalf("durable run wrote a conversation file: %v", err)
+	}
+}
+
+func TestDurableModelRejectionFinishesTheCheckpointSoAResumeSendsNothing(t *testing.T) {
+	store := &checkpointStore{}
+	backend, task, _, effects := durableFixture(t, store)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "request refused", 400)
+	}))
+	t.Cleanup(server.Close)
+	backend.BaseURL = server.URL
+	first := backend.Run(context.Background(), task, func(Event) {})
+	saved := store.latest
+	if first.Status != StatusError || saved.Boundary != "model_rejected" || !saved.Finished || saved.Pending != nil ||
+		saved.Result.Status != StatusError || saved.Result.Error == "" || saved.Result.RecoveryRequired {
+		t.Fatalf("rejection left a resumable checkpoint: result=%+v boundary=%s finished=%t pending=%+v saved=%+v", first, saved.Boundary, saved.Finished, saved.Pending, saved.Result)
+	}
+	task.Durable.Resume = saved
+	second := backend.Run(context.Background(), task, func(Event) {})
+	if second.Status != StatusError || second.RecoveryRequired || requests != 1 || *effects != 0 || store.latest != saved {
+		t.Fatalf("resume resent the rejected request: result=%+v requests=%d effects=%d", second, requests, *effects)
+	}
+}
+
+func TestDurableTaskDigestIsPinned(t *testing.T) {
+	task := Task{Prompt: "test", Dir: "/work", AttemptID: "attempt-1", Options: Options{Mode: ModeYolo, MaxTurns: 3, Timeout: Duration(time.Minute)},
+		Durable: &DurableExecution{Save: func(context.Context, APICheckpoint) error { return nil }}}
+	durable, err := prepareDurable(task, &apiRequest{}, &Result{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "edd8f6d631b9e0ac888c5456822fed04764a7c0e1a5061002851f6766caf20d2"
+	if got := durable.checkpoint.TaskDigest; got != want {
+		t.Fatalf("task identity digest changed; stored checkpoints would stop matching: got %s want %s", got, want)
 	}
 }

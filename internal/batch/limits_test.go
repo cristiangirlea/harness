@@ -10,6 +10,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -306,5 +307,73 @@ func TestABatchDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
 	recs, err := runlog.List(5)
 	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" {
 		t.Fatalf("records = %+v, err=%v; want only the limited run", recs, err)
+	}
+}
+
+// preferThird enables codex, claude and gemini (plus extra) with a gemini stub
+// that finishes, and claude limited as well as codex.
+func preferThird(t *testing.T, extra ...string) {
+	t.Helper()
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: append([]string{"codex", "claude", "gemini"}, extra...)}); err != nil {
+		t.Fatal(err)
+	}
+	standIn(t)
+	for _, name := range limits.MeteredEnv("gemini") {
+		t.Setenv(name, "")
+	}
+	for _, s := range []stub{
+		{"claude", func(context.Context, agent.Task) agent.Result {
+			return agent.Result{Backend: "claude", Status: agent.StatusLimited, Error: "You've reached your Fable limit."}
+		}},
+		{"gemini", func(_ context.Context, task agent.Task) agent.Result {
+			_ = os.WriteFile(filepath.Join(task.Dir, "done.txt"), []byte("second half\n"), 0o644)
+			return agent.Result{Backend: "gemini", Status: agent.StatusOK, Final: "finished", Turns: 1}
+		}},
+	} {
+		orig, err := agent.Get(s.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent.Register(s)
+		t.Cleanup(func() { agent.Register(orig) })
+	}
+}
+
+func TestWithAPreferenceACarryOnGoesPastTwoSpentBackends(t *testing.T) {
+	dir := initRepo(t)
+	preferThird(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Gate: []string{"test -f half.txt && test -f done.txt"},
+		Tasks: []Task{{ID: "third", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	var got []string
+	for _, a := range tr.Attempts {
+		got = append(got, a.Backend)
+	}
+	if tr.Status != StatusPass || strings.Join(got, ",") != "codex,claude,gemini" {
+		t.Fatalf("status %s, attempts %v", tr.Status, got)
+	}
+	if a := tr.Attempts[2]; !a.Continued || a.SwitchedFrom != "claude" {
+		t.Errorf("attempt 3: continued %v, switched from %q", a.Continued, a.SwitchedFrom)
+	}
+}
+
+func TestWithAPreferenceARetryMeantForASpentBackendStartsOnTheThird(t *testing.T) {
+	dir := initRepo(t)
+	preferThird(t, "wb-bad")
+	resets := time.Now().Add(time.Hour)
+	for _, name := range []string{"codex", "claude"} {
+		if err := limits.Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: resets}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-bad", Retry: []string{"codex"},
+		Tasks: []Task{{ID: "retried", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if a := tr.Attempts[1]; a.Backend != "gemini" || a.SwitchedFrom != "codex" {
+		t.Errorf("the retry ran on %s, switched from %q", a.Backend, a.SwitchedFrom)
 	}
 }

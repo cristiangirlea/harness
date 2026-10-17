@@ -17,6 +17,12 @@ import (
 // The rules lean towards refusing too much. A command segment ends at |, &&,
 // || or ; outside quotes (see Guard), so a rule reads one command at a time
 // rather than the whole line.
+
+// A scriptblock built from a download, by either type name and with $(...) too.
+const scriptblockOfDownload = `\[(?i:(?:(?:System\.)?Management\.Automation\.)?scriptblock)\]\s*::\s*(?i:Create)\s*\(\s*(?:\$?\(\s*)*(?:` +
+	`(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\s+` +
+	`|(?i:New-Object)\s+(?i:(?:System\.)?Net\.WebClient)\s*\)\s*\.\s*(?i:DownloadString)\s*\()`
+
 var guardRules = []struct {
 	name  string
 	match func(command string) bool
@@ -40,9 +46,9 @@ var guardRules = []struct {
 	// Downloading a script straight into a shell or PowerShell evaluation,
 	// through any number of pipe stages or a parenthesized download argument.
 	{"pipe-to-shell", matches(
-		`\b(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b.*\|\s*(?:&\s*)?(?:(?i:sudo)\s+)?(?i:sh|bash|zsh|powershell|pwsh|iex|Invoke-Expression)\b` +
-			`|(?:^|[^\w])(?:&|\.)\s*\(\s*\[(?i:scriptblock)\]\s*::\s*(?i:Create)\s*\(\s*(?:\(\s*)*` +
-			`(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\s+` +
+		`\b(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b.*\|\s*(?:[&.]\s*)?(?:(?i:sudo)\s+)?(?:"[^"|]*[\\/]|'[^'|]*[\\/]|[^\s"'|]*[\\/])?["']?(?i:sh|bash|zsh|powershell|pwsh|iex|Invoke-Expression)\b` +
+			`|(?:^|[^\w])(?:&|\.)\s*\(\s*` + scriptblockOfDownload +
+			`|` + scriptblockOfDownload + `.*\)\s*\.\s*(?i:Invoke(?:ReturnAsIs)?)\s*\(` +
 			`|(?:^|[^\w-])(?i:iex|Invoke-Expression)\s*(?:-(?i:c\w*)\s+)?\$?\(\s*(?:\(\s*)*(?:` +
 			`(?i:curl|wget|irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\s+` +
 			`|(?i:New-Object)\s+(?i:(?:System\.)?Net\.WebClient)\s*\)\s*\.\s*(?i:DownloadString)\s*\()`,
@@ -58,9 +64,10 @@ var guardRules = []struct {
 	// A GET of a publishing endpoint is harmless, but uncommon for an agent;
 	// refusing every method keeps implicit POSTs from fields and --input covered.
 	{"gh-publish", matches(
-		`\bgh\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b` +
+		`\b(?i:gh)\b[^|&;]*\b(?:pr\s+merge|release\s+(?:create|upload|edit|delete)|repo\s+(?:delete|archive|rename|edit\b[^|&;]*--visibility))\b` +
 			`|\b(?i:gh(?:\.exe)?)["']?\s+api\b[^|&;]*(?:-X|--method)[\s="'\\$]*(?i:PUT|PATCH|DELETE)\b` +
-			`|\b(?i:gh(?:\.exe)?)["']?\s+api\b[^|&;]*(?:/(?:releases|git/(?:refs|tags)|rulesets|keys|hooks|collaborators|dispatches|merges|environments|transfer|deployments|statuses|branches/[^/\s"'?]+/rename|merge-upstream|forks|pages|actions/(?:secrets|variables|runs/[^/\s"'?]+/pending_deployments|runners/registration-token))|\b(?:user/repos|orgs/[^/\s"'?]+/repos|gists))(?:/|[\s"'?]|$)` +
+			`|\b(?i:gh(?:\.exe)?)["']?\s+api\b[^|&;]*(?:/(?:releases|git/(?:refs|tags)|rulesets|keys|hooks|collaborators|dispatches|merges|environments|transfer|deployments|statuses|branches/[^/\s"'?]+/rename|merge-upstream|forks|pages|actions/(?:secrets|variables|runs/[^/\s"'?]+/pending_deployments|runners/(?:registration-token|generate-jitconfig|remove-token))|user/repos|orgs/[^/\s"'?]+/repos|gists))(?:/|[\s"'?]|$)` +
+			`|\b(?i:gh(?:\.exe)?)["']?\s+api(?:\s+-[-\w]+(?:[\s=]+(?:[^\s"'-]|"[^"]*"|'[^']*')(?:[^\s"']|"[^"]*"|'[^']*')*)?)*\s+["']?(?:user/repos|orgs/[^/\s"'?]+/repos|gists)(?:/|[\s"'?]|$)` +
 			`|\b(?i:gh(?:\.exe)?)["']?\s+api\b[^|&;]*(?:\bgraphql\b[^|&;]*(?i:mutation)\b|(?i:mutation)\b[^|&;]*\bgraphql\b)`,
 	)},
 	// gh's login in the system's credential store, which no variable hides:

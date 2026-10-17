@@ -68,9 +68,10 @@ Batch retry lists lose disabled entries while keeping their original order and
 repetitions; a nonempty list with no enabled entries is refused.
 
 At a usage limit the carry-on partner is the first other installed enabled backend
-in preference order, subject to the existing readiness and billing checks. With no
-preference, the claude/codex pairing is unchanged. With no ready enabled partner,
-the run stays limited. `--no-switch` still disables carry-on. A limited run with
+in preference order that passes the readiness and billing checks: one that is limited
+too, or would bill per token, is passed over for the next. With no preference, the
+claude/codex pairing is unchanged. With no ready enabled partner, the run stays limited.
+`--no-switch` still disables carry-on. A limited run with
 retrieval on is not carried on when its chain's latest retrieval pin was recorded on
 another backend than the partner (usually the limited one): the partner would resolve
 a new knowledge version, so the run stays limited and hrn prints the refusal, naming
@@ -356,8 +357,8 @@ the message gives one. Then:
   preferences). A limit can lift early (codex sells credits); deleting the file forgets it.
 - Nothing moves automatically to `api`, which is billed per token. Without preferences,
   gemini, opencode and agy are not partners either; with one, the enabled installed plan
-  backends stand in, in preference order. If no enabled partner is installed, or the
-  selected partner is limited too, the run stays `limited` and says so.
+  backends stand in, in preference order, past any that is limited too. If no enabled
+  partner is installed, or every one is limited, the run stays `limited` and says so.
 - Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
   the plan. Codex uses `CODEX_API_KEY` in API-key mode; older releases or API-key mode
