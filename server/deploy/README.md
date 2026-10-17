@@ -80,8 +80,10 @@ renders all three charts, checks scaling, storage, isolation, credential referen
 and rejects unsafe values: unpinned images, missing required Secret names,
 malformed tenant/project IDs, and control URLs with HTTP or a path. It also
 rejects repeated document kinds, checks the control container's image and
-security settings (including inherited seccomp), verifies DNS/control/PostgreSQL
-egress selectors and ports, forbids `envFrom` on both worker containers, and
+security settings (including inherited seccomp), forbids `capabilities.add` on
+the control, worker and fake-model containers, verifies DNS/control/PostgreSQL
+egress selectors and ports and the control ingress sources (project workers,
+KEDA, hrn-admin) and port 8443, forbids `envFrom` on both worker containers, and
 requires exactly four scaler Secret references. It parses every YAML document
 in `fixtures/postgres.yaml`. The regression tests exercise broken rendered
 documents and simulate Helm accepting forbidden values, without editing charts.
