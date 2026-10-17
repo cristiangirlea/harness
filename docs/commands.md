@@ -66,6 +66,10 @@ paths absent from the original; a rejected summary uses the existing cut. This
 includes generated counts, so a count absent from the original also rejects the
 summary. Failing-test diagnostics must stay with their test name, in order;
 ambiguous interleaved diagnostics reject the summary and use the existing cut.
+Sequential subtests are nested, not interleaved: a diagnostic after `=== RUN TestA/sub`
+belongs to that subtest while its parent waits. Go before 1.20 prints no `=== NAME`
+marker when the parent logs again after a subtest, so that parent diagnostic is kept with the
+subtest; if the subtest passed, the summary drops it and only `read_original` shows it.
 `--shape-tools=false` keeps the existing behavior. The additive `shape_tools`
 boolean is also available in run options, batch specs/tasks and MCP
 run inputs. Eval matrix variants each select `shape_tools` (default false),
