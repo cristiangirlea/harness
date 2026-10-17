@@ -162,3 +162,34 @@ func TestStartDetachedOutlivesItsParentAndStopEndsIt(t *testing.T) {
 		}
 	}
 }
+
+// ps prints argv[0] as typed: a watch started through PATH shows a bare
+// hrn, which must still match the target it runs from.
+func TestParsePSResolvesABareProgramNameThroughPATH(t *testing.T) {
+	target := filepath.Join(t.TempDir(), exe("hrn"))
+	out := []byte(`    1     0 Thu Oct 15 09:00:00 2026     /sbin/launchd
+  200     1 Thu Oct 15 09:01:00 2026     -zsh
+  300   200 Thu Oct 15 09:02:00 2026     hrn watch --lan
+  301   200 Thu Oct 15 09:03:00 2026     ./hrn watch
+`)
+	lookPath := func(name string) (string, error) {
+		if name == "hrn" {
+			return target, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	procs := parsePS(out, lookPath)
+	if len(procs) != 4 {
+		t.Fatalf("%d processes: %+v", len(procs), procs)
+	}
+	w := procs[2]
+	if w.PID != 300 || w.Exe != target || !reflect.DeepEqual(w.Args, []string{"watch", "--lan"}) || w.ParentName != "-zsh" {
+		t.Errorf("watch %+v; want pid 300 running %s", w, target)
+	}
+	if procs[3].Exe != "./hrn" {
+		t.Errorf("a path relative to the other process's folder was resolved: %q", procs[3].Exe)
+	}
+	if ws := WatchesOf(procs, []string{target}); len(ws) != 1 || ws[0].PID != 300 {
+		t.Errorf("watches %+v; want pid 300", ws)
+	}
+}
