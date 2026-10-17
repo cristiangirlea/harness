@@ -277,6 +277,13 @@ type VariantRow struct {
 	JudgeRepeats int     `json:"judge_repeats,omitempty"`
 	ScoreMin     float64 `json:"score_min,omitempty"`
 	ScoreMax     float64 `json:"score_max,omitempty"`
+
+	// Setup is the agent setup of the first cell of SetupTask, the spec's first
+	// task, its digest covering the variant's prompt_prefix too. SetupMixed says
+	// repeats of one task started with setups that differ beyond their options.
+	Setup      *agent.Setup `json:"setup,omitempty"`
+	SetupTask  string       `json:"setup_task,omitempty"`
+	SetupMixed bool         `json:"setup_mixed,omitempty"`
 }
 
 // judgeScore is a row's judge columns, shared by variant and task rows.
@@ -498,6 +505,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		row := VariantRow{Name: name, Statuses: map[string]int{}}
 		var costs, durations, turns, calls, inputs []float64
 		var judged [][]Judgement
+		taskSetups := map[string]string{}
 		for _, c := range cells {
 			if c.variant != name {
 				continue
@@ -515,6 +523,21 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 			if n := len(c.tr.Attempts); n > 0 {
 				a := c.tr.Attempts[n-1]
 				status = string(a.Result.Status)
+				if s := runSetup(a.RunID); s != nil {
+					// The first task only, so both sides of a diff compare the same task.
+					if row.Setup == nil && len(spec.Tasks) > 0 && c.task == spec.Tasks[0].ID {
+						row.Setup, row.SetupTask = s, c.task
+						if v.PromptPrefix != "" {
+							row.Setup = s.WithOptions(agent.PromptPrefixOption(v.PromptPrefix))
+						}
+					}
+					// Tasks may set their own MCP configs, so only repeats of one task must agree.
+					if was, ok := taskSetups[c.task]; !ok {
+						taskSetups[c.task] = s.BaseDigest
+					} else if was != s.BaseDigest {
+						row.SetupMixed = true
+					}
+				}
 				if cost, known, estimated := a.Result.KnownCost(); known {
 					costKnown = true
 					costs = append(costs, cost)
@@ -572,6 +595,18 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		}
 	}
 	return table
+}
+
+// runSetup is the setup a run recorded; nil for a run that is gone or older than the field.
+func runSetup(id string) *agent.Setup {
+	if id == "" {
+		return nil
+	}
+	rec, err := runlog.Load(id)
+	if err != nil {
+		return nil
+	}
+	return rec.Setup
 }
 
 // splitID reads back what Expand wrote: <evalid>.<task>.<variant>.r<n>. The

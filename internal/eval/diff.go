@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"math"
 	"slices"
+
+	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 // Diff sets two evals side by side: the question it answers is "did this
@@ -32,6 +34,19 @@ type Diff struct {
 	JudgeChanged bool `json:"judge_changed,omitempty"`
 	// Judged is true when either eval has judge scores to compare.
 	Judged bool `json:"judged,omitempty"`
+	// SetupChanged lists the variants whose runs started with another agent
+	// setup in b beyond the variant's own harness options.
+	SetupChanged []SetupChange `json:"setup_changed,omitempty"`
+}
+
+// SetupChange is what differs in one variant's setup between the two evals.
+type SetupChange struct {
+	Variant string `json:"variant"`
+	// Files were added, removed or changed; the names below are on one side only.
+	Files   []string `json:"files,omitempty"`
+	MCP     []string `json:"mcp,omitempty"`
+	Plugins []string `json:"plugins,omitempty"`
+	Skills  []string `json:"skills,omitempty"`
 }
 
 // VariantPair is one variant in both evals; a nil side did not run it.
@@ -131,12 +146,63 @@ func Compare(a, b Record) Diff {
 	}
 	for _, v := range b.Spec.Matrix {
 		if was, ok := defs[v.Key()]; ok && (was.Backend != v.Backend || was.Model != v.Model || was.Effort != v.Effort ||
-			was.PromptPrefix != v.PromptPrefix || was.AppendSystemPrompt != v.AppendSystemPrompt || was.NoSkills != v.NoSkills) {
+			was.PromptPrefix != v.PromptPrefix || was.AppendSystemPrompt != v.AppendSystemPrompt || was.NoSkills != v.NoSkills ||
+			!sameOptional(was.Lean, v.Lean) || was.ShapeTools != v.ShapeTools || was.Retrieval != v.Retrieval || was.RetrievalVersion != v.RetrievalVersion) {
 			d.VariantChanged = append(d.VariantChanged, v.Key())
+		}
+	}
+	for _, v := range d.Variants {
+		if v.A == nil || v.B == nil || v.A.Setup == nil || v.B.Setup == nil {
+			continue
+		}
+		// Another backend loads other files by design: that is a variant change,
+		// even when the backend came from the spec, a task or the default.
+		if v.A.Setup.Backend != v.B.Setup.Backend {
+			if !slices.Contains(d.VariantChanged, v.Name) {
+				d.VariantChanged = append(d.VariantChanged, v.Name)
+			}
+			continue
+		}
+		// Setups of two different tasks may differ by design (a task's own MCP configs).
+		if v.A.SetupTask == v.B.SetupTask && v.A.Setup.BaseDigest != v.B.Setup.BaseDigest {
+			d.SetupChanged = append(d.SetupChanged, setupChange(v.Name, v.A.Setup, v.B.Setup))
 		}
 	}
 	d.JudgeChanged = string(judgeScale(a.Spec.Judge)) != string(judgeScale(b.Spec.Judge))
 	return d
+}
+
+func setupChange(variant string, a, b *agent.Setup) SetupChange {
+	c := SetupChange{Variant: variant, MCP: oneSide(a.MCP, b.MCP), Plugins: oneSide(a.Plugins, b.Plugins), Skills: oneSide(a.Skills, b.Skills)}
+	for name, hash := range a.Files {
+		if b.Files[name] != hash {
+			c.Files = append(c.Files, name)
+		}
+	}
+	for name := range b.Files {
+		if _, ok := a.Files[name]; !ok {
+			c.Files = append(c.Files, name)
+		}
+	}
+	slices.Sort(c.Files)
+	return c
+}
+
+// oneSide is the names in a or b but not both, sorted.
+func oneSide(a, b []string) []string {
+	var out []string
+	for _, n := range a {
+		if !slices.Contains(b, n) {
+			out = append(out, n)
+		}
+	}
+	for _, n := range b {
+		if !slices.Contains(a, n) {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // judgeScale is the judge as JSON, without what does not change its scores' scale.
@@ -168,3 +234,6 @@ func firstOfList(own, spec []string) []string {
 	}
 	return spec
 }
+
+// sameOptional compares two optional settings, unset differing from either value.
+func sameOptional(a, b *bool) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }

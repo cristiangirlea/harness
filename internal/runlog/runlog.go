@@ -56,6 +56,9 @@ type Record struct {
 	ContinueRoute string `json:"continue_route,omitempty"`
 	RecordError   string `json:"record_error,omitempty"`
 	Done          bool   `json:"-"`
+
+	// Setup is the agent setup the run started with, read when the record was created.
+	Setup *agent.Setup `json:"setup,omitempty"`
 }
 
 type Writer struct {
@@ -106,7 +109,8 @@ func create(backend string, task agent.Task, continues, route string, routed ...
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route}}
+	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
+		Setup: agent.ResolveSetup(backend, task)}}
 	if len(routed) > 0 && routed[0] != nil {
 		by := *routed[0]
 		w.rec.RoutedBy = &by

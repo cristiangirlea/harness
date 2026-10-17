@@ -26,6 +26,50 @@ per cell, no repeat number and no spread, and still load.
 
 Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
 
+Every run records `setup`, the agent setup it started with, read when the record is
+created (an edit the agent makes later does not change it). It holds hashes and names,
+never file contents:
+
+- `backend`: whose files these are.
+- `files`: each instruction file the backend loads, mapped to its sha256. Keys are
+  workspace-relative, `~/` for a user-level file (`$CLAUDE_CONFIG_DIR/` or `$CODEX_HOME/`
+  when that variable names a folder other than the default; a relative one is read from the
+  workspace), and `../` per folder for a file above the workspace. api: `HRN.md`, `AGENTS.md`, `CLAUDE.md`. claude: `CLAUDE.md`, `CLAUDE.local.md`,
+  `.claude/CLAUDE.md`, `.claude/settings.json` and `settings.local.json`, `.claude/rules/**.md`,
+  each skill's `SKILL.md`; `CLAUDE.md` and `CLAUDE.local.md` in every folder above the
+  workspace (the main checkout above a batch worktree, for one); `CLAUDE.md`,
+  `settings.json`, `rules/**.md` and skills under `~/.claude` (or `$CLAUDE_CONFIG_DIR`); and
+  the files those Markdown files import by `@path` inside the same tree or, for `@~/`, a
+  Markdown file under the home folder, up to five hops.
+  codex: `AGENTS.override.md` and `AGENTS.md`, also under `~/.codex` (or `$CODEX_HOME`).
+  gemini: `GEMINI.md` and `~/.gemini/GEMINI.md`. opencode: `AGENTS.md`, `CLAUDE.md` and
+  `~/.config/opencode/AGENTS.md`. agy: `AGENTS.md`, `GEMINI.md`, `.agent/rules/**.md` and
+  `~/.gemini/GEMINI.md`. A file that cannot be read maps to `unreadable`. Linked rules
+  folders and linked folders inside them are followed. A link that leads out of its tree
+  is hashed when it reaches a file of the same kind (a `.md` or `.json` from a dotfiles
+  checkout); any other maps to `outside` and is not hashed, since the hash of a guessable
+  secret would confirm it.
+- `mcp`, `plugins`, `skills`: the names of the run's MCP servers (its `mcp` configs, only
+  the stdio ones on api; for claude also the project's `.mcp.json` and the user-wide and
+  this project's servers in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`), of
+  which only the names are read, listed whether or not `lean` keeps them from starting), the plugins the claude settings turn on
+  (local over project over user), and the claude skills present. claude.ai connectors are
+  not visible locally and are not listed.
+- `base_digest`: a sha256 over all of the above; `digest`: the same plus the harness
+  options the backend applies (`append_system_prompt` on api and claude, `retrieval` with
+  its version on every backend, `no_instructions` and `shape_tools` on api, `no_skills` and
+  `lean` on claude). Options do not remove names or files: they count in `digest` only, so
+  runs that differ only by those options share `base_digest`.
+- `truncated`: set when the scan stopped at 500 files; files past the cap are not covered.
+
+Two runs with the same files, servers, plugins, skills and options have the same `digest`
+wherever their workspaces are, except on claude when the folders above them hold
+`CLAUDE.md` files at another depth (their keys count the `../`). Records written before the
+field have no `setup` and still load. Eval variant rows copy the `setup` of the first cell of
+the spec's first task, named in `setup_task` (none when that run is gone); for a variant
+with a `prompt_prefix`, its `digest` covers the prefix too. `setup_mixed: true` says repeats of one task started with different `base_digest`s
+(tasks may set their own MCP configs, so different tasks may differ).
+
 A follow-up names the run it continues in `continues`. One started with `--fresh` (MCP
 `fresh`, exec `fresh`) also has `continue_route: "fresh_handover"`: it started a new
 session with a hand-over instead of resuming or forking one. The field is omitted for

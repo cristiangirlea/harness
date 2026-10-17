@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -274,5 +275,32 @@ func TestEvalTableShowsADashForAVariantJudgedWithoutRepeats(t *testing.T) {
 		if len(f) > 0 && f[0] == "sonnet" && f[len(f)-1] != "5.0-7.0" {
 			t.Errorf("sonnet row = %q, want its spread", line)
 		}
+	}
+}
+
+func TestEvalDiffNotesASetupChangeAndMixedCells(t *testing.T) {
+	a, b := diffPair()
+	a.Table.Variants[0].Setup = &agent.Setup{BaseDigest: "1", Files: map[string]string{"AGENTS.md": "x"}}
+	a.Table.Variants[0].SetupMixed = true
+	b.Table.Variants[0].Setup = &agent.Setup{BaseDigest: "2", Files: map[string]string{"AGENTS.md": "y"}, Skills: []string{"deliver"}}
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEvalDiff(r, eval.Compare(a, b))
+	out := buf.String()
+	for _, want := range []string{
+		"variant sonnet started with another agent setup in bbbbb, beyond its variant fields: files AGENTS.md; skills deliver",
+		"variant sonnet's cells in aaaaa did not all start with the same agent setup",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("diff lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestEvalDiffListsAtMostFiveFilesOfASetupChange(t *testing.T) {
+	got := setupNames("files", []string{"a", "b", "c", "d", "e", "f", "g"})
+	if got != "files a, b, c, d, e and 2 more" {
+		t.Errorf("got %q", got)
 	}
 }

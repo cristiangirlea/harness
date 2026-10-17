@@ -63,6 +63,29 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 	for _, name := range d.VariantChanged {
 		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s runs a different backend, model, effort or harness in %s", name, d.B)))
 	}
+	for _, c := range d.SetupChanged {
+		var parts []string
+		for _, p := range []string{setupNames("files", c.Files), setupNames("mcp", c.MCP), setupNames("plugins", c.Plugins), setupNames("skills", c.Skills)} {
+			if p != "" {
+				parts = append(parts, p)
+			}
+		}
+		what := ""
+		if len(parts) > 0 {
+			what = ": " + strings.Join(parts, "; ")
+		}
+		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s started with another agent setup in %s, beyond its variant fields%s", c.Variant, d.B, what)))
+	}
+	for _, v := range d.Variants {
+		for _, side := range []struct {
+			id  string
+			row *eval.VariantRow
+		}{{d.A, v.A}, {d.B, v.B}} {
+			if side.row != nil && side.row.SetupMixed {
+				r.Line(r.c(dim, fmt.Sprintf("  note: variant %s's cells in %s did not all start with the same agent setup", v.Name, side.id)))
+			}
+		}
+	}
 	if d.JudgeChanged {
 		r.Line(r.c(dim, "  note: the judge or its rubric differs, so the scores are not on one scale"))
 	}
@@ -70,6 +93,17 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 		slices.ContainsFunc(d.Tasks, func(t eval.TaskPair) bool { return t.WithinNoise }) {
 		r.Line(r.c(dim, "  note: within noise: the judge score moved less than the judge's own spread between repeats"))
 	}
+}
+
+// setupNames lists a kind of setup change, at most five names; empty for none.
+func setupNames(kind string, names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	if len(names) > 5 {
+		return fmt.Sprintf("%s %s and %d more", kind, strings.Join(names[:5], ", "), len(names)-5)
+	}
+	return kind + " " + strings.Join(names, ", ")
 }
 
 // noise marks a judge-score change smaller than the judge's own spread.
