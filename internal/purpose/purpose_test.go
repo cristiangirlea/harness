@@ -195,6 +195,8 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 		{"an error word before a code is an error, not a label", "Error: ENOENT: no such file or directory", "debug", "debug.error-message"},
 		{"a drive letter is not a label", "fix C:\\repo\\README.md", "debug", "debug.fix"},
 		{"only leading labels are skipped", "Repository: hrn\nImplement x\nBranch: y", "implement", "implement.build"},
+		{"a long bracketed part keeps the label", "Goal (" + strings.Repeat("x", maxLead+100) + "): Refactor the loader.", "refactor", "refactor.refactor"},
+		{"a long last label value keeps its own budget", "Context: " + strings.Repeat("x", maxLead-len(" refactor")) + " refactor", "refactor", "refactor.refactor"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -326,9 +328,10 @@ func TestParagraphsBoundGatheringAfterLabels(t *testing.T) {
 
 func TestParagraphsBoundLabelGathering(t *testing.T) {
 	for _, tc := range []struct{ name, prompt, want string }{
-		{"one long label", "Context: " + strings.Repeat("X", 4<<20), "Context: " + strings.Repeat("X", maxLead-len("Context: "))},
+		{"one long label", "Context: " + strings.Repeat("X", 4<<20), "Context: " + strings.Repeat("X", maxLead)},
 		{"many short labels", strings.Repeat("A: b\n", (4<<20)/len("A: b\n")) + "Last: value", "Last: value"},
-		{"unicode label", "Context: " + strings.Repeat("\U0001f600", maxLead), "Context: " + strings.Repeat("\U0001f600", maxLead-len("Context: "))},
+		{"unicode label", "Context: " + strings.Repeat("\U0001f600", maxLead+1), "Context: " + strings.Repeat("\U0001f600", maxLead)},
+		{"long bracketed part", "Goal (" + strings.Repeat("Y", 4<<20) + "): " + strings.Repeat("X", 4<<20), "Goal (" + strings.Repeat("Y", maxLead) + "): " + strings.Repeat("X", maxLead)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, suffix := range []string{"", "\n" + strings.Repeat("x", maxLead*2) + "\n\nImplement it."} {
@@ -349,6 +352,15 @@ func TestParagraphsBoundLabelGathering(t *testing.T) {
 	}
 }
 
+func TestLabelWordsPastTheCapAreAnInstruction(t *testing.T) {
+	for _, words := range []string{strings.Repeat("W", maxLead+1), "A " + strings.Repeat("W", maxLead) + " (note)"} {
+		prompt := words + ": " + strings.Repeat("X", 4<<20)
+		if got := paragraphs(prompt); len(got) != 1 || utf8.RuneCountInString(got[0]) != maxLead {
+			t.Errorf("paragraphs kept %d runes of a label with long words, want the instruction's %d", utf8.RuneCountInString(strings.Join(got, "")), maxLead)
+		}
+	}
+}
+
 func TestLeadingLabelsMatchTheGrammarWithoutScratchAllocations(t *testing.T) {
 	lines := []string{
 		"", "A: b", "A:", "A:two", "A:\tb", "A : b", "A  B: c",
@@ -362,7 +374,8 @@ func TestLeadingLabelsMatchTheGrammarWithoutScratchAllocations(t *testing.T) {
 	}
 	for _, line := range lines {
 		want := !errorLine.MatchString(line) && label.MatchString(line)
-		if got := leadingLabel(line); got != want {
+		colon, _ := leadingLabel(line)
+		if got := colon >= 0; got != want {
 			t.Errorf("leadingLabel(%q) = %v, want %v", line, got, want)
 		}
 	}
