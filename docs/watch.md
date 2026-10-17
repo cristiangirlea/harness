@@ -94,8 +94,9 @@ path's own slashes), the home folder is `~`, and a program named by its full pat
 System32, Program Files, `/usr/bin`, `/bin` or `/usr/local/bin` is its file name: `codex
 exec -C . --json`, `"powershell.exe" -Command ...`. A batch task's text is shortened by its
 worktree. The index's rows (a run's prompt, a batch's task names) are shortened the same way,
-for every viewer. A path only counts whole, so `ada-os-ipc-old` keeps its name. This is the page
-only: `events.jsonl`, the records and `hrn show` keep the full paths.
+for every viewer, and so are Ada's sentences, log and list of what is going (by each run's
+workspace or task's worktree). A path only counts whole, so `ada-os-ipc-old` keeps its name.
+This is the page only: `events.jsonl`, the records and `hrn show` keep the full paths.
 
 When the backend reports the last turn's context size, the run page also shows
 `Context: 285.0k tokens at the end`. This includes input served from or written to

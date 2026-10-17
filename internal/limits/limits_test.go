@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -242,6 +243,35 @@ func TestAfterCarriesALimitedRunOnToItsPartner(t *testing.T) {
 	// The limit is remembered, so the next run goes straight to claude.
 	if Until("codex", time.Now()).IsZero() {
 		t.Error("After did not remember codex's limit")
+	}
+}
+
+func TestAfterRefusesToRepinRetrievalOnThePartner(t *testing.T) {
+	for _, mode := range []string{"required", "off"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, true, true)
+			prev := agent.Task{Prompt: "fix the bug", Dir: t.TempDir(), Options: agent.Options{Retrieval: mode}}
+			rec, err := runlog.Create("codex", prev)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.",
+				Retrieval: &retrieval.Record{Mode: "required", Packet: &retrieval.Packet{VersionID: "kv-7"}}}
+			if err := rec.Close(res); err != nil {
+				t.Fatal(err)
+			}
+			next, why, err := After(rec.ID(), "codex", prev, res)
+			if mode == "off" {
+				if err != nil || next == nil {
+					t.Fatalf("retrieval off should still carry on: %v %s", err, why)
+				}
+				return
+			}
+			if next != nil || err == nil || !strings.Contains(err.Error(), "kv-7") {
+				t.Fatalf("claude would repin silently: next = %+v, err = %v", next, err)
+			}
+		})
 	}
 }
 

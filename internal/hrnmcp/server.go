@@ -186,7 +186,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			var plan followup.Plan
 			if args.ContinueRunID != "" {
-				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model, Fresh: args.Fresh})
+				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, Fresh: args.Fresh})
 				if err != nil {
 					return mcp.CallResult{}, err
 				}

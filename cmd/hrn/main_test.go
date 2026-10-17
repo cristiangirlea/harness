@@ -12,6 +12,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/route"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -518,5 +519,33 @@ func TestShowMasksHumanOutputOnly(t *testing.T) {
 		} else if strings.Contains(got, "fake-show-secret") || strings.Contains(got, "sk-test-show-secret") || !strings.Contains(got, "••••") {
 			t.Fatal("show did not mask")
 		}
+	}
+}
+
+func TestContinueWithRetrievalOnAnotherBackendThanThePinIsRefusedBeforeItRuns(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := t.TempDir()
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := &retrieval.Record{Mode: "required", Scope: retrieval.Scope{Backend: "api", Model: "m"}, Packet: &retrieval.Packet{VersionID: "kv-7"}}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK, Final: "a", Retrieval: pin}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "-m", "m", "--retrieval", "required",
+		"--retrieval-tenant", "t", "--retrieval-project", "p", "--retrieval-revision", "r", "x"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "kv-7") || !strings.Contains(err.Error(), "continue on api") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if recs, err := runlog.List(10); err != nil || len(recs) != 1 {
+		t.Fatalf("a refused continuation must record nothing: %d runs, %v", len(recs), err)
+	}
+	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "x"}); code != 0 || err != nil {
+		t.Fatalf("retrieval off should hand the transcript over: code=%d err=%v", code, err)
+	}
+	if task := <-recorded; !strings.Contains(task.Prompt, "--- request\n> p") {
+		t.Errorf("prompt:\n%s", task.Prompt)
 	}
 }
