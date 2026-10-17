@@ -1,12 +1,14 @@
 package followup
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -63,12 +65,114 @@ func TestAgyContinuesItsConversationWithoutPromisingAFork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer p.Release()
 	if p.Backend != "agy" || p.ForkSession != "conversation-1" || p.Resume != nil || len(p.Handoff) != 0 || p.Model != "requested-model" || p.Dir != dir {
 		t.Fatalf("unexpected plan %+v", p)
 	}
 	notes := strings.Join(p.Notes, "\n")
 	if !strings.Contains(notes, "resuming agy session conversation-1") || strings.Contains(notes, "forking") {
 		t.Fatalf("misleading continuation: %s", notes)
+	}
+}
+
+func TestTwoContinuationsOfOneAgyConversationCannotRunAtOnce(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "a"})
+	second := finished(t, first, agent.Task{Prompt: "q", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "b"})
+
+	type outcome struct {
+		plan Plan
+		err  error
+	}
+	outcomes := make(chan outcome, 2)
+	var start sync.WaitGroup
+	start.Add(1)
+	for _, id := range []string{first, second} {
+		go func() {
+			start.Wait()
+			p, err := Make(Request{RunID: id})
+			outcomes <- outcome{p, err}
+		}()
+	}
+	start.Done()
+	var held Plan
+	var refusals []error
+	for range 2 {
+		o := <-outcomes
+		if o.err != nil {
+			refusals = append(refusals, o.err)
+		} else {
+			defer o.plan.Release()
+			held = o.plan
+		}
+	}
+	if len(refusals) != 1 || !strings.Contains(refusals[0].Error(), "conversation-1") || !strings.Contains(refusals[0].Error(), "another hrn run") {
+		t.Fatalf("one of two continuations of one conversation must be refused: %v", refusals)
+	}
+
+	// Ending the run that holds the conversation frees it, once and for all.
+	held.Release()
+	held.Release()
+	again, err := Make(Request{RunID: second})
+	if err != nil {
+		t.Fatalf("after the first run ended: %v", err)
+	}
+	again.Release()
+
+	// A forked session is a copy of its own, so claude continuations may overlap.
+	other := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "claude", Session: "s1", Final: "a"})
+	a, err := Make(Request{RunID: other})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Release()
+	b, err := Make(Request{RunID: other})
+	if err != nil {
+		t.Fatalf("two claude forks: %v", err)
+	}
+	b.Release()
+}
+
+func TestContinuingAnOlderAgyRunSaysTheConversationHoldsLaterTurns(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	first := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "a"})
+	elsewhere := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-2", Final: "a"})
+	second := finished(t, first, agent.Task{Prompt: "q", Dir: dir}, agent.Result{Backend: "agy", Session: "conversation-1", Final: "b"})
+
+	p, err := Make(Request{RunID: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	notes := strings.Join(p.Notes, "\n")
+	if !strings.Contains(notes, "not the newest") || !strings.Contains(notes, second) {
+		t.Fatalf("no warning about the later run %s: %s", second, notes)
+	}
+	for _, id := range []string{second, elsewhere} {
+		p, err := Make(Request{RunID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Release()
+		if notes := strings.Join(p.Notes, "\n"); strings.Contains(notes, "not the newest") {
+			t.Errorf("run %s is the newest on its conversation: %s", id, notes)
+		}
+	}
+
+	// A run that resumed the conversation but ended before naming it is handed over, not later.
+	unnamed := finished(t, second, agent.Task{Prompt: "r", Dir: dir, ForkSession: "conversation-1"}, agent.Result{Backend: "agy", Final: "c"})
+	p, err = Make(Request{RunID: unnamed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+	if p.ForkSession != "conversation-1" || len(p.Handoff) != 1 || p.Handoff[0].ID != unnamed {
+		t.Fatalf("want %s handed over on conversation-1: %+v", unnamed, p)
+	}
+	if notes := strings.Join(p.Notes, "\n"); strings.Contains(notes, "not the newest") {
+		t.Errorf("the run being continued was named as a later one: %s", notes)
 	}
 }
 
@@ -273,6 +377,93 @@ func TestTheAPIConversationIsResumed(t *testing.T) {
 	p, err = Make(Request{RunID: w.ID(), Model: "claude-sonnet-5"})
 	if err != nil || p.Model != "claude-sonnet-5" || !strings.Contains(strings.Join(p.Notes, "\n"), "drops the earlier thinking") {
 		t.Errorf("another model should be warned about: %+v err=%v", p, err)
+	}
+}
+
+func TestAResumedConversationCarriesItsOriginals(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, _ := json.Marshal(agent.Conversation{Model: "claude-opus-5"})
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), conv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := "earlier tool output"
+	handle := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))[:16]
+	if err := os.MkdirAll(filepath.Join(w.Dir(), "originals"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Dir(), "originals", handle+".txt"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	for _, fresh := range []bool{false, true} {
+		p, err := Make(Request{RunID: w.ID(), Fresh: fresh})
+		if err != nil {
+			t.Fatal(err)
+		}
+		next := t.TempDir()
+		task := agent.Task{Prompt: "go on"}
+		p.Apply(&task, next, func(agent.Event) {})
+		data, err := os.ReadFile(filepath.Join(next, "originals", handle+".txt"))
+		if fresh {
+			if !os.IsNotExist(err) {
+				t.Fatalf("a fresh hand-over resumes no conversation, so it carries no originals: %v", err)
+			}
+		} else if err != nil || string(data) != text {
+			t.Fatalf("original not carried over: %q %v", data, err)
+		}
+	}
+}
+
+func TestOriginalsThatCannotBeCarriedOverAreReportedAndTheRunGoesOn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, _ := json.Marshal(agent.Conversation{Model: "claude-opus-5"})
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), conv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := "earlier tool output"
+	handle := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))[:16]
+	if err := os.MkdirAll(filepath.Join(w.Dir(), "originals"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Dir(), "originals", handle+".txt"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Make(Request{RunID: w.ID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := t.TempDir()
+	// A file where the originals directory belongs makes every copy fail.
+	if err := os.WriteFile(filepath.Join(next, "originals"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task := agent.Task{Prompt: "go on"}
+	var events []string
+	p.Apply(&task, next, func(e agent.Event) { events = append(events, e.Text) })
+	reported := false
+	for _, e := range events {
+		reported = reported || strings.HasPrefix(e, "originals not carried over: ")
+	}
+	if !reported {
+		t.Fatalf("copy failure not reported: %q", events)
+	}
+	if task.Resume == nil || task.Prompt != "go on" {
+		t.Fatalf("the run should still resume the conversation: resume=%v prompt=%q", task.Resume != nil, task.Prompt)
 	}
 }
 

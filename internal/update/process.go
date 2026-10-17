@@ -1,11 +1,14 @@
 package update
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,6 +58,43 @@ func DescribeProcess(p Process) string {
 		fmt.Fprintf(&b, " (%s)", strings.Join(extra, ", "))
 	}
 	return b.String()
+}
+
+// parsePS reads `ps -axo pid=,ppid=,lstart=,command=`. lstart is a fixed
+// five-word date, so the command and its arguments are everything after it;
+// an argument with a space in it cannot be told from two, which only matters
+// for --lan=NAME. A bare program name is looked up with lookPath, through
+// this process's PATH since the other one's is not visible.
+func parsePS(out []byte, lookPath func(string) (string, error)) []Process {
+	var procs []Process
+	names := map[int]string{}
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		f := strings.Fields(sc.Text())
+		if len(f) < 8 {
+			continue
+		}
+		pid, err := strconv.Atoi(f[0])
+		if err != nil {
+			continue
+		}
+		ppid, _ := strconv.Atoi(f[1])
+		p := Process{PID: pid, PPID: ppid, Exe: f[7], Args: f[8:]}
+		if !strings.ContainsRune(p.Exe, '/') {
+			if path, err := lookPath(p.Exe); err == nil && filepath.IsAbs(path) {
+				p.Exe = path
+			}
+		}
+		if t, err := time.ParseInLocation("Mon Jan _2 15:04:05 2006", strings.Join(f[2:7], " "), time.Local); err == nil {
+			p.Start = t
+		}
+		names[pid] = filepath.Base(p.Exe)
+		procs = append(procs, p)
+	}
+	for i := range procs {
+		procs[i].ParentName = names[procs[i].PPID]
+	}
+	return procs
 }
 
 // fromTargets keeps the processes whose exe is one of targets (resolved

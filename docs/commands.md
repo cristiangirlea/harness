@@ -66,6 +66,10 @@ paths absent from the original; a rejected summary uses the existing cut. This
 includes generated counts, so a count absent from the original also rejects the
 summary. Failing-test diagnostics must stay with their test name, in order;
 ambiguous interleaved diagnostics reject the summary and use the existing cut.
+Sequential subtests are nested, not interleaved: a diagnostic after `=== RUN TestA/sub`
+belongs to that subtest while its parent waits. Go before 1.20 prints no `=== NAME`
+marker when the parent logs again after a subtest, so that parent diagnostic is kept with the
+subtest; if the subtest passed, the summary drops it and only `read_original` shows it.
 `--shape-tools=false` keeps the existing behavior. The additive `shape_tools`
 boolean is also available in run options, batch specs/tasks and MCP
 run inputs. Eval matrix variants each select `shape_tools` (default false),
@@ -130,8 +134,9 @@ names them) and `SHA256SUMS`, and refuses to go on when the checksum does not ma
 need Go on `PATH` and say so otherwise. `--file PATH` takes a binary already built, say the
 one a session built in a scratch folder. Whatever the source, the candidate is run once with
 `version` and nothing else, after the checksum. The command prints `installed:` and
-`candidate:` lines and stops with `already current` when they name the same commit or module
-version.
+`candidate:` lines and stops with `already current` when every target names the same commit or
+module version as the candidate; otherwise a target that already does is listed as `already
+current` and left alone (no backup, its watch not restarted), and the others are updated.
 
 **Targets.** The running executable (resolved through symlinks) and every `hrn` (`hrn.exe`) on
 `PATH`, in `$GOPATH/bin` or `~/go/bin` and, on Windows, in `%LOCALAPPDATA%\hrn`, each listed
@@ -154,7 +159,8 @@ and the new binary started detached with the same arguments, so `--lan`, `--addr
 `--public` settings survive. Its output goes to the files the old one wrote to where the
 system can tell (Linux), else to `watch-<port>.log` under `HRN_HOME`. The command prints
 `watch restarted on <addr>` with the new pid. A watch whose binary could not be replaced is
-left running.
+left running. On macOS the watch is found through `ps`, which shows the program as it was typed;
+a bare `hrn` is looked up on the `PATH` of `hrn update` itself.
 
 **MCP servers.** Running `hrn mcp` processes are listed under "still on the old build until their
 host restarts them", with pid, parent and start time, and never stopped: the host (Claude Code,

@@ -94,7 +94,7 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 	}
 
 	failed := 0
-	done := map[string]bool{}
+	done, current := map[string]bool{}, map[string]bool{}
 	if o.Rollback {
 		for _, t := range hrn {
 			if o.DryRun {
@@ -127,7 +127,13 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		}
 		installed := versions[hrn[0]]
 		fmt.Fprintf(out, "installed: %s\ncandidate: %s\n", installed.Line, want.Line)
-		if installed.Same(want) {
+		for _, t := range hrn {
+			// The candidate's own copy is new on disk, but a watch it runs may not be.
+			if versions[t].Same(want) && !isSameFile(candidate, t) {
+				current[t] = true
+			}
+		}
+		if len(current) == len(hrn) {
 			fmt.Fprintln(out, "already current")
 			return 0, nil
 		}
@@ -140,6 +146,10 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		}
 		for _, t := range hrn {
 			old := versions[t]
+			if current[t] {
+				fmt.Fprintf(out, "  %s already current\n", t)
+				continue
+			}
 			if isSameFile(candidate, t) {
 				// --file named this copy: renaming it aside would remove the source.
 				fmt.Fprintf(out, "  %s is the candidate itself\n", t)
@@ -170,6 +180,9 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 			if samePath(exe, Resolved(t)) {
 				target = t
 			}
+		}
+		if current[target] {
+			continue
 		}
 		if !done[target] {
 			fmt.Fprintf(out, "watch (pid %d) left running on the old build: %s was not replaced\n", w.PID, target)

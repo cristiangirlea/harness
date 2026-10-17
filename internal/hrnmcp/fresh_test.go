@@ -7,8 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
+	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -83,4 +87,100 @@ func TestRunFreshNeedsARunToContinue(t *testing.T) {
 	if recs, err := runlog.List(0); err != nil || len(recs) != 0 {
 		t.Fatalf("a refused run left records: %v %v", recs, err)
 	}
+}
+
+// resumeStub resumes a conversation in place, as agy does, and tries to plan a
+// second continuation of prev while it runs.
+type resumeStub struct {
+	sessionStub
+	prev    string
+	refused *error
+}
+
+func (s resumeStub) Capabilities() agent.Capabilities {
+	return agent.Capabilities{Modes: []agent.Mode{agent.ModeReadOnly, agent.ModeAuto, agent.ModeYolo}, Sessions: "resume"}
+}
+
+func (s resumeStub) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	p, err := followup.Make(followup.Request{RunID: s.prev})
+	if err == nil {
+		p.Release()
+	}
+	*s.refused = err
+	res := s.sessionStub.Run(ctx, task, emit)
+	res.Session = task.ForkSession
+	return res
+}
+
+func TestRunHoldsAnAgyConversationUntilItEnds(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := connect(t, dir)
+	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "agy", Status: agent.StatusOK, Session: "conversation-1", Final: "Parser done."}); err != nil {
+		t.Fatal(err)
+	}
+	var refused error
+	old, _ := agent.Get("agy")
+	agent.Register(resumeStub{sessionStub{"agy"}, w.ID(), &refused})
+	defer agent.Register(old)
+	for range 2 {
+		refused = nil
+		r := s.call(t, "run", `{"prompt":"again","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)
+		if r.IsError {
+			t.Fatalf("the conversation was not released after the last run: %s", r.Text())
+		}
+		if refused == nil || !strings.Contains(refused.Error(), "another hrn run") {
+			t.Fatalf("a continuation during the run: %v", refused)
+		}
+	}
+}
+
+func TestRunReleasesAnAgyConversationAfterCarryingALimitedRunOn(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := connect(t, dir)
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"agy", "codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range limits.MeteredEnv("codex") {
+		t.Setenv(name, "")
+	}
+	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "agy", Status: agent.StatusOK, Session: "conversation-1", Final: "Parser done."}); err != nil {
+		t.Fatal(err)
+	}
+	var refused error
+	for _, b := range []agent.Backend{
+		resumeStub{sessionStub{"agy"}, w.ID(), &refused},
+		scripted{"codex", func(agent.Task) agent.Result {
+			return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
+		}},
+	} {
+		old, _ := agent.Get(b.Name())
+		agent.Register(b)
+		defer agent.Register(old)
+	}
+	r := s.call(t, "run", `{"prompt":"again","backend":"codex","continue_run_id":"`+w.ID()+`"}`)
+	if r.IsError || !strings.Contains(r.Text(), "codex reached its usage limit") {
+		t.Fatalf("agy did not carry the limited run on: %s", r.Text())
+	}
+	if refused == nil || !strings.Contains(refused.Error(), "another hrn run") {
+		t.Fatalf("the carry-on did not hold the conversation: %v", refused)
+	}
+	p, err := followup.Make(followup.Request{RunID: w.ID()})
+	if err != nil {
+		t.Fatalf("the conversation was not released after the carry-on: %v", err)
+	}
+	p.Release()
 }

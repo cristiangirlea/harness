@@ -83,7 +83,10 @@ print mode without putting a long prompt in Windows' command line. The `antigrav
 IDE launcher is not the CLI. `-m` passes `--model` (use `agy models` to list IDs), and
 all hrn effort levels pass through as `--effort`: low, medium, high, xhigh and max.
 Usage comes from the result event; output tokens already include thinking tokens,
-and input tokens exclude cache reads. A requested model is retained, but marked as
+and input tokens exclude cache reads. When agy exits 0 without a result event (a
+truncated stream), the run stays `ok` with the answer it streamed, its usage is marked
+`missing`, and an info line says no result arrived; the counters are what the finished
+(`DONE`) steps reported, if any, never an estimate. A requested model is retained, but marked as
 reported only if an event names one.
 
 | hrn mode | agy flags |
@@ -302,7 +305,13 @@ directory it started in, and the session refers to that workspace's files.
 agy uses the same continuation hook but resumes the saved conversation in place:
 continuing the same run twice appends to that conversation instead of creating two
 branches. Its session capability is `resume`, and the continuation note says
-`resuming`.
+`resuming`. Only one hrn run at a time may continue an agy conversation: a second
+`--continue` (or MCP `run` with `continue_run_id`) on the same conversation is refused
+while the first runs. The lock is a file under `$HRN_HOME/locks`, held by the running hrn
+process and dropped by the OS when it ends, even in a crash; the file itself stays.
+Continuing a run that is not the newest on its conversation is allowed, with a note
+naming the later run: the conversation already holds that run's turns, so the agent
+sees them too. `--fresh` starts a new conversation instead.
 
 Continuing on the same backend refuses rather than quietly starting over when that
 backend saved nothing: a run from before session ids were recorded, a gemini run, or an
