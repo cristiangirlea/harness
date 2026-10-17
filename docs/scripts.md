@@ -3,8 +3,11 @@
 Use Bash (Git Bash on Windows, Bash on Linux), or standard-library Go via
 `go run`. Run examples from the repository root. No Python is needed.
 
-Every file under `scripts/` starts with this header (after a shell shebang).
-Go uses `//` instead of `#`:
+Every `.sh` and `.go` file in `scripts/`, and every `.go` file one directory
+down (a Go package such as `scripts/tool-shapes/`, its tests included), starts
+with this header (after a shell shebang). Go uses `//` instead of `#`. The
+header ends at the first comment line that is not a lowercase `key: value`, so
+prose comments after it are not read as keys:
 
 ```bash
 # name: example
@@ -37,10 +40,14 @@ collapsed to one space. A script with no `matches:` line is never hinted.
 - Write the header first.
 - Compose by calling scripts, never copying their code.
 
-`bash scripts/verify.sh` reads headers of `.sh` and `.go` files, runs each
-example, stamps SHA-256 excluding the hash line, and replaces the marked index
-in AGENTS.md with sorted paths and summaries. Failed examples are reported,
-omitted from the index and cause a non-zero exit. Header errors also fail.
+`bash scripts/verify.sh` reads headers of `scripts/*.sh`, `scripts/*.go` and
+`scripts/*/*.go`, runs each example, stamps SHA-256 excluding the hash line, and
+replaces the marked index in AGENTS.md with sorted paths and summaries. Failed
+examples are reported, omitted from the index and cause a non-zero exit. Header
+errors also fail, and so does any other file: in `scripts/` only `.sh`, `.go`
+and `.txt` data (such as the comment baseline) are allowed, one directory down
+only `.go`; `scripts/testdata/` is not checked. Shell scripts are mode 100755
+but are always run through `bash`.
 Writes are in place so Windows can handle files held open by other processes.
 
 `bash scripts/verify.sh --check` performs the same examples but writes nothing.
@@ -54,15 +61,17 @@ Explicit exclusions use `example: none (reason)` and `hash: none`; they remain
 indexed with `(not verified: reason)`. The paid `api-check.sh` is excluded and
 keeps its existing behavior. No example may invoke it.
 
-`check.sh --list` prints the check skill's commands without executing them;
-normal execution stops on the first failure. Each check reports its step number;
+`check.sh --list` prints the check skill's commands without executing them:
+each non-blank line of the first `bash` block in its `SKILL.md`. Normal
+execution stops on the first failure; steps run with stdin from `/dev/null`. Each check reports its step number;
 failures include at most 2,000 bytes of diagnostics. `test-summary.sh [file]`
 reads JSON test events from a file or stdin, counts terminal test events (including
 subtests, excluding package events), and returns at most 20 failure names,
 each at most 200 characters, plus `truncated`. Invalid input is an error.
 `wait-for.sh host port [timeout]` waits for TCP connection success; timeout
-defaults to 10 seconds. Zero timeout makes one immediate probe. Invalid inputs
-and timeouts return error objects. Successful probes return `{"ready":true}`.
+defaults to 10 seconds. Zero timeout makes one immediate probe (200 ms dial).
+Invalid inputs and timeouts write only the error object to stderr (`go run`'s
+`exit status` line is dropped). Successful probes return `{"ready":true}`.
 
 `comment-check.sh [--root DIR] [--baseline PATH] [--prune] [--init]` scans
 non-test `.go` files with `go/scanner`, flagging comment blocks over five

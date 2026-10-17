@@ -8,7 +8,14 @@
 set -euo pipefail
 check=false
 root=$(cd "$(dirname "$0")/.." && pwd)
-error() { printf '{"error":"%s"}\n' "$1" >&2; }
+error() {
+  local s=${1//\\/\\\\} i o c u
+  s=${s//\"/\\\"}
+  for ((i=1; i<32; i++)); do
+    printf -v o '%03o' "$i"; printf -v c "\\$o"; printf -v u '\\u%04x' "$i"; s=${s//"$c"/"$u"}
+  done
+  printf '{"error":"%s"}\n' "$s" >&2
+}
 while (( $# )); do
   case "$1" in
     --check) check=true; shift ;;
@@ -32,14 +39,23 @@ else error 'no SHA-256 command'; exit 1; fi
 status=0
 : > "$tmp/index"
 shopt -s nullglob
-for file in scripts/*.go scripts/*.sh; do
+while IFS= read -r -d '' file; do
+  [[ $file != scripts/testdata/* ]] || continue
+  name=${file#scripts/}
+  if [[ $name == .* || $name == */.* || $name == */*/* ]] ||
+    [[ $name == */* && $name != *.go ]] || [[ $name != */* && ! $name =~ \.(sh|go|txt)$ ]]; then
+    error "unsupported file: $file"; status=1
+  fi
+done < <(find scripts -type f -print0)
+for file in scripts/*.go scripts/*/*.go scripts/*.sh; do
+  [[ $file != scripts/testdata/* ]] || continue
   header=$(awk '/^#!/ {next} /^# / {sub(/^# /, ""); print; next}
     /^\/\/ / {sub(/^\/\/ /, ""); print; next} {exit}' "$file")
   valid=true
   unset metadata
   declare -A metadata=()
   while IFS= read -r line; do
-    [[ $line == *': '* ]] || continue
+    [[ $line =~ ^[a-z]+:\  ]] || break
     key=${line%%: *}
     value=${line#*: }
     [[ ! ${metadata[$key]+set} ]] || valid=false

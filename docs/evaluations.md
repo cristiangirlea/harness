@@ -144,7 +144,8 @@ excluded; unreadable finished records in the window are counted and excluded.
 
 `shapes` classifies UTF-8 tool-result bytes as `test`, `log`, `json`, `table`,
 `terminal`, or `other`, in that priority order. Tests have `go test`, `ok`, `FAIL`,
-`=== RUN`, or `--- PASS|FAIL|SKIP|BENCH` lines; unified diff headers do not match.
+`=== RUN`, or `--- PASS|FAIL|SKIP|BENCH` lines, or are `go test -json` output
+(every non-empty line an object with an `Action`); unified diff headers do not match.
 Logs have timestamp or level prefixes; JSON must parse; CSV/TSV
 needs at least two rows with a consistent field count. Shell results otherwise
 count as terminal output. For unnamed results, a pending shell call (or a batch
@@ -181,7 +182,9 @@ input fields are supported; shell calls without either use the event's `text`
 (including Codex command events). Normalisation is a heuristic, not proof that two
 scripts are interchangeable. Totals cover all groups, including those beyond
 20; repeated bytes include every occurrence of groups seen more than once,
-even within one run. Keeping a script still costs its invocation and result.
+even within one run. `inline_script_totals` gives each of the five labels, in
+that order, its count, distinct run count and command bytes over all groups, so
+a label whose groups never reach the top 20 still shows. Keeping a script still costs its invocation and result.
 `inline_script_input_share_replayed_estimate` weights command bytes / 4 by
 usage events after the command, or `max(0, n - i)` using its ordinal
 among all tool calls when usage is absent, over the same token denominator.
