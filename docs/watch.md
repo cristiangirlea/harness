@@ -282,15 +282,17 @@ the microphone, and the recordings are that person's voice.
   quiet, or good.
 - **Just record me**: one long recording for talking, to someone or to ChatGPT's voice mode,
   with headphones, so that only the speaker's voice reaches the microphone. It is saved in
-  parts of five minutes and when it stops. A failed save keeps the audio for another try;
-  the warning clears once that part is saved.
+  parts of five minutes and when it stops, even if releasing the audio fails. A failed save
+  keeps the audio for another try; the warning clears once that part is saved.
 
 The page asks for the microphone as it is (echo cancellation, noise suppression and
 automatic gain off, one channel) and says so if the browser filters it anyway, as it may
 while another tab uses the microphone. Takes are 16-bit mono WAV at the browser's audio rate (usually 48 kHz).
 Record starts a fresh capture; Stop includes the last partial audio block, releases the
-microphone and suspends the audio context. Playback wakes the context without opening the
-microphone; the next Record opens it again. Switching modes stops the current recording
+microphone and suspends the audio context, or leaves it to an earlier playback still running,
+which suspends it when it ends. A block the old capture posts after Stop gave up waiting
+never reaches the next take, and a microphone that fails to open leaves a playback playing.
+Playback wakes the context without opening the microphone; the next Record opens it again. Switching modes stops the current recording
 and cancels one still opening the microphone. Keep and Retake wait until opening finishes.
 They are saved by the browser into a folder the person picks (`0001.wav`, … with
 `metadata.csv` as `id|text`, and `talk-<time>-<part>.wav`), never sent to hrn watch, which
