@@ -39,3 +39,26 @@ func TestCapabilityList(t *testing.T) {
 		t.Fatalf("missing capability: %s", out.String())
 	}
 }
+
+func TestDeterministicRouting(t *testing.T) {
+	for _, tc := range []struct {
+		prompt string
+		want string
+		matched bool
+		wantErr bool
+	}{
+		{prompt: "add 12 and 30", want: `{"sum":42}`, matched: true},
+		{prompt: "ADD -2 AND 3", want: `{"sum":1}`, matched: true},
+		{prompt: "write a function to add 12 and 30", matched: false},
+		{prompt: "add 9223372036854775807 and 1", matched: true, wantErr: true},
+		{prompt: "add 999999999999999999999 and 1", matched: true, wantErr: true},
+	} {
+		result, matched, err := tryDeterministicTask(context.Background(), tc.prompt)
+		if matched != tc.matched || (err != nil) != tc.wantErr {
+			t.Fatalf("%q: matched=%v err=%v", tc.prompt, matched, err)
+		}
+		if !tc.wantErr && tc.matched && string(result.Output) != tc.want {
+			t.Fatalf("%q: got %s", tc.prompt, result.Output)
+		}
+	}
+}
