@@ -54,6 +54,20 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 		}
 		r.Line(fmt.Sprintf("  %-20s %-20s %s", t.Task, t.Variant, arrow(before, after)+noise(t.WithinNoise)))
 	}
+	for _, v := range d.Variants {
+		for _, side := range []struct {
+			id  string
+			row *eval.VariantRow
+		}{{d.A, v.A}, {d.B, v.B}} {
+			if side.row != nil && side.row.DidNotAct > 0 {
+				noun := "cells"
+				if side.row.DidNotAct == 1 {
+					noun = "cell"
+				}
+				r.Line(r.c(dim, fmt.Sprintf("  note: %d %s of %s in %s did not act; its pass rate counts only the cells that did", side.row.DidNotAct, noun, v.Name, side.id)))
+			}
+		}
+	}
 	for _, id := range d.PromptChanged {
 		r.Line(r.c(dim, fmt.Sprintf("  note: the prompt differs for task %s, so its rows compare different tasks", id)))
 	}
@@ -144,12 +158,16 @@ func listEvals(w io.Writer, n int) error {
 	}
 	for _, rec := range recs {
 		cells, passed, cost, known, estimate, withoutCost := rec.Totals()
+		acted := cells
+		for _, v := range rec.Table.Variants {
+			acted -= v.DidNotAct
+		}
 		unknown := ""
 		if withoutCost > 0 {
 			unknown = fmt.Sprintf("  (%d of %d cells without a cost)", withoutCost, cells)
 		}
 		fmt.Fprintf(w, "%-6s %-16s %6d %6s %9s  %s%s\n", rec.ID, rec.Started.Local().Format("2006-01-02 15:04"),
-			cells, report.Percent(passed, cells), report.KnownMoney(cost, known, estimate), rec.BatchID, unknown)
+			cells, report.Percent(passed, acted), report.KnownMoney(cost, known, estimate), rec.BatchID, unknown)
 	}
 	if unreadable > 0 {
 		noun := "record"

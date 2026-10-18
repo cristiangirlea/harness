@@ -398,10 +398,11 @@ func TestAnEvalCellThatChangedAProtectedFileFailsByDefault(t *testing.T) {
 	}
 }
 
-// ev-half does task alpha at a full context and gives up on the others cheaply.
+// ev-half does task alpha at a full context and, after one look, gives up on the others cheaply.
 type halfStub struct{ stub }
 
-func (s halfStub) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+func (s halfStub) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	emit(agent.Event{Kind: agent.EventToolCall, Tool: "Read", Text: "out.txt"})
 	tokens := int64(10)
 	if strings.Contains(task.Prompt, "alpha") {
 		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt), 0o644)
@@ -423,5 +424,63 @@ func TestAVariantsMediansOverPassingCellsLeaveCheapFailuresOut(t *testing.T) {
 	v := rec.Table.Variants[0]
 	if v.Passed != 2 || v.MedianContext != 505 || v.MedianContextPassed != 1000 || v.MedianCostPassedUSD != 1 || !v.PassedCostKnown {
 		t.Errorf("row = %+v; want 2 passes, all-cells context 505, passing context 1000 and cost $1", v)
+	}
+}
+
+// ev-idle works on alpha and, on any other task, answers in one turn without a tool call or a change.
+type idleStub struct{ stub }
+
+func (s idleStub) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	if strings.Contains(task.Prompt, "alpha") {
+		emit(agent.Event{Kind: agent.EventToolCall, Tool: "Write", Text: "out.txt"})
+		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt), 0o644)
+		return s.stub.Run(ctx, task, emit)
+	}
+	return agent.Result{Backend: s.name, Status: agent.StatusOK, Final: "I can't access the repository files.", Turns: 1,
+		InputTokens: 34000, Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "reported"}}
+}
+
+func init() { agent.Register(idleStub{stub{"ev-idle", false}}) }
+
+func TestACellThatNeverActedIsCountedApartFromFailures(t *testing.T) {
+	spec := testSpec(initRepo(t))
+	spec.Matrix = []Variant{{Backend: "ev-idle"}}
+	rec, _, err := Run(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := rec.Table.Variants[0]
+	if v.Attempts != 4 || v.Passed != 2 || v.DidNotAct != 2 || v.PassRate() != 1 {
+		t.Errorf("row = %+v (pass rate %v); want 4 cells, 2 passes, 2 that did not act, a pass rate of 1 over the cells that acted", v, v.PassRate())
+	}
+	if v.MedianContext != 100 || v.MedianTurns != 2 {
+		t.Errorf("medians = context %v, turns %v; the cells that never acted must stay out of them", v.MedianContext, v.MedianTurns)
+	}
+	for _, row := range rec.Table.Tasks {
+		want := map[string]string{"alpha": "2/2", "beta": "0/0 +2 did not act"}[row.Task]
+		if row.Score() != want {
+			t.Errorf("task %s scores %q, want %q", row.Task, row.Score(), want)
+		}
+	}
+}
+
+func TestAnAnswerOnlyTaskThatFailsWithoutAToolCallStillActed(t *testing.T) {
+	var spec Spec
+	spec.Dir = initRepo(t)
+	spec.Tasks = []batch.Task{{ID: "beta", Prompt: "is there a bug in beta?", Expect: "^yes"}}
+	spec.Matrix = []Variant{{Backend: "ev-idle"}}
+	rec, _, err := Run(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := rec.Table.Variants[0]; v.DidNotAct != 0 || v.Attempts != 1 || v.Passed != 0 {
+		t.Errorf("row = %+v; the answer is the work, so a wrong one is a failure", v)
+	}
+}
+
+func TestATasksScoreKeepsTheCellsThatNeverActedBesideItsCount(t *testing.T) {
+	r := TaskRow{Passed: 1, Total: 2, DidNotAct: 1, Judged: 1, MeanScore: 8}
+	if got := r.Score(); got != "1/1 +1 did not act 8.0" {
+		t.Errorf("score = %q", got)
 	}
 }
