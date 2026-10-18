@@ -288,3 +288,17 @@ func TestFromEvalDoesNotCreditAHarnessChangeToTheModel(t *testing.T) {
 		t.Errorf("the task with a harness change is left out: %+v", got)
 	}
 }
+
+func TestFromEvalLeavesCellsThatNeverActedOutOfThePassRate(t *testing.T) {
+	r := evidence()
+	r.Table.Tasks[2].DidNotAct = 1 // small's one miss on build never acted: 9 of 9
+	if got := FromEval(r, .05)["implement"]; got.Model != "small" {
+		t.Fatalf("implement = %+v; the cheapest variant passed every cell that acted", got)
+	}
+	r.Table.Tasks[5] = eval.TaskRow{Task: "check", Variant: "small", Total: 10, DidNotAct: 10}
+	r.Table.Tasks[4].Passed = 0
+	r.Table.Tasks[3].Passed = 0
+	if got, ok := FromEval(r, .05)["review"]; ok && got.Model == "small" {
+		t.Fatalf("review = %+v; a variant with no cell that acted is no evidence", got)
+	}
+}

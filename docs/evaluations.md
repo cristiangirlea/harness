@@ -277,6 +277,15 @@ a dim line gives the run statuses when any cell did not finish `ok`, and how man
 changed nothing: right for "find the bug, if there is one", suspicious for "fix the
 typos", how many cells have no known cost, and when some cells failed, the passing
 cells' median cost and context, since cheap failures pull the all-cells medians down.
+
+A failed cell whose run ended `ok` in one turn, with no tool call and no change, *did not
+act*: an agent that answered "I can't access the files" or that misread the task's own
+instructions measured the eval's setup, not the variant. Such cells are counted apart
+(`did not act` under the variant, `+1 did not act` after a task's score), left out of the
+pass rate and the medians, and the footer says to re-run them; `hrn eval diff` notes a side
+that has them, and the routing table built from an eval and `hrn eval list` count the
+same way. A task whose deliverable is the answer (an `expect` and no gate) is the
+exception: there the answer is the work, so a wrong one is a failure.
 As in `hrn report`, an unknown cost (a
 codex cell marked missing, a cell with no attempt) is never counted as zero: the median
 cost and `total_cost_usd` cover the known costs, `cells_without_cost` counts the rest,

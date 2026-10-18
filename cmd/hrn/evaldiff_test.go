@@ -335,3 +335,34 @@ func TestTheEvalTableShowsPassingCellMediansWhenSomeCellsFailed(t *testing.T) {
 		}
 	}
 }
+
+func TestTheEvalTablesSayWhichCellsNeverActedAndToRerunThem(t *testing.T) {
+	a, b := diffPair()
+	b.Table.Variants[0].DidNotAct = 1
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEval(r, b)
+	if out := buf.String(); !strings.Contains(out, "1 did not act") || !strings.Contains(out, "1 cell did not act (no tool call, no change): re-run it") {
+		t.Errorf("eval table should count and explain the cells that never acted:\n%s", out)
+	}
+	buf.Reset()
+	printEvalDiff(r, eval.Compare(a, b))
+	if out := buf.String(); !strings.Contains(out, "did not act") {
+		t.Errorf("diff should say a side has cells that never acted:\n%s", out)
+	}
+}
+
+func TestEvalListLeavesCellsThatNeverActedOutOfThePassShare(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	_, b := diffPair()
+	b.Table.Variants = []eval.VariantRow{{Name: "haiku", Attempts: 4, Passed: 2, DidNotAct: 2}}
+	savedEval(t, b)
+	var buf bytes.Buffer
+	if err := listEvals(&buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "100%") {
+		t.Errorf("list should count only the cells that acted:\n%s", out)
+	}
+}
