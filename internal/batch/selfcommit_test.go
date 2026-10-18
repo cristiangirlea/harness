@@ -303,3 +303,51 @@ func TestAWorktreeThatVanishedInAContinuedAttemptKeepsTheEarlierCommit(t *testin
 		t.Errorf("commit = %q, want the branch's commit %s from the first attempt", tr.Commit, tip)
 	}
 }
+
+func TestABranchResetBelowTheBaseRecordsNoCommit(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "second.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "second.txt")
+	git(t, dir, "commit", "-q", "-m", "second")
+	agent.Register(stub{"wb-rewinds", func(_ context.Context, task agent.Task) agent.Result {
+		if err := gitIn(task.Dir, "reset", "-q", "--hard", "HEAD~1"); err != nil {
+			return agent.Result{Backend: "wb-rewinds", Status: agent.StatusError, Error: err.Error()}
+		}
+		return agent.Result{Backend: "wb-rewinds", Status: agent.StatusOK, Final: "rewound", Turns: 1}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-rewinds", Worktrees: WorktreesFresh, Tasks: []Task{{ID: "rewound", Prompt: "p"}}})
+	defer Remove(res)
+	if tr := res.Tasks[0]; tr.Status != StatusPass || tr.Commit != "" {
+		t.Errorf("status %s, commit %q: a branch reset below the base holds no work", tr.Status, tr.Commit)
+	}
+}
+
+func TestATipRewrittenWithoutTheBaseIsNotRecordedAndSaysWhy(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "second.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "second.txt")
+	git(t, dir, "commit", "-q", "-m", "second")
+	agent.Register(stub{"wb-rewrites", func(_ context.Context, task agent.Task) agent.Result {
+		if err := gitIn(task.Dir, "reset", "-q", "--hard", "HEAD~1"); err != nil {
+			return agent.Result{Backend: "wb-rewrites", Status: agent.StatusError, Error: err.Error()}
+		}
+		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte("x\n"), 0o644)
+		if err := commitAll(task.Dir, "new work on an older commit"); err != nil {
+			return agent.Result{Backend: "wb-rewrites", Status: agent.StatusError, Error: err.Error()}
+		}
+		return agent.Result{Backend: "wb-rewrites", Status: agent.StatusOK, Final: "rewrote", Turns: 1}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-rewrites", Worktrees: WorktreesFresh, Tasks: []Task{{ID: "rewritten", Prompt: "p"}}})
+	defer Remove(res)
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || tr.Commit != "" {
+		t.Fatalf("status %s, commit %q: merging this tip would revert the base", tr.Status, tr.Commit)
+	}
+	if got := tr.Attempts[0].Error; !strings.Contains(got, "does not contain the base") {
+		t.Errorf("attempt error = %q, want it to say why the commit was not recorded", got)
+	}
+}

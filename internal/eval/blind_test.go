@@ -377,8 +377,8 @@ func TestTheJudgeSeesTheDiffOfAnAgentThatCommittedItsOwnWork(t *testing.T) {
 	if len(seen) != 4 || len(rec.Judgements) != 4 {
 		t.Fatalf("judge ran %d times, want one per cell", len(seen))
 	}
-	if row := rec.Table.Variants[0]; row.Passed != 4 || row.Unchanged != 0 {
-		t.Errorf("row = %+v: cells whose agent committed its own work changed something", row)
+	if row := rec.Table.Variants[0]; row.Passed != 4 || row.Unchanged != 0 || row.DidNotAct != 0 {
+		t.Errorf("row = %+v: want every cell counted as changed and as having acted", row)
 	}
 	for _, s := range seen {
 		prompt := s.readable[:strings.Index(s.readable, s.dir)]

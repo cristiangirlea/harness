@@ -1331,7 +1331,11 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	// can be inspected or removed without losing work.
 	sha, commitErr := commitChanges(task.Dir, plan.commit)
 	if sha == "" && commitErr == nil {
-		sha, commitErr = agentCommit(task.Dir, plan.branch, plan.base)
+		var note string
+		sha, note, commitErr = agentCommit(task.Dir, plan.branch, plan.base)
+		if note != "" {
+			att.Error = strings.TrimSpace(att.Error + "\n" + note)
+		}
 	}
 	if commitErr != nil {
 		att.Error = strings.TrimSpace(att.Error + "\ncommit: " + commitErr.Error())
@@ -1494,31 +1498,41 @@ func commitChanges(wt, message string) (string, error) {
 }
 
 // agentCommit returns the branch's tip when the agent committed its own work on it
-// and left nothing for commitChanges, or "" while the branch is still at the base.
-// A commit on no branch is left out, since a merge would not bring it.
-func agentCommit(wt, branch, base string) (string, error) {
+// and left nothing for commitChanges, or "" while the branch is still at the base;
+// note says why a moved tip was left out. A commit on no branch is never taken.
+func agentCommit(wt, branch, base string) (sha, note string, err error) {
 	if _, err := os.Stat(wt); err != nil || branch == "" || base == "" {
-		return "", nil
+		return "", "", nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	g, err := newAgentGit(ctx, wt)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer g.close()
 	// for-each-ref prints nothing for a branch the agent renamed or deleted, and
 	// its pattern also matches refs below the name, so only the exact one counts.
 	out, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"+branch)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for _, line := range strings.Split(out, "\n") {
-		if name, head, ok := strings.Cut(line, " "); ok && name == "refs/heads/"+branch && head != base {
-			return head, nil
+		name, head, ok := strings.Cut(line, " ")
+		if !ok || name != "refs/heads/"+branch || head == base {
+			continue
 		}
+		// Merging a tip that dropped the base would revert it, so such a tip is not taken.
+		missing, err := g.stdout(ctx, "rev-list", "--count", head+".."+base)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.TrimSpace(missing) != "0" {
+			return "", "commit not recorded: the branch tip " + tools.ShortSHA(head) + " does not contain the base", nil
+		}
+		return head, "", nil
 	}
-	return "", nil
+	return "", "", nil
 }
 
 // agentGit runs every status, diff, add and commit hrn makes in a tree whose config an
