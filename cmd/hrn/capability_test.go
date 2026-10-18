@@ -42,8 +42,8 @@ func TestCapabilityList(t *testing.T) {
 
 func TestDeterministicRouting(t *testing.T) {
 	for _, tc := range []struct {
-		prompt string
-		want string
+		prompt  string
+		want    string
 		matched bool
 		wantErr bool
 	}{
