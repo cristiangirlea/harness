@@ -928,8 +928,11 @@ func printEval(r *renderer, rec eval.Record) {
 		if v.CellsWithoutCost > 0 {
 			notes = append(notes, fmt.Sprintf("%d of %d cells without a cost", v.CellsWithoutCost, v.Attempts))
 		}
+		if v.DidNotAct > 0 {
+			notes = append(notes, fmt.Sprintf("%d did not act", v.DidNotAct))
+		}
 		// Records from before the passing medians existed have neither field.
-		if v.Passed > 0 && v.Passed < v.Attempts && (v.PassedCostKnown || v.MedianContextPassed > 0) {
+		if v.Passed > 0 && v.Passed < v.Attempts-v.DidNotAct && (v.PassedCostKnown || v.MedianContextPassed > 0) {
 			notes = append(notes, fmt.Sprintf("passing cells: median cost %s, context %s",
 				report.KnownMoney(v.MedianCostPassedUSD, v.PassedCostKnown, v.CostEstimate), report.Number(v.MedianContextPassed)))
 		}
@@ -974,6 +977,15 @@ func printEval(r *renderer, rec eval.Record) {
 	}
 
 	cells, _, _, _, _, _ := rec.Totals()
+	idle := 0
+	for _, v := range rec.Table.Variants {
+		idle += v.DidNotAct
+	}
+	if idle == 1 {
+		r.Line(r.c(dim, "1 cell did not act (no tool call, no change): re-run it; the pass rate leaves it out"))
+	} else if idle > 1 {
+		r.Line(r.c(dim, fmt.Sprintf("%d cells did not act (no tool call, no change): re-run them; the pass rates leave them out", idle)))
+	}
 	if judged {
 		failed, estimate := 0, false
 		for _, j := range rec.Judgements {

@@ -254,6 +254,9 @@ type VariantRow struct {
 	Name     string `json:"name"`
 	Attempts int    `json:"attempts"`
 	Passed   int    `json:"passed"`
+	// DidNotAct counts the cells among Attempts that ended ok without a tool
+	// call, a second turn or a change; they are left out of the pass rate.
+	DidNotAct int `json:"did_not_act,omitempty"`
 	// Unchanged counts the passes that committed nothing: right for "find
 	// the bug, if any", suspicious for "fix the typos".
 	Unchanged     int            `json:"passed_unchanged,omitempty"`
@@ -370,12 +373,22 @@ func (v VariantRow) CostKnown() bool {
 	return v.Attempts > v.CellsWithoutCost
 }
 
-// PassRate is the share of cells that passed, as a share of attempts.
+// PassRate is the share of the cells that acted which passed.
 func (v VariantRow) PassRate() float64 {
-	if v.Attempts == 0 {
+	acted := v.Attempts - v.DidNotAct
+	if acted <= 0 {
 		return 0
 	}
-	return float64(v.Passed) / float64(v.Attempts)
+	return float64(v.Passed) / float64(acted)
+}
+
+// neverActed is a cell whose run ended ok in one turn with no tool call and no change.
+func neverActed(tr batch.TaskResult) bool {
+	if len(tr.Attempts) == 0 || tr.Commit != "" {
+		return false
+	}
+	r := tr.Attempts[len(tr.Attempts)-1].Result
+	return r.Status == agent.StatusOK && r.ToolCalls == 0 && r.Turns <= 1
 }
 
 // TaskRow is one task's score under one variant, over the repeats.
@@ -384,6 +397,8 @@ type TaskRow struct {
 	Variant string `json:"variant"`
 	Passed  int    `json:"passed"`
 	Total   int    `json:"total"`
+	// DidNotAct counts the cells among Total that never acted, as in VariantRow.
+	DidNotAct int `json:"did_not_act,omitempty"`
 	// The judge fields are as in VariantRow, for this task alone.
 	Judged       int     `json:"judged,omitempty"`
 	MeanScore    float64 `json:"mean_score,omitempty"`
@@ -396,10 +411,14 @@ func (r TaskRow) judge() judgeScore {
 	return judgeScore{r.Judged, r.MeanScore, r.JudgeRepeats, r.ScoreMin, r.ScoreMax}
 }
 
-// Score reads as "2/3", "2/3 7.5" with the judge's mean score, or
-// "2/3 7.5 (7.0-8.0)" with the spread of its repeats.
+// Score reads as "2/3" over the cells that acted ("2/2 +1 did not act" when one
+// never did), then the judge's mean score and the spread of its repeats:
+// "2/3 7.5 (7.0-8.0)".
 func (r TaskRow) Score() string {
-	s := fmt.Sprintf("%d/%d", r.Passed, r.Total)
+	s := fmt.Sprintf("%d/%d", r.Passed, r.Total-r.DidNotAct)
+	if r.DidNotAct > 0 {
+		s += fmt.Sprintf(" +%d did not act", r.DidNotAct)
+	}
 	if r.Judged > 0 {
 		s += fmt.Sprintf(" %.1f", r.MeanScore)
 	}
@@ -491,6 +510,11 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		passed        bool
 		tr            batch.TaskResult
 		verdicts      []Judgement // the scored ones
+		idle          bool
+	}
+	answerOnly := map[string]bool{}
+	for _, t := range spec.Tasks {
+		answerOnly[t.ID] = t.Expect != "" && len(firstOfList(t.Gate, spec.Gate)) == 0
 	}
 	scores := map[string][]Judgement{}
 	for _, v := range verdicts {
@@ -504,7 +528,8 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		if !ok {
 			continue
 		}
-		cells = append(cells, cell{task, variant, tr.Status == batch.StatusPass, tr, scores[tr.ID]})
+		passed := tr.Status == batch.StatusPass
+		cells = append(cells, cell{task, variant, passed, tr, scores[tr.ID], !passed && !answerOnly[task] && neverActed(tr)})
 	}
 
 	// Variant order follows the matrix, so the table reads like the spec.
@@ -520,6 +545,12 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				continue
 			}
 			row.Attempts++
+			if c.idle {
+				// It measured the eval's setup, not the variant: out of the pass rate and the medians.
+				row.DidNotAct++
+				row.Statuses[string(c.tr.Attempts[len(c.tr.Attempts)-1].Result.Status)]++
+				continue
+			}
 			if c.passed {
 				row.Passed++
 				if c.tr.Commit == "" {
@@ -601,6 +632,9 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 					continue
 				}
 				row.Total++
+				if c.idle {
+					row.DidNotAct++
+				}
 				if c.passed {
 					row.Passed++
 				}

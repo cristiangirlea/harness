@@ -23,7 +23,9 @@ Each `table.variants` row also holds `cells_without_cost`, the cells whose cost 
 unknown (left out of the total and median), and `cost_counted`, set when the row was
 counted that way. Older records have neither and show a zero median cost as `-`.
 Rows may also hold `median_cost_usd_passed` (with `passed_cost_known`) and
-`median_context_tokens_passed`, the medians over passing cells only, and a
+`median_context_tokens_passed`, the medians over passing cells only, and
+`did_not_act` (on variant and task rows), the cells among `attempts` or `total` that
+ended `ok` in one turn with no tool call and no change; a
 `retrieval_comparison` may hold `passing_pairs`, the passing-pair medians and
 reduction, `baseline_median_movement` and `saving_threshold`. All are optional;
 older records without them still load.
