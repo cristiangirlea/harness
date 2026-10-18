@@ -85,6 +85,7 @@ Usage:
   hrn eval show <eval-id>         reprint a saved eval
   hrn eval list [-n N]            list saved evals, newest first
   hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
+  hrn capability list|run         execute registered deterministic capabilities without an LLM
   hrn route show                 show purpose routing rows
   hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]
                                  replace a routing row by hand
@@ -109,6 +110,7 @@ Usage:
 
 Run flags:
   When backend, model and effort are all unset, use the purpose row in route.json before falling back to defaults.
+      --prefer-capabilities  attempt exact deterministic task matching before selecting an LLM (new runs only)
   -b, --backend NAME   api | claude | codex | gemini | opencode | agy, an enabled one once hrn backends set
                        a preference (default: the preference, else api if credentials exist, else claude)
   -m, --model NAME     model id (api default: claude-opus-5)
@@ -202,6 +204,8 @@ func main() {
 		code, err = cmdBatch(os.Args[2:])
 	case "eval":
 		code, err = cmdEval(os.Args[2:])
+	case "capability":
+		err = runCapability(context.Background(), os.Args[2:], os.Stdout)
 	case "route":
 		code, err = cmdRoute(os.Args[2:])
 	case "report":
@@ -243,7 +247,7 @@ func cmdRun(args []string) (int, error) {
 func cmdRunContext(parent context.Context, args []string) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	var backend, dir string
-	var jsonOut, thinking bool
+	var jsonOut, thinking, preferCapabilities bool
 	// Every option is a flag named after its json name; the struct is the
 	// list. The mode default belongs to this command, not to the struct.
 	opts := agent.Options{Mode: agent.ModeAsk}
@@ -257,6 +261,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	fs.BoolVar(&jsonOut, "json", false, "")
 	fs.BoolVar(&thinking, "thinking", false, "")
+	fs.BoolVar(&preferCapabilities, "prefer-capabilities", false, "")
 	continueID := fs.String("continue", "", "")
 	fresh := fs.Bool("fresh", false, "")
 	declared := fs.String("purpose", "", "")
@@ -344,6 +349,21 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	if strings.TrimSpace(prompt) == "" {
 		return 2, errors.New("empty prompt")
+	}
+
+	if preferCapabilities && *continueID == "" && backend == "" && opts.Model == "" {
+		result, matched, capabilityErr := tryDeterministicTask(parent, prompt)
+		if matched {
+			if capabilityErr != nil {
+				return 1, fmt.Errorf("deterministic capability: %w", capabilityErr)
+			}
+			if jsonOut {
+				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"solver": "capability", "capability": "math.add@1", "result": json.RawMessage(result.Output)})
+			} else {
+				fmt.Fprintln(os.Stdout, string(result.Output))
+			}
+			return 0, nil
+		}
 	}
 
 	routedBy, err := opts.Route(*declared, prompt, &backend, runlog.Home())
