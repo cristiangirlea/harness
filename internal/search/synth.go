@@ -61,7 +61,8 @@ func Synthesize(ctx context.Context,p Problem)(Solution,error) {
 	if len(p.Training)==0 || len(p.Validation)==0 || p.MaxDepth<0 || p.MaxDepth>5 || p.MaxCandidates<1 {
 		return Solution{},ErrInvalid
 	}
-	examples:=append(append([]Example(nil),p.Training...),p.Validation...)
+	examples:=append([]Example(nil),p.Training...)
+	p.Constants=append([]int64(nil),p.Constants...)
 	sort.Slice(p.Constants,func(i,j int)bool{return p.Constants[i]<p.Constants[j]})
 	seen:=map[string]bool{}
 	all:=[]expr{}
@@ -83,6 +84,12 @@ func Synthesize(ctx context.Context,p Problem)(Solution,error) {
 		all=append(all,e)
 		ok:=true
 		for i,v:=range examples {if e.values[i]!=v.Want {ok=false;break}}
+		if ok {
+			for _,v:=range p.Validation {
+				n,valid:=e.eval(v.X,v.Y)
+				if !valid || n!=v.Want {ok=false;break}
+			}
+		}
 		return ok,nil
 	}
 	base:=[]expr{
