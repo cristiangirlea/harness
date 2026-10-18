@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math/rand/v2"
@@ -23,7 +24,9 @@ func blindCheckout(ctx context.Context, repo, base, commit string) (_ string, er
 	}
 	defer func() {
 		if err != nil {
-			_ = os.RemoveAll(dir)
+			if rerr := os.RemoveAll(dir); rerr != nil {
+				err = errors.Join(err, fmt.Errorf("leaving %s behind: %w", dir, rerr))
+			}
 		}
 	}()
 	hooks, err := os.MkdirTemp("", "hrn-no-hooks-")

@@ -537,3 +537,51 @@ func TestAFailedRemovalOfAJudgesCheckoutIsReported(t *testing.T) {
 		t.Errorf("locked %d checkouts, %d reported: %v", len(locked), len(reported), reported)
 	}
 }
+
+func TestACheckoutLeftByACancelIsReportedOnce(t *testing.T) {
+	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+		t.Skip("root can empty any directory")
+	}
+	dir := initRepo(t)
+	resetSnoop(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var locked, judged string
+	var open *os.File
+	snoopAfter = func(dir string) {
+		judged = dir
+		sub := filepath.Join(dir, "locked")
+		if os.Mkdir(sub, 0o700) == nil && os.WriteFile(filepath.Join(sub, "f"), nil, 0o600) == nil {
+			if runtime.GOOS == "windows" {
+				open, _ = os.Open(filepath.Join(sub, "f"))
+			} else {
+				_ = os.Chmod(sub, 0o500)
+			}
+			locked = sub
+		}
+		cancel()
+	}
+	t.Cleanup(func() {
+		if open != nil {
+			_ = open.Close()
+		}
+		if locked != "" {
+			_ = os.Chmod(locked, 0o700)
+			_ = os.RemoveAll(filepath.Dir(locked))
+		}
+	})
+	spec := testSpec(dir)
+	spec.Matrix = []Variant{{Backend: "ev-ok"}}
+	spec.Parallel = 1
+	spec.Judge = &Judge{Backend: "ev-judge-snoop", Rubric: "r", Repeats: 2}
+	var reported []string
+	_, res, _ := Run(ctx, spec, func(e batch.Event) {
+		if strings.Contains(e.Text, "leaving its checkout behind") {
+			reported = append(reported, e.Text)
+		}
+	})
+	defer batch.Remove(res)
+	if locked == "" || len(reported) != 1 || !strings.Contains(reported[0], filepath.Base(judged)) {
+		t.Errorf("locked %q; reports %v; want one naming the cancelled cell's checkout", locked, reported)
+	}
+}
