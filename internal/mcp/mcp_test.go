@@ -229,6 +229,13 @@ func TestHelperMCPServer(t *testing.T) {
 	case "crash":
 		fmt.Fprintln(os.Stderr, "helper crashing on purpose")
 		os.Exit(3)
+	case "gitenv":
+		if os.Getenv("GIT_DIR") != "" || os.Getenv("GIT_INDEX_FILE") != "" {
+			fmt.Fprintln(os.Stderr, "inherited", os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"))
+			os.Exit(5)
+		}
+		_ = echoServer().Serve(context.Background(), os.Stdin, os.Stdout)
+		os.Exit(0)
 	case "env":
 		if os.Getenv("HRN_WORKER_TOKEN") != "" || os.Getenv("HRN_SCALER_TOKEN") != "" {
 			os.Exit(4)
@@ -508,4 +515,16 @@ func TestServeStopsWhenTheClientLeavesMidQuestion(t *testing.T) {
 		t.Fatal("Serve did not return: it waited for a handler it had not cancelled")
 	}
 	serverOut.Close()
+}
+
+func TestAnMCPServerDoesNotInheritARepositoryFromHrnsEnvironment(t *testing.T) {
+	t.Setenv("GIT_DIR", "/elsewhere/.git")
+	t.Setenv("GIT_INDEX_FILE", "/elsewhere/.git/index")
+	cl := &Client{}
+	cfg := helperConfig("gitenv")
+	cfg.Dir = t.TempDir()
+	if err := cl.Start(context.Background(), cfg); err != nil {
+		t.Fatalf("the server saw hrn's GIT_DIR or GIT_INDEX_FILE: %v", err)
+	}
+	cl.Close()
 }

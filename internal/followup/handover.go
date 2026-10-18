@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -139,7 +140,7 @@ func git(dir string, off []string, args ...string) (string, error) {
 	defer cancel()
 	full := append([]string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir}, off...)
 	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_NO_LAZY_FETCH=1")
 	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -73,9 +73,9 @@ func TestHelperCLIError(t *testing.T) {
 		os.Exit(1)
 	case "env":
 		// What the CLI was started with, as its final answer.
-		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s",
+		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s;GIT_DIR=%s;GIT_INDEX_FILE=%s;GIT_WORK_TREE=%s",
 			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
-			os.Getenv("HRN_GUARDED"))
+			os.Getenv("HRN_GUARDED"), os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"), os.Getenv("GIT_WORK_TREE"))
 		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
 		fmt.Println(string(out))
 		os.Exit(0)
@@ -497,5 +497,25 @@ func TestAnAdapterWithoutLimitWordsKeepsTheError(t *testing.T) {
 	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
 	if res.Status != StatusError {
 		t.Fatalf("status = %s: only claude and codex are read for limits", res.Status)
+	}
+}
+
+// hrn started from a git hook carries GIT_DIR and friends; an agent must act
+// on its own workspace, guarded or not.
+func TestACLIDoesNotInheritARepositoryFromHrnsEnvironment(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "env")
+	t.Setenv("GIT_DIR", "/elsewhere/.git")
+	t.Setenv("GIT_INDEX_FILE", "/elsewhere/.git/index")
+	t.Setenv("GIT_WORK_TREE", "/elsewhere")
+	for _, opts := range []Options{{Mode: ModeYolo}, {Mode: ModeYolo, AllowDangerous: true}} {
+		res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: opts}, func(Event) {})
+		for _, v := range []string{"GIT_DIR=;", "GIT_INDEX_FILE=;"} {
+			if !strings.Contains(res.Final+";", v) {
+				t.Errorf("allow dangerous %v: the CLI saw %s", opts.AllowDangerous, res.Final)
+			}
+		}
+		if !strings.HasSuffix(res.Final, "GIT_WORK_TREE=") {
+			t.Errorf("allow dangerous %v: the CLI saw %s", opts.AllowDangerous, res.Final)
+		}
 	}
 }

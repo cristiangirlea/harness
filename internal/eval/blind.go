@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/gitenv"
 )
 
 // blindCheckout copies base and then commit into a fresh repository under a
@@ -67,20 +68,9 @@ func blindCheckout(ctx context.Context, repo, base, commit string) (_ string, er
 	return dir, nil
 }
 
-// blindEnv drops what would point git at another repository (a git hook that
-// starts hrn sets some) and names a neutral author.
+// blindEnv names a neutral author; the repository the copy's git acts on is its directory's.
 func blindEnv() []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		name, _, _ := strings.Cut(kv, "=")
-		switch strings.ToUpper(name) {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
-			"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE":
-			continue
-		}
-		env = append(env, kv)
-	}
-	return append(env, "GIT_AUTHOR_NAME=judge", "GIT_AUTHOR_EMAIL=judge@localhost",
+	return append(gitenv.WithoutRepoVars(os.Environ()), "GIT_AUTHOR_NAME=judge", "GIT_AUTHOR_EMAIL=judge@localhost",
 		"GIT_COMMITTER_NAME=judge", "GIT_COMMITTER_EMAIL=judge@localhost", "LC_ALL=C", "LANGUAGE=")
 }
 
