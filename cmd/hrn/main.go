@@ -85,6 +85,7 @@ Usage:
   hrn eval show <eval-id>         reprint a saved eval
   hrn eval list [-n N]            list saved evals, newest first
   hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
+  hrn capability list|run         execute registered deterministic capabilities without an LLM
   hrn route show                 show purpose routing rows
   hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]
                                  replace a routing row by hand
@@ -202,6 +203,8 @@ func main() {
 		code, err = cmdBatch(os.Args[2:])
 	case "eval":
 		code, err = cmdEval(os.Args[2:])
+	case "capability":
+		err = runCapability(context.Background(), os.Args[2:], os.Stdout)
 	case "route":
 		code, err = cmdRoute(os.Args[2:])
 	case "report":
