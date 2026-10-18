@@ -272,6 +272,11 @@ type VariantRow struct {
 	// MedianContext counts every input token once, cached or not: what the
 	// model was given, not what was billed at full rate.
 	MedianContext float64 `json:"median_context_tokens"`
+	// The same medians over passing cells only: a variant that fails cheaply
+	// looks efficient over all of them.
+	MedianCostPassedUSD float64 `json:"median_cost_usd_passed,omitempty"`
+	PassedCostKnown     bool    `json:"passed_cost_known,omitempty"`
+	MedianContextPassed float64 `json:"median_context_tokens_passed,omitempty"`
 	// Judged counts the cells the judge scored; MeanScore is the mean of
 	// their verdicts, 0-10.
 	Judged    int     `json:"judged,omitempty"`
@@ -507,7 +512,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	for _, v := range spec.Matrix {
 		name := v.Key()
 		row := VariantRow{Name: name, Statuses: map[string]int{}}
-		var costs, durations, turns, calls, inputs []float64
+		var costs, durations, turns, calls, inputs, passedCosts, passedInputs []float64
 		var judged [][]Judgement
 		taskSetups := map[string]string{}
 		for _, c := range cells {
@@ -545,6 +550,9 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				if cost, known, estimated := a.Result.KnownCost(); known {
 					costKnown = true
 					costs = append(costs, cost)
+					if c.passed {
+						passedCosts = append(passedCosts, cost)
+					}
 					row.TotalCostUSD += cost
 					row.CostEstimate = row.CostEstimate || estimated
 				}
@@ -556,6 +564,9 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				}
 				if total, known, _ := r.ModelTokens(); known {
 					inputs = append(inputs, float64(total-r.OutputTokens))
+					if c.passed {
+						passedInputs = append(passedInputs, float64(total-r.OutputTokens))
+					}
 				}
 			}
 			if !costKnown {
@@ -572,6 +583,10 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		js := scoreOf(judged)
 		row.Judged, row.MeanScore, row.JudgeRepeats, row.ScoreMin, row.ScoreMax = js.judged, js.mean, js.repeats, js.min, js.max
 		row.MedianContext = report.Median(inputs)
+		row.MedianContextPassed = report.Median(passedInputs)
+		if len(passedCosts) > 0 {
+			row.MedianCostPassedUSD, row.PassedCostKnown = report.Median(passedCosts), true
+		}
 		table.Variants = append(table.Variants, row)
 	}
 

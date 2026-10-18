@@ -22,6 +22,11 @@ or `false` when explicitly set, omitted otherwise. Older records without it stil
 Each `table.variants` row also holds `cells_without_cost`, the cells whose cost is
 unknown (left out of the total and median), and `cost_counted`, set when the row was
 counted that way. Older records have neither and show a zero median cost as `-`.
+Rows may also hold `median_cost_usd_passed` (with `passed_cost_known`) and
+`median_context_tokens_passed`, the medians over passing cells only, and a
+`retrieval_comparison` may hold `passing_pairs`, the passing-pair medians and
+reduction, `baseline_median_movement` and `saving_threshold`. All are optional;
+older records without them still load.
 Variants may hold `prompt_prefix`, `append_system_prompt` and `no_skills`, and a judge
 `repeats`. With repeats, `judgements` holds one verdict per passing cell and repeat, each
 with its `repeat` number; variant and task rows add `judge_repeats`, `score_min` and

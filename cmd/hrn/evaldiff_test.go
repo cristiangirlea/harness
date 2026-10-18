@@ -304,3 +304,34 @@ func TestEvalDiffListsAtMostFiveFilesOfASetupChange(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestTheEvalTableShowsPassingCellMediansWhenSomeCellsFailed(t *testing.T) {
+	_, b := diffPair()
+	v := &b.Table.Variants[0]
+	v.Attempts, v.Passed = 4, 2
+	v.MedianContextPassed, v.MedianCostPassedUSD, v.PassedCostKnown = 1000, 1, true
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEval(r, b)
+	if out := buf.String(); !strings.Contains(out, "passing cells: median cost $1.00, context 1000") {
+		t.Errorf("eval table should show the passing cells' medians:\n%s", out)
+	}
+	for name, change := range map[string]func(*eval.VariantRow){
+		"an older record": func(v *eval.VariantRow) {
+			v.MedianContextPassed, v.MedianCostPassedUSD, v.PassedCostKnown = 0, 0, false
+		},
+		"every cell passed": func(v *eval.VariantRow) { v.Passed = v.Attempts },
+		"no cell passed":    func(v *eval.VariantRow) { v.Passed = 0 },
+	} {
+		row := *v
+		change(&row)
+		rec := b
+		rec.Table.Variants = []eval.VariantRow{row}
+		buf.Reset()
+		printEval(r, rec)
+		if strings.Contains(buf.String(), "passing cells") {
+			t.Errorf("%s: the table should not show passing medians:\n%s", name, buf.String())
+		}
+	}
+}

@@ -928,6 +928,11 @@ func printEval(r *renderer, rec eval.Record) {
 		if v.CellsWithoutCost > 0 {
 			notes = append(notes, fmt.Sprintf("%d of %d cells without a cost", v.CellsWithoutCost, v.Attempts))
 		}
+		// Records from before the passing medians existed have neither field.
+		if v.Passed > 0 && v.Passed < v.Attempts && (v.PassedCostKnown || v.MedianContextPassed > 0) {
+			notes = append(notes, fmt.Sprintf("passing cells: median cost %s, context %s",
+				report.KnownMoney(v.MedianCostPassedUSD, v.PassedCostKnown, v.CostEstimate), report.Number(v.MedianContextPassed)))
+		}
 		if len(notes) > 0 {
 			r.Line(r.c(dim, "  "+strings.Repeat(" ", 20)+strings.Join(notes, " · ")))
 		}
