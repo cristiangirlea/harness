@@ -52,6 +52,10 @@ type Spec struct {
 	// GateTimeout bounds each gate command; default 15m. A task's own wins.
 	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
 	Retry       []string       `json:"retry,omitempty"` // backends to try, in order, after a failed attempt
+	// Protect names the files the gates rely on, as globs relative to the
+	// repository ("**/*_test.go"); ProtectMode says what changing one means.
+	Protect     []string `json:"protect,omitempty"`
+	ProtectMode string   `json:"protect_mode,omitempty"`
 	// Worktrees is where each task works: WorktreesSlots (the default) or
 	// WorktreesFresh.
 	Worktrees string `json:"worktrees,omitempty"`
@@ -83,6 +87,8 @@ type Task struct {
 	Gate        []string       `json:"gate,omitempty"`
 	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
 	Retry       []string       `json:"retry,omitempty"`
+	Protect     []string       `json:"protect,omitempty"`
+	ProtectMode string         `json:"protect_mode,omitempty"`
 	// Expect is a regular expression the agent's final answer must match. It
 	// is checked before the gates and reported as one, so a task whose answer
 	// is the deliverable ("is there a bug?") can fail on what it said.
@@ -150,6 +156,9 @@ type Attempt struct {
 	// SwitchedFrom is the backend this attempt was meant for, or whose
 	// limited attempt it carries on, when a usage limit moved it here.
 	SwitchedFrom string `json:"switched_from,omitempty"`
+	// Protected lists the protected files this attempt changed or removed,
+	// against the batch's base.
+	Protected []string `json:"protected,omitempty"`
 }
 
 type GateResult struct {
@@ -296,6 +305,9 @@ func (s *Spec) normalize() error {
 	if err := checkGateTimeout(s.GateTimeout); err != nil {
 		return err
 	}
+	if err := checkProtect(s.Protect, s.ProtectMode); err != nil {
+		return err
+	}
 	if len(s.Tasks) == 0 {
 		return errors.New("no tasks")
 	}
@@ -334,6 +346,9 @@ func (s *Spec) normalize() error {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkGateTimeout(t.GateTimeout); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
+		if err := checkProtect(t.Protect, t.ProtectMode); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if _, err := compileExpect(t.Expect); err != nil {
@@ -711,6 +726,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
+	guard := protection{globs: firstList(t.Protect, spec.Protect), fail: firstOf(t.ProtectMode, spec.ProtectMode) == ProtectFail, base: base}
 	gateTimeout := defaultGateTimeout
 	if d := firstNonZero(t.GateTimeout, spec.GateTimeout); d > 0 {
 		gateTimeout = time.Duration(d)
@@ -872,7 +888,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		if at.Lean == nil && agent.AppliesLean(b) {
 			at.Lean = agent.Bool(true) // lean by default in a batch (#204)
 		}
-		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, gates, notify, report)
+		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
 		task.RetrievalState = out.att.Result.Retrieval
 		task.RetrievalRepair = false
@@ -1226,7 +1242,7 @@ type attemptOutcome struct {
 // runAttempt runs the agent in the task's worktree, then the gates, then
 // commits whatever was left behind, pass or fail. A returned error aborts the
 // whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, gates []string, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
 	if plan.switchedFrom != "" {
@@ -1274,6 +1290,22 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		} else {
 			notify(Event{Task: id, Kind: "gate", Text: "✓ " + gr.Command})
 		}
+	}
+	if len(guard.globs) > 0 && att.Result.Status == agent.StatusOK {
+		changed, err := changedProtected(ctx, task.Dir, guard)
+		att.Protected = changed
+		if len(changed) > 0 {
+			notify(Event{Task: id, Kind: "gate", Text: "! protected files changed: " + strings.Join(changed, ", ")})
+		}
+		if guard.fail && pass && (err != nil || len(changed) > 0) {
+			gr := protectGate(guard, changed, err)
+			att.Gates = append(att.Gates, gr)
+			pass = false
+			notify(Event{Task: id, Kind: "gate", Text: "✗ " + gr.Command})
+		} else if err != nil {
+			att.Error = strings.TrimSpace(att.Error + "\nprotect: " + err.Error())
+		}
+		report(att)
 	}
 	if pass {
 		for _, g := range gates {

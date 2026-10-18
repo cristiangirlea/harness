@@ -112,6 +112,18 @@ It is checked before the gates and reported as one, `expect /pattern/`, so a tas
 answer is the deliverable can fail on what it said: `"expect": "(?i)^no\\b"` for "is
 there a race here? answer yes or no". A retry after a miss is shown the answer it gave.
 
+Gates run in the worktree the agent just edited, so an agent can make them pass by
+weakening the tests. `protect` names the files the gates rely on, as globs relative to
+the repository in which `**` stands for any number of folders:
+`"protect": ["**/*_test.go", "scripts/check.sh"]`. After an attempt's run ends `ok`, hrn
+compares those files with the batch's base, committed or not; a file the agent added is
+not a change, a modified or removed one is. The attempt's record lists them under
+`protected` and the batch shows `! protected files changed: ...`. `protect_mode` says what
+that means: `report` (the default) keeps the verdict, `fail` fails the attempt before its
+gates run, as a gate named `protect ...` whose output lists the files, so a retry is told
+which ones to restore. A task's `protect` and `protect_mode` replace the spec's. Evals
+default to `fail`.
+
 A failed attempt is retried on each backend named in `retry`, in order. The same name
 may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common case: a
 second try with the same model, told what went wrong. A retry on a backend other than
