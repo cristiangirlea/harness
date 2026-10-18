@@ -770,6 +770,16 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   the owner approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-18: the eval judge is blind to the variant (#554, PR #566). The judge's prompt never
+  named the variant, but it ran in the cell's worktree, whose path, branch and commit message do.
+  It now runs in a fresh repository under a neutral temporary name with commits `base` and
+  `candidate`, so `git diff HEAD~1` also shows what the prompt clips past 60 KB, and verdicts are
+  asked for in an order shuffled by the batch id. Beyond the issue: `batch.CheckoutTree` writes the
+  copy under the task worktree guards and pins NTFS/HFS path protection, since the shared config
+  could turn it off and plant `GIT~1/config` in the copy's `.git`; a cell whose agent committed its
+  own work is judged on the worktree's HEAD; a cancel is recorded as canceled. Left for later:
+  `batch.Diff` misses such self-commits (#560), batch git and agent CLIs inherit `GIT_DIR` (#561),
+  and a read-only judge can still read run records (#562, the owner's call).
 - 2026-10-16: four issues closed in the triage without a code PR. #388 (tests reading the
   developer's `backends.json`) was fixed by PR #386, its timing half by PRs #387 and #413. #190
   (no `syscall.Flock` on solaris and aix) is not worth doing while neither is a release or CI
