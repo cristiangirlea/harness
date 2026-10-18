@@ -54,7 +54,10 @@ agent there, then the gates in order, stopping at the first non-zero exit or aft
 minutes. Whatever the agent left is committed on the branch as `<id>: <prompt>`, pass or
 fail, so the work is on the branch whatever happens to the worktree; if that commit fails
 (no git identity, a pre-commit hook) the task ends as `error` and the work stays
-uncommitted in the worktree. hrn writes `.hrn/.gitignore` so the worktrees never show up
+uncommitted in the worktree. An agent that commits its own work on the branch and leaves nothing
+uncommitted gets no extra commit; the task records the branch's tip, so `diff` and merge see its
+work. A commit the agent made on no branch (a detached `HEAD`) is not
+recorded, since a merge would not bring it. hrn writes `.hrn/.gitignore` so the worktrees never show up
 in the repository's status.
 
 ### Slots or fresh worktrees

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -232,15 +231,6 @@ func canceledOr(ctx context.Context, ev evidence) evidence {
 }
 
 func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prompt, rubric string) evidence {
-	if head := worktreeHead(ctx, tr); head != "" && head != res.Base {
-		tr.Commit = head
-		res.Tasks = slices.Clone(res.Tasks)
-		for i := range res.Tasks {
-			if res.Tasks[i].ID == tr.ID {
-				res.Tasks[i].Commit = head
-			}
-		}
-	}
 	diff, untracked, err := batch.Diff(ctx, res, tr.ID)
 	if err != nil {
 		return evidence{err: fmt.Errorf("reading the diff: %w", err)}
@@ -254,19 +244,6 @@ func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prom
 		return evidence{err: fmt.Errorf("preparing the judge's checkout: %w", err)}
 	}
 	return evidence{prompt: judgePrompt(prompt, rubric, final, diff, untracked), dir: dir}
-}
-
-// worktreeHead is where an agent that committed its own work left the cell,
-// since hrn records a commit only for changes it committed itself.
-func worktreeHead(ctx context.Context, tr batch.TaskResult) string {
-	if tr.Commit != "" || tr.Worktree == "" {
-		return ""
-	}
-	head, err := batch.Head(ctx, tr.Worktree)
-	if err != nil {
-		return ""
-	}
-	return head
 }
 
 func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResult, ev evidence) Judgement {
