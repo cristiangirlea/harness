@@ -331,18 +331,7 @@ func TestBlindCheckoutLeavesNothingBehindWhenItFails(t *testing.T) {
 	}
 }
 
-func TestTheJudgeSeesTheWorkOfAnAgentThatCommittedItself(t *testing.T) {
-	repo := initRepo(t)
-	commit := commitFile(t, repo, "own.txt", "x\n")
-	if got := worktreeHead(context.Background(), batch.TaskResult{Worktree: repo}); got != commit {
-		t.Errorf("worktreeHead = %q, want %s", got, commit)
-	}
-	if got := worktreeHead(context.Background(), batch.TaskResult{Worktree: repo, Commit: "abc"}); got != "" {
-		t.Errorf("a recorded commit wins, got %q", got)
-	}
-}
-
-// ownCommit commits its own work, so hrn finds a clean tree and records no commit.
+// ownCommit commits its own work, so hrn finds a clean tree with the work already committed.
 type ownCommit struct{}
 
 func (ownCommit) Name() string            { return "ev-commits" }
@@ -387,6 +376,9 @@ func TestTheJudgeSeesTheDiffOfAnAgentThatCommittedItsOwnWork(t *testing.T) {
 	seen := seenBySnoop()
 	if len(seen) != 4 || len(rec.Judgements) != 4 {
 		t.Fatalf("judge ran %d times, want one per cell", len(seen))
+	}
+	if row := rec.Table.Variants[0]; row.Passed != 4 || row.Unchanged != 0 || row.DidNotAct != 0 {
+		t.Errorf("row = %+v: want every cell counted as changed and as having acted", row)
 	}
 	for _, s := range seen {
 		prompt := s.readable[:strings.Index(s.readable, s.dir)]
