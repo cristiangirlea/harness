@@ -2180,6 +2180,29 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 	return out, untracked, err
 }
 
+// CheckoutTree writes the files of commit into dir, outside the repository,
+// under the guards of a task worktree: every agent worktree shares the repository's config.
+func CheckoutTree(ctx context.Context, repo, commit, dir string) error {
+	g, err := newAgentGit(ctx, repo)
+	if err != nil {
+		return err
+	}
+	defer g.close()
+	scratch, err := os.MkdirTemp("", "hrn-index-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(scratch)
+	env := append(g.env(ctx), "GIT_INDEX_FILE="+filepath.Join(scratch, "index"), "GIT_WORK_TREE="+dir)
+	// No fsmonitor watching dir, and no path such as GIT~1 that a short name turns into dir's .git.
+	guard := []string{"-c", "core.fsmonitor=false", "-c", "core.protectNTFS=true", "-c", "core.protectHFS=true"}
+	if _, err := gitOutEnv(ctx, g.dir, env, "", append(slices.Clone(guard), "read-tree", commit+"^{tree}")...); err != nil {
+		return err
+	}
+	_, err = gitOutEnv(ctx, g.dir, env, "", append(guard, "checkout-index", "-a")...)
+	return err
+}
+
 // MergeResult is what one task's branch did.
 type MergeResult struct {
 	Task     string `json:"task"`

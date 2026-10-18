@@ -431,3 +431,41 @@ func TestOnlyAPromisorInTheRepositoryConfigBlocksTransports(t *testing.T) {
 		t.Error("a promisor in the operator's global config blocked transports")
 	}
 }
+
+func TestCheckoutTreeDoesNotRunProgramsFromTheSharedRepositoryConfig(t *testing.T) {
+	dir := initRepo(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	t.Setenv("HRN_TEST_HOOK_MARKER", marker)
+	writeMainRepoPrograms(t, dir)
+	git(t, dir, "config", "core.fsmonitor", markerScript(t))
+	out := t.TempDir()
+	if err := CheckoutTree(context.Background(), dir, git(t, dir, "rev-parse", "HEAD"), out); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(out, "README.md")); err != nil || strings.TrimSpace(string(data)) != "hello" {
+		t.Fatalf("README.md in the checkout = %q, %v", data, err)
+	}
+	if status := git(t, dir, "-c", "core.fsmonitor=false", "-c", "filter.drv.required=false", "status", "--porcelain"); status != "" {
+		t.Errorf("the repository's own index or tree changed:\n%s", status)
+	}
+	assertNotRan(t, marker, "a filter or fsmonitor during CheckoutTree", func() {
+		_ = os.Remove(filepath.Join(dir, "README.md"))
+		_ = exec.Command("git", "-C", dir, "checkout", "-f", "HEAD", "--", "README.md").Run()
+	})
+}
+
+// GIT~1 is the 8.3 name of a .git directory, which core.protectNTFS refuses.
+func TestCheckoutTreeKeepsNTFSProtectionWhatTheSharedConfigSays(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "config", "core.protectNTFS", "false")
+	blob := git(t, dir, "hash-object", "-w", "--stdin")
+	git(t, dir, "update-index", "--add", "--cacheinfo", "100644,"+blob+",GIT~1/config")
+	tree := git(t, dir, "write-tree")
+	commit := git(t, dir, "commit-tree", tree, "-m", "planted")
+	git(t, dir, "reset", "-q", "--hard")
+	out := t.TempDir()
+	err := CheckoutTree(context.Background(), dir, commit, out)
+	if _, statErr := os.Stat(filepath.Join(out, "GIT~1")); err == nil || !strings.Contains(err.Error(), "GIT~1") || statErr == nil {
+		t.Fatalf("CheckoutTree wrote GIT~1 (err %v, stat %v)", err, statErr)
+	}
+}
