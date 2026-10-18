@@ -12,6 +12,11 @@ reason; the task fails with that reason without retrying. Older gate records
 without the field still load. See [Batches](batches.md) for the launcher errors
 that count as infrastructure failures.
 
+A batch attempt with `protect` globs carries an optional `protected` list: the
+protected files it changed or removed against the batch's base, as slash paths.
+Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`.
+Records without the field still load. See [Batches](batches.md#batches).
+
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.
 Each `table.variants` row also holds `cells_without_cost`, the cells whose cost is

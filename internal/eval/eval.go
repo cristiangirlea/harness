@@ -161,6 +161,10 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	}
 	bs.Retry = nil
 	bs.NoSwitch = true
+	if bs.ProtectMode == "" {
+		// A cell that weakened its own gates scored nothing real.
+		bs.ProtectMode = batch.ProtectFail
+	}
 	bs.Tasks = nil
 	for _, t := range spec.Tasks {
 		if t.ID == "" {

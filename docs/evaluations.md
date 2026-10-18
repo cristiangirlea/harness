@@ -225,7 +225,9 @@ collide. Retries are off for every cell on purpose: an eval measures what one at
 does, and a retried attempt would score the harness rather than the backend. Everything
 else, gates and mode and the budgets, `lean` and `compact_window`, carries through from the
 spec; cells on claude are lean unless the spec or task says `"lean": false` (see
-[Lean claude workers](backends.md#lean-claude-workers)).
+[Lean claude workers](backends.md#lean-claude-workers)). `protect` carries through too,
+but `protect_mode` defaults to `fail` in an eval: a cell that changed a file its gates rely
+on did not earn its pass (see [Batches](batches.md#batches)).
 
 A variant may set `"lean": true` or `"lean": false`, overriding the task and spec.
 Omitting it preserves the task/spec setting and the claude batch default. A variant's
