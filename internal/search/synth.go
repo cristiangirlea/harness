@@ -79,9 +79,6 @@ func Synthesize(ctx context.Context,p Problem)(Solution,error) {
 			e.values[i]=n
 		}
 		k:=key(e.values)
-		if seen[k]{return false,nil}
-		seen[k]=true
-		all=append(all,e)
 		ok:=true
 		for i,v:=range examples {if e.values[i]!=v.Want {ok=false;break}}
 		if ok {
@@ -90,6 +87,9 @@ func Synthesize(ctx context.Context,p Problem)(Solution,error) {
 				if !valid || n!=v.Want {ok=false;break}
 			}
 		}
+		if seen[k] { return ok,nil }
+		seen[k]=true
+		all=append(all,e)
 		return ok,nil
 	}
 	base:=[]expr{
