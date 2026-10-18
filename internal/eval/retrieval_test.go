@@ -202,3 +202,90 @@ func TestRetrievalMissingAndPartialEvidenceCannotSupportClaims(t *testing.T) {
 		}
 	}
 }
+
+// shapeRetrieval gives every fixture cell the tokens and pass state cell returns for it.
+func shapeRetrieval(t *testing.T, cell func(s RetrievalSample) (int64, bool)) RetrievalComparison {
+	t.Helper()
+	m, s, err := RetrievalFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range s {
+		r := &s[i].Usage.Attempts[0]
+		r.OutputTokens, r.CacheRead = 0, 0
+		r.InputTokens, s[i].Usage.Passed = cell(s[i])
+	}
+	z := int64(0)
+	c := 0.0
+	p := report.Overhead{ModelTokens: &z, CostUSD: &c}
+	out, err := CompareRetrieval(m, s, p, p, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestRetrievalSavingsAreMeasuredOverPassingPairsOnly(t *testing.T) {
+	failing := map[string]bool{}
+	out := shapeRetrieval(t, func(s RetrievalSample) (int64, bool) {
+		fails := len(failing) < 16 || failing[s.TaskID+string(rune('0'+s.Repeat))]
+		if fails {
+			failing[s.TaskID+string(rune('0'+s.Repeat))] = true
+		}
+		switch {
+		case fails && s.Variant == "off":
+			return 1000, false
+		case fails:
+			return 100, false // the candidate fails as often, but cheaply
+		case s.Variant == "off":
+			return 1000, true
+		}
+		return 990, true
+	})
+	if out.Gate == "pass" {
+		t.Fatalf("cheap failures counted as savings: %+v", out)
+	}
+	if out.PassingPairs != 14 || out.PassingBaselineMedian == nil || *out.PassingBaselineMedian != 1000 || *out.PassingCandidateMedian != 990 {
+		t.Errorf("passing pairs = %d, medians %v %v; want 14 pairs at 1000 and 990", out.PassingPairs, out.PassingBaselineMedian, out.PassingCandidateMedian)
+	}
+}
+
+func TestRetrievalSavingsMustExceedTheBaselinesOwnMovementBetweenRepeats(t *testing.T) {
+	baseline := []int64{1000, 1300, 1000} // the baseline's median moves 27% between repeats
+	for _, c := range []struct {
+		name  string
+		ratio float64
+		pass  bool
+	}{{"below the movement", 0.8, false}, {"above the movement", 0.6, true}} {
+		t.Run(c.name, func(t *testing.T) {
+			out := shapeRetrieval(t, func(s RetrievalSample) (int64, bool) {
+				n := baseline[s.Repeat]
+				if s.Variant != "off" {
+					n = int64(float64(n) * c.ratio)
+				}
+				return n, true
+			})
+			if (out.Gate == "pass") != c.pass {
+				t.Errorf("gate = %s (%s), want pass %v", out.Gate, out.Reason, c.pass)
+			}
+			if out.BaselineMovement == nil || math.Abs(*out.BaselineMovement-300.0/1100) > 1e-9 || out.SavingThreshold == nil || *out.SavingThreshold != *out.BaselineMovement {
+				t.Errorf("movement = %v, threshold = %v; want 300/1100 for both", out.BaselineMovement, out.SavingThreshold)
+			}
+		})
+	}
+}
+
+func TestRetrievalGivesNoSavingVerdictWhenTheNoiseWasNotMeasured(t *testing.T) {
+	out := shapeRetrieval(t, func(s RetrievalSample) (int64, bool) {
+		if s.Repeat > 0 {
+			return 1000, false // only one repeat passes, on both sides
+		}
+		if s.Variant == "off" {
+			return 1000, true
+		}
+		return 100, true
+	})
+	if out.Gate == "pass" || out.BaselineMovement != nil {
+		t.Errorf("gate = %s, movement = %v; one passing repeat measures no noise", out.Gate, out.BaselineMovement)
+	}
+}

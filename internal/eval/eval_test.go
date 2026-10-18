@@ -397,3 +397,31 @@ func TestAnEvalCellThatChangedAProtectedFileFailsByDefault(t *testing.T) {
 		})
 	}
 }
+
+// ev-half does task alpha at a full context and gives up on the others cheaply.
+type halfStub struct{ stub }
+
+func (s halfStub) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+	tokens := int64(10)
+	if strings.Contains(task.Prompt, "alpha") {
+		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt), 0o644)
+		tokens = 1000
+	}
+	return agent.Result{Backend: s.name, Status: agent.StatusOK, Final: "done", Turns: 1,
+		InputTokens: tokens, CostUSD: float64(tokens) / 1000, Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "reported"}}
+}
+
+func init() { agent.Register(halfStub{stub{"ev-half", false}}) }
+
+func TestAVariantsMediansOverPassingCellsLeaveCheapFailuresOut(t *testing.T) {
+	spec := testSpec(initRepo(t))
+	spec.Matrix = []Variant{{Backend: "ev-half"}}
+	rec, _, err := Run(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := rec.Table.Variants[0]
+	if v.Passed != 2 || v.MedianContext != 505 || v.MedianContextPassed != 1000 || v.MedianCostPassedUSD != 1 || !v.PassedCostKnown {
+		t.Errorf("row = %+v; want 2 passes, all-cells context 505, passing context 1000 and cost $1", v)
+	}
+}
