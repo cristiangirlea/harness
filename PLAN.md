@@ -770,6 +770,29 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   the owner approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-18: evals count cells that never acted apart from failures (#569, PR #583). A failed
+  cell whose run ended `ok` in one turn with no tool call and no change did not act; four of
+  luna-low's five failures in eval `f353a` were such cells, misled by the fixture's own wording.
+  They stay out of the pass rate and medians, the table and footer say to re-run them, and an
+  answer-only task (an `expect` and no gate) still counts a wrong answer. The review found routing
+  from an eval rebuilt pass rates without the count, so `route.FromEval` carries it, and `hrn eval
+  list` counts only the cells that acted.
+- 2026-10-18: the retrieval saving gate reads passing pairs and the baseline's own noise (#570,
+  PR #573). A flat 10% over every pair let a variant that failed cheaply look efficient, and over
+  the 58 saved evals one variant's passing median moves between repeats by more than 10% in most
+  rows. The saving must now reach the larger of 10% and that movement, over pairs where both cells
+  passed, and with fewer than two passing repeats there is no saving verdict; variant rows also
+  hold passing-cell medians. The same rule is planned for setup comparisons (#547).
+- 2026-10-18: batches and evals protect the files their gates rely on (#552, PR #563). Gates run in
+  the worktree the agent edited, so `protect` globs name the tests and scripts the gates read;
+  an attempt that changed or removed one is flagged (`report`, the default) or fails before its
+  gates (`fail`, the eval default), and a retry is told which files to restore. The review found
+  the comparison ran plain git in the agent's worktree, where planted config could run a program
+  or point git at a clean copy; it goes through `agentGit`.
+- 2026-10-17: two tests from the long-gate change failed on Windows CI (#550, PR #551). One read the
+  batch record with `os.ReadFile` while the beat renamed over it, the other set a batch's end
+  microseconds after the watcher's look, which a coarse VM wall clock can reorder. Both were test
+  defects; the product code was unchanged.
 - 2026-10-18: the eval judge is blind to the variant (#554, PR #566). The judge's prompt never
   named the variant, but it ran in the cell's worktree, whose path, branch and commit message do.
   It now runs in a fresh repository under a neutral temporary name with commits `base` and
