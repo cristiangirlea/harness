@@ -509,13 +509,10 @@ func TestACLIDoesNotInheritARepositoryFromHrnsEnvironment(t *testing.T) {
 	t.Setenv("GIT_WORK_TREE", "/elsewhere")
 	for _, opts := range []Options{{Mode: ModeYolo}, {Mode: ModeYolo, AllowDangerous: true}} {
 		res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: opts}, func(Event) {})
-		for _, v := range []string{"GIT_DIR=;", "GIT_INDEX_FILE=;"} {
-			if !strings.Contains(res.Final+";", v) {
+		for _, v := range []string{"GIT_DIR=;", "GIT_INDEX_FILE=;", "GIT_WORK_TREE=;"} {
+			if !strings.Contains(";"+res.Final+";", ";"+v) {
 				t.Errorf("allow dangerous %v: the CLI saw %s", opts.AllowDangerous, res.Final)
 			}
-		}
-		if !strings.HasSuffix(res.Final, "GIT_WORK_TREE=") {
-			t.Errorf("allow dangerous %v: the CLI saw %s", opts.AllowDangerous, res.Final)
 		}
 	}
 }

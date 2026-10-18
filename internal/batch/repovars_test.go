@@ -14,6 +14,9 @@ func TestABatchIgnoresARepositoryNamedInHrnsEnvironment(t *testing.T) {
 	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
 	t.Setenv("GIT_WORK_TREE", other)
 	t.Setenv("GIT_INDEX_FILE", filepath.Join(other, ".git", "index"))
+	// pinnedGit sets GIT_DIR itself, but not these.
+	t.Setenv("GIT_COMMON_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_OBJECT_DIRECTORY", filepath.Join(other, ".git", "objects"))
 	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-ok", Worktrees: WorktreesFresh, Gate: []string{"test -f out.txt"},
 		Tasks: []Task{{ID: "own", Prompt: "write out"}}}, nil)
 	var checkoutErr error
@@ -21,7 +24,7 @@ func TestABatchIgnoresARepositoryNamedInHrnsEnvironment(t *testing.T) {
 	if err == nil && res.Tasks[0].Commit != "" {
 		checkoutErr = CheckoutTree(context.Background(), dir, res.Tasks[0].Commit, out)
 	}
-	for _, v := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"} {
+	for _, v := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"} {
 		t.Setenv(v, "")
 		os.Unsetenv(v)
 	}

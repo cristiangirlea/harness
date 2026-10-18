@@ -1382,7 +1382,7 @@ var runGateShell = tools.RunShell
 
 func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
 	started := time.Now()
-	// A gate is the operator's own command: it keeps hrn's environment.
+	// A gate is the operator's own command: it keeps hrn's environment, less the git repository variables.
 	res, err := runGateShell(ctx, dir, command, timeout, nil)
 	output, decodedUTF16 := decodeGateOutput(res.Output)
 	res.Output = output
