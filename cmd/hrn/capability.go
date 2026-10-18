@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/cristiangirlea/harness/internal/capability"
 )
@@ -61,4 +64,29 @@ func runCapability(ctx context.Context, args []string, out io.Writer) error {
 	default:
 		return fmt.Errorf("unknown capability subcommand %q", args[0])
 	}
+}
+
+var addTaskPattern = regexp.MustCompile(`^add (-?[0-9]+) and (-?[0-9]+)$`)
+
+// tryDeterministicTask recognizes only an unambiguous, bounded task grammar.
+// Unknown requests are never guessed at or rewritten into a different operation.
+func tryDeterministicTask(ctx context.Context, prompt string) (capability.Result, bool, error) {
+	matches := addTaskPattern.FindStringSubmatch(strings.ToLower(strings.TrimSpace(prompt)))
+	if matches == nil {
+		return capability.Result{}, false, nil
+	}
+	a, err := strconv.ParseInt(matches[1], 10, 64)
+	if err != nil {
+		return capability.Result{}, true, err
+	}
+	b, err := strconv.ParseInt(matches[2], 10, 64)
+	if err != nil {
+		return capability.Result{}, true, err
+	}
+	input, err := json.Marshal(map[string]int64{"a": a, "b": b})
+	if err != nil {
+		return capability.Result{}, true, err
+	}
+	result, err := capabilityRegistry().Execute(ctx, "math.add", "1", capability.Request{Input: input})
+	return result, true, err
 }
