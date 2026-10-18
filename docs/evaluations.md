@@ -403,4 +403,25 @@ When either side's judge ran with repeats, the score shows its spread (`8.0 (7.0
 itself by more than that. With no repeats on either side there is no spread to compare
 and nothing is marked. A different number of judge repeats does not count as a changed
 judge; a variant that changes its backend, model, effort, `prompt_prefix`,
-`append_system_prompt` or `no_skills` under the same name gets a note.
+`append_system_prompt`, `no_skills`, `lean`, `shape_tools`, `retrieval` or
+`retrieval_version` under the same name gets a note.
+
+Every run records the agent setup it started with ([run records](run-records.md)): the
+instruction files its backend loads, its MCP servers, plugins and skills, and its harness
+options. When a variant's runs started with a different setup on the two sides beyond the
+variant's own options (`base_digest` differs), the diff says so and names what differs, so
+a score moved by an unrelated AGENTS.md, rule or skill edit is not credited to the change
+under test:
+
+```
+  note: variant base started with another agent setup in 847f6, beyond its variant fields: files .claude/rules/tests.md; skills check
+  note: variant base's cells in cb867 did not all start with the same agent setup
+```
+
+The second note means repeats of one task on that side started with setups that differ
+beyond their options, so its row already mixes setups. The comparison uses the first cell
+of each spec's first task, and only when both specs start with the same task: tasks may set
+their own MCP configs. A variant that changed its backend, whether the variant, the spec, a
+task or the default backend changed it, loads other files by design and gets only the
+variant note. When the first task's run is gone, or the eval is older than the field, there
+is no setup to compare and no note. `setup_changed` in `--json` lists the same.
