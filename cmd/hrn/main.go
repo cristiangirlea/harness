@@ -925,6 +925,9 @@ func printEval(r *renderer, rec eval.Record) {
 		if v.Unchanged > 0 {
 			notes = append(notes, fmt.Sprintf("%d of %d passes changed nothing", v.Unchanged, v.Passed))
 		}
+		if v.AgentCommitted > 0 {
+			notes = append(notes, fmt.Sprintf("%d of %d cells committed on their own", v.AgentCommitted, v.Attempts))
+		}
 		if v.CellsWithoutCost > 0 {
 			notes = append(notes, fmt.Sprintf("%d of %d cells without a cost", v.CellsWithoutCost, v.Attempts))
 		}

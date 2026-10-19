@@ -38,6 +38,9 @@ func TestATaskWhoseAgentCommittedItsOwnWorkRecordsThatCommit(t *testing.T) {
 	if head := git(t, tr.Worktree, "rev-parse", "HEAD"); tr.Commit != head {
 		t.Errorf("commit = %s, want the worktree's HEAD %s", tr.Commit, head)
 	}
+	if !tr.Attempts[0].AgentCommitted || !tr.AgentCommitted() {
+		t.Error("the attempt should say the agent committed on its own")
+	}
 	diff, _, err := Diff(context.Background(), res, "own")
 	if err != nil || !strings.Contains(diff, "+++ b/out.txt") {
 		t.Fatalf("diff = %q, %v; want the agent's change", diff, err)
@@ -57,6 +60,45 @@ func TestATaskThatChangedNothingStillRecordsNoCommit(t *testing.T) {
 	defer Remove(res)
 	if c := res.Tasks[0].Commit; c != "" {
 		t.Errorf("commit = %s for a task that changed nothing", c)
+	}
+	if res.Tasks[0].AgentCommitted() {
+		t.Error("an agent that changed nothing did not commit")
+	}
+}
+
+func TestATaskWhoseChangesHrnCommittedIsNotMarkedAsTheAgentsCommit(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Worktrees: WorktreesFresh, Tasks: []Task{{ID: "plain", Prompt: "p"}}})
+	defer Remove(res)
+	tr := res.Tasks[0]
+	if tr.Commit == "" || tr.AgentCommitted() {
+		t.Fatalf("commit %q, agent committed %v: want hrn's commit, not the agent's", tr.Commit, tr.AgentCommitted())
+	}
+	if msg := git(t, tr.Worktree, "log", "-1", "--format=%s"); !strings.HasPrefix(msg, "plain: ") {
+		t.Errorf("last commit %q, want hrn's", msg)
+	}
+}
+
+func TestAnAgentThatCommittedPartOfItsWorkIsMarkedAndTheRestCommittedByHrn(t *testing.T) {
+	dir := initRepo(t)
+	agent.Register(stub{"wb-commits-part", func(_ context.Context, task agent.Task) agent.Result {
+		_ = os.WriteFile(filepath.Join(task.Dir, "a.txt"), []byte("a\n"), 0o644)
+		for _, args := range [][]string{{"add", "a.txt"}, {"commit", "-q", "-m", "part"}} {
+			if out, err := exec.Command("git", append([]string{"-C", task.Dir}, args...)...).CombinedOutput(); err != nil {
+				return agent.Result{Backend: "wb-commits-part", Status: agent.StatusError, Error: string(out)}
+			}
+		}
+		_ = os.WriteFile(filepath.Join(task.Dir, "b.txt"), []byte("b\n"), 0o644)
+		return agent.Result{Backend: "wb-commits-part", Status: agent.StatusOK, Final: "half committed", Turns: 1}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-commits-part", Worktrees: WorktreesFresh, Tasks: []Task{{ID: "half", Prompt: "p"}}})
+	defer Remove(res)
+	tr := res.Tasks[0]
+	if !tr.AgentCommitted() || tr.Commit != git(t, tr.Worktree, "rev-parse", "HEAD") {
+		t.Fatalf("agent committed %v, commit %q: want the agent's commit noted and hrn's on top recorded", tr.AgentCommitted(), tr.Commit)
+	}
+	if msg := git(t, tr.Worktree, "log", "-1", "--format=%s"); !strings.HasPrefix(msg, "half: ") {
+		t.Errorf("last commit %q, want hrn's commit of b.txt", msg)
 	}
 }
 

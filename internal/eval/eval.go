@@ -257,6 +257,8 @@ type VariantRow struct {
 	// DidNotAct counts the cells among Attempts that ended ok without a tool
 	// call, a second turn or a change; they are left out of the pass rate.
 	DidNotAct int `json:"did_not_act,omitempty"`
+	// AgentCommitted counts the cells whose agent ran git commit itself, which a prompt may forbid.
+	AgentCommitted int `json:"agent_committed,omitempty"`
 	// Unchanged counts the passes that committed nothing: right for "find
 	// the bug, if any", suspicious for "fix the typos".
 	Unchanged     int            `json:"passed_unchanged,omitempty"`
@@ -545,6 +547,9 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				continue
 			}
 			row.Attempts++
+			if c.tr.AgentCommitted() {
+				row.AgentCommitted++
+			}
 			if c.idle {
 				// It measured the eval's setup, not the variant: out of the pass rate and the medians.
 				row.DidNotAct++

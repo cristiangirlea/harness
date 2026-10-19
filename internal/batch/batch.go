@@ -160,6 +160,13 @@ type Attempt struct {
 	// Protected lists the protected files this attempt changed or removed,
 	// against the batch's base.
 	Protected []string `json:"protected,omitempty"`
+	// AgentCommitted says the agent moved its branch with git itself during the run.
+	AgentCommitted bool `json:"agent_committed,omitempty"`
+}
+
+// AgentCommitted reports whether any attempt's agent committed on its own.
+func (t TaskResult) AgentCommitted() bool {
+	return slices.ContainsFunc(t.Attempts, func(a Attempt) bool { return a.AgentCommitted })
 }
 
 type GateResult struct {
@@ -1265,12 +1272,16 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	att.RunID = rec.ID()
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
 	report(att)
+	before, beforeErr := branchTip(task.Dir, plan.branch)
 	att.Result = agent.Run(ctx, b, task, func(e agent.Event) {
 		rec.Event(e)
 		if e.Kind == agent.EventToolCall {
 			notify(Event{Task: id, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
 		}
 	})
+	if after, err := branchTip(task.Dir, plan.branch); beforeErr == nil && err == nil && before != "" && after != before {
+		att.AgentCommitted = true
+	}
 	if err := rec.Close(att.Result); err != nil {
 		att.Error = runlog.CloseMessage(err)
 	}
@@ -1496,6 +1507,30 @@ func commitChanges(wt, message string) (string, error) {
 		return "", err
 	}
 	return g.out(ctx, "rev-parse", "HEAD")
+}
+
+// branchTip is the commit refs/heads/<branch> names in the worktree's repository, or "" without one.
+func branchTip(wt, branch string) (string, error) {
+	if _, err := os.Stat(wt); err != nil || branch == "" {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	g, err := newAgentGit(ctx, wt)
+	if err != nil {
+		return "", err
+	}
+	defer g.close()
+	out, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"+branch)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if name, head, ok := strings.Cut(line, " "); ok && name == "refs/heads/"+branch {
+			return head, nil
+		}
+	}
+	return "", nil
 }
 
 // agentCommit returns the branch's tip when the agent committed its own work on it

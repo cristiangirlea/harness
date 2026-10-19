@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -350,6 +351,19 @@ func TestTheEvalTablesSayWhichCellsNeverActedAndToRerunThem(t *testing.T) {
 	printEvalDiff(r, eval.Compare(a, b))
 	if out := buf.String(); !strings.Contains(out, "did not act") {
 		t.Errorf("diff should say a side has cells that never acted:\n%s", out)
+	}
+}
+
+func TestTheEvalTableCountsCellsThatCommittedOnTheirOwn(t *testing.T) {
+	_, b := diffPair()
+	b.Table.Variants[0].AgentCommitted = 1
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEval(r, b)
+	want := fmt.Sprintf("1 of %d cells committed on their own", b.Table.Variants[0].Attempts)
+	if out := buf.String(); !strings.Contains(out, want) {
+		t.Errorf("eval table should say %q:\n%s", want, out)
 	}
 }
 

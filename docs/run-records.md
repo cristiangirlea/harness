@@ -17,6 +17,10 @@ protected files it changed or removed against the batch's base, as slash paths.
 Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`.
 Records without the field still load. See [Batches](batches.md#batches).
 
+A batch attempt whose agent moved its own branch with git (a commit of its own) carries
+`agent_committed: true`, and an eval's variant row counts those cells in
+`agent_committed`. Records without either field still load.
+
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.
 Each `table.variants` row also holds `cells_without_cost`, the cells whose cost is
