@@ -17,6 +17,10 @@ protected files it changed or removed against the batch's base, as slash paths.
 Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`.
 Records without the field still load. See [Batches](batches.md#batches).
 
+A batch attempt whose agent moved its branch or `HEAD` with git (a commit, reset or rename) carries
+`agent_committed: true`, and an eval's variant row counts those cells in
+`agent_committed`. Records without either field still load.
+
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.
 Each `table.variants` row also holds `cells_without_cost`, the cells whose cost is
@@ -127,14 +131,38 @@ an ordinary follow-up, and old records without it still load.
   being renamed to the handle; failed writes remove the temporary file.
   A checked summary or a cut after failed checks ends with
   `original: <handle> (<n> bytes); read_original reads it` whenever the original was saved. The `read_original`
-  tool returns the whole original or a byte range (`range: "a-b"`, zero-based,
-  end exclusive). Tool-result events and messages contain the summary the model
+  tool returns the whole original or one part of it: a byte range (`range: "a-b"`,
+  zero-based, end exclusive), a line range (`lines: "a-b"`, 1-based, inclusive; a
+  last line without a newline still counts), or, for an original that is one JSON
+  value, an RFC 6901 pointer (`pointer: "/items/3/name"`, `~1` for `/` and `~0` for
+  `~` in a key), which returns that value's own bytes with the whitespace removed,
+  numbers spelt as they were. An empty `pointer` means the whole original, as the
+  empty pointer does in RFC 6901. At most one of the three; a range or line range
+  outside the original, or a pointer that does not resolve, is an error naming
+  what was asked. Tool-result events and messages contain the summary the model
   saw. If checks fail or the original cannot be saved, the existing head-and-tail
   cut is used; without a run record directory, nothing is saved. File reads are
   not shaped. Old records without this directory or `shape_tools` still load.
-  A continuation that resumes an api conversation copies that run's originals into
-  its own `originals/` before it starts, so the handles in the conversation still
-  read; only regular files whose bytes hash to their handle are copied.
+  The store is bounded and refuses rather than evicts: a new original that would
+  take one run's originals past `HRN_ORIGINALS_RUN_MAX` bytes (default 64 MiB), or
+  all of `$HRN_HOME/runs/*/originals/` past `HRN_ORIGINALS_MAX` bytes (default
+  1 GiB), is not saved, and that result gets the head-and-tail cut without a
+  handle. An invalid value (not a whole number of bytes, or negative) leaves the
+  default. Saved originals are never removed while their run exists, so a handle
+  the model was given always reads; `hrn runs prune` removes them with their run.
+  The machine total is measured once per run, at its first save, and then kept
+  up to date in memory, so runs going at the same time do not see each other's
+  saves and together may pass the cap a little. When the runs directory cannot be
+  read, nothing new is saved until it can.
+  A continuation that resumes an api conversation first copies that run's
+  originals into its own `originals/`, so the handles in the conversation still
+  read. hrn picks that run from the record, never from a path the model gives;
+  only regular files named for their content's SHA-256 prefix are copied, never
+  links. The run's events say how many were copied and how many were skipped (a
+  link or other non-regular file, bytes that do not match the name, or a file
+  larger than the run cap, or than 64 MiB when the cap is set lower). The resumed
+  run holds its own predecessor's copies, so one hop covers the chain. Copies
+  count toward the new run's cap but are never refused.
   Shell capture keeps the whole output up to 8 MiB, including on nonzero exit
   and timeout. Above that ceiling it uses the existing head-and-tail cut, says
   the original is unavailable, and saves no incomplete original.

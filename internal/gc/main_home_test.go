@@ -23,6 +23,9 @@ func TestMain(m *testing.M) {
 	os.Setenv("HRN_HOME", home)
 	code := m.Run()
 	os.RemoveAll(home)
+	if templateDir != "" {
+		os.RemoveAll(templateDir)
+	}
 	os.Exit(code)
 }
 
