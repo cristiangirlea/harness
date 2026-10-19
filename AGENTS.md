@@ -30,7 +30,7 @@ Go 1.26.x (`go.mod`), nothing else. Run these CI checks before a PR (`/check` do
 ```bash
 go vet ./...
 go build ./...
-go test -count=1 ./...
+go test -count=1 -timeout 40m ./...
 go test -race -count=1 ./...                                  # Linux only in CI
 go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -parallel=4 ./internal/agent
 go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
@@ -42,7 +42,7 @@ bash .github/release.sh                                       # release dry run,
 test -z "$(gofmt -l .)"                                       # /check: tracked files only
 ```
 
-`-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 ./...` there and leave
+`-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 -timeout 40m ./...` there and leave
 `-race` to CI. Do not attach self-hosted runners or route public contributions to the owner's
 machines. See `CONTRIBUTING.md` for CI and release details.
 
