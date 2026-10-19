@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 		os.Setenv("HRN_HOME", home)
 		code := m.Run()
 		os.RemoveAll(home)
+		if repoTemplate != "" {
+			os.RemoveAll(repoTemplate)
+		}
 		os.Exit(code)
 	}
 	os.Exit(m.Run())

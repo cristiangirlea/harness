@@ -53,6 +53,10 @@ type Workspace struct {
 	// judged against. Root keeps the spelling it was given, a junction
 	// included, since commands run there.
 	real string
+	// Bytes of originals in this run and in every run, measured at the first
+	// store and kept under originalWrites.
+	originalsSeen              bool
+	originalsRun, originalsAll int64
 }
 
 func NewWorkspace(dir string) (*Workspace, error) {

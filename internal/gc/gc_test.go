@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,6 +84,59 @@ type fixture struct {
 	prs    []PR
 }
 
+// Each git process can take seconds on a loaded machine, so the origin and repo
+// pair is built once per test binary and copied into every test.
+var (
+	templateOnce sync.Once
+	templateDir  string
+	templateErr  error
+)
+
+func buildTemplate() (string, error) {
+	dir, err := os.MkdirTemp("", "hrn-gc-fixture-")
+	if err != nil {
+		return "", err
+	}
+	origin, repo := filepath.Join(dir, "origin.git"), filepath.Join(dir, "repo")
+	run := func(dir string, args ...string) error {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = cleanEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git %v: %v\n%s", args, err, out)
+		}
+		return nil
+	}
+	steps := [][]string{
+		{dir, "init", "-q", "--bare", "-b", "main", origin},
+		{dir, "init", "-q", "-b", "main", repo},
+		{repo, "config", "user.email", "test@example.com"},
+		{repo, "config", "user.name", "Test"},
+	}
+	for _, s := range steps {
+		if err := run(s[0], s[1:]...); err != nil {
+			return dir, err
+		}
+	}
+	for name, body := range map[string]string{".gitignore": ".hrn/\ntarget/\n", "README.md": "hello\n"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			return dir, err
+		}
+	}
+	steps = [][]string{
+		{repo, "add", "."},
+		{repo, "commit", "-q", "-m", "init"},
+		{repo, "remote", "add", "origin", origin},
+		{repo, "push", "-q", "origin", "main"},
+		{repo, "remote", "set-head", "origin", "main"},
+	}
+	for _, s := range steps {
+		if err := run(s[0], s[1:]...); err != nil {
+			return dir, err
+		}
+	}
+	return dir, nil
+}
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	t.Setenv("HRN_HOME", t.TempDir())
@@ -90,18 +144,17 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	templateOnce.Do(func() { templateDir, templateErr = buildTemplate() })
+	if templateErr != nil {
+		t.Fatalf("fixture template: %v", templateErr)
+	}
 	f := &fixture{t: t, root: root, origin: filepath.Join(root, "origin.git"), repo: filepath.Join(root, "repo")}
-	git(t, root, "init", "-q", "--bare", "-b", "main", f.origin)
-	git(t, root, "init", "-q", "-b", "main", f.repo)
-	git(t, f.repo, "config", "user.email", "test@example.com")
-	git(t, f.repo, "config", "user.name", "Test")
-	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\n")
-	f.write(f.repo, "README.md", "hello\n")
-	git(t, f.repo, "add", ".")
-	git(t, f.repo, "commit", "-q", "-m", "init")
-	git(t, f.repo, "remote", "add", "origin", f.origin)
-	git(t, f.repo, "push", "-q", "origin", "main")
-	git(t, f.repo, "remote", "set-head", "origin", "main")
+	for _, name := range []string{"origin.git", "repo"} {
+		if err := os.CopyFS(filepath.Join(root, name), os.DirFS(filepath.Join(templateDir, name))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, f.repo, "remote", "set-url", "origin", f.origin)
 	f.serve()
 	return f
 }
@@ -1384,11 +1437,19 @@ func TestGCFixtureGitIgnoresGuardConfigPassedDownInItsEnvironment(t *testing.T) 
 	t.Setenv("GIT_CONFIG_KEY_0", "url.push-refused-by-hrn://.pushinsteadof")
 	t.Setenv("GIT_CONFIG_VALUE_0", "")
 
+	dir, err := buildTemplate()
+	if dir != "" {
+		defer os.RemoveAll(dir)
+	}
+	if err != nil {
+		t.Fatalf("the template build saw the guard config: %v", err)
+	}
 	f := newFixture(t)
 	wt, head := f.worktree("wt", "branch")
 	if !exists(wt) || head == "" {
 		t.Fatal("the fixture did not create its worktree")
 	}
+	f.land("branch")
 }
 
 func TestGCIgnoresGitConfigPassedDownInItsEnvironment(t *testing.T) {
