@@ -125,8 +125,9 @@ Run flags:
                        skip the project instruction files (api backend)
       --no-context-edits
                        keep every tool result in the request instead of letting the server clear old ones (api backend)
-      --lean           start claude with only the run's --mcp servers: none of your other MCP servers,
-                       plugin servers or connectors; settings, rules and skills still load (claude backend)
+      --lean=false     load every MCP server, plugin and skill your CLI is set up with; by default
+                       claude and codex start with only the run's --mcp servers, and claude without skills
+      --skills         keep claude's skills and slash commands in a lean run (claude backend)
       --compact-window N
                        compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
                        (claude backend; unset keeps Claude Code's own threshold)

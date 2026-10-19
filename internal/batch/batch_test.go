@@ -1935,6 +1935,25 @@ func TestLeanReachesTheTask(t *testing.T) {
 	}
 }
 
+// codexLeanStub runs nothing, but honours lean exactly as the codex backend does.
+type codexLeanStub struct{ stub }
+
+func (codexLeanStub) AppliesLean() bool { return agent.AppliesLean(agent.NewCodexBackend()) }
+
+func TestBatchTaskOnCodexRecordsLean(t *testing.T) {
+	agent.Register(codexLeanStub{stub{"wb-codex-lean", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "wb-codex-lean", Status: agent.StatusOK, Final: "nothing", Turns: 1}
+	}}})
+	res, _ := run(t, Spec{Dir: initRepo(t), Backend: "wb-codex-lean", Tasks: []Task{{Prompt: "a"}}})
+	b, err := json.Marshal(firstRun(t, res.Tasks[0]).Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"lean":true`) {
+		t.Errorf("a codex batch task must record lean: %s", b)
+	}
+}
+
 func mergeable(t *testing.T, dir string, tasks ...Task) Result {
 	t.Helper()
 	return mergeableIn(t, Spec{Dir: dir, Backend: "wb-file", Tasks: tasks})

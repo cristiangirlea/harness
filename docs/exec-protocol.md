@@ -48,7 +48,7 @@ hrn       -> result                (always the last line after accepted; then ex
     "modes":["readonly","auto","yolo"],
     "efforts":["low","medium","high","xhigh","max"],
     "sessions":"fork",
-    "options":["model","mode","effort","timeout"],
+    "options":["model","mode","effort","timeout","mcp"],
     "approvals":false}
  ]}
 ```
