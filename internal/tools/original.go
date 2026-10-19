@@ -92,7 +92,10 @@ func (w *Workspace) storeOriginalWithWriter(text string, write func(io.Writer, s
 	if held, err := holdsOriginal(root, name, text); err != nil || held {
 		return handle, err
 	}
-	w.measureOriginals()
+	// An unmeasured store would fail open, so it refuses, which falls back to the cut.
+	if err := w.measureOriginals(); err != nil {
+		return "", err
+	}
 	size := int64(len(text))
 	if w.originalsRun+size > originalsCap("HRN_ORIGINALS_RUN_MAX", defaultOriginalsRunMax) ||
 		w.originalsAll+size > originalsCap("HRN_ORIGINALS_MAX", defaultOriginalsMax) {
@@ -149,33 +152,54 @@ func writeOriginal(root *os.Root, name, text string, write func(io.Writer, strin
 // measureOriginals sizes this run's originals and every run's beside it (the
 // record directory's parent is HRN_HOME/runs) once; stores keep both current.
 // Concurrent runs each count from their own measurement, so they may overshoot.
-func (w *Workspace) measureOriginals() {
+func (w *Workspace) measureOriginals() error {
 	if w.originalsSeen {
-		return
+		return nil
 	}
-	w.originalsSeen = true
-	w.originalsRun = originalsSize(filepath.Join(w.RunDir, "originals"))
+	run, err := originalsSize(filepath.Join(w.RunDir, "originals"))
+	if err != nil {
+		return err
+	}
 	runs := filepath.Dir(w.RunDir)
-	entries, _ := os.ReadDir(runs)
+	entries, err := os.ReadDir(runs)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	var all int64
 	for _, e := range entries {
 		if e.IsDir() {
-			w.originalsAll += originalsSize(filepath.Join(runs, e.Name(), "originals"))
+			n, err := originalsSize(filepath.Join(runs, e.Name(), "originals"))
+			if err != nil {
+				return err
+			}
+			all += n
 		}
 	}
+	w.originalsSeen, w.originalsRun, w.originalsAll = true, run, all
+	return nil
 }
 
-func originalsSize(dir string) int64 {
-	entries, _ := os.ReadDir(dir)
+// originalsSize totals dir's regular files; a missing dir or a file pruned meanwhile counts as none.
+func originalsSize(dir string) (int64, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return 0, err
+	}
 	var total int64
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
 			continue
 		}
-		if info, err := e.Info(); err == nil {
-			total += info.Size()
+		info, err := e.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
+		if err != nil {
+			return 0, err
+		}
+		total += info.Size()
 	}
-	return total
+	return total, nil
 }
 
 func originalsCap(name string, def int64) int64 {
@@ -185,10 +209,8 @@ func originalsCap(name string, def int64) int64 {
 	return def
 }
 
-// CopyOriginals copies record directory from's originals into record directory
-// to, past the caps: their handles are already in the continued conversation.
-// Only regular files named for the SHA-256 of their own content are copied;
-// other files with a handle's name are skipped and counted.
+// CopyOriginals copies from's hash-named originals into to past the caps, since the
+// continued conversation already cites them; it counts the files it skips.
 func CopyOriginals(from, to string) (copied, skipped int, err error) {
 	src, err := (&Workspace{RunDir: from}).originals(false)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -268,19 +290,16 @@ func ReadOriginal() Tool {
 		Pointer string `json:"pointer"`
 	}
 	return Tool{
-		Name: "read_original",
-		Description: "Read a saved original tool result by its 16-character hex handle. Without a selector returns the whole original. " +
-			"To read only a part, give one of: range a-b (zero-based byte offsets, end exclusive); lines a-b (1-based line numbers, inclusive); " +
-			"or pointer, an RFC 6901 JSON pointer such as /items/3/name for an original that is one JSON value (~1 stands for / and ~0 for ~ in a key), " +
-			"which returns that value compactly.",
+		Name:        "read_original",
+		Description: "Read a saved original tool result by its 16-character hex handle: the whole original, or one part given by range, lines or pointer.",
 		Properties: map[string]any{
 			"handle":  str("The 16-character hex handle."),
-			"range":   str("Optional byte range a-b, end exclusive."),
-			"lines":   str("Optional line range a-b, 1-based and inclusive."),
-			"pointer": str("Optional RFC 6901 JSON pointer, for an original that is one JSON value."),
+			"range":   str("Optional byte range a-b, zero-based, end exclusive."),
+			"lines":   str("Optional line range a-b, 1-based, inclusive."),
+			"pointer": str("Optional RFC 6901 JSON pointer such as /items/3/name, for an original that is one JSON value; ~1 is / and ~0 is ~ in a key."),
 		},
 		Required: []string{"handle"}, Effect: EffectRead, Summary: summaryOf("handle"),
-		Run: func(_ context.Context, w *Workspace, raw json.RawMessage) (string, error) {
+		Run: func(ctx context.Context, w *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
@@ -331,12 +350,14 @@ func ReadOriginal() Tool {
 			if err != nil {
 				return "", err
 			}
-			part := string(data)
+			var part string
 			switch {
 			case args.Lines != "":
 				part, err = originalLines(data, args.Lines)
 			case args.Pointer != "":
-				part, err = originalPointer(data, args.Pointer)
+				part, err = originalPointer(ctx, data, args.Pointer)
+			default:
+				part = string(data)
 			}
 			if err != nil {
 				return "", fmt.Errorf("original %s: %w", args.Handle, err)
@@ -378,49 +399,71 @@ func originalLines(data []byte, spec string) (string, error) {
 	return string(data[start:end]), nil
 }
 
-// originalPointer resolves an RFC 6901 pointer and returns the value's own
-// bytes, only compacted, so numbers keep the spelling they had.
-func originalPointer(data []byte, pointer string) (string, error) {
+// originalPointer resolves an RFC 6901 pointer in one pass over data and returns
+// the value's own bytes, only compacted, so numbers keep the spelling they had.
+func originalPointer(ctx context.Context, data []byte, pointer string) (string, error) {
 	if !json.Valid(data) {
 		return "", fmt.Errorf("pointer %q: the original is not one JSON value", pointer)
 	}
 	if !strings.HasPrefix(pointer, "/") {
 		return "", fmt.Errorf("invalid pointer %q: want /key/index as in RFC 6901", pointer)
 	}
-	value := json.RawMessage(data)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber() // a number too large for float64 is still a valid value in the way
+	skip := func() error { var v json.RawMessage; return dec.Decode(&v) }
 	at, walked := "the root", ""
 	for token := range strings.SplitSeq(pointer[1:], "/") {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		key, ok := unescapePointer(token)
 		if !ok {
 			return "", fmt.Errorf("invalid pointer %q: ~ must be followed by 0 or 1", pointer)
 		}
-		trimmed := bytes.TrimLeft(value, " \t\r\n")
-		switch {
-		case len(trimmed) > 0 && trimmed[0] == '{':
-			var object map[string]json.RawMessage
-			if err := json.Unmarshal(value, &object); err != nil {
-				return "", err
+		open, err := dec.Token()
+		if err != nil {
+			return "", err
+		}
+		switch open {
+		case json.Delim('{'):
+			found := false
+			for !found && dec.More() {
+				name, err := dec.Token()
+				if err != nil {
+					return "", err
+				}
+				if found = name == key; !found {
+					if err := skip(); err != nil {
+						return "", err
+					}
+				}
 			}
-			next, found := object[key]
 			if !found {
 				return "", fmt.Errorf("pointer %q: no key %q in the object at %s", pointer, key, at)
 			}
-			value = next
-		case len(trimmed) > 0 && trimmed[0] == '[':
-			var array []json.RawMessage
-			if err := json.Unmarshal(value, &array); err != nil {
-				return "", err
+		case json.Delim('['):
+			want, err := strconv.Atoi(key)
+			if !pointerIndex.MatchString(key) || err != nil {
+				want = -1
 			}
-			i, err := strconv.Atoi(key)
-			if !pointerIndex.MatchString(key) || err != nil || i >= len(array) {
-				return "", fmt.Errorf("pointer %q: no index %q in the %d-element array at %s", pointer, key, len(array), at)
+			n := 0
+			for ; n != want && dec.More(); n++ {
+				if err := skip(); err != nil {
+					return "", err
+				}
 			}
-			value = array[i]
+			if n != want || !dec.More() {
+				return "", fmt.Errorf("pointer %q: no index %q in the %d-element array at %s", pointer, key, n, at)
+			}
 		default:
 			return "", fmt.Errorf("pointer %q: the value at %s is not an object or array", pointer, at)
 		}
 		walked += "/" + token
 		at = walked
+	}
+	var value json.RawMessage
+	if err := dec.Decode(&value); err != nil {
+		return "", err
 	}
 	var out bytes.Buffer
 	if err := json.Compact(&out, value); err != nil {

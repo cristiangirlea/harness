@@ -142,7 +142,8 @@ an ordinary follow-up, and old records without it still load.
   the model was given always reads; `hrn runs prune` removes them with their run.
   The machine total is measured once per run, at its first save, and then kept
   up to date in memory, so runs going at the same time do not see each other's
-  saves and together may pass the cap a little.
+  saves and together may pass the cap a little. When the runs directory cannot be
+  read, nothing new is saved until it can.
   A continuation that resumes an api conversation first copies that run's
   originals into its own `originals/`, so the handles in the conversation still
   read. hrn picks that run from the record, never from a path the model gives;

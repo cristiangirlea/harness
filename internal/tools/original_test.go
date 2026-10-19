@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/mcp"
 )
@@ -462,6 +464,48 @@ func TestTheRunCapRefusesANewOriginalAndKeepsEarlierOnesReadable(t *testing.T) {
 	}
 }
 
+func TestARunCapOfZeroRefusesNewOriginalsButReturnsOnesAlreadyHeld(t *testing.T) {
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "0")
+	ws, _ := setup(t)
+	ws.ShapeTools, ws.RunDir = true, filepath.Join(t.TempDir(), "runs", "run")
+	held := "count 6000\n" + strings.Repeat("working\n", 6000)
+	writeOriginalFile(t, ws.RunDir, originalHandleOf(held), held)
+	if got := ws.toolOutput(held); !strings.Contains(got, "original: "+originalHandleOf(held)) {
+		t.Fatalf("an original already held was refused: %q", got)
+	}
+	fresh := "count 6000\n" + strings.Repeat("waiting\n", 6000)
+	if got := ws.toolOutput(fresh); got != Truncate(fresh) {
+		t.Fatal("a cap of 0 stored a new original")
+	}
+}
+
+func TestConcurrentStoresOnOneRunStayUnderItsCap(t *testing.T) {
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "120000")
+	ws, _ := setup(t)
+	ws.ShapeTools, ws.RunDir = true, filepath.Join(t.TempDir(), "runs", "run")
+	must(t, os.MkdirAll(ws.RunDir, 0o755))
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ws.toolOutput("count 6000\n" + strings.Repeat(fmt.Sprintf("job%04d\n", i), 6000))
+		}()
+	}
+	wg.Wait()
+	entries, err := os.ReadDir(filepath.Join(ws.RunDir, "originals"))
+	must(t, err)
+	var total int64
+	for _, e := range entries {
+		info, err := e.Info()
+		must(t, err)
+		total += info.Size()
+	}
+	if len(entries) == 0 || total > 120000 {
+		t.Fatalf("%d originals, %d bytes, against a cap of 120000", len(entries), total)
+	}
+}
+
 func TestTheMachineCapCountsOtherRunsOriginals(t *testing.T) {
 	runs := filepath.Join(t.TempDir(), "runs")
 	writeOriginalFile(t, filepath.Join(runs, "other"), "0123456789abcdef", strings.Repeat("o", 60000))
@@ -585,6 +629,11 @@ func TestReadOriginalReturnsTheAskedLinesWithTheirEndings(t *testing.T) {
 			t.Errorf("lines %s of %s = %q, want %q", tc.lines, tc.handle, out, tc.want)
 		}
 	}
+	empty := "0000000000000007"
+	writeOriginalFile(t, ws.RunDir, empty, "")
+	if _, err := call(t, ws, ReadOriginal(), map[string]any{"handle": empty, "lines": "1-1"}); err == nil || !strings.Contains(err.Error(), "0 lines") {
+		t.Errorf("lines of an empty original: error %v", err)
+	}
 	for _, lines := range []string{"3-4", "4-4", "0-1", "2-1", "1", "a-b", "1-99999999999999999999"} {
 		_, err := call(t, ws, ReadOriginal(), map[string]any{"handle": withNewline, "lines": lines})
 		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%q", lines)) {
@@ -598,11 +647,11 @@ func TestReadOriginalReturnsTheValueAtAJSONPointerAsWritten(t *testing.T) {
 	ws.RunDir = t.TempDir()
 	handle := "0000000000000003"
 	writeOriginalFile(t, ws.RunDir, handle, `{"items": [ {"name": "a"}, {"name": "b", "n": 1.50} ],
-  "a/b": 1, "m~n": 2, "e": 1E3, "": "empty key", "~1": "tilde one", "/": "slash"}`)
+  "a/b": 1, "m~n": 2, "e": 1E3, "": "empty key", "~1": "tilde one", "/": "slash", "big": 1e999, "d": 1, "d": 2}`)
 	for pointer, want := range map[string]string{
 		"/items/1": `{"name":"b","n":1.50}`, "/items/0/name": `"a"`, "/items/1/n": "1.50",
 		"/a~1b": "1", "/m~0n": "2", "/e": "1E3", "/": `"empty key"`,
-		"/~01": `"tilde one"`, "/~1": `"slash"`,
+		"/~01": `"tilde one"`, "/~1": `"slash"`, "/big": "1e999", "/d": "1",
 	} {
 		out, err := call(t, ws, ReadOriginal(), map[string]any{"handle": handle, "pointer": pointer})
 		must(t, err)
@@ -612,7 +661,7 @@ func TestReadOriginalReturnsTheValueAtAJSONPointerAsWritten(t *testing.T) {
 	}
 	for pointer, says := range map[string]string{
 		"/missing": `no key "missing"`, "/items/2": `no index "2" in the 2-element array at /items`,
-		"/items/01": `no index "01"`, "/items/-": `no index "-"`, "/items/0/name/x": "not an object or array",
+		"/items/01": `no index "01"`, "/items/-": `no index "-"`, "/items/0/name/x": "not an object or array", "/big/x": "not an object or array",
 		"items": "invalid pointer", "/m~2n": "~ must be followed", "/m~": "~ must be followed",
 	} {
 		_, err := call(t, ws, ReadOriginal(), map[string]any{"handle": handle, "pointer": pointer})
@@ -626,6 +675,58 @@ func TestReadOriginalReturnsTheValueAtAJSONPointerAsWritten(t *testing.T) {
 	writeOriginalFile(t, ws.RunDir, "0000000000000004", "not json\n")
 	if _, err := call(t, ws, ReadOriginal(), map[string]any{"handle": "0000000000000004", "pointer": "/a"}); err == nil || !strings.Contains(err.Error(), "not one JSON value") {
 		t.Fatalf("pointer into a non-JSON original: %v", err)
+	}
+}
+
+func TestADeepPointerCostsAboutAsMuchAsAShallowOne(t *testing.T) {
+	const depth = 2000
+	doc := strings.Repeat(`{"a":`, depth) + `"` + strings.Repeat("x", 1<<20) + `"` + strings.Repeat("}", depth)
+	run := func(pointer string) time.Duration {
+		best := time.Duration(1 << 62)
+		for range 3 {
+			start := time.Now()
+			if _, err := originalPointer(context.Background(), []byte(doc), pointer); err != nil {
+				t.Fatal(err)
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	shallow, deep := run("/a"), run(strings.Repeat("/a", depth))
+	if deep > 20*shallow {
+		t.Errorf("a pointer %d deep took %v, one level %v", depth, deep, shallow)
+	}
+}
+
+func TestAPointerWalkStopsWhenTheRunIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := originalPointer(ctx, []byte(`{"a":{"b":1}}`), "/a/b"); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestAMeasurementThatCannotReadTheRunsFailsClosed(t *testing.T) {
+	ws := &Workspace{RunDir: filepath.Join(t.TempDir(), "ru\x00ns", "mine")}
+	if err := ws.measureOriginals(); err == nil || ws.originalsSeen {
+		t.Fatalf("err = %v, seen = %v: an unreadable runs directory must not count as empty", err, ws.originalsSeen)
+	}
+	ws = &Workspace{RunDir: filepath.Join(t.TempDir(), "runs", "mine")}
+	if err := ws.measureOriginals(); err != nil || !ws.originalsSeen || ws.originalsAll != 0 {
+		t.Fatalf("a runs directory not made yet is empty: err = %v, seen = %v, all = %d", err, ws.originalsSeen, ws.originalsAll)
+	}
+}
+
+func TestASiblingRunThatCannotBeReadFailsTheMeasurementClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports a file read as a directory as not found")
+	}
+	runs := filepath.Join(t.TempDir(), "runs")
+	must(t, os.MkdirAll(filepath.Join(runs, "other"), 0o755))
+	must(t, os.WriteFile(filepath.Join(runs, "other", "originals"), []byte("not a directory"), 0o644))
+	ws := &Workspace{RunDir: filepath.Join(runs, "mine")}
+	if err := ws.measureOriginals(); err == nil || ws.originalsSeen {
+		t.Fatalf("err = %v, seen = %v: a sibling run that cannot be read must not count as empty", err, ws.originalsSeen)
 	}
 }
 
