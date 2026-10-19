@@ -108,7 +108,7 @@ the model only that the operator can lift the guard.
 
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.
-Gates keep hrn's full environment and execute the code the agent wrote, including
+Gates keep hrn's full environment (less the git repository variables below) and execute the code the agent wrote, including
 tests, so that code can use the operator's credentials. hrn's own batch `git status`,
 `git add` and `git commit`, and in the operator's repository `hrn batch merge` and the
 `git worktree add` of a fresh task worktree, neutralise repository config keys that run programs
@@ -155,6 +155,12 @@ it run a command either. Neither command guard refuses `git config` for those ke
 and the settings remain in the shared config for other git commands, including the
 operator's later commits.
 The agent CLIs run their own shells; the next section is their guard.
+
+Guarded or not, hrn drops `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
+`GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_NAMESPACE` from the
+environment of its own git commands, of agent CLIs, of the api backend's commands and MCP
+servers, and of gates (an MCP server's own `env` in its config still applies). A git hook or a `!` alias that starts hrn sets some of them, and git would then act
+on that repository instead of the task's.
 
 #### The guard for every backend
 

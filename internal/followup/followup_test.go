@@ -1027,3 +1027,23 @@ func TestAFreshHandoverCannotForgeItsOwnStructure(t *testing.T) {
 		t.Errorf("the quoted answer should be there, marked as quoted:\n%s", h)
 	}
 }
+
+func TestTheHandoverReadsTheWorkspacesOwnRepository(t *testing.T) {
+	dir, other := t.TempDir(), t.TempDir()
+	for _, d := range []string{dir, other} {
+		if out, err := exec.Command("git", "-C", d, "init", "-q").CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v\n%s", err, out)
+		}
+	}
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_WORK_TREE", other)
+	got, err := git(dir, nil, "rev-parse", "--show-toplevel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, _ := filepath.EvalSymlinks(strings.TrimSpace(got))
+	w, _ := filepath.EvalSymlinks(dir)
+	if !strings.EqualFold(filepath.Clean(g), filepath.Clean(w)) {
+		t.Errorf("the handover's git read %q, want %s", got, w)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -219,7 +220,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	cmd.Dir = task.Dir
 	// A nested Claude Code session refuses to start when it thinks it is
 	// inside another one.
-	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
+	cmd.Env = gitenv.WithoutRepoVars(withoutEnv(os.Environ(), "CLAUDECODE"))
 	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
 	guarded := !task.AllowDangerous
 	var withheld []string

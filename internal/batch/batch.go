@@ -27,6 +27,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/gitretry"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
@@ -1381,7 +1382,7 @@ var runGateShell = tools.RunShell
 
 func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
 	started := time.Now()
-	// A gate is the operator's own command: it keeps hrn's environment.
+	// A gate is the operator's own command: it keeps hrn's environment, less the git repository variables.
 	res, err := runGateShell(ctx, dir, command, timeout, nil)
 	output, decodedUTF16 := decodeGateOutput(res.Output)
 	res.Output = output
@@ -2005,7 +2006,7 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 	// Git may create the branch before failing to read another worktree's
 	// metadata, so this command cannot safely be retried.
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
-	cmd.Env = append(cmd.Environ(), g.env(ctx)...)
+	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), g.env(ctx)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
@@ -2446,7 +2447,7 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 func gitOutEnv(ctx context.Context, dir string, env []string, stdin string, args ...string) (string, error) {
 	out, err := gitretry.Output(ctx, func() ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(append(cmd.Environ(), env...), "LC_ALL=C", "LANGUAGE=")
+		cmd.Env = append(append(gitenv.WithoutRepoVars(cmd.Environ()), env...), "LC_ALL=C", "LANGUAGE=")
 		cmd.Stdin = strings.NewReader(stdin)
 		return cmd.CombinedOutput()
 	})
@@ -2469,7 +2470,7 @@ func gitStdout(ctx context.Context, dir string, args ...string) (string, error) 
 
 func gitStdoutEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(cmd.Environ(), env...)
+	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
