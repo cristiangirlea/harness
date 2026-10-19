@@ -58,8 +58,11 @@ fail, so the work is on the branch whatever happens to the worktree; if that com
 (no git identity, a pre-commit hook) the task ends as `error` and the work stays
 uncommitted in the worktree. An agent that commits its own work on the branch and leaves nothing
 uncommitted gets no extra commit; the task records the branch's tip, so `diff` and merge see its
-work. A commit the agent made on no branch (a detached `HEAD`) is not
-recorded, since a merge would not bring it. Nor is a tip that no longer contains the base (the agent reset or
+work. hrn reads the branch's tip and `HEAD` before and after the agent runs: when the agent
+moved either itself (a commit of all or part of its work, a reset, a rename, a commit on another
+branch or on none), the attempt records `agent_committed` and `hrn batch show` marks the task
+`agent committed`. A commit the agent made on no branch (a detached `HEAD`) is not
+recorded as the task's commit, since a merge would not bring it. Nor is a tip that no longer contains the base (the agent reset or
 rewrote the branch below it), since merging it would revert the base; the attempt's error
 says so. hrn writes `.hrn/.gitignore` so the worktrees never show up
 in the repository's status.
