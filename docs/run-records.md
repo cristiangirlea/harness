@@ -7,7 +7,7 @@
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 
 Batch gate output is stored as UTF-8 after decoding detected UTF-16 shell output.
-A gate whose shell cannot start includes an optional `infrastructure_error`
+A gate whose shell cannot start or be waited for includes an optional `infrastructure_error`
 reason; the task fails with that reason without retrying. Older gate records
 without the field still load. See [Batches](batches.md) for the launcher errors
 that count as infrastructure failures.
@@ -16,6 +16,10 @@ A batch attempt with `protect` globs carries an optional `protected` list: the
 protected files it changed or removed against the batch's base, as slash paths.
 Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`.
 Records without the field still load. See [Batches](batches.md#batches).
+
+A batch attempt whose agent moved its branch or `HEAD` with git (a commit, reset or rename) carries
+`agent_committed: true`, and an eval's variant row counts those cells in
+`agent_committed`. Records without either field still load.
 
 Eval records retain each variant's optional `lean` field in `spec.matrix`: `true`
 or `false` when explicitly set, omitted otherwise. Older records without it still load.

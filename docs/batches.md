@@ -24,7 +24,9 @@ retried on the next backend in `retry`. Every attempt is an ordinary recorded ru
 ```
 
 `dir` (default: the file's directory) is any path inside the repository. Task fields
-override the file's defaults of the same name; `id` defaults to `t1`, `t2`, ….
+override the file's defaults of the same name; `id` defaults to `t1`, `t2`, …. A task's
+`"gate": []` is refused: leave `gate` out to use the spec's gates, or move the gates onto
+the tasks that need them (an answer-only task then has none), so a record reads as the run ran.
 
 Every shared run option (`agent.Options`) is a spec field under the same name with
 underscores (`--max-turns` is `max_turns`, `--max-cost` is `max_cost_usd`), on the spec
@@ -56,8 +58,11 @@ fail, so the work is on the branch whatever happens to the worktree; if that com
 (no git identity, a pre-commit hook) the task ends as `error` and the work stays
 uncommitted in the worktree. An agent that commits its own work on the branch and leaves nothing
 uncommitted gets no extra commit; the task records the branch's tip, so `diff` and merge see its
-work. A commit the agent made on no branch (a detached `HEAD`) is not
-recorded, since a merge would not bring it. Nor is a tip that no longer contains the base (the agent reset or
+work. hrn reads the branch's tip and `HEAD` before and after the agent runs: when the agent
+moved either itself (a commit of all or part of its work, a reset, a rename, a commit on another
+branch or on none), the attempt records `agent_committed` and `hrn batch show` marks the task
+`agent committed`. A commit the agent made on no branch (a detached `HEAD`) is not
+recorded as the task's commit, since a merge would not bring it. Nor is a tip that no longer contains the base (the agent reset or
 rewrote the branch below it), since merging it would revert the base; the attempt's error
 says so. hrn writes `.hrn/.gitignore` so the worktrees never show up
 in the repository's status.
@@ -200,7 +205,8 @@ does not search the output for a failing test.
 
 If the gate shell cannot start, the task fails with an infrastructure reason and
 does not use any remaining `retry` backends. This covers a process start error
-(including a missing shell interpreter), or a nonzero exit whose output was decoded
+(including a missing shell interpreter), a shell that started but could not be waited
+for (recorded as a wait failure, not a start failure), or a nonzero exit whose output was decoded
 from UTF-16 and contains an `HCS_E_*` error code or `The Windows Subsystem for Linux`
 launcher diagnostic within the first 1 KiB of decoded output.
 The gate records the reason in `infrastructure_error`; the agent's work is still
@@ -210,7 +216,17 @@ inside a running shell, keep the normal retry behavior. Cancellation and
 
 Gate output is decoded from UTF-16 to UTF-8 before it is checked, shortened,
 recorded or shown. A little- or big-endian BOM identifies UTF-16; without a BOM,
-alternating NUL bytes over the first few code units identify the byte order.
+alternating NUL bytes over the first few code units identify the byte order. One
+mixed shape is split, since stdout and stderr can differ in encoding: UTF-16 (with a
+BOM or detected as above) ending on a UTF-16 newline, then UTF-8 to the end with no
+NUL or other control bytes than tab, newline, carriage return and escape. The split is
+made only when the UTF-16 part decodes cleanly and the UTF-8 part does not also read
+as clean UTF-16 text in one script, as a short final UTF-16 line in Cyrillic, CJK or
+Gurmukhi can; such output is decoded as UTF-16 whole. Output too long to keep whole is
+decoded on each side of its `[... N bytes truncated ...]` marker: the head loses a
+character the cut ended inside, and the tail is read from the code-unit boundary that
+`N` gives (dropping half of a surrogate pair the cut split), or as UTF-8 from its first
+whole character, whichever decodes cleanly.
 
 The record goes to `~/.hrn/batches/<id>.json`, written before the first task starts,
 again each time a task moves on (an attempt's run starts or ends, a gate finishes, a task
