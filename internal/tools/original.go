@@ -21,8 +21,7 @@ import (
 var originalHandle = regexp.MustCompile(`^[0-9a-f]{16}$`)
 var originalRange = regexp.MustCompile(`^(\d+)-(\d+)$`)
 
-// Serialize the collision check and publication, so concurrent tool results
-// cannot replace each other's hash-named files.
+// Serialize check/publish to prevent concurrent overwrites.
 var originalWrites sync.Mutex
 
 func (w *Workspace) toolOutput(text string) string {
@@ -43,8 +42,7 @@ func (w *Workspace) toolOutput(text string) string {
 	return fmt.Sprintf("%s\noriginal: %s (%d bytes); read_original reads it", summary, handle, len(text))
 }
 
-// Root keeps links inside the record directory; the second root also confines
-// reads and writes to originals, even if a hash-named file is replaced by a link.
+// The second root confines replaced-file links to originals too.
 func (w *Workspace) originals(create bool) (*os.Root, error) {
 	if w == nil || w.RunDir == "" {
 		return nil, fmt.Errorf("run has no record directory")
@@ -110,9 +108,7 @@ func (w *Workspace) storeOriginalWithWriter(text string, write func(io.Writer, s
 	return handle, nil
 }
 
-// CopyOriginals copies the originals saved under one run record directory into
-// another, so a resumed conversation's handles still read; only regular files
-// whose bytes hash to their handle are copied.
+// CopyOriginals preserves resumed handles using hash-verified regular files.
 func CopyOriginals(fromRunDir, toRunDir string) error {
 	src, err := (&Workspace{RunDir: fromRunDir}).originals(false)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -146,7 +142,7 @@ func CopyOriginals(fromRunDir, toRunDir string) error {
 	return nil
 }
 
-// ReadOriginal is added to the API tool set only when shaping is enabled.
+// ReadOriginal supplies saved output for shaping.
 func ReadOriginal() Tool {
 	type in struct {
 		Handle string `json:"handle"`

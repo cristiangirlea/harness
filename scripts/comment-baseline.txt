@@ -35,17 +35,6 @@ internal/mcp/server.go	6c1637c73d52	7	long
 internal/purpose/purpose.go	0d4495eb68e1	3	cite
 internal/purpose/purpose.go	d031f2cf1711	8	long
 internal/runlog/prune.go	49c2b7f8deb3	7	long
-internal/tools/guard.go	25eefc543980	7	long
-internal/tools/guard.go	60956bb738f6	6	long
-internal/tools/guard.go	89f3ddb9c4fc	6	long
-internal/tools/guard.go	a20064b811ec	9	cite,long
-internal/tools/guard.go	b426e1843a5a	10	long
-internal/tools/guardenv.go	6485a0f7bbce	17	long
-internal/tools/guardenv.go	e1b3de0896e7	6	long
-internal/tools/links_other.go	6e425a1d03de	13	cite,long
-internal/tools/links_windows.go	071747c5e9e3	12	long
-internal/tools/secretfiles.go	8dc1aebb7afa	8	long
-internal/tools/tools.go	3ff9f686a396	6	long
 internal/update/swap.go	702b2069dfd8	6	long
 internal/watch/bot.go	5bffa170cfee	6	cite,long
 internal/watch/paths.go	ea12df4d5c04	7	long

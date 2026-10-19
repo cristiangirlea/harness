@@ -1,6 +1,4 @@
-// Package tools is the client-side tool runtime used by the API backend.
-// Every path a tool touches is resolved through a Workspace, which refuses
-// anything outside the task directory.
+// Package tools provides confined API tools.
 package tools
 
 import (
@@ -12,7 +10,7 @@ import (
 	"strings"
 )
 
-// Effect classifies what a tool can change; the permission gate keys off it.
+// Effect selects permission policy.
 type Effect int
 
 const (
@@ -26,32 +24,24 @@ type Tool struct {
 	Description string
 	Properties  map[string]any
 	Required    []string
-	// Schema, when set, is the complete input schema and replaces Properties
-	// and Required (MCP tools bring their own).
+	// Schema overrides Properties/Required for MCP.
 	Schema map[string]any
 	Effect Effect
-	// Summary renders a one-line description of a call for logs and approvals.
+	// Summary supplies log/approval text.
 	Summary func(input json.RawMessage) string
-	// Refuse reports why the harness will not run this call at all, named so
-	// the caller can say it. It is asked before any approval, so the operator
-	// is never prompted for something that would be refused anyway. Empty
-	// means the tool will attempt the call.
+	// Refuse avoids forbidden-call prompts before approval; "" allows.
 	Refuse func(ws *Workspace, input json.RawMessage) string
 	Run    func(ctx context.Context, ws *Workspace, input json.RawMessage) (string, error)
 }
 
 type Workspace struct {
 	Root string
-	// RunDir is the record directory, not a model-supplied workspace path.
+	// RunDir is trusted, outside model control.
 	RunDir     string
 	ShapeTools bool
-	// AllowDangerous lifts the command guard for this run. It lives here
-	// because the tool set is built once and shared by every run, so per-task
-	// policy has to travel with the workspace.
+	// AllowDangerous is per-run; tools are shared.
 	AllowDangerous bool
-	// real is Root where its links lead, which a path's own real location is
-	// judged against. Root keeps the spelling it was given, a junction
-	// included, since commands run there.
+	// Commands use Root; confinement needs its junction target.
 	real string
 }
 
@@ -73,7 +63,7 @@ func NewWorkspace(dir string) (*Workspace, error) {
 	return &Workspace{Root: abs, real: realPath(abs)}, nil
 }
 
-// Resolve maps a model-supplied path to an absolute path inside the workspace.
+// Resolve confines model paths to the workspace.
 func (w *Workspace) Resolve(p string) (string, error) {
 	if p == "" {
 		p = "."
@@ -82,7 +72,6 @@ func (w *Workspace) Resolve(p string) (string, error) {
 		p = filepath.Join(w.Root, p)
 	}
 	p = filepath.Clean(p)
-	// Judge where the path really is, so a link can't escape.
 	real := realPath(p)
 	if real == "" || w.real == "" {
 		return "", fmt.Errorf("path %q is refused: hrn cannot tell where it leads (a link that loops or cannot be read, or a name the system refuses)", p)
@@ -93,18 +82,11 @@ func (w *Workspace) Resolve(p string) (string, error) {
 	return p, nil
 }
 
-// maxLinks bounds the links realPath follows itself, so a loop of them ends.
 const maxLinks = 255
 
-// realPath is p with the links on its longest existing prefix resolved:
-// where p is, or would be once created. On Windows that includes directory
-// junctions, which filepath.EvalSymlinks has not followed since Go 1.23
-// (links_windows.go), and short 8.3 names become long ones. It is "" when
-// the links lead round in a loop or more than maxLinks times, or one cannot
-// be read.
+// New files need resolved prefixes, junctions and 8.3 aliases.
 func realPath(p string) string {
-	// A path met again is a loop: stop there, since each round runs
-	// EvalSymlinks, which follows up to 255 links of its own.
+	// Each EvalSymlinks follows 255 links; catch loops early.
 	seen := map[string]bool{}
 	for range maxLinks {
 		seen[p] = true
@@ -121,8 +103,6 @@ func realPath(p string) string {
 	return ""
 }
 
-// evalSymlinksPrefix is p with filepath.EvalSymlinks applied to its longest
-// prefix that resolves.
 func evalSymlinksPrefix(p string) string {
 	check := p
 	for {
@@ -138,7 +118,6 @@ func evalSymlinksPrefix(p string) string {
 	}
 }
 
-// inside reports whether a path from realPath lies in the workspace.
 func (w *Workspace) inside(real string) bool {
 	if real == "" {
 		return false
@@ -147,15 +126,11 @@ func (w *Workspace) inside(real string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// secretPath reports whether an absolute path names a secret file, as
-// written or where its links lead.
 func (w *Workspace) secretPath(p string) bool {
 	return SecretFile(w.Rel(p)) || w.secretReal(realPath(p))
 }
 
-// secretReal reports whether a path from realPath names a secret file. It is
-// judged from the workspace's real root, as inside is: from Root, a workspace
-// reached through a junction would see its parents' names.
+// Real roots keep junction ancestors out of secret matching.
 func (w *Workspace) secretReal(real string) bool {
 	if real == "" {
 		return false // Resolve refuses a path hrn cannot judge
@@ -167,7 +142,7 @@ func (w *Workspace) secretReal(real string) bool {
 	return SecretFile(rel)
 }
 
-// Rel renders an absolute workspace path for display.
+// Rel renders workspace paths.
 func (w *Workspace) Rel(p string) string {
 	if rel, err := filepath.Rel(w.Root, p); err == nil {
 		return filepath.ToSlash(rel)
@@ -175,8 +150,7 @@ func (w *Workspace) Rel(p string) string {
 	return p
 }
 
-// All returns the default tool set in a fixed order; a stable order keeps the
-// API prompt cache warm across turns.
+// All keeps tool order for prompt caching.
 func All() []Tool {
 	return []Tool{readFile(), listFiles(), grep(), writeFile(), editFile(), runCommand()}
 }
