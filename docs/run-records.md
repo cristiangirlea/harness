@@ -29,6 +29,11 @@ ended `ok` in one turn with no tool call and no change; a
 `retrieval_comparison` may hold `passing_pairs`, the passing-pair medians and
 reduction, `baseline_median_movement` and `saving_threshold`. All are optional;
 older records without them still load.
+The candidate's record of `hrn eval setup` also holds `setup_comparison`: the source ref and
+`source_commit` (where the branch left it), the branch head, the setup commit and the paths it
+changed, the task ids (and the `held_out` share and `seed` that picked them), `unpaired` cells, each
+side's eval id, cells that acted and passed, tokens on failures and per success, the
+movements and threshold, the verdict and its reason. It is optional; other records lack it.
 Variants may hold `prompt_prefix`, `append_system_prompt` and `no_skills`, and a judge
 `repeats`. With repeats, `judgements` holds one verdict per passing cell and repeat, each
 with its `repeat` number; variant and task rows add `judge_repeats`, `score_min` and

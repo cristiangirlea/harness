@@ -2,6 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -364,5 +368,84 @@ func TestEvalListLeavesCellsThatNeverActedOutOfThePassShare(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "100%") {
 		t.Errorf("list should count only the cells that acted:\n%s", out)
+	}
+}
+
+func TestASetupComparisonPrintsBothSidesAndItsVerdict(t *testing.T) {
+	per := 750.0
+	c := eval.SetupComparison{Source: "origin/main", Changed: []string{"AGENTS.md"},
+		Baseline:  eval.SetupSide{Eval: "aaaaa", Acted: 4, Passed: 4, TokensPerSuccess: &per},
+		Candidate: eval.SetupSide{Eval: "bbbbb", Acted: 3, Passed: 3, DidNotAct: 1, FailedTokens: 0},
+		Verdict:   eval.SetupSame, Reason: "the same pass rate"}
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printSetupComparison(r, c)
+	out := buf.String()
+	buf.Reset()
+	c.Candidate.UnknownTokens, c.Candidate.FailedTokens = 2, 300
+	printSetupComparison(r, c)
+	out += buf.String()
+	for _, want := range []string{"origin/main's setup files → this branch's (AGENTS.md)", "eval aaaaa · 4/4 passed", "750 per success", "1 did not act", "verdict: same, the same pass rate", "never change the verdict", "at least 300 (2 cells unknown) tokens on failures"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// fakeSetup replaces the comparison with one that returns run and err, and
+// records which batches the command removes.
+func fakeSetup(t *testing.T, run eval.SetupRun, err error) (*[]string, string) {
+	t.Helper()
+	oldRun, oldRemove := runSetupComparison, removeBatch
+	t.Cleanup(func() { runSetupComparison, removeBatch = oldRun, oldRemove })
+	runSetupComparison = func(context.Context, eval.Spec, eval.SetupOptions, func(batch.Event)) (eval.SetupRun, error) {
+		return run, err
+	}
+	var removed []string
+	removeBatch = func(res batch.Result) error { removed = append(removed, res.ID); return nil }
+	spec := filepath.Join(t.TempDir(), "eval.json")
+	body := `{"matrix": [{"backend": "claude"}], "repeats": 2, "tasks": [{"id": "a", "prompt": "do a"}]}`
+	if werr := os.WriteFile(spec, []byte(body), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	return &removed, spec
+}
+
+func TestEvalSetupRemovesBothBatchesEvenWhenTheCandidateFailed(t *testing.T) {
+	run := eval.SetupRun{BaselineRes: batch.Result{ID: "base-batch"}, CandidateRes: batch.Result{ID: "cand-batch"}}
+	removed, spec := fakeSetup(t, run, errors.New("candidate: boom"))
+	var out, errOut bytes.Buffer
+	if code, err := evalSetup([]string{spec}, &out, &errOut); code != 1 || err == nil {
+		t.Fatalf("code = %d, err = %v; want the candidate's failure", code, err)
+	}
+	if strings.Join(*removed, ",") != "base-batch,cand-batch" {
+		t.Errorf("removed = %q, want both batches", *removed)
+	}
+}
+
+func TestEvalSetupKeepsTheWorktreesWithKeep(t *testing.T) {
+	run := eval.SetupRun{BaselineRes: batch.Result{ID: "base-batch"}, CandidateRes: batch.Result{ID: "cand-batch"},
+		Comparison: eval.SetupComparison{Verdict: eval.SetupSame}}
+	removed, spec := fakeSetup(t, run, nil)
+	var out, errOut bytes.Buffer
+	if code, err := evalSetup([]string{"--keep", spec}, &out, &errOut); code != 0 || err != nil {
+		t.Fatalf("code = %d, err = %v", code, err)
+	}
+	if len(*removed) != 0 {
+		t.Errorf("removed = %q with --keep", *removed)
+	}
+}
+
+func TestEvalSetupJSONPrintsOnlyTheComparison(t *testing.T) {
+	run := eval.SetupRun{Comparison: eval.SetupComparison{Verdict: eval.SetupBetter, Reason: "fewer tokens"}}
+	_, spec := fakeSetup(t, run, nil)
+	var out, errOut bytes.Buffer
+	if code, err := evalSetup([]string{"--json", spec}, &out, &errOut); code != 0 || err != nil {
+		t.Fatalf("code = %d, err = %v", code, err)
+	}
+	var got eval.SetupComparison
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.Verdict != eval.SetupBetter {
+		t.Errorf("stdout = %q (%v); want only the comparison as JSON", out.String(), err)
 	}
 }
