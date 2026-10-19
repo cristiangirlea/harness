@@ -1138,6 +1138,11 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   or `Invoke-Expression` given a download as its argument, in parentheses or `$(...)`, with or
   without `-Command`; `iex $script` stays allowed. The call operator and scriptblock spellings
   followed as #338 (PR #430).
+- 2026-10-15: a killed gate is reported in three forms (#396, PR #402). `Outcome()` with the
+  operator's advice for the batch tool, `batch_show`, the `-v` event and the watch badge's title;
+  `Brief()` (`was killed after 15m0s by gate_timeout`) for the retry prompt, which cannot act on
+  the advice; a short badge (`killed · gate_timeout 15m0s`) on the watch page, since badges never
+  wrap. A gate that could not start after a cancellation is `canceled` too.
 - 2026-10-15: a gate killed by gate_timeout says so (#395, PR #399). A gate hrn killed at its
   per-gate limit, or at a cancellation, was `exited -1` everywhere, and a retry hunted its
   output for a failing test; five batches on 2026-10-14 failed that way while the code was
