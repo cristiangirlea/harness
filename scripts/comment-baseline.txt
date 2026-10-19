@@ -8,17 +8,6 @@ internal/agent/instructions.go	9aa0b42f9337	7	long
 internal/agent/options.go	094c2822224f	9	long
 internal/agent/options.go	9ef8f02d126e	4	cite
 internal/agent/prices_openai.go	6e85964aeb78	4	cite
-internal/batch/batch.go	103418936ecf	7	long
-internal/batch/batch.go	13e144fbe64e	7	long
-internal/batch/batch.go	1aba04cb3de5	6	long
-internal/batch/batch.go	1dba1a1fe2c6	7	long
-internal/batch/batch.go	2f6e76f0ef7a	1	cite
-internal/batch/batch.go	35d5dc22609c	7	long
-internal/batch/batch.go	88de21df06e8	20	long
-internal/batch/batch.go	92a5dbd06cb2	6	long
-internal/batch/batch.go	a046e8db766f	8	long
-internal/batch/batch.go	a81c89d3a40d	7	long
-internal/batch/read_windows.go	a531b68df96b	6	long
 internal/eval/eval.go	66692ee9e46d	8	long
 internal/followup/followup.go	bd637312fda3	6	long
 internal/gc/cache.go	393fb92f493b	6	long

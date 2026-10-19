@@ -10,20 +10,16 @@ import (
 	"strings"
 )
 
-// DefaultSetupPaths are the files an agent's setup lives in, as git pathspecs:
-// the instruction files anywhere in the tree and everything under .claude.
+// DefaultSetupPaths selects agent instructions and configuration as git pathspecs.
 var DefaultSetupPaths = []string{":(glob)**/AGENTS.md", ":(glob)**/CLAUDE.md", ":(glob)**/HRN.md", ".claude"}
 
-// Setup is a commit SetupCommit made, the source commit its files came from and the paths it changed.
+// Setup records a setup commit, its source and changed paths.
 type Setup struct {
 	Commit, Source string
 	Changed        []string
 }
 
-// SetupCommit makes a commit on top of head whose tree is head's except that the
-// files paths match are as they were where head left source (their merge base),
-// so later setup edits on source do not count as the branch's. Nothing is
-// checked out: it is built in a scratch index.
+// SetupCommit commits on head, in a scratch index, the matching files as they are at head and source's merge base.
 func SetupCommit(ctx context.Context, repo, head, source string, paths []string) (Setup, error) {
 	var out Setup
 	if len(paths) == 0 {
@@ -34,7 +30,7 @@ func SetupCommit(ctx context.Context, repo, head, source string, paths []string)
 		return out, err
 	}
 	defer g.close()
-	// The pathspecs mean what they say whatever the operator's environment asks of git.
+	// Environment pathspec modes must not reinterpret the supplied patterns.
 	base := append(g.env(ctx), "GIT_LITERAL_PATHSPECS=0", "GIT_GLOB_PATHSPECS=0", "GIT_NOGLOB_PATHSPECS=0", "GIT_ICASE_PATHSPECS=0")
 	resolve := func(rev string) (string, error) {
 		return gitOutEnv(ctx, g.dir, base, "", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
@@ -85,8 +81,7 @@ func SetupCommit(ctx context.Context, repo, head, source string, paths []string)
 		mode, rest, _ := strings.Cut(meta, " ")
 		kind, sha, _ := strings.Cut(rest, " ")
 		if entry == "" || kind == "tree" {
-			// Not a file at the source (absent, or a folder whose files come on their
-			// own lines): an all-zero mode removes it from the index.
+			// Zero mode removes absent files; folders' files have separate entries.
 			fmt.Fprintf(&stdin, "0 %s\t%s\x00", strings.Repeat("0", len(src)), name)
 			continue
 		}
