@@ -19,70 +19,51 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// This file holds the machinery every agent CLI shares: finding the binary,
-// running it, reading its stdout and turning a non-zero exit into a Result.
-// Each backend's arguments and stream format live in its own file, claude.go,
-// codex.go, gemini.go, opencode.go and agy.go.
-
-// CLIBackend drives an installed agent CLI non-interactively, so the work is
-// billed to that CLI's own subscription login rather than per API token.
+// CLIBackend runs an installed CLI using its own login.
 type CLIBackend struct {
 	name string
-	// candidates lists extra install locations checked after PATH.
+	// PATH takes precedence over bundled installations.
 	candidates func() []string
-	// args builds the argument list. promptFile is set when the prompt is
-	// passed as an attachment instead of on stdin.
+	// promptFile replaces stdin for attachment-based CLIs.
 	args        func(t Task, promptFile string) []string
 	promptStdin bool
-	// env, when set, adds variables to the child's environment, values that
-	// must not show on its command line; the guard filters them like the rest.
+	// env keeps values off command lines; the guard still filters them.
 	env func(t Task) ([]string, error)
-	// encodePrompt wraps stdin for CLIs that require structured input.
+	// Some CLIs require structured stdin even in print mode.
 	encodePrompt func(string) string
-	// parse handles one stdout line. Nil means stdout is plain text.
+	// A nil parser treats stdout as plain text.
 	parse func(line []byte, emit func(Event), res *Result) bool
-	// newParse, when set, makes a parse for one run, for a stream whose lines
-	// are read in the light of earlier ones; Run uses it instead of parse.
+	// newParse isolates parser state per run.
 	newParse func() func(line []byte, emit func(Event), res *Result) bool
-	// stopWhen stops a streaming CLI when its parser reports a reason to stop.
+	// Stop promptly when stream events declare a terminal condition.
 	stopWhen func(*Result) bool
-	// finalize runs after exit with all of stdout, for single-JSON outputs.
+	// Single-JSON CLIs need the complete stdout document.
 	finalize func(stdout []byte, emit func(Event), res *Result)
-	// end, when set, runs once the stream has ended and the CLI exited clean,
-	// for a parser whose last line left something only the end of the
-	// stream can settle (an error line no later line resolved). errored says
-	// whether the stream wrote an error event, so the step does not repeat one.
+	// Resolve pending errors after clean exit without duplicating events.
 	end func(emit func(Event), res *Result, errored bool)
-	// forks is set when args honours Task.ForkSession and parse records
-	// Result.Session.
+	// forks requires session argument and result support.
 	forks bool
-	// resumesInPlace distinguishes a continuation that does not copy the session.
+	// In-place resume must not be advertised as a session copy.
 	resumesInPlace bool
-	// loginEnv names the secret-looking variables the CLI logs in with on a
-	// plan; the guard passes them on to this CLI and no other.
+	// Pass login secrets only to their owning CLI.
 	loginEnv []string
-	// fileRules is set when args hands the guard's secret files to the CLI's
-	// own permission rules; the other CLIs can read and write them.
+	// fileRules requires native CLI secret-file protection.
 	fileRules bool
-	// mapsEffort is set when args passes Options.Effort to the CLI.
+	// Advertise effort only when the adapter enforces it.
 	mapsEffort bool
-	// These fields are opt-in: advertise only explicit adapter mappings.
+	// Advertise only explicitly mapped capabilities.
 	mapsModes    []Mode
 	mapsModel    bool
 	mapsMaxTurns bool
 	mapsMCP      bool
-	// mapsLean is set when args honours Options.Lean. It is not a capability:
-	// the exec protocol's start message has no lean field.
+	// The exec start protocol has no lean field.
 	mapsLean bool
-	// mapsCompact is set when args honours Options.CompactWindow; like
-	// mapsLean, not a capability.
+	// Compaction support is separate from exec capabilities.
 	mapsCompact bool
-	// mapsSystemPrompt and mapsNoSkills: args honours AppendSystemPrompt and NoSkills.
+	// System-prompt and skill support require explicit argument mappings.
 	mapsSystemPrompt bool
 	mapsNoSkills     bool
-	// limits is set when the CLI bills to a plan and says, in a way usageLimit
-	// knows, that its usage limit was reached: such a run ends limited rather
-	// than in an error.
+	// Only subscription-backed CLIs report plan limits.
 	limits bool
 }
 
@@ -109,7 +90,6 @@ func (c *CLIBackend) Capabilities() Capabilities {
 		caps.Efforts = append(caps.Efforts, EffortLevels...)
 		caps.Options = append(caps.Options, "effort")
 	}
-	// Run itself enforces timeout for every CLI adapter.
 	caps.Options = append(caps.Options, "timeout")
 	if c.mapsMaxTurns {
 		caps.Options = append(caps.Options, "max_turns")
@@ -126,16 +106,14 @@ func (c *CLIBackend) Capabilities() Capabilities {
 	return caps
 }
 
-// ForksSessions reports whether the CLI honours Task.ForkSession. Capabilities
-// distinguishes a copied session from one resumed in place.
+// ForksSessions reports support, including in-place resume.
 func (c *CLIBackend) ForksSessions() bool { return c.forks }
 
 var sessionID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
 
 var modelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,127}$`)
 
-// ValidModel reports whether model may become a CLI argument: cmd.exe, which runs
-// the npm .cmd shims, does not neutralise &, |, ^, % or quotes, and a dash is a flag.
+// ValidModel rejects flags and unsafe cmd.exe syntax.
 func ValidModel(model string) bool { return modelID.MatchString(model) }
 
 // ForksSessions reports whether b honours Task.ForkSession.
@@ -150,8 +128,7 @@ func (c *CLIBackend) Detect() (string, error) {
 	}
 	if c.candidates != nil {
 		for _, p := range c.candidates() {
-			// A relative candidate (an unset HOME, APPDATA or LOCALAPPDATA) would
-			// resolve against the working directory, the task's workspace.
+			// Relative candidates could select workspace-controlled binaries.
 			if !filepath.IsAbs(p) {
 				continue
 			}
@@ -187,8 +164,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if task.ForkSession != "" && !c.forks {
 		return fail(StatusError, fmt.Errorf("the %s backend cannot resume a session", c.name))
 	}
-	// The id comes from a record on disk and becomes an argument, where one
-	// starting with a dash would be read as a flag. Both CLIs issue UUIDs.
+	// Disk-sourced session IDs must not become CLI flags.
 	if task.ForkSession != "" && !sessionID.MatchString(task.ForkSession) {
 		return fail(StatusError, fmt.Errorf("session id %q is not one the %s CLI issues", task.ForkSession, c.name))
 	}
@@ -200,7 +176,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if err != nil {
 		return fail(StatusError, err)
 	}
-	// cmd.exe, which runs an npm .cmd shim, would read &, |, % and newlines in free text as its own syntax.
+	// cmd.exe treats free-text metacharacters as shell syntax.
 	if task.AppendSystemPrompt != "" && c.mapsSystemPrompt && isBatchFile(bin) {
 		return fail(StatusError, fmt.Errorf("append_system_prompt cannot be passed safely through %s; install the native %s CLI", filepath.Base(bin), c.name))
 	}
@@ -221,8 +197,6 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 
 	cmd := exec.CommandContext(ctx, bin, c.args(task, promptFile)...)
 	cmd.Dir = task.Dir
-	// A nested Claude Code session refuses to start when it thinks it is
-	// inside another one.
 	cmd.Env = agentEnv(os.Environ())
 	if c.env != nil {
 		extra, err := c.env(task)
@@ -234,8 +208,6 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	guarded := !task.AllowDangerous
 	var withheld []string
 	if guarded {
-		// The logins tools keep on disk are looked for in an empty directory
-		// of the run's own.
 		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
 		if err != nil {
 			return fail(StatusError, err)
@@ -277,8 +249,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	defer tree.Close()
 	emitCLITreeStartInfo(tree, emit)
-	// A surviving descendant can hold StdoutPipe open before Wait is reached.
-	// Bound that read on cancellation as well as exec's stderr copy in Wait.
+	// A surviving descendant can hold stdout open; bound the read on cancel.
 	readDone := make(chan struct{})
 	defer close(readDone)
 	go func() {
@@ -336,7 +307,6 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 				continue
 			}
 		}
-		// Unparsed output is shown as text so nothing is silently lost.
 		text := string(line) + "\n"
 		plain.WriteString(text)
 		emit(Event{Kind: EventText, Text: text, Partial: true})
@@ -359,12 +329,8 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	switch {
 	case ctx.Err() != nil:
 		return fail(stopStatus(ctx), stopCLITree(tree, ctx.Err()))
+	// Prefer stderr, then the stream's error; a stream-set status or usage limit survives the exit.
 	case waitErr != nil:
-		// Prefer what the CLI said over the bare exit status: stderr first,
-		// then a structured error the stream already reported. A status the
-		// stream set (max_turns, refused) survives the non-zero exit too. A
-		// usage limit the stream reported wins over stderr, which then holds
-		// only the CLI's chatter around it.
 		msg := strings.TrimSpace(stderr.String())
 		if limited, _ := usageLimit(res.Error, time.Now()); msg == "" || c.limits && limited {
 			msg = res.Error
@@ -377,7 +343,6 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 			status = res.Status
 		}
 		if msg = lastLines(msg, 20); msg == lastErr {
-			// The stream's last error event already said it.
 			res.Status, res.Error = status, msg
 			return finish(&res, started)
 		}
@@ -406,10 +371,7 @@ func emitCLITreeStartInfo(tree interface {
 }
 
 func stopCLITree(tree *tools.Tree, err error) error {
-	// exec may have reaped a CLI that exited just before cancellation
-	// and stopped its watcher without ever invoking cmd.Cancel.
-	// Without containment, cmd.Cancel owns the best-effort fallback. WaitGone
-	// supplies the single explanation that cleanup could not be verified.
+	// Exit may race cancellation without invoking cmd.Cancel.
 	if tree.Contained() {
 		if killErr := tree.Kill(); killErr != nil {
 			err = fmt.Errorf("%w; kill process tree: %v", err, killErr)
@@ -421,8 +383,7 @@ func stopCLITree(tree *tools.Tree, err error) error {
 	return err
 }
 
-// agentEnv is env without what no agent CLI may inherit: hrn's own secrets, git's
-// repository variables, and CLAUDECODE, which makes a nested Claude Code refuse to start.
+// Strip harness secrets, git repository overrides, and the nested-session marker.
 func agentEnv(env []string) []string {
 	return retrieval.ExecutorEnv(gitenv.WithoutRepoVars(withoutEnv(env, "CLAUDECODE")))
 }
@@ -445,9 +406,7 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// appData joins parts under %APPDATA%, or returns "" when APPDATA is not an
-// absolute path: a relative candidate would resolve against the working
-// directory, which for a run is the task's workspace.
+// Relative APPDATA paths could select workspace binaries.
 func appData(parts ...string) string {
 	root := os.Getenv("APPDATA")
 	if !filepath.IsAbs(root) {
@@ -475,14 +434,10 @@ func init() {
 	Register(NewAgyBackend())
 }
 
-// guardLine is what a guarded run says about the guard, with what this CLI
-// leaves open. It says "pointed", not "cannot": an agent set on undoing the
-// guarded environment can, and the README says how.
+// The environment guard is reversible by a determined agent; do not claim isolation.
 func (c *CLIBackend) guardLine(withheld []string) string {
 	text := "guard: git pushes are pointed at a dead end; gh, npm, cloud and container logins are out of reach; tokens and keys are withheld"
 	if len(withheld) > 0 {
-		// A CLI that logs in with one of these fails under the guard; this
-		// line says why.
 		text += " (" + strings.Join(withheld, ", ") + ")"
 	}
 	if c.fileRules {
@@ -493,9 +448,7 @@ func (c *CLIBackend) guardLine(withheld []string) string {
 	return text + "; --allow-dangerous lifts it"
 }
 
-// shownArgs is a command line as a run's info line shows it: the guard's
-// deny rules, dozens of them, are counted rather than listed, and MCP server
-// values, which may hold expanded secrets, are hidden.
+// Hide MCP secrets and summarize verbose deny rules.
 func shownArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -523,7 +476,6 @@ func shownArgs(args []string) []string {
 
 var mcpValueArg = regexp.MustCompile(`^(mcp_servers\.[^.=]+\.(?:command|args|url|env_vars)=)`)
 
-// isBatchFile reports whether bin runs through cmd.exe.
 func isBatchFile(bin string) bool {
 	ext := strings.ToLower(filepath.Ext(bin))
 	return ext == ".cmd" || ext == ".bat"

@@ -1,13 +1,5 @@
 # Existing comment-rule violations: only --prune removes lines; a renamed file may have its path edited.
 cmd/hrn/prune.go	018296750787	6	long
-internal/agent/api.go	c64ace1c687c	2	cite
-internal/agent/codex.go	3ae249df54bd	7	long
-internal/agent/codex.go	d817c7ee90b3	6	long
-internal/agent/guardenv.go	5336dc3180ff	8	long
-internal/agent/instructions.go	9aa0b42f9337	7	long
-internal/agent/options.go	094c2822224f	9	long
-internal/agent/options.go	9ef8f02d126e	4	cite
-internal/agent/prices_openai.go	6e85964aeb78	4	cite
 internal/batch/batch.go	103418936ecf	7	long
 internal/batch/batch.go	13e144fbe64e	7	long
 internal/batch/batch.go	1aba04cb3de5	6	long

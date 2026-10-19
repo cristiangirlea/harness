@@ -10,10 +10,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// instructionFiles are the project instruction files, read from the workspace
-// root in this order. The agent CLIs read their own (claude: CLAUDE.md, codex
-// and opencode: AGENTS.md), so this is what gives the api loop the same view.
-// A function, not a package variable, so the order cannot be changed at runtime.
 func instructionFiles() []string { return []string{"HRN.md", "AGENTS.md", "CLAUDE.md"} }
 
 const (
@@ -21,13 +17,7 @@ const (
 	truncatedMarker = "\n\n[truncated: project instructions exceed 32 KiB]"
 )
 
-// loadInstructions renders the instruction files found in the workspace root.
-// The text is empty when there are none, and truncated reports whether the cap
-// dropped anything. Only the root is searched: nested and parent directories
-// are deliberately out of scope.
-//
-// Every path goes through the workspace, so a file that is a symlink out of the
-// tree is refused rather than read into the prompt.
+// Workspace resolution prevents instruction symlinks from escaping the tree.
 func loadInstructions(ws *tools.Workspace) (text string, names []string, truncated bool, err error) {
 	var b strings.Builder
 	for _, name := range instructionFiles() {
@@ -52,8 +42,6 @@ func loadInstructions(ws *tools.Workspace) (text string, names []string, truncat
 		}
 		if room := maxInstructions - b.Len(); b.Len()+len(heading)+len(content)+1 > maxInstructions {
 			truncated = true
-			// A section that cannot fit its heading and some content is left
-			// out whole; a half-written heading would read as corruption.
 			if room > len(heading) {
 				b.WriteString(heading)
 				b.WriteString(trimToRune(content[:room-len(heading)]))
@@ -70,7 +58,6 @@ func loadInstructions(ws *tools.Workspace) (text string, names []string, truncat
 	return b.String(), names, truncated, nil
 }
 
-// trimToRune drops a trailing partial rune, which a byte-wise cut can leave.
 func trimToRune(s string) string {
 	for len(s) > 0 {
 		if r, size := utf8.DecodeLastRuneInString(s); r != utf8.RuneError || size > 1 {

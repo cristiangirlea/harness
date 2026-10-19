@@ -18,15 +18,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// Options is everything a caller can set on a run besides the prompt and the
-// workspace. It is one struct so that the run flags, a batch spec and its
-// tasks, and the MCP run tool all take the same fields from the same place: an
-// option added here reaches every entry point, and options_test.go fails if
-// one of them stops picking it up.
-//
-// Each field carries a json tag (its name in run records, batch specs and MCP
-// calls), a desc tag (the one-line help the flag and the MCP schema show) and,
-// where the flag is not the json name with dashes, a flag tag.
+// Options shares CLI, batch, and MCP configuration.
 type Options struct {
 	ShapeTools        bool   `json:"shape_tools,omitempty" flag:"shape-tools" desc:"Summarise large terminal, log and test results and keep the original behind a handle (api backend; default off)."`
 	Retrieval         string `json:"retrieval,omitempty" desc:"Project retrieval: off | optional | required (default off)."`
@@ -40,65 +32,47 @@ type Options struct {
 	MaxTurns int    `json:"max_turns,omitempty" flag:"max-turns" desc:"Stop after this many model turns (api default 50)."`
 	Effort   string `json:"effort,omitempty" desc:"Reasoning effort for api, codex and claude: low | medium | high | xhigh | max; empty uses the backend default."`
 
-	// MCP lists config files (Claude Code .mcp.json format) whose stdio
-	// servers are offered as tools by the api backend and passed through to
-	// the claude CLI. Absolute paths once a caller has resolved them.
+	// MCP contains resolved stdio-server config paths.
 	MCP []string `json:"mcp,omitempty" desc:"MCP config files, in Claude Code's .mcp.json format."`
 
-	// NoInstructions skips the project instruction files (HRN.md, AGENTS.md,
-	// CLAUDE.md) that the api backend otherwise puts in its system prompt.
+	// NoInstructions omits project instructions from the API prompt.
 	NoInstructions bool `json:"no_instructions,omitempty" desc:"Skip the project instruction files HRN.md, AGENTS.md and CLAUDE.md (api backend)."`
 
-	// NoContextEdits turns off server-side context management, which the api
-	// backend asks for by default so old tool results are cleared server-side
-	// instead of being resent every turn.
+	// NoContextEdits disables server-side clearing.
 	NoContextEdits bool `json:"no_context_edits,omitempty" desc:"Keep every tool result in the request instead of letting the server clear old ones (api backend)."`
 
-	// Lean trims what the claude and codex CLIs load to what the run names:
-	// its --mcp servers, and on claude no skills. Unset (nil) is on, so a
-	// record keeps lean only as written; an explicit false loads everything.
+	// Lean limits MCP servers and Claude skills; nil enables it.
 	Lean *bool `json:"lean,omitempty" desc:"Load only this run's --mcp servers, and on claude no skills (default on; claude and codex backends). false loads every MCP server, plugin and skill your CLI is set up with."`
 
-	// Skills lets a lean claude run keep its skills and slash commands.
+	// Skills preserves Claude skills in lean runs.
 	Skills *bool `json:"skills,omitempty" desc:"Keep the claude CLI's skills and slash commands in a lean run (default off; claude backend)."`
 
-	// AppendSystemPrompt follows the backend's own system prompt, so an eval
-	// variant can measure a rule or tool-guidance change with the same gates.
+	// AppendSystemPrompt follows the backend's system prompt.
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty" desc:"Text added after the backend's own system prompt, such as a rule or tool guidance (api and claude backends; at most 16 KiB)."`
 
-	// NoSkills starts the claude CLI with its skills off, to measure what they add.
+	// NoSkills disables Claude skills.
 	NoSkills bool `json:"no_skills,omitempty" desc:"Start the claude CLI with skills turned off (--disable-slash-commands) (claude backend)."`
 
-	// CompactWindow is the context size, in tokens, at which the claude CLI
-	// compacts the conversation (--autocompact): 100000 to 1000000, or
-	// "auto". Unset keeps Claude Code's own threshold, which on a 1M-window
-	// model is close to the whole window (#204).
+	// CompactWindow sets Claude's compaction threshold.
 	CompactWindow CompactWindow `json:"compact_window,omitempty" desc:"Compact the claude CLI's conversation at this many tokens of context: 100000 to 1000000, or auto (claude backend)."`
 
-	// AllowDangerous lifts the guard: the api backend's command guard, which
-	// otherwise refuses a few command lines (git push, sudo, rm -rf /, curl |
-	// sh), and the guarded environment every backend runs in (tools.GuardEnv).
+	// AllowDangerous lifts command and environment guards.
 	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Lift the guard: let agents push, merge and deploy with your credentials, and let run_command run sudo, rm -rf / and the like."`
 
 	// Timeout ends the run when it passes; zero means no deadline.
 	Timeout Duration `json:"timeout,omitempty" desc:"Stop the run after this long, e.g. 20m."`
 
-	// MaxCostUSD stops the api loop before a turn that would take the
-	// estimated cost past it. The CLI backends cannot enforce it.
+	// MaxCostUSD caps estimated API cost.
 	MaxCostUSD float64 `json:"max_cost_usd,omitempty" flag:"max-cost" desc:"Stop the api loop before a turn that would pass this estimated cost, in USD."`
 
-	// TaskBudget is the api backend's token ceiling for the whole task: the
-	// model paces itself and finishes rather than being cut off.
+	// TaskBudget gives the model a task-wide token ceiling.
 	TaskBudget int `json:"task_budget,omitempty" desc:"Token ceiling the api backend gives the model to pace itself (min 20000)."`
 
-	// NoSwitch keeps a run on its backend when that backend has reached its
-	// plan's usage limit. Otherwise an enabled partner carries on its work;
-	// without preferences claude and codex stand in for each other (internal/limits).
+	// NoSwitch prevents continuation on a partner backend.
 	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its usage limit, instead of carrying on on an enabled partner (claude and codex pair by default)."`
 }
 
-// Route fills a wholly unspecified backend/model/effort choice from evidence.
-// Backend lives beside Options in the callers, so it is passed separately.
+// Route fills an unspecified backend/model/effort from evidence.
 func (o *Options) Route(declared, prompt string, backend *string, home string) (*table.RoutedBy, error) {
 	if *backend != "" || o.Model != "" || o.Effort != "" {
 		return nil, nil
@@ -144,9 +118,7 @@ func (o Options) IsLean() bool { return o.Lean == nil || *o.Lean }
 // Bool returns a pointer to v, for an option that is set or left unset.
 func Bool(v bool) *bool { return &v }
 
-// Validate rejects what the API or hrn would refuse, where the values are typed
-// rather than after an agent has started. An empty mode passes: each entry
-// point has its own default.
+// Validate rejects unsupported options; empty mode permits caller defaults.
 func (o Options) Validate() error {
 	if o.Retrieval != "" && o.Retrieval != "off" && o.Retrieval != "optional" && o.Retrieval != "required" {
 		return fmt.Errorf("invalid retrieval mode")
@@ -181,20 +153,13 @@ func (o Options) Validate() error {
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }
 
-// MaxAppendSystemPrompt leaves room under Windows' 32K command line for the
-// rest of the claude CLI's arguments.
+// MaxAppendSystemPrompt reserves Windows command-line space.
 const MaxAppendSystemPrompt = 16 << 10
 
-// ErrGuardedRun refuses allow_dangerous to an hrn started inside a guarded
-// run (tools.GuardedVar is set): from an agent's shell, or from an MCP server
-// its CLI started with its environment. Lifting the guard is the operator's
-// call. The text names no variable: the model reads it.
+// ErrGuardedRun reserves lifting the guard for the operator; its text names no variable because the model reads it.
 var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run: only the operator can lift the guard")
 
-// Over returns o with every unset field taken from base: a task's options over
-// its spec's. A switch left off inherits the spec's, so a task can turn one on
-// but not back off, except lean and skills, which are unset only when nil; a list left nil
-// inherits, and an empty list stays empty.
+// Over inherits unset values; non-nil pointers and lists override base.
 func (o Options) Over(base Options) Options {
 	ov, bv := reflect.ValueOf(&o).Elem(), reflect.ValueOf(base)
 	for i := 0; i < ov.NumField(); i++ {
@@ -205,8 +170,7 @@ func (o Options) Over(base Options) Options {
 	return o
 }
 
-// Schema describes the options as JSON-schema properties, for the MCP run
-// tool, from the same fields and descriptions the flags use.
+// Schema derives MCP properties from CLI option fields.
 func (Options) Schema() map[string]any {
 	props := map[string]any{}
 	t := reflect.TypeOf(Options{})
@@ -252,9 +216,7 @@ func (Options) Schema() map[string]any {
 	return props
 }
 
-// BindFlags registers one flag per option on fs, bound to o. The flag is named
-// by the field's flag tag, or its json name with dashes. Whatever o holds when
-// this is called shows as the default, so a caller sets its defaults first.
+// BindFlags uses o's current values as defaults.
 func BindFlags(fs *flag.FlagSet, o *Options) {
 	v := reflect.ValueOf(o).Elem()
 	t := v.Type()
@@ -282,7 +244,6 @@ func BindFlags(fs *flag.FlagSet, o *Options) {
 	}
 }
 
-// flagName is the flag an Options field is set with.
 func flagName(f reflect.StructField) string {
 	if name := f.Tag.Get("flag"); name != "" {
 		return name
@@ -294,9 +255,7 @@ func jsonName(f reflect.StructField) string {
 	return strings.Split(f.Tag.Get("json"), ",")[0]
 }
 
-// EffortLevels are the reasoning efforts a caller may ask for. The api backend
-// sends the level as is, codex and claude pass it to their CLIs, and the other
-// backends report it as not enforced. The names are exact: "HIGH" is refused.
+// EffortLevels contains case-sensitive effort names.
 var EffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
 
 // Modes lists the permission modes, for the MCP schema and the flag help.
@@ -304,8 +263,7 @@ var Modes = []Mode{ModeReadOnly, ModeAsk, ModeAuto, ModeYolo}
 
 func (m Mode) String() string { return string(m) }
 
-// Set parses a flag value, so a *Mode is a flag.Value and a bad mode is
-// refused by the flag parser itself.
+// Set validates Mode as a flag.Value.
 func (m *Mode) Set(s string) error {
 	v, err := ParseMode(s)
 	if err != nil {
@@ -315,10 +273,7 @@ func (m *Mode) Set(s string) error {
 	return nil
 }
 
-// Duration is a time.Duration that reads as "20m" in a spec, a flag or an MCP
-// call and is written the same way in a run record. A bare number is refused:
-// "timeout": 300 would otherwise be 300 nanoseconds, and the records that
-// stored nanoseconds used their own key, timeout_ns, which Task still reads.
+// Duration stores durations as text to prevent nanosecond mistakes.
 type Duration time.Duration
 
 func (d Duration) String() string { return time.Duration(d).String() }
@@ -339,7 +294,7 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	return d.Set(s)
 }
 
-// Set parses a flag value, so a *Duration is a flag.Value.
+// Set parses Duration as a flag.Value.
 func (d *Duration) Set(s string) error {
 	v, err := time.ParseDuration(s)
 	if err != nil {
@@ -349,8 +304,7 @@ func (d *Duration) Set(s string) error {
 	return nil
 }
 
-// setBool is a boolean flag that stays nil until it is given, so that an
-// absent flag and --x=false differ.
+// Nil distinguishes an absent boolean flag from an explicit false.
 type setBool struct{ p **bool }
 
 func (b setBool) String() string {
@@ -371,9 +325,7 @@ func (b setBool) Set(s string) error {
 
 func (setBool) IsBoolFlag() bool { return true }
 
-// CompactWindow is "auto" or a token count from 100000 to 1000000 in decimal,
-// as claude --autocompact takes it. A spec or call may quote the count;
-// a record always stores the count as a number.
+// CompactWindow is auto or 100000-1000000; records store the count as a number.
 type CompactWindow string
 
 const minCompactWindow, maxCompactWindow = 100000, 1000000
@@ -390,7 +342,7 @@ func (w CompactWindow) check() error {
 
 func (w CompactWindow) String() string { return string(w) }
 
-// Set parses a flag value, so a *CompactWindow is a flag.Value.
+// Set validates CompactWindow as a flag.Value.
 func (w *CompactWindow) Set(s string) error {
 	if err := CompactWindow(s).check(); err != nil {
 		return err
@@ -423,7 +375,6 @@ func (w *CompactWindow) UnmarshalJSON(data []byte) error {
 	return w.Set(s)
 }
 
-// stringList collects a repeatable string flag.
 type stringList []string
 
 func (l *stringList) String() string     { return strings.Join(*l, ",") }

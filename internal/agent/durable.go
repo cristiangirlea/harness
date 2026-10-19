@@ -12,18 +12,14 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// DurableExecution supplies a trusted persistence boundary for the API loop.
-// Save must commit before returning success, reject stale owners and preserve
-// immutable versions. It must not share its credentials with execution tools.
-// Resume is crash recovery of this same task, not a new conversational turn.
+// DurableExecution's credentials must never reach execution tools; Resume recovers the same task without a new turn.
 type DurableExecution struct {
 	Resume *APICheckpoint
 	Save   func(context.Context, APICheckpoint) error
 }
 
-// APICheckpoint preserves the exact request, including signed assistant blocks,
-// and the outcomes needed to continue without repeating confirmed operations.
-// It contains untrusted workspace/model content and must stay project-scoped.
+// APICheckpoint preserves signed requests and confirmed outcomes to prevent replay.
+// Its untrusted content must stay project-scoped.
 type APICheckpoint struct {
 	Version      int               `json:"version"`
 	Sequence     uint64            `json:"sequence"`
@@ -49,8 +45,7 @@ type PendingOperation struct {
 	Input json.RawMessage `json:"input,omitempty"`
 }
 
-// ErrRecoveryRequired means an operation may have happened. The caller must
-// establish executor termination and reconcile the effect before resubmitting.
+// ErrRecoveryRequired requires executor termination and effect reconciliation before resubmission.
 var ErrRecoveryRequired = errors.New("execution requires recovery")
 
 type durableAPI struct {
@@ -80,8 +75,7 @@ func prepareDurable(task Task, req *apiRequest, res *Result) (*durableAPI, error
 		cp.Deadline = cp.Started.Add(time.Duration(task.Timeout))
 	}
 	if saved := task.Durable.Resume; saved != nil {
-		// Clone at the trust boundary: a caller cannot mutate an active run's
-		// snapshot, and Save never receives pointers to mutable loop state.
+		// Clone snapshots so neither callers nor Save can mutate active loop state.
 		data, err := json.Marshal(saved)
 		if err != nil {
 			return nil, err
@@ -124,8 +118,7 @@ func (d *durableAPI) persist(ctx context.Context, boundary string, req apiReques
 		return err
 	}
 	if err := d.save(ctx, snapshot); err != nil {
-		// A failed save may still have committed. Never continue or reuse this
-		// writer after an ambiguous acknowledgement.
+		// An ambiguous save may have committed; never reuse its writer.
 		return fmt.Errorf("%w: persist %s: %v", ErrRecoveryRequired, boundary, err)
 	}
 	return nil
@@ -152,9 +145,7 @@ func (d *durableAPI) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 		}
 		seen[id] = true
 	}
-	// Durable operations run in order. A later operation must never start after
-	// an earlier outcome could not be committed. Local execution keeps its
-	// existing parallel read behavior.
+	// Run in order, never in parallel: nothing starts after an outcome failed to commit.
 	for i, call := range calls {
 		name, id := str(call["name"]), str(call["id"])
 		if i < len(d.checkpoint.ToolResults) {
