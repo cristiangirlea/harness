@@ -12,8 +12,7 @@ import (
 	"time"
 )
 
-// Shell returns the command interpreter used by run_command: bash when one is
-// available (Git Bash on Windows), otherwise PowerShell or sh.
+// Shell prefers bash (Git Bash), then PowerShell or sh.
 func Shell() (name string, argv func(cmd string) []string) {
 	if path, err := exec.LookPath("bash"); err == nil && !isWSLLauncher(path) {
 		return "bash", func(c string) []string { return []string{path, "-c", c} }
@@ -36,8 +35,6 @@ func isWSLLauncher(path string) bool {
 	return runtime.GOOS == "windows" && inSystem32(path)
 }
 
-// inSystem32 reports whether path's folder is System32 in any case: PATH often
-// spells it C:\WINDOWS\system32. Both separators count, so it tests anywhere.
 func inSystem32(path string) bool {
 	dir := path[:max(strings.LastIndexAny(path, `\/`), 0)]
 	return strings.EqualFold(dir[strings.LastIndexAny(dir, `\/`)+1:], "System32")
@@ -71,8 +68,7 @@ func runCommand() Tool {
 			if err != nil {
 				return "", err
 			}
-			// Belt and braces: Refuse already declined this call inside the
-			// loop, and a direct caller gets the same answer here.
+			// Direct callers bypass Refuse; recheck here.
 			if !ws.AllowDangerous {
 				if rule := Guard(args.Command); rule != "" {
 					return "", GuardError(rule)
@@ -82,8 +78,7 @@ func runCommand() Tool {
 			if args.TimeoutSec > 0 {
 				timeout = time.Duration(min(args.TimeoutSec, 600)) * time.Second
 			}
-			// The command runs under the guarded environment, as an agent CLI
-			// does: no model key to print into the run, no token to publish with.
+			// Keys must not reach model output or enable publishing.
 			var env []string
 			if !ws.AllowDangerous {
 				guardDir, err := os.MkdirTemp("", "hrn-guard-*")

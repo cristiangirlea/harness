@@ -11,19 +11,7 @@ import (
 	"syscall"
 )
 
-// throughLink finds the first existing component of p that is a symbolic
-// link filepath.EvalSymlinks left unresolved, and returns p with that
-// component replaced by where it leads. EvalSymlinks fails on a link whose
-// target does not exist yet, and realPath falls back to a prefix before the
-// link, which would judge the link by its own name while a write follows it
-// (#47). A mount is not a link here. The result is "" with true when the
-// link cannot be read, or its target has a .. after a name: the system takes
-// that .. after following the name, which may be a link too, so the target
-// cannot be judged as text. A leading .. is taken from the link's own
-// directory, which is real. realPath then refuses the path. A component that
-// does not exist, or sits under a file, ends the walk: nothing past it can be
-// followed either. Any other error refuses: a path too long to look at may
-// still be reached, since the system follows each link's target on its own.
+// Writes follow dangling links EvalSymlinks misses; ("", true) refuses.
 func throughLink(p string) (string, bool) {
 	cur := string(filepath.Separator)
 	parts := strings.Split(strings.Trim(p, string(filepath.Separator)), string(filepath.Separator))
@@ -36,6 +24,7 @@ func throughLink(p string) (string, bool) {
 		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			return "", false
 		}
+		// Other errors can hide reachable paths: fail closed.
 		if err != nil {
 			return "", true
 		}
@@ -54,7 +43,7 @@ func throughLink(p string) (string, bool) {
 	return "", false
 }
 
-// dotDotAfterName reports whether a link's target has a .. after a name.
+// name/.. may traverse a link; only leading .. is safe to clean.
 func dotDotAfterName(target string) bool {
 	named := false
 	for _, e := range strings.Split(target, string(filepath.Separator)) {
