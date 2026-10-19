@@ -181,8 +181,8 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 				// Pin the measured backend so purpose routing cannot change a cell.
 				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
 				if v.Lean != nil {
-					if cell.Backend != "claude" {
-						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude backend (task %s uses %s)", v.Key(), t.ID, cell.Backend)
+					if cell.Backend != "claude" && cell.Backend != "codex" {
+						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude and codex backends (task %s uses %s)", v.Key(), t.ID, cell.Backend)
 					}
 					cell.Lean = v.Lean
 				}
@@ -225,6 +225,9 @@ func checkHarness(o agent.Options, backend string) error {
 	}
 	if o.NoSkills && !agent.AppliesNoSkills(b) {
 		return fmt.Errorf("no_skills is only supported by the claude backend")
+	}
+	if o.NoSkills && o.IsLean() && (o.Skills == nil || !*o.Skills) {
+		return fmt.Errorf(`no_skills changes nothing on a lean claude cell, which already runs without skills: set "skills": true (or "lean": false) on the spec or task`)
 	}
 	return nil
 }
@@ -469,6 +472,8 @@ type Record struct {
 	// Judgements are the judge's verdicts, one per passing cell and judge repeat.
 	Judgements   []Judgement `json:"judgements,omitempty"`
 	JudgeCostUSD float64     `json:"judge_cost_usd,omitempty"`
+	// SetupComparison is on the candidate's record of `hrn eval setup`.
+	SetupComparison *SetupComparison `json:"setup_comparison,omitempty"`
 }
 
 // Run expands the spec, runs it as a batch and scores the result. The batch

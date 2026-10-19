@@ -85,6 +85,8 @@ Usage:
   hrn eval show <eval-id>         reprint a saved eval
   hrn eval list [-n N]            list saved evals, newest first
   hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
+  hrn eval setup [--base REF] <eval.json>
+                                 the same tasks with the base's setup files and this branch's: did the setup change help
   hrn route show                 show purpose routing rows
   hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]
                                  replace a routing row by hand
@@ -123,8 +125,9 @@ Run flags:
                        skip the project instruction files (api backend)
       --no-context-edits
                        keep every tool result in the request instead of letting the server clear old ones (api backend)
-      --lean           start claude with only the run's --mcp servers: none of your other MCP servers,
-                       plugin servers or connectors; settings, rules and skills still load (claude backend)
+      --lean=false     load every MCP server, plugin and skill your CLI is set up with; by default
+                       claude and codex start with only the run's --mcp servers, and claude without skills
+      --skills         keep claude's skills and slash commands in a lean run (claude backend)
       --compact-window N
                        compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
                        (claude backend; unset keeps Claude Code's own threshold)
@@ -801,6 +804,9 @@ func cmdEval(args []string) (int, error) {
 		}
 		printEvalDiff(newRenderer(false), d)
 		return 0, nil
+	}
+	if len(args) >= 1 && args[0] == "setup" {
+		return cmdEvalSetup(args[1:])
 	}
 	if len(args) >= 1 && args[0] == "show" {
 		if len(args) != 2 {

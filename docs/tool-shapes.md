@@ -130,3 +130,25 @@ prompt is larger. The definitions sit in the cached prefix, so most of those tok
 the cache-read rate, and the money saved is smaller than the share.
 `TestToolDefinitionsStayUnderTheirByteBudget` (`internal/agent/tooldefs_test.go`) holds each
 mode under its size rounded up to 512 bytes: 1,536 read-only, 3,072 auto and yolo, 3,584 with shaping.
+
+## What a run loads
+
+2026-10-16, on the owner's PC: one run per row of the prompt "Reply with the single word ok."
+in an empty directory, read-only, with the flags hrn now passes by default (Claude Code 2.1.284,
+codex-cli 0.162.0-alpha.17.2). Input is every input token of the first and only turn: plain,
+cache write and cache read for claude; input for codex, whose figure includes its cache.
+
+| Backend | Loads | First-turn input tokens |
+|---|---|---:|
+| claude | every MCP server, plugin server and connector, and skills (before) | 57,551 |
+| claude | `--strict-mcp-config` | 50,525 |
+| claude | `--strict-mcp-config --disable-slash-commands` (now the default) | 48,196 |
+| codex | the MCP servers of `~/.codex/config.toml` (before) | 20,518 |
+| codex | those servers disabled with `-c mcp_servers.<name>.enabled=false` (now the default) | 20,518 |
+
+On claude the two switches take 9,355 tokens (16%) off every first turn on this account, about
+7,000 for MCP servers and connectors and 2,300 for the skill listing; later turns replay the same
+prefix from the cache. On codex the first turn does not change: codex did not put these servers'
+tool definitions into the first request, so what the switch saves there is starting the servers
+(here Docker's gateway, two hrn servers and a Node REPL) for every run, not tokens. One
+measurement per row; the user's own instruction files and settings load in every row.

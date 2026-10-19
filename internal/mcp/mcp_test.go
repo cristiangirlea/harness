@@ -325,12 +325,28 @@ func TestStartFailureIncludesStderr(t *testing.T) {
 	}
 }
 
+func TestExpandReadsHrnsSecretsAsUnset(t *testing.T) {
+	t.Setenv("HRN_DATABASE_URL", "postgres://secret")
+	t.Setenv("HRN_TENANT_TOKEN", "tenant-secret")
+	t.Setenv("HRN_TEST_PLAIN", "plain")
+	for in, want := range map[string]string{
+		"${HRN_DATABASE_URL}":         "",
+		"x${HRN_TENANT_TOKEN:-none}x": "xnonex",
+		"${hrn_tenant_token}":         "",
+		"${HRN_TEST_PLAIN}":           "plain",
+	} {
+		if got := expand(in); got != want {
+			t.Errorf("expand(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
-	t.Setenv("HRN_TEST_TOKEN", "tok")
+	t.Setenv("HRN_TEST_VALUE", "tok")
 	t.Setenv("HRN_TEST_EMPTY", "")
 	p := filepath.Join(t.TempDir(), "mcp.json")
 	if err := os.WriteFile(p, []byte(`{"mcpServers":{
-		"zeta":{"command":"z","args":["--token","${HRN_TEST_TOKEN}","${HRN_TEST_EMPTY:-dflt}","${HRN_NOPE_UNSET}","literal $x"],"env":{"K":"${HRN_TEST_TOKEN}"}},
+		"zeta":{"command":"z","args":["--token","${HRN_TEST_VALUE}","${HRN_TEST_EMPTY:-dflt}","${HRN_NOPE_UNSET}","literal $x"],"env":{"K":"${HRN_TEST_VALUE}"}},
 		"alpha":{"command":"a"},
 		"remote":{"type":"http","url":"https://x"},
 		"sse":{"url":"https://y"}}}`), 0o644); err != nil {
