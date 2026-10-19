@@ -24,13 +24,19 @@ type ShellResult struct {
 // RunShell runs one command line through Shell() in dir. A zero timeout means
 // none. On timeout or cancellation the whole process tree is killed, not just
 // the shell, so a hung test cannot keep running and hold the directory. Only
-// a failure to start is an error; a non-zero exit is a result. env is the
-// command's environment; nil is hrn's own.
+// a failure to start, or ErrWait after it, is an error; a non-zero exit is a
+// result. env is the command's environment; nil is hrn's own.
 func RunShell(ctx context.Context, dir, command string, timeout time.Duration, env []string) (ShellResult, error) {
 	return runShell(ctx, dir, command, timeout, env, false)
 }
 
 const maxCapture = 8 << 20
+
+// ErrWait marks a shell that started but whose Wait failed, so callers do not
+// report it as a start failure.
+var ErrWait = errors.New("waiting for the shell failed")
+
+var waitShell = (*exec.Cmd).Wait
 
 func runShell(ctx context.Context, dir, command string, timeout time.Duration, env []string, capture bool) (ShellResult, error) {
 	if timeout > 0 {
@@ -62,7 +68,7 @@ func runShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	}
 	defer tree.Close()
 
-	err = cmd.Wait()
+	err = waitShell(cmd)
 	res := ShellResult{Output: out.String(), OutputCut: out.fullDropped, TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded)}
 	var exitErr *exec.ExitError
 	switch {
@@ -73,7 +79,7 @@ func runShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	case ctx.Err() != nil:
 		// Killed before it produced an exit status.
 	default:
-		return res, err
+		return res, fmt.Errorf("%w: %v", ErrWait, err)
 	}
 	if ctx.Err() != nil {
 		res.ExitCode = -1
