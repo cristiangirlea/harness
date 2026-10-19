@@ -1644,10 +1644,8 @@ func skipCutRune(s string) string {
 	return s
 }
 
-// commitChanges commits everything the agent left in the worktree and returns
-// the commit, or "" when nothing changed. It runs after the agent, so it uses
-// its own context: a cancelled batch must still leave a consistent branch.
-// With branch set, note says why work left off that branch was not committed.
+// commitChanges commits leftover work on its own context, so a cancelled batch still leaves a consistent
+// branch; it returns the SHA or "" if unchanged. With branch set, note explains why off-branch work was not committed.
 func commitChanges(wt, branch, message string) (sha, note string, err error) {
 	if _, err := os.Stat(wt); err != nil {
 		return "", "", nil
@@ -1670,7 +1668,7 @@ func commitChanges(wt, branch, message string) (sha, note string, err error) {
 		if err != nil {
 			return "", "", err
 		}
-		if head = strings.TrimSpace(head); head != branch {
+		if head = strings.TrimSuffix(strings.TrimSuffix(head, "\n"), "\r"); head != branch {
 			where := "HEAD is detached"
 			if head != "" {
 				where = "HEAD is on branch " + head
@@ -2443,7 +2441,12 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 		return "", nil, err
 	}
 	defer g.close()
-	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD")
+	against := "HEAD"
+	if _, err := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD^{commit}"); err != nil {
+		// An orphan checkout leaves HEAD unborn; its files still compare with the base.
+		against = res.Base
+	}
+	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", against)
 	if err != nil {
 		return "", nil, err
 	}

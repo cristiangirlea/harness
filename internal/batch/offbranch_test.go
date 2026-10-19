@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -26,9 +27,10 @@ func offBranch(name string, move []string, status agent.Status) string {
 }
 
 var offMoves = map[string][]string{
-	"detached":     {"checkout", "-q", "--detach"},
-	"other branch": {"checkout", "-q", "-b", "agent-side"},
-	"orphan":       {"checkout", "-q", "--orphan", "agent-orphan"},
+	"detached":      {"checkout", "-q", "--detach"},
+	"other branch":  {"checkout", "-q", "-b", "agent-side"},
+	"orphan":        {"checkout", "-q", "--orphan", "agent-orphan"},
+	"unicode space": {"checkout", "-q", "-b", "hrn/off\u00a0"},
 }
 
 // assertLeftOff checks that a task whose agent left work off its branch ended
@@ -57,6 +59,129 @@ func assertLeftOff(t *testing.T, dir string, res Result, attempts int) {
 	}
 }
 
+func TestCommitChangesWithAFailingBranchReadEndsWithoutRetry(t *testing.T) {
+	for _, mode := range []string{WorktreesFresh, WorktreesSlots} {
+		t.Run(mode, func(t *testing.T) {
+			dir := initRepo(t)
+			name := "wb-branch-read-error-" + mode
+			calls := 0
+			agent.Register(stub{name, func(ctx context.Context, task agent.Task) agent.Result {
+				calls++
+				for _, args := range [][]string{
+					{"update-ref", "refs/tags/off-head", "HEAD"},
+					{"symbolic-ref", "HEAD", "refs/tags/off-head"},
+				} {
+					if err := gitIn(task.Dir, args...); err != nil {
+						return agent.Result{Status: agent.StatusError, Error: err.Error()}
+					}
+				}
+				if err := os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte("x\n"), 0o644); err != nil {
+					return agent.Result{Status: agent.StatusError, Error: err.Error()}
+				}
+				g, err := newAgentGit(ctx, task.Dir)
+				if err != nil {
+					return agent.Result{Status: agent.StatusError, Error: err.Error()}
+				}
+				defer g.close()
+				status, err := g.stdout(ctx, "status", "--porcelain", "-z", "--no-renames", "--ignore-submodules=all")
+				if err != nil || status != "?? out.txt\x00" {
+					return agent.Result{Status: agent.StatusError, Error: "status did not report out.txt"}
+				}
+				return agent.Result{Backend: name, Status: agent.StatusOK, Turns: 1}
+			}})
+			res, _ := run(t, Spec{Dir: dir, Backend: name, Retry: []string{name}, Worktrees: mode,
+				Tasks: []Task{{ID: "off", Prompt: "p"}}})
+			defer Remove(res)
+			tr := res.Tasks[0]
+			if tr.Status != StatusError || tr.Commit != "" || len(tr.Attempts) != 1 || calls != 1 {
+				t.Fatalf("task = %+v, calls = %d; want one failed attempt without a commit", tr, calls)
+			}
+			for _, msg := range []string{tr.Error, tr.Attempts[0].Error} {
+				if !strings.Contains(msg, "git branch --show-current:") || strings.Contains(msg, "detached") {
+					t.Errorf("error = %q; want a git branch error, not a detached diagnosis", msg)
+				}
+			}
+			if tr.Attempts[0].Result.Status != agent.StatusOK {
+				t.Fatalf("stub failed before commitChanges: %+v", tr.Attempts[0].Result)
+			}
+			if tip := git(t, dir, "rev-parse", "refs/heads/"+tr.Branch); tip != res.Base {
+				t.Errorf("task branch = %s, want base %s", tip, res.Base)
+			}
+			if head := git(t, tr.Worktree, "rev-parse", "HEAD"); head != res.Base {
+				t.Errorf("HEAD = %s, want base %s", head, res.Base)
+			}
+			if _, err := os.Stat(filepath.Join(tr.Worktree, "out.txt")); err != nil {
+				t.Errorf("the agent's file is gone: %v", err)
+			}
+			if mode == WorktreesSlots && !strings.Contains(tr.Error, "kept") {
+				t.Errorf("error %q: a slot holding the work must be kept", tr.Error)
+			}
+		})
+	}
+}
+
+func TestWorkLeftOffTheBranchDuringAContinuedAttemptKeepsTheEarlierCommit(t *testing.T) {
+	for moveName, move := range map[string][]string{"detached": offMoves["detached"], "other branch": offMoves["other branch"]} {
+		for _, mode := range []string{WorktreesFresh, WorktreesSlots} {
+			t.Run(moveName+" "+mode, func(t *testing.T) {
+				dir := initRepo(t)
+				name := "wb-off-continued-" + strings.ReplaceAll(moveName, " ", "-") + "-" + mode
+				calls := 0
+				var earlier string
+				agent.Register(stub{name, func(ctx context.Context, task agent.Task) agent.Result {
+					calls++
+					file := "first.txt"
+					if calls > 1 {
+						var err error
+						earlier, err = gitOut(ctx, task.Dir, "rev-parse", "HEAD")
+						if err != nil {
+							return agent.Result{Status: agent.StatusError, Error: err.Error()}
+						}
+						if err := gitIn(task.Dir, move...); err != nil {
+							return agent.Result{Status: agent.StatusError, Error: err.Error()}
+						}
+						file = "out.txt"
+					}
+					if err := os.WriteFile(filepath.Join(task.Dir, file), []byte("x\n"), 0o644); err != nil {
+						return agent.Result{Status: agent.StatusError, Error: err.Error()}
+					}
+					return agent.Result{Backend: name, Status: agent.StatusOK, Turns: 1}
+				}})
+				res, _ := run(t, Spec{Dir: dir, Backend: name, Retry: []string{name, name}, Worktrees: mode,
+					Gate: []string{"exit 3"}, Tasks: []Task{{ID: "off", Prompt: "p"}}})
+				defer Remove(res)
+				tr := res.Tasks[0]
+				if tr.Status != StatusError || !strings.Contains(tr.Error, "not the task's branch") || len(tr.Attempts) != 2 || calls != 2 {
+					t.Fatalf("task = %+v, calls = %d; want two attempts ending off the branch", tr, calls)
+				}
+				if tr.Attempts[0].Continued || !tr.Attempts[1].Continued || failedGate(tr.Attempts[0]) == nil {
+					t.Errorf("attempts = %+v; want a gate failure followed by a continued attempt", tr.Attempts)
+				}
+				if earlier == "" || earlier == res.Base || tr.Commit != earlier {
+					t.Errorf("commit = %q, earlier = %q, base = %q; want the earlier commit recorded", tr.Commit, earlier, res.Base)
+				}
+				if tip := git(t, dir, "rev-parse", "refs/heads/"+tr.Branch); tip != earlier {
+					t.Errorf("task branch moved to %s, want %s", tip, earlier)
+				}
+				diff, untracked, err := Diff(context.Background(), res, tr.ID)
+				if err != nil || !strings.Contains(diff, "diff --git a/first.txt b/first.txt") || strings.Contains(diff, "out.txt") || len(untracked) != 0 {
+					t.Errorf("Diff = %q, %q, %v; want only the earlier committed file", diff, untracked, err)
+				}
+				if _, err := os.Stat(filepath.Join(tr.Worktree, "out.txt")); err != nil {
+					t.Errorf("the agent's file is gone: %v", err)
+				}
+				merged, err := Merge(context.Background(), res, nil, false)
+				if err == nil || !strings.Contains(err.Error(), "no task that passed") || len(merged) != 0 {
+					t.Errorf("merged = %+v, %v; want nothing to merge", merged, err)
+				}
+				if mode == WorktreesSlots && !strings.Contains(tr.Error, "kept") {
+					t.Errorf("error %q: a slot holding the work must be kept", tr.Error)
+				}
+			})
+		}
+	}
+}
+
 func TestWorkLeftOffTheTasksBranchEndsTheTaskAsAnError(t *testing.T) {
 	for name, move := range offMoves {
 		for _, mode := range []string{WorktreesFresh, WorktreesSlots} {
@@ -66,6 +191,22 @@ func TestWorkLeftOffTheTasksBranchEndsTheTaskAsAnError(t *testing.T) {
 				res, _ := run(t, Spec{Dir: dir, Backend: backend, Worktrees: mode, Tasks: []Task{{ID: "off", Prompt: "p"}}})
 				defer Remove(res)
 				assertLeftOff(t, dir, res, 1)
+				tr := res.Tasks[0]
+				where := "HEAD is on branch " + move[len(move)-1]
+				if name == "detached" {
+					where = "HEAD is detached"
+				}
+				if !strings.Contains(tr.Error, where+", not the task's branch "+tr.Branch) {
+					t.Errorf("error = %q; want the exact HEAD location %q", tr.Error, where)
+				}
+				diff, untracked, err := Diff(context.Background(), res, tr.ID)
+				var want []string
+				if mode == WorktreesFresh {
+					want = []string{"out.txt"}
+				}
+				if err != nil || diff != "" || !reflect.DeepEqual(untracked, want) {
+					t.Errorf("Diff = %q, %q, %v; want no committed work and untracked %q", diff, untracked, err, want)
+				}
 				if mode == WorktreesSlots && !strings.Contains(res.Tasks[0].Error, "kept") {
 					t.Errorf("error %q: a slot holding the work must be kept", res.Tasks[0].Error)
 				}
