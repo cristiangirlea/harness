@@ -14,8 +14,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/mcp"
 )
 
-// codexMCPArgs gives a codex run its --mcp servers and, when lean, none of config.toml's.
-// codex merges -c mcp_servers={} and refuses a plugin's or quoted name, so bare names are disabled one by one.
+// Codex merges empty MCP tables; lean must disable names individually.
 func codexMCPArgs(t Task) []string {
 	// A config that does not load is reported by codexMCPEnv before the start.
 	servers, _, _ := mcp.LoadConfigs(t.MCP)
@@ -38,8 +37,7 @@ func codexMCPArgs(t Task) []string {
 			}
 		}
 	}
-	// Overrides merge into a config.toml entry of the same name, which may
-	// be disabled or carry args of its own.
+	// Overrides merge into a config.toml entry of the same name, which may be disabled.
 	for _, s := range servers {
 		set(s.Name, "enabled", "true")
 		set(s.Name, "command", tomlString(s.Command))
@@ -57,9 +55,7 @@ func codexMCPArgs(t Task) []string {
 	return a
 }
 
-// codexMCPEnv is the environment the run's MCP servers ask for. codex passes
-// variables named in env_vars on from its own environment, so the values
-// stay off the command line, the process list and the run's start line.
+// env_vars keeps MCP secrets off command lines.
 func codexMCPEnv(t Task) ([]string, error) {
 	servers, _, err := mcp.LoadConfigs(t.MCP)
 	if err != nil {
@@ -117,7 +113,6 @@ func codexMCPEnv(t Task) ([]string, error) {
 	return env, nil
 }
 
-// codexConfigPath is where codex, started in dir, reads its user config.
 func codexConfigPath(dir string) string {
 	if h := os.Getenv("CODEX_HOME"); h != "" {
 		if !filepath.IsAbs(h) {
@@ -132,8 +127,7 @@ func codexConfigPath(dir string) string {
 	return filepath.Join(home, ".codex", "config.toml")
 }
 
-// codexConfigServers names the [mcp_servers.<name>] tables of a config.toml,
-// from table headers only: no value is read. A file that cannot be read has none.
+// codexConfigServers reads table headers only: values may hold secrets and are never read.
 func codexConfigServers(path string) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -153,7 +147,6 @@ func codexConfigServers(path string) []string {
 	return names
 }
 
-// tomlHeader reads the dotted key of a table header up to its "]".
 func tomlHeader(s string) ([]string, bool) {
 	var keys []string
 	for {
@@ -209,7 +202,7 @@ func isBareKey(name string) bool {
 	return name != "" && len(bareKey.FindString(name)) == len(name)
 }
 
-// tomlString quotes s as a TOML basic string, whose escapes differ from Go's.
+// TOML string escapes differ from Go's.
 func tomlString(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')

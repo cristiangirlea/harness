@@ -8,8 +8,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// defaultCommitPolicy is the owner's policy, used when the checkout has no
-// .hrn/rules.md of its own.
 const defaultCommitPolicy = "Reviews are text, commits are changes. Review findings and the reason for a fix go into the review on the pull request, not into commit messages and not into a commit per round or per finding. Before a commit exists, everything found goes into that one commit; no fix-round commits for work that was never pushed. After a commit, a new finding means one more review entry and one more commit for all of it. Every defect a review finds in what this run changes is fixed before the push; nits are dropped."
 
 const (
@@ -20,8 +18,6 @@ const (
 	maxRules       = 4 << 10
 )
 
-// commitBlock is the "how to commit" block put before every run's prompt, or
-// empty for a read-only run, which cannot commit.
 func commitBlock(task Task) string {
 	if task.Mode == ModeReadOnly {
 		return ""
@@ -37,9 +33,7 @@ func commitBlock(task Task) string {
 	return b + "\n"
 }
 
-// readRules is the checkout's .hrn/rules.md, capped, or empty when there is
-// none. Only a regular file inside the workspace is read: a symlink is refused,
-// and so is a FIFO or device, which could block the run on open.
+// Reject links and special files to prevent escapes and blocking opens.
 func readRules(dir string) string {
 	ws, err := tools.NewWorkspace(dir)
 	if err != nil {
