@@ -47,12 +47,6 @@ internal/tools/links_windows.go	071747c5e9e3	12	long
 internal/tools/secretfiles.go	8dc1aebb7afa	8	long
 internal/tools/tools.go	3ff9f686a396	6	long
 internal/update/swap.go	702b2069dfd8	6	long
-internal/watch/bot.go	5bffa170cfee	6	cite,long
-internal/watch/paths.go	ea12df4d5c04	7	long
-internal/watch/redact.go	2f977605af2b	7	long
-internal/watch/server.go	401ed61b500e	9	long
-internal/watch/server.go	bbf111fe61ec	7	long
-internal/watch/voice.go	f489929b41a9	5	cite
 internal/ws/ws.go	1ccb7fef28e2	7	long
 internal/ws/ws.go	34d3ef810ea5	7	long
 internal/ws/ws.go	4a2dc4860312	6	long
