@@ -104,3 +104,17 @@ func TestRendererLongResultKeepsLineCount(t *testing.T) {
 		t.Errorf("result line count = %q", b.String())
 	}
 }
+
+func TestSummaryLineSaysWhenUsageIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		usage *agent.UsageMetadata
+		want  bool
+	}{{nil, false}, {&agent.UsageMetadata{Status: "missing"}, true}} {
+		var b strings.Builder
+		r := &renderer{out: &b}
+		r.Summary("r1", agent.Result{Status: agent.StatusOK, Backend: "codex", InputTokens: 5, Usage: tc.usage})
+		if got := strings.Contains(b.String(), "usage missing"); got != tc.want {
+			t.Errorf("usage %+v: summary = %q", tc.usage, b.String())
+		}
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/metrics"
 	"strings"
 	"sync"
 	"testing"
@@ -280,6 +282,153 @@ func TestAtOutputCapDoesNotStore(t *testing.T) {
 	}
 }
 
+func TestConcurrentIdenticalOriginalWritesLeaveOneCompleteFile(t *testing.T) {
+	ws, _ := setup(t)
+	ws.RunDir = t.TempDir()
+	text := strings.Repeat("same output\n", 5000)
+	var wg sync.WaitGroup
+	handles := make([]string, 16)
+	errs := make([]error, len(handles))
+	for i := range handles {
+		wg.Go(func() { handles[i], errs[i] = ws.storeOriginal(text) })
+	}
+	wg.Wait()
+	for i := range handles {
+		if errs[i] != nil || handles[i] != handles[0] {
+			t.Fatalf("write %d: handle %q err %v", i, handles[i], errs[i])
+		}
+	}
+	files, err := os.ReadDir(filepath.Join(ws.RunDir, "originals"))
+	must(t, err)
+	if len(files) != 1 || files[0].Name() != handles[0]+".txt" {
+		t.Fatalf("want one hash-named file, got %v", files)
+	}
+	data, err := os.ReadFile(filepath.Join(ws.RunDir, "originals", files[0].Name()))
+	must(t, err)
+	if string(data) != text {
+		t.Fatal("original incomplete")
+	}
+}
+
+func TestShortOriginalWriteWithoutAnErrorPublishesNothing(t *testing.T) {
+	ws, _ := setup(t)
+	ws.RunDir = t.TempDir()
+	text := "complete original"
+	_, err := ws.storeOriginalWithWriter(text, func(w io.Writer, s string) (int, error) {
+		return io.WriteString(w, s[:len(s)-1])
+	})
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("short write not reported: %v", err)
+	}
+	files, err := os.ReadDir(filepath.Join(ws.RunDir, "originals"))
+	must(t, err)
+	if len(files) != 0 {
+		t.Fatalf("short write left %v", files)
+	}
+}
+
+func TestFailedOriginalRenameRemovesTheTemporaryFile(t *testing.T) {
+	ws, _ := setup(t)
+	ws.RunDir = t.TempDir()
+	text := "complete original"
+	hash := sha256.Sum256([]byte(text))
+	name := filepath.Join(ws.RunDir, "originals", fmt.Sprintf("%x", hash)[:16]+".txt")
+	_, err := ws.storeOriginalWithWriter(text, func(w io.Writer, s string) (int, error) {
+		// A non-empty directory at the handle's name makes the rename fail.
+		must(t, os.MkdirAll(filepath.Join(name, "blocker"), 0o755))
+		return io.WriteString(w, s)
+	})
+	if err == nil {
+		t.Fatal("rename over a directory succeeded")
+	}
+	files, err := os.ReadDir(filepath.Dir(name))
+	must(t, err)
+	if len(files) != 1 || !files[0].IsDir() {
+		t.Fatalf("failed rename left a temporary file: %v", files)
+	}
+}
+
+func TestCopyOriginalsCarriesOnlyHashNamedFiles(t *testing.T) {
+	from, to := t.TempDir(), t.TempDir()
+	src := &Workspace{RunDir: from}
+	text := strings.Repeat("earlier output\n", 3000)
+	handle, err := src.storeOriginal(text)
+	must(t, err)
+	dir := filepath.Join(from, "originals")
+	must(t, os.WriteFile(filepath.Join(dir, "0123456789abcdef.txt"), []byte("bytes that do not hash to the name"), 0o644))
+	must(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not an original"), 0o644))
+	must(t, os.WriteFile(filepath.Join(dir, ".original-x.tmp"), []byte("partial"), 0o644))
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	must(t, os.WriteFile(outside, []byte("outside"), 0o644))
+	linked := os.Symlink(outside, filepath.Join(dir, "fedcba9876543210.txt")) == nil
+	_, _, err = CopyOriginals(from, to)
+	must(t, err)
+	files, err := os.ReadDir(filepath.Join(to, "originals"))
+	must(t, err)
+	if len(files) != 1 || files[0].Name() != handle+".txt" {
+		t.Fatalf("copied %v, want only %s.txt (symlink tried: %v)", files, handle, linked)
+	}
+	ws, _ := setup(t)
+	ws.ShapeTools, ws.RunDir = true, to
+	out, err := call(t, ws, ReadOriginal(), map[string]any{"handle": handle})
+	must(t, err)
+	if out != text {
+		t.Fatal("carried original changed")
+	}
+	if _, _, err := CopyOriginals(t.TempDir(), to); err != nil {
+		t.Fatalf("a run without originals is not an error: %v", err)
+	}
+	_, _, err = CopyOriginals(from, to)
+	must(t, err)
+}
+
+func BenchmarkNearCeilingCaptureAndShaping(b *testing.B) {
+	var sb strings.Builder
+	for i := 0; sb.Len() < maxCapture-200; i++ {
+		fmt.Fprintf(&sb, "=== RUN   TestCase%d\n--- PASS: TestCase%d (0.00s)\n", i, i)
+	}
+	sb.WriteString("--- FAIL: TestLast (0.00s)\nFAIL\n")
+	text := sb.String()
+	ws := &Workspace{ShapeTools: true, RunDir: b.TempDir()}
+	b.SetBytes(int64(len(text)))
+	b.ReportAllocs()
+	runtime.GC()
+	sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
+	metrics.Read(sample)
+	base, peak := sample[0].Value.Uint64(), uint64(0)
+	done, sampled := make(chan struct{}), make(chan struct{})
+	go func() { // live and unswept heap objects, polled while the loop runs
+		defer close(sampled)
+		s := []metrics.Sample{{Name: sample[0].Name}}
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			metrics.Read(s)
+			peak = max(peak, s[0].Value.Uint64())
+			runtime.Gosched()
+		}
+	}()
+	defer func() {
+		close(done)
+		<-sampled
+		b.ReportMetric(float64(peak-min(peak, base))/(1<<20), "peak-heap-MiB")
+	}()
+	for b.Loop() {
+		out := &boundedBuffer{keepHead: maxOutput * 2 / 3, keepTail: maxOutput / 3, fullLimit: maxCapture}
+		for chunk := text; chunk != ""; {
+			n := min(len(chunk), 32<<10)
+			_, _ = out.Write([]byte(chunk[:n]))
+			chunk = chunk[n:]
+		}
+		if out.fullDropped || !strings.Contains(ws.toolOutput(out.String()), "read_original") {
+			b.Fatal("near-ceiling output was not captured and shaped")
+		}
+	}
+}
+
 // writeOriginalFile puts text under handle in runDir's originals, as a store would.
 func writeOriginalFile(t *testing.T, runDir, handle, text string) {
 	t.Helper()
@@ -490,96 +639,6 @@ func TestReadOriginalRefusesTwoSelectors(t *testing.T) {
 		args["handle"] = "0000000000000005"
 		if _, err := call(t, ws, ReadOriginal(), args); err == nil || !strings.Contains(err.Error(), "at most one") {
 			t.Errorf("%v: %v", args, err)
-		}
-	}
-}
-
-func TestConcurrentIdenticalOriginalWritesLeaveOneCompleteFile(t *testing.T) {
-	ws, _ := setup(t)
-	ws.RunDir = t.TempDir()
-	text := strings.Repeat("same bytes\n", 5000)
-	var wg sync.WaitGroup
-	errs := make(chan error, 16)
-	for range 16 {
-		wg.Go(func() {
-			if _, err := ws.storeOriginal(text); err != nil {
-				errs <- err
-			}
-		})
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatal(err)
-	}
-	entries, err := os.ReadDir(filepath.Join(ws.RunDir, "originals"))
-	must(t, err)
-	if len(entries) != 1 || entries[0].Name() != originalHandleOf(text)+".txt" {
-		t.Fatalf("left %v", entries)
-	}
-	data, err := os.ReadFile(filepath.Join(ws.RunDir, "originals", entries[0].Name()))
-	must(t, err)
-	if string(data) != text {
-		t.Fatal("the original is incomplete")
-	}
-}
-
-func TestAShortWriteWithoutAnErrorPublishesNothing(t *testing.T) {
-	ws, _ := setup(t)
-	ws.RunDir = t.TempDir()
-	_, err := ws.storeOriginalWithWriter("complete original", func(w io.Writer, s string) (int, error) {
-		return io.WriteString(w, s[:len(s)-1])
-	})
-	if !errors.Is(err, io.ErrShortWrite) {
-		t.Fatalf("short write not reported: %v", err)
-	}
-	entries, err := os.ReadDir(filepath.Join(ws.RunDir, "originals"))
-	must(t, err)
-	if len(entries) != 0 {
-		t.Fatalf("a short write left %v", entries)
-	}
-}
-
-func TestAFailedRenameRemovesTheTemporaryFile(t *testing.T) {
-	ws, _ := setup(t)
-	ws.RunDir = t.TempDir()
-	text := "complete original"
-	dir := filepath.Join(ws.RunDir, "originals")
-	_, err := ws.storeOriginalWithWriter(text, func(w io.Writer, s string) (int, error) {
-		// A directory taking the name after the check makes the rename fail.
-		must(t, os.MkdirAll(filepath.Join(dir, originalHandleOf(text)+".txt", "inside"), 0o755))
-		return io.WriteString(w, s)
-	})
-	if err == nil {
-		t.Fatal("rename onto a directory succeeded")
-	}
-	entries, err := os.ReadDir(dir)
-	must(t, err)
-	if len(entries) != 1 || !entries[0].IsDir() {
-		t.Fatalf("a failed rename left %v", entries)
-	}
-}
-
-func BenchmarkShapeNearCeiling(b *testing.B) {
-	var sb strings.Builder
-	for i := 0; sb.Len() < maxCapture-200; i++ {
-		fmt.Fprintf(&sb, "2026-10-16T10:00:00Z INFO request %d served in 3ms\n", i)
-		if i%5000 == 0 {
-			fmt.Fprintf(&sb, "2026-10-16T10:00:01Z WARN request %d retried\n", i)
-		}
-	}
-	text := sb.String()
-	b.ReportAllocs()
-	b.SetBytes(int64(len(text)))
-	for b.Loop() {
-		b.StopTimer()
-		ws := &Workspace{ShapeTools: true, RunDir: filepath.Join(b.TempDir(), "runs", "run")}
-		if err := os.MkdirAll(ws.RunDir, 0o755); err != nil {
-			b.Fatal(err)
-		}
-		b.StartTimer()
-		if out := ws.toolOutput(text); !strings.Contains(out, "original: ") {
-			b.Fatal("near-ceiling output was not stored")
 		}
 	}
 }

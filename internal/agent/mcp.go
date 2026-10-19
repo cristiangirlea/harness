@@ -37,7 +37,7 @@ func startMCP(ctx context.Context, task Task, root string, emit func(Event)) ([]
 		go func() {
 			defer wg.Done()
 			cfg.Dir = root
-			// A server keeps hrn's environment, which its tools may need;
+			// A server keeps hrn's environment (less the git repository variables), which its tools may need;
 			// under the guard it is told so, and an hrn among them then
 			// refuses to lift the guard.
 			if !task.AllowDangerous {

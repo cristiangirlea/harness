@@ -60,6 +60,7 @@ func (r *renderer) newline() {
 func (r *renderer) Event(e agent.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Live text is masked per fragment, so a token split across two can show in halves.
 	e.Text, e.Tool = printable(mask.Text(e.Text)), printable(mask.Text(e.Tool))
 	if e.Kind != agent.EventThinking && r.inThought {
 		r.newline()
@@ -137,8 +138,12 @@ func (r *renderer) Summary(runID string, res agent.Result) {
 	if res.Status != agent.StatusOK {
 		status = r.c(red, status)
 	}
-	r.write(r.c(dim, fmt.Sprintf("── %s · %s · %s · %d turns · %s in / %s out (cache %s read)%s · %s ──",
-		status, res.Backend, res.Model, res.Turns, human(res.InputTokens), human(res.OutputTokens), human(res.CacheRead),
+	missing := ""
+	if res.UsageMissing() {
+		missing = ", usage missing"
+	}
+	r.write(r.c(dim, fmt.Sprintf("── %s · %s · %s · %d turns · %s in / %s out (cache %s read%s)%s · %s ──",
+		status, res.Backend, res.Model, res.Turns, human(res.InputTokens), human(res.OutputTokens), human(res.CacheRead), missing,
 		cost, res.Duration.Round(100_000_000))) + "\n")
 	r.write(r.c(dim, "run "+runID) + "\n")
 }

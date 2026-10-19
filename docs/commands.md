@@ -34,11 +34,11 @@
 | `hrn batch rm <id>` | Remove what a batch created: its branches, and its worktrees when they were fresh (a slot stays; see [Batches](batches.md#reading-and-landing-the-work)). |
 | `hrn eval [flags] <eval.json>` | Run a task set across a matrix of backends, models and efforts (see [Evals](evaluations.md#evals)). |
 | `hrn eval show <id>` | Reprint a saved eval. |
-| `hrn route show` | List purpose routing rows, or `(empty)` (see [Routing by evidence](evaluations.md#routing-by-evidence)). |
-| `hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]` | Replace one routing row by hand; accepts any nonempty subset of the three choices. |
-| `hrn route from-eval <id> [--margin 0.05]` | Print and save the cheapest qualifying rows from saved eval results. |
-| `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge. |
+| `hrn eval list [-n N]` | List saved evals, newest first: cells, pass rate, cost with the judge (`-` when none is known; cells without a cost are counted). |
 | `hrn eval diff [--json] <a> <b>` | Two evals side by side, variant by variant and task by task. |
+| `hrn route show` | List purpose routing rows, or `(empty)` (see [Routing by evidence](evaluations.md#routing-by-evidence)). |
+| `hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]` | Replace one routing row by hand; accepts any nonempty subset of the three choices. Warns when the backend is disabled (runs ignore the row until it is enabled). |
+| `hrn route from-eval <id> [--margin 0.05]` | Print and save the cheapest qualifying rows from saved eval results. |
 | `hrn report [--since 7d] [--by backend\|model\|dir\|purpose\|routed\|day] [--json]` | Tables over the finished runs, their tokens and context per turn, and the batches; `routed` groups by the source routing row (see [Reports](evaluations.md#reports)). |
 | `hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [PATH…]` | Remove worktrees whose work is merged, with their build output, and build caches (`CACHEDIR.TAG`) idle past `--idle`, or past `--min-idle` on a drive below `--free-below` (see [Clearing merged worktrees](batches.md#clearing-merged-worktrees) and [Build caches](batches.md#build-caches)). |
 | `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch (see [Reusable workspaces](workspaces.md#take)). |
@@ -54,6 +54,9 @@ backend default; gemini and opencode report it as not enforced),
 `--mcp` servers, your settings, rules and skills still load; see [Lean claude workers](backends.md#lean-claude-workers)),
 `--compact-window N` (claude: compact at N tokens, 100000 to 1000000, or `auto`; see
 [Compaction window](backends.md#compaction-window)),
+`--append-system-prompt TEXT` (api and claude: added after the backend's own system prompt,
+at most 16 KiB), `--no-skills` (claude: skills off; see
+[Harness variants](evaluations.md#harness-variants)),
 `--allow-dangerous`, `--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
 budgets below.
@@ -66,6 +69,10 @@ paths absent from the original; a rejected summary uses the existing cut. This
 includes generated counts, so a count absent from the original also rejects the
 summary. Failing-test diagnostics must stay with their test name, in order;
 ambiguous interleaved diagnostics reject the summary and use the existing cut.
+Sequential subtests are nested, not interleaved: a diagnostic after `=== RUN TestA/sub`
+belongs to that subtest while its parent waits. Go before 1.20 prints no `=== NAME`
+marker when the parent logs again after a subtest, so that parent diagnostic is kept with the
+subtest; if the subtest passed, the summary drops it and only `read_original` shows it.
 `--shape-tools=false` keeps the existing behavior. The additive `shape_tools`
 boolean is also available in run options, batch specs/tasks and MCP
 run inputs. Eval matrix variants each select `shape_tools` (default false),
@@ -74,7 +81,12 @@ give the variants distinct names. This flag does not change CLI backend tools.
 `--retrieval off|optional|required` opts into project references; enabled modes
 require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and
 an explicit `--model`. `--retrieval-version` pins a version; otherwise the
-active version is resolved once and saved with the run.
+active version is resolved once and saved with the run. A pin stays with its
+backend: `--continue` with `--retrieval optional|required` on another backend than
+the chain's latest pin is refused with exit 2 before anything runs, naming the
+pinned run and its version. Continue on the pin's backend, start a fresh run, or
+continue with retrieval off to hand the transcript over (see
+[Continuing a run](backends.md#continuing-a-run)).
 
 ### Declared purpose
 
@@ -94,6 +106,14 @@ precedence over the header. The effective declaration is saved in `task.purpose`
 no prompt text is added, removed or changed. Watch and reports use it before
 falling back to the keyword classifier. An invalid stored `task.purpose` is ignored,
 falling back to a valid header or the classifier.
+
+A continued run (`hrn run --continue`, or the MCP `run` tool with `continue_run_id`)
+keeps the earlier run's declared purpose when neither `--purpose`/`purpose` nor a
+header names one, as it keeps the mode; a short follow-up such as "now fix what you
+found" is therefore not re-classified. `hrn exec` takes the same optional `purpose`
+on `start` (see [the exec protocol](exec-protocol.md#start-caller-exactly-one-the-first-line)).
+A batch task's declared purpose shows in `hrn batch show`'s table, the MCP
+`batch_show` text and the task list on the watch batch page.
 
 ### hrn exec
 
@@ -117,8 +137,9 @@ names them) and `SHA256SUMS`, and refuses to go on when the checksum does not ma
 need Go on `PATH` and say so otherwise. `--file PATH` takes a binary already built, say the
 one a session built in a scratch folder. Whatever the source, the candidate is run once with
 `version` and nothing else, after the checksum. The command prints `installed:` and
-`candidate:` lines and stops with `already current` when they name the same commit or module
-version.
+`candidate:` lines and stops with `already current` when every target names the same commit or
+module version as the candidate; otherwise a target that already does is listed as `already
+current` and left alone (no backup, its watch not restarted), and the others are updated.
 
 **Targets.** The running executable (resolved through symlinks) and every `hrn` (`hrn.exe`) on
 `PATH`, in `$GOPATH/bin` or `~/go/bin` and, on Windows, in `%LOCALAPPDATA%\hrn`, each listed
@@ -141,7 +162,8 @@ and the new binary started detached with the same arguments, so `--lan`, `--addr
 `--public` settings survive. Its output goes to the files the old one wrote to where the
 system can tell (Linux), else to `watch-<port>.log` under `HRN_HOME`. The command prints
 `watch restarted on <addr>` with the new pid. A watch whose binary could not be replaced is
-left running.
+left running. On macOS the watch is found through `ps`, which shows the program as it was typed;
+a bare `hrn` is looked up on the `PATH` of `hrn update` itself.
 
 **MCP servers.** Running `hrn mcp` processes are listed under "still on the old build until their
 host restarts them", with pid, parent and start time, and never stopped: the host (Claude Code,
@@ -154,9 +176,16 @@ issued tenant token, and optionally `HRN_SERVER_CA_FILE` to a PEM CA file. HTTP
 is accepted only for loopback fixtures. The tenant and project IDs are issued
 by the server; `--base-ref` is a full Git commit registered for the project.
 The origin may have a trailing `/`, but no credentials, other path, query
-(including an empty `?`), or fragment. The CA path must name a regular file;
-symlinks to regular files are accepted.
+(including an empty `?`), or fragment, and its hostname may not be empty. The CA
+path must name a regular file of at most 1 MiB; symlinks to regular files are
+accepted. Devices, FIFOs and pipes are refused before they are opened, and on
+Windows so are `\\.\`, `\\?\` and `\??\` paths and reserved device names such as
+`NUL` or `COM1`.
 Submission requires a stable idempotency key and a positive USD cost ceiling.
+When `HRN_REMOTE_MAX_COST_USD` is set, a `--max-cost` above it is refused before
+any request; unset means no client cap. The control service does not reserve
+tenant budgets yet, so this and the server's `HRN_MAX_COST_USD_PER_JOB` (see
+[server/README.md](../server/README.md)) are the spending control.
 The prompt can be supplied as arguments or on stdin. Remote jobs currently
 support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
 for the corresponding tools.
@@ -171,7 +200,13 @@ then exits with status 0, including when the job failed or was canceled. Termina
 event kinds are `succeeded`, `failed`, and `canceled`; `admission_timeout` and
 `recovery_resolved` also end the watch when their `details.state` is terminal.
 The watch reconnects from the last printed event ID if a stream ends before a
-terminal event. Ctrl-C ends the watch early.
+terminal event. Before streaming it reads the job's state (the request `hrn remote
+show` makes): if the job has already ended, it prints the events after `--after`, if
+any, and exits with status 0 without waiting. Ctrl-C ends the watch early.
+Each event's data must be JSON of at most 1 MiB in total, however many `data:`
+lines carry it; the space after a field's colon is optional. C1 control
+characters (U+0080 to U+009F) and invalid UTF-8 are printed as `\u` escapes, so
+the terminal never reads them as control sequences.
 
 ### Project knowledge
 

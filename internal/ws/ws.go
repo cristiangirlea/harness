@@ -618,6 +618,24 @@ func lockCreate(ctx context.Context, dir string) (unlock func(), err error) {
 	}
 }
 
+// TryLock takes an exclusive lock on the file at p without waiting, creating
+// it, and returns the function that releases it, or ok false while another
+// holder has it. The OS drops the lock when its holder dies.
+func TryLock(p string) (unlock func(), ok bool, err error) {
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, false, err
+	}
+	if ok, err = tryLock(f); !ok || err != nil {
+		f.Close()
+		return nil, false, err
+	}
+	return func() {
+		unlockFile(f)
+		f.Close()
+	}, true, nil
+}
+
 // stranded counts the commits at HEAD that a switch away would leave on no
 // ref: on no remote-tracking ref, local branch or tag. A slot Release gave
 // back sits on its task's local branch, which keeps those commits.

@@ -128,6 +128,9 @@ Run flags:
       --compact-window N
                        compact claude's conversation at N tokens of context, 100000 to 1000000, or auto
                        (claude backend; unset keeps Claude Code's own threshold)
+      --append-system-prompt TEXT
+                       add TEXT after the backend's own system prompt, such as a rule (api and claude; at most 16 KiB)
+      --no-skills      start claude with skills turned off (claude backend)
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --fresh          with --continue: start a new session, handed the earlier run over from its record
                        (task, outcome, changed files, gate results) instead of resuming or forking its session
@@ -294,7 +297,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	// the backend picks up and what it is handed as a transcript.
 	var plan followup.Plan
 	if *continueID != "" {
-		req := followup.Request{RunID: *continueID, Backend: backend, Fresh: *fresh}
+		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, Fresh: *fresh}
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}
@@ -305,7 +308,12 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		if plan, err = followup.Make(req); err != nil {
 			return 2, err
 		}
+		defer plan.Release()
 		backend, dir, opts.Model = plan.Backend, plan.Dir, plan.Model
+		// The inherited backend is refused here, before a prompt is read from stdin.
+		if err := preference.Check(backend); err != nil {
+			return 2, fmt.Errorf("run: %w", err)
+		}
 		if !set["mode"] && plan.Prev.Task.Mode != "" {
 			opts.Mode = plan.Prev.Task.Mode
 		}
@@ -338,14 +346,17 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("empty prompt")
 	}
 
-	routedBy, err := opts.Route(prompt, &backend, runlog.Home())
+	routedBy, err := opts.Route(*declared, prompt, &backend, runlog.Home())
 	if err != nil {
 		return 2, err
 	}
 	if !opts.NoSwitch && *continueID == "" {
 		meant := backend
 		if backend, routed = limits.Choose(backend, ""); backend != meant {
-			opts.Model = ""
+			if routedBy != nil {
+				opts.Effort = "" // the row measured the limited backend, not its partner
+			}
+			opts.Model, routedBy = "", nil
 		}
 	}
 	if backend == "" {
@@ -361,6 +372,10 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 
 	if *declared == "" {
 		*declared = purpose.Declared(prompt)
+	}
+	// Like the mode, a continued run keeps the earlier purpose unless this one names its own.
+	if *declared == "" && purpose.Valid(plan.Prev.Task.Purpose) {
+		*declared = plan.Prev.Task.Purpose
 	}
 	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts}
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
@@ -438,6 +453,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	case next == nil && why != "":
 		fmt.Fprintln(os.Stderr, "hrn:", why)
 	case next != nil:
+		defer next.Plan.Release()
 		nb, err := agent.Get(next.To)
 		if err != nil {
 			return 1, err
@@ -560,7 +576,7 @@ func cmdRuns(args []string) error {
 			status = "running?"
 		}
 		fmt.Printf("%s  %-8s %-9s %7s  %s\n", rec.ID, printable(rec.Backend), status,
-			rec.Result.Duration.Round(time.Second), printable(tools.OneLine(rec.Task.Prompt, 70)))
+			rec.Result.Duration.Round(time.Second), printable(tools.OneLine(mask.Text(rec.Task.Prompt), 70)))
 	}
 	return nil
 }
@@ -872,15 +888,19 @@ func cmdEval(args []string) (int, error) {
 func printEval(r *renderer, rec eval.Record) {
 	r.Line("")
 	judged := rec.Spec.Judge != nil
-	head := fmt.Sprintf("  %-20s %6s %9s %12s %10s %7s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "tools", "context")
+	spread := slices.ContainsFunc(rec.Table.Variants, func(v eval.VariantRow) bool { return v.JudgeRepeats > 1 })
+	head := fmt.Sprintf("  %-20s %6s %9s %12s %11s %7s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "tools", "context")
 	if judged {
 		head += fmt.Sprintf(" %6s", "judge")
 	}
+	if judged && spread {
+		head += fmt.Sprintf(" %9s", "spread")
+	}
 	r.Line(head)
 	for _, v := range rec.Table.Variants {
-		line := fmt.Sprintf("  %-20s %6s %9d %12s %10s %7s %7s %9s",
+		line := fmt.Sprintf("  %-20s %6s %9d %12s %11s %7s %7s %9s",
 			v.Name, report.Share(v.PassRate()), v.Attempts,
-			report.Money(v.MedianCostUSD, v.CostEstimate),
+			report.KnownMoney(v.MedianCostUSD, v.CostKnown(), v.CostEstimate),
 			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns),
 			report.Number(v.MedianTools), report.Number(v.MedianContext))
 		if judged {
@@ -890,6 +910,13 @@ func printEval(r *renderer, rec eval.Record) {
 			}
 			line += fmt.Sprintf(" %6s", score)
 		}
+		if judged && spread {
+			between := "-"
+			if v.Judged > 0 && v.JudgeRepeats > 1 {
+				between = fmt.Sprintf("%.1f-%.1f", v.ScoreMin, v.ScoreMax)
+			}
+			line += fmt.Sprintf(" %9s", between)
+		}
 		r.Line(line)
 		var notes []string
 		if len(v.Statuses) > 1 || v.Statuses["ok"] != v.Attempts {
@@ -897,6 +924,17 @@ func printEval(r *renderer, rec eval.Record) {
 		}
 		if v.Unchanged > 0 {
 			notes = append(notes, fmt.Sprintf("%d of %d passes changed nothing", v.Unchanged, v.Passed))
+		}
+		if v.CellsWithoutCost > 0 {
+			notes = append(notes, fmt.Sprintf("%d of %d cells without a cost", v.CellsWithoutCost, v.Attempts))
+		}
+		if v.DidNotAct > 0 {
+			notes = append(notes, fmt.Sprintf("%d did not act", v.DidNotAct))
+		}
+		// Records from before the passing medians existed have neither field.
+		if v.Passed > 0 && v.Passed < v.Attempts-v.DidNotAct && (v.PassedCostKnown || v.MedianContextPassed > 0) {
+			notes = append(notes, fmt.Sprintf("passing cells: median cost %s, context %s",
+				report.KnownMoney(v.MedianCostPassedUSD, v.PassedCostKnown, v.CostEstimate), report.Number(v.MedianContextPassed)))
 		}
 		if len(notes) > 0 {
 			r.Line(r.c(dim, "  "+strings.Repeat(" ", 20)+strings.Join(notes, " · ")))
@@ -918,22 +956,36 @@ func printEval(r *renderer, rec eval.Record) {
 				tasks = append(tasks, row.Task)
 			}
 		}
+		// A score with its repeats' spread is wider than the usual column.
+		width := 10
+		for _, s := range scores {
+			width = max(width, len(s))
+		}
 		r.Line("")
 		head := fmt.Sprintf("  %-20s", "task")
 		for _, n := range names {
-			head += fmt.Sprintf(" %10s", n)
+			head += fmt.Sprintf(" %*s", width, n)
 		}
 		r.Line(head)
 		for _, task := range tasks {
 			line := fmt.Sprintf("  %-20s", task)
 			for _, n := range names {
-				line += fmt.Sprintf(" %10s", scores[task+"/"+n])
+				line += fmt.Sprintf(" %*s", width, scores[task+"/"+n])
 			}
 			r.Line(line)
 		}
 	}
 
-	cells, _, _, _ := rec.Totals()
+	cells, _, _, _, _, _ := rec.Totals()
+	idle := 0
+	for _, v := range rec.Table.Variants {
+		idle += v.DidNotAct
+	}
+	if idle == 1 {
+		r.Line(r.c(dim, "1 cell did not act (no tool call, no change): re-run it; the pass rate leaves it out"))
+	} else if idle > 1 {
+		r.Line(r.c(dim, fmt.Sprintf("%d cells did not act (no tool call, no change): re-run them; the pass rates leave them out", idle)))
+	}
 	if judged {
 		failed, estimate := 0, false
 		for _, j := range rec.Judgements {
@@ -943,6 +995,9 @@ func printEval(r *renderer, rec eval.Record) {
 			estimate = estimate || j.CostEstimate
 		}
 		note := fmt.Sprintf("judge: %d verdicts, %s", len(rec.Judgements), report.Money(rec.JudgeCostUSD, estimate))
+		if rec.Spec.Judge.Repeats > 1 {
+			note = fmt.Sprintf("judge: %d verdicts (%d per cell), %s", len(rec.Judgements), rec.Spec.Judge.Repeats, report.Money(rec.JudgeCostUSD, estimate))
+		}
 		if failed > 0 {
 			note += fmt.Sprintf(", %d could not score; see --json", failed)
 		}

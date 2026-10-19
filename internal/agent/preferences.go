@@ -38,10 +38,15 @@ func DefaultBackendNameIn(home string) string {
 	if p.Enabled("api") && installed("api") {
 		return "api"
 	}
-	for _, name := range p.Filter(Names()) {
+	enabled := p.Filter(Names())
+	for _, name := range enabled {
 		if installed(name) {
 			return name
 		}
 	}
-	return "claude"
+	// None is installed: name an enabled one, so the error says it is missing, not disabled.
+	if p.Default() != "" {
+		return p.Default()
+	}
+	return enabled[0] // never empty: BackendPreferences refuses unregistered names
 }

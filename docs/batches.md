@@ -54,7 +54,12 @@ agent there, then the gates in order, stopping at the first non-zero exit or aft
 minutes. Whatever the agent left is committed on the branch as `<id>: <prompt>`, pass or
 fail, so the work is on the branch whatever happens to the worktree; if that commit fails
 (no git identity, a pre-commit hook) the task ends as `error` and the work stays
-uncommitted in the worktree. hrn writes `.hrn/.gitignore` so the worktrees never show up
+uncommitted in the worktree. An agent that commits its own work on the branch and leaves nothing
+uncommitted gets no extra commit; the task records the branch's tip, so `diff` and merge see its
+work. A commit the agent made on no branch (a detached `HEAD`) is not
+recorded, since a merge would not bring it. Nor is a tip that no longer contains the base (the agent reset or
+rewrote the branch below it), since merging it would revert the base; the attempt's error
+says so. hrn writes `.hrn/.gitignore` so the worktrees never show up
 in the repository's status.
 
 ### Slots or fresh worktrees
@@ -112,14 +117,35 @@ It is checked before the gates and reported as one, `expect /pattern/`, so a tas
 answer is the deliverable can fail on what it said: `"expect": "(?i)^no\\b"` for "is
 there a race here? answer yes or no". A retry after a miss is shown the answer it gave.
 
+Gates run in the worktree the agent just edited, so an agent can make them pass by
+weakening the tests. `protect` names the files the gates rely on, as globs relative to
+the repository in which `**` stands for any number of folders:
+`"protect": ["**/*_test.go", "scripts/check.sh"]`. After an attempt's run ends `ok`, hrn
+compares those files with the batch's base, committed or not; a file the agent added is
+not a change, a modified or removed one is. The attempt's record lists them under
+`protected` and the batch shows `! protected files changed: ...`. `protect_mode` says what
+that means: `report` (the default) keeps the verdict, `fail` fails the attempt before its
+gates run, as a gate named `protect ...` whose output lists the files, so a retry is told
+which ones to restore. A task's `protect` and `protect_mode` replace the spec's. Evals
+default to `fail`.
+
 A failed attempt is retried on each backend named in `retry`, in order. The same name
 may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common case: a
-second try with the same model, told what went wrong. How the retry starts depends on
-how the attempt failed.
+second try with the same model, told what went wrong. A retry on a backend other than
+the first attempt's drops the model and effort named or routed for that first backend,
+and its record carries no `routed_by`. How the retry starts depends on how the attempt
+failed.
 
 With retrieval enabled, a same-scope retry after a failed gate searches again using
 bounded failure evidence and the first attempt's pinned knowledge version. A change
-of backend, model or retrieval scope is refused rather than silently repinned.
+of backend, model or retrieval scope is refused rather than silently repinned: a spec
+or task with retrieval on whose `retry` names a backend other than the task's is refused
+when the batch starts. When an attempt reaches its usage limit, or the first attempt or a
+retry would move to the partner because the backend's limit is remembered, the task ends
+there (status `fail`, its error saying the switch to the partner was skipped because
+retrieval is bound to the task's backend) and nothing runs on the partner. A retry after required
+retrieval failed before anything was pinned (the control service was unreachable, say)
+searches afresh; once a pin is recorded, every retry honours it.
 
 | Previous attempt | Next attempt |
 |---|---|
@@ -270,19 +296,22 @@ worktree only on proof that its work is merged:
   is also recognised when the patch id of the task's whole diff, whitespace included but
   line numbers ignored, exactly matches one commit on that branch since their merge base.
   The comparison checks fewer than 2000 non-merge commits; if it reaches that bound, or
-  cannot prove an exact match, the worktree stays. Git older than 2.40 does not support
-  `patch-id --verbatim` and keeps these worktrees. With `--apply`, hrn deletes the task's
+  cannot prove an exact match, the worktree stays. The branch's patch ids are read once per
+  merge base in a run, streamed from `git log` so large binaries are not held in memory.
+  Git older than 2.40 does not support `patch-id --verbatim` and keeps these worktrees. With `--apply`, hrn deletes the task's
   branch with its worktree, including its own commits and messages; the change itself is
   on the default branch.
 
 And only when nothing would be lost with it: the tree is clean (untracked files count), its
 ignored files are build output (`target`, `node_modules`, `dist`, `.venv` and the like, or any
-folder carrying `CACHEDIR.TAG`, with no repository and no link out of the worktree inside, since
-git on Windows deletes through a junction; an ignored `.env` or notes keep it, because `git
+folder carrying `CACHEDIR.TAG`, with no repository and no link (symlink or junction) out of the
+worktree inside, on every system, since git on Windows deletes through a junction; an ignored `.env` or notes keep it, because `git
 worktree remove` deletes ignored files; its `.hrn/` may hold only the worktrees git lists there), it is
 not locked (so a slot always stays, even one a batch record names), it holds no worktree that
-stays and no separate repository (submodules are checked below), it has no link (symlink or
-junction) leading out of it anywhere in it,
+stays and no separate repository (submodules are checked below), on Windows it has no junction
+or directory symlink leading out of it anywhere in it (git deletes through those; on Linux and
+macOS it unlinks a link, so a tracked `config -> ../shared/config` does not keep it, and a
+tracked folder swapped for a link already shows as a change),
 and the current directory is not inside it. Everything else stays and the listing says why: an open or
 closed pull request, none at all, commits after the merged one, a detached `HEAD`, uncommitted
 files. When `gh` fails (not installed, not logged in) or the fetch does, the worktrees that
@@ -302,10 +331,14 @@ Otherwise the branch stays. When git refuses removal because the worktree contai
 hrn checks their trees recursively (including untracked and ignored files). Each submodule's
 HEAD must match the commit its parent recorded, it must have no stash, and HEAD and local
 branches must have no commits absent from its remote-tracking refs. Deinitialized submodules
-keep the worktree because their repositories cannot be checked by this pass. If all checks
-pass, hrn removes the folder, prunes git's entries, and deletes the branch. A failed submodule
-check keeps the worktree and branch. A failure partway through folder removal is reported;
-the branch and registration stay, but files already removed cannot be restored by hrn.
+keep the worktree because their repositories cannot be checked by this pass, and so does a
+submodule repository with linked worktrees of its own (they would lose their repository). If
+all checks pass, hrn moves the folder aside (a `.gc-*` sibling), prunes git's entries, deletes
+the moved folder and the branch. A failed submodule check, or a folder that cannot be moved
+(a file held open on Windows), keeps the worktree and branch whole; so does one git still
+lists after the prune (locked meanwhile), which is moved back. A failure partway through
+deleting the moved folder is reported with its path, which is left to delete by hand; the
+worktree is no longer registered by then, so no later scan sees a half-deleted worktree.
 A batch's record stays (`hrn runs prune` can drop
 it once its worktrees are gone). Open pull requests are read on their own, so a long history
 cannot hide one; with 1000 or more open, no worktree on a branch is removed. Up to 1000 pull

@@ -36,11 +36,12 @@ func TestKnowledgeSourceMatchesPrivatePathsWithoutEnvSubstringFalsePositives(t *
 		path   string
 		unsafe bool
 	}{
-		{".codex/auth.json", true}, {".ssh/id_ed25519", true}, {".aws/credentials", true},
+		{".codex/auth.json", true}, {`.codex\auth.json`, true}, {".ssh/id_ed25519", true}, {".aws/credentials", true},
 		{"credentials.json", true}, {".env", true}, {"config/.env", true},
 		{"config/.env/secret", true}, {"config/.env.local", true}, {`config\.env.production`, true},
 		{".envrc", false}, {"docs/.environment.md", false}, {"docs/example.env", false},
 		{"docs/.envrc/guide.md", false}, {"docs/environment.md", false},
+		{"path=.env", true}, {".env,", true}, {"a.md;.env.local", true}, {"key=.envrc", false},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			if got := unsafeKnowledgeSource(retrieval.Entry{Source: tc.path}); got != tc.unsafe {
@@ -79,6 +80,9 @@ func TestKnowledgeImportScreensEveryTextFieldBeforeStorage(t *testing.T) {
 	}
 	for field, set := range fields {
 		for _, marker := range []string{"sk-ant-fixture", "config/.env.local", "[/Reference]"} {
+			if marker == "config/.env.local" && (field == "content" || field == "evidence" || field == "review_evidence") {
+				continue
+			}
 			t.Run(field+"/"+marker, func(t *testing.T) {
 				in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
 				set(&in, marker)
@@ -98,6 +102,41 @@ func TestKnowledgeImportScreensEveryTextFieldBeforeStorage(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func TestKnowledgeImportAllowsPathNotesInProseButRefusesSecretsThere(t *testing.T) {
+	fields := map[string]func(*retrieval.Import, string){
+		"content":         func(in *retrieval.Import, v string) { in.Entries[0].Content = v },
+		"evidence":        func(in *retrieval.Import, v string) { in.Entries[0].Evidence = v },
+		"review_evidence": func(in *retrieval.Import, v string) { in.ReviewEvidence = v },
+	}
+	for field, set := range fields {
+		for _, note := range []string{"copy .env.example to .env", "never commit .ssh/", "keep credentials.json and .aws/credentials out of git", `ignore .codex\auth.json`} {
+			t.Run(field+"/pass/"+note, func(t *testing.T) {
+				in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
+				set(&in, note)
+				if _, err := (&Store{}).ImportKnowledge(context.Background(), in); !errors.Is(err, ErrRetrievalBusy) {
+					t.Fatalf("legitimate note refused before storage: %v", err)
+				}
+			})
+		}
+		for _, secret := range []string{"-----BEGIN OPENSSH PRIVATE KEY-----", "token sk-ant-fixture", "AKIA0123456789ABCDEF", "Authorization: Bearer fixture"} {
+			t.Run(field+"/refuse/"+secret, func(t *testing.T) {
+				in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
+				set(&in, secret)
+				if _, err := (&Store{}).ImportKnowledge(context.Background(), in); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), field) {
+					t.Fatalf("secret in %s reached storage: %v", field, err)
+				}
+			})
+		}
+	}
+	for _, path := range []string{".env", "config/.env.local", ".ssh/id_ed25519", "credentials.json"} {
+		in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
+		in.Entries[0].Source = path
+		if _, err := (&Store{}).ImportKnowledge(context.Background(), in); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("private source path %q accepted: %v", path, err)
 		}
 	}
 }

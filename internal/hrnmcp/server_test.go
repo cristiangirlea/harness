@@ -20,9 +20,20 @@ import (
 
 type stubBackend struct{}
 
+// typed is a prompt without the commit block agent.Run puts first.
+func typed(prompt string) string {
+	rest, ok := strings.CutPrefix(prompt, "# How to commit\n\n")
+	if !ok {
+		return prompt
+	}
+	_, after, _ := strings.Cut(rest, "\n\n")
+	return after
+}
+
 func (stubBackend) Name() string            { return "stub" }
 func (stubBackend) Detect() (string, error) { return "built-in stub", nil }
 func (stubBackend) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	task.Prompt = typed(task.Prompt)
 	if task.Prompt == "record-write-failure" {
 		// Invalid tool input forces event encoding to fail without a real backend.
 		for range 2 {
@@ -572,25 +583,46 @@ func TestRunContinueHandsTheConversationToAnotherBackend(t *testing.T) {
 	}
 }
 
-func TestRunContinueCopiesTheEarlierRunsOriginals(t *testing.T) {
+func TestRunContinueInheritsThePurposeUnlessTheCallOrHeaderNamesOne(t *testing.T) {
 	s := connect(t, t.TempDir())
-	first := s.call(t, "run", `{"prompt":"look","backend":"stub-ask"}`)
+	first := s.call(t, "run", `{"prompt":"look","backend":"stub-ask","mode":"auto","purpose":"review"}`)
 	id := first.StructuredContent.(map[string]any)["run_id"].(string)
-	const text, handle = "abc", "ba7816bf8f01cfea" // the SHA-256 prefix of text
-	originals := filepath.Join(runlog.Root(), id, "originals")
-	if err := os.MkdirAll(originals, 0o755); err != nil {
+	for _, tc := range []struct{ extra, prompt, want string }{
+		{"", "now fix what you found", "review"},
+		{`"purpose":"debug",`, "now fix what you found", "debug"},
+		{"", `Purpose: test\nnow fix what you found`, "test"},
+	} {
+		r := s.call(t, "run", `{`+tc.extra+`"prompt":"`+tc.prompt+`","backend":"stub","continue_run_id":"`+id+`"}`)
+		if r.IsError {
+			t.Fatalf("continue: %s", r.Text())
+		}
+		rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string))
+		if err != nil || rec.Task.Purpose != tc.want {
+			t.Errorf("%s%s: purpose = %q, want %q (%v)", tc.extra, tc.prompt, rec.Task.Purpose, tc.want, err)
+		}
+	}
+}
+
+func TestRunContinueIgnoresAnInvalidStoredPurpose(t *testing.T) {
+	dir := t.TempDir()
+	s := connect(t, dir)
+	w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir, Purpose: "Bogus"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(originals, handle+".txt"), []byte(text), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub-1"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := s.call(t, "run", `{"prompt":"and now?","backend":"stub","continue_run_id":"`+id+`"}`)
+	if err := w.Close(agent.Result{Backend: "stub", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	r := s.call(t, "run", `{"prompt":"again","backend":"stub","continue_run_id":"`+w.ID()+`"}`)
 	if r.IsError {
 		t.Fatalf("continue: %s", r.Text())
 	}
-	next := r.StructuredContent.(map[string]any)["run_id"].(string)
-	if data, err := os.ReadFile(filepath.Join(runlog.Root(), next, "originals", handle+".txt")); err != nil || string(data) != text {
-		t.Fatalf("the continued run cannot read the earlier original: %q %v", data, err)
+	rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Task.Purpose != "" {
+		t.Errorf("an invalid stored purpose was inherited: %q (%v)", rec.Task.Purpose, err)
 	}
 }
 
@@ -648,5 +680,32 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 				t.Errorf("unneeded warning: %s", r.Text())
 			}
 		})
+	}
+}
+
+func TestRunSummarySaysWhenUsageIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		usage *agent.UsageMetadata
+		want  bool
+	}{{nil, false}, {&agent.UsageMetadata{Status: "missing"}, true}} {
+		s := summary("r1", agent.Result{Status: agent.StatusOK, Backend: "codex", InputTokens: 5, Usage: tc.usage})
+		if got := strings.Contains(s, "usage missing"); got != tc.want || !strings.Contains(s, "5 in") {
+			t.Errorf("usage %+v: summary = %q", tc.usage, s)
+		}
+	}
+}
+
+func TestMCPRoutesByTheDeclaredPurpose(t *testing.T) {
+	s := connect(t, t.TempDir())
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"nope"},"review":{"backend":"stub","model":"routed"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "run", `{"prompt":"Implement a widget","purpose":"review","no_switch":true}`)
+	if res.IsError {
+		t.Fatal(res.Text())
+	}
+	rec, err := runlog.Load(res.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Backend != "stub" || rec.RoutedBy == nil || rec.RoutedBy.Category != "review" || !rec.RoutedBy.Declared {
+		t.Fatalf("declared purpose did not route: %+v %v", rec, err)
 	}
 }

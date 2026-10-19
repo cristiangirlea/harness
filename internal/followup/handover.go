@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -132,12 +133,14 @@ func changes(dir, base string) string {
 // git runs a read-only git command in dir, with the -c settings in off before
 // it. Settings that would run commands of their own are turned off here (an
 // fsmonitor hook) or by the caller (filter drivers, external diff drivers and
-// textconv), and no optional lock is taken on a workspace in use.
+// textconv), and no optional lock is taken on a workspace in use. A partial
+// clone does not fetch its missing objects, which would reach the remote.
 func git(dir string, off []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	full := append([]string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir}, off...)
 	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
+	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_NO_LAZY_FETCH=1")
 	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

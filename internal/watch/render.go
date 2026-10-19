@@ -276,8 +276,12 @@ func resultOf(res agent.Result) resultView {
 	if res.ContextTokens > 0 {
 		add("Context", tokens(res.ContextTokens)+" tokens at the end")
 	}
-	add("Tokens", fmt.Sprintf("%s in · %s out · %s cache read · %s cache write",
-		tokens(res.InputTokens), tokens(res.OutputTokens), tokens(res.CacheRead), tokens(res.CacheWrite)))
+	counts := fmt.Sprintf("%s in · %s out · %s cache read · %s cache write",
+		tokens(res.InputTokens), tokens(res.OutputTokens), tokens(res.CacheRead), tokens(res.CacheWrite))
+	if res.UsageMissing() {
+		counts += " · usage missing, counts partial"
+	}
+	add("Tokens", counts)
 	add("Cost", cost(res.CostUSD, res.CostEstimate))
 	add("Duration", short(res.Duration))
 	if res.Session != "" {
@@ -562,6 +566,9 @@ func batchBodyOf(res batch.Result, v viewer) batchBody {
 		}
 		tv.PromptLine, tv.PromptMore = firstLine(t.Prompt)
 		tv.Facts = []fact{{Label: "Branch", Value: t.Branch}}
+		if t.Purpose != "" {
+			tv.Facts = append(tv.Facts, fact{Label: "Purpose", Value: t.Purpose})
+		}
 		if t.Commit != "" {
 			tv.Facts = append(tv.Facts, fact{Label: "Commit", Value: tools.ShortSHA(t.Commit)})
 		}

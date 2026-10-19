@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -43,6 +44,7 @@ func (p ProjectProfile) validate(ctx context.Context, dir string) error {
 		return err
 	}
 	command := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD")
+	command.Env = gitenv.WithoutRepoVars(os.Environ())
 	head, err := command.Output()
 	if err != nil || strings.TrimSpace(string(head)) != p.Options.RetrievalRevision {
 		return fmt.Errorf("retrieval profile revision changed; review and refresh the knowledge version")

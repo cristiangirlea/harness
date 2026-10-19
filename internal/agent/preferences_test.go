@@ -40,7 +40,9 @@ func TestDefaultBackendFollowsPreferencesAndAvailability(t *testing.T) {
 		{"api enabled", prefs.Prefs{EnabledNames: []string{"codex", "api"}}, true, true, "api"},
 		{"api disabled", prefs.Prefs{EnabledNames: []string{"codex", "claude"}}, true, true, "codex"},
 		{"uninstalled default", prefs.Prefs{EnabledNames: []string{"codex", "claude"}, DefaultName: "codex"}, false, false, "claude"},
-		{"no installed", prefs.Prefs{EnabledNames: []string{"codex"}}, false, false, "claude"},
+		{"no installed", prefs.Prefs{EnabledNames: []string{"codex"}}, false, false, "codex"},
+		{"no installed in order", prefs.Prefs{EnabledNames: []string{"codex", "api"}}, false, false, "codex"},
+		{"no installed default", prefs.Prefs{EnabledNames: []string{"codex", "api"}, DefaultName: "api"}, false, false, "api"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()

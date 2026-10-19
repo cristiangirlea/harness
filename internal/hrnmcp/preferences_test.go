@@ -3,11 +3,14 @@ package hrnmcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -61,5 +64,63 @@ func TestRunToolOffersNoEnumWhenThePreferenceFileIsMalformed(t *testing.T) {
 	backend := props["backend"].(map[string]any)
 	if _, has := backend["enum"]; has {
 		t.Fatalf("an empty enum would make every value invalid: %v", backend)
+	}
+}
+
+type installStub struct {
+	name      string
+	installed bool
+}
+
+func (s installStub) Name() string { return s.name }
+func (s installStub) Detect() (string, error) {
+	if !s.installed {
+		return "", errors.New("not installed")
+	}
+	return "stub", nil
+}
+func (s installStub) Run(context.Context, agent.Task, func(agent.Event)) agent.Result {
+	panic("must not run")
+}
+
+func TestBackendsToolNamesOneDefaultWhenTheConfiguredOneIsNotInstalled(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	for _, s := range []installStub{{"codex", false}, {"claude", true}} {
+		orig, _ := agent.Get(s.name)
+		agent.Register(s)
+		t.Cleanup(func() { agent.Register(orig) })
+	}
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "claude"}, DefaultName: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := backendsTool().Handler(context.Background(), mcp.Call{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := result.StructuredContent.(map[string]any)
+	if data["default"] != "claude" {
+		t.Errorf("default: %v", data["default"])
+	}
+	for _, entry := range data["backends"].([]map[string]any) {
+		if entry["default"] != (entry["name"] == "claude") {
+			t.Errorf("entry: %v", entry)
+		}
+	}
+	if strings.Count(result.Content[0].Text, "(default)") != 1 || !strings.Contains(result.Content[0].Text, "claude    enabled (default)") {
+		t.Errorf("text: %s", result.Content[0].Text)
+	}
+}
+
+func TestRunToolOffersEveryBackendWithoutAPreferenceFile(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	props := runTool(t.TempDir(), false).InputSchema["properties"].(map[string]any)
+	got := props["backend"].(map[string]any)["enum"].([]any)
+	want := make([]any, 0, len(agent.Names()))
+	for _, name := range agent.Names() {
+		want = append(want, name)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("enum %v, want %v", got, want)
 	}
 }

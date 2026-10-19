@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
@@ -77,7 +78,8 @@ func (c *Client) Start(ctx context.Context, cfg ServerConfig) error {
 	}
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Dir = cfg.Dir
-	cmd.Env = os.Environ()
+	// A server config may still name a repository on purpose; hrn's own does not reach it.
+	cmd.Env = gitenv.WithoutRepoVars(os.Environ())
 	for k, v := range cfg.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}

@@ -201,18 +201,27 @@ func TestPublicAccessChecksEveryRequestAndKeepsItRemote(t *testing.T) {
 	if cookieResponse.Code != 200 {
 		t.Fatalf("cookie fallback = %d", cookieResponse.Code)
 	}
-	for _, tc := range []struct{ name, host, origin, token string }{
-		{"missing token", "harness.example.com", "", ""},
-		{"wrong host", "other.example", "", token},
-		{"loopback host", "127.0.0.1:8089", "", token},
-		{"wrong origin scheme", "harness.example.com", "http://harness.example.com", token},
-		{"wrong origin host", "harness.example.com", "https://other.example", token},
+	for _, tc := range []struct{ name, host, origin, token, reason string }{
+		{"missing token", "harness.example.com", "", "", ""},
+		{"wrong host", "other.example", "", token, "bad host"},
+		{"loopback host", "127.0.0.1:8089", "", token, "bad host"},
+		{"wrong origin scheme", "harness.example.com", "http://harness.example.com", token, "bad origin"},
+		{"wrong origin host", "harness.example.com", "https://other.example", token, "bad origin"},
+		{"host with a trailing dot", "harness.example.com.", "", token, "bad host"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := f.request(h, "/", tc.host, tc.origin, tc.token); got.Code != 403 {
 				t.Fatalf("status = %d", got.Code)
 			}
+			if tc.reason != "" {
+				if got := lastAccessRow(t)["reason"]; got != tc.reason {
+					t.Fatalf("access log reason = %v, want %s", got, tc.reason)
+				}
+			}
 		})
+	}
+	if got := f.request(h, "/", "HARNESS.Example.COM", "", token); got.Code != 200 {
+		t.Fatalf("upper-case host = %d %s", got.Code, got.Body)
 	}
 	crossSite := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8089/", nil)
 	crossSite.Host = "harness.example.com"
@@ -244,11 +253,19 @@ func TestPublicAccessAllowsPageNavigationAfterLoginAndKeepsOtherGuards(t *testin
 		{"cross-site CORS GET", http.MethodGet, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "cross-site"}, 403},
 		{"cross-site POST navigation", http.MethodPost, "harness.example.com", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site", "X-Hrn-Watch-Key": "k3y"}, 403},
 		{"navigation with wrong Host", http.MethodGet, "other.example", "", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, 403},
+		{"navigation with the public Origin", http.MethodGet, "harness.example.com", "https://harness.example.com", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, 200},
+		{"navigation with another Origin", http.MethodGet, "harness.example.com", "https://other.example", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, 403},
+		{"navigation with another Origin and cross-site", http.MethodGet, "harness.example.com", "https://other.example", token, map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "cross-site"}, 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := f.requestWithHeaders(h, tc.method, "/", tc.host, tc.origin, tc.token, tc.headers)
 			if got.Code != tc.want {
 				t.Fatalf("status = %d, want %d: %s", got.Code, tc.want, got.Body)
+			}
+			if tc.want == http.StatusForbidden && strings.Contains(tc.name, "Origin") {
+				if reason := lastAccessRow(t)["reason"]; reason != "bad origin" {
+					t.Errorf("access log reason = %v, want bad origin", reason)
+				}
 			}
 			if tc.name == "cross-site iframe navigation" || tc.name == "cross-site navigation without destination" {
 				data, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-access.log"))
@@ -315,12 +332,20 @@ func TestPublicAccessRejectsInvalidJWTClaimsAndSignatures(t *testing.T) {
 		{"future iat", map[string]any{"alg": "RS256", "kid": "test-key"}, func() map[string]any { c := f.validClaims(); c["iat"] = f.clock.Add(2 * time.Minute).Unix(); return c }(), f.key},
 		{"wrong aud", map[string]any{"alg": "RS256", "kid": "test-key"}, func() map[string]any { c := f.validClaims(); c["aud"] = "elsewhere"; return c }(), f.key},
 		{"wrong iss", map[string]any{"alg": "RS256", "kid": "test-key"}, func() map[string]any { c := f.validClaims(); c["iss"] = "https://wrong.example"; return c }(), f.key},
+		{"absent aud", map[string]any{"alg": "RS256", "kid": "test-key"}, func() map[string]any { c := f.validClaims(); delete(c, "aud"); return c }(), f.key},
+		{"null aud", map[string]any{"alg": "RS256", "kid": "test-key"}, func() map[string]any { c := f.validClaims(); c["aud"] = nil; return c }(), f.key},
+		{"number aud", map[string]any{"alg": "RS256", "kid": "test-key"}, func() map[string]any { c := f.validClaims(); c["aud"] = 42; return c }(), f.key},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := f.request(h, "/", "harness.example.com", "", f.token(tc.header, tc.claims, tc.key))
 			if w.Code != 403 || strings.TrimSpace(w.Body.String()) != "Cloudflare Access login required" {
 				t.Fatalf("status %d body %q", w.Code, w.Body.String())
+			}
+			if strings.HasSuffix(tc.name, " aud") {
+				if reason := lastAccessRow(t)["reason"]; reason != "wrong aud" {
+					t.Fatalf("access log reason = %v, want wrong aud", reason)
+				}
 			}
 		})
 	}
@@ -678,5 +703,143 @@ func TestPublicAccessKeepsSSEFlushingThroughTheLogWriter(t *testing.T) {
 	line, err := bufio.NewReader(resp.Body).ReadString('\n')
 	if err != nil || line != "retry: 2000\n" {
 		t.Fatalf("first flushed line = %q, %v", line, err)
+	}
+}
+
+func lastAccessRow(t *testing.T) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-access.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var row map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &row); err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+func TestPublicAccessLogsAStreamRowAtStartAndAtEnd(t *testing.T) {
+	f := newAccessFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := httptest.NewServer(New(ctx, f.opt))
+	defer srv.Close()
+	r, err := http.NewRequest(http.MethodGet, srv.URL+"/stream/index", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Host = "harness.example.com"
+	r.Header.Set("Cf-Access-Jwt-Assertion", f.validToken())
+	resp, err := srv.Client().Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if _, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	row := waitAccessRow(t)
+	if row["stream"] != "start" || row["status"] != float64(200) || row["path"] != "/stream/index" || row["email"] != "owner@example.com" {
+		t.Fatalf("row while the stream is open = %v", row)
+	}
+	resp.Body.Close()
+	path := filepath.Join(runlog.Home(), "watch-access.log")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		if len(lines) == 2 {
+			var end map[string]any
+			if err := json.Unmarshal([]byte(lines[1]), &end); err != nil {
+				t.Fatal(err)
+			}
+			if end["stream"] != "end" || end["status"] != float64(200) || end["path"] != "/stream/index" {
+				t.Fatalf("row after the stream ends = %v", end)
+			}
+			return
+		}
+		if len(lines) > 2 || time.Now().After(deadline) {
+			t.Fatalf("log after the stream ends: %s", data)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// waitAccessRow returns the last access row once one exists: a stream's start
+// row follows its first flush, so the browser may read before it is written.
+func waitAccessRow(t *testing.T) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if data, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-access.log")); err == nil && len(bytes.TrimSpace(data)) > 0 {
+			return lastAccessRow(t)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no access row")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPublicAccessSendsAStreamsFirstByteWhileTheLogIsBusy(t *testing.T) {
+	f := newAccessFixture(t)
+	s := &server{opt: f.opt}
+	done := make(chan struct{})
+	h := s.publicLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "retry: 2000\n\n")
+		_ = http.NewResponseController(w).Flush()
+		<-done
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	defer close(done)
+	s.logMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.logMu.Unlock()
+		}
+	}()
+	line := make(chan string, 1)
+	go func() {
+		resp, err := srv.Client().Get(srv.URL + "/stream/index")
+		if err != nil {
+			line <- err.Error()
+			return
+		}
+		defer resp.Body.Close()
+		l, _ := bufio.NewReader(resp.Body).ReadString('\n')
+		line <- l
+	}()
+	select {
+	case l := <-line:
+		if l != "retry: 2000\n" {
+			t.Fatalf("first line = %q", l)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream's first byte waited for the access log")
+	}
+	locked = false
+	s.logMu.Unlock()
+	if row := waitAccessRow(t); row["stream"] != "start" || row["path"] != "/stream/index" {
+		t.Fatalf("start row = %v", row)
+	}
+}
+
+func TestPublicGuardCalledWithoutTheLogWriterRefusesInsteadOfPanicking(t *testing.T) {
+	f := newAccessFixture(t)
+	s := &server{opt: f.opt}
+	h := s.guard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("guard passed a request through without the access log writer")
+	}), nil, "")
+	w := f.request(h, "/", "harness.example.com", "", f.validToken())
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d %s, want 500", w.Code, w.Body)
 	}
 }

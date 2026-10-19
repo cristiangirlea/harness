@@ -186,14 +186,19 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			var plan followup.Plan
 			if args.ContinueRunID != "" {
-				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model, Fresh: args.Fresh})
+				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, Fresh: args.Fresh})
 				if err != nil {
 					return mcp.CallResult{}, err
 				}
+				defer plan.Release()
 				args.Backend, args.Dir, args.Model = plan.Backend, plan.Dir, plan.Model
 				// As hrn run does: the earlier run's mode, unless this call names one.
 				if !modeGiven && plan.Prev.Task.Mode != "" {
 					args.Mode = plan.Prev.Task.Mode
+				}
+				// And its purpose, unless the call or the prompt's header names one.
+				if args.Purpose == "" && purpose.Valid(plan.Prev.Task.Purpose) {
+					args.Purpose = plan.Prev.Task.Purpose
 				}
 			}
 			// The inherited workspace is checked like any other.
@@ -206,14 +211,17 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
 			dir = ws.Root
-			routedBy, err := args.Options.Route(args.Prompt, &args.Backend, runlog.Home())
+			routedBy, err := args.Options.Route(args.Purpose, args.Prompt, &args.Backend, runlog.Home())
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
 			if !args.NoSwitch && args.ContinueRunID == "" {
 				meant := args.Backend
 				if args.Backend, routed = limits.Choose(args.Backend, ""); args.Backend != meant {
-					args.Model = ""
+					if routedBy != nil {
+						args.Options.Effort = "" // the row measured the limited backend, not its partner
+					}
+					args.Model, routedBy = "", nil
 				}
 			}
 			if args.Backend == "" {
@@ -284,6 +292,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			case next == nil && why != "":
 				notes = append(notes, why)
 			case next != nil:
+				defer next.Plan.Release()
 				nb, err := agent.Get(next.To)
 				if err != nil {
 					return mcp.CallResult{}, err
@@ -466,10 +475,8 @@ func backendsTool() mcp.Tool {
 			if err != nil {
 				return text(err.Error(), nil, true), nil
 			}
-			def := p.Default()
-			if def == "" {
-				def = agent.DefaultBackendNameIn(runlog.Home())
-			}
+			// The backend a run without one would use, which is the configured default when it is installed.
+			def := agent.DefaultBackendNameIn(runlog.Home())
 			now := time.Now()
 			for _, name := range agent.Names() {
 				state := "disabled"
@@ -497,7 +504,7 @@ func backendsTool() mcp.Tool {
 				entry["default"] = name == def
 				list = append(list, entry)
 			}
-			return text(b.String(), map[string]any{"backends": list, "default": agent.DefaultBackendNameIn(runlog.Home())}, false), nil
+			return text(b.String(), map[string]any{"backends": list, "default": def}, false), nil
 		},
 	}
 }
@@ -569,7 +576,11 @@ func summary(runID string, res agent.Result) string {
 		}
 		cost = fmt.Sprintf(" · %s$%.4f", approx, res.CostUSD)
 	}
-	return fmt.Sprintf("── %s · %s · %s · %d turns · %d in / %d out (cache %d read)%s · %s ── run %s",
-		res.Status, res.Backend, res.Model, res.Turns, res.InputTokens, res.OutputTokens, res.CacheRead,
+	missing := ""
+	if res.UsageMissing() {
+		missing = ", usage missing"
+	}
+	return fmt.Sprintf("── %s · %s · %s · %d turns · %d in / %d out (cache %d read%s)%s · %s ── run %s",
+		res.Status, res.Backend, res.Model, res.Turns, res.InputTokens, res.OutputTokens, res.CacheRead, missing,
 		cost, res.Duration.Round(100*time.Millisecond), runID)
 }

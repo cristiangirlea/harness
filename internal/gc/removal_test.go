@@ -40,6 +40,9 @@ func TestGCRemovesOnlySafeSubmoduleWorktrees(t *testing.T) {
 			}
 			copy.write(copy.repo, name, strings.ReplaceAll(string(data), filepath.ToSlash(f.root), filepath.ToSlash(root)))
 		}
+		// The rewrite above can miss the submodule's remote when Git spelt the path
+		// differently; a push to the shared original would race the other copies.
+		git(t, filepath.Join(path, "module"), "remote", "set-url", "origin", filepath.Join(root, "sub"))
 		cw := w
 		cw.Repo, cw.Path = copy.repo, path
 		return copy, path, []Worktree{cw}
@@ -53,6 +56,7 @@ func TestGCRemovesOnlySafeSubmoduleWorktrees(t *testing.T) {
 		{"history", keepsSubmoduleHistory},
 		{"nested", checksNestedSubmodules},
 		{"orphaned", keepsOrphanedSubmodules},
+		{"linked", keepsSubmoduleLinkedWorktrees},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -62,6 +66,11 @@ func TestGCRemovesOnlySafeSubmoduleWorktrees(t *testing.T) {
 	// These replace a package hook and must finish before parallel cases run.
 	t.Run("unreadable", func(t *testing.T) { keepsUnreadableSubmodule(t, copyFixture) })
 	t.Run("parent-changed", func(t *testing.T) { keepsParentChanges(t, copyFixture) })
+	t.Run("unmovable", func(t *testing.T) { keepsAWorktreeThatCannotBeMovedAside(t, copyFixture) })
+	t.Run("partial", func(t *testing.T) { deregistersBeforeAPartialRemoval(t, copyFixture) })
+	t.Run("prune-fails", func(t *testing.T) { movesBackWhenPruneFails(t, copyFixture) })
+	t.Run("locked-late", func(t *testing.T) { movesBackWhenPruneKeepsItRegistered(t, copyFixture) })
+	t.Run("stuck-aside", func(t *testing.T) { namesAWorktreeThatCannotBeMovedBack(t, copyFixture) })
 }
 
 func removesCleanSubmodule(t *testing.T, copyFixture func(*testing.T) (*fixture, string, []Worktree)) {
@@ -268,6 +277,137 @@ func keepsParentChanges(t *testing.T, copyFixture func(*testing.T) (*fixture, st
 	}
 	if got, err := os.ReadFile(filepath.Join(wt, "README.md")); err != nil || string(got) != "keep this parent edit\n" {
 		t.Fatalf("parent edit lost: %q, %v", got, err)
+	}
+}
+
+func keepsSubmoduleLinkedWorktrees(t *testing.T, copyFixture func(*testing.T) (*fixture, string, []Worktree)) {
+	f, wt, wts := copyFixture(t)
+	linked := filepath.Join(f.root, "module-linked")
+	git(t, filepath.Join(wt, "module"), "worktree", "add", "-q", "--detach", linked)
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) == 0 || !exists(wt) {
+		t.Fatalf("removed %d, errors %v; a submodule's linked worktree must keep the worktree", len(removed), errs)
+	}
+	if !strings.Contains(errors.Join(errs...).Error(), "linked worktrees") {
+		t.Fatalf("errors %v do not name the linked worktrees", errs)
+	}
+	git(t, linked, "rev-parse", "HEAD")
+}
+
+func keepsAWorktreeThatCannotBeMovedAside(t *testing.T, copyFixture func(*testing.T) (*fixture, string, []Worktree)) {
+	f, wt, wts := copyFixture(t)
+	taken := filepath.Join(f.root, "taken")
+	f.write(taken, "occupied.txt", "x\n")
+	original := movedCachePath
+	t.Cleanup(func() { movedCachePath = original })
+	movedCachePath = func(string) string { return taken }
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "could not be moved aside") {
+		t.Fatalf("removed %d, errors %v; expected the worktree kept", len(removed), errs)
+	}
+	if !exists(filepath.Join(wt, "module", "README.md")) || !exists(filepath.Join(f.repo, ".git/worktrees/wt")) || !exists(filepath.Join(f.repo, ".git/refs/heads/done")) {
+		t.Fatal("worktree files, registration or branch lost")
+	}
+}
+
+func movesBackWhenPruneFails(t *testing.T, copyFixture func(*testing.T) (*fixture, string, []Worktree)) {
+	f, wt, wts := copyFixture(t)
+	head := filepath.Join(f.repo, ".git", "HEAD")
+	saved, err := os.ReadFile(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := movedCachePath
+	t.Cleanup(func() { movedCachePath = original })
+	movedCachePath = func(path string) string {
+		// Runs after the last recheck, just before the move: prune now finds no repository.
+		f.write(f.repo, ".git/HEAD", "broken\n")
+		return original(path)
+	}
+	removed, errs := Apply(context.Background(), wts)
+	f.write(f.repo, ".git/HEAD", string(saved))
+	if len(removed) != 0 || len(errs) != 1 {
+		t.Fatalf("removed %d, errors %v; expected the worktree kept", len(removed), errs)
+	}
+	if !exists(filepath.Join(wt, "module", "README.md")) || !exists(filepath.Join(f.repo, ".git/worktrees/wt")) || !exists(filepath.Join(f.repo, ".git/refs/heads/done")) {
+		t.Fatal("worktree files, registration or branch lost")
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(f.root, ".gc-*")); len(leftovers) != 0 {
+		t.Fatalf("moved folder left behind: %q", leftovers)
+	}
+}
+
+func movesBackWhenPruneKeepsItRegistered(t *testing.T, copyFixture func(*testing.T) (*fixture, string, []Worktree)) {
+	f, wt, wts := copyFixture(t)
+	original := movedCachePath
+	t.Cleanup(func() { movedCachePath = original })
+	movedCachePath = func(path string) string {
+		// A lock taken after the last recheck: prune skips the entry and succeeds.
+		f.write(f.repo, ".git/worktrees/wt/locked", "in use\n")
+		return original(path)
+	}
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "still registered") {
+		t.Fatalf("removed %d, errors %v; expected the locked worktree kept", len(removed), errs)
+	}
+	if !exists(filepath.Join(wt, "module", "README.md")) || !exists(filepath.Join(f.repo, ".git/refs/heads/done")) {
+		t.Fatal("worktree files or branch lost")
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(f.root, ".gc-*")); len(leftovers) != 0 {
+		t.Fatalf("moved folder left behind: %q", leftovers)
+	}
+}
+
+func namesAWorktreeThatCannotBeMovedBack(t *testing.T, copyFixture func(*testing.T) (*fixture, string, []Worktree)) {
+	f, wt, wts := copyFixture(t)
+	originalPath, originalRename := movedCachePath, renameWorktree
+	t.Cleanup(func() { movedCachePath, renameWorktree = originalPath, originalRename })
+	var moved string
+	movedCachePath = func(path string) string {
+		// A lock taken after the last recheck keeps the entry, so the folder must go back.
+		f.write(f.repo, ".git/worktrees/wt/locked", "in use\n")
+		moved = originalPath(path)
+		return moved
+	}
+	renameWorktree = func(src, dst string) error {
+		if src == moved {
+			return errors.New("destination busy")
+		}
+		return originalRename(src, dst)
+	}
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 1 || moved == "" || !strings.Contains(errs[0].Error(), moved) {
+		t.Fatalf("removed %d, errors %v; expected one naming the moved folder (%q)", len(removed), errs, moved)
+	}
+	if !exists(filepath.Join(moved, "module", "README.md")) || exists(wt) || !exists(filepath.Join(f.repo, ".git/refs/heads/done")) {
+		t.Fatal("moved folder or branch lost")
+	}
+}
+
+func deregistersBeforeAPartialRemoval(t *testing.T, copyFixture func(*testing.T) (*fixture, string, []Worktree)) {
+	f, wt, wts := copyFixture(t)
+	original := removeMovedWorktree
+	t.Cleanup(func() { removeMovedWorktree = original })
+	var moved string
+	removeMovedWorktree = func(dir string) error {
+		moved = dir
+		if err := os.Remove(filepath.Join(dir, "README.md")); err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("disk failed partway")
+	}
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 1 || len(errs) != 1 || moved == "" || !strings.Contains(errs[0].Error(), moved) || !exists(moved) {
+		t.Fatalf("removed %d, errors %v; expected one naming the folder left aside (%q)", len(removed), errs, moved)
+	}
+	if exists(filepath.Join(f.repo, ".git/refs/heads/done")) {
+		t.Fatal("branch kept although the worktree was deregistered")
+	}
+	if exists(wt) || exists(filepath.Join(f.repo, ".git/worktrees/wt")) {
+		t.Fatal("a partly deleted worktree is still registered at its path")
+	}
+	if out := git(t, f.repo, "worktree", "list", "--porcelain"); strings.Contains(out, "wt") {
+		t.Fatalf("git still lists the worktree:\n%s", out)
 	}
 }
 

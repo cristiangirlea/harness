@@ -38,6 +38,9 @@ var (
 
 const jsonSpace = " \t\r\n"
 
+// Far beyond any real Go test name; longer ones would make prefix lookups quadratic.
+const maxTestName = 1024
+
 func Classify(text string) Kind {
 	if text == "" {
 		return Other
@@ -361,14 +364,15 @@ type testFailure struct {
 }
 
 // A RUN, CONT or NAME owns following diagnostics until PAUSE or a result. Keep
-// paused tests' earlier diagnostics, and refuse unmarked output while a test
-// other than its parents runs beside it: plain text cannot name the owner.
+// paused tests' earlier diagnostics, and refuse unmarked output while more
+// than one test is running: its owner cannot be recovered from plain text.
 // Non-verbose Go output also prints diagnostics immediately after FAIL.
 func testFailures(lines []string) (map[string]*testFailure, bool) {
 	tests := map[string]*testFailure{}
 	running := map[string]bool{}
+	waitsOn := map[string]string{}
 	current := ""
-	markedOwner, sawMarker, unassigned := false, false, false
+	markedOwner, sawMarker, unassigned, parallel := false, false, false, false
 	var pending []int
 	for i, line := range lines {
 		if m := testMarker.FindStringSubmatch(line); m != nil {
@@ -376,10 +380,17 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 			sawMarker = true
 			markedOwner = m[1] == "CONT" || m[1] == "NAME"
 			name := m[2]
+			if len(name) > maxTestName {
+				return nil, false
+			}
 			if tests[name] == nil {
 				tests[name] = &testFailure{}
 			}
 			tests[name].indices = append(tests[name].indices, i)
+			parallel = parallel || m[1] == "PAUSE" || m[1] == "CONT"
+			if m[1] == "RUN" && !parallel {
+				endSiblings(running, waitsOn, name)
+			}
 			if m[1] == "PAUSE" {
 				delete(running, name)
 				current = ""
@@ -394,6 +405,9 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 		if m := testResult.FindStringSubmatch(line); m != nil {
 			markedOwner = false
 			name := m[2]
+			if len(name) > maxTestName {
+				return nil, false
+			}
 			if tests[name] == nil {
 				tests[name] = &testFailure{}
 			}
@@ -422,7 +436,14 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		if (len(running) > 1 && !markedOwner && !nested(running, current)) || (len(running) > 0 && !running[current]) {
+		if !markedOwner {
+			for name := range running { // a running parent waits on its subtest, not beside it
+				if name != current && !subtestOf(current, name) {
+					return nil, false
+				}
+			}
+		}
+		if len(running) > 0 && !running[current] {
 			return nil, false
 		}
 		if current != "" {
@@ -449,15 +470,31 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 	return tests, true
 }
 
-// nested reports whether every running test but current is one of its
-// parents: a subtest running inside them, not tests running side by side.
-func nested(running map[string]bool, current string) bool {
-	for name := range running {
-		if name != current && !strings.HasPrefix(current, name+"/") {
-			return false
+func subtestOf(name, parent string) bool {
+	return strings.HasPrefix(name, parent+"/")
+}
+
+// Sequential subtests print their results only when the parent ends, so a
+// sibling's RUN is the only sign that the earlier subtest finished. A
+// subtest's own name may hold slashes, so the parent is the longest running prefix.
+func endSiblings(running map[string]bool, waitsOn map[string]string, name string) {
+	parent := ""
+	for i := strings.LastIndex(name, "/"); i > 0; i = strings.LastIndex(name[:i], "/") {
+		if running[name[:i]] {
+			parent = name[:i]
+			break
 		}
 	}
-	return true
+	if parent == "" {
+		return
+	}
+	for child := waitsOn[parent]; child != ""; { // each child name is longer, so the chain ends
+		next := waitsOn[child]
+		delete(running, child)
+		delete(waitsOn, child)
+		child = next
+	}
+	waitsOn[parent] = name
 }
 
 func collapse(lines []string) []string {

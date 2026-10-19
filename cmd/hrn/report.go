@@ -78,8 +78,14 @@ func cmdReport(args []string) error {
 			if r.ContextFrom != "" {
 				median, peak, from = report.Tokens(int64(math.Round(r.MedianContext))), report.Tokens(r.PeakContext), r.ContextFrom
 			}
-			t = append(t, []string{shortKey(r.Key, 48), report.Tokens(r.InputTokens), report.Tokens(r.OutputTokens),
-				report.Tokens(r.CacheRead), report.Tokens(r.CacheWrite), median, peak, from})
+			in, out, read, write := "-", "-", "-", "-"
+			if r.Runs > r.RunsWithoutTokens {
+				in, out, read, write = report.Tokens(r.InputTokens), report.Tokens(r.OutputTokens), report.Tokens(r.CacheRead), report.Tokens(r.CacheWrite)
+				if r.RunsWithoutTokens > 0 {
+					in += fmt.Sprintf(" (%d unknown)", r.RunsWithoutTokens)
+				}
+			}
+			t = append(t, []string{shortKey(r.Key, 48), in, out, read, write, median, peak, from})
 		}
 		fmt.Print(table(t, 1))
 	}
@@ -106,17 +112,8 @@ func cmdReport(args []string) error {
 
 // reportCost preserves a known zero and counts missing costs beside a partial total.
 func reportCost(cost float64, known, estimated bool, unknown int) string {
-	if !known {
-		return "-"
-	}
-	value := report.Money(cost, estimated)
-	if cost == 0 {
-		value = "$0.00"
-		if estimated {
-			value = "~" + value
-		}
-	}
-	if unknown > 0 {
+	value := report.KnownMoney(cost, known, estimated)
+	if known && unknown > 0 {
 		value += fmt.Sprintf(" (%d unknown)", unknown)
 	}
 	return value

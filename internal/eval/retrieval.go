@@ -37,8 +37,19 @@ type RetrievalComparison struct {
 	Baseline              report.WorkflowUsage `json:"baseline"`
 	Candidate             report.WorkflowUsage `json:"candidate"`
 	MedianPairedSaving    *float64             `json:"median_paired_saving"`
-	Gate                  string               `json:"gate"`
-	Reason                string               `json:"reason"`
+	// The saving verdict reads only pairs where both cells passed: a variant
+	// that fails cheaply is not efficient. The medians above keep every pair.
+	PassingPairs           int      `json:"passing_pairs,omitempty"`
+	PassingBaselineMedian  *float64 `json:"passing_baseline_median_tokens,omitempty"`
+	PassingCandidateMedian *float64 `json:"passing_candidate_median_tokens,omitempty"`
+	PassingReduction       *float64 `json:"passing_median_token_reduction,omitempty"`
+	// BaselineMovement is how far the baseline's passing median moves between
+	// repeats (range over mean); the saving must reach SavingThreshold, the
+	// larger of it and 10 percent.
+	BaselineMovement *float64 `json:"baseline_median_movement,omitempty"`
+	SavingThreshold  *float64 `json:"saving_threshold,omitempty"`
+	Gate             string   `json:"gate"`
+	Reason           string   `json:"reason"`
 }
 
 func (m RetrievalManifest) Validate() error {
@@ -46,8 +57,11 @@ func (m RetrievalManifest) Validate() error {
 		return fmt.Errorf("retrieval comparison requires fixed identity, held-out tasks, two variants, >=10 tasks and >=3 repeats")
 	}
 	a, b := m.Spec.Matrix[0], m.Spec.Matrix[1]
-	if a.name() == b.name() || a.Backend == "" || a.Backend != b.Backend || a.Model == "" || a.Model != b.Model || a.Effort != b.Effort {
+	if a.Key() == b.Key() || a.Backend == "" || a.Backend != b.Backend || a.Model == "" || a.Model != b.Model || a.Effort != b.Effort {
 		return fmt.Errorf("variants must use identical explicit backend/model/effort")
+	}
+	if a.ChangesHarness() || b.ChangesHarness() {
+		return fmt.Errorf("variants must not change the harness: prompt_prefix, append_system_prompt or no_skills would be counted as retrieval")
 	}
 	if a.Retrieval != "off" || (b.Retrieval != "optional" && b.Retrieval != "required") {
 		return fmt.Errorf("comparison requires explicit baseline off and candidate enabled")
@@ -72,7 +86,7 @@ func CompareRetrieval(m RetrievalManifest, samples []RetrievalSample, basePrep, 
 	if err := m.Validate(); err != nil {
 		return out, err
 	}
-	variants := []string{m.Spec.Matrix[0].name(), m.Spec.Matrix[1].name()}
+	variants := []string{m.Spec.Matrix[0].Key(), m.Spec.Matrix[1].Key()}
 	tasks := map[string]bool{}
 	for _, t := range m.Spec.Tasks {
 		tasks[t.ID] = true
@@ -117,6 +131,8 @@ func CompareRetrieval(m RetrievalManifest, samples []RetrievalSample, basePrep, 
 	}
 	var baselines, candidates []report.TaskUsage
 	var savings, baselineTokens, candidateTokens []float64
+	var passingBase, passingCand []float64
+	baseByRepeat := map[int][]float64{}
 	regression := false
 	for _, t := range m.Spec.Tasks {
 		for r := 0; r < m.Spec.Repeats; r++ {
@@ -142,6 +158,12 @@ func CompareRetrieval(m RetrievalManifest, samples []RetrievalSample, basePrep, 
 				if an > 0 {
 					savings = append(savings, 1-float64(bn)/float64(an))
 				}
+				if a.Usage.Passed && b.Usage.Passed {
+					out.PassingPairs++
+					passingBase = append(passingBase, float64(an))
+					passingCand = append(passingCand, float64(bn))
+					baseByRepeat[r] = append(baseByRepeat[r], float64(an))
+				}
 			}
 		}
 	}
@@ -166,6 +188,18 @@ func CompareRetrieval(m RetrievalManifest, samples []RetrievalSample, basePrep, 
 		v := report.Median(savings)
 		out.MedianPairedSaving = &v
 	}
+	if len(passingBase) > 0 {
+		a, b := report.Median(passingBase), report.Median(passingCand)
+		out.PassingBaselineMedian, out.PassingCandidateMedian = &a, &b
+		if a > 0 {
+			v := 1 - b/a
+			out.PassingReduction = &v
+		}
+	}
+	if move, ok := movement(baseByRepeat); ok {
+		threshold := max(0.10, move)
+		out.BaselineMovement, out.SavingThreshold = &move, &threshold
+	}
 	switch {
 	case regression:
 		out.Gate = "reject"
@@ -175,9 +209,15 @@ func CompareRetrieval(m RetrievalManifest, samples []RetrievalSample, basePrep, 
 	case out.Candidate.Successes > out.Baseline.Successes:
 		out.Gate = "pass"
 		out.Reason = "higher success"
-	case out.Candidate.Successes == out.Baseline.Successes && out.Candidate.Successes > 0 && out.ComparablePairs == out.ExpectedPairs && out.MedianReduction != nil && *out.MedianReduction >= 0.10-1e-12:
+	case out.Candidate.Successes == out.Baseline.Successes && out.Candidate.Successes > 0 && out.ComparablePairs == out.ExpectedPairs && out.SavingThreshold == nil:
+		out.Reason = "equal success, but the baseline passed in fewer than two repeats, so the token noise was not measured"
+	case out.Candidate.Successes == out.Baseline.Successes && out.Candidate.Successes > 0 && out.ComparablePairs == out.ExpectedPairs && out.PassingReduction != nil && *out.PassingReduction >= *out.SavingThreshold-1e-12:
 		out.Gate = "pass"
-		out.Reason = "equal success and at least 10 percent reduction between comparable model-token medians"
+		out.Reason = fmt.Sprintf("equal success and a %.1f percent reduction between passing model-token medians, above the %.1f percent threshold",
+			100**out.PassingReduction, 100**out.SavingThreshold)
+	case out.Candidate.Successes == out.Baseline.Successes && out.Candidate.Successes > 0 && out.ComparablePairs == out.ExpectedPairs && out.PassingReduction != nil:
+		out.Reason = fmt.Sprintf("equal success, but the %.1f percent reduction between passing model-token medians is below the %.1f percent threshold (the baseline's own movement between repeats, or 10 percent)",
+			100**out.PassingReduction, 100**out.SavingThreshold)
 	default:
 		out.Reason = "insufficient comparable usage or improvement"
 	}
@@ -208,4 +248,27 @@ func taskTokens(t report.TaskUsage) (int64, bool) {
 		known = known && k && !e && a.Usage != nil && a.Usage.Status == "reported"
 	}
 	return n, known
+}
+
+// movement is the range of the per-repeat medians over their mean, for the
+// repeats that have any; fewer than two repeats measure nothing.
+func movement(byRepeat map[int][]float64) (float64, bool) {
+	var medians []float64
+	for _, v := range byRepeat {
+		if len(v) > 0 {
+			medians = append(medians, report.Median(v))
+		}
+	}
+	if len(medians) < 2 {
+		return 0, false
+	}
+	lo, hi, sum := medians[0], medians[0], 0.0
+	for _, m := range medians {
+		lo, hi, sum = min(lo, m), max(hi, m), sum+m
+	}
+	mean := sum / float64(len(medians))
+	if mean == 0 {
+		return 0, false
+	}
+	return (hi - lo) / mean, true
 }

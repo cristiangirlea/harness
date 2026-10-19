@@ -1,9 +1,9 @@
 // name: tool-shapes-main
-// summary: Measure recorded tool output and repeated inline scripts without exposing text.
+// summary: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
 // effects: read, exec
-// parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true
+// parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true; --definitions:bool=false
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 28d7a78f2d8a8dca670aac738a0a7bd898811ee446455422a215bc05e4f7ea9b
+// hash: 128d060e01c141fbd10a62a381f88a78753f88e10835c26473a73f02c04bc9ee
 package main
 
 import (
@@ -35,7 +35,7 @@ func shellTool(tool string) bool {
 
 func classify(text, tool string) string {
 	text = strings.TrimSpace(text)
-	if testLine.MatchString(text) {
+	if testLine.MatchString(text) || testEvents(text) {
 		return "test"
 	}
 	if logLine.MatchString(text) {
@@ -58,6 +58,24 @@ func classify(text, tool string) string {
 	return "other"
 }
 
+// testEvents reports `go test -json` output: every non-empty line is an object with an Action.
+func testEvents(text string) bool {
+	found := false
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var e struct{ Action *string }
+		if json.Unmarshal([]byte(line), &e) != nil || e.Action == nil {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+var inlineLabels = []string{"heredoc", "python", "node", "perl", "go"}
 var interpreter = regexp.MustCompile(`(?:^\s*|[;|&\n]\s*|\b(?:sudo|env)\s+)(python3?|node|perl)\s+(-c|-e)(?:\s|$)`)
 var goTemp = regexp.MustCompile(`(?i)(?:^\s*|[;|&\n]\s*)go\s+run\s+["']?(?:[^\s"']*[/\\](?:tmp|temp)[/\\]|\$\{?TMPDIR\}?[/\\]|\$\{?TEMP\}?[/\\]|%TEMP%[/\\])[^\s"']*\.go\b`)
 
@@ -112,6 +130,7 @@ type group struct {
 type stats struct {
 	Shapes                []shape  `json:"shapes"`
 	InlineScripts         []group  `json:"inline_scripts"`
+	InlineTotals          []group  `json:"inline_script_totals"`
 	ToolResultBytes       int64    `json:"tool_result_bytes"`
 	InputTokens           int64    `json:"input_plus_cache_read_tokens"`
 	InlineBytes           int64    `json:"inline_script_bytes"`
@@ -135,6 +154,7 @@ type report struct {
 		WithTokens int `json:"with_tokens"`
 		Unreadable int `json:"skipped_unreadable"`
 	} `json:"runs"`
+	calls callContexts
 }
 type event struct {
 	Kind  string          `json:"kind"`
@@ -142,8 +162,9 @@ type event struct {
 	Text  string          `json:"text"`
 	Input json.RawMessage `json:"input"`
 	Usage *struct {
-		Input int64 `json:"input_tokens"`
-		Cache int64 `json:"cache_read_tokens"`
+		Input      int64 `json:"input_tokens"`
+		Cache      int64 `json:"cache_read_tokens"`
+		CacheWrite int64 `json:"cache_write_tokens"`
 	} `json:"usage"`
 }
 
@@ -151,6 +172,9 @@ func newStats() *stats {
 	s := &stats{InlineScripts: []group{}, groups: map[string]*group{}}
 	for _, name := range shapeNames {
 		s.Shapes = append(s.Shapes, shape{Shape: name})
+	}
+	for _, name := range inlineLabels {
+		s.InlineTotals = append(s.InlineTotals, group{Shape: name})
 	}
 	return s
 }
@@ -276,6 +300,16 @@ func (s *stats) add(events []event, tokens *int64, turns int) {
 				g.Runs++
 				seen[key] = true
 			}
+			for i := range s.InlineTotals {
+				if total := &s.InlineTotals[i]; total.Shape == label {
+					total.Count++
+					total.Bytes += int64(len(command))
+					if !seen[label] {
+						total.Runs++
+						seen[label] = true
+					}
+				}
+			}
 		}
 	}
 }
@@ -369,11 +403,12 @@ func measure(home string, days int, now time.Time) (*report, error) {
 		}
 		dir := filepath.Join(home, "runs", name)
 		type totals struct {
-			Status  string `json:"status"`
-			Backend string `json:"backend"`
-			Input   *int64 `json:"input_tokens"`
-			Cache   int64  `json:"cache_read_tokens"`
-			Turns   int    `json:"turns"`
+			Status     string `json:"status"`
+			Backend    string `json:"backend"`
+			Input      *int64 `json:"input_tokens"`
+			Cache      int64  `json:"cache_read_tokens"`
+			CacheWrite int64  `json:"cache_write_tokens"`
+			Turns      int    `json:"turns"`
 		}
 		var result struct {
 			totals
@@ -405,7 +440,8 @@ func measure(home string, days int, now time.Time) (*report, error) {
 			continue
 		}
 		var task struct {
-			Backend string `json:"backend"`
+			Backend string   `json:"backend"`
+			MCP     []string `json:"mcp"`
 		}
 		if readJSON(filepath.Join(dir, "task.json"), &task) != nil {
 			r.Runs.Unreadable++
@@ -451,6 +487,7 @@ func measure(home string, days int, now time.Time) (*report, error) {
 		if tokenFigure != nil {
 			r.Runs.WithTokens++
 		}
+		r.calls.add(backend, len(task.MCP) > 0, events, tokenFigure, result.CacheWrite, result.Turns)
 		r.stats.add(events, tokenFigure, result.Turns)
 		if backend == "claude" && hasCalls {
 			r.Claude.add(events, tokenFigure, result.Turns)
@@ -498,16 +535,21 @@ func options(args []string) (string, int, error) {
 	return home, days, nil
 }
 func main() {
-	home, days, err := options(os.Args[1:])
+	defs, args := definitionsFlag(os.Args[1:])
+	home, days, err := options(args)
 	var r *report
 	if err == nil {
 		r, err = measure(home, days, time.Now())
+	}
+	var out any = r
+	if err == nil && defs {
+		out, err = definitions(r, days)
 	}
 	if err != nil {
 		_ = json.NewEncoder(os.Stderr).Encode(map[string]string{"error": err.Error()})
 		os.Exit(1)
 	}
-	if err = json.NewEncoder(os.Stdout).Encode(r); err != nil {
+	if err = json.NewEncoder(os.Stdout).Encode(out); err != nil {
 		fmt.Fprintln(os.Stderr, `{"error":"cannot write report"}`)
 		os.Exit(1)
 	}

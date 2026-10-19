@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/route"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -181,7 +183,7 @@ func TestRunChecksLimitsOnTheRoutedBackend(t *testing.T) {
 	}
 	<-recorded
 	recs, err := runlog.List(1)
-	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].RoutedBy == nil {
+	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].Task.Model != "" || recs[0].Task.Effort != "" || recs[0].RoutedBy != nil {
 		t.Fatalf("limit after routing: %+v %v", recs, err)
 	}
 }
@@ -221,6 +223,23 @@ func TestRunUsesRoutingAndKeepsNamedModel(t *testing.T) {
 				t.Fatalf("route: %+v %+v", task, recs[0])
 			}
 		})
+	}
+}
+
+func TestRunRoutesByTheDeclaredPurpose(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := route.Save(route.Table{"implement": {Backend: "stub-cmd-b"}, "review": {Backend: "stub-cmd", Model: "routed"}}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"--no-switch", "--purpose", "review", "-C", t.TempDir(), "Implement a widget"})
+	if code != 0 || err != nil {
+		t.Fatalf("run: %d %v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "stub-cmd" || recs[0].RoutedBy == nil || recs[0].RoutedBy.Category != "review" || !recs[0].RoutedBy.Declared {
+		t.Fatalf("declared purpose did not route: %+v %v", recs, err)
 	}
 }
 
@@ -278,8 +297,8 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the backend was never run")
 	}
-	if task.Prompt != "hello world" {
-		t.Errorf("prompt = %q", task.Prompt)
+	if !strings.HasPrefix(task.Prompt, "# How to commit\n\n") || !strings.HasSuffix(task.Prompt, "\n\nhello world") {
+		t.Errorf("prompt = %q, want the commit block, then the prompt", task.Prompt)
 	}
 	for name, ok := range map[string]bool{
 		"mode":             task.Mode == agent.ModeAuto,
@@ -361,7 +380,9 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", dir, "--mode", "auto", "-m", "stub-model", "first"}); code != 0 || err != nil {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
-	<-recorded
+	if task := <-recorded; strings.Contains(task.Prompt, "fix round") {
+		t.Errorf("a first run is told it is a fix round:\n%s", task.Prompt)
+	}
 	recs, err := runlog.List(1)
 	if err != nil || len(recs) != 1 {
 		t.Fatalf("recs=%+v err=%v", recs, err)
@@ -380,6 +401,9 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	if !strings.Contains(task.Prompt, "--- request\n> first\n--- answer\n> done") || !strings.HasSuffix(task.Prompt, "second") {
 		t.Errorf("prompt:\n%s", task.Prompt)
 	}
+	if !strings.HasPrefix(task.Prompt, "# How to commit\n\n") || !strings.Contains(task.Prompt, "\nThis is a fix round: one review, one commit; every fix from this review goes into one commit.\n") {
+		t.Errorf("a continued run should get the commit block with the fix-round line:\n%s", task.Prompt)
+	}
 
 	// The stub saves no session, so the same backend has nothing to resume.
 	if code, err := cmdRun([]string{"--continue", first, "x"}); code != 2 || err == nil || !strings.Contains(err.Error(), "no saved conversation") {
@@ -387,10 +411,28 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	}
 }
 
-func TestContinueCopiesTheEarlierRunsOriginals(t *testing.T) {
+func TestRunsMasksPromptExcerpts(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("fake", agent.Task{Prompt: "API_KEY=fake-runs-secret task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdRuns(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); strings.Contains(got, "fake-runs-secret") || !strings.Contains(got, "API_KEY=•••• task") {
+		t.Fatalf("runs did not mask the prompt:\n%s", got)
+	}
+}
+
+func TestContinueInheritsThePurposeUnlessTheFlagOrHeaderNamesOne(t *testing.T) {
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())
-	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "first"}); code != 0 || err != nil {
+	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "--purpose", "review", "first"}); code != 0 || err != nil {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
 	<-recorded
@@ -398,24 +440,41 @@ func TestContinueCopiesTheEarlierRunsOriginals(t *testing.T) {
 	if err != nil || len(recs) != 1 {
 		t.Fatalf("recs=%+v err=%v", recs, err)
 	}
-	const text, handle = "abc", "ba7816bf8f01cfea" // the SHA-256 prefix of text
-	originals := filepath.Join(runlog.Root(), recs[0].ID, "originals")
-	if err := os.MkdirAll(originals, 0o755); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"now fix what you found"}, "review"},
+		{[]string{"--purpose", "debug", "now fix what you found"}, "debug"},
+		{[]string{"Purpose: test\nnow fix what you found"}, "test"},
+	} {
+		args := append([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b"}, tc.args...)
+		if code, err := cmdRun(args); code != 0 || err != nil {
+			t.Fatalf("%q: code=%d err=%v", tc.args, code, err)
+		}
+		if task := <-recorded; task.Purpose != tc.want {
+			t.Errorf("%q: purpose = %q, want %q", tc.args, task.Purpose, tc.want)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(originals, handle+".txt"), []byte(text), 0o644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"task.json", "result.json"} {
+		path := filepath.Join(runlog.Root(), recs[0].ID, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad := regexp.MustCompile(`("purpose":\s*)"review"`).ReplaceAll(data, []byte(`$1"Bogus"`))
+		if err := os.WriteFile(path, bad, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if code, err := cmdRun([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b", "second"}); code != 0 || err != nil {
+	if rec, err := runlog.Load(recs[0].ID); err != nil || rec.Task.Purpose != "Bogus" {
+		t.Fatalf("stored purpose = %q, err=%v", rec.Task.Purpose, err)
+	}
+	if code, err := cmdRun([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b", "again"}); code != 0 || err != nil {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
-	<-recorded
-	next, err := runlog.List(1)
-	if err != nil || len(next) != 1 || next[0].ID == recs[0].ID {
-		t.Fatalf("recs=%+v err=%v", next, err)
-	}
-	if data, err := os.ReadFile(filepath.Join(runlog.Root(), next[0].ID, "originals", handle+".txt")); err != nil || string(data) != text {
-		t.Fatalf("the continued run cannot read the earlier original: %q %v", data, err)
+	if task := <-recorded; task.Purpose != "" {
+		t.Errorf("an invalid stored purpose was inherited: %q", task.Purpose)
 	}
 }
 
@@ -460,5 +519,33 @@ func TestShowMasksHumanOutputOnly(t *testing.T) {
 		} else if strings.Contains(got, "fake-show-secret") || strings.Contains(got, "sk-test-show-secret") || !strings.Contains(got, "••••") {
 			t.Fatal("show did not mask")
 		}
+	}
+}
+
+func TestContinueWithRetrievalOnAnotherBackendThanThePinIsRefusedBeforeItRuns(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := t.TempDir()
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := &retrieval.Record{Mode: "required", Scope: retrieval.Scope{Backend: "api", Model: "m"}, Packet: &retrieval.Packet{VersionID: "kv-7"}}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK, Final: "a", Retrieval: pin}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "-m", "m", "--retrieval", "required",
+		"--retrieval-tenant", "t", "--retrieval-project", "p", "--retrieval-revision", "r", "x"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "kv-7") || !strings.Contains(err.Error(), "continue on api") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if recs, err := runlog.List(10); err != nil || len(recs) != 1 {
+		t.Fatalf("a refused continuation must record nothing: %d runs, %v", len(recs), err)
+	}
+	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "x"}); code != 0 || err != nil {
+		t.Fatalf("retrieval off should hand the transcript over: code=%d err=%v", code, err)
+	}
+	if task := <-recorded; !strings.Contains(task.Prompt, "--- request\n> p") {
+		t.Errorf("prompt:\n%s", task.Prompt)
 	}
 }

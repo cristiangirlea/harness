@@ -18,6 +18,7 @@ function page({ folder, permission, ignoreStop = false, script = asset('voice.js
   const downloads = [];
   const tracks = [];
   const contexts = [];
+  const nodes = [];
   let processor;
   const worklet = vm.createContext({
     AudioWorkletProcessor: class { constructor() { this.port = { postMessage: (data) => queueMicrotask(() => processor.node.port.onmessage({ data })) }; } },
@@ -37,9 +38,13 @@ function page({ folder, permission, ignoreStop = false, script = asset('voice.js
     constructor() { this.sampleRate = 48000; this.audioWorklet = { addModule: async () => {} }; contexts.push(this); }
     async resume() { this.suspended = false; }
     async suspend() { this.suspended = true; }
-    close() {}
+    close() { this.closed = true; }
     createGain() { return { gain: {}, connect() {} }; }
-    createMediaStreamSource() { return { connect: (node) => node, disconnect() {} }; }
+    createMediaStreamSource() {
+      const source = { connect: (node) => node, disconnect() { this.disconnected = true; } };
+      (this.sources ||= []).push(source);
+      return source;
+    }
     createBuffer(_, n) { return { getChannelData: () => new Float32Array(n) }; }
     createBufferSource() {
       const source = { connect() {}, start() {} };
@@ -68,16 +73,16 @@ function page({ folder, permission, ignoreStop = false, script = asset('voice.js
     } } },
     AudioContext,
     AudioWorkletNode: class {
-      constructor() { processor.node = this; this.port = { postMessage: (data) => {
+      constructor() { processor.node = this; nodes.push(this); this.port = { postMessage: (data) => {
         if (ignoreStop && data === 'stop') return;
         queueMicrotask(() => processor.port.onmessage?.({ data }));
       } }; }
-      connect() { return { connect() {} }; }
-      disconnect() {}
+      connect(next) { return next; }
+      disconnect() { this.disconnected = true; }
     },
   });
   vm.runInContext(script, sandbox);
-  return { element, document, downloads, tracks, contexts, sandbox,
+  return { element, document, downloads, tracks, contexts, nodes, sandbox,
     click: async (id) => { await element(id).click(); await tick(); },
     audio: (n, value = 0.25) => processor.process([[new Float32Array(n).fill(value)]]),
   };
@@ -257,4 +262,81 @@ test('unreadable metadata is reported and never overwritten', async () => {
   await p.click('voice-rec'); p.audio(2048); await p.click('voice-rec'); await p.click('voice-keep');
   assert.equal(writes, 0);
   assert.equal(p.downloads[0].download, '0001.wav');
+});
+
+test('a failed audio release clears the talk Stop busy state and keeps its audio', async () => {
+  const p = page(); await p.click('voice-mode-talk');
+  await p.click('voice-talk-rec'); p.audio(2048);
+  p.contexts[0].suspend = async () => { throw new Error('interrupted'); };
+  await assert.rejects(p.click('voice-talk-rec'), /interrupted/);
+  assert.equal(p.element('voice-talk-rec').disabled, false);
+  assert.equal(p.element('voice-talk-rec').textContent, 'Start');
+  assert.equal((await p.downloads[0].href.arrayBuffer()).byteLength, 44 + 2048 * 2);
+});
+
+test('a late block from the last take does not start the next one', async () => {
+  const p = page({ ignoreStop: true });
+  await p.click('voice-rec'); p.audio(2048); await p.click('voice-rec');
+  await p.click('voice-rec');
+  p.nodes[0].port.onmessage?.({ data: new Float32Array(128).fill(0.5) });
+  p.audio(2048); await p.click('voice-rec'); await p.click('voice-keep');
+  assert.equal((await p.downloads[0].href.arrayBuffer()).byteLength, 44 + 2048 * 2);
+});
+
+test('a graph that fails on a reused context leaves the playback and the next take intact', async () => {
+  const p = page();
+  await p.click('voice-rec'); p.audio(2048); await p.click('voice-rec');
+  await p.click('voice-play');
+  const c = p.contexts[0];
+  const createGain = c.createGain;
+  c.createGain = () => ({ gain: {}, connect() { throw new Error('graph'); } });
+  await p.click('voice-retake');
+  assert.match(p.element('voice-warn').textContent, /could not be opened: graph/);
+  assert.equal(c.closed, undefined);
+  assert.equal(c.suspended, false);
+  assert.equal(p.tracks[1].stopped, true);
+  assert.equal(c.sources[1].disconnected, true);
+  assert.equal(p.nodes[1].disconnected, true);
+  c.createGain = createGain;
+  await p.click('voice-retake'); p.audio(2048); await p.click('voice-rec');
+  assert.equal(p.contexts.length, 1);
+  assert.equal(p.nodes[2].port.onmessage, null);
+  await p.click('voice-keep');
+  assert.equal((await p.downloads[0].href.arrayBuffer()).byteLength, 44 + 2048 * 2);
+});
+
+test('a graph that fails on a new context closes it and the next take opens another', async () => {
+  const p = page();
+  const AudioContext = p.sandbox.AudioContext;
+  p.sandbox.AudioContext = class extends AudioContext {
+    createGain() { return { gain: {}, connect() { throw new Error('graph'); } }; }
+  };
+  await p.click('voice-rec');
+  assert.equal(p.contexts[0].closed, true);
+  p.sandbox.AudioContext = AudioContext;
+  await p.click('voice-rec'); p.audio(2048); await p.click('voice-rec');
+  assert.equal(p.contexts.length, 2);
+  assert.equal(p.contexts[1].closed, undefined);
+  await p.click('voice-keep');
+  assert.equal((await p.downloads[0].href.arrayBuffer()).byteLength, 44 + 2048 * 2);
+});
+
+test('Stop during an earlier playback lets it finish', async () => {
+  const p = page();
+  await p.click('voice-rec'); p.audio(2048); await p.click('voice-rec');
+  await p.click('voice-play');
+  await p.click('voice-retake'); p.audio(2048); await p.click('voice-rec');
+  assert.equal(p.tracks[1].stopped, true);
+  assert.equal(p.contexts[0].suspended, false);
+  p.contexts[0].playbacks[0].onended();
+  assert.equal(p.contexts[0].suspended, true);
+});
+
+test('a graph that fails on a reused idle context suspends it again', async () => {
+  const p = page();
+  await p.click('voice-rec'); p.audio(2048); await p.click('voice-rec');
+  p.contexts[0].createGain = () => ({ gain: {}, connect() { throw new Error('graph'); } });
+  await p.click('voice-retake');
+  assert.equal(p.contexts[0].closed, undefined);
+  assert.equal(p.contexts[0].suspended, true);
 });

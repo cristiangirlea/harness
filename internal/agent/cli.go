@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -73,9 +74,12 @@ type CLIBackend struct {
 	// mapsCompact is set when args honours Options.CompactWindow; like
 	// mapsLean, not a capability.
 	mapsCompact bool
-	// limits is set when the CLI bills to a plan and says in words that its
-	// usage limit was reached (usageLimit knows the words): such a run ends
-	// limited rather than in an error.
+	// mapsSystemPrompt and mapsNoSkills: args honours AppendSystemPrompt and NoSkills.
+	mapsSystemPrompt bool
+	mapsNoSkills     bool
+	// limits is set when the CLI bills to a plan and says, in a way usageLimit
+	// knows, that its usage limit was reached: such a run ends limited rather
+	// than in an error.
 	limits bool
 }
 
@@ -83,6 +87,12 @@ func (c *CLIBackend) Name() string { return c.name }
 
 // AppliesLean reports whether this CLI honours Options.Lean (see AppliesLean).
 func (c *CLIBackend) AppliesLean() bool { return c.mapsLean }
+
+// AppliesSystemPrompt reports whether this CLI honours Options.AppendSystemPrompt.
+func (c *CLIBackend) AppliesSystemPrompt() bool { return c.mapsSystemPrompt }
+
+// AppliesNoSkills reports whether this CLI honours Options.NoSkills.
+func (c *CLIBackend) AppliesNoSkills() bool { return c.mapsNoSkills }
 
 func (c *CLIBackend) Capabilities() Capabilities {
 	caps := Capabilities{Modes: append([]Mode{}, c.mapsModes...), Efforts: []string{}, Sessions: "none", Options: []string{}}
@@ -119,6 +129,12 @@ func (c *CLIBackend) ForksSessions() bool { return c.forks }
 
 var sessionID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
 
+var modelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,127}$`)
+
+// ValidModel reports whether model may become a CLI argument: cmd.exe, which runs
+// the npm .cmd shims, does not neutralise &, |, ^, % or quotes, and a dash is a flag.
+func ValidModel(model string) bool { return modelID.MatchString(model) }
+
 // ForksSessions reports whether b honours Task.ForkSession.
 func ForksSessions(b Backend) bool {
 	f, ok := b.(interface{ ForksSessions() bool })
@@ -131,6 +147,11 @@ func (c *CLIBackend) Detect() (string, error) {
 	}
 	if c.candidates != nil {
 		for _, p := range c.candidates() {
+			// A relative candidate (an unset HOME, APPDATA or LOCALAPPDATA) would
+			// resolve against the working directory, the task's workspace.
+			if !filepath.IsAbs(p) {
+				continue
+			}
 			if _, err := os.Stat(p); err == nil {
 				return p, nil
 			}
@@ -168,10 +189,17 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if task.ForkSession != "" && !sessionID.MatchString(task.ForkSession) {
 		return fail(StatusError, fmt.Errorf("session id %q is not one the %s CLI issues", task.ForkSession, c.name))
 	}
+	if task.Model != "" && !ValidModel(task.Model) {
+		return fail(StatusError, fmt.Errorf("model %q is not a model id", task.Model))
+	}
 
 	bin, err := c.Detect()
 	if err != nil {
 		return fail(StatusError, err)
+	}
+	// cmd.exe, which runs an npm .cmd shim, would read &, |, % and newlines in free text as its own syntax.
+	if task.AppendSystemPrompt != "" && c.mapsSystemPrompt && isBatchFile(bin) {
+		return fail(StatusError, fmt.Errorf("append_system_prompt cannot be passed safely through %s; install the native %s CLI", filepath.Base(bin), c.name))
 	}
 	var promptFile string
 	if !c.promptStdin {
@@ -192,7 +220,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	cmd.Dir = task.Dir
 	// A nested Claude Code session refuses to start when it thinks it is
 	// inside another one.
-	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
+	cmd.Env = gitenv.WithoutRepoVars(withoutEnv(os.Environ(), "CLAUDECODE"))
 	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
 	guarded := !task.AllowDangerous
 	var withheld []string
@@ -221,7 +249,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, err)
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("%s %s", filepath.Base(bin), strings.Join(shownArgs(cmd.Args[1:]), " "))})
-	if limits := unenforced(task, c.mapsEffort, c.mapsLean, c.mapsCompact); len(limits) > 0 {
+	if limits := unenforced(task, c); len(limits) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
@@ -269,8 +297,11 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		parse = c.newParse()
 	}
 	var errored bool
+	var lastErr string
 	parseEmit := func(e Event) {
-		errored = errored || e.Kind == EventError
+		if e.Kind == EventError {
+			errored, lastErr = true, e.Text
+		}
 		emit(e)
 	}
 	for sc.Scan() {
@@ -300,6 +331,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		text := string(line) + "\n"
 		plain.WriteString(text)
 		emit(Event{Kind: EventText, Text: text, Partial: true})
+	}
+	if c.newParse != nil && c.finalize == nil {
+		parse(nil, parseEmit, &res) // a parser holding a line back lets it go
 	}
 	_, _ = io.Copy(io.Discard, stdout)
 	waitErr := cmd.Wait()
@@ -333,7 +367,12 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		if res.Status != "" && res.Status != StatusOK {
 			status = res.Status
 		}
-		return fail(status, errors.New(lastLines(msg, 20)))
+		if msg = lastLines(msg, 20); msg == lastErr {
+			// The stream's last error event already said it.
+			res.Status, res.Error = status, msg
+			return finish(&res, started)
+		}
+		return fail(status, errors.New(msg))
 	default:
 		if c.end != nil {
 			c.end(emit, &res, errored)
@@ -391,15 +430,25 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// appData joins parts under %APPDATA%, or returns "" when APPDATA is not an
+// absolute path: a relative candidate would resolve against the working
+// directory, which for a run is the task's workspace.
 func appData(parts ...string) string {
-	return filepath.Join(append([]string{os.Getenv("APPDATA")}, parts...)...)
+	root := os.Getenv("APPDATA")
+	if !filepath.IsAbs(root) {
+		return ""
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func npmShim(name string) []string {
 	if runtime.GOOS != "windows" {
 		return nil
 	}
-	return []string{appData("npm", name+".cmd")}
+	if shim := appData("npm", name+".cmd"); shim != "" {
+		return []string{shim}
+	}
+	return nil
 }
 
 func init() {
@@ -434,6 +483,10 @@ func (c *CLIBackend) guardLine(withheld []string) string {
 func shownArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
+		if text, ok := strings.CutPrefix(args[i], appendSystemPromptFlag+"="); ok {
+			out = append(out, fmt.Sprintf("%s=<%d bytes>", appendSystemPromptFlag, len(text)))
+			continue
+		}
 		out = append(out, args[i])
 		if args[i] != "--disallowedTools" {
 			continue
@@ -446,4 +499,10 @@ func shownArgs(args []string) []string {
 		out = append(out, fmt.Sprintf("<%d guard rules>", n))
 	}
 	return out
+}
+
+// isBatchFile reports whether bin runs through cmd.exe.
+func isBatchFile(bin string) bool {
+	ext := strings.ToLower(filepath.Ext(bin))
+	return ext == ".cmd" || ext == ".bat"
 }
