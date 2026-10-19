@@ -43,6 +43,10 @@ type Workspace struct {
 	AllowDangerous bool
 	// Commands use Root; confinement needs its junction target.
 	real string
+	// Bytes of originals in this run and in every run, measured at the first
+	// store and kept under originalWrites.
+	originalsSeen              bool
+	originalsRun, originalsAll int64
 }
 
 func NewWorkspace(dir string) (*Workspace, error) {

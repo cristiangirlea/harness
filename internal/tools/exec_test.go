@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -78,5 +80,18 @@ func TestFullCaptureKeepsExactlyTheCeilingAndDropsOneByteMore(t *testing.T) {
 		if dropped := extra > 0; b.fullDropped != dropped || (got == text) == dropped {
 			t.Fatalf("%d bytes: dropped=%v, whole=%v", len(text), b.fullDropped, got == text)
 		}
+	}
+}
+
+func TestRunShellReportsAWaitErrorAsAWaitFailure(t *testing.T) {
+	old := waitShell
+	t.Cleanup(func() { waitShell = old })
+	waitShell = func(cmd *exec.Cmd) error {
+		_ = cmd.Wait()
+		return errors.New("pipe broke")
+	}
+	_, err := RunShell(context.Background(), t.TempDir(), "echo hi", 0, nil)
+	if !errors.Is(err, ErrWait) || !strings.Contains(err.Error(), "pipe broke") {
+		t.Fatalf("err = %v, want a wait failure", err)
 	}
 }

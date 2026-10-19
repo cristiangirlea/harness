@@ -227,6 +227,23 @@ func TestSummarizeCountsUnchangedPassesAndToolCalls(t *testing.T) {
 	}
 }
 
+func TestSummarizeCountsCellsWhoseAgentCommittedOnItsOwn(t *testing.T) {
+	spec := Spec{Matrix: []Variant{{Backend: "ev-ok"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	att := func(own bool) []batch.Attempt {
+		return []batch.Attempt{{Result: agent.Result{Status: agent.StatusOK, ToolCalls: 2}, AgentCommitted: own}}
+	}
+	res := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "e.a.ev-ok.r1", Status: batch.StatusPass, Commit: "abc", Attempts: att(true)},
+		{ID: "e.a.ev-ok.r2", Status: batch.StatusPass, Commit: "def", Attempts: att(false)},
+		{ID: "e.a.ev-ok.r3", Status: batch.StatusFail, Commit: "123", Attempts: att(true)},
+	}}
+	row := Summarize(spec, res, nil).Variants[0]
+	if row.AgentCommitted != 2 || row.Unchanged != 0 {
+		t.Errorf("row = %+v: two cells committed on their own, none is unchanged", row)
+	}
+}
+
 func TestSummarizeLeavesUnknownCostsOutOfTheTotalAndMedian(t *testing.T) {
 	spec := Spec{Matrix: []Variant{{Backend: "codex"}, {Backend: "claude"}}}
 	spec.Tasks = []batch.Task{{ID: "a"}}
