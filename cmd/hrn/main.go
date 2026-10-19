@@ -85,6 +85,8 @@ Usage:
   hrn eval show <eval-id>         reprint a saved eval
   hrn eval list [-n N]            list saved evals, newest first
   hrn eval diff [--json] <a> <b>  two evals side by side: did the change help
+  hrn eval setup [--base REF] <eval.json>
+                                 the same tasks with the base's setup files and this branch's: did the setup change help
   hrn route show                 show purpose routing rows
   hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]
                                  replace a routing row by hand
@@ -801,6 +803,9 @@ func cmdEval(args []string) (int, error) {
 		}
 		printEvalDiff(newRenderer(false), d)
 		return 0, nil
+	}
+	if len(args) >= 1 && args[0] == "setup" {
+		return cmdEvalSetup(args[1:])
 	}
 	if len(args) >= 1 && args[0] == "show" {
 		if len(args) != 2 {
