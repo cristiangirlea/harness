@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 // Config is the on-disk format, shared with Claude Code's .mcp.json and the
@@ -27,6 +29,7 @@ type configEntry struct {
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // DefaultConfigPath is $HRN_HOME/mcp.json, or ~/.hrn/mcp.json.
@@ -118,7 +121,10 @@ func LoadConfigs(paths []string) (servers []ServerConfig, skipped []string, err 
 }
 
 // Remote is a server reached by URL, which hrn's own client skips.
-type Remote struct{ Name, URL string }
+type Remote struct {
+	Name, URL, Type string
+	Headers         bool
+}
 
 // LoadRemotes returns the url servers of paths, by name within each file; a
 // later file overrides an earlier server of the same name.
@@ -143,7 +149,8 @@ func LoadRemotes(paths []string) ([]Remote, error) {
 			if cfg.Servers[name].URL == "" {
 				continue
 			}
-			r := Remote{Name: name, URL: expand(cfg.Servers[name].URL)}
+			e := cfg.Servers[name]
+			r := Remote{Name: name, URL: expand(e.URL), Type: e.Type, Headers: len(e.Headers) > 0}
 			if i, ok := index[name]; ok {
 				out[i] = r
 				continue
@@ -156,6 +163,7 @@ func LoadRemotes(paths []string) ([]Remote, error) {
 }
 
 // expand substitutes ${VAR} and ${VAR:-default}; anything else is literal.
+// hrn's own secrets read as unset, so a config cannot copy one under another name.
 func expand(s string) string {
 	var b strings.Builder
 	for {
@@ -171,7 +179,7 @@ func expand(s string) string {
 		}
 		b.WriteString(s[:i])
 		name, def, hasDef := strings.Cut(s[i+2:i+j], ":-")
-		if v, ok := os.LookupEnv(name); ok && v != "" {
+		if v, ok := os.LookupEnv(name); ok && v != "" && len(retrieval.ExecutorEnv([]string{name + "="})) == 1 {
 			b.WriteString(v)
 		} else if hasDef {
 			b.WriteString(def)

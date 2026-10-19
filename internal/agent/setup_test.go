@@ -192,6 +192,20 @@ func TestSetupOptionsCountOnlyWhereTheBackendAppliesThem(t *testing.T) {
 	if s := ResolveSetup("codex", task); s.Digest != plain.Digest {
 		t.Fatalf("options codex ignores changed its digest")
 	}
+	mcpCfg := filepath.Join(t.TempDir(), "extra.json")
+	writeTree(t, filepath.Dir(mcpCfg), map[string]string{"extra.json": `{"mcpServers": {"extra": {"url": "https://example.test"}}}`})
+	task = Task{Dir: dir}
+	task.MCP = []string{mcpCfg}
+	if s := ResolveSetup("codex", task); s.Digest == plain.Digest || !slices.Contains(s.MCP, "extra") {
+		t.Fatalf("a run MCP config on codex: digest changed %v, mcp %v", s.Digest != plain.Digest, s.MCP)
+	}
+	claude := Task{Dir: dir}
+	claude.NoSkills = true
+	both := claude
+	both.Skills = Bool(true)
+	if ResolveSetup("claude", both).Digest != ResolveSetup("claude", claude).Digest {
+		t.Fatalf("skills beside no_skills starts claude the same way but changed its digest")
+	}
 	task = Task{Dir: dir}
 	task.Lean = Bool(false)
 	if s := ResolveSetup("codex", task); s.Digest == plain.Digest {

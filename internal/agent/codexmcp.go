@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -13,10 +14,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/mcp"
 )
 
-// codexMCPArgs are the -c overrides that give a codex run the run's --mcp
-// servers and, when lean, none of the servers in the user's config.toml.
-// codex merges -c mcp_servers={} rather than replacing it, and refuses a
-// plugin's server or a quoted name by name, so only config.toml's bare ones go.
+// codexMCPArgs gives a codex run its --mcp servers and, when lean, none of config.toml's.
+// codex merges -c mcp_servers={} and refuses a plugin's or quoted name, so bare names are disabled one by one.
 func codexMCPArgs(t Task) []string {
 	// A config that does not load is reported by codexMCPEnv before the start.
 	servers, _, _ := mcp.LoadConfigs(t.MCP)
@@ -33,7 +32,7 @@ func codexMCPArgs(t Task) []string {
 		a = append(a, "-c", "mcp_servers."+name+"."+field+"="+value)
 	}
 	if t.IsLean() {
-		for _, name := range codexConfigServers(codexConfigPath()) {
+		for _, name := range codexConfigServers(codexConfigPath(t.Dir)) {
 			if !ours[name] && isBareKey(name) {
 				set(name, "enabled", "false")
 			}
@@ -82,6 +81,11 @@ func codexMCPEnv(t Task) ([]string, error) {
 			return nil, fmt.Errorf("mcp server %q: codex takes only names of letters, digits, '_' and '-'", name)
 		}
 	}
+	for _, r := range remotes {
+		if r.Headers || r.Type == "sse" {
+			return nil, fmt.Errorf("mcp server %s: codex is passed only a url, so its headers or sse transport would be dropped", r.Name)
+		}
+	}
 	type setBy struct{ value, server string }
 	vars := map[string]setBy{}
 	for _, s := range servers {
@@ -89,10 +93,21 @@ func codexMCPEnv(t Task) ([]string, error) {
 			if k == "" || strings.Contains(k, "=") {
 				return nil, fmt.Errorf("mcp %s: %q is not an environment variable name", s.Name, k)
 			}
-			if prev, ok := vars[k]; ok && prev.value != s.Env[k] {
+			if len(agentEnv([]string{k + "="})) == 0 {
+				return nil, fmt.Errorf("mcp %s: hrn keeps %s out of an agent's environment, and codex would get it too", s.Name, k)
+			}
+			// The value lands in codex's own environment too, so it must not change one codex relies on.
+			if have, ok := os.LookupEnv(k); ok && have != s.Env[k] {
+				return nil, fmt.Errorf("mcp %s: %s is already set in hrn's environment to another value; codex starts its servers with its own environment", s.Name, k)
+			}
+			key := k
+			if runtime.GOOS == "windows" {
+				key = strings.ToUpper(k)
+			}
+			if prev, ok := vars[key]; ok && prev.value != s.Env[k] {
 				return nil, fmt.Errorf("mcp servers %s and %s set %s differently; codex starts them with one environment", prev.server, s.Name, k)
 			}
-			vars[k] = setBy{s.Env[k], s.Name}
+			vars[key] = setBy{s.Env[k], s.Name}
 		}
 	}
 	env := make([]string, 0, len(vars))
@@ -102,9 +117,12 @@ func codexMCPEnv(t Task) ([]string, error) {
 	return env, nil
 }
 
-// codexConfigPath is where codex reads its user config.
-func codexConfigPath() string {
+// codexConfigPath is where codex, started in dir, reads its user config.
+func codexConfigPath(dir string) string {
 	if h := os.Getenv("CODEX_HOME"); h != "" {
+		if !filepath.IsAbs(h) {
+			h = filepath.Join(dir, h)
+		}
 		return filepath.Join(h, "config.toml")
 	}
 	home, err := os.UserHomeDir()

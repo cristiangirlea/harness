@@ -62,15 +62,15 @@ never file contents:
   checkout); any other maps to `outside` and is not hashed, since the hash of a guessable
   secret would confirm it.
 - `mcp`, `plugins`, `skills`: the names of the run's MCP servers (its `mcp` configs, only
-  the stdio ones on api; for claude also the project's `.mcp.json` and the user-wide and
+  the stdio ones on api, all of them on codex; for claude also the project's `.mcp.json` and the user-wide and
   this project's servers in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`), of
   which only the names are read, listed whether or not `lean` keeps them from starting), the plugins the claude settings turn on
   (local over project over user), and the claude skills present. claude.ai connectors are
   not visible locally and are not listed.
 - `base_digest`: a sha256 over all of the above; `digest`: the same plus the harness
   options the backend applies (`append_system_prompt` on api and claude, `retrieval` with
-  its version on every backend, `no_instructions` and `shape_tools` on api, `no_skills` and
-  `lean` on claude). Options do not remove names or files: they count in `digest` only, so
+  its version on every backend, `no_instructions` and `shape_tools` on api, `no_skills` on claude,
+  `lean` on claude and codex, and `skills` on a lean claude run without `no_skills`). Options do not remove names or files: they count in `digest` only, so
   runs that differ only by those options share `base_digest`.
 - `truncated`: set when the scan stopped at 500 files; files past the cap are not covered.
 

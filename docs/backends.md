@@ -158,18 +158,21 @@ either. `--lean=false` passes no overrides, and
 
 The run's `--mcp` files (Claude Code's `.mcp.json` format) reach codex as `-c` overrides on
 any run: a stdio server as `mcp_servers.<name>.command` and `.args` (an empty `args` too), a
-server with a `url` as `mcp_servers.<name>.url` (its `headers` are not passed), each with
+server with a `url` as `mcp_servers.<name>.url`, each with
 `.enabled=true`, since the overrides merge into a `config.toml` server of the same name. A
-run server whose name is not a bare key is refused before codex starts. `${VAR}` expands as
+run server whose name is not a bare key is refused before codex starts, and so is a url
+server with `headers` or `"type": "sse"`, since codex is passed only its url. `${VAR}` expands as
 for the api backend. Environment values never go on the command line, where the process list
 and the run's start line would show them: hrn sets them in codex's own environment and names
 them in `mcp_servers.<name>.env_vars`, which codex passes on to the server. They pass hrn's
 guard like the rest of that environment: a secret-named variable is withheld and the guard's
 own variables (`GIT_CONFIG_COUNT`, `GH_CONFIG_DIR` and the others) keep the guard's values.
 Two servers that set one variable to different values are refused, since codex has one
-environment for all of them. A server's `command`, `args` and `url` are on codex's command
-line, where the process list shows them, so keep secrets in `env`; the run's start line shows
-them as `<hidden>`.
+environment for all of them, and so is a server variable that hrn's own environment already
+holds with another value, since codex itself would run with it. Values in `env` are kept off
+the command line, not from the agent: codex's shell commands can read them. A server's
+`command`, `args` and `url` are on codex's command line, where the process list shows them;
+the run's start line shows them as `<hidden>`.
 
 gemini, opencode and agy load what they always load; they say `lean: not enforced` only when
 a run asks for lean explicitly, and the api loop never reads a CLI's settings.

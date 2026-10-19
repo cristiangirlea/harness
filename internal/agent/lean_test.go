@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -239,7 +240,7 @@ func TestCodexRefusesTwoServersThatSetOneVariableDifferently(t *testing.T) {
 func TestCodexMCPEnvIsGuardedLikeTheRestOfTheEnvironment(t *testing.T) {
 	codexHome(t, "")
 	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
-	t.Setenv("GIT_CONFIG_COUNT", "")
+	unsetenv(t, "GIT_CONFIG_COUNT", "GITHUB_TOKEN")
 	t.Setenv("HRN_TEST_WITHHELD", "withheld-token-value")
 	file := mcpFile(t, `"github":{"command":"npx","env":{"GITHUB_TOKEN":"${HRN_TEST_WITHHELD}","GIT_CONFIG_COUNT":"0"}}`)
 	b := NewCodexBackend()
@@ -293,6 +294,96 @@ func TestCodexKeepsExpandedMCPValuesOffTheStartLine(t *testing.T) {
 	}
 	if !strings.Contains(start, "mcp_servers.tool.enabled=true") {
 		t.Errorf("enabled carries no secret and stays shown: %q", start)
+	}
+}
+
+// unsetenv removes names for the test and restores them after.
+func unsetenv(t *testing.T, names ...string) {
+	t.Helper()
+	for _, n := range names {
+		t.Setenv(n, "")
+		os.Unsetenv(n)
+	}
+}
+
+func TestCodexRefusesAServerEnvThatWouldChangeCodexsOwn(t *testing.T) {
+	t.Setenv("HRN_TEST_SHARED", "hrn-value")
+	for servers, refused := range map[string]bool{
+		`"a":{"command":"x","env":{"HRN_TEST_SHARED":"other"}}`:              true,
+		`"a":{"command":"x","env":{"HRN_TEST_SHARED":"hrn-value"}}`:          false,
+		`"a":{"command":"x","env":{"HRN_TEST_SHARED":"${HRN_TEST_SHARED}"}}`: false,
+	} {
+		_, err := codexMCPEnv(Task{Options: Options{MCP: []string{mcpFile(t, servers)}}})
+		if got := err != nil && strings.Contains(err.Error(), "HRN_TEST_SHARED is already set"); got != refused {
+			t.Errorf("%s: refused = %v, want %v (err %v)", servers, got, refused, err)
+		}
+	}
+}
+
+func TestCodexRefusesAServerEnvThatHrnKeepsFromAgents(t *testing.T) {
+	t.Setenv("HRN_DATABASE_URL", "postgres://hrn")
+	for _, servers := range []string{
+		`"a":{"command":"x","env":{"HRN_DATABASE_URL":"${HRN_DATABASE_URL}"}}`,
+		`"a":{"command":"x","env":{"HRN_REMOTE_TOKEN":"t"}}`,
+		`"a":{"command":"x","env":{"GIT_DIR":"/somewhere"}}`,
+		`"a":{"command":"x","env":{"CLAUDECODE":"1"}}`,
+	} {
+		_, err := codexMCPEnv(Task{Options: Options{MCP: []string{mcpFile(t, servers)}}})
+		if err == nil || !strings.Contains(err.Error(), "out of an agent's environment") {
+			t.Errorf("%s: want a refusal, got %v", servers, err)
+		}
+	}
+}
+
+func TestCodexNeverGetsHrnsSecretsThroughAnExpandedValue(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_DATABASE_URL", "postgres://secret")
+	file := mcpFile(t, `"a":{"command":"x","args":["${HRN_DATABASE_URL}"],"env":{"DB":"${HRN_DATABASE_URL}"}},"r":{"url":"https://example.test/${HRN_DATABASE_URL}"}`)
+	task := Task{Options: Options{MCP: []string{file}}}
+	env, err := codexMCPEnv(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(append(env, codexMCPArgs(task)...), " "); strings.Contains(got, "secret") {
+		t.Errorf("an expanded secret reached codex: %s", got)
+	}
+}
+
+func TestCodexReadsARelativeCodexHomeFromTheRunsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "home", "config.toml"), []byte("[mcp_servers.docs]\ncommand = \"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", "home")
+	if got, want := strings.Join(codexMCPArgs(Task{Dir: dir}), " "), "-c mcp_servers.docs.enabled=false"; got != want {
+		t.Errorf("args = %q, want %q", got, want)
+	}
+}
+
+func TestCodexRefusesTwoServersThatSetOneWindowsVariableDifferently(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("environment names are case-sensitive here")
+	}
+	file := mcpFile(t, `"a":{"command":"x","env":{"HRN_TEST_CASE":"1"}},"b":{"command":"y","env":{"hrn_test_case":"2"}}`)
+	if _, err := codexMCPEnv(Task{Options: Options{MCP: []string{file}}}); err == nil || !strings.Contains(err.Error(), "differently") {
+		t.Errorf("want a refusal, got %v", err)
+	}
+}
+
+func TestCodexRefusesARemoteServerWhoseHeadersOrTransportWouldBeDropped(t *testing.T) {
+	for servers, refused := range map[string]bool{
+		`"r":{"url":"https://example.test","headers":{"Authorization":"Bearer x"}}`: true,
+		`"r":{"type":"sse","url":"https://example.test"}`:                           true,
+		`"r":{"type":"http","url":"https://example.test"}`:                          false,
+		`"r":{"url":"https://example.test"}`:                                        false,
+	} {
+		_, err := codexMCPEnv(Task{Options: Options{MCP: []string{mcpFile(t, servers)}}})
+		if got := err != nil && strings.Contains(err.Error(), "would be dropped"); got != refused {
+			t.Errorf("%s: refused = %v, want %v (err %v)", servers, got, refused, err)
+		}
 	}
 }
 

@@ -209,6 +209,7 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{Lean: Bool(true), CompactWindow: "200000"},
 				{AppendSystemPrompt: "rule"},
 				{NoSkills: true, Effort: "high"},
+				{Skills: Bool(true)},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
@@ -239,6 +240,9 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				}
 				if options.NoSkills && !adapter.mapsHarness {
 					want = append(want, "no_skills")
+				}
+				if options.Skills != nil && *options.Skills && !adapter.mapsHarness {
+					want = append(want, "skills")
 				}
 				if len(want) == 0 {
 					if len(infos) != 0 {

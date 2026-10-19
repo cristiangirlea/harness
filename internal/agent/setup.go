@@ -106,6 +106,7 @@ func ResolveSetup(backend string, task Task) *Setup {
 	case "codex":
 		s.file(project, "AGENTS.override.md", "AGENTS.md")
 		s.file(user(".codex", "CODEX_HOME", "~/.codex/"), "AGENTS.override.md", "AGENTS.md")
+		s.mcpConfigs(task.MCP, true)
 	case "gemini":
 		s.file(project, "GEMINI.md")
 		s.file(user(".gemini", "", "~/.gemini/"), "GEMINI.md")
@@ -146,7 +147,7 @@ func optionLines(backend string, o Options) []string {
 	if (backend == "claude" || backend == "codex") && o.IsLean() {
 		out = append(out, "option lean")
 	}
-	if backend == "claude" && o.IsLean() && o.Skills != nil && *o.Skills {
+	if backend == "claude" && o.IsLean() && o.Skills != nil && *o.Skills && !o.NoSkills {
 		out = append(out, "option skills")
 	}
 	return out

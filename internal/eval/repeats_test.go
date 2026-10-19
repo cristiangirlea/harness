@@ -271,14 +271,15 @@ func TestHarnessVariantsReachTheirCellsOnlyOnBackendsThatApplyThem(t *testing.T)
 	for _, f := range fields {
 		for _, source := range []string{"variant", "task", "spec"} {
 			for _, backend := range []string{"claude", "codex", "api", "gemini", "opencode", "agy"} {
-				variant, task, top := `{"name":"v","backend":"`+backend+`"}`, `{"id":"one","prompt":"p"}`, ""
+				// Skills kept, so no_skills changes something on a lean claude cell.
+				variant, task, top := `{"name":"v","backend":"`+backend+`"}`, `{"id":"one","prompt":"p"}`, `"skills":true,`
 				switch source {
 				case "variant":
 					variant = `{"name":"v","backend":"` + backend + `",` + f.json + `}`
 				case "task":
 					task = `{"id":"one","prompt":"p",` + f.json + `}`
 				case "spec":
-					top = f.json + ","
+					top += f.json + ","
 				}
 				var spec Spec
 				if err := json.Unmarshal([]byte(`{`+top+`"matrix":[`+variant+`],"tasks":[`+task+`]}`), &spec); err != nil {
@@ -308,6 +309,20 @@ func TestHarnessVariantsReachTheirCellsOnlyOnBackendsThatApplyThem(t *testing.T)
 	spec.Matrix = []Variant{{Name: "default"}}
 	if _, err := Expand(spec, "abc12"); err != nil && strings.Contains(err.Error(), "only supported") {
 		t.Errorf("default backend %s: %v", agent.DefaultBackendNameIn(runlog.Home()), err)
+	}
+}
+
+func TestNoSkillsIsRefusedOnALeanClaudeCellThatHasNoSkillsToTurnOff(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for top, refused := range map[string]bool{``: true, `"lean":true,`: true, `"skills":true,`: false, `"lean":false,`: false} {
+		var spec Spec
+		if err := json.Unmarshal([]byte(`{`+top+`"matrix":[{"name":"bare","backend":"claude","no_skills":true}],"tasks":[{"id":"one","prompt":"p"}]}`), &spec); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Expand(spec, "abc12")
+		if got := err != nil && strings.Contains(err.Error(), `set "skills": true`); got != refused {
+			t.Errorf("spec %q: refused = %v, want %v (err %v)", top, got, refused, err)
+		}
 	}
 }
 

@@ -223,8 +223,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	cmd.Dir = task.Dir
 	// A nested Claude Code session refuses to start when it thinks it is
 	// inside another one.
-	cmd.Env = gitenv.WithoutRepoVars(withoutEnv(os.Environ(), "CLAUDECODE"))
-	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
+	cmd.Env = agentEnv(os.Environ())
 	if c.env != nil {
 		extra, err := c.env(task)
 		if err != nil {
@@ -420,6 +419,12 @@ func stopCLITree(tree *tools.Tree, err error) error {
 		err = fmt.Errorf("%w; %v", err, goneErr)
 	}
 	return err
+}
+
+// agentEnv is env without what no agent CLI may inherit: hrn's own secrets, git's
+// repository variables, and CLAUDECODE, which makes a nested Claude Code refuse to start.
+func agentEnv(env []string) []string {
+	return retrieval.ExecutorEnv(gitenv.WithoutRepoVars(withoutEnv(env, "CLAUDECODE")))
 }
 
 func withoutEnv(env []string, key string) []string {

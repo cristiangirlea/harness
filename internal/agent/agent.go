@@ -407,5 +407,8 @@ func unenforced(task Task, c *CLIBackend) []string {
 	if task.NoSkills && !c.mapsNoSkills {
 		out = append(out, "no_skills")
 	}
+	if task.Skills != nil && *task.Skills && !c.mapsNoSkills {
+		out = append(out, "skills")
+	}
 	return out
 }

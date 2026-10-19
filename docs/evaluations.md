@@ -314,9 +314,12 @@ or a skills set is scored by the same gates as a model change:
   guidance. The api backend sends it as its own system block (cached with the rest);
   claude gets `--append-system-prompt`. At most 16 KiB.
 - `no_skills: true` starts the claude CLI with its skills off (`--disable-slash-commands`),
-  to measure what they add.
+  to measure what they add. A lean cell already runs without skills, so the spec or task
+  sets `"skills": true` (or `"lean": false`) for the comparison; `no_skills` on a lean
+  claude cell without them is refused.
 
 ```json
+"skills": true,
 "matrix": [
   {"name": "base",  "backend": "claude"},
   {"name": "rule",  "backend": "claude", "append_system_prompt": "Run the tests before you answer."},

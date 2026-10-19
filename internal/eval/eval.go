@@ -226,6 +226,9 @@ func checkHarness(o agent.Options, backend string) error {
 	if o.NoSkills && !agent.AppliesNoSkills(b) {
 		return fmt.Errorf("no_skills is only supported by the claude backend")
 	}
+	if o.NoSkills && o.IsLean() && (o.Skills == nil || !*o.Skills) {
+		return fmt.Errorf(`no_skills changes nothing on a lean claude cell, which already runs without skills: set "skills": true (or "lean": false) on the spec or task`)
+	}
 	return nil
 }
 
