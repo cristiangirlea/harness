@@ -770,6 +770,20 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   the owner approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-19: hrn drops the git repository variables it inherited (#561, PR #586). Started from
+  a git hook or a `!` alias, hrn carried `GIT_DIR`, `GIT_INDEX_FILE` and five more, and a batch
+  made its branch and moved HEAD in that repository. `internal/gitenv` drops them for hrn's own
+  git (batch, eval's judge copy, the follow-up handover, the MCP profile check), agent CLIs, the
+  api backend's commands and MCP servers, and gates; an MCP server's own `env` still applies.
+  ws and gc keep their own copies of the list. Running `GIT_DIR=... hrn run` no longer hands
+  the agent that repository.
+- 2026-10-19: a task records the commits its agent made itself (#560, PR #585). `commitChanges`
+  found a clean tree and recorded nothing, so diff, merge and the eval saw no change. `agentCommit`
+  now records the task branch's tip when it contains the base and moved past it: a detached
+  commit, a renamed branch and a tip rewritten below the base are left out (the last with a note,
+  since merging it would revert the base), and a continued attempt that resets to the base clears
+  the commit. The eval judge's workaround from PR #566 went. Left: hrn's own commit on a detached
+  `HEAD` is still recorded (#582).
 - 2026-10-18: evals count cells that never acted apart from failures (#569, PR #583). A failed
   cell whose run ended `ok` in one turn with no tool call and no change did not act; four of
   luna-low's five failures in eval `f353a` were such cells, misled by the fixture's own wording.
