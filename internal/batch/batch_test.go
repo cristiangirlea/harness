@@ -121,7 +121,8 @@ var (
 	repoTemplateErr error
 )
 
-func buildRepoTemplate() (string, error) {
+// extraEnv lets a test trace the build after the GIT_* filter.
+func buildRepoTemplate(extraEnv ...string) (string, error) {
 	dir, err := os.MkdirTemp("", "hrn-batch-repo-")
 	if err != nil {
 		return "", err
@@ -133,8 +134,10 @@ func buildRepoTemplate() (string, error) {
 			env = append(env, kv)
 		}
 	}
+	env = append(env, extraEnv...)
 	run := func(args ...string) error {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		// Detached auto maintenance would still touch the template while tests copy it.
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)...)
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -159,6 +162,34 @@ func buildRepoTemplate() (string, error) {
 		err = run("commit", "-q", "-m", "init")
 	}
 	return dir, err
+}
+
+func TestTheRepoTemplateBuildStartsNoAutoMaintenance(t *testing.T) {
+	trace := filepath.Join(t.TempDir(), "trace")
+	dir, err := buildRepoTemplate("GIT_TRACE=" + trace)
+	defer os.RemoveAll(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "built-in: git commit") {
+		t.Fatalf("the trace holds no commit, so the build went unchecked:\n%s", out)
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if strings.Contains(line, "maintenance run") || strings.Contains(line, "gc --auto") {
+			t.Errorf("the template build started git's auto maintenance: %s", line)
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(dir, ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "[maintenance]") || strings.Contains(string(body), "[gc]") {
+		t.Errorf("the template's config holds maintenance settings:\n%s", body)
+	}
 }
 
 // initRepo makes a repository with one commit and points HRN_HOME at a temp dir.
