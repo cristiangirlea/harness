@@ -182,6 +182,48 @@ func TestWorkLeftOffTheBranchDuringAContinuedAttemptKeepsTheEarlierCommit(t *tes
 	}
 }
 
+func TestDiffReadsARecordedBaseOnlyAsARevision(t *testing.T) {
+	for name, move := range map[string][]string{"committed": nil, "orphan": offMoves["orphan"]} {
+		t.Run(name, func(t *testing.T) {
+			dir := initRepo(t)
+			backend := offBranch("wb-base-option-"+name, move, agent.StatusOK)
+			res, _ := run(t, Spec{Dir: dir, Backend: backend, Worktrees: WorktreesFresh, Tasks: []Task{{ID: "off", Prompt: "p"}}})
+			defer Remove(res)
+			if (res.Tasks[0].Commit != "") != (move == nil) {
+				t.Fatalf("task = %+v; the committed case needs a commit and the orphan none", res.Tasks[0])
+			}
+			if _, _, err := Diff(context.Background(), res, "off"); err != nil {
+				t.Fatalf("Diff with the real base: %v", err)
+			}
+			written := filepath.Join(t.TempDir(), "written")
+			res.Base = "--output=" + written
+			if _, _, err := Diff(context.Background(), res, "off"); err == nil {
+				t.Error("Diff took an option for the base and succeeded")
+			}
+			// The committed path appends ..<commit>, so an option would write to that name.
+			for _, path := range []string{written, written + ".." + res.Tasks[0].Commit} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Errorf("git diff read the recorded base as an option and wrote %s (%v)", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestDiffOfAWorktreeHoldingAFileNamedHEADReadsHEADAsARevision(t *testing.T) {
+	dir := initRepo(t)
+	backend := offBranch("wb-head-file", offMoves["detached"], agent.StatusOK)
+	res, _ := run(t, Spec{Dir: dir, Backend: backend, Worktrees: WorktreesFresh, Tasks: []Task{{ID: "off", Prompt: "p"}}})
+	defer Remove(res)
+	if err := os.WriteFile(filepath.Join(res.Tasks[0].Worktree, "HEAD"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diff, untracked, err := Diff(context.Background(), res, "off")
+	if err != nil || diff != "" || !reflect.DeepEqual(untracked, []string{"HEAD", "out.txt"}) {
+		t.Errorf("Diff = %q, %q, %v; want no diff and the two untracked files", diff, untracked, err)
+	}
+}
+
 func TestWorkLeftOffTheTasksBranchEndsTheTaskAsAnError(t *testing.T) {
 	for name, move := range offMoves {
 		for _, mode := range []string{WorktreesFresh, WorktreesSlots} {

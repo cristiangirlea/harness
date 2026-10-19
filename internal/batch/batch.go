@@ -2425,7 +2425,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 			return "", nil, fmt.Errorf("task %s: commit %s is no longer in %s, so its branch was removed",
 				taskID, tools.ShortSHA(tr.Commit), res.Dir)
 		}
-		out, err := gitStdout(ctx, res.Dir, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", res.Base+".."+tr.Commit)
+		out, err := gitStdout(ctx, res.Dir, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--end-of-options", res.Base+".."+tr.Commit, "--")
 		return out, nil, err
 	}
 	if tr.Slot != 0 {
@@ -2446,7 +2446,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 		// An orphan checkout leaves HEAD unborn; its files still compare with the base.
 		against = res.Base
 	}
-	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", against)
+	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--end-of-options", against, "--")
 	if err != nil {
 		return "", nil, err
 	}
