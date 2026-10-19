@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestVariantsOverrideLeanAndPreserveUnsetValues(t *testing.T) {
 	}
 }
 
-func TestVariantLeanRequiresTheResolvedClaudeBackend(t *testing.T) {
+func TestVariantLeanRequiresAResolvedBackendThatAppliesIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, source := range []string{"variant", "task", "spec", "default"} {
 		for _, backend := range []string{"claude", "codex", "api", "gemini", "opencode", "agy"} {
@@ -71,12 +72,12 @@ func TestVariantLeanRequiresTheResolvedClaudeBackend(t *testing.T) {
 					backend = agent.DefaultBackendNameIn(runlog.Home())
 				}
 				_, err := Expand(spec, "abc12")
-				if backend == "claude" {
+				if backend == "claude" || backend == "codex" {
 					if err != nil {
 						t.Errorf("%s lean=%v: %v", source, lean, err)
 					}
-				} else if err == nil || !strings.Contains(err.Error(), "lean") || !strings.Contains(err.Error(), "claude") {
-					t.Errorf("%s backend=%s lean=%v: got %v, want claude-only lean error", source, backend, lean, err)
+				} else if err == nil || !strings.Contains(err.Error(), "lean") || !strings.Contains(err.Error(), "claude and codex") {
+					t.Errorf("%s backend=%s lean=%v: got %v, want a claude-and-codex-only lean error", source, backend, lean, err)
 				}
 			}
 		}
@@ -249,6 +250,29 @@ func TestExpandRejectsBadSpecs(t *testing.T) {
 		if _, err := Expand(spec, "abc12"); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+// A cell with its own empty gate list would run gateless but be saved and
+// diffed as gated, so the eval is refused before any cell runs or is recorded.
+func TestAnEvalRefusesATaskWithAnEmptyGateList(t *testing.T) {
+	dir := initRepo(t)
+	p := filepath.Join(t.TempDir(), "eval.json")
+	body := `{"dir":` + strconv.Quote(dir) + `,"gate":["test -f out.txt"],"matrix":[{"backend":"ev-ok"}],` +
+		`"tasks":[{"id":"alpha","prompt":"do alpha"},{"id":"beta","prompt":"do beta","gate":[]}]}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := LoadSpec(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, res, err := Run(context.Background(), spec, nil); err == nil || !strings.Contains(err.Error(), "beta") ||
+		!strings.Contains(err.Error(), "empty gate list") || len(res.Tasks) != 0 {
+		t.Fatalf("err = %v, tasks = %d; want beta refused before anything ran", err, len(res.Tasks))
+	}
+	if recs, _, err := ListAll(); err != nil || len(recs) != 0 {
+		t.Errorf("no eval should be recorded: %d records, err = %v", len(recs), err)
 	}
 }
 

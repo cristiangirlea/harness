@@ -397,7 +397,7 @@ func TestRunPassesLean(t *testing.T) {
 	if rec, err := runlog.Load(id); err != nil || !rec.Task.IsLean() {
 		t.Fatalf("lean should reach the task: %+v err=%v", rec.Task, err)
 	}
-	// Like hrn run, the tool is not lean unless asked.
+	// Unasked, the record leaves lean unset and the backend's default applies.
 	res = s.call(t, "run", `{"prompt":"x","backend":"stub-lean"}`)
 	id = res.StructuredContent.(map[string]any)["run_id"].(string)
 	if rec, err := runlog.Load(id); err != nil || rec.Task.Lean != nil {
@@ -424,6 +424,15 @@ func TestRunPassesCompactWindow(t *testing.T) {
 		if r := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":`+value+`}`); !r.IsError || !strings.Contains(r.Text(), "compact_window") {
 			t.Errorf("invalid window %s must be refused before the run: %s", value, r.Text())
 		}
+	}
+}
+
+func TestRunAdvertisesSkillsAsABoolean(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	props := runTool(t.TempDir(), false).InputSchema["properties"].(map[string]any)
+	skills, ok := props["skills"].(map[string]any)
+	if !ok || skills["type"] != "boolean" {
+		t.Errorf("skills schema = %v, want a boolean", props["skills"])
 	}
 }
 

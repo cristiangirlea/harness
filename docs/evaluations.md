@@ -224,14 +224,14 @@ task with the id `<evalid>.<task>.<variant>.r<n>`, so branches from different ev
 collide. Retries are off for every cell on purpose: an eval measures what one attempt
 does, and a retried attempt would score the harness rather than the backend. Everything
 else, gates and mode and the budgets, `lean` and `compact_window`, carries through from the
-spec; cells on claude are lean unless the spec or task says `"lean": false` (see
-[Lean claude workers](backends.md#lean-claude-workers)). `protect` carries through too,
+spec; cells on claude and codex are lean unless the spec or task says `"lean": false` (see
+[What a run loads](backends.md#what-a-run-loads)). `protect` carries through too,
 but `protect_mode` defaults to `fail` in an eval: a cell that changed a file its gates rely
 on did not earn its pass (see [Batches](batches.md#batches)).
 
 A variant may set `"lean": true` or `"lean": false`, overriding the task and spec.
-Omitting it preserves the task/spec setting and the claude batch default. A variant's
-`lean` field is refused if any of its cells resolves to a backend other than `claude`.
+Omitting it preserves the task/spec setting and the lean default. A variant's
+`lean` field is refused if any of its cells resolves to a backend other than `claude` or `codex`.
 Give variants distinct names to compare lean within one eval, for example:
 
 ```json
@@ -314,9 +314,12 @@ or a skills set is scored by the same gates as a model change:
   guidance. The api backend sends it as its own system block (cached with the rest);
   claude gets `--append-system-prompt`. At most 16 KiB.
 - `no_skills: true` starts the claude CLI with its skills off (`--disable-slash-commands`),
-  to measure what they add.
+  to measure what they add. A lean cell already runs without skills, so the spec or task
+  sets `"skills": true` (or `"lean": false`) for the comparison; `no_skills` on a lean
+  claude cell without them is refused.
 
 ```json
+"skills": true,
 "matrix": [
   {"name": "base",  "backend": "claude"},
   {"name": "rule",  "backend": "claude", "append_system_prompt": "Run the tests before you answer."},

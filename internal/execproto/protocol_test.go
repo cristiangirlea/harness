@@ -155,7 +155,7 @@ func TestHelloPrecedesInputAndReportsConservativeCapabilities(t *testing.T) {
 	wants := map[string]agent.Capabilities{
 		"api":      {Modes: []agent.Mode{"readonly", "auto", "yolo"}, Efforts: agent.EffortLevels, Sessions: "fork", Options: []string{"model", "mode", "effort", "timeout", "max_turns", "mcp"}},
 		"claude":   {Modes: []agent.Mode{"readonly", "auto", "yolo"}, Efforts: agent.EffortLevels, Sessions: "fork", Options: []string{"model", "mode", "effort", "timeout", "max_turns", "mcp"}},
-		"codex":    {Modes: []agent.Mode{"readonly", "auto", "yolo"}, Efforts: agent.EffortLevels, Sessions: "fork", Options: []string{"model", "mode", "effort", "timeout"}},
+		"codex":    {Modes: []agent.Mode{"readonly", "auto", "yolo"}, Efforts: agent.EffortLevels, Sessions: "fork", Options: []string{"model", "mode", "effort", "timeout", "mcp"}},
 		"gemini":   {Modes: []agent.Mode{"auto", "yolo"}, Efforts: []string{}, Sessions: "none", Options: []string{"model", "mode", "timeout"}},
 		"opencode": {Modes: []agent.Mode{"yolo"}, Efforts: []string{}, Sessions: "none", Options: []string{"model", "mode", "timeout"}},
 	}
