@@ -180,7 +180,7 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 		// mapsHarness: the adapter passes append_system_prompt and no_skills on.
 		mapsHarness bool
 	}{
-		{NewCodexBackend, true, false, false, false},
+		{NewCodexBackend, true, true, false, false},
 		{NewClaudeBackend, true, true, true, true},
 		{NewGeminiBackend, false, false, false, false},
 		{NewOpencodeBackend, false, false, false, false},
@@ -209,6 +209,7 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{Lean: Bool(true), CompactWindow: "200000"},
 				{AppendSystemPrompt: "rule"},
 				{NoSkills: true, Effort: "high"},
+				{Skills: Bool(true)},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
@@ -228,7 +229,7 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				if options.Effort != "" && !adapter.mapsEffort {
 					want = append(want, "effort")
 				}
-				if options.IsLean() && !adapter.mapsLean {
+				if options.Lean != nil && *options.Lean && !adapter.mapsLean {
 					want = append(want, "lean")
 				}
 				if options.CompactWindow != "" && !adapter.mapsCompact {
@@ -239,6 +240,9 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				}
 				if options.NoSkills && !adapter.mapsHarness {
 					want = append(want, "no_skills")
+				}
+				if options.Skills != nil && *options.Skills && !adapter.mapsHarness {
+					want = append(want, "skills")
 				}
 				if len(want) == 0 {
 					if len(infos) != 0 {
