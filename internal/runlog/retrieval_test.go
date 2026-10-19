@@ -41,6 +41,17 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 		}, reject: true},
 		{name: "replaced_scope", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Scope.ProjectID = "other" }, reject: true},
 		{name: "replaced_mode", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Mode = "optional" }, reject: true},
+		{name: "optional_unavailable_replaced_scope", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Scope.ProjectID = "other" }, reject: true},
+		{name: "optional_unavailable_replaced_mode", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Mode = "required" }, reject: true},
+		{name: "optional_unavailable_replaced_failure", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Failure = "other" }, reject: true},
+		{name: "optional_unavailable_one_sided_packet", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) {
+			// Passes the single-pin checks, so only the packet comparison can reject it.
+			text := testRetrievalText("ref", "fixture", "revision")
+			c.Retrieval.Packet = &retrieval.Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), Entries: []retrieval.Entry{{ID: "entry", Source: "fixture", Content: "ref"}}}
+		}, reject: true},
+		{name: "optional_unavailable_missing_conversation_pin", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval = nil }, reject: true},
+		{name: "optional_unavailable_persisted_scope", unavailable: true, unfinished: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { (*p).Scope.Revision = "other" }, reject: true},
+		{name: "optional_unavailable_missing_persisted_pin", unavailable: true, unfinished: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { *p = nil }, reject: true},
 		{name: "task_scope", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { r.Task.RetrievalProject = "other" }, reject: true},
 		{name: "both_pins_corrupt", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) {
 			r.Result.Retrieval.Packet.Digest = "bad"

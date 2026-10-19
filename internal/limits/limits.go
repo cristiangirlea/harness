@@ -21,24 +21,32 @@ import (
 )
 
 // Partner is the backend that takes over from one at its usage limit, or ""
-// when none does.
-func Partner(backend string) string {
+// when none does. With a preference it is the first enabled, installed one that
+// is Ready at now, or else the first installed one, so Ready can say why not.
+func Partner(backend string, now time.Time, spent Spent) string {
 	p, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {
 		return ""
 	}
 	if len(p.EnabledNames) > 0 {
+		first := ""
 		for _, name := range p.Filter(agent.Names()) {
 			// api bills per token, never a plan: it is no stand-in even when enabled.
 			if name == backend || name == "api" {
 				continue
 			}
 			b, _ := agent.Get(name)
-			if _, err := b.Detect(); err == nil {
+			if _, err := b.Detect(); err != nil {
+				continue
+			}
+			if ok, _ := Ready(name, now, spent); ok {
 				return name
 			}
+			if first == "" {
+				first = name
+			}
 		}
-		return ""
+		return first
 	}
 	switch backend {
 	case "claude":
@@ -99,14 +107,10 @@ func Note(backend string, res agent.Result) error {
 	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() {
 		return nil
 	}
-	p, err := agent.BackendPreferences(runlog.Home())
-	if err != nil {
+	// A backend without a partner today is still remembered, for the listing
+	// and for a partner enabled or installed later; a broken preference file is reported.
+	if _, err := agent.BackendPreferences(runlog.Home()); err != nil {
 		return err
-	}
-	// A preference may leave no installed partner today. Still remember the
-	// limit for the listing and for a partner enabled or installed later.
-	if len(p.EnabledNames) == 0 && Partner(backend) == "" {
-		return nil
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -243,7 +247,7 @@ func when(t time.Time) string { return t.Local().Format("Jan 2 15:04") }
 // limited, pick is backend, why says so, and bothOut is set: a caller with
 // other work to do can skip this; one without runs it and lets it say so.
 func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
-	other := Partner(backend)
+	other := Partner(backend, now, spent)
 	gone := spent.out(backend, now)
 	if gone == "" || other == "" {
 		return backend, "", false
@@ -305,16 +309,16 @@ func After(prevID, backend string, prev agent.Task, res agent.Result) (next *Car
 		// Not remembering costs the next run a limited start; this one goes on.
 		why = "the limit was not remembered: " + err.Error() + "; "
 	}
-	other := Partner(backend)
+	other := Partner(backend, time.Now(), nil)
 	if prev.NoSwitch || other == "" {
 		return nil, "", nil
 	}
 	if ok, reason := Ready(other, time.Now(), nil); !ok {
 		return nil, why + reason + ", so the run stays " + string(agent.StatusLimited), nil
 	}
-	plan, err := followup.Make(followup.Request{RunID: prevID, Backend: other, Dir: prev.Dir})
+	plan, err := followup.Make(followup.Request{RunID: prevID, Backend: other, Dir: prev.Dir, Retrieval: prev.Retrieval})
 	if err != nil {
-		return nil, "", fmt.Errorf("carrying run %s on on %s: %w", prevID, other, err)
+		return nil, "", fmt.Errorf("carrying run %s on %s: %w", prevID, other, err)
 	}
 	task := agent.Task{Prompt: fmt.Sprintf(carryOnPrompt, backend), Purpose: prev.Purpose, Dir: plan.Dir, Options: prev.Options, Approve: prev.Approve}
 	task.Model = plan.Model

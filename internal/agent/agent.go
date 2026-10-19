@@ -70,6 +70,10 @@ type Task struct {
 	// session stays as it was and the same run can be continued twice.
 	ForkSession string `json:"fork_session,omitempty"`
 
+	// FixRound marks a run that continues an earlier one; its commit block
+	// asks for every fix in one commit.
+	FixRound bool `json:"-"`
+
 	// Approve decides calls that the mode does not auto-approve. Nil means deny.
 	Approve func(ApprovalRequest) bool `json:"-"`
 }
@@ -144,7 +148,7 @@ const (
 	StatusTimeout  Status = "timeout" // the task's own deadline passed
 	StatusBudget   Status = "budget"  // a cost or token ceiling was reached
 	StatusCanceled Status = "canceled"
-	// StatusLimited is a claude or codex run stopped by the plan the CLI bills
+	// StatusLimited is a claude, codex or agy run stopped by the plan the CLI bills
 	// to: its usage limit was reached. Result.LimitResets says when it lifts.
 	StatusLimited Status = "limited"
 )
@@ -287,6 +291,8 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state}
 	}
 	task = prepared
+	// After retrieval, so the block is not part of its query.
+	task.Prompt = commitBlock(task) + task.Prompt
 	if state != nil {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
 	}
@@ -365,8 +371,20 @@ func AppliesLean(b Backend) bool {
 	return ok && l.AppliesLean()
 }
 
+// AppliesSystemPrompt reports whether b honours Options.AppendSystemPrompt.
+func AppliesSystemPrompt(b Backend) bool {
+	s, ok := b.(interface{ AppliesSystemPrompt() bool })
+	return ok && s.AppliesSystemPrompt()
+}
+
+// AppliesNoSkills reports whether b honours Options.NoSkills.
+func AppliesNoSkills(b Backend) bool {
+	s, ok := b.(interface{ AppliesNoSkills() bool })
+	return ok && s.AppliesNoSkills()
+}
+
 // unenforced names the options a CLI backend cannot apply, for one warning line.
-func unenforced(task Task, mapsEffort, mapsLean, mapsCompact bool) []string {
+func unenforced(task Task, c *CLIBackend) []string {
 	var out []string
 	if task.MaxCostUSD > 0 {
 		out = append(out, "max_cost")
@@ -374,14 +392,20 @@ func unenforced(task Task, mapsEffort, mapsLean, mapsCompact bool) []string {
 	if task.TaskBudget > 0 {
 		out = append(out, "task_budget")
 	}
-	if task.Effort != "" && !mapsEffort {
+	if task.Effort != "" && !c.mapsEffort {
 		out = append(out, "effort")
 	}
-	if task.Lean != nil && *task.Lean && !mapsLean { // the default is not a request
+	if task.Lean != nil && *task.Lean && !c.mapsLean { // the default is not a request
 		out = append(out, "lean")
 	}
-	if task.CompactWindow != "" && !mapsCompact {
+	if task.CompactWindow != "" && !c.mapsCompact {
 		out = append(out, "compact_window")
+	}
+	if task.AppendSystemPrompt != "" && !c.mapsSystemPrompt {
+		out = append(out, "append_system_prompt")
+	}
+	if task.NoSkills && !c.mapsNoSkills {
+		out = append(out, "no_skills")
 	}
 	return out
 }

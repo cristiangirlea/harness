@@ -53,13 +53,22 @@ with `HRN_CONTROL_URL`, `HRN_FIXTURE_API_URL`, `HRN_PROJECT_ID`,
 `HRN_WORKER_TOKEN`, and an existing absolute `HRN_WORKSPACE_ROOT`. The worker
 command is `go run ./cmd/hrn-worker`.
 
+Tenant budgets and spending reservation are not enforced yet (still open in
+the durable workers spec): any tenant can queue any number of jobs, each up to
+its own `max_cost_usd`. Set `HRN_MAX_COST_USD_PER_JOB` (a positive number of
+USD) to cap that ceiling: a submission above it is refused with 422
+`cost_limit` naming the limit, and an invalid value stops startup. Unset means
+no server cap. Clients can add their own with `HRN_REMOTE_MAX_COST_USD`.
+
 ## Job events
 
 `GET /v1/jobs/{job}/events?tenant_id=...&project_id=...` requires the tenant's
 bearer token. By default it returns a JSON page of up to 100 events. Set
 `Accept: text/event-stream` to receive the backlog and then live events, polled
 once per second. Resume after the last received event ID using `after` or
-`Last-Event-ID`; if both are supplied they must match.
+`Last-Event-ID`; if both are supplied they must match. A job's event IDs
+become visible in increasing order, because each event is written while its job's
+row is locked, so a cursor never skips an event that commits later.
 
 Each control service instance allows at most four open SSE streams per tenant,
 shared across its projects and jobs. Further streams receive HTTP 429 with a
@@ -114,8 +123,11 @@ read credential. Credentials stay outside request files and packets.
 Operator review is the control: the import deny list screens every text field
 but catches obvious mistakes only, including private credential paths, key
 headers, common token shapes, and a few instruction-injection phrases.
-The `.env` path check matches whole segments and `.env.<suffix>` files;
-`.envrc` and `docs/.environment.md` are allowed.
+The `.env` path check matches whole segments (split on `/`, whitespace, quotes,
+`=`, `,` and `;`) and `.env.<suffix>` files; `.envrc` and `docs/.environment.md`
+are allowed. Path checks apply to paths, keys and identifiers, not to the prose
+of `content`, `evidence` and `review_evidence`, so a note such as "copy
+.env.example to .env" imports; key headers and token shapes are refused in every field.
 Import refusals name the field and deny-list pattern that matched, without
 including the submitted text.
 

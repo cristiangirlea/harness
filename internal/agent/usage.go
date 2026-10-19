@@ -28,9 +28,9 @@ func (r Result) ModelTokens() (int64, bool, bool) {
 	} else if r.InputTokens+r.OutputTokens+r.CacheRead+r.CacheWrite > 0 {
 		status = "reported"
 		switch r.Backend {
-		case "codex":
+		case "codex", "gemini":
 			semantics = "inclusive_cache"
-		case "api", "claude", "agy":
+		case "api", "claude", "agy", "opencode":
 			semantics = "exclusive_cache"
 		}
 	}
@@ -81,4 +81,29 @@ func (r Result) ValidateUsage() error {
 		return fmt.Errorf("invalid usage or cost")
 	}
 	return nil
+}
+
+// UsageMissing reports that the token counters are partial or invalid, so
+// their totals must not be shown or summed as known.
+func (r Result) UsageMissing() bool {
+	return r.ValidateUsage() != nil || (r.Usage != nil && r.Usage.Status == "missing")
+}
+
+// addUsage adds one turn's counters and reports whether it did; a negative one
+// or a total that would overflow is not added and marks the usage missing.
+func (r *Result) addUsage(semantics string, input, output, cacheRead, cacheWrite int64) bool {
+	for _, c := range [][2]int64{{r.InputTokens, input}, {r.OutputTokens, output}, {r.CacheRead, cacheRead}, {r.CacheWrite, cacheWrite}} {
+		if c[0] < 0 || c[1] < 0 || c[1] > math.MaxInt64-c[0] {
+			if r.Usage == nil {
+				r.Usage = &UsageMetadata{InputSemantics: semantics}
+			}
+			r.Usage.Status = "missing"
+			return false
+		}
+	}
+	r.InputTokens += input
+	r.OutputTokens += output
+	r.CacheRead += cacheRead
+	r.CacheWrite += cacheWrite
+	return true
 }

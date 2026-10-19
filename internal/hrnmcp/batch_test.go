@@ -21,6 +21,7 @@ type writer struct{}
 func (writer) Name() string            { return "mcp-writer" }
 func (writer) Detect() (string, error) { return "stub", nil }
 func (writer) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	task.Prompt = typed(task.Prompt)
 	name := strings.Fields(task.Prompt)[0] + ".txt"
 	emit(agent.Event{Kind: agent.EventToolCall, Tool: "write_file", Text: name})
 	_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(task.Prompt+"\n"), 0o644)
@@ -184,5 +185,19 @@ func TestBatchReportsAKilledGateAsSuch(t *testing.T) {
 	b := brief(res)
 	if b.Tasks[0].Failed != timeoutLine || b.Tasks[1].Failed != "gate `go vet ./...` canceled" {
 		t.Errorf("failed = %q, %q", b.Tasks[0].Failed, b.Tasks[1].Failed)
+	}
+}
+
+func TestBatchSummaryShowsADeclaredPurpose(t *testing.T) {
+	res := batch.Result{ID: "b1", Tasks: []batch.TaskResult{
+		{ID: "a", Purpose: "review", Status: batch.StatusPass},
+		{ID: "b", Status: batch.StatusPass},
+	}}
+	summary := batchSummary(res)
+	if !strings.Contains(summary, "a: pass (purpose review)") {
+		t.Errorf("summary lacks the declared purpose:\n%s", summary)
+	}
+	if strings.Contains(summary, "b: pass (") {
+		t.Errorf("a task with no declared purpose shows one:\n%s", summary)
 	}
 }

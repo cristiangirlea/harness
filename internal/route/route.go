@@ -4,7 +4,6 @@ package route
 import (
 	"math"
 	"slices"
-	"strings"
 
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/purpose"
@@ -29,16 +28,29 @@ func FromEval(rec eval.Record, margin float64) Table {
 	if math.IsNaN(margin) || math.IsInf(margin, 0) || margin < 0 || margin > 1 {
 		return out
 	}
+	// A row routes only backend, model and effort: a score won with a harness
+	// change would be credited to the model, and routed without the change.
+	if rec.Spec.AppendSystemPrompt != "" || rec.Spec.NoSkills {
+		return out
+	}
 	categories := map[string]string{}
 	tasks := map[string]struct{ backend, model, effort string }{}
 	for _, t := range rec.Spec.Tasks {
+		if t.AppendSystemPrompt != "" || t.NoSkills {
+			continue
+		}
 		categories[t.ID] = purpose.Classify(t.Prompt).Category
 		tasks[t.ID] = struct{ backend, model, effort string }{t.Backend, t.Model, t.Effort}
+	}
+	// Left out of the bar too, so a better harness does not disqualify every plain variant.
+	harnessed := map[string]bool{}
+	for _, v := range rec.Spec.Matrix {
+		harnessed[v.Key()] = v.ChangesHarness()
 	}
 	groups := map[string]map[string]eval.VariantRow{}
 	for _, t := range rec.Table.Tasks {
 		cat, ok := categories[t.Task]
-		if !ok || t.Total <= 0 {
+		if !ok || t.Total-t.DidNotAct <= 0 || harnessed[t.Variant] {
 			continue
 		}
 		if groups[cat] == nil {
@@ -47,6 +59,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 		r := groups[cat][t.Variant]
 		r.Name = t.Variant
 		r.Attempts += t.Total
+		r.DidNotAct += t.DidNotAct
 		r.Passed += t.Passed
 		groups[cat][t.Variant] = r
 	}
@@ -80,19 +93,9 @@ func FromEval(rec eval.Record, margin float64) Table {
 		}
 		families := map[string]candidate{}
 		for _, v := range rec.Spec.Matrix {
-			name := v.Name
-			if name == "" {
-				parts := []string{v.Backend}
-				if v.Model != "" {
-					parts = append(parts, v.Model)
-				}
-				if v.Effort != "" {
-					parts = append(parts, v.Effort)
-				}
-				name = strings.Join(parts, "-")
-			}
+			name := v.Key()
 			r, ok := rows[name]
-			if !ok || r.Attempts == 0 || r.PassRate()+margin+1e-12 < best {
+			if !ok || r.Attempts <= r.DidNotAct || r.PassRate()+margin+1e-12 < best {
 				continue
 			}
 			cost, ok := costs[name]
@@ -112,7 +115,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 			var effective eval.Variant
 			found, mixed := false, false
 			for _, tr := range rec.Table.Tasks {
-				if tr.Variant != name || tr.Total <= 0 || categories[tr.Task] != cat {
+				if tr.Variant != name || tr.Total-tr.DidNotAct <= 0 || categories[tr.Task] != cat {
 					continue
 				}
 				t := tasks[tr.Task]

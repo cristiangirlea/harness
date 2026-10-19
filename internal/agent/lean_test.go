@@ -86,6 +86,21 @@ func TestClaudeSkillsTrueKeepsSkillsButStaysLean(t *testing.T) {
 	}
 }
 
+func TestClaudeNoSkillsPassesTheSwitchOnceAndBeatsSkills(t *testing.T) {
+	for _, o := range []Options{{NoSkills: true}, {NoSkills: true, Skills: Bool(true)}, {NoSkills: true, Lean: Bool(false)}} {
+		args := NewClaudeBackend().args(Task{Options: o}, "")
+		n := 0
+		for _, a := range args {
+			if a == "--disable-slash-commands" {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%+v: --disable-slash-commands passed %d times: %v", o, n, args)
+		}
+	}
+}
+
 // codexHome writes config to a fresh CODEX_HOME, the directory codex reads it from.
 func codexHome(t *testing.T, config string) {
 	t.Helper()

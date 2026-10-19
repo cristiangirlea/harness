@@ -120,6 +120,30 @@ func TestAllCostsKnownGiveTheSumAndNoneKnownGiveADash(t *testing.T) {
 	}
 }
 
+func TestAKnownCostTooSmallToRoundIsStillANumber(t *testing.T) {
+	runs := []runlog.Record{{Backend: "claude", Done: true, Task: agent.Task{Prompt: "fix the login bug"},
+		Result: agent.Result{Backend: "claude", Status: agent.StatusOK, CostUSD: 1e-9}}}
+	if r := purposeRowOf(t, purposesOf(runs), "debug"); r.Cost != "$0.0000" || r.NoCost != "" {
+		t.Errorf("debug row = %+v", r)
+	}
+	runs[0].Result.CostEstimate = true
+	if r := purposeRowOf(t, purposesOf(runs), "debug"); r.Cost != "~$0.0000" {
+		t.Errorf("estimated debug row = %+v", r)
+	}
+}
+
+// Only a corrupted record holds such a cost: it is not added, so the sum of the
+// others stays right on every platform.
+func TestACostTooLargeForTheSumIsNotAdded(t *testing.T) {
+	runs := []runlog.Record{
+		{Backend: "claude", Done: true, Task: agent.Task{Prompt: "fix the login bug"}, Result: agent.Result{Backend: "claude", Status: agent.StatusOK, CostUSD: 1e300}},
+		{Backend: "claude", Done: true, Task: agent.Task{Prompt: "fix the logout bug"}, Result: agent.Result{Backend: "claude", Status: agent.StatusOK, CostUSD: 0.5}},
+	}
+	if r := purposeRowOf(t, purposesOf(runs), "debug"); r.Cost != "≥ $0.5000" || r.NoCost != "1 run reports no cost" {
+		t.Errorf("debug row = %+v", r)
+	}
+}
+
 func TestPurposeTokensCountCacheOnce(t *testing.T) {
 	for _, tc := range []struct {
 		backend string

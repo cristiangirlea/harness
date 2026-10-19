@@ -63,7 +63,7 @@ func TestClaudeCarriesTheGuardsDenyRules(t *testing.T) {
 			rules = rules[:j]
 		}
 		for _, want := range []string{"Bash(git push)", "Bash(git push *)", "PowerShell(git push *)", "Bash(gh pr merge *)", "Bash(gh release create *)",
-			"Bash(npx wrangler deploy *)", "Bash(npm publish *)", "Bash(npm run deploy*)", "Bash(terraform apply *)", "Bash(helm upgrade *)",
+			"Bash(npx wrangler *deploy *)", "Bash(npm publish *)", "Bash(npm run deploy*)", "Bash(terraform apply *)", "Bash(helm upgrade *)",
 			"Bash(git config *push*)", "PowerShell(git remote set-url --push *)",
 			"Read(//**/.env*)", "Edit(//**/.env*)", "Read(//**/*.pem)", "Edit(//**/*.key)", "Read(//**/.dev.vars)",
 			"Read(//**/.ssh/**)", "Edit(//**/.private/**)", "Read(//**/.kube/**)", "Read(//**/.wrangler/config/**)",
@@ -71,6 +71,11 @@ func TestClaudeCarriesTheGuardsDenyRules(t *testing.T) {
 			"Edit(//**/.codex/auth.json)", "Read(//**/.config/gh/**)"} {
 			if !slices.Contains(rules, want) {
 				t.Errorf("mode %s: deny rules %q lack %q", mode, rules, want)
+			}
+		}
+		for _, kind := range []string{"Read", "Edit"} {
+			if !slices.Contains(rules, kind+"(//**/.local/share/opencode/auth.json)") {
+				t.Errorf("mode %s: no %s deny rule for opencode's login", mode, kind)
 			}
 		}
 		// A file the agent may not read it may not write either: a Read rule
@@ -91,8 +96,8 @@ func TestClaudeCarriesTheGuardsDenyRules(t *testing.T) {
 // publishing command here is refused by both. Claude Code reads a trailing
 // " *" as "with arguments or without" and any other "*" as any text.
 func TestTheApiGuardAndClaudesRulesRefuseTheSameCommands(t *testing.T) {
-	matches := func(rule, command string) bool {
-		body, ok := strings.CutPrefix(rule, "Bash(")
+	matches := func(shell, rule, command string) bool {
+		body, ok := strings.CutPrefix(rule, shell+"(")
 		if !ok {
 			return false
 		}
@@ -109,6 +114,10 @@ func TestTheApiGuardAndClaudesRulesRefuseTheSameCommands(t *testing.T) {
 	}
 	rules := claudeDenyRules()
 	for _, command := range []string{
+		"pnpm --filter web run deploy", "npm -w web run deploy", "npm --prefix site run deploy",
+		"yarn workspace web deploy", "npm run-script deploy",
+		"wrangler publish", "wrangler pages publish", "npx wrangler publish", "npx wrangler pages publish dist",
+		"npm run deploy-docs-preview", "bun --cwd site run deploy",
 		"git push", "git push origin main", "git config remote.origin.pushurl https://x", "git remote set-url --push origin x",
 		"git config --local url.x.PushInsteadOf y", "git -c url.a.PushInsteadOf=b fetch", // git's keys ignore case; the rules do not
 		"unset GIT_CONFIG_COUNT", "env -u GH_CONFIG_DIR gh pr merge 1",
@@ -125,8 +134,20 @@ func TestTheApiGuardAndClaudesRulesRefuseTheSameCommands(t *testing.T) {
 		if tools.Guard(command) == "" {
 			t.Errorf("%q: the api loop's guard lets it through", command)
 		}
-		if !slices.ContainsFunc(rules, func(r string) bool { return matches(r, command) }) {
-			t.Errorf("%q: no claude deny rule refuses it", command)
+		for _, shell := range []string{"Bash", "PowerShell"} {
+			if !slices.ContainsFunc(rules, func(r string) bool { return matches(shell, r, command) }) {
+				t.Errorf("%q: no claude %s deny rule refuses it", command, shell)
+			}
+		}
+	}
+	for _, command := range []string{"npm -w web run build", "pnpm --filter web run predeploy-check", "yarn workspace web test", "wrangler dev", "wrangler pages list"} {
+		if rule := tools.Guard(command); rule != "" {
+			t.Errorf("%q: the api guard refused it with %s", command, rule)
+		}
+		for _, shell := range []string{"Bash", "PowerShell"} {
+			if slices.ContainsFunc(rules, func(r string) bool { return matches(shell, r, command) }) {
+				t.Errorf("%q: a claude %s deny rule refuses it", command, shell)
+			}
 		}
 	}
 }

@@ -27,6 +27,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/gitretry"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
@@ -52,6 +53,10 @@ type Spec struct {
 	// GateTimeout bounds each gate command; default 15m. A task's own wins.
 	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
 	Retry       []string       `json:"retry,omitempty"` // backends to try, in order, after a failed attempt
+	// Protect names the files the gates rely on, as globs relative to the
+	// repository ("**/*_test.go"); ProtectMode says what changing one means.
+	Protect     []string `json:"protect,omitempty"`
+	ProtectMode string   `json:"protect_mode,omitempty"`
 	// Worktrees is where each task works: WorktreesSlots (the default) or
 	// WorktreesFresh.
 	Worktrees string `json:"worktrees,omitempty"`
@@ -83,6 +88,8 @@ type Task struct {
 	Gate        []string       `json:"gate,omitempty"`
 	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
 	Retry       []string       `json:"retry,omitempty"`
+	Protect     []string       `json:"protect,omitempty"`
+	ProtectMode string         `json:"protect_mode,omitempty"`
 	// Expect is a regular expression the agent's final answer must match. It
 	// is checked before the gates and reported as one, so a task whose answer
 	// is the deliverable ("is there a bug?") can fail on what it said.
@@ -150,6 +157,9 @@ type Attempt struct {
 	// SwitchedFrom is the backend this attempt was meant for, or whose
 	// limited attempt it carries on, when a usage limit moved it here.
 	SwitchedFrom string `json:"switched_from,omitempty"`
+	// Protected lists the protected files this attempt changed or removed,
+	// against the batch's base.
+	Protected []string `json:"protected,omitempty"`
 }
 
 type GateResult struct {
@@ -215,6 +225,10 @@ const defaultGateTimeout = 15 * time.Minute
 
 // maxGateTimeout is where a gate stops being a check and becomes a job.
 const maxGateTimeout = 24 * time.Hour
+
+// gateBeat is how often a running gate saves its batch's record again: a gate
+// writes nothing itself, and a reader takes an hour of quiet for a stopped batch.
+var gateBeat = 10 * time.Minute
 
 // worktreeMu serialises `git worktree add`, `remove` and `prune` for this
 // process. They all rewrite the repository's shared worktree metadata, and git
@@ -292,6 +306,9 @@ func (s *Spec) normalize() error {
 	if err := checkGateTimeout(s.GateTimeout); err != nil {
 		return err
 	}
+	if err := checkProtect(s.Protect, s.ProtectMode); err != nil {
+		return err
+	}
 	if len(s.Tasks) == 0 {
 		return errors.New("no tasks")
 	}
@@ -323,10 +340,16 @@ func (s *Spec) normalize() error {
 		if err := checkBackends(t.Backend, &t.Retry); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
+		if err := checkRetrievalRetry(t.Options.Over(s.Options), firstOf(t.Backend, s.Backend), firstList(t.Retry, s.Retry)); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
 		if err := checkGates(t.Gate); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkGateTimeout(t.GateTimeout); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
+		if err := checkProtect(t.Protect, t.ProtectMode); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if _, err := compileExpect(t.Expect); err != nil {
@@ -350,6 +373,23 @@ func compileExpect(expr string) (*regexp.Regexp, error) {
 
 // expectCommand is how an expect check is named where a gate command would be.
 func expectCommand(expr string) string { return "expect /" + expr + "/" }
+
+// checkRetrievalRetry refuses a retry on another backend when retrieval is on:
+// the pin is scoped to the backend the first attempt ran on.
+func checkRetrievalRetry(opts agent.Options, backend string, retry []string) error {
+	if !retrievalOn(opts) {
+		return nil
+	}
+	backend = firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	for _, name := range retry {
+		if name != backend {
+			return fmt.Errorf("retry names %s, but retrieval pins the task to its backend %s: retry on %s only, or turn retrieval off", name, backend, backend)
+		}
+	}
+	return nil
+}
+
+func retrievalOn(opts agent.Options) bool { return opts.Retrieval != "" && opts.Retrieval != "off" }
 
 func checkBackends(backend string, retry *[]string) error {
 	p, err := agent.BackendPreferences(runlog.Home())
@@ -441,11 +481,10 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		report(e)
 	}
 
-	root, err := gitOut(ctx, spec.Dir, "rev-parse", "--show-toplevel")
+	root, err := repoRoot(ctx, spec.Dir)
 	if err != nil {
 		return Result{}, err
 	}
-	root = filepath.Clean(filepath.FromSlash(root))
 	base, err := gitOut(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return Result{}, err
@@ -534,6 +573,8 @@ type attemptPlan struct {
 	number   int    // 1-based
 	prompt   string // what the agent is sent, failure context included
 	commit   string // the commit subject for whatever it leaves behind
+	base     string // the commit the worktree started from
+	branch   string // the task's branch, which a merge takes
 	// continued keeps the worktree and the work already committed on the
 	// branch, so the agent fixes its own output instead of starting over.
 	continued bool
@@ -542,6 +583,8 @@ type attemptPlan struct {
 	// switchedFrom is the backend a usage limit moved this attempt from;
 	// continues is the run of the limited attempt it carries on, if any.
 	switchedFrom, continues string
+	// chosenFor is the backend the task's model and effort were named or routed for.
+	chosenFor string
 }
 
 // The prompt a retry gets. A gate failure is recoverable in place, so the next
@@ -672,7 +715,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	// both MCP lists already.
 	opts := t.Options.Over(spec.Options)
 	backend := firstOf(t.Backend, spec.Backend)
-	routedBy, err := opts.Route(t.Prompt, &backend, runlog.Home())
+	routedBy, err := opts.Route(t.Purpose, t.Prompt, &backend, runlog.Home())
 	if err != nil {
 		return fail(err)
 	}
@@ -686,6 +729,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	}
 	backends = append(backends, firstList(t.Retry, spec.Retry)...)
 	gates := firstList(t.Gate, spec.Gate)
+	guard := protection{globs: firstList(t.Protect, spec.Protect), fail: firstOf(t.ProtectMode, spec.ProtectMode) == ProtectFail, base: base}
 	gateTimeout := defaultGateTimeout
 	if d := firstNonZero(t.GateTimeout, spec.GateTimeout); d > 0 {
 		gateTimeout = time.Duration(d)
@@ -712,7 +756,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	var carry *Attempt    // the limited attempt the next one carries on
 	for i := 0; i < len(backends); i++ {
 		name := backends[i]
-		plan := attemptPlan{number: len(tr.Attempts) + 1, prompt: t.Prompt, gateTimeout: gateTimeout}
+		plan := attemptPlan{number: len(tr.Attempts) + 1, prompt: t.Prompt, gateTimeout: gateTimeout, chosenFor: backends[0], base: base, branch: tr.Branch}
 		if i == 0 {
 			plan.routedBy = routedBy
 		}
@@ -726,6 +770,14 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				outOfPlans = why
 				notify(Event{Task: t.ID, Kind: "switch", Text: "skipping an attempt on " + name + ": " + why})
 				continue
+			}
+			if pick != name && retrievalOn(opts) {
+				bound := name
+				if task.RetrievalState != nil && task.RetrievalState.Scope.Backend != "" {
+					bound = task.RetrievalState.Scope.Backend
+				}
+				tr.Error = pinnedSwitch(name, pick, bound)
+				return finish(StatusFail, "limited: "+tr.Error)
 			}
 			if pick != name {
 				plan.switchedFrom, name = name, pick
@@ -839,7 +891,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		if at.Lean == nil && agent.AppliesLean(b) {
 			at.Lean = agent.Bool(true) // lean by default in a batch (#204)
 		}
-		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, gates, notify, report)
+		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
 		task.RetrievalState = out.att.Result.Retrieval
 		task.RetrievalRepair = false
@@ -848,7 +900,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				task.RetrievalRepair = true
 			}
 		}
-		if out.commit != "" {
+		// The attempt's commit stands even when empty, since a continued agent may have
+		// reset the branch; a failed attempt or a vanished worktree leaves the record's commit.
+		if _, gone := os.Stat(task.Dir); err == nil && (out.commit != "" || gone == nil) {
 			tr.Commit = out.commit
 		}
 		switch {
@@ -874,8 +928,11 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			}
 			// The partner carries the attempt on in this worktree, as one
 			// more attempt that does not use up a retry.
-			if other := limits.Partner(att.Backend); other != "" && !opts.NoSwitch {
-				if ok, why := limits.Ready(other, time.Now(), spent); ok {
+			if other := limits.Partner(att.Backend, time.Now(), spent); other != "" && !opts.NoSwitch {
+				if ok, why := limits.Ready(other, time.Now(), spent); ok && retrievalOn(opts) {
+					tr.Error = pinnedSwitch(att.Backend, other, att.Backend)
+					return finish(StatusFail, "limited: "+tr.Error)
+				} else if ok {
 					backends = slices.Insert(backends, i+1, other)
 					carry = &att
 				} else {
@@ -893,6 +950,12 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		left = "branch " + tr.Branch + " kept"
 	}
 	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · %s", len(tr.Attempts), left))
+}
+
+// pinnedSwitch is why a task with retrieval on ends at a usage limit instead
+// of carrying on on the partner, where the pin's backend scope would refuse it.
+func pinnedSwitch(from, to, bound string) string {
+	return fmt.Sprintf("%s reached its usage limit; switch to %s skipped: the retrieval pin is bound to %s", from, to, bound)
 }
 
 // takeSlot leases a slot of the repository for a task. The branch is made
@@ -1184,11 +1247,14 @@ type attemptOutcome struct {
 // runAttempt runs the agent in the task's worktree, then the gates, then
 // commits whatever was left behind, pass or fail. A returned error aborts the
 // whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, gates []string, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
 	if plan.switchedFrom != "" {
 		task.Model = "" // the model named for the other backend means nothing here
+	}
+	if b.Name() != plan.chosenFor {
+		task.Model, task.Effort, plan.routedBy = "", "", nil
 	}
 
 	// A carry-on's record continues the limited run, so the chain shows.
@@ -1230,9 +1296,27 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			notify(Event{Task: id, Kind: "gate", Text: "✓ " + gr.Command})
 		}
 	}
+	if len(guard.globs) > 0 && att.Result.Status == agent.StatusOK {
+		changed, err := changedProtected(ctx, task.Dir, guard)
+		att.Protected = changed
+		if len(changed) > 0 {
+			notify(Event{Task: id, Kind: "gate", Text: "! protected files changed: " + strings.Join(changed, ", ")})
+		}
+		if guard.fail && pass && (err != nil || len(changed) > 0) {
+			gr := protectGate(guard, changed, err)
+			att.Gates = append(att.Gates, gr)
+			pass = false
+			notify(Event{Task: id, Kind: "gate", Text: "✗ " + gr.Command})
+		} else if err != nil {
+			att.Error = strings.TrimSpace(att.Error + "\nprotect: " + err.Error())
+		}
+		report(att)
+	}
 	if pass {
 		for _, g := range gates {
+			stop := beating(gateBeat, func() { report(att) })
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
+			stop()
 			att.Gates = append(att.Gates, gr)
 			report(att)
 			if gr.ExitCode != 0 {
@@ -1247,12 +1331,38 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	// The branch holds whatever the agent left, pass or fail, so the worktree
 	// can be inspected or removed without losing work.
 	sha, commitErr := commitChanges(task.Dir, plan.commit)
+	if sha == "" && commitErr == nil {
+		var note string
+		sha, note, commitErr = agentCommit(task.Dir, plan.branch, plan.base)
+		if note != "" {
+			att.Error = strings.TrimSpace(att.Error + "\n" + note)
+		}
+	}
 	if commitErr != nil {
 		att.Error = strings.TrimSpace(att.Error + "\ncommit: " + commitErr.Error())
 		// The work exists only in the worktree; say so instead of claiming a pass.
 		return attemptOutcome{att: att}, fmt.Errorf("commit failed, changes are uncommitted in %s: %v", task.Dir, commitErr)
 	}
 	return attemptOutcome{att: att, commit: sha, pass: pass}, nil
+}
+
+// beating calls beat every interval until stop returns; beat never runs after.
+func beating(every time.Duration, beat func()) (stop func()) {
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		tick := time.NewTicker(every)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				beat()
+			}
+		}
+	})
+	return func() { close(done); wg.Wait() }
 }
 
 // checkExpect is the expect pattern run as a gate: exit 0 on a match, 1
@@ -1272,7 +1382,7 @@ var runGateShell = tools.RunShell
 
 func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
 	started := time.Now()
-	// A gate is the operator's own command: it keeps hrn's environment.
+	// A gate is the operator's own command: it keeps hrn's environment, less the git repository variables.
 	res, err := runGateShell(ctx, dir, command, timeout, nil)
 	output, decodedUTF16 := decodeGateOutput(res.Output)
 	res.Output = output
@@ -1356,19 +1466,301 @@ func decodeGateOutput(s string) (string, bool) {
 // the commit, or "" when nothing changed. It runs after the agent, so it uses
 // its own context: a cancelled batch must still leave a consistent branch.
 func commitChanges(wt, message string) (string, error) {
-	dirty, err := hasChanges(wt)
-	if err != nil || !dirty {
-		return "", err
+	if _, err := os.Stat(wt); err != nil {
+		return "", nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if _, err := gitOut(ctx, wt, "add", "-A"); err != nil {
+	g, err := newAgentGit(ctx, wt)
+	if err != nil {
 		return "", err
 	}
-	if _, err := gitOut(ctx, wt, "commit", "-q", "-m", message); err != nil {
+	defer g.close()
+	status, err := g.stdout(ctx, "status", "--porcelain", "-z", "--no-renames", "--ignore-submodules=all")
+	if err != nil || status == "" {
 		return "", err
 	}
-	return gitOut(ctx, wt, "rev-parse", "HEAD")
+	// A bare `git add -A` runs status inside every submodule, whatever
+	// diff.ignoreSubmodules says; stage exactly the paths status reported.
+	var paths []string
+	for _, entry := range strings.Split(status, "\x00") {
+		if len(entry) > 3 {
+			paths = append(paths, entry[3:])
+		}
+	}
+	if _, err := g.in(ctx, strings.Join(paths, "\x00"),
+		"--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+		return "", err
+	}
+	if _, err := g.out(ctx, "commit", "-q", "-m", message); err != nil {
+		return "", err
+	}
+	return g.out(ctx, "rev-parse", "HEAD")
+}
+
+// agentCommit returns the branch's tip when the agent committed its own work on it
+// and left nothing for commitChanges, or "" while the branch is still at the base;
+// note says why a moved tip was left out. A commit on no branch is never taken.
+func agentCommit(wt, branch, base string) (sha, note string, err error) {
+	if _, err := os.Stat(wt); err != nil || branch == "" || base == "" {
+		return "", "", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	g, err := newAgentGit(ctx, wt)
+	if err != nil {
+		return "", "", err
+	}
+	defer g.close()
+	// for-each-ref prints nothing for a branch the agent renamed or deleted, and
+	// its pattern also matches refs below the name, so only the exact one counts.
+	out, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"+branch)
+	if err != nil {
+		return "", "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		name, head, ok := strings.Cut(line, " ")
+		if !ok || name != "refs/heads/"+branch || head == base {
+			continue
+		}
+		// Merging a tip that dropped the base would revert it, so such a tip is not taken.
+		missing, err := g.stdout(ctx, "rev-list", "--count", head+".."+base)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.TrimSpace(missing) != "0" {
+			return "", "commit not recorded: the branch tip " + tools.ShortSHA(head) + " does not contain the base", nil
+		}
+		return head, "", nil
+	}
+	return "", "", nil
+}
+
+// agentGit runs every status, diff, add and commit hrn makes in a tree whose config an
+// agent may have written, so its hooks, fsmonitor, filters, signing or auto-maintenance
+// never run programs under the operator's environment. Overrides travel as
+// GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> because `-c` splits at the first '=' and a filter
+// name may hold one; git never enters submodules, whose config is the agent's to write too.
+type agentGit struct {
+	dir   string
+	hooks string
+	temp  bool // hooks is an empty directory close removes
+	pin   []string
+}
+
+// newAgentGit is for a task worktree: no hooks run at all.
+func newAgentGit(ctx context.Context, dir string) (*agentGit, error) {
+	g, err := pinnedGit(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	if g.hooks, err = os.MkdirTemp("", "hrn-empty-hooks-"); err != nil {
+		return nil, err
+	}
+	g.temp = true
+	return g, nil
+}
+
+// newRepoGit is for the operator's own repository: its hooks directory, or a
+// global or system core.hooksPath, still runs; one the shared config names does not.
+func newRepoGit(ctx context.Context, root string) (*agentGit, error) {
+	g, err := pinnedGit(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	if g.hooks = operatorHooksPath(ctx, g.dir, g.pin); g.hooks != "" {
+		return g, nil
+	}
+	common, err := gitStdoutEnv(ctx, g.dir, g.pin, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return nil, err
+	}
+	g.hooks = filepath.Join(strings.TrimSpace(common), "hooks")
+	return g, nil
+}
+
+// operatorHooksPath returns the last core.hooksPath set outside the repository
+// config, or "" when there is none.
+func operatorHooksPath(ctx context.Context, dir string, pin []string) string {
+	out, err := gitStdoutEnv(ctx, dir, pin, "config", "--show-scope", "--get-regexp", `^core\.hookspath$`)
+	if err != nil {
+		return ""
+	}
+	path := ""
+	for _, line := range strings.Split(out, "\n") {
+		scope, entry, _ := strings.Cut(line, "\t")
+		switch scope {
+		case "global", "system", "command":
+			_, path, _ = strings.Cut(entry, " ")
+		}
+	}
+	return path
+}
+
+// repoRoot finds the work tree that holds dir from its .git entry, since a
+// core.worktree in the shared config would send rev-parse --show-toplevel elsewhere.
+func repoRoot(ctx context.Context, dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			g, err := pinnedGit(ctx, d)
+			if err != nil {
+				return "", err
+			}
+			top, err := gitOutEnv(ctx, d, g.pin, "", "rev-parse", "--show-toplevel")
+			if err != nil {
+				return "", err
+			}
+			return filepath.Clean(filepath.FromSlash(top)), nil
+		}
+		if filepath.Dir(d) == d {
+			return "", fmt.Errorf("%s is not inside a git work tree", dir)
+		}
+	}
+}
+
+// pinnedGit sets GIT_DIR and GIT_WORK_TREE, so a core.worktree cannot point git elsewhere.
+func pinnedGit(ctx context.Context, dir string) (*agentGit, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	// GIT_WORK_TREE already here: git leaves the agent's core.worktree unread.
+	work := "GIT_WORK_TREE=" + dir
+	gitDir, err := gitStdoutEnv(ctx, dir, []string{work}, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return nil, err
+	}
+	// A promisor remote in the shared config would otherwise run its upload-pack for a missing object.
+	return &agentGit{dir: dir, pin: []string{"GIT_DIR=" + strings.TrimSpace(gitDir), work, "GIT_NO_LAZY_FETCH=1"}}, nil
+}
+
+func (g *agentGit) close() {
+	if g.temp {
+		_ = os.RemoveAll(g.hooks)
+	}
+}
+
+func (g *agentGit) out(ctx context.Context, args ...string) (string, error) {
+	return gitOutEnv(ctx, g.dir, g.env(ctx), "", args...)
+}
+
+// in is out with stdin.
+func (g *agentGit) in(ctx context.Context, stdin string, args ...string) (string, error) {
+	return gitOutEnv(ctx, g.dir, g.env(ctx), stdin, args...)
+}
+
+func (g *agentGit) stdout(ctx context.Context, args ...string) (string, error) {
+	return gitStdoutEnv(ctx, g.dir, g.env(ctx), args...)
+}
+
+// env scans the config right before each command, since a process the agent
+// left running can add a filter between one command and the next.
+func (g *agentGit) env(ctx context.Context) []string {
+	return append(slices.Clone(g.pin), configEnv(agentConfigOverrides(ctx, g.dir, g.pin, g.hooks))...)
+}
+
+// configEnv numbers the overrides after any GIT_CONFIG_COUNT entries the
+// operator already set, so theirs still apply and ours, coming later, win.
+func configEnv(pairs [][2]string) []string {
+	n, err := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
+	if err != nil || n < 0 {
+		n = 0
+	}
+	env := make([]string, 0, 2*len(pairs)+1)
+	for i, p := range pairs {
+		env = append(env,
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", n+i, p[0]),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", n+i, p[1]))
+	}
+	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", n+len(pairs)))
+}
+
+// agentConfigOverrides turns off hooks and auto-maintenance, keeps git out of
+// submodules, and turns off the fsmonitor, commit signing, filter and merge drivers
+// and transports only where the repository's own config (local or worktree) defines
+// them: the operator's global and system config, a Git LFS filter for one, keep working.
+func agentConfigOverrides(ctx context.Context, dir string, pin []string, hooks string) [][2]string {
+	pairs := [][2]string{
+		{"core.hooksPath", hooks},
+		{"maintenance.auto", "false"},
+		{"gc.auto", "0"},
+		{"diff.ignoreSubmodules", "all"},
+		{"status.submoduleSummary", "false"},
+		{"submodule.recurse", "false"},
+	}
+	out, err := gitStdoutEnv(ctx, dir, pin, "config", "--show-scope", "--get-regexp",
+		`^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|core\.fsmonitor|gpg\..*program|gpg\.ssh\.defaultkeycommand|extensions\.partialclone|remote\..*\.(promisor|partialclonefilter))$`)
+	if err != nil {
+		return pairs
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		scope, entry, _ := strings.Cut(line, "\t")
+		switch scope {
+		case "global", "system", "command":
+			continue
+		}
+		key, _, _ := strings.Cut(entry, " ")
+		switch {
+		case key == "extensions.partialclone" || strings.HasPrefix(key, "remote."):
+			// A promisor remote is the only way hrn's own git starts a transport.
+			if !seen["promisor"] {
+				seen["promisor"] = true
+				pairs = append(pairs, [2]string{"protocol.allow", "never"})
+			}
+			continue
+		case key == "core.fsmonitor":
+			if !seen[key] {
+				seen[key] = true
+				pairs = append(pairs, [2]string{"core.fsmonitor", "false"})
+			}
+			continue
+		case strings.HasPrefix(key, "gpg."):
+			if !seen["gpg."] {
+				seen["gpg."] = true
+				pairs = append(pairs, [2]string{"commit.gpgSign", "false"}, [2]string{"merge.verifySignatures", "false"})
+			}
+			continue
+		}
+		if rest, ok := strings.CutPrefix(key, "merge."); ok {
+			// A driver that runs false makes git report a conflict, which the merge then undoes.
+			if name, ok := strings.CutSuffix(rest, ".driver"); ok && name != "" && !seen["merge:"+name] {
+				seen["merge:"+name] = true
+				pairs = append(pairs, [2]string{"merge." + name + ".driver", "false"})
+			}
+			continue
+		}
+		rest, ok := strings.CutPrefix(key, "filter.")
+		if !ok {
+			continue
+		}
+		dot := strings.LastIndexByte(rest, '.')
+		if dot <= 0 {
+			continue
+		}
+		switch rest[dot+1:] {
+		case "clean", "smudge", "process":
+		default:
+			continue
+		}
+		// Filter names get their own prefix so a filter called "gpg." or
+		// "core.fsmonitor" is not taken for the marker entries above.
+		name := rest[:dot]
+		if !seen["filter:"+name] {
+			seen["filter:"+name] = true
+			pairs = append(pairs,
+				[2]string{"filter." + name + ".clean", ""},
+				[2]string{"filter." + name + ".smudge", ""},
+				[2]string{"filter." + name + ".process", ""},
+				[2]string{"filter." + name + ".required", "false"},
+			)
+		}
+	}
+	return pairs
 }
 
 // hasChanges reports whether a worktree holds uncommitted work. A missing
@@ -1389,11 +1781,16 @@ func hasChanges(wt string) (bool, error) {
 // dirtyPaths lists the porcelain status lines of a working tree, with or
 // without untracked files. One place decides what "dirty" means.
 func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, error) {
-	args := []string{"status", "--porcelain"}
+	g, err := newAgentGit(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer g.close()
+	args := []string{"status", "--porcelain", "--ignore-submodules=all"}
 	if !untracked {
 		args = append(args, "--untracked-files=no")
 	}
-	status, err := gitOut(ctx, dir, args...)
+	status, err := g.out(ctx, args...)
 	if err != nil || status == "" {
 		return nil, err
 	}
@@ -1601,9 +1998,15 @@ func comparablePath(p string) string {
 func addWorktree(ctx context.Context, root string, tr TaskResult, base string) error {
 	worktreeMu.Lock()
 	defer worktreeMu.Unlock()
+	g, err := newRepoGit(ctx, root)
+	if err != nil {
+		return err
+	}
+	defer g.close()
 	// Git may create the branch before failing to read another worktree's
 	// metadata, so this command cannot safely be retried.
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), g.env(ctx)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
@@ -1798,7 +2201,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 			return "", nil, fmt.Errorf("task %s: commit %s is no longer in %s, so its branch was removed",
 				taskID, tools.ShortSHA(tr.Commit), res.Dir)
 		}
-		out, err := gitStdout(ctx, res.Dir, "diff", res.Base+".."+tr.Commit)
+		out, err := gitStdout(ctx, res.Dir, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", res.Base+".."+tr.Commit)
 		return out, nil, err
 	}
 	if tr.Slot != 0 {
@@ -1809,7 +2212,12 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 	if _, err := os.Stat(tr.Worktree); err != nil {
 		return "", nil, fmt.Errorf("task %s committed nothing and its worktree is gone", taskID)
 	}
-	out, err := gitStdout(ctx, tr.Worktree, "diff", "HEAD")
+	g, err := newAgentGit(ctx, tr.Worktree)
+	if err != nil {
+		return "", nil, err
+	}
+	defer g.close()
+	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD")
 	if err != nil {
 		return "", nil, err
 	}
@@ -1820,6 +2228,29 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 		}
 	}
 	return out, untracked, err
+}
+
+// CheckoutTree writes the files of commit into dir, outside the repository,
+// under the guards of a task worktree: every agent worktree shares the repository's config.
+func CheckoutTree(ctx context.Context, repo, commit, dir string) error {
+	g, err := newAgentGit(ctx, repo)
+	if err != nil {
+		return err
+	}
+	defer g.close()
+	scratch, err := os.MkdirTemp("", "hrn-index-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(scratch)
+	env := append(g.env(ctx), "GIT_INDEX_FILE="+filepath.Join(scratch, "index"), "GIT_WORK_TREE="+dir)
+	// No fsmonitor watching dir, and no path such as GIT~1 that a short name turns into dir's .git.
+	guard := []string{"-c", "core.fsmonitor=false", "-c", "core.protectNTFS=true", "-c", "core.protectHFS=true"}
+	if _, err := gitOutEnv(ctx, g.dir, env, "", append(slices.Clone(guard), "read-tree", commit+"^{tree}")...); err != nil {
+		return err
+	}
+	_, err = gitOutEnv(ctx, g.dir, env, "", append(guard, "checkout-index", "-a")...)
+	return err
 }
 
 // MergeResult is what one task's branch did.
@@ -1929,17 +2360,22 @@ func mergeBranch(ctx context.Context, root string, tr TaskResult, squash bool) (
 	if squash {
 		args = []string{"merge", "--squash", tr.Branch}
 	}
-	if _, err := gitOut(ctx, root, args...); err != nil {
-		return "", hasUnmerged(root), undoMerge(root, err)
+	g, err := newRepoGit(ctx, root)
+	if err != nil {
+		return "", false, err
+	}
+	defer g.close()
+	if _, err := g.out(ctx, args...); err != nil {
+		return "", hasUnmerged(g), undoMerge(root, err)
 	}
 	if squash {
-		if staged, err := hasStagedChanges(ctx, root); err != nil {
+		if staged, err := hasStagedChanges(ctx, g); err != nil {
 			return "", false, undoMerge(root, err)
 		} else if !staged {
 			return "", false, undoMerge(root, errNothingStaged)
 		}
-		if _, err := gitOut(ctx, root, "commit", "-q", "-m", tr.ID+": "+tools.OneLine(tr.Prompt, 60)); err != nil {
-			return "", hasUnmerged(root), undoMerge(root, err)
+		if _, err := g.out(ctx, "commit", "-q", "-m", tr.ID+": "+tools.OneLine(tr.Prompt, 60)); err != nil {
+			return "", hasUnmerged(g), undoMerge(root, err)
 		}
 	}
 	commit, err = gitOut(ctx, root, "rev-parse", "HEAD")
@@ -1948,17 +2384,17 @@ func mergeBranch(ctx context.Context, root string, tr TaskResult, squash bool) (
 
 // hasUnmerged reports whether the index holds conflicting paths. It takes its
 // own context because it runs while a merge is being cleaned up.
-func hasUnmerged(root string) bool {
+func hasUnmerged(g *agentGit) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	out, err := gitOut(ctx, root, "ls-files", "--unmerged")
+	out, err := g.out(ctx, "ls-files", "--unmerged")
 	return err == nil && out != ""
 }
 
-func hasStagedChanges(ctx context.Context, root string) (bool, error) {
+func hasStagedChanges(ctx context.Context, g *agentGit) (bool, error) {
 	// --quiet exits 1 when there is a difference, which gitOut reports as an
 	// error, so ask for the names instead and read them.
-	out, err := gitOut(ctx, root, "diff", "--cached", "--name-only")
+	out, err := g.out(ctx, "diff", "--cached", "--name-only")
 	return out != "", err
 }
 
@@ -1970,10 +2406,15 @@ func hasStagedChanges(ctx context.Context, root string) (bool, error) {
 func undoMerge(root string, cause error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if _, err := gitOut(ctx, root, "merge", "--abort"); err == nil {
+	g, err := newRepoGit(ctx, root)
+	if err != nil {
+		return fmt.Errorf("%w; and the tree could not be restored: %v", cause, err)
+	}
+	defer g.close()
+	if _, err := g.out(ctx, "merge", "--abort"); err == nil {
 		return cause
 	}
-	if _, err := gitOut(ctx, root, "reset", "--hard", "HEAD"); err != nil {
+	if _, err := g.out(ctx, "reset", "--hard", "HEAD"); err != nil {
 		return fmt.Errorf("%w; and the tree could not be restored: %v", cause, err)
 	}
 	return cause
@@ -1998,9 +2439,16 @@ func Head(ctx context.Context, dir string) (string, error) {
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitOutEnv(ctx, dir, nil, "", args...)
+}
+
+// gitOutEnv is gitOut with extra environment entries, which win over the
+// process's own, and standard input.
+func gitOutEnv(ctx context.Context, dir string, env []string, stdin string, args ...string) (string, error) {
 	out, err := gitretry.Output(ctx, func() ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANGUAGE=")
+		cmd.Env = append(append(gitenv.WithoutRepoVars(cmd.Environ()), env...), "LC_ALL=C", "LANGUAGE=")
+		cmd.Stdin = strings.NewReader(stdin)
 		return cmd.CombinedOutput()
 	})
 	text := strings.TrimSpace(string(out))
@@ -2017,7 +2465,12 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 // gitOut merges stderr into the result, which makes a good error message and a
 // corrupt patch; a diff is data and goes through here.
 func gitStdout(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitStdoutEnv(ctx, dir, nil, args...)
+}
+
+func gitStdoutEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

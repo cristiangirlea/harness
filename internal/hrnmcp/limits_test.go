@@ -323,3 +323,21 @@ func TestLimitCarryOnRecordsContextWarning(t *testing.T) {
 		})
 	}
 }
+
+func TestRunToolDropsRoutedByWhenALimitMovesTheRoutedRun(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	_ = limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"codex","model":"routed","effort":"medium","eval":"e1"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "run", `{"prompt":"Implement a widget","mode":"auto"}`)
+	if res.IsError {
+		t.Fatalf("run: %s", res.Text())
+	}
+	id, _ := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, _ := runlog.Load(id)
+	if rec.Backend != "claude" || rec.Task.Model != "" || rec.Task.Effort != "" || rec.RoutedBy != nil {
+		t.Errorf("ran on %s with model %q effort %q routed by %+v, want claude and no routed choice", rec.Backend, rec.Task.Model, rec.Task.Effort, rec.RoutedBy)
+	}
+}

@@ -34,9 +34,10 @@ func TestRunShellExitCodeAndOutput(t *testing.T) {
 func TestRunShellNilEnvironmentHidesWorkerAndScalerTokens(t *testing.T) {
 	t.Setenv("HRN_WORKER_TOKEN", "worker-fixture")
 	t.Setenv("HRN_SCALER_TOKEN", "scaler-fixture")
-	command := "if [ -n \"$HRN_WORKER_TOKEN$HRN_SCALER_TOKEN\" ]; then echo leaked; else echo clean; fi"
+	t.Setenv("HRN_DATABASE_URL", "postgres://fixture")
+	command := "if [ -n \"$HRN_WORKER_TOKEN$HRN_SCALER_TOKEN$HRN_DATABASE_URL\" ]; then echo leaked; else echo clean; fi"
 	if name, _ := Shell(); name == "powershell" {
-		command = "if ($env:HRN_WORKER_TOKEN -or $env:HRN_SCALER_TOKEN) { echo leaked } else { echo clean }"
+		command = "if ($env:HRN_WORKER_TOKEN -or $env:HRN_SCALER_TOKEN -or $env:HRN_DATABASE_URL) { echo leaked } else { echo clean }"
 	}
 	result, err := RunShell(context.Background(), t.TempDir(), command, 0, nil)
 	if err != nil || result.ExitCode != 0 || !strings.Contains(result.Output, "clean") || strings.Contains(result.Output, "leaked") {
@@ -61,5 +62,21 @@ func TestRunShellTimeoutKillsTheTree(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > timeout+4*time.Second {
 		t.Errorf("took %s; the process tree was not killed", elapsed)
+	}
+}
+
+func TestFullCaptureKeepsExactlyTheCeilingAndDropsOneByteMore(t *testing.T) {
+	for _, extra := range []int{0, 1} {
+		b := &boundedBuffer{keepHead: 10, keepTail: 5, fullLimit: maxCapture}
+		text := strings.Repeat("x", maxCapture-1) + "\n" + strings.Repeat("y", extra)
+		for chunk := text; chunk != ""; {
+			n := min(len(chunk), 32<<10)
+			_, _ = b.Write([]byte(chunk[:n]))
+			chunk = chunk[n:]
+		}
+		got := b.String()
+		if dropped := extra > 0; b.fullDropped != dropped || (got == text) == dropped {
+			t.Fatalf("%d bytes: dropped=%v, whole=%v", len(text), b.fullDropped, got == text)
+		}
 	}
 }

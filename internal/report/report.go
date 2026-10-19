@@ -29,7 +29,8 @@ const (
 )
 
 // Where a row's context per turn comes from: every run's usage events, every
-// run's totals (an average a run), or some of each.
+// run's totals (an average a run), or some of each, whose median is then over
+// one average a run.
 const (
 	ContextFromTurns  = "turns"
 	ContextFromTotals = "totals"
@@ -195,11 +196,13 @@ type Row struct {
 	// saw (uncached input, cache writes and cache reads), or -1 when the group
 	// reported no tokens at all (the CLI backends that do not count them).
 	CacheShare float64 `json:"cache_share"`
-	// Token totals, from each run's result.
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	CacheRead    int64 `json:"cache_read_tokens"`
-	CacheWrite   int64 `json:"cache_write_tokens"`
+	// Token totals, from each run's result; RunsWithoutTokens counts the runs
+	// left out because their usage is missing.
+	InputTokens       int64 `json:"input_tokens"`
+	OutputTokens      int64 `json:"output_tokens"`
+	CacheRead         int64 `json:"cache_read_tokens"`
+	CacheWrite        int64 `json:"cache_write_tokens"`
+	RunsWithoutTokens int   `json:"runs_without_tokens,omitempty"`
 	// The median and peak context a model call carried. ContextFrom says
 	// where they come from (ContextFromTurns, ContextFromTotals or
 	// ContextFromMixed); empty when no run in the group reported tokens.
@@ -293,7 +296,7 @@ func canonDir(p string) string {
 
 func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Turn) Row {
 	row := Row{Key: key, Runs: len(recs), CacheShare: -1}
-	var durations, turns, costs, contexts []float64
+	var durations, turns, costs, contexts, runAverages []float64
 	var input, cached int64
 	fromTurns, fromTotals := false, false
 	for _, r := range recs {
@@ -301,22 +304,30 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		if res.Backend == "" {
 			res.Backend = r.Backend
 		}
-		row.InputTokens += res.InputTokens
-		row.OutputTokens += res.OutputTokens
-		row.CacheRead += res.CacheRead
-		row.CacheWrite += res.CacheWrite
+		if res.UsageMissing() || res.InputTokens > math.MaxInt64-row.InputTokens || res.OutputTokens > math.MaxInt64-row.OutputTokens ||
+			res.CacheRead > math.MaxInt64-row.CacheRead || res.CacheWrite > math.MaxInt64-row.CacheWrite {
+			row.RunsWithoutTokens++
+		} else {
+			row.InputTokens += res.InputTokens
+			row.OutputTokens += res.OutputTokens
+			row.CacheRead += res.CacheRead
+			row.CacheWrite += res.CacheWrite
+		}
 		if calls := turnsOf[r.ID]; len(calls) > 0 {
 			fromTurns = true
+			var sum float64
 			for _, c := range calls {
 				contexts = append(contexts, float64(c.ContextTokens))
+				sum += float64(c.ContextTokens)
 				row.PeakContext = max(row.PeakContext, c.ContextTokens)
 			}
+			runAverages = append(runAverages, sum/float64(len(calls)))
 		} else if total, known, _ := res.ModelTokens(); known && total > res.OutputTokens && res.Turns > 0 {
 			// Without the calls, a run's turns are its average; the last
 			// call's context, where known, may be above it.
 			fromTotals = true
 			avg := (total - res.OutputTokens) / int64(res.Turns)
-			contexts = append(contexts, float64(avg))
+			runAverages = append(runAverages, float64(avg))
 			row.PeakContext = max(row.PeakContext, avg, res.ContextTokens)
 		}
 		if res.Status == agent.StatusOK {
@@ -344,7 +355,10 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 	row.MedianDuration = time.Duration(Median(durations))
 	row.MedianTurns = Median(turns)
 	row.MedianCost = Median(costs)
-	row.MedianContext = Median(contexts)
+	row.MedianContext = Median(runAverages)
+	if fromTurns && !fromTotals {
+		row.MedianContext = Median(contexts)
+	}
 	switch {
 	case fromTurns && fromTotals:
 		row.ContextFrom = ContextFromMixed
@@ -469,6 +483,20 @@ func Money(v float64, estimated bool) string {
 		return fmt.Sprintf("%s$%.4f", prefix, v)
 	}
 	return fmt.Sprintf("%s$%.2f", prefix, v)
+}
+
+// KnownMoney is Money for a cost that may be unknown: "-" only when it is,
+// so a known zero shows as "$0.00".
+func KnownMoney(v float64, known, estimated bool) string {
+	switch {
+	case !known:
+		return "-"
+	case v == 0 && estimated:
+		return "~$0.00"
+	case v == 0:
+		return "$0.00"
+	}
+	return Money(v, estimated)
 }
 
 // Number renders a median without trailing zeros: 9, not 9.0; 6.5 stays.

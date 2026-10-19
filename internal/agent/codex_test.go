@@ -89,6 +89,7 @@ func TestCodexListPriceEstimate(t *testing.T) {
 		{"gpt-6.1-sol", 2.24},
 		{"gpt-6.1-sol-20261015", 2.24},
 		{"gpt-6.1-sol@20261015", 2.24},
+		{"gpt-6.1-sol-2026-10-15", 2.24},
 		// Luna: 0.6*0.10 + 0.4*0.01 + 0.1*0.50 = $0.114.
 		{"gpt-6-luna", 0.114},
 		// Astra: 0.6*10 + 0.4*1 + 0.1*50 = $11.40.
@@ -111,6 +112,18 @@ func TestCodexListPriceEstimate(t *testing.T) {
 				t.Fatalf("result = %+v, usage = %+v; want cost %v, status %s", res, res.Usage, tc.want, wantStatus)
 			}
 		})
+	}
+}
+
+func TestCodexEntryWithoutCachedRateBillsCacheReadsAtATenthOfInput(t *testing.T) {
+	openAIPrices["test-no-cached-rate"] = price{in: 2, out: 10}
+	t.Cleanup(func() { delete(openAIPrices, "test-no-cached-rate") })
+	b := NewCodexBackend()
+	res := Result{Backend: "codex", Model: "test-no-cached-rate"}
+	b.parse([]byte(`{"type":"turn.completed","usage":{"input_tokens":1000000,"cached_input_tokens":400000,"output_tokens":100000}}`), func(Event) {}, &res)
+	// 0.6*2 + 0.4*0.2 + 0.1*10 = $2.28.
+	if math.Abs(res.CostUSD-2.28) > 1e-12 || !res.CostEstimate {
+		t.Fatalf("result = %+v, want cost 2.28", res)
 	}
 }
 

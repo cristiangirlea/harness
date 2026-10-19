@@ -38,6 +38,9 @@ func NewAPIBackend() *APIBackend {
 
 func (b *APIBackend) Name() string { return "api" }
 
+// AppliesSystemPrompt: the api loop builds its own system prompt.
+func (b *APIBackend) AppliesSystemPrompt() bool { return true }
+
 // offeredTools is what a run offers the model, by name and as the request's
 // tools field: the built-ins, read_original when shaping, then MCP tools.
 func (b *APIBackend) offeredTools(task Task, mcpTools []tools.Tool) (map[string]tools.Tool, []apiTool) {
@@ -137,6 +140,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		// default, is what keeps its requests small.
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "compact_window: not enforced by the api backend"})
 	}
+	if task.NoSkills {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "no_skills: not enforced by the api backend"})
+	}
 	// req is built below; saveConversation closes over it so every exit path
 	// leaves a resumable history behind.
 	var req apiRequest
@@ -222,6 +228,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			emit(Event{Time: time.Now(), Kind: EventInfo,
 				Text: fmt.Sprintf("instructions: %s (%.1f KB%s)", strings.Join(names, ", "), float64(len(text))/1024, note)})
 		}
+	}
+	if task.AppendSystemPrompt != "" {
+		system = append(system, block{"type": "text", "text": task.AppendSystemPrompt})
 	}
 	// Constant for the whole run, so this breakpoint caches tools, prompt and
 	// instructions together.
@@ -339,17 +348,24 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			}
 			for {
 				msg, err = client.stream(ctx, req, onDelta, onBlock)
+				retry := err != nil && dropContextEdits(&req, err)
 				if err != nil && durable != nil {
 					var apiErr *apiError
 					if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && !apiErr.retryable() {
 						// A definite rejection has no model effect to reconcile.
 						durable.checkpoint.Pending = nil
-						if saveErr := durable.persist(ctx, "model_rejected", req, res); saveErr != nil {
+						rejected := res
+						if !retry {
+							// Finished, so a resume never resends the rejected request.
+							durable.checkpoint.Finished = true
+							rejected.Status, rejected.Error = StatusError, err.Error()
+						}
+						if saveErr := durable.persist(ctx, "model_rejected", req, rejected); saveErr != nil {
 							return durableFailure(saveErr)
 						}
 					}
 				}
-				if err == nil || !dropContextEdits(&req, err) {
+				if !retry {
 					break
 				}
 				// A beta hrn sends by default must never make every run fail.
@@ -372,13 +388,13 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			emit(Event{Time: time.Now(), Kind: EventUsage, Usage: &Usage{Model: servedModel(msg.Model, model),
 				InputTokens: turn.InputTokens, OutputTokens: turn.OutputTokens,
 				CacheRead: turn.CacheRead, CacheWrite: turn.CacheWrite, ContextTokens: res.ContextTokens}})
-			res.InputTokens += turn.InputTokens
-			res.OutputTokens += turn.OutputTokens
-			res.CacheRead += turn.CacheRead
-			res.CacheWrite += turn.CacheWrite
-			// Each turn at the price of the model that served it: a server-side
-			// fallback can answer a refused turn with another model.
-			res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
+			if res.addUsage("exclusive_cache", turn.InputTokens, turn.OutputTokens, turn.CacheRead, turn.CacheWrite) {
+				// Each turn at the price of the model that served it: a server-side
+				// fallback can answer a refused turn with another model.
+				res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
+			} else {
+				res.Usage.CostStatus = "missing"
+			}
 		}
 		if err != nil && durable != nil && durable.checkpoint.Pending != nil {
 			return durableFailure(err)

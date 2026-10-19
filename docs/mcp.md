@@ -63,7 +63,7 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `fresh` (with `continue_run_id`: a new session with a hand-over, see [backends](backends.md#a-fresh-hand-over)), `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
+| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `append_system_prompt`, `no_skills`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `continue_run_id`, `fresh` (with `continue_run_id`: a new session with a hand-over, see [backends](backends.md#a-fresh-hand-over)), `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `backends` | — | Availability and remembered limits, plus per-backend `enabled` and `default` booleans. The top-level `default` string names the backend selected for a fresh run. |
@@ -98,7 +98,10 @@ fixtures. The origin may have a trailing `/`, but no credentials, other path,
 query (including an empty `?`), or fragment. The CA path must name a regular
 file; symlinks to regular files are accepted. `remote_submit` accepts only
 read-only `api` jobs on registered projects, with a full commit, positive cost
-ceiling, and idempotency key.
+ceiling, and idempotency key. When `HRN_REMOTE_MAX_COST_USD` is set on the MCP
+server, a `max_cost_usd` above it is refused before any request; a fresh
+idempotency key queues a new job, and tenant budgets are not reserved yet, so
+set this cap for hosts you do not fully trust.
 Unknown and unsupported input fields are refused.
 
 Requests are served concurrently, so parallel tool calls from the host become parallel

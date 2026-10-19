@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
@@ -46,7 +47,7 @@ func runShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	if env == nil {
 		env = os.Environ()
 	}
-	cmd.Env = retrieval.ExecutorEnv(env)
+	cmd.Env = retrieval.ExecutorEnv(gitenv.WithoutRepoVars(env))
 	out := &boundedBuffer{keepHead: maxOutput * 2 / 3, keepTail: maxOutput / 3}
 	if capture {
 		out.fullLimit = maxCapture

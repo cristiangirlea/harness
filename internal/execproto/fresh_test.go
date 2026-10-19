@@ -57,9 +57,9 @@ func TestFreshStartsANewSessionWithAHandover(t *testing.T) {
 					t.Fatalf("record: %+v %v", rec, err)
 				}
 				if !fresh {
-					// Ordinary continue is unchanged: it forks the session.
-					if task.ForkSession != "session-01" || rec.ContinueRoute != "" || task.Prompt != "work" {
-						t.Errorf("ordinary continue changed: fork=%q route=%q", task.ForkSession, rec.ContinueRoute)
+					// Ordinary continue is unchanged: it forks the session; agent.Run only puts the commit block first.
+					if task.ForkSession != "session-01" || rec.ContinueRoute != "" || !strings.HasPrefix(task.Prompt, "# How to commit\n\n") || !strings.HasSuffix(task.Prompt, "\nThis is a fix round: one review, one commit; every fix from this review goes into one commit.\n\nwork") {
+						t.Errorf("ordinary continue changed: fork=%q route=%q prompt=%q", task.ForkSession, rec.ContinueRoute, task.Prompt)
 					}
 					continue
 				}

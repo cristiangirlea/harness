@@ -15,7 +15,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-func TestReportCostCells(t *testing.T) {
+func TestReportCostCellsKeepAKnownZeroAndCountMissingCosts(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		results       []agent.Result
@@ -319,11 +319,24 @@ func TestReportByDayPrintsTokensAndContextPerTurn(t *testing.T) {
 	if err := w.Close(agent.Result{Status: agent.StatusOK, Turns: 3, InputTokens: 90000, OutputTokens: 700, CacheRead: 1500, CacheWrite: 250}); err != nil {
 		t.Fatal(err)
 	}
+	// A fixed start, so the row's day does not depend on when the test runs.
+	rec, err := runlog.Load(w.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Started = time.Date(2026, 9, 21, 12, 0, 0, 0, time.Local)
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runlog.Root(), w.ID(), "result.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	out, err := captureStdout(t, func() error { return cmdReport([]string{"--by", "day"}) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	day := time.Now().Format("2006-01-02")
+	const day = "2026-09-21"
 	text := string(out)
 	i := strings.Index(text, "tokens by day, all time\n")
 	if !strings.HasPrefix(text, "runs by day, all time\n") || i < 0 {
@@ -340,6 +353,49 @@ func TestReportByDayPrintsTokensAndContextPerTurn(t *testing.T) {
 		}
 	}
 	if f := strings.Fields(lines[2]); f[0] != day {
-		t.Errorf("first row is %q, want today, %s", f[0], day)
+		t.Errorf("first row is %q, want the run's day, %s", f[0], day)
+	}
+}
+
+// The tokens table shows "-" for a group whose every run lost its usage,
+// and counts the runs it left out of a total beside it.
+func TestReportTokensMarkRunsWithMissingUsage(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, res := range []agent.Result{
+		{Status: agent.StatusOK, InputTokens: 90000, OutputTokens: 700, Usage: &agent.UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing"}},
+		{Status: agent.StatusOK, InputTokens: 1000, OutputTokens: 70},
+	} {
+		backend := "codex"
+		if res.Usage == nil {
+			backend = "api"
+		}
+		w, err := runlog.Create(backend, agent.Task{Prompt: "p", Dir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(res); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := captureStdout(t, func() error { return cmdReport([]string{"--by", "backend"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	i := strings.Index(text, "tokens by backend")
+	if i < 0 {
+		t.Fatalf("report =\n%s", text)
+	}
+	rows := map[string][]string{}
+	for _, line := range strings.Split(text[i:], "\n") {
+		if f := strings.Fields(line); len(f) > 0 {
+			rows[f[0]] = f
+		}
+	}
+	if f := rows["codex"]; len(f) < 5 || f[1] != "-" || f[2] != "-" || f[3] != "-" || f[4] != "-" {
+		t.Errorf("codex row = %q, want every total unknown", f)
+	}
+	if f := rows["all"]; len(f) < 4 || f[1] != "1.0k" || f[2] != "(1" || f[3] != "unknown)" {
+		t.Errorf("all row = %q, want the api total and one run unknown", f)
 	}
 }

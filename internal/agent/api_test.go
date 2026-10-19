@@ -428,6 +428,20 @@ func TestAPIReportsCompactWindowAsNotEnforced(t *testing.T) {
 	}
 }
 
+func TestAPIReportsNoSkillsAsNotEnforced(t *testing.T) {
+	_, events, _ := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(),
+		Options: Options{Mode: ModeAsk, NoInstructions: true, NoSkills: true}})
+	var infos []string
+	for _, e := range events {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	}
+	if !slices.Contains(infos, "no_skills: not enforced by the api backend") {
+		t.Errorf("info events = %v", infos)
+	}
+}
+
 func TestAPILoopWithoutProjectInstructions(t *testing.T) {
 	dir := t.TempDir()
 	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Options: Options{Mode: ModeAsk}})
@@ -444,6 +458,19 @@ func TestAPILoopWithoutProjectInstructions(t *testing.T) {
 		if e.Kind == EventInfo && strings.HasPrefix(e.Text, "instructions:") {
 			t.Error("NoInstructions must not announce instructions")
 		}
+	}
+}
+
+func TestAPILoopAppendsTheSystemPromptBeforeTheCachedEnvBlock(t *testing.T) {
+	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(),
+		Options: Options{Mode: ModeAsk, NoInstructions: true, AppendSystemPrompt: "Run the tests before you answer."}})
+	sys := systemText(t, fake.requests[0])
+	if len(sys) != 3 || sys[1] != "Run the tests before you answer." {
+		t.Fatalf("system = %q, want the text as its own block after the harness prompt", sys)
+	}
+	blocks := fake.requests[0]["system"].([]any)
+	if _, cached := blocks[2].(map[string]any)["cache_control"]; !cached {
+		t.Error("the env block after it keeps the breakpoint, so the added text is cached too")
 	}
 }
 

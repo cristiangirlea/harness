@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -230,7 +231,12 @@ func (w *cancelOnSecondEvent) Write(data []byte) (int, error) {
 func TestRemoteWatchReconnectsWithDurableCursor(t *testing.T) {
 	var mu sync.Mutex
 	var cursors []string
-	remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var job string
+	_, _, job = remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/jobs/"+job {
+			fmt.Fprint(w, `{"state":"running"}`)
+			return
+		}
 		mu.Lock()
 		cursors = append(cursors, r.Header.Get("Last-Event-ID"))
 		count := len(cursors)
@@ -249,7 +255,7 @@ func TestRemoteWatchReconnectsWithDurableCursor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	output := &cancelOnSecondEvent{cancel: cancel}
-	if err := connection.watch(ctx, "/v1/jobs/j_fixture/events", 0, output); err != nil {
+	if err := connection.WatchJob(ctx, job, url.Values{}, 0, output); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -266,6 +272,10 @@ func TestRemoteEventsWatchExitsSuccessfullyWhenJobEnds(t *testing.T) {
 	for _, kind := range []string{"succeeded", "failed", "canceled"} {
 		t.Run(kind, func(t *testing.T) {
 			tenant, project, job := remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/events") {
+					fmt.Fprint(w, `{"state":"running"}`)
+					return
+				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprintf(w, "id: 1\nevent: %s\ndata: {\"kind\":%q}\n\n", kind, kind)
 				w.(http.Flusher).Flush()
@@ -287,6 +297,63 @@ func TestRemoteEventsWatchExitsSuccessfullyWhenJobEnds(t *testing.T) {
 	}
 }
 
+func TestRemoteEventsWatchStartedAfterTheJobEndedExitsAtOnce(t *testing.T) {
+	var streams atomic.Int32
+	tenant, project, job := remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case !strings.HasSuffix(r.URL.Path, "/events"):
+			fmt.Fprint(w, `{"state":"succeeded"}`)
+		case r.Header.Get("Accept") == "text/event-stream":
+			streams.Add(1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		case r.URL.Query().Get("after") == "4":
+			fmt.Fprint(w, `{"events":[{"id":5,"kind":"succeeded"}]}`)
+		default:
+			fmt.Fprint(w, `{"events":[]}`)
+		}
+	}))
+	for _, test := range []struct{ after, want string }{
+		{"5", ""},
+		{"4", "{\"id\":5,\"kind\":\"succeeded\"}\n"},
+	} {
+		t.Run(test.after, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperRemoteEventsWatch$", "--",
+				"events", "--tenant", tenant, "--project", project, "--watch", "--after", test.after, job)
+			cmd.Env = append(os.Environ(), "HRN_TEST_REMOTE_EVENTS_WATCH=1")
+			output, err := cmd.CombinedOutput()
+			if err != nil || ctx.Err() != nil {
+				t.Fatalf("watch process error = %v, context = %v, output = %s", err, ctx.Err(), output)
+			}
+			if string(output) != test.want {
+				t.Fatalf("output = %q, want %q", output, test.want)
+			}
+		})
+	}
+	if got := streams.Load(); got != 0 {
+		t.Fatalf("a watch of an ended job opened %d streams", got)
+	}
+}
+
+func TestRemoteEventsRefusesANegativeCursorBeforeSending(t *testing.T) {
+	var calls atomic.Int32
+	tenant, project, job := remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+	}))
+	for _, watch := range [][]string{nil, {"--watch"}} {
+		args := append(append([]string{"events", "--tenant", tenant, "--project", project, "--after", "-1"}, watch...), job)
+		if err := runRemote(args, io.Discard); err == nil || err.Error() != "--after must be nonnegative" {
+			t.Errorf("%v: error = %v", args, err)
+		}
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("a negative cursor sent %d requests", got)
+	}
+}
+
 func TestHelperRemoteEventsWatch(t *testing.T) {
 	if os.Getenv("HRN_TEST_REMOTE_EVENTS_WATCH") != "1" {
 		return
@@ -296,4 +363,30 @@ func TestHelperRemoteEventsWatch(t *testing.T) {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+func TestRemoteSubmitRefusesCostAboveTheClientCapBeforeSending(t *testing.T) {
+	var calls atomic.Int32
+	tenant, project, _ := remoteFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"state":"queued"}`)
+	}))
+	t.Setenv("HRN_REMOTE_MAX_COST_USD", "2")
+	args := []string{"submit", "--tenant", tenant, "--project", project,
+		"--base-ref", strings.Repeat("a", 40), "--key", "stable-key", "--max-cost", "5", "inspect"}
+	err := runRemote(args, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "HRN_REMOTE_MAX_COST_USD") {
+		t.Fatalf("cost above the cap: err = %v, want the limit named", err)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("cost above the cap sent %d requests", got)
+	}
+	args[len(args)-2] = "2"
+	if err := runRemote(args, io.Discard); err != nil {
+		t.Fatalf("cost at the cap: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("cost at the cap sent %d requests, want 1", got)
+	}
 }

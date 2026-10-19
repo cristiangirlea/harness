@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,16 +27,16 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 	for _, v := range d.Variants {
 		switch {
 		case v.A == nil:
-			r.Line(fmt.Sprintf("  %-20s only in %s (%s pass, %s)", v.Name, d.B, report.Share(v.B.PassRate()), report.Money(v.B.MedianCostUSD, v.B.CostEstimate)))
+			r.Line(fmt.Sprintf("  %-20s only in %s (%s pass, %s)", v.Name, d.B, report.Share(v.B.PassRate()), report.KnownMoney(v.B.MedianCostUSD, v.B.CostKnown(), v.B.CostEstimate)))
 		case v.B == nil:
-			r.Line(fmt.Sprintf("  %-20s only in %s (%s pass, %s)", v.Name, d.A, report.Share(v.A.PassRate()), report.Money(v.A.MedianCostUSD, v.A.CostEstimate)))
+			r.Line(fmt.Sprintf("  %-20s only in %s (%s pass, %s)", v.Name, d.A, report.Share(v.A.PassRate()), report.KnownMoney(v.A.MedianCostUSD, v.A.CostKnown(), v.A.CostEstimate)))
 		default:
 			line := fmt.Sprintf("  %-20s %-16s %-18s %-14s", v.Name,
 				arrow(report.Share(v.A.PassRate()), report.Share(v.B.PassRate())),
-				arrow(report.Money(v.A.MedianCostUSD, v.A.CostEstimate), report.Money(v.B.MedianCostUSD, v.B.CostEstimate)),
+				arrow(report.KnownMoney(v.A.MedianCostUSD, v.A.CostKnown(), v.A.CostEstimate), report.KnownMoney(v.B.MedianCostUSD, v.B.CostKnown(), v.B.CostEstimate)),
 				arrow(v.A.MedianDuration.Round(time.Second).String(), v.B.MedianDuration.Round(time.Second).String()))
 			if d.Judged {
-				line += " " + arrow(score(v.A.Judged, v.A.MeanScore), score(v.B.Judged, v.B.MeanScore))
+				line += " " + arrow(score(*v.A), score(*v.B)) + noise(v.WithinNoise)
 			}
 			r.Line(strings.TrimRight(line, " "))
 		}
@@ -51,7 +52,21 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 		if t.B != nil {
 			after = t.B.Score()
 		}
-		r.Line(fmt.Sprintf("  %-20s %-20s %s", t.Task, t.Variant, arrow(before, after)))
+		r.Line(fmt.Sprintf("  %-20s %-20s %s", t.Task, t.Variant, arrow(before, after)+noise(t.WithinNoise)))
+	}
+	for _, v := range d.Variants {
+		for _, side := range []struct {
+			id  string
+			row *eval.VariantRow
+		}{{d.A, v.A}, {d.B, v.B}} {
+			if side.row != nil && side.row.DidNotAct > 0 {
+				noun := "cells"
+				if side.row.DidNotAct == 1 {
+					noun = "cell"
+				}
+				r.Line(r.c(dim, fmt.Sprintf("  note: %d %s of %s in %s did not act; its pass rate counts only the cells that did", side.row.DidNotAct, noun, v.Name, side.id)))
+			}
+		}
 	}
 	for _, id := range d.PromptChanged {
 		r.Line(r.c(dim, fmt.Sprintf("  note: the prompt differs for task %s, so its rows compare different tasks", id)))
@@ -60,21 +75,71 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 		r.Line(r.c(dim, fmt.Sprintf("  note: the gates or expect differ for task %s, so passing means something else on each side", id)))
 	}
 	for _, name := range d.VariantChanged {
-		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s runs a different backend, model or effort in %s", name, d.B)))
+		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s runs a different backend, model, effort or harness in %s", name, d.B)))
+	}
+	for _, c := range d.SetupChanged {
+		var parts []string
+		for _, p := range []string{setupNames("files", c.Files), setupNames("mcp", c.MCP), setupNames("plugins", c.Plugins), setupNames("skills", c.Skills)} {
+			if p != "" {
+				parts = append(parts, p)
+			}
+		}
+		what := ""
+		if len(parts) > 0 {
+			what = ": " + strings.Join(parts, "; ")
+		}
+		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s started with another agent setup in %s, beyond its variant fields%s", c.Variant, d.B, what)))
+	}
+	for _, v := range d.Variants {
+		for _, side := range []struct {
+			id  string
+			row *eval.VariantRow
+		}{{d.A, v.A}, {d.B, v.B}} {
+			if side.row != nil && side.row.SetupMixed {
+				r.Line(r.c(dim, fmt.Sprintf("  note: variant %s's cells in %s did not all start with the same agent setup", v.Name, side.id)))
+			}
+		}
 	}
 	if d.JudgeChanged {
 		r.Line(r.c(dim, "  note: the judge or its rubric differs, so the scores are not on one scale"))
 	}
+	if slices.ContainsFunc(d.Variants, func(v eval.VariantPair) bool { return v.WithinNoise }) ||
+		slices.ContainsFunc(d.Tasks, func(t eval.TaskPair) bool { return t.WithinNoise }) {
+		r.Line(r.c(dim, "  note: within noise: the judge score moved less than the judge's own spread between repeats"))
+	}
+}
+
+// setupNames lists a kind of setup change, at most five names; empty for none.
+func setupNames(kind string, names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	if len(names) > 5 {
+		return fmt.Sprintf("%s %s and %d more", kind, strings.Join(names[:5], ", "), len(names)-5)
+	}
+	return kind + " " + strings.Join(names, ", ")
+}
+
+// noise marks a judge-score change smaller than the judge's own spread.
+func noise(within bool) string {
+	if within {
+		return " (within noise)"
+	}
+	return ""
 }
 
 func arrow(before, after string) string { return before + " → " + after }
 
-// score renders a variant's mean judge score, or "-" when nothing was judged.
-func score(judged int, mean float64) string {
-	if judged == 0 {
+// score renders a variant's mean judge score, with the spread of its repeats,
+// or "-" when nothing was judged.
+func score(v eval.VariantRow) string {
+	if v.Judged == 0 {
 		return "-"
 	}
-	return fmt.Sprintf("%.1f", mean)
+	if v.JudgeRepeats > 1 {
+		return fmt.Sprintf("%.1f (%.1f-%.1f)", v.MeanScore, v.ScoreMin, v.ScoreMax)
+	}
+	return fmt.Sprintf("%.1f", v.MeanScore)
 }
 
 // listEvals prints the saved evals, newest first; n limits how many, 0 is all.
@@ -92,9 +157,17 @@ func listEvals(w io.Writer, n int) error {
 		fmt.Fprintf(w, "%-6s %-16s %6s %6s %9s  %s\n", "id", "started", "cells", "pass", "cost", "batch")
 	}
 	for _, rec := range recs {
-		cells, passed, cost, estimate := rec.Totals()
-		fmt.Fprintf(w, "%-6s %-16s %6d %6s %9s  %s\n", rec.ID, rec.Started.Local().Format("2006-01-02 15:04"),
-			cells, report.Percent(passed, cells), report.Money(cost, estimate), rec.BatchID)
+		cells, passed, cost, known, estimate, withoutCost := rec.Totals()
+		acted := cells
+		for _, v := range rec.Table.Variants {
+			acted -= v.DidNotAct
+		}
+		unknown := ""
+		if withoutCost > 0 {
+			unknown = fmt.Sprintf("  (%d of %d cells without a cost)", withoutCost, cells)
+		}
+		fmt.Fprintf(w, "%-6s %-16s %6d %6s %9s  %s%s\n", rec.ID, rec.Started.Local().Format("2006-01-02 15:04"),
+			cells, report.Percent(passed, acted), report.KnownMoney(cost, known, estimate), rec.BatchID, unknown)
 	}
 	if unreadable > 0 {
 		noun := "record"

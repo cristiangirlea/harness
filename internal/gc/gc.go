@@ -16,11 +16,13 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -158,6 +160,13 @@ var removeGitWorktree = func(ctx context.Context, w Worktree) error {
 	return nil
 }
 
+// removeMovedWorktree is replaceable by tests to make deletion fail partway
+// after the worktree has been moved aside and deregistered.
+var removeMovedWorktree = os.RemoveAll
+
+// renameWorktree is replaceable by tests that make only the move back fail.
+var renameWorktree = os.Rename
+
 func removeWorktree(ctx context.Context, w Worktree) (bool, error) {
 	err := removeGitWorktree(ctx, w)
 	if err == nil {
@@ -216,11 +225,30 @@ dir=$(git rev-parse --absolute-git-dir) && printf '%s\0' "$dir"`)
 	if why := recheck(ctx, w); why != "" {
 		return false, fmt.Errorf("kept, %s", why)
 	}
-	if removeErr := os.RemoveAll(w.Path); removeErr != nil {
-		return false, removeErr
+	// Moved aside and deregistered first, a deletion that fails partway leaves
+	// an unregistered folder, never a registered worktree missing files.
+	moved := movedCachePath(w.Path)
+	if err := renameWorktree(w.Path, moved); err != nil {
+		return false, fmt.Errorf("kept, it could not be moved aside: %s", firstLine(err.Error()))
 	}
+	// Prune skips a lock taken since the recheck and can fail after pruning
+	// this entry, so git's listing decides whether the folder goes back.
 	_, pruneErr := gitOut(ctx, w.Repo, "worktree", "prune")
-	return pruneErr == nil, pruneErr
+	entries, listErr = listWorktrees(ctx, w.Repo)
+	if listErr != nil || listed(w.Path, entryPaths(entries)) {
+		keptErr := errors.Join(pruneErr, listErr)
+		if keptErr == nil {
+			keptErr = errors.New("still registered after git worktree prune")
+		}
+		if err := renameWorktree(moved, w.Path); err != nil {
+			return false, fmt.Errorf("moved to %s, which could not be moved back: %w", moved, errors.Join(keptErr, err))
+		}
+		return false, fmt.Errorf("kept, %w", keptErr)
+	}
+	if err := removeMovedWorktree(moved); err != nil {
+		return true, fmt.Errorf("worktree removed, but %s (moved aside) remains: %w", moved, errors.Join(pruneErr, err))
+	}
+	return true, pruneErr
 }
 
 // status and foreach only see indexed submodules. A removed submodule can
@@ -254,6 +282,14 @@ func checkSubmoduleRepositories(ctx context.Context, wt, checked string) error {
 			if d.IsDir() && isBare(path) {
 				if !indexed[samePath(path)] {
 					return fmt.Errorf("submodule repository is not indexed: %s", path)
+				}
+				// Its linked worktrees live elsewhere and would lose their repository.
+				linked, err := os.ReadDir(filepath.Join(path, "worktrees"))
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+				if len(linked) != 0 {
+					return fmt.Errorf("submodule repository has linked worktrees: %s", path)
 				}
 				// Skip the object store, but not repositories nested below it.
 				if err := walk(filepath.Join(path, "modules")); err != nil {
@@ -298,10 +334,11 @@ func recheck(ctx context.Context, w Worktree) string {
 		if held := holding(w.Path, entryPaths(entries)); held != "" {
 			return "it holds the worktree " + held + ", which nothing judged"
 		}
-		if why := unsaved(ctx, w.Path, entryPaths(entries)); why != "" {
+		walk := &worktreeWalk{wt: w.Path, registered: entryPaths(entries)}
+		if why := unsaved(ctx, walk); why != "" {
 			return why + " since the scan"
 		}
-		if why := worktreeLinkRisk(w.Path, entryPaths(entries)); why != "" {
+		if why := walk.linkRisk(); why != "" {
 			return why + " since the scan"
 		}
 		return ""
@@ -514,6 +551,7 @@ type repoFacts struct {
 	prs       []PR
 	ghErr     error
 	ghDone    bool
+	landed    map[string][]patchID // landedPatchIDs by merge base, for the run
 }
 
 func (r *repoFacts) pullRequests(ctx context.Context) ([]PR, error) {
@@ -558,7 +596,8 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 	case cwd != "" && inside(cwd, w.Path):
 		return Keep, "the current directory is inside it"
 	}
-	if why := unsaved(ctx, w.Path, facts.worktrees); why != "" {
+	walk := &worktreeWalk{wt: w.Path, registered: facts.worktrees}
+	if why := unsaved(ctx, walk); why != "" {
 		return Keep, why
 	}
 	if facts.ownersErr != nil {
@@ -572,15 +611,15 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		case facts.fetchErr != nil:
 			return Keep, "fetch failed: " + firstLine(facts.fetchErr.Error())
 		case !isAncestor(ctx, facts.repo, w.Head, facts.def):
-			if landed := landedBatchChange(ctx, facts.repo, w.Head, facts.def); landed != "" {
-				if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+			if landed := landedBatchChange(ctx, facts, w.Head); landed != "" {
+				if why := walk.linkRisk(); why != "" {
 					return Keep, why
 				}
 				return Remove, fmt.Sprintf("batch %s: its change landed on %s as %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"), landed[:7])
 			}
 			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
 		}
-		if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+		if why := walk.linkRisk(); why != "" {
 			return Keep, why
 		}
 		return Remove, fmt.Sprintf("batch %s finished and its commit is on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
@@ -619,7 +658,7 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 		if age := time.Since(p.MergedAt); age < grace {
 			return Keep, fmt.Sprintf("PR #%d merged %s ago, inside the %s grace period", p.Number, short(age), short(grace))
 		}
-		if why := worktreeLinkRisk(w.Path, facts.worktrees); why != "" {
+		if why := walk.linkRisk(); why != "" {
 			return Keep, why
 		}
 		return Remove, fmt.Sprintf("PR #%d merged %s", p.Number, p.MergedAt.Local().Format("2006-01-02 15:04"))
@@ -673,10 +712,10 @@ func buildFolder(dir, path string, tracksNothing func(prefix string) bool) (stri
 }
 
 // unsaved says why a worktree holds something no branch has: tracked changes,
-// untracked files, or ignored files that are not build output. registered are
-// the paths git lists as worktrees, which may sit in .hrn/worktrees. Empty
-// means nothing.
-func unsaved(ctx context.Context, dir string, registered []string) string {
+// untracked files, or ignored files that are not build output. It gives walk
+// the build folders it finds. Empty means nothing.
+func unsaved(ctx context.Context, walk *worktreeWalk) string {
+	dir := walk.wt
 	// "matching" lists the paths an ignore pattern matched; the default mode
 	// shows a folder of nothing but ignored files as the folder, which hides
 	// what is in it.
@@ -689,7 +728,7 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 	changed := 0
 	var kept []string
 	hrn := false
-	walked := map[string]bool{} // build folders already searched for a repository
+	walked := map[string]bool{} // build folders already handed to walk
 	untracked := map[string]bool{}
 	tracksNothing := func(prefix string) bool {
 		if v, ok := untracked[prefix]; ok {
@@ -723,16 +762,14 @@ func unsaved(ctx context.Context, dir string, registered []string) string {
 			kept = append(kept, strings.TrimSuffix(path, "/"))
 		case folder != "" && !walked[folder]:
 			walked[folder] = true
-			if why := linkAbove(dir, folder); why != "" {
-				return why
-			}
-			if why := buildRisk(dir, filepath.Join(dir, filepath.FromSlash(folder))); why != "" {
-				return why
-			}
+			walk.folders = append(walk.folders, folder)
 		}
 	}
+	if why := walk.buildRisk(); why != "" {
+		return why
+	}
 	if hrn {
-		kept = append(kept, hrnLeftovers(dir, registered)...)
+		kept = append(kept, hrnLeftovers(dir, walk.registered)...)
 	}
 	if changed == 0 {
 		if n, err := hiddenFromStatus(ctx, dir); err != nil {
@@ -839,56 +876,158 @@ func buildRisk(wt, folder string) string {
 	return ""
 }
 
-// worktreeLinkRisk checks every entry that would go with wt. Git follows
-// junctions on Windows when removing a worktree, including tracked folders.
-// Inner worktrees have their own verdicts and are checked separately.
-func worktreeLinkRisk(wt string, registered []string) string {
-	root := samePath(wt)
-	listed := make(map[string]bool, len(registered))
-	for _, path := range registered {
-		listed[samePath(path)] = true
-	}
-	var link string
-	err := filepath.WalkDir(wt, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+// treeWalks counts worktree walks, so a test can see one check walks once.
+var treeWalks atomic.Int64
+
+// worktreeWalk walks a worktree at most once for a check: its build folders
+// for buildRisk's rules, the rest for links git deletes through.
+type worktreeWalk struct {
+	wt         string
+	registered []string // worktrees git lists; inner ones have their own verdicts
+	folders    []string // build folders, slash-separated, in git status order
+
+	done  bool
+	risks map[string]string // why a build folder cannot go, "" when it can
+	link  string            // why the rest of the worktree cannot go
+}
+
+// buildRisk says why a build folder keeps the worktree, checking the folders
+// in order as git status listed them.
+func (w *worktreeWalk) buildRisk() string {
+	for _, folder := range w.folders {
+		if why := linkAbove(w.wt, folder); why != "" {
+			return why
 		}
-		if p != wt && d.IsDir() {
-			rel, err := filepath.Rel(wt, p)
+		w.run()
+		why, ok := w.risks[folder]
+		if !ok { // reached only through a link that stays inside, so walk it there
+			why = buildRisk(w.wt, filepath.Join(w.wt, filepath.FromSlash(folder)))
+		}
+		if why != "" {
+			return why
+		}
+	}
+	return ""
+}
+
+// linkRisk says why the rest of the worktree cannot go: git on Windows deletes
+// through a junction or directory symlink, tracked folders included; elsewhere
+// it unlinks links, and a tracked folder swapped for one is a change unsaved sees.
+func (w *worktreeWalk) linkRisk() string {
+	w.run()
+	return w.link
+}
+
+func (w *worktreeWalk) run() {
+	if w.done {
+		return
+	}
+	w.done = true
+	treeWalks.Add(1)
+	w.risks = make(map[string]string, len(w.folders))
+	root := samePath(w.wt)
+	listed := make(map[string]bool, len(w.registered))
+	for _, reg := range w.registered {
+		listed[samePath(reg)] = true
+	}
+	build := make(map[string]bool, len(w.folders))
+	above := map[string]bool{} // folders on the way to a build folder
+	for _, f := range w.folders {
+		build[f] = true
+		for d := path.Dir(f); d != "."; d = path.Dir(d) {
+			above[d] = true
+		}
+	}
+	windows := runtime.GOOS == "windows"
+	skip := func(d fs.DirEntry) error {
+		if d != nil && d.IsDir() {
+			return fs.SkipDir
+		}
+		return nil
+	}
+	cur := ""              // the build folder the walk is in
+	left := len(w.folders) // build folders not reached yet
+	_ = filepath.WalkDir(w.wt, func(p string, d fs.DirEntry, err error) error {
+		if p == w.wt {
 			if err != nil {
+				w.link = "the worktree cannot be read: " + firstLine(err.Error())
 				return err
 			}
+			return nil
+		}
+		r, rerr := filepath.Rel(w.wt, p)
+		if rerr != nil {
+			return rerr
+		}
+		rel := filepath.ToSlash(r)
+		if cur != "" && rel != cur && !strings.HasPrefix(rel, cur+"/") {
+			cur = ""
+		}
+		if cur == "" && build[rel] {
+			cur = rel
+			w.risks[cur] = ""
+			left--
+		}
+		if cur != "" {
+			if w.risks[cur] != "" {
+				return skip(d)
+			}
+			if err != nil {
+				w.risks[cur] = "build output that cannot be read: " + cur
+				return skip(d)
+			}
+			switch kind, at := riskAt(w.wt, p, d); kind {
+			case riskRepo:
+				w.risks[cur] = "a repository inside build output: " + relSlash(w.wt, at)
+			case riskLink:
+				w.risks[cur] = "a link out of the worktree inside build output: " + relSlash(w.wt, at)
+			}
+			return nil
+		}
+		if err != nil {
+			if w.link == "" {
+				w.link = "the worktree cannot be read: " + firstLine(err.Error())
+			}
+			return skip(d)
+		}
+		if d.IsDir() {
 			// WalkDir only adds names read under wt, so no directory needs EvalSymlinks.
-			key := filepath.Join(root, rel)
-			if runtime.GOOS == "windows" {
+			key := filepath.Join(root, r)
+			if windows {
 				key = strings.ToLower(key)
 			}
-			if listed[key] {
+			if listed[key] || d.Name() == ".git" || !windows && !above[rel] {
 				return fs.SkipDir
 			}
+			return nil
 		}
-		if d.Name() == ".git" {
-			if d.Type() == fs.ModeDir {
-				return fs.SkipDir
-			}
-			if d.Type().IsRegular() {
-				return nil
-			}
+		if windows && w.link == "" && !d.Type().IsRegular() && deletesThrough(w.wt, p) {
+			w.link = "a link out of the worktree: " + rel
 		}
-		if kind, at := riskAt(wt, p, d); kind == riskLink {
-			link = at
+		if w.link != "" && left == 0 {
 			return fs.SkipAll
 		}
 		return nil
 	})
-	if link != "" {
-		rel, _ := filepath.Rel(wt, link)
-		return "a link out of the worktree: " + filepath.ToSlash(rel)
-	}
+}
+
+func relSlash(wt, p string) string {
+	r, _ := filepath.Rel(wt, p)
+	return filepath.ToSlash(r)
+}
+
+// deletesThrough reports a link that git on Windows would delete through: one
+// to a directory outside wt, or one it cannot read.
+func deletesThrough(wt, p string) bool {
+	to, err := os.Readlink(p)
 	if err != nil {
-		return "the worktree cannot be read: " + firstLine(err.Error())
+		return true
 	}
-	return ""
+	if inside(linkTarget(p, to), wt) {
+		return false
+	}
+	info, err := os.Stat(p)
+	return err != nil || info.IsDir()
 }
 
 const (
@@ -1066,24 +1205,27 @@ var maxCommits = 2000
 // landedBatchChange proves that the whole task diff is one commit on the
 // default branch. A missing base, empty diff, git error or a history at the
 // comparison limit gives no proof.
-func landedBatchChange(ctx context.Context, repo, head, def string) string {
-	base, err := gitOut(ctx, repo, "merge-base", head, def)
+func landedBatchChange(ctx context.Context, facts *repoFacts, head string) string {
+	base, err := gitOut(ctx, facts.repo, "merge-base", head, facts.def)
 	if err != nil || base == "" {
 		return ""
 	}
-	countText, err := gitOut(ctx, repo, "rev-list", "--count", "--max-count="+strconv.Itoa(maxCommits), "--no-merges", base+".."+def)
-	if err != nil {
+	landed, ok := facts.landed[base]
+	if !ok {
+		landed = landedPatchIDs(ctx, facts.repo, base, facts.def)
+		if facts.landed == nil {
+			facts.landed = map[string][]patchID{}
+		}
+		facts.landed[base] = landed
+	}
+	if len(landed) == 0 {
 		return ""
 	}
-	count, err := strconv.Atoi(countText)
-	if err != nil || count == 0 || count >= maxCommits {
-		return ""
-	}
-	taskDiff, err := gitStdout(ctx, repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", base, head)
+	taskDiff, err := gitStdout(ctx, facts.repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", base, head)
 	if err != nil || taskDiff == "" {
 		return ""
 	}
-	taskID, err := gitStdoutInput(ctx, repo, taskDiff, "patch-id", "--verbatim")
+	taskID, err := gitStdoutInput(ctx, facts.repo, taskDiff, "patch-id", "--verbatim")
 	if err != nil {
 		return ""
 	}
@@ -1091,24 +1233,72 @@ func landedBatchChange(ctx context.Context, repo, head, def string) string {
 	if len(taskFields) != 2 {
 		return ""
 	}
-	patches, err := gitStdout(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
-	if err != nil {
-		return ""
-	}
-	landedIDs, err := gitStdoutInput(ctx, repo, patches, "patch-id", "--verbatim")
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(strings.TrimSpace(landedIDs), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 || len(fields[1]) < 7 {
-			return ""
-		}
-		if fields[0] == taskFields[0] {
-			return fields[1]
+	for _, p := range landed {
+		if p.id == taskFields[0] {
+			return p.commit
 		}
 	}
 	return ""
+}
+
+// patchID is one default branch commit and the patch id of its change.
+type patchID struct{ id, commit string }
+
+// landedPatchIDs gives the patch ids of the default branch's commits since
+// base, or none when they cannot prove anything; tests wrap it to count runs.
+var landedPatchIDs = func(ctx context.Context, repo, base, def string) []patchID {
+	countText, err := gitOut(ctx, repo, "rev-list", "--count", "--max-count="+strconv.Itoa(maxCommits), "--no-merges", base+".."+def)
+	if err != nil {
+		return nil
+	}
+	count, err := strconv.Atoi(countText)
+	if err != nil || count == 0 || count >= maxCommits {
+		return nil
+	}
+	out, err := logPatchIDs(ctx, repo, base, def)
+	if err != nil {
+		return nil
+	}
+	var ids []patchID
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || len(fields[1]) < 7 {
+			return nil
+		}
+		ids = append(ids, patchID{id: fields[0], commit: fields[1]})
+	}
+	return ids
+}
+
+// logPatchIDs pipes the default branch's log since base into git patch-id,
+// so a history with large binaries is never held in memory.
+func logPatchIDs(ctx context.Context, repo, base, def string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	log := gitCommand(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
+	var logErr bytes.Buffer
+	log.Stderr = &logErr
+	patches, err := log.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	ids := gitCommand(ctx, repo, "patch-id", "--verbatim")
+	ids.Stdin = patches
+	var out, idsErr bytes.Buffer
+	ids.Stdout, ids.Stderr = &out, &idsErr
+	if err := log.Start(); err != nil {
+		return "", err
+	}
+	if err := ids.Run(); err != nil {
+		// A git log blocked on a full pipe would otherwise never exit.
+		cancel()
+		_ = log.Wait()
+		return "", fmt.Errorf("git patch-id: %v: %s", err, strings.TrimSpace(idsErr.String()))
+	}
+	if err := log.Wait(); err != nil {
+		return "", fmt.Errorf("git log: %v: %s", err, strings.TrimSpace(logErr.String()))
+	}
+	return out.String(), nil
 }
 
 // listPRs reads the repository's pull requests: the open ones on their own,

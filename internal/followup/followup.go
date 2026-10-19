@@ -12,14 +12,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 // Request names the run to continue and what the caller set explicitly.
@@ -29,6 +33,8 @@ type Request struct {
 	Backend string
 	Dir     string
 	Model   string
+	// Retrieval is the follow-up's retrieval mode; a pin from another backend refuses an opt-in.
+	Retrieval string
 	// Fresh starts a new session briefed by a hand-over built from the
 	// earlier run's record, instead of resuming or forking anything.
 	Fresh bool
@@ -60,6 +66,17 @@ type Plan struct {
 
 	// Notes say what was carried over and how, for the run's transcript.
 	Notes []string
+
+	// release frees the conversation a backend resumes in place.
+	release func()
+}
+
+// Release frees what Make took for this plan; call it once the run has ended.
+// It is safe to call more than once, and on a plan that took nothing.
+func (p Plan) Release() {
+	if p.release != nil {
+		p.release()
+	}
 }
 
 // Route is what the run record keeps as its continue_route.
@@ -108,6 +125,9 @@ func Make(req Request) (Plan, error) {
 	p.Dir = ws.Root
 	b, err := agent.Get(p.Backend)
 	if err != nil {
+		return Plan{}, err
+	}
+	if err := checkRetrievalPin(chain, p.Backend, req.Retrieval); err != nil {
 		return Plan{}, err
 	}
 	if missing != "" {
@@ -188,6 +208,17 @@ func Make(req Request) (Plan, error) {
 	default:
 		p.Notes = append(p.Notes, fmt.Sprintf("no %s session in this chain to pick up; starting a new one", p.Backend))
 	}
+	if p.ForkSession != "" && agent.BackendCapabilities(b).Sessions == "resume" {
+		// Resumed in place, the conversation is shared by every run on it.
+		release, err := lockConversation(p.Backend, p.ForkSession)
+		if err != nil {
+			return Plan{}, err
+		}
+		p.release = release
+		if later := laterOn(p.Backend, p.ForkSession, chain[from], chain); later != "" {
+			p.Notes = append(p.Notes, fmt.Sprintf("run %s is not the newest on %s conversation %s: run %s resumed it later, so the agent also sees that run's turns", chain[from].ID, p.Backend, p.ForkSession, later))
+		}
+	}
 	if n := len(p.Handoff); n > 0 {
 		turns := "turns"
 		if n == 1 {
@@ -196,6 +227,71 @@ func Make(req Request) (Plan, error) {
 		p.Notes = append(p.Notes, fmt.Sprintf("handing %d earlier %s to %s as a transcript: requests and final answers, not tool calls or reasoning", n, turns, p.Backend))
 	}
 	return p, nil
+}
+
+var conversationID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
+
+// lockConversation refuses a second run on one conversation while the first
+// runs. The lock file stays behind: removing it would let two holders in.
+func lockConversation(backend, id string) (func(), error) {
+	if !conversationID.MatchString(id) {
+		// The backend refuses such an id before it starts the CLI.
+		return func() {}, nil
+	}
+	dir := filepath.Join(runlog.Home(), "locks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	unlock, ok, err := ws.TryLock(filepath.Join(dir, backend+"-"+id+".lock"))
+	if err != nil {
+		return nil, fmt.Errorf("locking %s conversation %s: %w", backend, id, err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("%s conversation %s is being continued by another hrn run right now; wait for that run to end, or start a fresh hand-over", backend, id)
+	}
+	return sync.OnceFunc(unlock), nil
+}
+
+// laterOn names the newest run on backend, outside chain, that ran on
+// conversation id since carried started, or "".
+func laterOn(backend, id string, carried runlog.Record, chain []runlog.Record) string {
+	recs, _, err := runlog.ListSince(carried.Started)
+	if err != nil {
+		return ""
+	}
+	for _, r := range recs {
+		// The chain's own runs are not later ones, even when the clock gave them the same start.
+		if !slices.ContainsFunc(chain, func(c runlog.Record) bool { return c.ID == r.ID }) && r.Backend == backend && !r.Started.Before(carried.Started) &&
+			(r.Result.Session == id || r.Task.ForkSession == id) {
+			return r.ID
+		}
+	}
+	return ""
+}
+
+// checkRetrievalPin refuses a retrieval opt-in that would resolve a new version
+// while the chain's latest pin belongs to another backend, which cannot carry it.
+func checkRetrievalPin(chain []runlog.Record, backend, mode string) error {
+	if mode == "" || mode == "off" {
+		return nil
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		r := chain[i]
+		pin := r.Result.Retrieval
+		if pin == nil {
+			continue
+		}
+		if r.Backend == backend {
+			return nil
+		}
+		pinned := "recorded a retrieval pin with no knowledge version"
+		if pin.Packet != nil && pin.Packet.VersionID != "" {
+			pinned = "pinned retrieval to knowledge version " + pin.Packet.VersionID
+		}
+		return fmt.Errorf("run %s %s on %s, which %s cannot carry over; continue on %[3]s to keep that pin, start a fresh run to retrieve again, or continue on %[4]s with retrieval off",
+			r.ID, pinned, r.Backend, backend)
+	}
+	return nil
 }
 
 // latestModel is the model the latest run on backend in the chain asked for:
@@ -215,11 +311,18 @@ func latestModel(chain []runlog.Record, backend string) string {
 // hand-over first, which is also saved beside the record as handoff.md.
 func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.Resume, task.ForkSession = p.Resume, p.ForkSession
+	task.FixRound = p.Prev.ID != ""
 	for _, n := range p.Notes {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: n})
 	}
 	if warning := p.ContextWarning(); warning != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: warning})
+	}
+	if p.Resume != nil && p.carried != nil {
+		// The resumed conversation cites these handles; read_original looks only in runDir.
+		if err := tools.CopyOriginals(filepath.Join(runlog.Root(), p.carried.ID), runDir); err != nil {
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "originals not carried over: " + err.Error()})
+		}
 	}
 	var h string
 	switch {

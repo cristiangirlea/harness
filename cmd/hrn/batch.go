@@ -326,8 +326,12 @@ func printBatch(r *renderer, res batch.Result) {
 		if t.Status == batch.StatusRunning {
 			took = "-" // the record holds no start time per task
 		}
-		r.Line(fmt.Sprintf("  %-16s %-9s %-9s %d attempt(s)  %-24s %s",
-			t.ID, status, last, len(t.Attempts), t.Branch, took))
+		declared := t.Purpose
+		if declared == "" {
+			declared = "-"
+		}
+		r.Line(fmt.Sprintf("  %-16s %-9s %-9s %-9s %d attempt(s)  %-24s %s",
+			t.ID, status, declared, last, len(t.Attempts), t.Branch, took))
 	}
 	// A batch still going has no duration in its record; say how long it has
 	// been going instead, which is what the reader wants to know.

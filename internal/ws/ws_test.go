@@ -18,9 +18,21 @@ import (
 	"time"
 )
 
+// gitWait bounds one fixture git command, so a stuck one fails its test with
+// the command named instead of hanging until the package timeout.
+const gitWait = 2 * time.Minute
+
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), gitWait)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	// A child git leaves behind (auto gc, a daemon) can hold the output pipe open.
+	cmd.WaitDelay = 10 * time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("git %v in %s still running after %s\n%s", args, dir, gitWait, out)
+	}
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -1117,11 +1129,30 @@ func TestCreateLockIsNeverTakenFromAHolderSlowerThanTheWait(t *testing.T) {
 	createLockWait = 200 * time.Millisecond
 	unlock := f.holdCreateLock()
 	defer unlock()
-	// The holder's git commands outlast the wait, as a slow add can.
-	time.Sleep(3 * createLockWait)
-	if second, err := lockCreate(context.Background(), SlotsDir(f.repo)); err == nil {
-		second()
-		t.Fatal("a second caller got the create lock while its holder still held it")
+	// The holder keeps the lock until the second caller's own wait has run out,
+	// as a slow add can; the outer bound only turns a hang into a failure.
+	got := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		second, err := lockCreate(context.Background(), SlotsDir(f.repo))
+		if err == nil {
+			second()
+		}
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		if err == nil {
+			t.Fatal("a second caller got the create lock while its holder still held it")
+		}
+		if !strings.Contains(err.Error(), "waited "+createLockWait.String()) {
+			t.Fatalf("second caller: %v, want it to give up after its wait", err)
+		}
+		if waited := time.Since(start); waited < createLockWait {
+			t.Fatalf("second caller gave up after %s, before its wait of %s", waited, createLockWait)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("a second caller kept waiting past its wait for the create lock")
 	}
 }
 

@@ -62,6 +62,13 @@ type Options struct {
 	// Skills lets a lean claude run keep its skills and slash commands.
 	Skills *bool `json:"skills,omitempty" desc:"Keep the claude CLI's skills and slash commands in a lean run (default off; claude backend)."`
 
+	// AppendSystemPrompt follows the backend's own system prompt, so an eval
+	// variant can measure a rule or tool-guidance change with the same gates.
+	AppendSystemPrompt string `json:"append_system_prompt,omitempty" desc:"Text added after the backend's own system prompt, such as a rule or tool guidance (api and claude backends; at most 16 KiB)."`
+
+	// NoSkills starts the claude CLI with its skills off, to measure what they add.
+	NoSkills bool `json:"no_skills,omitempty" desc:"Start the claude CLI with skills turned off (--disable-slash-commands) (claude backend)."`
+
 	// CompactWindow is the context size, in tokens, at which the claude CLI
 	// compacts the conversation (--autocompact): 100000 to 1000000, or
 	// "auto". Unset keeps Claude Code's own threshold, which on a 1M-window
@@ -92,7 +99,7 @@ type Options struct {
 
 // Route fills a wholly unspecified backend/model/effort choice from evidence.
 // Backend lives beside Options in the callers, so it is passed separately.
-func (o *Options) Route(prompt string, backend *string, home string) (*table.RoutedBy, error) {
+func (o *Options) Route(declared, prompt string, backend *string, home string) (*table.RoutedBy, error) {
 	if *backend != "" || o.Model != "" || o.Effort != "" {
 		return nil, nil
 	}
@@ -100,7 +107,8 @@ func (o *Options) Route(prompt string, backend *string, home string) (*table.Rou
 	if err != nil {
 		return nil, err
 	}
-	category := purpose.Classify(prompt).Category
+	resolved := purpose.Resolve(declared, prompt)
+	category := resolved.Category
 	r, ok := t.Pick(category)
 	if !ok {
 		return nil, nil
@@ -120,13 +128,14 @@ func (o *Options) Route(prompt string, backend *string, home string) (*table.Rou
 		}
 	}
 	if err := (Options{Effort: r.Effort}).Validate(); err != nil {
-		return nil, fmt.Errorf("route for %s: %w", category, err)
+		fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: %v\n", category, err)
+		return nil, nil
 	}
 	if r.Backend == "" && r.Model == "" && r.Effort == "" {
 		return nil, nil
 	}
 	*backend, o.Model, o.Effort = r.Backend, r.Model, r.Effort
-	return &table.RoutedBy{Category: category, Eval: r.Eval, Set: r.Set}, nil
+	return &table.RoutedBy{Category: category, Declared: resolved.Rule == "declared", Eval: r.Eval, Set: r.Set}, nil
 }
 
 // IsLean reports whether lean is on: unset or true.
@@ -153,6 +162,13 @@ func (o Options) Validate() error {
 	if o.Effort != "" && !slices.Contains(EffortLevels, o.Effort) {
 		return fmt.Errorf("unknown effort %q (want %s)", o.Effort, strings.Join(EffortLevels, ", "))
 	}
+	// Windows escapes each quote and backslash on the command line, so they count twice.
+	if n := len(o.AppendSystemPrompt) + strings.Count(o.AppendSystemPrompt, `"`) + strings.Count(o.AppendSystemPrompt, `\`); n > MaxAppendSystemPrompt {
+		return fmt.Errorf("append_system_prompt takes %d bytes on a command line; at most %d fit", n, MaxAppendSystemPrompt)
+	}
+	if strings.ContainsRune(o.AppendSystemPrompt, 0) {
+		return fmt.Errorf("append_system_prompt holds a NUL byte, which no command line can carry")
+	}
 	if err := o.CompactWindow.check(); err != nil {
 		return err
 	}
@@ -164,6 +180,10 @@ func (o Options) Validate() error {
 	}
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }
+
+// MaxAppendSystemPrompt leaves room under Windows' 32K command line for the
+// rest of the claude CLI's arguments.
+const MaxAppendSystemPrompt = 16 << 10
 
 // ErrGuardedRun refuses allow_dangerous to an hrn started inside a guarded
 // run (tools.GuardedVar is set): from an agent's shell, or from an MCP server

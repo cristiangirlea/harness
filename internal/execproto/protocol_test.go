@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -216,6 +217,35 @@ func TestAcceptedRunStreamsCompleteEventsAndRecordsTheAttempt(t *testing.T) {
 	}
 }
 
+func TestStartRecordsADeclaredPurposeOrTheHeader(t *testing.T) {
+	name := registerFake(t, func(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
+	})
+	for _, tc := range []struct{ name, prompt, declared, want string }{
+		{name: "declared", prompt: "Purpose: debug\nwork", declared: "review", want: "review"},
+		{name: "header", prompt: "Purpose: debug\nwork", want: "debug"},
+		{name: "neither", prompt: "work", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := openHarness(t, nil)
+			h.next(t, "hello")
+			req := start(t.TempDir(), name)
+			req["task"].(map[string]any)["prompt"] = tc.prompt
+			if tc.declared != "" {
+				req["task"].(map[string]any)["purpose"] = tc.declared
+			}
+			h.send(t, req)
+			accepted := h.next(t, "accepted")
+			h.next(t, "result")
+			h.exit(t, 0)
+			rec, err := runlog.Load(accepted["run_id"].(string))
+			if err != nil || rec.Task.Purpose != tc.want {
+				t.Fatalf("purpose = %q, want %q (%v)", rec.Task.Purpose, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestInvalidStartsAreRejectedWithoutRecords(t *testing.T) {
 	name := registerFake(t, nil)
 	agent.Register(fakeBackend{name: "fake-no-effort", caps: agent.Capabilities{Modes: []agent.Mode{agent.ModeAuto}, Sessions: "none", Options: []string{"model", "mode", "timeout"}}})
@@ -233,6 +263,13 @@ func TestInvalidStartsAreRejectedWithoutRecords(t *testing.T) {
 		{name: "missing backend", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "backend") }},
 		{name: "missing mode", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "mode") }},
 		{name: "missing task", code: "bad_request", edit: func(m map[string]any) { delete(m, "task") }},
+		{name: "unknown purpose", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["purpose"] = "unknown" }},
+		{name: "purpose typo", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["purpose"] = "Review" }},
+		{name: "model with ampersand", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["model"] = "x&calc" }},
+		{name: "model with variable", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["model"] = "%PATH%" }},
+		{name: "model with quote", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["model"] = `a"b` }},
+		{name: "model with space", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["model"] = "a b" }},
+		{name: "model as flag", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["model"] = "-x" }},
 		{name: "bad attempt", code: "bad_request", edit: func(m map[string]any) { m["attempt_id"] = "bad/attempt" }},
 		{name: "long attempt", code: "bad_request", edit: func(m map[string]any) { m["attempt_id"] = strings.Repeat("a", 129) }},
 		{name: "empty attempt", code: "bad_request", edit: func(m map[string]any) { m["attempt_id"] = "" }},
@@ -425,6 +462,32 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	rec, err := runlog.Load(msg["run_id"].(string))
 	if err != nil || rec.Continues != prev.ID() || rec.Task.Dir != dir {
 		t.Fatalf("bad continuation record: %+v %v", rec, err)
+	}
+}
+
+func TestAContinuationOfARecordWithABadModelIsRejectedWithoutARecord(t *testing.T) {
+	name := registerFake(t, nil)
+	dir := t.TempDir()
+	prev, err := runlog.Create(name, agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "x&calc"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prev.Close(agent.Result{Backend: name, Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	h := openHarness(t, nil)
+	h.next(t, "hello")
+	req := start(dir, name)
+	req["task"].(map[string]any)["continue_run_id"] = prev.ID()
+	req["task"].(map[string]any)["fresh"] = true
+	h.send(t, req)
+	msg := h.next(t, "rejected")
+	if e := msg["error"].(map[string]any); e["code"] != "bad_request" || !strings.Contains(e["message"].(string), "is not a model id") {
+		t.Fatalf("bad rejection: %+v", msg)
+	}
+	h.exit(t, 2)
+	if recs, err := runlog.List(0); err != nil || len(recs) != 1 {
+		t.Fatalf("records = %+v %v, want only the earlier run", recs, err)
 	}
 }
 
@@ -713,5 +776,51 @@ func TestWrongCancelAndSecondStartLeaveTheRunRunning(t *testing.T) {
 	h.exit(t, 0)
 	if recs, err := runlog.List(0); err != nil || len(recs) != 1 {
 		t.Fatalf("second start must not create another record: %+v %v", recs, err)
+	}
+}
+
+func TestExecTakesNoRetrievalOptInAndHandsAPinnedRunToAnotherBackend(t *testing.T) {
+	var got agent.Task
+	registerFake(t, func(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+		got = task
+		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
+	})
+	dir := t.TempDir()
+	prev, err := runlog.Create("api", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := &retrieval.Record{Mode: "required", Scope: retrieval.Scope{Backend: "api", Model: "m"}, Packet: &retrieval.Packet{VersionID: "kv-7"}}
+	if err := prev.Close(agent.Result{Backend: "api", Status: agent.StatusOK, Final: "a", Retrieval: pin}); err != nil {
+		t.Fatal(err)
+	}
+
+	// exec has no retrieval field, so it never reaches followup's pin refusal.
+	h := openHarness(t, nil)
+	h.next(t, "hello")
+	req := start(dir, "fake-exec")
+	req["task"].(map[string]any)["continue_run_id"] = prev.ID()
+	req["task"].(map[string]any)["retrieval"] = "required"
+	h.send(t, req)
+	if e := h.next(t, "rejected")["error"].(map[string]any); e["code"] != "bad_request" || !strings.Contains(fmt.Sprint(e["message"]), `unknown field "retrieval"`) {
+		t.Fatalf("bad rejection: %+v", e)
+	}
+	h.exit(t, 2)
+	if recs, err := runlog.List(0); err != nil || len(recs) != 1 {
+		t.Fatalf("rejected start created records: %+v %v", recs, err)
+	}
+
+	// With retrieval off the transcript is handed over as before.
+	h = openHarness(t, nil)
+	h.next(t, "hello")
+	delete(req["task"].(map[string]any), "retrieval")
+	h.send(t, req)
+	h.next(t, "accepted")
+	h.next(t, "event") // the plan's notes: a new session, and the turn handed over
+	h.next(t, "event")
+	h.next(t, "result")
+	h.exit(t, 0)
+	if !strings.Contains(got.Prompt, "--- request\n> earlier") || got.RetrievalState != nil {
+		t.Fatalf("the hand-over should carry the transcript and no pin: %+v", got)
 	}
 }

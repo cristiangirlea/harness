@@ -5,11 +5,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/cristiangirlea/harness/internal/shape"
@@ -105,6 +108,42 @@ func (w *Workspace) storeOriginalWithWriter(text string, write func(io.Writer, s
 		return "", err
 	}
 	return handle, nil
+}
+
+// CopyOriginals copies the originals saved under one run record directory into
+// another, so a resumed conversation's handles still read; only regular files
+// whose bytes hash to their handle are copied.
+func CopyOriginals(fromRunDir, toRunDir string) error {
+	src, err := (&Workspace{RunDir: fromRunDir}).originals(false)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	entries, err := fs.ReadDir(src.FS(), ".")
+	if err != nil {
+		return err
+	}
+	dst := &Workspace{RunDir: toRunDir}
+	for _, e := range entries {
+		handle, ok := strings.CutSuffix(e.Name(), ".txt")
+		if !ok || !originalHandle.MatchString(handle) || !e.Type().IsRegular() {
+			continue
+		}
+		data, err := src.ReadFile(e.Name())
+		if err != nil {
+			return err
+		}
+		if fmt.Sprintf("%x", sha256.Sum256(data))[:16] != handle {
+			continue
+		}
+		if _, err := dst.storeOriginal(string(data)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ReadOriginal is added to the API tool set only when shaping is enabled.

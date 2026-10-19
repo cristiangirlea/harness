@@ -3,11 +3,14 @@ package prefs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 type Prefs struct {
@@ -49,9 +52,23 @@ func (p Prefs) validate() error {
 	return nil
 }
 
+// retry runs f until it succeeds or a short while has passed: on Windows a
+// reader in another process refuses a rename over the file, and a rename a read.
+func retry(f func() error) error {
+	var err error
+	for i := 0; i < 20; i++ {
+		if err = f(); err == nil || errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return err
+}
+
 func Load(home string) (Prefs, error) {
 	path := filepath.Join(home, "backends.json")
-	data, err := os.ReadFile(path)
+	var data []byte
+	err := retry(func() (err error) { data, err = os.ReadFile(path); return err })
 	if os.IsNotExist(err) {
 		return Prefs{}, nil
 	}
@@ -94,5 +111,5 @@ func Save(home string, p Prefs) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(home, "backends.json"))
+	return retry(func() error { return os.Rename(f.Name(), filepath.Join(home, "backends.json")) })
 }

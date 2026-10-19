@@ -52,19 +52,31 @@ backends enabled. A nonempty default without an enabled list is refused.
 
 The configured default wins when installed; otherwise hrn chooses enabled `api`
 when credentials exist, then the first installed enabled backend in preference
-order, falling back to `claude`. If that fallback is disabled, the run is refused.
-`hrn backends` shows enabled/disabled, the configured default (or the selected default
-when none is configured), availability and remembered limits beside each backend.
+order. When none is installed it names the configured default, or else the first
+enabled backend, so the run fails because that backend is not installed. Without
+preferences the fallback is `claude`. `hrn backends` shows enabled/disabled, the
+configured default (or the selected default when none is configured), availability
+and remembered limits beside each backend. The MCP `backends` tool marks one default:
+the backend a run without `backend` would use.
 
-An explicit disabled backend is refused before execution (`hrn run` exits 2).
-Purpose routing ignores disabled rows with a warning and records no routing evidence.
+An explicit disabled backend is refused before execution (`hrn run` exits 2). So is
+`hrn run --continue <id>` without `-b` when that run's backend is now disabled; the
+refusal comes before a prompt is read from stdin.
+Purpose routing ignores disabled rows with a warning and records no routing evidence;
+`hrn route set` with a disabled backend saves the row and warns that runs ignore it.
 Batch retry lists lose disabled entries while keeping their original order and
 repetitions; a nonempty list with no enabled entries is refused.
 
 At a usage limit the carry-on partner is the first other installed enabled backend
-in preference order, subject to the existing readiness and billing checks. With no
-preference, the claude/codex pairing is unchanged. With no ready enabled partner,
-the run stays limited. `--no-switch` still disables carry-on.
+in preference order that passes the readiness and billing checks: one that is limited
+too, or would bill per token, is passed over for the next. With no preference, the
+claude/codex pairing is unchanged. With no ready enabled partner, the run stays limited.
+`--no-switch` still disables carry-on. A limited run with
+retrieval on is not carried on when its chain's latest retrieval pin was recorded on
+another backend than the partner (usually the limited one): the partner would resolve
+a new knowledge version, so the run stays limited and hrn prints the refusal, naming
+the pinned run and version (see
+[Continuing a run](#continuing-a-run)).
 
 The `agy` adapter sends one `{"event":"user","message":{"content":"..."}}` line on
 stdin with `--input-format stream-json --output-format stream-json`, which selects
@@ -72,7 +84,10 @@ print mode without putting a long prompt in Windows' command line. The `antigrav
 IDE launcher is not the CLI. `-m` passes `--model` (use `agy models` to list IDs), and
 all hrn effort levels pass through as `--effort`: low, medium, high, xhigh and max.
 Usage comes from the result event; output tokens already include thinking tokens,
-and input tokens exclude cache reads. A requested model is retained, but marked as
+and input tokens exclude cache reads. When agy exits 0 without a result event (a
+truncated stream), the run stays `ok` with the answer it streamed, its usage is marked
+`missing`, and an info line says no result arrived; the counters are what the finished
+(`DONE`) steps reported, if any, never an estimate. A requested model is retained, but marked as
 reported only if an event names one.
 
 | hrn mode | agy flags |
@@ -217,11 +232,13 @@ Codex costs are list-price estimates from the OpenAI table in
 `internal/agent/prices_openai.go`, never a bill or subscription charge. The table
 records its source URL and date and uses standard short-context rates; service
 tiers, long-context rates and regional uplifts are not represented. Reported input
-includes cached input: cache reads use the cached-input rate, the remaining input
-uses the input rate, and output uses the output rate.
+includes cached input: cache reads use the cached-input rate (0.1x input for an
+entry without one), the remaining input uses the input rate, and output uses the
+output rate.
 
 The model the run asked for (`-m` or the routing table) selects the price, with
-the same dated-snapshot suffix rule as the Claude table. The adapter records no
+a `-YYYYMMDD` or `@YYYYMMDD` snapshot suffix stripped as in the Claude table, and
+OpenAI's `-YYYY-MM-DD` suffix stripped too. The adapter records no
 CLI default model: a run with neither keeps cost marked `missing`, as does an
 unknown model or missing usage. `gpt-6-sol`
 is omitted because the pricing page fetched on 2026-10-15 did not list it.
@@ -239,8 +256,9 @@ hrn run --continue 20260921-095628-f18a6d -b codex "review what claude just did"
 ```
 
 The follow-up is a new run whose `task.json` says which run it continues, so a
-conversation is a chain of runs. It inherits the earlier run's backend, workspace and
-mode unless you pass those flags, and its model only from runs on the same backend: a
+conversation is a chain of runs. It inherits the earlier run's backend, workspace,
+mode and declared purpose unless you pass those flags (or, for the purpose, a
+`Purpose:` header), and its model only from runs on the same backend: a
 claude model name means nothing to codex. The MCP `run` tool takes the same thing as
 `continue_run_id`.
 Lean is not inherited: a follow-up is lean by default whatever the earlier run was, so pass
@@ -277,8 +295,9 @@ status and error, its final answer (up to 6 KiB), the workspace's changes as a
 batch's base commit for a batch attempt, otherwise against `HEAD`, so only what is
 uncommitted), and for a batch attempt its gate results. git runs there with the
 repository's fsmonitor, filter drivers, external diff drivers and textconv turned off,
-since the earlier run could have set them to any command; files under a filter (git
-lfs) may then show as changed. The whole is capped at
+since the earlier run could have set them to any command, and with `GIT_NO_LAZY_FETCH=1`,
+so a partial clone fetches no missing object from its remote (the diff then fails and
+says so); files under a filter (git lfs) may then show as changed. The whole is capped at
 16 KiB, cut from the end with a note saying so; a fact the record lacks is said to
 be missing. It describes only the run named, not the turns before it, and points to
 the full record (`hrn show <id>`). As with a transcript, it is saved as `handoff.md`
@@ -317,13 +336,27 @@ directory it started in, and the session refers to that workspace's files.
 agy uses the same continuation hook but resumes the saved conversation in place:
 continuing the same run twice appends to that conversation instead of creating two
 branches. Its session capability is `resume`, and the continuation note says
-`resuming`.
+`resuming`. Only one hrn run at a time may continue an agy conversation: a second
+`--continue` (or MCP `run` with `continue_run_id`) on the same conversation is refused
+while the first runs. The lock is a file under `$HRN_HOME/locks`, held by the running hrn
+process and dropped by the OS when it ends, even in a crash; the file itself stays.
+Continuing a run that is not the newest on its conversation is allowed, with a note
+naming the later run: the conversation already holds that run's turns, so the agent
+sees them too. `--fresh` starts a new conversation instead.
 
 Continuing on the same backend refuses rather than quietly starting over when that
 backend saved nothing: a run from before session ids were recorded, a gemini run, or an
 api history that ended on a tool call the model never got an answer for, which the API
 refuses to resume from. Batch attempts save their conversations too, so a failed attempt
 can be picked up by hand.
+
+A retrieval pin stays with the backend that recorded it. Continuing a chain whose
+latest pin (`--retrieval`) was recorded on another backend refuses an opt-in on the new
+one before anything runs, since that would resolve a new knowledge version: the message
+names the pinned run and version. Continue on the pin's backend to keep it, or start a
+fresh run to retrieve again. With retrieval off (`--retrieval off` or not set, and
+always over `hrn exec`, which takes no retrieval option) the follow-up on another backend
+gets the transcript hand-over as usual. The MCP `run` tool follows the same rule.
 
 Thinking blocks belong to the model that produced them. Continuing an api conversation
 on a different model is allowed and warned about: the API serves it without the earlier
@@ -335,8 +368,10 @@ Without preferences, the claude and codex CLIs stand in for each other at subscr
 usage limits. With preferences, the partner follows the enabled list described above.
 A run that ends because its CLI said the limit was reached ("You've hit your
 session limit · resets 10:10pm (Europe/Bucharest)", "You've hit your usage limit ... try
-again at Oct 16th, 2026 3:29 PM") is `limited`, not `error`, and its result keeps the
-time the limit lifts as `limit_resets` when the message gives one. Then:
+again at Oct 16th, 2026 3:29 PM", or agy's `AGY_ERROR` object with status
+`RESOURCE_EXHAUSTED` and error code 429, its reset read from "Resets in 167h4m51s") is
+`limited`, not `error`, and its result keeps the time the limit lifts as `limit_resets` when
+the message gives one. Then:
 
 - The other CLI carries it on, once, as a follow-up run (see above): a new record that
   continues the limited one, with the transcript handed over, the same workspace and
@@ -348,12 +383,12 @@ time the limit lifts as `limit_resets` when the message gives one. Then:
 - The reset time is kept in `~/.hrn/limits.json`. Until it passes, a run, a batch
   attempt or a retry meant for that backend starts on the other one, and its transcript
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
-  tool) shows each limit it remembers. A limit can lift early (codex sells credits);
-  deleting the file forgets it.
+  tool) shows each limit it remembers, also for a backend with no partner (agy without
+  preferences). A limit can lift early (codex sells credits); deleting the file forgets it.
 - Nothing moves automatically to `api`, which is billed per token. Without preferences,
   gemini, opencode and agy are not partners either; with one, the enabled installed plan
-  backends stand in, in preference order. If no enabled partner is installed, or the
-  selected partner is limited too, the run stays `limited` and says so.
+  backends stand in, in preference order, past any that is limited too. If no enabled
+  partner is installed, or every one is limited, the run stays `limited` and says so.
 - Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
   the plan. Codex uses `CODEX_API_KEY` in API-key mode; older releases or API-key mode
@@ -379,8 +414,8 @@ sandbox but claude only edit files, and codex's `readonly` reads the whole disk 
 [permission table](permissions.md#permission-modes)). A carried-on run's `--timeout` starts again, so the two runs together can
 take twice as long. `--no-switch` (field `no_switch`) keeps a run on its backend, and on the
 vendor it was meant for. `hrn eval` always sets it: a cell measures its own backend. `hrn
-exec` never switches; its supervisor decides. Limits are recognised by the CLIs' wording,
-which is matched in `internal/agent/limit.go` against messages seen in real runs; a new
+exec` never switches; its supervisor decides. Limits are recognised by the CLIs' wording
+(agy's by its error object), which is matched in `internal/agent/limit.go` against messages seen in real runs; a new
 wording is an `error` until it is added there. A remembered time more than eight days ahead
 is ignored, as a CLI's would be.
 
@@ -393,3 +428,24 @@ the total is capped at 32 KiB; the run says what it loaded and whether the cap c
 anything. A file that is a symlink out of the workspace is refused, like any other
 path. `hrn run --no-instructions` skips them, as do the `no_instructions` field on a
 batch spec or task and the MCP `run` argument of the same name.
+
+### How to commit
+
+Every run that may write, on every backend and in batches too, gets a short "How to commit"
+block before its prompt. By default it says: "Reviews are text, commits are changes. Review
+findings and the reason for a fix go into the review on the pull request, not into commit
+messages and not into a commit per round or per finding. Before a commit exists, everything
+found goes into that one commit; no fix-round commits for work that was never pushed. After a
+commit, a new finding means one more review entry and one more commit for all of it. Every
+defect a review finds in what this run changes is fixed before the push; nits are dropped."
+It adds that these rules take precedence over a repository instruction such as "one logical
+change per commit" when the two conflict. A repository replaces both with its own
+`.hrn/rules.md` in the checkout (read up to 4 KiB; only a regular file is read, so a symlink,
+a FIFO or a directory by that name is ignored). hrn ignores `.hrn/` in git, so commit it with
+`git add -f`; only a committed file reaches batch worktrees. Either way the block then says
+"Commit your work before you finish, as one clean commit for this task; leave the working tree
+clean." A run that continues another (`--continue`, the MCP `continue_run_id`, or a carry-on
+after a usage limit), the usual fix round, gets one more line: "This is a fix round: one
+review, one commit; every fix from this review goes into one commit." Read-only runs, such as an eval's judge, get no block. The run record keeps the prompt as typed. A batch's own commit of
+whatever a task left behind (`<id>: <prompt>`) stays the fallback for an agent that did not
+commit.
