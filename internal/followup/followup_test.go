@@ -467,6 +467,45 @@ func TestAResumedConversationCarriesItsOriginals(t *testing.T) {
 	}
 }
 
+func TestAResumedConversationCarriesOriginalsPastALoweredCapAndReportsSkippedFiles(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "1")
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: workspace(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, _ := json.Marshal(agent.Conversation{Model: "claude-opus-5"})
+	text := "earlier tool output, longer than the cap"
+	handle := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))[:16]
+	for name, data := range map[string]string{"messages.json": string(conv), "originals/" + handle + ".txt": text, "originals/0123456789abcdef.txt": "not its hash"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(w.Dir(), name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(w.Dir(), name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Make(Request{RunID: w.ID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := t.TempDir()
+	var notes []string
+	p.Apply(&agent.Task{Prompt: "go on"}, next, func(e agent.Event) { notes = append(notes, e.Text) })
+	if data, err := os.ReadFile(filepath.Join(next, "originals", handle+".txt")); err != nil || string(data) != text {
+		t.Fatalf("an original already in the conversation must be carried past the cap: %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(next, "originals", "0123456789abcdef.txt")); !os.IsNotExist(err) {
+		t.Fatalf("copied a file whose name is not its hash: %v", err)
+	}
+	if want := fmt.Sprintf("copied 1 tool-result originals from run %s, skipped 1", w.ID()); !strings.Contains(strings.Join(notes, "\n"), want) {
+		t.Errorf("notes = %q, want %q", notes, want)
+	}
+}
+
 func TestOriginalsThatCannotBeCarriedOverAreReportedAndTheRunGoesOn(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)
