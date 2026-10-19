@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ---- gemini ---------------------------------------------------------------
+// NewGeminiBackend drives the Gemini CLI.
 func NewGeminiBackend() *CLIBackend {
 	return &CLIBackend{
 		name:        "gemini",

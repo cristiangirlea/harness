@@ -5,11 +5,7 @@ import (
 	"math"
 )
 
-// UsageMetadata, in Result.Usage, describes how to interpret the run's totals;
-// the counts themselves are Result's InputTokens, OutputTokens, CacheRead,
-// CacheWrite and CostUSD.
-// Usage in Event.Usage holds per-call token counters instead.
-// Empty metadata on historical records is inferred only for known adapters.
+// UsageMetadata describes run totals, inferred only for known adapters.
 type UsageMetadata struct {
 	InputSemantics string `json:"input_semantics"`       // inclusive_cache or exclusive_cache
 	Status         string `json:"status"`                // reported, estimated, missing
@@ -83,14 +79,11 @@ func (r Result) ValidateUsage() error {
 	return nil
 }
 
-// UsageMissing reports that the token counters are partial or invalid, so
-// their totals must not be shown or summed as known.
+// UsageMissing marks counters unsafe to display or sum as known.
 func (r Result) UsageMissing() bool {
 	return r.ValidateUsage() != nil || (r.Usage != nil && r.Usage.Status == "missing")
 }
 
-// addUsage adds one turn's counters and reports whether it did; a negative one
-// or a total that would overflow is not added and marks the usage missing.
 func (r *Result) addUsage(semantics string, input, output, cacheRead, cacheWrite int64) bool {
 	for _, c := range [][2]int64{{r.InputTokens, input}, {r.OutputTokens, output}, {r.CacheRead, cacheRead}, {r.CacheWrite, cacheWrite}} {
 		if c[0] < 0 || c[1] < 0 || c[1] > math.MaxInt64-c[0] {

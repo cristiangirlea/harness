@@ -169,7 +169,7 @@ func editFile() Tool {
 			}
 			content := string(data)
 			old := args.OldString
-			// Files with CRLF endings still match LF-only old_string from the model.
+			// Match model LF text against CRLF files.
 			if !strings.Contains(content, old) && strings.Contains(content, "\r\n") {
 				old = strings.ReplaceAll(old, "\n", "\r\n")
 				args.NewString = strings.ReplaceAll(args.NewString, "\n", "\r\n")
@@ -325,23 +325,17 @@ func grep() Tool {
 			if info, err := os.Stat(base); err == nil && !info.IsDir() {
 				search(base)
 			} else {
-				// base as it really is, once: the walk goes into no link, so a
-				// regular file below it really is base's real path and rel. It
-				// is judged there too, since base can be spelt otherwise (a
-				// short 8.3 name: CODEX~1/auth.json is .codex/auth.json).
+				// Link-free walks reuse realBase to expose 8.3 secrets.
 				realBase := realPath(base)
 				if realBase == "" {
-					// Resolve judged it a moment ago; it changed since.
+					// Resolve accepted it a moment ago, so it changed since.
 					return "", fmt.Errorf("path %q is refused: hrn cannot tell where it leads", args.Path)
 				}
 				err = walk(ctx, ws, base, func(p, rel string, regular bool) bool {
 					if globRe != nil && !globRe.MatchString(rel) {
 						return true
 					}
-					// A link out of the workspace is not followed, as Resolve
-					// refuses one, and a search of a directory passes over the
-					// secret files in it rather than refusing the whole search,
-					// judged as written and where they really are.
+					// Skip escapes/secrets, not the whole search.
 					real := filepath.Join(realBase, filepath.FromSlash(rel))
 					if !regular {
 						real = realPath(p)
@@ -372,11 +366,7 @@ func grep() Tool {
 
 var errStop = errors.New("stop")
 
-// walk visits what is not a directory under base, passing the slash-separated
-// path relative to base and whether it is a regular file rather than a link,
-// a junction or another irregular entry. It goes into no link or junction
-// (filepath.WalkDir does not). A workspace root is walked from its real path,
-// while visit receives paths under Root. visit returns false to stop.
+// WalkDir skips links/junctions; visit Root's original spelling.
 func walk(ctx context.Context, ws *Workspace, base string, visit func(path, rel string, regular bool) bool) error {
 	walkBase := base
 	if base == ws.Root {
@@ -407,7 +397,7 @@ func walk(ctx context.Context, ws *Workspace, base string, visit func(path, rel 
 	return err
 }
 
-// GlobRegexp compiles a glob with ** support into an anchored regexp.
+// GlobRegexp compiles anchored globs supporting **.
 func GlobRegexp(glob string) (*regexp.Regexp, error) {
 	glob = filepath.ToSlash(glob)
 	var b strings.Builder

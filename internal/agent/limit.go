@@ -8,41 +8,28 @@ import (
 	"time"
 )
 
-// A plan's usage limit is a CLI saying that the subscription it bills to has
-// run out for now. claude and codex say so only in words, so the words are
-// matched here: one pattern per wording seen in a real run, with the time the
-// limit lifts read back where the message gives one. agy says so in an object.
-
 var (
 	limitWords = regexp.MustCompile(`(?i)hit your (?:[\w-]+ )?limit|reached your (?:[\w.-]+ ){1,3}limit|usage limit reached|requires usage credits|limit reached\W+resets`)
-	// The same phrases word a context window or a request rate, which are not
-	// a plan running out: a rate passes in a minute.
+	// Context and per-minute limits do not mean a subscription has run out.
 	notPlanWords = regexp.MustCompile(`(?i)context|token|request|\brate\b|per-minute`)
 
-	// claude before its current wording: "Claude AI usage limit reached|1760184000".
 	resetUnix = regexp.MustCompile(`(?i)usage limit reached\|(\d{9,11})`)
-	// codex: "try again in 2 days 3 hours 4 minutes".
+	// Codex reports relative resets in human duration units.
 	resetIn   = regexp.MustCompile(`(?i)try again in ((?:\d+\s*(?:days?|hours?|minutes?|mins?|seconds?|secs?|[dhms])\b[\s,]*(?:and\s+)?)+)`)
 	durPart   = regexp.MustCompile(`(?i)(\d+)\s*(day|hour|min|sec|d|h|m|s)`)
 	monthName = `([A-Za-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?,?`
-	// codex: "try again at Oct 16th, 2026 3:29 PM" or "try again at 3:29 PM".
+	// Codex clock resets omit a zone and may omit a date.
 	resetAt = regexp.MustCompile(`(?i)try again at (?:` + monthName + ` (\d{4}),? )?(\d{1,2}):(\d{2})\s*([ap])\.?m`)
-	// claude: "resets 10:10pm (Europe/Bucharest)", "resets 1pm", "resets Oct 14, 9am (...)".
+	// Claude clocks may name a zone absent from host tzdata.
 	resetClock = regexp.MustCompile(`(?i)resets (?:on )?(?:` + monthName + ` (?:at )?)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m(?:\s*\(([^)]+)\))?`)
 
-	// agy: `AGY_ERROR: {"short_error":"... Resets in 167h4m51s.","status":"RESOURCE_EXHAUSTED","error_code":429}`.
 	agyError  = regexp.MustCompile(`AGY_ERROR: (\{.*\})`)
 	agyResets = regexp.MustCompile(`Resets in ((?:\d+(?:\.\d+)?(?:h|ms|m|s))+)`)
 )
 
-// MaxLimitWindow is the furthest ahead a reset time is believed. The longest
-// window either plan has is a week; a time beyond that is a misread.
+// MaxLimitWindow bounds plausible subscription reset times.
 const MaxLimitWindow = 8 * 24 * time.Hour
 
-// usageLimit reports whether msg is a CLI saying its plan's usage limit was
-// reached, and when the limit lifts. resets is zero when the message gives no
-// time, or one that cannot be right: long past, or further off than any plan's
-// window. A clock time without a date is the next one after now.
 func usageLimit(msg string, now time.Time) (limited bool, resets time.Time) {
 	t, agy := agyLimit(msg, now)
 	if !agy && (!limitWords.MatchString(msg) || notPlanWords.MatchString(limitWords.FindString(msg))) {
@@ -58,7 +45,6 @@ func usageLimit(msg string, now time.Time) (limited bool, resets time.Time) {
 	return true, t
 }
 
-// agyLimit reports whether msg holds agy's quota error, and the reset it names.
 func agyLimit(msg string, now time.Time) (time.Time, bool) {
 	// agy retries, so the quota error may follow others.
 	for _, m := range agyError.FindAllStringSubmatch(msg, -1) {
@@ -102,8 +88,7 @@ func resetTime(msg string, now time.Time) time.Time {
 	if m := resetClock.FindStringSubmatch(msg); m != nil {
 		loc := time.Local
 		if m[6] != "" {
-			// The CLI names the zone; without the zone database (Windows ships
-			// none to Go), the computer's own zone is the CLI's own anyway.
+			// Windows may lack zone data; fall back to the CLI host's zone.
 			if l, err := time.LoadLocation(m[6]); err == nil {
 				loc = l
 			}
@@ -113,9 +98,6 @@ func resetTime(msg string, now time.Time) time.Time {
 	return time.Time{}
 }
 
-// clockTime builds the time a message names: a clock time on the day it gives,
-// or, without one, the next such time after now. A date without a year is the
-// next such date.
 func clockTime(now time.Time, loc *time.Location, monthText, dayText string, year int, hourText, minText, ampm string) time.Time {
 	hour, _ := strconv.Atoi(hourText)
 	minute, _ := strconv.Atoi(minText)
@@ -129,9 +111,7 @@ func clockTime(now time.Time, loc *time.Location, monthText, dayText string, yea
 	local := now.In(loc)
 	if monthText == "" {
 		t := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, loc)
-		// A time that passed in the last ten minutes is today's: the limit has
-		// just lifted rather than moved a day, and usageLimit, finding it in
-		// the past, keeps no reset time. Earlier than that it is tomorrow's.
+		// A reset within the last ten minutes just expired; do not move it to tomorrow.
 		if t.Before(now.Add(-10 * time.Minute)) {
 			t = t.AddDate(0, 0, 1)
 		}
