@@ -346,6 +346,10 @@ func (s *Spec) normalize() error {
 		if err := checkGates(t.Gate); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
+		// [] would run gateless, but records drop it and read the spec's gates.
+		if t.Gate != nil && len(t.Gate) == 0 {
+			return fmt.Errorf("task %s: empty gate list: leave gate out to use the spec's gates, or give each task that needs gates its own", t.ID)
+		}
 		if err := checkGateTimeout(t.GateTimeout); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}

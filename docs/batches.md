@@ -24,7 +24,9 @@ retried on the next backend in `retry`. Every attempt is an ordinary recorded ru
 ```
 
 `dir` (default: the file's directory) is any path inside the repository. Task fields
-override the file's defaults of the same name; `id` defaults to `t1`, `t2`, ….
+override the file's defaults of the same name; `id` defaults to `t1`, `t2`, …. A task's
+`"gate": []` is refused: leave `gate` out to use the spec's gates, or move the gates onto
+the tasks that need them (an answer-only task then has none), so a record reads as the run ran.
 
 Every shared run option (`agent.Options`) is a spec field under the same name with
 underscores (`--max-turns` is `max_turns`, `--max-cost` is `max_cost_usd`), on the spec
