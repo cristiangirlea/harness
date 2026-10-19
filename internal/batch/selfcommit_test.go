@@ -118,6 +118,9 @@ func TestACommitOnNoBranchIsNotRecordedAsTheTasks(t *testing.T) {
 	if c := res.Tasks[0].Commit; c != "" {
 		t.Errorf("commit = %s, a commit on no branch that a merge would not bring", c)
 	}
+	if !res.Tasks[0].AgentCommitted() {
+		t.Error("a commit on no branch is still the agent's own")
+	}
 }
 
 func gitIn(dir string, args ...string) error {
@@ -164,6 +167,9 @@ func TestAnAgentThatRenamesItsBranchKeepsItsGateResult(t *testing.T) {
 	if tr.Status != StatusPass || tr.Commit != "" || tr.Error != "" {
 		t.Errorf("status %s, commit %q, error %q: want a pass with no commit on the task's branch", tr.Status, tr.Commit, tr.Error)
 	}
+	if !tr.AgentCommitted() {
+		t.Error("an agent that committed and renamed its branch moved it itself")
+	}
 }
 
 func TestAContinuedAttemptRecordsTheAgentsNewCommit(t *testing.T) {
@@ -177,6 +183,9 @@ func TestAContinuedAttemptRecordsTheAgentsNewCommit(t *testing.T) {
 	}
 	if tip := git(t, dir, "rev-parse", "refs/heads/"+tr.Branch); tr.Commit != tip {
 		t.Errorf("commit = %s, want the branch tip %s after the agent's second commit", tr.Commit, tip)
+	}
+	if !tr.Attempts[0].AgentCommitted || !tr.Attempts[1].AgentCommitted {
+		t.Errorf("both attempts committed on their own: %v, %v", tr.Attempts[0].AgentCommitted, tr.Attempts[1].AgentCommitted)
 	}
 }
 
@@ -192,6 +201,9 @@ func TestAContinuedAttemptThatResetsToTheBaseRecordsNoCommit(t *testing.T) {
 	if tr.Commit != "" {
 		t.Errorf("commit = %s, but the branch is back at the base", tr.Commit)
 	}
+	if tr.Attempts[0].AgentCommitted || !tr.Attempts[1].AgentCommitted {
+		t.Errorf("only the attempt that reset the branch moved it: %v, %v", tr.Attempts[0].AgentCommitted, tr.Attempts[1].AgentCommitted)
+	}
 	if diff, _, err := Diff(context.Background(), res, "undone"); err != nil || diff != "" {
 		t.Errorf("diff = %q, %v; want none", diff, err)
 	}
@@ -205,6 +217,9 @@ func TestASlotTaskWhoseAgentCommittedItsOwnWorkIsRecordedAndGivenBack(t *testing
 	tr := res.Tasks[0]
 	if tr.Status != StatusPass || tr.Commit == "" || strings.Contains(tr.Error, "kept") {
 		t.Fatalf("status %s, commit %q, error %q: want a recorded commit and the slot given back", tr.Status, tr.Commit, tr.Error)
+	}
+	if !tr.AgentCommitted() {
+		t.Error("the slot task's agent committed on its own")
 	}
 	diff, _, err := Diff(context.Background(), res, "slotted")
 	if err != nil || !strings.Contains(diff, "+++ b/out.txt") {
@@ -259,6 +274,39 @@ func TestACarriedOnAttemptRecordsThePartnersOwnCommit(t *testing.T) {
 	}
 	if tip := git(t, dir, "rev-parse", "refs/heads/"+tr.Branch); tr.Commit != tip {
 		t.Errorf("commit = %s, want the branch tip %s holding both halves", tr.Commit, tip)
+	}
+}
+
+// hrn's own commit of an earlier attempt is the next attempt's starting tip, not the agent's move.
+func TestAContinuedAttemptAfterHrnsCommitIsNotMarkedAsTheAgents(t *testing.T) {
+	dir := initRepo(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Retry: []string{"wb-ok"}, Worktrees: WorktreesFresh,
+		Gate: []string{failsOnce(t)}, Tasks: []Task{{ID: "twice", Prompt: "p"}}})
+	defer Remove(res)
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 || !tr.Attempts[1].Continued || tr.Commit == "" {
+		t.Fatalf("task = %s, %d attempts, commit %q", tr.Status, len(tr.Attempts), tr.Commit)
+	}
+	if tr.AgentCommitted() {
+		t.Error("only hrn committed in this task")
+	}
+}
+
+func TestAFreshSlotRetryAfterHrnsCommitIsNotMarkedAsTheAgents(t *testing.T) {
+	dir := initRepo(t)
+	agent.Register(stub{"wb-edits-fails", func(_ context.Context, task agent.Task) agent.Result {
+		_ = os.WriteFile(filepath.Join(task.Dir, "half.txt"), []byte("x\n"), 0o644)
+		return agent.Result{Backend: "wb-edits-fails", Status: agent.StatusError, Error: "model exploded", Turns: 1}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-edits-fails", Retry: []string{"wb-ok"}, Worktrees: WorktreesSlots,
+		Tasks: []Task{{ID: "reslot", Prompt: "p"}}})
+	defer Remove(res)
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 || tr.Attempts[1].Continued || tr.Commit == "" {
+		t.Fatalf("task = %s, %d attempts, commit %q", tr.Status, len(tr.Attempts), tr.Commit)
+	}
+	if tr.AgentCommitted() {
+		t.Error("the slot reset and hrn's commits are not the agent's")
 	}
 }
 

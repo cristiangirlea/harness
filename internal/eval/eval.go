@@ -260,7 +260,7 @@ type VariantRow struct {
 	// DidNotAct counts the cells among Attempts that ended ok without a tool
 	// call, a second turn or a change; they are left out of the pass rate.
 	DidNotAct int `json:"did_not_act,omitempty"`
-	// AgentCommitted counts the cells whose agent ran git commit itself, which a prompt may forbid.
+	// AgentCommitted counts the cells whose agent moved its branch or HEAD with git, which a prompt may forbid.
 	AgentCommitted int `json:"agent_committed,omitempty"`
 	// Unchanged counts the passes that committed nothing: right for "find
 	// the bug, if any", suspicious for "fix the typos".

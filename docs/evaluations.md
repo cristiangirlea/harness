@@ -275,8 +275,9 @@ there to say why, which is the point of keeping them.
 that takes eight greps to read one file shows up here and not in `turns`. Under a variant,
 a dim line gives the run statuses when any cell did not finish `ok`, and how many passes
 changed nothing: right for "find the bug, if there is one", suspicious for "fix the
-typos", how many cells committed on their own (the agent ran `git commit` itself, which a
-prompt saying "do not run git" forbids; recorded, not failed), how many cells have no known
+typos", how many cells committed on their own (the agent moved its branch or `HEAD` with git
+itself, by a commit, reset or rename, which a prompt saying "do not run git" forbids;
+recorded, not failed), how many cells have no known
 cost, and when some cells failed, the passing
 cells' median cost and context, since cheap failures pull the all-cells medians down.
 

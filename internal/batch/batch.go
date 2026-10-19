@@ -162,7 +162,7 @@ type Attempt struct {
 	// Protected lists the protected files this attempt changed or removed,
 	// against the batch's base.
 	Protected []string `json:"protected,omitempty"`
-	// AgentCommitted says the agent moved its branch with git itself during the run.
+	// AgentCommitted says the agent moved its branch or HEAD with git itself (a commit, reset or rename).
 	AgentCommitted bool `json:"agent_committed,omitempty"`
 }
 
@@ -1283,14 +1283,14 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	att.RunID = rec.ID()
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
 	report(att)
-	before, beforeErr := branchTip(task.Dir, plan.branch)
+	before, beforeErr := gitTips(task.Dir, plan.branch)
 	att.Result = agent.Run(ctx, b, task, func(e agent.Event) {
 		rec.Event(e)
 		if e.Kind == agent.EventToolCall {
 			notify(Event{Task: id, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
 		}
 	})
-	if after, err := branchTip(task.Dir, plan.branch); beforeErr == nil && err == nil && before != "" && after != before {
+	if after, err := gitTips(task.Dir, plan.branch); beforeErr == nil && err == nil && before != "" && after != before {
 		att.AgentCommitted = true
 	}
 	if err := rec.Close(att.Result); err != nil {
@@ -1520,8 +1520,8 @@ func commitChanges(wt, message string) (string, error) {
 	return g.out(ctx, "rev-parse", "HEAD")
 }
 
-// branchTip is the commit refs/heads/<branch> names in the worktree's repository, or "" without one.
-func branchTip(wt, branch string) (string, error) {
+// gitTips is the task branch's tip and HEAD's commit, so a commit off the branch shows too; "" without a worktree.
+func gitTips(wt, branch string) (string, error) {
 	if _, err := os.Stat(wt); err != nil || branch == "" {
 		return "", err
 	}
@@ -1536,12 +1536,17 @@ func branchTip(wt, branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	tip := ""
 	for _, line := range strings.Split(out, "\n") {
 		if name, head, ok := strings.Cut(line, " "); ok && name == "refs/heads/"+branch {
-			return head, nil
+			tip = head
 		}
 	}
-	return "", nil
+	head, err := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return tip + " " + strings.TrimSpace(head), nil
 }
 
 // agentCommit returns the branch's tip when the agent committed its own work on it
