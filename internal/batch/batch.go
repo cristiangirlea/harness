@@ -1542,10 +1542,8 @@ func gitTips(wt, branch string) (string, error) {
 			tip = head
 		}
 	}
-	head, err := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD")
-	if err != nil {
-		return "", err
-	}
+	// An orphan branch has no HEAD commit yet; that is a move, not a failed read.
+	head, _ := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD")
 	return tip + " " + strings.TrimSpace(head), nil
 }
 

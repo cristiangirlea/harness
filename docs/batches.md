@@ -62,7 +62,7 @@ work. hrn reads the branch's tip and `HEAD` before and after the agent runs: whe
 moved either itself (a commit of all or part of its work, a reset, a rename, a commit on another
 branch or on none), the attempt records `agent_committed` and `hrn batch show` marks the task
 `agent committed`. A commit the agent made on no branch (a detached `HEAD`) is not
-recorded, since a merge would not bring it. Nor is a tip that no longer contains the base (the agent reset or
+recorded as the task's commit, since a merge would not bring it. Nor is a tip that no longer contains the base (the agent reset or
 rewrote the branch below it), since merging it would revert the base; the attempt's error
 says so. hrn writes `.hrn/.gitignore` so the worktrees never show up
 in the repository's status.

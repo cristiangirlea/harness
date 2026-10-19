@@ -275,6 +275,43 @@ func TestACarriedOnAttemptRecordsThePartnersOwnCommit(t *testing.T) {
 	if tip := git(t, dir, "rev-parse", "refs/heads/"+tr.Branch); tr.Commit != tip {
 		t.Errorf("commit = %s, want the branch tip %s holding both halves", tr.Commit, tip)
 	}
+	if !tr.Attempts[0].AgentCommitted || !tr.Attempts[1].AgentCommitted {
+		t.Errorf("both backends committed on their own: %v, %v", tr.Attempts[0].AgentCommitted, tr.Attempts[1].AgentCommitted)
+	}
+}
+
+func TestAnAgentThatMovesHeadOrItsBranchWithoutACommitOnItIsMarked(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		git  [][]string
+	}{
+		{"rename", [][]string{{"branch", "-m", "renamed-by-agent"}}},
+		{"other", [][]string{{"switch", "-q", "-c", "other-by-agent"}, {"add", "out.txt"}, {"commit", "-q", "-m", "elsewhere"}}},
+		{"orphan", [][]string{{"switch", "-q", "--orphan", "orphan-by-agent"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			name := "wb-moves-" + tc.name
+			agent.Register(stub{name, func(_ context.Context, task agent.Task) agent.Result {
+				_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte("x\n"), 0o644)
+				for _, args := range tc.git {
+					if err := gitIn(task.Dir, args...); err != nil {
+						return agent.Result{Backend: name, Status: agent.StatusError, Error: err.Error()}
+					}
+				}
+				return agent.Result{Backend: name, Status: agent.StatusOK, Final: "moved", Turns: 1}
+			}})
+			res, _ := run(t, Spec{Dir: dir, Backend: name, Worktrees: WorktreesFresh, Tasks: []Task{{ID: "moved", Prompt: "p"}}})
+			defer Remove(res)
+			tr := res.Tasks[0]
+			if len(tr.Attempts) != 1 || tr.Attempts[0].Result.Status != agent.StatusOK {
+				t.Fatalf("attempts = %+v", tr.Attempts)
+			}
+			if !tr.AgentCommitted() {
+				t.Error("the agent moved HEAD or its branch with git")
+			}
+		})
+	}
 }
 
 // hrn's own commit of an earlier attempt is the next attempt's starting tip, not the agent's move.
