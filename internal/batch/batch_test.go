@@ -1591,6 +1591,7 @@ func TestSpecValidation(t *testing.T) {
 		{"unknown task retry", Spec{Tasks: []Task{{Prompt: "a", Backend: "wb-ok", Retry: []string{"nope"}}}}, "task t1"},
 		{"blank gate", Spec{Backend: "wb-ok", Gate: []string{"go test", " "}, Tasks: []Task{{Prompt: "a"}}}, "empty gate"},
 		{"blank task gate", Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Gate: []string{""}}}}, "task t1"},
+		{"empty task gate list", Spec{Backend: "wb-ok", Gate: []string{"go vet"}, Tasks: []Task{{Prompt: "a", Gate: []string{}}}}, "task t1: empty gate list"},
 		{"unknown effort", Spec{Backend: "wb-ok", Options: agent.Options{Effort: "turbo"}, Tasks: []Task{{Prompt: "a"}}}, `unknown effort "turbo"`},
 		{"unknown task effort", Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Options: agent.Options{Effort: "HIGH"}}}}, "task t1"},
 	} {
@@ -1616,6 +1617,24 @@ func TestASpecWithoutParallelGetsTheDefault(t *testing.T) {
 	}
 	if spec.Parallel != DefaultParallel {
 		t.Errorf("parallel = %d, want the default %d", spec.Parallel, DefaultParallel)
+	}
+}
+
+// JSON "gate": [] decodes to a non-nil empty list, which runs gateless while
+// records and diffs read it as the spec's gates; a spec-level [] is just unset.
+func TestLoadSpecRefusesATaskWithAnEmptyGateList(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tasks.json")
+	if err := os.WriteFile(p, []byte(`{"backend":"wb-ok","gate":["go vet"],"tasks":[{"id":"ans","prompt":"a","gate":[]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSpec(p); err == nil || !strings.Contains(err.Error(), "task ans: empty gate list") {
+		t.Fatalf("err = %v, want task ans named with its empty gate list", err)
+	}
+	if err := os.WriteFile(p, []byte(`{"backend":"wb-ok","gate":[],"tasks":[{"prompt":"a"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSpec(p); err != nil {
+		t.Fatalf("a spec-level empty gate list is unset, not refused: %v", err)
 	}
 }
 
