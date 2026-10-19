@@ -61,6 +61,8 @@ type Spec struct {
 	// WorktreesFresh.
 	Worktrees string `json:"worktrees,omitempty"`
 	Tasks     []Task `json:"tasks"`
+	// Base is the commit the tasks branch from instead of HEAD; set by callers, never by a spec file.
+	Base string `json:"-"`
 }
 
 const (
@@ -488,6 +490,11 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	base, err := gitOut(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return Result{}, err
+	}
+	if spec.Base != "" {
+		if base, err = gitOut(ctx, root, "rev-parse", "--verify", "--quiet", spec.Base+"^{commit}"); err != nil {
+			return Result{}, fmt.Errorf("base %s: %w", spec.Base, err)
+		}
 	}
 	if !spec.AllowDirty {
 		if err := checkClean(ctx, root); err != nil {
