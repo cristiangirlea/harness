@@ -95,6 +95,15 @@ valid JSON value, and counts a table when `encoding/csv` parses at least two row
 fields (quoted commas allowed). Its `json` and `table` bytes are an upper bound on what these
 summaries can take.
 
+## Reading part of an original
+
+A shaped result names its original's handle. `read_original` returns the whole original, or one
+part: a byte range (`range`), a line range (`lines`, 1-based and inclusive), or, when the original
+is one JSON value, the value at an RFC 6901 pointer (`pointer`), copied from the original's bytes
+with only whitespace removed. So a model that sees `json: array of 500 items` can ask for
+`/412/status` instead of the whole array. [Run records](run-records.md) describes the store's
+caps and how originals follow a continuation.
+
 ## Tool definitions
 
 2026-10-16, runs from the 30 days before (2026-09-16 to 2026-10-16).
