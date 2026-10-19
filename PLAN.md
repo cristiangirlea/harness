@@ -770,6 +770,17 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   the owner approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-19: an attempt records when its agent moved its branch or HEAD with git (#592, PR #597).
+  hrn-evals cell `fbc00.fix-sum.luna-low.r1` ran `git commit` against its prompt and nothing said
+  so. `runAttempt` reads the branch tip and HEAD just before and after the agent runs and sets
+  `agent_committed` when either moved (a commit, reset, rename, orphan switch, or a commit on another
+  branch or none); hrn's own commits fall outside that window. The eval table counts such cells
+  ("N of M cells committed on their own") and `hrn batch show` marks the task. Recorded, not failed:
+  failing a cell for it is the owner's choice, raised in #592.
+- 2026-10-19: a task's own empty gate list is refused (#588, PR #594). `"gate": []` ran gateless,
+  but records dropped it and diff and `Summarize` read it as the spec's gates. Option 1 of the
+  issue: refusing it keeps the record format and the nil-means-inherit reading every consumer
+  already had; a task that needs no gates under a gated spec moves the gates onto the tasks.
 - 2026-10-19: hrn drops the git repository variables it inherited (#561, PR #586). Started from
   a git hook or a `!` alias, hrn carried `GIT_DIR`, `GIT_INDEX_FILE` and five more, and a batch
   made its branch and moved HEAD in that repository. `internal/gitenv` drops them for hrn's own
