@@ -34,6 +34,7 @@ func NewCodexBackend() *CLIBackend {
 			if t.Effort != "" {
 				a = append(a, "-c", "model_reasoning_effort="+t.Effort)
 			}
+			a = append(a, codexMCPArgs(t)...)
 			switch t.Mode {
 			case ModeReadOnly, ModeAsk:
 				a = append(a, "--sandbox", "read-only")
@@ -49,12 +50,15 @@ func NewCodexBackend() *CLIBackend {
 			}
 			return append(a, "-")
 		},
+		env:        codexMCPEnv,
 		parse:      parseCodexStream,
 		end:        codexStreamEnded,
 		forks:      true,
 		mapsEffort: true,
 		mapsModes:  []Mode{ModeReadOnly, ModeAuto, ModeYolo},
 		mapsModel:  true,
+		mapsMCP:    true,
+		mapsLean:   true,
 		limits:     true,
 	}
 }

@@ -395,7 +395,7 @@ func unenforced(task Task, c *CLIBackend) []string {
 	if task.Effort != "" && !c.mapsEffort {
 		out = append(out, "effort")
 	}
-	if task.IsLean() && !c.mapsLean {
+	if task.Lean != nil && *task.Lean && !c.mapsLean { // the default is not a request
 		out = append(out, "lean")
 	}
 	if task.CompactWindow != "" && !c.mapsCompact {
@@ -406,6 +406,9 @@ func unenforced(task Task, c *CLIBackend) []string {
 	}
 	if task.NoSkills && !c.mapsNoSkills {
 		out = append(out, "no_skills")
+	}
+	if task.Skills != nil && *task.Skills && !c.mapsNoSkills {
+		out = append(out, "skills")
 	}
 	return out
 }

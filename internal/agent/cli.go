@@ -34,6 +34,9 @@ type CLIBackend struct {
 	// passed as an attachment instead of on stdin.
 	args        func(t Task, promptFile string) []string
 	promptStdin bool
+	// env, when set, adds variables to the child's environment, values that
+	// must not show on its command line; the guard filters them like the rest.
+	env func(t Task) ([]string, error)
 	// encodePrompt wraps stdin for CLIs that require structured input.
 	encodePrompt func(string) string
 	// parse handles one stdout line. Nil means stdout is plain text.
@@ -220,8 +223,14 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	cmd.Dir = task.Dir
 	// A nested Claude Code session refuses to start when it thinks it is
 	// inside another one.
-	cmd.Env = gitenv.WithoutRepoVars(withoutEnv(os.Environ(), "CLAUDECODE"))
-	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
+	cmd.Env = agentEnv(os.Environ())
+	if c.env != nil {
+		extra, err := c.env(task)
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		cmd.Env = append(cmd.Env, extra...)
+	}
 	guarded := !task.AllowDangerous
 	var withheld []string
 	if guarded {
@@ -412,6 +421,12 @@ func stopCLITree(tree *tools.Tree, err error) error {
 	return err
 }
 
+// agentEnv is env without what no agent CLI may inherit: hrn's own secrets, git's
+// repository variables, and CLAUDECODE, which makes a nested Claude Code refuse to start.
+func agentEnv(env []string) []string {
+	return retrieval.ExecutorEnv(gitenv.WithoutRepoVars(withoutEnv(env, "CLAUDECODE")))
+}
+
 func withoutEnv(env []string, key string) []string {
 	out := env[:0:0]
 	for _, kv := range env {
@@ -479,10 +494,15 @@ func (c *CLIBackend) guardLine(withheld []string) string {
 }
 
 // shownArgs is a command line as a run's info line shows it: the guard's
-// deny rules, dozens of them, are counted rather than listed.
+// deny rules, dozens of them, are counted rather than listed, and MCP server
+// values, which may hold expanded secrets, are hidden.
 func shownArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
+		if m := mcpValueArg.FindStringSubmatch(args[i]); m != nil && i > 0 && args[i-1] == "-c" {
+			out = append(out, m[1]+"<hidden>")
+			continue
+		}
 		if text, ok := strings.CutPrefix(args[i], appendSystemPromptFlag+"="); ok {
 			out = append(out, fmt.Sprintf("%s=<%d bytes>", appendSystemPromptFlag, len(text)))
 			continue
@@ -500,6 +520,8 @@ func shownArgs(args []string) []string {
 	}
 	return out
 }
+
+var mcpValueArg = regexp.MustCompile(`^(mcp_servers\.[^.=]+\.(?:command|args|url|env_vars)=)`)
 
 // isBatchFile reports whether bin runs through cmd.exe.
 func isBatchFile(bin string) bool {

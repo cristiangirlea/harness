@@ -164,9 +164,9 @@ func TestClaudePassesCompactWindowOnlyWhenSet(t *testing.T) {
 }
 
 func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
-	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}}
+	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}, Lean: Bool(false)}
 	plain := NewClaudeBackend().args(Task{Options: opts}, "")
-	opts.Lean = Bool(true)
+	opts.Lean, opts.Skills = Bool(true), Bool(true)
 	lean := NewClaudeBackend().args(Task{Options: opts}, "")
 	for _, flag := range []string{"--strict-mcp-config", "--setting-sources", "--bare"} {
 		if slices.Contains(plain, flag) {
@@ -190,7 +190,7 @@ func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
 }
 
 func TestClaudeAppendsTheSystemPromptAsOneArgumentAndCanTurnSkillsOff(t *testing.T) {
-	plain := NewClaudeBackend().args(Task{Options: Options{Mode: ModeAuto}}, "")
+	plain := NewClaudeBackend().args(Task{Options: Options{Mode: ModeAuto, Lean: Bool(false)}}, "")
 	for _, flag := range []string{"--disable-slash-commands", appendSystemPromptFlag} {
 		if slices.ContainsFunc(plain, func(a string) bool { return strings.HasPrefix(a, flag) }) {
 			t.Errorf("unset, %s must not be passed: %v", flag, plain)
