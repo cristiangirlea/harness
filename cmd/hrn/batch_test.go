@@ -318,15 +318,20 @@ func TestPrintBatchTable(t *testing.T) {
 	r.out, r.color = &out, false
 	printBatch(r, batch.Result{ID: "b1", Dir: "/repo", Duration: 90 * time.Second, Tasks: []batch.TaskResult{
 		{ID: "done", Purpose: "review", Status: batch.StatusPass, Branch: "hrn/done", Attempts: []batch.Attempt{{Backend: "api"}}},
+		{ID: "own", Status: batch.StatusPass, Branch: "hrn/own", Attempts: []batch.Attempt{{Backend: "codex", AgentCommitted: true}}},
 		{ID: "going", Status: batch.StatusRunning, Branch: "hrn/going"},
 		{ID: "failed", Status: batch.StatusFail, Branch: "hrn/failed", Attempts: []batch.Attempt{{Backend: "claude"}, {Backend: "claude"}}},
 	}})
 	text := out.String()
+	if strings.Count(text, "agent committed") != 1 {
+		t.Errorf("only the task whose agent committed is marked:\n%s", text)
+	}
 	for _, want := range []string{
 		"done", "pass", "review", "hrn/done", "1 attempt(s)",
 		"going", "running",
 		"failed", "2 attempt(s)",
-		"1/3 passed", "1 still running", "hrn batch merge b1", "hrn batch rm b1",
+		"own", "agent committed",
+		"2/4 passed", "1 still running", "hrn batch merge b1", "hrn batch rm b1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("table is missing %q:\n%s", want, text)

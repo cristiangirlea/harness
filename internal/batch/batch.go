@@ -20,7 +20,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/gitenv"
@@ -136,6 +138,13 @@ type Attempt struct {
 	SwitchedFrom string `json:"switched_from,omitempty"`
 	// Protected lists changed or removed protected files against the base.
 	Protected []string `json:"protected,omitempty"`
+	// AgentCommitted says the agent moved its branch or HEAD with git itself (a commit, reset or rename).
+	AgentCommitted bool `json:"agent_committed,omitempty"`
+}
+
+// AgentCommitted reports whether any attempt's agent committed on its own.
+func (t TaskResult) AgentCommitted() bool {
+	return slices.ContainsFunc(t.Attempts, func(a Attempt) bool { return a.AgentCommitted })
 }
 
 type GateResult struct {
@@ -146,7 +155,7 @@ type GateResult struct {
 	// Killed says why an exit -1 gate never finished (KilledTimeout or KilledCanceled); empty in older records.
 	Killed  string         `json:"killed,omitempty"`
 	Timeout agent.Duration `json:"timeout,omitempty"`
-	// InfrastructureError requires operator action, not code repair.
+	// InfrastructureError is a gate shell that could not start or be waited for: the operator's to fix, not a retry backend's.
 	InfrastructureError string `json:"infrastructure_error,omitempty"`
 }
 
@@ -1125,12 +1134,16 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	att.RunID = rec.ID()
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
 	report(att)
+	before, beforeErr := gitTips(task.Dir, plan.branch)
 	att.Result = agent.Run(ctx, b, task, func(e agent.Event) {
 		rec.Event(e)
 		if e.Kind == agent.EventToolCall {
 			notify(Event{Task: id, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
 		}
 	})
+	if after, err := gitTips(task.Dir, plan.branch); beforeErr == nil && err == nil && before != "" && after != before {
+		att.AgentCommitted = true
+	}
 	if err := rec.Close(att.Result); err != nil {
 		att.Error = runlog.CloseMessage(err)
 	}
@@ -1250,6 +1263,8 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration) Ga
 		if ctx.Err() != nil {
 			// Cancellation before shell startup is not an infrastructure failure.
 			gr.Killed = KilledCanceled
+		} else if errors.Is(err, tools.ErrWait) {
+			gr.InfrastructureError = err.Error()
 		} else {
 			gr.InfrastructureError = "shell could not start: " + err.Error()
 		}
@@ -1276,32 +1291,104 @@ var gateHCSError = regexp.MustCompile(`\bHCS_E_[A-Z][A-Z0-9_]*\b`)
 
 // WSL can emit UTF-16 to pipes; decode before truncation or launcher detection.
 func decodeGateOutput(s string) (string, bool) {
-	var order binary.ByteOrder
-	switch {
-	case strings.HasPrefix(s, "\xff\xfe"):
-		order, s = binary.LittleEndian, s[2:]
-	case strings.HasPrefix(s, "\xfe\xff"):
-		order, s = binary.BigEndian, s[2:]
-	default:
-		// Without BOM, require two alternating NUL code units to avoid false detection.
-		n := min(len(s)/2, 16)
-		if n < 2 {
-			return s, false
-		}
-		le, be := true, true
-		for i := 0; i < n*2; i += 2 {
-			le = le && s[i] != 0 && s[i+1] == 0
-			be = be && s[i] == 0 && s[i+1] != 0
-		}
-		switch {
-		case le:
-			order = binary.LittleEndian
-		case be:
-			order = binary.BigEndian
-		default:
-			return s, false
+	m := gateTruncation.FindStringSubmatchIndex(s)
+	if m == nil {
+		out, decoded, _ := decodeGateText(s)
+		return out, decoded
+	}
+	head, headDecoded, order := decodeGateText(s[:m[0]])
+	if order != nil {
+		// The cut can end the head inside a character.
+		head = strings.TrimSuffix(head, "\ufffd")
+	}
+	head = trimCutRune(head)
+	rest := s[m[1]:]
+	tail, tailDecoded, _ := decodeGateText(skipCutRune(rest))
+	if order != nil {
+		// The tail starts at byte len(head)+dropped of the stream, which fixes its code-unit boundary.
+		dropped, _ := strconv.Atoi(s[m[2]:m[3]])
+		t16, _, _ := decodeGateText(gateBOM(order) + rest[min(len(rest), (m[0]+dropped)%2):])
+		// The cut can start the tail inside a surrogate pair.
+		t16 = strings.TrimPrefix(t16, "\ufffd")
+		if bad8, bad16 := gateBadRunes(tail), gateBadRunes(t16); bad8 > bad16 || bad8 == bad16 && (tailDecoded || !gatePlainUTF8(tail) || gateOneScript(t16)) {
+			tail, tailDecoded = t16, true
 		}
 	}
+	return head + s[m[0]:m[1]] + tail, headDecoded || tailDecoded
+}
+
+var gateTruncation = regexp.MustCompile(`\n\n\[\.\.\. (\d+) bytes truncated \.\.\.\]\n\n`)
+
+// decodeGateText decodes s as UTF-16 when it starts as UTF-16, unless it is a UTF-16 prefix ending on a
+// newline followed by UTF-8, which stdout and stderr in different encodings give; it returns the
+// byte order the text ends in, or nil for UTF-8.
+func decodeGateText(s string) (string, bool, binary.ByteOrder) {
+	if k, order, bom := gateSplit(s); k > 0 {
+		return decodeGateUTF16(s[bom:k], order) + s[k:], true, nil
+	}
+	order, bom := gateByteOrder(s)
+	if order == nil {
+		return s, false, nil
+	}
+	return decodeGateUTF16(s[bom:], order), true, order
+}
+
+// gateSplit returns where s turns from UTF-16 ending on a newline to plain UTF-8, or 0.
+// A UTF-16 newline holds a NUL byte, so only the one holding the last NUL can be followed by NUL-free text.
+func gateSplit(s string) (int, binary.ByteOrder, int) {
+	nul := strings.LastIndexByte(s, 0)
+	k := nul + 2 - nul%2
+	if nul < 0 || k >= len(s) || !gatePlainUTF8(s[k:]) {
+		return 0, nil, 0
+	}
+	order, bom := gateByteOrder(s[:k])
+	if order == nil || order.Uint16([]byte(s[k-2:k])) != '\n' || gateBadRunes(decodeGateUTF16(s[bom:k], order)) > 0 {
+		return 0, nil, 0
+	}
+	// A UTF-16 last line in one script can also be valid UTF-8, so the rest must not read as such a line.
+	if gateOneScript(decodeGateUTF16(s[k:], order)) {
+		return 0, nil, 0
+	}
+	return k, order, bom
+}
+
+// gateByteOrder returns the UTF-16 byte order s starts in, or nil, and the length of its BOM.
+func gateByteOrder(s string) (binary.ByteOrder, int) {
+	switch {
+	case strings.HasPrefix(s, "\xff\xfe"):
+		return binary.LittleEndian, 2
+	case strings.HasPrefix(s, "\xfe\xff"):
+		return binary.BigEndian, 2
+	}
+	// Without a BOM, require alternating NUL and non-NUL bytes in
+	// at least two code units, examining up to the first 32 bytes.
+	n := min(len(s)/2, 16)
+	if n < 2 {
+		return nil, 0
+	}
+	le, be := true, true
+	for i := 0; i < n*2; i += 2 {
+		le = le && s[i] != 0 && s[i+1] == 0
+		be = be && s[i] == 0 && s[i+1] != 0
+	}
+	switch {
+	case le:
+		return binary.LittleEndian, 0
+	case be:
+		return binary.BigEndian, 0
+	}
+	return nil, 0
+}
+
+func gateBOM(order binary.ByteOrder) string {
+	if order == binary.BigEndian {
+		return "\xfe\xff"
+	}
+	return "\xff\xfe"
+}
+
+// decodeGateUTF16 decodes s in the given byte order; an odd last byte becomes U+FFFD.
+func decodeGateUTF16(s string, order binary.ByteOrder) string {
 	units := make([]uint16, 0, (len(s)+1)/2)
 	for i := 0; i+1 < len(s); i += 2 {
 		units = append(units, order.Uint16([]byte(s[i:i+2])))
@@ -1309,7 +1396,88 @@ func decodeGateOutput(s string) (string, bool) {
 	if len(s)%2 != 0 {
 		units = append(units, '\ufffd')
 	}
-	return string(utf16.Decode(units)), true
+	return string(utf16.Decode(units))
+}
+
+// gatePlainUTF8 reports whether s is valid UTF-8 with no control bytes but tab, newline, carriage return and escape.
+func gatePlainUTF8(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 && c != '\t' && c != '\n' && c != '\r' && c != 0x1b || c == 0x7f {
+			return false
+		}
+	}
+	return utf8.ValidString(s)
+}
+
+// gateOneScript reports whether s is printable text in at most one script besides Common and Inherited.
+// Real UTF-16 text reads so; UTF-8 bytes read as UTF-16 scatter over scripts or hit unassigned code points.
+func gateOneScript(s string) bool {
+	script := ""
+	for _, r := range s {
+		switch {
+		case r == '\t' || r == '\n' || r == '\r' || r == 0x1b:
+			continue
+		case r == utf8.RuneError || !unicode.IsGraphic(r):
+			return false
+		case unicode.In(r, unicode.Common, unicode.Inherited):
+			continue
+		}
+		if k := gateScript(r); script == "" {
+			script = k
+		} else if k != script {
+			return false
+		}
+	}
+	return true
+}
+
+// gateCJK are the scripts written together in Chinese, Japanese and Korean text.
+var gateCJK = []*unicode.RangeTable{unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul, unicode.Bopomofo}
+
+func gateScript(r rune) string {
+	for _, t := range gateCJK {
+		if unicode.Is(t, r) {
+			return "CJK"
+		}
+	}
+	for name, t := range unicode.Scripts {
+		if unicode.Is(t, r) {
+			return name
+		}
+	}
+	return ""
+}
+
+// gateBadRunes counts the NULs and invalid or replaced characters in s.
+func gateBadRunes(s string) int {
+	n := 0
+	for _, r := range s {
+		if r == 0 || r == utf8.RuneError {
+			n++
+		}
+	}
+	return n
+}
+
+// trimCutRune drops a UTF-8 character that s ends inside.
+func trimCutRune(s string) string {
+	for i := len(s) - 1; i >= max(0, len(s)-3); i-- {
+		if utf8.RuneStart(s[i]) {
+			if !utf8.FullRuneInString(s[i:]) {
+				return s[:i]
+			}
+			break
+		}
+	}
+	return s
+}
+
+// skipCutRune drops the continuation bytes a cut leaves before the first whole UTF-8 character.
+func skipCutRune(s string) string {
+	for k := 0; k < 3 && s != "" && s[0]&0xc0 == 0x80; k++ {
+		s = s[1:]
+	}
+	return s
 }
 
 // Commit despite cancellation to leave a consistent branch.
@@ -1345,7 +1513,36 @@ func commitChanges(wt, message string) (string, error) {
 	return g.out(ctx, "rev-parse", "HEAD")
 }
 
-// Accept only a tip on the named branch that retains the batch base.
+// gitTips is the task branch's tip and HEAD's commit, so a commit off the branch shows too; "" without a worktree.
+func gitTips(wt, branch string) (string, error) {
+	if _, err := os.Stat(wt); err != nil || branch == "" {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	g, err := newAgentGit(ctx, wt)
+	if err != nil {
+		return "", err
+	}
+	defer g.close()
+	out, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"+branch)
+	if err != nil {
+		return "", err
+	}
+	tip := ""
+	for _, line := range strings.Split(out, "\n") {
+		if name, head, ok := strings.Cut(line, " "); ok && name == "refs/heads/"+branch {
+			tip = head
+		}
+	}
+	// An orphan branch has no HEAD commit yet; that is a move, not a failed read.
+	head, _ := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD")
+	return tip + " " + strings.TrimSpace(head), nil
+}
+
+// agentCommit returns the branch's tip when the agent committed its own work on it
+// and left nothing for commitChanges, or "" while the branch is still at the base;
+// note says why a moved tip was left out. A commit on no branch is never taken.
 func agentCommit(wt, branch, base string) (sha, note string, err error) {
 	if _, err := os.Stat(wt); err != nil || branch == "" || base == "" {
 		return "", "", nil
