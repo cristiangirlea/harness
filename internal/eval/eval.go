@@ -467,6 +467,8 @@ type Record struct {
 	// Judgements are the judge's verdicts, one per passing cell and judge repeat.
 	Judgements   []Judgement `json:"judgements,omitempty"`
 	JudgeCostUSD float64     `json:"judge_cost_usd,omitempty"`
+	// SetupComparison is on the candidate's record of `hrn eval setup`.
+	SetupComparison *SetupComparison `json:"setup_comparison,omitempty"`
 }
 
 // Run expands the spec, runs it as a batch and scores the result. The batch

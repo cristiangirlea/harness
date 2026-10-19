@@ -442,3 +442,44 @@ their own MCP configs. A variant that changed its backend, whether the variant, 
 task or the default backend changed it, loads other files by design and gets only the
 variant note. When the first task's run is gone, or the eval is older than the field, there
 is no setup to compare and no note. `setup_changed` in `--json` lists the same.
+
+### Comparing a setup change
+
+A branch that edits AGENTS.md, CLAUDE.md, rules or skills changes how every later task
+runs, and review cannot see whether that helped. `hrn eval setup` measures it: it runs the
+spec's one variant twice on the branch's code, once with the base's setup files and once
+with the branch's own, and compares the two cell by cell.
+
+```
+hrn eval setup --base origin/main --held-out 0.5 --seed 7 setup-eval.json
+```
+
+The baseline runs on a commit hrn makes on top of `HEAD` whose setup files are as they were
+where the branch left `--base` (their merge base, so setup edits made on `main` since do not
+count as the branch's): every `AGENTS.md`, `CLAUDE.md` and `HRN.md` in the tree and
+everything under `.claude`, or the git pathspecs `--paths` names, comma-separated. Nothing is checked out for it and the
+checkout is left alone; when those files are the same on both sides there is nothing to
+compare and it refuses. Both sides then run as ordinary evals with the same tasks, gates
+and budgets, and the candidate's record holds the comparison under `setup_comparison`.
+The spec needs exactly one variant, on a plan backend named in it (`claude` or `codex`),
+since every task runs twice, and at least two repeats. `--held-out 0.5 --seed 7` runs half
+the tasks of each purpose, picked in an order the seed fixes, so a later comparison can run
+on the same ones; the record keeps the task ids, the share and the seed. Both batches'
+worktrees are removed when it ends, also after an error, unless `--keep`; `--json` prints
+only the comparison on standard output, with the progress on standard error, and
+`-v` streams every agent's tool calls.
+
+The verdict is `better`, `worse`, `same` or `inconclusive`. Cells are compared in pairs of
+the same task and repeat: when either cell of a pair never acted, or a cell ran on one side
+only, the pair is left out of both sides (the reason counts them, and says to re-run the
+cells that did not act), so a setup
+that makes the agent give up on a hard task cannot drop that task from one side only. A pass rate counts as higher or lower
+only when the difference is larger than the baseline's own pass rate moves between repeats.
+With the same pass rate, the token saving is read over pairs of the same task and repeat
+where both cells passed (reported counts only, not estimates), and must reach the larger of
+10% and the baseline's passing median's own movement between repeats; a cost that grows by
+as much is `worse`. When the baseline passed in fewer than two repeats that movement was not
+measured, and with fewer than two pairs passing on both sides there is too little to compare:
+both are `inconclusive`. Each side also reports the tokens its failures spent and its tokens per
+success. A judge's scores, when the spec has one, appear in the diff printed above the
+verdict and never change it: the gates decide passing.
