@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,19 +113,66 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+var (
+	repoTemplateOnce sync.Once
+	// repoTemplate is built once per test binary and only ever copied: five git
+	// processes per test cost minutes on a loaded Windows machine.
+	repoTemplate    string
+	repoTemplateErr error
+)
+
+func buildRepoTemplate() (string, error) {
+	dir, err := os.MkdirTemp("", "hrn-batch-repo-")
+	if err != nil {
+		return "", err
+	}
+	// Whichever test builds it first must not bake its GIT_* settings into every test's repo.
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), "GIT_") {
+			env = append(env, kv)
+		}
+	}
+	run := func(args ...string) error {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("git %v: %v\n%s", args, err, out)
+		}
+		return nil
+	}
+	err = run("init", "-q", "-b", "main")
+	if err == nil {
+		err = run("config", "user.email", "test@example.com")
+	}
+	if err == nil {
+		err = run("config", "user.name", "Test")
+	}
+	if err == nil {
+		err = os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644)
+	}
+	if err == nil {
+		err = run("add", "README.md")
+	}
+	if err == nil {
+		err = run("commit", "-q", "-m", "init")
+	}
+	return dir, err
+}
+
 // initRepo makes a repository with one commit and points HRN_HOME at a temp dir.
 func initRepo(t *testing.T) string {
 	t.Helper()
 	t.Setenv("HRN_HOME", t.TempDir())
+	repoTemplateOnce.Do(func() { repoTemplate, repoTemplateErr = buildRepoTemplate() })
+	if repoTemplateErr != nil {
+		t.Fatal(repoTemplateErr)
+	}
 	dir := t.TempDir()
-	git(t, dir, "init", "-q", "-b", "main")
-	git(t, dir, "config", "user.email", "test@example.com")
-	git(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+	if err := os.CopyFS(dir, os.DirFS(repoTemplate)); err != nil {
 		t.Fatal(err)
 	}
-	git(t, dir, "add", "README.md")
-	git(t, dir, "commit", "-q", "-m", "init")
 	return dir
 }
 

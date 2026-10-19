@@ -244,6 +244,8 @@ type VariantRow struct {
 	Passed   int    `json:"passed"`
 	// DidNotAct excludes idle successes (no tools, second turn or change) from pass rates.
 	DidNotAct int `json:"did_not_act,omitempty"`
+	// AgentCommitted counts cells whose agent moved its branch or HEAD with git, which a prompt may forbid.
+	AgentCommitted int `json:"agent_committed,omitempty"`
 	// Unchanged counts passes without commits, valid for inspection tasks.
 	Unchanged     int            `json:"passed_unchanged,omitempty"`
 	Statuses      map[string]int `json:"statuses"` // run status histogram
@@ -511,6 +513,9 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				continue
 			}
 			row.Attempts++
+			if c.tr.AgentCommitted() {
+				row.AgentCommitted++
+			}
 			if c.idle {
 				// Idle cells measure setup, so exclude them from rates and medians.
 				row.DidNotAct++

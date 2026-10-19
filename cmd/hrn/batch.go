@@ -317,8 +317,12 @@ func printBatch(r *renderer, res batch.Result) {
 		if declared == "" {
 			declared = "-"
 		}
-		r.Line(fmt.Sprintf("  %-16s %-9s %-9s %-9s %d attempt(s)  %-24s %s",
-			t.ID, status, declared, last, len(t.Attempts), t.Branch, took))
+		line := fmt.Sprintf("  %-16s %-9s %-9s %-9s %d attempt(s)  %-24s %s",
+			t.ID, status, declared, last, len(t.Attempts), t.Branch, took)
+		if t.AgentCommitted() {
+			line += r.c(dim, " · agent committed")
+		}
+		r.Line(line)
 	}
 	tail, took := "", res.Duration.Round(time.Second).String()
 	if running > 0 {

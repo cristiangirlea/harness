@@ -292,8 +292,11 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	}
 	if p.Resume != nil && p.carried != nil {
 		// The resumed conversation cites these handles; read_original looks only in runDir.
-		if err := tools.CopyOriginals(filepath.Join(runlog.Root(), p.carried.ID), runDir); err != nil {
+		n, skipped, err := tools.CopyOriginals(filepath.Join(runlog.Root(), p.carried.ID), runDir)
+		if err != nil {
 			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "originals not carried over: " + err.Error()})
+		} else if n+skipped > 0 {
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: fmt.Sprintf("copied %d tool-result originals from run %s, skipped %d that were not regular files matching their hash within the size cap", n, p.carried.ID, skipped)})
 		}
 	}
 	var h string
