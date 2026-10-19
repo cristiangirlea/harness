@@ -21,10 +21,7 @@ const (
 	errorAccessDenied              = 5
 )
 
-// alive reports whether a process with this pid is running. OpenProcess
-// fails for a pid nobody holds; access denied means it runs under another
-// user. A process that exited but whose handle someone still holds opens,
-// and its exit code says it is gone.
+// Access denied counts as alive; exit status detects handles outliving processes.
 func alive(pid int) bool {
 	if pid <= 0 {
 		return false

@@ -16,8 +16,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
-// Worker talks only to the control service. It has no database connection.
-// This initial API worker exposes no tools; the separate executor is still pending.
+// Worker talks only to the control service: no database connection and, for now, no tools.
 type Worker struct {
 	ControlURL    string
 	ProjectID     string

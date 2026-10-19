@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 -run Definitions ./scripts/tool-shapes
-// hash: 938f1ed984269db325f50ba0ead7ea062f5274cc89a38710e63cb1a52519c276
+// hash: 61b7db83bee55e944d8e0fb311944289c40fd85bf8f349a9419b390076128896
 package main
 
 import (
@@ -14,8 +14,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
-// callContexts holds each model call's context (input, cache read and cache
-// write tokens) for api runs and for all runs.
 type callContexts struct {
 	api, all           []float64
 	apiRuns, allRuns   int
@@ -23,9 +21,7 @@ type callContexts struct {
 	apiRunsWithMCP     int
 }
 
-// add counts one value per call, as hrn report's median context does, but reads
-// usage events, or else spreads the run's totals over its turns. Codex input
-// already includes its cache, so its cache figures are not added.
+// Prefer per-call usage, falling back to run averages; Codex input already includes cache tokens.
 func (c *callContexts) add(backend string, withMCP bool, events []event, total *int64, cacheWrite int64, turns int) {
 	var calls []float64
 	fromUsage := false
@@ -162,8 +158,6 @@ func definitions(r *report, days int) (*definitionsReport, error) {
 	return d, nil
 }
 
-// definitionsFlag takes --definitions out of args, so options stays the
-// parser for what both reports share.
 func definitionsFlag(args []string) (bool, []string) {
 	var rest []string
 	found := false

@@ -5,8 +5,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/report"
 )
 
-// RetrievalManifest extends the existing eval matrix. It contains no answers or
-// corpus entries. A pilot must pin the model/settings and record cache conditions.
+// RetrievalManifest pins settings and cache conditions, excluding answers and corpus entries.
 type RetrievalManifest struct {
 	ID              string `json:"id"`
 	EvidenceKind    string `json:"evidence_kind"` // synthetic_fixture or measured
@@ -37,18 +36,15 @@ type RetrievalComparison struct {
 	Baseline              report.WorkflowUsage `json:"baseline"`
 	Candidate             report.WorkflowUsage `json:"candidate"`
 	MedianPairedSaving    *float64             `json:"median_paired_saving"`
-	// The saving verdict reads only pairs where both cells passed: a variant
-	// that fails cheaply is not efficient. The medians above keep every pair.
+	// PassingPairs counts joint passes to exclude cheap failures from savings; overall medians retain failures.
 	PassingPairs           int      `json:"passing_pairs,omitempty"`
 	PassingBaselineMedian  *float64 `json:"passing_baseline_median_tokens,omitempty"`
 	PassingCandidateMedian *float64 `json:"passing_candidate_median_tokens,omitempty"`
 	PassingReduction       *float64 `json:"passing_median_token_reduction,omitempty"`
-	// BaselineMovement is how far the baseline's passing median moves between
-	// repeats (range over mean); the saving must reach SavingThreshold, the
-	// larger of it and 10 percent.
+	// BaselineMovement is repeat-median range/mean; SavingThreshold is max(movement, 10%).
 	BaselineMovement *float64 `json:"baseline_median_movement,omitempty"`
 	SavingThreshold  *float64 `json:"saving_threshold,omitempty"`
-	Gate             string   `json:"gate"`
+	Gate             string   `json:"gate"` // pending, reject or pass
 	Reason           string   `json:"reason"`
 }
 
@@ -80,7 +76,7 @@ func (m RetrievalManifest) Validate() error {
 	return err
 }
 
-// CompareRetrieval operates over existing agent results, never starts a model.
+// CompareRetrieval compares existing results without model calls.
 func CompareRetrieval(m RetrievalManifest, samples []RetrievalSample, basePrep, candidatePrep report.Overhead, reuse int) (RetrievalComparison, error) {
 	out := RetrievalComparison{EvidenceKind: m.EvidenceKind, ExpectedPairs: len(m.Spec.Tasks) * m.Spec.Repeats, Gate: "pending"}
 	if err := m.Validate(); err != nil {
@@ -221,9 +217,7 @@ func CompareRetrieval(m RetrievalManifest, samples []RetrievalSample, basePrep, 
 	default:
 		out.Reason = "insufficient comparable usage or improvement"
 	}
-	// Run identity can be checked by the CLI, but these inputs cannot prove the
-	// reviewed corpus, held-out separation, checks or isolation outcomes. Numeric
-	// improvement is diagnostic, never supported measured promotion evidence.
+	// Run ids cannot prove corpus/check/isolation/held-out binding; do not promote supplied measurements.
 	if m.EvidenceKind == "measured" {
 		out.EvidenceKind = "supplied_unverified"
 		if out.Gate == "pass" {
@@ -250,8 +244,7 @@ func taskTokens(t report.TaskUsage) (int64, bool) {
 	return n, known
 }
 
-// movement is the range of the per-repeat medians over their mean, for the
-// repeats that have any; fewer than two repeats measure nothing.
+// Fewer than two nonempty repeats cannot measure baseline noise.
 func movement(byRepeat map[int][]float64) (float64, bool) {
 	var medians []float64
 	for _, v := range byRepeat {

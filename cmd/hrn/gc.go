@@ -21,10 +21,6 @@ import (
 
 const gcUsage = "usage: hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [PATH ...]"
 
-// cmdGC lists the worktrees under PATH (default: the current repository) and
-// the build caches there and inside them, with what gc decided for each, and
-// with --apply removes the ones whose work is proven merged or whose build
-// output is idle. internal/gc holds the rules.
 func cmdGC(args []string) (int, error) {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
 	apply := fs.Bool("apply", false, "")
@@ -89,8 +85,6 @@ func cmdGC(args []string) (int, error) {
 	return 0, nil
 }
 
-// gcSummary is the dry run's last line: what would go and what it frees, or
-// that nothing would.
 func gcSummary(wts []gc.Worktree, caches []gc.Cache, sizes map[string]int64) string {
 	var going []gc.Worktree
 	for _, w := range wts {
@@ -111,9 +105,6 @@ func gcSummary(wts []gc.Worktree, caches []gc.Cache, sizes map[string]int64) str
 	return fmt.Sprintf("would remove %d of %d worktrees and %d of %d caches, freeing %s; hrn gc --apply removes them", len(going), len(wts), len(goingCaches), len(caches), report.Bytes(freed))
 }
 
-// printGC writes one line per worktree, the ones to remove first: the
-// verdict, the folder, its branch or batch, the size it frees, why, and the
-// pull request, which is the record once the folder is gone.
 func printGC(w io.Writer, wts []gc.Worktree, sizes map[string]int64) {
 	sorted := append([]gc.Worktree(nil), wts...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -141,9 +132,6 @@ func printGC(w io.Writer, wts []gc.Worktree, sizes map[string]int64) {
 	tw.Flush()
 }
 
-// printCaches writes one line per build cache, the ones to remove first: the
-// verdict, the folder, "cache", its size, when it was last written (a build,
-// for a Cargo target with a profile), and why.
 func printCaches(w io.Writer, caches []gc.Cache) {
 	sorted := append([]gc.Cache(nil), caches...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -160,8 +148,7 @@ func printCaches(w io.Writer, caches []gc.Cache) {
 	tw.Flush()
 }
 
-// parseSize reads a size such as 50G, 500M, 2k, 1.5G or 123 (bytes), in units
-// of 1024 as the listing prints them. Empty is 0.
+// Interpret suffixes in powers of 1024 to match the listing; bare values are bytes.
 func parseSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

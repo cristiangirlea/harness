@@ -1,4 +1,4 @@
-// Package gitretry handles Git's brief exposure of incomplete worktree metadata.
+// Package gitretry tolerates transient worktree metadata.
 package gitretry
 
 import (
@@ -7,13 +7,10 @@ import (
 	"time"
 )
 
-// TestHookBeforeRetry, when non-nil, runs between attempts. Tests must set it
-// only while no other Output calls are running and restore it afterward.
+// TestHookBeforeRetry runs between attempts; set and restore it only while Output is idle.
 var TestHookBeforeRetry func()
 
-// Output runs a Git command, retrying once after a short pause if Git could
-// not read a worktree's commondir while another process was creating it.
-// run must create a fresh command on each call.
+// Output retries commondir races; run must create fresh commands.
 func Output(ctx context.Context, run func() ([]byte, error)) ([]byte, error) {
 	out, err := run()
 	if err == nil {
