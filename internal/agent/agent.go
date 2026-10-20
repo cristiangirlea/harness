@@ -163,6 +163,8 @@ type Result struct {
 	Session string `json:"session,omitempty"`
 	// LimitResets is absent when the CLI gives no time.
 	LimitResets time.Time `json:"limit_resets,omitzero"`
+	// CLIVersion is the version the CLI recorded for this run.
+	CLIVersion string `json:"cli_version,omitempty"`
 }
 
 // UnmarshalJSON also accepts legacy timeout_ns records.

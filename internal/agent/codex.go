@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"cmp"
 	"encoding/json"
 	"math"
@@ -51,6 +52,7 @@ func NewCodexBackend() *CLIBackend {
 		env:        codexMCPEnv,
 		parse:      parseCodexStream,
 		end:        codexStreamEnded,
+		exited:     codexReportModel,
 		forks:      true,
 		mapsEffort: true,
 		mapsModes:  []Mode{ModeReadOnly, ModeAuto, ModeYolo},
@@ -59,6 +61,91 @@ func NewCodexBackend() *CLIBackend {
 		mapsLean:   true,
 		limits:     true,
 	}
+}
+
+// codexReportModel takes the model from the session's rollout file: exec --json names none.
+func codexReportModel(t Task, started time.Time, res *Result) {
+	model, version := codexRollout(codexHomeDir(t.Dir), res.Session, started, time.Now())
+	res.CLIVersion = version
+	if model == "" {
+		return
+	}
+	res.Model, res.ModelReported = model, true
+	if res.Usage != nil {
+		estimateCodexCost(res)
+	}
+}
+
+// codexRollout reads the last turn's model and the CLI version codex recorded for session.
+func codexRollout(home, session string, started, now time.Time) (model, version string) {
+	if home == "" || !sessionID.MatchString(session) {
+		return "", ""
+	}
+	// Folders are named by the session's local start date; a day either side covers time zones.
+	first := started.AddDate(0, 0, -1)
+	first = time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, first.Location())
+	for day := first; !day.After(now.AddDate(0, 0, 1)); day = day.AddDate(0, 0, 1) {
+		dir := filepath.Join(home, "sessions", filepath.FromSlash(day.Format("2006/01/02")))
+		// ReadDir, not Glob: a home path may hold pattern characters such as [.
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, "-"+session+".jsonl") {
+				continue
+			}
+			if model, version, ok := readCodexRollout(filepath.Join(dir, name), session); ok {
+				return model, version
+			}
+		}
+	}
+	return "", ""
+}
+
+func readCodexRollout(path, session string) (model, version string, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", false
+	}
+	defer f.Close()
+	r := bufio.NewReader(f)
+	for {
+		raw, err := r.ReadBytes('\n')
+		if len(raw) == 0 && err != nil {
+			break
+		}
+		var line struct {
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		// A line codex cut short when it was killed is skipped, not fatal.
+		if json.Unmarshal(raw, &line) != nil {
+			continue
+		}
+		var p struct {
+			ID         string `json:"id"`
+			Model      string `json:"model"`
+			CLIVersion string `json:"cli_version"`
+		}
+		if (line.Type != "session_meta" || ok) && line.Type != "turn_context" || json.Unmarshal(line.Payload, &p) != nil {
+			continue
+		}
+		switch line.Type {
+		case "session_meta":
+			// The first session_meta names the file's own session; later ones are ignored.
+			if p.ID != session {
+				return "", "", false
+			}
+			ok = true
+			if ValidModel(p.CLIVersion) {
+				version = p.CLIVersion
+			}
+		case "turn_context":
+			if ValidModel(p.Model) {
+				model = p.Model
+			}
+		}
+	}
+	return model, version, ok
 }
 
 // Hashed build names require ordering by modification time.

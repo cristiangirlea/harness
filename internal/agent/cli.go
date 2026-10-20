@@ -41,6 +41,8 @@ type CLIBackend struct {
 	finalize func(stdout []byte, emit func(Event), res *Result)
 	// Resolve pending errors after clean exit without duplicating events.
 	end func(emit func(Event), res *Result, errored bool)
+	// exited reads what a CLI records outside its stream, once the process is gone.
+	exited func(t Task, started time.Time, res *Result)
 	// forks requires session argument and result support.
 	forks bool
 	// In-place resume must not be advertised as a session copy.
@@ -316,6 +318,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	_, _ = io.Copy(io.Discard, stdout)
 	waitErr := cmd.Wait()
+	if c.exited != nil {
+		c.exited(task, started, &res)
+	}
 
 	if c.finalize != nil {
 		c.finalize(all, emit, &res)
