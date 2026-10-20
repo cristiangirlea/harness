@@ -786,3 +786,15 @@ func TestALANViewerOfTheBotSeesNoFullWorkspaceOrHomePath(t *testing.T) {
 		}
 	}
 }
+
+func TestAdaGivesTheCauseOfTheLastAttemptOnly(t *testing.T) {
+	gate := batch.Attempt{Gates: []batch.GateResult{{Command: "go test", ExitCode: 1}}}
+	limited := batch.Attempt{Result: agent.Result{Status: agent.StatusLimited}}
+	if got := taskReason(batch.TaskResult{Error: "out of plans", Attempts: []batch.Attempt{gate, limited}}); got != "The attempt failed: out of plans." {
+		t.Fatalf("reason = %q: an earlier attempt's gate is not why the task ended", got)
+	}
+	killed := batch.Attempt{Gates: []batch.GateResult{{Command: "go test", ExitCode: -1, Killed: batch.KilledTimeout, Timeout: agent.Duration(time.Minute)}}}
+	if got := taskReason(batch.TaskResult{Attempts: []batch.Attempt{killed}}); got != "Gate go test was killed after 1m0s by gate_timeout." {
+		t.Fatalf("reason = %q", got)
+	}
+}

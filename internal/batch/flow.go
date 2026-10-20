@@ -29,6 +29,20 @@ func AttemptStep(task string, n int) string { return fmt.Sprintf("%s/a%d", TaskS
 
 func GateStep(task string, n, k int) string { return fmt.Sprintf("%s/gate%d", AttemptStep(task, n), k) }
 
+// gateStep gives the protect check its own step, the same live and rebuilt.
+func gateStep(task string, n, k int, g GateResult) string {
+	if strings.HasPrefix(g.Command, "protect ") {
+		return AttemptStep(task, n) + "/protect"
+	}
+	return GateStep(task, n, k)
+}
+
+// protectedInfo records protected files changed under a guard that only reports them.
+func protectedInfo(task string, n int, parent string, changed []string) flow.Event {
+	return flow.Event{Step: AttemptStep(task, n) + "/protected", Parent: parent, Kind: flow.KindInfo, Task: task, Attempt: n,
+		Status: flow.StatusOK, Name: "protected files changed", Text: strings.Join(changed, ", ")}
+}
+
 // LoadResultFor is LoadResult behind the read decision; a batch v may not read is reported as missing.
 func LoadResultFor(v owner.Viewer, id string) (Result, error) {
 	res, err := LoadResult(id)
@@ -129,12 +143,13 @@ func FlowOf(res Result, runs map[string]runlog.Record) []flow.Event {
 						st = flow.StatusCanceled
 					}
 				}
-				out = append(out, at(flow.Event{Time: end, Step: GateStep(t.ID, n, k+1), Parent: as, Kind: flow.KindGate,
+				out = append(out, at(flow.Event{Time: end, Step: gateStep(t.ID, n, k+1, g), Parent: as, Kind: flow.KindGate,
 					Task: t.ID, Attempt: n, Status: st, Name: g.Command, Reason: why, Text: lastLine(g.Output)}))
 			}
-			if len(a.Protected) > 0 {
-				out = append(out, at(flow.Event{Time: end, Step: as + "/protect", Parent: as, Kind: flow.KindGate, Task: t.ID,
-					Attempt: n, Status: flow.StatusFailed, Name: "protected files", Text: strings.Join(a.Protected, ", ")}))
+			if len(a.Protected) > 0 && !hasProtectGate(a.Gates) {
+				e := protectedInfo(t.ID, n, as, a.Protected)
+				e.Time = end
+				out = append(out, at(e))
 			}
 			st := attemptStatus(a)
 			if st.Done() {
@@ -159,6 +174,15 @@ func FlowOf(res Result, runs map[string]runlog.Record) []flow.Event {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
 	return out
+}
+
+func hasProtectGate(gates []GateResult) bool {
+	for _, g := range gates {
+		if strings.HasPrefix(g.Command, "protect ") {
+			return true
+		}
+	}
+	return false
 }
 
 func purposeReason(p string) string {

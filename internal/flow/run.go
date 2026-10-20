@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -142,8 +143,9 @@ func firstLine(s string) string {
 	return oneLine(s, 200)
 }
 
+// oneLine masks before it shortens: a cut can remove the end marker a secret pattern needs.
 func oneLine(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
+	s = strings.Join(strings.Fields(mask.Text(s)), " ")
 	if r := []rune(s); len(r) > n {
 		s = string(r[:n]) + "…"
 	}

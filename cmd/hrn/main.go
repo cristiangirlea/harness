@@ -62,7 +62,7 @@ Usage:
   hrn flow <run-or-batch-id>      show a run or batch execution tree (--level simple|technical|debug, --json)
   hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
   hrn show --usage [--json] <id>  a run's model calls, one row each: tokens, context, compactions
-  hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]
+  hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]
                                  a local page that follows runs and batches live (default 127.0.0.1:8089,
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR

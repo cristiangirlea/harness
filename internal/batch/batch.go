@@ -948,9 +948,19 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 
 // Save ownership before waiting; clear it before branch deletion.
 // On save failure, leak rather than delete unproven work.
-func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, fw *flow.Writer, notify func(Event), made func(mine bool) error) (ws.Taken, error) {
+func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, fw *flow.Writer, notify func(Event), made func(mine bool) error) (_ ws.Taken, failed error) {
 	step := SlotStep(id)
 	fw.Emit(flow.Event{Step: step, Parent: TaskStep(id), Kind: flow.KindSlot, Task: id, Status: flow.StatusWaiting, Next: "waits for a free worktree slot"})
+	defer func() {
+		if failed == nil {
+			return
+		}
+		st := flow.StatusFailed
+		if ctx.Err() != nil {
+			st = flow.StatusCanceled
+		}
+		fw.Emit(flow.Event{Step: step, Kind: flow.KindSlot, Task: id, Status: st, Text: firstLineOf(failed.Error())})
+	}()
 	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
 		return ws.Taken{}, err
 	}
@@ -1242,11 +1252,13 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		if len(changed) > 0 {
 			notify(Event{Task: id, Kind: "gate", Text: "! protected files changed: " + strings.Join(changed, ", ")})
 		}
+		if len(changed) > 0 && !(guard.fail && pass) {
+			fw.Emit(protectedInfo(id, plan.number, as, changed))
+		}
 		if guard.fail && pass && (err != nil || len(changed) > 0) {
 			gr := protectGate(guard, changed, err)
 			att.Gates = append(att.Gates, gr)
-			fw.Emit(flow.Event{Step: as + "/protect", Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number, Status: flow.StatusStarted, Name: gr.Command})
-			fw.Emit(flow.Event{Step: as + "/protect", Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Name: gr.Command, Reason: gr.Outcome(), Text: lastLine(gr.Output)})
+			fw.Emit(gateEvent(id, plan.number, len(att.Gates), as, gr))
 			pass = false
 			notify(Event{Task: id, Kind: "gate", Text: "✗ " + gr.Command})
 		} else if err != nil {
@@ -1293,7 +1305,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		return attemptOutcome{att: att}, fmt.Errorf("commit failed, changes are uncommitted in %s: %v", task.Dir, commitErr)
 	}
 	if sha != "" || note != "" {
-		fw.Emit(flow.Event{Step: as + "/commit", Parent: as, Kind: flow.KindCommit, Task: id, Attempt: plan.number, Text: firstOf(sha, note)})
+		fw.Emit(flow.Event{Step: as + "/commit", Parent: as, Kind: flow.KindCommit, Task: id, Attempt: plan.number, Status: flow.StatusOK, Text: firstOf(sha, note)})
 	}
 	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: attemptStatus(att), Text: firstLineOf(att.Result.Error)})
 	return attemptOutcome{att: att, commit: sha, pass: pass}, nil
@@ -1308,7 +1320,7 @@ func gateEvent(id string, attempt, gate int, parent string, gr GateResult) flow.
 			status = flow.StatusCanceled
 		}
 	}
-	return flow.Event{Step: GateStep(id, attempt, gate), Parent: parent, Kind: flow.KindGate, Task: id, Attempt: attempt,
+	return flow.Event{Step: gateStep(id, attempt, gate, gr), Parent: parent, Kind: flow.KindGate, Task: id, Attempt: attempt,
 		Status: status, Name: gr.Command, Reason: reason, Text: lastLine(gr.Output)}
 }
 

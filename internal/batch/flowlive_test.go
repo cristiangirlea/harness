@@ -2,11 +2,15 @@ package batch
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/owner"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 func TestLiveFlowRetryAndGate(t *testing.T) {
@@ -200,4 +204,76 @@ func TestLiveFlowEndsAnAttemptOnlyAfterItsGates(t *testing.T) {
 	if lastGate == 0 || firstEnd < lastGate {
 		t.Fatalf("attempt ended at seq %d before its last gate at %d: a live viewer would see it done while gates run", firstEnd, lastGate)
 	}
+}
+
+func TestTheLiveFlowAndTheRebuildFromTheRecordAgree(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := initRepo(t)
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-ok", Parallel: 1, Tasks: []Task{
+		{ID: "plain", Prompt: "write", Gate: []string{"exit 0"}},
+		{ID: "guarded", Prompt: "write", Backend: "wb-readme", Protect: []string{"README.md"}, ProtectMode: "fail"},
+		{ID: "retried", Prompt: "write", Backend: "wb-bad", Retry: []string{"wb-ok"}, Gate: []string{"exit 1"}},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := map[string]runlog.Record{}
+	livem := map[string]flow.Status{}
+	for _, n := range flowNodes(flow.Build(live)) {
+		livem[n.Step] = n.Status
+		if n.Kind == flow.KindCommit && n.Status != flow.StatusOK {
+			t.Errorf("commit step %s never ended: %q", n.Step, n.Status)
+		}
+	}
+	for _, n := range flowNodes(flow.Build(FlowOf(res, runs))) {
+		if got, ok := livem[n.Step]; !ok || got != n.Status {
+			t.Errorf("step %s: rebuilt %q, live %q (recorded %v)", n.Step, n.Status, got, ok)
+		}
+	}
+	if livem[AttemptStep("guarded", 1)+"/protect"] != flow.StatusFailed {
+		t.Errorf("the protect check must be one failed step, live steps: %v", livem)
+	}
+}
+
+func TestASlotWaitCanceledEndsItsStep(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := initRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rangeComputed = func(int) { cancel() }
+	t.Cleanup(func() { rangeComputed = nil })
+	res, _ := Run(ctx, Spec{Dir: dir, Backend: "wb-ok", Tasks: []Task{{ID: "waiting", Prompt: "write"}}}, nil)
+	if res.ID == "" {
+		t.Fatal("the batch never started")
+	}
+	events, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range flowNodes(flow.Build(events)) {
+		if n.Step == SlotStep("waiting") {
+			if n.Status != flow.StatusCanceled || n.Next != "" {
+				t.Fatalf("slot step = %+v: a canceled wait must end the step, not leave it waiting", n)
+			}
+			return
+		}
+	}
+	t.Fatal("no slot step was recorded")
+}
+
+func init() {
+	agent.Register(stub{"wb-readme", func(_ context.Context, task agent.Task) agent.Result {
+		_ = os.WriteFile(filepath.Join(task.Dir, "README.md"), []byte("changed"), 0o644)
+		return agent.Result{Backend: "wb-readme", Status: agent.StatusOK, Final: "changed the readme", Turns: 1}
+	}})
+}
+
+func flowNodes(roots []*flow.Node) []*flow.Node {
+	var out []*flow.Node
+	flow.Walk(roots, func(n *flow.Node, _ int) { out = append(out, n) })
+	return out
 }

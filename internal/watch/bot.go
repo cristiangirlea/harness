@@ -197,22 +197,24 @@ func taskOf(it botItem, n int) string {
 	return sentence(text)
 }
 
-// taskReason is the recorded cause of a task's last failed attempt, never a guess.
+// taskReason is the recorded cause of a task's last attempt, never an earlier one or a guess.
 func taskReason(t batch.TaskResult) string {
-	for i := len(t.Attempts) - 1; i >= 0; i-- {
-		a := t.Attempts[i]
+	why := t.Error
+	if n := len(t.Attempts); n > 0 {
+		a := t.Attempts[n-1]
 		for _, g := range a.Gates {
 			if g.ExitCode != 0 {
 				return "Gate " + g.Command + " " + g.Brief() + "."
 			}
 		}
-		why := a.Error
-		if why == "" {
-			why = a.Result.Error
+		for _, w := range []string{t.Error, a.Result.Error, a.Error} {
+			if w != "" {
+				why = w
+			}
 		}
-		if first, _ := firstLine(why); first != "" {
-			return "The attempt failed: " + words(first, 16) + "."
-		}
+	}
+	if first, _ := firstLine(why); first != "" {
+		return "The attempt failed: " + words(first, 16) + "."
 	}
 	return ""
 }

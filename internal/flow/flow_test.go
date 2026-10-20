@@ -188,9 +188,11 @@ func TestFromRunOfALegacyUnfinishedRunStaysRunning(t *testing.T) {
 
 func TestFromRunMasksSecretsInToolText(t *testing.T) {
 	rec := runlog.Record{ID: "r", Started: time.Unix(1, 0)}
-	events := []agent.Event{{Kind: agent.EventToolCall, Tool: "shell", Text: "export API_TOKEN=supersecretvalue123"}}
+	cut := strings.Repeat("x", 170) + " git clone https://bob:hunter2secret@example.com/repo"
+	events := []agent.Event{{Kind: agent.EventToolCall, Tool: "shell", Text: "export API_TOKEN=supersecretvalue123"},
+		{Kind: agent.EventToolCall, Tool: "shell", Text: cut}}
 	for _, e := range FromRun(rec, events, "") {
-		if strings.Contains(e.Text, "supersecretvalue123") {
+		if strings.Contains(e.Text, "supersecretvalue123") || strings.Contains(e.Text, "hunter2") {
 			t.Fatalf("a derived step kept a secret: %q", e.Text)
 		}
 	}

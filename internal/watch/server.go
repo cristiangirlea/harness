@@ -585,12 +585,11 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
-	// Check first so a foreign record answers exactly like a missing one.
-	if _, err := runlog.LoadFor(s.who(r), r.PathValue("id")); err != nil {
-		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
-		return
-	}
 	f, rec, err := NewFollower(r.PathValue("id"), 0)
+	// A public viewer gets one answer for missing, unreadable and foreign records, so ids cannot be probed.
+	if err != nil && s.opt.Public != nil || err == nil && !s.who(r).CanRead(rec.Owner) {
+		err = os.ErrNotExist
+	}
 	if err != nil {
 		s.missing(w, r, "Run "+r.PathValue("id"), err)
 		return
@@ -839,13 +838,9 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	rec, err := runlog.LoadFor(s.who(r), id)
-	if err != nil {
-		http.Error(w, "run not found", http.StatusNotFound)
-		return
-	}
-	f, _, err := NewFollower(id, cur.off)
-	if err != nil {
+	// The follower reads a half-written result's task.json; the owner check is on that record.
+	f, rec, err := NewFollower(id, cur.off)
+	if err != nil || !s.who(r).CanRead(rec.Owner) {
 		http.Error(w, "run not found", http.StatusNotFound)
 		return
 	}
