@@ -161,6 +161,8 @@ type GateResult struct {
 	Timeout agent.Duration `json:"timeout,omitempty"`
 	// InfrastructureError is a gate shell that could not start or be waited for: the operator's to fix, not a retry backend's.
 	InfrastructureError string `json:"infrastructure_error,omitempty"`
+	// Guard marks the protect check, so a user gate whose command starts the same way is not taken for it.
+	Guard bool `json:"guard,omitempty"`
 }
 
 const (
@@ -1233,7 +1235,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 
 	pass := att.Result.Status == agent.StatusOK
 	if pass && expect != nil {
-		fw.Emit(flow.Event{Step: gateStep(id, plan.number, len(att.Gates)+1, GateResult{Command: expectCommand(expect.String())}), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number,
+		fw.Emit(flow.Event{Step: GateStep(id, plan.number, len(att.Gates)+1), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number,
 			Status: flow.StatusStarted, Name: expectCommand(expect.String())})
 		gr := checkExpect(expect, att.Result.Final)
 		att.Gates = append(att.Gates, gr)
@@ -1269,7 +1271,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	if pass {
 		for _, g := range gates {
 			gateN := len(att.Gates) + 1
-			fw.Emit(flow.Event{Step: gateStep(id, plan.number, gateN, GateResult{Command: g}), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number, Status: flow.StatusStarted, Name: g})
+			fw.Emit(flow.Event{Step: GateStep(id, plan.number, gateN), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number, Status: flow.StatusStarted, Name: g})
 			stop := beating(gateBeat, func() { report(att) })
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
 			stop()

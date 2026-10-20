@@ -78,6 +78,11 @@ func cmdFlow(args []string) error {
 		events = flow.FromRun(rec, runEvents, "")
 		roots = flow.Build(events)
 	}
+	// A flow file may predate today's redaction or come from another environment: clean it again.
+	for i := range events {
+		events[i] = flow.Clean(events[i])
+	}
+	roots = flow.Build(events)
 	tree := filterFlow(roots, *level)
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)

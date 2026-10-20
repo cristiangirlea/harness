@@ -32,7 +32,7 @@ func GateStep(task string, n, k int) string { return fmt.Sprintf("%s/gate%d", At
 
 // gateStep gives the protect check its own step, the same live and rebuilt.
 func gateStep(task string, n, k int, g GateResult) string {
-	if strings.HasPrefix(g.Command, "protect ") {
+	if g.Guard {
 		return AttemptStep(task, n) + "/protect"
 	}
 	return GateStep(task, n, k)
@@ -181,7 +181,7 @@ func FlowOf(res Result, runs map[string]runlog.Record) []flow.Event {
 
 func hasProtectGate(gates []GateResult) bool {
 	for _, g := range gates {
-		if strings.HasPrefix(g.Command, "protect ") {
+		if g.Guard {
 			return true
 		}
 	}

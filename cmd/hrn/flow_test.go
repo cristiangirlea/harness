@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -110,5 +112,27 @@ func TestFlowPrintsNoTerminalControlsOrSecretsFromRecords(t *testing.T) {
 	}
 	if strings.ContainsRune(string(out), 0x1b) || strings.Contains(string(out), "ghp_abcdefghijklmnop1234") {
 		t.Fatalf("flow printed a control sequence or a secret: %q", out)
+	}
+}
+
+func TestFlowJSONCleansAStoredFlowFileAgain(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	res := batch.Result{ID: "20261020-150000-aabbcc", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "t", Status: batch.StatusPass}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"v":1,"seq":1,"step":"batch","kind":"batch","text":"token ghp_abcdefghijklmnop1234"}` + "\n"
+	if err := os.MkdirAll(filepath.Dir(batch.FlowPath(res.ID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(batch.FlowPath(res.ID), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdFlow([]string{"--json", res.ID}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "ghp_abcdefghijklmnop1234") {
+		t.Fatalf("--json printed a stored secret: %s", out)
 	}
 }

@@ -10,7 +10,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/owner"
-	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 func TestLiveFlowRetryAndGate(t *testing.T) {
@@ -221,17 +220,12 @@ func TestTheLiveFlowAndTheRebuildFromTheRecordAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs := map[string]runlog.Record{}
+	sameSteps(t, live, FlowOf(res, nil))
 	livem := map[string]flow.Status{}
 	for _, n := range flowNodes(flow.Build(live)) {
 		livem[n.Step] = n.Status
 		if n.Kind == flow.KindCommit && n.Status != flow.StatusOK {
 			t.Errorf("commit step %s never ended: %q", n.Step, n.Status)
-		}
-	}
-	for _, n := range flowNodes(flow.Build(FlowOf(res, runs))) {
-		if got, ok := livem[n.Step]; !ok || got != n.Status {
-			t.Errorf("step %s: rebuilt %q, live %q (recorded %v)", n.Step, n.Status, got, ok)
 		}
 	}
 	if livem[AttemptStep("guarded", 1)+"/protect"] != flow.StatusFailed {
@@ -282,7 +276,7 @@ func TestAUserGateNamedProtectEndsAndAWarnOnlyGuardIsInfo(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := initRepo(t)
 	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-readme", Protect: []string{"README.md"},
-		Gate: []string{"protect check || exit 0"}, Tasks: []Task{{ID: "warned", Prompt: "write"}}}, nil)
+		Gate: []string{"protect a || exit 0", "protect b || exit 0"}, Tasks: []Task{{ID: "warned", Prompt: "write"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,9 +297,38 @@ func TestAUserGateNamedProtectEndsAndAWarnOnlyGuardIsInfo(t *testing.T) {
 	if info == nil || info.Kind != flow.KindInfo || info.Status != flow.StatusOK || info.Text != "README.md" {
 		t.Fatalf("a guard that only reports must record an info step, got %+v", info)
 	}
-	for _, n := range flowNodes(flow.Build(FlowOf(res, nil))) {
-		if live := steps[n.Step]; live == nil || live.Status != n.Status {
-			t.Errorf("rebuilt step %s (%s) differs from the live flow", n.Step, n.Status)
+	for k := 1; k <= 2; k++ {
+		if g := steps[GateStep("warned", 1, k)]; g == nil || g.Status != flow.StatusOK {
+			t.Errorf("user gate %d = %+v: each gate keeps its own step", k, g)
+		}
+	}
+	sameSteps(t, live, FlowOf(res, nil))
+}
+
+// sameSteps checks both ways that the live flow and the rebuild hold the same steps; route, slot,
+// decision and commit steps exist only live because the record does not keep them.
+func sameSteps(t *testing.T, live, rebuilt []flow.Event) {
+	t.Helper()
+	index := func(events []flow.Event) map[string]flow.Status {
+		m := map[string]flow.Status{}
+		for _, n := range flowNodes(flow.Build(events)) {
+			switch n.Kind {
+			case flow.KindRoute, flow.KindSlot, flow.KindDecision, flow.KindCommit:
+				continue
+			}
+			m[n.Step] = n.Status
+		}
+		return m
+	}
+	l, r := index(live), index(rebuilt)
+	for step, st := range r {
+		if l[step] != st {
+			t.Errorf("rebuilt step %s is %q, live %q", step, st, l[step])
+		}
+	}
+	for step, st := range l {
+		if r[step] != st {
+			t.Errorf("live step %s is %q, rebuilt %q", step, st, r[step])
 		}
 	}
 }

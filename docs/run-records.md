@@ -14,7 +14,8 @@ that count as infrastructure failures.
 
 A batch attempt with `protect` globs carries an optional `protected` list: the
 protected files it changed or removed against the batch's base, as slash paths.
-Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`.
+Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`, marked
+`guard: true` so a user gate with a similar command is never taken for it.
 Records without the field still load. See [Batches](batches.md#batches).
 
 A batch attempt whose agent moved its branch or `HEAD` with git (a commit, reset or rename) carries
