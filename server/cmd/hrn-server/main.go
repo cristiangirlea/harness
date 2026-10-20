@@ -99,7 +99,6 @@ func run() error {
 	return fmt.Errorf("serve: %w", err)
 }
 
-// maxCostPerJob reads HRN_MAX_COST_USD_PER_JOB; empty means no limit.
 func maxCostPerJob(raw string) (float64, error) {
 	if raw == "" {
 		return 0, nil

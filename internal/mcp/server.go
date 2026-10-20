@@ -16,15 +16,13 @@ type Tool struct {
 	Name        string
 	Title       string
 	Description string
-	// InputSchema is a JSON Schema object; nil means an object with no properties.
+	// InputSchema defaults to an object with no properties.
 	InputSchema map[string]any
 	Annotations *Annotations
 	Handler     func(ctx context.Context, call Call) (CallResult, error)
 }
 
-// Call is one tools/call request as a handler sees it. Progress sends a
-// progress notification when the client asked for them and is a no-op
-// otherwise. The context is cancelled if the client cancels the request.
+// Call enables progress only when the client requests it.
 type Call struct {
 	Name      string
 	Arguments json.RawMessage
@@ -33,8 +31,7 @@ type Call struct {
 	conn *conn
 }
 
-// ClientSupports reports whether the client declared a capability, such as
-// "elicitation", when it connected.
+// ClientSupports checks declared handshake capabilities.
 func (c Call) ClientSupports(capability string) bool {
 	if c.conn == nil {
 		return false
@@ -42,13 +39,8 @@ func (c Call) ClientSupports(capability string) bool {
 	return c.conn.supports(capability)
 }
 
-// Request asks the client something and waits for its answer, which is
-// decoded into out. It is how a tool reaches the person at the other end:
-// elicitation/create is the only method MCP defines for it today.
-//
-// The wait ends only with ctx or an answer, and a person is on the other side,
-// so give ctx a deadline. Without one the call waits until the client answers
-// or the connection drops.
+// Request asks the client a method and decodes its answer into out.
+// Set a deadline: unanswered requests otherwise wait for cancellation.
 func (c Call) Request(ctx context.Context, method string, params, out any) error {
 	if c.conn == nil {
 		return errors.New("this call has no connection to ask on")
@@ -56,8 +48,6 @@ func (c Call) Request(ctx context.Context, method string, params, out any) error
 	return c.conn.request(ctx, method, params, out)
 }
 
-// conn is one client connection: the framing, what the client can do, and the
-// requests this server is waiting on answers for.
 type conn struct {
 	codec *codec
 
@@ -84,8 +74,6 @@ func (cn *conn) supports(capability string) bool {
 	return ok
 }
 
-// route hands a response to whoever is waiting for it. It reports whether
-// anyone was.
 func (cn *conn) route(m *message) bool {
 	cn.mu.Lock()
 	ch := cn.pending[string(m.ID)]
@@ -151,8 +139,7 @@ func (s *Server) AddTool(t Tool) {
 	s.byName[t.Name] = t
 }
 
-// Serve handles requests until the client closes r or ctx ends. Requests run
-// concurrently, so a host can dispatch several long tool calls at once.
+// Serve runs requests concurrently until EOF or cancellation, canceling handlers on shutdown.
 func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	c := newCodec(r, w)
 	cn := newConn(c)
@@ -184,9 +171,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	inflight := map[string]context.CancelFunc{}
-	// Cancel first, then wait: a handler blocked on an answer from a client that
-	// has gone away is released by the cancel, and waiting first would hold the
-	// shutdown until its own timeout.
+	// Cancel before waiting so unanswered client requests cannot stall shutdown.
 	defer func() { cancel(); wg.Wait() }()
 
 	for {
@@ -235,7 +220,6 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 					}
 				}
 			default:
-				// An answer to something this server asked the client.
 				if m.isResponse() {
 					cn.route(m)
 				}

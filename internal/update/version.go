@@ -1,8 +1,4 @@
-// Package update moves every hrn binary on this computer to another build:
-// it reads what each copy says with `version`, swaps the file under a backup,
-// and restarts a running hrn watch. The command in cmd/hrn wires the real
-// process list, network and file system; the pieces here take them as
-// options so tests run with fakes.
+// Package update replaces hrn binaries with backups and restarts watches.
 package update
 
 import (
@@ -12,9 +8,7 @@ import (
 	"strings"
 )
 
-// Version is what one hrn binary printed for `version`, taken apart. The
-// line is `hrn <release> (<go version>[, <module version>][, <commit>][,
-// modified])`, as cmd/hrn/version.go writes it.
+// Version holds parsed hrn release and build identity.
 type Version struct {
 	Line     string // the first line as printed
 	Release  string // agent.Version, 0.2.0
@@ -28,9 +22,7 @@ var (
 	commitRE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 )
 
-// ParseVersionLine reads the first line of a binary's `version` output. It
-// fails for anything that is not hrn's line, which is how a target that is
-// not hrn is refused.
+// ParseVersionLine rejects non-hrn output to protect unrelated binaries.
 func ParseVersionLine(out string) (Version, error) {
 	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
 	line = strings.TrimSpace(line)
@@ -66,9 +58,7 @@ func ParseVersionLine(out string) (Version, error) {
 	return v, nil
 }
 
-// Same reports whether two version lines describe the same build: the same
-// commit, or the same module version when neither names a commit, with the
-// same edits. Two lines without any stamp compare whole.
+// Same compares build identity and edits, using full lines for unstamped builds.
 func (v Version) Same(o Version) bool {
 	if v.Modified != o.Modified {
 		return false
@@ -84,8 +74,7 @@ func (v Version) Same(o Version) bool {
 	return v.Line == o.Line
 }
 
-// Short names the build for a backup file: the commit, else the module
-// version, else the release, else "unknown".
+// Short selects commit, module, release or "unknown" for backups.
 func (v Version) Short() string {
 	switch {
 	case v.Commit != "":

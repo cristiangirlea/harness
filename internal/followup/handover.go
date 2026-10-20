@@ -19,11 +19,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// A fresh hand-over is built from the earlier run's record alone, with no
-// model call, and is kept small: the point of a fresh run is to start without
-// the long context a continued session would carry. Each part has its own cap;
-// together they can pass the cap on the whole, which then cuts the end (the
-// workspace and gate parts first) and says so.
+// Cap handover bytes to avoid recreating the long context a fresh session is meant to escape.
 const (
 	maxFreshHandoff = 16 << 10
 	maxFreshPrompt  = 6 << 10
@@ -34,9 +30,7 @@ const (
 	maxFreshGateOut = 512
 )
 
-// freshHandoff tells a new session what the run it follows was asked, how it
-// ended, what it left in the workspace and, for a batch attempt, how its gates
-// went. Everything taken from records or git is quoted, as in handoff.
+// Quote record and git text so neither can impersonate new instructions.
 func (p Plan) freshHandoff() string {
 	r := p.Prev
 	recordDir := filepath.Join(runlog.Root(), r.ID)
@@ -49,8 +43,7 @@ func (p Plan) freshHandoff() string {
 	const footer = "\n=== now\n\n"
 
 	var b strings.Builder
-	// Record fields outside the quoted parts are kept to one line each, so
-	// none can open a section of its own.
+	// Unquoted fields must stay on one line so they cannot open a section.
 	fmt.Fprintf(&b, "\n=== run %s · %s", r.ID, tools.OneLine(r.Backend, 100))
 	if model := cmp.Or(r.Result.Model, r.Task.Model); model != "" {
 		fmt.Fprintf(&b, " (%s)", tools.OneLine(model, 100))
@@ -95,9 +88,6 @@ func (p Plan) freshHandoff() string {
 	return header + body + footer
 }
 
-// changes reports what the workspace holds against the run's start when that
-// is known (a batch's base commit), else against HEAD: tracked changes as a
-// diff stat, and the untracked files a diff cannot show.
 func changes(dir, base string) string {
 	ref, against := "HEAD", "the current commit; the run's start is not recorded, so only uncommitted changes show"
 	if base != "" {
@@ -130,11 +120,7 @@ func changes(dir, base string) string {
 	return title + quote(clipTo(b.String(), maxFreshChanges)) + "\n"
 }
 
-// git runs a read-only git command in dir, with the -c settings in off before
-// it. Settings that would run commands of their own are turned off here (an
-// fsmonitor hook) or by the caller (filter drivers, external diff drivers and
-// textconv), and no optional lock is taken on a workspace in use. A partial
-// clone does not fetch its missing objects, which would reach the remote.
+// Disable hooks, filters and diff helpers from untrusted config; avoid workspace locks and partial-clone fetches.
 func git(dir string, off []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -151,11 +137,7 @@ func git(dir string, off []string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-// filtersOff empties every filter driver git's config names. A diff against
-// the working tree reads files through their clean or process commands, and
-// the repository's own config, which the earlier run could write, may name
-// any command. Files under such a filter (git lfs, say) may then show as
-// changed when they are not.
+// Disable clean/process commands from agent-writable config; filtered files may then appear changed.
 func filtersOff(dir string) ([]string, error) {
 	keys, err := git(dir, nil, "config", "--name-only", "--get-regexp", `^filter\.`)
 	var exit *exec.ExitError
@@ -182,15 +164,13 @@ func filtersOff(dir string) ([]string, error) {
 	return off, nil
 }
 
-// batchAttempt is what a batch record says about the attempt a run was.
 type batchAttempt struct {
 	batch, task, status, base, err string
 	number                         int
 	gateResults                    []gateResult
 }
 
-// gateResult and batchRecord read the parts of a batch record (batch.Result)
-// a hand-over needs; batch imports this package, so it cannot be imported here.
+// Decode only needed fields to avoid an import cycle with batch.
 type gateResult struct {
 	Command             string        `json:"command"`
 	ExitCode            int           `json:"exit_code"`
@@ -214,8 +194,6 @@ type batchRecord struct {
 	} `json:"tasks"`
 }
 
-// findAttempt looks through the saved batch records for the attempt that was
-// run id, and counts the records it could not read.
 func findAttempt(id string) (found batchAttempt, unreadable int) {
 	paths, _ := filepath.Glob(filepath.Join(runlog.Home(), "batches", "*.json"))
 	for _, path := range paths {

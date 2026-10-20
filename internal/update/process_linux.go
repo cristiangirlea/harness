@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// systemProcesses reads /proc: cmdline for the arguments, the exe link for
-// the path, stat for the parent and the start time.
 func systemProcesses() ([]Process, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -45,8 +43,7 @@ func systemProcesses() ([]Process, error) {
 			names[pid] = strings.TrimSpace(string(comm))
 		}
 		if stat, err := os.ReadFile(filepath.Join(dir, "stat")); err == nil {
-			// The command name is in parentheses and may hold spaces; the
-			// fields after it start with the state, then the parent pid.
+			// Split after the parenthesized command, which may contain spaces.
 			if i := bytes.LastIndexByte(stat, ')'); i >= 0 {
 				f := strings.Fields(string(stat[i+1:]))
 				if len(f) > 0 && f[0] == "Z" {
@@ -88,9 +85,7 @@ func bootTime() time.Time {
 	return time.Time{}
 }
 
-// processLogs says which files a process has as stdout and stderr, when they
-// are files: /proc/<pid>/fd/1 and 2 link to them. A terminal or a pipe is
-// not a file and yields "".
+// Terminals and pipes cannot be reused as log files on restart.
 func processLogs(pid int) (stdout, stderr string) {
 	file := func(fd string) string {
 		target, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "fd", fd))

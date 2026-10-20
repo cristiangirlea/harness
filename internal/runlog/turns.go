@@ -12,9 +12,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
-// How a turn came after a compaction: the backend said so, or the context
-// fell by more than half from the turn before, which is a reading of the
-// numbers and never written to a record.
+// CompactionRecorded and CompactionProbable name recorded and probable (unpersisted inference) sources.
 const (
 	CompactionRecorded = "recorded"
 	CompactionProbable = "probable"
@@ -25,18 +23,15 @@ type Turn struct {
 	N    int       `json:"turn"`
 	Time time.Time `json:"t"`
 	agent.Usage
-	// CacheReadSoFar is the cache reads of this turn and every turn before.
 	CacheReadSoFar int64 `json:"cache_read_so_far,omitempty"`
-	// Compaction says whether the context was compacted before this turn.
+	// Compaction is recorded, probable or empty when none was observed.
 	Compaction string `json:"compaction,omitempty"`
-	// Trigger and CompactedFrom are a recorded compaction's cause and the
-	// context it started from.
+	// Trigger and CompactedFrom apply only to recorded compactions.
 	Trigger       string `json:"trigger,omitempty"`
 	CompactedFrom int64  `json:"compacted_from,omitempty"`
 }
 
-// Turns reads a run's events as its model calls, in order. A run whose
-// backend writes no usage events, or recorded before they existed, has none.
+// Turns returns model calls in usage-event order.
 func Turns(events []agent.Event) []Turn {
 	var turns []Turn
 	var soFar int64
@@ -64,9 +59,7 @@ func Turns(events []agent.Event) []Turn {
 	return turns
 }
 
-// TurnsOf reads run id's turns from its events.jsonl, decoding only the
-// usage and compaction lines. A line that does not decode is skipped: the
-// turns are a view, and the record's totals stay in result.json.
+// TurnsOf skips malformed event lines; authoritative totals remain in result.json.
 func TurnsOf(id string) ([]Turn, error) {
 	if err := validID(id); err != nil {
 		return nil, err
@@ -83,12 +76,9 @@ func TurnsOf(id string) ([]Turn, error) {
 	return Turns(events), nil
 }
 
-// UsageEvents reads the usage and compaction events of an events.jsonl
-// stream, decoding no other line; one that does not decode is skipped.
+// UsageEvents reads valid usage and compaction events.
 func UsageEvents(r io.Reader) ([]agent.Event, error) {
-	// hrn writes compact JSON with every quote inside a text escaped, so these
-	// strings appear as written only in an event of these kinds or a tool's
-	// input, which is recorded as given; the kind is checked once decoded.
+	// Raw tool input can match these compact-JSON markers; verify the decoded kind too.
 	usage, compaction := []byte(`"kind":"usage"`), []byte(`"kind":"compaction"`)
 	var events []agent.Event
 	br := bufio.NewReader(r)

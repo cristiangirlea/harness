@@ -1,6 +1,4 @@
-// Package qr makes QR codes (ISO/IEC 18004) for short text such as a link:
-// byte mode, error correction level M, versions 1 to 10 (up to 213 bytes),
-// and the mask the standard's penalty rules prefer. Standard library only.
+// Package qr encodes up to 213 bytes as ISO/IEC 18004 level-M QR codes, versions 1 to 10.
 package qr
 
 import (
@@ -21,16 +19,14 @@ type Code struct {
 // Dark reports whether the module in column x, row y is dark.
 func (c *Code) Dark(x, y int) bool { return c.dark[y*c.Size+x] }
 
-// Error correction level M, per version: codewords of error correction per
-// block, then the blocks of the first group and their data codewords, then
-// the second group (one data codeword longer), from the standard's table 9.
+// Table 9 counts codewords per block; second-group data blocks are one codeword longer.
 var levelM = [11]struct{ ec, blocks1, data1, blocks2, data2 int }{
 	{}, {10, 1, 16, 0, 0}, {16, 1, 28, 0, 0}, {26, 1, 44, 0, 0}, {18, 2, 32, 0, 0},
 	{24, 2, 43, 0, 0}, {16, 4, 27, 0, 0}, {18, 4, 31, 0, 0}, {22, 2, 38, 2, 39},
 	{22, 3, 36, 2, 37}, {26, 4, 43, 1, 44},
 }
 
-// Centres of the alignment patterns, per version (annex E).
+// Annex E specifies these alignment centres in module coordinates.
 var alignment = [11][]int{nil, nil, {6, 18}, {6, 22}, {6, 26}, {6, 30}, {6, 34},
 	{6, 22, 38}, {6, 24, 42}, {6, 26, 46}, {6, 28, 50}}
 
@@ -39,7 +35,6 @@ func dataCodewords(version int) int {
 	return v.blocks1*v.data1 + v.blocks2*v.data2
 }
 
-// countBits is the length of byte mode's character count.
 func countBits(version int) int {
 	if version < 10 {
 		return 8
@@ -47,7 +42,6 @@ func countBits(version int) int {
 	return 16
 }
 
-// capacity is how many bytes a version holds in byte mode.
 func capacity(version int) int {
 	return (dataCodewords(version)*8 - 4 - countBits(version)) / 8
 }
@@ -82,8 +76,6 @@ func Encode(text string) (*Code, error) {
 	return c, nil
 }
 
-// encodeData is the data codewords: mode, count, the bytes, a terminator,
-// then the standard's pad bytes up to the version's capacity.
 func encodeData(version int, data []byte) []byte {
 	var bits []bool
 	put := func(v, n int) {
@@ -115,8 +107,6 @@ func encodeData(version int, data []byte) []byte {
 	return out
 }
 
-// withErrorCorrection splits the data into the version's blocks, adds each
-// block's error correction, and interleaves them as the standard places them.
 func withErrorCorrection(version int, data []byte) []byte {
 	v := levelM[version]
 	gen := rsGenerator(v.ec)
@@ -146,7 +136,7 @@ func withErrorCorrection(version int, data []byte) []byte {
 	return out
 }
 
-// gfMul multiplies in GF(256) with the QR polynomial x^8+x^4+x^3+x^2+1.
+// QR requires GF(256) with polynomial x^8+x^4+x^3+x^2+1.
 func gfMul(x, y byte) byte {
 	var z byte
 	for i := 7; i >= 0; i-- {
@@ -156,8 +146,7 @@ func gfMul(x, y byte) byte {
 	return z
 }
 
-// rsGenerator is the Reed-Solomon generator polynomial of the degree, its
-// leading 1 left out, highest power first.
+// Coefficients are highest power first, with the implicit leading 1 omitted.
 func rsGenerator(degree int) []byte {
 	g := make([]byte, degree)
 	g[degree-1] = 1
@@ -174,7 +163,6 @@ func rsGenerator(degree int) []byte {
 	return g
 }
 
-// rsRemainder is the error correction codewords of data.
 func rsRemainder(data, gen []byte) []byte {
 	r := make([]byte, len(gen))
 	for _, b := range data {
@@ -188,8 +176,7 @@ func rsRemainder(data, gen []byte) []byte {
 	return r
 }
 
-// formatBits is the 15-bit format information for level M and a mask: the
-// level and mask, a BCH(15,5) remainder, then the standard's XOR pattern.
+// Level M format information requires a BCH(15,5) remainder and the standard's XOR mask.
 func formatBits(mask int) uint32 {
 	data := uint32(0b00<<3 | mask) // level M is 00
 	rem := data
@@ -199,7 +186,6 @@ func formatBits(mask int) uint32 {
 	return (data<<10 | rem&0x3FF) ^ 0x5412
 }
 
-// versionBits is the 18-bit version information of versions 7 and up.
 func versionBits(version int) uint32 {
 	rem := uint32(version)
 	for i := 0; i < 12; i++ {
@@ -249,7 +235,6 @@ func (c *Code) setFunction(x, y int, dark bool) {
 	c.function[y*c.Size+x] = true
 }
 
-// finder draws a finder pattern centred on x, y, with its light separator.
 func (c *Code) finder(x, y int) {
 	for dy := -4; dy <= 4; dy++ {
 		for dx := -4; dx <= 4; dx++ {
@@ -262,7 +247,6 @@ func (c *Code) finder(x, y int) {
 	}
 }
 
-// drawFormat writes both copies of the format information.
 func (c *Code) drawFormat(mask int) {
 	bits := formatBits(mask)
 	at := func(i int) bool { return bits>>i&1 == 1 }
@@ -285,9 +269,7 @@ func (c *Code) drawFormat(mask int) {
 	c.setFunction(8, n-8, true) // always dark
 }
 
-// place lays the codewords in the standard's zigzag: two columns at a time
-// from the right, up then down, around the function modules. Modules left
-// over (the remainder bits) stay light.
+// Leave remainder bits light and skip function modules in the standard's zigzag traversal.
 func (c *Code) place(data []byte) {
 	n, i := c.Size, 0
 	for right := n - 1; right >= 1; right -= 2 {
@@ -339,8 +321,6 @@ func (c *Code) applyMask(mask int) {
 	}
 }
 
-// penalty scores a masked code by the standard's four rules; lower reads
-// more reliably.
 func (c *Code) penalty() int {
 	n, score, dark := c.Size, 0, 0
 	line := func(get func(i int) bool) {
@@ -395,9 +375,7 @@ func (c *Code) penalty() int {
 	return score
 }
 
-// SVGPath draws the dark modules as one path, a run of modules per command,
-// shifted by quiet modules of quiet zone. Draw it on a light square of
-// Size+2*quiet units.
+// SVGPath draws dark modules with a quiet-module margin on a light square of Size+2*quiet units.
 func (c *Code) SVGPath(quiet int) string {
 	var b strings.Builder
 	for y := 0; y < c.Size; y++ {
@@ -417,9 +395,7 @@ func (c *Code) SVGPath(quiet int) string {
 	return b.String()
 }
 
-// Terminal draws the code for a terminal with a dark background, two rows
-// to a line in half blocks, with a quiet zone of four modules: light modules
-// are drawn, dark ones left as the background.
+// Terminal draws light half-blocks on a dark background with a four-module quiet zone.
 func (c *Code) Terminal() string {
 	const quiet = 4
 	n := c.Size + 2*quiet

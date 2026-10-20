@@ -8,10 +8,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
-// Diff sets two evals side by side: the question it answers is "did this
-// model, prompt or harness change help". Rows are matched by name, and a row
-// present on one side only is kept with the other side nil rather than
-// dropped, so a variant that was added or removed is visible.
+// Diff matches named eval rows, retaining unmatched rows with a nil side.
 type Diff struct {
 	A string `json:"a"` // the first eval's id
 	B string `json:"b"`
@@ -19,30 +16,23 @@ type Diff struct {
 	Variants []VariantPair `json:"variants"`
 	Tasks    []TaskPair    `json:"tasks"`
 
-	// PromptChanged lists the task ids whose prompt differs between the two
-	// specs: often the change being measured, but those rows do not compare
-	// like with like.
+	// PromptChanged marks tasks whose scores answer different prompts.
 	PromptChanged []string `json:"prompt_changed,omitempty"`
-	// VariantChanged lists the variant names that run something else in b:
-	// another backend, model, effort or harness under the same name.
+	// VariantChanged flags backend/model/effort/harness changes under the same name.
 	VariantChanged []string `json:"variant_changed,omitempty"`
-	// GateChanged lists the task ids whose gates or expect pattern differ, so
-	// passing means something else on each side.
+	// GateChanged flags gates or expect patterns that change passing's meaning.
 	GateChanged []string `json:"gate_changed,omitempty"`
-	// JudgeChanged is true when the judge or its rubric differs; its repeats
-	// do not change the scale.
+	// JudgeChanged ignores repeats, which leave the scoring scale unchanged.
 	JudgeChanged bool `json:"judge_changed,omitempty"`
-	// Judged is true when either eval has judge scores to compare.
-	Judged bool `json:"judged,omitempty"`
-	// SetupChanged lists the variants whose runs started with another agent
-	// setup in b beyond the variant's own harness options.
+	Judged       bool `json:"judged,omitempty"`
+	// SetupChanged excludes the variant's own harness options.
 	SetupChanged []SetupChange `json:"setup_changed,omitempty"`
 }
 
 // SetupChange is what differs in one variant's setup between the two evals.
 type SetupChange struct {
 	Variant string `json:"variant"`
-	// Files were added, removed or changed; the names below are on one side only.
+	// Files lists additions, removals and edits; other lists contain names unique to one side.
 	Files   []string `json:"files,omitempty"`
 	MCP     []string `json:"mcp,omitempty"`
 	Plugins []string `json:"plugins,omitempty"`
@@ -54,8 +44,7 @@ type VariantPair struct {
 	Name string      `json:"name"`
 	A    *VariantRow `json:"a,omitempty"`
 	B    *VariantRow `json:"b,omitempty"`
-	// WithinNoise: the judge score moved less than the judge's own spread
-	// between repeats, on either side.
+	// WithinNoise means the score moved less than either measured judge spread.
 	WithinNoise bool `json:"within_noise,omitempty"`
 }
 
@@ -69,8 +58,7 @@ type TaskPair struct {
 	WithinNoise bool `json:"within_noise,omitempty"`
 }
 
-// Compare lines up a and b. Rows come in a's order, then whatever only b has,
-// in b's order.
+// Compare matches rows in a's order, then appends b-only rows in b's order.
 func Compare(a, b Record) Diff {
 	d := Diff{A: a.ID, B: b.ID}
 
@@ -117,8 +105,7 @@ func Compare(a, b Record) Diff {
 		}
 	}
 
-	// What else differs between the specs, so a moved number is not credited
-	// to the wrong change.
+	// Expose confounders to avoid misattributing score changes.
 	type check struct {
 		prompt string
 		gates  []string
@@ -155,15 +142,14 @@ func Compare(a, b Record) Diff {
 		if v.A == nil || v.B == nil || v.A.Setup == nil || v.B.Setup == nil {
 			continue
 		}
-		// Another backend loads other files by design: that is a variant change,
-		// even when the backend came from the spec, a task or the default.
+		// Backend-specific files belong to the variant, even for inherited backends.
 		if v.A.Setup.Backend != v.B.Setup.Backend {
 			if !slices.Contains(d.VariantChanged, v.Name) {
 				d.VariantChanged = append(d.VariantChanged, v.Name)
 			}
 			continue
 		}
-		// Setups of two different tasks may differ by design (a task's own MCP configs).
+		// Different tasks may deliberately use different MCP configs.
 		if v.A.SetupTask == v.B.SetupTask && v.A.Setup.BaseDigest != v.B.Setup.BaseDigest {
 			d.SetupChanged = append(d.SetupChanged, setupChange(v.Name, v.A.Setup, v.B.Setup))
 		}
@@ -188,7 +174,6 @@ func setupChange(variant string, a, b *agent.Setup) SetupChange {
 	return c
 }
 
-// oneSide is the names in a or b but not both, sorted.
 func oneSide(a, b []string) []string {
 	var out []string
 	for _, n := range a {
@@ -205,7 +190,7 @@ func oneSide(a, b []string) []string {
 	return out
 }
 
-// judgeScale is the judge as JSON, without what does not change its scores' scale.
+// Repeat counts measure noise without changing the scoring scale.
 func judgeScale(j *Judge) []byte {
 	if j != nil {
 		c := *j
@@ -216,8 +201,7 @@ func judgeScale(j *Judge) []byte {
 	return out
 }
 
-// withinNoise reports a judge-score change smaller than the judge's own
-// spread; with no repeats on either side there is no spread to compare.
+// Without repeats, neither side can establish judge noise.
 func withinNoise(a, b judgeScore) bool {
 	if a.judged == 0 || b.judged == 0 {
 		return false
@@ -227,7 +211,6 @@ func withinNoise(a, b judgeScore) bool {
 	return (measuredA || measuredB) && math.Abs(b.mean-a.mean) < max(sa, sb)
 }
 
-// firstOfList is a task's own list when it has one, else the spec's.
 func firstOfList(own, spec []string) []string {
 	if len(own) > 0 {
 		return own
@@ -235,5 +218,5 @@ func firstOfList(own, spec []string) []string {
 	return spec
 }
 
-// sameOptional compares two optional settings, unset differing from either value.
+// Unset differs from an explicit false as well as true.
 func sameOptional(a, b *bool) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }

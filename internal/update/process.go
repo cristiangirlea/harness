@@ -13,9 +13,7 @@ import (
 	"time"
 )
 
-// Process is one running program as the system lists it. Exe is its full
-// path when the system gives it, else the image name alone; Args are the
-// arguments after the program. Start and ParentName are set where known.
+// Process holds an Exe path or image name, arguments and available start/parent data.
 type Process struct {
 	PID        int
 	PPID       int
@@ -25,21 +23,18 @@ type Process struct {
 	ParentName string
 }
 
-// ProcessLister lists the running processes. SystemProcesses is the real
-// one; tests hand in a slice.
+// ProcessLister lists running processes.
 type ProcessLister interface {
 	Processes() ([]Process, error)
 }
 
-// SystemProcesses reads the process list the way each system allows:
-// Toolhelp and the PEB on Windows, /proc on Linux, ps on macOS.
+// SystemProcesses enumerates native processes.
 type SystemProcesses struct{}
 
 // Processes lists every process the caller may see.
 func (SystemProcesses) Processes() ([]Process, error) { return systemProcesses() }
 
-// DescribeProcess is one line for a listing: the pid, the command, and the
-// parent and start time when known.
+// DescribeProcess formats pid, command and known parent/start data.
 func DescribeProcess(p Process) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "pid %d %s", p.PID, strings.Join(append([]string{"hrn"}, p.Args...), " "))
@@ -60,11 +55,7 @@ func DescribeProcess(p Process) string {
 	return b.String()
 }
 
-// parsePS reads `ps -axo pid=,ppid=,lstart=,command=`. lstart is a fixed
-// five-word date, so the command and its arguments are everything after it;
-// an argument with a space in it cannot be told from two, which only matters
-// for --lan=NAME. A bare program name is looked up with lookPath, through
-// this process's PATH since the other one's is not visible.
+// ps loses quoting after its five-word lstart; bare names use our PATH, not the peer's.
 func parsePS(out []byte, lookPath func(string) (string, error)) []Process {
 	var procs []Process
 	names := map[int]string{}
@@ -97,8 +88,6 @@ func parsePS(out []byte, lookPath func(string) (string, error)) []Process {
 	return procs
 }
 
-// fromTargets keeps the processes whose exe is one of targets (resolved
-// paths) and whose first argument is sub.
 func fromTargets(procs []Process, targets []string, sub string) []Process {
 	var out []Process
 	resolved := make([]string, len(targets))
@@ -120,9 +109,7 @@ func fromTargets(procs []Process, targets []string, sub string) []Process {
 	return out
 }
 
-// Resolved is the path with symlinks and Windows 8.3 short names expanded,
-// or the path itself when that fails. Two paths name one file only when
-// their resolved forms agree.
+// Resolved expands symlinks and Windows 8.3 names, returning path on failure.
 func Resolved(path string) string {
 	if r, err := filepath.EvalSymlinks(path); err == nil {
 		return r
@@ -130,11 +117,7 @@ func Resolved(path string) string {
 	return path
 }
 
-// splitCommandLine takes a Windows command line apart the way
-// CommandLineToArgvW does: the program ends at the first space outside
-// quotes, with no escapes; in the rest, 2n backslashes before a quote are n
-// backslashes and the quote toggles quoting, 2n+1 give n and a literal
-// quote, and backslashes elsewhere stand for themselves.
+// CommandLineToArgvW leaves argv[0] unescaped; later backslashes pair before quotes, with odd ones escaping them.
 func splitCommandLine(line string) []string {
 	var args []string
 	i := 0
@@ -144,7 +127,6 @@ func splitCommandLine(line string) []string {
 	if i >= len(line) {
 		return nil
 	}
-	// The program.
 	if line[i] == '"' {
 		end := strings.IndexByte(line[i+1:], '"')
 		if end < 0 {
@@ -203,8 +185,6 @@ func splitCommandLine(line string) []string {
 	return args
 }
 
-// waitGone polls the process list until pid is no longer in it, for at most
-// the context's deadline.
 func waitGone(ctx context.Context, lister ProcessLister, pid int) error {
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
