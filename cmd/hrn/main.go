@@ -59,6 +59,7 @@ Usage:
   hrn runs [-n N]                 list recent runs
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
+  hrn flow <run-or-batch-id>      show a run or batch execution tree (--level simple|technical|debug, --json)
   hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
   hrn show --usage [--json] <id>  a run's model calls, one row each: tokens, context, compactions
   hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]
@@ -197,6 +198,8 @@ func main() {
 		err = cmdRuns(os.Args[2:])
 	case "show":
 		err = cmdShow(os.Args[2:])
+	case "flow":
+		err = cmdFlow(os.Args[2:])
 	case "mcp":
 		err = cmdMCP(os.Args[2:])
 	case "batch":

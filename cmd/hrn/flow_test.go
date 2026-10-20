@@ -1,0 +1,95 @@
+package main
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/flow"
+	"github.com/cristiangirlea/harness/internal/runlog"
+)
+
+func TestFlowRunTextAndJSON(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:one")
+	w, err := runlog.Create("claude", agent.Task{Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "go test"})
+	w.Event(agent.Event{Kind: agent.EventToolResult, Tool: "shell", Text: "failed", IsError: true})
+	w.Event(agent.Event{Kind: agent.EventError, Text: "backend stopped"})
+	if err := w.Close(agent.Result{Status: agent.StatusError, Error: "backend stopped", Duration: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdFlow([]string{w.ID()}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if !strings.HasPrefix(text, "run "+w.ID()+": failed") || !strings.Contains(text, "tool shell") || !strings.Contains(text, "error") || strings.Contains(text, "thinking") {
+		t.Fatalf("flow text = %s", text)
+	}
+	out, err = captureStdout(t, func() error { return cmdFlow([]string{"--json", w.ID()}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Version int          `json:"version"`
+		Events  []flow.Event `json:"events"`
+		Tree    []*flow.Node `json:"tree"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil || doc.Version != 1 || len(doc.Events) == 0 || len(doc.Tree) == 0 {
+		t.Fatalf("json = %s (%v)", out, err)
+	}
+	out, err = captureStdout(t, func() error { return cmdFlow([]string{w.ID(), "--level", "simple"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "tool shell") {
+		t.Fatalf("simple output shows tool: %s", out)
+	}
+}
+
+func TestFlowBatchSummaryNamesFailedGateAfterRetry(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:one")
+	res := batch.Result{ID: "b1", Owner: "local:one", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "task-a", Status: batch.StatusFail, Attempts: []batch.Attempt{
+		{Backend: "claude", Result: agent.Result{Status: agent.StatusError}},
+		{Backend: "codex", Result: agent.Result{Status: agent.StatusError}, Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1, Output: "FAIL"}}},
+	}}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdFlow([]string{"b1"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "1 failed") || !strings.Contains(string(out), "go test ./...") || !strings.Contains(string(out), "exited 1") {
+		t.Fatalf("output = %s", out)
+	}
+}
+
+func TestFlowHidesMissingAndForeignRecords(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:one")
+	for _, id := range []string{"missing", "../secret"} {
+		if err := cmdFlow([]string{id}); err == nil || !strings.Contains(err.Error(), "hrn flow: no run or batch "+id) {
+			t.Errorf("id %q error = %v", id, err)
+		}
+	}
+	w, err := runlog.Create("claude", agent.Task{Prompt: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HRN_OWNER", "local:two")
+	if err := cmdFlow([]string{w.ID()}); err == nil || !strings.Contains(err.Error(), "hrn flow: no run or batch "+w.ID()) {
+		t.Fatalf("foreign run error = %v", err)
+	}
+}
