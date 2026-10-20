@@ -115,6 +115,7 @@ func load(id string) (runlog.Record, error) {
 	if json.Unmarshal(data, &running) != nil {
 		return runlog.Record{}, err
 	}
+	running.ID = id
 	return running, nil
 }
 

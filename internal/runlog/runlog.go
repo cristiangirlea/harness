@@ -292,7 +292,11 @@ func Load(id string) (Record, error) {
 	var rec Record
 	if data, err := os.ReadFile(filepath.Join(dir, "result.json")); err == nil {
 		rec.Done = true
-		return rec, json.Unmarshal(data, &rec)
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return rec, err
+		}
+		rec.ID = id
+		return rec, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return rec, err
 	}
@@ -300,7 +304,11 @@ func Load(id string) (Record, error) {
 	if err != nil {
 		return rec, err
 	}
-	return rec, json.Unmarshal(data, &rec)
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return rec, err
+	}
+	rec.ID = id
+	return rec, nil
 }
 
 func Events(id string) ([]agent.Event, error) {
