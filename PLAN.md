@@ -727,7 +727,7 @@ order they are worth taking:
     - [#437](https://github.com/cristiangirlea/harness/issues/437): a bounded originals store
       that refuses rather than evicts, and `read_original` by line range or JSON pointer;
       in the same PR as [#337](https://github.com/cristiangirlea/harness/issues/337), which
-      touches the same lookup (originals across a continuation).
+      touches the same lookup (originals across a continuation). Done: PR #601, 2026-10-19.
     - [#336](https://github.com/cristiangirlea/harness/issues/336): JSON and tabular summaries.
     - [#435](https://github.com/cristiangirlea/harness/issues/435): hrn owns the terminal for
       every backend, so shaped output reaches claude, codex and agy runs too.
@@ -741,6 +741,12 @@ order they are worth taking:
       (whole-line comments are 19% of non-test Go bytes, paid by every agent that reads a
       file). The rule and a comment check with a baseline land before every slice above, so
       new code stops growing them; the package-by-package cleanup lands after all of them.
+      Done: PR #457, 2026-10-16 (the rule and the check); the cleanup in PRs #602 and #604,
+      2026-10-19, and #615, #617, #618 and #620, 2026-10-20. Comments are now 8.8% of non-test
+      Go bytes and the baseline holds only its header.
+    - [#488](https://github.com/cristiangirlea/harness/issues/488) (the owner, 2026-10-16): a run
+      loads only the MCP servers, plugins and skills its task needs, on claude and codex.
+      Done: PR #595, 2026-10-19.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
