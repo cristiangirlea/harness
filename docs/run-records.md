@@ -219,10 +219,19 @@ switching is enabled. `hrn exec` neither reads nor writes it. Deleting it forget
 remembered limits.
 
 `result.json` includes `model_reported: true` only when the backend reports its
-model: api responses, claude init lines and gemini model stats. A requested/default
-model alone does not set it; codex and opencode do not report one. The field is
-omitted when false, and older records without it still load. Exec uses it to send
-an empty `resolved_model` when the backend did not report its model.
+model: api responses, claude init lines, gemini model stats and codex's session
+file. A requested/default model alone does not set it; opencode does not report one.
+The field is omitted when false, and older records without it still load. Exec uses
+it to send an empty `resolved_model` when the backend did not report its model.
+
+`codex exec --json` names neither the model nor the CLI version, so after the run hrn
+reads the session's rollout file, `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<session>.jsonl`
+(default `~/.codex`): the last `turn_context` model becomes `model` with
+`model_reported: true` (and prices the cost estimate), and `session_meta.cli_version`
+becomes `result.cli_version`. Without that file, or when its `session_meta` names
+another session, the result keeps the requested model, unreported, and no
+`cli_version`. hrn never reads `config.toml` for this: it says what codex would use,
+not what it ran.
 
 When complete events fail to write or `events.jsonl` fails to close, `result.json`
 includes `record_error` with the number of events not recorded, the first event error
