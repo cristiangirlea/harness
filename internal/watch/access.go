@@ -22,9 +22,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// PublicAccess enables Cloudflare Access verification for a loopback-only
-// watch server. CertsURL, Client, Now and Errors are test seams; leave them empty in
-// the CLI so certificates come from the named team with a 10-second timeout.
+// PublicAccess requires Cloudflare Access verification on a loopback-only watch server.
+// Leave CertsURL, Client, Now and Errors unset outside tests to use the team's certificates and timeout.
 type PublicAccess struct {
 	Origin   string
 	Team     string
@@ -313,9 +312,9 @@ type accessWriter struct {
 	status  int
 	email   string
 	reason  string
-	stream  bool   // the response is an event stream
-	started bool   // the stream's start row is written
-	start   func() // writes the stream's start row
+	stream  bool
+	started bool
+	start   func()
 }
 
 func (w *accessWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -328,8 +327,8 @@ func (w *accessWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
-// FlushError logs an event stream's start row after its first flush, so a slow
-// log never holds back the first byte; the end row waits for the browser to leave.
+// FlushError flushes before logging so a slow log cannot delay the stream's first byte.
+// The end row waits for the browser to disconnect.
 func (w *accessWriter) FlushError() error {
 	w.begin(http.StatusOK)
 	err := http.NewResponseController(w.ResponseWriter).Flush()
@@ -342,7 +341,6 @@ func (w *accessWriter) FlushError() error {
 	return err
 }
 
-// begin records the status once.
 func (w *accessWriter) begin(status int) {
 	if w.status != 0 {
 		return
@@ -369,8 +367,7 @@ func (s *server) publicLog(next http.Handler) http.Handler {
 	})
 }
 
-// writeAccessRow appends one JSON line to watch-access.log. stream is "start"
-// or "end" for an event stream's two rows, empty for any other request.
+// stream is "start" or "end" for SSE log rows, empty for other requests.
 func (s *server) writeAccessRow(r *http.Request, aw *accessWriter, stream string) {
 	if aw.status == http.StatusForbidden {
 		aw.email = ""

@@ -12,13 +12,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// secretReplacer blanks the values of secret-looking variables in env (names
-// with KEY, TOKEN, SECRET or PASSWORD in them) wherever they appear on a
-// page. A run records whatever its agent saw, and an agent that ran env or
-// printed a config file would put a key into it; the page may be open to the
-// network. Values shorter than 12 characters are left alone: they would
-// blank ordinary words and are not keys anyway. Both a value and the forms
-// html/template escapes it to are replaced. Nil when there is nothing to hide.
+// Mask environment secrets in raw, JSON and HTML forms before network viewers see them.
+// Skip values shorter than 12 characters to avoid blanking ordinary words.
 func secretReplacer(env []string) *strings.Replacer {
 	seen := map[string]bool{}
 	var values []string
@@ -58,11 +53,7 @@ func secretName(name string) bool {
 	return false
 }
 
-// The page cuts long text (capText, a summary's first line) before it is
-// rendered, and a key cut in two is no longer the value the rendered page is
-// checked for. So records are cleaned where they come in, before any cut;
-// server.render's pass over the finished page stays as a backstop.
-
+// Redact before truncation splits secrets; the finished-page pass is only a backstop.
 func (s *server) clean(text string) string {
 	if s.redact != nil {
 		text = s.redact.Replace(text)
@@ -77,7 +68,7 @@ func (s *server) cleanEvent(e agent.Event) agent.Event {
 	}
 	if e.Usage != nil {
 		u := *e.Usage
-		// Not left to the page's pass: that blanks the environment's values, not what mask finds.
+		// The page backstop masks environment values, not everything mask.Text finds.
 		u.Model = s.clean(u.Model)
 		e.Usage = &u
 	}

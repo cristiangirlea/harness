@@ -13,8 +13,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// batchCache keeps each batch record as cleaned, keyed by its file's name,
-// time and size, so the index and Ada do not clean every batch on every look.
+// Cache cleaned records so polling does not repeatedly redact unchanged batches.
 type batchCache struct {
 	mu     sync.Mutex
 	m      map[string]cachedBatch
@@ -27,9 +26,7 @@ type cachedBatch struct {
 	res  batch.Result
 }
 
-// listBatches is batch.List with every record cleaned of secrets. Files are
-// looked at before they are read: a record saved in between is kept under
-// its older time and so is cleaned again on the next look, never left stale.
+// listBatches is batch.List with every record cleaned; stat before loading so a concurrent save is cleaned again next poll.
 func (s *server) listBatches() (batches []batch.Result, unreadable int, err error) {
 	entries, err := os.ReadDir(filepath.Join(runlog.Home(), "batches"))
 	if errors.Is(err, os.ErrNotExist) {
