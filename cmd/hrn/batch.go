@@ -336,6 +336,11 @@ func printBatch(r *renderer, res batch.Result) {
 			line += r.c(dim, " · agent committed")
 		}
 		r.Line(line)
+		for i, att := range t.Attempts {
+			if att.Error != "" {
+				r.Line(fmt.Sprintf("    attempt %d note: %s", i+1, printable(tools.OneLine(att.Error, 500))))
+			}
+		}
 	}
 	// A batch still going has no duration in its record; say how long it has
 	// been going instead, which is what the reader wants to know.

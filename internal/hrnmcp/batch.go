@@ -28,7 +28,7 @@ func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 		Name:  "batch",
 		Title: "Run tasks in parallel worktrees",
 		Description: "Run several coding tasks at once, each on its own branch hrn/<id> in its own git worktree, " +
-			"then run the gate commands in each. Waits for every task and returns one line per task plus the batch id. " +
+			"then run the gate commands in each. Waits for every task and returns a summary with attempt notes and the batch id. " +
 			"The repository must have no modified tracked files unless allow_dirty is set. " +
 			"Read a task's changes with batch_show and land them with batch_merge.",
 		InputSchema: map[string]any{
@@ -103,7 +103,7 @@ func passed(res batch.Result) int {
 	return n
 }
 
-// batchSummary is one line per task and a footer that says what to do next.
+// batchSummary includes attempt notes so a passing task cannot hide work left out of its commit.
 func batchSummary(res batch.Result) string {
 	var b strings.Builder
 	running := 0
@@ -133,6 +133,11 @@ func batchSummary(res batch.Result) string {
 			b.WriteString(" · changed nothing")
 		}
 		b.WriteString("\n")
+		for i, att := range t.Attempts {
+			if att.Error != "" {
+				fmt.Fprintf(&b, "  attempt %d note: %s\n", i+1, tools.OneLine(att.Error, 500))
+			}
+		}
 	}
 	fmt.Fprintf(&b, "\nbatch %s · %d/%d passed", res.ID, passed(res), len(res.Tasks))
 	if running > 0 {
@@ -165,15 +170,16 @@ type batchBrief struct {
 }
 
 type taskBrief struct {
-	ID       string `json:"id"`
-	Purpose  string `json:"purpose,omitempty"`
-	Status   string `json:"status"`
-	Backend  string `json:"backend,omitempty"`
-	Attempts int    `json:"attempts"`
-	Branch   string `json:"branch,omitempty"`
-	Commit   string `json:"commit,omitempty"`
-	Changed  bool   `json:"changed"`
-	Failed   string `json:"failed,omitempty"` // the gate or error that stopped it
+	ID       string   `json:"id"`
+	Purpose  string   `json:"purpose,omitempty"`
+	Status   string   `json:"status"`
+	Backend  string   `json:"backend,omitempty"`
+	Attempts int      `json:"attempts"`
+	Branch   string   `json:"branch,omitempty"`
+	Commit   string   `json:"commit,omitempty"`
+	Changed  bool     `json:"changed"`
+	Failed   string   `json:"failed,omitempty"` // the gate or error that stopped it
+	Notes    []string `json:"notes,omitempty"`
 }
 
 func brief(res batch.Result) batchBrief {
@@ -191,6 +197,11 @@ func brief(res batch.Result) batchBrief {
 				tb.Failed = fmt.Sprintf("gate `%s` %s", tools.OneLine(g.Command, 80), g.Outcome())
 			} else if t.Status != batch.StatusPass && last.Result.Error != "" {
 				tb.Failed = tools.OneLine(last.Result.Error, 200)
+			}
+		}
+		for i, att := range t.Attempts {
+			if att.Error != "" {
+				tb.Notes = append(tb.Notes, fmt.Sprintf("attempt %d: %s", i+1, tools.OneLine(att.Error, 500)))
 			}
 		}
 		out.Tasks = append(out.Tasks, tb)
@@ -211,7 +222,7 @@ func batchShowTool() mcp.Tool {
 	return mcp.Tool{
 		Name:  "batch_show",
 		Title: "Show a batch",
-		Description: "Without batch_id: the most recent batches. With batch_id: one line per task. " +
+		Description: "Without batch_id: the most recent batches. With batch_id: one line per task plus attempt notes. " +
 			"With batch_id and task: that task's diff against the commit the batch started from, " +
 			"and any untracked files the diff cannot show.",
 		InputSchema: map[string]any{

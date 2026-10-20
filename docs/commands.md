@@ -28,7 +28,7 @@
 | `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
-| `hrn batch show [--json] <id>` | Reprint a batch's table, while it runs or long afterwards. |
+| `hrn batch show [--json] <id>` | Reprint a batch's table and attempt notes, while it runs or long afterwards. |
 | `hrn batch diff <id> <task-id>` | What one task changed, as a diff on stdout. |
 | `hrn batch merge [--squash] [--rm] <id> [task-id…]` | Merge passed tasks; `--rm` removes each task's worktree and branch only when it merged in this call. |
 | `hrn batch rm <id>` | Remove what a batch created: its branches, and its worktrees when they were fresh (a slot stays; see [Batches](batches.md#reading-and-landing-the-work)). |

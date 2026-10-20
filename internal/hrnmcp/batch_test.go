@@ -201,3 +201,33 @@ func TestBatchSummaryShowsADeclaredPurpose(t *testing.T) {
 		t.Errorf("a task with no declared purpose shows one:\n%s", summary)
 	}
 }
+
+func TestBatchSummariesShowAttemptNotesEvenWhenTheTaskPassed(t *testing.T) {
+	note := "commit not recorded: the branch tip abc1234 does not contain the base"
+	res := batch.Result{ID: "notes", Tasks: []batch.TaskResult{
+		{ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: note}, {Backend: "stub"}}},
+		{ID: "two", Status: batch.StatusPass},
+	}}
+	if got := batchSummary(res); !strings.Contains(got, "\n  attempt 1 note: "+note+"\n") {
+		t.Errorf("text summary omitted the attempt note: %s", got)
+	}
+	data, err := json.Marshal(brief(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Tasks []struct {
+			Notes  []string `json:"notes"`
+			Failed string   `json:"failed"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tasks[0].Notes) != 1 || got.Tasks[0].Notes[0] != "attempt 1: "+note || got.Tasks[0].Failed != "" {
+		t.Errorf("structured summary omitted or treated the note as a failure: %s", data)
+	}
+	if strings.Count(string(data), `"notes":`) != 1 {
+		t.Errorf("empty notes must be omitted: %s", data)
+	}
+}
