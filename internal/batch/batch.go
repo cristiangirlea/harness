@@ -1354,9 +1354,13 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 
 	// The branch holds whatever the agent left, pass or fail, so the worktree
 	// can be inspected or removed without losing work.
-	sha, commitErr := commitChanges(task.Dir, plan.commit)
+	sha, note, commitErr := commitChanges(task.Dir, plan.branch, plan.commit)
+	if note != "" {
+		// As with a failed commit: no retry may remove or reuse the worktree holding the work.
+		att.Error = strings.TrimSpace(att.Error + "\n" + note)
+		return attemptOutcome{att: att}, fmt.Errorf("%s (%s)", note, task.Dir)
+	}
 	if sha == "" && commitErr == nil {
-		var note string
 		sha, note, commitErr = agentCommit(task.Dir, plan.branch, plan.base)
 		if note != "" {
 			att.Error = strings.TrimSpace(att.Error + "\n" + note)
@@ -1640,23 +1644,37 @@ func skipCutRune(s string) string {
 	return s
 }
 
-// commitChanges commits everything the agent left in the worktree and returns
-// the commit, or "" when nothing changed. It runs after the agent, so it uses
-// its own context: a cancelled batch must still leave a consistent branch.
-func commitChanges(wt, message string) (string, error) {
+// commitChanges commits leftover work on its own context, so a cancelled batch still leaves a consistent
+// branch; it returns the SHA or "" if unchanged. With branch set, note explains why off-branch work was not committed.
+func commitChanges(wt, branch, message string) (sha, note string, err error) {
 	if _, err := os.Stat(wt); err != nil {
-		return "", nil
+		return "", "", nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	g, err := newAgentGit(ctx, wt)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer g.close()
 	status, err := g.stdout(ctx, "status", "--porcelain", "-z", "--no-renames", "--ignore-submodules=all")
 	if err != nil || status == "" {
-		return "", err
+		return "", "", err
+	}
+	if branch != "" {
+		// A merge takes the task's branch, so a commit anywhere else would be recorded for nothing.
+		// Prints nothing for a detached HEAD and names an unborn branch, failing only when git does.
+		head, err := g.stdout(ctx, "branch", "--show-current")
+		if err != nil {
+			return "", "", err
+		}
+		if head = strings.TrimSuffix(strings.TrimSuffix(head, "\n"), "\r"); head != branch {
+			where := "HEAD is detached"
+			if head != "" {
+				where = "HEAD is on branch " + head
+			}
+			return "", "work left uncommitted in the worktree: " + where + ", not the task's branch " + branch, nil
+		}
 	}
 	// A bare `git add -A` runs status inside every submodule, whatever
 	// diff.ignoreSubmodules says; stage exactly the paths status reported.
@@ -1668,12 +1686,13 @@ func commitChanges(wt, message string) (string, error) {
 	}
 	if _, err := g.in(ctx, strings.Join(paths, "\x00"),
 		"--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := g.out(ctx, "commit", "-q", "-m", message); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return g.out(ctx, "rev-parse", "HEAD")
+	sha, err = g.out(ctx, "rev-parse", "HEAD")
+	return sha, "", err
 }
 
 // gitTips is the task branch's tip and HEAD's commit, so a commit off the branch shows too; "" without a worktree.
@@ -2406,7 +2425,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 			return "", nil, fmt.Errorf("task %s: commit %s is no longer in %s, so its branch was removed",
 				taskID, tools.ShortSHA(tr.Commit), res.Dir)
 		}
-		out, err := gitStdout(ctx, res.Dir, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", res.Base+".."+tr.Commit)
+		out, err := gitStdout(ctx, res.Dir, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--end-of-options", res.Base+".."+tr.Commit, "--")
 		return out, nil, err
 	}
 	if tr.Slot != 0 {
@@ -2422,7 +2441,12 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 		return "", nil, err
 	}
 	defer g.close()
-	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD")
+	against := "HEAD"
+	if _, err := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD^{commit}"); err != nil {
+		// An orphan checkout leaves HEAD unborn; its files still compare with the base.
+		against = res.Base
+	}
+	out, err := g.stdout(ctx, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--end-of-options", against, "--")
 	if err != nil {
 		return "", nil, err
 	}

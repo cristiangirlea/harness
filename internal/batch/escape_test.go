@@ -26,7 +26,7 @@ func TestCommitChangesIgnoresACoreWorktreeOutsideTheTaskWorktree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sha, err := commitChanges(wt, "task result")
+	sha, _, err := commitChanges(wt, "", "task result")
 	if err != nil || sha == "" {
 		t.Fatalf("commitChanges = %q, %v", sha, err)
 	}
