@@ -16,9 +16,7 @@ func BackendPreferences(home string) (prefs.Prefs, error) {
 	return p, nil
 }
 
-// DefaultBackendNameIn selects an installed preferred backend. Entry points
-// validate the preferences separately so malformed files are reported as errors.
-// Without a preference the historical default is unchanged.
+// DefaultBackendNameIn prefers installed, enabled backends.
 func DefaultBackendNameIn(home string) string {
 	p, err := BackendPreferences(home)
 	if err != nil || len(p.EnabledNames) == 0 {

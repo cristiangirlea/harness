@@ -10,17 +10,13 @@ import (
 	"github.com/cristiangirlea/harness/internal/mcp"
 )
 
-// MCPCaller is the part of *mcp.Client the adapter needs.
+// MCPCaller supplies tools and calls.
 type MCPCaller interface {
 	Tools() []mcp.ToolInfo
 	CallTool(ctx context.Context, name string, args json.RawMessage) (mcp.CallResult, error)
 }
 
-// FromMCP wraps every tool a connected server lists as a harness Tool named
-// mcp__<server>__<tool>, the convention Claude Code uses. A tool the server
-// marks readOnlyHint is a read (auto-approved, runs in parallel); anything
-// else needs approval in ask and auto modes and is automatic only in yolo.
-// The server's annotations are trusted because the user chose the server.
+// FromMCP trusts chosen servers' readOnlyHint for parallelism/approval.
 func FromMCP(server string, c MCPCaller) []Tool {
 	var out []Tool
 	for _, info := range c.Tools() {
@@ -76,8 +72,7 @@ func FromMCP(server string, c MCPCaller) []Tool {
 	return out
 }
 
-// MCPName builds the model-facing name of an MCP tool. The Messages API only
-// allows [A-Za-z0-9_-] and 128 characters.
+// MCPName obeys API limits: [A-Za-z0-9_-], 128 characters.
 func MCPName(server, tool string) string {
 	n := "mcp__" + cleanName(server) + "__" + cleanName(tool)
 	if len(n) > 128 {
@@ -99,8 +94,7 @@ func cleanName(s string) string {
 	return b.String()
 }
 
-// InputSummary picks the most descriptive string field of a tool input for
-// logs and approval prompts. Empty when nothing familiar is there.
+// InputSummary picks log/approval text, or "".
 func InputSummary(in json.RawMessage) string {
 	var m map[string]any
 	if json.Unmarshal(in, &m) != nil {

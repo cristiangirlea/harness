@@ -11,14 +11,12 @@ import (
 	"time"
 )
 
-// Tree is a command's process group. A child that calls setsid can leave the
-// group; we do not try to chase it.
+// Tree tracks a process group; setsid children can escape it.
 type Tree struct {
 	pgid int
 }
 
-// StartTree starts cmd in its own process group and makes its context's
-// cancellation kill that group. The caller must Wait on cmd and Close the tree.
+// StartTree starts a cancellable group; Wait and Close are required.
 func StartTree(cmd *exec.Cmd) (*Tree, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -39,17 +37,16 @@ func StartTree(cmd *exec.Cmd) (*Tree, error) {
 	return &Tree{pgid: cmd.Process.Pid}, nil
 }
 
-// Contained reports whether the command was placed in a process group.
+// Contained reports group assignment.
 func (t *Tree) Contained() bool { return true }
 
-// StartWarnings has no thread-resume diagnostics on Unix.
+// StartWarnings is empty on Unix.
 func (t *Tree) StartWarnings() []string { return nil }
 
-// Close has no group handle to release on Unix.
+// Close is a no-op on Unix.
 func (t *Tree) Close() {}
 
-// Kill terminates the process group, including children left by an exited
-// command. It succeeds if the group is already gone.
+// Kill kills even leaderless groups; gone succeeds.
 func (t *Tree) Kill() error {
 	if t.pgid <= 0 {
 		return fmt.Errorf("process tree has no process group")
@@ -61,8 +58,7 @@ func (t *Tree) Kill() error {
 	return fmt.Errorf("kill process group %d: %w", t.pgid, err)
 }
 
-// WaitGone waits until no group member is running. Linux scans procfs to
-// exclude unreaped zombies; elsewhere the group probe supplies a lower bound.
+// WaitGone excludes Linux zombies; other Unix probes are lower bounds.
 func (t *Tree) WaitGone(timeout time.Duration) error {
 	var countLive func() (int, error)
 	if runtime.GOOS == "linux" {
