@@ -311,7 +311,13 @@ func TestACancelledTaskWithWorkOffItsBranchKeepsTheWork(t *testing.T) {
 }
 
 func TestMovingOffTheBranchWithNothingWrittenChangesNothing(t *testing.T) {
-	for name, move := range map[string][]string{"detached": offMoves["detached"], "other branch": offMoves["other branch"]} {
+	moves := map[string][]string{
+		"detached":     offMoves["detached"],
+		"other branch": offMoves["other branch"],
+		// switch empties the index, so the tree is clean with no commit at HEAD.
+		"empty orphan": {"switch", "-q", "--orphan", "agent-orphan"},
+	}
+	for name, move := range moves {
 		for _, mode := range []string{WorktreesFresh, WorktreesSlots} {
 			t.Run(name+" "+mode, func(t *testing.T) {
 				dir := initRepo(t)
@@ -324,8 +330,152 @@ func TestMovingOffTheBranchWithNothingWrittenChangesNothing(t *testing.T) {
 				}})
 				res, _ := run(t, Spec{Dir: dir, Backend: backend, Worktrees: mode, Tasks: []Task{{ID: "moved", Prompt: "p"}}})
 				defer Remove(res)
-				if tr := res.Tasks[0]; tr.Status != StatusPass || tr.Commit != "" || strings.Contains(tr.Error, "kept") {
+				tr := res.Tasks[0]
+				// ws cannot count an unborn HEAD's unpushed commits, so it keeps that slot.
+				keptOK := name == "empty orphan" && mode == WorktreesSlots
+				if tr.Status != StatusPass || tr.Commit != "" || (!keptOK && strings.Contains(tr.Error, "kept")) {
 					t.Errorf("status %s, commit %q, error %q: want a pass with nothing recorded and the slot given back", tr.Status, tr.Commit, tr.Error)
+				}
+			})
+		}
+	}
+}
+
+func TestAnAgentsOffBranchCommitEndsTheTaskAndKeepsItsWorktree(t *testing.T) {
+	for _, moveName := range []string{"detached", "other branch"} {
+		for _, mode := range []string{WorktreesFresh, WorktreesSlots} {
+			for _, ending := range []string{"pass", "error", "gate", "canceled", "continued"} {
+				t.Run(moveName+"/"+mode+"/"+ending, func(t *testing.T) {
+					dir := initRepo(t)
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					name := "wb-off-commit"
+					calls := 0
+					var head, earlier string
+					agent.Register(stub{name, func(ctx context.Context, task agent.Task) agent.Result {
+						fail := func(err error) agent.Result {
+							return agent.Result{Backend: name, Status: agent.StatusError, Error: err.Error()}
+						}
+						calls++
+						var err error
+						earlier, err = gitOut(ctx, task.Dir, "rev-parse", "HEAD")
+						if err != nil {
+							return fail(err)
+						}
+						if ending != "continued" || calls > 1 {
+							if err := gitIn(task.Dir, offMoves[moveName]...); err != nil {
+								return fail(err)
+							}
+						}
+						file := "out.txt"
+						if ending == "continued" && calls == 1 {
+							file = "first.txt"
+						}
+						if err := os.WriteFile(filepath.Join(task.Dir, file), []byte("x\n"), 0o644); err != nil {
+							return fail(err)
+						}
+						for _, args := range [][]string{{"add", file}, {"commit", "-q", "-m", "agent work"}} {
+							if err := gitIn(task.Dir, args...); err != nil {
+								return fail(err)
+							}
+						}
+						head, err = gitOut(ctx, task.Dir, "rev-parse", "HEAD")
+						if err != nil {
+							return fail(err)
+						}
+						status := agent.StatusOK
+						if ending == "error" {
+							status = agent.StatusError
+						}
+						if ending == "canceled" {
+							cancel()
+							status = agent.StatusCanceled
+						}
+						return agent.Result{Backend: name, Status: status, Turns: 1}
+					}})
+					spec := Spec{Dir: dir, Backend: name, Retry: []string{name, name}, Worktrees: mode,
+						Tasks: []Task{{ID: "off", Prompt: "p"}}}
+					if ending == "gate" || ending == "continued" {
+						spec.Gate = []string{"exit 3"}
+					}
+					res, err := Run(ctx, spec, nil)
+					defer Remove(res)
+					if err != nil && ending != "canceled" {
+						t.Fatal(err)
+					}
+					tr := res.Tasks[0]
+					wantStatus, attempts := StatusError, 1
+					if ending == "canceled" {
+						wantStatus = StatusCanceled
+					}
+					if ending == "continued" {
+						attempts = 2
+					}
+					if tr.Status != wantStatus || calls != attempts || len(tr.Attempts) != attempts {
+						t.Fatalf("status %s, calls %d, attempts %d: want %s and %d attempt(s)", tr.Status, calls, len(tr.Attempts), wantStatus, attempts)
+					}
+					if ending != "continued" && ending != "canceled" {
+						assertLeftOff(t, dir, res, attempts)
+					}
+					wantCommit := ""
+					if ending == "continued" {
+						wantCommit = earlier
+						if !tr.Attempts[1].Continued || earlier == res.Base {
+							t.Error("the second attempt must continue an earlier commit")
+						}
+					}
+					if tr.Commit != wantCommit || git(t, dir, "rev-parse", "refs/heads/"+tr.Branch) != earlier {
+						t.Errorf("recorded commit %q, want %q, with the task branch unchanged", tr.Commit, wantCommit)
+					}
+					where := "HEAD is detached"
+					if moveName == "other branch" {
+						where = "HEAD is on branch agent-side"
+					}
+					for _, note := range []string{tr.Error, tr.Attempts[attempts-1].Error} {
+						if !strings.Contains(note, where) || !strings.Contains(note, head[:7]) {
+							t.Errorf("note %q must name %q and commit %s", note, where, head[:7])
+						}
+					}
+					if got := git(t, tr.Worktree, "rev-parse", "HEAD"); got != head {
+						t.Errorf("worktree HEAD = %s, want retained commit %s", got, head)
+					}
+					if got := git(t, tr.Worktree, "status", "--porcelain"); got != "" {
+						t.Errorf("agent left a dirty tree: %q", got)
+					}
+					if mode == WorktreesSlots && !strings.Contains(tr.Error, "kept") {
+						t.Errorf("slot was not kept: %q", tr.Error)
+					}
+					if merged, err := Merge(context.Background(), res, nil, false); err == nil || len(merged) != 0 {
+						t.Errorf("Merge = %+v, %v: want refusal", merged, err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAnAgentMovingOffTheBranchAndBackStillPasses(t *testing.T) {
+	for _, moveName := range []string{"detached", "other branch"} {
+		for _, mode := range []string{WorktreesFresh, WorktreesSlots} {
+			t.Run(moveName+"/"+mode, func(t *testing.T) {
+				dir := initRepo(t)
+				name := "wb-off-back"
+				agent.Register(stub{name, func(ctx context.Context, task agent.Task) agent.Result {
+					branch, err := gitOut(ctx, task.Dir, "branch", "--show-current")
+					if err != nil {
+						return agent.Result{Status: agent.StatusError, Error: err.Error()}
+					}
+					for _, args := range [][]string{offMoves[moveName], {"checkout", "-q", branch}} {
+						if err := gitIn(task.Dir, args...); err != nil {
+							return agent.Result{Status: agent.StatusError, Error: err.Error()}
+						}
+					}
+					return agent.Result{Backend: name, Status: agent.StatusOK, Turns: 1}
+				}})
+				res, _ := run(t, Spec{Dir: dir, Backend: name, Worktrees: mode, Tasks: []Task{{ID: "back", Prompt: "p"}}})
+				defer Remove(res)
+				if tr := res.Tasks[0]; tr.Status != StatusPass || tr.Commit != "" || tr.Error != "" || tr.Attempts[0].Error != "" {
+					t.Errorf("task = %+v: want a pass with no commit or note", tr)
 				}
 			})
 		}

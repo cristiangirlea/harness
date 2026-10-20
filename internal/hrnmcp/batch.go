@@ -28,7 +28,7 @@ func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 		Name:  "batch",
 		Title: "Run tasks in parallel worktrees",
 		Description: "Run several coding tasks at once, each on its own branch hrn/<id> in its own git worktree, " +
-			"then run the gate commands in each. Waits for every task and returns one line per task plus the batch id. " +
+			"then run the gate commands in each. Waits for every task and returns a summary with attempt notes and the batch id. " +
 			"The repository must have no modified tracked files unless allow_dirty is set. " +
 			"Read a task's changes with batch_show and land them with batch_merge.",
 		InputSchema: map[string]any{
@@ -103,7 +103,7 @@ func passed(res batch.Result) int {
 	return n
 }
 
-// batchSummary is one line per task and a footer that says what to do next.
+// batchSummary includes attempt notes so a passing task cannot hide work left out of its commit.
 func batchSummary(res batch.Result) string {
 	var b strings.Builder
 	running := 0
@@ -116,13 +116,13 @@ func batchSummary(res batch.Result) string {
 			last := t.Attempts[n-1]
 			fmt.Fprintf(&b, " on %s after %d attempt(s)", last.Backend, n)
 			if g := failedGateOf(last); g != nil {
-				fmt.Fprintf(&b, "; gate `%s` %s", tools.OneLine(g.Command, 80), g.Outcome())
+				fmt.Fprintf(&b, "; gate `%s` %s", printableNote(g.Command, 80), g.Outcome())
 			} else if last.Result.Error != "" {
-				fmt.Fprintf(&b, "; %s", tools.OneLine(last.Result.Error, 160))
+				fmt.Fprintf(&b, "; %s", printableNote(last.Result.Error, 160))
 			}
 		}
 		if t.Error != "" {
-			fmt.Fprintf(&b, "; %s", tools.OneLine(t.Error, 160))
+			fmt.Fprintf(&b, "; %s", printableNote(t.Error, 160))
 		}
 		switch {
 		case t.Status == batch.StatusRunning:
@@ -133,6 +133,11 @@ func batchSummary(res batch.Result) string {
 			b.WriteString(" · changed nothing")
 		}
 		b.WriteString("\n")
+		for i, att := range t.Attempts {
+			if att.Error != "" {
+				fmt.Fprintf(&b, "  attempt %d note: %s\n", i+1, printableNote(att.Error, 500))
+			}
+		}
 	}
 	fmt.Fprintf(&b, "\nbatch %s · %d/%d passed", res.ID, passed(res), len(res.Tasks))
 	if running > 0 {
@@ -165,22 +170,23 @@ type batchBrief struct {
 }
 
 type taskBrief struct {
-	ID       string `json:"id"`
-	Purpose  string `json:"purpose,omitempty"`
-	Status   string `json:"status"`
-	Backend  string `json:"backend,omitempty"`
-	Attempts int    `json:"attempts"`
-	Branch   string `json:"branch,omitempty"`
-	Commit   string `json:"commit,omitempty"`
-	Changed  bool   `json:"changed"`
-	Failed   string `json:"failed,omitempty"` // the gate or error that stopped it
+	ID       string   `json:"id"`
+	Purpose  string   `json:"purpose,omitempty"`
+	Status   string   `json:"status"`
+	Backend  string   `json:"backend,omitempty"`
+	Attempts int      `json:"attempts"`
+	Branch   string   `json:"branch,omitempty"`
+	Commit   string   `json:"commit,omitempty"`
+	Changed  bool     `json:"changed"`
+	Failed   string   `json:"failed,omitempty"` // the gate or error that stopped it
+	Notes    []string `json:"notes,omitempty"`
 }
 
 func brief(res batch.Result) batchBrief {
 	out := batchBrief{ID: res.ID, Passed: passed(res), Total: len(res.Tasks),
 		Next: fmt.Sprintf("batch_show {batch_id: %q, task: <id>} for a diff; batch_merge {batch_id: %q} to land passing branches", res.ID, res.ID)}
 	for _, t := range res.Tasks {
-		tb := taskBrief{ID: t.ID, Purpose: t.Purpose, Status: string(t.Status), Attempts: len(t.Attempts), Changed: t.Commit != "", Failed: tools.OneLine(t.Error, 200)}
+		tb := taskBrief{ID: t.ID, Purpose: t.Purpose, Status: string(t.Status), Attempts: len(t.Attempts), Changed: t.Commit != "", Failed: printableNote(t.Error, 200)}
 		if t.Commit != "" {
 			tb.Branch, tb.Commit = t.Branch, tools.ShortSHA(t.Commit)
 		}
@@ -188,14 +194,29 @@ func brief(res batch.Result) batchBrief {
 			last := t.Attempts[n-1]
 			tb.Backend = last.Backend
 			if g := failedGateOf(last); g != nil {
-				tb.Failed = fmt.Sprintf("gate `%s` %s", tools.OneLine(g.Command, 80), g.Outcome())
+				tb.Failed = fmt.Sprintf("gate `%s` %s", printableNote(g.Command, 80), g.Outcome())
 			} else if t.Status != batch.StatusPass && last.Result.Error != "" {
-				tb.Failed = tools.OneLine(last.Result.Error, 200)
+				tb.Failed = printableNote(last.Result.Error, 200)
+			}
+		}
+		for i, att := range t.Attempts {
+			if att.Error != "" {
+				tb.Notes = append(tb.Notes, fmt.Sprintf("attempt %d: %s", i+1, printableNote(att.Error, 500)))
 			}
 		}
 		out.Tasks = append(out.Tasks, tb)
 	}
 	return out
+}
+
+// Decoded notes may be printed directly to a terminal by MCP clients.
+func printableNote(s string, max int) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && (r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)) {
+			return '\ufffd'
+		}
+		return r
+	}, tools.OneLine(s, max))
 }
 
 func failedGateOf(att batch.Attempt) *batch.GateResult {
@@ -211,7 +232,7 @@ func batchShowTool() mcp.Tool {
 	return mcp.Tool{
 		Name:  "batch_show",
 		Title: "Show a batch",
-		Description: "Without batch_id: the most recent batches. With batch_id: one line per task. " +
+		Description: "Without batch_id: the most recent batches. With batch_id: one line per task plus attempt notes. " +
 			"With batch_id and task: that task's diff against the commit the batch started from, " +
 			"and any untracked files the diff cannot show.",
 		InputSchema: map[string]any{
