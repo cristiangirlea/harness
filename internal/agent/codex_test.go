@@ -26,6 +26,7 @@ func TestCodexRunStreamCost(t *testing.T) {
 	for _, model := range []string{"gpt-6.1-sol", "unknown", ""} {
 		t.Run(model, func(t *testing.T) {
 			t.Setenv("HRN_CODEX_COST_HELPER", "1")
+			t.Setenv("CODEX_HOME", t.TempDir())
 			b := NewCodexBackend()
 			b.name, b.candidates = os.Args[0], nil
 			b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexCostStream$", "--"} }

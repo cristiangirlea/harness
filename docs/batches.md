@@ -64,7 +64,10 @@ branch or on none), the attempt records `agent_committed` and `hrn batch show` m
 `agent committed`. A commit the agent made on no branch (a detached `HEAD`) is not
 recorded as the task's commit, since a merge would not bring it. Nor is a tip that no longer contains the base (the agent reset or
 rewrote the branch below it), since merging it would revert the base; the attempt's error
-says so. hrn writes `.hrn/.gitignore` so the worktrees never show up
+says so. Work the agent left uncommitted after moving `HEAD` off the task's branch
+(detached, or onto another branch) is not committed there either: as with a failed commit,
+the task ends as `error` (`canceled` if the batch was stopped), saying where `HEAD` was,
+with no retry, and the work stays in the worktree. hrn writes `.hrn/.gitignore` so the worktrees never show up
 in the repository's status.
 
 ### Slots or fresh worktrees
@@ -106,7 +109,7 @@ A live `hrn ws free` or takeover holds the `.takeover` file while the lease it g
 a dead process, and removing it lets another take in, whose fresh lease the free then removes.
 Check with Task Manager or `tasklist | findstr hrn` on Windows, `pgrep hrn` elsewhere. When none can come free, because the rest are sessions', skipped
 for what is in them or kept by this batch's own tasks (below), it fails as `error` instead. A slot that still holds files when its task ends (the commit
-failed, say), or a commit on no branch (the agent detached HEAD and committed), is not
+failed, or the agent left them off the task's branch), or a commit on no branch (the agent detached HEAD and committed), is not
 given back: the task's error says `slot <n> kept` and why. Its lease
 goes stale once hrn exits, and later takes skip the slot without cleaning it. To keep its
 work and free it, see [A slot a batch kept](workspaces.md#a-slot-a-batch-kept).

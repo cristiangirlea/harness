@@ -17,28 +17,23 @@ import (
 	"github.com/cristiangirlea/harness/internal/mcp"
 )
 
-// Setup identifies the agent setup a run started with: the instruction files
-// its backend loads, the MCP servers, plugins and skills present, and the
-// harness options it applies. It holds hashes and names, never file contents.
+// Setup fingerprints loaded configuration without storing contents.
 type Setup struct {
-	// Backend is whose files these are; another backend loads other files.
+	// Backend identifies which configuration the adapter loads.
 	Backend string `json:"backend,omitempty"`
-	// Digest covers everything below plus the harness options the backend applies.
+	// Digest includes options that can distinguish otherwise identical runs.
 	Digest string `json:"digest"`
-	// BaseDigest leaves the harness options out, so runs that differ only by
-	// those options share it.
+	// BaseDigest excludes options to group equivalent setups.
 	BaseDigest string `json:"base_digest"`
-	// Files maps each loaded file to its sha256, or to "unreadable", or to
-	// "outside" for a link that leaves its tree; see docs/run-records.md.
+	// Files maps paths to hashes or unreadable/outside markers.
 	Files   map[string]string `json:"files,omitempty"`
 	MCP     []string          `json:"mcp,omitempty"`
 	Plugins []string          `json:"plugins,omitempty"`
 	Skills  []string          `json:"skills,omitempty"`
-	// Truncated is set when the file cap stopped the scan.
+	// Truncated warns that setup identity is incomplete.
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-// setupHome is the user's home directory; tests replace it.
 var setupHome = os.UserHomeDir
 
 const (
@@ -50,8 +45,7 @@ const (
 	fileOutsideTree = "outside"
 )
 
-// ResolveSetup reads the setup backend would load for task now. It never
-// fails: what cannot be read is recorded as such.
+// ResolveSetup records unreadable inputs without failing.
 func ResolveSetup(backend string, task Task) *Setup {
 	s := &setupScan{files: map[string]string{}}
 	dir, err := filepath.Abs(task.Dir)
@@ -62,11 +56,9 @@ func ResolveSetup(backend string, task Task) *Setup {
 	home, _ := setupHome()
 	user := func(rel, env, prefix string) setupTree {
 		if d := os.Getenv(env); env != "" && d != "" {
-			// The CLI runs in the workspace, so a relative folder is relative to it.
 			if !filepath.IsAbs(d) {
 				d = filepath.Join(dir, d)
 			}
-			// Its own prefix: an @~/ import still reaches the home folder, a different file.
 			if home == "" || !samePath(d, filepath.Join(home, rel)) {
 				return newSetupTree(d, "$"+env+"/")
 			}
@@ -92,14 +84,13 @@ func ResolveSetup(backend string, task Task) *Setup {
 		s.file(project, "CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", ".claude/settings.json", ".claude/settings.local.json")
 		s.mdDir(project, ".claude/rules")
 		s.skills(project, ".claude/skills")
-		// Claude Code also loads these from every folder above the workspace,
-		// such as the main checkout above a batch worktree.
+		// Claude also loads ancestor instructions above worktrees.
 		up := ""
 		for d := filepath.Dir(project.real); d != filepath.Dir(d); d = filepath.Dir(d) {
 			up += "../"
 			s.file(newSetupTree(d, up), "CLAUDE.md", "CLAUDE.local.md")
 		}
-		// Later settings files override earlier ones, as in Claude Code.
+		// Later files override earlier ones, as in Claude Code.
 		s.plugins(claudeDir.file("settings.json"), project.file(".claude/settings.json"), project.file(".claude/settings.local.json"))
 		s.mcpConfigs(append([]string{filepath.Join(dir, ".mcp.json")}, task.MCP...), true)
 		s.claudeUserMCP(claudeDir, home, dir, project.real)
@@ -125,8 +116,7 @@ func ResolveSetup(backend string, task Task) *Setup {
 	return out
 }
 
-// optionLines are the harness options a backend applies, as digest lines;
-// an option the backend ignores would change the digest and nothing else.
+// Ignored options must not distinguish equivalent setups.
 func optionLines(backend string, o Options) []string {
 	var out []string
 	if o.AppendSystemPrompt != "" && (backend == "api" || backend == "claude") {
@@ -153,8 +143,7 @@ func optionLines(backend string, o Options) []string {
 	return out
 }
 
-// WithOptions is s with more option lines in its digest, for an eval
-// variant's brief prefix, which reaches the run only inside its prompt.
+// WithOptions adds digest inputs for prompt-only variants.
 func (s *Setup) WithOptions(lines ...string) *Setup {
 	if s == nil || len(lines) == 0 {
 		return s
@@ -164,7 +153,7 @@ func (s *Setup) WithOptions(lines ...string) *Setup {
 	return &c
 }
 
-// PromptPrefixOption is the option line WithOptions takes for a brief prefix.
+// PromptPrefixOption hashes a brief for WithOptions.
 func PromptPrefixOption(prefix string) string { return "option prompt_prefix " + textHash(prefix) }
 
 func textHash(text string) string {
@@ -172,11 +161,8 @@ func textHash(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// setupTree is a directory the setup is read from, its real path (links
-// resolved), and the prefix its files are recorded under.
 type setupTree struct{ root, real, prefix string }
 
-// file is a file of t, or "" for a tree with no root.
 func (t setupTree) file(rel string) string {
 	if t.root == "" {
 		return ""
@@ -196,7 +182,7 @@ type setupScan struct {
 	files                             map[string]string
 	mcpNames, pluginNames, skillNames []string
 	imports, truncated                bool
-	// home is where an @~/ import resolves.
+	// Home imports resolve outside the project tree.
 	home setupTree
 }
 
@@ -206,8 +192,6 @@ func (s *setupScan) file(t setupTree, names ...string) {
 	}
 }
 
-// add hashes one file of t and, for a Markdown file under imports, the
-// files it imports with @path, as Claude Code does.
 func (s *setupScan) add(t setupTree, rel string, hop int) {
 	if t.root == "" {
 		return
@@ -229,8 +213,7 @@ func (s *setupScan) add(t setupTree, rel string, hop int) {
 		s.files[key] = fileUnreadable
 		return
 	}
-	// A link out of its tree is hashed only when it leads to the same kind of
-	// file, as from a dotfiles checkout: a guessable secret's hash would confirm the guess.
+	// Hash external links only for matching Markdown/JSON files to avoid confirming guessed secrets.
 	if !within(t.real, real) && (filepath.Ext(real) != filepath.Ext(rel) || !slices.Contains([]string{".md", ".json"}, filepath.Ext(rel))) {
 		s.files[key] = fileOutsideTree
 		return
@@ -257,7 +240,6 @@ func (s *setupScan) add(t setupTree, rel string, hop int) {
 			continue
 		}
 		target := filepath.ToSlash(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), filepath.FromSlash(imp)))
-		// Only files of the same tree: a path out of it has no name to be recorded under.
 		if target == ".." || strings.HasPrefix(target, "../") || filepath.IsAbs(imp) || strings.HasPrefix(target, "~") {
 			continue
 		}
@@ -265,7 +247,6 @@ func (s *setupScan) add(t setupTree, rel string, hop int) {
 	}
 }
 
-// samePath compares two spellings of a folder; Windows paths ignore case.
 func samePath(a, b string) bool {
 	a, b = filepath.Clean(filepath.FromSlash(a)), filepath.Clean(filepath.FromSlash(b))
 	if runtime.GOOS == "windows" {
@@ -274,14 +255,11 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
-// within reports whether path is dir or under it.
 func within(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// hashFile streams the file through sha256, keeping its first part when
-// the caller will look for imports in it.
 func hashFile(path string, keepHead bool) (sum, head string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -302,7 +280,6 @@ func hashFile(path string, keepHead bool) (sum, head string, err error) {
 	return hex.EncodeToString(h.Sum(nil)), buf.String(), nil
 }
 
-// importPaths finds the @path imports of a Markdown file, outside code.
 func importPaths(text string) []string {
 	var out []string
 	fenced := false
@@ -323,12 +300,10 @@ func importPaths(text string) []string {
 	return out
 }
 
-// mdDir hashes every Markdown file under dir, as a rules directory loads.
 func (s *setupScan) mdDir(t setupTree, dir string) {
 	if t.root == "" {
 		return
 	}
-	// Linked folders are followed, as Claude Code does; visited stops a loop.
 	visited := map[string]bool{}
 	var walk func(real, rel string)
 	walk = func(real, rel string) {
@@ -362,7 +337,6 @@ func (s *setupScan) mdDir(t setupTree, dir string) {
 	}
 }
 
-// skills records each <dir>/<name>/SKILL.md: the skill's name and its hash.
 func (s *setupScan) skills(t setupTree, dir string) {
 	if t.root == "" {
 		return
@@ -380,8 +354,6 @@ func (s *setupScan) skills(t setupTree, dir string) {
 	}
 }
 
-// plugins records the plugins Claude Code settings files turn on, a later
-// file overriding an earlier one.
 func (s *setupScan) plugins(paths ...string) {
 	on := map[string]bool{}
 	for _, p := range paths {
@@ -407,8 +379,7 @@ func (s *setupScan) plugins(paths ...string) {
 	}
 }
 
-// claudeUserMCP records the servers claude mcp add keeps in .claude.json,
-// user-wide and for this project; only their names are read.
+// claudeUserMCP reads only server names: entries may hold secrets.
 func (s *setupScan) claudeUserMCP(claudeDir setupTree, home string, projects ...string) {
 	path := ""
 	switch {
@@ -447,8 +418,6 @@ func (s *setupScan) claudeUserMCP(claudeDir setupTree, home string, projects ...
 	}
 }
 
-// mcpConfigs records the server names of MCP config files; all of them when
-// the CLI passes every kind through, else only the stdio ones hrn starts.
 func (s *setupScan) mcpConfigs(paths []string, every bool) {
 	for _, p := range paths {
 		servers, skipped, err := mcp.LoadConfig(p)
