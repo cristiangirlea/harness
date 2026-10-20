@@ -13,6 +13,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 // FlowPath is where a batch's live execution events are appended; outside batches/ so that holds only records.
@@ -123,7 +124,7 @@ func FlowOf(res Result, runs map[string]runlog.Record) []flow.Event {
 	for _, t := range res.Tasks {
 		ts := TaskStep(t.ID)
 		out = append(out, at(flow.Event{Time: res.Started, Step: ts, Parent: BatchStep, Kind: flow.KindTask, Task: t.ID,
-			Status: flow.StatusStarted, Name: t.ID, Text: firstLineOf(t.Prompt), Reason: purposeReason(t.Purpose)}))
+			Status: flow.StatusStarted, Name: t.ID, Text: promptLine(t.Prompt), Reason: purposeReason(t.Purpose)}))
 		for i, a := range t.Attempts {
 			n := i + 1
 			as := AttemptStep(t.ID, n)
@@ -135,6 +136,8 @@ func FlowOf(res Result, runs map[string]runlog.Record) []flow.Event {
 				Run: a.RunID, Status: flow.StatusStarted, Name: a.Backend, Reason: attemptReason(t.Attempts, i)}))
 			end := start.Add(a.Result.Duration)
 			for k, g := range a.Gates {
+				out = append(out, at(flow.Event{Time: end, Step: gateStep(t.ID, n, k+1, g), Parent: as, Kind: flow.KindGate,
+					Task: t.ID, Attempt: n, Status: flow.StatusStarted, Name: g.Command}))
 				end = end.Add(g.Duration)
 				st, why := flow.StatusOK, ""
 				if g.ExitCode != 0 {
@@ -273,6 +276,9 @@ func short(sha string) string {
 	}
 	return sha
 }
+
+// promptLine is a task's prompt as one line short enough to scan in a tree.
+func promptLine(p string) string { return tools.OneLine(firstLineOf(p), 160) }
 
 func firstLineOf(s string) string {
 	s = strings.TrimSpace(s)

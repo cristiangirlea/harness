@@ -667,11 +667,11 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	}
 	if ctx.Err() != nil {
 		fw.Emit(flow.Event{Step: TaskStep(t.ID), Parent: BatchStep, Kind: flow.KindTask, Task: t.ID, Status: flow.StatusStarted,
-			Name: t.ID, Text: firstLineOf(t.Prompt), Reason: purposeReason(t.Purpose)})
+			Name: t.ID, Text: promptLine(t.Prompt), Reason: purposeReason(t.Purpose)})
 		return finish(StatusCanceled, "canceled")
 	}
 	fw.Emit(flow.Event{Step: TaskStep(t.ID), Parent: BatchStep, Kind: flow.KindTask, Task: t.ID, Status: flow.StatusStarted,
-		Name: t.ID, Text: firstLineOf(t.Prompt), Reason: purposeReason(t.Purpose)})
+		Name: t.ID, Text: promptLine(t.Prompt), Reason: purposeReason(t.Purpose)})
 	decisions := 0
 	decide := func(st flow.Status, reason string) {
 		decisions++

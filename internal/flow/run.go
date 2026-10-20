@@ -51,8 +51,12 @@ func FromRun(rec runlog.Record, events []agent.Event, parent string) []Event {
 			}
 			c := calls[i]
 			calls = append(calls[:i], calls[i+1:]...)
-			out = append(out, at(Event{Time: e.Time, Step: c.step, Parent: root, Kind: KindTool, Status: resultStatus(e),
-				Text: oneLine(e.Text, 200)}))
+			// The step keeps its call; only a failure's output says more than the run page's evidence link.
+			done := Event{Time: e.Time, Step: c.step, Parent: root, Kind: KindTool, Status: resultStatus(e)}
+			if e.IsError {
+				done.Reason = oneLine(e.Text, 200)
+			}
+			out = append(out, at(done))
 		case agent.EventError:
 			out = append(out, at(Event{Time: e.Time, Step: fmt.Sprintf("%s/error%d", root, len(out)), Parent: root,
 				Kind: KindError, Status: StatusFailed, Text: oneLine(e.Text, 400)}))

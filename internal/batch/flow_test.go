@@ -36,9 +36,9 @@ func legacyBatch(t *testing.T) Result {
 	canceled := runFor(t, "codex", agent.Result{Status: agent.StatusCanceled})
 	res := Result{ID: "20260101-000000-abcdef", Started: time.Now().Add(-time.Hour), Base: "0123456789abcdef", Parallel: 2, Duration: time.Minute,
 		Tasks: []TaskResult{
-			{ID: "fix", Prompt: "fix it\nmore", Purpose: "debug", Status: StatusPass, Commit: "c0ffee", Duration: time.Minute, Attempts: []Attempt{
+			{ID: "fix", Prompt: strings.Repeat("long words ", 40) + "\nmore", Purpose: "debug", Status: StatusPass, Commit: "c0ffee", Duration: time.Minute, Attempts: []Attempt{
 				{Backend: "codex", RunID: failed, Result: agent.Result{Status: agent.StatusOK}, Gates: []GateResult{
-					{Command: "go vet ./...", ExitCode: 0}, {Command: "go test ./...", ExitCode: 1, Output: "--- FAIL: TestX\nFAIL"}}},
+					{Command: "go vet ./...", ExitCode: 0}, {Command: "go test ./...", ExitCode: 1, Output: "--- FAIL: TestX\nFAIL", Duration: 90 * time.Second}}},
 				{Backend: "claude", RunID: passed, Result: agent.Result{Status: agent.StatusOK}, Gates: []GateResult{{Command: "go test ./...", ExitCode: 0}}},
 			}},
 			{ID: "stop", Prompt: "slow", Status: StatusCanceled, Attempts: []Attempt{
@@ -88,6 +88,9 @@ func TestTimelineRebuildsALegacyBatchWithRetriesGatesAndRuns(t *testing.T) {
 	if gate == nil || gate.Status != flow.StatusFailed || gate.Reason != "exited 1" || gate.Text != "FAIL" {
 		t.Fatalf("failing gate = %+v", gate)
 	}
+	if d := gate.Ended.Sub(gate.Started); d != 90*time.Second {
+		t.Errorf("rebuilt gate took %s, want its recorded 1m30s", d)
+	}
 	retry := find(nodes, AttemptStep("fix", 2))
 	if retry == nil || retry.Status != flow.StatusOK || !strings.Contains(retry.Reason, "gate go test ./... exited 1") {
 		t.Fatalf("retry = %+v: want its recorded reason", retry)
@@ -95,6 +98,9 @@ func TestTimelineRebuildsALegacyBatchWithRetriesGatesAndRuns(t *testing.T) {
 	run := find(nodes, AttemptStep("fix", 1)+"/run")
 	if run == nil || len(run.Children) != 1 || run.Children[0].Kind != flow.KindTool {
 		t.Fatalf("the first attempt's run and its tool call must hang under the attempt, got %+v", run)
+	}
+	if fix := find(nodes, TaskStep("fix")); len([]rune(fix.Text)) > 161 {
+		t.Errorf("task line is %d runes: a tree line must stay short", len([]rune(fix.Text)))
 	}
 	if fix := find(nodes, TaskStep("fix")); fix.Status != flow.StatusOK || !strings.Contains(fix.Next, "hrn batch show") {
 		t.Fatalf("task = %+v: want ok with what to do next", fix)

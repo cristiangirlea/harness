@@ -167,6 +167,12 @@ func TestFromRunPairsToolCallsWithResultsAndRecordsTheRoute(t *testing.T) {
 			if c.Status != want[c.Name] {
 				t.Errorf("tool %s = %s, want %s", c.Name, c.Status, want[c.Name])
 			}
+			if c.Name == "shell" && (c.Text != "go test ./..." || c.Reason != "FAIL") {
+				t.Errorf("shell step = %q / %q: keep the call, and give a failure's output as its reason", c.Text, c.Reason)
+			}
+			if c.Name == "read" && (c.Text != "a.go" || c.Reason != "") {
+				t.Errorf("read step = %q / %q: a success keeps its call and adds nothing", c.Text, c.Reason)
+			}
 		}
 		if strings.Contains(c.Text, "private musing") {
 			t.Fatal("thinking must not become a step")
