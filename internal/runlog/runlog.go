@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/route/table"
 )
@@ -38,12 +39,14 @@ func Root() string { return filepath.Join(Home(), "runs") }
 type RoutedBy = table.RoutedBy
 
 type Record struct {
-	RoutedBy *RoutedBy    `json:"routed_by,omitempty"`
-	ID       string       `json:"id"`
-	Backend  string       `json:"backend"`
-	Started  time.Time    `json:"started"`
-	Task     agent.Task   `json:"task"`
-	Result   agent.Result `json:"result"`
+	RoutedBy *RoutedBy `json:"routed_by,omitempty"`
+	ID       string    `json:"id"`
+	// Owner is empty on records written before ownership; owner.Of reads that as the local user.
+	Owner   string       `json:"owner,omitempty"`
+	Backend string       `json:"backend"`
+	Started time.Time    `json:"started"`
+	Task    agent.Task   `json:"task"`
+	Result  agent.Result `json:"result"`
 
 	Continues string `json:"continues,omitempty"`
 	// ContinueRoute is empty (default) or fresh_handover (record-briefed session).
@@ -97,7 +100,7 @@ func create(backend string, task agent.Task, continues, route string, routed ...
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
+	w = &Writer{dir: dir, rec: Record{ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
 		Setup: agent.ResolveSetup(backend, task)}}
 	if len(routed) > 0 && routed[0] != nil {
 		by := *routed[0]
@@ -226,19 +229,37 @@ func writeJSON(path string, v any) error {
 
 // List returns newest runs, capped by positive limit; no result means Done=false.
 func List(limit int) ([]Record, error) {
-	recs, _, err := list(time.Time{}, limit)
+	recs, _, err := list(time.Time{}, limit, nil)
 	return recs, err
+}
+
+// ListFor is List of the runs v may read; others are skipped before they count toward limit.
+func ListFor(v owner.Viewer, limit int) ([]Record, error) {
+	recs, _, err := list(time.Time{}, limit, func(r Record) bool { return v.CanRead(r.Owner) })
+	return recs, err
+}
+
+// LoadFor is Load behind the read decision; a run v may not read is reported as missing.
+func LoadFor(v owner.Viewer, id string) (Record, error) {
+	rec, err := Load(id)
+	if err != nil {
+		return rec, err
+	}
+	if !v.CanRead(rec.Owner) {
+		return Record{}, fmt.Errorf("run %s: %w", id, os.ErrNotExist)
+	}
+	return rec, nil
 }
 
 // ListSince lists recent runs and unreadable counts with a day of clock slack.
 // Ids start with the local start time, so older ones are skipped unopened; callers filter by recorded time.
 func ListSince(since time.Time) ([]Record, int, error) {
-	return list(since, 0)
+	return list(since, 0, nil)
 }
 
 const idTimeLayout = "20060102-150405"
 
-func list(since time.Time, limit int) (recs []Record, unreadable int, err error) {
+func list(since time.Time, limit int, keep func(Record) bool) (recs []Record, unreadable int, err error) {
 	entries, err := os.ReadDir(Root())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, nil
@@ -258,6 +279,9 @@ func list(since time.Time, limit int) (recs []Record, unreadable int, err error)
 		rec, err := Load(e.Name())
 		if err != nil {
 			unreadable++
+			continue
+		}
+		if keep != nil && !keep(rec) {
 			continue
 		}
 		recs = append(recs, rec)

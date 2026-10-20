@@ -29,6 +29,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/gitretry"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -95,7 +96,9 @@ const (
 
 // Result is a saved batch record.
 type Result struct {
-	ID       string        `json:"id"`
+	ID string `json:"id"`
+	// Owner is empty on records written before ownership; owner.Of reads that as the local user.
+	Owner    string        `json:"owner,omitempty"`
 	Started  time.Time     `json:"started"`
 	Dir      string        `json:"dir"`  // repository root
 	Base     string        `json:"base"` // commit every worktree branched from
@@ -478,7 +481,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 
-	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
+	res := Result{ID: runlog.NewID(), Owner: owner.Local(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
 	for i, t := range spec.Tasks {
 		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Purpose: t.Purpose, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
