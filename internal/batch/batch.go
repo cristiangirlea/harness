@@ -1687,8 +1687,18 @@ func commitChanges(wt, branch, message string) (sha, note string, err error) {
 			if err != nil {
 				return "", "", err
 			}
-			// An empty orphan branch has no HEAD commit, so nothing was left behind.
-			commit, _ := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD")
+			commit, err := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD")
+			if err != nil {
+				if head == "" {
+					return "", "", err
+				}
+				// Only a confirmed unborn branch can have no HEAD commit.
+				headRef := "refs/heads/" + head
+				headRefs, refErr := g.stdout(ctx, "for-each-ref", "--format=%(refname)", headRef)
+				if refErr != nil || slices.Contains(strings.Split(headRefs, "\n"), headRef) {
+					return "", "", err
+				}
+			}
 			commit = strings.TrimSpace(commit)
 			if commit != "" && !slices.Contains(strings.Split(refs, "\n"), "refs/heads/"+branch+" "+commit) {
 				return "", "commit " + tools.ShortSHA(commit) + " left in the worktree: " + where, nil
