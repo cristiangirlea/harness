@@ -1,11 +1,7 @@
 // Package purpose says what a run was for (review, debug, implement, ...) from
 // its prompt, with ordered keyword rules: the first rule that matches wins.
-//
-// hrn prompts are long briefs whose later paragraphs mention every keyword
-// ("review the diff", "CI", "deploy"), so only the first two non-blank paragraphs
-// can supply the lead: the second is tried only if no rule matches the first.
-// An instruction after leading label lines ("Repository: hrn") is tried before
-// the paragraph as written. Each lead is lowercased and capped at maxLead bytes.
+// Only a prompt's lead counts, since long briefs mention every keyword later
+// (docs/commands.md, "Declared purpose").
 package purpose
 
 import (
@@ -71,6 +67,15 @@ func Resolve(declared, prompt string) Result {
 	return Classify(prompt)
 }
 
+// Inherited is the purpose a continuation keeps from the run it follows: that
+// run's declaration or classified purpose, "" when it was unknown.
+func Inherited(declared, prompt string) string {
+	if c := Resolve(declared, prompt).Category; c != Unknown {
+		return c
+	}
+	return ""
+}
+
 // Result is a prompt's category and the id of the rule that put it there ("" for
 // unknown). It never carries prompt text.
 type Result struct {
@@ -84,16 +89,32 @@ const maxLead = 600
 type rule struct {
 	id, category string
 	re           *regexp.Regexp
+	// firstSentence keeps a keyword rule off the constraints and context
+	// that follow the instruction ("no docker", "never deploy").
+	firstSentence bool
 }
 
 func r(id, category, expr string) rule {
 	return rule{id: id, category: category, re: regexp.MustCompile(expr)}
 }
 
+func r1(id, category, expr string) rule {
+	return rule{id: id, category: category, re: regexp.MustCompile(expr), firstSentence: true}
+}
+
+// Keyword bounds that keep a branch, file or path name ("ci/pin", "deploy-x",
+// "ci.yml") from counting; a full stop that ends a sentence still bounds.
+const (
+	nameStart = `(?:^|[^\w/\\.-])`
+	nameEnd   = `(?:[^\w/\\.-]|\.(?:\W|$)|$)`
+)
+
 // rules are tried in order. The first is hrn's own reviewer brief; the rest
 // are adapted from classify-sessions rules-v1.
 var rules = []rule{
 	r("review.reviewer-role", "review", `\byou are an? ([a-z-]+,? )*(reviewer|auditor)\b`),
+	// Only at the start: an implement brief often names the review that follows it.
+	r("review.brief", "review", `^(?:(?:final|narrow|short|bounded|focused|independent|read-only|pre-merge|merged-head|exact-head|verification|follow-up|fix-round|confirmation|attacker-style|second|third|security|code)[ ,]+){1,4}(?:review|verification|security read)(?: (?:of|on|for|at|in|with|and|only)\b| ?[(,.:;]|$)|^(?:(?:final|narrow|short|bounded|focused|independent|read-only)[ ,]+){0,4}re-review\b|^verify (?:the (?:newest|latest|fix|fixes|head)|commit)\b|^you are re-?reviewing\b|^continue the review\b`),
 	r("plan.before-code", "plan", `\bbefore (you )?(writing|write|making|changing|touching|implementing) (any )?(code|changes)\b`),
 	r("plan.write-plan", "plan", `\b(give me|write|draft|propose|outline|sketch|prepare|come up with) (me )?(a |an )?([a-z-]+ )?(plan|design|spec|specification|proposal|rfc|roadmap)\b`),
 	r("plan.lead", "plan", `^(plan|design)\b`),
@@ -104,12 +125,12 @@ var rules = []rule{
 	r("debug.error-message", "debug", `\b[a-z]*(error|exception)\s*:|\btraceback\b|\bpanic:|\bstack ?trace\b|\bsegfault\b|\bsegmentation fault\b`),
 	r("research.how-does", "research", `\bhow does\b[^?]*\b(work|works|handle|handles|implement|implements|manage|manages|resolve|resolves|decide|decides|store|stores|load|loads)\b`),
 	r("research.explain", "research", `^(explain|describe|walk me through|tell me about|what is|what are)\b|\bexplain how\b|\bpoint me (at|to)\b`),
-	r("research.compare", "research", `\bcompare\b|\bpros and cons\b|\btrade-?offs?\b|\bdifference between\b|\bshould (i|we) use\b|\b(versus|vs)\b`),
+	r1("research.compare", "research", nameStart+`(?:compare|versus|vs|trade-?offs?)`+nameEnd+`|\bpros and cons\b|\bdifference between\b|\bshould (i|we) use\b`),
 	r("refactor.refactor", "refactor", `\brefactor`),
 	r("refactor.behaviour-preserving", "refactor", `\bno behaviou?r(al)? changes?\b|\bwithout changing (the |its |any )?behaviou?r\b|\bremove (the )?duplication\b|\bdeduplicate\b`),
 	r("refactor.restructure", "refactor", `^(extract|rename|restructure|reorgani[sz]e|split|inline|simplify|clean up|tidy up|consolidate|decouple|modulari[sz]e)\b`),
-	r("ops.ci-container", "ops", `\b(dockerfile|docker|docker-compose|github actions|gitlab ci|ci|pipeline|kubernetes|k8s|helm|terraform|ansible|nginx)\b`),
-	r("ops.deploy-release", "ops", `\b(deploy|deploys|deployment|release|rollback|roll back|provision)\b`),
+	r1("ops.ci-container", "ops", nameStart+`(?:dockerfile|docker|docker-compose|github actions|gitlab ci|ci|pipeline|kubernetes|k8s|helm|terraform|ansible|nginx)`+nameEnd),
+	r1("ops.deploy-release", "ops", nameStart+`(?:deploy|deploys|deployment|release|rollback|roll back|provision)`+nameEnd),
 	r("ops.dependencies", "ops", `\b(upgrade|bump)\b|\bdependenc(y|ies)\b|\blockfile\b|\b(npm|pip|go mod|poetry|yarn|pnpm) (install|update|tidy|audit)\b|\bmakefile\b|\bbuild script\b`),
 	r("test.coverage", "test", `\b(increase|improve|raise|extend|add|boost|expand)\b[^.;]*\bcoverage\b|\bcoverage (on|for|of)\b`),
 	r("test.write-tests", "test", `\b(write|add|create|extend|expand|generate)\b (a |an |some |more |the |new )?([a-z-]+ ){0,2}(tests?|test cases)\b`),
@@ -117,7 +138,7 @@ var rules = []rule{
 	r("debug.fix", "debug", `^(please )?(fix|debug)\b|\b(investigate|diagnose|troubleshoot)\b`),
 	r("debug.symptom", "debug", `\b(is|are|keeps) (broken|failing|crashing|hanging|flaky)\b|\b(crash|crashes|crashed|hangs|regressed|returns the wrong)\b|\b(doesn't|does not|isn't|is not) work(ing)?\b|\bnot working\b|\bstopped working\b`),
 	r("implement.add", "implement", `^(please )?add\b|\badd (a|an|the|support for|new)\b`),
-	r("implement.build", "implement", `^(please )?(implement|create|build|write|introduce|support|make|generate|scaffold|wire up|set up|integrate)\b`),
+	r("implement.build", "implement", `^(please )?(implement|create|build|write|introduce|support|make|generate|scaffold|wire up|set up|integrate)\b|^you are implementing\b`),
 }
 
 // Classify names what a prompt asks for, from its lead: the first of at most
@@ -158,12 +179,62 @@ func match(l string) (Result, bool) {
 	if l == "" {
 		return Result{}, false
 	}
+	first := firstSentence(l)
 	for _, rl := range rules {
-		if rl.re.MatchString(l) {
+		s := l
+		if rl.firstSentence {
+			s = first
+		}
+		if rl.re.MatchString(s) {
 			return Result{Category: rl.category, Rule: rl.id}, true
 		}
 	}
 	return Result{}, false
+}
+
+// firstSentence cuts a lead at the first ".", ";", "?" or "!" before white
+// space, except the full stops of "e.g." and "i.e.".
+func firstSentence(l string) string {
+	for i := 0; i+1 < len(l); i++ {
+		if strings.IndexByte(".;?!", l[i]) < 0 {
+			continue
+		}
+		if r, _ := utf8.DecodeRuneInString(l[i+1:]); !unicode.IsSpace(r) {
+			continue
+		}
+		if abbreviation(l[:i+1]) {
+			continue
+		}
+		return l[:i]
+	}
+	return l
+}
+
+// abbreviation reports whether s ends in a whole "e.g." or "i.e.".
+func abbreviation(s string) bool {
+	if !strings.HasSuffix(s, "e.g.") && !strings.HasSuffix(s, "i.e.") {
+		return false
+	}
+	r, _ := utf8.DecodeLastRuneInString(s[:len(s)-4])
+	return len(s) == 4 || !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '.'
+}
+
+// handover drops a hand-over marker ("## Hand-over", "Hand-over: fix x") from
+// a line, keeping what follows it; false when nothing is left.
+func handover(line string) (string, bool) {
+	rest := strings.TrimLeft(strings.TrimLeft(line, "#"), " \t")
+	for _, marker := range []string{"hand-over", "handover"} {
+		if len(rest) < len(marker) || !strings.EqualFold(rest[:len(marker)], marker) {
+			continue
+		}
+		after := rest[len(marker):]
+		if r, _ := utf8.DecodeRuneInString(after); after != "" && (unicode.IsLetter(r) || unicode.IsNumber(r)) {
+			return line, true
+		}
+		after = strings.TrimLeft(after, " \t.:|*-–—")
+		return after, after != ""
+	}
+	return line, true
 }
 
 // nextLine slices a line without copying or normalizing the remaining prompt.
@@ -201,6 +272,10 @@ func paragraphs(prompt string) []string {
 		var line string
 		line, prompt = nextLine(prompt)
 		line = strings.TrimSpace(line)
+		var keep bool
+		if line, keep = handover(line); !keep {
+			continue
+		}
 		if line == "" {
 			if paragraph.Len() > 0 || lastLabel != "" {
 				result = append(result, strings.TrimSuffix(lastLabel+paragraph.String(), "\n"))

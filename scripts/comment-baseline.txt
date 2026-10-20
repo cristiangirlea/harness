@@ -25,7 +25,6 @@ internal/mcp/config.go	cf018ab867db	7	long
 internal/mcp/protocol.go	5d429b45c41f	7	long
 internal/mcp/server.go	6c1637c73d52	7	long
 internal/purpose/purpose.go	0d4495eb68e1	3	cite
-internal/purpose/purpose.go	d031f2cf1711	8	long
 internal/runlog/prune.go	49c2b7f8deb3	7	long
 internal/update/swap.go	702b2069dfd8	6	long
 internal/watch/bot.go	5bffa170cfee	6	cite,long

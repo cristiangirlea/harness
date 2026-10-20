@@ -612,6 +612,28 @@ func TestRunContinueInheritsThePurposeUnlessTheCallOrHeaderNamesOne(t *testing.T
 	}
 }
 
+func TestRunContinueInheritsAClassifiedPurposeWhenNoneWasDeclared(t *testing.T) {
+	for _, tc := range []struct{ first, want string }{
+		{"Review the diff on this branch.", "review"},
+		{"Hello there.", ""},
+	} {
+		s := connect(t, t.TempDir())
+		first := s.call(t, "run", `{"prompt":"`+tc.first+`","backend":"stub-ask","mode":"auto"}`)
+		id := first.StructuredContent.(map[string]any)["run_id"].(string)
+		if rec, err := runlog.Load(id); err != nil || rec.Task.Purpose != "" {
+			t.Fatalf("%q: an undeclared first run stored purpose %q (%v)", tc.first, rec.Task.Purpose, err)
+		}
+		r := s.call(t, "run", `{"prompt":"now fix what you found","backend":"stub","continue_run_id":"`+id+`"}`)
+		if r.IsError {
+			t.Fatalf("continue: %s", r.Text())
+		}
+		rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string))
+		if err != nil || rec.Task.Purpose != tc.want {
+			t.Errorf("%q: continuation purpose = %q, want %q (%v)", tc.first, rec.Task.Purpose, tc.want, err)
+		}
+	}
+}
+
 func TestRunContinueIgnoresAnInvalidStoredPurpose(t *testing.T) {
 	dir := t.TempDir()
 	s := connect(t, dir)

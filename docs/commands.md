@@ -110,9 +110,20 @@ no prompt text is added, removed or changed. Watch and reports use it before
 falling back to the keyword classifier. An invalid stored `task.purpose` is ignored,
 falling back to a valid header or the classifier.
 
+The classifier reads only the lead of a prompt, because long briefs mention every
+keyword ("review the diff", "CI", "deploy") somewhere later: the first non-blank
+paragraph, and the second only when no rule matches the first, each lowercased and
+capped at 600 bytes. An instruction after leading labels such as `Repository: hrn`
+is tried before the paragraph as written, and hand-over headings such as
+`## Hand-over` are skipped. Its CI, deploy and compare keywords count only in the
+lead's first sentence and never inside a branch, file or path name (`ci/pin`,
+`deploy-x`, `ci.yml`).
+
 A continued run (`hrn run --continue`, or the MCP `run` tool with `continue_run_id`)
-keeps the earlier run's declared purpose when neither `--purpose`/`purpose` nor a
-header names one, as it keeps the mode; a short follow-up such as "now fix what you
+keeps the earlier run's purpose when neither `--purpose`/`purpose` nor a
+header names one, as it keeps the mode: its declared purpose, or else the category
+the classifier gave its prompt (nothing when that was `unknown`), saved in
+`task.purpose` like a declaration. A short follow-up such as "now fix what you
 found" is therefore not re-classified. `hrn exec` takes the same optional `purpose`
 on `start` (see [the exec protocol](exec-protocol.md#start-caller-exactly-one-the-first-line)).
 A batch task's declared purpose shows in `hrn batch show`'s table, the MCP
