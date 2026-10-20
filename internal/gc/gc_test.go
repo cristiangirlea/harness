@@ -1085,6 +1085,7 @@ func TestGCKeepsBatchChangeThatAMergeSettingWouldHide(t *testing.T) {
 		{name: "union", attrs: "notes.txt merge=union\n"},
 		{name: "driver keeping main's side", attrs: "notes.txt merge=keep\n", key: "merge.keep.driver", value: "true"},
 		{name: "merge.default", key: "merge.default", value: "union"},
+		{name: "a driver named text", key: "merge.text.driver", value: "true"},
 		{name: "union on the name main renamed it to", attrs: "*.log merge=union\n", rename: "notes.log"},
 		{name: "union on main but not in the checkout", attrs: "notes.txt merge=union\n", dropCheckout: true},
 		{name: "union only in the checkout", checkout: "notes.txt merge=union\n"},

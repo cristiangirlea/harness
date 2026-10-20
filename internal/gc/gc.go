@@ -1185,8 +1185,11 @@ func mergeChangesNothing(ctx context.Context, facts *repoFacts, head string) boo
 			return false
 		}
 	}
-	// merge.default would pick the driver for files with no merge attribute.
-	merged, err := gitStdout(ctx, facts.repo, source, "-c", "merge.default=text", "merge-tree", "--write-tree", "--no-messages", facts.def, head)
+	// merge.default would pick the driver for files with no merge attribute, a configured one first.
+	if v, err := gitOut(ctx, facts.repo, "config", "--default=", "--get", "merge.default"); err != nil || v != "" {
+		return false
+	}
+	merged, err := gitStdout(ctx, facts.repo, source, "merge-tree", "--write-tree", "--no-messages", facts.def, head)
 	return err == nil && strings.TrimSpace(merged) == tree[2]
 }
 

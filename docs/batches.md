@@ -323,11 +323,11 @@ worktree only on proof that its work is merged:
   changed since their merge base (a rename can move the merge to the other side's path), read
   from the branch's `.gitattributes` (and git's own attribute files) for the merge as well:
   a union or a custom merge driver can settle on the branch's side and make a merge look
-  clean that dropped the task's change. For the same reason the check merges with
-  `merge.default` set to git's plain text merge. The branch's patch ids are read once per
-  merge base in a run, streamed from `git log` so large binaries are not held in memory. Git
-  older than 2.40 has no `patch-id --verbatim`, and the merge check needs Git 2.43 or later;
-  a proof that cannot run keeps the worktree. With `--apply`, hrn deletes the task's
+  clean that dropped the task's change. For the same reason a `merge.default` setting keeps
+  it. The branch's patch ids are read once per merge base in a run, streamed from `git log`
+  so large binaries are not held in memory. Git older than 2.40 has no
+  `patch-id --verbatim`, and the merge check needs Git 2.43 or later; a proof that cannot
+  run keeps the worktree. With `--apply`, hrn deletes the task's
   branch with its worktree, including its own commits and messages; the change itself is
   on the default branch.
 
