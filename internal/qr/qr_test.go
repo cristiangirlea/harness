@@ -46,7 +46,7 @@ func TestTheSmallestVersionThatHoldsTheTextIsChosen(t *testing.T) {
 
 // The fixed parts every reader looks for first.
 func TestACodeHasItsFinderTimingAndFormatPatterns(t *testing.T) {
-	for _, text := range []string{"http://192.168.1.218:8089/", strings.Repeat("x", 150)} {
+	for _, text := range []string{"http://192.168.1.40:8089/", strings.Repeat("x", 150)} {
 		c, err := Encode(text)
 		if err != nil {
 			t.Fatal(err)

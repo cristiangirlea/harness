@@ -19,7 +19,7 @@ func TestSplitCommandLineFollowsTheWindowsRules(t *testing.T) {
 		want []string
 	}{
 		{`hrn.exe watch --lan`, []string{"hrn.exe", "watch", "--lan"}},
-		{`"C:\Program Files\hrn\hrn.exe" watch "--lan=Ethernet 3"`, []string{`C:\Program Files\hrn\hrn.exe`, "watch", "--lan=Ethernet 3"}},
+		{`"C:\Program Files\hrn\hrn.exe" watch "--lan=Local Area Connection"`, []string{`C:\Program Files\hrn\hrn.exe`, "watch", "--lan=Local Area Connection"}},
 		{`hrn mcp --dir "C:\w\my repo\"`, []string{"hrn", "mcp", "--dir", `C:\w\my repo"`}},
 		{`hrn mcp --dir "C:\w\my repo\\"`, []string{"hrn", "mcp", "--dir", `C:\w\my repo\`}},
 		{`hrn run "say \"hi\""`, []string{"hrn", "run", `say "hi"`}},
@@ -77,7 +77,7 @@ func TestSystemProcessesListsThisProcessAndItsChildWithTheirArguments(t *testing
 	copyDir := t.TempDir()
 	child := filepath.Join(copyDir, exe("hrn"))
 	fakeHrn(t, child, "child")
-	cmd := exec.Command(child, "-test.run=^TestHelperSleep$", "--", "watch", "--lan=Ethernet 3", "--addr", "127.0.0.1:1")
+	cmd := exec.Command(child, "-test.run=^TestHelperSleep$", "--", "watch", "--lan=Local Area Connection", "--addr", "127.0.0.1:1")
 	cmd.Env = append(os.Environ(), "HRN_UPDATE_HELPER_SLEEP=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

@@ -184,7 +184,7 @@ Do not mount host homes, host repositories outside the assigned project, Docker/
 
 Use separate process namespaces for trusted coordination and execution. Keep control credentials and API-backend provider keys out of execution-container mounts and environment.
 
-Native CLIs need their own provider credentials inside their execution environment. Scope those to the configured tenant/project/account, document that exposure honestly, and never share the owner's account implicitly across tenants.
+Native CLIs need their own provider credentials inside their execution environment. Scope those to the configured tenant/project/account, document that exposure honestly, and never share an operator's account implicitly across tenants.
 
 Use default-deny network policy with a supporting network-policy implementation. Allow only required DNS, control endpoints, and configured outbound destinations. Implement domain-aware outbound restrictions through a controlled egress proxy or an explicitly configured policy-capable network layer; ordinary NetworkPolicy alone does not enforce arbitrary hostname rules.
 

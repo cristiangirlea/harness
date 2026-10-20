@@ -56,15 +56,15 @@ func mustAsset(name string) string {
 
 func adaLines() []string {
 	backends := []string{"claude", "codex", "gemini", "opencode", "api"}
-	places := []string{"harness", "tidedesk", "jobpilot", "website", "infra", "rendezvous", "commercial"}
+	places := []string{"harness", "demo-api", "web-shop", "docs-site", "notes-app", "cli-tool", "data-pipeline"}
 	tasks := []string{
-		"add the budget guard", "fix the flaky clipboard test", "translate the settings page",
-		"name a batch's runs by their task", "record Ada's voice", "check the licence on startup",
-		"speed up the screen capture", "add a dark theme to the website", "move the gates to bash",
-		"review the security findings", "pin the base images", "look up the employer links",
-		"write the release notes", "tidy the README", "split the rendezvous service",
+		"add the budget guard", "fix the flaky upload test", "translate the settings page",
+		"name a batch's runs by their task", "record Ada's voice", "check the config on startup",
+		"speed up the search page", "add a dark theme to the docs", "move the gates to bash",
+		"review the security findings", "pin the base images", "look up the broken links",
+		"write the release notes", "tidy the README", "split the billing service",
 		"show the cost on the watch page", "retry a failed gate once", "map the whole workflow",
-		"test the keyboard switch", "add German questions", "catch a batch mid-save",
+		"test the login form", "add German translations", "catch a batch mid-save",
 		"warn before the disk fills up", "teach Ada to listen", "make the phone page faster",
 	}
 	minutes := []time.Duration{12 * time.Second, 45 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute,
@@ -84,12 +84,12 @@ func adaLines() []string {
 	place := func(i int) string { return pick(i*3+1, places) }
 	// Record common README examples first using the actual wording functions.
 	_, finished := runEnding("Claude", "harness", agent.Result{Status: agent.StatusOK, Duration: 4 * time.Minute})
-	four := botItem{Kind: "batch", Where: "tidedesk"}
+	four := botItem{Kind: "batch", Where: "demo-api"}
 	for k := 0; k < 4; k++ {
 		four.tasks = append(four.tasks, botTask{What: "fix the flaky test", Status: batch.StatusRunning})
 	}
 	four.tasks[1].Status = batch.StatusPass
-	ended := batch.Result{Dir: "/work/tidedesk", Duration: 12 * time.Minute, Tasks: []batch.TaskResult{
+	ended := batch.Result{Dir: "/work/demo-api", Duration: 12 * time.Minute, Tasks: []batch.TaskResult{
 		{Status: batch.StatusPass}, {Status: batch.StatusPass}, {Status: batch.StatusPass}, {Status: batch.StatusFail}}}
 	_, batchDone := batchEnding(ended)
 	out = append(out,
@@ -98,7 +98,7 @@ func adaLines() []string {
 		taskOf(four, 1), finished, batchDone,
 		statusOf(botSnapshot{items: []botItem{
 			{Who: "Claude", Where: "harness", Doing: "editing bot.go", Going: true},
-			{Who: "a batch of four tasks", Where: "tidedesk", Going: true}}}),
+			{Who: "a batch of four tasks", Where: "demo-api", Going: true}}}),
 	)
 	for i := 0; i < 60; i++ {
 		out = append(out, startedOf(botItem{Kind: "run", Who: who(i), Where: place(i), What: tasks[i%len(tasks)]}))
