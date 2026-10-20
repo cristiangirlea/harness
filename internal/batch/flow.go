@@ -15,8 +15,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// FlowPath is where a batch's live execution events are appended, beside its record.
-func FlowPath(id string) string { return filepath.Join(batchesDir(), id+".flow.jsonl") }
+// FlowPath is where a batch's live execution events are appended; outside batches/ so that holds only records.
+func FlowPath(id string) string { return filepath.Join(runlog.Home(), "batch-flows", id+".jsonl") }
 
 // Step ids are shared by the live writer and the derivation so both build the same tree.
 const BatchStep = "batch"

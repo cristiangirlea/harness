@@ -1,0 +1,177 @@
+package batch
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/cristiangirlea/harness/internal/flow"
+	"github.com/cristiangirlea/harness/internal/owner"
+)
+
+func TestLiveFlowRetryAndGate(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "user:live-flow")
+	dir := initRepo(t)
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-bad", Retry: []string{"wb-ok"},
+		Gate: []string{"exit 0"}, Tasks: []Task{{ID: "retry", Prompt: "first line\nmore"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 {
+		t.Fatal("live flow is empty")
+	}
+	for i := 1; i < len(events); i++ {
+		if events[i].Seq <= events[i-1].Seq {
+			t.Fatalf("sequence is not increasing: %d then %d", events[i-1].Seq, events[i].Seq)
+		}
+	}
+	if res.Owner != "user:live-flow" || events[0].Owner != res.Owner {
+		t.Fatalf("owner = %q, first flow owner = %q", res.Owner, events[0].Owner)
+	}
+	tree := flow.Build(events)
+	if len(tree) == 0 || tree[0].Step != BatchStep {
+		t.Fatalf("flow tree root = %+v", tree)
+	}
+	want := map[string]flow.Status{BatchStep: flow.StatusOK, TaskStep("retry"): flow.StatusOK,
+		AttemptStep("retry", 1): flow.StatusFailed, AttemptStep("retry", 2): flow.StatusOK,
+		GateStep("retry", 2, 1): flow.StatusOK}
+	seen := map[string]flow.Event{}
+	for _, e := range events {
+		seen[e.Step] = e
+	}
+	for step, status := range want {
+		if got := seen[step].Status; got != status {
+			t.Errorf("%s status = %q, want %q", step, got, status)
+		}
+	}
+	if !strings.Contains(seen[TaskStep("retry")+"/route"].Reason, "wb-bad") {
+		t.Errorf("route reason = %q", seen[TaskStep("retry")+"/route"].Reason)
+	}
+	retryDecision := false
+	for _, e := range events {
+		if e.Kind == flow.KindDecision && e.Parent == TaskStep("retry") && strings.Contains(e.Reason, "retrying on wb-ok") {
+			retryDecision = true
+		}
+	}
+	secondReason := ""
+	for _, e := range events {
+		if e.Step == AttemptStep("retry", 2) && e.Reason != "" {
+			secondReason = e.Reason
+		}
+	}
+	if !retryDecision || !strings.Contains(secondReason, "retry on wb-ok because") {
+		t.Errorf("retry decision/reason missing: decision=%v reason=%q", retryDecision, secondReason)
+	}
+}
+
+func TestLiveFlowFailingGate(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := initRepo(t)
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-ok", Gate: []string{"exit 1"},
+		Tasks: []Task{{ID: "badgate", Prompt: "run"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := flow.Event{}
+	for _, e := range events {
+		if e.Step == GateStep("badgate", 1, 1) {
+			last = e
+		}
+	}
+	if last.Status != flow.StatusFailed || !strings.HasPrefix(last.Reason, "exited 1") {
+		t.Fatalf("gate event = %+v", last)
+	}
+}
+
+func TestLiveFlowParallelAndTimeline(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "user:parallel")
+	dir := initRepo(t)
+	res, err := Run(context.Background(), Spec{Dir: dir, Parallel: 2, Backend: "wb-ok", Tasks: []Task{
+		{ID: "one", Prompt: "one"}, {ID: "two", Prompt: "two"},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := map[int64]bool{}
+	for _, e := range events {
+		if seq[e.Seq] {
+			t.Fatalf("duplicate sequence %d", e.Seq)
+		}
+		seq[e.Seq] = true
+	}
+	for _, id := range []string{"one", "two"} {
+		if !hasStep(events, TaskStep(id)) || !hasStep(events, AttemptStep(id, 1)) {
+			t.Errorf("missing subtree for %s", id)
+		}
+	}
+	timeline, err := Timeline(owner.LocalViewer(), res.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range res.Tasks {
+		parent := AttemptStep(tr.ID, 1)
+		if !hasParentStep(timeline, parent+"/run", parent) {
+			t.Errorf("run not nested under %s", parent)
+		}
+	}
+}
+
+func TestLiveFlowCanceledBatch(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := initRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	go func() {
+		<-blockStarted
+		close(started)
+		cancel()
+	}()
+	res, err := Run(ctx, Spec{Dir: dir, Backend: "wb-block", Tasks: []Task{{ID: "cut", Prompt: "wait"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]flow.Status{}
+	for _, e := range events {
+		seen[e.Step] = e.Status
+	}
+	<-started
+	if seen[TaskStep("cut")] != flow.StatusCanceled || seen[BatchStep] != flow.StatusCanceled {
+		t.Fatalf("canceled statuses: task=%q batch=%q", seen[TaskStep("cut")], seen[BatchStep])
+	}
+}
+
+func hasStep(events []flow.Event, step string) bool {
+	for _, e := range events {
+		if e.Step == step {
+			return true
+		}
+	}
+	return false
+}
+
+func hasParentStep(events []flow.Event, step, parent string) bool {
+	for _, e := range events {
+		if e.Step == step && e.Parent == parent {
+			return true
+		}
+	}
+	return false
+}

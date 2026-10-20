@@ -273,7 +273,7 @@ read that crosses an access boundary (the watch server, `hrn flow`) goes through
 `owner.Viewer.CanRead`: the owner reads their records, an admin grant reads all, and anyone else
 is told the record does not exist, so ids cannot be probed.
 
-A batch also appends its execution events to `batches/<id>.flow.jsonl`, one JSON object per
+A batch also appends its execution events to `batch-flows/<id>.jsonl`, one JSON object per
 line. Each event has a version `v` (1), a sequence `seq` that continues when the file is reopened,
 a time `t`, the `owner`, `batch`, `task`, `attempt` and `run` it concerns, a `step` id and its
 `parent`, a `kind` (`batch`, `task`, `slot`, `attempt`, `route`, `decision`, `run`, `tool`, `gate`,
