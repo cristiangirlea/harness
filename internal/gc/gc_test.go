@@ -1041,6 +1041,92 @@ func TestGCRemovesTwoCommitBatchChangeLandedAsOneCommit(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
 
+func TestGCRemovesBatchChangeLandedOverTwoCommits(t *testing.T) {
+	f := newFixture(t)
+	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	f.write(task, "second.txt", "second\n")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "second task commit")
+	saveBatch(t, "split", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land the first file")
+	f.write(f.repo, "second.txt", "second\n")
+	f.write(f.repo, "other.txt", "other work\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land the second file with other work")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Remove, "merging it into origin/main changes nothing")
+}
+
+func TestGCKeepsBatchChangeOfWhichOnlyPartLanded(t *testing.T) {
+	f := newFixture(t)
+	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	f.write(task, "second.txt", "second\n")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "second task commit")
+	saveBatch(t, "part", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land the first file only")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
+// The task drops a line that main rewords: a plain merge conflicts, but these settings keep main's side.
+func TestGCKeepsBatchChangeThatAMergeSettingWouldHide(t *testing.T) {
+	lines := "1\n2\n3\n4\n5\n6\n7\n8\n9\n"
+	for _, c := range []struct {
+		name, attrs, key, value, rename, checkout string
+		dropCheckout                              bool
+	}{
+		{name: "union", attrs: "notes.txt merge=union\n"},
+		{name: "driver keeping main's side", attrs: "notes.txt merge=keep\n", key: "merge.keep.driver", value: "true"},
+		{name: "merge.default", key: "merge.default", value: "union"},
+		{name: "a driver named text", key: "merge.text.driver", value: "true"},
+		{name: "union on the name main renamed it to", attrs: "*.log merge=union\n", rename: "notes.log"},
+		{name: "union on main but not in the checkout", attrs: "notes.txt merge=union\n", dropCheckout: true},
+		{name: "union only in the checkout", checkout: "notes.txt merge=union\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			if c.attrs != "" {
+				f.write(f.repo, ".gitattributes", c.attrs)
+			}
+			f.write(f.repo, "notes.txt", lines+"b\n")
+			git(t, f.repo, "add", ".")
+			git(t, f.repo, "commit", "-q", "-m", "notes")
+			git(t, f.repo, "push", "-q", "origin", "main")
+			if c.key != "" {
+				git(t, f.repo, "config", c.key, c.value)
+			}
+			task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+			git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+			f.write(task, "notes.txt", lines)
+			git(t, task, "commit", "-q", "-am", "task drops b")
+			saveBatch(t, "setting", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+			notes := "notes.txt"
+			if c.rename != "" {
+				git(t, f.repo, "mv", notes, c.rename)
+				notes = c.rename
+			}
+			f.write(f.repo, notes, lines+"c\n")
+			git(t, f.repo, "commit", "-q", "-am", "main rewords b")
+			git(t, f.repo, "push", "-q", "origin", "main")
+			if c.dropCheckout {
+				git(t, f.repo, "rm", "-q", ".gitattributes") // from the index too, where git also reads attributes
+			}
+			if c.checkout != "" {
+				f.write(f.repo, ".gitattributes", c.checkout)
+			}
+
+			wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+		})
+	}
+}
+
 func TestGCRemovesBatchChangeAfterLaterEditToSameFile(t *testing.T) {
 	f := newFixture(t)
 	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
@@ -1057,7 +1143,7 @@ func TestGCRemovesBatchChangeAfterLaterEditToSameFile(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as "+landed[:7])
 }
 
-func TestGCKeepsBatchChangeAtCommitComparisonBound(t *testing.T) {
+func TestGCDecidesByMergingAtTheCommitComparisonBound(t *testing.T) {
 	previous := maxCommits
 	maxCommits = 2
 	t.Cleanup(func() { maxCommits = previous })
@@ -1072,7 +1158,7 @@ func TestGCKeepsBatchChangeAtCommitComparisonBound(t *testing.T) {
 	git(t, f.repo, "commit", "-q", "-m", "later change")
 	git(t, f.repo, "push", "-q", "origin", "main")
 
-	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "merging it into origin/main changes nothing")
 }
 
 func TestGCKeepsBatchChangeThatLandedDifferently(t *testing.T) {
@@ -1156,7 +1242,7 @@ func TestGCComparesBatchChangesWithoutTextconv(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
 
-func TestGCKeepsBatchTasksCombinedIntoOneCommit(t *testing.T) {
+func TestGCRemovesBatchTasksCombinedIntoOneCommit(t *testing.T) {
 	f := newFixture(t)
 	a, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "a"), "hrn/a")
 	b, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "b"), "hrn/b")
@@ -1170,8 +1256,8 @@ func TestGCKeepsBatchTasksCombinedIntoOneCommit(t *testing.T) {
 	git(t, f.repo, "push", "-q", "origin", "main")
 
 	wts := f.scan()
-	wantVerdict(t, find(t, wts, a), Keep, "not on origin/main")
-	wantVerdict(t, find(t, wts, b), Keep, "not on origin/main")
+	wantVerdict(t, find(t, wts, a), Remove, "merging it into origin/main changes nothing")
+	wantVerdict(t, find(t, wts, b), Remove, "merging it into origin/main changes nothing")
 }
 
 func TestGCKeepsBatchTaskWithEmptyDiff(t *testing.T) {
@@ -1291,7 +1377,7 @@ func logPatchIDsWithin(t *testing.T, repo, base string) error {
 	return err
 }
 
-func TestGCKeepsLandedBatchChangeWhenGitLogFails(t *testing.T) {
+func TestGCFallsBackToMergingWhenGitLogFails(t *testing.T) {
 	f := newFixture(t)
 	task := landedTask(t, f)
 
@@ -1300,14 +1386,18 @@ func TestGCKeepsLandedBatchChangeWhenGitLogFails(t *testing.T) {
 		t.Fatalf("logPatchIDs with a bad base: %v, want a git log error", err)
 	}
 
-	// rev-list and merge-base ignore log.* settings, so only git log fails.
+	// rev-list and merge-base ignore log.* settings, so only git log fails;
+	// only merge-tree reads merge.conflictStyle.
 	git(t, f.repo, "config", "log.showRoot", "bogus")
+	git(t, f.repo, "config", "merge.conflictStyle", "bogus")
 	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+	git(t, f.repo, "config", "--unset", "merge.conflictStyle")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "merging it into origin/main changes nothing")
 	git(t, f.repo, "config", "--unset", "log.showRoot")
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
 
-func TestGCKeepsLandedBatchChangeWhenGitPatchIDFails(t *testing.T) {
+func TestGCFallsBackToMergingWhenGitPatchIDFails(t *testing.T) {
 	f := newFixture(t)
 	task := landedTask(t, f)
 	git(t, f.repo, "config", "patchid.stable", "bogus")
@@ -1318,7 +1408,7 @@ func TestGCKeepsLandedBatchChangeWhenGitPatchIDFails(t *testing.T) {
 		t.Fatalf("logPatchIDs with a failing patch-id: %v, want a git patch-id error", err)
 	}
 
-	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "merging it into origin/main changes nothing")
 	git(t, f.repo, "config", "--unset", "patchid.stable")
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
