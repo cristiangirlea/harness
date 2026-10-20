@@ -20,6 +20,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -36,7 +37,8 @@ type Options struct {
 	// The listener remains on loopback and every request needs a valid JWT.
 	Public *PublicAccess
 	// Key is required in X-Hrn-Watch-Key for all non-GET/HEAD requests; empty denies actions.
-	Key string
+	Key         string
+	OwnerEmails []string
 }
 
 // Endpoint is one private network address the page is served on.
@@ -262,6 +264,8 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 	mux.HandleFunc("POST /backends", s.saveBackends)
 	mux.HandleFunc("GET /run/{id}", s.run)
 	mux.HandleFunc("GET /batch/{id}", s.batch)
+	mux.HandleFunc("GET /flow/{id}/json", s.flowJSON)
+	mux.HandleFunc("GET /flow/{id}", s.flowPage)
 	mux.HandleFunc("GET /stream/index", s.streamIndex)
 	mux.HandleFunc("GET /stream/run/{id}", s.streamRun)
 	mux.HandleFunc("GET /stream/batch/{id}", s.streamBatch)
@@ -437,15 +441,19 @@ func (s *server) missing(w http.ResponseWriter, r *http.Request, what string, er
 	}{page{Title: "Not found", Home: s.homeFor(r)}, msg})
 }
 
-func (s *server) lists() lists {
+func (s *server) lists(r *http.Request) lists {
 	var l lists
-	runs, err := runlog.List(s.opt.Runs)
+	who := s.who(r)
+	runs, err := runlog.ListFor(who, s.opt.Runs)
 	if err != nil {
 		msg := "Runs could not be listed."
 		if s.opt.Public == nil {
 			msg = "Runs could not be listed: " + err.Error()
 		}
 		l.Problems = append(l.Problems, msg)
+	}
+	if len(runs) > s.opt.Runs {
+		runs = runs[:s.opt.Runs]
 	}
 	// Derive purpose before shortening prompts; never expose full-path hover titles in shared rows.
 	vw := viewer{home: s.home, system: s.system}
@@ -462,6 +470,13 @@ func (s *server) lists() lists {
 		time.Sleep(50 * time.Millisecond)
 		batches, unreadable, err = s.listBatches()
 	}
+	visible := batches[:0]
+	for _, res := range batches {
+		if who.CanRead(res.Owner) {
+			visible = append(visible, res)
+		}
+	}
+	batches = visible
 	if err != nil {
 		msg := "Batches could not be listed."
 		if s.opt.Public == nil {
@@ -517,7 +532,7 @@ func batchOf(batches []batch.Result) map[string]string {
 }
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
-	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists()}
+	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists(r)}
 	p.Backends = s.backendsCard(w, r)
 	// Keep network discovery links and LAN hints local.
 	if s.fromThisComputer(r) {
@@ -529,6 +544,27 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) viewerOf(r *http.Request) viewer {
 	return viewer{local: s.fromThisComputer(r), home: s.home, system: s.system}
+}
+
+type accessContextKey struct{}
+
+func (s *server) who(r *http.Request) owner.Viewer {
+	if s.opt.Public == nil || s.fromThisComputer(r) {
+		return owner.LocalViewer()
+	}
+	aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter)
+	if aw == nil || aw.email == "" {
+		return owner.Viewer{}
+	}
+	if len(s.opt.OwnerEmails) == 0 {
+		return owner.LocalViewer()
+	}
+	for _, email := range s.opt.OwnerEmails {
+		if strings.EqualFold(strings.TrimSpace(email), aw.email) {
+			return owner.LocalViewer()
+		}
+	}
+	return owner.Viewer{ID: owner.Email(aw.email)}
 }
 
 // Requests via a local LAN address are not loopback and must not receive private local details.
@@ -549,9 +585,19 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
-	f, _, err := NewFollower(r.PathValue("id"), 0)
+	if s.opt.Public != nil {
+		if _, err := runlog.LoadFor(s.who(r), r.PathValue("id")); err != nil {
+			s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
+			return
+		}
+	}
+	f, rec, err := NewFollower(r.PathValue("id"), 0)
 	if err != nil {
 		s.missing(w, r, "Run "+r.PathValue("id"), err)
+		return
+	}
+	if !s.who(r).CanRead(rec.Owner) {
+		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
 	lines, rec, done, err := f.Poll()
@@ -593,7 +639,7 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Batch "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
-	res, err := batch.LoadResult(r.PathValue("id"))
+	res, err := batch.LoadResultFor(s.who(r), r.PathValue("id"))
 	if err != nil {
 		s.missing(w, r, "Batch "+r.PathValue("id"), err)
 		return
@@ -743,7 +789,7 @@ func (s *server) problem(r *http.Request, st *stream, err error) error {
 
 func (s *server) streamIndex(w http.ResponseWriter, r *http.Request) {
 	st := s.startStream(w)
-	s.streamChanges(r, st, 4*s.opt.Poll, func() (any, string, error) { return s.lists(), "", nil }, "lists")
+	s.streamChanges(r, st, 4*s.opt.Poll, func() (any, string, error) { return s.lists(r), "", nil }, "lists")
 }
 
 func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
@@ -752,7 +798,8 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
 	}
-	last, err := batch.LoadResult(id)
+	v := s.who(r)
+	last, err := batch.LoadResultFor(v, id)
 	if err != nil {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
@@ -760,7 +807,7 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 	vw := s.viewerOf(r)
 	st := s.startStream(w)
 	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, string, error) {
-		res, err := batch.LoadResult(id)
+		res, err := batch.LoadResultFor(v, id)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
 			return nil, "", fmt.Errorf("batch %s was removed", id)
@@ -797,7 +844,12 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	f, rec, err := NewFollower(id, cur.off)
+	rec, err := runlog.LoadFor(s.who(r), id)
+	if err != nil {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	f, _, err := NewFollower(id, cur.off)
 	if err != nil {
 		http.Error(w, "run not found", http.StatusNotFound)
 		return

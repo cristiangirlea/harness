@@ -289,7 +289,7 @@ func TestABatchUnreadableOnTheFirstLookThatEndsSince(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
 	first := b.look()
 	// Clearly after the first look: a coarse wall clock may otherwise put a just-now end before it.
 	ended.Duration = time.Since(started) + time.Second
@@ -335,7 +335,7 @@ func TestARunThatWritesAgainIsNotSaidToDoWhatItDidBefore(t *testing.T) {
 			rec := activityRun(t, time.Now(), false)
 			events := filepath.Join(runlog.Root(), rec.ID, "events.jsonl")
 			appendEvent(t, events, agent.Event{Kind: agent.EventToolCall, Tool: "Read", Text: "old.go"})
-			b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+			b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
 			if followed {
 				if b.look(); b.doing[rec.ID] != "reading old.go" {
 					t.Fatalf("doing while running = %q", b.doing[rec.ID])
@@ -371,7 +371,7 @@ func TestABatchUnreadableOnTheFirstLookIsNotAnnouncedAsNew(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, res.ID+".json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
 	first := b.look()
 	if err := batch.SaveResult(res); err != nil {
 		t.Fatal(err)
@@ -397,7 +397,7 @@ func TestTheBotHoldsNoFollowerForAStoppedRunUntilItWritesAgain(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	rec := activityRun(t, time.Now(), false)
 	events := filepath.Join(runlog.Root(), rec.ID, "events.jsonl")
-	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
 	for _, step := range []struct {
 		name string
 		at   time.Time
@@ -413,6 +413,7 @@ func TestTheBotHoldsNoFollowerForAStoppedRunUntilItWritesAgain(t *testing.T) {
 
 func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
 	id := "20261011-110000-cccccc"
 	mk := func(s1, s2 batch.Status, d time.Duration) batch.Result {
 		return batch.Result{ID: id, Started: noon.Add(-time.Hour), Dir: "/repo/harness", Duration: d, Tasks: []batch.TaskResult{
@@ -424,12 +425,14 @@ func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
 	if len(says) != 1 || says[0].Kind != "task" || says[0].Text != "Task one of two in harness passed: add the guard." {
 		t.Fatalf("task: %+v", says)
 	}
-	end := lookAt(nil, []batch.Result{mk(batch.StatusPass, batch.StatusFail, 12*time.Minute)}, nil)
+	failed := mk(batch.StatusPass, batch.StatusFail, 12*time.Minute)
+	failed.Tasks[1].Attempts = []batch.Attempt{{Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1}}}}
+	end := lookAt(nil, []batch.Result{failed}, nil)
 	says = announce(one, end, false)
 	if strings.Join(kinds(says), ",") != "task,failed,status" {
 		t.Fatalf("end: %+v", says)
 	}
-	if says[0].Text != "Task two of two in harness failed: add the budget." || says[1].Text != "The batch in harness is done: one of two tasks passed. It took twelve minutes." {
+	if says[0].Text != "Task two of two in harness failed: add the budget. Gate go test ./... exited 1." || says[1].Text != "Task add the budget failed: gate go test ./... exited 1." {
 		t.Errorf("end: %q / %q", says[0].Text, says[1].Text)
 	}
 	all := lookAt(nil, []batch.Result{mk(batch.StatusPass, batch.StatusPass, 3*time.Minute)}, nil)

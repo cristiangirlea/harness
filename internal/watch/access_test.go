@@ -25,6 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -132,6 +135,40 @@ func (f *accessFixture) requestWithHeaders(h http.Handler, method, path, host, o
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
+}
+
+func TestPublicOwnerEmailAccessIsolatedByVerifiedEmail(t *testing.T) {
+	f := newAccessFixture(t)
+	t.Setenv("HRN_OWNER", "local:test")
+	runID := saveRun(t, "fake", "mine", &agent.Result{Status: agent.StatusOK})
+	batchID := "20261020-120000-aabbcc"
+	saveBatch(t, batch.Result{ID: batchID, Owner: owner.Local(), Started: time.Now()})
+	f.opt.OwnerEmails = []string{"OWNER@example.com"}
+	h := New(context.Background(), f.opt)
+	ownerResp := f.request(h, "/run/"+runID, "harness.example.com", "", f.validToken())
+	if ownerResp.Code != 200 {
+		t.Fatalf("owner: %d", ownerResp.Code)
+	}
+	ownerBatch := f.request(h, "/batch/"+batchID, "harness.example.com", "", f.validToken())
+	if ownerBatch.Code != 200 {
+		t.Fatalf("owner batch: %d", ownerBatch.Code)
+	}
+	for _, path := range []string{"/run/" + runID, "/flow/" + runID, "/flow/" + batchID, "/batch/" + batchID, "/stream/run/" + runID, "/stream/batch/" + batchID} {
+		claims := f.validClaims()
+		claims["email"] = "other@example.com"
+		token := f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
+		resp := f.request(h, path, "harness.example.com", "", token)
+		if resp.Code != http.StatusNotFound || strings.Contains(resp.Body.String(), runID) && !strings.Contains(path, runID) {
+			t.Errorf("%s: %d %s", path, resp.Code, resp.Body)
+		}
+	}
+	claims := f.validClaims()
+	claims["email"] = "other@example.com"
+	token := f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
+	resp := f.request(h, "/", "harness.example.com", "", token)
+	if strings.Contains(resp.Body.String(), runID) || strings.Contains(resp.Body.String(), batchID) {
+		t.Fatal("stranger index listed local records")
+	}
 }
 
 func TestParsePublicAccess(t *testing.T) {

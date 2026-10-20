@@ -59,6 +59,7 @@ type botItem struct {
 
 type botTask struct {
 	ID, What string
+	Reason   string
 	Status   batch.Status
 }
 
@@ -85,7 +86,7 @@ func botLook(runs []runlog.Record, batches []batch.Result, doing map[string]stri
 		}
 		it.Who = "a batch of " + count(len(b.Tasks), "task")
 		for _, t := range b.Tasks {
-			it.tasks = append(it.tasks, botTask{t.ID, taskName(t), t.Status})
+			it.tasks = append(it.tasks, botTask{ID: t.ID, What: taskName(t), Reason: taskReason(t), Status: t.Status})
 			if t.Status == batch.StatusRunning && len(t.Attempts) > 0 {
 				last := t.Attempts[len(t.Attempts)-1]
 				if d := doing[last.RunID]; d != "" {
@@ -190,7 +191,31 @@ func taskOf(it botItem, n int) string {
 	if t.What != "" {
 		text += ": " + t.What
 	}
+	if t.Status == batch.StatusFail && t.Reason != "" {
+		text += ". " + t.Reason
+	}
 	return sentence(text)
+}
+
+func taskReason(t batch.TaskResult) string {
+	for _, a := range t.Attempts {
+		for _, g := range a.Gates {
+			if g.ExitCode != 0 {
+				return "Gate " + g.Command + " exited " + strconv.Itoa(g.ExitCode) + "."
+			}
+		}
+		if a.Error != "" || a.Result.Error != "" {
+			why := a.Error
+			if why == "" {
+				why = a.Result.Error
+			}
+			first, _ := firstLine(why)
+			if first != "" {
+				return "The attempt failed: " + words(first, 16) + "."
+			}
+		}
+	}
+	return ""
 }
 
 func statusOf(s botSnapshot) string {
@@ -256,6 +281,26 @@ func batchEnding(b batch.Result) (kind, text string) {
 	n := len(b.Tasks)
 	head := "The batch" + in(place(b.Dir)) + " is done"
 	took := " It took " + spoken(b.Duration) + "."
+	for _, t := range b.Tasks {
+		if t.Status != batch.StatusFail {
+			continue
+		}
+		for _, a := range t.Attempts {
+			for _, g := range a.Gates {
+				if g.ExitCode != 0 {
+					return "failed", sentence("Task " + taskName(t) + " failed: gate " + g.Command + " exited " + strconv.Itoa(g.ExitCode) + ".")
+				}
+			}
+			if a.Error != "" || a.Result.Error != "" {
+				why := a.Error
+				if why == "" {
+					why = a.Result.Error
+				}
+				first, _ := firstLine(why)
+				return "failed", sentence("Task " + taskName(t) + " failed: " + words(first, 16) + ".")
+			}
+		}
+	}
 	switch {
 	case pass == n && n == 2:
 		return "done", head + ": both tasks passed." + took
@@ -491,6 +536,7 @@ type botPage struct {
 
 type botWatcher struct {
 	s         *server
+	request   *http.Request
 	followers map[string]*Follower
 	doing     map[string]string
 	paused    map[string]int64 // where each stopped run's transcript ended
@@ -500,8 +546,8 @@ type botWatcher struct {
 	late      map[string]bool // batches on disk the first look could not read
 }
 
-func (s *server) newBotWatcher() *botWatcher {
-	return &botWatcher{s: s, followers: map[string]*Follower{}, doing: map[string]string{}, paused: map[string]int64{}, late: map[string]bool{}}
+func (s *server) newBotWatcher(r *http.Request) *botWatcher {
+	return &botWatcher{s: s, request: r, followers: map[string]*Follower{}, doing: map[string]string{}, paused: map[string]int64{}, late: map[string]bool{}}
 }
 
 // Retain unreadable files across Windows renames to avoid false new-batch announcements.
@@ -556,7 +602,8 @@ func unread(batches []batch.Result) map[string]bool {
 }
 
 func (b *botWatcher) look() botSnapshot {
-	runs, _ := runlog.List(b.s.opt.Runs)
+	who := b.s.who(b.request)
+	runs, _ := runlog.ListFor(who, b.s.opt.Runs)
 	// Every batch on disk: an attempt of an old batch is still its run.
 	batches, unreadable, _ := b.s.listBatches()
 	if unreadable > 0 {
@@ -564,6 +611,13 @@ func (b *botWatcher) look() botSnapshot {
 		time.Sleep(50 * time.Millisecond)
 		batches, unreadable, _ = b.s.listBatches()
 	}
+	visible := batches[:0]
+	for _, res := range batches {
+		if who.CanRead(res.Owner) {
+			visible = append(visible, res)
+		}
+	}
+	batches = visible
 	var onDisk map[string]bool
 	if unreadable > 0 {
 		onDisk = unread(batches)
@@ -635,14 +689,14 @@ func (b *botWatcher) stoppedAt(id string) int64 {
 func (s *server) bot(w http.ResponseWriter, r *http.Request) {
 	// The page may ask for the microphone, to listen for its few commands.
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
-	snap := s.newBotWatcher().look()
+	snap := s.newBotWatcher(r).look()
 	s.page(w, http.StatusOK, "bot", botPage{page: page{Title: "Ada", Home: s.homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds, Local: s.fromThisComputer(r)})
 }
 
 // Redact spoken JSON too: it bypasses the page template's masking.
 func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 	st := s.startStream(w)
-	b := s.newBotWatcher()
+	b := s.newBotWatcher(r)
 	var prev botSnapshot
 	first, last := true, ""
 	s.loop(r, st, 4*s.opt.Poll, func() (bool, error) {

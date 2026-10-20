@@ -230,7 +230,7 @@ func statusClass(s string) string {
 		return "ok"
 	case string(batch.StatusRunning), "":
 		return "run"
-	case string(agent.StatusError), string(agent.StatusRefused), string(batch.StatusFail):
+	case string(agent.StatusError), string(agent.StatusRefused), string(batch.StatusFail), "failed":
 		return "bad"
 	}
 	return "warn"
