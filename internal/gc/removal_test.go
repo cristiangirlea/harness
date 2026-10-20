@@ -111,27 +111,32 @@ func submoduleFixture(t *testing.T) (*fixture, string) {
 		t.Fatal(err)
 	}
 	f := &fixture{t: t, root: root, repo: filepath.Join(root, "repo")}
-	git(t, root, "init", "-q", "-b", "main", f.repo)
-	git(t, f.repo, "config", "user.email", "test@example.com")
-	git(t, f.repo, "config", "user.name", "Test")
+	// Detached auto maintenance would still touch the fixture while parallel cases copy it.
+	run := func(dir string, args ...string) {
+		t.Helper()
+		git(t, dir, append([]string{"-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)...)
+	}
+	run(root, "init", "-q", "-b", "main", f.repo)
+	run(f.repo, "config", "user.email", "test@example.com")
+	run(f.repo, "config", "user.name", "Test")
 	f.write(f.repo, "README.md", "parent\n")
-	git(t, f.repo, "add", ".")
-	git(t, f.repo, "commit", "-q", "-m", "init")
+	run(f.repo, "add", ".")
+	run(f.repo, "commit", "-q", "-m", "init")
 	sub := filepath.Join(f.root, "sub")
-	git(t, f.root, "init", "-q", "-b", "main", sub)
-	git(t, sub, "config", "user.email", "test@example.com")
-	git(t, sub, "config", "user.name", "Test")
+	run(f.root, "init", "-q", "-b", "main", sub)
+	run(sub, "config", "user.email", "test@example.com")
+	run(sub, "config", "user.name", "Test")
 	f.write(sub, "README.md", "submodule\n")
 	f.write(sub, ".gitignore", "ignored.txt\n")
-	git(t, sub, "add", ".")
-	git(t, sub, "commit", "-q", "-m", "init")
+	run(sub, "add", ".")
+	run(sub, "commit", "-q", "-m", "init")
 	wt := filepath.Join(root, "wt")
-	git(t, f.repo, "worktree", "add", "-q", "-b", "done", wt)
-	git(t, wt, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "module")
-	git(t, wt, "config", "submodule.module.ignore", "all")
-	git(t, filepath.Join(wt, "module"), "config", "user.name", "Test")
-	git(t, filepath.Join(wt, "module"), "config", "user.email", "test@example.com")
-	git(t, wt, "commit", "-q", "-am", "add submodule")
+	run(f.repo, "worktree", "add", "-q", "-b", "done", wt)
+	run(wt, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "module")
+	run(wt, "config", "submodule.module.ignore", "all")
+	run(filepath.Join(wt, "module"), "config", "user.name", "Test")
+	run(filepath.Join(wt, "module"), "config", "user.email", "test@example.com")
+	run(wt, "commit", "-q", "-am", "add submodule")
 	return f, wt
 }
 

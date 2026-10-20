@@ -18,7 +18,7 @@ const perTokenRefusal = "claude would bill per token"
 
 const appendSystemPromptFlag = "--append-system-prompt"
 
-// ---- claude ---------------------------------------------------------------
+// NewClaudeBackend drives the Claude Code CLI.
 func NewClaudeBackend() *CLIBackend {
 	return &CLIBackend{
 		name: "claude",
@@ -30,7 +30,6 @@ func NewClaudeBackend() *CLIBackend {
 				filepath.Join(home, ".claude", "local", "claude"),
 			}
 			c = append(c, npmShim("claude")...)
-			// The Claude desktop app ships its own Claude Code build.
 			if runtime.GOOS == "windows" {
 				c = append(c, newestVersionDir(appData("Claude", "claude-code"), "claude.exe")...)
 			}
@@ -53,9 +52,7 @@ func NewClaudeBackend() *CLIBackend {
 				a = append(a, "--permission-mode", mode)
 			}
 			if t.IsLean() {
-				// Only the --mcp-config files below. Every setting source still
-				// loads, so the user's rules, hooks and deny rules hold. Not
-				// --bare: it logs in only with an API key, never the subscription.
+				// Limit MCP servers without losing settings or subscription login; --bare requires an API key.
 				a = append(a, "--strict-mcp-config")
 			}
 			if t.CompactWindow != "" {
@@ -170,11 +167,7 @@ type claudeLine struct {
 	} `json:"usage"`
 }
 
-// newClaudeParse is parseClaudeStream for one run. stream-json writes each
-// content block of a message as a line of its own and repeats the message's
-// usage on every one, its output count growing, so the usage event goes out
-// once per message id when its lines end, with the largest output. A nil
-// line is the end of the stream.
+// Message lines repeat usage; emit its largest output once, flushing on nil.
 func newClaudeParse() func([]byte, func(Event), *Result) bool {
 	m := &claudeMessage{seen: map[string]bool{}}
 	return func(line []byte, emit func(Event), res *Result) bool {
@@ -186,8 +179,6 @@ func newClaudeParse() func([]byte, func(Event), *Result) bool {
 	}
 }
 
-// claudeMessage holds the usage of the main-loop message whose lines are
-// still coming.
 type claudeMessage struct {
 	id      string
 	pending *Event
@@ -201,18 +192,13 @@ func (m *claudeMessage) flush(emit func(Event)) {
 	m.id, m.pending = "", nil
 }
 
-// parseClaudeStream reads one line on its own: a line with usage is a usage
-// event, whatever came before.
 func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 	return parseClaudeLine(line, emit, res, nil)
 }
 
 func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessage) bool {
 	var l claudeLine
-	// A field of an unexpected type (a permission_denied system line carries
-	// its message as a string, not an object) leaves the rest of the line
-	// decoded, so it is read like any other; anything else that is not JSON
-	// with a type is plain text.
+	// Permission-denied lines may mistype message; keep other decoded fields.
 	var mistyped *json.UnmarshalTypeError
 	if err := json.Unmarshal(line, &l); (err != nil && !errors.As(err, &mistyped)) || l.Type == "" {
 		return false
@@ -221,7 +207,6 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessag
 	if m != nil && (!mainLoop || l.Message.ID != m.id) {
 		m.flush(emit)
 	}
-	// Every line carries the session id; with --fork-session it is the new one.
 	if l.SessionID != "" {
 		res.Session = l.SessionID
 	}
@@ -242,8 +227,7 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessag
 				Usage: &Usage{ContextTokens: l.CompactMetadata.PreTokens}})
 		}
 	case "assistant", "user":
-		// A sub-agent's turns (under a parent tool call) fill its own context,
-		// not the main loop's: they count in the run's totals only.
+		// Sub-agent usage belongs in run totals, not main-loop context.
 		if mainLoop {
 			u := l.Message.Usage
 			res.ContextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
@@ -290,9 +274,7 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessag
 		res.Status = StatusOK
 		if l.IsError {
 			res.Status = StatusError
-			// The subtype classifies the failure and the result text says what
-			// happened; a login failure arrives as subtype "success" with only
-			// the text. For max_turns the text is the partial answer, not a reason.
+			// Login failures may say success; max_turns text is a partial answer.
 			switch {
 			case l.Subtype == "success" && l.Result != "":
 				res.Error = l.Result

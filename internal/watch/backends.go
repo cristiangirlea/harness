@@ -46,10 +46,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// The card lists backends alphabetically, but the list's order is the
-	// preference order (the carry-on partner, the default's fallback): keep
-	// what was already enabled in its order and append what is new.
-	// An empty list means every backend, so there is nothing to order.
+	// Preserve fallback preference order despite the card's alphabetical display.
 	if had, err := prefs.Load(runlog.Home()); err == nil && len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {
 		var kept []string
 		for _, name := range had.EnabledNames {
@@ -65,8 +62,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		p.EnabledNames = kept
 	}
 	if err := prefs.Save(runlog.Home(), *p); err != nil {
-		// Save validates the default before touching the filesystem. Other
-		// errors may include private paths, so keep them off the page.
+		// Only default-validation errors are safe to show; filesystem errors may expose paths.
 		if p.Default() != "" && (len(p.EnabledNames) == 0 || !p.Enabled(p.Default())) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
@@ -88,8 +84,7 @@ func (s *server) mayChangeBackends(w http.ResponseWriter, r *http.Request) bool 
 		aw, ok := w.(*accessWriter)
 		return ok && aw.email != ""
 	}
-	// A proxy on this computer (a tunnel without --public, a dev proxy) makes
-	// its users look like loopback viewers; a forwarding header gives it away.
+	// Forwarding headers reveal remote viewers hidden behind a loopback proxy.
 	for _, h := range []string{"Forwarded", "X-Forwarded-For", "Cf-Connecting-Ip"} {
 		if r.Header.Get(h) != "" {
 			return false
