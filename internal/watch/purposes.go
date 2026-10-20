@@ -8,28 +8,22 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// purposeCard says what the listed runs were for and what they cost, one row
-// per purpose that occurs and then all of them.
 type purposeCard struct {
-	Scope   string // which runs it covers
-	Partial bool   // some finished run reported no cost
+	Scope   string
+	Partial bool // some finished run reported no cost
 	Rows    []purposeRow
 }
 
-// purposeRow is ready to print. A finished run whose backend reported no cost
-// is not $0: NoCost says how many did not, and while any did not, Cost is a
-// lower bound ("≥") over those that did, or "-" when none did.
+// Missing costs are unknown, not zero: Cost is a lower bound while NoCost is nonzero.
 type purposeRow struct {
 	Purpose               string
 	Runs, Running, Tokens string
 	Cost, NoCost          string
 }
 
-// maxRunUSD is more than any one run costs: a larger CostUSD is a corrupted
-// record, and would overflow the sum in 1e-8 USD units.
+// Reject corrupted costs that could overflow the sum in 1e-8 USD units.
 const maxRunUSD = 1e6
 
-// purposeSum adds up the runs of one row.
 type purposeSum struct {
 	runs, running, noCost int
 	tokens                int64
@@ -84,9 +78,7 @@ func (s purposeSum) row(name string) purposeRow {
 	return r
 }
 
-// lowerBound prints a partial sum of 1e-8 USD units rounded down to four
-// decimals, so that it never claims more than is known; a floored zero is
-// still a number. The sum is exact, so 0.1+0.7 floors to 0.8000, not 0.7999.
+// Floor exact 1e-8 USD units to four decimals so partial totals never overstate known cost.
 func lowerBound(usd int64, estimate bool) string {
 	str := fmt.Sprintf("$%d.%04d", usd/1e8, usd/1e4%1e4)
 	if estimate {
@@ -95,7 +87,6 @@ func lowerBound(usd int64, estimate bool) string {
 	return str
 }
 
-// purposesOf builds the card over the runs the index lists; nil for none.
 func purposesOf(runs []runlog.Record) *purposeCard {
 	if len(runs) == 0 {
 		return nil
