@@ -93,3 +93,22 @@ func TestFlowHidesMissingAndForeignRecords(t *testing.T) {
 		t.Fatalf("foreign run error = %v", err)
 	}
 }
+
+func TestFlowPrintsNoTerminalControlsOrSecretsFromRecords(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("codex", agent.Task{Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "echo \x1b]52;c;cGF5bG9hZA==\x07 done"})
+	if err := w.Close(agent.Result{Status: agent.StatusError, Error: "token=ghp_abcdefghijklmnop1234 \x1b[2J"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdFlow([]string{w.ID()}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(string(out), 0x1b) || strings.Contains(string(out), "ghp_abcdefghijklmnop1234") {
+		t.Fatalf("flow printed a control sequence or a secret: %q", out)
+	}
+}

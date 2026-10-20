@@ -85,13 +85,16 @@ func cmdFlow(args []string) error {
 		return enc.Encode(flowDocument{Version: flow.Version, Events: events, Tree: tree})
 	}
 	if isBatch {
-		fmt.Println(batchSummary(res))
+		fmt.Println(safeFlowText(batchSummary(res)))
 	} else {
-		fmt.Println(runSummary(roots))
+		fmt.Println(safeFlowText(runSummary(roots)))
 	}
 	flow.Walk(tree, func(n *flow.Node, depth int) { printFlowNode(n, depth, *level == "debug") })
 	return nil
 }
+
+// safeFlowText keeps secrets and terminal controls in records out of the terminal.
+func safeFlowText(s string) string { return printable(flow.Redact(s)) }
 
 func flowNotFound(id string) error { return fmt.Errorf("hrn flow: no run or batch %s", id) }
 
@@ -207,12 +210,12 @@ func printFlowNode(n *flow.Node, depth int, debug bool) {
 	if n.Text != "" {
 		label += " — " + n.Text
 	}
-	fmt.Printf("%s%s %s\n", indent, statusMark(n.Status), label)
+	fmt.Printf("%s%s %s\n", indent, statusMark(n.Status), safeFlowText(label))
 	if n.Reason != "" {
-		fmt.Printf("%s  why: %s\n", indent, n.Reason)
+		fmt.Printf("%s  why: %s\n", indent, safeFlowText(n.Reason))
 	}
 	if n.Next != "" {
-		fmt.Printf("%s  next: %s\n", indent, n.Next)
+		fmt.Printf("%s  next: %s\n", indent, safeFlowText(n.Next))
 	}
 }
 

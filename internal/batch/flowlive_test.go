@@ -277,3 +277,35 @@ func flowNodes(roots []*flow.Node) []*flow.Node {
 	flow.Walk(roots, func(n *flow.Node, _ int) { out = append(out, n) })
 	return out
 }
+
+func TestAUserGateNamedProtectEndsAndAWarnOnlyGuardIsInfo(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := initRepo(t)
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-readme", Protect: []string{"README.md"},
+		Gate: []string{"protect check || exit 0"}, Tasks: []Task{{ID: "warned", Prompt: "write"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range flowNodes(flow.Build(live)) {
+		if n.Kind == flow.KindGate && !n.Status.Done() {
+			t.Errorf("gate step %s never ended", n.Step)
+		}
+	}
+	steps := map[string]*flow.Node{}
+	for _, n := range flowNodes(flow.Build(live)) {
+		steps[n.Step] = n
+	}
+	info := steps[AttemptStep("warned", 1)+"/protected"]
+	if info == nil || info.Kind != flow.KindInfo || info.Status != flow.StatusOK || info.Text != "README.md" {
+		t.Fatalf("a guard that only reports must record an info step, got %+v", info)
+	}
+	for _, n := range flowNodes(flow.Build(FlowOf(res, nil))) {
+		if live := steps[n.Step]; live == nil || live.Status != n.Status {
+			t.Errorf("rebuilt step %s (%s) differs from the live flow", n.Step, n.Status)
+		}
+	}
+}

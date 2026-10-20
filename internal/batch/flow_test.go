@@ -168,3 +168,14 @@ func TestRemoveRecordAlsoRemovesTheFlowFile(t *testing.T) {
 		t.Fatalf("flow file left behind: %v", err)
 	}
 }
+
+func TestATaskLineIsMaskedBeforeItIsShortened(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	prompt := strings.Repeat("y", 130) + " git clone https://bob:hunter2secret@example.com/repo"
+	res := Result{ID: "20260101-000000-cccccc", Started: time.Now(), Tasks: []TaskResult{{ID: "t", Prompt: prompt, Status: StatusPass}}}
+	for _, e := range FlowOf(res, nil) {
+		if strings.Contains(e.Text, "hunter2") {
+			t.Fatalf("the cut kept part of a secret: %q", e.Text)
+		}
+	}
+}

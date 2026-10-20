@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -78,12 +79,23 @@ type Event struct {
 
 const maxText = 2000
 
-// Clean masks secrets and bounds text before an event is stored or shown.
+// envSecrets is read once per process; tests replace it.
+var envSecrets = sync.OnceValue(func() *strings.Replacer { return mask.Env(os.Environ()) })
+
+// Redact hides this process's secret environment values and secret-looking text; call it before any cut.
+func Redact(s string) string {
+	if r := envSecrets(); r != nil {
+		s = r.Replace(s)
+	}
+	return mask.Text(s)
+}
+
+// Clean redacts and bounds text before an event is stored or shown.
 func Clean(e Event) Event {
-	e.Name = clip(mask.Text(e.Name), 300)
-	e.Text = clip(mask.Text(e.Text), maxText)
-	e.Reason = clip(mask.Text(e.Reason), maxText)
-	e.Next = clip(mask.Text(e.Next), 500)
+	e.Name = clip(Redact(e.Name), 300)
+	e.Text = clip(Redact(e.Text), maxText)
+	e.Reason = clip(Redact(e.Reason), maxText)
+	e.Next = clip(Redact(e.Next), 500)
 	return e
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -213,5 +214,18 @@ func TestOpenCreatesTheDirectoryItWritesIn(t *testing.T) {
 	w.Emit(Event{Step: "s", Kind: KindInfo})
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAnEnvironmentSecretIsRedactedBeforeACutCanSplitIt(t *testing.T) {
+	secret := "Zq9Vx7Lm2Np4Rt6Wy8"
+	old := envSecrets
+	envSecrets = func() *strings.Replacer { return mask.Env([]string{"SERVICE_TOKEN=" + secret}) }
+	t.Cleanup(func() { envSecrets = old })
+	text := strings.Repeat("z", 190) + " " + secret
+	for _, e := range FromRun(runlog.Record{ID: "r"}, []agent.Event{{Kind: agent.EventToolCall, Tool: "shell", Text: text}}, "") {
+		if strings.Contains(e.Text, secret[:6]) {
+			t.Fatalf("part of an environment secret survived the cut: %q", e.Text)
+		}
 	}
 }

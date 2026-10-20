@@ -278,7 +278,7 @@ func short(sha string) string {
 }
 
 // promptLine is a task's prompt as one line short enough to scan in a tree.
-func promptLine(p string) string { return tools.OneLine(firstLineOf(p), 160) }
+func promptLine(p string) string { return tools.OneLine(flow.Redact(firstLineOf(p)), 160) }
 
 func firstLineOf(s string) string {
 	s = strings.TrimSpace(s)

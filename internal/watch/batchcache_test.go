@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 func TestABatchIsCleanedAgainOnlyWhenItsRecordChanges(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const secret = "Abcdefghijklmnop"
-	s := &server{redact: secretReplacer([]string{"SERVICE_TOKEN=" + secret})}
+	s := &server{redact: mask.Env([]string{"SERVICE_TOKEN=" + secret})}
 	start := time.Now()
 	old := batch.Result{ID: "20261012-170000-abcdef", Started: start.Add(-time.Hour),
 		Tasks: []batch.TaskResult{{ID: "t1", Prompt: secret + " first"}}}

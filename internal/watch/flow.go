@@ -94,10 +94,12 @@ func (s *server) flowPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) cleanFlowEvent(e flow.Event) flow.Event {
 	e = flow.Clean(e)
-	e.Name = s.redact.Replace(e.Name)
-	e.Text = s.redact.Replace(e.Text)
-	e.Reason = s.redact.Replace(e.Reason)
-	e.Next = s.redact.Replace(e.Next)
+	if s.redact != nil {
+		e.Name = s.redact.Replace(e.Name)
+		e.Text = s.redact.Replace(e.Text)
+		e.Reason = s.redact.Replace(e.Reason)
+		e.Next = s.redact.Replace(e.Next)
+	}
 	return e
 }
 

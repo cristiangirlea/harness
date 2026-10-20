@@ -887,6 +887,8 @@ func TestARunPageCaughtWhileTheResultIsWrittenKeepsStreaming(t *testing.T) {
 	if code != 200 || strings.Contains(body, "Finished") || !strings.Contains(body, `data-stream="/stream/run/`+w.ID()+"?after=") {
 		t.Fatalf("status %d; want a running page that streams the rest:\n%s", code, body)
 	}
+	_, stop := openStream(t, srv.URL+"/stream/run/"+w.ID(), "")
+	stop()
 }
 
 // --lan is for the network a phone is on: adapters that are down, loopback

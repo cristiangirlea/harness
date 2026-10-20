@@ -20,6 +20,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -251,7 +252,7 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ()), system: systemFolders()}
+	s := &server{ctx: ctx, opt: opt, redact: mask.Env(os.Environ()), system: systemFolders()}
 	s.home, _ = os.UserHomeDir()
 	if opt.Public != nil {
 		if access == nil {
