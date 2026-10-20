@@ -577,6 +577,12 @@ func decide(ctx context.Context, w *Worktree, e entry, owners map[string]owner, 
 				}
 				return Remove, fmt.Sprintf("batch %s: its change landed on %s as %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"), landed[:7])
 			}
+			if mergeChangesNothing(ctx, facts, w.Head) {
+				if why := walk.linkRisk(); why != "" {
+					return Keep, why
+				}
+				return Remove, fmt.Sprintf("batch %s: merging it into %s changes nothing", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
+			}
 			return Keep, fmt.Sprintf("batch %s: its commit is not on %s", o.id, strings.TrimPrefix(facts.def, "refs/remotes/"))
 		}
 		if why := walk.linkRisk(); why != "" {
@@ -1143,6 +1149,45 @@ func landedBatchChange(ctx context.Context, facts *repoFacts, head string) strin
 		}
 	}
 	return ""
+}
+
+// A change split over several landed commits, or inside a larger one, leaves the merge nothing to do.
+func mergeChangesNothing(ctx context.Context, facts *repoFacts, head string) bool {
+	base, err := gitOut(ctx, facts.repo, "merge-base", head, facts.def)
+	if err != nil || base == "" {
+		return false
+	}
+	trees, err := gitOut(ctx, facts.repo, "rev-parse", base+"^{tree}", head+"^{tree}", facts.def+"^{tree}")
+	tree := strings.Fields(trees)
+	// A task that changed nothing proves nothing.
+	if err != nil || len(tree) != 3 || tree[0] == tree[1] {
+		return false
+	}
+	// A rename moves a content merge to a path that only the other side changed.
+	var paths string
+	for _, tip := range []string{head, facts.def} {
+		changed, err := gitStdout(ctx, facts.repo, "diff", "--no-renames", "--name-only", "-z", base, tip)
+		if err != nil {
+			return false
+		}
+		paths += changed
+	}
+	// A union or custom merge driver can keep the branch's side and hide the task's change;
+	// both commands read attributes from the branch, so this sees what the merge uses.
+	source := "--attr-source=" + facts.def
+	attrs, err := gitStdoutInput(ctx, facts.repo, paths, source, "check-attr", "-z", "--stdin", "merge")
+	fields := strings.Split(attrs, "\x00")
+	if err != nil || len(fields)%3 != 1 {
+		return false
+	}
+	for i := 2; i < len(fields); i += 3 {
+		if fields[i] != "unspecified" {
+			return false
+		}
+	}
+	// merge.default would pick the driver for files with no merge attribute.
+	merged, err := gitStdout(ctx, facts.repo, source, "-c", "merge.default=text", "merge-tree", "--write-tree", "--no-messages", facts.def, head)
+	return err == nil && strings.TrimSpace(merged) == tree[2]
 }
 
 type patchID struct{ id, commit string }
