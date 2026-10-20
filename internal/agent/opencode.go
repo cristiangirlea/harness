@@ -7,15 +7,14 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// ---- opencode -------------------------------------------------------------
+// NewOpencodeBackend drives the OpenCode CLI.
 func NewOpencodeBackend() *CLIBackend {
 	return &CLIBackend{
 		name:       "opencode",
 		mapsModes:  []Mode{ModeYolo},
 		mapsModel:  true,
 		candidates: func() []string { return npmShim("opencode") },
-		// Windows .cmd shims mangle multi-line arguments, so the prompt travels
-		// as an attached file.
+		// Use a prompt file because Windows .cmd shims mangle multiline arguments.
 		args: func(t Task, promptFile string) []string {
 			// The message goes first: -f is an array flag and would swallow it.
 			a := []string{"run", "Follow the instructions in the attached file.", "--format", "json", "--dir", t.Dir}

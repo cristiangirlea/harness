@@ -1,6 +1,4 @@
-// Package agent defines the contract every backend implements: take a Task,
-// stream Events while working, and return a Result. The orchestrator and eval
-// layers are built on this contract, so it stays small and serializable.
+// Package agent defines the shared backend contract.
 package agent
 
 import (
@@ -33,7 +31,7 @@ func ParseMode(s string) (Mode, error) {
 	return "", fmt.Errorf("unknown mode %q (want readonly, ask, auto, yolo)", s)
 }
 
-// ApprovalRequest is raised when a tool call needs a human decision.
+// ApprovalRequest asks for a human tool-call decision.
 type ApprovalRequest struct {
 	Tool    string
 	Summary string
@@ -44,51 +42,40 @@ type Task struct {
 	RetrievalState  *retrieval.Record `json:"-"`
 	RetrievalRepair bool              `json:"-"`
 
-	// Durable is supplied only by trusted execution coordinators. Callers cannot
-	// configure persistence or resume snapshots through task JSON.
+	// Durable accepts trusted coordinator state only.
 	Durable   *DurableExecution `json:"-"`
 	Prompt    string            `json:"prompt"`
 	Purpose   string            `json:"purpose,omitempty"`
 	Dir       string            `json:"dir"`
 	AttemptID string            `json:"attempt_id,omitempty"`
 
-	// Options is everything a caller may set besides the prompt and the
-	// workspace: the one struct the run flags, a batch spec and the MCP run
-	// tool all fill in. Its fields are promoted, so task.Mode reads as before.
+	// Options shares configuration across entry points.
 	Options
 
-	// RunDir is where the api backend saves the conversation, so the run can be
-	// continued later. Callers that hold a runlog.Writer set it to its Dir.
+	// RunDir stores API history for continuation.
 	RunDir string `json:"-"`
 
-	// Resume is a conversation from an earlier run that this one continues.
-	// The api backend seeds its history with it, then appends Prompt.
+	// Resume seeds API history before Prompt.
 	Resume *Conversation `json:"-"`
 
-	// ForkSession is the session id an earlier claude, codex or agy run reported.
-	// The CLI starts from a copy of that session, so the earlier run's own
-	// session stays as it was and the same run can be continued twice.
+	// ForkSession preserves the original CLI session.
 	ForkSession string `json:"fork_session,omitempty"`
 
-	// FixRound marks a run that continues an earlier one; its commit block
-	// asks for every fix in one commit.
+	// FixRound requests one commit for continuation fixes.
 	FixRound bool `json:"-"`
 
-	// Approve decides calls that the mode does not auto-approve. Nil means deny.
+	// Approve defaults to denial when nil.
 	Approve func(ApprovalRequest) bool `json:"-"`
 }
 
-// Conversation is the message history of a finished run, saved next to its
-// transcript so a follow-up can carry on from it. Thinking blocks are bound to
-// the model that produced them, which is why the model is recorded with them.
+// Conversation is a run's saved history; Model is kept because thinking blocks are bound to it.
 type Conversation struct {
 	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
 	Model     string            `json:"model"`
 	Messages  []Message         `json:"messages"`
 }
 
-// Message is one turn of a Conversation: the role and the content blocks
-// exactly as the API returned them. An alias, so other packages can build one.
+// Message aliases an API turn without changing its blocks.
 type Message = apiMessage
 
 type EventKind string
@@ -103,15 +90,11 @@ const (
 	EventSession    EventKind = "session"
 	// EventUsage is one model call's token usage, in Event.Usage.
 	EventUsage EventKind = "usage"
-	// EventCompaction is a compaction the backend reported: Text is what set
-	// it off (auto, manual), Usage.ContextTokens the context before it.
+	// EventCompaction puts its trigger in Text and prior context in Usage.ContextTokens.
 	EventCompaction EventKind = "compaction"
 )
 
-// Usage is the tokens one model call used. ContextTokens is what that call
-// carried: its input including cache reads and writes.
-// Event.Usage carries these counters; UsageMetadata in Result.Usage describes
-// how to interpret the run's totals.
+// Usage records per-call tokens including cached input.
 type Usage struct {
 	Model         string `json:"model,omitempty"`
 	InputTokens   int64  `json:"input_tokens,omitempty"`
@@ -128,13 +111,12 @@ type Event struct {
 	Tool    string          `json:"tool,omitempty"`
 	Input   json.RawMessage `json:"input,omitempty"`
 	IsError bool            `json:"is_error,omitempty"`
-	// Usage holds per-call token counters; Result.Usage holds run-level
-	// UsageMetadata describing how to interpret the totals.
+	// Usage holds per-call counters, unlike Result.Usage.
 	Usage *Usage `json:"usage,omitempty"`
 
-	// Partial marks a streaming fragment. Renderers print it; transcripts skip it.
+	// Partial fragments are rendered but excluded from transcripts.
 	Partial bool `json:"-"`
-	// Streamed marks a complete block whose fragments were already emitted.
+	// Streamed marks blocks whose fragments were already emitted.
 	Streamed bool `json:"-"`
 }
 
@@ -148,23 +130,19 @@ const (
 	StatusTimeout  Status = "timeout" // the task's own deadline passed
 	StatusBudget   Status = "budget"  // a cost or token ceiling was reached
 	StatusCanceled Status = "canceled"
-	// StatusLimited is a claude, codex or agy run stopped by the plan the CLI bills
-	// to: its usage limit was reached. Result.LimitResets says when it lifts.
+	// StatusLimited reports a CLI subscription limit.
 	StatusLimited Status = "limited"
 )
 
 type Result struct {
 	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
-	// Usage describes how to interpret the run's totals (the counts are the fields
-	// above), saved as usage_metadata.
-	// Event.Usage holds per-call token counters of type Usage.
+	// Usage describes the run-level token and cost totals.
 	Usage *UsageMetadata `json:"usage_metadata,omitempty"`
-	// RecoveryRequired is execution evidence for the scheduler, not success or
-	// permission to replay. Orchestration states remain separate from Status.
+	// RecoveryRequired requires reconciliation before replay.
 	RecoveryRequired bool   `json:"recovery_required,omitempty"`
 	Backend          string `json:"backend"`
 	Model            string `json:"model,omitempty"`
-	// ModelReported distinguishes a backend report from a requested/default model.
+	// ModelReported distinguishes actual and requested model names.
 	ModelReported bool   `json:"model_reported,omitempty"`
 	Status        Status `json:"status"`
 	Final         string `json:"final,omitempty"`
@@ -174,25 +152,22 @@ type Result struct {
 	OutputTokens  int64  `json:"output_tokens,omitempty"`
 	CacheRead     int64  `json:"cache_read_tokens,omitempty"`
 	CacheWrite    int64  `json:"cache_write_tokens,omitempty"`
-	// ContextTokens is the last model call's input, including cache reads and
-	// writes. Absent when the backend reports only run totals or no usage.
+	// ContextTokens includes caches for the last call; totals-only reports omit it.
 	ContextTokens int64 `json:"context_tokens,omitempty"`
-	// ToolCalls counts the tool calls the agent made. Run counts event calls for
-	// ordinary backends; durable api checkpoints count committed outcomes.
+	// ToolCalls counts emitted calls or durable committed outcomes.
 	ToolCalls    int           `json:"tool_calls,omitempty"`
 	CostUSD      float64       `json:"cost_usd,omitempty"`
 	CostEstimate bool          `json:"cost_is_estimate,omitempty"`
 	Duration     time.Duration `json:"duration_ns"`
-	// Session is the CLI's own session id (claude, codex), so a follow-up run
-	// can fork it, and a person can open it in that CLI.
+	// Session permits CLI access and continuation.
 	Session string `json:"session,omitempty"`
-	// LimitResets is when a limited run's plan limit lifts, as the CLI said.
-	// Absent when the message gave no time.
+	// LimitResets is absent when the CLI gives no time.
 	LimitResets time.Time `json:"limit_resets,omitzero"`
+	// CLIVersion is the version the CLI recorded for this run.
+	CLIVersion string `json:"cli_version,omitempty"`
 }
 
-// UnmarshalJSON reads a task as written today and as records before 0.3 wrote
-// it, when the timeout was a count of nanoseconds under timeout_ns.
+// UnmarshalJSON also accepts legacy timeout_ns records.
 func (t *Task) UnmarshalJSON(data []byte) error {
 	type plain Task // no methods, so this does not recurse
 	aux := struct {
@@ -208,17 +183,15 @@ func (t *Task) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Backend runs a task. Run never returns a Go error: failures are reported in
-// Result.Status so callers can record and compare every run the same way.
+// Backend reports failures in Result.Status rather than Go errors.
 type Backend interface {
 	Name() string
-	// Detect reports where the backend comes from (binary path, credential source)
-	// or why it cannot run.
+	// Detect reports the backend source or unavailability.
 	Detect() (string, error)
 	Run(ctx context.Context, task Task, emit func(Event)) Result
 }
 
-// Capabilities describes the task fields a backend can enforce for a supervisor.
+// Capabilities describes options enforceable by a supervisor.
 type Capabilities struct {
 	Modes     []Mode   `json:"modes"`
 	Efforts   []string `json:"efforts"`
@@ -276,12 +249,9 @@ func Names() []string {
 	return names
 }
 
-// Run runs a task on a backend and counts the tool calls it makes. Callers use
-// it rather than Backend.Run so the count does not depend on each adapter
-// remembering to keep one.
+// Run is what callers use instead of Backend.Run: it enforces the guard and counts tool calls.
 func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
-	// Every entry point validates options first; this holds for one that
-	// does not.
+	// Entry points validate first; this catches one that does not.
 	if task.AllowDangerous && tools.Guarded() {
 		emit(Event{Time: time.Now(), Kind: EventError, Text: ErrGuardedRun.Error()})
 		return Result{Backend: b.Name(), Status: StatusRefused, Error: ErrGuardedRun.Error()}
@@ -318,7 +288,7 @@ func finish(res *Result, started time.Time) Result {
 // Version is reported to MCP peers as the hrn version.
 const Version = "0.2.0"
 
-// DefaultBackendName is api when API credentials exist, otherwise claude.
+// DefaultBackendName prefers API credentials, otherwise claude.
 func DefaultBackendName() string {
 	if b, ok := registry["api"]; ok {
 		if _, err := b.Detect(); err == nil {
@@ -331,8 +301,7 @@ func DefaultBackendName() string {
 // MinTaskBudget is the smallest task budget the API accepts.
 const MinTaskBudget = 20000
 
-// ValidateLimits rejects limits the API or hrn would refuse, where the values
-// are typed rather than after an agent has already started.
+// ValidateLimits rejects unsupported execution limits.
 func ValidateLimits(timeout time.Duration, maxCostUSD float64, taskBudget int) error {
 	if timeout < 0 {
 		return fmt.Errorf("timeout %s is negative", timeout)
@@ -346,9 +315,7 @@ func ValidateLimits(timeout time.Duration, maxCostUSD float64, taskBudget int) e
 	return nil
 }
 
-// withTimeout applies the task's own deadline. The backends do this rather
-// than their callers, so every caller gets it and every other Task field is
-// honoured in the same place.
+// Enforce deadlines in each backend so every caller gets the same limit.
 func withTimeout(ctx context.Context, task Task) (context.Context, context.CancelFunc) {
 	if task.Timeout <= 0 {
 		return context.WithCancel(ctx)
@@ -356,7 +323,6 @@ func withTimeout(ctx context.Context, task Task) (context.Context, context.Cance
 	return context.WithTimeout(ctx, time.Duration(task.Timeout))
 }
 
-// stopStatus reports why a context ended: the task's deadline, or a cancel.
 func stopStatus(ctx context.Context) Status {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return StatusTimeout
@@ -364,8 +330,7 @@ func stopStatus(ctx context.Context) Status {
 	return StatusCanceled
 }
 
-// AppliesLean reports whether b honours Options.Lean, so that a batch makes
-// lean its default only where it takes effect.
+// AppliesLean reports whether b honours Options.Lean.
 func AppliesLean(b Backend) bool {
 	l, ok := b.(interface{ AppliesLean() bool })
 	return ok && l.AppliesLean()
@@ -383,7 +348,6 @@ func AppliesNoSkills(b Backend) bool {
 	return ok && s.AppliesNoSkills()
 }
 
-// unenforced names the options a CLI backend cannot apply, for one warning line.
 func unenforced(task Task, c *CLIBackend) []string {
 	var out []string
 	if task.MaxCostUSD > 0 {

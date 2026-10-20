@@ -24,9 +24,8 @@ var originalHandle = regexp.MustCompile(`^[0-9a-f]{16}$`)
 var originalRange = regexp.MustCompile(`^(\d+)-(\d+)$`)
 var pointerIndex = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
-// Serialize the collision check and publication, so concurrent tool results
-// cannot replace each other's hash-named files. It also guards the sizes a
-// Workspace keeps of the originals already stored.
+// Serialize the collision check and publication so concurrent results cannot replace each other's files;
+// it also guards the Workspace's counts of stored bytes.
 var originalWrites sync.Mutex
 
 // The store refuses past these caps instead of evicting, so a handle already
@@ -56,8 +55,7 @@ func (w *Workspace) toolOutput(text string) string {
 	return fmt.Sprintf("%s\noriginal: %s (%d bytes); read_original reads it", summary, handle, len(text))
 }
 
-// Root keeps links inside the record directory; the second root also confines
-// reads and writes to originals, even if a hash-named file is replaced by a link.
+// The second root confines replaced-file links to originals too.
 func (w *Workspace) originals(create bool) (*os.Root, error) {
 	if w == nil || w.RunDir == "" {
 		return nil, fmt.Errorf("run has no record directory")
@@ -281,7 +279,7 @@ func readOwnOriginal(root *os.Root, name, handle string, limit int64) (string, b
 	return string(data), true
 }
 
-// ReadOriginal is added to the API tool set only when shaping is enabled.
+// ReadOriginal supplies saved output for shaping.
 func ReadOriginal() Tool {
 	type in struct {
 		Handle  string `json:"handle"`

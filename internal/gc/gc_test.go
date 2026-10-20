@@ -99,7 +99,8 @@ func buildTemplate() (string, error) {
 	}
 	origin, repo := filepath.Join(dir, "origin.git"), filepath.Join(dir, "repo")
 	run := func(dir string, args ...string) error {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		// Detached auto maintenance would still touch the template while tests copy it.
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)...)
 		cmd.Env = cleanEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git %v: %v\n%s", args, err, out)
@@ -126,7 +127,8 @@ func buildTemplate() (string, error) {
 		{repo, "add", "."},
 		{repo, "commit", "-q", "-m", "init"},
 		{repo, "remote", "add", "origin", origin},
-		{repo, "push", "-q", "origin", "main"},
+		// The local transport drops -c, so the receiver gets the settings itself.
+		{repo, "push", "-q", "--receive-pack=git -c maintenance.auto=false -c gc.auto=0 receive-pack", "origin", "main"},
 		{repo, "remote", "set-head", "origin", "main"},
 	}
 	for _, s := range steps {
@@ -135,6 +137,49 @@ func buildTemplate() (string, error) {
 		}
 	}
 	return dir, nil
+}
+
+func TestGCFixtureBuildsStartNoAutoMaintenance(t *testing.T) {
+	trace := filepath.Join(t.TempDir(), "trace")
+	t.Setenv("GIT_TRACE", trace)
+	dir, err := buildTemplate()
+	defer os.RemoveAll(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, _ := submoduleFixture(t)
+	out, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only a traced receiver proves the push's own maintenance is covered.
+	if !strings.Contains(string(out), "built-in: git receive-pack") {
+		t.Fatalf("the trace holds no receive-pack, so the receiver went unchecked:\n%s", out)
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if strings.Contains(line, "maintenance run") || strings.Contains(line, "gc --auto") {
+			t.Errorf("a fixture build started git's auto maintenance: %s", line)
+		}
+	}
+	// The copies must keep git's defaults, so the settings never reach a config file.
+	for _, root := range []string{dir, f.root} {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || d.Name() != "config" {
+				return err
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(body), "[maintenance]") || strings.Contains(string(body), "[gc]") {
+				t.Errorf("%s holds maintenance settings:\n%s", path, body)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func newFixture(t *testing.T) *fixture {

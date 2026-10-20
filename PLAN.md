@@ -770,6 +770,15 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   the owner approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-19: the gc and batch test packages build their git fixture once per test binary and
+  copy it per test (#310, PR #598; #333, PR #599). Under memory pressure a process start on the
+  owner's PC costs seconds or fails ("The paging file is too small"), and the old fixtures spent
+  nine and five git processes per test; the gc fixture repoints its origin with one git call, the
+  batch one needs none, and both builds drop GIT_* from the environment so the first test cannot
+  bake its settings in. The check commands carry `-timeout 40m` so a slow package fails with a
+  readable dump. What remains is the git work of the code under test, so the full suite still
+  needs a quiet machine here: it passed in 17 minutes idle and was killed at 40 in gc beside other
+  sessions' test binaries.
 - 2026-10-19: an attempt records when its agent moved its branch or HEAD with git (#592, PR #597).
   hrn-evals cell `fbc00.fix-sum.luna-low.r1` ran `git commit` against its prompt and nothing said
   so. `runAttempt` reads the branch tip and HEAD just before and after the agent runs and sets

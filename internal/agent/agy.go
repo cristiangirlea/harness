@@ -55,7 +55,7 @@ func NewAgyBackend() *CLIBackend {
 		},
 		newParse: newAgyParse,
 		end:      agyStreamEnded,
-		// The continuation hook is shared with forking CLIs; agy resumes in place.
+		// Agy uses the fork hook but resumes its session in place.
 		forks:          true,
 		resumesInPlace: true,
 		mapsModes:      []Mode{ModeReadOnly, ModeAuto, ModeYolo},
@@ -127,7 +127,6 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 					res.Final = answer.String()
 				}
 			}
-			// A finished step's usage stands only until the result's totals arrive.
 			if l.Step.State == "DONE" && l.Step.Usage != nil {
 				u := l.Step.Usage
 				res.addUsage("exclusive_cache", u.InputTokens, u.OutputTokens, u.CacheRead, 0)
@@ -140,7 +139,6 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 			if r.Model != "" {
 				model = r.Model
 			}
-			// A result without a response keeps the streamed answer.
 			if r.Response != "" {
 				res.Final = r.Response
 			}
@@ -171,8 +169,7 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 	}
 }
 
-// agyStreamEnded runs when agy exited clean. Without a result event the run
-// keeps its streamed answer, but the finished steps' usage is all it has.
+// Without a result event, only finished steps supply usage.
 func agyStreamEnded(emit func(Event), res *Result, _ bool) {
 	if res.Status != "" {
 		return

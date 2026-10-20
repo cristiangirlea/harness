@@ -12,9 +12,7 @@ import (
 	"unsafe"
 )
 
-// A Job Object holds the command and every process it starts, whatever their
-// parent chain looks like: Git Bash forks and execs in a way that leaves the
-// real command without a stable parent, so taskkill /T misses it.
+// A Job Object holds every descendant; taskkill /T misses Git Bash's re-parented ones.
 var (
 	kernel32                      = syscall.NewLazyDLL("kernel32.dll")
 	procCreateJobObjectW          = kernel32.NewProc("CreateJobObjectW")
@@ -66,7 +64,7 @@ type jobObjectExtendedLimitInformation struct {
 	PeakJobMemoryUsed     uintptr
 }
 
-// Tree holds the Job Object containing a command and its descendants.
+// Tree holds a command's descendant job.
 type Tree struct {
 	mu            sync.Mutex
 	job           syscall.Handle
@@ -74,10 +72,8 @@ type Tree struct {
 	startWarnings []string
 }
 
-// StartTree starts cmd suspended, assigns it to a kill-on-close job, then
-// resumes its initial thread. If the job is unavailable, Contained is false
-// and cancellation falls back to taskkill /T and then killing the process.
-// The caller must Wait on cmd and Close the tree.
+// StartTree assigns a kill-on-close job before resuming cmd.
+// Wait and Close are required; failed assignment leaves taskkill fallback.
 func StartTree(cmd *exec.Cmd) (*Tree, error) {
 	t := &Tree{}
 	if h, _, _ := procCreateJobObjectW.Call(0, 0); h != 0 {
@@ -94,9 +90,7 @@ func StartTree(cmd *exec.Cmd) (*Tree, error) {
 }
 
 func startTree(cmd *exec.Cmd, t *Tree) (*Tree, error) {
-	// CommandContext's watcher can cancel as soon as Start returns. Hold the
-	// lock through assignment and resume so it cannot kill an empty job and
-	// then let the newly assigned process run.
+	// Lock until resume: cancellation could kill an empty job.
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if cmd.Cancel != nil {
@@ -132,10 +126,10 @@ func startTree(cmd *exec.Cmd, t *Tree) (*Tree, error) {
 	if err := resumeInitialThread(uint32(cmd.Process.Pid), func(err error) {
 		t.startWarnings = append(t.startWarnings, err.Error())
 	}); err != nil {
-		// Never leave a suspended process behind on a failed start.
+		// Failed starts must not leave suspended processes.
 		t.close()
 		_ = cmd.Process.Kill()
-		// Wait can wait for the cancellation watcher, which takes our lock.
+		// Wait's cancellation watcher needs this lock.
 		t.mu.Unlock()
 		_ = cmd.Wait()
 		t.mu.Lock()
@@ -150,11 +144,7 @@ type threadEntry32 struct {
 	Flags                                 uint32
 }
 
-// resumeInitialThread resumes the suspended process. A process created
-// suspended has one thread, but another program (security software, a
-// debugger) may have added one before this runs, and the snapshot does not say
-// which is the initial thread. So every thread of the process is resumed:
-// resuming a thread that was not suspended changes nothing.
+// Another program may add threads and the snapshot cannot name the initial one: resume all; running ones are unaffected.
 func resumeInitialThread(pid uint32, warning func(error)) error {
 	return resumeInitialThreadWith(pid, resumeThread, warning)
 }
@@ -172,8 +162,7 @@ func resumeInitialThreadWith(pid uint32, resume func(uint32) error, warning func
 	for ok != 0 {
 		if entry.OwnerProcessID == pid {
 			if err := resume(entry.ThreadID); err != nil {
-				// An injected thread may exit after the snapshot or deny
-				// access. Keep trying the other threads of the process.
+				// Injection may vanish/deny access; try other threads.
 				resumeErr = err
 				if warning != nil {
 					warning(fmt.Errorf("resume process %d thread %d: %w", pid, entry.ThreadID, err))
@@ -206,8 +195,7 @@ func resumeThread(id uint32) error {
 	return nil
 }
 
-// Close releases the job; with kill-on-close set, anything the command left
-// running in the background ends here.
+// Close releases the job, killing surviving descendants.
 func (t *Tree) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -221,24 +209,21 @@ func (t *Tree) close() {
 	}
 }
 
-// Contained reports whether job assignment succeeded.
+// Contained reports job assignment.
 func (t *Tree) Contained() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.contained
 }
 
-// StartWarnings reports per-thread failures even when another thread resumed.
-// These explain a possible suspended initial thread without failing the start.
+// StartWarnings reports possibly incomplete initial-thread resume.
 func (t *Tree) StartWarnings() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]string(nil), t.startWarnings...)
 }
 
-// Kill terminates every process in the job, even after the command has exited.
-// Without a job the tree cannot be killed reliably; context cancellation still
-// attempts the taskkill fallback.
+// Kill kills even leaderless jobs; only cancellation falls back to taskkill.
 func (t *Tree) Kill() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -257,8 +242,7 @@ type jobObjectBasicAccountingInformation struct {
 	TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses uint32
 }
 
-// WaitGone polls the job's active process count before Close releases its handle.
-// An unavailable or closed job cannot prove that descendants have stopped.
+// WaitGone verifies exit before Close; missing jobs cannot.
 func (t *Tree) WaitGone(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
