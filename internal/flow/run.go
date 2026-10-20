@@ -23,7 +23,7 @@ func FromRun(rec runlog.Record, events []agent.Event, parent string) []Event {
 	base := Event{Owner: rec.Owner, Run: rec.ID, Derived: true}
 	at := func(e Event) Event {
 		e.Owner, e.Run, e.Derived = base.Owner, base.Run, true
-		return e
+		return Clean(e)
 	}
 	out := []Event{at(Event{Time: rec.Started, Step: root, Parent: parent, Kind: KindRun, Status: StatusStarted,
 		Name: rec.Backend, Text: firstLine(rec.Task.Prompt), Reason: routeReason(rec)})}

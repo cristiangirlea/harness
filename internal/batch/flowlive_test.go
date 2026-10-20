@@ -175,3 +175,29 @@ func hasParentStep(events []flow.Event, step, parent string) bool {
 	}
 	return false
 }
+
+func TestLiveFlowEndsAnAttemptOnlyAfterItsGates(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := initRepo(t)
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-ok", Gate: []string{"exit 0", "exit 0"},
+		Tasks: []Task{{ID: "gated", Prompt: "write"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lastGate, firstEnd int64
+	for _, e := range events {
+		if strings.HasPrefix(e.Step, AttemptStep("gated", 1)+"/gate") && e.Status.Done() {
+			lastGate = e.Seq
+		}
+		if e.Step == AttemptStep("gated", 1) && e.Status.Done() && firstEnd == 0 {
+			firstEnd = e.Seq
+		}
+	}
+	if lastGate == 0 || firstEnd < lastGate {
+		t.Fatalf("attempt ended at seq %d before its last gate at %d: a live viewer would see it done while gates run", firstEnd, lastGate)
+	}
+}

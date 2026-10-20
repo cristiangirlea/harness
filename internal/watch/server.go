@@ -585,19 +585,14 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
-	if s.opt.Public != nil {
-		if _, err := runlog.LoadFor(s.who(r), r.PathValue("id")); err != nil {
-			s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
-			return
-		}
+	// Check first so a foreign record answers exactly like a missing one.
+	if _, err := runlog.LoadFor(s.who(r), r.PathValue("id")); err != nil {
+		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
+		return
 	}
 	f, rec, err := NewFollower(r.PathValue("id"), 0)
 	if err != nil {
 		s.missing(w, r, "Run "+r.PathValue("id"), err)
-		return
-	}
-	if !s.who(r).CanRead(rec.Owner) {
-		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
 	lines, rec, done, err := f.Poll()

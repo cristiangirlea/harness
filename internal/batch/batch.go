@@ -672,6 +672,12 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 	}
 	fw.Emit(flow.Event{Step: TaskStep(t.ID), Parent: BatchStep, Kind: flow.KindTask, Task: t.ID, Status: flow.StatusStarted,
 		Name: t.ID, Text: firstLineOf(t.Prompt), Reason: purposeReason(t.Purpose)})
+	decisions := 0
+	decide := func(st flow.Status, reason string) {
+		decisions++
+		fw.Emit(flow.Event{Step: fmt.Sprintf("%s/d%d", TaskStep(t.ID), decisions), Parent: TaskStep(t.ID), Kind: flow.KindDecision,
+			Task: t.ID, Status: st, Reason: reason})
+	}
 
 	opts := t.Options.Over(spec.Options)
 	backend := firstOf(t.Backend, spec.Backend)
@@ -685,7 +691,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		if routedBy.Declared {
 			mode = "declared"
 		}
-		routeReason = fmt.Sprintf("route category %s, %s, set %s, eval %s", routedBy.Category, mode, routedBy.Set, routedBy.Eval)
+		routeReason = fmt.Sprintf("route category %s, %s, set by %s", routedBy.Category, mode, routedBy.Set)
+		if routedBy.Eval != "" {
+			routeReason += ", from eval " + routedBy.Eval
+		}
 	}
 	fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/route", Parent: TaskStep(t.ID), Kind: flow.KindRoute, Task: t.ID,
 		Status: flow.StatusOK, Name: backend, Reason: routeReason})
@@ -738,7 +747,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			if bothOut {
 				outOfPlans = why
 				text := "skipping an attempt on " + name + ": " + why
-				fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/decision-" + strconv.Itoa(len(tr.Attempts)+i+1), Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Status: flow.StatusSkipped, Reason: text})
+				decide(flow.StatusSkipped, text)
 				notify(Event{Task: t.ID, Kind: "switch", Text: text})
 				continue
 			}
@@ -748,15 +757,15 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					bound = task.RetrievalState.Scope.Backend
 				}
 				tr.Error = pinnedSwitch(name, pick, bound)
-				fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/decision-pinned-switch", Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Status: flow.StatusSkipped, Reason: tr.Error})
+				decide(flow.StatusSkipped, tr.Error)
 				return finish(StatusFail, "limited: "+tr.Error)
 			}
 			if pick != name {
 				plan.switchedFrom, name = name, pick
-				fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/decision-switch-" + strconv.Itoa(len(tr.Attempts)+i+1), Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Reason: why})
+				decide(flow.StatusOK, why)
 				notify(Event{Task: t.ID, Kind: "switch", Text: why})
 			} else if why != "" {
-				fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/decision-info-" + strconv.Itoa(len(tr.Attempts)+i+1), Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Reason: why})
+				decide(flow.StatusOK, why)
 				notify(Event{Task: t.ID, Kind: "info", Text: why})
 			}
 		}
@@ -779,7 +788,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 				verb = fmt.Sprintf("%s reached its usage limit; carrying on on %s", plan.switchedFrom, name)
 			}
 			text = fmt.Sprintf("%s (%s)", verb, where)
-			fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/decision-retry-" + strconv.Itoa(len(tr.Attempts)+1), Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Reason: text})
+			decide(flow.StatusOK, text)
 			notify(Event{Task: t.ID, Kind: "retry", Text: text})
 		}
 		plan.commit = t.ID + ": " + tools.OneLine(t.Prompt, 60)
@@ -898,7 +907,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			spent[att.Backend] = true
 			if err := limits.Note(att.Backend, att.Result); err != nil {
 				text := "the limit was not remembered: " + err.Error()
-				fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/decision-limit-note", Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Reason: text})
+				decide(flow.StatusOK, text)
 				notify(Event{Task: t.ID, Kind: "switch", Text: text})
 			}
 			// A usage-limit carry-on preserves work without consuming a retry.
@@ -911,7 +920,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					carry = &att
 				} else {
 					text := "not carried on: " + why
-					fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/decision-not-carried", Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Reason: text})
+					decide(flow.StatusOK, text)
 					notify(Event{Task: t.ID, Kind: "switch", Text: text})
 				}
 			}
@@ -1206,8 +1215,6 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	if att.Result.Error != "" {
 		text += " · " + tools.OneLine(att.Result.Error, 160)
 	}
-	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number,
-		Status: attemptStatus(att), Text: firstLineOf(att.Result.Error)})
 	if att.Error != "" {
 		text += " · " + tools.OneLine(att.Error, 160)
 	}
@@ -2198,8 +2205,6 @@ func save(res Result) error {
 	if err := os.MkdirAll(batchesDir(), 0o755); err != nil {
 		return err
 	}
-	// Made with the records so a flow writer can open beside any saved batch; a failure only loses the flow.
-	_ = os.MkdirAll(filepath.Dir(FlowPath(res.ID)), 0o755)
 	data, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {
 		return err

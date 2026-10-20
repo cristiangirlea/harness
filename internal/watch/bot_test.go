@@ -432,7 +432,7 @@ func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
 	if strings.Join(kinds(says), ",") != "task,failed,status" {
 		t.Fatalf("end: %+v", says)
 	}
-	if says[0].Text != "Task two of two in harness failed: add the budget. Gate go test ./... exited 1." || says[1].Text != "Task add the budget failed: gate go test ./... exited 1." {
+	if says[0].Text != "Task two of two in harness failed: add the budget. Gate go test ./... exited 1." || says[1].Text != "The batch in harness is done: one of two tasks passed. It took twelve minutes." {
 		t.Errorf("end: %q / %q", says[0].Text, says[1].Text)
 	}
 	all := lookAt(nil, []batch.Result{mk(batch.StatusPass, batch.StatusPass, 3*time.Minute)}, nil)

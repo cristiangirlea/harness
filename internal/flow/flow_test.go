@@ -185,3 +185,25 @@ func TestFromRunOfALegacyUnfinishedRunStaysRunning(t *testing.T) {
 		t.Fatalf("got %+v: a run without result is still going, and an unnamed result closes the oldest call", nodes[0])
 	}
 }
+
+func TestFromRunMasksSecretsInToolText(t *testing.T) {
+	rec := runlog.Record{ID: "r", Started: time.Unix(1, 0)}
+	events := []agent.Event{{Kind: agent.EventToolCall, Tool: "shell", Text: "export API_TOKEN=supersecretvalue123"}}
+	for _, e := range FromRun(rec, events, "") {
+		if strings.Contains(e.Text, "supersecretvalue123") {
+			t.Fatalf("a derived step kept a secret: %q", e.Text)
+		}
+	}
+}
+
+func TestOpenCreatesTheDirectoryItWritesIn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new", "f.jsonl")
+	w, err := Open(path, Event{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Emit(Event{Step: "s", Kind: KindInfo})
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

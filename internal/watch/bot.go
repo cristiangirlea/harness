@@ -197,22 +197,21 @@ func taskOf(it botItem, n int) string {
 	return sentence(text)
 }
 
+// taskReason is the recorded cause of a task's last failed attempt, never a guess.
 func taskReason(t batch.TaskResult) string {
-	for _, a := range t.Attempts {
+	for i := len(t.Attempts) - 1; i >= 0; i-- {
+		a := t.Attempts[i]
 		for _, g := range a.Gates {
 			if g.ExitCode != 0 {
-				return "Gate " + g.Command + " exited " + strconv.Itoa(g.ExitCode) + "."
+				return "Gate " + g.Command + " " + g.Brief() + "."
 			}
 		}
-		if a.Error != "" || a.Result.Error != "" {
-			why := a.Error
-			if why == "" {
-				why = a.Result.Error
-			}
-			first, _ := firstLine(why)
-			if first != "" {
-				return "The attempt failed: " + words(first, 16) + "."
-			}
+		why := a.Error
+		if why == "" {
+			why = a.Result.Error
+		}
+		if first, _ := firstLine(why); first != "" {
+			return "The attempt failed: " + words(first, 16) + "."
 		}
 	}
 	return ""
@@ -281,26 +280,6 @@ func batchEnding(b batch.Result) (kind, text string) {
 	n := len(b.Tasks)
 	head := "The batch" + in(place(b.Dir)) + " is done"
 	took := " It took " + spoken(b.Duration) + "."
-	for _, t := range b.Tasks {
-		if t.Status != batch.StatusFail {
-			continue
-		}
-		for _, a := range t.Attempts {
-			for _, g := range a.Gates {
-				if g.ExitCode != 0 {
-					return "failed", sentence("Task " + taskName(t) + " failed: gate " + g.Command + " exited " + strconv.Itoa(g.ExitCode) + ".")
-				}
-			}
-			if a.Error != "" || a.Result.Error != "" {
-				why := a.Error
-				if why == "" {
-					why = a.Result.Error
-				}
-				first, _ := firstLine(why)
-				return "failed", sentence("Task " + taskName(t) + " failed: " + words(first, 16) + ".")
-			}
-		}
-	}
 	switch {
 	case pass == n && n == 2:
 		return "done", head + ": both tasks passed." + took

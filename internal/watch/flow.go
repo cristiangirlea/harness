@@ -2,9 +2,9 @@ package watch
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -84,7 +84,7 @@ func (s *server) flowPage(w http.ResponseWriter, r *http.Request) {
 		level = "technical"
 	}
 	events = s.prepareFlowEvents(r, events, id)
-	summary := flowSummary(events)
+	summary := flowSummary(flow.Build(events))
 	if kind == "run" {
 		summary += " Open the run for tool calls and their recorded output."
 	}
@@ -152,34 +152,87 @@ func buildFlowTree(events []flow.Event, level string) []flowNode {
 	return convert(flow.Build(events))
 }
 
-func flowSummary(events []flow.Event) string {
-	passed, tasks := 0, 0
-	for _, e := range events {
-		if e.Kind == flow.KindTask && e.Status.Done() {
-			tasks++
-			if e.Status == flow.StatusOK {
+// flowSummary reads only the tree: what ended, each failed task's last recorded cause, and what is next.
+func flowSummary(nodes []*flow.Node) string {
+	var tasks, passed, running int
+	var failed []string
+	var next string
+	var run *flow.Node
+	flow.Walk(nodes, func(n *flow.Node, _ int) {
+		switch n.Kind {
+		case flow.KindTask:
+			switch {
+			case n.Status == flow.StatusOK:
+				tasks++
 				passed++
+			case n.Status.Done():
+				tasks++
+			default:
+				running++
+			}
+			if n.Status == flow.StatusFailed {
+				failed = append(failed, "Task "+n.Name+" failed"+failureOf(n)+".")
+			}
+			if next == "" && n.Next != "" {
+				next = n.Next
+			}
+		case flow.KindRun:
+			if run == nil {
+				run = n
 			}
 		}
+	})
+	var parts []string
+	switch {
+	case tasks+running > 0:
+		parts = append(parts, fmt.Sprintf("%d of %d tasks passed.", passed, tasks+running))
+		if running > 0 {
+			parts = append(parts, fmt.Sprintf("%d still going.", running))
+		}
+		parts = append(parts, failed...)
+	case run != nil:
+		st := string(run.Status)
+		if st == "" || st == string(flow.StatusStarted) {
+			st = "is still going"
+		}
+		line := "The run " + st
+		if run.Status.Done() && run.Text != "" {
+			line += ": " + run.Text
+		}
+		parts = append(parts, line+".")
+		if run.Reason != "" {
+			parts = append(parts, "Why it ran here: "+run.Reason+".")
+		}
+	default:
+		parts = append(parts, "No steps are recorded.")
 	}
-	if tasks == 0 {
-		return "No completed tasks are recorded."
+	if next != "" {
+		parts = append(parts, "Next: "+next+".")
 	}
-	text := strconv.Itoa(passed) + " of " + strconv.Itoa(tasks) + " tasks passed."
-	for _, e := range events {
-		if e.Kind == flow.KindGate && e.Status == flow.StatusFailed {
-			text += " Task " + e.Task + " failed at gate " + e.Name + " (" + strings.TrimSpace(e.Reason) + ")."
-			if e.Next != "" {
-				text += " Next: " + e.Next + "."
-			}
-			break
+	return strings.Join(parts, " ")
+}
+
+// failureOf names the failed gate of a task's last attempt, else that attempt's recorded error.
+func failureOf(task *flow.Node) string {
+	var last *flow.Node
+	for _, c := range task.Children {
+		if c.Kind == flow.KindAttempt {
+			last = c
 		}
 	}
-	for _, e := range events {
-		if e.Kind == flow.KindAttempt && e.Status == flow.StatusFailed && e.Text != "" {
-			text += " Attempt failed: " + strings.TrimSpace(e.Text) + "."
-			break
+	if last == nil {
+		if task.Text != "" {
+			return ": " + task.Text
+		}
+		return ""
+	}
+	for _, c := range last.Children {
+		if c.Kind == flow.KindGate && c.Status == flow.StatusFailed {
+			return " at gate " + c.Name + " (" + c.Reason + ")"
 		}
 	}
-	return text
+	if last.Text != "" {
+		return ": " + last.Text
+	}
+	return ""
 }

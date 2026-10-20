@@ -102,7 +102,7 @@ func missingWhy(err error) string {
 func FlowOf(res Result, runs map[string]runlog.Record) []flow.Event {
 	at := func(e flow.Event) flow.Event {
 		e.Owner, e.Batch, e.Derived = res.Owner, res.ID, true
-		return e
+		return flow.Clean(e)
 	}
 	out := []flow.Event{at(flow.Event{Time: res.Started, Step: BatchStep, Kind: flow.KindBatch, Status: flow.StatusStarted,
 		Name: res.ID, Text: fmt.Sprintf("%d tasks, %d at once, from %s", len(res.Tasks), res.Parallel, short(res.Base))})}
