@@ -319,7 +319,7 @@ func TestCommitChangesDoesNotRunRepositoryHooks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			sha, err := commitChanges(wt, "task result")
+			sha, _, err := commitChanges(wt, "", "task result")
 			if err != nil || sha == "" {
 				t.Fatalf("commitChanges = %q, %v", sha, err)
 			}
@@ -408,7 +408,7 @@ func TestCommitChangesKeepsProgramsFromTheOperatorsGlobalConfig(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			sha, err := commitChanges(wt, "task result")
+			sha, _, err := commitChanges(wt, "", "task result")
 			if err != nil || sha == "" {
 				t.Fatalf("commitChanges = %q, %v", sha, err)
 			}
@@ -453,7 +453,7 @@ func TestCommitChangesIgnoresARepositoryRedefinitionOfAGlobalFilter(t *testing.T
 	if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sha, err := commitChanges(wt, "task result")
+	sha, _, err := commitChanges(wt, "", "task result")
 	if err != nil || sha == "" {
 		t.Fatalf("commitChanges = %q, %v", sha, err)
 	}
@@ -490,7 +490,7 @@ func TestCommitChangesNeutralisesAFilterNamedLikeAnotherSetting(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			sha, err := commitChanges(wt, "task result")
+			sha, _, err := commitChanges(wt, "", "task result")
 			if err != nil || sha == "" {
 				t.Fatalf("commitChanges = %q, %v", sha, err)
 			}
@@ -540,7 +540,7 @@ func TestCommitChangesNeutralisesAFilterWhoseNameHoldsAnEqualsSign(t *testing.T)
 			if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			sha, err := commitChanges(wt, "task result")
+			sha, _, err := commitChanges(wt, "", "task result")
 			if err != nil || sha == "" {
 				t.Fatalf("commitChanges = %q, %v", sha, err)
 			}
@@ -584,7 +584,7 @@ func TestCommitChangesDoesNotRunASubmodulesFsmonitor(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, "result.txt"), []byte("done\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sha, err := commitChanges(wt, "task result")
+	sha, _, err := commitChanges(wt, "", "task result")
 	if err != nil || sha == "" {
 		t.Fatalf("commitChanges = %q, %v", sha, err)
 	}
