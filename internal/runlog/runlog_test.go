@@ -15,6 +15,36 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
+func TestLoadUsesDirectoryID(t *testing.T) {
+	for _, file := range []string{"result.json", "task.json"} {
+		for _, storedID := range []string{"../outside", "20261014-120000-abcdef"} {
+			t.Run(file+"/"+storedID, func(t *testing.T) {
+				t.Setenv("HRN_HOME", t.TempDir())
+				id := "20261014-130000-abcdef"
+				dir := filepath.Join(Root(), id)
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				want := Record{ID: storedID, Backend: "stub", Task: agent.Task{Prompt: "keep me"}}
+				if err := writeJSON(filepath.Join(dir, file), want); err != nil {
+					t.Fatal(err)
+				}
+				rec, err := Load(id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rec.ID != id || rec.Done != (file == "result.json") || rec.Backend != want.Backend || rec.Task.Prompt != want.Task.Prompt {
+					t.Fatalf("loaded record = %+v, want ID %q and contents preserved", rec, id)
+				}
+				recs, err := List(0)
+				if err != nil || len(recs) != 1 || recs[0].ID != id {
+					t.Fatalf("listed records = %+v, error = %v", recs, err)
+				}
+			})
+		}
+	}
+}
+
 func TestOldTaskRecordsLoadWithoutAPurpose(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	id := "20261014-120000-abcdef"

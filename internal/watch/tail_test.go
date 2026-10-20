@@ -38,6 +38,31 @@ func texts(lines []Line) []string {
 	return out
 }
 
+func TestFallbackRecordUsesDirectoryID(t *testing.T) {
+	for _, storedID := range []string{"../outside", "20261014-120000-abcdef"} {
+		t.Run(storedID, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			id := "20261014-130000-abcdef"
+			dir := filepath.Join(runlog.Root(), id)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for file, data := range map[string]string{
+				"result.json": `{"id":`,
+				"task.json":   `{"id":"` + storedID + `","task":{"prompt":"keep me"}}`,
+			} {
+				if err := os.WriteFile(filepath.Join(dir, file), []byte(data), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, rec, err := NewFollower(id, 0)
+			if err != nil || rec.ID != id || rec.Done || rec.Task.Prompt != "keep me" {
+				t.Fatalf("fallback record = %+v, error = %v", rec, err)
+			}
+		})
+	}
+}
+
 func TestTailReadsNothingFromAFileThatDoesNotExistYet(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	tail := &Tail{Path: path}
