@@ -6,11 +6,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,10 +26,31 @@ import (
 // Spec extends a batch with variants, repeats and optional judging.
 type Spec struct {
 	batch.Spec
-	Matrix  []Variant `json:"matrix"`
-	Repeats int       `json:"repeats,omitempty"` // default 1
+	Matrix         []Variant `json:"matrix"`
+	Repeats        int       `json:"repeats,omitempty"` // default 1
+	RerunUnstarted int       `json:"rerun_unstarted,omitempty"`
 	// Judge optionally grades passing diffs against a rubric.
 	Judge *Judge `json:"judge,omitempty"`
+}
+
+// UnmarshalJSON distinguishes an omitted rerun policy from an explicit zero.
+func (s *Spec) UnmarshalJSON(data []byte) error {
+	type plain Spec
+	v := plain{RerunUnstarted: 1}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*s = Spec(v)
+	return nil
+}
+
+// MarshalJSON preserves disabled reruns when a saved spec is loaded again.
+func (s Spec) MarshalJSON() ([]byte, error) {
+	type plain Spec
+	return json.Marshal(struct {
+		plain
+		RerunUnstarted *int `json:"rerun_unstarted,omitempty"`
+	}{plain(s), &s.RerunUnstarted})
 }
 
 // Variant selects a matrix cell's backend and harness.
@@ -94,6 +117,9 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	}
 	if spec.Repeats < 0 {
 		return batch.Spec{}, fmt.Errorf("repeats %d is negative", spec.Repeats)
+	}
+	if spec.RerunUnstarted < 0 {
+		return batch.Spec{}, fmt.Errorf("rerun_unstarted %d is negative", spec.RerunUnstarted)
 	}
 	if spec.Repeats == 0 {
 		spec.Repeats = 1
@@ -243,8 +269,11 @@ type VariantRow struct {
 	Attempts int    `json:"attempts"`
 	Passed   int    `json:"passed"`
 	// DidNotAct excludes idle successes (no tools, second turn or change) from pass rates.
-	DidNotAct   int `json:"did_not_act,omitempty"`
-	DidNotStart int `json:"did_not_start,omitempty"`
+	DidNotAct        int     `json:"did_not_act,omitempty"`
+	DidNotStart      int     `json:"did_not_start,omitempty"`
+	Reruns           int     `json:"reruns,omitempty"`
+	RerunsExhausted  int     `json:"reruns_exhausted,omitempty"`
+	BackendStartRate float64 `json:"start_rate"`
 	// AgentCommitted counts cells whose agent moved its branch or HEAD with git, which a prompt may forbid.
 	AgentCommitted int `json:"agent_committed,omitempty"`
 	// Unchanged counts passes without commits, valid for inspection tasks.
@@ -278,6 +307,25 @@ type VariantRow struct {
 	Setup      *agent.Setup `json:"setup,omitempty"`
 	SetupTask  string       `json:"setup_task,omitempty"`
 	SetupMixed bool         `json:"setup_mixed,omitempty"`
+}
+
+// UnmarshalJSON keeps old rows' start rates consistent with their recorded counts.
+func (v *VariantRow) UnmarshalJSON(data []byte) error {
+	type plain VariantRow
+	var row struct {
+		plain
+		StartRate *float64 `json:"start_rate"`
+	}
+	if err := json.Unmarshal(data, &row); err != nil {
+		return err
+	}
+	*v = VariantRow(row.plain)
+	if row.StartRate != nil {
+		v.BackendStartRate = *row.StartRate
+	} else if v.Attempts > 0 {
+		v.BackendStartRate = float64(v.Attempts-v.DidNotStart) / float64(v.Attempts)
+	}
+	return nil
 }
 
 type judgeScore struct {
@@ -375,13 +423,15 @@ type TaskRow struct {
 	Passed  int    `json:"passed"`
 	Total   int    `json:"total"`
 	// DidNotAct counts idle cells as in VariantRow.
-	DidNotAct    int     `json:"did_not_act,omitempty"`
-	DidNotStart  int     `json:"did_not_start,omitempty"`
-	Judged       int     `json:"judged,omitempty"`
-	MeanScore    float64 `json:"mean_score,omitempty"`
-	JudgeRepeats int     `json:"judge_repeats,omitempty"`
-	ScoreMin     float64 `json:"score_min,omitempty"`
-	ScoreMax     float64 `json:"score_max,omitempty"`
+	DidNotAct       int     `json:"did_not_act,omitempty"`
+	DidNotStart     int     `json:"did_not_start,omitempty"`
+	Reruns          int     `json:"reruns,omitempty"`
+	RerunsExhausted int     `json:"reruns_exhausted,omitempty"`
+	Judged          int     `json:"judged,omitempty"`
+	MeanScore       float64 `json:"mean_score,omitempty"`
+	JudgeRepeats    int     `json:"judge_repeats,omitempty"`
+	ScoreMin        float64 `json:"score_min,omitempty"`
+	ScoreMax        float64 `json:"score_max,omitempty"`
 }
 
 func (r TaskRow) judge() judgeScore {
@@ -396,6 +446,12 @@ func (r TaskRow) Score() string {
 	}
 	if r.DidNotStart > 0 {
 		s += fmt.Sprintf(" +%d did not start", r.DidNotStart)
+	}
+	if r.Reruns > 0 {
+		s += fmt.Sprintf(" +%d reruns", r.Reruns)
+	}
+	if r.RerunsExhausted > 0 {
+		s += fmt.Sprintf(" (%d exhausted)", r.RerunsExhausted)
 	}
 	if r.Judged > 0 {
 		s += fmt.Sprintf(" %.1f", r.MeanScore)
@@ -441,8 +497,9 @@ type Record struct {
 	Spec                Spec                 `json:"spec"`
 	Table               Table                `json:"table"`
 	// Judgements holds a verdict per passing cell and judge repeat.
-	Judgements   []Judgement `json:"judgements,omitempty"`
-	JudgeCostUSD float64     `json:"judge_cost_usd,omitempty"`
+	Judgements   []Judgement        `json:"judgements,omitempty"`
+	JudgeCostUSD float64            `json:"judge_cost_usd,omitempty"`
+	Results      []batch.TaskResult `json:"results,omitempty"`
 	// SetupComparison belongs to the candidate's setup eval.
 	SetupComparison *SetupComparison `json:"setup_comparison,omitempty"`
 }
@@ -462,12 +519,41 @@ func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batc
 	if runErr != nil && len(res.Tasks) == 0 {
 		return Record{}, res, runErr
 	}
+	for round := 1; round <= spec.RerunUnstarted && runErr == nil && ctx.Err() == nil; round++ {
+		pending := map[string]bool{}
+		for _, c := range groupCells(res.Tasks) {
+			if neverStarted(c.scored) && neverStarted(c.results[len(c.results)-1]) {
+				pending[c.first.ID] = true
+			}
+		}
+		next := bs
+		next.Base = res.Base
+		next.Tasks = nil
+		for _, task := range bs.Tasks {
+			if pending[task.ID] {
+				task.ID += fmt.Sprintf(".u%d", round)
+				next.Tasks = append(next.Tasks, task)
+			}
+		}
+		if len(next.Tasks) == 0 {
+			break
+		}
+		rerun, err := batch.Run(ctx, next, notify)
+		res.Tasks = append(res.Tasks, rerun.Tasks...)
+		res.Duration += rerun.Duration
+		runErr = errors.Join(runErr, err)
+	}
 	var verdicts []Judgement
 	if spec.Judge != nil && ctx.Err() == nil {
-		verdicts = judgeAll(ctx, spec, res, notify)
+		scored := res
+		scored.Tasks = nil
+		for _, c := range groupCells(res.Tasks) {
+			scored.Tasks = append(scored.Tasks, c.scored)
+		}
+		verdicts = judgeAll(ctx, spec, scored, notify)
 	}
 	rec := Record{ID: id, BatchID: res.ID, Started: started, Spec: spec, Judgements: verdicts,
-		Table: Summarize(spec, res, verdicts), Duration: time.Since(started)}
+		Table: Summarize(spec, res, verdicts), Results: res.Tasks, Duration: time.Since(started)}
 	for _, v := range verdicts {
 		rec.JudgeCostUSD += v.CostUSD
 	}
@@ -487,15 +573,47 @@ func neverStarted(tr batch.TaskResult) bool {
 	return len(tr.Attempts) > 0
 }
 
+type cellResults struct {
+	first, scored batch.TaskResult
+	results       []batch.TaskResult
+}
+
+func groupCells(results []batch.TaskResult) []cellResults {
+	var cells []cellResults
+	byID := map[string]int{}
+	for _, tr := range results {
+		id := tr.ID
+		if i := strings.LastIndex(id, ".u"); i >= 0 {
+			if round, err := strconv.Atoi(id[i+2:]); err == nil && round > 0 {
+				id = id[:i]
+			}
+		}
+		if i, ok := byID[id]; ok {
+			c := &cells[i]
+			c.results = append(c.results, tr)
+			if neverStarted(c.scored) && len(tr.Attempts) > 0 && !neverStarted(tr) {
+				c.scored = tr
+			}
+		} else if id == tr.ID {
+			byID[id] = len(cells)
+			cells = append(cells, cellResults{first: tr, scored: tr, results: []batch.TaskResult{tr}})
+		}
+	}
+	return cells
+}
+
 // Summarize scores a batch and judge verdicts by persisted cell ids.
 func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	type cell struct {
-		task, variant string
-		passed        bool
-		tr            batch.TaskResult
-		verdicts      []Judgement
-		idle          bool
-		unstarted     bool
+		task, variant    string
+		passed           bool
+		tr               batch.TaskResult
+		verdicts         []Judgement
+		idle             bool
+		unstarted        bool
+		firstUnstarted   bool
+		rerun, exhausted bool
+		results          []batch.TaskResult
 	}
 	answerOnly := map[string]bool{}
 	for _, t := range spec.Tasks {
@@ -508,14 +626,19 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		}
 	}
 	var cells []cell
-	for _, tr := range res.Tasks {
+	for _, group := range groupCells(res.Tasks) {
+		tr := group.scored
 		task, variant, ok := splitID(tr.ID)
 		if !ok {
 			continue
 		}
 		unstarted := neverStarted(tr)
 		passed := tr.Status == batch.StatusPass && !unstarted
-		cells = append(cells, cell{task, variant, passed, tr, scores[tr.ID], !unstarted && !passed && !answerOnly[task] && neverActed(tr), unstarted})
+		rerun := len(group.results) > 1
+		cells = append(cells, cell{task: task, variant: variant, passed: passed, tr: tr, verdicts: scores[tr.ID],
+			idle: !unstarted && !passed && !answerOnly[task] && neverActed(tr), unstarted: unstarted,
+			firstUnstarted: neverStarted(group.first), rerun: rerun,
+			exhausted: rerun && unstarted && len(group.results)-1 >= spec.RerunUnstarted, results: group.results})
 	}
 
 	var table Table
@@ -530,6 +653,23 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				continue
 			}
 			row.Attempts++
+			if !c.firstUnstarted {
+				row.BackendStartRate++
+			}
+			if c.rerun {
+				row.Reruns++
+			}
+			if c.exhausted {
+				row.RerunsExhausted++
+			}
+			for _, tr := range c.results {
+				for _, a := range tr.Attempts {
+					if cost, known, estimated := a.Result.KnownCost(); known {
+						row.TotalCostUSD += cost
+						row.CostEstimate = row.CostEstimate || estimated
+					}
+				}
+			}
 			if c.tr.AgentCommitted() {
 				row.AgentCommitted++
 			}
@@ -576,7 +716,6 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 					if c.passed {
 						passedCosts = append(passedCosts, cost)
 					}
-					row.TotalCostUSD += cost
 					row.CostEstimate = row.CostEstimate || estimated
 				}
 				turns = append(turns, float64(a.Result.Turns))
@@ -599,6 +738,9 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 			durations = append(durations, float64(c.tr.Duration))
 		}
 		row.MedianCostUSD = report.Median(costs)
+		if row.Attempts > 0 {
+			row.BackendStartRate /= float64(row.Attempts)
+		}
 		row.CostCounted = true
 		row.MedianDuration = time.Duration(report.Median(durations))
 		row.MedianTurns = report.Median(turns)
@@ -623,6 +765,12 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 					continue
 				}
 				row.Total++
+				if c.rerun {
+					row.Reruns++
+				}
+				if c.exhausted {
+					row.RerunsExhausted++
+				}
 				if c.unstarted {
 					row.DidNotStart++
 					continue

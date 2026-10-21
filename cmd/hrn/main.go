@@ -916,6 +916,10 @@ func printEval(r *renderer, rec eval.Record) {
 		}
 		r.Line(line)
 		var notes []string
+		notes = append(notes, fmt.Sprintf("start rate %s", report.Share(v.BackendStartRate)))
+		if v.Reruns > 0 {
+			notes = append(notes, fmt.Sprintf("%d reruns (%d exhausted)", v.Reruns, v.RerunsExhausted))
+		}
 		if len(v.Statuses) > 1 || v.Statuses["ok"] != v.Attempts {
 			notes = append(notes, statuses(v.Statuses))
 		}

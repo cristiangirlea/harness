@@ -388,6 +388,28 @@ func TestEvalTablesAndDiffCountCellsThatDidNotStart(t *testing.T) {
 	}
 }
 
+func TestEvalTablesAndDiffReportRerunsAndStartRate(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	a, b := diffPair()
+	b.Table.Variants[0].Reruns = 2
+	b.Table.Variants[0].RerunsExhausted = 1
+	b.Table.Variants[0].BackendStartRate = .5
+	b.Table.Tasks[0].Reruns = 2
+	b.Table.Tasks[0].RerunsExhausted = 1
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	for _, print := range []func(){func() { printEval(r, b) }, func() { printEvalDiff(r, eval.Compare(a, b)) }} {
+		buf.Reset()
+		print()
+		for _, want := range []string{"start rate", "50%", "2 reruns", "1 exhausted"} {
+			if !strings.Contains(buf.String(), want) {
+				t.Errorf("missing %q:\n%s", want, buf.String())
+			}
+		}
+	}
+}
+
 func TestTheEvalTableCountsCellsThatCommittedOnTheirOwn(t *testing.T) {
 	_, b := diffPair()
 	b.Table.Variants[0].AgentCommitted = 1
