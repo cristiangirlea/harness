@@ -128,13 +128,13 @@ func TestRunThenInspect(t *testing.T) {
 	for _, tool := range tools {
 		seen[tool.Name] = true
 	}
-	for _, name := range []string{"run", "runs", "show", "backends", "batch", "batch_show", "batch_merge",
+	for _, name := range []string{"run", "runs", "show", "flow", "backends", "batch", "batch_show", "batch_merge",
 		"remote_submit", "remote_status", "remote_events", "remote_cancel"} {
 		if !seen[name] {
 			t.Errorf("missing tool %s", name)
 		}
 	}
-	if len(tools) != 11 || !tools[1].Annotations.ReadOnly() {
+	if len(tools) != 12 || !tools[1].Annotations.ReadOnly() {
 		t.Fatalf("tools = %+v", tools)
 	}
 
@@ -177,8 +177,50 @@ func TestRunThenInspect(t *testing.T) {
 			t.Errorf("show missing %q:\n%s", want, text)
 		}
 	}
+	flowResult := s.call(t, "flow", `{"id":"`+id+`"}`)
+	if flowResult.IsError || !strings.Contains(flowResult.Text(), "tool read_file") || !strings.Contains(flowResult.Text(), "run "+id+": ok") {
+		t.Fatalf("flow = %+v", flowResult)
+	}
+	flowData := flowResult.StructuredContent.(map[string]any)
+	if flowData["version"] != float64(1) || flowData["summary"] == "" {
+		t.Fatalf("flow structured content = %#v", flowData)
+	}
+	if simple := s.call(t, "flow", `{"id":"`+id+`","level":"simple"}`); simple.IsError || strings.Contains(simple.Text(), "tool read_file") {
+		t.Fatalf("simple flow = %+v", simple)
+	}
 	if text := s.call(t, "backends", `{}`).Text(); !strings.Contains(text, "✓ stub") {
 		t.Errorf("backends = %q", text)
+	}
+}
+
+func TestMCPFlowBatchReasonsErrorsAndRedaction(t *testing.T) {
+	t.Setenv("HRN_OWNER", "local:one")
+	s := connect(t, t.TempDir())
+	res := batch.Result{ID: "20261021-120000-abcdef", Owner: "local:one", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "task-a", Status: batch.StatusFail, Attempts: []batch.Attempt{{Backend: "stub", Result: agent.Result{Status: agent.StatusError}, Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1, Output: "FAIL"}}}}}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	got := s.call(t, "flow", `{"id":"20261021-120000-abcdef"}`)
+	if got.IsError || !strings.Contains(got.Text(), "gate go test ./...: exited 1") || !strings.Contains(got.Text(), "why:") {
+		t.Fatalf("batch flow = %+v", got)
+	}
+	for _, id := range []string{"no-such-run", "../x"} {
+		bad := s.call(t, "flow", `{"id":"`+id+`"}`)
+		if !bad.IsError || !strings.Contains(bad.Text(), "no run or batch "+id) {
+			t.Errorf("flow %q = %+v", id, bad)
+		}
+	}
+	w, err := runlog.Create("stub", agent.Task{Prompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "ghp_abcdefghijklmnop1234"})
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	secret := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	if strings.Contains(secret.Text(), "ghp_abcdefghijklmnop1234") {
+		t.Fatalf("flow exposed secret: %s", secret.Text())
 	}
 }
 

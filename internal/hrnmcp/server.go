@@ -9,11 +9,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/flow"
+	"github.com/cristiangirlea/harness/internal/flowview"
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -44,6 +48,7 @@ func newServer(defaultDir string, allowDangerous bool) *mcp.Server {
 	s.AddTool(runTool(defaultDir, allowDangerous))
 	s.AddTool(runsTool())
 	s.AddTool(showTool())
+	s.AddTool(flowTool())
 	s.AddTool(backendsTool())
 	s.AddTool(batchTool(defaultDir, allowDangerous))
 	s.AddTool(batchShowTool())
@@ -447,6 +452,95 @@ func showTool() mcp.Tool {
 			return text(b.String(), map[string]any{"record": rec, "events": events}, false), nil
 		},
 	}
+}
+
+func flowTool() mcp.Tool {
+	return mcp.Tool{
+		Name: "flow", Title: "Show an execution flow",
+		Description: "Read a run or batch execution tree, including recorded reasons and next steps.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":    str("A run or batch id."),
+				"level": map[string]any{"type": "string", "enum": []any{"simple", "technical", "debug"}, "description": "Detail level (default technical)."},
+			},
+			"required": []any{"id"},
+		},
+		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(true)},
+		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
+			args, err := decode[struct {
+				ID    string `json:"id"`
+				Level string `json:"level"`
+			}](call.Arguments)
+			if err != nil {
+				return mcp.CallResult{}, err
+			}
+			if args.ID == "" || strings.ContainsAny(args.ID, `/\\`) {
+				return text("no run or batch "+args.ID, nil, true), nil
+			}
+			if args.Level == "" {
+				args.Level = "technical"
+			}
+			if args.Level != "simple" && args.Level != "technical" && args.Level != "debug" {
+				return mcp.CallResult{}, fmt.Errorf("invalid flow level %q: use simple, technical or debug", args.Level)
+			}
+			view, err := flowview.Load(owner.LocalViewer(), args.ID)
+			if err != nil {
+				if strings.Contains(err.Error(), "no run or batch") {
+					return text("no run or batch "+args.ID, nil, true), nil
+				}
+				return mcp.CallResult{}, err
+			}
+			tree := flowview.Filter(view.Tree, args.Level)
+			var b strings.Builder
+			if err := flowview.WriteText(&b, view.Summary, tree, args.Level); err != nil {
+				return mcp.CallResult{}, err
+			}
+			body, cut := truncateFlowText(printableFlow(b.String()), 64*1024)
+			if cut {
+				body += "\n[flow text truncated at 64 KiB]\n"
+			}
+			return text(body, map[string]any{"version": view.Version, "summary": view.Summary, "tree": cleanFlowTree(tree)}, false), nil
+		},
+	}
+}
+
+func cleanFlowTree(nodes []*flow.Node) []*flow.Node {
+	out := make([]*flow.Node, len(nodes))
+	for i, n := range nodes {
+		copy := *n
+		copy.Name = flow.Redact(copy.Name)
+		copy.Text = flow.Redact(copy.Text)
+		copy.Reason = flow.Redact(copy.Reason)
+		copy.Next = flow.Redact(copy.Next)
+		copy.Children = cleanFlowTree(copy.Children)
+		out[i] = &copy
+	}
+	return out
+}
+
+func printableFlow(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return '�'
+		}
+		return r
+	}, s)
+}
+
+func truncateFlowText(s string, limit int) (string, bool) {
+	if len(s) <= limit {
+		return s, false
+	}
+	s = s[:limit]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s, true
 }
 
 func backendsTool() mcp.Tool {
