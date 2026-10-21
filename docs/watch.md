@@ -9,7 +9,7 @@ Pictures of each page: [hrn watch and Ada, in pictures](presentation.md).
 ```
 hrn watch                  # http://127.0.0.1:8089, this computer only
 hrn watch --lan            # also on this computer's private network addresses, for a phone
-hrn watch --lan="Ethernet 3"   # only that adapter's network (a name or an address)
+hrn watch --lan="Ethernet"     # only that adapter's network (a name or an address)
 hrn show -f <run-id>       # the same timeline in the terminal
 hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
@@ -91,7 +91,7 @@ running: they have no cost yet, known or unknown. A stopped run still counts tow
 the number of runs, but not the running count or the count of finished runs with no
 reported cost.
 
-A run's page names its workspace by the same name as its row (`ada-os-ipc`, the repository
+A run's page names its workspace by the same name as its row (`demo-app`, the repository
 for a batch task's worktree), and a batch's page its repository; a task's worktree shows
 relative to the repository (`.\.hrn\worktrees\t1`). Hover the name for the whole path,
 on this computer only: a phone on the network sees the name alone. In what a run's steps
@@ -102,7 +102,7 @@ System32, Program Files, `/usr/bin`, `/bin` or `/usr/local/bin` is its file name
 exec -C . --json`, `"powershell.exe" -Command ...`. A batch task's text is shortened by its
 worktree. The index's rows (a run's prompt, a batch's task names) are shortened the same way,
 for every viewer, and so are Ada's sentences, log and list of what is going (by each run's
-workspace or task's worktree). A path only counts whole, so `ada-os-ipc-old` keeps its name.
+workspace or task's worktree). A path only counts whole, so `demo-app-old` keeps its name.
 This is the page only: `events.jsonl`, the records and `hrn show` keep the full paths.
 
 When the backend reports the last turn's context size, the run page also shows
@@ -233,10 +233,10 @@ and as desktop notifications:
 |---|---|---|---|
 | started | Claude has started in harness: add the budget guard. | yes | no |
 | working | Claude is editing bot.go in harness. | no | no |
-| task | Task two of four in tidedesk passed: fix the flaky test. | yes | no |
+| task | Task two of four in demo-api passed: fix the flaky test. | yes | no |
 | done | Claude has finished in harness. It took four minutes. | yes | yes |
-| failed | The batch in tidedesk is done: three of four tasks passed. It took twelve minutes. | yes | yes |
-| status | Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in tidedesk. | no | no |
+| failed | The batch in demo-api is done: three of four tasks passed. It took twelve minutes. | yes | yes |
+| status | Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in demo-api. | no | no |
 
 Those are the defaults; the settings change each one, pick the voice and the speed, and
 are kept in that browser. A done or failed notification stays until it is dismissed;

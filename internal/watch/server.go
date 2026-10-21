@@ -840,7 +840,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// The follower reads a half-written result's task.json; the owner check is on that record.
+	// The follower reads a half-written result's task.json; the ownership check is on that record.
 	f, rec, err := NewFollower(id, cur.off)
 	if err != nil || !s.who(r).CanRead(rec.Owner) {
 		http.Error(w, "run not found", http.StatusNotFound)

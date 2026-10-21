@@ -50,7 +50,7 @@ func TestTheBotNamesBackendsAndPlacesAsPeopleSayThem(t *testing.T) {
 			t.Errorf("backendName(%q) = %q, want %q", in, got, want)
 		}
 	}
-	for in, want := range map[string]string{`E:\__Workdir\personal\harness`: "harness", "/home/me/tidedesk/": "tidedesk", "": "", "/": ""} {
+	for in, want := range map[string]string{`D:\src\harness`: "harness", "/home/me/web-shop/": "web-shop", "": "", "/": ""} {
 		if got := place(in); got != want {
 			t.Errorf("place(%q) = %q, want %q", in, got, want)
 		}
@@ -632,14 +632,14 @@ func TestBotJavaScript(t *testing.T) {
 // sentence: no full stop in the middle of a line.
 func TestTheCardOfWhatIsGoingNamesWhoWorksWhere(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	b := batch.Result{ID: "20261011-115900-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/work/tidedesk", Tasks: []batch.TaskResult{
+	b := batch.Result{ID: "20261011-115900-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/work/demo-api", Tasks: []batch.TaskResult{
 		{ID: "t1", Prompt: "Fix it", Status: batch.StatusRunning}, {ID: "t2", Prompt: "Test it", Status: batch.StatusRunning}}}
 	snap := lookAt([]runlog.Record{runRec("20261011-115000-aaaaaa", noon.Add(-10*time.Minute), false, agent.Result{})}, []batch.Result{b}, nil)
 	html, err := render("botnow", botNowOf(snap))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{">A batch of two tasks in tidedesk</a>", ">Claude in harness</a>", `href="/batch/20261011-115900-bbbbbb"`, `data-mute="20261011-115000-aaaaaa"`} {
+	for _, want := range []string{">A batch of two tasks in demo-api</a>", ">Claude in harness</a>", `href="/batch/20261011-115900-bbbbbb"`, `data-mute="20261011-115000-aaaaaa"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("the card lacks %q:\n%s", want, html)
 		}
@@ -651,14 +651,14 @@ func TestTheCardOfWhatIsGoingNamesWhoWorksWhere(t *testing.T) {
 // shared opening out four times.
 func TestTheBotNamesABatchsTasksByTheirNames(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	const preamble = "You are working in a git worktree of jobpilot. First read AGENTS.md and follow it.\n\n"
+	const preamble = "You are working in a git worktree of web-shop. First read AGENTS.md and follow it.\n\n"
 	mk := func(s batch.Status) batch.Result {
-		return batch.Result{ID: "20261011-213338-c6fe69", Started: noon.Add(-time.Hour), Dir: "/work/jobpilot", Tasks: []batch.TaskResult{
-			{ID: "employer-link-lookups", Prompt: preamble + "Look the links up", Status: s},
-			{ID: "german-questions", Prompt: preamble + "Translate the questions", Status: batch.StatusRunning}}}
+		return batch.Result{ID: "20261011-213338-c6fe69", Started: noon.Add(-time.Hour), Dir: "/work/web-shop", Tasks: []batch.TaskResult{
+			{ID: "broken-link-lookups", Prompt: preamble + "Look the links up", Status: s},
+			{ID: "german-translations", Prompt: preamble + "Translate the pages", Status: batch.StatusRunning}}}
 	}
 	says := announce(lookAt(nil, []batch.Result{mk(batch.StatusRunning)}, nil), lookAt(nil, []batch.Result{mk(batch.StatusPass)}, nil), false)
-	if len(says) != 1 || says[0].Text != "Task one of two in jobpilot passed: employer-link-lookups." {
+	if len(says) != 1 || says[0].Text != "Task one of two in web-shop passed: broken-link-lookups." {
 		t.Fatalf("task: %+v", says)
 	}
 	// A task whose id hrn made up (t1, t2, ...) is named by its prompt instead;

@@ -21,7 +21,7 @@ don't reopen its decisions. Older entries use `hx` (`cmd/hx`, `$HX_HOME`); code 
 | `internal/flow/`, `owner/`, `flowview/` | Execution events and step trees, local ownership, the shared flow view. |
 | `internal/gc/`, `internal/ws/` | Merged cleanup; O_EXCL-leased slots (`.hrn/slots/<n>`). |
 | `server/` | Separate module with its own `go.mod`; PostgreSQL control service and project worker. PostgreSQL tests need `HRN_TEST_DATABASE_URL`. |
-| `scripts/api-check.sh` | The first real api runs. Costs real money; the owner's to run. |
+| `scripts/api-check.sh` | The first real api runs. Costs real money; a maintainer runs it. |
 | `.github/release.sh` | Builds the six release binaries and `SHA256SUMS` into `dist/`. |
 
 ## Build and test
@@ -39,13 +39,14 @@ go test -run='^$' -fuzz=FuzzSummarize -fuzztime=14000x -fuzzminimizetime=200x -p
 bash -n .github/release.sh && bash -n scripts/api-check.sh
 bash scripts/verify.sh --check
 bash scripts/comment-check.sh
+bash scripts/privacy-check.sh
 bash .github/release.sh                                       # release dry run, writes dist/
 test -z "$(gofmt -l .)"                                       # /check: tracked files only
 ```
 
-`-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 -timeout 40m ./...` there and leave
-`-race` to CI. Do not attach self-hosted runners or route public contributions to the owner's
-machines. See `CONTRIBUTING.md` for CI and release details.
+`-race` needs cgo: where it is missing (a Windows PC without a C compiler), run
+`go test -count=3 -timeout 40m ./...` and leave `-race` to CI. Do not attach self-hosted runners
+or route public contributions to private machines. See `CONTRIBUTING.md` for CI and release details.
 
 ## Rules of this repository
 
@@ -65,8 +66,8 @@ machines. See `CONTRIBUTING.md` for CI and release details.
   only shrinks.
 - The api loop puts this file and `CLAUDE.md` into its system prompt when it runs on this repo
   (`instructions.go`, 32 KiB cap): keep them short.
-- A release tag must match `Version` in `internal/agent/agent.go`; tags and releases are the
-  owner's.
+- A release tag must match `Version` in `internal/agent/agent.go`; tags and releases are a
+  maintainer's.
 - For every new flag, field, command or status, update the relevant `docs/` guide (and README
   if its overview changes). For a PLAN.md item, tick its box, add `Done: PR #n, <date>`, and
   log deviations; for an issue-only fix, add a Decisions-log entry naming the issue and PR.
@@ -88,23 +89,23 @@ machines. See `CONTRIBUTING.md` for CI and release details.
   --match-head-commit <sha>`), when an independent review ran and every defect it found is fixed, a
   security read of the diff has nothing open, and the head being merged is the commit all of that
   ran on. Merge the base branch in once before those final checks and review (CI tests the merge
-  with `main`, so local checks must too), or for a conflict. What could not be tested is said in the PR and waits for the owner. Never auto-merge
-  (`--auto`) or `--admin`, never push to `main`, never tag or release: hand over the command.
-  PLAN.md's merge step (merge commit, delete the branch) is done through the PR under these
-  conditions. Rulesets with no bypass protect `main` and `v*` tags: GitHub itself refuses a direct
-  push to `main`, a squash or rebase merge, a merge with a failing or missing check, and a moved or
-  deleted `v*` tag; in an emergency the owner turns the ruleset off in Settings > Rules and back on
-  after.
+  with `main`, so local checks must too), or for a conflict. What could not be tested is said in the
+  PR and waits for a maintainer. Never auto-merge (`--auto`) or `--admin`, never push to `main`,
+  never tag or release: hand over the command. PLAN.md's merge step (merge commit, delete the
+  branch) is done through the PR under these conditions. Rulesets with no bypass protect `main` and
+  `v*` tags: GitHub itself refuses a direct push to `main`, a squash or rebase merge, a merge with a
+  failing or missing check, and a moved or deleted `v*` tag; in an emergency a maintainer turns the
+  ruleset off in Settings > Rules and back on after.
 - Commit messages: the area first, lower case, then a plain sentence (`batch rm: name a single
   leftover file instead of counting it`), one logical change per commit. No emoji, no AI attribution
   anywhere (no `Co-Authored-By`, `Assisted-by` or "Generated with", in commits, PR text, comments or
-  docs). Commits are `Cristian Girlea <cristiangirlea@gmail.com>`: check `git config user.email`
-  first.
+  docs). Commits use the git identity configured for the repository: check `git config
+  user.email` first.
 - Self-review with `/code-review`. Every defect, missing test, broken house rule or security hole in
   what the branch touches is fixed before the push, blocking or not, with the smallest change; the
   fixes of one review round go in one commit, never a commit per finding. Nits (wording, naming,
   style) are dropped, at most a line in the PR. Only a defect elsewhere on `main`, or a choice for
-  the owner, becomes an issue; a follow-up branch files no follow-ups of its own nits.
+  a maintainer, becomes an issue; a follow-up branch files no follow-ups of its own nits.
 - Tests first, seen failing. On Windows the temp dir has 8.3 short names: compare paths after
   `filepath.EvalSymlinks`. Files are LF (`.gitattributes`).
 - Secrets are never read, printed or committed. Small diffs: don't restyle what you didn't change.
@@ -122,11 +123,14 @@ machines. See `CONTRIBUTING.md` for CI and release details.
 <!-- scripts index: start -->
 - `scripts/answers.go`: Provide JSON test summaries and bounded TCP probes for Bash entry points.
 - `scripts/answers_test.go`: Check that TCP probes stay within the wait deadline.
-- `scripts/api-check.sh`: Exercise real API runs, continuation and context editing at the owner's expense. (not verified: spends money)
+- `scripts/api-check.sh`: Exercise real API runs, continuation and context editing; spends real money. (not verified: spends money)
 - `scripts/check.sh`: Run the check skill commands in order, stopping on failure.
 - `scripts/comment-check.sh`: Check Go comments against the repository rule and baseline.
 - `scripts/comment-check/main.go`: Check Go comments against the repository rule and baseline.
 - `scripts/comment-check/main_test.go`: Check comment rules, baseline comparison and pruning in fixtures.
+- `scripts/privacy-check.sh`: Check tracked text files for personal folders, local work paths and narration of a person.
+- `scripts/privacy-check/main.go`: Check tracked text files for personal folders, local work paths and narration of a person.
+- `scripts/privacy-check/main_test.go`: Check the personal folder, local path and narration rules on fixture files.
 - `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
 - `scripts/tool-shapes.sh`: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
 - `scripts/tool-shapes/defs.go`: Measure the api loop's tool definitions against the recorded context per model call.

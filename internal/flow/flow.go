@@ -120,7 +120,7 @@ type Writer struct {
 	err  error
 }
 
-// Open appends to path; base supplies the owner and ids every event carries.
+// Open appends to path; base supplies owner and ids every event carries.
 func Open(path string, base Event) (*Writer, error) {
 	prior, _ := Read(path)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
