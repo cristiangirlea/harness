@@ -64,6 +64,13 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 				}
 				r.Line(r.c(dim, fmt.Sprintf("  note: %d %s of %s in %s did not act; its pass rate counts only the cells that did", side.row.DidNotAct, noun, v.Name, side.id)))
 			}
+			if side.row != nil && side.row.DidNotStart > 0 {
+				noun := "cells"
+				if side.row.DidNotStart == 1 {
+					noun = "cell"
+				}
+				r.Line(r.c(dim, fmt.Sprintf("  note: %d %s of %s in %s did not start; its pass rate excludes them", side.row.DidNotStart, noun, v.Name, side.id)))
+			}
 		}
 	}
 	for _, id := range d.PromptChanged {
@@ -153,7 +160,7 @@ func listEvals(w io.Writer, n int) error {
 		cells, passed, cost, known, estimate, withoutCost := rec.Totals()
 		acted := cells
 		for _, v := range rec.Table.Variants {
-			acted -= v.DidNotAct
+			acted -= v.DidNotAct + v.DidNotStart
 		}
 		unknown := ""
 		if withoutCost > 0 {

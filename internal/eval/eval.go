@@ -243,7 +243,8 @@ type VariantRow struct {
 	Attempts int    `json:"attempts"`
 	Passed   int    `json:"passed"`
 	// DidNotAct excludes idle successes (no tools, second turn or change) from pass rates.
-	DidNotAct int `json:"did_not_act,omitempty"`
+	DidNotAct   int `json:"did_not_act,omitempty"`
+	DidNotStart int `json:"did_not_start,omitempty"`
 	// AgentCommitted counts cells whose agent moved its branch or HEAD with git, which a prompt may forbid.
 	AgentCommitted int `json:"agent_committed,omitempty"`
 	// Unchanged counts passes without commits, valid for inspection tasks.
@@ -352,7 +353,7 @@ func (v VariantRow) CostKnown() bool {
 
 // PassRate is the share of the cells that acted which passed.
 func (v VariantRow) PassRate() float64 {
-	acted := v.Attempts - v.DidNotAct
+	acted := v.Attempts - v.DidNotAct - v.DidNotStart
 	if acted <= 0 {
 		return 0
 	}
@@ -375,6 +376,7 @@ type TaskRow struct {
 	Total   int    `json:"total"`
 	// DidNotAct counts idle cells as in VariantRow.
 	DidNotAct    int     `json:"did_not_act,omitempty"`
+	DidNotStart  int     `json:"did_not_start,omitempty"`
 	Judged       int     `json:"judged,omitempty"`
 	MeanScore    float64 `json:"mean_score,omitempty"`
 	JudgeRepeats int     `json:"judge_repeats,omitempty"`
@@ -388,9 +390,12 @@ func (r TaskRow) judge() judgeScore {
 
 // Score formats passes/acted cells, idle counts and judge mean/range.
 func (r TaskRow) Score() string {
-	s := fmt.Sprintf("%d/%d", r.Passed, r.Total-r.DidNotAct)
+	s := fmt.Sprintf("%d/%d", r.Passed, r.Total-r.DidNotAct-r.DidNotStart)
 	if r.DidNotAct > 0 {
 		s += fmt.Sprintf(" +%d did not act", r.DidNotAct)
+	}
+	if r.DidNotStart > 0 {
+		s += fmt.Sprintf(" +%d did not start", r.DidNotStart)
 	}
 	if r.Judged > 0 {
 		s += fmt.Sprintf(" %.1f", r.MeanScore)
@@ -472,6 +477,16 @@ func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batc
 	return rec, res, runErr
 }
 
+// neverStarted is true only when no attempt reached the task: one that ran and failed is a real failure.
+func neverStarted(tr batch.TaskResult) bool {
+	for _, a := range tr.Attempts {
+		if a.DidNotStart == "" {
+			return false
+		}
+	}
+	return len(tr.Attempts) > 0
+}
+
 // Summarize scores a batch and judge verdicts by persisted cell ids.
 func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	type cell struct {
@@ -480,6 +495,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		tr            batch.TaskResult
 		verdicts      []Judgement
 		idle          bool
+		unstarted     bool
 	}
 	answerOnly := map[string]bool{}
 	for _, t := range spec.Tasks {
@@ -497,8 +513,9 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		if !ok {
 			continue
 		}
-		passed := tr.Status == batch.StatusPass
-		cells = append(cells, cell{task, variant, passed, tr, scores[tr.ID], !passed && !answerOnly[task] && neverActed(tr)})
+		unstarted := neverStarted(tr)
+		passed := tr.Status == batch.StatusPass && !unstarted
+		cells = append(cells, cell{task, variant, passed, tr, scores[tr.ID], !unstarted && !passed && !answerOnly[task] && neverActed(tr), unstarted})
 	}
 
 	var table Table
@@ -516,9 +533,13 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 			if c.tr.AgentCommitted() {
 				row.AgentCommitted++
 			}
-			if c.idle {
-				// Idle cells measure setup, so exclude them from rates and medians.
-				row.DidNotAct++
+			if c.idle || c.unstarted {
+				// Setup failures cannot measure task performance.
+				if c.unstarted {
+					row.DidNotStart++
+				} else {
+					row.DidNotAct++
+				}
 				row.Statuses[string(c.tr.Attempts[len(c.tr.Attempts)-1].Result.Status)]++
 				continue
 			}
@@ -602,6 +623,10 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 					continue
 				}
 				row.Total++
+				if c.unstarted {
+					row.DidNotStart++
+					continue
+				}
 				if c.idle {
 					row.DidNotAct++
 				}

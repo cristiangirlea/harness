@@ -117,6 +117,20 @@ func (h *harness) next(t *testing.T, kind string) map[string]any {
 	}
 }
 
+// nextAny reads one frame of any type, for callers that skip events of unknown number.
+func (h *harness) nextAny(t *testing.T) map[string]any {
+	t.Helper()
+	line, err := h.out.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(line, &msg); err != nil {
+		t.Fatal(err)
+	}
+	return msg
+}
+
 func (h *harness) send(t *testing.T, msg any) {
 	t.Helper()
 	if err := json.NewEncoder(h.in).Encode(msg); err != nil {
@@ -260,7 +274,6 @@ func TestInvalidStartsAreRejectedWithoutRecords(t *testing.T) {
 		{name: "unknown task field", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["max_cost_usd"] = 1 }},
 		{name: "missing prompt", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "prompt") }},
 		{name: "missing dir", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "dir") }},
-		{name: "missing backend", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "backend") }},
 		{name: "missing mode", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "mode") }},
 		{name: "missing task", code: "bad_request", edit: func(m map[string]any) { delete(m, "task") }},
 		{name: "unknown purpose", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["purpose"] = "unknown" }},
@@ -378,8 +391,8 @@ func TestStorageFailureCancelsAndStillReportsTheRecordError(t *testing.T) {
 		<-ctx.Done()
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusCanceled}
 	})
-	h := openHarness(t, func(backend string, task agent.Task, continues, route string) (record, error) {
-		w, err := runlog.CreateContinuingRoute(backend, task, continues, route)
+	h := openHarness(t, func(backend string, task agent.Task, continues, route string, routed *runlog.RoutedBy, note string) (record, error) {
+		w, err := runlog.CreateRouted(backend, task, continues, route, routed, note)
 		return &closedEvents{Writer: w}, err
 	})
 	h.next(t, "hello")

@@ -931,8 +931,11 @@ func printEval(r *renderer, rec eval.Record) {
 		if v.DidNotAct > 0 {
 			notes = append(notes, fmt.Sprintf("%d did not act", v.DidNotAct))
 		}
+		if v.DidNotStart > 0 {
+			notes = append(notes, fmt.Sprintf("%d did not start", v.DidNotStart))
+		}
 		// Older records lack passing medians; preserve their fallback display.
-		if v.Passed > 0 && v.Passed < v.Attempts-v.DidNotAct && (v.PassedCostKnown || v.MedianContextPassed > 0) {
+		if v.Passed > 0 && v.Passed < v.Attempts-v.DidNotAct-v.DidNotStart && (v.PassedCostKnown || v.MedianContextPassed > 0) {
 			notes = append(notes, fmt.Sprintf("passing cells: median cost %s, context %s",
 				report.KnownMoney(v.MedianCostPassedUSD, v.PassedCostKnown, v.CostEstimate), report.Number(v.MedianContextPassed)))
 		}
