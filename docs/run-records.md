@@ -109,7 +109,9 @@ an ordinary follow-up, and old records without it still load.
   `append_system_prompt` and `no_skills` are omitted when unset)
   and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
   the declared category from `--purpose`, MCP `purpose`, a batch task's `purpose`,
-  or a valid leading `Purpose: <category>` header. It is omitted when undeclared;
+  or a valid leading `Purpose: <category>` header; a continuation without one stores
+  the purpose it inherits from the earlier run (see
+  [Declared purpose](commands.md#declared-purpose)). It is omitted when undeclared;
   old records without it still load and use the header or classifier for display
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)

@@ -191,8 +191,8 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if !modeGiven && plan.Prev.Task.Mode != "" {
 					args.Mode = plan.Prev.Task.Mode
 				}
-				if args.Purpose == "" && purpose.Valid(plan.Prev.Task.Purpose) {
-					args.Purpose = plan.Prev.Task.Purpose
+				if args.Purpose == "" {
+					args.Purpose = purpose.Inherited(plan.Prev.Task.Purpose, plan.Prev.Task.Prompt)
 				}
 			}
 			// Inherited workspaces require the same validation as explicit ones.
