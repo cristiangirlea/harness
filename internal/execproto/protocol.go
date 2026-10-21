@@ -39,13 +39,13 @@ type record interface {
 	Err() error
 	Close(agent.Result) error
 }
-type recordFactory func(string, agent.Task, string, string) (record, error)
+type recordFactory func(string, agent.Task, string, string, *runlog.RoutedBy, string) (record, error)
 
 // Run writes hello before reading input, runs at most one task, and returns the
 // protocol exit code. ctx carries interrupts; nil now uses the real clock.
 func Run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
-	return run(ctx, in, out, now, func(b string, t agent.Task, id, route string) (record, error) {
-		return runlog.CreateContinuingRoute(b, t, id, route)
+	return run(ctx, in, out, now, func(b string, t agent.Task, id, route string, routed *runlog.RoutedBy, note string) (record, error) {
+		return runlog.CreateRouted(b, t, id, route, routed, note)
 	})
 }
 
@@ -89,12 +89,24 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		return w.reject(req.AttemptID, "bad_request", "task is required")
 	}
 	t := req.Task
-	if strings.TrimSpace(t.Prompt) == "" || strings.TrimSpace(t.Dir) == "" || t.Backend == "" || t.Mode == "" {
-		return w.reject(req.AttemptID, "bad_request", "prompt, dir, backend and mode are required")
+	if strings.TrimSpace(t.Prompt) == "" || strings.TrimSpace(t.Dir) == "" || t.Mode == "" {
+		return w.reject(req.AttemptID, "bad_request", "prompt, dir and mode are required")
 	}
 	if t.Fresh && t.ContinueRunID == "" {
 		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
 	}
+	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP}
+	routed, routeNote, err := opts.RouteWithNote(t.Purpose, t.Prompt, &t.Backend, runlog.Home())
+	if err != nil {
+		return w.reject(req.AttemptID, "bad_request", err.Error())
+	}
+	if t.Backend == "" {
+		t.Backend = agent.DefaultBackendNameIn(runlog.Home())
+		if routed == nil {
+			routeNote = agent.WithDefault(routeNote, t.Backend)
+		}
+	}
+	t.Model, t.Effort = opts.Model, opts.Effort
 	if t.Model != "" && !agent.ValidModel(t.Model) {
 		return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("model %q is not a model id", t.Model))
 	}
@@ -133,9 +145,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if err != nil {
 		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
-	task := agent.Task{Prompt: t.Prompt, Purpose: t.Purpose, Dir: ws.Root, AttemptID: req.AttemptID, Options: agent.Options{
-		Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP,
-	}}
+	task := agent.Task{Prompt: t.Prompt, Purpose: t.Purpose, Dir: ws.Root, AttemptID: req.AttemptID, Options: opts}
 	// A backend without MCP support must not inherit the default config.
 	if slices.Contains(caps.Options, "mcp") {
 		if task.MCP, err = mcp.ConfigPaths(t.MCP); err != nil {
@@ -157,7 +167,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if _, err := b.Detect(); err != nil {
 		return w.reject(req.AttemptID, "unavailable", err.Error())
 	}
-	rec, err := create(t.Backend, task, t.ContinueRunID, plan.Route())
+	rec, err := create(t.Backend, task, t.ContinueRunID, plan.Route(), routed, routeNote)
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", err.Error())
 	}
