@@ -16,6 +16,8 @@ hrn bot                    # Ada, the bot, in a small window: what hrn is doing,
 
 Run and batch pages link to **Execution flow**, a hierarchical view of recorded steps and their timing. It can also be opened at `/flow/<id>` or fetched as JSON at `/flow/<id>/json` (`version: 1`). The `?level=simple`, `?level=technical` and `?level=debug` links choose how much detail is shown; simple omits tool steps, while debug includes step identifiers and marks rebuilt steps. The summary is generated from recorded events. An unfinished flow updates live at the selected level and ends when its run or batch finishes or stops. hrn shows recorded steps and reasons, not the model's private reasoning. Run steps link back to the run page, where tool calls and output provide the evidence.
 
+New flow steps usually appear within a quarter of the configured poll interval (at least 50ms), with file size and modification time checked between full refreshes.
+
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
 `hrn update` restarts a running watch on the new binary with the same flags (see
 [hrn update](commands.md#hrn-update)).

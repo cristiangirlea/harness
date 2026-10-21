@@ -1,11 +1,13 @@
 package watch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -126,10 +128,18 @@ func (s *server) streamFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := s.who(r)
-	if _, _, err := s.flowEvents(v, id); err != nil {
+	_, kind, err := s.flowEvents(v, id)
+	if err != nil {
 		s.missing(w, r, "Flow "+id, os.ErrNotExist)
 		return
 	}
+	path := filepath.Join(runlog.Root(), id, "events.jsonl")
+	if kind == "batch" {
+		path = batch.FlowPath(id)
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	wake := watchFlowFile(ctx, path, s.opt.Poll)
 	level := flowLevel(r.URL.Query().Get("level"))
 	st := s.startStream(w)
 	var last *flowPageData
@@ -144,7 +154,7 @@ func (s *server) streamFlow(w http.ResponseWriter, r *http.Request) {
 		}
 		last = &p
 		return p, end, nil
-	}, "flowbody")
+	}, "flowbody", wake)
 }
 
 // flowState renders the flow and says whether its batch or run has ended.

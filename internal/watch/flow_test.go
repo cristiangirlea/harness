@@ -105,6 +105,57 @@ func TestFlowRunStreamsChangesUntilClosed(t *testing.T) {
 	}
 }
 
+func TestFlowStreamWakesBeforeTheNextPoll(t *testing.T) {
+	for _, kind := range []string{"run", "batch"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			t.Setenv("HRN_OWNER", "local:test")
+			var id string
+			var appendStep func()
+			if kind == "run" {
+				w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer w.Close(agent.Result{})
+				id = w.ID()
+				appendStep = func() {
+					w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "new live step"})
+				}
+			} else {
+				id = "20261021-120000-aabbcc"
+				saveBatch(t, batch.Result{ID: id, Owner: owner.Local(), Started: time.Now(), Tasks: []batch.TaskResult{{ID: "t", Status: batch.StatusRunning}}})
+				w, err := flow.Open(batch.FlowPath(id), flow.Event{Owner: owner.Local(), Batch: id})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer w.Close()
+				w.Emit(flow.Event{Step: batch.BatchStep, Kind: flow.KindBatch, Status: flow.StatusStarted})
+				appendStep = func() {
+					w.Emit(flow.Event{Step: "live", Parent: batch.BatchStep, Kind: flow.KindGate, Status: flow.StatusStarted, Name: "new live step"})
+				}
+			}
+			srv := httptest.NewServer(New(context.Background(), Options{Poll: 400 * time.Millisecond}))
+			defer srv.Close()
+			s, stop := openStream(t, srv.URL+"/stream/flow/"+id+"?level=debug", "")
+			defer stop()
+			if first, ok := s.next(t); !ok || first.event != "replace" {
+				t.Fatalf("first flow event = %#v, %v", first, ok)
+			}
+			started := time.Now()
+			appendStep()
+			update, ok := s.next(t)
+			elapsed := time.Since(started)
+			if !ok || update.event != "replace" || !strings.Contains(update.data, "new live step") {
+				t.Fatalf("step update = %#v, %v", update, ok)
+			}
+			if elapsed >= 250*time.Millisecond {
+				t.Fatalf("step arrived after %s, want less than 250ms", elapsed)
+			}
+		})
+	}
+}
+
 func TestFlowStreamMasksToolSecrets(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:test")
