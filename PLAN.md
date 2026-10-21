@@ -776,6 +776,17 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-22: attempts whose backend never started are classified and left out of eval pass
+  rates, Ada answers questions about a run or batch from its records, and the exec protocol
+  routes an omitted backend (#567, #576, #577 toward #580; PR #636). `did_not_start` is set only
+  from evidence that no model was reached (no turns, tool calls, final answer or tokens), a cell
+  counts only when every attempt did not start, and the routing table skips such cells. Ada's
+  answers (`/bot/answer`) use fixed keyword rules, the viewer's permissions, the flow page's
+  masking and path shortening, and read a bounded set of records; today's count is bounded by
+  its own two-day window so the number it states is exact. A continuation through the exec
+  protocol is never routed: it stays on the earlier run's backend. The eval rerun policy for
+  unstarted cells, live push of flow events and organisations with grants (#575) are left for
+  later slices.
 - 2026-10-21: the execution flow page updates while its batch or run is going, runs record why no
   route row applied, and `hrn mcp` serves a `flow` tool (#576, #577; PR #633 into #632). A record
   caught mid-write keeps the last good tree instead of ending the stream; a batch that fails to
