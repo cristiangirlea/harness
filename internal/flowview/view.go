@@ -14,7 +14,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// ErrNotFound covers missing and foreign ids alike, so callers cannot tell them apart.
+// ErrNotFound covers missing, unreadable and foreign ids alike, so callers cannot tell them apart.
 var ErrNotFound = errors.New("no run or batch")
 
 // View is a cleaned execution tree and its source summary.

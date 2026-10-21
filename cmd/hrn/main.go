@@ -349,7 +349,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, err
 	}
 	if *continueID != "" {
-		routeNote = "" // the backend came from the run being continued, which the record names
+		routeNote = agent.ContinuationNote(*continueID, routed)
 	}
 	if !opts.NoSwitch && *continueID == "" {
 		meant := backend

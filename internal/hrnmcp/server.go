@@ -210,7 +210,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			if args.ContinueRunID != "" {
-				routeNote = "" // the backend came from the run being continued, which the record names
+				routeNote = agent.ContinuationNote(args.ContinueRunID, routed)
 			}
 			if !args.NoSwitch && args.ContinueRunID == "" {
 				meant := args.Backend
@@ -519,7 +519,8 @@ func cleanFlowTree(nodes []*flow.Node) []*flow.Node {
 		copy.Text = printableFlow(flow.Redact(copy.Text))
 		copy.Reason = printableFlow(flow.Redact(copy.Reason))
 		copy.Next = printableFlow(flow.Redact(copy.Next))
-		copy.Step, copy.Run = printableFlow(copy.Step), printableFlow(copy.Run)
+		copy.Step, copy.Run, copy.Task = printableFlow(copy.Step), printableFlow(copy.Run), printableFlow(copy.Task)
+		copy.Status = flow.Status(printableFlow(string(copy.Status)))
 		copy.Children = cleanFlowTree(copy.Children)
 		out[i] = &copy
 	}

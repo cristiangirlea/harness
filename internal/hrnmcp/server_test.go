@@ -817,3 +817,22 @@ func TestMCPFlowCapsALargeTreeAndFiltersControls(t *testing.T) {
 		t.Fatalf("the structured tree of a cut flow must not be returned whole, got %d roots", len(tree))
 	}
 }
+
+func TestMCPFlowFiltersTaskAndStatusInStructuredContent(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := batch.Result{ID: "20261021-130000-aabbcc", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "t", Status: batch.StatusPass}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"v":1,"seq":1,"step":"batch","kind":"batch","task":"t\u001b]52;c;eA==\u0007","status":"ok\u001b[2J"}` + "\n"
+	if err := os.MkdirAll(filepath.Dir(batch.FlowPath(res.ID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(batch.FlowPath(res.ID), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := s.call(t, "flow", `{"id":"`+res.ID+`","level":"debug"}`)
+	if data, _ := json.Marshal(out.StructuredContent); out.IsError || strings.Contains(string(data), `\u001b`) || strings.Contains(string(data), `\u0007`) {
+		t.Fatalf("structured content carried a control character: %s", data)
+	}
+}

@@ -577,3 +577,23 @@ func TestContinueWithRetrievalOnAnotherBackendThanThePinIsRefusedBeforeItRuns(t 
 		t.Errorf("prompt:\n%s", task.Prompt)
 	}
 }
+
+func TestRunRecordsThatTheDefaultBackendWasUsed(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	name := agent.DefaultBackendName()
+	old, _ := agent.Get(name)
+	agent.Register(recorder{name, recorded})
+	defer agent.Register(old)
+	if code, err := cmdRun([]string{"--no-switch", "-C", t.TempDir(), "Implement a widget"}); code != 0 || err != nil {
+		t.Fatalf("run: %d %v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("records: %v %v", recs, err)
+	}
+	if want := "no route row for purpose implement; default backend " + name + " was used"; recs[0].RouteNote != want {
+		t.Fatalf("route note = %q, want %q", recs[0].RouteNote, want)
+	}
+}

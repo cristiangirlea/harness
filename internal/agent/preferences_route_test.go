@@ -102,3 +102,12 @@ func TestWithDefaultNamesTheDefaultBackend(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestContinuationNoteSaysWhyALimitMovedIt(t *testing.T) {
+	if got := ContinuationNote("r1", ""); got != "" {
+		t.Fatalf("a continuation on its own backend needs no note, got %q", got)
+	}
+	if got := ContinuationNote("r1", "codex is at its limit; carrying on on claude"); got != "continues run r1; codex is at its limit; carrying on on claude" {
+		t.Fatalf("got %q", got)
+	}
+}

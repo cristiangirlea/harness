@@ -139,6 +139,14 @@ func WithDefault(note, backend string) string {
 	return note + "; " + d
 }
 
+// ContinuationNote keeps a continuation's own reason, and adds the limit's reason whenever one was weighed.
+func ContinuationNote(continues, switched string) string {
+	if switched == "" {
+		return ""
+	}
+	return "continues run " + continues + "; " + switched
+}
+
 // IsLean reports whether lean is on: unset or true.
 func (o Options) IsLean() bool { return o.Lean == nil || *o.Lean }
 

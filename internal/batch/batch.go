@@ -702,7 +702,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 	}
 	fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/route", Parent: TaskStep(t.ID), Kind: flow.KindRoute, Task: t.ID,
-		Status: flow.StatusOK, Name: backend, Reason: routeReason})
+		Status: flow.StatusOK, Name: firstOf(backend, agent.DefaultBackendNameIn(runlog.Home())), Reason: routeReason})
 	backends := []string{firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))}
 	p, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {
