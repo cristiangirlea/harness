@@ -130,6 +130,15 @@ func (o *Options) RouteWithNote(declared, prompt string, backend *string, home s
 	return &table.RoutedBy{Category: category, Declared: resolved.Rule == "declared", Eval: r.Eval, Set: r.Set}, "", nil
 }
 
+// WithDefault adds the default backend to a route note, for a run that named none and had no route.
+func WithDefault(note, backend string) string {
+	d := "default backend " + backend + " was used"
+	if note == "" {
+		return d
+	}
+	return note + "; " + d
+}
+
 // IsLean reports whether lean is on: unset or true.
 func (o Options) IsLean() bool { return o.Lean == nil || *o.Lean }
 

@@ -688,8 +688,8 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		return fail(err)
 	}
 	routeReason := routeNote
-	if routeReason == "" {
-		routeReason = "spec or default chose backend " + firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	if backend == "" {
+		routeReason = agent.WithDefault(routeNote, agent.DefaultBackendNameIn(runlog.Home()))
 	}
 	if routedBy != nil {
 		mode := "classified"

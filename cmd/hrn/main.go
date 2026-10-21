@@ -348,19 +348,22 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	if *continueID != "" {
+		routeNote = "" // the backend came from the run being continued, which the record names
+	}
 	if !opts.NoSwitch && *continueID == "" {
 		meant := backend
 		if backend, routed = limits.Choose(backend, ""); backend != meant {
 			if routedBy != nil {
 				opts.Effort = "" // the row measured the limited backend, not its partner
 			}
-			opts.Model, routedBy = "", nil
+			opts.Model, routedBy, routeNote = "", nil, routed
 		}
 	}
 	if backend == "" {
 		backend = agent.DefaultBackendNameIn(runlog.Home())
-		if routedBy == nil && routeNote == "" {
-			routeNote = "default backend " + backend + " was used"
+		if routedBy == nil {
+			routeNote = agent.WithDefault(routeNote, backend)
 		}
 	}
 	if err := preference.Check(backend); err != nil {

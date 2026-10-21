@@ -78,3 +78,19 @@ func TestLoadCleansStoredFlowAgain(t *testing.T) {
 		t.Fatalf("view = %+v err=%v", got, err)
 	}
 }
+
+func TestWriteTextKeepsItsMarksAndDashes(t *testing.T) {
+	tree := []*flow.Node{{Step: "run:r", Kind: flow.KindRun, Name: "codex", Status: flow.StatusOK, Text: "done", Children: []*flow.Node{
+		{Step: "run:r/tool1", Kind: flow.KindTool, Name: "shell", Status: flow.StatusFailed},
+		{Step: "run:r/tool2", Kind: flow.KindTool, Name: "read", Status: flow.StatusStarted},
+	}}}
+	var b strings.Builder
+	if err := WriteText(&b, "summary", tree, "technical"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"✓ run codex — done", "✗ tool shell", "… tool read"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("missing %q in: %s", want, b.String())
+		}
+	}
+}

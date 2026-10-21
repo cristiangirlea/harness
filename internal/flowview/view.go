@@ -14,7 +14,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// ErrNotFound covers missing, unreadable and foreign ids alike, so callers cannot tell them apart.
+// ErrNotFound covers missing and foreign ids alike, so callers cannot tell them apart.
 var ErrNotFound = errors.New("no run or batch")
 
 // View is a cleaned execution tree and its source summary.
@@ -102,7 +102,7 @@ func RunSummary(roots []*flow.Node) string {
 	}
 	line := "run " + n.Run + ": " + status
 	if n.Text != "" {
-		line += " â€” " + n.Text
+		line += " — " + n.Text
 	}
 	return line
 }
@@ -189,7 +189,7 @@ func writeNode(w io.Writer, n *flow.Node, depth int, debug bool) error {
 		label += " " + n.Ended.Sub(n.Started).Round(time.Millisecond).String()
 	}
 	if n.Text != "" {
-		label += " â€” " + n.Text
+		label += " — " + n.Text
 	}
 	if _, err := fmt.Fprintf(w, "%s%s %s\n", indent, statusMark(n.Status), label); err != nil {
 		return err
@@ -210,16 +210,16 @@ func writeNode(w io.Writer, n *flow.Node, depth int, debug bool) error {
 func statusMark(status flow.Status) string {
 	switch status {
 	case flow.StatusOK:
-		return "âœ“"
+		return "✓"
 	case flow.StatusFailed:
-		return "âœ—"
+		return "✗"
 	case flow.StatusCanceled:
-		return "âŠ˜"
+		return "⊘"
 	case flow.StatusStarted, flow.StatusWaiting:
-		return "â€¦"
+		return "…"
 	case flow.StatusSkipped:
 		return "-"
 	default:
-		return "â€¦"
+		return "…"
 	}
 }

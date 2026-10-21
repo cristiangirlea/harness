@@ -82,6 +82,7 @@ func safeTree(nodes []*flow.Node) []*flow.Node {
 		copy.Text = safeFlowText(copy.Text)
 		copy.Reason = safeFlowText(copy.Reason)
 		copy.Next = safeFlowText(copy.Next)
+		copy.Step, copy.Run = safeFlowText(copy.Step), safeFlowText(copy.Run)
 		copy.Children = safeTree(copy.Children)
 		out[i] = &copy
 	}

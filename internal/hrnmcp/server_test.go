@@ -773,3 +773,47 @@ func TestMCPRunRecordsExplicitBackendNote(t *testing.T) {
 		t.Fatalf("record=%+v err=%v", rec, err)
 	}
 }
+
+func TestMCPContinuationKeepsItsContinuesReasonInsteadOfANote(t *testing.T) {
+	s := connect(t, t.TempDir())
+	first := s.call(t, "run", `{"prompt":"hello","backend":"stub"}`)
+	if first.IsError {
+		t.Fatal(first.Text())
+	}
+	id := first.StructuredContent.(map[string]any)["run_id"].(string)
+	next := s.call(t, "run", `{"prompt":"again","fresh":true,"no_switch":true,"continue_run_id":"`+id+`"}`)
+	if next.IsError {
+		t.Fatal(next.Text())
+	}
+	rec, err := runlog.Load(next.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Continues != id || rec.RouteNote != "" {
+		t.Fatalf("continuation record = %+v (%v): its backend came from the run it continues, not a choice", rec, err)
+	}
+}
+
+func TestMCPFlowCapsALargeTreeAndFiltersControls(t *testing.T) {
+	s := connect(t, t.TempDir())
+	w, err := runlog.Create("stub", agent.Task{Prompt: "big"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "echo \x1b]52;c;cGF5bG9hZA==\x07"})
+	small := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	if small.IsError || strings.ContainsRune(small.Text(), 0x1b) {
+		t.Fatalf("flow text: %q", small.Text())
+	}
+	if data, _ := json.Marshal(small.StructuredContent); strings.Contains(string(data), `\u001b`) {
+		t.Fatalf("structured content carried a control character: %s", data)
+	}
+	for i := 0; i < 600; i++ {
+		w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: strings.Repeat("long command text ", 12)})
+	}
+	big := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	content, _ := big.StructuredContent.(map[string]any)
+	if big.IsError || !strings.Contains(big.Text(), "truncated at 64 KiB") || content["truncated"] != true {
+		t.Fatalf("a large flow must be cut and say so: truncated=%v", content["truncated"])
+	}
+	if tree, _ := content["tree"].([]any); len(tree) != 0 {
+		t.Fatalf("the structured tree of a cut flow must not be returned whole, got %d roots", len(tree))
+	}
+}

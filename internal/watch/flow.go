@@ -31,6 +31,9 @@ func (s *server) flowEvents(v owner.Viewer, id string) ([]flow.Event, string, er
 	if _, err := batch.LoadResultFor(v, id); err == nil {
 		events, err := batch.Timeline(v, id)
 		return events, "batch", err
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// A batch caught mid-save is still a batch; reading it as a missing run would end a live stream.
+		return nil, "batch", err
 	}
 	rec, err := runlog.LoadFor(v, id)
 	if err != nil {

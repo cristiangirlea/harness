@@ -99,6 +99,9 @@ func TestRunToolStartsOnTheOtherBackendWhileALimitIsRemembered(t *testing.T) {
 	if rec.Backend != "claude" || rec.Task.Model != "" {
 		t.Errorf("ran on %s with model %q, want claude and no codex model", rec.Backend, rec.Task.Model)
 	}
+	if rec.RouteNote == "" || strings.Contains(rec.RouteNote, "backend codex was named") {
+		t.Errorf("route note %q: a run moved to its partner must say why, not keep the named backend", rec.RouteNote)
+	}
 }
 
 func TestRunToolExplainsAMeteredPartnerBeforeStartingAndKeepsItsModel(t *testing.T) {

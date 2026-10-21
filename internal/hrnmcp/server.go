@@ -209,19 +209,22 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
+			if args.ContinueRunID != "" {
+				routeNote = "" // the backend came from the run being continued, which the record names
+			}
 			if !args.NoSwitch && args.ContinueRunID == "" {
 				meant := args.Backend
 				if args.Backend, routed = limits.Choose(args.Backend, ""); args.Backend != meant {
 					if routedBy != nil {
 						args.Options.Effort = "" // the row measured the limited backend, not its partner
 					}
-					args.Model, routedBy = "", nil
+					args.Model, routedBy, routeNote = "", nil, routed
 				}
 			}
 			if args.Backend == "" {
 				args.Backend = agent.DefaultBackendNameIn(runlog.Home())
-				if routedBy == nil && routeNote == "" {
-					routeNote = "default backend " + args.Backend + " was used"
+				if routedBy == nil {
+					routeNote = agent.WithDefault(routeNote, args.Backend)
 				}
 			}
 			if err := preference.Check(args.Backend); err != nil {
@@ -497,10 +500,13 @@ func flowTool() mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			body, cut := truncateFlowText(printableFlow(b.String()), 64*1024)
+			structured := map[string]any{"version": view.Version, "summary": printableFlow(view.Summary), "tree": cleanFlowTree(tree)}
 			if cut {
 				body += "\n[flow text truncated at 64 KiB]\n"
+				// The tree is at least as large as the text; a lower level or hrn flow --json gives it whole.
+				structured["tree"], structured["truncated"] = []*flow.Node{}, true
 			}
-			return text(body, map[string]any{"version": view.Version, "summary": view.Summary, "tree": cleanFlowTree(tree)}, false), nil
+			return text(body, structured, false), nil
 		},
 	}
 }
@@ -509,10 +515,11 @@ func cleanFlowTree(nodes []*flow.Node) []*flow.Node {
 	out := make([]*flow.Node, len(nodes))
 	for i, n := range nodes {
 		copy := *n
-		copy.Name = flow.Redact(copy.Name)
-		copy.Text = flow.Redact(copy.Text)
-		copy.Reason = flow.Redact(copy.Reason)
-		copy.Next = flow.Redact(copy.Next)
+		copy.Name = printableFlow(flow.Redact(copy.Name))
+		copy.Text = printableFlow(flow.Redact(copy.Text))
+		copy.Reason = printableFlow(flow.Redact(copy.Reason))
+		copy.Next = printableFlow(flow.Redact(copy.Next))
+		copy.Step, copy.Run = printableFlow(copy.Step), printableFlow(copy.Run)
 		copy.Children = cleanFlowTree(copy.Children)
 		out[i] = &copy
 	}

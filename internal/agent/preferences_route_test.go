@@ -93,3 +93,12 @@ func TestRouteWithNote(t *testing.T) {
 		})
 	}
 }
+
+func TestWithDefaultNamesTheDefaultBackend(t *testing.T) {
+	if got := WithDefault("", "claude"); got != "default backend claude was used" {
+		t.Fatalf("got %q", got)
+	}
+	if got := WithDefault("no route row for purpose plan", "codex"); got != "no route row for purpose plan; default backend codex was used" {
+		t.Fatalf("got %q", got)
+	}
+}

@@ -210,3 +210,38 @@ func TestFlowStreamRidesOutAResultCaughtMidWrite(t *testing.T) {
 		}
 	}
 }
+
+func TestFlowStreamRidesOutABatchCaughtMidSave(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
+	id := "20261021-110000-aabbcc"
+	running := batch.Result{ID: id, Owner: owner.Local(), Started: time.Now(), Tasks: []batch.TaskResult{{ID: "t", Status: batch.StatusRunning}}}
+	saveBatch(t, running)
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	s, stop := openStream(t, srv.URL+"/stream/flow/"+id, "")
+	defer stop()
+	if first, ok := s.next(t); !ok || first.event != "replace" {
+		t.Fatalf("first flow event = %#v, %v", first, ok)
+	}
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "batches", id+".json"), []byte(`{"id":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	done := running
+	done.Tasks = []batch.TaskResult{{ID: "t", Status: batch.StatusPass, Duration: time.Second}}
+	done.Duration = time.Second
+	saveBatch(t, done)
+	for {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("the stream ended without an end event")
+		}
+		if m.event == "problem" {
+			t.Fatalf("a batch caught mid-save ended the stream: %s", m.data)
+		}
+		if m.event == "end" {
+			return
+		}
+	}
+}
