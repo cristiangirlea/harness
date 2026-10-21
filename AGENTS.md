@@ -18,6 +18,7 @@ don't reopen its decisions. Older entries use `hx` (`cmd/hx`, `$HX_HOME`); code 
 | `internal/mcp/`, `internal/hrnmcp/` | JSON-RPC stdio and `hrn mcp` host tools. |
 | `internal/batch/`, `eval/`, `report/`, `purpose/` | Worktrees, variants, tables, prompt labels. |
 | `internal/runlog/`, `followup/` | Run records, pruning, continuation. |
+| `internal/flow/`, `owner/`, `flowview/` | Execution events and step trees, local ownership, the shared flow view. |
 | `internal/gc/`, `internal/ws/` | Merged cleanup; O_EXCL-leased slots (`.hrn/slots/<n>`). |
 | `server/` | Separate module with its own `go.mod`; PostgreSQL control service and project worker. PostgreSQL tests need `HRN_TEST_DATABASE_URL`. |
 | `scripts/api-check.sh` | The first real api runs. Costs real money; a maintainer runs it. |

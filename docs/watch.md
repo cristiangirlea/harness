@@ -14,6 +14,8 @@ hrn show -f <run-id>       # the same timeline in the terminal
 hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
 
+Run and batch pages link to **Execution flow**, a hierarchical view of recorded steps and their timing. It can also be opened at `/flow/<id>` or fetched as JSON at `/flow/<id>/json` (`version: 1`). The `?level=simple`, `?level=technical` and `?level=debug` links choose how much detail is shown; simple omits tool steps, while debug includes step identifiers and marks rebuilt steps. The summary is generated from recorded events. An unfinished flow updates live at the selected level and ends when its run or batch finishes or stops. hrn shows recorded steps and reasons, not the model's private reasoning. Run steps link back to the run page, where tool calls and output provide the evidence.
+
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
 `hrn update` restarts a running watch on the new binary with the same flags (see
 [hrn update](commands.md#hrn-update)).
@@ -190,6 +192,7 @@ hrn watch --addr 127.0.0.1:8090 --public https://harness.example.com --access-te
 ```
 
 All three flags are required together; `--public` cannot be combined with `--lan`.
+Use repeatable `--owner-email address` flags to identify which verified Access emails act as the local owner. Those emails (matched without case) see local records; other verified emails can see only records owned by their `email:` identity. With no `--owner-email`, every verified visitor acts as the local owner as before. Loopback and LAN visitors use the local owner identity.
 Watch checks the Cloudflare Access signing keys at start and refuses to serve if they cannot be fetched.
 Watch still listens only on loopback. In this mode it accepts only the public Host
 and verifies the Access JWT on every request, including static assets and event

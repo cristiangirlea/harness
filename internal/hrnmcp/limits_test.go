@@ -99,6 +99,9 @@ func TestRunToolStartsOnTheOtherBackendWhileALimitIsRemembered(t *testing.T) {
 	if rec.Backend != "claude" || rec.Task.Model != "" {
 		t.Errorf("ran on %s with model %q, want claude and no codex model", rec.Backend, rec.Task.Model)
 	}
+	if rec.RouteNote == "" || strings.Contains(rec.RouteNote, "backend codex was named") {
+		t.Errorf("route note %q: a run moved to its partner must say why, not keep the named backend", rec.RouteNote)
+	}
 }
 
 func TestRunToolExplainsAMeteredPartnerBeforeStartingAndKeepsItsModel(t *testing.T) {
@@ -339,5 +342,27 @@ func TestRunToolDropsRoutedByWhenALimitMovesTheRoutedRun(t *testing.T) {
 	rec, _ := runlog.Load(id)
 	if rec.Backend != "claude" || rec.Task.Model != "" || rec.Task.Effort != "" || rec.RoutedBy != nil {
 		t.Errorf("ran on %s with model %q effort %q routed by %+v, want claude and no routed choice", rec.Backend, rec.Task.Model, rec.Task.Effort, rec.RoutedBy)
+	}
+}
+
+func TestAContinuationMovedByALimitRecordsWhy(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	first, err := runlog.Create("codex", agent.Task{Prompt: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(agent.Result{Backend: "codex", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	_ = limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	res := s.call(t, "run", `{"prompt":"go on","backend":"codex","continue_run_id":"`+first.ID()+`"}`)
+	if res.IsError {
+		t.Fatalf("run: %s", res.Text())
+	}
+	id, _ := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, _ := runlog.Load(id)
+	if rec.Backend != "claude" || !strings.HasPrefix(rec.RouteNote, "continues run "+first.ID()+"; ") {
+		t.Fatalf("ran on %s with route note %q: a continuation moved by a limit must say so", rec.Backend, rec.RouteNote)
 	}
 }

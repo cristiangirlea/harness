@@ -27,6 +27,8 @@ func cmdWatch(args []string) error {
 	public := fs.String("public", "", "")
 	team := fs.String("access-team", "", "")
 	audience := fs.String("access-aud", "", "")
+	var ownerEmails stringListFlag
+	fs.Var(&ownerEmails, "owner-email", "repeat to mark verified Access emails as the local owner")
 	var lan lanFlag
 	fs.Var(&lan, "lan", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -62,6 +64,7 @@ func cmdWatch(args []string) error {
 		return err
 	}
 	lns, opt := []net.Listener{ln}, watchOptions(access)
+	opt.OwnerEmails = ownerEmails
 	if lan.on {
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
 		more, eps, err := watch.ListenLAN(port, lan.only)
@@ -79,6 +82,18 @@ func cmdWatch(args []string) error {
 		printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
 	}
 	return watch.Serve(ctx, opt, lns...)
+}
+
+type stringListFlag []string
+
+func (f *stringListFlag) String() string { return strings.Join(*f, ",") }
+func (f *stringListFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.Contains(value, "@") {
+		return errors.New("--owner-email needs an email address")
+	}
+	*f = append(*f, value)
+	return nil
 }
 
 func watchOptions(access *watch.PublicAccess) watch.Options {

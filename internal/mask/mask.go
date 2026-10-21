@@ -2,7 +2,10 @@
 package mask
 
 import (
+	"encoding/json"
+	"html"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -56,4 +59,45 @@ func replace(s string, rule *regexp.Regexp) string {
 		s = s[:start] + hidden + s[end:]
 	}
 	return s
+}
+
+// Mask environment secrets in raw, JSON and HTML forms before network viewers see them.
+// Skip values shorter than 12 characters to avoid blanking ordinary words.
+func Env(env []string) *strings.Replacer {
+	seen := map[string]bool{}
+	var values []string
+	for _, kv := range env {
+		name, value, ok := strings.Cut(kv, "=")
+		if !ok || len(value) < 12 || !secretName(name) {
+			continue
+		}
+		quoted, _ := json.Marshal(value) // the form a tool's JSON input holds it in
+		inJSON := strings.TrimSuffix(strings.TrimPrefix(string(quoted), `"`), `"`)
+		for _, v := range []string{value, inJSON, html.EscapeString(value), strings.ReplaceAll(html.EscapeString(value), "+", "&#43;")} {
+			if !seen[v] {
+				seen[v] = true
+				values = append(values, v)
+			}
+		}
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	// The longest first, so a value inside another goes with it.
+	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+	var pairs []string
+	for _, v := range values {
+		pairs = append(pairs, v, "[redacted]")
+	}
+	return strings.NewReplacer(pairs...)
+}
+
+func secretName(name string) bool {
+	n := strings.ToUpper(name)
+	for _, w := range []string{"KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL"} {
+		if strings.Contains(n, w) {
+			return true
+		}
+	}
+	return false
 }

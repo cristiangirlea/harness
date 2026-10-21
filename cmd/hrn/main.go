@@ -59,9 +59,10 @@ Usage:
   hrn runs [-n N]                 list recent runs
   hrn runs prune --older-than AGE remove old runs and records (--keep N, --dry-run)
   hrn show [--json] <run-id>      replay a recorded run
+  hrn flow <run-or-batch-id>      show a run or batch execution tree (--level simple|technical|debug, --json)
   hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
   hrn show --usage [--json] <id>  a run's model calls, one row each: tokens, context, compactions
-  hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]
+  hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]
                                  a local page that follows runs and batches live (default 127.0.0.1:8089,
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR
@@ -197,6 +198,8 @@ func main() {
 		err = cmdRuns(os.Args[2:])
 	case "show":
 		err = cmdShow(os.Args[2:])
+	case "flow":
+		err = cmdFlow(os.Args[2:])
 	case "mcp":
 		err = cmdMCP(os.Args[2:])
 	case "batch":
@@ -341,9 +344,12 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("empty prompt")
 	}
 
-	routedBy, err := opts.Route(*declared, prompt, &backend, runlog.Home())
+	routedBy, routeNote, err := opts.RouteWithNote(*declared, prompt, &backend, runlog.Home())
 	if err != nil {
 		return 2, err
+	}
+	if *continueID != "" {
+		routeNote = agent.ContinuationNote(*continueID, routed)
 	}
 	if !opts.NoSwitch && *continueID == "" {
 		meant := backend
@@ -351,11 +357,14 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 			if routedBy != nil {
 				opts.Effort = "" // the row measured the limited backend, not its partner
 			}
-			opts.Model, routedBy = "", nil
+			opts.Model, routedBy, routeNote = "", nil, routed
 		}
 	}
 	if backend == "" {
 		backend = agent.DefaultBackendNameIn(runlog.Home())
+		if routedBy == nil {
+			routeNote = agent.WithDefault(routeNote, backend)
+		}
 	}
 	if err := preference.Check(backend); err != nil {
 		return 2, fmt.Errorf("run: %w", err)
@@ -384,7 +393,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 
-	rec, err := runlog.CreateContinuingRoute(backend, task, *continueID, plan.Route(), routedBy)
+	rec, err := runlog.CreateRouted(backend, task, *continueID, plan.Route(), routedBy, routeNote)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}

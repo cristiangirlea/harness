@@ -25,6 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -132,6 +135,43 @@ func (f *accessFixture) requestWithHeaders(h http.Handler, method, path, host, o
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
+}
+
+func TestPublicOwnerEmailAccessIsolatedByVerifiedEmail(t *testing.T) {
+	f := newAccessFixture(t)
+	t.Setenv("HRN_OWNER", "local:test")
+	runID := saveRun(t, "fake", "mine", &agent.Result{Status: agent.StatusOK})
+	batchID := "20261020-120000-aabbcc"
+	saveBatch(t, batch.Result{ID: batchID, Owner: owner.Local(), Started: time.Now()})
+	f.opt.OwnerEmails = []string{"OWNER@example.com"}
+	h := New(context.Background(), f.opt)
+	ownerResp := f.request(h, "/run/"+runID, "harness.example.com", "", f.validToken())
+	if ownerResp.Code != 200 {
+		t.Fatalf("owner: %d", ownerResp.Code)
+	}
+	ownerBatch := f.request(h, "/batch/"+batchID, "harness.example.com", "", f.validToken())
+	if ownerBatch.Code != 200 {
+		t.Fatalf("owner batch: %d", ownerBatch.Code)
+	}
+	for _, path := range []string{"/run/" + runID, "/flow/" + runID, "/flow/" + batchID, "/batch/" + batchID, "/stream/run/" + runID, "/stream/batch/" + batchID, "/stream/flow/" + runID} {
+		claims := f.validClaims()
+		claims["email"] = "other@example.com"
+		token := f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
+		resp := f.request(h, path, "harness.example.com", "", token)
+		if resp.Code != http.StatusNotFound || strings.Contains(resp.Body.String(), runID) && !strings.Contains(path, runID) {
+			t.Errorf("%s: %d %s", path, resp.Code, resp.Body)
+		}
+		if path == "/stream/flow/"+runID && strings.Contains(resp.Header().Get("Content-Type"), "text/event-stream") {
+			t.Errorf("stranger flow stream sent event-stream headers")
+		}
+	}
+	claims := f.validClaims()
+	claims["email"] = "other@example.com"
+	token := f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
+	resp := f.request(h, "/", "harness.example.com", "", token)
+	if strings.Contains(resp.Body.String(), runID) || strings.Contains(resp.Body.String(), batchID) {
+		t.Fatal("stranger index listed local records")
+	}
 }
 
 func TestParsePublicAccess(t *testing.T) {
@@ -841,5 +881,77 @@ func TestPublicGuardCalledWithoutTheLogWriterRefusesInsteadOfPanicking(t *testin
 	w := f.request(h, "/", "harness.example.com", "", f.validToken())
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d %s, want 500", w.Code, w.Body)
+	}
+}
+
+// streamAs reads what a live route sends in its first moments, then hangs up.
+func (f *accessFixture) streamAs(h http.Handler, path, token string) string {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8089"+path, nil).WithContext(ctx)
+	r.Host = "harness.example.com"
+	r.RemoteAddr = "127.0.0.1:5678"
+	r.Header.Set("Cf-Connecting-IP", "198.51.100.8")
+	r.Header.Set("Cf-Access-Jwt-Assertion", token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w.Body.String()
+}
+
+func (f *accessFixture) tokenFor(email string) string {
+	claims := f.validClaims()
+	claims["email"] = email
+	return f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
+}
+
+func TestAStrangerGetsNothingFromTheFlowJSONTheLiveIndexOrAda(t *testing.T) {
+	f := newAccessFixture(t)
+	t.Setenv("HRN_OWNER", "local:test")
+	runID := saveRun(t, "fake", "polish the zebra module", nil)
+	f.opt.OwnerEmails = []string{"owner@example.com"}
+	f.opt.Poll = 5 * time.Millisecond
+	h := New(context.Background(), f.opt)
+	stranger, mine := f.tokenFor("other@example.com"), f.tokenFor("owner@example.com")
+	if resp := f.request(h, "/flow/"+runID+"/json", "harness.example.com", "", stranger); resp.Code != http.StatusNotFound {
+		t.Fatalf("flow JSON for a stranger: %d", resp.Code)
+	}
+	if resp := f.request(h, "/flow/"+runID+"/json", "harness.example.com", "", mine); resp.Code != http.StatusOK {
+		t.Fatalf("flow JSON for the owner: %d", resp.Code)
+	}
+	if body := f.streamAs(h, "/stream/index", mine); !strings.Contains(body, runID) {
+		t.Fatalf("control: the owner's live index must list the run: %s", body)
+	}
+	if body := f.streamAs(h, "/stream/index", stranger); strings.Contains(body, runID) || strings.Contains(body, "zebra") {
+		t.Errorf("the live index showed a stranger the owner's run: %s", body)
+	}
+}
+
+func TestAdaOnlyWatchesWhatHerViewerMayRead(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
+	runID := saveRun(t, "fake", "polish the zebra module", &agent.Result{Status: agent.StatusOK})
+	s := &server{opt: Options{Runs: 50, Public: &PublicAccess{}, OwnerEmails: []string{"owner@example.com"}}}
+	as := func(email string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/stream/bot", nil)
+		return r.WithContext(context.WithValue(r.Context(), accessContextKey{}, &accessWriter{email: email}))
+	}
+	if _, ok := s.newBotWatcher(as("owner@example.com")).look().find(runID); !ok {
+		t.Fatal("control: Ada must watch the owner's run")
+	}
+	if snap := s.newBotWatcher(as("other@example.com")).look(); len(snap.items) != 0 {
+		t.Fatalf("Ada watched %d records for a stranger", len(snap.items))
+	}
+}
+
+func TestWithoutOwnerEmailsEveryVerifiedVisitorIsTheLocalUser(t *testing.T) {
+	f := newAccessFixture(t)
+	t.Setenv("HRN_OWNER", "local:test")
+	runID := saveRun(t, "fake", "mine", &agent.Result{Status: agent.StatusOK})
+	h := New(context.Background(), f.opt)
+	for _, path := range []string{"/run/" + runID, "/flow/" + runID} {
+		if resp := f.request(h, path, "harness.example.com", "", f.tokenFor("anyone@example.com")); resp.Code != http.StatusOK {
+			t.Errorf("%s: %d, want the behaviour before ownership: every verified visitor reads local records", path, resp.Code)
+		}
 	}
 }

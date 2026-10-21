@@ -98,7 +98,7 @@ func changedProtected(ctx context.Context, dir string, p protection) ([]string, 
 }
 
 func protectGate(p protection, changed []string, err error) GateResult {
-	gr := GateResult{Command: "protect " + strings.Join(p.globs, " ")}
+	gr := GateResult{Command: "protect " + strings.Join(p.globs, " "), Guard: true}
 	switch {
 	case err != nil:
 		gr.ExitCode, gr.Output = 1, "could not compare the protected files with the base: "+err.Error()

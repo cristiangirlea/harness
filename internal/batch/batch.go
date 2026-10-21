@@ -25,10 +25,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/gitretry"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -95,7 +97,9 @@ const (
 
 // Result is a saved batch record.
 type Result struct {
-	ID       string        `json:"id"`
+	ID string `json:"id"`
+	// Owner is empty on records written before ownership; owner.Of reads that as the local user.
+	Owner    string        `json:"owner,omitempty"`
 	Started  time.Time     `json:"started"`
 	Dir      string        `json:"dir"`  // repository root
 	Base     string        `json:"base"` // commit every worktree branched from
@@ -157,6 +161,8 @@ type GateResult struct {
 	Timeout agent.Duration `json:"timeout,omitempty"`
 	// InfrastructureError is a gate shell that could not start or be waited for: the operator's to fix, not a retry backend's.
 	InfrastructureError string `json:"infrastructure_error,omitempty"`
+	// Guard marks the protect check, so a user gate whose command starts the same way is not taken for it.
+	Guard bool `json:"guard,omitempty"`
 }
 
 const (
@@ -478,7 +484,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 
-	res := Result{ID: runlog.NewID(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
+	res := Result{ID: runlog.NewID(), Owner: owner.Local(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
 	for i, t := range spec.Tasks {
 		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Purpose: t.Purpose, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
@@ -488,6 +494,10 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	if err := save(res); err != nil {
 		return Result{}, fmt.Errorf("saving batch record: %w", err)
 	}
+	flowWriter, _ := flow.Open(FlowPath(res.ID), flow.Event{Owner: res.Owner, Batch: res.ID})
+	defer func() { _ = flowWriter.Close() }()
+	flowWriter.Emit(flow.Event{Step: BatchStep, Kind: flow.KindBatch, Status: flow.StatusStarted, Name: res.ID,
+		Text: fmt.Sprintf("%d tasks, %d parallel, base %s", len(res.Tasks), res.Parallel, short(res.Base))})
 
 	// Intermediate save failures stale the view; final save errors are returned.
 	var recordMu sync.Mutex
@@ -506,8 +516,9 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				update(i, runTask(ctx, &spec, res.ID, kept, spec.Tasks[i], res.Tasks[i], root, base, notify,
-					func(tr TaskResult) error { return update(i, tr) }))
+				tr := runTask(ctx, &spec, res.ID, kept, spec.Tasks[i], res.Tasks[i], root, base, flowWriter, notify,
+					func(tr TaskResult) error { return update(i, tr) })
+				update(i, tr)
 			}
 		}()
 	}
@@ -520,6 +531,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	if err := save(res); err != nil {
 		return res, fmt.Errorf("saving batch record: %w", err)
 	}
+	flowWriter.Emit(flow.Event{Step: BatchStep, Kind: flow.KindBatch, Status: batchStatus(res), Text: tally(res)})
 	return res, nil
 }
 
@@ -536,6 +548,7 @@ type attemptPlan struct {
 	switchedFrom, continues string
 	// Model and effort are backend-scoped.
 	chosenFor string
+	reason    string
 }
 
 const (
@@ -621,7 +634,7 @@ func fence(s string) string {
 	return f
 }
 
-func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t Task, tr TaskResult, root, base string, notify func(Event), progress func(TaskResult) error) TaskResult {
+func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t Task, tr TaskResult, root, base string, fw *flow.Writer, notify func(Event), progress func(TaskResult) error) TaskResult {
 	started := time.Now()
 	tr.Status, tr.Attempts, tr.Commit, tr.Error, tr.BranchMade = "", []Attempt{}, "", "", false
 	slots := spec.Worktrees == WorktreesSlots
@@ -638,6 +651,12 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 		tr.Status = status
 		tr.Duration = time.Since(started)
+		st := taskStatus(status)
+		e := flow.Event{Step: TaskStep(t.ID), Kind: flow.KindTask, Task: t.ID, Status: st, Text: firstLineOf(tr.Error)}
+		if st == flow.StatusOK && tr.Commit != "" {
+			e.Next = "review the diff with hrn batch show " + batchID + " " + t.ID + ", then merge it"
+		}
+		fw.Emit(e)
 		notify(Event{Task: t.ID, Kind: "done", Text: text})
 		return tr
 	}
@@ -649,15 +668,41 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		return finish(StatusError, "error: "+err.Error())
 	}
 	if ctx.Err() != nil {
+		fw.Emit(flow.Event{Step: TaskStep(t.ID), Parent: BatchStep, Kind: flow.KindTask, Task: t.ID, Status: flow.StatusStarted,
+			Name: t.ID, Text: promptLine(t.Prompt), Reason: purposeReason(t.Purpose)})
 		return finish(StatusCanceled, "canceled")
+	}
+	fw.Emit(flow.Event{Step: TaskStep(t.ID), Parent: BatchStep, Kind: flow.KindTask, Task: t.ID, Status: flow.StatusStarted,
+		Name: t.ID, Text: promptLine(t.Prompt), Reason: purposeReason(t.Purpose)})
+	decisions := 0
+	decide := func(st flow.Status, reason string) {
+		decisions++
+		fw.Emit(flow.Event{Step: fmt.Sprintf("%s/d%d", TaskStep(t.ID), decisions), Parent: TaskStep(t.ID), Kind: flow.KindDecision,
+			Task: t.ID, Status: st, Reason: reason})
 	}
 
 	opts := t.Options.Over(spec.Options)
 	backend := firstOf(t.Backend, spec.Backend)
-	routedBy, err := opts.Route(t.Purpose, t.Prompt, &backend, runlog.Home())
+	routedBy, routeNote, err := opts.RouteWithNote(t.Purpose, t.Prompt, &backend, runlog.Home())
 	if err != nil {
 		return fail(err)
 	}
+	routeReason := routeNote
+	if backend == "" {
+		routeReason = agent.WithDefault(routeNote, agent.DefaultBackendNameIn(runlog.Home()))
+	}
+	if routedBy != nil {
+		mode := "classified"
+		if routedBy.Declared {
+			mode = "declared"
+		}
+		routeReason = fmt.Sprintf("route category %s, %s, set by %s", routedBy.Category, mode, routedBy.Set)
+		if routedBy.Eval != "" {
+			routeReason += ", from eval " + routedBy.Eval
+		}
+	}
+	fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/route", Parent: TaskStep(t.ID), Kind: flow.KindRoute, Task: t.ID,
+		Status: flow.StatusOK, Name: firstOf(backend, agent.DefaultBackendNameIn(runlog.Home())), Reason: routeReason})
 	backends := []string{firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))}
 	p, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {
@@ -706,7 +751,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			pick, why, bothOut := limits.Pick(name, time.Now(), spent)
 			if bothOut {
 				outOfPlans = why
-				notify(Event{Task: t.ID, Kind: "switch", Text: "skipping an attempt on " + name + ": " + why})
+				text := "skipping an attempt on " + name + ": " + why
+				decide(flow.StatusSkipped, text)
+				notify(Event{Task: t.ID, Kind: "switch", Text: text})
 				continue
 			}
 			if pick != name && retrievalOn(opts) {
@@ -715,12 +762,15 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					bound = task.RetrievalState.Scope.Backend
 				}
 				tr.Error = pinnedSwitch(name, pick, bound)
+				decide(flow.StatusSkipped, tr.Error)
 				return finish(StatusFail, "limited: "+tr.Error)
 			}
 			if pick != name {
 				plan.switchedFrom, name = name, pick
+				decide(flow.StatusOK, why)
 				notify(Event{Task: t.ID, Kind: "switch", Text: why})
 			} else if why != "" {
+				decide(flow.StatusOK, why)
 				notify(Event{Task: t.ID, Kind: "info", Text: why})
 			}
 		}
@@ -742,7 +792,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 			if plan.continues != "" {
 				verb = fmt.Sprintf("%s reached its usage limit; carrying on on %s", plan.switchedFrom, name)
 			}
-			notify(Event{Task: t.ID, Kind: "retry", Text: fmt.Sprintf("%s (%s)", verb, where)})
+			text = fmt.Sprintf("%s (%s)", verb, where)
+			decide(flow.StatusOK, text)
+			notify(Event{Task: t.ID, Kind: "retry", Text: text})
 		}
 		plan.commit = t.ID + ": " + tools.OneLine(t.Prompt, 60)
 		if plan.continued {
@@ -765,7 +817,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					}
 					return err
 				}
-				got, err := takeSlot(ctx, spec, batchID, kept, t.ID, tr.Branch, root, base, notify, made)
+				got, err := takeSlotFlow(ctx, spec, batchID, kept, t.ID, tr.Branch, root, base, fw, notify, made)
 				if err != nil {
 					if tr.BranchMade {
 						tr.Error = err.Error() // the branch is left: say so even when canceled
@@ -825,7 +877,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		if at.Lean == nil && agent.AppliesLean(b) {
 			at.Lean = agent.Bool(true) // lean by default in a batch
 		}
-		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, notify, report)
+		plan.number = len(tr.Attempts) + 1
+		plan.reason = attemptReason(append(slices.Clone(tr.Attempts), Attempt{Backend: name, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}), len(tr.Attempts))
+		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, fw, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
 		task.RetrievalState = out.att.Result.Retrieval
 		task.RetrievalRepair = false
@@ -857,7 +911,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		if att := out.att; att.Result.Status == agent.StatusLimited {
 			spent[att.Backend] = true
 			if err := limits.Note(att.Backend, att.Result); err != nil {
-				notify(Event{Task: t.ID, Kind: "switch", Text: "the limit was not remembered: " + err.Error()})
+				text := "the limit was not remembered: " + err.Error()
+				decide(flow.StatusOK, text)
+				notify(Event{Task: t.ID, Kind: "switch", Text: text})
 			}
 			// A usage-limit carry-on preserves work without consuming a retry.
 			if other := limits.Partner(att.Backend, time.Now(), spent); other != "" && !opts.NoSwitch {
@@ -868,7 +924,9 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 					backends = slices.Insert(backends, i+1, other)
 					carry = &att
 				} else {
-					notify(Event{Task: t.ID, Kind: "switch", Text: "not carried on: " + why})
+					text := "not carried on: " + why
+					decide(flow.StatusOK, text)
+					notify(Event{Task: t.ID, Kind: "switch", Text: text})
 				}
 			}
 		}
@@ -889,9 +947,25 @@ func pinnedSwitch(from, to, bound string) string {
 	return fmt.Sprintf("%s reached its usage limit; switch to %s skipped: the retrieval pin is bound to %s", from, to, bound)
 }
 
+func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, notify func(Event), made func(mine bool) error) (ws.Taken, error) {
+	return takeSlotFlow(ctx, spec, batchID, kept, id, branch, root, base, nil, notify, made)
+}
+
 // Save ownership before waiting; clear it before branch deletion.
 // On save failure, leak rather than delete unproven work.
-func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, notify func(Event), made func(mine bool) error) (ws.Taken, error) {
+func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, fw *flow.Writer, notify func(Event), made func(mine bool) error) (_ ws.Taken, failed error) {
+	step := SlotStep(id)
+	fw.Emit(flow.Event{Step: step, Parent: TaskStep(id), Kind: flow.KindSlot, Task: id, Status: flow.StatusWaiting, Next: "waits for a free worktree slot"})
+	defer func() {
+		if failed == nil {
+			return
+		}
+		st := flow.StatusFailed
+		if ctx.Err() != nil {
+			st = flow.StatusCanceled
+		}
+		fw.Emit(flow.Event{Step: step, Kind: flow.KindSlot, Task: id, Status: st, Text: firstLineOf(failed.Error())})
+	}()
 	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
 		return ws.Taken{}, err
 	}
@@ -948,6 +1022,7 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 	for {
 		got, err := try()
 		if err == nil {
+			fw.Emit(flow.Event{Step: step, Parent: TaskStep(id), Kind: flow.KindSlot, Task: id, Status: flow.StatusOK, Text: fmt.Sprintf("slot %d at %s", got.N, got.Path)})
 			return got, nil
 		}
 		var full *ws.NoSlotError
@@ -979,6 +1054,7 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 			return drop(err)
 		}
 		if wait != said {
+			fw.Emit(flow.Event{Step: step, Parent: TaskStep(id), Kind: flow.KindSlot, Task: id, Status: flow.StatusWaiting, Text: wait})
 			notify(Event{Task: id, Kind: "wait", Text: wait})
 			said = wait
 		}
@@ -1117,7 +1193,7 @@ type attemptOutcome struct {
 }
 
 // runAttempt's returned error aborts the whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
 	if plan.switchedFrom != "" {
@@ -1132,6 +1208,9 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
 	}
 	att.RunID = rec.ID()
+	as := AttemptStep(id, plan.number)
+	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number,
+		Status: flow.StatusStarted, Name: b.Name(), Reason: plan.reason, Run: att.RunID})
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
 	report(att)
 	before, beforeErr := gitTips(task.Dir, plan.branch)
@@ -1159,8 +1238,11 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 
 	pass := att.Result.Status == agent.StatusOK
 	if pass && expect != nil {
+		fw.Emit(flow.Event{Step: GateStep(id, plan.number, len(att.Gates)+1), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number,
+			Status: flow.StatusStarted, Name: expectCommand(expect.String())})
 		gr := checkExpect(expect, att.Result.Final)
 		att.Gates = append(att.Gates, gr)
+		fw.Emit(gateEvent(id, plan.number, len(att.Gates), as, gr))
 		report(att)
 		if gr.ExitCode != 0 {
 			pass = false
@@ -1175,9 +1257,13 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		if len(changed) > 0 {
 			notify(Event{Task: id, Kind: "gate", Text: "! protected files changed: " + strings.Join(changed, ", ")})
 		}
+		if len(changed) > 0 && !(guard.fail && pass) {
+			fw.Emit(protectedInfo(id, plan.number, as, changed))
+		}
 		if guard.fail && pass && (err != nil || len(changed) > 0) {
 			gr := protectGate(guard, changed, err)
 			att.Gates = append(att.Gates, gr)
+			fw.Emit(gateEvent(id, plan.number, len(att.Gates), as, gr))
 			pass = false
 			notify(Event{Task: id, Kind: "gate", Text: "✗ " + gr.Command})
 		} else if err != nil {
@@ -1187,10 +1273,13 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 	if pass {
 		for _, g := range gates {
+			gateN := len(att.Gates) + 1
+			fw.Emit(flow.Event{Step: GateStep(id, plan.number, gateN), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number, Status: flow.StatusStarted, Name: g})
 			stop := beating(gateBeat, func() { report(att) })
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
 			stop()
 			att.Gates = append(att.Gates, gr)
+			fw.Emit(gateEvent(id, plan.number, gateN, as, gr))
 			report(att)
 			if gr.ExitCode != 0 {
 				pass = false
@@ -1206,6 +1295,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	if note != "" {
 		// No retry may remove or reuse the worktree holding the work.
 		att.Error = strings.TrimSpace(att.Error + "\n" + note)
+		fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Text: firstLineOf(note)})
 		return attemptOutcome{att: att}, fmt.Errorf("%s (%s)", note, task.Dir)
 	}
 	if sha == "" && commitErr == nil {
@@ -1216,9 +1306,27 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 	if commitErr != nil {
 		att.Error = strings.TrimSpace(att.Error + "\ncommit: " + commitErr.Error())
+		fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Text: firstLineOf(commitErr.Error())})
 		return attemptOutcome{att: att}, fmt.Errorf("commit failed, changes are uncommitted in %s: %v", task.Dir, commitErr)
 	}
+	if sha != "" || note != "" {
+		fw.Emit(flow.Event{Step: as + "/commit", Parent: as, Kind: flow.KindCommit, Task: id, Attempt: plan.number, Status: flow.StatusOK, Text: firstOf(sha, note)})
+	}
+	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: attemptStatus(att), Text: firstLineOf(att.Result.Error)})
 	return attemptOutcome{att: att, commit: sha, pass: pass}, nil
+}
+
+func gateEvent(id string, attempt, gate int, parent string, gr GateResult) flow.Event {
+	status := flow.StatusOK
+	reason := ""
+	if gr.ExitCode != 0 {
+		status, reason = flow.StatusFailed, gr.Outcome()
+		if gr.Killed == KilledCanceled {
+			status = flow.StatusCanceled
+		}
+	}
+	return flow.Event{Step: gateStep(id, attempt, gate, gr), Parent: parent, Kind: flow.KindGate, Task: id, Attempt: attempt,
+		Status: status, Name: gr.Command, Reason: reason, Text: lastLine(gr.Output)}
 }
 
 // stop waits for beat, preventing later writes.
