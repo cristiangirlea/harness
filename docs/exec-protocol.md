@@ -84,7 +84,8 @@ hrn       -> result                (always the last line after accepted; then ex
   selected route, or `route_note` explaining the default or named choice; a named backend records
   `backend X was named for this run`. `accepted.requested.backend` reports the resolved backend.
 - `continue_run_id` continues a finished run, as `hrn run --continue` does; `accepted` says how
-  (`notes`).
+  (`notes`). A continuation is never routed: with `backend` omitted it stays on the earlier run's
+  backend, and its record carries no `route_note`.
   When the saved session or conversation being carried over ended above 150,000 tokens of
   context, these notes include the same fresh-run warning as the CLI and MCP. The new run
   also records it once as an `info` event. A transcript hand-over alone does not warn.

@@ -29,6 +29,9 @@ var answerRules = []struct {
 	{"today", regexp.MustCompile(`^what went wrong today$`)},
 }
 
+// answerScan bounds the records one question reads, each of which costs an events file.
+const answerScan = 50
+
 type botAnswer struct {
 	Text string `json:"text"`
 	Ref  string `json:"ref"`
@@ -88,14 +91,27 @@ func (s *server) recordedAnswer(r *http.Request) botAnswer {
 		return strings.Compare(a.id, b.id)
 	})
 	var first botAnswer
-	failedToday := 0
+	failedToday, scanned := 0, 0
 	now := time.Now()
 	for _, rec := range records {
 		if target != "" && !strings.Contains(rec.names, target) {
 			continue
 		}
+		// A count must be exact over the window it names, so today's window is the bound, not the cap.
+		if kind == "today" {
+			if rec.started.Before(now.Add(-48 * time.Hour)) {
+				break
+			}
+		} else if scanned++; scanned > answerScan {
+			break
+		}
 		view, err := flowview.Load(v, rec.id)
 		if err != nil || len(view.Tree) == 0 {
+			continue
+		}
+		// The same shortening as the flow page: a full path names the account that ran it.
+		view.Tree = flow.Build(s.prepareFlowEvents(r, view.Events, rec.id))
+		if len(view.Tree) == 0 {
 			continue
 		}
 		root := view.Tree[0]
@@ -157,7 +173,7 @@ func (s *server) recordedAnswer(r *http.Request) botAnswer {
 		return botAnswer{Text: text, Ref: rec.id, URL: "/flow/" + rec.id}
 	}
 	if first.Ref != "" {
-		first.Text = fmt.Sprintf("%s: %d failed records today; %s", first.Ref, failedToday, first.Text)
+		first.Text = fmt.Sprintf("%s: %d failed records today among those started in the last two days; %s", first.Ref, failedToday, first.Text)
 		return first
 	}
 	return botAnswer{Text: answerHelp}

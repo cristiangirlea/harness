@@ -117,6 +117,20 @@ func (h *harness) next(t *testing.T, kind string) map[string]any {
 	}
 }
 
+// nextAny reads one frame of any type, for callers that skip events of unknown number.
+func (h *harness) nextAny(t *testing.T) map[string]any {
+	t.Helper()
+	line, err := h.out.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(line, &msg); err != nil {
+		t.Fatal(err)
+	}
+	return msg
+}
+
 func (h *harness) send(t *testing.T, msg any) {
 	t.Helper()
 	if err := json.NewEncoder(h.in).Encode(msg); err != nil {

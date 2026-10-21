@@ -72,6 +72,10 @@ test('spoken and typed questions reply and link the recorded flow', async () => 
   p.hear('what are you doing');
   assert.equal(calls.length, 2);
   assert.equal(p.line(), 'Nothing is running.');
+  p.hear('why did quiet-hours fail');
+  await new Promise(setImmediate);
+  assert.equal(calls[2], '/bot/answer?q=why%20did%20quiet-hours%20fail');
+  assert.equal(p.snooze(), 0, 'a question naming quiet must not snooze her');
 });
 
 test('an unavailable answer is reported without an unhandled rejection', async () => {

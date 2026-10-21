@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -200,11 +201,16 @@ func TestAdaAnswersCountOnlyTodaysFailures(t *testing.T) {
 		{"20261022-120000-aabbcc", now, "latest cause"},
 		{"20261022-110000-aabbcc", now.Add(-time.Nanosecond), "other cause"},
 		{"20261021-120000-aabbcc", now.AddDate(0, 0, -1), "yesterday cause"},
+		{"20261019-120000-aabbcc", now.AddDate(0, 0, -3), "old cause"},
 	} {
 		saveBatch(t, batch.Result{ID: tc.id, Started: tc.at.Add(-time.Second), Duration: time.Second, Tasks: []batch.TaskResult{{ID: "broken", Status: batch.StatusFail, Error: tc.why}}})
 	}
 	srv := httptest.NewServer(New(t.Context(), Options{}))
 	defer srv.Close()
+	// More passing runs than the scan cap sit between today's failures: the count must still be exact.
+	for i := 0; i < answerScan+5; i++ {
+		saveRun(t, "fake", "fine", &agent.Result{Status: agent.StatusOK})
+	}
 	a := getAnswer(t, srv.URL, "what went wrong today")
 	if a.Ref != "20261022-120000-aabbcc" || !strings.Contains(a.Text, "2 failed records today") || !strings.Contains(a.Text, "latest cause") || strings.Contains(a.Text, "yesterday") {
 		t.Fatalf("today: %+v", a)
@@ -219,4 +225,34 @@ func getAnswer(t *testing.T, base, q string) struct{ Text, Ref, URL string } {
 		t.Fatalf("answer: %d %s", code, body)
 	}
 	return a
+}
+
+func TestAdaAnswersShortenPathsLikeTheFlowPage(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
+	home, _ := os.UserHomeDir()
+	full := filepath.Join(home, "work", "repo", "pkg", "file.go")
+	id := saveRun(t, "fake", "edit", &agent.Result{Status: agent.StatusError, Error: "cannot write " + full})
+	h := New(t.Context(), Options{LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	body := viewAs(t, h, "/bot/answer?q=why+did+it+fail", "192.168.1.20:4567")
+	if !strings.Contains(body, id) || strings.Contains(body, filepath.ToSlash(home)) || strings.Contains(strings.ReplaceAll(body, "\\\\", "\\"), home) {
+		t.Fatalf("a LAN viewer saw the home path: %s", body)
+	}
+}
+
+func TestAdaAnswersReadABoundedNumberOfRecords(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
+	for i := 0; i < answerScan+5; i++ {
+		saveRun(t, "fake", "fine", &agent.Result{Status: agent.StatusOK})
+	}
+	srv := httptest.NewServer(New(t.Context(), Options{}))
+	defer srv.Close()
+	start := time.Now()
+	if a := getAnswer(t, srv.URL, "why did it fail"); a.Text != answerHelp {
+		t.Fatalf("answer = %+v", a)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("a question over many records took %s", took)
+	}
 }

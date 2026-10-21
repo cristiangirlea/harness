@@ -302,3 +302,22 @@ func TestFromEvalLeavesCellsThatNeverActedOutOfThePassRate(t *testing.T) {
 		t.Fatalf("review = %+v; a variant with no cell that acted is no evidence", got)
 	}
 }
+
+func TestFromEvalLeavesOutCellsThatDidNotStart(t *testing.T) {
+	r := evidence()
+	// Every cell of the cheapest variant never started; the old counts still made it the winner.
+	for i := range r.Table.Tasks {
+		if r.Table.Tasks[i].Variant == "small" {
+			r.Table.Tasks[i].DidNotStart = r.Table.Tasks[i].Total
+		}
+	}
+	for i := range r.Table.Variants {
+		if r.Table.Variants[i].Name == "small" {
+			r.Table.Variants[i].DidNotStart = r.Table.Variants[i].Attempts
+		}
+	}
+	tab := FromEval(r, .1)
+	if got := tab["implement"]; got.Model == "small" {
+		t.Fatalf("a variant whose cells never started was still chosen: %+v", got)
+	}
+}

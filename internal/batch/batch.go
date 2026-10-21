@@ -1281,7 +1281,6 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
 			stop()
 			att.Gates = append(att.Gates, gr)
-			att.DidNotStart = startFailure(att)
 			fw.Emit(gateEvent(id, plan.number, gateN, as, gr))
 			report(att)
 			if gr.ExitCode != 0 {
@@ -1319,19 +1318,14 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	return attemptOutcome{att: att, commit: sha, pass: pass}, nil
 }
 
+// startFailure needs evidence the model was never reached: some adapters report no turns even when it was.
 func startFailure(a Attempt) string {
-	if a.Result.Turns != 0 || a.Result.ToolCalls != 0 {
+	r := a.Result
+	reached := r.Turns != 0 || r.ToolCalls != 0 || r.Final != "" || r.InputTokens != 0 || r.OutputTokens != 0 || r.ContextTokens != 0
+	if reached || r.Status != agent.StatusError || r.Error == "" {
 		return ""
 	}
-	if a.Result.Status == agent.StatusError && a.Result.Error != "" {
-		return strings.TrimSpace(firstLineOf(a.Result.Error))
-	}
-	for _, g := range a.Gates {
-		if g.InfrastructureError != "" {
-			return strings.TrimSpace(firstLineOf(g.InfrastructureError))
-		}
-	}
-	return ""
+	return strings.TrimSpace(firstLineOf(r.Error))
 }
 
 func gateEvent(id string, attempt, gate int, parent string, gr GateResult) flow.Event {

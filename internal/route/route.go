@@ -46,7 +46,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 	groups := map[string]map[string]eval.VariantRow{}
 	for _, t := range rec.Table.Tasks {
 		cat, ok := categories[t.Task]
-		if !ok || t.Total-t.DidNotAct <= 0 || harnessed[t.Variant] {
+		if !ok || t.Total-t.DidNotAct-t.DidNotStart <= 0 || harnessed[t.Variant] {
 			continue
 		}
 		if groups[cat] == nil {
@@ -56,6 +56,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 		r.Name = t.Variant
 		r.Attempts += t.Total
 		r.DidNotAct += t.DidNotAct
+		r.DidNotStart += t.DidNotStart
 		r.Passed += t.Passed
 		groups[cat][t.Variant] = r
 	}
@@ -91,7 +92,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 		for _, v := range rec.Spec.Matrix {
 			name := v.Key()
 			r, ok := rows[name]
-			if !ok || r.Attempts <= r.DidNotAct || r.PassRate()+margin+1e-12 < best {
+			if !ok || r.Attempts <= r.DidNotAct+r.DidNotStart || r.PassRate()+margin+1e-12 < best {
 				continue
 			}
 			cost, ok := costs[name]
@@ -110,7 +111,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 			var effective eval.Variant
 			found, mixed := false, false
 			for _, tr := range rec.Table.Tasks {
-				if tr.Variant != name || tr.Total-tr.DidNotAct <= 0 || categories[tr.Task] != cat {
+				if tr.Variant != name || tr.Total-tr.DidNotAct-tr.DidNotStart <= 0 || categories[tr.Task] != cat {
 					continue
 				}
 				t := tasks[tr.Task]

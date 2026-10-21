@@ -225,7 +225,23 @@
   // unmute" keeps her quiet; a plain "unmute" is not heard as quiet, as
   // \bmute\b does not match inside it. A recogniser may hear "un mute" as
   // two words, so that is made one before matching.
+  // A recorded answer comes from the server; a question is matched at its start so the words
+  // inside it (quiet, stop, again) never steer the bot.
+  const asksAboutARecord = /^(why did|what is|where is|what happens|what's next|how long did|what went wrong)\b/;
+  const askRecorded = async (said) => {
+    try {
+      const response = await fetch('/bot/answer?q=' + encodeURIComponent(said), { mode: 'same-origin' });
+      if (!response.ok) throw new Error('answer unavailable');
+      const answer = await response.json();
+      if (!answer || typeof answer.text !== 'string') throw new Error('invalid answer');
+      show({ ...answer, kind: 'answer' });
+      reply(answer.text);
+    } catch (e) {
+      reply("I couldn't read hrn's recorded answer. Please try again.");
+    }
+  };
   const commands = [
+    [asksAboutARecord, (said) => askRecorded(said)],
     [/\b(status|what are you doing|what'?s (going on|happening|running)|anything running)\b/, () => reply(lastStatus)],
     [/\b(quiet|snooze|mute|silence|hush)\b/, (said) => {
       const minutes = /hour/.test(said) ? 60 : /until|unmute/.test(said) ? -1 : 15;
@@ -235,18 +251,6 @@
     [/\b(unmute|carry on|wake up|speak again|resume)\b/, () => { snooze(0); reply("Right, I'll tell you again."); }],
     [/\b(skip|stop|shush|enough)\b/, () => skip()],
     [/\b(repeat|again|what did you say)\b/, () => reply(lastSpoken || lastStatus)],
-    [/\b(why|what|where|how long)\b/, async (said) => {
-      try {
-        const response = await fetch('/bot/answer?q=' + encodeURIComponent(said), { mode: 'same-origin' });
-        if (!response.ok) throw new Error('answer unavailable');
-        const answer = await response.json();
-        if (!answer || typeof answer.text !== 'string') throw new Error('invalid answer');
-        show({ ...answer, kind: 'answer' });
-        reply(answer.text);
-      } catch (e) {
-        reply("I couldn't read hrn's recorded answer. Please try again.");
-      }
-    }],
   ];
   const act = (alternatives) => {
     for (const said of alternatives) {
@@ -270,7 +274,7 @@
     e.preventDefault();
     const text = question.value.trim();
     if (!text) return;
-    act([text.toLowerCase()]);
+    askRecorded(text.toLowerCase());
     question.value = '';
   });
   const Recogniser = window.SpeechRecognition || window.webkitSpeechRecognition;

@@ -133,3 +133,40 @@ func TestOldRecordWithoutRoutingFieldsLoadsIntoFlow(t *testing.T) {
 		t.Fatalf("old record flow: %+v", steps)
 	}
 }
+
+func TestAContinuationWithoutABackendStaysOnTheEarlierRunsBackend(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	var got agent.Task
+	name := registerFake(t, func(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+		got = task
+		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
+	})
+	if err := table.Save(runlog.Home(), table.Table{"review": {Backend: "codex", Model: "routed-model", Set: "manual"}}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(agent.Result{Backend: name, Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	h := openHarness(t, nil)
+	h.next(t, "hello")
+	h.send(t, map[string]any{"type": "start", "attempt_id": "a1", "task": map[string]any{
+		"prompt": "work", "purpose": "review", "dir": t.TempDir(), "mode": "auto", "continue_run_id": first.ID(), "fresh": true}})
+	accepted := h.next(t, "accepted")
+	if b, _ := accepted["requested"].(map[string]any)["backend"].(string); b != name {
+		t.Fatalf("accepted backend = %q, want the earlier run's %q, not the route row's codex", b, name)
+	}
+	// The hand-over's info event precedes the result.
+	for msg := h.next(t, "event"); msg["type"] != "result"; msg = h.nextAny(t) {
+	}
+	if got.Model != "" {
+		t.Fatalf("a continuation must not take the route row's model, got %q", got.Model)
+	}
+	recs, _ := runlog.List(1)
+	if len(recs) != 1 || recs[0].Backend != name || recs[0].RouteNote != "" || recs[0].RoutedBy != nil {
+		t.Fatalf("record = %+v", recs[0])
+	}
+}

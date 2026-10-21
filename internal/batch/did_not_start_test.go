@@ -33,6 +33,8 @@ func (s startupStub) Run(_ context.Context, task agent.Task, emit func(agent.Eve
 		r.Error = ""
 	case "long":
 		r.Duration = time.Hour
+	case "tokens":
+		r.OutputTokens = 12 // an adapter that reports no turns still proves the model answered
 	}
 	if strings.HasPrefix(prompt, "gate") || prompt == "ok" {
 		r.Status, r.Error = agent.StatusOK, ""
@@ -57,7 +59,8 @@ func TestAttemptDidNotStartRequiresEvidence(t *testing.T) {
 		{"limited", ""},
 		{"empty-error", ""},
 		{"ok", ""},
-		{"gate", "shell could not start: launcher unavailable"},
+		{"gate", ""},
+		{"tokens", ""},
 		{"gate-turn", ""},
 		{"gate-tools", ""},
 		{"gate-exit", ""},

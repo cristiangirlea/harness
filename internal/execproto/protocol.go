@@ -96,14 +96,28 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
 	}
 	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP}
-	routed, routeNote, err := opts.RouteWithNote(t.Purpose, t.Prompt, &t.Backend, runlog.Home())
-	if err != nil {
-		return w.reject(req.AttemptID, "bad_request", err.Error())
-	}
-	if t.Backend == "" {
-		t.Backend = agent.DefaultBackendNameIn(runlog.Home())
-		if routed == nil {
-			routeNote = agent.WithDefault(routeNote, t.Backend)
+	var routed *runlog.RoutedBy
+	var routeNote string
+	if t.ContinueRunID != "" {
+		// A continuation stays on the run it continues, as hrn run does; routing would move it.
+		if t.Backend == "" {
+			prev, err := runlog.Load(t.ContinueRunID)
+			if err != nil {
+				return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("run %s: %v", t.ContinueRunID, err))
+			}
+			t.Backend = prev.Backend
+		}
+		routeNote = agent.ContinuationNote(t.ContinueRunID, "")
+	} else {
+		var err error
+		if routed, routeNote, err = opts.RouteWithNote(t.Purpose, t.Prompt, &t.Backend, runlog.Home()); err != nil {
+			return w.reject(req.AttemptID, "bad_request", err.Error())
+		}
+		if t.Backend == "" {
+			t.Backend = agent.DefaultBackendNameIn(runlog.Home())
+			if routed == nil {
+				routeNote = agent.WithDefault(routeNote, t.Backend)
+			}
 		}
 	}
 	t.Model, t.Effort = opts.Model, opts.Effort

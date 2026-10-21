@@ -290,11 +290,13 @@ that has them, and the routing table built from an eval and `hrn eval list` coun
 same way. A task whose deliverable is the answer (an `expect` and no gate) is the
 exception: there the answer is the work, so a wrong one is a failure.
 
-A cell *did not start* when its attempt records `did_not_start`: the run ended
-`error` with zero turns, zero tool calls and an error, or a gate recorded an
-`infrastructure_error` before any turn or tool call. The reason is the first
-line of that error, such as a missing CLI, a refused launch, an unsupported
-resume or option, or a shell that could not start. These cells are counted
+A cell *did not start* when every one of its attempts records `did_not_start`: the
+run ended `error` with an error and no sign that a model was reached (no turns, tool
+calls, final answer or tokens; some adapters never count turns, so tokens decide).
+The reason is the first line of that error, such as a missing CLI, a refused launch
+or an unsupported resume or option. A gate that could not start is a gate failure,
+not a start failure: the agent ran before it. A cell with one attempt that ran and
+failed and a retry that never started is a failure. These cells are counted
 separately on variant and task rows, beside `did not act`, and in `hrn eval diff`.
 Both counts are excluded from pass-rate denominators and medians, including in
 `hrn eval list`; the status histogram and total cell count still include them.
