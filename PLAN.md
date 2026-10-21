@@ -776,6 +776,15 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-21: the purpose classifier closes the gaps measured on real runs (#614, PR #621).
+  `internal/purpose` gained an anchored review-brief rule, skips hand-over headings, lets a
+  continuation inherit its parent run's resolved purpose (`purpose.Inherited`, saved in
+  `task.purpose`), and keeps the CI, deploy and compare keywords to the lead's first sentence and
+  off branch, file and path names. Re-measured over the owner's local run records, undeclared runs
+  classified unknown fell from 30.4% to 24.9% and agreement with declared purposes rose from 25.2%
+  to 60.9%. Open: whether "Fix round for ..." briefs are implement or debug is the owner's call
+  (`debug.fix` unchanged; 63 runs). The rules stay deterministic; hosted decision models were
+  declined.
 - 2026-10-20: a loaded run record takes the id it was loaded by, not the one stored in it (PR
   #622, no issue: harness is public). A record whose stored id was edited could otherwise point
   a continuation's originals copy outside `runs/`; the watch's fallback read of `task.json`
