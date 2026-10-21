@@ -270,6 +270,7 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 	mux.HandleFunc("GET /stream/index", s.streamIndex)
 	mux.HandleFunc("GET /stream/run/{id}", s.streamRun)
 	mux.HandleFunc("GET /stream/batch/{id}", s.streamBatch)
+	mux.HandleFunc("GET /stream/flow/{id}", s.streamFlow)
 	mux.HandleFunc("GET /bot", s.bot)
 	mux.HandleFunc("GET /stream/bot", s.streamBot)
 	mux.HandleFunc("GET /voice", s.voice)

@@ -15,8 +15,8 @@ import (
 
 type flowPageData struct {
 	page
-	ID, Level, Summary string
-	Tree               []flowNode
+	ID, Level, Summary, Stream string
+	Tree                       []flowNode
 }
 
 type flowNode struct {
@@ -80,16 +80,83 @@ func (s *server) flowPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	level := r.URL.Query().Get("level")
-	if level != "simple" && level != "technical" && level != "debug" {
-		level = "technical"
+	level = flowLevel(level)
+	p := s.flowData(r, id, level, events, kind)
+	if s.flowUnfinished(r, id, kind) {
+		p.Stream = "/stream/flow/" + id + "?level=" + level
 	}
+	s.page(w, 200, "flow", p)
+}
+
+func flowLevel(level string) string {
+	if level != "simple" && level != "technical" && level != "debug" {
+		return "technical"
+	}
+	return level
+}
+
+func (s *server) flowData(r *http.Request, id, level string, events []flow.Event, kind string) flowPageData {
 	events = s.prepareFlowEvents(r, events, id)
-	summary := flowSummary(flow.Build(events))
+	nodes := flow.Build(events)
+	summary := flowSummary(nodes)
 	if kind == "run" {
 		summary += " Open the run for tool calls and their recorded output."
 	}
-	p := flowPageData{page: page{Title: "Execution flow " + id, Home: s.homeFor(r)}, ID: id, Level: level, Summary: summary, Tree: buildFlowTree(events, level)}
-	s.page(w, 200, "flow", p)
+	return flowPageData{page: page{Title: "Execution flow " + id, Home: s.homeFor(r)}, ID: id, Level: level, Summary: summary, Tree: buildFlowTree(events, level)}
+}
+
+func (s *server) flowUnfinished(r *http.Request, id, kind string) bool {
+	v := s.who(r)
+	if kind == "batch" {
+		res, err := batch.LoadResultFor(v, id)
+		return err == nil && batchUnfinished(res) && batchStopped(res).IsZero()
+	}
+	rec, err := runlog.LoadFor(v, id)
+	return err == nil && !rec.Done && runStopped(rec).IsZero()
+}
+
+func (s *server) streamFlow(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !idRE.MatchString(id) {
+		s.missing(w, r, "Flow "+id, os.ErrNotExist)
+		return
+	}
+	v := s.who(r)
+	if _, _, err := s.flowEvents(v, id); err != nil {
+		s.missing(w, r, "Flow "+id, os.ErrNotExist)
+		return
+	}
+	level := flowLevel(r.URL.Query().Get("level"))
+	st := s.startStream(w)
+	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, string, error) {
+		events, kind, err := s.flowEvents(v, id)
+		if err != nil {
+			return nil, "", err
+		}
+		end := ""
+		if kind == "batch" {
+			res, err := batch.LoadResultFor(v, id)
+			if err != nil {
+				return nil, "", err
+			}
+			if at := batchStopped(res); !at.IsZero() {
+				end = "stopped"
+			} else if !batchUnfinished(res) {
+				end = "done"
+			}
+		} else {
+			rec, err := runlog.LoadFor(v, id)
+			if err != nil {
+				return nil, "", err
+			}
+			if rec.Done {
+				end = "done"
+			} else if at := runStopped(rec); !at.IsZero() {
+				end = "stopped"
+			}
+		}
+		return s.flowData(r, id, level, events, kind), end, nil
+	}, "flowbody")
 }
 
 func (s *server) cleanFlowEvent(e flow.Event) flow.Event {

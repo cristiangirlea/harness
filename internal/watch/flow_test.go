@@ -12,6 +12,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/owner"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 func TestFlowBatchPageAndJSON(t *testing.T) {
@@ -39,6 +40,9 @@ func TestFlowBatchPageAndJSON(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("page status %d", code)
 	}
+	if strings.Contains(body, `data-stream=`) {
+		t.Fatal("finished batch flow should not have a stream")
+	}
 	for _, want := range []string{"fix", "go test ./...", "Why:", "0 of 1 tasks passed.", "API_TOKEN="} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q: %s", want, body)
@@ -54,6 +58,67 @@ func TestFlowBatchPageAndJSON(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(jsonBody), &data); err != nil || data.Version != 1 || code != 200 {
 		t.Fatalf("JSON %d %s %v", code, jsonBody, err)
+	}
+}
+
+func TestFlowRunStreamsChangesUntilClosed(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
+	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := w.ID()
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	code, body := get(t, srv.URL+"/flow/"+id+"?level=debug")
+	if code != 200 || !strings.Contains(body, `data-stream="/stream/flow/`+id+`?level=debug"`) {
+		t.Fatalf("running flow page does not stream: %d\n%s", code, body)
+	}
+	s, stop := openStream(t, srv.URL+"/stream/flow/"+id+"?level=debug", "")
+	defer stop()
+	first, ok := s.next(t)
+	if !ok || first.event != "replace" {
+		t.Fatalf("first flow event = %#v, %v", first, ok)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Input: json.RawMessage(`{"command":"echo live"}`)})
+	update, ok := s.next(t)
+	if !ok || update.event != "replace" || !strings.Contains(update.data, "shell") {
+		t.Fatalf("tool step update = %#v, %v", update, ok)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		end, ok := s.next(t)
+		if !ok {
+			t.Fatal("flow stream ended without end event")
+		}
+		if end.event == "end" {
+			if end.data != "done" {
+				t.Fatalf("flow end = %#v", end)
+			}
+			break
+		}
+	}
+}
+
+func TestFlowStreamMasksToolSecrets(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
+	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close(agent.Result{})
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Input: json.RawMessage(`{"API_TOKEN":"supersecretvalue123"}`), Text: "API_TOKEN=supersecretvalue123"})
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	s, stop := openStream(t, srv.URL+"/stream/flow/"+w.ID()+"?level=debug", "")
+	defer stop()
+	m, ok := s.next(t)
+	if !ok || m.event != "replace" || strings.Contains(m.data, "supersecretvalue123") || !strings.Contains(m.data, "••••") {
+		t.Fatalf("masked flow = %#v, %v", m, ok)
 	}
 }
 

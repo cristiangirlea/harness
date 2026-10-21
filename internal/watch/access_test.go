@@ -153,13 +153,16 @@ func TestPublicOwnerEmailAccessIsolatedByVerifiedEmail(t *testing.T) {
 	if ownerBatch.Code != 200 {
 		t.Fatalf("owner batch: %d", ownerBatch.Code)
 	}
-	for _, path := range []string{"/run/" + runID, "/flow/" + runID, "/flow/" + batchID, "/batch/" + batchID, "/stream/run/" + runID, "/stream/batch/" + batchID} {
+	for _, path := range []string{"/run/" + runID, "/flow/" + runID, "/flow/" + batchID, "/batch/" + batchID, "/stream/run/" + runID, "/stream/batch/" + batchID, "/stream/flow/" + runID} {
 		claims := f.validClaims()
 		claims["email"] = "other@example.com"
 		token := f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
 		resp := f.request(h, path, "harness.example.com", "", token)
 		if resp.Code != http.StatusNotFound || strings.Contains(resp.Body.String(), runID) && !strings.Contains(path, runID) {
 			t.Errorf("%s: %d %s", path, resp.Code, resp.Body)
+		}
+		if path == "/stream/flow/"+runID && strings.Contains(resp.Header().Get("Content-Type"), "text/event-stream") {
+			t.Errorf("stranger flow stream sent event-stream headers")
 		}
 	}
 	claims := f.validClaims()

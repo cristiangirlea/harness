@@ -200,11 +200,15 @@
 {{define "flow"}}{{template "head" .}}
 <p class="eyebrow">Execution flow · <span class="mono">{{.ID}}</span></p>
 <h1>What happened</h1>
+<div id="live"{{with .Stream}} data-stream="{{.}}" data-replace{{end}}>{{template "flowbody" .}}</div>
+{{template "foot" .}}{{end}}
+
+{{define "flowbody"}}
 <p class="flow-summary">{{.Summary}}</p>
 <p class="muted">hrn shows recorded steps and reasons, not the model&#39;s private reasoning.</p>
 <nav class="flow-level">Level: <a href="?level=simple">simple</a> · <a href="?level=technical">technical</a> · <a href="?level=debug">debug</a> · <a href="/flow/{{.ID}}/json">JSON</a></nav>
 <div class="flow-tree">{{range .Tree}}{{template "flowNode" .}}{{end}}</div>
-{{template "foot" .}}{{end}}
+{{end}}
 
 {{define "flowNode"}}<details open class="flow-node"><summary><span class="badge {{.StatusClass}}">{{.Node.Status}}</span> <span class="tag">{{.Node.Kind}}</span> {{.Node.Name}}{{with .Duration}} · {{.}}{{end}}</summary>
 {{if .Debug}}<p class="muted small mono">{{.Node.Step}}{{if .Node.Derived}} · derived{{end}}</p>{{end}}
