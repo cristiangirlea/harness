@@ -776,6 +776,25 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-21: the execution flow page updates while its batch or run is going, runs record why no
+  route row applied, and `hrn mcp` serves a `flow` tool (#576, #577; PR #633 into #632). A record
+  caught mid-write keeps the last good tree instead of ending the stream; a batch that fails to
+  read is still a batch, never a missing run. `route_note` holds what was only a stderr warning
+  before: a named backend, no row for the purpose, a disabled or unknown backend, the default
+  backend used, or the limit that moved the run; a continuation keeps "continues run X" and adds
+  the limit's reason when one was weighed. The shared renderer lives in `internal/flowview`;
+  moving it there had double-encoded its `✓ ✗ ⊘ … —`, which a review caught and a test now pins.
+- 2026-10-21: run and batch records carry a local owner, batches write a versioned execution-event
+  file, and the dashboard, `hrn flow` and Ada show the recorded steps, reasons and next actions
+  (#575, #576, #577 toward #580's Transparent Local; PR #632). `internal/flow` is the envelope
+  (version, sequence, step and parent ids, status, reason, next); `hrn batch` appends to
+  `batch-flows/<id>.jsonl` and older batches and every run are rebuilt from their records with the
+  same step ids, checked both ways. `internal/owner` names the local user (`local:<OS user>` or
+  `$HRN_OWNER`); records without the field belong to the local user, and every watch route answers
+  "not found" for a record the viewer may not read. Reasons are only recorded causes, never model
+  reasoning. Text is redacted before any cut: three review rounds found the same bug in different
+  places. Organisations, grants and an admin flag, live push of events, Ada answering flow
+  questions and #567's did-not-start class are left for later slices.
 - 2026-10-20: a loaded run record takes the id it was loaded by, not the one stored in it (PR
   #622, no issue: harness is public). A record whose stored id was edited could otherwise point
   a continuation's originals copy outside `runs/`; the watch's fallback read of `task.json`
