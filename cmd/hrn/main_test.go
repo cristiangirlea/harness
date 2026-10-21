@@ -506,6 +506,32 @@ func TestContinueInheritsThePurposeUnlessTheFlagOrHeaderNamesOne(t *testing.T) {
 	}
 }
 
+func TestContinueInheritsAClassifiedPurposeWhenNoneWasDeclared(t *testing.T) {
+	for _, tc := range []struct{ first, want string }{
+		{"Review the diff on this branch.", "review"},
+		{"Hello there.", ""},
+	} {
+		drain(t)
+		t.Setenv("HRN_HOME", t.TempDir())
+		if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), tc.first}); code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v", code, err)
+		}
+		if task := <-recorded; task.Purpose != "" {
+			t.Fatalf("%q: an undeclared first run stored purpose %q", tc.first, task.Purpose)
+		}
+		recs, err := runlog.List(1)
+		if err != nil || len(recs) != 1 {
+			t.Fatalf("recs=%+v err=%v", recs, err)
+		}
+		if code, err := cmdRun([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b", "now fix what you found"}); code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v", code, err)
+		}
+		if task := <-recorded; task.Purpose != tc.want {
+			t.Errorf("%q: continuation purpose = %q, want %q", tc.first, task.Purpose, tc.want)
+		}
+	}
+}
+
 func TestShowMasksHumanOutputOnly(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const prompt = "API_KEY=fake-show-secret task"
