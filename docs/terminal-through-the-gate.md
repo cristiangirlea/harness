@@ -3,7 +3,7 @@
 [← README](../README.md)
 
 Status: proposed, 2026-10-20, for issue #435. Nothing here is built; each slice below is its own
-pull request once the owner approves this note. The gate is
+pull request once this note is approved. The gate is
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec); its design and build happen there.
 
 ## The goal
@@ -21,7 +21,7 @@ it reaches the CLI backends today.
 
 ## How claims are marked
 
-**Verified** means documented in the installed CLI's `--help` on the owner's PC on 2026-10-20:
+**Verified** means documented in the installed CLI's `--help` on the development PC on 2026-10-20:
 Claude Code 2.1.284, codex-cli 0.163.0-alpha.10.2, agy 1.4.2. Anything else is **unverified**. A
 documented flag is not a tested behaviour: each slice runs its live check before it merges.
 
@@ -32,7 +32,7 @@ documented flag is not a tested behaviour: each slice runs its live check before
 settles #86 by design), the run's policy profile, its timeout and the run id as the caller. The
 gate returns the exit code, the output (capped, or shaped) and its decision. Two ways to call
 it: the Go SDK (`broker`), or the `adanext-exec run` binary and its JSON protocol. The SDK is a
-`require` in `go.mod`, which this repository's rules forbid today, so the first is an owner
+`require` in `go.mod`, which this repository's rules forbid today, so the first is an open
 decision (below); the binary works either way.
 
 **claude.** Two routes; the note proposes the first and keeps the second as the fallback.
@@ -43,8 +43,8 @@ decision (below); the binary works either way.
    Monitor taking a `command` like Bash). The hook, `adanext-exec hook claude-code`
    (adanext-exec #8), decides, and rewrites an allowed command to `adanext-exec run --
    <command>` through `updatedInput`, so it runs under the gate's limits, audit and shaping.
-   Refusing a Bash or PowerShell call from a PreToolUse hook (exit 2) is in use in the owner's
-   repositories (adanext-exec's push guard); the `updatedInput` rewrite on 2.1.284 is
+   Refusing a Bash or PowerShell call from a PreToolUse hook (exit 2) is in use in
+   adanext-exec's own push guard; the `updatedInput` rewrite on 2.1.284 is
    **unverified**, and so is whether the hook fires for a subagent's calls and in
    `bypassPermissions`. The same run passes `--tools` (below) naming Bash, PowerShell, Monitor
    and the tools that run no code, so REPL and the other code-running tools the hook does not
@@ -92,7 +92,7 @@ mode rule below would change for codex in those modes.
 server for one run (verified by their absence from `agy --help`; `agy mcp add` changes its
 persistent configuration, which hrn never does for a run). Its `--sandbox` "with terminal
 restrictions" (verified) is agy's own. So agy cannot be routed; whether it may still run,
-labelled ungated, is an owner decision. gemini and opencode were not examined; until they are,
+labelled ungated, is an open decision. gemini and opencode were not examined; until they are,
 they are ungated like agy (**unverified** that they lack a route).
 
 **The gate-backed tool.** Route 2 and codex need an MCP tool whose calls run through the gate.
@@ -103,7 +103,7 @@ its results land in the CLI's stream, which hrn records as today. The guard is n
 permission mode: the api loop offers no command tool in `readonly` and asks before every command
 in `ask` and `auto` (`internal/agent/api.go`). The bridge keeps that: it is offered in `yolo`
 only, since elsewhere it would have to ask a person and a CLI run has no channel for that. So
-route 2 leaves a non-`yolo` claude run without commands, where today the owner's permission
+route 2 leaves a non-`yolo` claude run without commands, where today the user's permission
 rules let some Bash commands run; the hook route keeps claude's permission handling, one reason
 it is the proposal.
 
@@ -144,8 +144,8 @@ Stays in harness:
 
 One summarizer, not two: the shaping code and its adversarial tests move to adanext-exec with
 #1, and harness either imports it (the same `require` decision as the SDK) or keeps a copy held
-in step by the same tests. The note recommends the import if the owner allows the one
-dependency, since two copies of an invariant-checked summarizer is where a bad summary slips in.
+in step by the same tests. The note recommends the import if the one
+dependency is allowed, since two copies of an invariant-checked summarizer is where a bad summary slips in.
 
 ## The adanext-exec milestones it needs
 
@@ -176,7 +176,7 @@ so an original can be read whole in ranges below the CLI's own output limit.
 ## Slices, in order
 
 Each is one branch and one pull request in harness, behind an opt-in run option (`--gate`,
-default off) until the owner turns it on.
+default off) until a maintainer turns it on.
 
 1. **api loop through the binary** (needs M1, M3). `run_command` runs through `adanext-exec run`
    with the shell named, the run id as caller and a version handshake; when `--gate` is on and
@@ -216,8 +216,8 @@ hrn-evals #69 (one exact fact buried in a large test, log, JSON, table or termin
 a no-op task) on claude and on codex in `yolo`, three repeats each, in three arms: no gate (the native shell, today's baseline), gate with raw
 output, and gate with shaping. The first two measure what routing costs, codex's tool
 replacement included; the last two measure shaping. It records pass rate and input, cache-read
-and cache-write tokens per arm from the run records, runs on the owner's plans and so waits for
-the owner's yes. harness #542 (eval checks that ignore `shape_tools` on variants) is fixed
+and cache-write tokens per arm from the run records, runs on subscription plans and so waits for
+a maintainer's yes. harness #542 (eval checks that ignore `shape_tools` on variants) is fixed
 first, or arms could be scored as one.
 
 ## Risks
@@ -240,7 +240,7 @@ first, or arms could be scored as one.
 
 - Changing a CLI's persistent configuration to route a run (`agy mcp add`, `codex features
   enable`, `~/.claude/settings.json`): per-run flags only.
-- A shim named `bash` or `powershell` on `PATH`: it would catch the owner's own shells, and codex
+- A shim named `bash` or `powershell` on `PATH`: it would catch the user's own shells, and codex
   starts PowerShell by its full path (seen in hrn's run records, `pwsh.exe` or `powershell.exe`;
   no flag documents it, so **unverified** as a rule).
 - codex's `exec-server`: experimental (verified: `codex --help`) and made to register remote
@@ -250,9 +250,9 @@ first, or arms could be scored as one.
   Bash, and the gate already sees the output.
 - Running ungated without saying so.
 
-## Owner decisions
+## Open decisions
 
-1. May harness `require` adanext-exec (owner's, public, standard library only) for the SDK and
+1. May harness `require` adanext-exec (public, standard library only) for the SDK and
    the summarizer, or does it call the binary and keep a tested copy of the summarizer?
 2. claude: the hook (recommended) or the shell tools off with the gate-backed tool?
 3. codex: route `yolo` only and leave the sandboxed modes on codex's shell (this design), with
