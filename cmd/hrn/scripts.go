@@ -13,7 +13,6 @@ import (
 
 const scriptsUsage = `usage: hrn scripts hint    (a Claude Code PreToolUse hook: reads the payload on stdin)`
 
-// maxHintPayload caps stdin; a larger payload gets no hint.
 const maxHintPayload = 1 << 20
 
 func cmdScripts(args []string) (int, error) {
@@ -24,8 +23,6 @@ func cmdScripts(args []string) (int, error) {
 	return scriptsHint(os.Stdin, os.Stdout, time.Now())
 }
 
-// scriptsHint prints the hook's added context when a kept script covers the
-// command's inline script, and otherwise nothing; it always exits 0.
 func scriptsHint(in io.Reader, out io.Writer, now time.Time) (int, error) {
 	data, err := io.ReadAll(io.LimitReader(in, maxHintPayload+1))
 	if err != nil || len(data) > maxHintPayload {

@@ -1,6 +1,4 @@
-// Package limits keeps work going when a CLI backend reaches its plan's usage
-// limit. By default claude and codex stand in for each other. A preference
-// selects partners among enabled, installed backends in preference order.
+// Package limits replaces usage-limited CLIs without metered billing.
 package limits
 
 import (
@@ -20,9 +18,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// Partner is the backend that takes over from one at its usage limit, or ""
-// when none does. With a preference it is the first enabled, installed one that
-// is Ready at now, or else the first installed one, so Ready can say why not.
+// Partner prefers ready replacements, then installed ones for diagnostics, or "".
+// Without a preference, claude and codex stand in for each other.
 func Partner(backend string, now time.Time, spent Spent) string {
 	p, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {
@@ -31,7 +28,7 @@ func Partner(backend string, now time.Time, spent Spent) string {
 	if len(p.EnabledNames) > 0 {
 		first := ""
 		for _, name := range p.Filter(agent.Names()) {
-			// api bills per token, never a plan: it is no stand-in even when enabled.
+			// Automatic replacements must not bill per token.
 			if name == backend || name == "api" {
 				continue
 			}
@@ -57,12 +54,7 @@ func Partner(backend string, now time.Time, spent Spent) string {
 	return ""
 }
 
-// The file is small and read on every run; a write replaces it whole, so a
-// reader never sees half of one. Within a process, mu orders the readers and
-// writers (a batch's workers all reach a limit together). Across processes,
-// Windows refuses to replace a file another one is reading, so both sides try
-// again for a moment; two processes noting at the same instant can still lose
-// one note, which costs one more limited start, not a wrong answer.
+// Atomic writes prevent partial reads; lost updates cost a limited start.
 const fileName = "limits.json"
 
 var mu sync.RWMutex
@@ -74,8 +66,7 @@ type entry struct {
 
 func path() string { return filepath.Join(runlog.Home(), fileName) }
 
-// retry runs f until it succeeds or a short while has passed, for the moment
-// another process holds the file.
+// Retry Windows sharing conflicts.
 func retry(f func() error) error {
 	var err error
 	for i := 0; i < 20; i++ {
@@ -87,8 +78,7 @@ func retry(f func() error) error {
 	return err
 }
 
-// load reads the remembered limits. A missing or unreadable file is no limits:
-// the worst it costs is one more run that ends limited. The caller holds mu.
+// Caller holds mu; unreadable state costs a limited start.
 func load() map[string]entry {
 	var data []byte
 	if retry(func() (err error) { data, err = os.ReadFile(path()); return err }) != nil {
@@ -101,14 +91,12 @@ func load() map[string]entry {
 	return m
 }
 
-// Note remembers when backend's limit lifts, from a run's result. A result
-// that is not limited, or does not say when the limit lifts, changes nothing.
+// Note persists a known limit reset.
 func Note(backend string, res agent.Result) error {
 	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() {
 		return nil
 	}
-	// A backend without a partner today is still remembered, for the listing
-	// and for a partner enabled or installed later; a broken preference file is reported.
+	// Unpaired backends may gain a partner later.
 	if _, err := agent.BackendPreferences(runlog.Home()); err != nil {
 		return err
 	}
@@ -150,9 +138,7 @@ func writeFile(name string, data []byte) error {
 	return err
 }
 
-// Until is when backend's remembered limit lifts, or zero when none holds at now.
-// A time further ahead than a CLI's reset time is believed is not one hrn
-// wrote; it would move the backend's runs for as long as the file says.
+// Until returns a reset or zero, bounding implausibly long diversions.
 func Until(backend string, now time.Time) time.Time {
 	mu.RLock()
 	m := load()
@@ -163,9 +149,7 @@ func Until(backend string, now time.Time) time.Time {
 	return time.Time{}
 }
 
-// Status is backend's remembered limit in words, for a list of backends, or ""
-// when none holds. A limit can lift early (codex sells credits), and only
-// deleting the file tells hrn so, which is why the line names it.
+// Status describes a limit or returns "", naming the file for early-reset cleanup.
 func Status(backend string, now time.Time) string {
 	until := Until(backend, now)
 	if until.IsZero() {
@@ -174,12 +158,9 @@ func Status(backend string, now time.Time) string {
 	return fmt.Sprintf("at its usage limit until %s, as remembered in %s (delete it if the limit has lifted)", when(until), path())
 }
 
-// Spent names the backends that reached their limit in the caller's own work,
-// such as a batch task's earlier attempts. They count as limited whatever the
-// file says, which matters when the limit gave no time to remember.
+// Spent tracks task-local limits without known resets too.
 type Spent map[string]bool
 
-// out says why backend cannot start now, or "" when it can as far as limits go.
 func (s Spent) out(backend string, now time.Time) string {
 	if s[backend] {
 		return backend + " reached its usage limit earlier in this task"
@@ -190,21 +171,16 @@ func (s Spent) out(backend string, now time.Time) string {
 	return ""
 }
 
-// metered lists, for each partner, the variables under which its CLI bills
-// something other than the owner's plan: an API key, which the CLI prefers to
-// the plan's login, or a cloud account. codex exec reads CODEX_API_KEY, and
-// older releases OPENAI_API_KEY.
+// Credentials override plan billing; older codex uses OPENAI_API_KEY too.
 var metered = map[string][]string{
 	"claude": {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"},
 	"codex":  {"CODEX_API_KEY", "OPENAI_API_KEY"},
 }
 
-// MeteredEnv names the variables that keep backend from standing in for its
-// partner: with one of them set, its CLI would bill per token, not to a plan.
+// MeteredEnv names overrides to plan billing.
 func MeteredEnv(backend string) []string { return slices.Clone(metered[backend]) }
 
-// meteredBy names the first of backend's metered variables that is set, or "".
-// Only its name is ever shown.
+// Return names only; never expose credentials.
 func meteredBy(backend string) string {
 	for _, name := range metered[backend] {
 		v := os.Getenv(name)
@@ -216,9 +192,7 @@ func meteredBy(backend string) string {
 	return ""
 }
 
-// Ready reports whether backend can take work over at now, or why not. Nobody
-// chose the backend that takes over, so it must bill to a plan as the one it
-// stands in for does.
+// Ready requires plan billing for unrequested replacements.
 func Ready(backend string, now time.Time, spent Spent) (bool, string) {
 	if backend == "api" {
 		return false, "api would bill per token, not to a plan"
@@ -241,11 +215,7 @@ func Ready(backend string, now time.Time, spent Spent) (bool, string) {
 
 func when(t time.Time) string { return t.Local().Format("Jan 2 15:04") }
 
-// Pick is the backend a run meant for backend starts on: backend itself,
-// unless it is limited and its partner can take over. why says what moved it
-// or why the partner cannot take over, for the run's transcript. When both are
-// limited, pick is backend, why says so, and bothOut is set: a caller with
-// other work to do can skip this; one without runs it and lets it say so.
+// Pick returns backend unless it is limited and its partner is ready; bothOut means pick stays backend.
 func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
 	other := Partner(backend, now, spent)
 	gone := spent.out(backend, now)
@@ -258,10 +228,7 @@ func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut
 	return other, fmt.Sprintf("%s; starting on %s instead", gone, other), false
 }
 
-// Choose is Pick for a run as its caller asked for it: backend as typed, empty
-// for the default or for a continued run's own, continuing continueID when that
-// is set. It returns backend unchanged when nothing moves it, keeping Pick's
-// reason; a continued run is planned after this, on whatever it returns.
+// Choose returns backend as typed (even empty) unless a limit moves it; a continued run is planned after.
 func Choose(backend, continueID string) (string, string) {
 	meant := backend
 	if meant == "" && continueID != "" {
@@ -279,34 +246,27 @@ func Choose(backend, continueID string) (string, string) {
 	return backend, why
 }
 
-// carryOnPrompt is what the partner is asked, below the transcript of the
-// turn that stopped.
 const carryOnPrompt = "The turn above stopped before it finished: %s reached its plan's usage limit. " +
 	"Carry on with that turn's request from where it stopped. Whatever it changed is already in this " +
 	"workspace: check it, then finish the task, and answer as that turn would have."
 
-// CarryOn is the run that takes a limited run on, on the partner backend.
+// CarryOn plans a limited run's replacement.
 type CarryOn struct {
 	From, To string
-	// Task is ready for a record that continues the limited run; Plan.Apply
-	// then hands the transcript over, as for any follow-up.
+	// Task must be recorded before Plan.Apply adds the transcript.
 	Task agent.Task
 	Plan followup.Plan
-	// Why is an info line for the new run's transcript.
+
 	Why string
 }
 
-// After plans the run that carries limited run prevID on. It also remembers
-// the limit, so the next run starts on the partner. next is nil when there is
-// nothing to do: the run was not limited, switching is off for it, or its
-// backend has no partner (why is empty), or the partner cannot take over
-// (why says so).
+// After persists a limit and plans a switch, or returns nil.
 func After(prevID, backend string, prev agent.Task, res agent.Result) (next *CarryOn, why string, err error) {
 	if res.Status != agent.StatusLimited {
 		return nil, "", nil
 	}
 	if err := Note(backend, res); err != nil {
-		// Not remembering costs the next run a limited start; this one goes on.
+		// Persistence failure costs only a future limited start.
 		why = "the limit was not remembered: " + err.Error() + "; "
 	}
 	other := Partner(backend, time.Now(), nil)

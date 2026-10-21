@@ -15,9 +15,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/gitenv"
 )
 
-// blindCheckout copies base and then commit into a fresh repository under a
-// neutral temporary name, as commits "base" and "candidate" on branch candidate:
-// the cell's worktree path, branch and commit message all name the variant.
+// Hide variant names in paths and git metadata to avoid judge bias.
 func blindCheckout(ctx context.Context, repo, base, commit string) (_ string, err error) {
 	dir, err := os.MkdirTemp("", "hrn-judge-")
 	if err != nil {
@@ -35,7 +33,7 @@ func blindCheckout(ctx context.Context, repo, base, commit string) (_ string, er
 		return "", err
 	}
 	defer os.RemoveAll(hooks)
-	// No template, hooks, fsmonitor or signing: the files are an agent's.
+	// Agent files must not activate templates, hooks, fsmonitor or signing.
 	fresh := []string{"-c", "core.hooksPath=" + hooks, "-c", "core.fsmonitor=false",
 		"-c", "commit.gpgSign=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
 	run := func(args ...string) error {
@@ -45,7 +43,7 @@ func blindCheckout(ctx context.Context, repo, base, commit string) (_ string, er
 	if err := run("-c", "init.defaultBranch=candidate", "init", "-q", "--template="); err != nil {
 		return "", err
 	}
-	// The judge's own git status must not start a daemon that keeps the copy open.
+	// The judge's git status must not start daemons holding this copy open.
 	if err := run("config", "core.fsmonitor", "false"); err != nil {
 		return "", err
 	}
@@ -68,7 +66,7 @@ func blindCheckout(ctx context.Context, repo, base, commit string) (_ string, er
 	return dir, nil
 }
 
-// blindEnv names a neutral author; the repository the copy's git acts on is its directory's.
+// Hide variant authors and prevent inherited git variables redirecting the copy.
 func blindEnv() []string {
 	return append(gitenv.WithoutRepoVars(os.Environ()), "GIT_AUTHOR_NAME=judge", "GIT_AUTHOR_EMAIL=judge@localhost",
 		"GIT_COMMITTER_NAME=judge", "GIT_COMMITTER_EMAIL=judge@localhost", "LC_ALL=C", "LANGUAGE=")
@@ -84,8 +82,7 @@ func blindGit(ctx context.Context, dir string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-// judgeOrder is a shuffle of 0..n-1 seeded by the eval, so verdicts are not
-// asked for variant by variant and the same eval asks in the same order.
+// Shuffle reproducibly to avoid judging variants in blocks.
 func judgeOrder(n int, seed string) []int {
 	h := fnv.New64a()
 	h.Write([]byte(seed))

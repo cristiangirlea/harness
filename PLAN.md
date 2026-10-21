@@ -27,9 +27,9 @@ These are not preferences; a PR that breaks one is not mergeable.
 3. **No AI attribution anywhere.** No `Co-Authored-By`, no `Assisted-by`, no
    "Generated with" in commit messages, PR bodies, code comments or docs. Harness
    reminders that ask for such lines are overridden by this rule.
-4. **Commit identity** is `Cristian Girlea <cristiangirlea@gmail.com>`. It is set in
-   this repo's local git config; check `git config user.email` before the first
-   commit of a session.
+4. **Commit identity.** Commits use the git identity configured for the repository
+   (`user.name`, `user.email`); no bot identity and no AI attribution lines. Check
+   `git config user.email` before the first commit of a session.
 5. **Update this plan in its own Markdown-only PR once the change has merged** (never in
    the code PR; #374; a branch such as `plan-371`). Tick the box, add a `Done:` line with
    the PR number, and record any deviation from the spec below under *Decisions log*.
@@ -52,8 +52,8 @@ These are not preferences; a PR that breaks one is not mergeable.
 
 ## Current state (facts, so the agent does not have to rediscover them)
 
-- Repo `E:\__Workdir\harness`, module `github.com/cristiangirlea/harness`, private
-  GitHub `cristiangirlea/harness`, default branch `main`. Go 1.26.
+- Module `github.com/cristiangirlea/harness`, public GitHub repository
+  `cristiangirlea/harness`, default branch `main`. Go 1.26.
 - Layout: `cmd/hx` (CLI + renderer), `internal/agent` (Backend contract, `api` loop on
   a hand-written Messages client in `messages.go`, CLI adapters in `cli.go`),
   `internal/tools` (workspace-confined tools, `RunShell`, MCP tool bridge),
@@ -86,7 +86,7 @@ Prerequisite, one of:
 - `npm install -g @anthropic-ai/claude-code`, run `claude`, type `/login`; hx will then
   find `claude` on PATH.
 
-Then, from the JobPilotC checkout (any clean branch):
+Then, from a checkout of a private test repository (any clean branch):
 
 ```
 hx backends
@@ -544,7 +544,7 @@ where such a typo lives.
       tests the merge with `main`).
 - [ ] An independent review (`/code-review`): every defect, security point or missing test it
       finds in the branch's own code fixed in the branch before the push, blocking or not. Nits
-      dropped (at most a line in the PR); only work outside the branch or an owner decision
+      dropped (at most a line in the PR); only work outside the branch or a maintainer's decision
       becomes an issue, never a follow-up of a follow-up. Reviews are text and commits are
       changes: everything found before a commit exists goes into that one commit, and each later
       round's fixes into one more.
@@ -584,47 +584,44 @@ order they are worth taking:
 6. ~~**A `batch` tool in `hrn mcp`.**~~ Done as PR N: `batch`, `batch_show` and
    `batch_merge`.
 7. ~~**Release binaries.**~~ Done as PR P. No release has been cut: that, and making the
-   repository public, are Cristian's to do.
+   repository public, are a maintainer's to do.
 8. ~~**`hrn eval diff <a> <b>`.**~~ Done as PR Q, with `hrn eval list`.
 9. ~~**A live view.**~~ Done as PR V (#34): `hrn watch`, `hrn show -f`, and `--lan` for a
    phone, read-only and without a login for now.
-10. ~~**An access key for `hrn watch --lan`**~~ Done as PR W (#39, closes #33): `--lan=NAME`,
-    a QR code of the phone link, phone-sized lists, and the key at the door for anything
-    that would act. Viewing stays keyless (the owner's choice, 2026-10-11).
-11. **A status bot** (the owner's idea, 2026-10-10): something on screen that says what hrn
-    is doing and asks for the decisions it waits on (an approval, a failed gate: retry or
-    stop, merging the branches that passed), and acts on the answer. Its eyes are `hrn
-    watch`'s streams (`/stream/index`, `/stream/run/<id>`, `/stream/batch/<id>`), its hands
-    `hrn mcp`'s tools (run, batch, batch_show, batch_merge; approvals already reach an MCP
-    host by elicitation). The missing piece is a place where pending decisions wait: today an
-    approval is a prompt in the terminal of `hrn run` or a question to the MCP host, and
-    nothing else can answer it. Its actions go through hrn watch's door: they must send
-    `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
+10. ~~**An access key for `hrn watch --lan`**~~ Done as PR W (#39, closes #33): `--lan=NAME`, a QR
+    code of the phone link, phone-sized lists, and the key at the door for anything that would
+    act. Viewing stays keyless.
+11. **A status bot**: something on screen that says what hrn is doing and asks for the decisions
+    it waits on (an approval, a failed gate: retry or stop, merging the branches that passed), and
+    acts on the answer. Its eyes are `hrn watch`'s streams (`/stream/index`, `/stream/run/<id>`,
+    `/stream/batch/<id>`), its hands `hrn mcp`'s tools (run, batch, batch_show, batch_merge;
+    approvals already reach an MCP host by elicitation). The missing piece is a place where
+    pending decisions wait: today an approval is a prompt in the terminal of `hrn run` or a
+    question to the MCP host, and nothing else can answer it. Its actions go through hrn watch's
+    door: they must send `Options.Key` in `X-Hrn-Watch-Key`, which hrn watch does not set yet.
     - ~~Part 1, her eyes and voice.~~ Done: PR #89, 2026-10-11 (closes #59). The bot is **Ada**, a
-      female robot scarlet macaw (the owner's choices, 2026-10-11): `hrn bot`, `/bot`,
-      sentences in plain UK English made in Go, speech, notifications, skip, snooze, mute,
-      push-to-talk for commands that steer her only.
-    - Her purpose, in the owner's word, is super intelligence. In this order: her own voice
-      (#83, the owner's wife's, recorded with her agreement); a live map of where the work
-      is across the entire workflow, every repository and every stage from idea to release
-      (#90); then decisions and actions, behind #38; then planning and improving hrn
+      female robot scarlet macaw: `hrn bot`, `/bot`, sentences in plain UK English made in Go,
+      speech, notifications, skip, snooze, mute, push-to-talk for commands that steer her only.
+    - Her purpose is super intelligence. In this order: her own recorded voice (#83); a live map
+      of where the work is across the entire workflow, every repository and every stage from idea
+      to release (#90); then decisions and actions, behind #38; then planning and improving hrn
       itself (the self-improvement loop).
     - [x] Recording her voice ([#91](https://github.com/cristiangirlea/harness/issues/91), the
-      first slice of #83). Done: PR #93, 2026-10-11. `/voice`, for this computer only: 523
-      lines to read (everyday ones mixed with Ada's own, made by her wording functions) and a
-      mode that records talk, saved as WAV with `metadata.csv` into a folder the speaker picks.
-      Next in #83, each download with the owner's yes: a taste with Chatterbox, transcribing
-      talk with Whisper, training with Piper, and Ada speaking with the voice.
-    - Ada where the owner works (the owner, 2026-10-14), after the map of #90 and behind the
-      masking of [#304](https://github.com/cristiangirlea/harness/issues/304) (secrets masked
-      in everything hrn watch, `hrn show`, the renderer and the bot display): a Claude Code
-      side pane with Ada reacting to the live session, the map in short form and the session
-      meter, the session recorded under `~/.hrn` so reports and hrn watch include the owner's
-      own sessions ([#305](https://github.com/cristiangirlea/harness/issues/305)); and Ada
-      gamified, experience gathered by working with the AI, from real outcomes only, with
-      Ada's own growth beside it ([#306](https://github.com/cristiangirlea/harness/issues/306),
-      four owner decisions before any slice). #304 done: PR #314, 2026-10-14.
-12. **Guard rails** (the owner, 2026-10-11), in this order:
+      first slice of #83). Done: PR #93, 2026-10-11. `/voice`, for this computer only: 523 lines
+      to read (everyday ones mixed with Ada's own, made by her wording functions) and a mode that
+      records talk, saved as WAV with `metadata.csv` into a folder the speaker picks. Next in #83,
+      each download approved by a maintainer first: a taste with Chatterbox, transcribing talk
+      with Whisper, training with Piper, and Ada speaking with the voice.
+    - Ada where the user works, after the map of #90 and behind the masking of
+      [#304](https://github.com/cristiangirlea/harness/issues/304) (secrets masked in everything
+      hrn watch, `hrn show`, the renderer and the bot display): a Claude Code side pane with Ada
+      reacting to the live session, the map in short form and the session meter, the session
+      recorded under `~/.hrn` so reports and hrn watch include the user's own sessions
+      ([#305](https://github.com/cristiangirlea/harness/issues/305)); and Ada gamified, experience
+      gathered by working with the AI, from real outcomes only, with Ada's own growth beside it
+      ([#306](https://github.com/cristiangirlea/harness/issues/306), four maintainer decisions
+      before any slice). #304 done: PR #314, 2026-10-14.
+12. **Guard rails**, in this order:
     - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
       Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
       deny rules, and the api loop's guard extended to secret files and the guard's own
@@ -646,10 +643,9 @@ order they are worth taking:
     Done as PR #46, 2026-10-11: a `limited` status, claude and codex carrying on each
     other's runs, reset times remembered in `limits.json`, `no_switch`. See the Decisions
     log, 2026-10-11.
-15. **What a run was for, and what it costs** (from classify-sessions, the owner's session
-    analytics): its purpose rules and its honest cost ("unknown cost is never zero"), brought
-    into hrn. The work goes through `hrn batch`, so hrn watch shows it as batches. Three PRs,
-    in this order:
+15. **What a run was for, and what it costs** (from classify-sessions, a session analytics tool):
+    its purpose rules and its honest cost ("unknown cost is never zero"), brought into hrn. The
+    work goes through `hrn batch`, so hrn watch shows it as batches. Three PRs, in this order:
     - [x] A batch's runs link to their batch on hrn watch ([#61](https://github.com/cristiangirlea/harness/issues/61)).
       Done: PR #67, 2026-10-11.
     - [x] `internal/purpose` and `hrn report --by purpose` ([#62](https://github.com/cristiangirlea/harness/issues/62)).
@@ -657,9 +653,9 @@ order they are worth taking:
     - [x] hrn watch: what the listed runs were for and what they cost, as a lower bound
       ([#63](https://github.com/cristiangirlea/harness/issues/63)); a first, budget-free step
       towards #37. Done: PR #123, 2026-10-12.
-16. **Disk: clear what merged work leaves behind** (the owner, 2026-10-11, after both work
-    drives filled with worktrees and Rust build folders). Deterministic, no model involved, and
-    nothing local goes before its merge is proven. Three PRs, in this order:
+16. **Disk: clear what merged work leaves behind** (after two work drives filled with worktrees
+    and Rust build folders). Deterministic, no model involved, and nothing local goes before its
+    merge is proven. Three PRs, in this order:
     - [x] `hrn gc`: worktrees whose pull request is proven merged
       ([#78](https://github.com/cristiangirlea/harness/issues/78)). Done: PR #95, 2026-10-12.
     - [x] `hrn gc`: idle build caches (`CACHEDIR.TAG`), oldest first when a drive runs low
@@ -686,11 +682,11 @@ order they are worth taking:
     - [x] [#141](https://github.com/cristiangirlea/harness/issues/141) retrieval: wiring in runs, batches, evals and MCP, with the fixture comparison. Done: PR #186, 2026-10-13.
     - [x] `durable` into main. Done: PR #266, 2026-10-14.
 
-18. **Cheaper runs: shape what the agent reads, route by evidence, keep the scripts it retypes**
-    (the owner, 2026-10-14). In the sample in `docs/evaluations.md` (nine runs over a week),
-    output is about 2% of the tokens moved and cache reads of the growing context are most of
-    the rest, so shorter answers can save little. The levers are what the agent reads, which
-    effort and model answer, and what it writes twice. In this order, each its own PR:
+18. **Cheaper runs: shape what the agent reads, route by evidence, keep the scripts it retypes**.
+    In the sample in `docs/evaluations.md` (nine runs over a week), output is about 2% of the
+    tokens moved and cache reads of the growing context are most of the rest, so shorter answers
+    can save little. The levers are what the agent reads, which effort and model answer, and what
+    it writes twice. In this order, each its own PR:
     - [#295](https://github.com/cristiangirlea/harness/issues/295): measure first, from the run
       records: tool-result bytes by shape, and the inline scripts written again and again.
       Done: PR #330, 2026-10-14. The page says shaping can touch about 10% of the context
@@ -702,7 +698,7 @@ order they are worth taking:
     - [#296](https://github.com/cristiangirlea/harness/issues/296): large tool results shaped
       per kind (tests, logs, JSON, tables, terminal), the original kept behind a handle,
       invariants checked, measured by an eval in hrn-evals. Done: PR #335, 2026-10-14, for
-      terminal, log and test output, off by default; the eval and its run wait for the owner.
+      terminal, log and test output, off by default; the eval and its run wait for a maintainer.
     - [#297](https://github.com/cristiangirlea/harness/issues/297): a routing table from eval
       results (purpose to backend, model and effort), applied when a run names none and
       recorded in the run; effort first, then model; the AdaNext allocation as the first table,
@@ -720,37 +716,47 @@ order they are worth taking:
     The gate side lives in adanext-exec (output shaping, and the hint when a kept script covers
     a command: adanext-exec #1 and #2); the rule for claiming a saving and the page of where
     each model loses live in hrn-evals (#3 and #4).
-    Second round (the owner, 2026-10-16: follow the more mature patterns where they beat ours),
-    each its own PR, in this order:
+    Second round (follow the more mature patterns where they beat ours), each its own PR, in
+    this order:
     - [#436](https://github.com/cristiangirlea/harness/issues/436): adversarial probes and a fuzz
-      target for the summary invariants, before shaping runs by default.
+      target for the summary invariants, before shaping runs by default. Done: PR #468,
+      2026-10-16.
     - [#437](https://github.com/cristiangirlea/harness/issues/437): a bounded originals store
       that refuses rather than evicts, and `read_original` by line range or JSON pointer;
       in the same PR as [#337](https://github.com/cristiangirlea/harness/issues/337), which
-      touches the same lookup (originals across a continuation).
+      touches the same lookup (originals across a continuation). Done: PR #601, 2026-10-19.
     - [#336](https://github.com/cristiangirlea/harness/issues/336): JSON and tabular summaries.
+      Done: PR #487, 2026-10-16.
     - [#435](https://github.com/cristiangirlea/harness/issues/435): hrn owns the terminal for
       every backend, so shaped output reaches claude, codex and agy runs too.
     - [#439](https://github.com/cristiangirlea/harness/issues/439): an advisory Claude Code hook
       that names a kept script covering a command, until the gate does it (adanext-exec #2).
+      Done: PR #481, 2026-10-16.
     - [#438](https://github.com/cristiangirlea/harness/issues/438): measure what tool definitions
-      cost per api turn, and trim them only if it pays.
+      cost per api turn, and trim them only if it pays. Measurement and byte budget done: PR
+      #492, 2026-10-16; trimming deferred (2026-10-19).
     - hrn-evals #30: a routing suite of real tasks, two or more per purpose, with multi-step
-      requirements, so the table rests on more than ten small fixtures.
-    - [#441](https://github.com/cristiangirlea/harness/issues/441) (the owner, 2026-10-16): comments
-      (whole-line comments are 19% of non-test Go bytes, paid by every agent that reads a
-      file). The rule and a comment check with a baseline land before every slice above, so
-      new code stops growing them; the package-by-package cleanup lands after all of them.
+      requirements, so the table rests on more than ten small fixtures. Done: hrn-evals PR #39,
+      2026-10-16.
+    - [#441](https://github.com/cristiangirlea/harness/issues/441): comments (whole-line comments
+      are 19% of non-test Go bytes, paid by every agent that reads a file). The rule and a comment
+      check with a baseline land before every slice above, so new code stops growing them; the
+      package-by-package cleanup lands after all of them. Done: PR #457, 2026-10-16 (the rule and
+      the check); the cleanup in PRs #602 and #604, 2026-10-19, and #615, #617, #618 and #620,
+      2026-10-20. Comments are now 8.8% of non-test Go bytes and the baseline holds only its
+      header.
+    - [#488](https://github.com/cristiangirlea/harness/issues/488): a run loads only the MCP
+      servers, plugins and skills its task needs, on claude and codex. Done: PR #595, 2026-10-19.
 
-Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
-guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
-HTTP (every host met so far speaks stdio). A web dashboard was on this list ("report and
-batch show answer the questions") until the owner asked for a live view on 2026-10-10:
-neither of them follows a run while it happens.
+Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a guard
+rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over HTTP (every host
+met so far speaks stdio). A web dashboard was on this list ("report and batch show answer the
+questions") until a live view was asked for on 2026-10-10: neither of them follows a run while it
+happens.
 
 ## Under consideration
 
-Things kept but not active (the owner, 2026-10-16). Each says what would bring it back.
+Things kept but not active (2026-10-16). Each says what would bring it back.
 
 - **Context editing against the prompt cache**
   ([#116](https://github.com/cristiangirlea/harness/issues/116)), with What is open items 2 and 5.
@@ -767,25 +773,29 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
 - **Measuring `compact_window`**, the last item of
   [#208](https://github.com/cristiangirlea/harness/issues/208) (closed by PR #450): measure it on
   a long real task (cache reads, turns, result checks) before recommending a default. Back when
-  the owner approves the plan usage for that run.
+  a maintainer approves the plan usage for that run.
 
 ## Decisions log
-- 2026-10-19: the gc and batch test packages build their git fixture once per test binary and
-  copy it per test (#310, PR #598; #333, PR #599). Under memory pressure a process start on the
-  owner's PC costs seconds or fails ("The paging file is too small"), and the old fixtures spent
+- 2026-10-20: a loaded run record takes the id it was loaded by, not the one stored in it (PR
+  #622, no issue: harness is public). A record whose stored id was edited could otherwise point
+  a continuation's originals copy outside `runs/`; the watch's fallback read of `task.json`
+  follows the same rule.
+- 2026-10-19: the gc and batch test packages build their git fixture once per test binary and copy
+  it per test (#310, PR #598; #333, PR #599). Under memory pressure a process start on the
+  development PC costs seconds or fails ("The paging file is too small"), and the old fixtures spent
   nine and five git processes per test; the gc fixture repoints its origin with one git call, the
   batch one needs none, and both builds drop GIT_* from the environment so the first test cannot
   bake its settings in. The check commands carry `-timeout 40m` so a slow package fails with a
-  readable dump. What remains is the git work of the code under test, so the full suite still
-  needs a quiet machine here: it passed in 17 minutes idle and was killed at 40 in gc beside other
+  readable dump. What remains is the git work of the code under test, so the full suite still needs
+  a quiet machine here: it passed in 17 minutes idle and was killed at 40 in gc beside other
   sessions' test binaries.
 - 2026-10-19: an attempt records when its agent moved its branch or HEAD with git (#592, PR #597).
   hrn-evals cell `fbc00.fix-sum.luna-low.r1` ran `git commit` against its prompt and nothing said
   so. `runAttempt` reads the branch tip and HEAD just before and after the agent runs and sets
-  `agent_committed` when either moved (a commit, reset, rename, orphan switch, or a commit on another
-  branch or none); hrn's own commits fall outside that window. The eval table counts such cells
-  ("N of M cells committed on their own") and `hrn batch show` marks the task. Recorded, not failed:
-  failing a cell for it is the owner's choice, raised in #592.
+  `agent_committed` when either moved (a commit, reset, rename, orphan switch, or a commit on
+  another branch or none); hrn's own commits fall outside that window. The eval table counts such
+  cells ("N of M cells committed on their own") and `hrn batch show` marks the task. Recorded, not
+  failed: failing a cell for it is a maintainer's choice, raised in #592.
 - 2026-10-19: a task's own empty gate list is refused (#588, PR #594). `"gate": []` ran gateless,
   but records dropped it and diff and `Summarize` read it as the spec's gates. Option 1 of the
   issue: refusing it keeps the record format and the nil-means-inherit reading every consumer
@@ -827,24 +837,24 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   batch record with `os.ReadFile` while the beat renamed over it, the other set a batch's end
   microseconds after the watcher's look, which a coarse VM wall clock can reorder. Both were test
   defects; the product code was unchanged.
-- 2026-10-18: the eval judge is blind to the variant (#554, PR #566). The judge's prompt never
-  named the variant, but it ran in the cell's worktree, whose path, branch and commit message do.
-  It now runs in a fresh repository under a neutral temporary name with commits `base` and
-  `candidate`, so `git diff HEAD~1` also shows what the prompt clips past 60 KB, and verdicts are
-  asked for in an order shuffled by the batch id. Beyond the issue: `batch.CheckoutTree` writes the
-  copy under the task worktree guards and pins NTFS/HFS path protection, since the shared config
-  could turn it off and plant `GIT~1/config` in the copy's `.git`; a cell whose agent committed its
-  own work is judged on the worktree's HEAD; a cancel is recorded as canceled. Left for later:
-  `batch.Diff` misses such self-commits (#560), batch git and agent CLIs inherit `GIT_DIR` (#561),
-  and a read-only judge can still read run records (#562, the owner's call).
+- 2026-10-18: the eval judge is blind to the variant (#554, PR #566). The judge's prompt never named
+  the variant, but it ran in the cell's worktree, whose path, branch and commit message do. It now
+  runs in a fresh repository under a neutral temporary name with commits `base` and `candidate`, so
+  `git diff HEAD~1` also shows what the prompt clips past 60 KB, and verdicts are asked for in an
+  order shuffled by the batch id. Beyond the issue: `batch.CheckoutTree` writes the copy under the
+  task worktree guards and pins NTFS/HFS path protection, since the shared config could turn it off
+  and plant `GIT~1/config` in the copy's `.git`; a cell whose agent committed its own work is judged
+  on the worktree's HEAD; a cancel is recorded as canceled. Left for later: `batch.Diff` misses such
+  self-commits (#560), batch git and agent CLIs inherit `GIT_DIR` (#561), and a read-only judge can
+  still read run records (#562, a maintainer's call).
 - 2026-10-16: four issues closed in the triage without a code PR. #388 (tests reading the
-  developer's `backends.json`) was fixed by PR #386, its timing half by PRs #387 and #413. #190
-  (no `syscall.Flock` on solaris and aix) is not worth doing while neither is a release or CI
-  target; reopen it with an fcntl lock if one becomes one. #360 (a model id starting with a dash
-  reaches the CLI as a flag) is a duplicate of #397, an allow-list of model ids before
-  any CLI argument. #37 (a budget across runs) is not needed: the owner uses plan backends only
-  (claude, codex, agy), `api` is disabled in `backends.json`, no API key is set, and none of 1,498
-  run records spent real money; reopen it if a metered backend is ever enabled.
+  developer's `backends.json`) was fixed by PR #386, its timing half by PRs #387 and #413. #190 (no
+  `syscall.Flock` on solaris and aix) is not worth doing while neither is a release or CI target;
+  reopen it with an fcntl lock if one becomes one. #360 (a model id starting with a dash reaches the
+  CLI as a flag) is a duplicate of #397, an allow-list of model ids before any CLI argument. #37 (a
+  budget across runs) is not needed: only plan backends are used (claude, codex, agy), `api` is
+  disabled in `backends.json`, no API key is set, and none of 1,498 run records spent real money;
+  reopen it if a metered backend is ever enabled.
 - 2026-10-16: gemini and opencode cache semantics, and totals that carry their missing status
   (#320, #334, PR #506). Gemini counts cached tokens inside its input and opencode apart from it;
   `ModelTokens` now knows both, so their runs are no longer "unknown". Token totals are summed
@@ -854,12 +864,11 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   so the cost reads unknown rather than absurd. The review found the overflowing turn's cost still
   counted as known and eval counting cached tokens twice; both fixed.
 - 2026-10-16: `hrn runs` masks prompts, and the `git` URL user stays (#311, PR #511). What #304's
-  display masking left out, decided on the issue (the owner delegated the calls). `hrn runs` masks
-  prompt excerpts as `hrn show`'s header does. Live `hrn run` output stays masked per fragment,
-  and `docs/watch.md` says a secret split across two fragments can show in halves while it
-  streams; `hrn show` and hrn watch mask the assembled text, and records keep the original. A
-  URL's user part stays masked except the literal lower-case `git` with no password, a protocol
-  name rather than a credential.
+  display masking left out, decided on the issue. `hrn runs` masks prompt excerpts as `hrn show`'s
+  header does. Live `hrn run` output stays masked per fragment, and `docs/watch.md` says a secret
+  split across two fragments can show in halves while it streams; `hrn show` and hrn watch mask the
+  assembled text, and records keep the original. A URL's user part stays masked except the literal
+  lower-case `git` with no password, a protocol name rather than a credential.
 - 2026-10-16: stopped runs, Ada's watcher and one cache of cleaned batch records; all of #88 done
   (#96, #124, #88, #403, PRs #456, #486, #510). A record with no write for an hour shows as
   stopped instead of running for ever, worked out at render time and never written to records (PR
@@ -875,13 +884,13 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   itself. The client tests #169 named (TLS, 3xx and 4xx, malformed and oversized events, `--after
   -1`, the MCP `job_id` cases) landed with it.
 - 2026-10-16: a remote job's cost ceiling is capped from the environment (#168, PR #508). Anyone
-  with a client could queue remote jobs at any cost ceiling. Decided on the issue (the owner
-  delegated the call): caps read from the environment, unset keeping today's behaviour. The
-  control service refuses `max_cost_usd` above `HRN_MAX_COST_USD_PER_JOB` with 422 `cost_limit`
-  after the token and tenant checks, an invalid value stops it before it opens the database, and
-  an idempotent retry of an existing job still returns it after the limit is lowered. `hrn remote
-  submit` and the MCP `remote_submit` tool refuse a cost above `HRN_REMOTE_MAX_COST_USD` before
-  any request. Tenant budgets are still not enforced, as `server/README.md` says.
+  with a client could queue remote jobs at any cost ceiling. Decided on the issue: caps read from
+  the environment, unset keeping today's behaviour. The control service refuses `max_cost_usd` above
+  `HRN_MAX_COST_USD_PER_JOB` with 422 `cost_limit` after the token and tenant checks, an invalid
+  value stops it before it opens the database, and an idempotent retry of an existing job still
+  returns it after the limit is lowered. `hrn remote submit` and the MCP `remote_submit` tool refuse
+  a cost above `HRN_REMOTE_MAX_COST_USD` before any request. Tenant budgets are still not enforced,
+  as `server/README.md` says.
 - 2026-10-16: `hrn watch --public`: token, Host and Origin cases (#219, #229, PR #507). Tests pin
   what the code already handled: an absent, null or numeric `aud` is refused, an upper-case Host
   accepted and one with a trailing dot refused as `bad host`. A stream's access-log row is now
@@ -900,8 +909,8 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   #332, PR #505). Routing uses `purpose.Resolve(declared, prompt)`, and `routed_by` says when the
   category was declared. A retry on another backend clears the routed model and effort, and a
   usage-limit switch also clears `routed_by`, in run, MCP and batch alike, so `hrn report --by
-  routed` no longer credits a partner's results to a row. An invalid route row warns and is
-  skipped instead of refusing every run of its purpose (the owner's decision on #327).
+  routed` no longer credits a partner's results to a row. An invalid route row warns and is skipped
+  instead of refusing every run of its purpose (decided on #327).
 - 2026-10-16: a declared purpose follows continuations and exec (#322, #325, PR #504). A continued
   run inherits the earlier run's declared purpose unless given a new one, as mode is; an invalid
   stored purpose is not inherited (a review finding). `hrn exec`'s `start` accepts a `purpose`,
@@ -914,11 +923,11 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   proof, so the worktree is kept. If patch-id fails, gc cancels before waiting on `git log`, so a
   full pipe cannot hang it.
 - 2026-10-16: the review rule: fix every defect in the branch, drop the nits (PR #502, AGENTS.md).
-  The owner's rule of 2026-10-16, after a backlog run in which every merged PR spawned a follow-up
-  issue of non-blocking findings (59 opened against 47 closed). A branch finishes everything its
-  issue asks; every defect, missing test, broken house rule or security hole a review finds in the
+  The rule since 2026-10-16, after a backlog run in which every merged PR spawned a follow-up issue
+  of non-blocking findings (59 opened against 47 closed). A branch finishes everything its issue
+  asks; every defect, missing test, broken house rule or security hole a review finds in the
   branch's code is fixed before the push, blocking or not, one commit per review round. Nits are
-  dropped; only a defect elsewhere on `main` or an owner decision becomes an issue, never a
+  dropped; only a defect elsewhere on `main` or a maintainer's decision becomes an issue, never a
   follow-up of a follow-up. The base branch is merged in once before the final checks, since CI
   tests the merge with `main`. The Definition of done says the same.
 - 2026-10-16: the usage chart's review follow-ups (#243, PR #501). claude's per-turn output keeps
@@ -931,16 +940,16 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   attempt with "pin cannot be resumed"; a recorded pin is honoured as before and kept after a
   refused replay, so no attempt falls back to an unpinned search. The spec check refuses retrieval
   with a retry on another backend, and the automatic switch at a usage limit is skipped when
-  retrieval is on: a switch clears the model, which retrieval needs, so the task ends `limited`
-  with the reason. Both decided on the issues (the owner delegated the calls).
+  retrieval is on: a switch clears the model, which retrieval needs, so the task ends `limited` with
+  the reason. Both decided on the issues.
 - 2026-10-16: the api tool definitions measured per mode and held to a byte budget (Refs #438, PR
   #492). Steps 1 and 3 of #438: hrn's own definitions are 1,409 bytes read-only, 2,836 in auto and
   yolo and 3,295 with shaping, about 16%, 32% and 37% of the median api call (2,211 tokens over
   1,110 calls); those calls were local models without cache writes, so a call to Anthropic's API
   would be larger. A test holds each mode under its budget, and `scripts/tool-shapes.sh
-  --definitions` reports the figures (`docs/tool-shapes.md`). Nothing is trimmed: a third less
-  would save about 240 tokens a call, mostly at the cache-read rate, and step 2 waits for the
-  owner's decision and an eval, so #438 stays open.
+  --definitions` reports the figures (`docs/tool-shapes.md`). Nothing is trimmed: a third less would
+  save about 240 tokens a call, mostly at the cache-read rate, and step 2 waits for a maintainer's
+  decision and an eval, so #438 stays open.
 - 2026-10-16: a fresh continuation with a bounded hand-over (Refs #117, PR #494). `hrn run
   --continue <id> --fresh`, MCP `fresh: true` and exec `fresh` start a new session instead of
   forking the old one, in the earlier run's workspace and mode, carrying a hand-over built from
@@ -967,23 +976,23 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   in until the gate does this (adanext-exec #2).
 - 2026-10-16: the attempt id is left out of the durable task identity digest (#147, PR #478).
   `Task.AttemptID` was part of the digest that binds a checkpoint to its task, so a coordinator
-  giving each retry a new id would fail every resume with "task identity does not match". Decided
-  (the owner delegated the call): the attempt id names an attempt, not the task. Existing
-  checkpoints still resume, since `attempt_id` is `omitempty` and no stored checkpoint had one.
+  giving each retry a new id would fail every resume with "task identity does not match". Decided:
+  the attempt id names an attempt, not the task. Existing checkpoints still resume, since
+  `attempt_id` is `omitempty` and no stored checkpoint had one.
 - 2026-10-16: stronger chart verifier assertions, with regression tests in CI (#173, PR #473).
   `server/deploy/verify_charts.py` makes the ten assertions #139's review listed (a pinned control
   image, Secret names, tenant and project ids, the control container's securityContext,
   NetworkPolicy egress contents, no repeated kinds, no `envFrom`), and `test_verify_charts.py`
   breaks each on purpose. The review found nothing ran those tests; the charts job in CI now does.
   No chart changed.
-- 2026-10-16: adversarial probes and a fuzz target for the summary invariants (#436, PR #468).
-  They found one defect: `valid` compared error lines with the raw original while summaries are
-  built from colour-stripped text, so a colour code inside `error` or `FAIL` let a long terminal
-  result drop that line and still pass; it now compares stripped lines. Left open, each needing a
-  mechanism of its own: #461 (digits in escape codes satisfy the number check), #462 (an error
-  word wrapped across two lines), #463 (the oracle does not catch invented error lines), #464 (a
-  stack frame far after a log error; an owner decision) and #465 (one test name in two packages
-  always falls back).
+- 2026-10-16: adversarial probes and a fuzz target for the summary invariants (#436, PR #468). They
+  found one defect: `valid` compared error lines with the raw original while summaries are built
+  from colour-stripped text, so a colour code inside `error` or `FAIL` let a long terminal result
+  drop that line and still pass; it now compares stripped lines. Left open, each needing a mechanism
+  of its own: #461 (digits in escape codes satisfy the number check), #462 (an error word wrapped
+  across two lines), #463 (the oracle does not catch invented error lines), #464 (a stack frame far
+  after a log error; a maintainer's decision) and #465 (one test name in two packages always falls
+  back).
 - 2026-10-16: which `Usage` is which on `Result` and `Event` (#265, PR #471). `Result.Usage`
   (`*UsageMetadata`, how to read the run's totals) and `Event.Usage` (the per-call `*Usage`) now
   say what they are and name each other. The issue's smaller option: no rename, since
@@ -1002,12 +1011,12 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   in `limits.json`. `docs/backends.md` names what hrn cannot see (a Console login, a settings
   `env` block, codex profiles).
 - 2026-10-16: hrn watch hides the backend start line and the shell wrapper around commands (Refs
-  #435, PR #460). The display-only first step the owner asked for on 2026-10-16. A run's first
-  info event, the backend's own command line, is hidden when its first word is the recorded
-  backend; command calls lose one outer `powershell -Command`, `bash -lc`, `sh -c` or `cmd /c`
-  layer and its quotes, in the event text, the tool input and Ada's "running" line, and a command
-  that cannot be unquoted cleanly is shown as it was. Records and `hrn show` keep the full text.
-  The gate itself is #435, re-scoped by the owner to run every agent command through adanext-exec.
+  #435, PR #460). The display-only first step, asked for on 2026-10-16. A run's first info event,
+  the backend's own command line, is hidden when its first word is the recorded backend; command
+  calls lose one outer `powershell -Command`, `bash -lc`, `sh -c` or `cmd /c` layer and its quotes,
+  in the event text, the tool input and Ada's "running" line, and a command that cannot be unquoted
+  cleanly is shown as it was. Records and `hrn show` keep the full text. The gate itself is #435,
+  re-scoped to run every agent command through adanext-exec.
 - 2026-10-16: the comment rule, and a check with a baseline that only shrinks (Refs #441, PR
   #457). Part one of #441: AGENTS.md's rule, and `scripts/comment-check.sh` over the whole tree
   with a baseline of today's comments, so new code is held to the rule without a base ref. Today
@@ -1015,13 +1024,13 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   entry fails the check and editing a baselined block changes its fingerprint, so a touched
   comment comes up to the rule. "Review" matches review narration, not the bare word, which hrn
   uses as a purpose. The cleanup, part two, comes after item 18's slices.
-- 2026-10-16: quoted compact windows over MCP, and the lean carry-on and `--continue` covered
-  (#208, PR #450). `compact_window`'s MCP schema is one type every host accepts, and a quoted
-  `"200000"` passes the same check as a number; a test checks that a lean claude attempt carried
-  on on codex records no `lean`; `hrn run --continue` of a lean batch run runs without lean unless
-  asked, as `docs/backends.md` now says; `.claude/rules/records.md` forbids changing a stored
-  field's JSON type. The issue's last item, measuring `compact_window` on a long real task, needs
-  the owner's plan usage and moves to *Under consideration*.
+- 2026-10-16: quoted compact windows over MCP, and the lean carry-on and `--continue` covered (#208,
+  PR #450). `compact_window`'s MCP schema is one type every host accepts, and a quoted `"200000"`
+  passes the same check as a number; a test checks that a lean claude attempt carried on on codex
+  records no `lean`; `hrn run --continue` of a lean batch run runs without lean unless asked, as
+  `docs/backends.md` now says; `.claude/rules/records.md` forbids changing a stored field's JSON
+  type. The issue's last item, measuring `compact_window` on a long real task, needs a maintainer's
+  approval of the plan usage and moves to *Under consideration*.
 - 2026-10-16: the incomplete-worktree test skips where git adds the worktree anyway (#451, PR
   #452). git 2.55.0 on GitHub's ubuntu runner adds a worktree beside a half-written
   `.git/worktrees/<n>` entry, so the test from PR #426 found no error and turned every PR's ubuntu
@@ -1095,14 +1104,13 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   required; the server Dockerfile runs `go mod download` right after copying `go.mod`, so
   `server/` changes reuse a cached layer. `verify_charts.py` checks both, and that an empty
   `caName` fails to render.
-- 2026-10-15: certain durable failures end without recovery, and every call is recorded (#145,
-  #146, #148, PR #420). A definite model rejection (a 4xx other than 408, 409 or 429) saves a
-  `model_rejected` checkpoint and ends as an error without `recovery_required`; a
-  context-management 400 retries once in durable mode as it does locally. Every tool result in the
-  durable transcript has its call event, emitted after the saved `tool_intent`. The docs say the
-  checkpoint store is the trust boundary for budget, deadline and start, and that a restored,
-  already-paid response may finish its tools over the ceiling. #147 waited for the owner's call
-  (PR #478).
+- 2026-10-15: certain durable failures end without recovery, and every call is recorded (#145, #146,
+  #148, PR #420). A definite model rejection (a 4xx other than 408, 409 or 429) saves a
+  `model_rejected` checkpoint and ends as an error without `recovery_required`; a context-management
+  400 retries once in durable mode as it does locally. Every tool result in the durable transcript
+  has its call event, emitted after the saved `tool_intent`. The docs say the checkpoint store is
+  the trust boundary for budget, deadline and start, and that a restored, already-paid response may
+  finish its tools over the ceiling. #147 waited for a maintainer's call (PR #478).
 - 2026-10-15: the continue context warning reaches exec and every new run's record (#102, #104,
   #108, PR #418). Over 150,000 tokens of carried context, exec's `accepted` frame carries the
   warning in its notes, and `followup.Plan.Apply` records it once as an info event in the new run
@@ -1115,10 +1123,10 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   several races around retakes and mode switches are closed. Item 5, a headless browser check in
   CI, moves to #415.
 - 2026-10-15: the shaping test's slow shell start (#380, #401, PRs #387, #413).
-  `TestRunCommandShapesLargeOutput` gave every case 2 seconds, and on the owner's loaded PC
+  `TestRunCommandShapesLargeOutput` gave every case 2 seconds, and on a loaded development PC
   PowerShell took longer to start. The success and failure cases got 60 seconds (PR #387); the
-  timeout case then failed before printing, so it gets 10 seconds while the command still sleeps
-  60 (PR #413). The failures depend on load, so neither could be shown failing on demand;
+  timeout case then failed before printing, so it gets 10 seconds while the command still sleeps 60
+  (PR #413). The failures depend on load, so neither could be shown failing on demand;
   `TestRunShellTimeoutKillsTheTree`, with 3 seconds, is the next likely flake.
 - 2026-10-15: the remote server origin built from the parsed URL, and the CA file read through a
   checked handle (#282, PR #408). A query, fragment or `%2F` in the server URL can no longer reach
@@ -1147,11 +1155,11 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   database opens; `localhost`, `0.0.0.0` and host names are refused. This follows
   `internal/remote`, the stricter client (the worker still accepts `localhost`). The control chart
   always sets TLS, so nothing deployed changes.
-- 2026-10-15: tests run against a temporary `HRN_HOME`, never the owner's (#379, #381, PR #386).
-  Since PR #371 added `~/.hrn/backends.json`, tests that set no `HRN_HOME` read the owner's file,
-  and with only claude and agy enabled four tests, and so every full local check, failed; CI has
-  no such file. All nine packages that can reach the home get a TestMain that sets a fresh
-  temporary one, with a guard test that fails if it is not under the temp directory.
+- 2026-10-15: tests run against a temporary `HRN_HOME`, never the user's (#379, #381, PR #386).
+  Since PR #371 added `~/.hrn/backends.json`, tests that set no `HRN_HOME` read the user's file, and
+  with only claude and agy enabled four tests, and so every full local check, failed; CI has no such
+  file. All nine packages that can reach the home get a TestMain that sets a fresh temporary one,
+  with a guard test that fails if it is not under the temp directory.
 - 2026-10-15: the guard refuses PowerShell's long download names and `iex` given a download (#267,
   PR #375). pipe-to-shell knew only `curl`, `wget`, `irm` and `iwr` piped into an evaluator. It
   now knows `Invoke-RestMethod`, `Invoke-WebRequest` and the WebClient download, and refuses `iex`
@@ -1164,13 +1172,13 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   the advice; a short badge (`killed · gate_timeout 15m0s`) on the watch page, since badges never
   wrap. A gate that could not start after a cancellation is `canceled` too.
 - 2026-10-15: a gate killed by gate_timeout says so (#395, PR #399). A gate hrn killed at its
-  per-gate limit, or at a cancellation, was `exited -1` everywhere, and a retry hunted its
-  output for a failing test; five batches on 2026-10-14 failed that way while the code was
-  fine. Decided: `GateResult.killed` ("timeout" with the `timeout` that applied, or "canceled"),
-  additive, and one `Outcome()` every printer uses: `killed after 15m0s (gate_timeout; set
-  "gate_timeout" in the spec to allow more)` or `canceled`. The retry prompt says the gate did
-  not fail and that only the operator can raise the limit. Whether to skip the retry after a
-  timeout is left to the owner in #395; the review's smaller follow-ups are #396.
+  per-gate limit, or at a cancellation, was `exited -1` everywhere, and a retry hunted its output
+  for a failing test; five batches on 2026-10-14 failed that way while the code was fine. Decided:
+  `GateResult.killed` ("timeout" with the `timeout` that applied, or "canceled"), additive, and one
+  `Outcome()` every printer uses: `killed after 15m0s (gate_timeout; set "gate_timeout" in the spec
+  to allow more)` or `canceled`. The retry prompt says the gate did not fail and that only the
+  operator can raise the limit. Whether to skip the retry after a timeout is left to a maintainer in
+  #395; the review's smaller follow-ups are #396.
 - 2026-10-15: a stream that ends on a codex reconnect notice loses its usage (#348, PR #393).
   A `turn.completed` that reported usage, then a notice, then the end of the stream left the
   usage `reported` although the last turn's tokens never were. Decided: the end-of-stream step
@@ -1211,10 +1219,10 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   appearing in a later replace on the same connection, after reading the first
   fragment, with a short poll interval and a generous deadline. Suppressing every
   replace after the first makes the test fail; production code is unchanged.
-- 2026-10-14: CI skips a Markdown-only change (#341, PR #353). Owner's request: a change
-  touching only documentation Markdown (an allowlist: top-level `*.md` but AGENTS.md, `docs/`,
-  the server READMEs) runs no build or test. The required `test` jobs still report, skipping
-  their steps, so the ruleset's checks pass.
+- 2026-10-14: CI skips a Markdown-only change (#341, PR #353). Requested: a change touching only
+  documentation Markdown (an allowlist: top-level `*.md` but AGENTS.md, `docs/`, the server READMEs)
+  runs no build or test. The required `test` jobs still report, skipping their steps, so the
+  ruleset's checks pass.
 - 2026-10-14: a codex reconnect notice is not the run's error (#342, PR #343). `Reconnecting...
   n/5` is the CLI retrying its model stream: an `info` event that stands as the error only until
   the turn completes, so a run whose work finished is `ok` with its usage, and a stream that
@@ -1257,8 +1265,8 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   Ordinary issue, pull request, comment, label and reaction POSTs remain allowed.
 - 2026-10-14: a raw `gh api` POST asks first (#206, PR #292). A field (`-f`, `-F`, `--field`,
   `--raw-field`, `--input`) with no method makes `gh api` POST, which can create a release, a tag or
-  a deploy key. Decided: in this repository's Claude settings such a call asks the owner; hrn runs
-  hold no GitHub token at all, and #210 adds the guard's refusals as a second layer.
+  a deploy key. Decided: in this repository's Claude settings such a call asks first; hrn runs hold
+  no GitHub token at all, and #210 adds the guard's refusals as a second layer.
 - 2026-10-14: a retrieval packet's entries stay within the text cap (#177, PR #291).
   Decided: count only rendered entry fields (ID, Content, Source, Evidence) against the 8192-byte
   text cap; Key and Identifiers keep the import limits. Require each entry ID in Text's reference label.
@@ -1366,16 +1374,16 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   spins the watch (#164), `--watch` never exits (#165), the CLI skips options.Validate (#166),
   URL and CA file edge cases (#167), no client-side cost cap (#168), tests the review named
   (#169).
-- 2026-10-13: the server module ([#137](https://github.com/cristiangirlea/harness/issues/137), PR #159; slice 4 of #142).
-  The snapshot's PostgreSQL control service and project worker, cut to the control plane: the
-  knowledge pool, retrieval slots and schema 003 wait for #140, the deploy charts and image for
-  #139, the remote-client test for #138. CI: server unit jobs on both hosted runners and a
-  PostgreSQL race job on Linux. The review's security read found nothing blocking; tests for
-  token scope across tenants and projects, wrong tokens of the real length, submission
-  validation, migration idempotence and checkpoint sequence were added and passed in CI's
-  postgres job, where the suite runs: Docker's engine on the owner's PC answers with an
-  internal error. Follow-ups: refuse mcp and allow_dangerous at submission (#154), the token
-  check before the body (#155), bounded event streams (#156), two status codes (#157).
+- 2026-10-13: the server module ([#137](https://github.com/cristiangirlea/harness/issues/137), PR
+  #159; slice 4 of #142). The snapshot's PostgreSQL control service and project worker, cut to the
+  control plane: the knowledge pool, retrieval slots and schema 003 wait for #140, the deploy charts
+  and image for #139, the remote-client test for #138. CI: server unit jobs on both hosted runners
+  and a PostgreSQL race job on Linux. The review's security read found nothing blocking; tests for
+  token scope across tenants and projects, wrong tokens of the real length, submission validation,
+  migration idempotence and checkpoint sequence were added and passed in CI's postgres job, where
+  the suite runs: Docker's engine on the development PC answers with an internal error. Follow-ups:
+  refuse mcp and allow_dangerous at submission (#154), the token check before the body (#155),
+  bounded event streams (#156), two status codes (#157).
 - 2026-10-13: agent usage metadata ([#136](https://github.com/cristiangirlea/harness/issues/136), PR #158; slice 3 of #142).
   Ported from the snapshot: codex input includes its cached input, api and claude counters are
   disjoint, and a missing counter, an incomplete turn or a failed turn marks the run's usage
@@ -1409,11 +1417,11 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   `hrn report` has it, not from the shortened text.
 - 2026-10-13: AGENTS.md back under 100 lines (#196, PR #253). Decided: shorten layout
   rows and the hx note, and point repeated CI and release details to CONTRIBUTING.md.
-- 2026-10-13: three wording points from #58's review (#65, PR #252). Decided: a blocking
-  finding is fixed, as AGENTS.md and the owner's merge rule say, so the definition of done
-  no longer offers rejecting one; a finding shown wrong is no defect, so it was never
-  blocking. AGENTS.md says "the base branch" (a piece of a feature branch merges that one
-  in) and "a broken house rule" (PLAN.md's rules and `.claude/rules/` count too).
+- 2026-10-13: three wording points from #58's review (#65, PR #252). Decided: a blocking finding is
+  fixed, as AGENTS.md and the merge rule say, so the definition of done no longer offers rejecting
+  one; a finding shown wrong is no defect, so it was never blocking. AGENTS.md says "the base
+  branch" (a piece of a feature branch merges that one in) and "a broken house rule" (PLAN.md's
+  rules and `.claude/rules/` count too).
 - 2026-10-13: the definition of done and rule 2 follow AGENTS.md (#64, PR #251). Since the
   repository went public, CI again tests both platforms on every pull request, so rule 2's
   "green on both" stays. Decided: the definition of done points at AGENTS.md's checks instead
@@ -1478,27 +1486,26 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   given, so `-X delete` still deleted. Decided: the method alone matches case-insensitively
   (`(?i:PUT|PATCH|DELETE)`); `gh`'s subcommands stay case-sensitive. POST is #210, Windows
   program names in other rules #211.
-- 2026-10-13: `gh api` writes in this repository's Claude settings (#198, PR #209). Only the
-  `PUT` spellings were denied, so a session with the owner's token could still change or delete
-  the rulesets. Decided: deny any `gh api` call with an explicit `-X` or `--method`, whatever the
+- 2026-10-13: `gh api` writes in this repository's Claude settings (#198, PR #209). Only the `PUT`
+  spellings were denied, so a session with a maintainer's token could still change or delete the
+  rulesets. Decided: deny any `gh api` call with an explicit `-X` or `--method`, whatever the
   method's case or spelling (`gh` upper-cases it and takes `-X=DELETE`); nothing here reads with an
   explicit method. A field without a method is an implicit `POST`, left to #206.
 - 2026-10-13: gc tests under the guard (#120, PR #205). The fixture's git now drops
   passed-down git config like gc's own git, so `go test ./...` passes inside an hrn run.
   The guard's refusal of pushes to real remotes remains tested in internal/tools.
-- 2026-10-13: issue #204 (PR #207): lean dropped the owner's own rules, plugins and skills, which
-  workers must keep. Decided: lean is `--strict-mcp-config` only (no `--setting-sources`), so
-  it drops only MCP servers hrn did not pass (the user's, plugin-provided ones and claude.ai
-  connectors). `lean` became a `*bool` in `agent.Options`: unset means the entry point's
-  default, `false` is honoured over a spec's `true` (the one switch a task can turn back
-  off). The JSON is unchanged (`true` or absent, now also `false`), so old records load.
-  Batch, and with it eval and the MCP `batch` tool, makes lean the default per attempt only
-  on a backend that applies it (`agent.AppliesLean`, claude), so a codex task's record does
-  not claim lean and prints no `not enforced` line; `hrn run` and MCP `run` stay opt-in. New
-  `compact_window` (an integer 100000-1000000 or `"auto"`, as `claude --autocompact` takes
-  it; it accepts the bare integer) is passed to claude only and reported as not enforced by
-  the other backends, the api loop included. Measured: lean 55.1K context against 61.7K by
-  default on a two-turn task (docs/backends.md).
+- 2026-10-13: issue #204 (PR #207): lean dropped the user's own rules, plugins and skills, which
+  workers must keep. Decided: lean is `--strict-mcp-config` only (no `--setting-sources`), so it
+  drops only MCP servers hrn did not pass (the user's, plugin-provided ones and claude.ai
+  connectors). `lean` became a `*bool` in `agent.Options`: unset means the entry point's default,
+  `false` is honoured over a spec's `true` (the one switch a task can turn back off). The JSON is
+  unchanged (`true` or absent, now also `false`), so old records load. Batch, and with it eval and
+  the MCP `batch` tool, makes lean the default per attempt only on a backend that applies it
+  (`agent.AppliesLean`, claude), so a codex task's record does not claim lean and prints no `not
+  enforced` line; `hrn run` and MCP `run` stay opt-in. New `compact_window` (an integer
+  100000-1000000 or `"auto"`, as `claude --autocompact` takes it; it accepts the bare integer) is
+  passed to claude only and reported as not enforced by the other backends, the api loop included.
+  Measured: lean 55.1K context against 61.7K by default on a two-turn task (docs/backends.md).
 - 2026-10-13: issue #200 (PR #201): a claude worker inherited every plugin, skill, hook and MCP
   server of the operator's, about 64K tokens of context on every turn of a tiny task. Decided:
   an additive `lean` option (`--lean`, spec, task and MCP `run` field, off by default) that
@@ -1610,15 +1617,14 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   the branch is free for other checkouts and for gc; CLI only, no `hrn mcp` tool. The
   package is exported with a pid on the lease so batch can use it (#126). Its test fixture
   publishes to origin by fetching from origin's side, since hrn's guard refuses every push.
-- 2026-10-13: PR #127 (closes #82, widened by the owner on 2026-10-12): hrn watch's rows lead
-  with `<repository> · <task>`, the id under it. Decided: the repository is the workspace
-  folder's name (the folder above `.hrn` for a batch worktree), read from the record, not
-  from git or the disk; a task's name is the bot's `taskName`; a batch task named after its
-  issue (`82-repo-and-task`) shows that number with no new field. Task names come only from
-  batch records cleaned of secrets, all of them, since `taskName` changes text and blanking
-  is by exact match. Built through hrn: a batch task, then hrn runs for the checks, two
-  codex reviews and the fixes. One security defect and one id-line defect fixed with tests
-  seen failing; the rest is #124 and #125.
+- 2026-10-13: PR #127 (closes #82, widened on 2026-10-12): hrn watch's rows lead with `<repository>
+  · <task>`, the id under it. Decided: the repository is the workspace folder's name (the folder
+  above `.hrn` for a batch worktree), read from the record, not from git or the disk; a task's name
+  is the bot's `taskName`; a batch task named after its issue (`82-repo-and-task`) shows that number
+  with no new field. Task names come only from batch records cleaned of secrets, all of them, since
+  `taskName` changes text and blanking is by exact match. Built through hrn: a batch task, then hrn
+  runs for the checks, two codex reviews and the fixes. One security defect and one id-line defect
+  fixed with tests seen failing; the rest is #124 and #125.
 - 2026-10-12: PR #123 (closes #63), item 15's third box, which closes item 15. hrn watch's
   index has a Purpose column (the rule id in its title) and a card, "What the runs were for",
   over the listed runs only. Decided: a finished run with no reported cost is left out of the
@@ -1646,12 +1652,12 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   Remove unsupported language-performance comparisons and the install suggestion
   to download releases when no releases have been published. Runtime behavior is unchanged.
 
-- 2026-10-12: Public-repository CI migration (PR #106). Use standard GitHub-hosted Linux
-  and Windows runners, including both PR legs, with read-only CI token permissions. Gate CI
-  and releases on public visibility to avoid private-minute usage. Retire the repository's
-  desktop runner and ARC scale set before changing visibility; infra owns the retirement.
-  The owner authorized the migration and publication. This supersedes the private-only
-  runner rules below. Historical entries remain a record of earlier configurations.
+- 2026-10-12: Public-repository CI migration (PR #106). Use standard GitHub-hosted Linux and Windows
+  runners, including both PR legs, with read-only CI token permissions. Gate CI and releases on
+  public visibility to avoid private-minute usage. Retire the repository's desktop runner and ARC
+  scale set before changing visibility; infra owns the retirement. The migration and publication
+  were authorized. This supersedes the private-only runner rules below. Historical entries remain a
+  record of earlier configurations.
 
 - 2026-10-12: A dangling symbolic link out of the workspace on Linux and macOS (#47). The
   non-Windows `throughLink` now reads a link `EvalSymlinks` left unresolved and judges the
@@ -1711,34 +1717,32 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   repository", since a worktree whose repository is gone fails with another message and its
   files are tracked. A build starting in the moment between the last lock probe and the removal
   is #129; saying how far a drive still is below `--free-below` after `--apply` is #130.
-- 2026-10-11: PR #93 (closes #91), recording Ada's voice, the first slice of #83. The voice
-  will be the owner's wife's, recorded by her with her agreement; the recordings stay on this
-  computer, never in a repository. Decided: the page records in the browser and saves into a
-  folder the speaker picks (File System Access, downloads otherwise), so hrn watch stays
-  read-only and keeps no one's voice; it is refused from the network. The microphone is taken
-  as it is (no echo cancellation, noise suppression or auto gain) and saved as 16-bit WAV
-  with `id|text` rows, the layout Piper and most trainers read. Ada's lines come from her own
-  wording functions, so the voice is trained on what she says; their numbers are a contract
-  (`testdata/voice-lines.golden`), since a take finds its text by its number. Training will
-  use only models under MIT or Apache licences, and from ChatGPT conversations only her side
-  is recorded, through a shared microphone with headphones. Rounds of independent review
-  through hrn (claude; codex at its limit) found four blocking defects and smaller races this
-  branch brought in, each fixed and checked in the browser; the rest is #92. Every handler
-  on the page awaits, so each says what may happen while it waits: one microphone setup at a
-  time, nothing moves while a take is saved, Keep and Retake never overlap, and a talk's
-  parts save in order.
-- 2026-10-11: PR #89 (closes #59), Ada, part 1 of item 11. Decided: the sentences are made in
-  Go (`internal/watch/bot.go`), not in the page, so they are tested and pass the same
-  redaction as every page; one stream per page, the visible card as escaped HTML and the
-  sentences as JSON. Read-only: her commands steer her alone, decisions wait for #38. Speech
-  is the browser's, with voices on this computer first, since an online voice sends prompts
-  to its maker; a nicer voice of her own is #83. The owner named her Ada and chose an animal
-  over a human, then a parrot over an owl; she is an inline SVG with CSS animation, as the
-  page loads nothing from elsewhere and allows no inline style. Kept out of this branch under
-  the one-purpose rule: naming a batch's runs by their task on the index (#82, the owner's
-  question about four look-alike runs). Three independent reviews through hrn (claude; codex
-  at its limit) found four blocking defects, each fixed with a test seen failing; the rest
-  is #88.
+- 2026-10-11: PR #93 (closes #91), recording Ada's voice, the first slice of #83. The voice will
+  be recorded by a volunteer speaker with their consent; the recordings stay on this computer,
+  never in a repository. Decided: the page records in the browser and saves into a folder the
+  speaker picks (File System Access, downloads otherwise), so hrn watch stays read-only and
+  keeps no one's voice; it is refused from the network. The microphone is taken as it is (no
+  echo cancellation, noise suppression or auto gain) and saved as 16-bit WAV with `id|text`
+  rows, the layout Piper and most trainers read. Ada's lines come from her own wording
+  functions, so the voice is trained on what she says; their numbers are a contract
+  (`testdata/voice-lines.golden`), since a take finds its text by its number. Training will use
+  only models under MIT or Apache licences, and from ChatGPT conversations only her side is
+  recorded, through a shared microphone with headphones. Rounds of independent review through
+  hrn (claude; codex at its limit) found four blocking defects and smaller races this branch
+  brought in, each fixed and checked in the browser; the rest is #92. Every handler on the page
+  awaits, so each says what may happen while it waits: one microphone setup at a time, nothing
+  moves while a take is saved, Keep and Retake never overlap, and a talk's parts save in order.
+- 2026-10-11: PR #89 (closes #59), Ada, part 1 of item 11. Decided: the sentences are made in Go
+  (`internal/watch/bot.go`), not in the page, so they are tested and pass the same redaction as
+  every page; one stream per page, the visible card as escaped HTML and the sentences as JSON.
+  Read-only: her commands steer her alone, decisions wait for #38. Speech is the browser's, with
+  voices on this computer first, since an online voice sends prompts to its maker; a nicer voice
+  of her own is #83. She is named Ada, an animal rather than a human, and a parrot rather than
+  an owl; she is an inline SVG with CSS animation, as the page loads nothing from elsewhere and
+  allows no inline style. Kept out of this branch under the one-purpose rule: naming a batch's
+  runs by their task on the index (#82, a question about four look-alike runs). Three
+  independent reviews through hrn (claude; codex at its limit) found four blocking defects, each
+  fixed with a test seen failing; the rest is #88.
 - 2026-10-11: Fuzzing by count (#70). FuzzCodec failed PR #60's job with `context deadline
   exceeded` at exactly 10 s and no input saved, as it had once before (the PR X entry
   below). The cause is in Go's coordinator (`internal/fuzz/fuzz.go`):
@@ -1749,12 +1753,11 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
     storing the child's error: the OS pausing it on a loaded node, or the child's lock,
     which each minimization's own timeout context takes as it starts and ends.
 
-  It never happened in 288 runs on the owner's PC, so it is a loaded-runner race; reading
-  the source, not a repro, is the evidence. With a count (`-fuzztime=Nx`) Go makes no
-  deadline context and stops through `stop(nil)`.
-  The 2026-10-10 entry's FuzzParseSSE failure on #34 (`context deadline exceeded` at
-  0 execs/s, put down there to garbage from a 1 MiB buffer) fits this race after the
-  minimization stall below better; that entry stays as recorded.
+  It never happened in 288 runs on the development PC, so it is a loaded-runner race; reading
+  the source, not a repro, is the evidence. With a count (`-fuzztime=Nx`) Go makes no deadline
+  context and stops through `stop(nil)`. The 2026-10-10 entry's FuzzParseSSE failure on #34
+  (`context deadline exceeded` at 0 execs/s, put down there to garbage from a 1 MiB buffer) fits
+  this race after the minimization stall below better; that entry stays as recorded.
 
   FuzzParseSSE also did no executions after a few seconds in every run looked at.
   `GODEBUG=fuzzdebug=1` showed all four workers minimizing "interesting" inputs, which Go
@@ -1825,24 +1828,23 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   since a component that cannot be read could be a junction; `NewWorkspace` does not fail
   there, because it also checks the directory for the CLI backends, which do not use it.
 - 2026-10-11: Junctions (#45, PR #48), found while reviewing the guard for #36. Since Go 1.23 a
-  Windows mount point (a directory junction, which needs no privilege to make) is an
-  irregular file to `os.Lstat`, not a symbolic link, so `filepath.EvalSymlinks` stopped
-  resolving it: worse, it fails on a path that goes on past one, and the workspace check's
-  fall-back to the longest prefix that resolves then judged `out/secret.txt` by its name.
-  Tests with real junctions saw `read_file`, `write_file`, `edit_file` and `grep` reach
-  outside. Now `realPath` reads each irregular component with `os.Readlink` on Windows
-  (it answers only for links, so OneDrive's reparse points are passed over) and follows
-  the target, up to 255 times; paths are compared with the root resolved the same way, so a
-  workspace reached through a junction still works while `Root` keeps the spelling it was
-  given for commands. Refusing every junction was not taken: pnpm fills `node_modules` with
-  junctions that stay in the project, and `os.Root`, which would also close the race
-  between the check and the open, refuses those too. `grep`'s walk judged no file it found
-  on main, so a file symlink out of the workspace was searched on Linux too; it now judges
-  each link it finds (the guard branch judges every file, and also passes over secret
-  files). A walk still goes into no link or junction, as before: `grep` over the root, or
-  with `path` set to a junction, does not search the files behind one; a path through it
-  does. Windows CI runs only after a merge: the junction tests ran on the owner's PC, the
-  symlink tests on Linux.
+  Windows mount point (a directory junction, which needs no privilege to make) is an irregular
+  file to `os.Lstat`, not a symbolic link, so `filepath.EvalSymlinks` stopped resolving it:
+  worse, it fails on a path that goes on past one, and the workspace check's fall-back to the
+  longest prefix that resolves then judged `out/secret.txt` by its name. Tests with real
+  junctions saw `read_file`, `write_file`, `edit_file` and `grep` reach outside. Now `realPath`
+  reads each irregular component with `os.Readlink` on Windows (it answers only for links, so
+  OneDrive's reparse points are passed over) and follows the target, up to 255 times; paths are
+  compared with the root resolved the same way, so a workspace reached through a junction still
+  works while `Root` keeps the spelling it was given for commands. Refusing every junction was
+  not taken: pnpm fills `node_modules` with junctions that stay in the project, and `os.Root`,
+  which would also close the race between the check and the open, refuses those too. `grep`'s
+  walk judged no file it found on main, so a file symlink out of the workspace was searched on
+  Linux too; it now judges each link it finds (the guard branch judges every file, and also
+  passes over secret files). A walk still goes into no link or junction, as before: `grep` over
+  the root, or with `path` set to a junction, does not search the files behind one; a path
+  through it does. Windows CI runs only after a merge: the junction tests ran on a Windows
+  development PC, the symlink tests on Linux.
 - 2026-10-11: PR X done (#44, closes #36): one guard for every backend. Issue #36 asked for
   each CLI's own policy file; the PR puts the guard in what every backend inherits instead,
   so one mechanism covers all four CLIs and the api loop's run_command: tokens and keys
@@ -1895,29 +1897,28 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   One FuzzCodec run failed once in a container while the Windows suite loaded the same
   machine; no input was saved, and three 10 s runs and a 2 min run (7.4M executions) after
   it passed.
-- 2026-10-11: PR X merged with main (#46, #48, #50 to #53), then a security review of the
-  whole PR as it would merge (Claude, read-only): 2 blocking. (1) The merge kept #48's grep
-  walk, which judges only links by where they lead; a regular file was judged by its
-  spelling under the search path, so `grep` with `path` set to `.codex`'s short 8.3 name
-  (`CODEX~1`) printed `auth.json`: the secret paths of two parts never matched. Now each
-  file is also judged at the search path's real place plus its relative name, which costs
-  no call per file. A Windows test with a real short name (the test skips on a volume
-  without them, E: here; it ran on C:). (2) gh keeps its login in the system's credential
-  store and asks it when no token is set, so the empty `GH_CONFIG_DIR` did not keep
-  `gh auth token` from printing it; checked on the owner's PC without printing it. Now
-  `GH_TOKEN` and `GH_ENTERPRISE_TOKEN` are a token that is not one, and a `gh-token` rule
-  (and claude's rules) refuse `gh auth token`, `gh auth git-credential` and `gh auth status
-  --show-token`; `gh auth token --user NAME` still reads the store, so under codex, gemini
-  and opencode it is open, and the README and each run say so. Also taken from its notes: an
-  hrn started inside a guarded run (from the shell, or as the hrn MCP server the claude CLI
-  loads from the owner's user scope) could lift the guard with `allow_dangerous`, and the
-  refusal message even named that lever. The guarded environment now sets `HRN_GUARDED`,
-  the api loop sets it for its own MCP servers, `Validate` and `agent.Run` refuse
-  `allow_dangerous` under it, and the message names no lever. The test packages that lift
-  the guard clear the marker in `TestMain` (helper processes keep it), so the suite still
-  passes when an agent under the guard runs it. Its other notes are #56.
-  Live, codex in `yolo` under the guard on a scratch repo: fake `GH_TOKEN` and `NPM_TOKEN`
-  empty, `git push` at the dead end, the bare remote empty.
+- 2026-10-11: PR X merged with main (#46, #48, #50 to #53), then a security review of the whole
+  PR as it would merge (Claude, read-only): 2 blocking. (1) The merge kept #48's grep walk,
+  which judges only links by where they lead; a regular file was judged by its spelling under
+  the search path, so `grep` with `path` set to `.codex`'s short 8.3 name (`CODEX~1`) printed
+  `auth.json`: the secret paths of two parts never matched. Now each file is also judged at the
+  search path's real place plus its relative name, which costs no call per file. A Windows test
+  with a real short name (the test skips on a volume without them, E: here; it ran on C:). (2)
+  gh keeps its login in the system's credential store and asks it when no token is set, so the
+  empty `GH_CONFIG_DIR` did not keep `gh auth token` from printing it; checked on a development
+  PC without printing it. Now `GH_TOKEN` and `GH_ENTERPRISE_TOKEN` are a token that is not one,
+  and a `gh-token` rule (and claude's rules) refuse `gh auth token`, `gh auth git-credential`
+  and `gh auth status --show-token`; `gh auth token --user NAME` still reads the store, so under
+  codex, gemini and opencode it is open, and the README and each run say so. Also taken from its
+  notes: an hrn started inside a guarded run (from the shell, or as the hrn MCP server the
+  claude CLI loads from the user scope) could lift the guard with `allow_dangerous`, and the
+  refusal message even named that lever. The guarded environment now sets `HRN_GUARDED`, the api
+  loop sets it for its own MCP servers, `Validate` and `agent.Run` refuse `allow_dangerous`
+  under it, and the message names no lever. The test packages that lift the guard clear the
+  marker in `TestMain` (helper processes keep it), so the suite still passes when an agent under
+  the guard runs it. Its other notes are #56. Live, codex in `yolo` under the guard on a scratch
+  repo: fake `GH_TOKEN` and `NPM_TOKEN` empty, `git push` at the dead end, the bare remote
+  empty.
 - 2026-10-11: PR X, the review's second pass over those fixes: B1 and B2 closed, 1
   blocking. The marker reaches an hrn MCP server only if the agent's CLI passes its
   environment on to the servers it starts, which the reviewer believed codex does not
@@ -1931,21 +1932,21 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   `HRN_GUARDED=1` and the empty gh config dir, so under codex plain `gh auth token` gets the
   stand-in and only `--user NAME` reaches the store.
 
-- 2026-10-11: PR W security review (the owner's condition for merging: "tested with all
-  means including security"), by an independent agent with loopback-only proof tests in a
-  scratch copy. Nothing critical or high; four findings, three fixed here, each as its own
-  commit. (1) Record text reached the terminal raw in hrn run, show and show -f, so a file an
-  agent read could set the window title, write the clipboard (OSC 52) or forge a check mark:
-  control characters now become U+FFFD. (2) On Windows a reader of a batch record blocked
-  save's rename, so 64 readers on the network failed 14% of saves (a test with 32 saw 10 to
-  15 of 50): records are read with FILE_SHARE_DELETE and replaced with os.Root's Rename,
-  which uses POSIX rename semantics; none fail now. (4) A key that reached a run (an agent
-  running env) would show on the LAN page: watch blanks the values of its environment's
-  secret-looking variables on every page and fragment; the run_command side belongs to #36.
-  Also the footer's home path and read errors' paths are shown to this computer only.
-  Left, low: (3) one client can make watch read a whole large events.jsonl per request and
-  open many streams, each re-reading the lists every 2 s; real runs are under 1 MB today.
-  A shared poller, a cap on streams per address and a bounded run page are the fix, with #38.
+- 2026-10-11: PR W security review (a condition for merging: tested with all means including
+  security), by an independent agent with loopback-only proof tests in a scratch copy. Nothing
+  critical or high; four findings, three fixed here, each as its own commit. (1) Record text
+  reached the terminal raw in hrn run, show and show -f, so a file an agent read could set the
+  window title, write the clipboard (OSC 52) or forge a check mark: control characters now
+  become U+FFFD. (2) On Windows a reader of a batch record blocked save's rename, so 64 readers
+  on the network failed 14% of saves (a test with 32 saw 10 to 15 of 50): records are read with
+  FILE_SHARE_DELETE and replaced with os.Root's Rename, which uses POSIX rename semantics; none
+  fail now. (4) A key that reached a run (an agent running env) would show on the LAN page:
+  watch blanks the values of its environment's secret-looking variables on every page and
+  fragment; the run_command side belongs to #36. Also the footer's home path and read errors'
+  paths are shown to this computer only. Left, low: (3) one client can make watch read a whole
+  large events.jsonl per request and open many streams, each re-reading the lists every 2 s;
+  real runs are under 1 MB today. A shared poller, a cap on streams per address and a bounded
+  run page are the fix, with #38.
 - 2026-10-11: PR W review (an independent read-only reviewer), nothing blocking, 5 findings
   fixed, each as its own commit. The reviewer wrote its own decoder and found the encoder
   exact at every length 0 to 213 under every mask; since jsQR forgives a few wrong
@@ -1957,51 +1958,48 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   route must be registered as POST, since the door goes by method; the key must never
   appear in a GET response; and on plain HTTP it is a replayable bearer token, so an HMAC
   over method, path and time, or HTTPS, comes before it carries power.
-- 2026-10-11: PR W done (#39, closes #33): hrn watch for a phone. Issue #33 asked for a key
-  that other devices need even to view. The owner had said "we can see it on LAN, but we can
-  only control it with a key", then picked "a key for viewing too" by an accidental tap
-  (their words) and settled on control only: viewing stays keyless. So the PR has (1)
-  `--lan=NAME`, one adapter by name (any case) or address, since plain `--lan` on the
-  owner's PC also served WSL, Hyper-V and two VMware networks; (2) a QR code of each phone
-  link on the PC's own view of the index, and in the terminal when there is one network,
-  from a new `internal/qr` (byte mode, level M, versions 1 to 10; tests pin the standard's
-  HELLO WORLD codewords, format and version strings; jsQR 1.4.0 in a browser read back codes
-  of versions 1, 2, 5, 8 and 10 and the served code itself); (3) on a narrow screen, runs and
-  batches as cards, since the owner found the first page poor on a phone (the tables ran off
-  the side and broke words); (4) the door: anything but GET and HEAD must send
-  `Options.Key` in `X-Hrn-Watch-Key`, from loopback too, a custom header doubling as the
-  CSRF check. No action exists and hrn watch sets no key, so all are refused until the bot
-  brings one; no client side was written for an action that does not exist. Not done from
-  #33: HTTPS (a key on plain HTTP can be sniffed on the Wi-Fi; worth it when the key
-  matters) and a key per start for viewing (declined). A phone that came in over the network
-  sees neither the codes nor the PC's hints, decided by the connection's address, not Host.
-- 2026-10-10: PR V done (#34): a live view. The owner ran `hrn batch` on the claude backend
-  and asked for a way to see what is going on. `hrn watch` serves a page of the newest runs
-  and batches, a timeline per run streamed over Server-Sent Events that tail
-  `events.jsonl`, and a page per batch with each task's runs and gates; `hrn show -f`
-  prints the same timeline in the terminal until the run saves its result. New package
-  `internal/watch`, standard library only. Choices: fragments are rendered and escaped on
-  the server by `html/template` and the script only places them, so the escaping is tested
-  in Go; the SSE writer splits data on `\r`, `\n` and `\r\n`, because a lone `\r` in a tool
-  result would otherwise end a data line and forge a field; each message's id is the byte
-  offset after its line plus that event's time, so a reconnecting browser resumes exactly
-  and the wait before the next step stays right; the file is opened for each read, since an
-  open handle on Windows would stop `runs prune` and `batch rm`. A run killed before it
-  saved its result never ends in either view (it cannot be told from a long step). The
-  guard (loopback Host, Origin, Sec-Fetch-Site, CSP, no-store) is a copy of `hrn sessions'`
-  in `internal/sessionweb`, which is not on main yet; once both are, they can share it.
-  Deviations: (1) the batch record was saved at the start and the end only, so mid-batch
-  nothing tied a task to its run or showed a finished gate. It is now saved when an
-  attempt's run starts and ends, after each gate and when a task ends (best effort; the
-  end's save still reports errors), and `save` retries its rename for up to 200 ms, since
-  a reader holding the file open makes it fail on Windows (Go opens files without
-  `FILE_SHARE_DELETE`). The format is unchanged; an attempt still running has an empty
-  result status. (2) The brief said loopback only; the owner then asked for a phone on the
-  same network, and chose (asked twice, since it widens who can read the runs) to have
-  `--lan` now without a login and the key later (#33). `--lan` binds each private IPv4
-  address of the adapters that are up, never 0.0.0.0, and the Host check admits exactly
-  those `ip:port` strings. (3) A cost column on the index, since the owner asked whether
-  the harness has the cost: it is the backend's own figure, so codex and gemini show none.
+- 2026-10-11: PR W done (#39, closes #33): hrn watch for a phone. Issue #33 asked for a key that
+  other devices need even to view. Decided on the issue: a key for control only, viewing stays
+  keyless. So the PR has (1) `--lan=NAME`, one adapter by name (any case) or address, since
+  plain `--lan` on a PC with several virtual network adapters served every one of them; (2) a QR
+  code of each phone link on the PC's own view of the index, and in the terminal when there is
+  one network, from a new `internal/qr` (byte mode, level M, versions 1 to 10; tests pin the
+  standard's HELLO WORLD codewords, format and version strings; jsQR 1.4.0 in a browser read
+  back codes of versions 1, 2, 5, 8 and 10 and the served code itself); (3) on a narrow screen,
+  runs and batches as cards, since the first page read poorly on a phone (the tables ran off the
+  side and broke words); (4) the door: anything but GET and HEAD must send `Options.Key` in
+  `X-Hrn-Watch-Key`, from loopback too, a custom header doubling as the CSRF check. No action
+  exists and hrn watch sets no key, so all are refused until the bot brings one; no client side
+  was written for an action that does not exist. Not done from #33: HTTPS (a key on plain HTTP
+  can be sniffed on the Wi-Fi; worth it when the key matters) and a key per start for viewing
+  (declined). A phone that came in over the network sees neither the codes nor the PC's hints,
+  decided by the connection's address, not Host.
+- 2026-10-10: PR V done (#34): a live view. After an `hrn batch` on the claude backend there was
+  no way to see what was going on. `hrn watch` serves a page of the newest runs and batches, a
+  timeline per run streamed over Server-Sent Events that tail `events.jsonl`, and a page per
+  batch with each task's runs and gates; `hrn show -f` prints the same timeline in the terminal
+  until the run saves its result. New package `internal/watch`, standard library only. Choices:
+  fragments are rendered and escaped on the server by `html/template` and the script only places
+  them, so the escaping is tested in Go; the SSE writer splits data on `\r`, `\n` and `\r\n`,
+  because a lone `\r` in a tool result would otherwise end a data line and forge a field; each
+  message's id is the byte offset after its line plus that event's time, so a reconnecting
+  browser resumes exactly and the wait before the next step stays right; the file is opened for
+  each read, since an open handle on Windows would stop `runs prune` and `batch rm`. A run
+  killed before it saved its result never ends in either view (it cannot be told from a long
+  step). The guard (loopback Host, Origin, Sec-Fetch-Site, CSP, no-store) is a copy of `hrn
+  sessions'` in `internal/sessionweb`, which is not on main yet; once both are, they can share
+  it. Deviations: (1) the batch record was saved at the start and the end only, so mid-batch
+  nothing tied a task to its run or showed a finished gate. It is now saved when an attempt's
+  run starts and ends, after each gate and when a task ends (best effort; the end's save still
+  reports errors), and `save` retries its rename for up to 200 ms, since a reader holding the
+  file open makes it fail on Windows (Go opens files without `FILE_SHARE_DELETE`). The format is
+  unchanged; an attempt still running has an empty result status. (2) The brief said loopback
+  only; a phone on the same network was then asked for, and the choice (made twice, since it
+  widens who can read the runs) was `--lan` now without a login and the key later (#33). `--lan`
+  binds each private IPv4 address of the adapters that are up, never 0.0.0.0, and the Host check
+  admits exactly those `ip:port` strings. (3) A cost column on the index, since the question was
+  whether the harness has the cost: it is the backend's own figure, so codex and gemini show
+  none.
 - 2026-10-10: PR V review (an independent read-only reviewer), 11 findings, 8 fixed, each
   as its own commit. The ones that mattered: a page loaded while `Close` wrote
   `result.json` showed an empty "Finished" and a stream URL with no id, since
@@ -2305,24 +2303,23 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   unverified - third increment in a row, and PR K should end it.
 - 2026-09-21: plan written. Step 0 not yet done; PR order may change after it.
 - 2026-09-21: Step 0 done. Prerequisite used: the desktop-bundled `claude.exe` logged in
-  interactively (`/login`); hx finds it without PATH changes. Three smaller smokes passed
-  first on the claude backend: `hx run` on this repo; Claude Code -> `hx mcp` run tool ->
-  claude (hx registered with `claude mcp add --scope local`, `claude mcp list` shows it
-  Connected); `hx batch` in a throwaway repo. Then the prescribed JobPilotC batch, with
-  `model: sonnet` instead of the default opus to keep cost down: 3/3 passed in 1m23s at
-  about USD 1.03 list price, 26-60 s per task. What the agents did: `api-vet` found nothing
-  to fix (pass, no commit, 3 turns); `small-test` added a 33-line table-driven test for
-  `isRoleTitleLine` (14 turns, green); `readme-typos` changed two British spellings to
-  American (Behaviour, re-emphasises) - not typos, and the build gate cannot see that.
-  Lessons: (1) gates verify the build, not the intent: PR G should add a per-task `expect`
-  regex on the final answer, and the judge stays necessary for diffs; (2) a pass with no
-  commit is a distinct outcome eval should count separately; (3) the claude backend spent
-  eight consecutive Grep calls on one file, so tool-call count is worth a column next to
-  turns; (4) a 12-turn run read about 1M cached tokens, so cost is dominated by Claude
-  Code re-reading its context and per-task `max_cost_usd` (PR C) matters more than
-  `max_turns`. The branches hx/readme-typos, hx/api-vet and hx/small-test are left in
-  JobPilotC for Cristian to inspect or merge; `hx batch rm 20260921-100459-f3b353`
-  removes them. PR order unchanged.
+  interactively (`/login`); hx finds it without PATH changes. Three smaller smokes passed first
+  on the claude backend: `hx run` on this repo; Claude Code -> `hx mcp` run tool -> claude (hx
+  registered with `claude mcp add --scope local`, `claude mcp list` shows it Connected); `hx
+  batch` in a throwaway repo. Then the prescribed batch in a test checkout, with `model: sonnet`
+  instead of the default opus to keep cost down: 3/3 passed in 1m23s at about USD 1.03 list
+  price, 26-60 s per task. What the agents did: `api-vet` found nothing to fix (pass, no commit,
+  3 turns); `small-test` added a 33-line table-driven test for `isRoleTitleLine` (14 turns,
+  green); `readme-typos` changed two British spellings to American (Behaviour, re-emphasises) -
+  not typos, and the build gate cannot see that. Lessons: (1) gates verify the build, not the
+  intent: PR G should add a per-task `expect` regex on the final answer, and the judge stays
+  necessary for diffs; (2) a pass with no commit is a distinct outcome eval should count
+  separately; (3) the claude backend spent eight consecutive Grep calls on one file, so
+  tool-call count is worth a column next to turns; (4) a 12-turn run read about 1M cached
+  tokens, so cost is dominated by Claude Code re-reading its context and per-task `max_cost_usd`
+  (PR C) matters more than `max_turns`. The branches hx/readme-typos, hx/api-vet and
+  hx/small-test are left in the test checkout to inspect or merge; `hx batch rm
+  20260921-100459-f3b353` removes them. PR order unchanged.
 - 2026-09-21: two fixes outside the lettered list, found by the smokes, shipped as PR #3
   together with this file: the Claude stream parser records the result text when
   `is_error` arrives with subtype `success` (a login failure read as "success" before),
@@ -2404,15 +2401,15 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   decode) - PR E adds more fields, so one shared options struct belongs with PR K rather
   than mid-queue. (4) The CLI flag wiring is still untested, the same gap as PR A, now
   covering two flags and five limits; PR K.
-- 2026-09-21: PR F done (#7). Built in a second git worktree (`E:\__Workdir\harness-f`,
-  branch `f-report`) because another session was on PR C in the main checkout at the same
-  time; two agents in one working tree would overwrite each other. Choices the spec left
-  open: batch rows group by repository (the spec named the columns, not the rows); a group
-  with no token counts reports cache share -1 in JSON and `-` in text; `--by` defaults to
-  backend; unfinished runs are counted and listed under the tables, not in them; a cost is
-  marked `~` when any run in the group carries a non-zero estimate. `batch.List` was added
-  for the batch table. The smoke against the real `~/.hx` showed long repository paths cut
-  from the end, which hid the part that differs, so keys are shortened from the left.
+- 2026-09-21: PR F done (#7). Built in a second git worktree (branch `f-report`) because another
+  session was on PR C in the main checkout at the same time; two agents in one working tree
+  would overwrite each other. Choices the spec left open: batch rows group by repository (the
+  spec named the columns, not the rows); a group with no token counts reports cache share -1 in
+  JSON and `-` in text; `--by` defaults to backend; unfinished runs are counted and listed under
+  the tables, not in them; a cost is marked `~` when any run in the group carries a non-zero
+  estimate. `batch.List` was added for the batch table. The smoke against the real `~/.hx`
+  showed long repository paths cut from the end, which hid the part that differs, so keys are
+  shortened from the left.
 - 2026-09-21: PR F self-review, 12 findings, all fixed. A `Report` type now owns the
   `--json` shape (empty tables print `[]`, an empty `--by` means backend, the window is
   carried in the report instead of a field nothing read). A batch with a task still
@@ -2425,21 +2422,20 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   ran; `Percent` never rounds to a false 100% or 0%; directory keys are canonical, so one
   workspace under two spellings is one row; `ParseSince` refuses windows that overflow;
   and `table` and `shortKey` got the first tests in `cmd/hx`.
-- 2026-09-22: PR I done (#11). Built in a worktree (`E:\__Workdir\harness-i`, branch
-  `i-guard`) because another session had the main checkout on PR E. Deviation: the refusal
-  text does not say "rerun with --allow-dangerous". That sentence is read by the model,
-  which cannot rerun anything and does have a shell, so it invited a retry or a recursive
-  hx call; it now names the rule, says only the operator can lift it, and tells the model
-  to explain rather than retry. Design note the spec left open: the guard needs per-run
-  state, but `APIBackend.Tools` is built once in `NewAPIBackend` and shared by every run,
-  so the switch rides on `tools.Workspace` (already the per-run policy object for path
-  confinement) rather than in a tool closure. `pipe-to-shell` also matches `powershell`
-  as written in the spec. The dirty check lists up to five paths so the message is
-  actionable, and runs before any worktree is created. Two self-inflicted lessons for
-  scripted edits, both caught only by merging main: an invalid `open(..., newline=)`
-  truncated this file before raising, and `subprocess.run(text=True)` decoded `git show`
-  with the console codepage and mangled every arrow. Read bytes, decode UTF-8, and assert
-  the file did not shrink.
+- 2026-09-22: PR I done (#11). Built in a second git worktree (branch `i-guard`) because another
+  session had the main checkout on PR E. Deviation: the refusal text does not say "rerun with
+  --allow-dangerous". That sentence is read by the model, which cannot rerun anything and does
+  have a shell, so it invited a retry or a recursive hx call; it now names the rule, says only
+  the operator can lift it, and tells the model to explain rather than retry. Design note the
+  spec left open: the guard needs per-run state, but `APIBackend.Tools` is built once in
+  `NewAPIBackend` and shared by every run, so the switch rides on `tools.Workspace` (already the
+  per-run policy object for path confinement) rather than in a tool closure. `pipe-to-shell`
+  also matches `powershell` as written in the spec. The dirty check lists up to five paths so
+  the message is actionable, and runs before any worktree is created. Two self-inflicted lessons
+  for scripted edits, both caught only by merging main: an invalid `open(..., newline=)`
+  truncated this file before raising, and `subprocess.run(text=True)` decoded `git show` with
+  the console codepage and mangled every arrow. Read bytes, decode UTF-8, and assert the file
+  did not shrink.
 - 2026-09-22: PR I self-review, 10 findings: 7 fixed, 3 not. The guard as specced blocked
   `rm -rf /`, which rm itself refuses without --no-preserve-root, and allowed `rm -rf /*`,
   `rm -rf "$HOME"` and `rm -rf /c/`, which are the spellings that actually empty a machine;
@@ -2537,17 +2533,17 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   Opus) found the short-write corruption; fixed. Left as is: if a broken line and a failed
   result.json happen in one run, no record_error is saved and hrn show refuses the run; that
   means the disk is failing.
-- 2026-10-11: PR #52, contained process trees. Windows starts the process suspended, joins
-  it to a kill-on-close job, then resumes every thread; the job does not allow breakaway, so a
-  descendant using CREATE_BREAKAWAY_FROM_JOB fails (strict containment over compatibility, the
-  owner's to revisit). A CLI's leftovers end with the run on Windows even after a normal exit;
-  on Unix only on cancel or timeout. Tree.Kill makes "canceled" mean killed even when Go never
-  called Cancel. On Linux WaitGone counts live members from /proc so an unreaped zombie is not a
-  survivor, skips entries it may not read, and falls back to the kill(-pgid, 0) probe when the
-  scan fails; hidepid=2 can hide a member owned by another user. hrn stops on SIGTERM and SIGHUP
-  as well. Reviews (Claude Opus, twice) asked for the zombie handling, the explicit kill, the
-  signals and the /proc fallback; all done. The live test cannot separate this from Codex's own
-  sandbox cleanup; the fake-CLI tests show the change.
+- 2026-10-11: PR #52, contained process trees. Windows starts the process suspended, joins it to
+  a kill-on-close job, then resumes every thread; the job does not allow breakaway, so a
+  descendant using CREATE_BREAKAWAY_FROM_JOB fails (strict containment over compatibility, a
+  maintainer's to revisit). A CLI's leftovers end with the run on Windows even after a normal
+  exit; on Unix only on cancel or timeout. Tree.Kill makes "canceled" mean killed even when Go
+  never called Cancel. On Linux WaitGone counts live members from /proc so an unreaped zombie is
+  not a survivor, skips entries it may not read, and falls back to the kill(-pgid, 0) probe when
+  the scan fails; hidepid=2 can hide a member owned by another user. hrn stops on SIGTERM and
+  SIGHUP as well. Reviews (Claude Opus, twice) asked for the zombie handling, the explicit kill,
+  the signals and the /proc fallback; all done. The live test cannot separate this from Codex's
+  own sandbox cleanup; the fake-CLI tests show the change.
 - 2026-10-11: PR #53, hrn exec --protocol v1. The document came first and the code follows
   it. The capability report is conservative: a mode is listed only where the adapter enforces
   it (gemini auto and yolo, opencode yolo only), and a start that names an option the backend
@@ -2558,24 +2554,23 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   end of stdin cancels, because the supervisor is gone. Review (Claude Opus) found the case
   and oversized-line holes; fixed. An api-backend run through exec has not been tried (it costs
   money).
-- 2026-10-11: carrying on at a usage limit (#43). Cause: eight codex attempts in the owner's
-  batches that night ended at codex's usage limit, and their records said only
-  `exit status 1`, because codex's `turn.failed` keeps its text under `error.message` and
-  its empty `message` overwrote the limit message; now read from there and never
-  overwriting. The same records show the limit was rarely the whole story: in every one of
-  those tasks the first attempt, on claude, had already failed a gate (a screen test that
-  needs a live desktop, a base with long dashes, gates run in WSL's bash), so the switch
-  saves the retry, not the task. Decisions: only claude and codex stand in for each other,
-  never api (billed per token) or gemini/opencode; a limited run is carried on once, since
-  a partner that is limited too would only hand it back; the reset time is believed only
-  up to 8 days ahead and from a minute in the past; a time without a date is the next one;
-  a zone the CLI names is loaded when Go has the zone database and is the computer's own
-  otherwise (Windows ships none to Go, and the CLI names the computer's zone anyway). In a
-  batch the carry-on is an extra attempt in the same worktree that does not use up a
-  `retry` entry, its record `continues` the limited run, and the model named for the
-  other backend is dropped. Two processes noting a limit at once can lose one note, which
-  costs one more limited start, so the file has no lock. An eval sets `no_switch`, for the
-  reason retry is refused there. `hrn report` counts `limited` as not ok, which it is.
+- 2026-10-11: carrying on at a usage limit (#43). Cause: eight codex attempts in local batches
+  that night ended at codex's usage limit, and their records said only `exit status 1`, because
+  codex's `turn.failed` keeps its text under `error.message` and its empty `message` overwrote
+  the limit message; now read from there and never overwriting. The same records show the limit
+  was rarely the whole story: in every one of those tasks the first attempt, on claude, had
+  already failed a gate (a screen test that needs a live desktop, a base with long dashes, gates
+  run in WSL's bash), so the switch saves the retry, not the task. Decisions: only claude and
+  codex stand in for each other, never api (billed per token) or gemini/opencode; a limited run
+  is carried on once, since a partner that is limited too would only hand it back; the reset
+  time is believed only up to 8 days ahead and from a minute in the past; a time without a date
+  is the next one; a zone the CLI names is loaded when Go has the zone database and is the
+  computer's own otherwise (Windows ships none to Go, and the CLI names the computer's zone
+  anyway). In a batch the carry-on is an extra attempt in the same worktree that does not use up
+  a `retry` entry, its record `continues` the limited run, and the model named for the other
+  backend is dropped. Two processes noting a limit at once can lose one note, which costs one
+  more limited start, so the file has no lock. An eval sets `no_switch`, for the reason retry is
+  refused there. `hrn report` counts `limited` as not ok, which it is.
 - 2026-10-11: #43 review (codex, read-only), 6 findings, 5 fixed. A carry-on that ended
   limited too was not remembered. Notes from a batch's parallel workers failed on Windows
   ("Access is denied": a rename cannot replace a file another reader holds) and could
@@ -2600,12 +2595,12 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   exec never switches.
 - 2026-10-11: WSL's launcher spelt in lower case (#72, PR #87). `isWSLLauncher` compared the
   folder name to `System32` exactly, but `exec.LookPath` returns it as PATH spells it
-  (`C:\WINDOWS\system32\bash.exe` on the owner's PC), so gates and `run_command` ran in WSL,
-  and a batch's gates all timed out starting it. The folder name is now compared in any case,
-  by a helper that reads both separators so its test runs on the Linux runner. Left for their
-  own items: other WSL launchers, such as the WindowsApps alias and SysWOW64 (#86), and a gate
-  whose shell cannot start being retried as a code failure, with WSL's UTF-16 output shown
-  undecoded (#84).
+  (`C:\WINDOWS\system32\bash.exe` on a development PC), so gates and `run_command` ran in WSL,
+  and a batch's gates all timed out starting it. The folder name is now compared in any case, by
+  a helper that reads both separators so its test runs on the Linux runner. Left for their own
+  items: other WSL launchers, such as the WindowsApps alias and SysWOW64 (#86), and a gate whose
+  shell cannot start being retried as a code failure, with WSL's UTF-16 output shown undecoded
+  (#84).
 - 2026-10-12: A null content block (#77, PR #99). `json.Unmarshal` decodes
   `"content_block":null` into a nil map without an error, and the block's first text,
   thinking, signature or citations delta (an input delta: its stop) then wrote into it and
@@ -2674,14 +2669,14 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   pattern matches whole segments so `--max-tokens=400` and `authors=x` stay. Left out, as
   #311: `hrn runs`, streamed deltas, URL user names.
 - 2026-10-14: PR #317 (closes #298): kept scripts. `docs/scripts.md` has the header (name,
-  summary, effects, parameters, an example that is the script's test, a hash line) and the
-  eight rules; `scripts/verify.sh` runs every example, stamps the hash and regenerates the
-  index between markers in AGENTS.md, and `--check` (CI, ubuntu only, and `/check`) fails on
-  a failing example, a stale hash or a differing index. First kept scripts: `check.sh`
-  (`--list`), `test-summary.sh` and `wait-for.sh`, both over `answers.go` through `go run`;
-  `api-check.sh` is listed as not verified (it spends money). Sized before #295's numbers
-  exist: the owner asked for this order on 2026-10-14. Hardening and extra tests from the
-  review are #318; AGENTS.md is 119 lines for now, with the rules also in the doc.
+  summary, effects, parameters, an example that is the script's test, a hash line) and the eight
+  rules; `scripts/verify.sh` runs every example, stamps the hash and regenerates the index
+  between markers in AGENTS.md, and `--check` (CI, ubuntu only, and `/check`) fails on a failing
+  example, a stale hash or a differing index. First kept scripts: `check.sh` (`--list`),
+  `test-summary.sh` and `wait-for.sh`, both over `answers.go` through `go run`; `api-check.sh`
+  is listed as not verified (it spends money). Sized before #295's numbers exist: this order was
+  asked for on 2026-10-14. Hardening and extra tests from the review are #318; AGENTS.md is 119
+  lines for now, with the rules also in the doc.
 - 2026-10-14: PR #321 (closes #264): a codex cache read is counted once. The report's
   context average for a run without usage events and hrn watch's purposes card both go
   through `ModelTokens` (context is its total less output; the card sums input, output,
@@ -2694,10 +2689,10 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   `Options.Route` fills the three only when a run names none of them (`hrn run`, a batch task,
   the MCP run tool) and records `routed_by`; `hrn report --by routed`. An eval cell's backend is
   pinned so an eval never measures the table it feeds. Deviation: the first table from a
-  hrn-evals run is not in the PR (the run spends plan quota; the owner's word first), so the
-  table starts empty and nothing is routed until it is filled. Left open as #327: a routed
-  model following a retry onto another backend, `routed_by` after a limit switch, eval naming
-  shared with `FromEval`, uneven row validation.
+  hrn-evals run is not in the PR (the run spends plan quota; a maintainer's yes first), so the
+  table starts empty and nothing is routed until it is filled. Left open as #327: a routed model
+  following a retry onto another backend, `routed_by` after a limit switch, eval naming shared
+  with `FromEval`, uneven row validation.
 - 2026-10-14: PR #330 (closes #295): the measurement before any saving is claimed.
   `scripts/tool-shapes.sh` (a kept script over `scripts/tool-shapes/`) reads the run records
   of a window and prints bytes per result shape, two estimated shares of input tokens
@@ -2713,14 +2708,14 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
 - 2026-10-14: PR #335 (closes #296): large tool results shaped. `internal/shape` summarises
   terminal, log and test output (the shapes #295's page ranks first; JSON and tabular are 0.3%
   of the bytes and wait for their own issue), and a summary replaces the cut only when its
-  invariants hold against the original (numbers, negations, error strings, paths, every
-  failing test with its own diagnostics in order), else the head-and-tail cut as before. The
-  original is kept whole under the run's `originals/` behind a hash handle that `read_original`
-  reads back, read-only. All of it is behind `--shape-tools` (`shape_tools` on a run, batch
-  task, MCP run or eval variant), off by default: the issue says on by default only once the
-  hrn-evals eval shows it pays, and that run spends plan quota, so it waits for the owner's
-  word, with the suite as a slice of its own in hrn-evals. With the flag off the tool schema
-  and every byte of behaviour are as before.
+  invariants hold against the original (numbers, negations, error strings, paths, every failing
+  test with its own diagnostics in order), else the head-and-tail cut as before. The original is
+  kept whole under the run's `originals/` behind a hash handle that `read_original` reads back,
+  read-only. All of it is behind `--shape-tools` (`shape_tools` on a run, batch task, MCP run or
+  eval variant), off by default: the issue says on by default only once the hrn-evals eval shows
+  it pays, and that run spends plan quota, so it waits for a maintainer's yes, with the suite as
+  a slice of its own in hrn-evals. With the flag off the tool schema and every byte of behaviour
+  are as before.
 - 2026-10-15: hrn update (#377, PR #389). `hrn update` replaces every hrn copy on this
   computer (the running one, PATH, Go's bin, `%LOCALAPPDATA%\hrn`) with the newest release
   (checksum verified), a `go install` of `--ref` or a `--file`, renaming each aside as

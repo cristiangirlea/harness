@@ -20,23 +20,21 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// Everything from a record reaches the page through html/template, which
-// escapes it for where it lands; tool results hold arbitrary file contents.
-//
+// Use contextual template escaping: tool results contain arbitrary file contents.
+
 //go:embed assets
 var assets embed.FS
 
 var pages = template.Must(template.ParseFS(assets, "assets/*.tmpl"))
 
-// render runs one template to a string.
 func render(name string, data any) (string, error) {
 	var b bytes.Buffer
 	err := pages.ExecuteTemplate(&b, name, data)
 	return b.String(), err
 }
 
-// How much of a long text a page shows: the start and the end, where a
-// command's errors usually are. The whole text stays in events.jsonl.
+// Keep both ends because command errors usually appear at the tail; records retain full text.
+
 const (
 	textHead, textTail     = 24 << 10, 8 << 10
 	resultHead, resultTail = 12 << 10, 4 << 10
@@ -59,16 +57,14 @@ type eventView struct {
 	Label   string
 	When    string // RFC 3339, for the datetime attribute
 	Clock   string
-	Gap     string // time since the step before
+	Gap     string
 	Slow    bool
 	Text    bool // the assistant's own words: shown, not collapsed
 	Summary string
 	Body    string
-	More    string // what the cap left out
+	More    string
 }
 
-// eventOf renders one line of a run's timeline. prev is the time of the step
-// before (the run's start for the first); it returns the time to pass on.
 func eventOf(l Line, prev time.Time) (eventView, time.Time) {
 	if l.Err != nil {
 		return eventView{Class: "ev-bad", Label: "unreadable", Summary: mask.Text(l.Err.Error())}, prev
@@ -122,8 +118,6 @@ func eventOf(l Line, prev time.Time) (eventView, time.Time) {
 	return v, prev
 }
 
-// callSummary is the one line a tool call shows: the backend's own summary,
-// the input field that says what it does, or the input itself.
 func callSummary(e agent.Event) string {
 	s := e.Text
 	if s == "" {
@@ -168,8 +162,7 @@ func prettyJSON(raw json.RawMessage) string {
 	return b.String()
 }
 
-// capText keeps the first head and last tail bytes of s, on rune boundaries,
-// and says how much it left out.
+// Cut on rune boundaries so byte caps cannot split UTF-8 characters.
 func capText(s string, head, tail int) (string, string) {
 	if len(s) <= head+tail {
 		return s, ""
@@ -198,7 +191,6 @@ func size(n int) string {
 // Gap is the wait before a step, as the page and hrn show --follow print it.
 func Gap(d time.Duration) string { return "+" + short(d) }
 
-// short is a duration as a person reads it: 0.4s, 12.3s, 2m05s, 1h02m.
 func short(d time.Duration) string {
 	switch {
 	case d < time.Minute:
@@ -211,8 +203,7 @@ func short(d time.Duration) string {
 	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
-// cost is a cost as the terminal summary prints it, ~ marking hrn's own
-// estimate; none reported (codex, gemini, or nothing finished yet) is "-".
+// Missing cost is unknown, not zero; mark estimates with ~.
 func cost(usd float64, estimate bool) string {
 	if usd <= 0 {
 		return "-"
@@ -223,7 +214,6 @@ func cost(usd float64, estimate bool) string {
 	return fmt.Sprintf("$%.4f", usd)
 }
 
-// tokens is a count as the terminal summary prints it: 340, 1.2k, 3.4M.
 func tokens(n int64) string {
 	switch {
 	case n >= 1_000_000:
@@ -234,7 +224,6 @@ func tokens(n int64) string {
 	return fmt.Sprint(n)
 }
 
-// statusClass picks the badge colour for a run, task or gate status.
 func statusClass(s string) string {
 	switch s {
 	case string(agent.StatusOK), string(batch.StatusPass):
@@ -247,7 +236,6 @@ func statusClass(s string) string {
 	return "warn"
 }
 
-// firstLine is the first line of a prompt that has something on it.
 func firstLine(s string) (line string, more bool) {
 	trimmed := strings.TrimSpace(mask.Text(s))
 	first, rest, _ := strings.Cut(trimmed, "\n")
@@ -345,7 +333,6 @@ type indexPage struct {
 	Phone    []phoneLink // where a phone opens it, with hrn watch --lan
 }
 
-// phoneLink is one network address of the page, with a QR code of it to scan.
 type phoneLink struct {
 	Endpoint
 	QRView int    // the code's side in modules, its quiet zone included
@@ -372,25 +359,21 @@ type lists struct {
 	Problems []string
 }
 
-// row is one run or batch in a list.
 type row struct {
 	ID, Kind, Status, Class string
-	Label                   string // what the row leads with: the repository and the task, or the id
-	Repo                    string // the workspace's folder name, from repoOf
+	Label                   string
+	Repo                    string
 	Backend                 string
 	Tasks                   string
-	Took                    string // the duration, or the start while it goes
-	Cost                    string // what the finished runs cost, as far as their backends say
+	Took                    string
+	Cost                    string
 	Since                   string // the start, for the live clock while it goes
 	Prompt                  string // a run's prompt's first line; a batch's tasks' names
 	Batch                   string // for a run: the batch whose attempt it was
 	Purpose, Rule           string // for a run: what it was for, and the rule that said so
 }
 
-// repoOf is the repository a workspace is in, by its folder's name: the last
-// element of dir, in either path style. A batch task's worktree,
-// <repo>/.hrn/worktrees/<task>, or a slot, <repo>/.hrn/slots/<n>, is in the
-// repository above .hrn.
+// Worktrees and slots belong to the repository above .hrn, not their leaf directory.
 func repoOf(dir string) string {
 	parts := strings.FieldsFunc(dir, func(r rune) bool { return r == '/' || r == '\\' })
 	if n := len(parts); n >= 4 && parts[n-3] == ".hrn" && (parts[n-2] == "worktrees" || parts[n-2] == "slots") {
@@ -402,9 +385,6 @@ func repoOf(dir string) string {
 	return parts[len(parts)-1]
 }
 
-// labelOf is what a row leads with: the repository and the task; the
-// repository alone when no batch started the run; the id when the workspace
-// is unknown.
 func labelOf(id, repo, task string) string {
 	switch {
 	case repo == "":
@@ -484,7 +464,6 @@ func batchRow(res batch.Result) row {
 	return r
 }
 
-// taskNames is up to three of the tasks' names, then how many more there are.
 func taskNames(tasks []batch.TaskResult) string {
 	var names []string
 	for _, t := range tasks {
@@ -607,10 +586,7 @@ func batchBodyOf(res batch.Result, v viewer) batchBody {
 				gv.Class = "ok"
 				switch {
 				case g.Killed == batch.KilledTimeout:
-					// The badge says why, so a suite the limit killed is not
-					// taken for failing code, but in a few words: badges never
-					// wrap. The full text, as the batch tool prints it, is the
-					// title.
+					// Distinguish timeout from failing code; keep the badge short and detail in its title.
 					gv.Exit, gv.Class, gv.Title = fmt.Sprintf("killed · gate_timeout %s", g.Timeout), "bad", g.Outcome()
 				case g.Killed != "":
 					gv.Exit, gv.Class = g.Outcome(), "bad"

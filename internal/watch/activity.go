@@ -9,7 +9,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// quietSince returns the last write only when it is known to be stale.
 // An unreadable timestamp is not evidence that a writer stopped.
 func quietSince(last time.Time) time.Time {
 	if runlog.Active(last) {

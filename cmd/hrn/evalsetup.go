@@ -19,14 +19,11 @@ import (
 
 const evalSetupUsage = "usage: hrn eval setup [--base REF] [--paths P,P] [--held-out SHARE --seed N] [--keep] [--json] [-v] <eval.json>"
 
-// The comparison and the cleanup, replaceable so tests need no agent runs.
 var (
 	runSetupComparison = eval.RunSetupComparison
 	removeBatch        = batch.Remove
 )
 
-// cmdEvalSetup runs an eval twice on this commit's code, with the base's setup
-// files and with the branch's, and says whether the setup change helped.
 func cmdEvalSetup(args []string) (int, error) { return evalSetup(args, os.Stdout, os.Stderr) }
 
 func evalSetup(args []string, stdout, stderr io.Writer) (int, error) {

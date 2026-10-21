@@ -13,23 +13,14 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// A run's text names its workspace, the user's home and the programs it ran
-// by their full paths, again and again. The page shows them short: the
-// workspace as ".", the home as "~", and a program in a system folder by its
-// file name. Only the page: records and hrn show keep the full paths.
-
-// pathRoot is one path the shortener looks for.
 type pathRoot struct {
 	elems   []string // the path's elements; a Unix path's first is ""
-	windows bool     // either slash, a JSON-escaped backslash, any case
+	windows bool     // match either slash, a JSON-escaped backslash and any case
 	to      string   // "." or "~"; "" for a system folder, whose programs become their file names
 }
 
 type shortener struct{ roots []pathRoot }
 
-// newShortener looks for workspace, home and the system folders, in either
-// path style; a path with a drive letter or a backslash is a Windows one. A
-// root folder ("/", C:\) or an empty path is left out.
 func newShortener(workspace, home string, system []string) shortener {
 	var sh shortener
 	sh.add(workspace, ".")
@@ -59,7 +50,6 @@ func (sh *shortener) add(path, to string) {
 	sh.roots = append(sh.roots, pathRoot{elems: parts, windows: windows, to: to})
 }
 
-// systemFolders are where the programs an agent runs by full path live.
 func systemFolders() []string {
 	env := func(name, def string) string {
 		if v := os.Getenv(name); v != "" {
@@ -71,14 +61,13 @@ func systemFolders() []string {
 		env("ProgramFiles(x86)", `C:\Program Files (x86)`), "/usr/bin", "/bin", "/usr/local/bin"}
 }
 
-// shorten rewrites the paths in s. A root counts only at a path boundary:
-// E:\ws-old is not E:\ws, and neither is D:\copy\E:\ws.
+// Require path boundaries so E:\ws-old and D:\copy\E:\ws cannot match E:\ws.
 func (sh shortener) shorten(s string) string {
 	if len(sh.roots) == 0 || s == "" {
 		return s
 	}
 	var b strings.Builder
-	done := 0 // s[:done] is in b
+	done := 0
 	for i := 0; i < len(s); i++ {
 		if i > 0 {
 			if r, _ := utf8.DecodeLastRuneInString(s[:i]); nameRune(r) || r == '/' || r == '\\' {
@@ -119,7 +108,6 @@ func (sh shortener) shorten(s string) string {
 	return b.String()
 }
 
-// match is where root ends in s when it starts at i, or -1.
 func (r pathRoot) match(s string, i int) int {
 	for k, e := range r.elems {
 		if k > 0 {
@@ -140,7 +128,6 @@ func (r pathRoot) match(s string, i int) int {
 	return i
 }
 
-// sepAt is the length of the path separator at s[i], 0 for none.
 func sepAt(s string, i int, windows bool) int {
 	switch {
 	case i >= len(s):
@@ -153,8 +140,6 @@ func sepAt(s string, i int, windows bool) int {
 	return 0
 }
 
-// boundaryAt: a path ends before s[i], with a separator or a character no
-// file name continues with.
 func boundaryAt(s string, i int) bool {
 	r, _ := utf8.DecodeRuneInString(s[i:])
 	return r == '/' || r == '\\' || !nameRune(r)
@@ -164,13 +149,7 @@ func nameRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("_-.~$", r)
 }
 
-// program reads the path that starts at s[i] and continues past a system
-// folder at s[j], up to a quote, a space or a delimiter, and returns where it
-// ends and the program's file name; "" when it does not name a program. In
-// quotes a Windows folder may have spaces in its name (Microsoft VS Code) and
-// punctuation (Git (Preview)), so only the matching quote, a backtick or a
-// line end stops it (in single quotes an unescaped double quote too, which ends
-// a JSON string); a Windows program has an extension, which tells it from a folder.
+// Quoted Windows folders may contain spaces and punctuation; an extension distinguishes a program.
 func program(s string, i, j int, windows bool) (int, string) {
 	var quote byte
 	stops := "\"'`\r\n,;|&<>()[]{}"
@@ -194,9 +173,7 @@ func program(s string, i, j int, windows bool) (int, string) {
 		if strings.IndexByte(stops, c) >= 0 {
 			break
 		}
-		// In single quotes a double quote that no backslash escapes still ends the
-		// scan: in JSON text it closes the string, and the next field is not a path.
-		// An even run of backslashes before it escapes only itself.
+		// An unescaped JSON closing quote ends the path; even backslash runs escape only themselves.
 		if quote == '\'' && c == '"' {
 			n := 0
 			for k := end - 1; k >= j && s[k] == '\\'; k-- {
@@ -220,8 +197,6 @@ func program(s string, i, j int, windows bool) (int, string) {
 	return end, name
 }
 
-// viewer is who a page is for: whether they sit at this computer, and the
-// paths their pages are shortened by.
 type viewer struct {
 	local  bool
 	home   string
@@ -232,8 +207,7 @@ func (v viewer) shortener(workspace string) shortener {
 	return newShortener(workspace, v.home, v.system)
 }
 
-// place is a path as a page's fact shows it: by name, with the whole path as
-// the hover title for this computer only, as it names the user's account.
+// Full hover paths reveal the user's account and must stay local.
 func (v viewer) place(label, name, full string) fact {
 	f := fact{Label: label, Value: name}
 	if v.local && full != name {
@@ -242,8 +216,7 @@ func (v viewer) place(label, name, full string) fact {
 	return f
 }
 
-// The shortening runs after secrets are blanked (cleanEvent, cleanRecord,
-// cleanBatch), on what a record says, before any cut.
+// Redact before shortening, then truncate, so partial secrets cannot evade masking.
 
 func (sh shortener) event(e agent.Event) agent.Event {
 	if e.Kind == agent.EventToolCall {
@@ -257,8 +230,7 @@ func (sh shortener) event(e agent.Event) agent.Event {
 	return e
 }
 
-// record shortens what a run's page shows from its record; Task.Dir stays
-// whole, for the Workspace fact.
+// Keep Task.Dir whole for the Workspace fact.
 func (sh shortener) record(rec runlog.Record) runlog.Record {
 	rec.Task.Prompt = sh.shorten(rec.Task.Prompt)
 	rec.Result.Final = sh.shorten(rec.Result.Final)
@@ -266,9 +238,7 @@ func (sh shortener) record(rec runlog.Record) runlog.Record {
 	return rec
 }
 
-// batch shortens what a batch's page shows: each task's text by its own
-// worktree (the repository when it has none). Dir and Worktree stay whole,
-// for the facts.
+// Keep Dir and Worktree whole for facts; shorten each task against its own workspace.
 func (v viewer) batch(res batch.Result) batch.Result {
 	tasks := make([]batch.TaskResult, len(res.Tasks))
 	for i, t := range res.Tasks {

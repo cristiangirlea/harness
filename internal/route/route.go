@@ -18,18 +18,14 @@ type RoutedBy = table.RoutedBy
 func Load() (Table, error) { return table.Load(runlog.Home()) }
 func Save(t Table) error   { return table.Save(runlog.Home(), t) }
 
-// FromEval compares pass rates within each purpose. Costs are the variant's
-// recorded median across the eval: task rows do not store individual costs.
-// First reduce each backend/model family to its cheapest qualifying effort,
-// then compare those winners. Equal costs prefer plan CLIs, then lower effort;
-// the variant name makes remaining ties deterministic.
+// FromEval picks qualifying family efforts by eval-wide median cost, then purpose winners.
+// Ties prefer plan CLIs, lower effort, then name for determinism.
 func FromEval(rec eval.Record, margin float64) Table {
 	out := Table{}
 	if math.IsNaN(margin) || math.IsInf(margin, 0) || margin < 0 || margin > 1 {
 		return out
 	}
-	// A row routes only backend, model and effort: a score won with a harness
-	// change would be credited to the model, and routed without the change.
+	// Routing cannot reproduce harness changes, so exclude their scores.
 	if rec.Spec.AppendSystemPrompt != "" || rec.Spec.NoSkills {
 		return out
 	}
@@ -102,8 +98,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 			if !ok || cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
 				continue
 			}
-			// Expand inherits variant over task over spec. Only a uniform
-			// measured choice can be represented by a single purpose row.
+			// Only uniform variant-over-task-over-spec choices fit a single routing row.
 			first := func(values ...string) string {
 				for _, s := range values {
 					if s != "" {

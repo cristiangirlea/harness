@@ -142,7 +142,7 @@ mode under its size rounded up to 512 bytes: 1,536 read-only, 3,072 auto and yol
 
 ## What a run loads
 
-2026-10-16, on the owner's PC: one run per row of the prompt "Reply with the single word ok."
+2026-10-16, on a development PC: one run per row of the prompt "Reply with the single word ok."
 in an empty directory, read-only, with the flags hrn now passes by default (Claude Code 2.1.284,
 codex-cli 0.162.0-alpha.17.2). Input is every input token of the first and only turn: plain,
 cache write and cache read for claude; input for codex, whose figure includes its cache.

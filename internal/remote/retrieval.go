@@ -17,8 +17,7 @@ import (
 	"time"
 )
 
-// Optional retrieval may skip only transport availability and explicit 5xx/429.
-// Authorization, redirects, bad requests and malformed content always fail closed.
+// Optional retrieval skips only availability failures (transport, 5xx/429); all other failures stay closed.
 func RetrievalUnavailable(err error) bool {
 	var h *HTTPError
 	if errors.As(err, &h) {
@@ -32,8 +31,7 @@ func RetrievalUnavailable(err error) bool {
 	if errors.As(err, &verification) || errors.As(err, &unknown) || errors.As(err, &hostname) || errors.As(err, &invalid) || errors.As(err, &header) {
 		return false
 	}
-	// url.Error implements net.Error even when its cause is a protocol error.
-	// Classify the cause, otherwise malformed TLS handshakes become skippable.
+	// Inspect url.Error's cause so its net.Error interface cannot make malformed TLS skippable.
 	var u *url.Error
 	if errors.As(err, &u) {
 		return RetrievalUnavailable(u.Err)

@@ -1,5 +1,4 @@
-// Package scripthint names the kept script that covers an inline script an
-// agent is about to run, for an advisory Claude Code PreToolUse hook.
+// Package scripthint suggests kept scripts before tool use.
 package scripthint
 
 import (
@@ -14,7 +13,7 @@ import (
 	"time"
 )
 
-// Script is a kept script whose header carries a matches: pattern.
+// Script carries a kept script's matches pattern.
 type Script struct {
 	File       string
 	Parameters string
@@ -36,8 +35,7 @@ type payload struct {
 	Cwd string `json:"cwd"`
 }
 
-// Find reads one PreToolUse payload and returns the hint to show, if any.
-// Anything it does not understand yields no hint, never an error.
+// Find returns a hint or silently ignores unrecognized input.
 func Find(data []byte) (Hint, bool) {
 	var p payload
 	if json.Unmarshal(data, &p) != nil || p.Cwd == "" {
@@ -68,7 +66,7 @@ func Find(data []byte) (Hint, bool) {
 	return Hint{}, false
 }
 
-// Root walks up from dir to the first directory holding a .git file or directory.
+// Root finds the nearest enclosing .git entry.
 func Root(dir string) (string, bool) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
@@ -86,8 +84,7 @@ func Root(dir string) (string, bool) {
 	}
 }
 
-// Load reads the headers of root/scripts/*.sh and *.go in file-name order and
-// keeps those with a valid matches: pattern.
+// Load reads valid script matches headers in file-name order.
 func Load(root string) []Script {
 	var scripts []Script
 	for _, file := range keptFiles(root) {
@@ -106,13 +103,11 @@ var (
 	safeParameters = regexp.MustCompile(`^[A-Za-z0-9_:=;.,\[\]|/ -]*$`)
 )
 
-// hintSafe reports whether a header's text may reach the agent: any repository
-// can commit scripts, so only a plain file name and a short parameters grammar pass.
+// Untrusted headers require plain filenames and bounded parameter syntax.
 func hintSafe(file, parameters string) bool {
 	return safeFile.MatchString(file) && len(parameters) <= 200 && safeParameters.MatchString(parameters)
 }
 
-// keptFiles lists root/scripts/*.sh and *.go together, sorted by file name.
 func keptFiles(root string) []string {
 	var files []string
 	for _, pattern := range []string{"*.sh", "*.go"} {
@@ -123,8 +118,7 @@ func keptFiles(root string) []string {
 	return files
 }
 
-// readHeader parses the leading comment block the way scripts/verify.sh does:
-// shebangs skipped, "# " or "// " lines read, anything else ends it.
+// Match scripts/verify.sh header boundaries so hints describe the verified script.
 func readHeader(file string) map[string]string {
 	header := map[string]string{}
 	f, err := os.Open(file)
@@ -151,7 +145,7 @@ func readHeader(file string) map[string]string {
 	return header
 }
 
-// Normalize trims text and collapses each run of whitespace to one space.
+// Normalize collapses and trims whitespace.
 func Normalize(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
@@ -162,8 +156,7 @@ var (
 	powershell  = regexp.MustCompile(`(?i)(?:^|[;|&\n({]\s*|\s)(?:\S*[/\\])?(?:pwsh|powershell)(?:\.exe)?\s(?:[^;|&\n]*?\s)?-(?:command|c)\s+`)
 )
 
-// Inline returns the inline scripts in a command (heredoc bodies and the
-// arguments of interpreter flags), joined by newlines, or "" when there are none.
+// Inline joins heredocs and interpreter scripts with newlines, or returns "".
 func Inline(command string) string {
 	var parts []string
 	for _, m := range heredoc.FindAllStringSubmatchIndex(command, -1) {
@@ -196,8 +189,6 @@ func Inline(command string) string {
 	return strings.Join(parts, "\n")
 }
 
-// heredocBody returns the lines after the heredoc's own line up to its
-// delimiter, or to the end when the delimiter never comes.
 func heredocBody(rest, delimiter string, dash bool) string {
 	_, after, ok := strings.Cut(rest, "\n")
 	if !ok {
@@ -217,7 +208,6 @@ func heredocBody(rest, delimiter string, dash bool) string {
 	return strings.Join(body, "\n")
 }
 
-// shellWord reads one POSIX shell word: quoted and bare pieces concatenated.
 func shellWord(s string) string {
 	var b strings.Builder
 	i := 0
@@ -250,8 +240,6 @@ func shellWord(s string) string {
 	return b.String()
 }
 
-// powershellScript reads a -Command argument: a script block, or a quoted
-// string that holds more than one statement.
 func powershellScript(s string) string {
 	if s == "" {
 		return ""
@@ -279,8 +267,6 @@ func powershellScript(s string) string {
 	return ""
 }
 
-// powershellString reads a quoted PowerShell string: a doubled quote stands for
-// one inside single quotes, and a backtick or backslash escapes inside double quotes.
 func powershellString(s string) string {
 	q := s[0]
 	var b bytes.Buffer
@@ -302,7 +288,7 @@ func powershellString(s string) string {
 	return b.String()
 }
 
-// Context is the hook's stdout line: added context only, never a decision.
+// Context supplies advisory text without making an approval decision.
 func Context(h Hint) []byte {
 	var out struct {
 		HookSpecificOutput struct {
@@ -315,7 +301,7 @@ func Context(h Hint) []byte {
 	return encode(out)
 }
 
-// Record appends one line for a shown hint; a failure is ignored so the hook never fails.
+// Record appends a shown hint, ignoring failures so the hook cannot fail.
 func Record(path string, h Hint, now time.Time) {
 	line := encode(struct {
 		Time   string `json:"time"`

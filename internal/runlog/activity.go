@@ -6,20 +6,16 @@ import (
 	"time"
 )
 
-// activeWindow is how recently an unfinished record must have written to
-// count as still running rather than stopped. Watch and prune share this rule.
+// Watch and prune share the writer-liveness window.
 const activeWindow = time.Hour
 
-// Active reports whether last is recent enough to indicate a live writer.
-// A zero time means no write was observed.
+// Active reports a recent, nonzero write time.
 func Active(last time.Time) bool {
 	return !last.IsZero() && time.Since(last) < activeWindow
 }
 
-// LastWrite is the transcript's modification time, falling back to the run
-// directory if the transcript is absent, as prune has always done. A newer
-// result also counts: a batch may still be running gates after its run ends.
-// An invalid id or unreadable directory returns zero. Nothing is changed.
+// LastWrite returns the latest transcript/result mtime, falling back to the directory or zero on failure.
+// Results count because batch gates can outlive a run.
 func LastWrite(id string) time.Time {
 	if validID(id) != nil {
 		return time.Time{}
@@ -39,7 +35,6 @@ func LastWrite(id string) time.Time {
 	return last
 }
 
-// stillRunning protects an unfinished run's active writer from prune.
 func stillRunning(id string) bool {
 	if _, err := os.Stat(filepath.Join(Root(), id, "result.json")); err == nil {
 		return false

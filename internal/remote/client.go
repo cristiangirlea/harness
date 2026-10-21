@@ -168,9 +168,7 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 	}
 }
 
-// WatchJob watches one job's events. It reads the job's state first: a job that has already
-// ended may have no terminal event left after the cursor, so it prints the remaining events
-// page by page and returns instead of streaming.
+// WatchJob reads state first because a finished job may have no terminal event after the cursor.
 func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, after int64, out io.Writer) error {
 	if !jobID.MatchString(job) {
 		return errors.New("job must be a server-issued ID")
@@ -227,8 +225,7 @@ func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, aft
 	}
 }
 
-// watchRetries reports whether Watch would retry err rather than return it: a 5xx, or a transport
-// error that is not a certificate error.
+// Retry availability failures, but never certificate failures.
 func watchRetries(err error) bool {
 	var status *HTTPError
 	if errors.As(err, &status) {
@@ -249,8 +246,7 @@ func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 	return after, err
 }
 
-// terminalEvent follows the State constants in server/platform/types.go.
-// queue.go and recovery.go also emit state transitions in details.state.
+// terminalEvent must keep in step with server/platform/types.go's terminal States; they also arrive in details.state.
 func terminalEvent(kind, data string) bool {
 	state := kind
 	if kind == "admission_timeout" || kind == "recovery_resolved" {
@@ -278,8 +274,7 @@ func terminalState(state string) bool {
 
 const maxEventData = 1 << 20
 
-// escapeC1 writes C1 controls and invalid UTF-8 as JSON escapes, which valid JSON holds only in
-// strings, so a terminal never reads one as a control sequence such as U+009B (CSI).
+// Escape C1 and invalid UTF-8 so JSON text cannot execute terminal controls.
 func escapeC1(data string) string {
 	var out strings.Builder
 	for i, r := range data {
@@ -293,8 +288,6 @@ func escapeC1(data string) string {
 	return out.String()
 }
 
-// readEvents prints the events after the cursor and reports whether one ended the job; with
-// stop it returns at that event, as a watch does, otherwise it reads to the end.
 func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, bool, error) {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
@@ -334,7 +327,7 @@ func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, 
 			currentID, kind, data = 0, "", data[:0]
 			continue
 		}
-		// The space after the colon is optional in SSE.
+		// SSE permits the colon without a following space.
 		field, value, _ := strings.Cut(line, ":")
 		value = strings.TrimPrefix(value, " ")
 		switch field {

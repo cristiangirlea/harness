@@ -19,9 +19,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/watch"
 )
 
-// cmdBot opens hrn watch's bot in a small window of its own, serving hrn
-// watch on loopback for it until Ctrl+C, or, when an hrn watch already serves
-// at that address, just opening its bot.
 func cmdBot(args []string) error {
 	fs := flag.NewFlagSet("bot", flag.ContinueOnError)
 	addr := fs.String("addr", watch.DefaultAddr, "")
@@ -62,16 +59,13 @@ func cmdBot(args []string) error {
 	return watch.Serve(ctx, watch.Options{}, ln)
 }
 
-// servesBot reports whether an hrn watch with a bot answers at url: the
-// address may be taken by something else, or by an hrn watch from before the
-// bot.
+// Verify bot support because another service or an older watch may own the port.
 func servesBot(url string) bool {
 	serves, _ := probeBot(url)
 	return serves
 }
 
-// probeBot is servesBot that also returns the status code, 0 when nothing
-// answered: a 403 may be a public watch refusing a loopback Host.
+// A 403 may be a public watch rejecting the loopback Host, not an absent bot.
 func probeBot(url string) (bool, int) {
 	c := http.Client{Timeout: 2 * time.Second}
 	resp, err := c.Get(url)
@@ -83,8 +77,7 @@ func probeBot(url string) (bool, int) {
 	return resp.StatusCode == http.StatusOK && strings.Contains(string(body), `data-stream="/stream/bot"`), resp.StatusCode
 }
 
-// openWindow starts the browser and does not wait for it, but reaps it when
-// it exits, so it leaves no zombie on Linux while hrn bot serves.
+// Reap the browser asynchronously to avoid Linux zombies while the bot serves.
 func openWindow(url string) error {
 	argv := windowCommand(runtime.GOOS, os.Getenv, fileExists, exec.LookPath, url)
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -100,12 +93,8 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
-// botWindow is the size the bot asks for: a narrow window beside the work.
 const botWindow = "--window-size=440,720"
 
-// windowCommand is the command that opens url in a small window of its own:
-// Edge's or Chrome's app mode where one is installed, which has no address bar
-// or tabs, else the default browser. No shell is involved.
 func windowCommand(goos string, getenv func(string) string, exists func(string) bool, lookPath func(string) (string, error), url string) []string {
 	app := []string{"--app=" + url, botWindow}
 	switch goos {

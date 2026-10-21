@@ -1,6 +1,4 @@
-// Command hrn is a personal agent harness: one CLI that runs a coding task on
-// the harness's own API agent loop or on an installed agent CLI, and records
-// every run the same way.
+// Command hrn runs coding tasks through API or CLI backends with uniform records.
 package main
 
 import (
@@ -247,8 +245,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	var backend, dir string
 	var jsonOut, thinking bool
-	// Every option is a flag named after its json name; the struct is the
-	// list. The mode default belongs to this command, not to the struct.
+	// Keep the mode default local to this command rather than the shared options.
 	opts := agent.Options{Mode: agent.ModeAsk}
 	agent.BindFlags(fs, &opts)
 	fs.StringVar(&opts.Model, "m", "", "")
@@ -284,9 +281,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("run: --fresh needs --continue: it starts a new session handed an earlier run over")
 	}
 
-	// A backend whose plan limit is remembered hands the run to its partner
-	// from the start, a continued one too, so this is settled before the
-	// plan. A model typed for it means nothing to the partner.
+	// Resolve replacement before continuation planning; the requested model belongs to the original backend.
 	var routed string
 	if !opts.NoSwitch && *continueID != "" {
 		meant := backend
@@ -295,9 +290,6 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 
-	// A continued run inherits the earlier run's backend, workspace, mode and
-	// model for anything the user did not type this time; the plan says what
-	// the backend picks up and what it is handed as a transcript.
 	var plan followup.Plan
 	if *continueID != "" {
 		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, Fresh: *fresh}
@@ -376,7 +368,6 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if *declared == "" {
 		*declared = purpose.Declared(prompt)
 	}
-	// Like the mode, a continued run keeps the earlier purpose unless this one names its own.
 	if *declared == "" && purpose.Valid(plan.Prev.Task.Purpose) {
 		*declared = plan.Prev.Task.Purpose
 	}
@@ -397,7 +388,6 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}
-	// The api backend saves the conversation here, so this run can be continued.
 	task.RunDir = rec.Dir()
 
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -441,8 +431,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	finished(rec.ID(), res)
 
-	// A run stopped by its plan's limit is carried on by the partner backend,
-	// once: a partner that is limited too would only hand it back.
+	// Switch only once to prevent two limited backends from handing work back indefinitely.
 	var next *limits.CarryOn
 	var why string
 	if ctx.Err() == nil {
@@ -635,7 +624,6 @@ func cmdShow(args []string) error {
 	return nil
 }
 
-// showUsage prints a run's model calls, one row each: hrn show --usage.
 func showUsage(id string, jsonOut bool) error {
 	rec, err := runlog.Load(id)
 	if err != nil {
@@ -690,7 +678,6 @@ func showUsage(id string, jsonOut bool) error {
 		contexts = append(contexts, float64(t.ContextTokens))
 		peak = max(peak, t.ContextTokens)
 	}
-	// The note trails its row unpadded, so a row without one ends in a number.
 	for i, line := range strings.Split(strings.TrimSuffix(table(rows, 3), "\n"), "\n") {
 		if notes[i] != "" {
 			line += "  " + notes[i]
@@ -702,7 +689,6 @@ func showUsage(id string, jsonOut bool) error {
 	return nil
 }
 
-// showHeader is what hrn show prints above a run's events.
 func showHeader(r *renderer, rec runlog.Record) {
 	head := fmt.Sprintf("%s · %s · mode %s", rec.Backend, rec.Task.Dir, rec.Task.Mode)
 	if rec.Continues != "" {
@@ -720,13 +706,11 @@ func showHeader(r *renderer, rec runlog.Record) {
 	r.Line("")
 }
 
-// cmdMCP serves hrn over stdio until the host closes the pipe. stdout is the
-// protocol channel, so nothing else may print there.
+// Reserve stdout exclusively for MCP frames to avoid corrupting the protocol.
 func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "")
-	// The server's caller is an agent; lifting the guard for its runs is the
-	// operator's decision, taken here and not in a tool call.
+	// Only the operator may lift the calling agent's guard, never a tool call.
 	dangerous := fs.Bool("allow-dangerous-runs", false, "")
 	profile := fs.String("retrieval-profile", "", "Project-scoped retrieval profile JSON (no credentials).")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -889,8 +873,6 @@ func cmdEval(args []string) (int, error) {
 	return 0, nil
 }
 
-// printEval writes the two tables: what each variant did, and how each task
-// scored under it.
 func printEval(r *renderer, rec eval.Record) {
 	r.Line("")
 	judged := rec.Spec.Judge != nil
@@ -940,7 +922,7 @@ func printEval(r *renderer, rec eval.Record) {
 		if v.DidNotAct > 0 {
 			notes = append(notes, fmt.Sprintf("%d did not act", v.DidNotAct))
 		}
-		// Records from before the passing medians existed have neither field.
+		// Older records lack passing medians; preserve their fallback display.
 		if v.Passed > 0 && v.Passed < v.Attempts-v.DidNotAct && (v.PassedCostKnown || v.MedianContextPassed > 0) {
 			notes = append(notes, fmt.Sprintf("passing cells: median cost %s, context %s",
 				report.KnownMoney(v.MedianCostPassedUSD, v.PassedCostKnown, v.CostEstimate), report.Number(v.MedianContextPassed)))
@@ -1016,7 +998,6 @@ func printEval(r *renderer, rec eval.Record) {
 		rec.ID, rec.BatchID, cells, rec.Duration.Round(time.Second))))
 }
 
-// statuses renders a run-status histogram as "ok 3, timeout 1".
 func statuses(h map[string]int) string {
 	keys := make([]string, 0, len(h))
 	for k := range h {

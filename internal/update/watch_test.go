@@ -49,7 +49,7 @@ func TestWatchAddrReadsEverySpellingOfTheFlag(t *testing.T) {
 		{[]string{"watch", "--addr", "127.0.0.1:9000"}, "127.0.0.1:9000"},
 		{[]string{"watch", "--addr=127.0.0.1:9001"}, "127.0.0.1:9001"},
 		{[]string{"watch", "-addr", "localhost:9002", "--lan"}, "localhost:9002"},
-		{[]string{"watch", "--lan=Ethernet 3", "--addr", ":9003"}, ":9003"},
+		{[]string{"watch", "--lan=Local Area Connection", "--addr", ":9003"}, ":9003"},
 	} {
 		if got := watchAddr(tc.args); got != tc.want {
 			t.Errorf("%v: %q; want %q", tc.args, got, tc.want)

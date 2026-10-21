@@ -1,6 +1,4 @@
-// Package report aggregates the run and batch records into tables: how often
-// each backend or model passes, what it costs and how long it takes. The
-// functions are pure over the records, so the eval layer can reuse them.
+// Package report summarizes run and batch records.
 package report
 
 import (
@@ -18,7 +16,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// Keys the run table can be grouped by.
+// ByBackend and peers name backend, model, dir, purpose, routed and day grouping keys.
 const (
 	ByBackend = "backend"
 	ByModel   = "model"
@@ -28,17 +26,14 @@ const (
 	ByDay     = "day"
 )
 
-// Where a row's context per turn comes from: every run's usage events, every
-// run's totals (an average a run), or some of each, whose median is then over
-// one average a run.
+// ContextFromTurns and peers name turns, totals and mixed sources.
 const (
 	ContextFromTurns  = "turns"
 	ContextFromTotals = "totals"
 	ContextFromMixed  = "mixed"
 )
 
-// ParseSince reads a window such as "7d", "36h" or "90m". Days are accepted
-// because time.ParseDuration stops at hours. Empty means no window.
+// ParseSince reads a duration with day support; empty means no window.
 func ParseSince(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "0" {
@@ -66,22 +61,18 @@ func ParseSince(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// Data is what a report is built from: every finished run and every batch
-// started at or after Since (the zero time means all of them).
+// Data holds records since Since, or all when zero.
 type Data struct {
 	Since time.Time
 	Runs  []runlog.Record
-	// Unfinished counts runs without a result: still running or killed. They
-	// are left out of every table.
+	// Unfinished counts runs without a result (running or killed); no table includes them.
 	Unfinished int
 	Batches    []batch.Result
-	// RunningBatches counts batches with a task still in progress; their pass
-	// rate and cost are not settled, so they stay out of the table.
+	// RunningBatches counts excluded in-progress batches.
 	RunningBatches int
-	// Unreadable counts run and batch records that could not be read.
+
 	Unreadable int
-	// Turns holds the runs' model calls by run id, for those that recorded
-	// usage events.
+
 	Turns map[string][]runlog.Turn
 }
 
@@ -107,8 +98,7 @@ func Collect(since time.Time) (Data, error) {
 	return d, nil
 }
 
-// Select is Collect without the disk: it applies the window and drops the
-// unfinished runs.
+// Select filters by window and completion.
 func Select(recs []runlog.Record, batches []batch.Result, since time.Time) Data {
 	d := Data{Since: since}
 	for _, r := range recs {
@@ -133,8 +123,6 @@ func Select(recs []runlog.Record, batches []batch.Result, since time.Time) Data 
 	return d
 }
 
-// running reports whether a batch record still has a task in progress: the
-// record is saved before the first task starts and again at the end.
 func running(b batch.Result) bool {
 	for _, t := range b.Tasks {
 		if t.Status == batch.StatusRunning {
@@ -148,11 +136,11 @@ func running(b batch.Result) bool {
 type Report struct {
 	Since *time.Time `json:"since"` // nil when the report covers all time
 	By    string     `json:"by"`
-	// Runs has a row per group, largest first; RunsAll is the row over every run.
+
 	Runs       []Row `json:"runs"`
 	RunsAll    Row   `json:"runs_all"`
 	Unfinished int   `json:"unfinished"`
-	// Batches has a row per repository; BatchesAll is the row over every batch.
+
 	Batches        []BatchRow `json:"batches"`
 	BatchesAll     BatchRow   `json:"batches_all"`
 	RunningBatches int        `json:"running_batches"`
@@ -178,7 +166,7 @@ func (d Data) Report(by string) (Report, error) {
 	return rep, nil
 }
 
-// Row is one line of the run table: the finished runs that share a key.
+// Row summarizes finished runs sharing a key.
 type Row struct {
 	Key            string        `json:"key"`
 	Runs           int           `json:"runs"`
@@ -187,32 +175,26 @@ type Row struct {
 	MedianTurns    float64       `json:"median_turns"`
 	TotalCost      float64       `json:"total_cost_usd"`
 	MedianCost     float64       `json:"median_cost_usd"`
-	// RunsWithoutCost counts results whose cost is unknown.
+
 	RunsWithoutCost int `json:"runs_without_cost,omitempty"`
-	// CostEstimated is set when any run's cost is a backend's list-price estimate
-	// rather than a figure the backend reported.
+	// CostEstimated includes any list-price estimate.
 	CostEstimated bool `json:"cost_is_estimate,omitempty"`
-	// CacheShare is the cache-read tokens over every input token the model
-	// saw (uncached input, cache writes and cache reads), or -1 when the group
-	// reported no tokens at all (the CLI backends that do not count them).
+	// CacheShare is reads / all input (including writes), or -1 when unknown.
 	CacheShare float64 `json:"cache_share"`
-	// Token totals, from each run's result; RunsWithoutTokens counts the runs
-	// left out because their usage is missing.
+
 	InputTokens       int64 `json:"input_tokens"`
 	OutputTokens      int64 `json:"output_tokens"`
 	CacheRead         int64 `json:"cache_read_tokens"`
 	CacheWrite        int64 `json:"cache_write_tokens"`
 	RunsWithoutTokens int   `json:"runs_without_tokens,omitempty"`
-	// The median and peak context a model call carried. ContextFrom says
-	// where they come from (ContextFromTurns, ContextFromTotals or
-	// ContextFromMixed); empty when no run in the group reported tokens.
+	// MedianContext and PeakContext use tokens per call, or run averages.
+	// ContextFrom is turns, totals or mixed; empty means no reported tokens.
 	MedianContext float64 `json:"median_context_tokens"`
 	PeakContext   int64   `json:"peak_context_tokens"`
 	ContextFrom   string  `json:"context_from,omitempty"`
 }
 
-// RunRows groups the finished runs by key and summarises each group, plus an
-// "all" row over every run. Rows come largest group first, then by key.
+// RunRows groups runs, sorting days by key and others by size then key.
 func (d Data) RunRows(by string) (rows []Row, all Row, err error) {
 	key, err := keyFunc(by)
 	if err != nil {
@@ -228,7 +210,6 @@ func (d Data) RunRows(by string) (rows []Row, all Row, err error) {
 		rows = append(rows, summarize(k, recs, d.Turns))
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		// Days read in order; any other key, the largest group first.
 		if rows[i].Runs != rows[j].Runs && by != ByDay {
 			return rows[i].Runs > rows[j].Runs
 		}
@@ -242,8 +223,7 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 	case ByBackend:
 		return func(r runlog.Record) string { return r.Backend }, nil
 	case ByModel:
-		// The result names the model that actually answered (a CLI backend
-		// reports it; the task only holds what was asked for).
+		// Prefer the answering model over the requested model.
 		return func(r runlog.Record) string {
 			for _, m := range []string{r.Result.Model, r.Task.Model} {
 				if m != "" {
@@ -263,7 +243,6 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 			return k
 		}, nil
 	case ByPurpose:
-		// What the run declared, otherwise keyword rules on its prompt's first paragraph.
 		return func(r runlog.Record) string { return purpose.Resolve(r.Task.Purpose, r.Task.Prompt).Category }, nil
 	case ByRouted:
 		return func(r runlog.Record) string {
@@ -277,16 +256,12 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 			return r.RoutedBy.Category + " via " + eval
 		}, nil
 	case ByDay:
-		// The day the run started, on this computer's calendar.
 		return func(r runlog.Record) string { return r.Started.Local().Format("2006-01-02") }, nil
 	}
 	return nil, fmt.Errorf("unknown key %q (want backend, model, dir, purpose, routed or day)", by)
 }
 
-// canonDir names a directory the way the filesystem does, so one workspace
-// recorded under two spellings (a Windows 8.3 short name and its long form, a
-// trailing separator) lands in one group. A path that no longer exists is
-// cleaned and used as recorded.
+// Resolve Windows 8.3 aliases to avoid duplicate groups; retain missing paths.
 func canonDir(p string) string {
 	if real, err := filepath.EvalSymlinks(p); err == nil {
 		return real
@@ -323,8 +298,7 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 			}
 			runAverages = append(runAverages, sum/float64(len(calls)))
 		} else if total, known, _ := res.ModelTokens(); known && total > res.OutputTokens && res.Turns > 0 {
-			// Without the calls, a run's turns are its average; the last
-			// call's context, where known, may be above it.
+			// Missing calls require an average; the last context may exceed it.
 			fromTotals = true
 			avg := (total - res.OutputTokens) / int64(res.Turns)
 			runAverages = append(runAverages, float64(avg))
@@ -342,8 +316,7 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 		} else {
 			row.RunsWithoutCost++
 		}
-		// ModelTokens accounts for backends that include cache reads in input
-		// and those that report disjoint input and cache counters.
+		// Normalize overlapping and disjoint cache counters before computing share.
 		if total, known, _ := res.ModelTokens(); known {
 			input += total - res.OutputTokens - res.CacheRead
 			cached += res.CacheRead
@@ -373,9 +346,7 @@ func summarize(key string, recs []runlog.Record, turnsOf map[string][]runlog.Tur
 	return row
 }
 
-// BatchRow is one line of the batch table: the batches run against one
-// repository. Cost sums every attempt, not only the one that passed; the
-// attempts median is over the tasks that ran at least once.
+// BatchRow includes all attempt costs; the attempts median excludes unstarted tasks.
 type BatchRow struct {
 	Key            string  `json:"key"`
 	Batches        int     `json:"batches"`
@@ -384,7 +355,7 @@ type BatchRow struct {
 	MedianAttempts float64 `json:"median_attempts"`
 	TotalCost      float64 `json:"total_cost_usd"`
 	CostEstimated  bool    `json:"cost_is_estimate,omitempty"`
-	// TasksWithoutCost counts tasks that ran with no known cost in any attempt.
+	// TasksWithoutCost counts started tasks with no known attempt cost.
 	TasksWithoutCost int `json:"tasks_without_cost,omitempty"`
 }
 
@@ -417,8 +388,7 @@ func summarizeBatches(key string, bs []batch.Result) BatchRow {
 			if t.Status == batch.StatusPass {
 				row.Passed++
 			}
-			// A task that never ran (canceled while queued, branch taken) says
-			// nothing about how many tries a task needs.
+			// Unstarted tasks provide no evidence about the attempts needed.
 			if n := len(t.Attempts); n > 0 {
 				attempts = append(attempts, float64(n))
 			}
@@ -439,7 +409,7 @@ func summarizeBatches(key string, bs []batch.Result) BatchRow {
 	return row
 }
 
-// Median of xs, 0 for none. An even count averages the middle two.
+// Median returns zero for no values, averaging an even middle pair.
 func Median(xs []float64) float64 {
 	if len(xs) == 0 {
 		return 0
@@ -453,8 +423,7 @@ func Median(xs []float64) float64 {
 	return (s[n/2-1] + s[n/2]) / 2
 }
 
-// Percent renders part of whole as "83%", or "-" when there is no whole.
-// Rounding never claims all or nothing: 199 of 200 is 99%, 1 of 200 is 1%.
+// Percent renders a ratio or "-", never rounding partial success to all or nothing.
 func Percent(part, whole int) string {
 	if whole == 0 {
 		return "-"
@@ -469,8 +438,7 @@ func Percent(part, whole int) string {
 	return strconv.Itoa(p) + "%"
 }
 
-// Money renders a dollar amount, "~" first when it is an estimate and "-"
-// when nothing was recorded. Amounts under a cent keep their digits.
+// Money renders dollars, "~" for estimates and "-" for zero.
 func Money(v float64, estimated bool) string {
 	if v == 0 {
 		return "-"
@@ -485,8 +453,7 @@ func Money(v float64, estimated bool) string {
 	return fmt.Sprintf("%s$%.2f", prefix, v)
 }
 
-// KnownMoney is Money for a cost that may be unknown: "-" only when it is,
-// so a known zero shows as "$0.00".
+// KnownMoney distinguishes unknown ("-") from zero ("$0.00").
 func KnownMoney(v float64, known, estimated bool) string {
 	switch {
 	case !known:

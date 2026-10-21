@@ -187,7 +187,7 @@ repository, then compare `hrn run -b claude --lean=false` with a default run usi
 prompt that exercises that instruction. These runs use your Claude plan; record the
 Claude Code version and whether each run follows the instruction.
 
-Measured on 2026-10-13, when lean meant `--strict-mcp-config` alone (Claude Code 2.1.284, claude-sonnet-5-5, the owner's setup, one
+Measured on 2026-10-13, when lean meant `--strict-mcp-config` alone (Claude Code 2.1.284, claude-sonnet-5-5, a developer's own setup, one
 read-only question on this repository, two runs each; `context_tokens` is the context of the
 last turn):
 
@@ -206,7 +206,7 @@ nothing on a run this small; it accepted the value (`--autocompact 200000` in th
 recorded command line) and the run succeeded.
 
 Before #204, lean also passed `--setting-sources project`, which kept the user's
-`CLAUDE.md`, rules, plugins and skills out as well; workers then lost the owner's rules,
+`CLAUDE.md`, rules, plugins and skills out as well; workers then lost the user's own rules,
 which is why it was dropped.
 
 ### Compaction window

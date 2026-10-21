@@ -10,8 +10,7 @@ import (
 	"strings"
 )
 
-// procStartTicks reads field 22 after the last ')' because comm (field 2)
-// may itself contain spaces and closing parentheses.
+// comm can contain spaces and ')'; split after the last ')'.
 func procStartTicks(stat []byte) (uint64, bool) {
 	end := bytes.LastIndexByte(stat, ')')
 	if end < 0 {

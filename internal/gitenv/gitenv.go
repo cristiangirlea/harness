@@ -1,4 +1,4 @@
-// Package gitenv keeps git run by hrn on the repository of the directory it runs in.
+// Package gitenv confines Git to its directory's repo.
 package gitenv
 
 import (
@@ -6,14 +6,13 @@ import (
 	"strings"
 )
 
-// repoVars point git at a repository, work tree, index or object store other
-// than the one its directory holds; a git hook that starts hrn sets some.
+// Strip hook overrides to honor the requested directory.
 var repoVars = []string{
 	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
 	"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
 }
 
-// WithoutRepoVars returns env without repoVars, any case.
+// WithoutRepoVars strips overrides, ignoring case.
 func WithoutRepoVars(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {

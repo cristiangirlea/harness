@@ -33,8 +33,7 @@ type Entry struct {
 	Identifiers []string `json:"identifiers"`
 }
 
-// Import replaces the complete membership set. Reusing a Key supersedes its
-// previous revision only in this new version; existing pins remain immutable.
+// Import replaces membership in a new version, leaving existing pins immutable even when keys are reused.
 type Import struct {
 	Scope
 	ReviewedBy     string  `json:"reviewed_by"`
@@ -59,9 +58,8 @@ type Search struct {
 	Attempt   int    `json:"attempt,omitempty"`
 }
 
-// Packet carries reviewed reference text. Validation permits one reference
-// label pair per entry in Text, bounds the combined rendered entry fields, rejects outer
-// project-reference markers there, and rejects all four markers in every entry field.
+// Packet carries reviewed reference text with bounded rendered entries and validated framing.
+// Only Text permits one reference-label pair; outer markers and all entry-field markers are forbidden.
 type Packet struct {
 	VersionID   string  `json:"version_id,omitempty"`
 	AuditID     string  `json:"audit_id"`
@@ -88,8 +86,7 @@ type Active struct {
 	Generation int64  `json:"generation"`
 }
 
-// TextDigest is lowercase SHA-256 of the exact raw UTF-8 bytes, without JSON
-// quoting, normalization, newline conversion or reference framing.
+// TextDigest hashes exact raw UTF-8 bytes as lowercase SHA-256; never normalize or add framing.
 func TextDigest(text string) string {
 	h := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(h[:])

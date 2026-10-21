@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// A temporary HRN_HOME, so no test reads the owner's records or backends.json
+// A temporary HRN_HOME, so no test reads the user's records or backends.json
 // (#379); a test may still set its own with t.Setenv. A helper process, the
 // test binary standing in for another program, keeps what it was started with.
 func TestMain(m *testing.M) {
@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// The tests never read or write the owner's ~/.hrn: backends.json there could
+// The tests never read or write the real ~/.hrn: backends.json there could
 // disable the backend a test names (#379).
 func TestTheTestsRunAgainstATemporaryHRNHome(t *testing.T) {
 	home := os.Getenv("HRN_HOME")
