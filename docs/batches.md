@@ -314,10 +314,20 @@ worktree only on proof that its work is merged:
   (`git ls-remote --symref`), fetched by name just before. A squashed or reworded landing
   is also recognised when the patch id of the task's whole diff, whitespace included but
   line numbers ignored, exactly matches one commit on that branch since their merge base.
-  The comparison checks fewer than 2000 non-merge commits; if it reaches that bound, or
-  cannot prove an exact match, the worktree stays. The branch's patch ids are read once per
-  merge base in a run, streamed from `git log` so large binaries are not held in memory.
-  Git older than 2.40 does not support `patch-id --verbatim` and keeps these worktrees. With `--apply`, hrn deletes the task's
+  The comparison checks fewer than 2000 non-merge commits. If it reaches that bound or finds
+  no exact match, a change that landed split over several commits, or inside a larger one,
+  is still recognised when merging the task's commit into that branch is clean and leaves
+  the branch's tree exactly as it is (`git merge-tree --write-tree`). A conflict, any
+  difference, or a task whose own diff is empty keeps the worktree, so once the branch edits
+  those lines again it stays. So does a `merge` attribute on any file the task or the branch
+  changed since their merge base (a rename can move the merge to the other side's path), read
+  from the branch's `.gitattributes` (and git's own attribute files) for the merge as well:
+  a union or a custom merge driver can settle on the branch's side and make a merge look
+  clean that dropped the task's change. For the same reason a `merge.default` setting keeps
+  it. The branch's patch ids are read once per merge base in a run, streamed from `git log`
+  so large binaries are not held in memory. Git older than 2.40 has no
+  `patch-id --verbatim`, and the merge check needs Git 2.43 or later; a proof that cannot
+  run keeps the worktree. With `--apply`, hrn deletes the task's
   branch with its worktree, including its own commits and messages; the change itself is
   on the default branch.
 

@@ -7,9 +7,7 @@ import (
 	"strconv"
 )
 
-// CheckCostCap refuses a job ceiling above HRN_REMOTE_MAX_COST_USD when that
-// variable is set. The control service does not reserve tenant budgets yet,
-// so this and the server's HRN_MAX_COST_USD_PER_JOB are the spending control.
+// CheckCostCap enforces HRN_REMOTE_MAX_COST_USD because tenant budgets are not reserved server-side.
 func CheckCostCap(cost float64) error {
 	raw := os.Getenv("HRN_REMOTE_MAX_COST_USD")
 	if raw == "" {

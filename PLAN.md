@@ -723,24 +723,35 @@ order they are worth taking:
     Second round (the owner, 2026-10-16: follow the more mature patterns where they beat ours),
     each its own PR, in this order:
     - [#436](https://github.com/cristiangirlea/harness/issues/436): adversarial probes and a fuzz
-      target for the summary invariants, before shaping runs by default.
+      target for the summary invariants, before shaping runs by default. Done: PR #468,
+      2026-10-16.
     - [#437](https://github.com/cristiangirlea/harness/issues/437): a bounded originals store
       that refuses rather than evicts, and `read_original` by line range or JSON pointer;
       in the same PR as [#337](https://github.com/cristiangirlea/harness/issues/337), which
-      touches the same lookup (originals across a continuation).
+      touches the same lookup (originals across a continuation). Done: PR #601, 2026-10-19.
     - [#336](https://github.com/cristiangirlea/harness/issues/336): JSON and tabular summaries.
+      Done: PR #487, 2026-10-16.
     - [#435](https://github.com/cristiangirlea/harness/issues/435): hrn owns the terminal for
       every backend, so shaped output reaches claude, codex and agy runs too.
     - [#439](https://github.com/cristiangirlea/harness/issues/439): an advisory Claude Code hook
       that names a kept script covering a command, until the gate does it (adanext-exec #2).
+      Done: PR #481, 2026-10-16.
     - [#438](https://github.com/cristiangirlea/harness/issues/438): measure what tool definitions
-      cost per api turn, and trim them only if it pays.
+      cost per api turn, and trim them only if it pays. Measurement and byte budget done: PR
+      #492, 2026-10-16; trimming deferred by the owner (2026-10-19).
     - hrn-evals #30: a routing suite of real tasks, two or more per purpose, with multi-step
-      requirements, so the table rests on more than ten small fixtures.
+      requirements, so the table rests on more than ten small fixtures. Done: hrn-evals PR #39,
+      2026-10-16.
     - [#441](https://github.com/cristiangirlea/harness/issues/441) (the owner, 2026-10-16): comments
       (whole-line comments are 19% of non-test Go bytes, paid by every agent that reads a
       file). The rule and a comment check with a baseline land before every slice above, so
       new code stops growing them; the package-by-package cleanup lands after all of them.
+      Done: PR #457, 2026-10-16 (the rule and the check); the cleanup in PRs #602 and #604,
+      2026-10-19, and #615, #617, #618 and #620, 2026-10-20. Comments are now 8.8% of non-test
+      Go bytes and the baseline holds only its header.
+    - [#488](https://github.com/cristiangirlea/harness/issues/488) (the owner, 2026-10-16): a run
+      loads only the MCP servers, plugins and skills its task needs, on claude and codex.
+      Done: PR #595, 2026-10-19.
 
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a
 guard rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over
@@ -770,6 +781,10 @@ Things kept but not active (the owner, 2026-10-16). Each says what would bring i
   the owner approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-20: a loaded run record takes the id it was loaded by, not the one stored in it (PR
+  #622, no issue: harness is public). A record whose stored id was edited could otherwise point
+  a continuation's originals copy outside `runs/`; the watch's fallback read of `task.json`
+  follows the same rule.
 - 2026-10-19: the gc and batch test packages build their git fixture once per test binary and
   copy it per test (#310, PR #598; #333, PR #599). Under memory pressure a process start on the
   owner's PC costs seconds or fails ("The paging file is too small"), and the old fixtures spent

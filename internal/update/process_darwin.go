@@ -8,8 +8,7 @@ import (
 	"syscall"
 )
 
-// systemProcesses runs ps: the standard library has no other way to list
-// processes on macOS.
+// macOS has no standard-library process enumeration, so use ps.
 func systemProcesses() ([]Process, error) {
 	out, err := exec.Command("ps", "-axo", "pid=,ppid=,lstart=,command=").Output()
 	if err != nil {

@@ -1,7 +1,4 @@
-// Package purpose says what a run was for (review, debug, implement, ...) from
-// its prompt, with ordered keyword rules: the first rule that matches wins.
-// Only a prompt's lead counts, since long briefs mention every keyword later
-// (docs/commands.md, "Declared purpose").
+// Package purpose classifies prompt leads using ordered keyword rules.
 package purpose
 
 import (
@@ -12,7 +9,7 @@ import (
 	"unicode/utf8"
 )
 
-// Categories in the order hrn lists them. Unknown means no rule fired.
+// Categories lists review, debug, implement, refactor, test, research, plan, ops and unknown in display order.
 var Categories = []string{"review", "debug", "implement", "refactor", "test", "research", "plan", "ops", "unknown"}
 
 // Unknown is the category of a prompt no rule matches.
@@ -34,9 +31,7 @@ func Declarable() []string {
 	return categories
 }
 
-// Declared reads a Purpose: <category> header on the first non-blank line.
-// The label and category are case-insensitive. A non-category value, including
-// unknown or free text, is ignored rather than treated as an error.
+// Declared reads a case-insensitive Purpose header, ignoring unknown or invalid categories.
 func Declared(prompt string) string {
 	line, _ := firstNonBlankLine(prompt)
 	label, value, ok := strings.Cut(line, ":")
@@ -67,8 +62,7 @@ func Resolve(declared, prompt string) Result {
 	return Classify(prompt)
 }
 
-// Inherited is the purpose a continuation keeps from the run it follows: that
-// run's declaration or classified purpose, "" when it was unknown.
+// Inherited is a continuation's purpose from its parent run, "" when that was unknown.
 func Inherited(declared, prompt string) string {
 	if c := Resolve(declared, prompt).Category; c != Unknown {
 		return c
@@ -76,21 +70,18 @@ func Inherited(declared, prompt string) string {
 	return ""
 }
 
-// Result is a prompt's category and the id of the rule that put it there ("" for
-// unknown). It never carries prompt text.
+// Result contains a category and rule id (empty for unknown), never prompt text.
 type Result struct {
 	Category string `json:"category"`
 	Rule     string `json:"rule,omitempty"`
 }
 
-// maxLead caps the bytes of the lead the rules see.
 const maxLead = 600
 
 type rule struct {
 	id, category string
 	re           *regexp.Regexp
-	// firstSentence keeps a keyword rule off the constraints and context
-	// that follow the instruction ("no docker", "never deploy").
+	// Keeps a keyword rule off constraints after the instruction ("no docker").
 	firstSentence bool
 }
 
@@ -102,18 +93,16 @@ func r1(id, category, expr string) rule {
 	return rule{id: id, category: category, re: regexp.MustCompile(expr), firstSentence: true}
 }
 
-// Keyword bounds that keep a branch, file or path name ("ci/pin", "deploy-x",
-// "ci.yml") from counting; a full stop that ends a sentence still bounds.
+// Branch, file and path names ("ci/pin", "deploy-x", "ci.yml") are not keywords.
 const (
 	nameStart = `(?:^|[^\w/\\.-])`
 	nameEnd   = `(?:[^\w/\\.-]|\.(?:\W|$)|$)`
 )
 
-// rules are tried in order. The first is hrn's own reviewer brief; the rest
-// are adapted from classify-sessions rules-v1.
+// First match wins; preserve rule precedence when adding patterns.
 var rules = []rule{
 	r("review.reviewer-role", "review", `\byou are an? ([a-z-]+,? )*(reviewer|auditor)\b`),
-	// Only at the start: an implement brief often names the review that follows it.
+	// Anchored: implement briefs often name the review that follows them.
 	r("review.brief", "review", `^(?:(?:final|narrow|short|bounded|focused|independent|read-only|pre-merge|merged-head|exact-head|verification|follow-up|fix-round|confirmation|attacker-style|second|third|security|code)[ ,]+){1,4}(?:review|verification|security read)(?: (?:of|on|for|at|in|with|and|only)\b| ?[(,.:;]|$)|^(?:(?:final|narrow|short|bounded|focused|independent|read-only)[ ,]+){0,4}re-review\b|^verify (?:the (?:newest|latest|fix|fixes|head)|commit)\b|^you are re-?reviewing\b|^continue the review\b`),
 	r("plan.before-code", "plan", `\bbefore (you )?(writing|write|making|changing|touching|implementing) (any )?(code|changes)\b`),
 	r("plan.write-plan", "plan", `\b(give me|write|draft|propose|outline|sketch|prepare|come up with) (me )?(a |an )?([a-z-]+ )?(plan|design|spec|specification|proposal|rfc|roadmap)\b`),
@@ -141,9 +130,7 @@ var rules = []rule{
 	r("implement.build", "implement", `^(please )?(implement|create|build|write|introduce|support|make|generate|scaffold|wire up|set up|integrate)\b|^you are implementing\b`),
 }
 
-// Classify names what a prompt asks for, from its lead: the first of at most
-// two paragraphs that a rule matches. An anchored instruction after leading
-// labels is tried first, then the raw lead, then the lead with labels skipped.
+// Classify matches at most two leading paragraphs to avoid incidental keywords in long briefs.
 func Classify(prompt string) Result {
 	for _, paragraph := range paragraphs(prompt) {
 		u := unlabel(paragraph)
@@ -155,8 +142,7 @@ func Classify(prompt string) Result {
 					continue
 				}
 				if loc := rl.re.FindStringIndex(stripped); loc != nil && loc[0] == 0 {
-					// Keep rule precedence within the instruction ("Add a test"
-					// is test, although the anchored add rule also matches).
+					// Preserve test precedence over the broader anchored add rule.
 					r, _ := match(stripped)
 					return r
 				}
@@ -174,7 +160,6 @@ func Classify(prompt string) Result {
 	return Result{Category: Unknown}
 }
 
-// match tries the rules in order on a lead; false when none fires.
 func match(l string) (Result, bool) {
 	if l == "" {
 		return Result{}, false
@@ -192,8 +177,7 @@ func match(l string) (Result, bool) {
 	return Result{}, false
 }
 
-// firstSentence cuts a lead at the first ".", ";", "?" or "!" before white
-// space, except the full stops of "e.g." and "i.e.".
+// Constraints and context follow the instruction's first sentence; "e.g." and "i.e." do not end it.
 func firstSentence(l string) string {
 	for i := 0; i+1 < len(l); i++ {
 		if strings.IndexByte(".;?!", l[i]) < 0 {
@@ -210,7 +194,6 @@ func firstSentence(l string) string {
 	return l
 }
 
-// abbreviation reports whether s ends in a whole "e.g." or "i.e.".
 func abbreviation(s string) bool {
 	if !strings.HasSuffix(s, "e.g.") && !strings.HasSuffix(s, "i.e.") {
 		return false
@@ -219,8 +202,7 @@ func abbreviation(s string) bool {
 	return len(s) == 4 || !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '.'
 }
 
-// handover drops a hand-over marker ("## Hand-over", "Hand-over: fix x") from
-// a line, keeping what follows it; false when nothing is left.
+// A hand-over marker ("## Hand-over") is framing, not the instruction; false when nothing follows it.
 func handover(line string) (string, bool) {
 	rest := strings.TrimLeft(strings.TrimLeft(line, "#"), " \t")
 	for _, marker := range []string{"hand-over", "handover"} {
@@ -237,7 +219,6 @@ func handover(line string) (string, bool) {
 	return line, true
 }
 
-// nextLine slices a line without copying or normalizing the remaining prompt.
 func nextLine(prompt string) (line, rest string) {
 	if i := strings.IndexAny(prompt, "\r\n"); i >= 0 {
 		end := i + 1
@@ -260,9 +241,6 @@ func firstNonBlankLine(prompt string) (line, rest string) {
 	return "", ""
 }
 
-// paragraphs gathers the latest leading label (see boundLabel) and the instruction,
-// capped at maxLead runes, from each of the first two non-blank paragraphs. CRLF, LF and
-// bare CR end lines; whitespace-only lines separate paragraphs.
 func paragraphs(prompt string) []string {
 	var result []string
 	var paragraph strings.Builder
@@ -291,9 +269,7 @@ func paragraphs(prompt string) []string {
 		if runes == maxLead {
 			continue
 		}
-		// Keep only the latest leading label, bounded separately so labels
-		// cannot exhaust the instruction's budget or grow the gathered text.
-		// Error lines remain part of the instruction.
+		// Bound labels separately so they cannot exhaust the instruction's budget; retain error lines.
 		if runes == 0 {
 			if colon, open := leadingLabel(line); colon >= 0 {
 				lastLabel = boundLabel(line, colon, open)
@@ -327,9 +303,7 @@ var errorLine = regexp.MustCompile(`(?i)^([a-z]*(error|exception)|panic)\s*:`)
 
 var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?:(?: +|$)`)
 
-// leadingLabel returns label's colon and bracket indexes (-1 when absent)
-// without regexp scratch allocations, which sync.Pool may discard under -race.
-// Words past maxLead runes are not a label, so a kept label stays bounded.
+// Avoid regexp scratch allocations, which sync.Pool may discard under -race; bound label length.
 func leadingLabel(line string) (colon, open int) {
 	i := 0
 	for words := 0; words < 3; words++ {
@@ -376,8 +350,7 @@ func leadingLabel(line string) (colon, open int) {
 	return -1, -1
 }
 
-// boundLabel caps a label's bracketed part and its value at maxLead runes
-// each, keeping the colon so the label stays a label and its value whole.
+// Preserve the colon and whole value so truncation cannot turn a label into an instruction.
 func boundLabel(line string, colon, open int) string {
 	if len(line) <= maxLead {
 		return line
@@ -403,8 +376,6 @@ func capRunes(s string) string {
 	return s
 }
 
-// errorLabel is errorLine's name check for a single label word. Only ASCII
-// letters and their Unicode case-fold equivalents can precede error/exception.
 func errorLabel(name string) bool {
 	if strings.EqualFold(name, "panic") {
 		return true
@@ -423,9 +394,6 @@ func errorLabel(name string) bool {
 	return false
 }
 
-// unlabel drops a paragraph's leading label lines ("Repository: hrn", "Goal
-// (issue #82): ..."); a last line that is itself a label keeps its value.
-// Lines stay separated by "\n".
 func unlabel(paragraph string) string {
 	lines := strings.Split(paragraph, "\n")
 	for len(lines) > 0 {
@@ -445,11 +413,8 @@ func unlabel(paragraph string) string {
 	return strings.Join(lines, "\n")
 }
 
-// lead is a paragraph's lines joined by spaces, lowercased and cut to maxLead
-// bytes without splitting a rune.
 func lead(paragraph string) string {
-	// At most maxLead runes can contribute to maxLead lowercased bytes,
-	// even when lowercasing shrinks a rune's UTF-8 encoding.
+	// Lowercasing may shrink UTF-8, but maxLead runes still suffice for maxLead bytes.
 	runes := 0
 	for i := range paragraph {
 		if runes == maxLead {

@@ -2,6 +2,5 @@
 
 package update
 
-// processLogs cannot see another process's standard handles here; the
-// restarted watch logs under HRN_HOME instead.
+// Peer standard handles are unavailable here, so restarted watches use HRN_HOME logs.
 func processLogs(int) (string, string) { return "", "" }

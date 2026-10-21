@@ -12,13 +12,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
-// Config is the on-disk format, shared with Claude Code's .mcp.json and the
-// Claude desktop app so existing files work unchanged:
-//
-//	{"mcpServers": {"name": {"command": "npx", "args": ["-y", "pkg"], "env": {"K": "${VAR}"}}}}
-//
-// ${VAR} and ${VAR:-default} expand from the environment. Entries with a
-// "url" (http or sse transports) are skipped: hrn speaks stdio only.
+// Config uses Claude's mcpServers format with ${VAR} and ${VAR:-default} expansion.
+// The stdio client skips URL and other non-stdio transports.
 type Config struct {
 	Servers map[string]configEntry `json:"mcpServers"`
 }
@@ -41,8 +36,7 @@ func DefaultConfigPath() string {
 	return filepath.Join(home, ".hrn", "mcp.json")
 }
 
-// ConfigPaths returns the default config when it exists, followed by extra,
-// all absolute. This is what gets recorded in a run's task.json.
+// ConfigPaths lists existing default and extra config paths for task.json.
 func ConfigPaths(extra []string) ([]string, error) {
 	var out []string
 	if p := DefaultConfigPath(); p != "" {
@@ -63,8 +57,7 @@ func ConfigPaths(extra []string) ([]string, error) {
 	return out, nil
 }
 
-// LoadConfig reads one file. Servers come back sorted by name so the tool
-// list, and with it the prompt cache, is stable across runs.
+// LoadConfig sorts server names to stabilize tool lists and prompt caches.
 func LoadConfig(path string) (servers []ServerConfig, skipped []string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -97,9 +90,7 @@ func LoadConfig(path string) (servers []ServerConfig, skipped []string, err erro
 	return servers, skipped, nil
 }
 
-// LoadConfigs merges several files; a later file overrides an earlier
-// server of the same name. Order is by name within each file, files in the
-// order given.
+// LoadConfigs merges files in order and servers by name, with later names overriding.
 func LoadConfigs(paths []string) (servers []ServerConfig, skipped []string, err error) {
 	index := map[string]int{}
 	for _, p := range paths {
@@ -126,8 +117,7 @@ type Remote struct {
 	Headers         bool
 }
 
-// LoadRemotes returns the url servers of paths, by name within each file; a
-// later file overrides an earlier server of the same name.
+// LoadRemotes lists URL servers by name per file, with later names overriding.
 func LoadRemotes(paths []string) ([]Remote, error) {
 	index := map[string]int{}
 	var out []Remote
@@ -162,8 +152,7 @@ func LoadRemotes(paths []string) ([]Remote, error) {
 	return out, nil
 }
 
-// expand substitutes ${VAR} and ${VAR:-default}; anything else is literal.
-// hrn's own secrets read as unset, so a config cannot copy one under another name.
+// Hide hrn secrets during expansion so configs cannot expose them under other names.
 func expand(s string) string {
 	var b strings.Builder
 	for {

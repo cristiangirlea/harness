@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// InstallDirs is where hrn copies may be: every PATH entry, Go's binary
-// folder ($GOPATH/bin, else ~/go/bin) and, on Windows, %LOCALAPPDATA%\hrn.
+// InstallDirs lists PATH entries, Go bin directories and Windows' %LOCALAPPDATA%\hrn.
 func InstallDirs(getenv func(string) string, goos, home string) []string {
 	var dirs []string
 	for _, d := range filepath.SplitList(getenv("PATH")) {
@@ -31,9 +30,7 @@ func InstallDirs(getenv func(string) string, goos, home string) []string {
 	return dirs
 }
 
-// FindTargets lists the hrn binaries to update: the running one first, then
-// every hrn (hrn.exe on Windows) in dirs, each path resolved through
-// EvalSymlinks and listed once.
+// FindTargets lists running then installed hrn copies, deduplicating resolved paths.
 func FindTargets(running string, dirs []string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
@@ -69,7 +66,6 @@ func FindTargets(running string, dirs []string) ([]string, error) {
 	return out, nil
 }
 
-// samePath compares two resolved paths the way the file system does.
 func samePath(a, b string) bool {
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(a, b)

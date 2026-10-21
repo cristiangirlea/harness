@@ -345,7 +345,6 @@ func checkTaskKeys(data json.RawMessage) error {
 	return err
 }
 
-// objectFields retains raw values but checks every key, including repetitions.
 func objectFields(data []byte, names ...string) (map[string]json.RawMessage, error) {
 	d := json.NewDecoder(bytes.NewReader(data))
 	first, err := d.Token()

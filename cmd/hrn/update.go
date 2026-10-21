@@ -14,11 +14,6 @@ import (
 
 const updateUsage = "usage: hrn update [--main | --ref REF | --file PATH] [--dry-run] [--rollback]"
 
-// cmdUpdate moves every hrn copy on this computer to a newer build: the
-// newest release by default, a go install of --ref, or a binary already
-// built with --file. Each copy is renamed aside as a backup, the candidate
-// copied in and checked with version, and a running hrn watch restarted
-// with its arguments. internal/update does the work.
 func cmdUpdate(args []string) (int, error) {
 	opts, err := updateOptions(args)
 	if err != nil {
@@ -29,9 +24,7 @@ func cmdUpdate(args []string) (int, error) {
 	return update.Run(ctx, os.Stdout, opts)
 }
 
-// updateOptions reads the flags. The release is the source unless one of
-// --main, --ref and --file is given; --rollback takes no source. A
-// GITHUB_TOKEN is sent to the API when present and never printed.
+// GITHUB_TOKEN may authenticate API requests but must never reach printed output.
 func updateOptions(args []string) (update.Options, error) {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	mainBranch := fs.Bool("main", false, "")

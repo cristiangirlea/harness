@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// RemoveRecord deletes a saved eval record and returns how many bytes it held;
-// with dryRun it only reports the size. The batch it ran as has its own record.
+// RemoveRecord returns the record's bytes and deletes it unless dryRun; the batch record is separate.
 func RemoveRecord(id string, dryRun bool) (int64, error) {
 	if id == "" || strings.ContainsAny(id, `/\`) {
 		return 0, fmt.Errorf("invalid eval id %q", id)

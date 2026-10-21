@@ -14,15 +14,12 @@ import (
 	"time"
 )
 
-// VersionFunc answers `<path> version` for one binary. RunVersion is the
-// real one; tests run copies of the test binary.
+// VersionFunc reads a binary's version.
 type VersionFunc func(ctx context.Context, path string) (Version, error)
 
-// versionTimeout bounds `version`: a binary that hangs there is not hrn.
 const versionTimeout = 20 * time.Second
 
-// RunVersion runs path with the single argument version and parses the
-// first line. This is the only way a candidate or a target is ever run.
+// RunVersion executes only the version command and parses its first line.
 func RunVersion(ctx context.Context, path string) (Version, error) {
 	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
 	defer cancel()
@@ -44,14 +41,12 @@ func RunVersion(ctx context.Context, path string) (Version, error) {
 	return v, nil
 }
 
-// ErrNoBackup says a rollback found no hrn-*.prev file beside the target.
+// ErrNoBackup indicates no adjacent rollback backup.
 var ErrNoBackup = errors.New("no backup beside it")
 
 const stampLayout = "20060102-1504"
 
-// BackupName is the file a target is renamed to before the candidate takes
-// its place: hrn-<old build>-<yyyymmdd-hhmm>.prev, with the target's
-// extension, in the same folder.
+// BackupName returns hrn-<build>-<stamp>.prev with target's extension.
 func BackupName(target string, old Version, now time.Time) string {
 	return fmt.Sprintf("hrn-%s-%s.prev%s", old.Short(), now.Format(stampLayout), filepath.Ext(target))
 }
@@ -60,12 +55,8 @@ func rolledBackName(target string, cur Version, now time.Time) string {
 	return fmt.Sprintf("hrn-%s-%s.rolledback%s", cur.Short(), now.Format(stampLayout), filepath.Ext(target))
 }
 
-// Swap puts candidate in place of target: the target is renamed to its
-// backup name beside it (a running binary can be renamed on Windows, not
-// overwritten), the candidate is copied in under the original name with
-// mode 0755, and the result is run with version and compared with want. On
-// any failure the backup goes back and the error says what went wrong. The
-// returned path is the backup.
+// Swap installs and verifies candidate, restoring on failure and returning its backup path on success.
+// Windows allows renaming running binaries, but forbids overwriting them.
 func Swap(ctx context.Context, target, candidate string, old, want Version, now time.Time, version VersionFunc) (string, error) {
 	if _, err := os.Stat(target); err != nil {
 		return "", err
@@ -90,8 +81,7 @@ func Swap(ctx context.Context, target, candidate string, old, want Version, now 
 	return backup, nil
 }
 
-// install copies src to dst with mode 0755, through a temporary file beside
-// dst so a half-written binary never carries the real name.
+// Rename an adjacent complete copy to avoid exposing a partial executable.
 func install(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -123,12 +113,9 @@ func install(src, dst string) error {
 	return nil
 }
 
-// restore puts the backup back under the target's name after a failed swap
-// and returns cause, or cause and the restore's own failure.
 func restore(backup, target string, cause error) error {
 	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
-		// A new file that cannot be removed (it may be running) is renamed
-		// out of the way instead; a .failed left by an earlier run gives way.
+		// Windows may allow renaming a running binary when deletion fails.
 		os.Remove(target + ".failed")
 		if err := os.Rename(target, target+".failed"); err != nil {
 			return fmt.Errorf("%w; and the failed file could not be moved: %v; the old binary is %s", cause, err, backup)
@@ -142,8 +129,7 @@ func restore(backup, target string, cause error) error {
 
 var backupRE = regexp.MustCompile(`^hrn-(.+)-([0-9]{8}-[0-9]{4})\.prev$`)
 
-// Backups lists the hrn-*.prev files beside target with its extension,
-// newest stamp first.
+// Backups lists adjacent hrn-*.prev files by extension, newest first.
 func Backups(target string) ([]string, error) {
 	dir, ext := filepath.Dir(target), filepath.Ext(target)
 	entries, err := os.ReadDir(dir)
@@ -179,10 +165,7 @@ func Backups(target string) ([]string, error) {
 	return out, nil
 }
 
-// Rollback puts the newest backup beside target back in its place: the
-// current binary becomes hrn-<build>-<stamp>.rolledback, the backup takes
-// the original name, and version must answer. On failure both renames are
-// undone. It returns the version the target now reports.
+// Rollback restores the newest backup and returns its version, undoing renames on verification failure.
 func Rollback(ctx context.Context, target string, now time.Time, version VersionFunc) (Version, error) {
 	backups, err := Backups(target)
 	if err != nil {

@@ -11,10 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ResolveRecovery requires an operator to attest that the former executor is
-// stopped. It never retries a checkpoint with an unresolved model/tool intent.
-// The evidence is durable audit text; an operator must verify termination
-// outside this initial local control service.
+// ResolveRecovery requires externally verified termination evidence and refuses unresolved model/tool intents.
 func (s *Store) ResolveRecovery(ctx context.Context, tenantID, projectID, jobID, action, evidence string) (State, error) {
 	if evidence == "" || len(evidence) > 1024 {
 		return "", errors.New("termination evidence must be 1..1024 bytes")

@@ -426,6 +426,46 @@ func TestTheAPIConversationIsResumed(t *testing.T) {
 	}
 }
 
+func TestCarriedRecordUsesItsOwnOriginalsDespiteStoredID(t *testing.T) {
+	for _, storedID := range []string{"20261014-120000-abcdef", "../outside"} {
+		t.Run(storedID, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			id := "20261014-130000-abcdef"
+			dir := filepath.Join(runlog.Root(), id)
+			other := filepath.Join(runlog.Root(), storedID)
+			ownText, otherText := "own original", "another directory's original"
+			ownHandle := fmt.Sprintf("%x", sha256.Sum256([]byte(ownText)))[:16]
+			otherHandle := fmt.Sprintf("%x", sha256.Sum256([]byte(otherText)))[:16]
+			for path, text := range map[string]string{
+				filepath.Join(dir, "originals", ownHandle+".txt"):     ownText,
+				filepath.Join(other, "originals", otherHandle+".txt"): otherText,
+				filepath.Join(dir, "result.json"):                     `{"id":"` + storedID + `","backend":"api"}`,
+				filepath.Join(dir, "messages.json"):                   `{"model":"claude-opus-5"}`,
+			} {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rec, conv, err := runlog.LoadConversation(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := Plan{Prev: rec, Resume: &conv, carried: &rec}
+			next := t.TempDir()
+			p.Apply(&agent.Task{Prompt: "go on"}, next, func(agent.Event) {})
+			if _, err := os.Stat(filepath.Join(next, "originals", otherHandle+".txt")); !os.IsNotExist(err) {
+				t.Errorf("another directory's original was copied: %v", err)
+			}
+			if data, err := os.ReadFile(filepath.Join(next, "originals", ownHandle+".txt")); err != nil || string(data) != ownText {
+				t.Errorf("own original not carried over: %q %v", data, err)
+			}
+		})
+	}
+}
+
 func TestAResumedConversationCarriesItsOriginals(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)

@@ -1,10 +1,4 @@
-// Package mcp is a dependency-free implementation of the Model Context
-// Protocol over its stdio transport: JSON-RPC 2.0 messages, one per line.
-//
-// Client lets the api backend call tools served by external MCP servers.
-// Server exposes hrn itself to MCP hosts such as Claude Code. Only the tools
-// capability is implemented, plus ping, progress, cancellation and roots;
-// resources, prompts and sampling are not.
+// Package mcp implements MCP tools over stdio with one JSON-RPC 2.0 message per line.
 package mcp
 
 import (
@@ -17,8 +11,7 @@ import (
 	"sync"
 )
 
-// ProtocolVersion is the spec revision hrn asks for. Everything hrn uses has
-// been wire-stable since the first revision, so older peers negotiate fine.
+// ProtocolVersion prefers this MCP revision while allowing wire-compatible older peers.
 const ProtocolVersion = "2025-06-18"
 
 var supportedVersions = []string{ProtocolVersion, "2025-03-26", "2024-11-05"}
@@ -32,7 +25,7 @@ func versionSupported(v string) bool {
 	return false
 }
 
-// JSON-RPC 2.0 error codes.
+// CodeParseError and its peers are JSON-RPC 2.0 error codes.
 const (
 	CodeParseError     = -32700
 	CodeInvalidRequest = -32600
@@ -41,8 +34,7 @@ const (
 	CodeInternalError  = -32603
 )
 
-// Error is a JSON-RPC error. Tool execution failures are not Errors: the
-// protocol reports those inside CallResult.IsError so the model can react.
+// Error represents RPC failures; tool failures use IsError so the model can react.
 type Error struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
@@ -51,8 +43,6 @@ type Error struct {
 
 func (e *Error) Error() string { return fmt.Sprintf("%s (jsonrpc %d)", e.Message, e.Code) }
 
-// message is the union of request, notification and response. Which one it
-// is follows from which fields are set.
 type message struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -67,8 +57,7 @@ func (m *message) isRequest() bool      { return m.Method != "" && m.hasID() }
 func (m *message) isNotification() bool { return m.Method != "" && !m.hasID() }
 func (m *message) isResponse() bool     { return m.Method == "" && m.hasID() }
 
-// codec frames messages as newline-delimited JSON. Writes are serialized so
-// concurrent handlers never interleave bytes on the pipe.
+// Serialize newline-framed JSON writes to prevent interleaved messages.
 type codec struct {
 	r  *bufio.Reader
 	mu sync.Mutex
@@ -79,9 +68,7 @@ func newCodec(r io.Reader, w io.Writer) *codec {
 	return &codec{r: bufio.NewReaderSize(r, 64*1024), w: w}
 }
 
-// read returns the next message. Malformed JSON comes back as an *Error with
-// CodeParseError so the caller can answer it and keep going; anything else
-// is an I/O error and ends the connection.
+// Parse errors allow a reply and continued reading; I/O errors end the connection.
 func (c *codec) read() (*message, error) {
 	for {
 		line, err := c.r.ReadBytes('\n')
@@ -154,8 +141,6 @@ func marshalParams(params any) (json.RawMessage, error) {
 	return json.Marshal(params)
 }
 
-// ---- protocol types ---------------------------------------------------------
-
 type Implementation struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
@@ -174,8 +159,7 @@ type initializeResult struct {
 	Instructions    string         `json:"instructions,omitempty"`
 }
 
-// Annotations are a server's hints about how a tool behaves. They are only as
-// trustworthy as the server that sent them, which the user chose to configure.
+// Annotations are hints only as trustworthy as their configured server.
 type Annotations struct {
 	Title           string `json:"title,omitempty"`
 	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
@@ -184,7 +168,7 @@ type Annotations struct {
 	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
 }
 
-// ReadOnly reports whether the server marked the tool as having no side effects.
+// ReadOnly reports the server's no-side-effects hint.
 func (a *Annotations) ReadOnly() bool { return a != nil && a.ReadOnlyHint != nil && *a.ReadOnlyHint }
 
 func Bool(v bool) *bool { return &v }
@@ -217,8 +201,7 @@ type callParams struct {
 	Meta      *callMeta       `json:"_meta,omitempty"`
 }
 
-// Content is one part of a tool result: text, image, audio, resource_link or
-// an embedded resource.
+// Content holds text, image, audio, resource_link or resource result parts.
 type Content struct {
 	Type     string          `json:"type"`
 	Text     string          `json:"text,omitempty"`
@@ -237,9 +220,7 @@ type CallResult struct {
 	IsError           bool      `json:"isError,omitempty"`
 }
 
-// Text flattens a result for a model: text parts verbatim, binary parts as a
-// one-line placeholder, and structured content as JSON when nothing else is
-// there.
+// Text flattens content with binary placeholders or falls back to structured JSON.
 func (r CallResult) Text() string {
 	var b strings.Builder
 	for i, c := range r.Content {
