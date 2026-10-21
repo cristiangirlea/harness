@@ -14,6 +14,9 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
+// ErrNotFound covers missing, unreadable and foreign ids alike, so callers cannot tell them apart.
+var ErrNotFound = errors.New("no run or batch")
+
 // View is a cleaned execution tree and its source summary.
 type View struct {
 	Version int
@@ -25,7 +28,7 @@ type View struct {
 // Load resolves an id with the same batch-first rules as hrn flow.
 func Load(v owner.Viewer, id string) (View, error) {
 	if id == "" || strings.ContainsAny(id, `/\\`) {
-		return View{}, fmt.Errorf("no run or batch %s", id)
+		return View{}, fmt.Errorf("%w %s", ErrNotFound, id)
 	}
 	res, err := batch.LoadResultFor(v, id)
 	isBatch := err == nil
@@ -34,13 +37,13 @@ func Load(v owner.Viewer, id string) (View, error) {
 	if isBatch {
 		events, err = batch.Timeline(v, id)
 		if err != nil {
-			return View{}, fmt.Errorf("no run or batch %s", id)
+			return View{}, fmt.Errorf("%w %s", ErrNotFound, id)
 		}
 		summary = BatchSummary(res)
 	} else {
 		rec, loadErr := runlog.LoadFor(v, id)
 		if loadErr != nil {
-			return View{}, fmt.Errorf("no run or batch %s", id)
+			return View{}, fmt.Errorf("%w %s", ErrNotFound, id)
 		}
 		runEvents, eventErr := runlog.Events(id)
 		if eventErr != nil && !errors.Is(eventErr, os.ErrNotExist) {

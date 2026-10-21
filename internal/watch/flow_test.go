@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -167,5 +169,44 @@ func TestFlowSummaryOfARunSaysHowItEnded(t *testing.T) {
 	rec := []flow.Event{{Step: "run:r", Kind: flow.KindRun, Status: flow.StatusFailed, Text: "error · 2 turns · 1 tool calls · boom"}}
 	if got := flowSummary(flow.Build(rec)); got != "The run failed: error · 2 turns · 1 tool calls · boom." {
 		t.Fatalf("summary = %q", got)
+	}
+}
+
+func TestFlowStreamRidesOutAResultCaughtMidWrite(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
+	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	s, stop := openStream(t, srv.URL+"/stream/flow/"+w.ID(), "")
+	defer stop()
+	if first, ok := s.next(t); !ok || first.event != "replace" {
+		t.Fatalf("first flow event = %#v, %v", first, ok)
+	}
+	half := filepath.Join(w.Dir(), "result.json")
+	if err := os.WriteFile(half, []byte(`{"id":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("the stream ended without an end event")
+		}
+		if m.event == "problem" {
+			t.Fatalf("a half-written result ended the stream with a problem: %s", m.data)
+		}
+		if m.event == "end" {
+			if m.data != "done" {
+				t.Fatalf("end = %q", m.data)
+			}
+			return
+		}
 	}
 }

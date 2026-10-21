@@ -2,6 +2,7 @@ package watch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -128,35 +129,50 @@ func (s *server) streamFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	level := flowLevel(r.URL.Query().Get("level"))
 	st := s.startStream(w)
+	var last *flowPageData
 	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, string, error) {
-		events, kind, err := s.flowEvents(v, id)
+		p, end, err := s.flowState(r, v, id, level)
 		if err != nil {
+			// A record caught mid-write reads as broken for one poll: keep the last good tree.
+			if last != nil && !errors.Is(err, os.ErrNotExist) {
+				return *last, "", nil
+			}
 			return nil, "", err
 		}
-		end := ""
-		if kind == "batch" {
-			res, err := batch.LoadResultFor(v, id)
-			if err != nil {
-				return nil, "", err
-			}
-			if at := batchStopped(res); !at.IsZero() {
-				end = "stopped"
-			} else if !batchUnfinished(res) {
-				end = "done"
-			}
-		} else {
-			rec, err := runlog.LoadFor(v, id)
-			if err != nil {
-				return nil, "", err
-			}
-			if rec.Done {
-				end = "done"
-			} else if at := runStopped(rec); !at.IsZero() {
-				end = "stopped"
-			}
-		}
-		return s.flowData(r, id, level, events, kind), end, nil
+		last = &p
+		return p, end, nil
 	}, "flowbody")
+}
+
+// flowState renders the flow and says whether its batch or run has ended.
+func (s *server) flowState(r *http.Request, v owner.Viewer, id, level string) (flowPageData, string, error) {
+	events, kind, err := s.flowEvents(v, id)
+	if err != nil {
+		return flowPageData{}, "", err
+	}
+	end := ""
+	if kind == "batch" {
+		res, err := batch.LoadResultFor(v, id)
+		if err != nil {
+			return flowPageData{}, "", err
+		}
+		if at := batchStopped(res); !at.IsZero() {
+			end = "stopped"
+		} else if !batchUnfinished(res) {
+			end = "done"
+		}
+	} else {
+		rec, err := runlog.LoadFor(v, id)
+		if err != nil {
+			return flowPageData{}, "", err
+		}
+		if rec.Done {
+			end = "done"
+		} else if at := runStopped(rec); !at.IsZero() {
+			end = "stopped"
+		}
+	}
+	return s.flowData(r, id, level, events, kind), end, nil
 }
 
 func (s *server) cleanFlowEvent(e flow.Event) flow.Event {

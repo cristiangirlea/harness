@@ -486,7 +486,7 @@ func flowTool() mcp.Tool {
 			}
 			view, err := flowview.Load(owner.LocalViewer(), args.ID)
 			if err != nil {
-				if strings.Contains(err.Error(), "no run or batch") {
+				if errors.Is(err, flowview.ErrNotFound) {
 					return text("no run or batch "+args.ID, nil, true), nil
 				}
 				return mcp.CallResult{}, err

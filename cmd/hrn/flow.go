@@ -55,7 +55,7 @@ func cmdFlow(args []string) error {
 	}
 	view, err := flowview.Load(owner.LocalViewer(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "no run or batch") {
+		if errors.Is(err, flowview.ErrNotFound) {
 			return flowNotFound(id)
 		}
 		return err
