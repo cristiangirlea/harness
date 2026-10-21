@@ -88,3 +88,23 @@ func TestOldEvalRowsKeepTheirDenominators(t *testing.T) {
 		t.Errorf("unstarted-only pass rate = %v", rate)
 	}
 }
+
+func TestACellWhoseEarlierAttemptRanIsAFailureNotADidNotStart(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	spec := Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}, Matrix: []Variant{{Backend: "stub"}}}
+	var res batch.Result
+	if err := json.Unmarshal([]byte(`{"tasks":[
+		{"id":"e.task.stub.r1","status":"fail","attempts":[
+			{"result":{"status":"error","error":"tests failed","turns":3,"tool_calls":5}},
+			{"did_not_start":"launch refused","result":{"status":"error","error":"launch refused"}}]},
+		{"id":"e.task.stub.r2","status":"fail","attempts":[
+			{"did_not_start":"launch refused","result":{"status":"error","error":"launch refused"}},
+			{"did_not_start":"launch refused again","result":{"status":"error","error":"launch refused again"}}]}
+	]}`), &res); err != nil {
+		t.Fatal(err)
+	}
+	v := Summarize(spec, res, nil).Variants[0]
+	if v.DidNotStart != 1 || v.Attempts != 2 || v.PassRate() != 0 {
+		t.Fatalf("variant = %+v: a retry that did not start after a real failure must stay a failure", v)
+	}
+}

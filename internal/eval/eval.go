@@ -477,6 +477,16 @@ func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batc
 	return rec, res, runErr
 }
 
+// neverStarted is true only when no attempt reached the task: one that ran and failed is a real failure.
+func neverStarted(tr batch.TaskResult) bool {
+	for _, a := range tr.Attempts {
+		if a.DidNotStart == "" {
+			return false
+		}
+	}
+	return len(tr.Attempts) > 0
+}
+
 // Summarize scores a batch and judge verdicts by persisted cell ids.
 func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	type cell struct {
@@ -503,7 +513,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		if !ok {
 			continue
 		}
-		unstarted := len(tr.Attempts) > 0 && tr.Attempts[len(tr.Attempts)-1].DidNotStart != ""
+		unstarted := neverStarted(tr)
 		passed := tr.Status == batch.StatusPass && !unstarted
 		cells = append(cells, cell{task, variant, passed, tr, scores[tr.ID], !unstarted && !passed && !answerOnly[task] && neverActed(tr), unstarted})
 	}
