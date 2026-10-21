@@ -6,14 +6,18 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const vm = require('node:vm');
 
-function page(stored = {}) {
+function page(stored = {}, fetch = () => Promise.reject(new Error('offline'))) {
   const elements = new Map();
   const handlers = {};
   const element = (id) => {
     if (!elements.has(id)) elements.set(id, {
       id, hidden: false, disabled: false, textContent: '', value: '', children: [], dataset: {},
       classList: { add() {}, remove() {}, toggle() {} },
-      addEventListener() {}, querySelector() { return null; }, prepend() {}, append() {},
+      listeners: {},
+      addEventListener(type, fn) { this.listeners[type] = fn; },
+      querySelector() { return null; },
+      prepend(child) { this.children.unshift(child); },
+      append(child) { this.children.push(child); },
     });
     return elements.get(id);
   };
@@ -29,12 +33,13 @@ function page(stored = {}) {
     getItem: (k) => (storage.has(k) ? storage.get(k) : null),
     setItem: (k, v) => storage.set(k, String(v)),
   };
-  const sandbox = vm.createContext({ document, window: {}, localStorage, setInterval() {}, Date, JSON });
+  const sandbox = vm.createContext({ document, window: {}, localStorage, fetch, setInterval() {}, Date, JSON });
   vm.runInContext(readFileSync(join(__dirname, '../assets/bot.js'), 'utf8'), sandbox);
   return {
     hear: (...said) => handlers['hrn:heard']({ detail: said }),
     line: () => element('bot-line').textContent,
     snooze: () => JSON.parse(storage.get('hrn-bot:snooze') ?? '0'),
+    element,
   };
 }
 
@@ -45,6 +50,35 @@ test('"un mute" in two words unmutes rather than snoozing', () => {
     assert.equal(p.snooze(), 0, said);
     assert.equal(p.line(), "Right, I'll tell you again.", said);
   }
+});
+
+test('spoken and typed questions reply and link the recorded flow', async () => {
+  const calls = [];
+  const p = page({}, async (url) => {
+    calls.push(url);
+    return { ok: true, json: async () => ({ text: 'abc failed at gate go vet (exited 1).', ref: 'abc', url: '/flow/abc' }) };
+  });
+  p.hear('why did it fail');
+  await new Promise(setImmediate);
+  assert.equal(calls[0], '/bot/answer?q=why%20did%20it%20fail');
+  assert.match(p.line(), /abc failed/);
+  const link = p.element('bot-log').children[0].children[1];
+  assert.equal(link.href, '/flow/abc');
+  const input = p.element('bot-question');
+  input.value = 'what happens next';
+  input.listeners.keydown({ key: 'Enter', preventDefault() {} });
+  await new Promise(setImmediate);
+  assert.equal(calls[1], '/bot/answer?q=what%20happens%20next');
+  p.hear('what are you doing');
+  assert.equal(calls.length, 2);
+  assert.equal(p.line(), 'Nothing is running.');
+});
+
+test('an unavailable answer is reported without an unhandled rejection', async () => {
+  const p = page();
+  p.hear('why did it fail');
+  await new Promise(setImmediate);
+  assert.match(p.line(), /couldn.t read/);
 });
 
 test('"quiet until I un mute" still keeps her quiet', () => {

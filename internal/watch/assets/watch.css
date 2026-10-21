@@ -155,6 +155,7 @@ input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--link
 @media (prefers-reduced-motion: reduce) { .ada .lid, .ada .ada-head, .bot.talking .ada .jaw, .bot.talking .ada .led { animation: none; } }
 @media (max-width: 480px) { .bot-face { width: 96px; height: 96px; } }
 .bot-line { font-size: 1.05rem; margin: 4px 0 0; overflow-wrap: anywhere; }
+.bot-question input { display: block; box-sizing: border-box; width: 100%; max-width: 32rem; margin-top: 6px; padding: 6px 8px; font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
 .bot-buttons, .bot-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 14px 0 4px; }
 .bot-now, .bot-log { padding-left: 0; list-style: none; margin: 0; }
 .bot-now li { padding: 8px 0; border-bottom: 1px solid var(--rule); overflow-wrap: anywhere; }

@@ -256,6 +256,18 @@ mute") and "repeat". These
 steer the bot only; nothing it hears or shows acts on hrn, which waits for the
 confirmations and audit log of #38.
 
+Ask a question with Talk to me, or type it in the question box and press Enter:
+"why did it fail?", "what is it doing?" (or "where is it?"), "what happens next?"
+(or "what's next?"), "how long did it take?", and "what went wrong today?".
+Use a run or batch ID, or part of a task name, instead of "it" to select a record.
+Without a name, failure questions select the newest failed record, activity questions
+the newest running record, and next-step and duration questions the newest record.
+Today's failures are counted by their recorded ending time in the server's local day.
+Answers name the record and link to its execution flow in the log. They come only
+from recorded steps, causes, next actions and durations, using fixed keyword rules;
+Ada makes no model call and cannot explain anything hrn did not record. Answers
+use the same viewer permissions and secret masking as the flow pages.
+
 The sentences are made by hrn (`internal/watch/bot.go`, where they are tested) and pass
 through the same blanking of secret values as every page; the page only chooses which to
 say. She speaks with the browser's own speech synthesis, which needs one click on the page

@@ -241,6 +241,7 @@
 <label>Snooze <select id="bot-snooze"><option value="0">off</option><option value="15">15 minutes</option><option value="60">an hour</option><option value="-1">until I unmute</option></select></label>
 </p>
 <p id="bot-quiet" class="muted small" hidden></p>
+<p class="bot-question"><label for="bot-question">Ask about a run or batch</label> <input type="text" id="bot-question" placeholder="Why did it fail?" maxlength="500" autocomplete="off"></p>
 {{if .Local}}<p class="small"><a href="/voice">Record my voice</a>: the voice I will speak in, recorded and kept on this computer.</p>{{end}}
 </section>
 <div id="live" data-stream="/stream/bot" data-replace>{{template "botnow" .Now}}</div>

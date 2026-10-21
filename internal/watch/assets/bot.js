@@ -148,7 +148,7 @@
   ask.addEventListener('click', () => Notification.requestPermission().then(showNotify));
   showNotify();
   if (!window.isSecureContext) $('bot-net').hidden = false;
-  const safeURL = (u) => (/^\/(run|batch)\/[0-9a-f-]+$/.test(u || '') ? u : '');
+  const safeURL = (u) => (/^\/(run|batch|flow)\/[0-9a-f-]+$/.test(u || '') ? u : '');
   const notify = (m) => {
     if (!canNotify || Notification.permission !== 'granted') return;
     const n = new Notification('Ada', {
@@ -235,6 +235,18 @@
     [/\b(unmute|carry on|wake up|speak again|resume)\b/, () => { snooze(0); reply("Right, I'll tell you again."); }],
     [/\b(skip|stop|shush|enough)\b/, () => skip()],
     [/\b(repeat|again|what did you say)\b/, () => reply(lastSpoken || lastStatus)],
+    [/\b(why|what|where|how long)\b/, async (said) => {
+      try {
+        const response = await fetch('/bot/answer?q=' + encodeURIComponent(said), { mode: 'same-origin' });
+        if (!response.ok) throw new Error('answer unavailable');
+        const answer = await response.json();
+        if (!answer || typeof answer.text !== 'string') throw new Error('invalid answer');
+        show({ ...answer, kind: 'answer' });
+        reply(answer.text);
+      } catch (e) {
+        reply("I couldn't read hrn's recorded answer. Please try again.");
+      }
+    }],
   ];
   const act = (alternatives) => {
     for (const said of alternatives) {
@@ -251,6 +263,15 @@
   // tried without a microphone.
   document.addEventListener('hrn:heard', (e) => {
     if (Array.isArray(e.detail)) act(e.detail.map((s) => String(s).toLowerCase().replace(/\bun[\s-]+mute\b/g, 'unmute')));
+  });
+  const question = $('bot-question');
+  question.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    const text = question.value.trim();
+    if (!text) return;
+    act([text.toLowerCase()]);
+    question.value = '';
   });
   const Recogniser = window.SpeechRecognition || window.webkitSpeechRecognition;
   const listen = $('bot-listen');
