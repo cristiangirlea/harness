@@ -12,6 +12,12 @@ reason; the task fails with that reason without retrying. Older gate records
 without the field still load. See [Batches](batches.md) for the launcher errors
 that count as infrastructure failures.
 
+A batch attempt carries `did_not_start` when a backend or gate could not start
+before any turn or tool call. Its value is the first line of the recorded error;
+it is omitted otherwise. Older attempts without the field keep their previous
+classification. Eval variant and task rows count these cells in the optional
+`did_not_start` integer, separately from `did_not_act`.
+
 A batch attempt with `protect` globs carries an optional `protected` list: the
 protected files it changed or removed against the batch's base, as slash paths.
 Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`, marked

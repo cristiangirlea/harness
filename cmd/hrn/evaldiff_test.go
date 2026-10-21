@@ -358,6 +358,36 @@ func TestTheEvalTablesSayWhichCellsNeverActedAndToRerunThem(t *testing.T) {
 	}
 }
 
+func TestEvalTablesAndDiffCountCellsThatDidNotStart(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	a, b := diffPair()
+	b.Table.Variants[0] = eval.VariantRow{Name: "sonnet", Attempts: 4, Passed: 1, DidNotAct: 1, DidNotStart: 1}
+	b.Table.Tasks = []eval.TaskRow{{Task: "task", Variant: "sonnet", Total: 4, Passed: 1, DidNotAct: 1, DidNotStart: 1}}
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEval(r, b)
+	for _, want := range []string{"50%", "1 did not act", "1 did not start", "1/2 +1 did not act +1 did not start"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("table missing %q:\n%s", want, buf.String())
+		}
+	}
+	buf.Reset()
+	printEvalDiff(r, eval.Compare(a, b))
+	if out := buf.String(); !strings.Contains(out, "1 cell of sonnet in "+b.ID+" did not start") || !strings.Contains(out, "1/2 +1 did not act +1 did not start") {
+		t.Errorf("diff lost did-not-start counts:\n%s", out)
+	}
+	b.Table.Variants = b.Table.Variants[:1]
+	savedEval(t, b)
+	buf.Reset()
+	if err := listEvals(&buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "50%") {
+		t.Errorf("list must exclude unstarted cells:\n%s", out)
+	}
+}
+
 func TestTheEvalTableCountsCellsThatCommittedOnTheirOwn(t *testing.T) {
 	_, b := diffPair()
 	b.Table.Variants[0].AgentCommitted = 1

@@ -157,7 +157,7 @@ func FlowOf(res Result, runs map[string]runlog.Record) []flow.Event {
 			st := attemptStatus(a)
 			if st.Done() {
 				out = append(out, at(flow.Event{Time: end, Step: as, Kind: flow.KindAttempt, Status: st,
-					Text: strings.TrimSpace(firstLineOf(a.Result.Error) + " " + firstLineOf(a.Error))}))
+					Reason: attemptEndReason(a), Text: strings.TrimSpace(firstLineOf(a.Result.Error) + " " + firstLineOf(a.Error))}))
 			}
 		}
 		if st := taskStatus(t.Status); st.Done() {
@@ -219,6 +219,9 @@ func attemptReason(atts []Attempt, i int) string {
 }
 
 func attemptStatus(a Attempt) flow.Status {
+	if a.DidNotStart != "" {
+		return flow.StatusFailed
+	}
 	switch a.Result.Status {
 	case "":
 		return flow.StatusStarted
@@ -234,6 +237,13 @@ func attemptStatus(a Attempt) flow.Status {
 		}
 	}
 	return flow.StatusOK
+}
+
+func attemptEndReason(a Attempt) string {
+	if a.DidNotStart != "" {
+		return "backend did not start: " + a.DidNotStart
+	}
+	return ""
 }
 
 func taskStatus(s Status) flow.Status {

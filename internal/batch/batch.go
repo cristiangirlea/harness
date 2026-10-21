@@ -130,11 +130,12 @@ type TaskResult struct {
 }
 
 type Attempt struct {
-	Backend string       `json:"backend"`
-	RunID   string       `json:"run_id,omitempty"`
-	Result  agent.Result `json:"result"`
-	Gates   []GateResult `json:"gates,omitempty"`
-	Error   string       `json:"error,omitempty"`
+	Backend     string       `json:"backend"`
+	RunID       string       `json:"run_id,omitempty"`
+	Result      agent.Result `json:"result"`
+	Gates       []GateResult `json:"gates,omitempty"`
+	Error       string       `json:"error,omitempty"`
+	DidNotStart string       `json:"did_not_start,omitempty"`
 	// Prompt includes prior failures; Continued preserves work.
 	Prompt    string `json:"prompt,omitempty"`
 	Continued bool   `json:"continued,omitempty"`
@@ -1220,6 +1221,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			notify(Event{Task: id, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
 		}
 	})
+	att.DidNotStart = startFailure(att)
 	if after, err := gitTips(task.Dir, plan.branch); beforeErr == nil && err == nil && before != "" && after != before {
 		att.AgentCommitted = true
 	}
@@ -1279,6 +1281,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
 			stop()
 			att.Gates = append(att.Gates, gr)
+			att.DidNotStart = startFailure(att)
 			fw.Emit(gateEvent(id, plan.number, gateN, as, gr))
 			report(att)
 			if gr.ExitCode != 0 {
@@ -1295,7 +1298,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	if note != "" {
 		// No retry may remove or reuse the worktree holding the work.
 		att.Error = strings.TrimSpace(att.Error + "\n" + note)
-		fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Text: firstLineOf(note)})
+		fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Reason: attemptEndReason(att), Text: firstLineOf(note)})
 		return attemptOutcome{att: att}, fmt.Errorf("%s (%s)", note, task.Dir)
 	}
 	if sha == "" && commitErr == nil {
@@ -1306,14 +1309,29 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 	if commitErr != nil {
 		att.Error = strings.TrimSpace(att.Error + "\ncommit: " + commitErr.Error())
-		fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Text: firstLineOf(commitErr.Error())})
+		fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Reason: attemptEndReason(att), Text: firstLineOf(commitErr.Error())})
 		return attemptOutcome{att: att}, fmt.Errorf("commit failed, changes are uncommitted in %s: %v", task.Dir, commitErr)
 	}
 	if sha != "" || note != "" {
 		fw.Emit(flow.Event{Step: as + "/commit", Parent: as, Kind: flow.KindCommit, Task: id, Attempt: plan.number, Status: flow.StatusOK, Text: firstOf(sha, note)})
 	}
-	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: attemptStatus(att), Text: firstLineOf(att.Result.Error)})
+	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: attemptStatus(att), Reason: attemptEndReason(att), Text: firstLineOf(att.Result.Error)})
 	return attemptOutcome{att: att, commit: sha, pass: pass}, nil
+}
+
+func startFailure(a Attempt) string {
+	if a.Result.Turns != 0 || a.Result.ToolCalls != 0 {
+		return ""
+	}
+	if a.Result.Status == agent.StatusError && a.Result.Error != "" {
+		return strings.TrimSpace(firstLineOf(a.Result.Error))
+	}
+	for _, g := range a.Gates {
+		if g.InfrastructureError != "" {
+			return strings.TrimSpace(firstLineOf(g.InfrastructureError))
+		}
+	}
+	return ""
 }
 
 func gateEvent(id string, attempt, gate int, parent string, gr GateResult) flow.Event {
