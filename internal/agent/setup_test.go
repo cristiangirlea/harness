@@ -85,7 +85,7 @@ func TestSetupDigestIsStableForTheSameSetup(t *testing.T) {
 func TestSetupRecordsWhatClaudeLoadsAsHashesOnly(t *testing.T) {
 	home := isolateSetupHome(t)
 	writeTree(t, filepath.Join(home, ".claude"), map[string]string{
-		"CLAUDE.md":                  "Owner rules.\n",
+		"CLAUDE.md":                  "Repo rules.\n",
 		"rules/guard.md":             "Guard rails.\n",
 		"skills/deliver/SKILL.md":    "---\nname: deliver\n---\n",
 		"settings.json":              `{"enabledPlugins": {"pr@tools": true}}`,
@@ -115,7 +115,7 @@ func TestSetupRecordsWhatClaudeLoadsAsHashesOnly(t *testing.T) {
 		t.Errorf("mcp = %v", s.MCP)
 	}
 	data, _ := json.Marshal(s)
-	for _, text := range []string{"Claude lines", "Owner rules", "Tests first", "docs-server"} {
+	for _, text := range []string{"Claude lines", "Repo rules", "Tests first", "docs-server"} {
 		if strings.Contains(string(data), text) {
 			t.Errorf("the setup record holds file contents (%q): %s", text, data)
 		}
@@ -253,14 +253,14 @@ func TestSetupOfClaudeIncludesTheCLAUDEFilesInTheFoldersAbove(t *testing.T) {
 	isolateSetupHome(t)
 	repo := t.TempDir()
 	ws := filepath.Join(repo, ".hrn", "worktrees", "t1")
-	writeTree(t, repo, map[string]string{"CLAUDE.md": "main checkout\n", "CLAUDE.local.md": "owner notes\n", ".hrn/worktrees/t1/CLAUDE.md": "tracked\n"})
+	writeTree(t, repo, map[string]string{"CLAUDE.md": "main checkout\n", "CLAUDE.local.md": "local notes\n", ".hrn/worktrees/t1/CLAUDE.md": "tracked\n"})
 	s := ResolveSetup("claude", Task{Dir: ws})
 	for _, key := range []string{"CLAUDE.md", "../../../CLAUDE.md", "../../../CLAUDE.local.md"} {
 		if s.Files[key] == "" {
 			t.Errorf("%s not recorded: %v", key, s.Files)
 		}
 	}
-	writeTree(t, repo, map[string]string{"CLAUDE.local.md": "owner notes, edited\n"})
+	writeTree(t, repo, map[string]string{"CLAUDE.local.md": "local notes, edited\n"})
 	if again := ResolveSetup("claude", Task{Dir: ws}); again.BaseDigest == s.BaseDigest {
 		t.Fatalf("an edit to a CLAUDE.local.md above the workspace left the digest as it was")
 	}

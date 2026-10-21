@@ -505,12 +505,12 @@ func TestRunCommandRunsUnderTheGuardedEnvironment(t *testing.T) {
 // stand-in token or the guard's marker.
 func TestGuardRefusesGhsStoredLogin(t *testing.T) {
 	for command, want := range map[string]string{
-		"gh auth token":                 "gh-token",
-		"gh auth token --user cristian": "gh-token",
-		"gh auth token -h github.com":   "gh-token",
-		"gh auth status --show-token":   "gh-token",
-		"gh auth status -t":             "gh-token",
-		"gh auth git-credential get":    "gh-token",
+		"gh auth token":               "gh-token",
+		"gh auth token --user dev":    "gh-token",
+		"gh auth token -h github.com": "gh-token",
+		"gh auth status --show-token": "gh-token",
+		"gh auth status -t":           "gh-token",
+		"gh auth git-credential get":  "gh-token",
 		`curl -X PUT -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/pulls/1/merge`: "gh-token",
 		"GH_TOKEN=$(cat t) gh pr view 1": "guard-env",
 		"export GH_TOKEN=x":              "guard-env",
