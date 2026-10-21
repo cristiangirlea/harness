@@ -145,6 +145,19 @@ jobs:
         shell: bash
         run: test -z "$(gofmt -l .)"
 
+  privacy:
+    # No personal folders, local work paths or narration of a person in tracked files. It runs
+    # on every change, Markdown-only ones included, since that is where such text comes back.
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -count=1 ./scripts/privacy-check
+      - run: bash scripts/privacy-check.sh
+
   server-unit:
     needs: changes
     if: ${{ github.event.repository.private == false && needs.changes.outputs.code == 'true' }}

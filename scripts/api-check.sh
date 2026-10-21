@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # name: api-check
-# summary: Exercise real API runs, continuation and context editing at the owner's expense.
+# summary: Exercise real API runs, continuation and context editing; spends real money.
 # effects: read, write-workspace, exec, network
 # parameters: SMALL_MODEL:string=claude-haiku-4-5; MODEL:string=claude-sonnet-5; MAX_COST:number=1; ANTHROPIC_API_KEY:secret=optional; ANTHROPIC_AUTH_TOKEN:secret=optional
 # example: none (spends money)
