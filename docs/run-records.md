@@ -170,7 +170,7 @@ an ordinary follow-up, and old records without it still load.
   the original is unavailable, and saves no incomplete original.
   Capturing and shaping one output just under that ceiling peaks at about 75–90 MiB of
   heap beyond the input itself, with 270 MB allocated in total (`go test -bench
-  NearCeiling ./internal/tools`, which reports `peak-heap-MiB`; Go 1.26, Ryzen 9 9950X).
+  NearCeiling ./internal/tools`, which reports `peak-heap-MiB`; Go 1.26, a 16-core desktop).
 - `retrieval.json` — the opt-in packet, scope and version pin, saved before a backend
   starts. An unfinished run keeps this pin; a continuation checks it against the
   conversation before reuse.

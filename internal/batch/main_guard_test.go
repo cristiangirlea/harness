@@ -18,7 +18,7 @@ func TestMain(m *testing.M) {
 	helper := slices.ContainsFunc(os.Args, func(a string) bool { return strings.HasPrefix(a, "-test.run=^TestHelper") })
 	if !helper {
 		os.Unsetenv(tools.GuardedVar)
-		// A temporary HRN_HOME, so no test reads the owner's records or
+		// A temporary HRN_HOME, so no test reads the user's records or
 		// backends.json (#379); a test may still set its own with t.Setenv.
 		home, err := os.MkdirTemp("", "hrn-test-home-")
 		if err != nil {
@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// The tests never read or write the owner's ~/.hrn: backends.json there could
+// The tests never read or write the real ~/.hrn: backends.json there could
 // disable the backend a test names (#379).
 func TestTheTestsRunAgainstATemporaryHRNHome(t *testing.T) {
 	home := os.Getenv("HRN_HOME")

@@ -5,26 +5,26 @@ import "testing"
 var testSystem = []string{`C:\Windows\System32`, `C:\Program Files`, `C:\Program Files (x86)`, "/usr/bin", "/bin", "/usr/local/bin"}
 
 func TestPathsInAWindowsRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *testing.T) {
-	sh := newShortener(`E:\__Workdir\personal\ada-os-ipc`, `C:\Users\crist`, testSystem)
+	sh := newShortener(`D:\src\demo-app`, `C:\Users\dev`, testSystem)
 	for _, tc := range []struct{ in, want string }{
-		{`codex.exe exec --json --skip-git-repo-check -C E:\__Workdir\personal\ada-os-ipc -c model_reasoning_effort=high --sandbox workspace-write`,
+		{`codex.exe exec --json --skip-git-repo-check -C D:\src\demo-app -c model_reasoning_effort=high --sandbox workspace-write`,
 			`codex.exe exec --json --skip-git-repo-check -C . -c model_reasoning_effort=high --sandbox workspace-write`},
-		{`E:\__Workdir\personal\ada-os-ipc`, `.`},
-		{`E:\__Workdir\personal\ada-os-ipc\`, `.\`},
-		{`E:\__Workdir\personal\ada-os-ipc\src\main.go:12`, `.\src\main.go:12`},
-		{`e:/__workdir/Personal/ADA-os-ipc/src/main.go`, `./src/main.go`},
-		{`cd 'E:\__Workdir\personal\ada-os-ipc'; ls`, `cd '.'; ls`},
-		{`{"file_path":"E:\\__Workdir\\personal\\ada-os-ipc\\src\\a.go"}`, `{"file_path":".\\src\\a.go"}`},
-		{`{"cwd":"E:\\__Workdir\\personal\\ada-os-ipc"}`, `{"cwd":"."}`},
+		{`D:\src\demo-app`, `.`},
+		{`D:\src\demo-app\`, `.\`},
+		{`D:\src\demo-app\src\main.go:12`, `.\src\main.go:12`},
+		{`d:/SRC/Demo-APP/src/main.go`, `./src/main.go`},
+		{`cd 'D:\src\demo-app'; ls`, `cd '.'; ls`},
+		{`{"file_path":"D:\\src\\demo-app\\src\\a.go"}`, `{"file_path":".\\src\\a.go"}`},
+		{`{"cwd":"D:\\src\\demo-app"}`, `{"cwd":"."}`},
 		// Only at a path boundary.
-		{`E:\__Workdir\personal\ada-os-ipc-old\x`, `E:\__Workdir\personal\ada-os-ipc-old\x`},
-		{`E:\__Workdir\personal\ada-os-ipc2`, `E:\__Workdir\personal\ada-os-ipc2`},
-		{`E:\__Workdir\personal\ada-os-ipc.bak`, `E:\__Workdir\personal\ada-os-ipc.bak`},
-		{`D:\copy\E:\__Workdir\personal\ada-os-ipc`, `D:\copy\E:\__Workdir\personal\ada-os-ipc`},
+		{`D:\src\demo-app-old\x`, `D:\src\demo-app-old\x`},
+		{`D:\src\demo-app2`, `D:\src\demo-app2`},
+		{`D:\src\demo-app.bak`, `D:\src\demo-app.bak`},
+		{`E:\copy\D:\src\demo-app`, `E:\copy\D:\src\demo-app`},
 		// The home folder.
-		{`C:\Users\crist\.codex\config.toml`, `~\.codex\config.toml`},
-		{`c:/users/CRIST/.claude`, `~/.claude`},
-		{`C:\Users\crist2\x`, `C:\Users\crist2\x`},
+		{`C:\Users\dev\.codex\config.toml`, `~\.codex\config.toml`},
+		{`c:/users/DEV/.claude`, `~/.claude`},
+		{`C:\Users\dev2\x`, `C:\Users\dev2\x`},
 		// Programs in system folders, quoted, JSON-escaped or bare.
 		{`shell "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-ChildItem'`,
 			`shell "powershell.exe" -Command 'Get-ChildItem'`},
@@ -95,11 +95,11 @@ func TestPathsInAUnixRunAreShortenedToTheWorkspaceHomeAndProgramNames(t *testing
 }
 
 func TestAWorkspaceInsideHomeIsShortenedAsTheWorkspace(t *testing.T) {
-	sh := newShortener(`C:\Users\crist\src\app`, `C:\Users\crist`, nil)
+	sh := newShortener(`C:\Users\dev\src\app`, `C:\Users\dev`, nil)
 	for in, want := range map[string]string{
-		`C:\Users\crist\src\app\main.go`: `.\main.go`,
-		`C:\Users\crist\src\app`:         `.`,
-		`C:\Users\crist\src\other`:       `~\src\other`,
+		`C:\Users\dev\src\app\main.go`: `.\main.go`,
+		`C:\Users\dev\src\app`:         `.`,
+		`C:\Users\dev\src\other`:       `~\src\other`,
 	} {
 		if got := sh.shorten(in); got != want {
 			t.Errorf("shorten(%q) = %q, want %q", in, got, want)

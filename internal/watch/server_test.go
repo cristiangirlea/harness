@@ -942,15 +942,15 @@ func TestTheRunPageStreamsOnlyWhatItDidNotShow(t *testing.T) {
 // --lan=NAME serves one network: the adapter named (any case) or the address
 // given. A name that matches nothing says which there are.
 func TestLanCanBeNarrowedToOneAdapter(t *testing.T) {
-	all := []lanAddr{{"192.168.1.218", "Ethernet 3"}, {"172.22.176.1", "vEthernet (WSL)"}, {"192.168.28.1", "VMware Network Adapter VMnet1"}}
+	all := []lanAddr{{"192.168.1.40", "Ethernet"}, {"172.20.0.1", "vEthernet (WSL)"}, {"192.168.56.1", "VMware Network Adapter VMnet8"}}
 	for _, tc := range []struct {
 		only string
 		want string
 	}{
-		{"", "192.168.1.218,172.22.176.1,192.168.28.1"},
-		{"Ethernet 3", "192.168.1.218"},
-		{"ethernet 3", "192.168.1.218"},
-		{"172.22.176.1", "172.22.176.1"},
+		{"", "192.168.1.40,172.20.0.1,192.168.56.1"},
+		{"Ethernet", "192.168.1.40"},
+		{"ethernet", "192.168.1.40"},
+		{"172.20.0.1", "172.20.0.1"},
 	} {
 		got, err := pickLAN(all, tc.only)
 		var ips []string
@@ -962,7 +962,7 @@ func TestLanCanBeNarrowedToOneAdapter(t *testing.T) {
 		}
 	}
 	_, err := pickLAN(all, "Wi-Fi")
-	if err == nil || !strings.Contains(err.Error(), "Ethernet 3 (192.168.1.218)") {
+	if err == nil || !strings.Contains(err.Error(), "Ethernet (192.168.1.40)") {
 		t.Errorf("an unknown adapter: %v; want the ones there are", err)
 	}
 }
@@ -1180,7 +1180,7 @@ func TestTheIndexLeadsEachRunWithItsRepositoryAndTask(t *testing.T) {
 			Attempts: []batch.Attempt{{Backend: "fake", RunID: runs[id], Result: agent.Result{Status: agent.StatusOK}}}})
 	}
 	saveBatch(t, batch.Result{ID: "20261012-150000-abcdef", Started: time.Now(), Dir: "/home/me/myrepo", Duration: time.Minute, Tasks: tasks})
-	plain, backslash, noDir := newRun("/src/harness", "a run on its own "+hostile), newRun(`C:\src\tidedesk\`, "on Windows"), newRun("", "no workspace")
+	plain, backslash, noDir := newRun("/src/harness", "a run on its own "+hostile), newRun(`C:\src\notes-app\`, "on Windows"), newRun("", "no workspace")
 	marked := newRun("/src/<b>bold<i>", "a folder named with markup")
 
 	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
@@ -1202,7 +1202,7 @@ func TestTheIndexLeadsEachRunWithItsRepositoryAndTask(t *testing.T) {
 				t.Errorf("%s: task %s's run does not keep its id in the row:\n%s", where, id, row)
 			}
 		}
-		for run, label := range map[string]string{plain: "harness", backslash: "tidedesk"} {
+		for run, label := range map[string]string{plain: "harness", backslash: "notes-app"} {
 			row := runRowOf(t, html, run)
 			if !strings.Contains(row, `">`+label+`</a><span class="row-id">`+run+`</span>`) {
 				t.Errorf("%s: a run no batch started does not lead with its repository %q alone:\n%s", where, label, row)
@@ -1238,7 +1238,7 @@ func TestTheBatchesTableLeadsWithTheRepositoryAndNamesTheTasks(t *testing.T) {
 		return ts
 	}
 	start := time.Now()
-	saveBatch(t, batch.Result{ID: five, Started: start, Dir: `C:\src\tidedesk`, Duration: time.Minute, Tasks: tasksNamed("91-login", "92-logout", "t3", "94-billing", "95-export")})
+	saveBatch(t, batch.Result{ID: five, Started: start, Dir: `C:\src\notes-app`, Duration: time.Minute, Tasks: tasksNamed("91-login", "92-logout", "t3", "94-billing", "95-export")})
 	saveBatch(t, batch.Result{ID: three, Started: start.Add(-time.Hour), Dir: "/home/me/harness", Duration: time.Minute, Tasks: tasksNamed("a", "b", "c")})
 	saveBatch(t, batch.Result{ID: noDir, Started: start.Add(-2 * time.Hour), Duration: time.Minute, Tasks: tasksNamed("only")})
 
@@ -1254,7 +1254,7 @@ func TestTheBatchesTableLeadsWithTheRepositoryAndNamesTheTasks(t *testing.T) {
 			t.Errorf("%s: the batches table's last column is not Tasks", where)
 		}
 		row := batchRowOf(t, html, five)
-		for _, want := range []string{`">tidedesk</a><span class="row-id">` + five + `</span>`, "91-login, 92-logout, shared opening and 2 more"} {
+		for _, want := range []string{`">notes-app</a><span class="row-id">` + five + `</span>`, "91-login, 92-logout, shared opening and 2 more"} {
 			if !strings.Contains(row, want) {
 				t.Errorf("%s: the batch of five lacks %q:\n%s", where, want, row)
 			}
@@ -1456,7 +1456,7 @@ func jsonPath(p string) string {
 
 func TestTheRunPageNamesItsWorkspaceAndShortensItsPaths(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
+	ws := filepath.Join(t.TempDir(), "demo-app")
 	readme := filepath.Join(ws, "README.md")
 	short := "." + string(filepath.Separator) + "README.md"
 	w, err := runlog.Create("fake", agent.Task{Prompt: "fix " + readme, Dir: ws})
@@ -1477,21 +1477,21 @@ func TestTheRunPageNamesItsWorkspaceAndShortensItsPaths(t *testing.T) {
 			t.Errorf("the phone's run page holds %q", bad)
 		}
 	}
-	for _, want := range []string{"<dd>ada-os-ipc</dd>", "codex exec -C . --json", "fix " + short, "read " + short, "changed " + short} {
+	for _, want := range []string{"<dd>demo-app</dd>", "codex exec -C . --json", "fix " + short, "read " + short, "changed " + short} {
 		if !strings.Contains(phone, want) {
 			t.Errorf("the phone's run page lacks %q", want)
 		}
 	}
 
 	local := viewAs(t, h, "/run/"+w.ID(), "127.0.0.1:5000")
-	if !strings.Contains(local, `<dd title="`+ws+`">ada-os-ipc</dd>`) || strings.Count(local, ws) != 1 {
+	if !strings.Contains(local, `<dd title="`+ws+`">demo-app</dd>`) || strings.Count(local, ws) != 1 {
 		t.Errorf("this computer should see the full workspace once, as the name's title; it is there %d times", strings.Count(local, ws))
 	}
 }
 
 func TestTheUsageChartShowsShortenedPathsOnTheRunPageAndInItsStream(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
+	ws := filepath.Join(t.TempDir(), "demo-app")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
@@ -1556,7 +1556,7 @@ func TestTheUsageChartShowsShortenedPathsOnTheRunPageAndInItsStream(t *testing.T
 
 func TestTheRunStreamShortensItsPaths(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
+	ws := filepath.Join(t.TempDir(), "demo-app")
 	w, err := runlog.Create("fake", agent.Task{Prompt: "p", Dir: ws})
 	if err != nil {
 		t.Fatal(err)
@@ -1582,7 +1582,7 @@ func TestTheRunStreamShortensItsPaths(t *testing.T) {
 
 func TestTheBatchPageNamesItsRepositoryAndShortensItsPaths(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	repo := filepath.Join(t.TempDir(), "ada-os-ipc")
+	repo := filepath.Join(t.TempDir(), "demo-app")
 	wt := filepath.Join(repo, ".hrn", "worktrees", "t1")
 	sep := string(filepath.Separator)
 	res := batch.Result{ID: "20261010-120000-abcdef", Started: time.Now().Add(-time.Minute), Duration: time.Minute, Dir: repo, Parallel: 1,
@@ -1598,7 +1598,7 @@ func TestTheBatchPageNamesItsRepositoryAndShortensItsPaths(t *testing.T) {
 			t.Errorf("the phone's batch page holds %q", bad)
 		}
 	}
-	for _, want := range []string{"<dd>ada-os-ipc</dd>", "<dd>." + sep + filepath.Join(".hrn", "worktrees", "t1") + "</dd>",
+	for _, want := range []string{"<dd>demo-app</dd>", "<dd>." + sep + filepath.Join(".hrn", "worktrees", "t1") + "</dd>",
 		"edit ." + sep + "a.go", "go vet ./...", "." + sep + "a.go:3: bad"} {
 		if !strings.Contains(phone, want) {
 			t.Errorf("the phone's batch page lacks %q", want)
@@ -1606,7 +1606,7 @@ func TestTheBatchPageNamesItsRepositoryAndShortensItsPaths(t *testing.T) {
 	}
 
 	local := viewAs(t, h, "/batch/"+res.ID, "127.0.0.1:5000")
-	for _, want := range []string{`<dd title="` + repo + `">ada-os-ipc</dd>`, `<dd title="` + wt + `">.`} {
+	for _, want := range []string{`<dd title="` + repo + `">demo-app</dd>`, `<dd title="` + wt + `">.`} {
 		if !strings.Contains(local, want) {
 			t.Errorf("this computer's batch page lacks %q", want)
 		}
@@ -1621,7 +1621,7 @@ func TestTheIndexShortensThePathsInItsRowsForEveryViewer(t *testing.T) {
 	const key = "sk-ant-api03-test-0123456789abcdefXYZ"
 	t.Setenv("ANTHROPIC_API_KEY", key)
 	sep := string(filepath.Separator)
-	ws := filepath.Join(t.TempDir(), "ada-os-ipc")
+	ws := filepath.Join(t.TempDir(), "demo-app")
 	w, err := runlog.Create("fake", agent.Task{Prompt: "fix " + filepath.Join(ws, "README.md") + " with " + filepath.Join(ws, key), Dir: ws})
 	if err != nil {
 		t.Fatal(err)
@@ -1688,7 +1688,7 @@ func TestTheIndexClassifiesThePromptAsRecordedNotAsShortened(t *testing.T) {
 
 func TestTheBatchStreamShortensItsPaths(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	repo := filepath.Join(t.TempDir(), "ada-os-ipc")
+	repo := filepath.Join(t.TempDir(), "demo-app")
 	wt := filepath.Join(repo, ".hrn", "worktrees", "t1")
 	sep := string(filepath.Separator)
 	res := batch.Result{ID: "20261010-120000-abcdef", Started: time.Now().Add(-time.Minute), Duration: time.Minute, Dir: repo, Parallel: 1,

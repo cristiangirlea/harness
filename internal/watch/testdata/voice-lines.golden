@@ -1,517 +1,517 @@
 1|Good morning. The kettle's on, and the post has just arrived.
 2|Claude has started in harness: add the budget guard.
 3|Claude is editing bot.go in harness.
-4|Task two of four in tidedesk passed: fix the flaky test.
+4|Task two of four in demo-api passed: fix the flaky test.
 5|I'll tell you as soon as the build has finished.
 6|Claude has finished in harness. It took four minutes.
-7|The batch in tidedesk is done: three of four tasks passed. It took twelve minutes.
-8|Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in tidedesk.
+7|The batch in demo-api is done: three of four tasks passed. It took twelve minutes.
+8|Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in demo-api.
 9|The lorry turned left at the roundabout and stopped by the bakery.
-10|Claude has started in tidedesk: add the budget guard.
-11|Codex has started in infra: fix the flaky clipboard test.
+10|Claude has started in demo-api: add the budget guard.
+11|Codex has started in notes-app: fix the flaky upload test.
 12|Gemini has started in harness: translate the settings page.
 13|She measured the garden twice before ordering the new fence.
-14|OpenCode has started in website: name a batch's runs by their task.
-15|The API loop has started in commercial: record Ada's voice.
-16|Claude has started in jobpilot: check the licence on startup.
+14|OpenCode has started in docs-site: name a batch's runs by their task.
+15|The API loop has started in data-pipeline: record Ada's voice.
+16|Claude has started in web-shop: check the config on startup.
 17|Could you pass me the blue notebook on the kitchen table?
-18|Codex has started in rendezvous: speed up the screen capture.
-19|Gemini has started in tidedesk: add a dark theme to the website.
-20|OpenCode has started in infra: move the gates to bash.
+18|Codex has started in cli-tool: speed up the search page.
+19|Gemini has started in demo-api: add a dark theme to the docs.
+20|OpenCode has started in notes-app: move the gates to bash.
 21|It rained all through the autumn, so the river was high in November.
 22|The API loop has started in harness: review the security findings.
-23|Claude has started in website: pin the base images.
-24|Codex has started in commercial: look up the employer links.
+23|Claude has started in docs-site: pin the base images.
+24|Codex has started in data-pipeline: look up the broken links.
 25|Three thousand, four hundred and twelve tests passed this afternoon.
-26|Gemini has started in jobpilot: write the release notes.
-27|OpenCode has started in rendezvous: tidy the README.
-28|The API loop has started in tidedesk: split the rendezvous service.
+26|Gemini has started in web-shop: write the release notes.
+27|OpenCode has started in cli-tool: tidy the README.
+28|The API loop has started in demo-api: split the billing service.
 29|Whether or not it works, we'll know by half past six.
-30|Claude has started in infra: show the cost on the watch page.
+30|Claude has started in notes-app: show the cost on the watch page.
 31|Codex has started in harness: retry a failed gate once.
-32|Gemini has started in website: map the whole workflow.
+32|Gemini has started in docs-site: map the whole workflow.
 33|The thrush sang loudly on the thatched roof at dawn.
-34|OpenCode has started in commercial: test the keyboard switch.
-35|The API loop has started in jobpilot: add German questions.
-36|Claude has started in rendezvous: catch a batch mid-save.
+34|OpenCode has started in data-pipeline: test the login form.
+35|The API loop has started in web-shop: add German translations.
+36|Claude has started in cli-tool: catch a batch mid-save.
 37|He thought the theatre was through the archway on the left.
-38|Codex has started in tidedesk: warn before the disk fills up.
-39|Gemini has started in infra: teach Ada to listen.
+38|Codex has started in demo-api: warn before the disk fills up.
+39|Gemini has started in notes-app: teach Ada to listen.
 40|OpenCode has started in harness: make the phone page faster.
 41|Please queue at the second window, behind the yellow line.
-42|The API loop has started in website: add the budget guard.
-43|Claude has started in commercial: fix the flaky clipboard test.
-44|Codex has started in jobpilot: translate the settings page.
+42|The API loop has started in docs-site: add the budget guard.
+43|Claude has started in data-pipeline: fix the flaky upload test.
+44|Codex has started in web-shop: translate the settings page.
 45|A fortnight's holiday in Cornwall sounds rather lovely.
-46|Gemini has started in rendezvous: name a batch's runs by their task.
-47|OpenCode has started in tidedesk: record Ada's voice.
-48|The API loop has started in infra: check the licence on startup.
+46|Gemini has started in cli-tool: name a batch's runs by their task.
+47|OpenCode has started in demo-api: record Ada's voice.
+48|The API loop has started in notes-app: check the config on startup.
 49|Is anything still running, or can I switch off for the night?
-50|Claude has started in harness: speed up the screen capture.
-51|Codex has started in website: add a dark theme to the website.
-52|Gemini has started in commercial: move the gates to bash.
+50|Claude has started in harness: speed up the search page.
+51|Codex has started in docs-site: add a dark theme to the docs.
+52|Gemini has started in data-pipeline: move the gates to bash.
 53|Brilliant! That's exactly what we hoped for.
-54|OpenCode has started in jobpilot: review the security findings.
-55|The API loop has started in rendezvous: pin the base images.
-56|Claude has started in tidedesk: look up the employer links.
+54|OpenCode has started in web-shop: review the security findings.
+55|The API loop has started in cli-tool: pin the base images.
+56|Claude has started in demo-api: look up the broken links.
 57|Oh dear, the gate failed again on the same test.
-58|Codex has started in infra: write the release notes.
+58|Codex has started in notes-app: write the release notes.
 59|Gemini has started in harness: tidy the README.
-60|OpenCode has started in website: split the rendezvous service.
+60|OpenCode has started in docs-site: split the billing service.
 61|The sixth strength of the bridge was tested with heavy weights.
-62|The API loop has started in commercial: show the cost on the watch page.
-63|Claude has started in jobpilot: retry a failed gate once.
-64|Codex has started in rendezvous: map the whole workflow.
+62|The API loop has started in data-pipeline: show the cost on the watch page.
+63|Claude has started in web-shop: retry a failed gate once.
+64|Codex has started in cli-tool: map the whole workflow.
 65|Usually, the vision is clearer after a good night's sleep.
-66|Gemini has started in tidedesk: test the keyboard switch.
-67|OpenCode has started in infra: add German questions.
+66|Gemini has started in demo-api: test the login form.
+67|OpenCode has started in notes-app: add German translations.
 68|The API loop has started in harness: catch a batch mid-save.
 69|The treasure was hidden beneath the garage, in a leisure chest.
-70|Claude has started in website: warn before the disk fills up.
-71|Codex has started in commercial: teach Ada to listen.
-72|Gemini has started in jobpilot: make the phone page faster.
+70|Claude has started in docs-site: warn before the disk fills up.
+71|Codex has started in data-pipeline: teach Ada to listen.
+72|Gemini has started in web-shop: make the phone page faster.
 73|Judge the jam by its colour, not by the label on the jar.
-74|OpenCode has started in rendezvous: add the budget guard.
-75|The API loop has started in tidedesk: fix the flaky clipboard test.
-76|Claude has started in infra: translate the settings page.
+74|OpenCode has started in cli-tool: add the budget guard.
+75|The API loop has started in demo-api: fix the flaky upload test.
+76|Claude has started in notes-app: translate the settings page.
 77|Charlotte chose cheese and chutney for the church picnic.
 78|Codex has started in harness: name a batch's runs by their task.
-79|Gemini has started in website: record Ada's voice.
-80|OpenCode has started in commercial: check the licence on startup.
+79|Gemini has started in docs-site: record Ada's voice.
+80|OpenCode has started in data-pipeline: check the config on startup.
 81|Which witch wished for a wristwatch on Wednesday?
-82|The API loop has started in jobpilot: speed up the screen capture.
-83|Claude has started in rendezvous: add a dark theme to the website.
-84|Codex has started in tidedesk: move the gates to bash.
+82|The API loop has started in web-shop: speed up the search page.
+83|Claude has started in cli-tool: add a dark theme to the docs.
+84|Codex has started in demo-api: move the gates to bash.
 85|The old oak tree stood alone on the hill above the village.
-86|Gemini has started in infra: review the security findings.
+86|Gemini has started in notes-app: review the security findings.
 87|OpenCode has started in harness: pin the base images.
-88|The API loop has started in website: look up the employer links.
+88|The API loop has started in docs-site: look up the broken links.
 89|Our new neighbours have a noisy dog called Biscuit.
-90|Claude is reading server.go in tidedesk.
-91|Codex is editing bot.go in infra.
+90|Claude is reading server.go in demo-api.
+91|Codex is editing bot.go in notes-app.
 92|Gemini is reading README.md in harness.
 93|I'm afraid the connection dropped twice in the last hour.
-94|OpenCode is editing main.rs in website.
-95|In the batch in commercial, the API loop is reading Cargo.toml.
-96|Claude is editing package.json in jobpilot.
+94|OpenCode is editing main.rs in docs-site.
+95|In the batch in data-pipeline, the API loop is reading Cargo.toml.
+96|Claude is editing package.json in web-shop.
 97|Shall I read the results again, more slowly this time?
-98|Codex is editing index.html in rendezvous.
-99|Gemini is editing styles.css in tidedesk.
-100|OpenCode is reading AGENTS.md in infra.
+98|Codex is editing index.html in cli-tool.
+99|Gemini is editing styles.css in demo-api.
+100|OpenCode is reading AGENTS.md in notes-app.
 101|The quick brown fox is far too predictable for a test.
 102|In the batch in harness, the API loop is editing guard.go.
-103|Claude is running go test in website.
-104|Codex is running cargo build in commercial.
+103|Claude is running go test in docs-site.
+104|Codex is running cargo build in data-pipeline.
 105|Every evening, the ferry leaves the harbour at seven forty-five.
-106|Gemini is running npm run in jobpilot.
-107|OpenCode is running git status in rendezvous.
-108|In the batch in tidedesk, the API loop is running make check.
+106|Gemini is running npm run in web-shop.
+107|OpenCode is running git status in cli-tool.
+108|In the batch in demo-api, the API loop is running make check.
 109|Yes, you're quite right; I should have said so sooner.
-110|Claude is running get-childitem in infra.
+110|Claude is running get-childitem in notes-app.
 111|Codex is searching the code in harness.
-112|Gemini is looking something up online in website.
+112|Gemini is looking something up online in docs-site.
 113|No, that isn't what I meant at all.
-114|OpenCode is handing part of the job to a helper in commercial.
-115|In the batch in jobpilot, the API loop is updating its to-do list.
-116|Claude is running docker build in rendezvous.
+114|OpenCode is handing part of the job to a helper in data-pipeline.
+115|In the batch in web-shop, the API loop is updating its to-do list.
+116|Claude is running docker build in cli-tool.
 117|Hmm, let me think about that for a moment.
-118|Codex is running kubectl get in tidedesk.
-119|Gemini is reading server.go in infra.
+118|Codex is running kubectl get in demo-api.
+119|Gemini is reading server.go in notes-app.
 120|OpenCode is editing bot.go in harness.
 121|The parcel weighs two kilos and costs four pounds fifty to send.
-122|In the batch in website, the API loop is reading README.md.
-123|Claude is editing main.rs in commercial.
-124|Codex is reading Cargo.toml in jobpilot.
+122|In the batch in docs-site, the API loop is reading README.md.
+123|Claude is editing main.rs in data-pipeline.
+124|Codex is reading Cargo.toml in web-shop.
 125|Fifteen, sixteen, seventeen, eighteen, nineteen, twenty.
-126|Gemini is editing package.json in rendezvous.
-127|OpenCode is editing index.html in tidedesk.
-128|In the batch in infra, the API loop is editing styles.css.
+126|Gemini is editing package.json in cli-tool.
+127|OpenCode is editing index.html in demo-api.
+128|In the batch in notes-app, the API loop is editing styles.css.
 129|Thirty, forty, fifty, sixty, seventy, eighty, ninety, a hundred.
 130|Claude is reading AGENTS.md in harness.
-131|Codex is editing guard.go in website.
-132|Gemini is running go test in commercial.
+131|Codex is editing guard.go in docs-site.
+132|Gemini is running go test in data-pipeline.
 133|One, two, three, four, five, six, seven, eight, nine, ten.
-134|OpenCode is running cargo build in jobpilot.
-135|In the batch in rendezvous, the API loop is running npm run.
-136|Claude is running git status in tidedesk.
+134|OpenCode is running cargo build in web-shop.
+135|In the batch in cli-tool, the API loop is running npm run.
+136|Claude is running git status in demo-api.
 137|Eleven, twelve, thirteen, fourteen.
-138|Codex is running make check in infra.
+138|Codex is running make check in notes-app.
 139|Gemini is running get-childitem in harness.
-140|OpenCode is searching the code in website.
+140|OpenCode is searching the code in docs-site.
 141|First, second, third, fourth, fifth.
-142|In the batch in commercial, the API loop is looking something up online.
-143|Claude is handing part of the job to a helper in jobpilot.
-144|Codex is updating its to-do list in rendezvous.
+142|In the batch in data-pipeline, the API loop is looking something up online.
+143|Claude is handing part of the job to a helper in web-shop.
+144|Codex is updating its to-do list in cli-tool.
 145|It's a quarter to nine on Thursday the twelfth of October.
-146|Gemini is running docker build in tidedesk.
-147|OpenCode is running kubectl get in infra.
+146|Gemini is running docker build in demo-api.
+147|OpenCode is running kubectl get in notes-app.
 148|In the batch in harness, the API loop is reading server.go.
 149|The meeting moved from Monday to Tuesday, then to Friday.
-150|Claude is editing bot.go in website.
-151|Codex is reading README.md in commercial.
-152|Gemini is editing main.rs in jobpilot.
+150|Claude is editing bot.go in docs-site.
+151|Codex is reading README.md in data-pipeline.
+152|Gemini is editing main.rs in web-shop.
 153|January, February, March, April, May, June.
-154|OpenCode is reading Cargo.toml in rendezvous.
-155|In the batch in tidedesk, the API loop is editing package.json.
-156|Claude is editing index.html in infra.
+154|OpenCode is reading Cargo.toml in cli-tool.
+155|In the batch in demo-api, the API loop is editing package.json.
+156|Claude is editing index.html in notes-app.
 157|July, August, September, October, November, December.
 158|Codex is editing styles.css in harness.
-159|Gemini is reading AGENTS.md in website.
-160|OpenCode is editing guard.go in commercial.
+159|Gemini is reading AGENTS.md in docs-site.
+160|OpenCode is editing guard.go in data-pipeline.
 161|The weather in Scotland changes four times a day.
-162|In the batch in jobpilot, the API loop is running go test.
-163|Claude is running cargo build in rendezvous.
-164|Codex is running npm run in tidedesk.
+162|In the batch in web-shop, the API loop is running go test.
+163|Claude is running cargo build in cli-tool.
+164|Codex is running npm run in demo-api.
 165|A cup of tea fixes almost anything, my gran used to say.
-166|Gemini is running git status in infra.
+166|Gemini is running git status in notes-app.
 167|OpenCode is running make check in harness.
-168|In the batch in website, the API loop is running get-childitem.
+168|In the batch in docs-site, the API loop is running get-childitem.
 169|Turn the volume down a little, please; it's rather loud.
-170|Claude is searching the code in commercial.
-171|Codex is looking something up online in jobpilot.
-172|Gemini is handing part of the job to a helper in rendezvous.
+170|Claude is searching the code in data-pipeline.
+171|Codex is looking something up online in web-shop.
+172|Gemini is handing part of the job to a helper in cli-tool.
 173|The hedgehog crept under the shed when the fireworks began.
-174|OpenCode is updating its to-do list in tidedesk.
-175|In the batch in infra, the API loop is running docker build.
+174|OpenCode is updating its to-do list in demo-api.
+175|In the batch in notes-app, the API loop is running docker build.
 176|Claude is running kubectl get in harness.
 177|Have you seen my glasses? I had them a minute ago.
-178|Codex is reading server.go in website.
-179|Gemini is editing bot.go in commercial.
-180|OpenCode is reading README.md in jobpilot.
+178|Codex is reading server.go in docs-site.
+179|Gemini is editing bot.go in data-pipeline.
+180|OpenCode is reading README.md in web-shop.
 181|That was quicker than I expected, which is a nice surprise.
-182|In the batch in rendezvous, the API loop is editing main.rs.
-183|Claude is reading Cargo.toml in tidedesk.
-184|Codex is editing package.json in infra.
+182|In the batch in cli-tool, the API loop is editing main.rs.
+183|Claude is reading Cargo.toml in demo-api.
+184|Codex is editing package.json in notes-app.
 185|The library closes early on bank holidays.
 186|Gemini is editing index.html in harness.
-187|OpenCode is editing styles.css in website.
-188|In the batch in commercial, the API loop is reading AGENTS.md.
+187|OpenCode is editing styles.css in docs-site.
+188|In the batch in data-pipeline, the API loop is reading AGENTS.md.
 189|Squirrels buried acorns all over the lawn last autumn.
-190|Claude is editing guard.go in jobpilot.
-191|Codex is running go test in rendezvous.
-192|Gemini is running cargo build in tidedesk.
+190|Claude is editing guard.go in web-shop.
+191|Codex is running go test in cli-tool.
+192|Gemini is running cargo build in demo-api.
 193|Bright yellow daffodils lined the path to the cottage.
-194|OpenCode is running npm run in infra.
+194|OpenCode is running npm run in notes-app.
 195|In the batch in harness, the API loop is running git status.
-196|Claude is running make check in website.
+196|Claude is running make check in docs-site.
 197|The orchestra tuned up while the audience found their seats.
-198|Codex is running get-childitem in commercial.
-199|Gemini is searching the code in jobpilot.
-200|OpenCode is looking something up online in rendezvous.
+198|Codex is running get-childitem in data-pipeline.
+199|Gemini is searching the code in web-shop.
+200|OpenCode is looking something up online in cli-tool.
 201|Would you like me to remind you again in ten minutes?
-202|In the batch in tidedesk, the API loop is handing part of the job to a helper.
-203|Claude is updating its to-do list in infra.
+202|In the batch in demo-api, the API loop is handing part of the job to a helper.
+203|Claude is updating its to-do list in notes-app.
 204|Codex is running docker build in harness.
 205|I can hear you clearly now; go ahead.
-206|Gemini is running kubectl get in website.
-207|OpenCode is reading server.go in commercial.
-208|In the batch in jobpilot, the API loop is editing bot.go.
+206|Gemini is running kubectl get in docs-site.
+207|OpenCode is reading server.go in data-pipeline.
+208|In the batch in web-shop, the API loop is editing bot.go.
 209|Sorry, I didn't quite catch that. Could you say it again?
-210|Claude has finished in tidedesk. It took twelve seconds.
-211|Claude stopped with an error in infra after seven minutes: exit status 1.
+210|Claude has finished in demo-api. It took twelve seconds.
+211|Claude stopped with an error in notes-app after seven minutes: exit status 1.
 212|Claude ran out of turns in harness after an hour and five minutes.
 213|That sounds like a job for tomorrow morning.
-214|Claude ran out of time in website after two minutes.
-215|Claude reached its budget in commercial after 35 minutes.
-216|Claude's run in jobpilot was cancelled after 45 seconds.
+214|Claude ran out of time in docs-site after two minutes.
+215|Claude reached its budget in data-pipeline after 35 minutes.
+216|Claude's run in web-shop was cancelled after 45 seconds.
 217|The train to Edinburgh is delayed by twenty-five minutes.
-218|Claude turned the task down in rendezvous.
-219|Claude hit its usage limit in tidedesk after two hours and 30 minutes.
-220|Codex has finished in infra. It took four minutes.
+218|Claude turned the task down in cli-tool.
+219|Claude hit its usage limit in demo-api after two hours and 30 minutes.
+220|Codex has finished in notes-app. It took four minutes.
 221|A choir of children sang carols outside the station.
 222|Codex stopped with an error in harness after an hour: the build failed.
-223|Codex ran out of turns in website after a minute.
-224|Codex ran out of time in commercial after 20 minutes.
+223|Codex ran out of turns in docs-site after a minute.
+224|Codex ran out of time in data-pipeline after 20 minutes.
 225|The jigsaw had a thousand pieces and three were missing.
-226|Codex reached its budget in jobpilot after twelve seconds.
-227|Codex's run in rendezvous was cancelled after seven minutes.
-228|Codex turned the task down in tidedesk.
+226|Codex reached its budget in web-shop after twelve seconds.
+227|Codex's run in cli-tool was cancelled after seven minutes.
+228|Codex turned the task down in demo-api.
 229|She zipped her jacket and stepped out into the drizzle.
-230|Codex hit its usage limit in infra after two minutes.
+230|Codex hit its usage limit in notes-app after two minutes.
 231|Gemini has finished in harness. It took 35 minutes.
-232|Gemini stopped with an error in website after 45 seconds: a test timed out.
+232|Gemini stopped with an error in docs-site after 45 seconds: a test timed out.
 233|Thick fog rolled in from the sea and covered the pier.
-234|Gemini ran out of turns in commercial after twelve minutes.
-235|Gemini ran out of time in jobpilot after two hours and 30 minutes.
-236|Gemini reached its budget in rendezvous after four minutes.
+234|Gemini ran out of turns in data-pipeline after twelve minutes.
+235|Gemini ran out of time in web-shop after two hours and 30 minutes.
+236|Gemini reached its budget in cli-tool after four minutes.
 237|Plenty of people prefer porridge with a pinch of salt.
-238|Gemini's run in tidedesk was cancelled after an hour.
-239|Gemini turned the task down in infra.
+238|Gemini's run in demo-api was cancelled after an hour.
+239|Gemini turned the task down in notes-app.
 240|Gemini hit its usage limit in harness after 20 minutes.
 241|The vet said the cat was perfectly healthy, if a little plump.
-242|OpenCode has finished in website. It took twelve seconds.
-243|OpenCode stopped with an error in commercial after seven minutes: the network went away.
-244|OpenCode ran out of turns in jobpilot after an hour and five minutes.
+242|OpenCode has finished in docs-site. It took twelve seconds.
+243|OpenCode stopped with an error in data-pipeline after seven minutes: the network went away.
+244|OpenCode ran out of turns in web-shop after an hour and five minutes.
 245|Grab your umbrella; it's bucketing down out there.
-246|OpenCode ran out of time in rendezvous after two minutes.
-247|OpenCode reached its budget in tidedesk after 35 minutes.
-248|OpenCode's run in infra was cancelled after 45 seconds.
+246|OpenCode ran out of time in cli-tool after two minutes.
+247|OpenCode reached its budget in demo-api after 35 minutes.
+248|OpenCode's run in notes-app was cancelled after 45 seconds.
 249|We watched the boats bobbing gently in the bay.
 250|OpenCode turned the task down in harness.
-251|OpenCode hit its usage limit in website after two hours and 30 minutes.
-252|The API loop has finished in commercial. It took four minutes.
+251|OpenCode hit its usage limit in docs-site after two hours and 30 minutes.
+252|The API loop has finished in data-pipeline. It took four minutes.
 253|The recipe calls for flour, butter, sugar and three eggs.
-254|The API loop stopped with an error in jobpilot after an hour: exit status 1.
-255|The API loop ran out of turns in rendezvous after a minute.
-256|The API loop ran out of time in tidedesk after 20 minutes.
+254|The API loop stopped with an error in web-shop after an hour: exit status 1.
+255|The API loop ran out of turns in cli-tool after a minute.
+256|The API loop ran out of time in demo-api after 20 minutes.
 257|A gentle breeze carried the smell of fresh bread down the street.
-258|The API loop reached its budget in infra after twelve seconds.
+258|The API loop reached its budget in notes-app after twelve seconds.
 259|The API loop's run in harness was cancelled after seven minutes.
-260|The API loop turned the task down in website.
+260|The API loop turned the task down in docs-site.
 261|Lunch is at one, unless the meeting runs over.
-262|The API loop hit its usage limit in commercial after two minutes.
-263|Claude has finished in jobpilot. It took 35 minutes.
-264|Claude stopped with an error in rendezvous after 45 seconds: the build failed.
+262|The API loop hit its usage limit in data-pipeline after two minutes.
+263|Claude has finished in web-shop. It took 35 minutes.
+264|Claude stopped with an error in cli-tool after 45 seconds: the build failed.
 265|The bus was so full that we decided to walk instead.
-266|Claude ran out of turns in tidedesk after twelve minutes.
-267|Claude ran out of time in infra after two hours and 30 minutes.
+266|Claude ran out of turns in demo-api after twelve minutes.
+267|Claude ran out of time in notes-app after two hours and 30 minutes.
 268|Claude reached its budget in harness after four minutes.
 269|It's not ideal, but it'll do for now.
-270|Claude's run in website was cancelled after an hour.
-271|Claude turned the task down in commercial.
-272|Claude hit its usage limit in jobpilot after 20 minutes.
+270|Claude's run in docs-site was cancelled after an hour.
+271|Claude turned the task down in data-pipeline.
+272|Claude hit its usage limit in web-shop after 20 minutes.
 273|Honestly, I'm rather pleased with how that turned out.
-274|Codex has finished in rendezvous. It took twelve seconds.
-275|Codex stopped with an error in tidedesk after seven minutes: a test timed out.
-276|Codex ran out of turns in infra after an hour and five minutes.
+274|Codex has finished in cli-tool. It took twelve seconds.
+275|Codex stopped with an error in demo-api after seven minutes: a test timed out.
+276|Codex ran out of turns in notes-app after an hour and five minutes.
 277|Careful on the stairs; they're a bit slippery.
 278|Codex ran out of time in harness after two minutes.
-279|Codex reached its budget in website after 35 minutes.
-280|Codex's run in commercial was cancelled after 45 seconds.
+279|Codex reached its budget in docs-site after 35 minutes.
+280|Codex's run in data-pipeline was cancelled after 45 seconds.
 281|The shop round the corner sells the best crumpets in town.
-282|Codex turned the task down in jobpilot.
-283|Codex hit its usage limit in rendezvous after two hours and 30 minutes.
-284|Gemini has finished in tidedesk. It took four minutes.
+282|Codex turned the task down in web-shop.
+283|Codex hit its usage limit in cli-tool after two hours and 30 minutes.
+284|Gemini has finished in demo-api. It took four minutes.
 285|Visitors must sign in at reception before going upstairs.
-286|Gemini stopped with an error in infra after an hour: the network went away.
+286|Gemini stopped with an error in notes-app after an hour: the network went away.
 287|Gemini ran out of turns in harness after a minute.
-288|Gemini ran out of time in website after 20 minutes.
+288|Gemini ran out of time in docs-site after 20 minutes.
 289|He whistled a cheerful tune while washing the dishes.
-290|Gemini reached its budget in commercial after twelve seconds.
-291|Gemini's run in jobpilot was cancelled after seven minutes.
-292|Gemini turned the task down in rendezvous.
+290|Gemini reached its budget in data-pipeline after twelve seconds.
+291|Gemini's run in web-shop was cancelled after seven minutes.
+292|Gemini turned the task down in cli-tool.
 293|The robin perched on the handle of the garden fork.
-294|Gemini hit its usage limit in tidedesk after two minutes.
-295|OpenCode has finished in infra. It took 35 minutes.
+294|Gemini hit its usage limit in demo-api after two minutes.
+295|OpenCode has finished in notes-app. It took 35 minutes.
 296|OpenCode stopped with an error in harness after 45 seconds: exit status 1.
 297|Afterwards, they strolled along the canal towpath.
-298|OpenCode ran out of turns in website after twelve minutes.
-299|OpenCode ran out of time in commercial after two hours and 30 minutes.
-300|OpenCode reached its budget in jobpilot after four minutes.
+298|OpenCode ran out of turns in docs-site after twelve minutes.
+299|OpenCode ran out of time in data-pipeline after two hours and 30 minutes.
+300|OpenCode reached its budget in web-shop after four minutes.
 301|The museum's newest exhibit is a vast whale skeleton.
-302|OpenCode's run in rendezvous was cancelled after an hour.
-303|OpenCode turned the task down in tidedesk.
-304|OpenCode hit its usage limit in infra after 20 minutes.
+302|OpenCode's run in cli-tool was cancelled after an hour.
+303|OpenCode turned the task down in demo-api.
+304|OpenCode hit its usage limit in notes-app after 20 minutes.
 305|Don't worry; there's plenty of time before the deadline.
-306|A batch of a task has started in infra.
-307|A batch of a task has started in website.
+306|A batch of a task has started in notes-app.
+307|A batch of a task has started in docs-site.
 308|A batch of two tasks has started in harness.
 309|Exactly how many biscuits did you eat?
-310|A batch of two tasks has started in commercial.
-311|A batch of three tasks has started in website.
-312|A batch of three tasks has started in jobpilot.
+310|A batch of two tasks has started in data-pipeline.
+311|A batch of three tasks has started in docs-site.
+312|A batch of three tasks has started in web-shop.
 313|The north wind whipped across the moor all night.
-314|A batch of four tasks has started in commercial.
-315|A batch of four tasks has started in rendezvous.
-316|A batch of five tasks has started in jobpilot.
+314|A batch of four tasks has started in data-pipeline.
+315|A batch of four tasks has started in cli-tool.
+316|A batch of five tasks has started in web-shop.
 317|A yawning puppy curled up in the basket by the fire.
-318|A batch of five tasks has started in tidedesk.
-319|A batch of six tasks has started in rendezvous.
-320|A batch of six tasks has started in infra.
+318|A batch of five tasks has started in demo-api.
+319|A batch of six tasks has started in cli-tool.
+320|A batch of six tasks has started in notes-app.
 321|Ice cream on a cold day is still a good idea.
-322|A batch of seven tasks has started in tidedesk.
+322|A batch of seven tasks has started in demo-api.
 323|A batch of seven tasks has started in harness.
-324|A batch of eight tasks has started in infra.
+324|A batch of eight tasks has started in notes-app.
 325|The bookshelf groaned under the weight of the encyclopaedias.
-326|A batch of eight tasks has started in website.
+326|A batch of eight tasks has started in docs-site.
 327|A batch of nine tasks has started in harness.
-328|A batch of nine tasks has started in commercial.
+328|A batch of nine tasks has started in data-pipeline.
 329|Everything's ready. Shall we begin?
-330|A batch of ten tasks has started in website.
-331|A batch of ten tasks has started in jobpilot.
-332|A batch of eleven tasks has started in commercial.
+330|A batch of ten tasks has started in docs-site.
+331|A batch of ten tasks has started in web-shop.
+332|A batch of eleven tasks has started in data-pipeline.
 333|Well done! That was the hardest part.
-334|A batch of eleven tasks has started in rendezvous.
-335|A batch of twelve tasks has started in jobpilot.
-336|A batch of twelve tasks has started in tidedesk.
+334|A batch of eleven tasks has started in cli-tool.
+335|A batch of twelve tasks has started in web-shop.
+336|A batch of twelve tasks has started in demo-api.
 337|Right, let's try that one more time.
-338|Task one of two in tidedesk passed: add the budget guard.
-339|Task two of three in infra failed: translate the settings page.
+338|Task one of two in demo-api passed: add the budget guard.
+339|Task two of three in notes-app failed: translate the settings page.
 340|Task three of four in harness passed: record Ada's voice.
 341|I'll keep quiet until you need me.
-342|Task four of five in website hit a problem: speed up the screen capture.
-343|Task five of six in commercial was cancelled: move the gates to bash.
-344|Task six of seven in jobpilot passed: pin the base images.
+342|Task four of five in docs-site hit a problem: speed up the search page.
+343|Task five of six in data-pipeline was cancelled: move the gates to bash.
+344|Task six of seven in web-shop passed: pin the base images.
 345|Here's a summary of what happened while you were away.
-346|Task seven of eight in rendezvous failed: write the release notes.
-347|Task two of two in tidedesk passed: move the gates to bash.
-348|Task three of three in infra hit a problem: pin the base images.
+346|Task seven of eight in cli-tool failed: write the release notes.
+347|Task two of two in demo-api passed: move the gates to bash.
+348|Task three of three in notes-app hit a problem: pin the base images.
 349|Nothing has changed since I last told you.
 350|Task two of four in harness was cancelled: pin the base images.
-351|Task one of five in website passed: pin the base images.
-352|Task six of six in commercial failed: retry a failed gate once.
+351|Task one of five in docs-site passed: pin the base images.
+352|Task six of six in data-pipeline failed: retry a failed gate once.
 353|Something has gone wrong, and I think I know why.
-354|Task six of seven in jobpilot passed: map the whole workflow.
-355|Task six of eight in rendezvous hit a problem: test the keyboard switch.
-356|Task one of two in tidedesk was cancelled: split the rendezvous service.
+354|Task six of seven in web-shop passed: map the whole workflow.
+355|Task six of eight in cli-tool hit a problem: test the login form.
+356|Task one of two in demo-api was cancelled: split the billing service.
 357|Good news: everything passed on the first try.
-358|Task one of three in infra passed: show the cost on the watch page.
+358|Task one of three in notes-app passed: show the cost on the watch page.
 359|Task one of four in harness failed: retry a failed gate once.
-360|Task three of five in website passed: add German questions.
+360|Task three of five in docs-site passed: add German translations.
 361|Bad news, I'm afraid: two tasks failed.
-362|Task one of six in commercial hit a problem: test the keyboard switch.
-363|Task six of seven in jobpilot was cancelled: add the budget guard.
-364|Task five of eight in rendezvous passed: add the budget guard.
+362|Task one of six in data-pipeline hit a problem: test the login form.
+363|Task six of seven in web-shop was cancelled: add the budget guard.
+364|Task five of eight in cli-tool passed: add the budget guard.
 365|The work is waiting for your review.
-366|Task two of two in tidedesk failed: teach Ada to listen.
-367|Task two of three in infra passed: make the phone page faster.
+366|Task two of two in demo-api failed: teach Ada to listen.
+367|Task two of three in notes-app passed: make the phone page faster.
 368|Task four of four in harness hit a problem: translate the settings page.
 369|I've paused the alerts for an hour.
-370|Task five of five in website was cancelled: record Ada's voice.
-371|Task two of six in commercial passed: translate the settings page.
-372|Task six of seven in jobpilot failed: add a dark theme to the website.
+370|Task five of five in docs-site was cancelled: record Ada's voice.
+371|Task two of six in data-pipeline passed: translate the settings page.
+372|Task six of seven in web-shop failed: add a dark theme to the docs.
 373|Welcome back. Shall I tell you what you missed?
-374|Task four of eight in rendezvous passed: speed up the screen capture.
-375|Task one of two in tidedesk hit a problem: record Ada's voice.
-376|Task three of three in infra was cancelled: add a dark theme to the website.
+374|Task four of eight in cli-tool passed: speed up the search page.
+375|Task one of two in demo-api hit a problem: record Ada's voice.
+376|Task three of three in notes-app was cancelled: add a dark theme to the docs.
 377|The rain finally stopped and a rainbow appeared over the hills.
 378|Task three of four in harness passed: move the gates to bash.
-379|Task two of five in website failed: move the gates to bash.
-380|Task three of six in commercial passed: pin the base images.
+379|Task two of five in docs-site failed: move the gates to bash.
+380|Task three of six in data-pipeline passed: pin the base images.
 381|They argued for hours about the best way to cook a roast potato.
-382|Task six of seven in jobpilot hit a problem: split the rendezvous service.
-383|Task three of eight in rendezvous was cancelled: write the release notes.
-384|Task two of two in tidedesk passed: write the release notes.
+382|Task six of seven in web-shop hit a problem: split the billing service.
+383|Task three of eight in cli-tool was cancelled: write the release notes.
+384|Task two of two in demo-api passed: write the release notes.
 385|Rather than guess, let's measure it properly.
-386|Task one of three in infra failed: write the release notes.
-387|Task two of four in harness passed: split the rendezvous service.
-388|Task four of five in website hit a problem: map the whole workflow.
+386|Task one of three in notes-app failed: write the release notes.
+387|Task two of four in harness passed: split the billing service.
+388|Task four of five in docs-site hit a problem: map the whole workflow.
 389|The firework display lit up the whole of the river.
-390|Task four of six in commercial was cancelled: test the keyboard switch.
-391|Task six of seven in jobpilot passed: warn before the disk fills up.
-392|Task two of eight in rendezvous failed: test the keyboard switch.
+390|Task four of six in data-pipeline was cancelled: test the login form.
+391|Task six of seven in web-shop passed: warn before the disk fills up.
+392|Task two of eight in cli-tool failed: test the login form.
 393|My favourite season is spring, when the evenings get longer.
-394|Task one of two in tidedesk passed: test the keyboard switch.
-395|Task two of three in infra hit a problem: catch a batch mid-save.
+394|Task one of two in demo-api passed: test the login form.
+395|Task two of three in notes-app hit a problem: catch a batch mid-save.
 396|Task one of four in harness was cancelled: catch a batch mid-save.
 397|He jogged round the park twice and then sat on a bench.
-398|Task one of five in website passed: warn before the disk fills up.
-399|Task five of six in commercial failed: translate the settings page.
-400|Task six of seven in jobpilot passed: record Ada's voice.
+398|Task one of five in docs-site passed: warn before the disk fills up.
+399|Task five of six in data-pipeline failed: translate the settings page.
+400|Task six of seven in web-shop passed: record Ada's voice.
 401|Zebras, giraffes and elephants live in the safari park.
-402|Task one of eight in rendezvous hit a problem: add the budget guard.
-403|Task two of two in tidedesk was cancelled: translate the settings page.
-404|Task three of three in infra passed: record Ada's voice.
+402|Task one of eight in cli-tool hit a problem: add the budget guard.
+403|Task two of two in demo-api was cancelled: translate the settings page.
+404|Task three of three in notes-app passed: record Ada's voice.
 405|The postman always whistles as he walks up the drive.
-406|Task four of four in harness failed: speed up the screen capture.
-407|Task three of five in website passed: speed up the screen capture.
-408|Task six of six in commercial hit a problem: pin the base images.
+406|Task four of four in harness failed: speed up the search page.
+407|Task three of five in docs-site passed: speed up the search page.
+408|Task six of six in data-pipeline hit a problem: pin the base images.
 409|A thin layer of frost glittered on the car windscreen.
-410|Task six of seven in jobpilot was cancelled: look up the employer links.
-411|Task eight of eight in rendezvous passed: split the rendezvous service.
-412|Task one of two in tidedesk failed: move the gates to bash.
+410|Task six of seven in web-shop was cancelled: look up the broken links.
+411|Task eight of eight in cli-tool passed: split the billing service.
+412|Task one of two in demo-api failed: move the gates to bash.
 413|The candle flickered and nearly went out.
-414|Task one of three in infra passed: review the security findings.
+414|Task one of three in notes-app passed: review the security findings.
 415|Task three of four in harness hit a problem: write the release notes.
-416|Task five of five in website was cancelled: show the cost on the watch page.
+416|Task five of five in docs-site was cancelled: show the cost on the watch page.
 417|Our flight lands at Heathrow just after midnight.
-418|Task one of six in commercial passed: write the release notes.
-419|Task six of seven in jobpilot failed: test the keyboard switch.
-420|Task seven of eight in rendezvous passed: catch a batch mid-save.
+418|Task one of six in data-pipeline passed: write the release notes.
+419|Task six of seven in web-shop failed: test the login form.
+420|Task seven of eight in cli-tool passed: catch a batch mid-save.
 421|Grey clouds gathered over the castle as the tourists left.
-422|Task two of two in tidedesk hit a problem: retry a failed gate once.
-423|The batch in tidedesk is done, and none of its a task passed. It took twelve seconds.
-424|The batch in infra is done: one of two tasks passed. It took two minutes.
+422|Task two of two in demo-api hit a problem: retry a failed gate once.
+423|The batch in demo-api is done, and none of its a task passed. It took twelve seconds.
+424|The batch in notes-app is done: one of two tasks passed. It took two minutes.
 425|The children built an enormous sandcastle with a moat.
 426|The batch in harness is done: two of three tasks passed. It took twelve minutes.
-427|The batch in website is done: one of four tasks passed. It took an hour.
-428|The batch in commercial is done: four of five tasks passed. It took twelve seconds.
+427|The batch in docs-site is done: one of four tasks passed. It took an hour.
+428|The batch in data-pipeline is done: four of five tasks passed. It took twelve seconds.
 429|You'll find the instructions in the second drawer down.
-430|The batch in jobpilot is done, and none of its six tasks passed. It took two minutes.
-431|The batch in rendezvous is done: two of seven tasks passed. It took twelve minutes.
-432|The batch in tidedesk is done: four of eight tasks passed. It took an hour.
+430|The batch in web-shop is done, and none of its six tasks passed. It took two minutes.
+431|The batch in cli-tool is done: two of seven tasks passed. It took twelve minutes.
+432|The batch in demo-api is done: four of eight tasks passed. It took an hour.
 433|The kitchen smells wonderful; what are you baking?
-434|The batch in infra is done: six of nine tasks passed. It took twelve seconds.
+434|The batch in notes-app is done: six of nine tasks passed. It took twelve seconds.
 435|The batch in harness is done: all a task passed. It took two minutes.
-436|The batch in website is done: one of two tasks passed. It took twelve minutes.
+436|The batch in docs-site is done: one of two tasks passed. It took twelve minutes.
 437|Thank you, that's very kind of you.
-438|The batch in commercial is done: one of three tasks passed. It took an hour.
-439|The batch in jobpilot is done: all four tasks passed. It took twelve seconds.
-440|The batch in rendezvous is done: one of five tasks passed. It took two minutes.
+438|The batch in data-pipeline is done: one of three tasks passed. It took an hour.
+439|The batch in web-shop is done: all four tasks passed. It took twelve seconds.
+440|The batch in cli-tool is done: one of five tasks passed. It took two minutes.
 441|Not at all; it was my pleasure.
-442|The batch in tidedesk is done, and none of its six tasks passed. It took twelve minutes.
-443|The batch in infra is done: one of seven tasks passed. It took an hour.
+442|The batch in demo-api is done, and none of its six tasks passed. It took twelve minutes.
+443|The batch in notes-app is done: one of seven tasks passed. It took an hour.
 444|The batch in harness is done: four of eight tasks passed. It took twelve seconds.
 445|Goodnight, and sleep well.
-446|The batch in website is done: all nine tasks passed. It took two minutes.
-447|The batch in commercial is done, and none of its a task passed. It took twelve minutes.
-448|The batch in jobpilot is done: one of two tasks passed. It took an hour.
+446|The batch in docs-site is done: all nine tasks passed. It took two minutes.
+447|The batch in data-pipeline is done, and none of its a task passed. It took twelve minutes.
+448|The batch in web-shop is done: one of two tasks passed. It took an hour.
 449|The sixth sheikh's sixth sheep is sick.
-450|The batch in rendezvous is done, and none of its three tasks passed. It took twelve seconds.
-451|The batch in tidedesk is done: two of four tasks passed. It took two minutes.
-452|The batch in infra is done: four of five tasks passed. It took twelve minutes.
+450|The batch in cli-tool is done, and none of its three tasks passed. It took twelve seconds.
+451|The batch in demo-api is done: two of four tasks passed. It took two minutes.
+452|The batch in notes-app is done: four of five tasks passed. It took twelve minutes.
 453|She sells seashells on the seashore, surely.
 454|The batch in harness is done, and none of its six tasks passed. It took an hour.
-455|The batch in website is done, and none of its seven tasks passed. It took twelve seconds.
-456|The batch in commercial is done: four of eight tasks passed. It took two minutes.
+455|The batch in docs-site is done, and none of its seven tasks passed. It took twelve seconds.
+456|The batch in data-pipeline is done: four of eight tasks passed. It took two minutes.
 457|Red lorry, yellow lorry, red lorry, yellow lorry.
-458|The batch in jobpilot is done: two of nine tasks passed. It took twelve minutes.
-459|The batch in rendezvous is done: all a task passed. It took an hour.
-460|The batch in tidedesk is done: one of two tasks passed. It took twelve seconds.
+458|The batch in web-shop is done: two of nine tasks passed. It took twelve minutes.
+459|The batch in cli-tool is done: all a task passed. It took an hour.
+460|The batch in demo-api is done: one of two tasks passed. It took twelve seconds.
 461|Thirty-three thousand thoughtful thinkers thought things through.
-462|The batch in infra is done: all three tasks passed. It took two minutes.
+462|The batch in notes-app is done: all three tasks passed. It took two minutes.
 463|The batch in harness is done, and none of its four tasks passed. It took twelve minutes.
-464|The batch in website is done: one of five tasks passed. It took an hour.
+464|The batch in docs-site is done: one of five tasks passed. It took an hour.
 465|Unique New York, you know you need unique New York.
 466|Nothing is running.
-467|One thing is going: Claude in tidedesk, reading server.go.
-468|Two things are going: Codex in infra; and a batch of four tasks in harness.
+467|One thing is going: Claude in demo-api, reading server.go.
+468|Two things are going: Codex in notes-app; and a batch of four tasks in harness.
 469|A proper copper coffee pot.
-470|Three things are going: Gemini in harness; a batch of five tasks in website, editing main.rs; and the API loop in commercial.
-471|One thing is going: OpenCode in website, editing main.rs.
-472|Two things are going: the API loop in commercial; and a batch of two tasks in jobpilot.
+470|Three things are going: Gemini in harness; a batch of five tasks in docs-site, editing main.rs; and the API loop in data-pipeline.
+471|One thing is going: OpenCode in docs-site, editing main.rs.
+472|Two things are going: the API loop in data-pipeline; and a batch of two tasks in web-shop.
 473|Rural jurors rarely agree quickly.
-474|Three things are going: Claude in jobpilot; a batch of three tasks in rendezvous, editing index.html; and Gemini in tidedesk.
-475|One thing is going: Codex in rendezvous, editing index.html.
-476|Two things are going: Gemini in tidedesk; and a batch of five tasks in infra.
+474|Three things are going: Claude in web-shop; a batch of three tasks in cli-tool, editing index.html; and Gemini in demo-api.
+475|One thing is going: Codex in cli-tool, editing index.html.
+476|Two things are going: Gemini in demo-api; and a batch of five tasks in notes-app.
 477|Strengths, lengths, widths and depths.
-478|Three things are going: OpenCode in infra; a batch of six tasks in harness, editing guard.go; and Claude in website.
+478|Three things are going: OpenCode in notes-app; a batch of six tasks in harness, editing guard.go; and Claude in docs-site.
 479|One thing is going: the API loop in harness, editing guard.go.
-480|Two things are going: Claude in website; and a batch of three tasks in commercial.
+480|Two things are going: Claude in docs-site; and a batch of three tasks in data-pipeline.
 481|The months, the clothes, the paths, the truths.
-482|Three things are going: Codex in commercial; a batch of four tasks in jobpilot, running npm run; and OpenCode in rendezvous.
-483|One thing is going: Gemini in jobpilot, running npm run.
-484|Two things are going: OpenCode in rendezvous; and a batch of six tasks in tidedesk.
+482|Three things are going: Codex in data-pipeline; a batch of four tasks in web-shop, running npm run; and OpenCode in cli-tool.
+483|One thing is going: Gemini in web-shop, running npm run.
+484|Two things are going: OpenCode in cli-tool; and a batch of six tasks in demo-api.
 485|Asked, risked, texts, glimpsed, sculpts.
-486|Three things are going: the API loop in tidedesk; a batch of two tasks in infra, running get-childitem; and Codex in harness.
-487|One thing is going: Claude in infra, running get-childitem.
-488|Two things are going: Codex in harness; and a batch of four tasks in website.
+486|Three things are going: the API loop in demo-api; a batch of two tasks in notes-app, running get-childitem; and Codex in harness.
+487|One thing is going: Claude in notes-app, running get-childitem.
+488|Two things are going: Codex in harness; and a batch of four tasks in docs-site.
 489|The batch is done.
-490|Three things are going: Gemini in website; a batch of five tasks in commercial, handing part of the job to a helper; and the API loop in jobpilot.
-491|One thing is going: OpenCode in commercial, handing part of the job to a helper.
-492|Two things are going: the API loop in jobpilot; and a batch of two tasks in rendezvous.
+490|Three things are going: Gemini in docs-site; a batch of five tasks in data-pipeline, handing part of the job to a helper; and the API loop in web-shop.
+491|One thing is going: OpenCode in data-pipeline, handing part of the job to a helper.
+492|Two things are going: the API loop in web-shop; and a batch of two tasks in cli-tool.
 493|The batch is done?
-494|Three things are going: Claude in rendezvous; a batch of three tasks in tidedesk, running kubectl get; and Gemini in infra.
-495|One thing is going: Codex in tidedesk, running kubectl get.
-496|Two things are going: Gemini in infra; and a batch of five tasks in harness.
+494|Three things are going: Claude in cli-tool; a batch of three tasks in demo-api, running kubectl get; and Gemini in notes-app.
+495|One thing is going: Codex in demo-api, running kubectl get.
+496|Two things are going: Gemini in notes-app; and a batch of five tasks in harness.
 497|The batch is done!
-498|Three things are going: OpenCode in harness; a batch of six tasks in website, reading README.md; and Claude in commercial.
-499|One thing is going: the API loop in website, reading README.md.
-500|Two things are going: Claude in commercial; and a batch of three tasks in jobpilot.
+498|Three things are going: OpenCode in harness; a batch of six tasks in docs-site, reading README.md; and Claude in data-pipeline.
+499|One thing is going: the API loop in docs-site, reading README.md.
+500|Two things are going: Claude in data-pipeline; and a batch of three tasks in web-shop.
 501|You want me to stop.
-502|Three things are going: Codex in jobpilot; a batch of four tasks in rendezvous, editing package.json; and OpenCode in tidedesk.
-503|One thing is going: Gemini in rendezvous, editing package.json.
-504|Two things are going: OpenCode in tidedesk; and a batch of six tasks in infra.
+502|Three things are going: Codex in web-shop; a batch of four tasks in cli-tool, editing package.json; and OpenCode in demo-api.
+503|One thing is going: Gemini in cli-tool, editing package.json.
+504|Two things are going: OpenCode in demo-api; and a batch of six tasks in notes-app.
 505|You want me to stop?
-506|Three things are going: the API loop in infra; a batch of two tasks in harness, reading AGENTS.md; and Codex in website.
+506|Three things are going: the API loop in notes-app; a batch of two tasks in harness, reading AGENTS.md; and Codex in docs-site.
 507|One thing is going: Claude in harness, reading AGENTS.md.
-508|Two things are going: Codex in website; and a batch of four tasks in commercial.
+508|Two things are going: Codex in docs-site; and a batch of four tasks in data-pipeline.
 509|Stop!
-510|Three things are going: Gemini in commercial; a batch of five tasks in jobpilot, running cargo build; and the API loop in rendezvous.
-511|One thing is going: OpenCode in jobpilot, running cargo build.
-512|Two things are going: the API loop in rendezvous; and a batch of two tasks in tidedesk.
+510|Three things are going: Gemini in data-pipeline; a batch of five tasks in web-shop, running cargo build; and the API loop in cli-tool.
+511|One thing is going: OpenCode in web-shop, running cargo build.
+512|Two things are going: the API loop in cli-tool; and a batch of two tasks in demo-api.
 513|It worked.
-514|Three things are going: Claude in tidedesk; a batch of three tasks in infra, running make check; and Gemini in harness.
+514|Three things are going: Claude in demo-api; a batch of three tasks in notes-app, running make check; and Gemini in harness.
 515|I'm Ada. I'll tell you what hrn is doing.
 516|Hello, I'm Ada. This is how I sound. I'll tell you when something starts, and when it's done.
 517|It worked?
