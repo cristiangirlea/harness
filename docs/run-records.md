@@ -271,7 +271,7 @@ record belongs to, as `kind:value`. A local install writes `local:<OS user name>
 `$HRN_OWNER` when it holds a valid `local:`, `email:` or `user:` principal. Records written
 before the field have none and belong to the local user, so nothing on disk is rewritten. Every
 read that crosses an access boundary (the watch server, `hrn flow`) goes through one decision,
-`owner.Viewer.CanRead`: the owner reads their records, an admin grant reads all, and anyone else
+`owner.Viewer.CanRead`: a record's owner reads it, an admin grant reads all, and anyone else
 is told the record does not exist, so ids cannot be probed.
 
 A batch also appends its execution events to `batch-flows/<id>.jsonl`, one JSON object per
