@@ -14,7 +14,7 @@ hrn show -f <run-id>       # the same timeline in the terminal
 hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
 
-Run and batch pages link to **Execution flow**, a hierarchical view of recorded steps and their timing. It can also be opened at `/flow/<id>` or fetched as JSON at `/flow/<id>/json` (`version: 1`). The `?level=simple`, `?level=technical` and `?level=debug` links choose how much detail is shown; simple omits tool steps, while debug includes step identifiers and marks rebuilt steps. The summary is generated from recorded events. hrn shows recorded steps and reasons, not the model's private reasoning. Run steps link back to the run page, where tool calls and output provide the evidence.
+Run and batch pages link to **Execution flow**, a hierarchical view of recorded steps and their timing. It can also be opened at `/flow/<id>` or fetched as JSON at `/flow/<id>/json` (`version: 1`). The `?level=simple`, `?level=technical` and `?level=debug` links choose how much detail is shown; simple omits tool steps, while debug includes step identifiers and marks rebuilt steps. The summary is generated from recorded events. An unfinished flow updates live at the selected level and ends when its run or batch finishes or stops. hrn shows recorded steps and reasons, not the model's private reasoning. Run steps link back to the run page, where tool calls and output provide the evidence.
 
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
 `hrn update` restarts a running watch on the new binary with the same flags (see

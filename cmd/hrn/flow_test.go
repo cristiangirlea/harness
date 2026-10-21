@@ -136,3 +136,25 @@ func TestFlowJSONCleansAStoredFlowFileAgain(t *testing.T) {
 		t.Fatalf("--json printed a stored secret: %s", out)
 	}
 }
+
+func TestFlowDebugPrintsNoControlsFromStepIds(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	res := batch.Result{ID: "20261021-120000-aabbcc", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "t", Status: batch.StatusPass}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"v":1,"seq":1,"step":"batch\u001b]0;owned\u0007","kind":"batch","run":"r\u001b[2J"}` + "\n"
+	if err := os.MkdirAll(filepath.Dir(batch.FlowPath(res.ID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(batch.FlowPath(res.ID), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdFlow([]string{"--level", "debug", res.ID}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(string(out), 0x1b) || strings.ContainsRune(string(out), 0x07) {
+		t.Fatalf("debug output carried a control character: %q", out)
+	}
+}

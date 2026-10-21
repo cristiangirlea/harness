@@ -74,42 +74,77 @@ type Options struct {
 
 // Route fills an unspecified backend/model/effort from evidence.
 func (o *Options) Route(declared, prompt string, backend *string, home string) (*table.RoutedBy, error) {
+	routed, _, err := o.RouteWithNote(declared, prompt, backend, home)
+	return routed, err
+}
+
+// RouteWithNote preserves why an explicit or invalid choice bypassed routing.
+func (o *Options) RouteWithNote(declared, prompt string, backend *string, home string) (*table.RoutedBy, string, error) {
 	if *backend != "" || o.Model != "" || o.Effort != "" {
-		return nil, nil
+		if *backend != "" {
+			return nil, "backend " + *backend + " was named for this run", nil
+		}
+		if o.Model != "" && o.Effort != "" {
+			return nil, "model and effort were named for this run", nil
+		}
+		if o.Model != "" {
+			return nil, "model " + o.Model + " was named for this run", nil
+		}
+		return nil, "effort " + o.Effort + " was named for this run", nil
 	}
 	t, err := table.Load(home)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	resolved := purpose.Resolve(declared, prompt)
 	category := resolved.Category
 	r, ok := t.Pick(category)
 	if !ok {
-		return nil, nil
+		return nil, "no route row for purpose " + category, nil
 	}
 	if r.Backend != "" {
 		p, err := BackendPreferences(home)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if !p.Enabled(r.Backend) {
-			fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: backend %s is disabled\n", category, r.Backend)
-			return nil, nil
+			note := fmt.Sprintf("ignoring route for %s: backend %s is disabled", category, r.Backend)
+			fmt.Fprintln(os.Stderr, "hrn: warning: "+note)
+			return nil, note, nil
 		}
 		if _, err := Get(r.Backend); err != nil {
-			fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: %v\n", category, err)
-			return nil, nil
+			note := fmt.Sprintf("ignoring route for %s: %v", category, err)
+			fmt.Fprintln(os.Stderr, "hrn: warning: "+note)
+			return nil, note, nil
 		}
 	}
 	if err := (Options{Effort: r.Effort}).Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "hrn: warning: ignoring route for %s: %v\n", category, err)
-		return nil, nil
+		note := fmt.Sprintf("ignoring route for %s: %v", category, err)
+		fmt.Fprintln(os.Stderr, "hrn: warning: "+note)
+		return nil, note, nil
 	}
 	if r.Backend == "" && r.Model == "" && r.Effort == "" {
-		return nil, nil
+		return nil, "no route row for purpose " + category, nil
 	}
 	*backend, o.Model, o.Effort = r.Backend, r.Model, r.Effort
-	return &table.RoutedBy{Category: category, Declared: resolved.Rule == "declared", Eval: r.Eval, Set: r.Set}, nil
+	return &table.RoutedBy{Category: category, Declared: resolved.Rule == "declared", Eval: r.Eval, Set: r.Set}, "", nil
+}
+
+// WithDefault adds the default backend to a route note, for a run that named none and had no route.
+func WithDefault(note, backend string) string {
+	d := "default backend " + backend + " was used"
+	if note == "" {
+		return d
+	}
+	return note + "; " + d
+}
+
+// ContinuationNote keeps a continuation's own reason, and adds the limit's reason whenever one was weighed.
+func ContinuationNote(continues, switched string) string {
+	if switched == "" {
+		return ""
+	}
+	return "continues run " + continues + "; " + switched
 }
 
 // IsLean reports whether lean is on: unset or true.

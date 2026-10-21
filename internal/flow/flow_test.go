@@ -193,6 +193,22 @@ func TestFromRunOfALegacyUnfinishedRunStaysRunning(t *testing.T) {
 	}
 }
 
+func TestFromRunUsesRouteNoteWhenNoRouteWasApplied(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	note := "no route row for purpose implement"
+	rec := runlog.Record{ID: "noted", Backend: "codex", RouteNote: note, Started: time.Unix(1, 0)}
+	steps := FromRun(rec, nil, "")
+	if len(steps) != 2 || steps[0].Reason != note || steps[1].Kind != KindRoute || steps[1].Status != StatusOK || steps[1].Reason != note {
+		t.Fatalf("steps=%+v", steps)
+	}
+	rec.RouteNote = ""
+	rec.Continues = "previous"
+	steps = FromRun(rec, nil, "")
+	if steps[0].Reason != "continues run previous" || len(steps) != 1 {
+		t.Fatalf("legacy continuation steps=%+v", steps)
+	}
+}
+
 func TestFromRunMasksSecretsInToolText(t *testing.T) {
 	rec := runlog.Record{ID: "r", Started: time.Unix(1, 0)}
 	cut := strings.Repeat("x", 170) + " git clone https://bob:hunter2secret@example.com/repo"

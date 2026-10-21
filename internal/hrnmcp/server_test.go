@@ -128,13 +128,13 @@ func TestRunThenInspect(t *testing.T) {
 	for _, tool := range tools {
 		seen[tool.Name] = true
 	}
-	for _, name := range []string{"run", "runs", "show", "backends", "batch", "batch_show", "batch_merge",
+	for _, name := range []string{"run", "runs", "show", "flow", "backends", "batch", "batch_show", "batch_merge",
 		"remote_submit", "remote_status", "remote_events", "remote_cancel"} {
 		if !seen[name] {
 			t.Errorf("missing tool %s", name)
 		}
 	}
-	if len(tools) != 11 || !tools[1].Annotations.ReadOnly() {
+	if len(tools) != 12 || !tools[1].Annotations.ReadOnly() {
 		t.Fatalf("tools = %+v", tools)
 	}
 
@@ -177,8 +177,50 @@ func TestRunThenInspect(t *testing.T) {
 			t.Errorf("show missing %q:\n%s", want, text)
 		}
 	}
+	flowResult := s.call(t, "flow", `{"id":"`+id+`"}`)
+	if flowResult.IsError || !strings.Contains(flowResult.Text(), "tool read_file") || !strings.Contains(flowResult.Text(), "run "+id+": ok") {
+		t.Fatalf("flow = %+v", flowResult)
+	}
+	flowData := flowResult.StructuredContent.(map[string]any)
+	if flowData["version"] != float64(1) || flowData["summary"] == "" {
+		t.Fatalf("flow structured content = %#v", flowData)
+	}
+	if simple := s.call(t, "flow", `{"id":"`+id+`","level":"simple"}`); simple.IsError || strings.Contains(simple.Text(), "tool read_file") {
+		t.Fatalf("simple flow = %+v", simple)
+	}
 	if text := s.call(t, "backends", `{}`).Text(); !strings.Contains(text, "✓ stub") {
 		t.Errorf("backends = %q", text)
+	}
+}
+
+func TestMCPFlowBatchReasonsErrorsAndRedaction(t *testing.T) {
+	t.Setenv("HRN_OWNER", "local:one")
+	s := connect(t, t.TempDir())
+	res := batch.Result{ID: "20261021-120000-abcdef", Owner: "local:one", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "task-a", Status: batch.StatusFail, Attempts: []batch.Attempt{{Backend: "stub", Result: agent.Result{Status: agent.StatusError}, Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1, Output: "FAIL"}}}}}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	got := s.call(t, "flow", `{"id":"20261021-120000-abcdef"}`)
+	if got.IsError || !strings.Contains(got.Text(), "gate go test ./...: exited 1") || !strings.Contains(got.Text(), "why:") {
+		t.Fatalf("batch flow = %+v", got)
+	}
+	for _, id := range []string{"no-such-run", "../x"} {
+		bad := s.call(t, "flow", `{"id":"`+id+`"}`)
+		if !bad.IsError || !strings.Contains(bad.Text(), "no run or batch "+id) {
+			t.Errorf("flow %q = %+v", id, bad)
+		}
+	}
+	w, err := runlog.Create("stub", agent.Task{Prompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "ghp_abcdefghijklmnop1234"})
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	secret := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	if strings.Contains(secret.Text(), "ghp_abcdefghijklmnop1234") {
+		t.Fatalf("flow exposed secret: %s", secret.Text())
 	}
 }
 
@@ -716,5 +758,81 @@ func TestMCPRoutesByTheDeclaredPurpose(t *testing.T) {
 	rec, err := runlog.Load(res.StructuredContent.(map[string]any)["run_id"].(string))
 	if err != nil || rec.Backend != "stub" || rec.RoutedBy == nil || rec.RoutedBy.Category != "review" || !rec.RoutedBy.Declared {
 		t.Fatalf("declared purpose did not route: %+v %v", rec, err)
+	}
+}
+
+func TestMCPRunRecordsExplicitBackendNote(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"hello","backend":"stub"}`)
+	if res.IsError {
+		t.Fatal(res.Text())
+	}
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(id)
+	if err != nil || rec.RouteNote != "backend stub was named for this run" {
+		t.Fatalf("record=%+v err=%v", rec, err)
+	}
+}
+
+func TestMCPContinuationKeepsItsContinuesReasonInsteadOfANote(t *testing.T) {
+	s := connect(t, t.TempDir())
+	first := s.call(t, "run", `{"prompt":"hello","backend":"stub"}`)
+	if first.IsError {
+		t.Fatal(first.Text())
+	}
+	id := first.StructuredContent.(map[string]any)["run_id"].(string)
+	next := s.call(t, "run", `{"prompt":"again","fresh":true,"no_switch":true,"continue_run_id":"`+id+`"}`)
+	if next.IsError {
+		t.Fatal(next.Text())
+	}
+	rec, err := runlog.Load(next.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Continues != id || rec.RouteNote != "" {
+		t.Fatalf("continuation record = %+v (%v): its backend came from the run it continues, not a choice", rec, err)
+	}
+}
+
+func TestMCPFlowCapsALargeTreeAndFiltersControls(t *testing.T) {
+	s := connect(t, t.TempDir())
+	w, err := runlog.Create("stub", agent.Task{Prompt: "big"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "echo \x1b]52;c;cGF5bG9hZA==\x07"})
+	small := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	if small.IsError || strings.ContainsRune(small.Text(), 0x1b) {
+		t.Fatalf("flow text: %q", small.Text())
+	}
+	if data, _ := json.Marshal(small.StructuredContent); strings.Contains(string(data), `\u001b`) {
+		t.Fatalf("structured content carried a control character: %s", data)
+	}
+	for i := 0; i < 600; i++ {
+		w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: strings.Repeat("long command text ", 12)})
+	}
+	big := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	content, _ := big.StructuredContent.(map[string]any)
+	if big.IsError || !strings.Contains(big.Text(), "truncated at 64 KiB") || content["truncated"] != true {
+		t.Fatalf("a large flow must be cut and say so: truncated=%v", content["truncated"])
+	}
+	if tree, _ := content["tree"].([]any); len(tree) != 0 {
+		t.Fatalf("the structured tree of a cut flow must not be returned whole, got %d roots", len(tree))
+	}
+}
+
+func TestMCPFlowFiltersTaskAndStatusInStructuredContent(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := batch.Result{ID: "20261021-130000-aabbcc", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "t", Status: batch.StatusPass}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"v":1,"seq":1,"step":"batch","kind":"batch","task":"t\u001b]52;c;eA==\u0007","status":"ok\u001b[2J"}` + "\n"
+	if err := os.MkdirAll(filepath.Dir(batch.FlowPath(res.ID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(batch.FlowPath(res.ID), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := s.call(t, "flow", `{"id":"`+res.ID+`","level":"debug"}`)
+	if data, _ := json.Marshal(out.StructuredContent); out.IsError || strings.Contains(string(data), `\u001b`) || strings.Contains(string(data), `\u0007`) {
+		t.Fatalf("structured content carried a control character: %s", data)
 	}
 }

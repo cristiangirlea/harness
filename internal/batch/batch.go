@@ -683,11 +683,14 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 
 	opts := t.Options.Over(spec.Options)
 	backend := firstOf(t.Backend, spec.Backend)
-	routedBy, err := opts.Route(t.Purpose, t.Prompt, &backend, runlog.Home())
+	routedBy, routeNote, err := opts.RouteWithNote(t.Purpose, t.Prompt, &backend, runlog.Home())
 	if err != nil {
 		return fail(err)
 	}
-	routeReason := "spec or default chose backend " + firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	routeReason := routeNote
+	if backend == "" {
+		routeReason = agent.WithDefault(routeNote, agent.DefaultBackendNameIn(runlog.Home()))
+	}
 	if routedBy != nil {
 		mode := "classified"
 		if routedBy.Declared {
@@ -699,7 +702,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 	}
 	fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/route", Parent: TaskStep(t.ID), Kind: flow.KindRoute, Task: t.ID,
-		Status: flow.StatusOK, Name: backend, Reason: routeReason})
+		Status: flow.StatusOK, Name: firstOf(backend, agent.DefaultBackendNameIn(runlog.Home())), Reason: routeReason})
 	backends := []string{firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))}
 	p, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {

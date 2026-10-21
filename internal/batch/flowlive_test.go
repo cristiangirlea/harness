@@ -332,3 +332,31 @@ func sameSteps(t *testing.T, live, rebuilt []flow.Event) {
 		}
 	}
 }
+
+func TestTheRouteStepNamesTheDefaultBackend(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := initRepo(t)
+	name := agent.DefaultBackendName()
+	old, _ := agent.Get(name)
+	agent.Register(stub{name, func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: name, Status: agent.StatusOK, Final: "nothing", Turns: 1}
+	}})
+	t.Cleanup(func() { agent.Register(old) })
+	res, err := Run(context.Background(), Spec{Dir: dir, Tasks: []Task{{ID: "dflt", Prompt: "Implement a widget"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := flow.Read(FlowPath(res.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range flowNodes(flow.Build(events)) {
+		if n.Step == TaskStep("dflt")+"/route" {
+			if n.Name != name || !strings.HasSuffix(n.Reason, "default backend "+name+" was used") {
+				t.Fatalf("route step = %q / %q", n.Name, n.Reason)
+			}
+			return
+		}
+	}
+	t.Fatal("no route step")
+}
