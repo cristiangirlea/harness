@@ -200,7 +200,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
 			dir = ws.Root
-			routedBy, err := args.Options.Route(args.Purpose, args.Prompt, &args.Backend, runlog.Home())
+			routedBy, routeNote, err := args.Options.RouteWithNote(args.Purpose, args.Prompt, &args.Backend, runlog.Home())
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
@@ -215,6 +215,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			if args.Backend == "" {
 				args.Backend = agent.DefaultBackendNameIn(runlog.Home())
+				if routedBy == nil && routeNote == "" {
+					routeNote = "default backend " + args.Backend + " was used"
+				}
 			}
 			if err := preference.Check(args.Backend); err != nil {
 				return text("run: "+err.Error(), nil, true), nil
@@ -227,7 +230,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
-			rec, err := runlog.CreateContinuingRoute(args.Backend, task, args.ContinueRunID, plan.Route(), routedBy)
+			rec, err := runlog.CreateRouted(args.Backend, task, args.ContinueRunID, plan.Route(), routedBy, routeNote)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 			}

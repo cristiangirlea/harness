@@ -39,8 +39,9 @@ func Root() string { return filepath.Join(Home(), "runs") }
 type RoutedBy = table.RoutedBy
 
 type Record struct {
-	RoutedBy *RoutedBy `json:"routed_by,omitempty"`
-	ID       string    `json:"id"`
+	RoutedBy  *RoutedBy `json:"routed_by,omitempty"`
+	RouteNote string    `json:"route_note,omitempty"`
+	ID        string    `json:"id"`
 	// Owner is empty on records written before ownership; owner.Of reads that as the local user.
 	Owner   string       `json:"owner,omitempty"`
 	Backend string       `json:"backend"`
@@ -70,12 +71,16 @@ type Writer struct {
 
 // Create starts a run record.
 func Create(backend string, task agent.Task) (*Writer, error) {
-	return create(backend, task, "", "")
+	return create(backend, task, "", "", nil, "")
 }
 
 // CreateContinuing records a continuation.
 func CreateContinuing(backend string, task agent.Task, continues string, routed ...*RoutedBy) (*Writer, error) {
-	return create(backend, task, continues, "", routed...)
+	var by *RoutedBy
+	if len(routed) > 0 {
+		by = routed[0]
+	}
+	return create(backend, task, continues, "", by, "")
 }
 
 // RouteFreshHandover means a new session briefed from the record.
@@ -83,13 +88,22 @@ const RouteFreshHandover = "fresh_handover"
 
 // CreateContinuingRoute records a route, empty for default.
 func CreateContinuingRoute(backend string, task agent.Task, continues, route string, routed ...*RoutedBy) (*Writer, error) {
-	return create(backend, task, continues, route, routed...)
+	var by *RoutedBy
+	if len(routed) > 0 {
+		by = routed[0]
+	}
+	return CreateRouted(backend, task, continues, route, by, "")
+}
+
+// CreateRouted records route selection evidence alongside the task.
+func CreateRouted(backend string, task agent.Task, continues, route string, routed *RoutedBy, note string) (*Writer, error) {
+	return create(backend, task, continues, route, routed, note)
 }
 
 var createEventsFile = func(path string) (io.WriteCloser, error) { return os.Create(path) }
 
 // Failed starts must leave no partial record.
-func create(backend string, task agent.Task, continues, route string, routed ...*RoutedBy) (w *Writer, err error) {
+func create(backend string, task agent.Task, continues, route string, routed *RoutedBy, note string) (w *Writer, err error) {
 	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -101,9 +115,9 @@ func create(backend string, task agent.Task, continues, route string, routed ...
 		}
 	}()
 	w = &Writer{dir: dir, rec: Record{ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
-		Setup: agent.ResolveSetup(backend, task)}}
-	if len(routed) > 0 && routed[0] != nil {
-		by := *routed[0]
+		Setup: agent.ResolveSetup(backend, task), RouteNote: note}}
+	if routed != nil {
+		by := *routed
 		w.rec.RoutedBy = &by
 	}
 	if err := writeJSON(filepath.Join(dir, "task.json"), w.rec); err != nil {

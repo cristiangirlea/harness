@@ -683,11 +683,14 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 
 	opts := t.Options.Over(spec.Options)
 	backend := firstOf(t.Backend, spec.Backend)
-	routedBy, err := opts.Route(t.Purpose, t.Prompt, &backend, runlog.Home())
+	routedBy, routeNote, err := opts.RouteWithNote(t.Purpose, t.Prompt, &backend, runlog.Home())
 	if err != nil {
 		return fail(err)
 	}
-	routeReason := "spec or default chose backend " + firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	routeReason := routeNote
+	if routeReason == "" {
+		routeReason = "spec or default chose backend " + firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	}
 	if routedBy != nil {
 		mode := "classified"
 		if routedBy.Declared {

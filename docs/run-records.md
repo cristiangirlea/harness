@@ -46,7 +46,7 @@ with its `repeat` number; variant and task rows add `judge_repeats`, `score_min`
 repeat). Older records have one verdict
 per cell, no repeat number and no spread, and still load.
 
-Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
+Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; runs without an applied route may include `route_note` explaining the choice, and old records still load.
 
 Every run records `setup`, the agent setup it started with, read when the record is
 created (an edit the agent makes later does not change it). It holds hashes and names,

@@ -27,7 +27,7 @@ func FromRun(rec runlog.Record, events []agent.Event, parent string) []Event {
 	}
 	out := []Event{at(Event{Time: rec.Started, Step: root, Parent: parent, Kind: KindRun, Status: StatusStarted,
 		Name: rec.Backend, Text: firstLine(rec.Task.Prompt), Reason: routeReason(rec)})}
-	if rb := rec.RoutedBy; rb != nil {
+	if rec.RoutedBy != nil || rec.RouteNote != "" {
 		out = append(out, at(Event{Time: rec.Started, Step: root + "/route", Parent: root, Kind: KindRoute, Status: StatusOK,
 			Name: rec.Backend, Reason: routeReason(rec)}))
 	}
@@ -122,6 +122,9 @@ func runStatus(s agent.Status) Status {
 func routeReason(rec runlog.Record) string {
 	rb := rec.RoutedBy
 	if rb == nil {
+		if rec.RouteNote != "" {
+			return rec.RouteNote
+		}
 		if rec.Continues != "" {
 			return "continues run " + rec.Continues
 		}

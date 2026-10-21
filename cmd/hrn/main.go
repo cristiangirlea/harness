@@ -344,7 +344,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("empty prompt")
 	}
 
-	routedBy, err := opts.Route(*declared, prompt, &backend, runlog.Home())
+	routedBy, routeNote, err := opts.RouteWithNote(*declared, prompt, &backend, runlog.Home())
 	if err != nil {
 		return 2, err
 	}
@@ -359,6 +359,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	if backend == "" {
 		backend = agent.DefaultBackendNameIn(runlog.Home())
+		if routedBy == nil && routeNote == "" {
+			routeNote = "default backend " + backend + " was used"
+		}
 	}
 	if err := preference.Check(backend); err != nil {
 		return 2, fmt.Errorf("run: %w", err)
@@ -387,7 +390,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 
-	rec, err := runlog.CreateContinuingRoute(backend, task, *continueID, plan.Route(), routedBy)
+	rec, err := runlog.CreateRouted(backend, task, *continueID, plan.Route(), routedBy, routeNote)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}

@@ -718,3 +718,16 @@ func TestMCPRoutesByTheDeclaredPurpose(t *testing.T) {
 		t.Fatalf("declared purpose did not route: %+v %v", rec, err)
 	}
 }
+
+func TestMCPRunRecordsExplicitBackendNote(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"hello","backend":"stub"}`)
+	if res.IsError {
+		t.Fatal(res.Text())
+	}
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(id)
+	if err != nil || rec.RouteNote != "backend stub was named for this run" {
+		t.Fatalf("record=%+v err=%v", rec, err)
+	}
+}
