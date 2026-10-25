@@ -128,3 +128,7 @@ rather than ignored, because the spec is written by a model and a misspelt `gate
 otherwise run with no gate. The structured result is a short summary rather than the
 whole record, since some hosts, Claude Code among them, show it to the model in place of
 the text. Worktrees stay after a merge; `hrn batch rm <id>` removes them.
+
+Batch progress messages and errors in the `batch_merge` result (text and structured)
+replace terminal control characters (C0 except newline and tab, DEL and C1) with
+U+FFFD, using the same filter as batch summary errors and attempt notes.

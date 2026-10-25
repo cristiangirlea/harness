@@ -52,7 +52,7 @@ func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if e.Kind == "tool" {
 					return // one line per agent tool call would drown the host
 				}
-				call.Progress(fmt.Sprintf("[%s] %s", e.Task, tools.OneLine(e.Text, 200)))
+				call.Progress(fmt.Sprintf("[%s] %s", e.Task, printableNote(e.Text, 200)))
 			})
 			if runErr != nil && res.ID == "" {
 				return mcp.CallResult{}, runErr
@@ -344,14 +344,16 @@ func batchMergeTool() mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			merged, mergeErr := batch.Merge(ctx, res, args.Tasks, args.Squash)
+			filtered := slices.Clone(merged)
 			var b strings.Builder
 			done := 0
-			for _, m := range merged {
+			for i, m := range merged {
+				filtered[i].Error = printableNote(m.Error, 200)
 				switch {
 				case m.Conflict:
 					fmt.Fprintf(&b, "%s: conflict merging %s; the tree is back as it was, merge it by hand with `git merge %s`\n", m.Task, m.Branch, m.Branch)
 				case m.Error != "":
-					fmt.Fprintf(&b, "%s: could not merge %s: %s\n", m.Task, m.Branch, tools.OneLine(m.Error, 200))
+					fmt.Fprintf(&b, "%s: could not merge %s: %s\n", m.Task, m.Branch, printableNote(m.Error, 200))
 				case m.Skipped != "":
 					fmt.Fprintf(&b, "%s: skipped, %s\n", m.Task, m.Skipped)
 				default:
@@ -364,9 +366,9 @@ func batchMergeTool() mcp.Tool {
 				fmt.Fprintf(&b, "\nundo with: git reset --hard %s", before)
 			}
 			if mergeErr != nil {
-				fmt.Fprintf(&b, "\nerror: %v", mergeErr)
+				fmt.Fprintf(&b, "\nerror: %s", printableNote(mergeErr.Error(), 200))
 			}
-			return text(b.String(), map[string]any{"batch_id": res.ID, "merged": merged}, mergeErr != nil), nil
+			return text(b.String(), map[string]any{"batch_id": res.ID, "merged": filtered}, mergeErr != nil), nil
 		},
 	}
 }
