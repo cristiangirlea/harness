@@ -662,10 +662,10 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		return tr
 	}
 	fail := func(err error) TaskResult {
+		tr.Error = err.Error()
 		if ctx.Err() != nil {
 			return finish(StatusCanceled, "canceled")
 		}
-		tr.Error = err.Error()
 		return finish(StatusError, "error: "+err.Error())
 	}
 	if ctx.Err() != nil {
@@ -882,6 +882,11 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		plan.reason = attemptReason(append(slices.Clone(tr.Attempts), Attempt{Backend: name, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}), len(tr.Attempts))
 		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, fw, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
+		if out.keepWorktree && slot != nil {
+			kept.add(slot.Lease.Holder)
+			err = fmt.Errorf("%w; slot %d kept", err, slot.N)
+			slot = nil
+		}
 		task.RetrievalState = out.att.Result.Retrieval
 		task.RetrievalRepair = false
 		for _, g := range out.att.Gates {
@@ -1190,9 +1195,10 @@ func giveBack(slot ws.Taken, base string) error {
 }
 
 type attemptOutcome struct {
-	att    Attempt
-	commit string // empty when the agent changed nothing
-	pass   bool   // the run finished and every gate exited 0
+	att          Attempt
+	commit       string // empty when the agent changed nothing
+	pass         bool   // the run finished and every gate exited 0
+	keepWorktree bool   // releasing a slot would move HEAD away from the agent's work
 }
 
 // runAttempt's returned error aborts the whole task; a failed run or gate is reported in the outcome instead.
@@ -1300,7 +1306,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		// No retry may remove or reuse the worktree holding the work.
 		att.Error = strings.TrimSpace(att.Error + "\n" + note)
 		fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Reason: attemptEndReason(att), Text: firstLineOf(note)})
-		return attemptOutcome{att: att}, fmt.Errorf("%s (%s)", note, task.Dir)
+		return attemptOutcome{att: att, keepWorktree: true}, fmt.Errorf("%s (%s)", note, task.Dir)
 	}
 	if sha == "" && commitErr == nil {
 		sha, note, commitErr = agentCommit(task.Dir, plan.branch, plan.base)
@@ -1606,7 +1612,7 @@ func skipCutRune(s string) string {
 	return s
 }
 
-// Commit despite cancellation to leave a consistent branch; note says why off-branch work stayed uncommitted.
+// Commit despite cancellation to leave a consistent branch; note says why off-branch work must stay in the worktree.
 func commitChanges(wt, branch, message string) (sha, note string, err error) {
 	if _, err := os.Stat(wt); err != nil {
 		return "", "", nil
@@ -1619,7 +1625,7 @@ func commitChanges(wt, branch, message string) (sha, note string, err error) {
 	}
 	defer g.close()
 	status, err := g.stdout(ctx, "status", "--porcelain", "-z", "--no-renames", "--ignore-submodules=all")
-	if err != nil || status == "" {
+	if err != nil {
 		return "", "", err
 	}
 	if branch != "" {
@@ -1634,8 +1640,34 @@ func commitChanges(wt, branch, message string) (sha, note string, err error) {
 			if head != "" {
 				where = "HEAD is on branch " + head
 			}
-			return "", "work left uncommitted in the worktree: " + where + ", not the task's branch " + branch, nil
+			where += ", not the task's branch " + branch
+			if status != "" {
+				return "", "work left uncommitted in the worktree: " + where, nil
+			}
+			refs, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"+branch)
+			if err != nil {
+				return "", "", err
+			}
+			commit, err := g.stdout(ctx, "rev-parse", "-q", "--verify", "HEAD")
+			if err != nil {
+				if head == "" {
+					return "", "", err
+				}
+				// Only a confirmed unborn branch can have no HEAD commit.
+				headRef := "refs/heads/" + head
+				headRefs, refErr := g.stdout(ctx, "for-each-ref", "--format=%(refname)", headRef)
+				if refErr != nil || slices.Contains(strings.Split(headRefs, "\n"), headRef) {
+					return "", "", err
+				}
+			}
+			commit = strings.TrimSpace(commit)
+			if commit != "" && !slices.Contains(strings.Split(refs, "\n"), "refs/heads/"+branch+" "+commit) {
+				return "", "commit " + tools.ShortSHA(commit) + " left in the worktree: " + where, nil
+			}
 		}
+	}
+	if status == "" {
+		return "", "", nil
 	}
 	// Stage reported paths: add -A ignores diff.ignoreSubmodules.
 	var paths []string

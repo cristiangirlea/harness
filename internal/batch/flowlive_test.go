@@ -95,6 +95,44 @@ func TestLiveFlowFailingGate(t *testing.T) {
 	}
 }
 
+func TestAnOffBranchCommitFailsTheLiveAndRebuiltAttempt(t *testing.T) {
+	for _, move := range []string{"detached", "other branch"} {
+		for _, mode := range []string{WorktreesFresh, WorktreesSlots} {
+			t.Run(move+"/"+mode, func(t *testing.T) {
+				t.Setenv("HRN_HOME", t.TempDir())
+				dir := initRepo(t)
+				const backend = "wb-flow-off-branch"
+				agent.Register(stub{backend, func(_ context.Context, task agent.Task) agent.Result {
+					git(t, task.Dir, offMoves[move]...)
+					writeFile(t, filepath.Join(task.Dir, "out.txt"), "work\n")
+					git(t, task.Dir, "add", "out.txt")
+					git(t, task.Dir, "commit", "-q", "-m", "agent work")
+					return agent.Result{Backend: backend, Status: agent.StatusOK, Turns: 1}
+				}})
+				res, err := Run(context.Background(), Spec{Dir: dir, Backend: backend, Worktrees: mode,
+					Tasks: []Task{{ID: "off", Prompt: "p"}}}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer Remove(res)
+				if res.Tasks[0].Status != StatusError {
+					t.Fatalf("task status = %s, want error", res.Tasks[0].Status)
+				}
+				live, err := flow.Read(FlowPath(res.ID))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for source, events := range map[string][]flow.Event{"live": live, "rebuilt": FlowOf(res, nil)} {
+					a := find(flow.Build(events), AttemptStep("off", 1))
+					if a == nil || a.Status != flow.StatusFailed || !strings.Contains(a.Text, "commit ") || !strings.Contains(a.Text, "left in the worktree") {
+						t.Errorf("%s attempt = %+v, want failed with the off-branch commit note", source, a)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestLiveFlowParallelAndTimeline(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "user:parallel")
