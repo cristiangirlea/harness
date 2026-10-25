@@ -80,12 +80,14 @@ func setupCells(spec Spec, res batch.Result) map[[2]string]setupCell {
 		answerOnly[t.ID] = t.Expect != "" && len(firstOfList(t.Gate, spec.Gate)) == 0
 	}
 	out := map[[2]string]setupCell{}
-	for _, tr := range res.Tasks {
-		task, _, ok := splitID(tr.ID)
+	// A rerun belongs to its first-round cell, so both sides pair on the first id.
+	for _, group := range groupCells(res.Tasks) {
+		tr := group.scored
+		task, _, ok := splitID(group.first.ID)
 		if !ok {
 			continue
 		}
-		repeat := tr.ID[strings.LastIndex(tr.ID, ".r")+2:]
+		repeat := group.first.ID[strings.LastIndex(group.first.ID, ".r")+2:]
 		c := setupCell{passed: tr.Status == batch.StatusPass}
 		c.acted = c.passed || answerOnly[task] || !neverActed(tr)
 		if n := len(tr.Attempts); n > 0 {
