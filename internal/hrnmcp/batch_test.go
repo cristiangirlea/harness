@@ -201,3 +201,81 @@ func TestBatchSummaryShowsADeclaredPurpose(t *testing.T) {
 		t.Errorf("a task with no declared purpose shows one:\n%s", summary)
 	}
 }
+
+func TestBatchSummariesShowAttemptNotesEvenWhenTheTaskPassed(t *testing.T) {
+	note := "commit not recorded: the branch tip abc1234 does not contain the base"
+	res := batch.Result{ID: "notes", Tasks: []batch.TaskResult{
+		{ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: note}, {Backend: "stub"}}},
+		{ID: "two", Status: batch.StatusPass},
+	}}
+	if got := batchSummary(res); !strings.Contains(got, "\n  attempt 1 note: "+note+"\n") {
+		t.Errorf("text summary omitted the attempt note: %s", got)
+	}
+	data, err := json.Marshal(brief(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Tasks []struct {
+			Notes  []string `json:"notes"`
+			Failed string   `json:"failed"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tasks[0].Notes) != 1 || got.Tasks[0].Notes[0] != "attempt 1: "+note || got.Tasks[0].Failed != "" {
+		t.Errorf("structured summary omitted or treated the note as a failure: %s", data)
+	}
+	if strings.Count(string(data), `"notes":`) != 1 {
+		t.Errorf("empty notes must be omitted: %s", data)
+	}
+}
+
+func TestBatchAttemptNotesCannotSendTerminalControls(t *testing.T) {
+	note := "commit: \x1b]0;title\x07 \x1b[31mred\u009b \x00\x1f\x7f\u0080\u009f"
+	want := "commit: \ufffd]0;title\ufffd \ufffd[31mred\ufffd \ufffd\ufffd\ufffd\ufffd\ufffd"
+	res := batch.Result{ID: "controls", Tasks: []batch.TaskResult{{
+		ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: note}},
+	}}}
+	if got := batchSummary(res); !strings.Contains(got, "attempt 1 note: "+want+"\n") {
+		t.Errorf("text summary did not replace terminal controls: %q", got)
+	}
+	data, err := json.Marshal(brief(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got batchBrief
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if notes := got.Tasks[0].Notes; len(notes) != 1 || notes[0] != "attempt 1: "+want {
+		t.Errorf("decoded notes did not replace terminal controls: %q", notes)
+	}
+}
+
+func TestBatchSummariesCarryNoTerminalControlsInErrors(t *testing.T) {
+	bad := "x\x1b[31m\x07\u009b"
+	res := batch.Result{ID: "controls", Tasks: []batch.TaskResult{
+		{ID: "failed", Status: batch.StatusError, Error: "task " + bad,
+			Attempts: []batch.Attempt{{Backend: "stub", Result: agent.Result{Error: "result " + bad}}}},
+		{ID: "gated", Status: batch.StatusFail,
+			Attempts: []batch.Attempt{{Backend: "stub", Gates: []batch.GateResult{{Command: "gate " + bad, ExitCode: 1}}}}},
+	}}
+	if got := batchSummary(res); strings.ContainsAny(got, "\x1b\x07\u009b") {
+		t.Errorf("text summary carries terminal controls: %q", got)
+	}
+	data, err := json.Marshal(brief(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got batchBrief
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, tb := range got.Tasks {
+		if strings.ContainsAny(tb.Failed, "\x1b\x07\u009b") || tb.Failed == "" {
+			t.Errorf("task %s: decoded failure %q is empty or carries terminal controls", tb.ID, tb.Failed)
+		}
+	}
+}

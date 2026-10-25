@@ -323,6 +323,11 @@ func printBatch(r *renderer, res batch.Result) {
 			line += r.c(dim, " · agent committed")
 		}
 		r.Line(line)
+		for i, att := range t.Attempts {
+			if att.Error != "" {
+				r.Line(fmt.Sprintf("    attempt %d note: %s", i+1, printable(tools.OneLine(att.Error, 500))))
+			}
+		}
 	}
 	tail, took := "", res.Duration.Round(time.Second).String()
 	if running > 0 {

@@ -339,6 +339,51 @@ func TestPrintBatchTable(t *testing.T) {
 	}
 }
 
+func TestBatchShowDisplaysPassingAttemptNotes(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	note := "commit not recorded: the branch tip abc1234 does not contain the base"
+	res := batch.Result{ID: "notes", Tasks: []batch.TaskResult{{
+		ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: note}},
+	}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	var table strings.Builder
+	r := newRenderer(false)
+	r.out, r.color = &table, false
+	printBatch(r, res)
+	if !strings.Contains(table.String(), "\n    attempt 1 note: "+note+"\n") {
+		t.Errorf("table omitted the attempt note: %s", table.String())
+	}
+	rd, wr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = wr
+	defer func() { os.Stdout = old }()
+	code, showErr := cmdBatchShow([]string{res.ID})
+	_ = wr.Close()
+	out, err := io.ReadAll(rd)
+	_ = rd.Close()
+	if err != nil || showErr != nil || code != 0 || !strings.Contains(string(out), note) {
+		t.Errorf("batch show = %d, %v, %v, %s: want the passing attempt note", code, showErr, err, out)
+	}
+}
+
+func TestBatchAttemptNotesCannotSendTerminalControls(t *testing.T) {
+	res := batch.Result{ID: "controls", Tasks: []batch.TaskResult{{
+		ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: "commit: \x1b]0;title\x07 \x1b[31mred\u009b"}},
+	}}}
+	var table strings.Builder
+	r := newRenderer(false)
+	r.out, r.color = &table, false
+	printBatch(r, res)
+	if out := table.String(); strings.ContainsAny(out, "\x1b\x07\u009b") || !strings.Contains(out, "attempt 1 note: commit:") {
+		t.Errorf("the note reached the terminal with its control characters: %q", out)
+	}
+}
+
 func TestPrintBatchTimesARunningBatchFromItsStart(t *testing.T) {
 	var out strings.Builder
 	r := newRenderer(false)
