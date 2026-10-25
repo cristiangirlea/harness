@@ -78,6 +78,16 @@ func TestPublicProjectGrantsAndAudit(t *testing.T) {
 	if !strings.Contains(resp.Body.String(), w.ID()) || !strings.Contains(resp.Body.String(), batchID) {
 		t.Fatal("granted index omitted records")
 	}
+	if body := f.request(h, "/", "harness.example.com", "", f.tokenFor("other@example.com")).Body.String(); strings.Contains(body, w.ID()) || strings.Contains(body, batchID) {
+		t.Fatal("with grants loaded, an ungranted viewer's index listed the records")
+	}
+	for _, email := range []string{"reader@example.com", "other@example.com"} {
+		body := f.request(h, "/bot/answer?q=how+long+did+it+take", "harness.example.com", "", f.tokenFor(email)).Body.String()
+		named := strings.Contains(body, w.ID()) || strings.Contains(body, batchID)
+		if named != (email == "reader@example.com") {
+			t.Fatalf("Ada's answer for %s named a record: %v (%s)", email, named, body)
+		}
+	}
 	missingID := "20260101-000000-aaaaaa"
 	resp = f.request(h, "/run/"+missingID, "harness.example.com", "", f.tokenFor("reader@example.com"))
 	row := lastAccessRow(t)

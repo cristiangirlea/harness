@@ -249,7 +249,7 @@ func List(limit int) ([]Record, error) {
 
 // ListFor is List of the runs v may read; others are skipped before they count toward limit.
 func ListFor(v owner.Viewer, limit int) ([]Record, error) {
-	recs, _, err := list(time.Time{}, limit, func(r Record) bool { return v.CanReadRecord(r.Owner, owner.RepositoryDir(r.Task.Dir)) })
+	recs, _, err := list(time.Time{}, limit, func(r Record) bool { return v.CanReadRecord(r.Owner, r.Task.Dir) })
 	return recs, err
 }
 
@@ -259,7 +259,7 @@ func LoadFor(v owner.Viewer, id string) (Record, error) {
 	if err != nil {
 		return rec, err
 	}
-	if !v.ReadRecord(id, rec.Owner, owner.RepositoryDir(rec.Task.Dir)) {
+	if !v.ReadRecord(id, rec.Owner, rec.Task.Dir) {
 		return Record{}, fmt.Errorf("run %s: %w", id, os.ErrNotExist)
 	}
 	return rec, nil

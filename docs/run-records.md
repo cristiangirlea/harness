@@ -303,7 +303,9 @@ when available, falling back to the task directory. A batch uses `Result.Dir`.
 The directory must equal the granted project or be below it after path cleaning,
 with case ignored on Windows and a directory boundary required (`/repo2` is outside
 `/repo`). Batch timelines check child runs independently; worktrees inside the
-granted repository qualify, while runs outside it require their own access.
+granted repository qualify, while runs outside it require their own access. The batch
+record's own attempt summaries and gate output stay visible to anyone who may read
+the batch.
 
 hrn never writes the grants file. Public watch loads it at startup; absent means no
 project grants, and malformed means no project grants plus one stderr error. Restart

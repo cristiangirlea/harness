@@ -213,8 +213,11 @@ an owner. `project` must be an absolute repository directory (on Windows, for ex
 matched on directory boundaries, so `/repo` never includes `/repo2`. Runs use their
 repository root when a `.git` entry can be found by walking parents, otherwise their
 recorded task directory; batches use their recorded repository directory. A batch's
-child run is checked independently: a worktree inside the granted project is covered
-by the same grant, while a run in another project remains hidden.
+child run is checked on its own: a worktree inside the granted project is covered by
+the same grant, while a run recorded elsewhere (such as a slot under another checkout)
+is hidden on the flow page. A batch grant still shows the batch record itself,
+including each attempt's summary, error line and gate output; only the run record
+(its prompt, events and tool output) needs its own access.
 
 Watch reads grants once at startup and never writes the file; restart watch after an
 edit. A missing file grants nothing. A malformed file disables all project grants

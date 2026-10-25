@@ -91,3 +91,53 @@ func TestViewerReadDecisionBasis(t *testing.T) {
 		}
 	}
 }
+
+func TestRepositoryDirFindsTheRepositoryRoot(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	deep := filepath.Join(repo, "pkg", "inner")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := RepositoryDir(deep); got != repo {
+		t.Fatalf("a .git directory: got %q, want %q", got, repo)
+	}
+	// A linked worktree has a .git file, not a directory, and is its own repository root.
+	wt := filepath.Join(root, "wt")
+	if err := os.MkdirAll(filepath.Join(wt, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := RepositoryDir(filepath.Join(wt, "sub")); got != wt {
+		t.Fatalf("a worktree's .git file: got %q, want %q", got, wt)
+	}
+	plain := filepath.Join(t.TempDir(), "plain", "dir")
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := RepositoryDir(plain); got != plain {
+		t.Fatalf("no repository: got %q, want the recorded %q", got, plain)
+	}
+}
+
+func TestAGrantOnASubfolderDoesNotCoverItsRepository(t *testing.T) {
+	t.Setenv("HRN_OWNER", "local:me")
+	repo := filepath.Join(t.TempDir(), "repo")
+	sub := filepath.Join(repo, "docs")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	v := Viewer{ID: Email("reader@example.com"), Grants: []Grant{{Viewer: Email("reader@example.com"), Project: sub}}}
+	// A run recorded in the subfolder belongs to the whole repository, which the grant does not cover.
+	if v.CanReadRecord("local:me", sub) {
+		t.Fatal("a grant on a subfolder must not open records of its repository")
+	}
+}

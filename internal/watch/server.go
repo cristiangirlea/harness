@@ -618,7 +618,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	}
 	f, rec, err := NewFollower(r.PathValue("id"), 0)
 	// A public viewer gets one answer for missing, unreadable and foreign records, so ids cannot be probed.
-	if err != nil && s.opt.Public != nil || err == nil && !s.who(r).ReadRecord(r.PathValue("id"), rec.Owner, owner.RepositoryDir(rec.Task.Dir)) {
+	if err != nil && s.opt.Public != nil || err == nil && !s.who(r).ReadRecord(r.PathValue("id"), rec.Owner, rec.Task.Dir) {
 		err = os.ErrNotExist
 	}
 	if err != nil {
@@ -876,7 +876,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// The follower reads a half-written result's task.json; the ownership check is on that record.
 	f, rec, err := NewFollower(id, cur.off)
-	if err != nil || !s.who(r).ReadRecord(id, rec.Owner, owner.RepositoryDir(rec.Task.Dir)) {
+	if err != nil || !s.who(r).ReadRecord(id, rec.Owner, rec.Task.Dir) {
 		http.Error(w, "run not found", http.StatusNotFound)
 		return
 	}

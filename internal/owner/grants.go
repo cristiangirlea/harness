@@ -54,9 +54,11 @@ func (v Viewer) ReadRecord(id, recorded, dir string) bool {
 		basis = "admin"
 	case v.ID != "" && Of(recorded) == v.ID:
 		basis = "owner"
-	case v.ID != "" && filepath.IsAbs(dir):
+	case v.ID != "" && len(v.Grants) > 0 && filepath.IsAbs(dir):
+		// The repository lookup costs a stat per parent, so only a grant check pays for it.
+		repo := RepositoryDir(dir)
 		for _, g := range v.Grants {
-			if g.Viewer == v.ID && Of(g.Owner) == Of(recorded) && within(g.Project, dir) {
+			if g.Viewer == v.ID && Of(g.Owner) == Of(recorded) && within(g.Project, repo) {
 				basis = "grant:" + filepath.Clean(g.Project)
 				break
 			}
