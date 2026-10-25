@@ -776,6 +776,12 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-20: gc also removes a batch task's worktree when merging its commit into the default
+  branch changes nothing (#626, PR #627). This reopens the 2026-10-13 decision of #85: a change
+  that landed split over several commits, or inside a larger one, matched no single patch id and
+  was kept for ever. The merge proof is refused when any file either side changed has a `merge`
+  attribute or `merge.default` is set, since a union or custom driver can keep the branch's side;
+  attributes are read from the branch (`--attr-source`), so it needs Git 2.43.
 - 2026-10-22: attempts whose backend never started are classified and left out of eval pass
   rates, Ada answers questions about a run or batch from its records, and the exec protocol
   routes an omitted backend (#567, #576, #577 toward #580; PR #636). `did_not_start` is set only
