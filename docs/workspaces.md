@@ -95,6 +95,9 @@ slot back itself. Otherwise it detaches HEAD where it is, so the branch is free 
 for `hrn gc`, and removes the lease. The folder and its build output stay for the next
 take.
 
+An empty orphan branch has no commits to keep. Free detaches such a slot at the
+main checkout's HEAD and removes its lease.
+
 ## A slot a batch kept
 
 When a batch task ends with files in its slot, or with a commit on no branch, the slot

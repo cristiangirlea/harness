@@ -311,7 +311,11 @@ func TestACancelledTaskWithWorkOffItsBranchKeepsTheWork(t *testing.T) {
 }
 
 func TestMovingOffTheBranchWithNothingWrittenChangesNothing(t *testing.T) {
-	for name, move := range map[string][]string{"detached": offMoves["detached"], "other branch": offMoves["other branch"]} {
+	for name, move := range map[string][]string{
+		"detached":     offMoves["detached"],
+		"other branch": offMoves["other branch"],
+		"empty orphan": {"switch", "--orphan", "agent-orphan"},
+	} {
 		for _, mode := range []string{WorktreesFresh, WorktreesSlots} {
 			t.Run(name+" "+mode, func(t *testing.T) {
 				dir := initRepo(t)
