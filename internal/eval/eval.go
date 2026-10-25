@@ -500,6 +500,8 @@ type Record struct {
 	Judgements   []Judgement        `json:"judgements,omitempty"`
 	JudgeCostUSD float64            `json:"judge_cost_usd,omitempty"`
 	Results      []batch.TaskResult `json:"results,omitempty"`
+	// RerunBatchIDs are the batches of later rounds, each with its own worktrees and branches.
+	RerunBatchIDs []string `json:"rerun_batch_ids,omitempty"`
 	// SetupComparison belongs to the candidate's setup eval.
 	SetupComparison *SetupComparison `json:"setup_comparison,omitempty"`
 }
@@ -519,6 +521,7 @@ func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batc
 	if runErr != nil && len(res.Tasks) == 0 {
 		return Record{}, res, runErr
 	}
+	var rerunBatches []string
 	for round := 1; round <= spec.RerunUnstarted && runErr == nil && ctx.Err() == nil; round++ {
 		pending := map[string]bool{}
 		for _, c := range groupCells(res.Tasks) {
@@ -539,6 +542,9 @@ func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batc
 			break
 		}
 		rerun, err := batch.Run(ctx, next, notify)
+		if rerun.ID != "" {
+			rerunBatches = append(rerunBatches, rerun.ID)
+		}
 		res.Tasks = append(res.Tasks, rerun.Tasks...)
 		res.Duration += rerun.Duration
 		runErr = errors.Join(runErr, err)
@@ -553,7 +559,7 @@ func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batc
 		verdicts = judgeAll(ctx, spec, scored, notify)
 	}
 	rec := Record{ID: id, BatchID: res.ID, Started: started, Spec: spec, Judgements: verdicts,
-		Table: Summarize(spec, res, verdicts), Results: res.Tasks, Duration: time.Since(started)}
+		Table: Summarize(spec, res, verdicts), Results: res.Tasks, RerunBatchIDs: rerunBatches, Duration: time.Since(started)}
 	for _, v := range verdicts {
 		rec.JudgeCostUSD += v.CostUSD
 	}

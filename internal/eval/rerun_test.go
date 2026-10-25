@@ -111,6 +111,9 @@ func TestRunRerunsOnlyUnstartedCells(t *testing.T) {
 			if !reflect.DeepEqual(loaded.Results, rec.Results) {
 				t.Error("raw results changed on disk")
 			}
+			if want := tc.calls - 1; len(rec.RerunBatchIDs) != want || len(loaded.RerunBatchIDs) != want {
+				t.Errorf("rerun batches = %v (loaded %v), want %d: a kept eval must name every batch to remove", rec.RerunBatchIDs, loaded.RerunBatchIDs, want)
+			}
 		})
 	}
 }

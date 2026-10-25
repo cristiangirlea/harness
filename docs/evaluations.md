@@ -319,7 +319,7 @@ The eval record's `results` retains every first-round `TaskResult` followed by
 every rerun result, including all attempts, diagnostics, tokens and timing.
 The first rerun that starts replaces the original for scoring, whether it passes
 or fails; unsuccessful launches remain in the record. The backing `batch_id`
-identifies the first batch; extra rounds also have their ordinary batch records.
+identifies the first batch; extra rounds also have their ordinary batch records, listed in `rerun_batch_ids`; with `--keep`, `hrn eval` prints a `hrn batch rm` for each.
 All known attempt costs, including unsuccessful launches and reruns, count in
 `total_cost_usd` and eval totals. Performance medians use the selected result.
 

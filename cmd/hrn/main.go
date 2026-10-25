@@ -873,6 +873,9 @@ func cmdEval(args []string) (int, error) {
 		printEval(r, rec)
 		if *keep {
 			r.Line(r.c(dim, "worktrees kept; remove them with: hrn batch rm "+rec.BatchID))
+			for _, id := range rec.RerunBatchIDs {
+				r.Line(r.c(dim, "and the rerun's: hrn batch rm "+id))
+			}
 		}
 	}
 	// A failing variant is data; a failing eval is not.
