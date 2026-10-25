@@ -159,13 +159,13 @@ func failsOnce(t *testing.T) string {
 	return `test -e "` + mark + `" || { touch "` + mark + `"; echo first; exit 3; }`
 }
 
-func TestAnAgentThatRenamesItsBranchKeepsItsGateResult(t *testing.T) {
+func TestAnAgentThatCommitsAndRenamesItsBranchEndsAsAnError(t *testing.T) {
 	dir := initRepo(t)
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-renames", Worktrees: WorktreesFresh, Tasks: []Task{{ID: "moved", Prompt: "p"}}})
 	defer Remove(res)
 	tr := res.Tasks[0]
-	if tr.Status != StatusPass || tr.Commit != "" || tr.Error != "" {
-		t.Errorf("status %s, commit %q, error %q: want a pass with no commit on the task's branch", tr.Status, tr.Commit, tr.Error)
+	if tr.Status != StatusError || tr.Commit != "" || !strings.Contains(tr.Error, "HEAD is on branch renamed-by-agent") {
+		t.Errorf("status %s, commit %q, error %q: want an error with no commit on the task's branch", tr.Status, tr.Commit, tr.Error)
 	}
 	if !tr.AgentCommitted() {
 		t.Error("an agent that committed and renamed its branch moved it itself")
@@ -404,7 +404,7 @@ func TestARefBelowTheTasksBranchNameIsNotTakenForIt(t *testing.T) {
 	}})
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-nests", Worktrees: WorktreesFresh, Tasks: []Task{{ID: "nest", Prompt: "p"}}})
 	defer Remove(res)
-	if tr := res.Tasks[0]; tr.Status != StatusPass || tr.Commit != "" {
+	if tr := res.Tasks[0]; tr.Status != StatusError || tr.Commit != "" || !strings.Contains(tr.Error, "not the task's branch") {
 		t.Errorf("status %s, commit %q: a ref below the branch name is not the task's branch", tr.Status, tr.Commit)
 	}
 }

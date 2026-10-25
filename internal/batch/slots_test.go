@@ -401,7 +401,8 @@ func TestASlotWhoseAgentCommittedOnADetachedHEADIsKeptAndSkipped(t *testing.T) {
 	})
 	res, _ := run(t, Spec{Dir: dir, Parallel: 1, Backend: "wb-hook", Tasks: []Task{{ID: "loose", Prompt: "p"}}})
 	tr := res.Tasks[0]
-	if tr.Slot != 1 || !strings.Contains(tr.Error, "slot 1 kept") || !strings.Contains(tr.Error, "no remote, branch or tag") {
+	if tr.Status != StatusError || tr.Slot != 1 || !strings.Contains(tr.Error, "slot 1 kept") ||
+		!strings.Contains(tr.Error, "HEAD is detached") || !strings.Contains(tr.Error, head[:7]) {
 		t.Fatalf("task = %+v", tr)
 	}
 	if h := git(t, tr.Worktree, "rev-parse", "HEAD"); h != head {

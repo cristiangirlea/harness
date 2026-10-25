@@ -155,6 +155,9 @@ func FlowOf(res Result, runs map[string]runlog.Record) []flow.Event {
 				out = append(out, at(e))
 			}
 			st := attemptStatus(a)
+			if i == len(t.Attempts)-1 && t.Status == StatusError && a.Error != "" {
+				st = flow.StatusFailed
+			}
 			if st.Done() {
 				out = append(out, at(flow.Event{Time: end, Step: as, Kind: flow.KindAttempt, Status: st,
 					Reason: attemptEndReason(a), Text: strings.TrimSpace(firstLineOf(a.Result.Error) + " " + firstLineOf(a.Error))}))
