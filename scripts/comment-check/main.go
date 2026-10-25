@@ -1,9 +1,9 @@
 // name: comment-check-main
 // summary: Check Go comments against the repository rule and baseline.
-// effects: read, write-workspace
+// effects: read, write-workspace, exec
 // parameters: --root:path=.; --baseline:path=scripts/comment-baseline.txt; --prune:bool=false; --init:bool=false
 // example: go test -count=1 ./scripts/comment-check
-// hash: 7d29f5f3eaaedcfc798d23adee4107a875d903b1d393a5187df6584e26eb1a28
+// hash: f6057d91ea3eee945dea379f7e6ca5c93e9d9408ebd64fe066fcdfb484b47862
 package main
 
 import (
@@ -19,8 +19,10 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,6 +130,55 @@ func isSkippedDir(name string) bool {
 		return true
 	}
 	return false
+}
+
+func sourceFiles(root string) ([]string, error) {
+	var paths []string
+	inside, err := exec.Command("git", "-C", root, "rev-parse", "--is-inside-work-tree").Output()
+	if err == nil && strings.TrimSpace(string(inside)) == "true" {
+		out, err := exec.Command("git", "-C", root, "ls-files", "-co", "--exclude-standard", "-z", "--", "*.go").Output()
+		if err != nil {
+			return nil, fmt.Errorf("git ls-files: %w", err)
+		}
+		paths = strings.Split(string(out), "\x00")
+	} else {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() {
+				if path != root && isSkippedDir(d.Name()) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			paths = append(paths, filepath.ToSlash(rel))
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	var files []string
+nextFile:
+	for _, path := range paths {
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		parts := strings.Split(path, "/")
+		for _, dir := range parts[:len(parts)-1] {
+			if isSkippedDir(dir) {
+				continue nextFile
+			}
+		}
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	return slices.Compact(files), nil
 }
 
 func isDirective(trimmed string) bool {
@@ -381,43 +432,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var blocks int
 	var violations []violation
 
-	err = filepath.WalkDir(opts.root, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	paths, err := sourceFiles(opts.root)
+	if err != nil {
+		writeError(stderr, err.Error())
+		return 1
+	}
+	for _, rel := range paths {
+		src, err := os.ReadFile(filepath.Join(opts.root, filepath.FromSlash(rel)))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
 		}
-		rel, err := filepath.Rel(opts.root, path)
 		if err != nil {
-			return err
+			writeError(stderr, err.Error())
+			return 1
 		}
-		if d.IsDir() {
-			if rel != "." && isSkippedDir(d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		name := d.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			return nil
-		}
-		src, err := os.ReadFile(path)
+		cb, blks, vs, err := scanFile(rel, src)
 		if err != nil {
-			return err
-		}
-		relSlash := filepath.ToSlash(rel)
-		cb, blks, vs, err := scanFile(relSlash, src)
-		if err != nil {
-			return fmt.Errorf("%s: %w", relSlash, err)
+			writeError(stderr, fmt.Sprintf("%s: %v", rel, err))
+			return 1
 		}
 		files++
 		sourceBytes += int64(len(src))
 		commentBytes += cb
 		blocks += blks
 		violations = append(violations, vs...)
-		return nil
-	})
-	if err != nil {
-		writeError(stderr, err.Error())
-		return 1
 	}
 
 	if opts.init {

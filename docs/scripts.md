@@ -74,7 +74,12 @@ Invalid inputs and timeouts write only the error object to stderr (`go run`'s
 `exit status` line is dropped). Successful probes return `{"ready":true}`.
 
 `comment-check.sh [--root DIR] [--baseline PATH] [--prune] [--init]` scans
-non-test `.go` files with `go/scanner`, flagging comment blocks over five
+non-test `.go` files with `go/scanner`. In a Git work tree it lists tracked and
+untracked, unignored files with `git ls-files -co --exclude-standard -z`, counting
+each path once even with unmerged index entries; outside a repository it walks
+the root. Reported paths are relative to `--root`, including repository
+subdirectories. Both skip hidden directories, `testdata`,
+`vendor`, `dist` and `node_modules`. It flags comment blocks over five
 counted lines (`long`) and comments citing `#<digits>`, `YYYY-MM-DD` dates, or
 review narration (`cite`). Directives and leading kept-script headers are
 exempt. `comment_bytes` and `comment_share` count whole-line comments only
