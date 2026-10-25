@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -50,7 +51,7 @@ func LoadResultFor(v owner.Viewer, id string) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	if !v.CanRead(res.Owner) {
+	if !v.ReadRecord(id, res.Owner, res.Dir) {
 		return Result{}, fmt.Errorf("batch %s: %w", id, os.ErrNotExist)
 	}
 	return res, nil
@@ -61,7 +62,7 @@ func ListFor(v owner.Viewer) ([]Result, int, error) {
 	all, unreadable, err := List()
 	out := all[:0]
 	for _, r := range all {
-		if v.CanRead(r.Owner) {
+		if v.CanReadRecord(r.Owner, r.Dir) {
 			out = append(out, r)
 		}
 	}
@@ -76,6 +77,7 @@ func Timeline(v owner.Viewer, id string) ([]flow.Event, error) {
 		return nil, err
 	}
 	runs := map[string]runlog.Record{}
+	var hidden []string
 	var streams [][]flow.Event
 	for _, t := range res.Tasks {
 		for i, a := range t.Attempts {
@@ -85,6 +87,7 @@ func Timeline(v owner.Viewer, id string) ([]flow.Event, error) {
 			parent := AttemptStep(t.ID, i+1)
 			rec, err := runlog.LoadFor(v, a.RunID)
 			if err != nil {
+				hidden = append(hidden, parent+"/run")
 				streams = append(streams, []flow.Event{{Time: res.Started, Owner: res.Owner, Step: parent + "/run", Parent: parent,
 					Kind: flow.KindError, Status: flow.StatusFailed, Run: a.RunID, Derived: true,
 					Text: "the run record cannot be shown: " + missingWhy(err)}})
@@ -102,6 +105,15 @@ func Timeline(v owner.Viewer, id string) ([]flow.Event, error) {
 	if err != nil || len(own) == 0 {
 		own = FlowOf(res, runs)
 	}
+	// Live flow files may retain child details after that run becomes unreadable.
+	own = slices.DeleteFunc(own, func(e flow.Event) bool {
+		for _, step := range hidden {
+			if e.Step == step || strings.HasPrefix(e.Step, step+"/") {
+				return true
+			}
+		}
+		return false
+	})
 	return flow.Renumber(append([][]flow.Event{own}, streams...)...), nil
 }
 

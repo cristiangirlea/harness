@@ -195,6 +195,35 @@ hrn watch --addr 127.0.0.1:8090 --public https://harness.example.com --access-te
 
 All three flags are required together; `--public` cannot be combined with `--lan`.
 Use repeatable `--owner-email address` flags to identify which verified Access emails act as the local owner. Those emails (matched without case) see local records; other verified emails can see only records owned by their `email:` identity. With no `--owner-email`, every verified visitor acts as the local owner as before. Loopback and LAN visitors use the local owner identity.
+
+To share selected projects, create `$HRN_HOME/grants.json` (default `~/.hrn/grants.json`):
+
+```json
+[
+  {"viewer": "email:reader@example.com", "project": "/absolute/path/to/repo"},
+  {"viewer": "user:teammate", "owner": "local:me", "project": "/absolute/path/to/another-repo"}
+]
+```
+
+Each grant allows that viewer to read that owner's records in the project directory
+or below it. `viewer` must be an `email:` or `user:` principal; use lowercase email
+addresses. Omitting `owner` selects the local owner, including older records without
+an owner. `project` must be an absolute repository directory (on Windows, for example,
+`"E:\\projects\\repo"`). Paths are cleaned, compared without case on Windows, and
+matched on directory boundaries, so `/repo` never includes `/repo2`. Runs use their
+repository root when a `.git` entry can be found by walking parents, otherwise their
+recorded task directory; batches use their recorded repository directory. A batch's
+child run is checked on its own: a worktree inside the granted project is covered by
+the same grant, while a run recorded elsewhere (such as a slot under another checkout)
+is hidden on the flow page. A batch grant still shows the batch record itself,
+including each attempt's summary, error line and gate output; only the run record
+(its prompt, events and tool output) needs its own access.
+
+Watch reads grants once at startup and never writes the file; restart watch after an
+edit. A missing file grants nothing. A malformed file disables all project grants
+and reports one error on stderr; ownership access still works. Use `--owner-email`
+to distinguish the local owner's emails from visitors who need project grants.
+
 Watch checks the Cloudflare Access signing keys at start and refuses to serve if they cannot be fetched.
 Watch still listens only on loopback. In this mode it accepts only the public Host
 and verifies the Access JWT on every request, including static assets and event
@@ -218,6 +247,13 @@ writes two lines: one after its first bytes reach the browser, marked
 `"stream":"start"`, and one when it ends, marked `"stream":"end"`, each with its
 own time; a stream that ends before sending anything writes one plain line. Cloudflare's
 own Access logs record logins; this file records requests that reached watch.
+
+Requests for a run, batch or flow also include `record` (the requested id),
+`decision` (`allowed` or `denied`), and `basis` (`owner`, `admin`, `grant:<project>`
+or `none`). Both stream rows carry these fields. Missing records use `denied` and
+`none`; denied reads answer just like missing records. A batch flow's decision names
+the batch, rather than its child runs. Index and other requests without a record id
+omit these fields. Loopback and LAN modes do not write an access log.
 
 ### Ada, the bot
 

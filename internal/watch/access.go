@@ -310,12 +310,15 @@ func (v *accessVerifier) fetch() (map[string]*rsa.PublicKey, error) {
 
 type accessWriter struct {
 	http.ResponseWriter
-	status  int
-	email   string
-	reason  string
-	stream  bool
-	started bool
-	start   func()
+	status   int
+	email    string
+	reason   string
+	record   string
+	decision string
+	basis    string
+	stream   bool
+	started  bool
+	start    func()
 }
 
 func (w *accessWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -369,6 +372,16 @@ func (s *server) publicLog(next http.Handler) http.Handler {
 	})
 }
 
+// Default to denial so missing and invalid records still leave an audit decision.
+func (s *server) recordRoute(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter); aw != nil {
+			aw.record, aw.decision, aw.basis = r.PathValue("id"), "denied", "none"
+		}
+		next(w, r)
+	}
+}
+
 // stream is "start" or "end" for SSE log rows, empty for other requests.
 func (s *server) writeAccessRow(r *http.Request, aw *accessWriter, stream string) {
 	if aw.status == http.StatusForbidden {
@@ -378,15 +391,18 @@ func (s *server) writeAccessRow(r *http.Request, aw *accessWriter, stream string
 		}
 	}
 	row := struct {
-		Time   string `json:"time"`
-		Email  string `json:"email"`
-		Method string `json:"method"`
-		Path   string `json:"path"`
-		Status int    `json:"status"`
-		IP     string `json:"ip"`
-		Reason string `json:"reason,omitempty"`
-		Stream string `json:"stream,omitempty"`
-	}{time.Now().UTC().Format(time.RFC3339), aw.email, r.Method, r.URL.Path, aw.status, r.Header.Get("Cf-Connecting-IP"), aw.reason, stream}
+		Time     string `json:"time"`
+		Email    string `json:"email"`
+		Method   string `json:"method"`
+		Path     string `json:"path"`
+		Status   int    `json:"status"`
+		IP       string `json:"ip"`
+		Reason   string `json:"reason,omitempty"`
+		Stream   string `json:"stream,omitempty"`
+		Record   string `json:"record,omitempty"`
+		Decision string `json:"decision,omitempty"`
+		Basis    string `json:"basis,omitempty"`
+	}{time.Now().UTC().Format(time.RFC3339), aw.email, r.Method, r.URL.Path, aw.status, r.Header.Get("Cf-Connecting-IP"), aw.reason, stream, aw.record, aw.decision, aw.basis}
 	b, err := json.Marshal(row)
 	if err != nil {
 		return
