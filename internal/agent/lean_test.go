@@ -320,6 +320,51 @@ func TestCodexRefusesAServerEnvThatWouldChangeCodexsOwn(t *testing.T) {
 	}
 }
 
+func TestCodexRefusesMCPServerCodexHomeBeforeStarting(t *testing.T) {
+	for _, key := range []string{"CODEX_HOME", "codex_home"} {
+		if key != "CODEX_HOME" && runtime.GOOS != "windows" {
+			continue
+		}
+		for _, tc := range []struct {
+			name, home string
+		}{
+			{"unset", ""},
+			{"empty", ""},
+			{"same", "server-home-value"},
+			{"different", "hrn-home-value"},
+		} {
+			t.Run(key+"/"+tc.name, func(t *testing.T) {
+				if tc.name == "unset" {
+					unsetenv(t, "CODEX_HOME")
+				} else {
+					t.Setenv("CODEX_HOME", tc.home)
+				}
+				t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+				file := mcpFile(t, fmt.Sprintf(`"home-server":{"command":"x","env":{%q:"server-home-value"}}`, key))
+				b := NewCodexBackend()
+				b.name, b.candidates = os.Args[0], nil
+				b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+				b.parse = nil
+				var events []Event
+				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{MCP: []string{file}}}, func(e Event) {
+					events = append(events, e)
+				})
+				if res.Status != StatusError || !strings.Contains(res.Error, "home-server") || !strings.Contains(res.Error, key) || !strings.Contains(res.Error, "not allowed") {
+					t.Errorf("want a refusal naming the server and variable, got %+v", res)
+				}
+				if res.Final != "" || len(events) != 1 || events[0].Kind != EventError {
+					t.Errorf("codex must be refused before its start line or child output: result %+v, events %+v", res, events)
+				}
+				for _, value := range []string{"server-home-value", "hrn-home-value"} {
+					if strings.Contains(res.Error, value) || slices.ContainsFunc(events, func(e Event) bool { return strings.Contains(e.Text, value) }) {
+						t.Errorf("a diagnostic shows an environment value: result %+v, events %+v", res, events)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestCodexRefusesAServerEnvThatHrnKeepsFromAgents(t *testing.T) {
 	t.Setenv("HRN_DATABASE_URL", "postgres://hrn")
 	for _, servers := range []string{
