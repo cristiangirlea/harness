@@ -729,9 +729,13 @@ func (st *stream) write(s string) error {
 const keepAlive = 15 * time.Second
 
 // Stop on either context so shutdown never waits for an idle browser to disconnect.
-func (s *server) loop(r *http.Request, st *stream, every time.Duration, step func() (bool, error)) {
+func (s *server) loop(r *http.Request, st *stream, every time.Duration, step func() (bool, error), wake ...<-chan struct{}) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
+	var changed <-chan struct{}
+	if len(wake) > 0 {
+		changed = wake[0]
+	}
 	for {
 		if done, err := step(); done || err != nil {
 			return
@@ -745,12 +749,13 @@ func (s *server) loop(r *http.Request, st *stream, every time.Duration, step fun
 		case <-s.ctx.Done():
 			return
 		case <-tick.C:
+		case <-changed:
 		}
 	}
 }
 
 // next returns end as "done", "stopped" or ""; clients receive it in the final SSE event.
-func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration, next func() (data any, end string, err error), name string) {
+func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration, next func() (data any, end string, err error), name string, wake ...<-chan struct{}) {
 	last := ""
 	s.loop(r, st, every, func() (bool, error) {
 		data, end, err := next()
@@ -771,7 +776,7 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 			return true, st.send("end", "", end)
 		}
 		return false, nil
-	})
+	}, wake...)
 }
 
 func (s *server) problem(r *http.Request, st *stream, err error) error {

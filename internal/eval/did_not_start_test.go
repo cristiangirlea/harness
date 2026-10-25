@@ -77,6 +77,9 @@ func TestOldEvalRowsKeepTheirDenominators(t *testing.T) {
 	if v := rec.Table.Variants[0]; v.DidNotStart != 0 || v.PassRate() != .5 {
 		t.Errorf("old variant = %+v", v)
 	}
+	if v := rec.Table.Variants[0]; v.BackendStartRate != 1 || v.Reruns != 0 || v.RerunsExhausted != 0 {
+		t.Errorf("old start rate or rerun counts = %+v", v)
+	}
 	if row := rec.Table.Tasks[0]; row.DidNotStart != 0 || row.Score() != "1/2 +1 did not act" {
 		t.Errorf("old task = %+v", row)
 	}

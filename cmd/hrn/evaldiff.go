@@ -57,6 +57,10 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 			id  string
 			row *eval.VariantRow
 		}{{d.A, v.A}, {d.B, v.B}} {
+			if side.row != nil {
+				r.Line(r.c(dim, fmt.Sprintf("  note: %s in %s: start rate %s; %d reruns (%d exhausted)",
+					v.Name, side.id, report.Share(side.row.BackendStartRate), side.row.Reruns, side.row.RerunsExhausted)))
+			}
 			if side.row != nil && side.row.DidNotAct > 0 {
 				noun := "cells"
 				if side.row.DidNotAct == 1 {

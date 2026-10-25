@@ -210,12 +210,14 @@
 <div class="flow-tree">{{range .Tree}}{{template "flowNode" .}}{{end}}</div>
 {{end}}
 
-{{define "flowNode"}}<details open class="flow-node"><summary><span class="badge {{.StatusClass}}">{{.Node.Status}}</span> <span class="tag">{{.Node.Kind}}</span> {{.Node.Name}}{{with .Duration}} · {{.}}{{end}}</summary>
+{{define "flowNode"}}<details open class="flow-node lane-{{.Lane}}" data-lane="{{.Lane}}"><summary><span class="badge {{.StatusClass}}">{{.Node.Status}}</span> <span class="tag">{{.Node.Kind}}</span> {{.Node.Name}}{{with .Duration}} · {{.}}{{end}}</summary>
+{{with .Numbers}}<p class="muted small">{{.}}</p>{{end}}
+{{if .Action}}<p class="muted small">{{.Hint}} <code>{{.Action}}</code></p>{{end}}
 {{if .Debug}}<p class="muted small mono">{{.Node.Step}}{{if .Node.Derived}} · derived{{end}}</p>{{end}}
-{{with .Node.Text}}<p>{{.}}</p>{{end}}{{with .Node.Reason}}<p><strong>Why:</strong> {{.}}</p>{{end}}{{with .Node.Next}}<p><strong>Next:</strong> {{.}}</p>{{end}}
+{{with .Node.Text}}<p>{{.}}</p>{{end}}{{with .Node.Reason}}<p><strong>Why:</strong> {{.}}</p>{{end}}{{if not .Action}}{{with .Node.Next}}<p><strong>Next:</strong> {{.}}</p>{{end}}{{end}}
 {{if .Node.Run}}<p><a href="/run/{{.Node.Run}}">Open run and tool evidence</a></p>{{end}}
 {{if .Node.Orphan}}<p class="muted">(gap: parent not recorded)</p>{{end}}
-{{range .Children}}{{template "flowNode" .}}{{end}}</details>{{end}}
+{{if .Children}}<div class="flow-tree">{{range .Children}}{{template "flowNode" .}}{{end}}</div>{{end}}</details>{{end}}
 
 {{define "problem"}}<p class="notice bad">{{.}}</p>{{end}}
 

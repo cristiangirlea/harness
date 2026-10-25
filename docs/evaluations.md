@@ -305,6 +305,37 @@ timeouts, cancellations, an ordinary failing gate, and a successful idle answer
 are not evidence of a failed start. Old records without the field retain their
 previous classification. Batch retries are unchanged.
 
+After every first-round cell finishes, `rerun_unstarted` gives cells whose every
+attempt did not start extra rounds. An omitted JSON field defaults to 1; `0`
+disables reruns and negative values are refused. A Go caller constructing a `Spec`
+sets `RerunUnstarted` explicitly (its zero value disables reruns). Each round runs
+only cells still unstarted, through the same batch path, on the same base commit
+with the original prompt, backend, model and options. Each gets a fresh task id
+with `.u<round>` appended, such as `e.task.variant.r1.u1`. A cell that started is
+never rerun, even when it failed. Cancellation or a batch infrastructure error
+stops further rounds.
+
+The eval record's `results` retains every first-round `TaskResult` followed by
+every rerun result, including all attempts, diagnostics, tokens and timing.
+The first rerun that starts replaces the original for scoring, whether it passes
+or fails; unsuccessful launches remain in the record. The backing `batch_id`
+identifies the first batch; extra rounds also have their ordinary batch records, listed in `rerun_batch_ids`; with `--keep`, `hrn eval` prints a `hrn batch rm` for each.
+All known attempt costs, including unsuccessful launches and reruns, count in
+`total_cost_usd` and eval totals. Performance medians use the selected result.
+
+Variant and task rows record `reruns` (distinct cells given an extra round, not
+the number of rounds) and `reruns_exhausted` (rerun cells still unstarted after
+all configured rounds). Zero counts are omitted. Scheduled cells remain the
+sum of first-round cells: variant `attempts` and task `total` never grow with
+reruns. `did_not_start` counts cells still unstarted after reruns; pass rate is
+`passed / (scheduled - did_not_start - did_not_act)`, or zero when none acted.
+Variant `start_rate` (`BackendStartRate` in Go) measures first-round started
+cells / scheduled cells, or zero with no cells. It stays below 100% after a
+recovered launch, so recovery cannot hide launch reliability. The table and
+`hrn eval diff` show start rate beside the did-not-start and rerun counts.
+Old rows without `start_rate` derive it from their original `attempts` and
+`did_not_start`; their pass rates are unchanged, and absent rerun counts are zero.
+
 As in `hrn report`, an unknown cost (a
 codex cell marked missing, a cell with no attempt) is never counted as zero: the median
 cost and `total_cost_usd` cover the known costs, `cells_without_cost` counts the rest,

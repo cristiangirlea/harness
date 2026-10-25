@@ -279,3 +279,58 @@ func TestBatchSummariesCarryNoTerminalControlsInErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestBatchProgressCannotSendTerminalControls(t *testing.T) {
+	const bad = "run: \x1b[31m\x07\u009b"
+	const want = "run: \ufffd[31m\ufffd\ufffd"
+	orig, err := agent.Get("stub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(scripted{"stub", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusError, Error: bad}
+	}})
+	t.Cleanup(func() { agent.Register(orig) })
+	s := connect(t, gitRepo(t))
+	res := s.call(t, "batch", `{"spec":{"backend":"stub","tasks":[{"id":"one","prompt":"fail"}]}}`)
+	if !res.IsError {
+		t.Fatalf("batch should fail: %s", res.Text())
+	}
+	s.mu.Lock()
+	progress := strings.Join(s.progress, "\n")
+	s.mu.Unlock()
+	if strings.ContainsAny(progress, "\x1b\x07\u009b") || !strings.Contains(progress, want) {
+		t.Errorf("progress did not replace terminal controls: %q", progress)
+	}
+}
+
+func TestBatchMergeErrorLineCannotSendTerminalControls(t *testing.T) {
+	const bad = "merge: \x1b[31m\x07\u009b"
+	const want = "merge: \ufffd[31m\ufffd\ufffd"
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := gitRepo(t)
+	s := connect(t, dir)
+	res := s.call(t, "batch", `{"spec":{"backend":"mcp-writer","tasks":[{"id":"one","prompt":"alpha"}]}}`)
+	if res.IsError {
+		t.Fatalf("batch: %s", res.Text())
+	}
+	id := res.StructuredContent.(map[string]any)["batch_id"].(string)
+	hook := filepath.Join(dir, ".git", "hooks", "pre-merge-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf '"+bad+"\\n' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	merged := s.call(t, "batch_merge", `{"batch_id":"`+id+`"}`)
+	line, _, _ := strings.Cut(merged.Text(), "\n")
+	if !merged.IsError || !strings.Contains(line, "one: could not merge hrn/one:") {
+		t.Fatalf("merge did not report a merge error: %q", merged.Text())
+	}
+	if strings.ContainsAny(merged.Text(), "\x1b\x07\u009b") || !strings.Contains(line, want) {
+		t.Errorf("merge error text did not replace terminal controls: %q", merged.Text())
+	}
+	rows := merged.StructuredContent.(map[string]any)["merged"].([]any)
+	mergeError := rows[0].(map[string]any)["error"].(string)
+	if strings.ContainsAny(mergeError, "\x1b\x07\u009b") || !strings.Contains(mergeError, want) {
+		t.Errorf("structured merge error did not replace terminal controls: %q", mergeError)
+	}
+}

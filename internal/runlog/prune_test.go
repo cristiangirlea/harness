@@ -1,12 +1,65 @@
 package runlog
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestPruneOrphanFlows(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		for _, withRuns := range []bool{false, true} {
+			t.Run(fmt.Sprintf("dry=%t/runs=%t", dryRun, withRuns), func(t *testing.T) {
+				t.Setenv("HRN_HOME", t.TempDir())
+				if withRuns {
+					runAged(t, 1, "cccccc", 10)
+				}
+				orphan, kept := "20261020-120000-aaaaaa", "20261020-120001-bbbbbb"
+				batches := filepath.Join(Home(), "batches")
+				flows := filepath.Join(Home(), "batch-flows")
+				for _, id := range []string{orphan, kept} {
+					write(t, batches, id+".json", `{"id":"`+id+`"}`)
+					write(t, flows, id+".jsonl", "{}\n")
+				}
+				if err := os.Remove(filepath.Join(batches, orphan+".json")); err != nil {
+					t.Fatal(err)
+				}
+				write(t, flows, "notes.jsonl", "keep")
+				write(t, flows, orphan+".txt", "keep")
+				write(t, filepath.Join(flows, "20261020-120002-dddddd.jsonl"), "notes", "keep")
+				res, err := Prune(time.Now().AddDate(0, 0, -30), 0, nil, dryRun)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var counts struct {
+					OrphanFlows int `json:"orphan_flows"`
+				}
+				data, err := json.Marshal(res)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(data, &counts); err != nil {
+					t.Fatal(err)
+				}
+				if counts.OrphanFlows != 1 || res.Bytes != 3 || len(res.Removed) != 0 {
+					t.Fatalf("prune = %s, want one orphan flow and 3 bytes", data)
+				}
+				if got := exists(filepath.Join(flows, orphan+".jsonl")); got != dryRun {
+					t.Errorf("orphan exists = %v, dry run = %v", got, dryRun)
+				}
+				for _, name := range []string{kept + ".jsonl", "notes.jsonl", orphan + ".txt", "20261020-120002-dddddd.jsonl"} {
+					if !exists(filepath.Join(flows, name)) {
+						t.Errorf("prune removed %s", name)
+					}
+				}
+			})
+		}
+	}
+}
 
 // runAged makes a finished run whose id says it started days ago, with size
 // bytes of events and a two-byte result, and returns its id.

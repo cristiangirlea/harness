@@ -95,12 +95,22 @@ pre { background: var(--code-bg); color: var(--code-fg); padding: 12px 14px; bor
 .result h2 { display: flex; gap: 10px; align-items: center; }
 footer { margin-top: 30px; font-size: .8rem; overflow-wrap: anywhere; }
 .flow-level { margin: 14px 0; }
-.flow-tree { border-left: 2px solid var(--line); padding-left: 14px; }
-.flow-node { border-top: 1px solid var(--rule); padding: 8px 0 8px 12px; margin-left: 8px; }
+.flow-tree { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; border-left: 2px solid var(--line); padding-left: 14px; }
+.flow-tree:has(> .lane-1) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.flow-tree:has(> .lane-2) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.flow-tree:has(> .lane-3) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.flow-tree:has(> .lane-4) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.flow-node { min-width: 0; grid-column: 1; border-top: 1px solid var(--rule); padding: 8px 0 8px 12px; margin-left: 8px; }
+.flow-node.lane-1 { grid-column: 2; }
+.flow-node.lane-2 { grid-column: 3; }
+.flow-node.lane-3 { grid-column: 4; }
+.flow-node.lane-4 { grid-column: 5; }
 .flow-node > summary { font-weight: 600; }
 .flow-node p { margin-left: 10px; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
 @media (max-width: 640px) {
+  .flow-tree, .flow-tree:has(> .flow-node) { grid-template-columns: minmax(0, 1fr); }
+  .flow-tree > .flow-node { grid-column: 1; }
   main { padding: 16px 16px 48px; }
   .card { padding: 16px; }
   .ev { grid-template-columns: minmax(0, 1fr); }

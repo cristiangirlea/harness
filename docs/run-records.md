@@ -302,6 +302,9 @@ are rebuilt from `events.jsonl` and the record (marked `derived`), and so is the
 written before the file existed. A step whose parent is missing, such as a pruned run, is shown
 as a gap rather than dropped. Readers skip a torn last line, duplicate sequence numbers and
 versions newer than they know. Pruning a batch record removes its flow file too.
+Prune also removes orphan `batch-flows/<id>.jsonl` files whose batch records are already
+gone, regardless of age, and reports their count as `orphan_flows` (omitted when zero)
+in `PruneResult` and in the command's text; `--dry-run` counts them without removing them.
 
 ## Usage per turn
 
