@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true; --definitions:bool=false
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 128d060e01c141fbd10a62a381f88a78753f88e10835c26473a73f02c04bc9ee
+// hash: ae5e1e499dbda05cd78417b7e6ee75c60eb846bd4093c3b275418bcfed7f994f
 package main
 
 import (
@@ -58,7 +58,6 @@ func classify(text, tool string) string {
 	return "other"
 }
 
-// testEvents reports `go test -json` output: every non-empty line is an object with an Action.
 func testEvents(text string) bool {
 	found := false
 	for line := range strings.SplitSeq(text, "\n") {

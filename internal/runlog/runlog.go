@@ -1,7 +1,4 @@
-// Package runlog records every run to disk so runs can be listed, replayed and
-// compared later (the eval and orchestrator layers read these records).
-//
-// Layout: <root>/<run-id>/task.json, events.jsonl, result.json
+// Package runlog persists task.json, events.jsonl and result.json per run.
 package runlog
 
 import (
@@ -22,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/route/table"
 )
@@ -41,23 +39,22 @@ func Root() string { return filepath.Join(Home(), "runs") }
 type RoutedBy = table.RoutedBy
 
 type Record struct {
-	RoutedBy *RoutedBy    `json:"routed_by,omitempty"`
-	ID       string       `json:"id"`
-	Backend  string       `json:"backend"`
-	Started  time.Time    `json:"started"`
-	Task     agent.Task   `json:"task"`
-	Result   agent.Result `json:"result"`
-	// Continues names the run this one follows, when it was started with
-	// hrn run --continue.
+	RoutedBy  *RoutedBy `json:"routed_by,omitempty"`
+	RouteNote string    `json:"route_note,omitempty"`
+	ID        string    `json:"id"`
+	// Owner is empty on records written before ownership; owner.Of reads that as the local user.
+	Owner   string       `json:"owner,omitempty"`
+	Backend string       `json:"backend"`
+	Started time.Time    `json:"started"`
+	Task    agent.Task   `json:"task"`
+	Result  agent.Result `json:"result"`
+
 	Continues string `json:"continues,omitempty"`
-	// ContinueRoute says how a continuing run took the earlier one over, when
-	// that is not the default: RouteFreshHandover for a new session briefed
-	// by a hand-over built from the record.
+	// ContinueRoute is empty (default) or fresh_handover (record-briefed session).
 	ContinueRoute string `json:"continue_route,omitempty"`
 	RecordError   string `json:"record_error,omitempty"`
 	Done          bool   `json:"-"`
 
-	// Setup is the agent setup the run started with, read when the record was created.
 	Setup *agent.Setup `json:"setup,omitempty"`
 }
 
@@ -74,31 +71,39 @@ type Writer struct {
 
 // Create starts a run record.
 func Create(backend string, task agent.Task) (*Writer, error) {
-	return create(backend, task, "", "")
+	return create(backend, task, "", "", nil, "")
 }
 
-// CreateContinuing starts a run record that follows an earlier run.
+// CreateContinuing records a continuation.
 func CreateContinuing(backend string, task agent.Task, continues string, routed ...*RoutedBy) (*Writer, error) {
-	return create(backend, task, continues, "", routed...)
+	var by *RoutedBy
+	if len(routed) > 0 {
+		by = routed[0]
+	}
+	return create(backend, task, continues, "", by, "")
 }
 
-// RouteFreshHandover is the ContinueRoute of a run that started a new session
-// with a hand-over instead of resuming or forking the earlier one's.
+// RouteFreshHandover means a new session briefed from the record.
 const RouteFreshHandover = "fresh_handover"
 
-// CreateContinuingRoute is CreateContinuing that also records the route the
-// run took the earlier one over by; an empty route is CreateContinuing.
+// CreateContinuingRoute records a route, empty for default.
 func CreateContinuingRoute(backend string, task agent.Task, continues, route string, routed ...*RoutedBy) (*Writer, error) {
-	return create(backend, task, continues, route, routed...)
+	var by *RoutedBy
+	if len(routed) > 0 {
+		by = routed[0]
+	}
+	return CreateRouted(backend, task, continues, route, by, "")
 }
 
-// createEventsFile opens a new run's events.jsonl; tests replace it to make the open fail.
+// CreateRouted records route selection evidence alongside the task.
+func CreateRouted(backend string, task agent.Task, continues, route string, routed *RoutedBy, note string) (*Writer, error) {
+	return create(backend, task, continues, route, routed, note)
+}
+
 var createEventsFile = func(path string) (io.WriteCloser, error) { return os.Create(path) }
 
-// create starts a run record. If it fails after making the run's directory, it removes the
-// directory again, so a run that never started leaves no half record behind (hrn exec promises a
-// rejected start creates none).
-func create(backend string, task agent.Task, continues, route string, routed ...*RoutedBy) (w *Writer, err error) {
+// Failed starts must leave no partial record.
+func create(backend string, task agent.Task, continues, route string, routed *RoutedBy, note string) (w *Writer, err error) {
 	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -109,10 +114,10 @@ func create(backend string, task agent.Task, continues, route string, routed ...
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	w = &Writer{dir: dir, rec: Record{ID: id, Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
-		Setup: agent.ResolveSetup(backend, task)}}
-	if len(routed) > 0 && routed[0] != nil {
-		by := *routed[0]
+	w = &Writer{dir: dir, rec: Record{ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
+		Setup: agent.ResolveSetup(backend, task), RouteNote: note}}
+	if routed != nil {
+		by := *routed
 		w.rec.RoutedBy = &by
 	}
 	if err := writeJSON(filepath.Join(dir, "task.json"), w.rec); err != nil {
@@ -129,7 +134,7 @@ func create(backend string, task agent.Task, continues, route string, routed ...
 func (w *Writer) ID() string  { return w.rec.ID }
 func (w *Writer) Dir() string { return w.dir }
 
-// Event appends a complete event; streaming fragments are skipped.
+// Event records whole events, skipping fragments.
 func (w *Writer) Event(e agent.Event) {
 	if e.Partial {
 		return
@@ -143,7 +148,7 @@ func (w *Writer) Event(e agent.Event) {
 	if err == nil {
 		data = append(data, '\n')
 		if w.brokenLine {
-			// Isolate the fragment so it cannot consume the next complete event.
+			// Isolate fragments to preserve the next complete event.
 			data = append([]byte{'\n'}, data...)
 		}
 		var n int
@@ -163,9 +168,7 @@ func (w *Writer) Event(e agent.Event) {
 	}
 }
 
-// Err reports how many complete events could not be recorded, wrapping the
-// first error, along with any events-file close error. It is safe to call
-// concurrently with Event and Close.
+// Err reports errors safely alongside Event and Close.
 func (w *Writer) Err() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -185,8 +188,7 @@ func (w *Writer) errLocked() error {
 	return errors.Join(eventErr, w.closeError)
 }
 
-// ResultWriteError distinguishes a failure to save result.json from an
-// incomplete event record whose result was saved. It wraps the write error.
+// ResultWriteError distinguishes unsaved results from lost events.
 type ResultWriteError struct {
 	Err error
 }
@@ -194,17 +196,13 @@ type ResultWriteError struct {
 func (e *ResultWriteError) Error() string { return e.Err.Error() }
 func (e *ResultWriteError) Unwrap() error { return e.Err }
 
-// ResultNotSaved reports whether err, from Writer.Close, includes a failure to
-// write result.json. Such a run is never marked done and reads as still
-// running, which is worse than lost events.
+// ResultNotSaved identifies an unsaved result after Close.
 func ResultNotSaved(err error) bool {
 	var saveErr *ResultWriteError
 	return errors.As(err, &saveErr)
 }
 
-// CloseMessage is the one line callers show for an error from Writer.Close:
-// "saving run:" when result.json was not written, "run record incomplete:"
-// when only events were lost.
+// CloseMessage distinguishes unsaved results from lost events.
 func CloseMessage(err error) string {
 	if ResultNotSaved(err) {
 		return "saving run: " + err.Error()
@@ -228,7 +226,7 @@ func (w *Writer) Close(res agent.Result) error {
 	return errors.Join(recordErr, err)
 }
 
-// NewID is a sortable timestamp plus random suffix, shared by runs and batches.
+// NewID returns a sortable timestamp with random suffix.
 func NewID() string {
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
@@ -243,26 +241,39 @@ func writeJSON(path string, v any) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// List returns runs newest first, at most limit of them when limit is
-// positive. Runs without result.json are still running or were killed; they
-// come back with Done=false.
+// List returns newest runs, capped by positive limit; no result means Done=false.
 func List(limit int) ([]Record, error) {
-	recs, _, err := list(time.Time{}, limit)
+	recs, _, err := list(time.Time{}, limit, nil)
 	return recs, err
 }
 
-// ListSince returns the runs started at or after since, newest first, and how
-// many records could not be read. Run ids begin with the local start time, so
-// directories older than the window are skipped without being opened. The
-// cut-off keeps a day of slack because the id is only as exact as the clock
-// that made it; callers filter by the recorded time anyway.
+// ListFor is List of the runs v may read; others are skipped before they count toward limit.
+func ListFor(v owner.Viewer, limit int) ([]Record, error) {
+	recs, _, err := list(time.Time{}, limit, func(r Record) bool { return v.CanRead(r.Owner) })
+	return recs, err
+}
+
+// LoadFor is Load behind the read decision; a run v may not read is reported as missing.
+func LoadFor(v owner.Viewer, id string) (Record, error) {
+	rec, err := Load(id)
+	if err != nil {
+		return rec, err
+	}
+	if !v.CanRead(rec.Owner) {
+		return Record{}, fmt.Errorf("run %s: %w", id, os.ErrNotExist)
+	}
+	return rec, nil
+}
+
+// ListSince lists recent runs and unreadable counts with a day of clock slack.
+// Ids start with the local start time, so older ones are skipped unopened; callers filter by recorded time.
 func ListSince(since time.Time) ([]Record, int, error) {
-	return list(since, 0)
+	return list(since, 0, nil)
 }
 
 const idTimeLayout = "20060102-150405"
 
-func list(since time.Time, limit int) (recs []Record, unreadable int, err error) {
+func list(since time.Time, limit int, keep func(Record) bool) (recs []Record, unreadable int, err error) {
 	entries, err := os.ReadDir(Root())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, nil
@@ -284,6 +295,9 @@ func list(since time.Time, limit int) (recs []Record, unreadable int, err error)
 			unreadable++
 			continue
 		}
+		if keep != nil && !keep(rec) {
+			continue
+		}
 		recs = append(recs, rec)
 		if limit > 0 && len(recs) == limit {
 			break
@@ -292,8 +306,6 @@ func list(since time.Time, limit int) (recs []Record, unreadable int, err error)
 	return recs, unreadable, nil
 }
 
-// idBefore reports whether a run id's time prefix is before t. The zero t and
-// an id without a readable prefix never match.
 func idBefore(id string, t time.Time) bool {
 	if t.IsZero() || len(id) < len(idTimeLayout) {
 		return false
@@ -302,7 +314,7 @@ func idBefore(id string, t time.Time) bool {
 	return err == nil && ts.Before(t)
 }
 
-// validID refuses an id that would reach outside the runs directory.
+// Reject run-directory traversal.
 func validID(id string) error {
 	if id == "" || strings.ContainsAny(id, `/\`) || id == ".." {
 		return fmt.Errorf("invalid run id %q", id)
@@ -318,7 +330,11 @@ func Load(id string) (Record, error) {
 	var rec Record
 	if data, err := os.ReadFile(filepath.Join(dir, "result.json")); err == nil {
 		rec.Done = true
-		return rec, json.Unmarshal(data, &rec)
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return rec, err
+		}
+		rec.ID = id
+		return rec, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return rec, err
 	}
@@ -326,7 +342,11 @@ func Load(id string) (Record, error) {
 	if err != nil {
 		return rec, err
 	}
-	return rec, json.Unmarshal(data, &rec)
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return rec, err
+	}
+	rec.ID = id
+	return rec, nil
 }
 
 func Events(id string) ([]agent.Event, error) {
@@ -350,7 +370,7 @@ func Events(id string) ([]agent.Event, error) {
 			var e agent.Event
 			if err := json.Unmarshal(line, &e); err != nil {
 				if !checked {
-					// Only a saved recording failure permits skipping broken lines.
+					// Skip broken lines only after a saved recording failure.
 					rec, loadErr := Load(id)
 					recoverBroken, checked = loadErr == nil && rec.RecordError != "", true
 				}
@@ -367,10 +387,10 @@ func Events(id string) ([]agent.Event, error) {
 	}
 }
 
-// LoadConversation returns a run's record together with the message history it
-// saved, for continuing it. Only the api backend saves one.
+// ErrNoConversation marks a record with no saved API history.
 var ErrNoConversation = errors.New("no saved conversation")
 
+// LoadConversation returns a record and saved API history.
 func LoadConversation(id string) (Record, agent.Conversation, error) {
 	var conv agent.Conversation
 	rec, err := Load(id)
@@ -387,8 +407,7 @@ func LoadConversation(id string) (Record, agent.Conversation, error) {
 	if err := json.Unmarshal(data, &conv); err != nil {
 		return rec, conv, err
 	}
-	// retrieval.json is persisted before model execution, including runs killed
-	// before result.json. Never silently discard a pin from an unfinished run.
+	// Missing results must not discard pre-execution pins.
 	data, err = os.ReadFile(filepath.Join(Root(), id, "retrieval.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return rec, conv, err
@@ -429,9 +448,7 @@ func LoadConversation(id string) (Record, agent.Conversation, error) {
 	return rec, conv, agent.ValidateContinuationPin(rec.Result.Retrieval, &conv)
 }
 
-// Chain returns run id and every run before it that it continues, oldest
-// first. A run that continues one that is gone starts the chain; missing
-// names the one that is gone.
+// Chain returns runs oldest first and names any missing predecessor.
 func Chain(id string) (chain []Record, missing string, err error) {
 	seen := map[string]bool{}
 	for next := id; next != ""; {
@@ -445,8 +462,7 @@ func Chain(id string) (chain []Record, missing string, err error) {
 				return nil, "", err
 			}
 			if !errors.Is(err, os.ErrNotExist) {
-				// Handing over less history than exists, silently, is worse
-				// than asking for the record to be fixed or removed.
+				// Refuse broken history rather than silently dropping it.
 				return nil, "", fmt.Errorf("run %s continues %s, which cannot be read: %w", id, next, err)
 			}
 			missing = next

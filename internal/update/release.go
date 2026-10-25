@@ -19,15 +19,13 @@ import (
 	"time"
 )
 
-// LatestReleaseAPI is where the newest release of hrn is described.
+// LatestReleaseAPI locates hrn's newest release.
 const LatestReleaseAPI = "https://api.github.com/repos/cristiangirlea/harness/releases/latest"
 
-// maxAsset bounds a download: a release binary is a few tens of megabytes.
+// Cap untrusted downloads at 256 MiB.
 const maxAsset = 256 << 20
 
-// AssetName is the file .github/release.sh builds for a platform:
-// hrn_<version>_<os>_<arch>, with .exe on Windows. A tag's leading v is
-// dropped, as the script drops it.
+// AssetName matches release.sh's hrn_<version>_<os>_<arch>[.exe], without the tag's v.
 func AssetName(version, goos, goarch string) string {
 	name := fmt.Sprintf("hrn_%s_%s_%s", strings.TrimPrefix(version, "v"), goos, goarch)
 	if goos == "windows" {
@@ -36,8 +34,7 @@ func AssetName(version, goos, goarch string) string {
 	return name
 }
 
-// VerifyChecksum checks data against the line for name in a SHA256SUMS file
-// as sha256sum writes it (`<hex>  <name>`, or `<hex> *<name>`).
+// VerifyChecksum matches data to name's text or binary SHA256SUMS entry.
 func VerifyChecksum(sums []byte, name string, data []byte) error {
 	var want string
 	sc := bufio.NewScanner(bytes.NewReader(sums))
@@ -64,10 +61,8 @@ func VerifyChecksum(sums []byte, name string, data []byte) error {
 	return nil
 }
 
-// ReleaseSource fetches the newest GitHub release's binary for one platform.
-// Client and API are set by tests; the zero values mean GitHub over the
-// default client. Token, when set, goes into the Authorization header of
-// the API call and nowhere else.
+// ReleaseSource fetches platform binaries using GitHub or a configured API/client.
+// Token authenticates only the API request, never asset downloads.
 type ReleaseSource struct {
 	API    string
 	Client *http.Client
@@ -84,9 +79,8 @@ type releaseDoc struct {
 	} `json:"assets"`
 }
 
-// Fetch downloads this platform's binary and SHA256SUMS into dir, verifies
-// the checksum before anything else is done with the file, and returns the
-// binary's path and the release tag. A mismatch removes the download.
+// Fetch returns a checksum-verified binary path and release tag.
+// Trust the API's SHA256SUMS; never write mismatched bytes as an executable.
 func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string, err error) {
 	api, client, goos, goarch := s.API, s.Client, s.GOOS, s.GOARCH
 	if api == "" {
@@ -112,8 +106,7 @@ func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string,
 	if doc.TagName == "" {
 		return "", "", errors.New("latest release: no tag_name in the response")
 	}
-	// The tag names the file written into dir; a tag with a separator or ".."
-	// would write elsewhere.
+	// Untrusted tags must not redirect writes outside dir.
 	if strings.ContainsAny(doc.TagName, `/\`) || strings.Contains(doc.TagName, "..") {
 		return "", "", fmt.Errorf("latest release: tag %q is not a plain version tag", doc.TagName)
 	}
@@ -159,9 +152,7 @@ func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string,
 	return path, doc.TagName, nil
 }
 
-// assetURLAllowed keeps downloads on GitHub: an asset URL the API named must
-// share the API's host (tests), or be https on github.com or
-// githubusercontent.com. Anything else could be a tampered response.
+// Restrict response-supplied assets to the API origin or GitHub HTTPS hosts.
 func assetURLAllowed(api, asset string) error {
 	a, err := url.Parse(api)
 	if err != nil {
@@ -183,9 +174,7 @@ func assetURLAllowed(api, asset string) error {
 	return nil
 }
 
-// get reads one URL whole. The token goes to the API call only, where a
-// private repository or a tight rate limit needs it; the asset downloads
-// are on a CDN that must never see it.
+// Send tokens only to API requests; asset CDNs must never receive them.
 func (s ReleaseSource) get(ctx context.Context, client *http.Client, url, accept string, withToken bool) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

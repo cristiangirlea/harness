@@ -85,6 +85,16 @@ violation or stale baseline entry is found. Only `--prune` removes stale lines
 from the baseline (without adding new ones), while a renamed file may have its
 baseline path edited by hand.
 
+`privacy-check.sh [--root DIR]` reads the files `git ls-files` lists (binary
+files skipped) and flags a Windows user folder other than a placeholder (`dev`,
+`me`, `user`, `%USERNAME%` and the like: `user-folder`), a local work-folder
+path (`local-work-path`), and text that narrates a person, the word *owner*
+after *the*, in Markdown files and Go comments (`narrates-a-person`). It prints
+a JSON summary with at most 20 findings and exits 1 when there is any, 2 on an
+error (with a JSON error object on stderr). CI runs
+it on every change, Markdown-only ones included. Examples use made-up values
+and environment variables (`%USERPROFILE%`, `$HOME`, `HRN_HOME`) instead.
+
 ## The hint hook
 
 `hrn scripts hint` is a Claude Code PreToolUse hook. It reads the hook's

@@ -23,9 +23,10 @@
 | `hrn runs [-n N]` | List recent runs. |
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](run-records.md#run-records)). |
 | `hrn show [--json] <id>` | Replay a recorded run. |
+| `hrn flow <run-or-batch-id> [--level simple\|technical\|debug] [--json]` | Show the recorded execution tree for a run or batch; `technical` is the default and includes tool steps, while `debug` adds info steps and IDs. |
 | `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](watch.md#watching-runs-live)). |
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
-| `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). |
+| `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). `--owner-email` (repeatable) names the verified emails that see this install's runs and batches; other verified visitors see only records they own. |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table and attempt notes, while it runs or long afterwards. |
@@ -110,9 +111,20 @@ no prompt text is added, removed or changed. Watch and reports use it before
 falling back to the keyword classifier. An invalid stored `task.purpose` is ignored,
 falling back to a valid header or the classifier.
 
+The classifier reads only the lead of a prompt, because long briefs mention every
+keyword ("review the diff", "CI", "deploy") somewhere later: the first non-blank
+paragraph, and the second only when no rule matches the first, each lowercased and
+capped at 600 bytes. An instruction after leading labels such as `Repository: hrn`
+is tried before the paragraph as written, and hand-over headings such as
+`## Hand-over` are skipped. Its CI, deploy and compare keywords count only in the
+lead's first sentence and never inside a branch, file or path name (`ci/pin`,
+`deploy-x`, `ci.yml`).
+
 A continued run (`hrn run --continue`, or the MCP `run` tool with `continue_run_id`)
-keeps the earlier run's declared purpose when neither `--purpose`/`purpose` nor a
-header names one, as it keeps the mode; a short follow-up such as "now fix what you
+keeps the earlier run's purpose when neither `--purpose`/`purpose` nor a
+header names one, as it keeps the mode: its declared purpose, or else the category
+the classifier gave its prompt (nothing when that was `unknown`), saved in
+`task.purpose` like a declaration. A short follow-up such as "now fix what you
 found" is therefore not re-classified. `hrn exec` takes the same optional `purpose`
 on `start` (see [the exec protocol](exec-protocol.md#start-caller-exactly-one-the-first-line)).
 A batch task's declared purpose shows in `hrn batch show`'s table, the MCP

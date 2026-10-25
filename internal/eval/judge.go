@@ -18,21 +18,17 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// Judge scores what each passing cell did against a rubric, with a model.
-// Gates prove the build and expect proves the answer; neither can tell a
-// typo fix from a spelling change. The judge reads the diff and says.
+// Judge grades passing cells against a rubric beyond deterministic checks.
 type Judge struct {
 	Backend string `json:"backend,omitempty"` // default: the default backend
 	Model   string `json:"model,omitempty"`
 	Effort  string `json:"effort,omitempty"`
-	// Rubric applies to every task; Rubrics replaces it for the tasks it
-	// names. Every task needs one or the other.
+	// Rubric is required unless Rubrics supplies a task-specific replacement.
 	Rubric  string            `json:"rubric,omitempty"`
 	Rubrics map[string]string `json:"rubrics,omitempty"`
 	// Timeout is per judgement; default 5m.
 	Timeout agent.Duration `json:"timeout,omitempty"`
-	// Repeats scores each passing cell this many times, default 1, to measure
-	// how far the judge disagrees with itself.
+	// Repeats defaults to 1; repeats measure judge noise.
 	Repeats int `json:"repeats,omitempty"`
 }
 
@@ -64,7 +60,6 @@ func (j *Judge) rubricFor(task string) string {
 	return j.Rubric
 }
 
-// check rejects a judge that could only fail once the agents have run.
 func (j *Judge) check(tasks []batch.Task) error {
 	p, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {
@@ -84,8 +79,7 @@ func (j *Judge) check(tasks []batch.Task) error {
 	if j.Repeats < 0 {
 		return fmt.Errorf("judge: repeats %d is negative", j.Repeats)
 	}
-	// The judge runs after every cell has, so a level its CLI would refuse must be
-	// caught here, not once the agents have been paid for.
+	// Validate effort before spending on cells the judge cannot grade.
 	if err := (agent.Options{Effort: j.Effort}).Validate(); err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
@@ -104,13 +98,10 @@ func (j *Judge) check(tasks []batch.Task) error {
 	return nil
 }
 
-// judgeAll scores every passing cell, spec.Parallel at a time. A cell that
-// failed its gates is not judged: it already scored zero where it counts, and
-// judging it would only spend money. The worktrees must still exist.
+// Failed gates need no paid judging; passing worktrees must remain available.
 func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batch.Event)) []Judgement {
 	j := spec.Judge
-	// Verdicts arrive from several goroutines; callers expect one at a time,
-	// as batch.Run delivers its own events.
+	// Serialize callbacks to preserve batch.Run's notification contract.
 	var notifyMu sync.Mutex
 	report := notify
 	notify = func(e batch.Event) {
@@ -137,8 +128,7 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 			cells = append(cells, tr)
 		}
 	}
-	// Built once per cell, so every repeat judges the same evidence, and only
-	// when first asked for, so no copy is on disk before its cell's turn.
+	// Lazy copies give repeats identical evidence without accumulating unused trees.
 	dirs := make([]string, len(cells)) // each written once, by its cell's first verdict
 	shown := make([]func() evidence, len(cells))
 	for i, tr := range cells {
@@ -151,20 +141,19 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 	}
 	repeats := max(1, j.Repeats)
 	out := make([]Judgement, len(cells)*repeats)
-	// The spec as loaded, not as batch.Run normalised it: an unset parallel
-	// is 0 here, and must mean the batch default rather than one at a time.
+	// The unnormalized spec's zero still means batch.DefaultParallel.
 	parallel := spec.Parallel
 	if parallel <= 0 {
 		parallel = batch.DefaultParallel
 	}
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
-	// A checkout goes once its cell's last repeat is in, so copies do not pile up.
+	// Remove after the final repeat to bound checkout storage.
 	left := make([]atomic.Int32, len(cells))
 	for i := range left {
 		left[i].Store(int32(repeats))
 	}
-	// After a cancel, the copies of cells whose last verdict never came.
+	// Cancellation can leave copies whose final repeat never ran.
 	defer func() {
 		for i, dir := range dirs {
 			if dir == "" || left[i].Load() == 0 {
@@ -214,15 +203,13 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 	return out
 }
 
-// evidence is the judge's prompt and checkout for one cell, or why they could not be built.
 type evidence struct {
 	prompt string
 	dir    string
 	err    error
 }
 
-// canceledOr says canceled when a cancel is why the evidence could not be
-// built, rather than whichever git command it cut short.
+// Report cancellation rather than an incidental git failure it caused.
 func canceledOr(ctx context.Context, ev evidence) evidence {
 	if ev.err != nil && ctx.Err() != nil {
 		ev.err = errors.New("canceled")
@@ -259,8 +246,7 @@ func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResu
 	}
 	task := agent.Task{
 		Prompt: ev.prompt,
-		// A copy of the cell's tree, read-only: the judge may open a file the
-		// diff only touches, but nothing there names the variant.
+		// Neutral read-only copies expose context without revealing the variant.
 		Dir: ev.dir,
 		Options: agent.Options{Mode: agent.ModeReadOnly, Model: j.Model, Effort: j.Effort,
 			Timeout: agent.Duration(timeout), NoInstructions: true},
@@ -320,7 +306,6 @@ func judgePrompt(prompt, rubric, final, diff string, untracked []string) string 
 	return b.String()
 }
 
-// clip keeps the start of s and says how much was cut.
 func clip(s string, limit int) string {
 	if len(s) <= limit {
 		return s
@@ -332,7 +317,6 @@ func clip(s string, limit int) string {
 	return s[:cut] + fmt.Sprintf("\n[... %d more bytes not shown]", len(s)-cut)
 }
 
-// fence returns a code fence longer than any run of backticks in s.
 func fence(s string) string {
 	f := "```"
 	for strings.Contains(s, f) {
@@ -341,8 +325,7 @@ func fence(s string) string {
 	return f
 }
 
-// parseVerdict reads the last JSON object in the judge's answer that has a
-// score. Models wrap JSON in prose or fences, so it scans from the end.
+// Scan backward because models may wrap the final verdict in prose or fences.
 func parseVerdict(text string) (int, string, error) {
 	for i := strings.LastIndex(text, "{"); i >= 0; i = strings.LastIndex(text[:i], "{") {
 		var v struct {

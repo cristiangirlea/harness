@@ -17,8 +17,8 @@ func TestLanTakesNoValueOrAnAdapter(t *testing.T) {
 	}{
 		{nil, false, ""},
 		{[]string{"--lan"}, true, ""},
-		{[]string{"--lan=Ethernet 3"}, true, "Ethernet 3"},
-		{[]string{"--lan=192.168.1.218"}, true, "192.168.1.218"},
+		{[]string{"--lan=Local Area Connection"}, true, "Local Area Connection"},
+		{[]string{"--lan=192.168.1.40"}, true, "192.168.1.40"},
 		{[]string{"--lan=false"}, false, ""},
 		{[]string{"--lan=TRUE"}, true, ""},
 	} {
@@ -47,21 +47,21 @@ func TestAnEmptyLanIsRefused(t *testing.T) {
 }
 
 func TestAnAdapterAfterASpaceIsPointedToTheEqualsSign(t *testing.T) {
-	err := cmdWatch([]string{"--lan", "Ethernet 3"})
-	if err == nil || !strings.Contains(err.Error(), `--lan="Ethernet 3"`) {
+	err := cmdWatch([]string{"--lan", "Local Area Connection"})
+	if err == nil || !strings.Contains(err.Error(), `--lan="Local Area Connection"`) {
 		t.Fatalf("err = %v; want the --lan=NAME form suggested", err)
 	}
 }
 
 func TestWatchDrawsTheQRCodeOfItsOnlyNetwork(t *testing.T) {
-	one := []watch.Endpoint{{URL: "http://192.168.1.218:8089/", Interface: "Ethernet 3"}}
+	one := []watch.Endpoint{{URL: "http://192.168.1.40:8089/", Interface: "Ethernet"}}
 	var b strings.Builder
 	printWatchStart(&b, "127.0.0.1:8089", true, one, false)
-	if out := b.String(); !strings.Contains(out, "http://192.168.1.218:8089/ (Ethernet 3)") || !strings.Contains(out, "█") || strings.Contains(out, "\x1b[") {
+	if out := b.String(); !strings.Contains(out, "http://192.168.1.40:8089/ (Ethernet)") || !strings.Contains(out, "█") || strings.Contains(out, "\x1b[") {
 		t.Errorf("one network, no colour: the link and its QR code; got\n%s", out)
 	}
 	b.Reset()
-	printWatchStart(&b, "127.0.0.1:8089", true, append(one, watch.Endpoint{URL: "http://172.22.176.1:8089/", Interface: "vEthernet (WSL)"}), false)
+	printWatchStart(&b, "127.0.0.1:8089", true, append(one, watch.Endpoint{URL: "http://172.20.0.1:8089/", Interface: "vEthernet (WSL)"}), false)
 	if out := b.String(); strings.Contains(out, "█") || !strings.Contains(out, "QR codes for each are on http://127.0.0.1:8089/") {
 		t.Errorf("several networks: no code here, a pointer to the page; got\n%s", out)
 	}
@@ -76,7 +76,7 @@ func TestWatchDrawsTheQRCodeOfItsOnlyNetwork(t *testing.T) {
 // theme would otherwise invert it, and not every reader copes.
 func TestTheTerminalCodeForcesItsColours(t *testing.T) {
 	var b strings.Builder
-	printWatchStart(&b, "127.0.0.1:8089", true, []watch.Endpoint{{URL: "http://192.168.1.218:8089/", Interface: "Ethernet 3"}}, true)
+	printWatchStart(&b, "127.0.0.1:8089", true, []watch.Endpoint{{URL: "http://192.168.1.40:8089/", Interface: "Ethernet"}}, true)
 	for _, line := range strings.Split(b.String(), "\n") {
 		if strings.ContainsAny(line, "█▀▄") && (!strings.HasPrefix(line, "\x1b[97;40m") || !strings.HasSuffix(line, "\x1b[0m")) {
 			t.Fatalf("a line of the code is not white on black: %q", line)

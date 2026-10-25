@@ -15,7 +15,6 @@ const (
 	ProtectFail = "fail"
 )
 
-// protection is what one task checks after its agent finishes.
 type protection struct {
 	globs []string
 	fail  bool
@@ -31,7 +30,7 @@ func checkProtect(globs []string, mode string) error {
 			return fmt.Errorf("protect %q: a glob relative to the repository, with / between folders", g)
 		}
 		for seg := range strings.SplitSeq(g, "/") {
-			// git names files without ./, ../, empty parts or a trailing /, so such a glob never matches.
+			// Git paths cannot match empty, dot or parent segments.
 			if seg == "" || seg == "." || seg == ".." {
 				return fmt.Errorf("protect %q: a glob relative to the repository, with / between folders", g)
 			}
@@ -43,8 +42,7 @@ func checkProtect(globs []string, mode string) error {
 	return nil
 }
 
-// matchProtect matches a slash path against a glob in which ** stands for any
-// number of whole folders and every other part is a path.Match pattern.
+// ** matches whole folders; other segments use path.Match.
 func matchProtect(glob, name string) bool {
 	return matchSegments(strings.Split(glob, "/"), strings.Split(name, "/"))
 }
@@ -70,13 +68,12 @@ func matchSegments(glob, name []string) bool {
 	return len(name) == 0
 }
 
-// changedProtected lists the files matching p's globs that differ from the
-// base in dir, committed or not. Added files are left out: a new test is work.
+// Exclude additions: new tests are legitimate work.
 func changedProtected(ctx context.Context, dir string, p protection) ([]string, error) {
 	if len(p.globs) == 0 {
 		return nil, nil
 	}
-	// The agent writes this worktree's config: its fsmonitor, filters and core.worktree must not apply.
+	// Agent-written config must not execute programs or redirect git.
 	g, err := newAgentGit(ctx, dir)
 	if err != nil {
 		return nil, err
@@ -100,10 +97,8 @@ func changedProtected(ctx context.Context, dir string, p protection) ([]string, 
 	return changed, nil
 }
 
-// protectGate reports a protect failure as a gate result, so the retry prompt
-// names the files the way it names a failing gate command.
 func protectGate(p protection, changed []string, err error) GateResult {
-	gr := GateResult{Command: "protect " + strings.Join(p.globs, " ")}
+	gr := GateResult{Command: "protect " + strings.Join(p.globs, " "), Guard: true}
 	switch {
 	case err != nil:
 		gr.ExitCode, gr.Output = 1, "could not compare the protected files with the base: "+err.Error()

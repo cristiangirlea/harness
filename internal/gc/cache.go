@@ -13,55 +13,41 @@ import (
 	"github.com/cristiangirlea/harness/internal/report"
 )
 
-// removeCacheEntry is replaceable by tests to make an inner deletion fail
-// after the cache has been moved aside.
 var removeCacheEntry = os.RemoveAll
 
-// movedCachePath is replaceable by tests that need a predictable collision.
 var movedCachePath = func(path string) string {
 	name := fmt.Sprintf(".gc-%d-%d-%s", os.Getpid(), time.Now().UnixNano(), filepath.Base(path))
 	return filepath.Join(filepath.Dir(path), name)
 }
 
-// renameCache is replaceable by tests that make a move fail or start a build
-// immediately after a successful move.
 var renameCache = os.Rename
 
-// movedCacheInUse is replaceable by tests that model a build starting just
-// after the move; production probes the moved cache's profile locks.
 var movedCacheInUse = inUse
 
-// Cache is one build cache, a folder tagged with CACHEDIR.TAG (Cargo writes
-// one into every target folder), and what the cache pass decided about it.
+// Cache is a CACHEDIR.TAG-tagged build folder and its removal verdict.
 type Cache struct {
 	Path       string
-	Worktree   string    // the worktree it lies in, "" for one found on its own
-	Size       int64     // the files under it
-	LastBuild  time.Time // its last write; see lastBuild
+	Worktree   string    // empty for a standalone cache
+	Size       int64     // bytes
+	LastBuild  time.Time // includes deletions; see lastBuild
 	Verdict    Verdict
 	Reason     string
-	risk       string // why it cannot go whole, found by the walk that sized it
-	young      bool   // kept only because it was written too recently
-	driveID    string // drive identified during the free-below scan
-	driveName  string // readable name from the free-below scan
-	driveBelow bool   // that drive was below the limit before any removals
-	driveMore  bool   // eligible caches left because enough was already going
+	risk       string // why whole-folder deletion is unsafe
+	young      bool   // age is the only reason to keep it
+	driveID    string
+	driveName  string
+	driveBelow bool // before removals
+	driveMore  bool // eligible caches remain after meeting the limit
 }
 
-// Drive is what the cache pass knows about the volume holding a folder.
+// Drive describes a cache's volume and available space.
 type Drive struct {
-	ID   string // the same for every folder on one volume: the drive on Windows, the device elsewhere
-	Name string // readable mount point, when available
+	ID   string // shared by all folders on the volume
+	Name string // mount point, when available
 	Free int64  // bytes free for this user
 }
 
-// Caches lists the build caches at paths, up to two levels down, and inside
-// each worktree that stays, up to two levels down, once each, with a verdict.
-// A cache goes when no build holds it and it was last written more than
-// opt.Idle ago; when the drive holding it has less than opt.FreeBelow free,
-// the caches on that drive idle past opt.MinIdle go too, oldest first, until
-// the drive would have enough. One inside a worktree marked Remove goes with
-// the worktree and is not listed.
+// Caches judges tagged folders up to two levels below paths and retained worktrees.
 func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([]Cache, error) {
 	cwd, _ := os.Getwd()
 	seen := map[string]bool{}
@@ -109,12 +95,8 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 	return all, nil
 }
 
-// ApplyCaches removes the caches marked Remove, the longest idle first so an
-// interruption leaves the newest, each checked again just before it goes
-// (still tagged, nothing written since the scan, no build holding it, nothing
-// inside that must stay). One that fails the check or the rename stays, with
-// the reason among the errors. A failed removal leaves the renamed cache for
-// the next scan.
+// ApplyCaches rechecks and removes caches marked Remove, oldest first so interruptions spare newer caches.
+// Failed deletions leave renamed, tagged caches for the next scan.
 func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []error) {
 	var todo []Cache
 	for _, c := range caches {
@@ -133,6 +115,7 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 			errs = append(errs, fmt.Errorf("%s: kept, it could not be moved aside: %s", c.Path, firstLine(err.Error())))
 			continue
 		}
+		// A build can take a lock between the recheck and the move.
 		if why := movedCacheInUse(moved); why != "" {
 			if err := os.Rename(moved, c.Path); err != nil {
 				errs = append(errs, fmt.Errorf("%s (moved to %s): a build started, but it could not be moved back: %w", c.Path, moved, err))
@@ -150,8 +133,7 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 	return removed, errs
 }
 
-// removeMovedCache keeps the signature until everything else has gone, so a
-// failed deletion remains a tagged cache for the next scan.
+// Keep the tag until last so failed deletions remain discoverable caches.
 func removeMovedCache(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -207,8 +189,6 @@ func TotalCaches(caches []Cache) int64 {
 	return n
 }
 
-// cacheDirs finds the tagged folders at dir and up to depth levels down,
-// without looking inside one, through a link, or into .git.
 func cacheDirs(dir string, depth int) []string {
 	if isCacheDir(dir) {
 		return []string{dir}
@@ -230,10 +210,7 @@ func cacheDirs(dir string, depth int) []string {
 	return found
 }
 
-// worktreeOf reports whether dir is a linked worktree of repo: its .git is a
-// file naming a folder under repo's .git/worktrees. git worktree list prints
-// whatever an entry's gitdir file says, a path that is no worktree at all
-// when the entry is stale or edited, and such a path must not be swept.
+// Validate the backlink: stale or edited gitdir entries can name unrelated folders.
 func worktreeOf(dir, repo string) bool {
 	gitfile := filepath.Join(dir, ".git")
 	if info, err := os.Lstat(gitfile); err != nil || !info.Mode().IsRegular() {
@@ -254,7 +231,6 @@ func worktreeOf(dir, repo string) bool {
 	return inside(target, filepath.Join(repo, ".git", "worktrees"))
 }
 
-// holder names the innermost worktree dir lies in, or "".
 func holder(dir string, wts []Worktree) string {
 	best := ""
 	for _, w := range wts {
@@ -265,8 +241,6 @@ func holder(dir string, wts []Worktree) string {
 	return best
 }
 
-// goesWithWorktree reports a folder inside a worktree marked Remove: the
-// worktree's removal takes it.
 func goesWithWorktree(dir string, wts []Worktree) bool {
 	for _, w := range wts {
 		if w.Verdict == Remove && inside(dir, w.Path) {
@@ -276,8 +250,6 @@ func goesWithWorktree(dir string, wts []Worktree) bool {
 	return false
 }
 
-// decideCache gives one cache its verdict: keep, with the first reason that
-// holds it, or remove, because nothing has written it for opt.Idle.
 func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt Options) (Verdict, string) {
 	if cwd != "" && inside(cwd, c.Path) {
 		return Keep, "the current directory is inside it"
@@ -306,8 +278,7 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	return Keep, fmt.Sprintf("last written %s ago, inside --idle %s", short(idle), short(opt.Idle))
 }
 
-// isMovedCache accepts both the old .gc-<pid>-<name> and the newer
-// .gc-<pid>-<time>-<name> form. Both start with a decimal PID and a hyphen.
+// Accept both on-disk forms: .gc-<pid>-<name> and .gc-<pid>-<time>-<name>.
 func isMovedCache(dir string) bool {
 	name, ok := strings.CutPrefix(filepath.Base(dir), ".gc-")
 	if !ok || name == "" {
@@ -320,8 +291,7 @@ func isMovedCache(dir string) bool {
 	return i > 0 && i+1 < len(name) && name[i] == '-'
 }
 
-// recheckCache says why a cache marked for removal must stay after all,
-// because it changed since the scan, or "".
+// Recheck before deletion: writes, locks or tracked files may have appeared since scanning.
 func recheckCache(ctx context.Context, c Cache) string {
 	if !isCacheDir(c.Path) {
 		return "it is no longer a tagged cache"
@@ -343,10 +313,7 @@ func recheckCache(ctx context.Context, c Cache) string {
 	return inUse(c.Path)
 }
 
-// freeBelow marks more caches for removal on each drive with less than
-// opt.FreeBelow free: those kept only for being young, idle past opt.MinIdle,
-// oldest first, until what goes would put the drive above the limit. A drive
-// whose free space cannot be read loses nothing more.
+// Unknown free space must not justify extra removals.
 func freeBelow(all []Cache, now time.Time, opt Options) {
 	if opt.FreeBelow <= 0 {
 		return
@@ -398,7 +365,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 				if s.free < opt.FreeBelow && idle >= minIdle {
 					s.more = true
 				}
-				continue // enough is going already; keep the original reason
+				continue
 			}
 			if idle < minIdle {
 				c.Reason = fmt.Sprintf("last written %s ago, inside --min-idle %s", short(idle), short(minIdle))
@@ -406,7 +373,7 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			}
 			if s.after >= opt.FreeBelow {
 				s.more = true
-				continue // enough is going already; younger ones keep their reason
+				continue
 			}
 			c.Verdict = Remove
 			c.Reason = fmt.Sprintf("idle %s, and %s has only %s free, below %s", short(idle), driveLabel(c.driveID, c.driveName), report.Bytes(s.free), report.Bytes(opt.FreeBelow))
@@ -428,8 +395,7 @@ func driveLabel(id, name string) string {
 	return id
 }
 
-// FreeBelowReport reads the free space after apply for drives that were below
-// the limit during the cache scan. Call it only after applying the listing.
+// FreeBelowReport reports space on previously low drives after the listing has been applied.
 func FreeBelowReport(caches []Cache, opt Options) []string {
 	if opt.FreeBelow <= 0 {
 		return nil
@@ -483,9 +449,6 @@ func FreeBelowReport(caches []Cache, opt Options) []string {
 	return lines
 }
 
-// profiles lists a cache's profile folders, those holding Cargo's .cargo-lock
-// (debug, release, a custom profile, or the same under a target triple), up
-// to two levels down.
 func profiles(dir string) []string {
 	var out []string
 	var walk func(d string, depth int)
@@ -511,9 +474,7 @@ func profiles(dir string) []string {
 	return out
 }
 
-// ageAt is how long before now a cache was last written. A write time a hair
-// after now (file times and the clock differ by their resolution) is age 0,
-// so --idle 0 takes any cache (#245).
+// Clamp clock-resolution skew to zero so --idle 0 includes future timestamps.
 func ageAt(now, written time.Time) time.Duration {
 	if d := now.Sub(written); d > 0 {
 		return d
@@ -521,13 +482,7 @@ func ageAt(now, written time.Time) time.Duration {
 	return 0
 }
 
-// lastBuild is the newest write among a cache's profile folders, their deps,
-// .fingerprint, build and incremental folders, the files directly in a
-// profile (the binaries a build ends with), and newest, the latest time the
-// walk that sized the cache saw inside it; the cache's own time when it has
-// no profile. The folder times catch what a build removes, which no file
-// shows; the walk catches a file rewritten deep inside a cache with no
-// profile, such as pytest's.
+// Directory times catch build deletions; newest catches deep rewrites in caches without profiles.
 func lastBuild(dir string, newest time.Time) time.Time {
 	note := func(p string) {
 		if info, err := os.Lstat(p); err == nil && info.ModTime().After(newest) {
@@ -554,9 +509,7 @@ func lastBuild(dir string, newest time.Time) time.Time {
 	return newest
 }
 
-// inUse says why a cache is in use, or "": a build holds a profile's
-// .cargo-lock (Cargo keeps it while it builds), or the lock could not be
-// checked, which counts as held.
+// An unreadable lock counts as held: absence of a build must be proven.
 func inUse(dir string) string {
 	for _, p := range profiles(dir) {
 		rel, _ := filepath.Rel(dir, p)
@@ -572,17 +525,13 @@ func inUse(dir string) string {
 	return ""
 }
 
-// measure walks a cache once for the size of the files under it (links are
-// not followed), the newest time of anything in it, and why it cannot be
-// deleted whole, or "": a repository inside it, a link leading out of it, or
-// a part it cannot read.
 func measure(dir string) (size int64, newest time.Time, risk string) {
 	var kind, at string
 	unreadable := false
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			unreadable = true
-			return nil // what could be read still counts
+			return nil
 		}
 		if kind == "" {
 			kind, at = riskAt(dir, p, d)
@@ -614,12 +563,8 @@ func measure(dir string) (size int64, newest time.Time, risk string) {
 	return size, newest, risk
 }
 
-// gitTracks reports whether git tracks any file under dir, which makes the
-// folder someone's (a tagged test fixture) whatever its tag says. A folder git
-// finds no repository above tracks nothing; any other failure is an error, so
-// the folder stays. The message is matched in full, because a worktree whose
-// repository is gone fails with "not a git repository: <gitdir>", and its
-// files are the tracked ones this check protects.
+// A cache tag does not make tracked fixtures disposable.
+// Match the no-parent-repository message narrowly: a missing worktree repository must keep its files.
 func gitTracks(ctx context.Context, dir string) (bool, error) {
 	if _, err := gitOut(ctx, dir, "rev-parse", "--show-toplevel"); err != nil {
 		if strings.Contains(err.Error(), "not a git repository (or any") {

@@ -11,23 +11,12 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 )
 
-// Recording Ada's voice (#83, #91): /voice shows the lines to read, one at a
-// time, and the page records them in the browser and saves them into a folder
-// the person picks. Nothing is sent back here, so hrn watch stays read-only.
-// The page is for this computer only: it uses the microphone, and the takes
-// are someone's voice.
-
-// voiceLine is one line to record. N is its number in the files' names
-// (0001.wav) and in metadata.csv, so it must not change for a line once
-// people have recorded it: the lines are made in a fixed order.
+// voiceLine's N is the line's position and names its recording (0001.wav, metadata.csv): never reorder or insert lines.
 type voiceLine struct {
 	N    int
 	Text string
 }
 
-// voiceLines are the lines: Ada's own sentences, made by the functions she
-// speaks with over many backends, places, tasks and durations, so the voice is
-// best at what she says, mixed with everyday lines covering English's sounds.
 var voiceLines = sync.OnceValue(func() []voiceLine {
 	var everyday []string
 	sc := bufio.NewScanner(strings.NewReader(mustAsset("assets/voice-lines.txt")))
@@ -65,18 +54,17 @@ func mustAsset(name string) string {
 	return string(data)
 }
 
-// adaLines are Ada's sentences, from her own wording functions.
 func adaLines() []string {
 	backends := []string{"claude", "codex", "gemini", "opencode", "api"}
-	places := []string{"harness", "tidedesk", "jobpilot", "website", "infra", "rendezvous", "commercial"}
+	places := []string{"harness", "demo-api", "web-shop", "docs-site", "notes-app", "cli-tool", "data-pipeline"}
 	tasks := []string{
-		"add the budget guard", "fix the flaky clipboard test", "translate the settings page",
-		"name a batch's runs by their task", "record Ada's voice", "check the licence on startup",
-		"speed up the screen capture", "add a dark theme to the website", "move the gates to bash",
-		"review the security findings", "pin the base images", "look up the employer links",
-		"write the release notes", "tidy the README", "split the rendezvous service",
+		"add the budget guard", "fix the flaky upload test", "translate the settings page",
+		"name a batch's runs by their task", "record Ada's voice", "check the config on startup",
+		"speed up the search page", "add a dark theme to the docs", "move the gates to bash",
+		"review the security findings", "pin the base images", "look up the broken links",
+		"write the release notes", "tidy the README", "split the billing service",
 		"show the cost on the watch page", "retry a failed gate once", "map the whole workflow",
-		"test the keyboard switch", "add German questions", "catch a batch mid-save",
+		"test the login form", "add German translations", "catch a batch mid-save",
 		"warn before the disk fills up", "teach Ada to listen", "make the phone page faster",
 	}
 	minutes := []time.Duration{12 * time.Second, 45 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute,
@@ -94,15 +82,14 @@ func adaLines() []string {
 	pick := func(i int, xs []string) string { return xs[i%len(xs)] }
 	who := func(i int) string { return backendName(pick(i, backends)) }
 	place := func(i int) string { return pick(i*3+1, places) }
-	// First, the examples the README gives of what she says, by the same
-	// functions, so the most common lines are recorded early.
+	// Record common README examples first using the actual wording functions.
 	_, finished := runEnding("Claude", "harness", agent.Result{Status: agent.StatusOK, Duration: 4 * time.Minute})
-	four := botItem{Kind: "batch", Where: "tidedesk"}
+	four := botItem{Kind: "batch", Where: "demo-api"}
 	for k := 0; k < 4; k++ {
 		four.tasks = append(four.tasks, botTask{What: "fix the flaky test", Status: batch.StatusRunning})
 	}
 	four.tasks[1].Status = batch.StatusPass
-	ended := batch.Result{Dir: "/work/tidedesk", Duration: 12 * time.Minute, Tasks: []batch.TaskResult{
+	ended := batch.Result{Dir: "/work/demo-api", Duration: 12 * time.Minute, Tasks: []batch.TaskResult{
 		{Status: batch.StatusPass}, {Status: batch.StatusPass}, {Status: batch.StatusPass}, {Status: batch.StatusFail}}}
 	_, batchDone := batchEnding(ended)
 	out = append(out,
@@ -111,13 +98,11 @@ func adaLines() []string {
 		taskOf(four, 1), finished, batchDone,
 		statusOf(botSnapshot{items: []botItem{
 			{Who: "Claude", Where: "harness", Doing: "editing bot.go", Going: true},
-			{Who: "a batch of four tasks", Where: "tidedesk", Going: true}}}),
+			{Who: "a batch of four tasks", Where: "demo-api", Going: true}}}),
 	)
-	// Starts.
 	for i := 0; i < 60; i++ {
 		out = append(out, startedOf(botItem{Kind: "run", Who: who(i), Where: place(i), What: tasks[i%len(tasks)]}))
 	}
-	// What an agent is doing, alone and in a batch.
 	for i := 0; i < 90; i++ {
 		c := calls[i%len(calls)]
 		doing := activity(c.tool, c.summary)
@@ -127,7 +112,6 @@ func adaLines() []string {
 		}
 		out = append(out, workingOf(botItem{Kind: "run", Who: who(i), Where: place(i), Doing: doing}))
 	}
-	// How a run ended.
 	statuses := []agent.Status{agent.StatusOK, agent.StatusError, agent.StatusMaxTurns, agent.StatusTimeout,
 		agent.StatusBudget, agent.StatusCanceled, agent.StatusRefused, agent.StatusLimited}
 	errs := []string{"exit status 1", "the build failed", "a test timed out", "the network went away"}
@@ -139,7 +123,6 @@ func adaLines() []string {
 		_, text := runEnding(who(i/len(statuses)), place(i), res)
 		out = append(out, text)
 	}
-	// Batches: starting, a task finishing, and how they ended.
 	taskStatuses := []batch.Status{batch.StatusPass, batch.StatusFail, batch.StatusPass, batch.StatusError, batch.StatusCanceled}
 	for n := 1; n <= 12; n++ {
 		out = append(out, startedOf(botItem{Kind: "batch", Who: "a batch of " + count(n, "task"), Where: place(n)}))
@@ -169,7 +152,6 @@ func adaLines() []string {
 		_, text := batchEnding(b)
 		out = append(out, text)
 	}
-	// What is going.
 	out = append(out, statusOf(botSnapshot{}))
 	for i := 0; i < 36; i++ {
 		var snap botSnapshot
@@ -189,8 +171,7 @@ func adaLines() []string {
 	return append(out, adaReplies...)
 }
 
-// adaReplies are what she says on her page (assets/bot.js, watch.tmpl); a
-// test keeps them the same there and here.
+// Keep replies identical to assets/bot.js and watch.tmpl for recording coverage.
 var adaReplies = []string{
 	"I'm Ada. I'll tell you what hrn is doing.",
 	"Hello, I'm Ada. This is how I sound. I'll tell you when something starts, and when it's done.",
@@ -204,7 +185,7 @@ type voicePage struct {
 	Lines []voiceLine
 }
 
-// voice serves the recording page to this computer only.
+// Takes stay in the browser and never come back here; the microphone page is for this computer only.
 func (s *server) voice(w http.ResponseWriter, r *http.Request) {
 	if !s.fromThisComputer(r) {
 		s.page(w, http.StatusForbidden, "missing", struct {

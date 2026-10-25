@@ -1,4 +1,4 @@
-// Package prefs stores backend preferences without depending on execution or records.
+// Package prefs stores execution-independent backend preferences.
 package prefs
 
 import (
@@ -37,7 +37,7 @@ func (p Prefs) Filter(names []string) []string {
 	return filtered
 }
 
-// Check refuses a disabled explicit choice; an empty name leaves selection to the caller.
+// Check rejects disabled choices; empty leaves selection to the caller.
 func (p Prefs) Check(name string) error {
 	if name != "" && !p.Enabled(name) {
 		return fmt.Errorf("backend %s is disabled; enabled: %s (hrn backends set)", name, strings.Join(p.EnabledNames, ", "))
@@ -52,8 +52,7 @@ func (p Prefs) validate() error {
 	return nil
 }
 
-// retry runs f until it succeeds or a short while has passed: on Windows a
-// reader in another process refuses a rename over the file, and a rename a read.
+// Retry Windows sharing conflicts between readers and renames.
 func retry(f func() error) error {
 	var err error
 	for i := 0; i < 20; i++ {

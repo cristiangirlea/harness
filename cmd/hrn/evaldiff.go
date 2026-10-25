@@ -13,8 +13,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// printEvalDiff sets two evals side by side, variant by variant and then task
-// by task. Each cell reads "before → after".
 func printEvalDiff(r *renderer, d eval.Diff) {
 	r.Line("")
 	r.Line(fmt.Sprintf("  eval %s → %s", d.A, d.B))
@@ -66,6 +64,13 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 				}
 				r.Line(r.c(dim, fmt.Sprintf("  note: %d %s of %s in %s did not act; its pass rate counts only the cells that did", side.row.DidNotAct, noun, v.Name, side.id)))
 			}
+			if side.row != nil && side.row.DidNotStart > 0 {
+				noun := "cells"
+				if side.row.DidNotStart == 1 {
+					noun = "cell"
+				}
+				r.Line(r.c(dim, fmt.Sprintf("  note: %d %s of %s in %s did not start; its pass rate excludes them", side.row.DidNotStart, noun, v.Name, side.id)))
+			}
 		}
 	}
 	for _, id := range d.PromptChanged {
@@ -109,7 +114,6 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 	}
 }
 
-// setupNames lists a kind of setup change, at most five names; empty for none.
 func setupNames(kind string, names []string) string {
 	if len(names) == 0 {
 		return ""
@@ -120,7 +124,6 @@ func setupNames(kind string, names []string) string {
 	return kind + " " + strings.Join(names, ", ")
 }
 
-// noise marks a judge-score change smaller than the judge's own spread.
 func noise(within bool) string {
 	if within {
 		return " (within noise)"
@@ -130,8 +133,6 @@ func noise(within bool) string {
 
 func arrow(before, after string) string { return before + " → " + after }
 
-// score renders a variant's mean judge score, with the spread of its repeats,
-// or "-" when nothing was judged.
 func score(v eval.VariantRow) string {
 	if v.Judged == 0 {
 		return "-"
@@ -142,7 +143,6 @@ func score(v eval.VariantRow) string {
 	return fmt.Sprintf("%.1f", v.MeanScore)
 }
 
-// listEvals prints the saved evals, newest first; n limits how many, 0 is all.
 func listEvals(w io.Writer, n int) error {
 	recs, unreadable, err := eval.ListAll()
 	if err != nil {
@@ -160,7 +160,7 @@ func listEvals(w io.Writer, n int) error {
 		cells, passed, cost, known, estimate, withoutCost := rec.Totals()
 		acted := cells
 		for _, v := range rec.Table.Variants {
-			acted -= v.DidNotAct
+			acted -= v.DidNotAct + v.DidNotStart
 		}
 		unknown := ""
 		if withoutCost > 0 {

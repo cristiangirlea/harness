@@ -11,8 +11,6 @@ import (
 	"syscall"
 )
 
-// diskFree asks the file system holding path how much it has free for this
-// user, and names the volume by its device number and mount point.
 func diskFree(path string) (Drive, error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(path, &st); err != nil {
@@ -56,9 +54,7 @@ func diskFree(path string) (Drive, error) {
 	return Drive{ID: fmt.Sprintf("device %d", dev), Name: mount, Free: int64(st.Bavail) * int64(st.Bsize)}, nil
 }
 
-// lockHeld reports whether a build holds the lock file. Cargo takes an
-// exclusive flock on .cargo-lock while it builds, so a non-blocking one fails
-// while one runs. A missing file is held by nobody.
+// Cargo holds an exclusive flock while building; probe without waiting for it to finish.
 func lockHeld(path string) (bool, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {

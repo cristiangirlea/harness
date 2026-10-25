@@ -17,8 +17,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// cmdBatch dispatches the batch subcommands. Anything that is not one of them
-// is the spec file of a new batch.
 func cmdBatch(args []string) (int, error) {
 	if len(args) > 0 {
 		switch args[0] {
@@ -35,9 +33,7 @@ func cmdBatch(args []string) (int, error) {
 	return cmdBatchRun(args)
 }
 
-// loadBatch turns the arguments of a subcommand into a record. A wrong number
-// of arguments is the caller's mistake (2); a record that will not load is a
-// run-time failure (1).
+// Distinguish usage errors (2) from record-loading failures (1).
 func loadBatch(args []string, want int, form string) (batch.Result, int, error) {
 	if len(args) != want {
 		return batch.Result{}, 2, fmt.Errorf("usage: hrn batch %s", form)
@@ -61,8 +57,7 @@ func cmdBatchRemove(args []string) (int, error) {
 	return 0, nil
 }
 
-// removedWhat is what hrn batch rm removes of a batch: a slot stays, so of a
-// slot batch only the branches go.
+// Slot worktrees are reusable and stay after their batch branches are removed.
 func removedWhat(res batch.Result) string {
 	for _, t := range res.Tasks {
 		if t.Slot == 0 && t.Worktree != "" {
@@ -92,8 +87,7 @@ func cmdBatchShow(args []string) (int, error) {
 	return 0, nil
 }
 
-// cmdBatchDiff writes one task's changes to stdout, so the output can be piped
-// into git apply or a pager. Anything else goes to stderr.
+// Keep stdout patch-only so it can be piped to git apply.
 func cmdBatchDiff(args []string) (int, error) {
 	fs := flag.NewFlagSet("batch diff", flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -119,8 +113,7 @@ func cmdBatchDiff(args []string) (int, error) {
 		fmt.Print(diff)
 	}
 	if len(untracked) > 0 {
-		// A diff cannot show a file git has never seen, and the agent's new
-		// files are exactly that until the task commits.
+		// New untracked files are absent from the patch until committed.
 		fmt.Fprintf(os.Stderr, "untracked in the worktree, not in the diff: %s\n", strings.Join(untracked, ", "))
 	}
 	return 0, nil
@@ -209,10 +202,7 @@ func cmdBatchMerge(args []string) (int, error) {
 	return 0, nil
 }
 
-// diffNothing says why a task's diff is empty. A slot task's diff is its
-// commit alone, so without one it committed nothing. A kept slot says only
-// that giving it back failed (work left in it, or a busy lock), so it is
-// named for inspection, not said to hold work.
+// A kept slot may only have a busy lock; do not claim it contains uncommitted work.
 func diffNothing(tr batch.TaskResult) string {
 	if tr.Slot == 0 {
 		return fmt.Sprintf("task %s changed nothing", tr.ID)
@@ -224,7 +214,6 @@ func diffNothing(tr batch.TaskResult) string {
 	return text
 }
 
-// mergeConflictBranch names the branch that stopped a merge run.
 func mergeConflictBranch(merged []batch.MergeResult) string {
 	for _, m := range merged {
 		if m.Conflict {
@@ -305,8 +294,6 @@ func passed(res batch.Result) int {
 	return n
 }
 
-// printBatch is the end-of-run table, which `hrn batch show` reprints later or
-// while the batch is still going.
 func printBatch(r *renderer, res batch.Result) {
 	running := 0
 	for _, t := range res.Tasks {
@@ -342,8 +329,6 @@ func printBatch(r *renderer, res batch.Result) {
 			}
 		}
 	}
-	// A batch still going has no duration in its record; say how long it has
-	// been going instead, which is what the reader wants to know.
 	tail, took := "", res.Duration.Round(time.Second).String()
 	if running > 0 {
 		tail = fmt.Sprintf(" · %d still running", running)

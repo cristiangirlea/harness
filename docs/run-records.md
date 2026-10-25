@@ -12,9 +12,16 @@ reason; the task fails with that reason without retrying. Older gate records
 without the field still load. See [Batches](batches.md) for the launcher errors
 that count as infrastructure failures.
 
+A batch attempt carries `did_not_start` when a backend or gate could not start
+before any turn or tool call. Its value is the first line of the recorded error;
+it is omitted otherwise. Older attempts without the field keep their previous
+classification. Eval variant and task rows count these cells in the optional
+`did_not_start` integer, separately from `did_not_act`.
+
 A batch attempt with `protect` globs carries an optional `protected` list: the
 protected files it changed or removed against the batch's base, as slash paths.
-Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`.
+Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`, marked
+`guard: true` so a user gate with a similar command is never taken for it.
 Records without the field still load. See [Batches](batches.md#batches).
 
 A batch attempt whose agent moved its branch or `HEAD` with git (a commit, reset or rename) carries
@@ -45,7 +52,7 @@ with its `repeat` number; variant and task rows add `judge_repeats`, `score_min`
 repeat). Older records have one verdict
 per cell, no repeat number and no spread, and still load.
 
-Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; it is omitted otherwise, and old records still load.
+Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; runs without an applied route may include `route_note` explaining the choice, and old records still load.
 
 Every run records `setup`, the agent setup it started with, read when the record is
 created (an edit the agent makes later does not change it). It holds hashes and names,
@@ -108,7 +115,9 @@ an ordinary follow-up, and old records without it still load.
   `append_system_prompt` and `no_skills` are omitted when unset)
   and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
   the declared category from `--purpose`, MCP `purpose`, a batch task's `purpose`,
-  or a valid leading `Purpose: <category>` header. It is omitted when undeclared;
+  or a valid leading `Purpose: <category>` header; a continuation without one stores
+  the purpose it inherits from the earlier run (see
+  [Declared purpose](commands.md#declared-purpose)). It is omitted when undeclared;
   old records without it still load and use the header or classifier for display
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
@@ -168,7 +177,7 @@ an ordinary follow-up, and old records without it still load.
   the original is unavailable, and saves no incomplete original.
   Capturing and shaping one output just under that ceiling peaks at about 75–90 MiB of
   heap beyond the input itself, with 270 MB allocated in total (`go test -bench
-  NearCeiling ./internal/tools`, which reports `peak-heap-MiB`; Go 1.26, Ryzen 9 9950X).
+  NearCeiling ./internal/tools`, which reports `peak-heap-MiB`; Go 1.26, a 16-core desktop).
 - `retrieval.json` — the opt-in packet, scope and version pin, saved before a backend
   starts. An unfinished run keeps this pin; a continuation checks it against the
   conversation before reuse.
@@ -219,10 +228,19 @@ switching is enabled. `hrn exec` neither reads nor writes it. Deleting it forget
 remembered limits.
 
 `result.json` includes `model_reported: true` only when the backend reports its
-model: api responses, claude init lines and gemini model stats. A requested/default
-model alone does not set it; codex and opencode do not report one. The field is
-omitted when false, and older records without it still load. Exec uses it to send
-an empty `resolved_model` when the backend did not report its model.
+model: api responses, claude init lines, gemini model stats and codex's session
+file. A requested/default model alone does not set it; opencode does not report one.
+The field is omitted when false, and older records without it still load. Exec uses
+it to send an empty `resolved_model` when the backend did not report its model.
+
+`codex exec --json` names neither the model nor the CLI version, so after the run hrn
+reads the session's rollout file, `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<session>.jsonl`
+(default `~/.codex`): the last `turn_context` model becomes `model` with
+`model_reported: true` (and prices the cost estimate), and `session_meta.cli_version`
+becomes `result.cli_version`. Without that file, or when its `session_meta` names
+another session, the result keeps the requested model, unreported, and no
+`cli_version`. hrn never reads `config.toml` for this: it says what codex would use,
+not what it ran.
 
 When complete events fail to write or `events.jsonl` fails to close, `result.json`
 includes `record_error` with the number of events not recorded, the first event error
@@ -253,6 +271,33 @@ its referenced runs, including a run's result: an active first attempt keeps the
 batch running even when the batch record itself is over an hour old, and a running
 gate has the batch save its record again every ten minutes. See
 [watch states](watch.md) for the display and Ada behaviour.
+
+## Ownership and execution flow
+
+Run records (`task.json`, `result.json`) and batch records carry an optional `owner`: who the
+record belongs to, as `kind:value`. A local install writes `local:<OS user name>`, or
+`$HRN_OWNER` when it holds a valid `local:`, `email:` or `user:` principal. Records written
+before the field have none and belong to the local user, so nothing on disk is rewritten. Every
+read that crosses an access boundary (the watch server, `hrn flow`) goes through one decision,
+`owner.Viewer.CanRead`: a record's owner reads it, an admin grant reads all, and anyone else
+is told the record does not exist, so ids cannot be probed.
+
+A batch also appends its execution events to `batch-flows/<id>.jsonl`, one JSON object per
+line. Each event has a version `v` (1), a sequence `seq` that continues when the file is reopened,
+a time `t`, the `owner`, `batch`, `task`, `attempt` and `run` it concerns, a `step` id and its
+`parent`, a `kind` (`batch`, `task`, `slot`, `attempt`, `route`, `decision`, `run`, `tool`, `gate`,
+`commit`, `info`, `error`) and optionally a `status` (`started`, `waiting`, `ok`, `failed`,
+`canceled`, `skipped`), `name`, `text`, `reason` and `next`. Later events for a step update it.
+`reason` is only ever a recorded cause, such as a route row or a gate's exit; hrn never writes
+model reasoning there. Text is masked for secrets and capped before it is written.
+
+Step ids are fixed: `batch`, `task:<id>`, `task:<id>/slot`, `task:<id>/a<n>` for attempt n,
+`task:<id>/a<n>/gate<k>`, and `<attempt>/run` for the attempt's run, whose tool calls are
+`<attempt>/run/tool<n>`. A run outside a batch is `run:<id>`. Runs keep no flow file: their steps
+are rebuilt from `events.jsonl` and the record (marked `derived`), and so is the flow of a batch
+written before the file existed. A step whose parent is missing, such as a pruned run, is shown
+as a gap rather than dropped. Readers skip a torn last line, duplicate sequence numbers and
+versions newer than they know. Pruning a batch record removes its flow file too.
 
 ## Usage per turn
 

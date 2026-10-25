@@ -12,8 +12,8 @@ paths:
   `internal/mcp/mcp_test.go`). Never depend on an installed claude, codex, gemini or opencode.
 - The api loop is tested against the `httptest` fake SSE server in `internal/agent/api_test.go`.
   No test may reach the real API or need a key.
-- A test that writes records sets `t.Setenv("HRN_HOME", t.TempDir())`, never the owner's
+- A test that writes records sets `t.Setenv("HRN_HOME", t.TempDir())`, never the real
   `~/.hrn`. Git-backed tests (`internal/batch`, `internal/eval`, `internal/hrnmcp`) make their own
   repo in `t.TempDir()`. On Windows compare paths after `filepath.EvalSymlinks` (8.3 short names).
 - A fuzzer crash: add the input as an `f.Add` seed or a `testdata/fuzz` file with the fix.
-- Locally `go test -count=3 ./...`; `-race` runs only in CI (no cgo on the owner's PC).
+- Locally `go test -count=3 ./...`; `-race` needs cgo; on a PC without a C compiler it runs only in CI.

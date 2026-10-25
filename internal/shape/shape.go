@@ -71,9 +71,7 @@ func Classify(text string) Kind {
 	return Terminal
 }
 
-// Summarize returns false rather than relaxing a failed invariant. Test counts
-// must also occur as numeric tokens in the original; a JSON or table first line
-// must equal the one recomputed from it.
+// Summarize rejects failed invariants, requiring original numeric tokens and exactly recomputed JSON/table headers.
 func Summarize(kind Kind, text string) (string, bool) {
 	lines := strings.Split(ansi.ReplaceAllString(text, ""), "\n")
 	var summary string
@@ -150,7 +148,6 @@ func isJSON(s string) bool {
 	return s != "" && (s[0] == '{' || s[0] == '[') && json.Valid([]byte(s))
 }
 
-// jsonEnd returns the index just past the value starting at s[i]; s must be valid JSON.
 func jsonEnd(s string, i int) int {
 	switch s[i] {
 	case '"':
@@ -187,8 +184,7 @@ func skipSpace(s string, i int) int {
 	return i
 }
 
-// jsonMembers returns the raw keys (empty in arrays) and values of a container,
-// as byte slices of the original so numbers and strings keep their spelling.
+// Keep raw slices so numbers and strings retain their exact spelling.
 func jsonMembers(s string) (keys, values []string) {
 	for i := skipSpace(s, 1); s[i] != '}' && s[i] != ']'; {
 		key := ""
@@ -205,7 +201,6 @@ func jsonMembers(s string) (keys, values []string) {
 	return keys, values
 }
 
-// jsonHead also returns the top-level values, so jsonSummary takes its sample without a second walk.
 func jsonHead(text string) (string, []string) {
 	s := strings.Trim(text, jsonSpace)
 	if !isJSON(s) {
@@ -218,8 +213,6 @@ func jsonHead(text string) (string, []string) {
 	return fmt.Sprintf("json: object with %d keys", len(values)), values
 }
 
-// jsonSample re-joins raw members without spaces and replaces non-empty
-// containers deeper than depth with {...} or [...].
 func jsonSample(v string, depth int) string {
 	if v[0] != '{' && v[0] != '[' {
 		return v
@@ -247,8 +240,7 @@ func jsonSample(v string, depth int) string {
 	return b.String()
 }
 
-// jsonSummary leaves out a keys or sample line naming an error, since it would be
-// an error line absent from the original; the original's error lines follow verbatim.
+// Suppress generated error-bearing keys/sample lines so all error lines come verbatim from the original.
 func jsonSummary(text string, lines []string) string {
 	s := strings.Trim(text, jsonSpace)
 	head, values := jsonHead(s)
@@ -282,8 +274,6 @@ func jsonSummary(text string, lines []string) string {
 	return strings.Join(out, "\n")
 }
 
-// tableShape needs five non-blank lines with one count of tabs, or else of
-// commas; quoted delimiters break the count, and NDJSON is not a table.
 func tableShape(lines []string) (rows, columns int, filled []int, ok bool) {
 	for i, line := range lines {
 		if strings.TrimSpace(line) != "" {
@@ -363,10 +353,8 @@ type testFailure struct {
 	failed   bool
 }
 
-// A RUN, CONT or NAME owns following diagnostics until PAUSE or a result. Keep
-// paused tests' earlier diagnostics, and refuse unmarked output while more
-// than one test is running: its owner cannot be recovered from plain text.
-// Non-verbose Go output also prints diagnostics immediately after FAIL.
+// Preserve paused diagnostics; reject ambiguous ownership when tests overlap.
+// Non-verbose Go output can place diagnostics immediately after FAIL.
 func testFailures(lines []string) (map[string]*testFailure, bool) {
 	tests := map[string]*testFailure{}
 	running := map[string]bool{}
@@ -419,8 +407,7 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 					return nil, false // repeated names cannot identify one test
 				}
 				tests[name].failed, current = true, name
-				// With one unmarked failure, leading diagnostics belong to
-				// that test. Multiple failures with such text are rejected below.
+				// Leading diagnostics are attributable only when exactly one unmarked test fails.
 				for _, j := range pending {
 					tests[name].indices = append(tests[name].indices, j)
 					tests[name].messages = append(tests[name].messages, lines[j])
@@ -474,9 +461,7 @@ func subtestOf(name, parent string) bool {
 	return strings.HasPrefix(name, parent+"/")
 }
 
-// Sequential subtests print their results only when the parent ends, so a
-// sibling's RUN is the only sign that the earlier subtest finished. A
-// subtest's own name may hold slashes, so the parent is the longest running prefix.
+// Sibling RUN marks completion before delayed results; find the longest running prefix because names may contain slashes.
 func endSiblings(running map[string]bool, waitsOn map[string]string, name string) {
 	parent := ""
 	for i := strings.LastIndex(name, "/"); i > 0; i = strings.LastIndex(name[:i], "/") {

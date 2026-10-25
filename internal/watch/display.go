@@ -16,8 +16,7 @@ func trimProgExt(s string) string {
 	return s
 }
 
-// backendStart matches the info line emitted by cliBackend.Run, before any
-// display shortening or masking. A live run may not have saved its program yet.
+// Match cliBackend.Run's info line before masking; live runs may not have saved their program.
 func backendStart(e agent.Event, backend string) bool {
 	if e.Kind != agent.EventInfo {
 		return false
@@ -38,8 +37,6 @@ func backendStart(e agent.Event, backend string) bool {
 	return false
 }
 
-// shellPrefix consumes only a recognised interpreter and its command flags.
-// next supplies either words from display text or already decoded argv entries.
 func shellPrefix(next func() string) bool {
 	program := next()
 	if program == "&" {
@@ -86,7 +83,6 @@ func shellPrefix(next func() string) bool {
 	return false
 }
 
-// quoteEnd finds the matching quote without interpreting the command itself.
 func quoteEnd(s string) int {
 	for i := 1; i < len(s); i++ {
 		if s[0] == '"' && (s[i] == '\\' || s[i] == '`') && i+1 < len(s) {
@@ -187,8 +183,7 @@ func unwrapCommandValue(raw json.RawMessage) (string, bool) {
 	return shown, balancedCommand(shown)
 }
 
-// unwrapInput rewrites only the command field in place, preserving field order
-// and other JSON values and leaving the source event's bytes untouched.
+// Preserve field order and other JSON bytes without mutating the source event.
 func unwrapInput(input json.RawMessage) json.RawMessage {
 	if !json.Valid(input) {
 		return input

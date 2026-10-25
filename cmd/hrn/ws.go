@@ -17,9 +17,7 @@ const wsUsage = `usage: hrn ws take [--repo DIR] [--branch NAME] [--base REF] [-
        hrn ws free [PATH]
        hrn ws list [--repo DIR] [--json]`
 
-// cmdWS hands out, gives back and lists a repository's reusable worktrees
-// ("slots"). internal/ws holds the rules; take prints only the slot's path on
-// stdout, so `cd "$(hrn ws take)"` works, and everything else goes to stderr.
+// Keep take's stdout path-only so callers can use it directly with cd.
 func cmdWS(args []string) (int, error) {
 	if len(args) == 0 {
 		return 2, fmt.Errorf("%s", wsUsage)
@@ -116,8 +114,6 @@ func wsList(ctx context.Context, args []string) (int, error) {
 	return 0, nil
 }
 
-// printWS writes one line per slot: its number, folder, state, holder, since
-// when, branch (or the detached commit) and what is in it.
 func printWS(w io.Writer, rows []ws.Status) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, s := range rows {

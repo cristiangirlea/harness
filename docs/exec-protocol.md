@@ -78,10 +78,14 @@ hrn       -> result                (always the last line after accepted; then ex
 - `model`, when set, is 1 to 128 characters from `[A-Za-z0-9._:/@+[]-]`, starting with a letter
   or digit; anything else is `bad_request`, as is a continuation whose earlier run recorded such
   a model. The model becomes a CLI argument, and on Windows the CLIs run through `cmd.exe`.
-- `prompt`, `dir`, `backend` and `mode` are required. There is no default backend and no default
-  mode: a supervisor states both.
+- `prompt`, `dir` and `mode` are required. When `backend` is omitted or empty, hrn routes by the
+  task's purpose and prompt as `hrn run` does, then uses the default backend if routing did not
+  select one. A named model or effort bypasses routing. The run record stores `routed_by` for a
+  selected route, or `route_note` explaining the default or named choice; a named backend records
+  `backend X was named for this run`. `accepted.requested.backend` reports the resolved backend.
 - `continue_run_id` continues a finished run, as `hrn run --continue` does; `accepted` says how
-  (`notes`).
+  (`notes`). A continuation is never routed: with `backend` omitted it stays on the earlier run's
+  backend, and its record carries no `route_note`.
   When the saved session or conversation being carried over ended above 150,000 tokens of
   context, these notes include the same fresh-run warning as the CLI and MCP. The new run
   also records it once as an `info` event. A transcript hand-over alone does not warn.

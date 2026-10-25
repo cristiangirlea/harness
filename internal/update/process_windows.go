@@ -10,11 +10,6 @@ import (
 	"unsafe"
 )
 
-// The process list comes from Toolhelp (pid, parent, image name), the full
-// path from QueryFullProcessImageName, and the command line from the other
-// process's PEB: NtQueryInformationProcess gives its address, and
-// ReadProcessMemory reads ProcessParameters.CommandLine. All of it through
-// the system DLLs, as the repository allows no golang.org/x/sys.
 var (
 	kernel32                       = syscall.NewLazyDLL("kernel32.dll")
 	procCreateToolhelp32Snapshot   = kernel32.NewProc("CreateToolhelp32Snapshot")
@@ -57,8 +52,7 @@ type processEntry32 struct {
 	ExeFile         [maxPath]uint16
 }
 
-// processBasicInformation is PROCESS_BASIC_INFORMATION on a 64-bit system,
-// where every field is padded to the pointer size.
+// The 64-bit PROCESS_BASIC_INFORMATION pads every field to pointer size.
 type processBasicInformation struct {
 	ExitStatus                   uintptr
 	PebBaseAddress               uintptr
@@ -108,9 +102,7 @@ func systemProcesses() ([]Process, error) {
 	return procs, nil
 }
 
-// inspect opens one process for its full path, command line and start
-// time. A process of another user or a protected one opens with limited
-// rights or not at all; what cannot be read stays empty.
+// Restricted processes may permit only limited reads; unavailable fields stay empty.
 func inspect(pid uint32) (path string, args []string, start time.Time) {
 	if pid == 0 {
 		return "", nil, time.Time{}
@@ -125,7 +117,6 @@ func inspect(pid uint32) (path string, args []string, start time.Time) {
 	}
 	defer syscall.CloseHandle(syscall.Handle(h))
 
-	// Most paths fit MAX_PATH; a long one gets the full long-path buffer.
 	for _, n := range []int{syscall.MAX_PATH, syscall.MAX_LONG_PATH} {
 		buf := make([]uint16, n)
 		size := uint32(len(buf))
@@ -148,7 +139,6 @@ func inspect(pid uint32) (path string, args []string, start time.Time) {
 	return path, args, start
 }
 
-// commandLine reads the other process's command line out of its PEB.
 func commandLine(h uintptr) (string, error) {
 	if unsafe.Sizeof(uintptr(0)) != 8 {
 		return "", errors.New("the PEB layout here is the 64-bit one")
@@ -192,8 +182,7 @@ func readMemory(h, addr uintptr, into unsafe.Pointer, n uintptr) error {
 	return nil
 }
 
-// detach makes the new process survive this one: no inherited console, and
-// its own process group so Ctrl+C here never reaches it.
+// Detach from the console and process group so our Ctrl+C cannot kill the replacement.
 func detach(attr *syscall.SysProcAttr) {
 	attr.CreationFlags |= detachedProcess | createNewProcessGroup
 }

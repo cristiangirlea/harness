@@ -289,6 +289,22 @@ pass rate and the medians, and the footer says to re-run them; `hrn eval diff` n
 that has them, and the routing table built from an eval and `hrn eval list` count the
 same way. A task whose deliverable is the answer (an `expect` and no gate) is the
 exception: there the answer is the work, so a wrong one is a failure.
+
+A cell *did not start* when every one of its attempts records `did_not_start`: the
+run ended `error` with an error and no sign that a model was reached (no turns, tool
+calls, final answer or tokens; some adapters never count turns, so tokens decide).
+The reason is the first line of that error, such as a missing CLI, a refused launch
+or an unsupported resume or option. A gate that could not start is a gate failure,
+not a start failure: the agent ran before it. A cell with one attempt that ran and
+failed and a retry that never started is a failure. These cells are counted
+separately on variant and task rows, beside `did not act`, and in `hrn eval diff`.
+Both counts are excluded from pass-rate denominators and medians, including in
+`hrn eval list`; the status histogram and total cell count still include them.
+Any turn or tool call rules out this classification. Short duration alone,
+timeouts, cancellations, an ordinary failing gate, and a successful idle answer
+are not evidence of a failed start. Old records without the field retain their
+previous classification. Batch retries are unchanged.
+
 As in `hrn report`, an unknown cost (a
 codex cell marked missing, a cell with no attempt) is never counted as zero: the median
 cost and `total_cost_usd` cover the known costs, `cells_without_cost` counts the rest,

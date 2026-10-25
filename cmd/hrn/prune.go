@@ -16,12 +16,8 @@ import (
 
 const pruneUsage = "usage: hrn runs prune --older-than AGE [--keep N] [--dry-run]   (AGE like 30d or 36h)"
 
-// cmdPrune removes old runs, batch records and eval records from HRN_HOME.
-// Records reference each other, so it decides from the top down: an eval that
-// stays keeps the batch it ran as and its judge's runs, and a batch that stays
-// keeps its runs. A
-// batch whose worktrees are still on disk also stays, because hrn batch rm
-// needs its record to remove them.
+// Decide top down so retained evals protect batches and judge runs, and retained batches protect runs.
+// Keep batches with worktrees because batch rm needs their records for cleanup.
 func cmdPrune(args []string) error {
 	fs := flag.NewFlagSet("runs prune", flag.ContinueOnError)
 	olderThan := fs.String("older-than", "", "")
@@ -94,8 +90,7 @@ func cmdPrune(args []string) error {
 		}
 	}
 
-	// Top down, records before what they cite: if a removal fails partway, what
-	// is left can be unreferenced but never a record pointing at nothing.
+	// Delete referring records first so partial failure cannot leave dangling references.
 	var bytes int64
 	for _, id := range oldEvals {
 		n, err := eval.RemoveRecord(id, *dryRun)
@@ -138,7 +133,6 @@ func cmdPrune(args []string) error {
 	return nil
 }
 
-// parseAge reads an age as a number of days ("30d") or a Go duration ("36h").
 func parseAge(s string) (time.Duration, error) {
 	var d time.Duration
 	if days, ok := strings.CutSuffix(s, "d"); ok {

@@ -100,6 +100,7 @@ func TestClassifyNamesTheRuleThatFired(t *testing.T) {
 		// One row per rule.
 		{"reviewer role", "You are an independent, read-only senior reviewer. Your job is to find real defects.", "review", "review.reviewer-role"},
 		{"auditor role", "You are a security auditor for this repository.", "review", "review.reviewer-role"},
+		{"review brief", "Independent pre-merge review of branch x of cristiangirlea/harness (Go).", "review", "review.brief"},
 		{"before code", "Before writing any code, read the store layer and tell me what it does.", "plan", "plan.before-code"},
 		{"write a plan", "Write a migration plan for the record format.", "plan", "plan.write-plan"},
 		{"plan lead", "Design the retry policy for flaky gates.", "plan", "plan.lead"},
@@ -129,6 +130,7 @@ func TestClassifyNamesTheRuleThatFired(t *testing.T) {
 		{"symptom", "The watch page is broken on phones.", "debug", "debug.symptom"},
 		{"add", "Add a --by purpose flag to hrn report.", "implement", "implement.add"},
 		{"build", "Implement retries for the MCP client.", "implement", "implement.build"},
+		{"you are implementing", "You are implementing slice 2 of the plan in this repository.", "implement", "implement.build"},
 
 		// Precedence.
 		{"plan beats implement", "Plan for adding a cache to the store.", "plan", "plan.lead"},
@@ -205,6 +207,135 @@ func TestClassifyReadsPastLabelsAndAContextParagraph(t *testing.T) {
 				t.Errorf("Classify(%q) = %+v, want {%s %s}", c.prompt, got, c.category, c.rule)
 			}
 		})
+	}
+}
+
+func TestClassifyReviewBriefsButNotImplementBriefsThatMentionAReview(t *testing.T) {
+	for _, prompt := range []string{
+		"Independent pre-merge review of branch ada-short-paths, written by an agent.",
+		"Independent read-only review of `git diff origin/main...HEAD` in this checkout.",
+		"Verification review (round 2), branch x: the previous review found the findings below.",
+		"Verification review (read-only), branch `lean-runs`.",
+		"Read-only verification. Read AGENTS.md first.",
+		"Attacker-style verification of the newest commit in this worktree.",
+		"Verify the newest commit on branch x.",
+		"Verify commit 4278188 in this worktree.",
+		"Follow-up review (read-only; no edits) of HEAD.",
+		"Bounded independent re-review of 896ede0 vs a71c7b6.",
+		"Final short review (read-only; nothing to edit).",
+		"Read-only security read of the diff.",
+		"Independent pre-merge review of branch deploy-ca-conditionals.",
+		"Hand-over: re-review of branch auth/invite-only.",
+		"Hand-over: you are re-reviewing branch auth/invite-only.",
+		"Independent read-only fix-round review in cristiangirlea/harness.",
+		"Independent pre-merge review and security read of branch x.",
+		"Independent read-only review with a security focus.",
+	} {
+		if got := Classify(prompt); got.Category != "review" {
+			t.Errorf("Classify(%q) = %+v, want review", prompt, got)
+		}
+	}
+	for _, tc := range []struct{ prompt, category string }{
+		{"Implement issue #184 in this worktree, then ask for an independent read-only review before the PR.", "implement"},
+		{"Add a --by purpose flag; an independent pre-merge review follows.", "implement"},
+		{"Write the verification script, then a read-only review checks it.", "implement"},
+		{"Second review's findings: apply each one.", "unknown"},
+		{"Independent review run 20261015 found required fixes. Apply them.", "unknown"},
+		{"Independent work: implement the cache; a final review comes later.", "implement"},
+		{"In this worktree, after the independent review: add a cache.", "implement"},
+	} {
+		if got := Classify(tc.prompt); got.Category != tc.category {
+			t.Errorf("Classify(%q) = %+v, want %s", tc.prompt, got, tc.category)
+		}
+	}
+}
+
+func TestClassifySkipsHandOverHeadings(t *testing.T) {
+	for _, tc := range []struct{ name, prompt, category, rule string }{
+		{"heading line before a goal", "## Hand-over\nGoal: Final independent read-only review of the display fixes.", "review", "review.brief"},
+		{"heading with an instruction", "# Hand-over: add a repository column to the index", "implement", "implement.add"},
+		{"sentence marker", "Hand-over. Review the diff on this branch.", "review", "review.review"},
+		{"a heading paragraph is not a lead", "HAND-OVER\n\nImplement the cache.", "implement", "implement.build"},
+		{"a heading paragraph leaves the second lead", "You are picking up a task.\n\n## HAND-OVER\n\nImplement the cache.", "implement", "implement.build"},
+		{"handover spelled as one word", "Handover: refactor the loader.", "refactor", "refactor.refactor"},
+		{"a word that starts with the marker", "Hand-overs are slow.\n\nThis is hrn.\n\nImplement the cache.", "unknown", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Classify(tc.prompt); got.Category != tc.category || got.Rule != tc.rule {
+				t.Errorf("Classify(%q) = %+v, want {%s %s}", tc.prompt, got, tc.category, tc.rule)
+			}
+		})
+	}
+}
+
+func TestKeywordRulesIgnoreNamesAndLaterSentences(t *testing.T) {
+	for _, tc := range []struct{ prompt, category, rule string }{
+		{"Implement the cache for branch ci/toolchain-pin.", "implement", "implement.build"},
+		{"Implement the cache on branch m0/hosted-ci.", "implement", "implement.build"},
+		{"Implement the cache in the store. No docker, never deploy or push.", "implement", "implement.build"},
+		{"Implement the cache; never deploy.", "implement", "implement.build"},
+		{"Implement the CA conditionals on branch deploy-ca-conditionals.", "implement", "implement.build"},
+		{"Implement issue #184 on branch retrieval-compare-resolved-model.", "implement", "implement.build"},
+		{"Fix the decoder. Compare against main's decoder on valid input.", "debug", "debug.fix"},
+		{"Fix the parser on .github/workflows/ci.yml lines.", "debug", "debug.fix"},
+		{"Implement ci.yml parsing.", "implement", "implement.build"},
+		{`Implement C:\repo\ci\parser.go support.`, "implement", "implement.build"},
+		{"Implement the cache on branch retrieval-trade-offs-x.", "implement", "implement.build"},
+		{"Implement the cache.\tNever deploy.", "implement", "implement.build"},
+		{"Implement the cache.\u00a0Never deploy.", "implement", "implement.build"},
+		{"Set up e.g. GitHub Actions for this repository.", "ops", "ops.ci-container"},
+		{"Set up (i.e. configure) GitHub Actions here.", "ops", "ops.ci-container"},
+		{"Fix parser.c. Never deploy.", "debug", "debug.fix"},
+		{"Implement the cache... Never deploy.", "implement", "implement.build"},
+		{"Implement the cache for x.e.g. Never deploy.", "implement", "implement.build"},
+		{"Set up CI.", "ops", "ops.ci-container"},
+		{"Weigh the trade-offs of two caches.", "research", "research.compare"},
+		{"Add a GitHub Actions workflow that caches modules.", "ops", "ops.ci-container"},
+		{"Set up CI for the server module.", "ops", "ops.ci-container"},
+		{"Deploy the release to staging.", "ops", "ops.deploy-release"},
+		{"Compare goroutines vs threads.", "research", "research.compare"},
+	} {
+		if got := Classify(tc.prompt); got.Category != tc.category || got.Rule != tc.rule {
+			t.Errorf("Classify(%q) = %+v, want {%s %s}", tc.prompt, got, tc.category, tc.rule)
+		}
+	}
+}
+
+func TestHandOverMarker(t *testing.T) {
+	for _, tc := range []struct {
+		line, rest string
+		keep       bool
+	}{
+		{"## Hand-over", "", false},
+		{"HAND-OVER", "", false},
+		{"# Hand-over: fix x", "fix x", true},
+		{"Hand-over. Repository x", "Repository x", true},
+		{"Hand-over — Goal: x", "Goal: x", true},
+		{"Handover", "", false},
+		{"Hand-overs are slow", "Hand-overs are slow", true},
+		{"Hand-over2: x", "Hand-over2: x", true},
+		{"# Task: x", "# Task: x", true},
+		{"Hand", "Hand", true},
+		{"", "", true},
+	} {
+		if rest, keep := handover(tc.line); rest != tc.rest || keep != tc.keep {
+			t.Errorf("handover(%q) = %q, %v, want %q, %v", tc.line, rest, keep, tc.rest, tc.keep)
+		}
+	}
+}
+
+func TestInheritedIsTheResolvedPurposeOrNothing(t *testing.T) {
+	for _, tc := range []struct{ declared, prompt, want string }{
+		{"review", "Fix the bug.", "review"},
+		{"", "Purpose: test\nFix the bug.", "test"},
+		{"", "Fix the bug.", "debug"},
+		{"Bogus", "Review the diff on this branch.", "review"},
+		{"Bogus", "Hello there.", ""},
+		{"", "", ""},
+	} {
+		if got := Inherited(tc.declared, tc.prompt); got != tc.want {
+			t.Errorf("Inherited(%q, %q) = %q, want %q", tc.declared, tc.prompt, got, tc.want)
+		}
 	}
 }
 
@@ -322,6 +453,26 @@ func TestParagraphsBoundGatheringAfterLabels(t *testing.T) {
 		baseline := testing.AllocsPerRun(10, func() { paragraphs(prefix) })
 		if got := testing.AllocsPerRun(10, func() { paragraphs(prompt) }); got > baseline {
 			t.Errorf("long instruction allocated %g times, bounded prefix allocated %g", got, baseline)
+		}
+	}
+}
+
+func TestParagraphsBoundGatheringAfterHandOverHeadings(t *testing.T) {
+	instruction := "Refactor the loader. " + strings.Repeat("X", maxLead)
+	for _, prompt := range []string{
+		strings.Repeat("## Hand-over\n", (4<<20)/len("## Hand-over\n")) + instruction + strings.Repeat("X", 4<<20),
+		strings.Repeat("HAND-OVER\n\n", (4<<20)/len("HAND-OVER\n\n")) + instruction + strings.Repeat("X", 4<<20),
+		"# Hand-over: " + instruction + strings.Repeat("X", 4<<20),
+	} {
+		got := paragraphs(prompt)
+		if len(got) != 1 || utf8.RuneCountInString(got[0]) != maxLead || !strings.HasPrefix(got[0], "Refactor the loader.") {
+			t.Errorf("paragraphs did not skip the headings and cap the instruction: %d paragraphs", len(got))
+		}
+		if got := allocatedBytes(func() { paragraphs(prompt) }); got > 64<<10 {
+			t.Errorf("paragraphs allocated %d bytes, want at most 64 KiB", got)
+		}
+		if got := Classify(prompt); got.Rule != "refactor.refactor" {
+			t.Errorf("Classify = %+v, want refactor.refactor", got)
 		}
 	}
 }

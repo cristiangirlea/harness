@@ -50,7 +50,7 @@ func TestTheBotNamesBackendsAndPlacesAsPeopleSayThem(t *testing.T) {
 			t.Errorf("backendName(%q) = %q, want %q", in, got, want)
 		}
 	}
-	for in, want := range map[string]string{`E:\__Workdir\personal\harness`: "harness", "/home/me/tidedesk/": "tidedesk", "": "", "/": ""} {
+	for in, want := range map[string]string{`D:\src\harness`: "harness", "/home/me/web-shop/": "web-shop", "": "", "/": ""} {
 		if got := place(in); got != want {
 			t.Errorf("place(%q) = %q, want %q", in, got, want)
 		}
@@ -289,7 +289,7 @@ func TestABatchUnreadableOnTheFirstLookThatEndsSince(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
 	first := b.look()
 	// Clearly after the first look: a coarse wall clock may otherwise put a just-now end before it.
 	ended.Duration = time.Since(started) + time.Second
@@ -335,7 +335,7 @@ func TestARunThatWritesAgainIsNotSaidToDoWhatItDidBefore(t *testing.T) {
 			rec := activityRun(t, time.Now(), false)
 			events := filepath.Join(runlog.Root(), rec.ID, "events.jsonl")
 			appendEvent(t, events, agent.Event{Kind: agent.EventToolCall, Tool: "Read", Text: "old.go"})
-			b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+			b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
 			if followed {
 				if b.look(); b.doing[rec.ID] != "reading old.go" {
 					t.Fatalf("doing while running = %q", b.doing[rec.ID])
@@ -371,7 +371,7 @@ func TestABatchUnreadableOnTheFirstLookIsNotAnnouncedAsNew(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, res.ID+".json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
 	first := b.look()
 	if err := batch.SaveResult(res); err != nil {
 		t.Fatal(err)
@@ -397,7 +397,7 @@ func TestTheBotHoldsNoFollowerForAStoppedRunUntilItWritesAgain(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	rec := activityRun(t, time.Now(), false)
 	events := filepath.Join(runlog.Root(), rec.ID, "events.jsonl")
-	b := (&server{opt: Options{Runs: 50}}).newBotWatcher()
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
 	for _, step := range []struct {
 		name string
 		at   time.Time
@@ -413,6 +413,7 @@ func TestTheBotHoldsNoFollowerForAStoppedRunUntilItWritesAgain(t *testing.T) {
 
 func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
 	id := "20261011-110000-cccccc"
 	mk := func(s1, s2 batch.Status, d time.Duration) batch.Result {
 		return batch.Result{ID: id, Started: noon.Add(-time.Hour), Dir: "/repo/harness", Duration: d, Tasks: []batch.TaskResult{
@@ -424,12 +425,14 @@ func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
 	if len(says) != 1 || says[0].Kind != "task" || says[0].Text != "Task one of two in harness passed: add the guard." {
 		t.Fatalf("task: %+v", says)
 	}
-	end := lookAt(nil, []batch.Result{mk(batch.StatusPass, batch.StatusFail, 12*time.Minute)}, nil)
+	failed := mk(batch.StatusPass, batch.StatusFail, 12*time.Minute)
+	failed.Tasks[1].Attempts = []batch.Attempt{{Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1}}}}
+	end := lookAt(nil, []batch.Result{failed}, nil)
 	says = announce(one, end, false)
 	if strings.Join(kinds(says), ",") != "task,failed,status" {
 		t.Fatalf("end: %+v", says)
 	}
-	if says[0].Text != "Task two of two in harness failed: add the budget." || says[1].Text != "The batch in harness is done: one of two tasks passed. It took twelve minutes." {
+	if says[0].Text != "Task two of two in harness failed: add the budget. Gate go test ./... exited 1." || says[1].Text != "The batch in harness is done: one of two tasks passed. It took twelve minutes." {
 		t.Errorf("end: %q / %q", says[0].Text, says[1].Text)
 	}
 	all := lookAt(nil, []batch.Result{mk(batch.StatusPass, batch.StatusPass, 3*time.Minute)}, nil)
@@ -629,14 +632,14 @@ func TestBotJavaScript(t *testing.T) {
 // sentence: no full stop in the middle of a line.
 func TestTheCardOfWhatIsGoingNamesWhoWorksWhere(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	b := batch.Result{ID: "20261011-115900-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/work/tidedesk", Tasks: []batch.TaskResult{
+	b := batch.Result{ID: "20261011-115900-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/work/demo-api", Tasks: []batch.TaskResult{
 		{ID: "t1", Prompt: "Fix it", Status: batch.StatusRunning}, {ID: "t2", Prompt: "Test it", Status: batch.StatusRunning}}}
 	snap := lookAt([]runlog.Record{runRec("20261011-115000-aaaaaa", noon.Add(-10*time.Minute), false, agent.Result{})}, []batch.Result{b}, nil)
 	html, err := render("botnow", botNowOf(snap))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{">A batch of two tasks in tidedesk</a>", ">Claude in harness</a>", `href="/batch/20261011-115900-bbbbbb"`, `data-mute="20261011-115000-aaaaaa"`} {
+	for _, want := range []string{">A batch of two tasks in demo-api</a>", ">Claude in harness</a>", `href="/batch/20261011-115900-bbbbbb"`, `data-mute="20261011-115000-aaaaaa"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("the card lacks %q:\n%s", want, html)
 		}
@@ -648,14 +651,14 @@ func TestTheCardOfWhatIsGoingNamesWhoWorksWhere(t *testing.T) {
 // shared opening out four times.
 func TestTheBotNamesABatchsTasksByTheirNames(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	const preamble = "You are working in a git worktree of jobpilot. First read AGENTS.md and follow it.\n\n"
+	const preamble = "You are working in a git worktree of web-shop. First read AGENTS.md and follow it.\n\n"
 	mk := func(s batch.Status) batch.Result {
-		return batch.Result{ID: "20261011-213338-c6fe69", Started: noon.Add(-time.Hour), Dir: "/work/jobpilot", Tasks: []batch.TaskResult{
-			{ID: "employer-link-lookups", Prompt: preamble + "Look the links up", Status: s},
-			{ID: "german-questions", Prompt: preamble + "Translate the questions", Status: batch.StatusRunning}}}
+		return batch.Result{ID: "20261011-213338-c6fe69", Started: noon.Add(-time.Hour), Dir: "/work/web-shop", Tasks: []batch.TaskResult{
+			{ID: "broken-link-lookups", Prompt: preamble + "Look the links up", Status: s},
+			{ID: "german-translations", Prompt: preamble + "Translate the pages", Status: batch.StatusRunning}}}
 	}
 	says := announce(lookAt(nil, []batch.Result{mk(batch.StatusRunning)}, nil), lookAt(nil, []batch.Result{mk(batch.StatusPass)}, nil), false)
-	if len(says) != 1 || says[0].Text != "Task one of two in jobpilot passed: employer-link-lookups." {
+	if len(says) != 1 || says[0].Text != "Task one of two in web-shop passed: broken-link-lookups." {
 		t.Fatalf("task: %+v", says)
 	}
 	// A task whose id hrn made up (t1, t2, ...) is named by its prompt instead;
@@ -781,5 +784,17 @@ func TestALANViewerOfTheBotSeesNoFullWorkspaceOrHomePath(t *testing.T) {
 				t.Errorf("task: %q, want it to say %q", v.Text, want)
 			}
 		}
+	}
+}
+
+func TestAdaGivesTheCauseOfTheLastAttemptOnly(t *testing.T) {
+	gate := batch.Attempt{Gates: []batch.GateResult{{Command: "go test", ExitCode: 1}}}
+	limited := batch.Attempt{Result: agent.Result{Status: agent.StatusLimited}}
+	if got := taskReason(batch.TaskResult{Error: "out of plans", Attempts: []batch.Attempt{gate, limited}}); got != "The attempt failed: out of plans." {
+		t.Fatalf("reason = %q: an earlier attempt's gate is not why the task ended", got)
+	}
+	killed := batch.Attempt{Gates: []batch.GateResult{{Command: "go test", ExitCode: -1, Killed: batch.KilledTimeout, Timeout: agent.Duration(time.Minute)}}}
+	if got := taskReason(batch.TaskResult{Attempts: []batch.Attempt{killed}}); got != "Gate go test was killed after 1m0s by gate_timeout." {
+		t.Fatalf("reason = %q", got)
 	}
 }

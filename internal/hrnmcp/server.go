@@ -1,7 +1,4 @@
-// Package hrnmcp exposes hrn itself as an MCP server, so a Claude Code session
-// (or any MCP host) can delegate tasks to any backend, several at a time, fan
-// a set of tasks out into worktrees with batch, and read the records back. Requests are served concurrently, so parallel
-// tool calls from the host become parallel agents.
+// Package hrnmcp exposes concurrent run, batch and inspection tools over MCP.
 package hrnmcp
 
 import (
@@ -12,11 +9,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/flow"
+	"github.com/cristiangirlea/harness/internal/flowview"
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -32,14 +33,11 @@ Use "batch" to fan out: several tasks at once, each on its own branch and git wo
 
 There is no terminal behind this server. Mode "ask" puts each write and command to you through the host, when the host supports elicitation, and denies it otherwise. Use "readonly" for investigation, "auto" to allow file edits without asking, "yolo" to also allow shell commands.`
 
-// NewServer builds the hrn MCP server. defaultDir is the workspace used when
-// a run does not name one, normally the host's project directory. It refuses
-// allow_dangerous: its caller is an agent, perhaps one under the guard whose
-// CLI loaded this server, and lifting the guard is the operator's call.
+// NewServer builds an MCP server using defaultDir for unspecified workspaces.
+// It refuses allow_dangerous because only the operator may lift the caller's guard.
 func NewServer(defaultDir string) *mcp.Server { return newServer(defaultDir, false) }
 
-// NewDangerousServer is NewServer for an operator who means its runs and
-// batches to lift the guard when asked: hrn mcp --allow-dangerous-runs.
+// NewDangerousServer allows guarded runs to escalate when explicitly enabled by the operator.
 func NewDangerousServer(defaultDir string) *mcp.Server { return newServer(defaultDir, true) }
 
 // errDangerousRefused names no way around it: the model reads it.
@@ -50,6 +48,7 @@ func newServer(defaultDir string, allowDangerous bool) *mcp.Server {
 	s.AddTool(runTool(defaultDir, allowDangerous))
 	s.AddTool(runsTool())
 	s.AddTool(showTool())
+	s.AddTool(flowTool())
 	s.AddTool(backendsTool())
 	s.AddTool(batchTool(defaultDir, allowDangerous))
 	s.AddTool(batchShowTool())
@@ -61,8 +60,6 @@ func newServer(defaultDir string, allowDangerous bool) *mcp.Server {
 	return s
 }
 
-// runProperties is the run tool's argument schema: the options every entry
-// point shares, generated from agent.Options, plus what only this tool takes.
 func runProperties(backends []any, defaultDir string) map[string]any {
 	props := agent.Options{}.Schema()
 	mode := props["mode"].(map[string]any)
@@ -175,8 +172,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if err := preference.Check(args.Backend); err != nil {
 				return text("run: "+err.Error(), nil, true), nil
 			}
-			// As hrn run does: a backend whose limit is remembered hands
-			// the run to its partner before anything is planned.
+			// Mirrors hrn run: limit routing first, then the earlier run's mode and purpose unless named.
 			var routed string
 			if !args.NoSwitch && args.ContinueRunID != "" {
 				meant := args.Backend
@@ -192,16 +188,14 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				}
 				defer plan.Release()
 				args.Backend, args.Dir, args.Model = plan.Backend, plan.Dir, plan.Model
-				// As hrn run does: the earlier run's mode, unless this call names one.
 				if !modeGiven && plan.Prev.Task.Mode != "" {
 					args.Mode = plan.Prev.Task.Mode
 				}
-				// And its purpose, unless the call or the prompt's header names one.
-				if args.Purpose == "" && purpose.Valid(plan.Prev.Task.Purpose) {
-					args.Purpose = plan.Prev.Task.Purpose
+				if args.Purpose == "" {
+					args.Purpose = purpose.Inherited(plan.Prev.Task.Purpose, plan.Prev.Task.Prompt)
 				}
 			}
-			// The inherited workspace is checked like any other.
+			// Inherited workspaces require the same validation as explicit ones.
 			dir := args.Dir
 			if dir == "" {
 				dir = defaultDir
@@ -211,9 +205,12 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
 			dir = ws.Root
-			routedBy, err := args.Options.Route(args.Purpose, args.Prompt, &args.Backend, runlog.Home())
+			routedBy, routeNote, err := args.Options.RouteWithNote(args.Purpose, args.Prompt, &args.Backend, runlog.Home())
 			if err != nil {
 				return mcp.CallResult{}, err
+			}
+			if args.ContinueRunID != "" {
+				routeNote = agent.ContinuationNote(args.ContinueRunID, routed)
 			}
 			if !args.NoSwitch && args.ContinueRunID == "" {
 				meant := args.Backend
@@ -221,11 +218,14 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 					if routedBy != nil {
 						args.Options.Effort = "" // the row measured the limited backend, not its partner
 					}
-					args.Model, routedBy = "", nil
+					args.Model, routedBy, routeNote = "", nil, routed
 				}
 			}
 			if args.Backend == "" {
 				args.Backend = agent.DefaultBackendNameIn(runlog.Home())
+				if routedBy == nil {
+					routeNote = agent.WithDefault(routeNote, args.Backend)
+				}
 			}
 			if err := preference.Check(args.Backend); err != nil {
 				return text("run: "+err.Error(), nil, true), nil
@@ -238,12 +238,10 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
-			rec, err := runlog.CreateContinuingRoute(args.Backend, task, args.ContinueRunID, plan.Route(), routedBy)
+			rec, err := runlog.CreateRouted(args.Backend, task, args.ContinueRunID, plan.Route(), routedBy, routeNote)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 			}
-			// The api backend saves the conversation here, so a follow-up can
-			// continue this run.
 			task.RunDir = rec.Dir()
 			if args.Mode == agent.ModeAsk && call.ClientSupports("elicitation") {
 				// Named by run, because two runs may be asking at once.
@@ -277,8 +275,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			structured := map[string]any{"run_id": rec.ID(), "result": res}
 
-			// A run stopped by its plan's limit is carried on by the partner
-			// backend, once, and the call answers with that run.
+			// Switch only once to prevent limited partners from handing work back indefinitely.
 			var next *limits.CarryOn
 			var why string
 			if ctx.Err() == nil {
@@ -311,8 +308,6 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Why})
 				next.Plan.Apply(&next.Task, nrec.Dir(), emit)
 				res = agent.Run(ctx, nb, next.Task, emit)
-				// The answer is the new run's, and so is its record error; the
-				// limited run's goes with the notes.
 				if recordErr != nil {
 					notes = append(notes, "the limited run "+limitedID+": "+recordMessage)
 				}
@@ -462,6 +457,100 @@ func showTool() mcp.Tool {
 	}
 }
 
+func flowTool() mcp.Tool {
+	return mcp.Tool{
+		Name: "flow", Title: "Show an execution flow",
+		Description: "Read a run or batch execution tree, including recorded reasons and next steps.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":    str("A run or batch id."),
+				"level": map[string]any{"type": "string", "enum": []any{"simple", "technical", "debug"}, "description": "Detail level (default technical)."},
+			},
+			"required": []any{"id"},
+		},
+		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(true)},
+		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
+			args, err := decode[struct {
+				ID    string `json:"id"`
+				Level string `json:"level"`
+			}](call.Arguments)
+			if err != nil {
+				return mcp.CallResult{}, err
+			}
+			if args.ID == "" || strings.ContainsAny(args.ID, `/\\`) {
+				return text("no run or batch "+args.ID, nil, true), nil
+			}
+			if args.Level == "" {
+				args.Level = "technical"
+			}
+			if args.Level != "simple" && args.Level != "technical" && args.Level != "debug" {
+				return mcp.CallResult{}, fmt.Errorf("invalid flow level %q: use simple, technical or debug", args.Level)
+			}
+			view, err := flowview.Load(owner.LocalViewer(), args.ID)
+			if err != nil {
+				if errors.Is(err, flowview.ErrNotFound) {
+					return text("no run or batch "+args.ID, nil, true), nil
+				}
+				return mcp.CallResult{}, err
+			}
+			tree := flowview.Filter(view.Tree, args.Level)
+			var b strings.Builder
+			if err := flowview.WriteText(&b, view.Summary, tree, args.Level); err != nil {
+				return mcp.CallResult{}, err
+			}
+			body, cut := truncateFlowText(printableFlow(b.String()), 64*1024)
+			structured := map[string]any{"version": view.Version, "summary": printableFlow(view.Summary), "tree": cleanFlowTree(tree)}
+			if cut {
+				body += "\n[flow text truncated at 64 KiB]\n"
+				// The tree is at least as large as the text; a lower level or hrn flow --json gives it whole.
+				structured["tree"], structured["truncated"] = []*flow.Node{}, true
+			}
+			return text(body, structured, false), nil
+		},
+	}
+}
+
+func cleanFlowTree(nodes []*flow.Node) []*flow.Node {
+	out := make([]*flow.Node, len(nodes))
+	for i, n := range nodes {
+		copy := *n
+		copy.Name = printableFlow(flow.Redact(copy.Name))
+		copy.Text = printableFlow(flow.Redact(copy.Text))
+		copy.Reason = printableFlow(flow.Redact(copy.Reason))
+		copy.Next = printableFlow(flow.Redact(copy.Next))
+		copy.Step, copy.Run, copy.Task = printableFlow(copy.Step), printableFlow(copy.Run), printableFlow(copy.Task)
+		copy.Status = flow.Status(printableFlow(string(copy.Status)))
+		copy.Children = cleanFlowTree(copy.Children)
+		out[i] = &copy
+	}
+	return out
+}
+
+func printableFlow(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return '�'
+		}
+		return r
+	}, s)
+}
+
+func truncateFlowText(s string, limit int) (string, bool) {
+	if len(s) <= limit {
+		return s, false
+	}
+	s = s[:limit]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s, true
+}
+
 func backendsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "backends",
@@ -475,7 +564,6 @@ func backendsTool() mcp.Tool {
 			if err != nil {
 				return text(err.Error(), nil, true), nil
 			}
-			// The backend a run without one would use, which is the configured default when it is installed.
 			def := agent.DefaultBackendNameIn(runlog.Home())
 			now := time.Now()
 			for _, name := range agent.Names() {
@@ -509,9 +597,7 @@ func backendsTool() mcp.Tool {
 	}
 }
 
-// approver asks the host's user about each call the mode does not decide by
-// itself. One question at a time, so prompts never interleave, and anything
-// other than a clear yes is a no.
+// Serialize prompts to prevent interleaving and deny anything other than a clear yes.
 func approver(ctx context.Context, call mcp.Call, runID string) func(agent.ApprovalRequest) bool {
 	var asking sync.Mutex
 	return func(req agent.ApprovalRequest) bool {
@@ -527,8 +613,7 @@ func approver(ctx context.Context, call mcp.Call, runID string) func(agent.Appro
 			} `json:"content"`
 		}
 		params := map[string]any{
-			// The summary is what is being approved, so it goes in whole: a
-			// truncated command can hide the part that matters.
+			// Truncate keeps the summary's head and tail; never cut it further, as it is what is approved.
 			"message": fmt.Sprintf("hrn run %s wants to run %s:\n%s", runID, req.Tool, tools.Truncate(req.Summary)),
 			"requestedSchema": map[string]any{
 				"type":       "object",
@@ -550,12 +635,9 @@ func approver(ctx context.Context, call mcp.Call, runID string) func(agent.Appro
 	}
 }
 
-// approvalTimeout is how long a question may wait for its answer before the
-// call is denied; a host that never answers must not hold a run open.
+// Unanswered approvals must not hold a run open indefinitely.
 const approvalTimeout = 5 * time.Minute
 
-// continues renders what a run followed and the session it left, for the
-// show header.
 func continues(rec runlog.Record) string {
 	s := ""
 	if rec.Continues != "" {

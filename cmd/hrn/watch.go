@@ -21,14 +21,14 @@ import (
 	"github.com/cristiangirlea/harness/internal/watch"
 )
 
-// cmdWatch serves the live page on a loopback address, and with --lan on this
-// computer's private network addresses too, until Ctrl+C.
 func cmdWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	addr := fs.String("addr", watch.DefaultAddr, "")
 	public := fs.String("public", "", "")
 	team := fs.String("access-team", "", "")
 	audience := fs.String("access-aud", "", "")
+	var ownerEmails stringListFlag
+	fs.Var(&ownerEmails, "owner-email", "repeat to mark verified Access emails as the local owner")
 	var lan lanFlag
 	fs.Var(&lan, "lan", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -64,8 +64,8 @@ func cmdWatch(args []string) error {
 		return err
 	}
 	lns, opt := []net.Listener{ln}, watchOptions(access)
+	opt.OwnerEmails = ownerEmails
 	if lan.on {
-		// The same port on the network as on this computer, when it was named.
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
 		more, eps, err := watch.ListenLAN(port, lan.only)
 		if err != nil {
@@ -84,6 +84,18 @@ func cmdWatch(args []string) error {
 	return watch.Serve(ctx, opt, lns...)
 }
 
+type stringListFlag []string
+
+func (f *stringListFlag) String() string { return strings.Join(*f, ",") }
+func (f *stringListFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.Contains(value, "@") {
+		return errors.New("--owner-email needs an email address")
+	}
+	*f = append(*f, value)
+	return nil
+}
+
 func watchOptions(access *watch.PublicAccess) watch.Options {
 	var key [32]byte
 	rand.Read(key[:])
@@ -94,10 +106,7 @@ func printPublicWatchStart(w io.Writer, origin, local, accessLog string) {
 	fmt.Fprintf(w, "hrn watch: %s (behind Cloudflare Access; tunnel to http://%s; Ctrl+C stops it)\n  access log: %s\n", origin, local, accessLog)
 }
 
-// printWatchStart says where the page is. With one network address it also
-// draws that link's QR code, for a phone to scan; with several, the codes
-// are on the page itself. color forces the code white on black: on a
-// terminal with a light theme it would otherwise come out inverted.
+// Force white-on-black QR output so light terminal themes cannot invert the code.
 func printWatchStart(w io.Writer, local string, lan bool, eps []watch.Endpoint, color bool) {
 	if !lan {
 		fmt.Fprintf(w, "hrn watch: http://%s (this computer only; --lan for a phone; Ctrl+C stops it)\n", local)
@@ -126,8 +135,6 @@ func printWatchStart(w io.Writer, local string, lan bool, eps []watch.Endpoint, 
 	}
 }
 
-// lanFlag is --lan (every private network address) or --lan=NAME (one
-// adapter, by name or address); --lan=false turns it off again.
 type lanFlag struct {
 	on   bool
 	only string
@@ -161,9 +168,7 @@ func (f *lanFlag) Set(s string) error {
 	return nil
 }
 
-// followRun prints a run as it is recorded, until its result is saved: the
-// header, each step with a line for any wait of a second or more before it,
-// then the summary. Interrupting it leaves the run alone.
+// Interrupting observation must leave the running task alone.
 func followRun(ctx context.Context, r *renderer, id string, every time.Duration) error {
 	rec, err := runlog.Load(id)
 	if err != nil {

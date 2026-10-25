@@ -114,17 +114,26 @@ func codexMCPEnv(t Task) ([]string, error) {
 }
 
 func codexConfigPath(dir string) string {
+	home := codexHomeDir(dir)
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "config.toml")
+}
+
+// codexHomeDir is the directory codex started in dir reads and writes; "" when unknown.
+func codexHomeDir(dir string) string {
 	if h := os.Getenv("CODEX_HOME"); h != "" {
 		if !filepath.IsAbs(h) {
 			h = filepath.Join(dir, h)
 		}
-		return filepath.Join(h, "config.toml")
+		return h
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".codex", "config.toml")
+	return filepath.Join(home, ".codex")
 }
 
 // codexConfigServers reads table headers only: values may hold secrets and are never read.

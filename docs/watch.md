@@ -9,10 +9,12 @@ Pictures of each page: [hrn watch and Ada, in pictures](presentation.md).
 ```
 hrn watch                  # http://127.0.0.1:8089, this computer only
 hrn watch --lan            # also on this computer's private network addresses, for a phone
-hrn watch --lan="Ethernet 3"   # only that adapter's network (a name or an address)
+hrn watch --lan="Ethernet"     # only that adapter's network (a name or an address)
 hrn show -f <run-id>       # the same timeline in the terminal
 hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
+
+Run and batch pages link to **Execution flow**, a hierarchical view of recorded steps and their timing. It can also be opened at `/flow/<id>` or fetched as JSON at `/flow/<id>/json` (`version: 1`). The `?level=simple`, `?level=technical` and `?level=debug` links choose how much detail is shown; simple omits tool steps, while debug includes step identifiers and marks rebuilt steps. The summary is generated from recorded events. An unfinished flow updates live at the selected level and ends when its run or batch finishes or stops. hrn shows recorded steps and reasons, not the model's private reasoning. Run steps link back to the run page, where tool calls and output provide the evidence.
 
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
 `hrn update` restarts a running watch on the new binary with the same flags (see
@@ -89,7 +91,7 @@ running: they have no cost yet, known or unknown. A stopped run still counts tow
 the number of runs, but not the running count or the count of finished runs with no
 reported cost.
 
-A run's page names its workspace by the same name as its row (`ada-os-ipc`, the repository
+A run's page names its workspace by the same name as its row (`demo-app`, the repository
 for a batch task's worktree), and a batch's page its repository; a task's worktree shows
 relative to the repository (`.\.hrn\worktrees\t1`). Hover the name for the whole path,
 on this computer only: a phone on the network sees the name alone. In what a run's steps
@@ -100,7 +102,7 @@ System32, Program Files, `/usr/bin`, `/bin` or `/usr/local/bin` is its file name
 exec -C . --json`, `"powershell.exe" -Command ...`. A batch task's text is shortened by its
 worktree. The index's rows (a run's prompt, a batch's task names) are shortened the same way,
 for every viewer, and so are Ada's sentences, log and list of what is going (by each run's
-workspace or task's worktree). A path only counts whole, so `ada-os-ipc-old` keeps its name.
+workspace or task's worktree). A path only counts whole, so `demo-app-old` keeps its name.
 This is the page only: `events.jsonl`, the records and `hrn show` keep the full paths.
 
 When the backend reports the last turn's context size, the run page also shows
@@ -190,6 +192,7 @@ hrn watch --addr 127.0.0.1:8090 --public https://harness.example.com --access-te
 ```
 
 All three flags are required together; `--public` cannot be combined with `--lan`.
+Use repeatable `--owner-email address` flags to identify which verified Access emails act as the local owner. Those emails (matched without case) see local records; other verified emails can see only records owned by their `email:` identity. With no `--owner-email`, every verified visitor acts as the local owner as before. Loopback and LAN visitors use the local owner identity.
 Watch checks the Cloudflare Access signing keys at start and refuses to serve if they cannot be fetched.
 Watch still listens only on loopback. In this mode it accepts only the public Host
 and verifies the Access JWT on every request, including static assets and event
@@ -230,10 +233,10 @@ and as desktop notifications:
 |---|---|---|---|
 | started | Claude has started in harness: add the budget guard. | yes | no |
 | working | Claude is editing bot.go in harness. | no | no |
-| task | Task two of four in tidedesk passed: fix the flaky test. | yes | no |
+| task | Task two of four in demo-api passed: fix the flaky test. | yes | no |
 | done | Claude has finished in harness. It took four minutes. | yes | yes |
-| failed | The batch in tidedesk is done: three of four tasks passed. It took twelve minutes. | yes | yes |
-| status | Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in tidedesk. | no | no |
+| failed | The batch in demo-api is done: three of four tasks passed. It took twelve minutes. | yes | yes |
+| status | Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in demo-api. | no | no |
 
 Those are the defaults; the settings change each one, pick the voice and the speed, and
 are kept in that browser. A done or failed notification stays until it is dismissed;
@@ -252,6 +255,20 @@ doing?"), "skip", "quiet" ("for an hour", "until I unmute"), "unmute" (also hear
 mute") and "repeat". These
 steer the bot only; nothing it hears or shows acts on hrn, which waits for the
 confirmations and audit log of #38.
+
+Ask a question with Talk to me, or type it in the question box and press Enter:
+"why did it fail?", "what is it doing?" (or "where is it?"), "what happens next?"
+(or "what's next?"), "how long did it take?", and "what went wrong today?".
+Use a run or batch ID, or part of a task name, instead of "it" to select a record.
+Without a name, failure questions select the newest failed record, activity questions
+the newest running record, and next-step and duration questions the newest record.
+Today's failures are counted by their recorded ending time in the server's local day, among
+the records started in the last two days (a longer batch that ended today is not counted).
+Answers name the record and link to its execution flow in the log. They come only
+from recorded steps, causes, next actions and durations, using fixed keyword rules;
+Ada makes no model call and cannot explain anything hrn did not record. Answers
+use the same viewer permissions, secret masking and path shortening as the flow
+pages, and a question other than today's count reads at most the newest fifty records.
 
 The sentences are made by hrn (`internal/watch/bot.go`, where they are tested) and pass
 through the same blanking of secret values as every page; the page only chooses which to

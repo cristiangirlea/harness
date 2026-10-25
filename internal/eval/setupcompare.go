@@ -16,10 +16,9 @@ import (
 	"github.com/cristiangirlea/harness/internal/report"
 )
 
-// minPassingPairs is the fewest pairs passing on both sides a token verdict reads.
 const minPassingPairs = 2
 
-// The verdicts of a setup comparison.
+// SetupBetter and its peers label verdicts: better, worse, same or inconclusive.
 const (
 	SetupBetter       = "better"
 	SetupWorse        = "worse"
@@ -27,7 +26,7 @@ const (
 	SetupInconclusive = "inconclusive"
 )
 
-// SetupSide is what one side of a setup comparison did over its cells.
+// SetupSide aggregates one side's comparison cells.
 type SetupSide struct {
 	Eval      string  `json:"eval"`
 	Cells     int     `json:"cells"`
@@ -35,15 +34,13 @@ type SetupSide struct {
 	DidNotAct int     `json:"did_not_act,omitempty"`
 	Passed    int     `json:"passed"`
 	PassRate  float64 `json:"pass_rate"`
-	// FailedTokens is what the cells that acted and failed spent; TokensPerSuccess
-	// divides every acted cell's tokens by the passes.
+	// FailedTokens covers acted failures; TokensPerSuccess charges all acted tokens to passes.
 	FailedTokens     int64    `json:"failed_tokens"`
 	TokensPerSuccess *float64 `json:"tokens_per_success,omitempty"`
 	UnknownTokens    int      `json:"cells_without_tokens,omitempty"`
 }
 
-// SetupComparison scores a setup change: the same tasks, gates and variant run
-// once with the base's setup files and once with the branch's.
+// SetupComparison varies source/branch setup files, keeping tasks, gates and variants fixed.
 type SetupComparison struct {
 	Source      string   `json:"source"`       // the ref the baseline's setup files came from
 	Head        string   `json:"head"`         // the branch commit the candidate ran on
@@ -51,15 +48,14 @@ type SetupComparison struct {
 	Paths       []string `json:"paths"`
 	Changed     []string `json:"changed"`
 	Tasks       []string `json:"tasks"`
-	// HeldOut and Seed rebuild the task split: the share of each purpose and its order.
+	// HeldOut and Seed reproduce each purpose's task split.
 	HeldOut      float64   `json:"held_out,omitempty"`
 	Seed         *uint64   `json:"seed,omitempty"`
 	SourceCommit string    `json:"source_commit"` // where the branch left the source, whose setup files the baseline ran with
 	Unpaired     int       `json:"unpaired,omitempty"`
 	Baseline     SetupSide `json:"baseline"`
 	Candidate    SetupSide `json:"candidate"`
-	// PassMovement and TokenMovement are how far the baseline's own pass rate
-	// and passing median move between repeats; a difference inside them is noise.
+	// PassMovement and TokenMovement measure baseline repeat noise in pass rates and passing tokens.
 	PassMovement           *float64 `json:"pass_rate_movement,omitempty"`
 	PassingPairs           int      `json:"passing_pairs"`
 	PassingBaselineMedian  *float64 `json:"passing_baseline_median_tokens,omitempty"`
@@ -67,7 +63,7 @@ type SetupComparison struct {
 	PassingReduction       *float64 `json:"passing_median_token_reduction,omitempty"`
 	TokenMovement          *float64 `json:"token_median_movement,omitempty"`
 	SavingThreshold        *float64 `json:"saving_threshold,omitempty"`
-	Verdict                string   `json:"verdict"`
+	Verdict                string   `json:"verdict"` // better, worse, same or inconclusive
 	Reason                 string   `json:"reason"`
 }
 
@@ -75,11 +71,9 @@ type setupCell struct {
 	passed, acted bool
 	tokens        int64
 	known         bool
-	// excluded marks a cell whose pair has a side that did not act.
-	excluded bool
+	excluded      bool
 }
 
-// setupCells keys a batch's cells by task and repeat.
 func setupCells(spec Spec, res batch.Result) map[[2]string]setupCell {
 	answerOnly := map[string]bool{}
 	for _, t := range spec.Tasks {
@@ -96,7 +90,7 @@ func setupCells(spec Spec, res batch.Result) map[[2]string]setupCell {
 		c.acted = c.passed || answerOnly[task] || !neverActed(tr)
 		if n := len(tr.Attempts); n > 0 {
 			r := tr.Attempts[n-1].Result
-			// Estimated usage is a guess, not a measurement to compare.
+			// Estimates cannot establish measured savings.
 			if total, known, estimated := r.ModelTokens(); known && !estimated {
 				c.tokens, c.known = total, true
 			}
@@ -138,12 +132,10 @@ func sideOf(cells map[[2]string]setupCell) SetupSide {
 	return s
 }
 
-// CompareSetups reads the two evals' batches cell by cell, paired by task and
-// repeat. A judge's scores never enter the verdict: the gates decide passing.
+// CompareSetups pairs task/repeat cells, using gate outcomes instead of judge scores.
 func CompareSetups(spec Spec, baseline, candidate batch.Result) SetupComparison {
 	b, c := setupCells(spec, baseline), setupCells(spec, candidate)
-	// A pair counts on both sides or on neither: a setup that makes the agent give
-	// up on a hard task must not drop that task from one side's pass rate only.
+	// Exclude idle pairs on both sides so abandoning hard tasks cannot improve one pass rate.
 	unpaired := 0
 	for k, bc := range b {
 		cc, ok := c[k]
@@ -260,8 +252,7 @@ func CompareSetups(spec Spec, baseline, candidate batch.Result) SetupComparison 
 
 func pct(v float64) string { return strconv.FormatFloat(math.Round(v*1000)/10, 'f', -1, 64) + "%" }
 
-// HeldOut picks the same share of each purpose's tasks, in an order the seed
-// fixes, so a later comparison runs on the same tasks.
+// HeldOut reproducibly selects a share of each purpose's tasks using seed.
 func HeldOut(tasks []batch.Task, seed uint64, fraction float64) []string {
 	byPurpose := map[string][]string{}
 	var purposes []string
@@ -289,11 +280,10 @@ func HeldOut(tasks []batch.Task, seed uint64, fraction float64) []string {
 	return out
 }
 
-// setupBackends are the plan backends a setup comparison may run on: it runs
-// every task twice, and nothing here may bill per token.
+// Comparisons run every task twice, so only plan backends may be used.
 var setupBackends = []string{"claude", "codex"}
 
-// SetupOptions say where the baseline's setup files come from and which tasks run.
+// SetupOptions selects baseline setup files and tasks.
 type SetupOptions struct {
 	Source  string   // a ref, such as origin/main
 	Paths   []string // git pathspecs; DefaultSetupPaths when empty
@@ -301,16 +291,14 @@ type SetupOptions struct {
 	Seed    uint64
 }
 
-// SetupRun is a finished comparison with both evals and their batches, whose
-// worktrees are still on disk for the caller to look at or remove.
+// SetupRun retains evals, batches and worktrees for inspection or cleanup.
 type SetupRun struct {
 	Comparison                SetupComparison
 	Baseline, Candidate       Record
 	BaselineRes, CandidateRes batch.Result
 }
 
-// RunSetupComparison runs the spec's one variant twice on the same commit's
-// code: with the source's setup files, then with the branch's own.
+// RunSetupComparison varies source/branch setup files over identical code.
 func RunSetupComparison(ctx context.Context, spec Spec, opts SetupOptions, notify func(batch.Event)) (SetupRun, error) {
 	var out SetupRun
 	if len(spec.Matrix) != 1 {

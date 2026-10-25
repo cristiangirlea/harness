@@ -1,9 +1,4 @@
-// Package followup plans a run that continues an earlier one, on the same
-// backend or another. A backend carries on from what it saved itself where a
-// run in the chain left something: the api backend's conversation, or a fork
-// of a claude or codex session. The turns it has not seen, which is all of
-// them when it saved nothing, go at the top of its prompt as a transcript. The
-// runs stay one chain in the records either way, linked by continues.
+// Package followup plans continuations using saved sessions and transcripts for unseen turns.
 package followup
 
 import (
@@ -26,8 +21,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/ws"
 )
 
-// Request names the run to continue and what the caller set explicitly.
-// An empty field inherits from the chain.
+// Request names a run and explicit overrides; empty fields inherit from the chain.
 type Request struct {
 	RunID   string
 	Backend string
@@ -35,44 +29,36 @@ type Request struct {
 	Model   string
 	// Retrieval is the follow-up's retrieval mode; a pin from another backend refuses an opt-in.
 	Retrieval string
-	// Fresh starts a new session briefed by a hand-over built from the
-	// earlier run's record, instead of resuming or forking anything.
+	// Fresh briefs a new session from the record, without resuming or forking.
 	Fresh bool
 }
 
 // Plan is how a follow-up run starts.
 type Plan struct {
-	// Prev is the run being continued. Backend, Dir (absolute) and Model are
-	// the follow-up's own, inherited where the request left them empty.
+	// Prev is the predecessor; Backend, absolute Dir and Model describe the follow-up.
 	Prev    runlog.Record
 	Backend string
 	Dir     string
 	Model   string
 
-	// Resume or ForkSession is what the backend saved in an earlier run of the
-	// chain, when it saved anything it can pick up again here.
+	// Resume and ForkSession identify reusable state from earlier in the chain.
 	Resume      *agent.Conversation
 	ForkSession string
-	// carried is the run Resume or ForkSession comes from; the context warning's subject.
+	// carried identifies the context warning's source run.
 	carried *runlog.Record
 
-	// Handoff is the runs of the chain after that one, or all of them, oldest
-	// first: the turns this backend has not seen.
+	// Handoff contains unseen turns, oldest first.
 	Handoff []runlog.Record
 
-	// Fresh is set for a fresh hand-over: Resume, ForkSession and Handoff stay
-	// empty and the backend is told about Prev by freshHandoff instead.
+	// Fresh excludes Resume, ForkSession and Handoff; freshHandoff briefs the backend instead.
 	Fresh bool
 
-	// Notes say what was carried over and how, for the run's transcript.
 	Notes []string
 
-	// release frees the conversation a backend resumes in place.
 	release func()
 }
 
-// Release frees what Make took for this plan; call it once the run has ended.
-// It is safe to call more than once, and on a plan that took nothing.
+// Release frees the plan's resources after the run and is safe to repeat.
 func (p Plan) Release() {
 	if p.release != nil {
 		p.release()
@@ -89,8 +75,7 @@ func (p Plan) Route() string {
 
 const contextWarningThreshold = 150000
 
-// ContextWarning advises the caller before continuing a large recorded context.
-// It is informational: the plan and the decision to continue stay unchanged.
+// ContextWarning advises about large recorded context without changing the plan.
 func (p Plan) ContextWarning() string {
 	if p.carried == nil || p.carried.Result.ContextTokens <= contextWarningThreshold {
 		return ""
@@ -134,8 +119,6 @@ func Make(req Request) (Plan, error) {
 		p.Notes = append(p.Notes, fmt.Sprintf("run %s continues %s, which is gone, so the chain starts at %[1]s", chain[0].ID, missing))
 	}
 	if req.Fresh {
-		// Nothing any run saved is picked up, not even on the same backend:
-		// the record is all the new session learns of the chain.
 		p.Fresh = true
 		if p.Model == "" {
 			p.Model = latestModel(chain, p.Backend)
@@ -144,7 +127,6 @@ func Make(req Request) (Plan, error) {
 		return p, nil
 	}
 
-	// The latest run of the chain that left this backend something to pick up.
 	from := -1
 	var conv agent.Conversation
 	var elsewhere string
@@ -158,8 +140,7 @@ func Make(req Request) (Plan, error) {
 		} else if !errors.Is(err, runlog.ErrNoConversation) {
 			return Plan{}, err
 		} else if agent.ForksSessions(b) && r.Result.Session != "" {
-			// A session knows the files of its own workspace, and claude only
-			// finds one from the directory it was started in.
+			// Sessions belong to their workspace; claude also requires the original directory to find them.
 			if samePath(r.Task.Dir, p.Dir) {
 				from, p.ForkSession = i, r.Result.Session
 			} else if elsewhere == "" {
@@ -168,8 +149,7 @@ func Make(req Request) (Plan, error) {
 		}
 	}
 	if from < 0 && p.Backend == prev.Backend {
-		// Starting over quietly would drop what the run did. On another
-		// backend a fresh start is the only kind there is, and expected.
+		// Refuse silent history loss on the same backend; a new backend necessarily starts fresh.
 		msg := fmt.Sprintf("run %s has no saved conversation or session to continue on %s", prev.ID, p.Backend)
 		if elsewhere != "" {
 			msg += fmt.Sprintf(" in %s; its session belongs to %s", p.Dir, elsewhere)
@@ -188,7 +168,7 @@ func Make(req Request) (Plan, error) {
 			p.Notes = append(p.Notes, fmt.Sprintf("continuing on %s instead of %s; the API drops the earlier thinking", req.Model, conv.Model))
 		}
 	case from >= 0:
-		// What that run asked for, not what the backend reported back.
+		// Preserve the requested model rather than a backend-reported alias.
 		if p.Model = chain[from].Task.Model; p.Model == "" && p.Resume != nil {
 			p.Model = conv.Model
 		}
@@ -231,11 +211,10 @@ func Make(req Request) (Plan, error) {
 
 var conversationID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
 
-// lockConversation refuses a second run on one conversation while the first
-// runs. The lock file stays behind: removing it would let two holders in.
+// Keep the lock file after release: removing it could admit two conversation writers.
 func lockConversation(backend, id string) (func(), error) {
 	if !conversationID.MatchString(id) {
-		// The backend refuses such an id before it starts the CLI.
+		// No lock needed: the backend refuses such an id before it starts the CLI.
 		return func() {}, nil
 	}
 	dir := filepath.Join(runlog.Home(), "locks")
@@ -252,8 +231,6 @@ func lockConversation(backend, id string) (func(), error) {
 	return sync.OnceFunc(unlock), nil
 }
 
-// laterOn names the newest run on backend, outside chain, that ran on
-// conversation id since carried started, or "".
 func laterOn(backend, id string, carried runlog.Record, chain []runlog.Record) string {
 	recs, _, err := runlog.ListSince(carried.Started)
 	if err != nil {
@@ -269,8 +246,7 @@ func laterOn(backend, id string, carried runlog.Record, chain []runlog.Record) s
 	return ""
 }
 
-// checkRetrievalPin refuses a retrieval opt-in that would resolve a new version
-// while the chain's latest pin belongs to another backend, which cannot carry it.
+// Refuse cross-backend opt-in rather than silently replacing a pin the new backend cannot carry.
 func checkRetrievalPin(chain []runlog.Record, backend, mode string) error {
 	if mode == "" || mode == "off" {
 		return nil
@@ -294,9 +270,7 @@ func checkRetrievalPin(chain []runlog.Record, backend, mode string) error {
 	return nil
 }
 
-// latestModel is the model the latest run on backend in the chain asked for:
-// a model chosen for this backend earlier in the chain still applies;
-// another backend's model name would not.
+// Inherit model names only within their backend.
 func latestModel(chain []runlog.Record, backend string) string {
 	for i := len(chain) - 1; i >= 0; i-- {
 		if chain[i].Backend == backend {
@@ -306,9 +280,7 @@ func latestModel(chain []runlog.Record, backend string) string {
 	return ""
 }
 
-// Apply readies task once its run record exists, so the record keeps the
-// prompt as it was typed: the backend gets the transcript or the fresh
-// hand-over first, which is also saved beside the record as handoff.md.
+// Apply adds handoff context after recording, so the record retains the original prompt.
 func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.Resume, task.ForkSession = p.Resume, p.ForkSession
 	task.FixRound = p.Prev.ID != ""
@@ -342,9 +314,7 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.Prompt = h + task.Prompt
 }
 
-// The transcript is capped like the project instruction files: room for a long
-// exchange without crowding out the task. When it does not fit, the oldest
-// turns go first, since the latest are what a follow-up is most likely about.
+// Cap transcript bytes to leave room for the task, dropping oldest turns first to preserve recent context.
 const (
 	maxHandoff  = 32 << 10
 	maxTurnText = 8 << 10
@@ -401,16 +371,13 @@ func (p Plan) turn(n int, r runlog.Record) string {
 	return b.String()
 }
 
-// quote marks every line of an earlier turn as quoted, so text an agent
-// wrote cannot open a section of the transcript or pass for the request.
+// Quote every line so recorded text cannot open sections or impersonate the request.
 func quote(s string) string {
 	return "> " + strings.ReplaceAll(s, "\n", "\n> ")
 }
 
-// clip keeps the start and the end of a long text, cut on rune boundaries.
 func clip(s string) string { return clipTo(s, maxTurnText) }
 
-// clipTo is clip with a limit of limit bytes, plus the note on what was left out.
 func clipTo(s string, limit int) string {
 	if len(s) <= limit {
 		return s

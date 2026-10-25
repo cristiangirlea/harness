@@ -1,11 +1,4 @@
-// Package eval is the scoring layer: one task set run across a matrix of
-// backends, models and efforts, repeated, and judged by the same gates a batch
-// uses and, optionally, by a model reading each diff against a rubric. It answers "which backend, model and effort for this kind of task"
-// with numbers instead of impressions.
-//
-// An eval is a batch with two extra dimensions, so it expands into a
-// batch.Spec and runs through batch.Run unchanged. Every cell is an ordinary
-// recorded run.
+// Package eval scores repeated variants with batch gates and optional model judging.
 package eval
 
 import (
@@ -28,17 +21,16 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// Spec is a batch spec plus the two dimensions that make it an eval: the
-// matrix of variants to compare and how many times to repeat each cell.
+// Spec extends a batch with variants, repeats and optional judging.
 type Spec struct {
 	batch.Spec
 	Matrix  []Variant `json:"matrix"`
 	Repeats int       `json:"repeats,omitempty"` // default 1
-	// Judge, when set, scores every passing cell's diff against a rubric.
+	// Judge optionally grades passing diffs against a rubric.
 	Judge *Judge `json:"judge,omitempty"`
 }
 
-// Variant is one cell of the matrix: what to run the task set with.
+// Variant selects a matrix cell's backend and harness.
 type Variant struct {
 	Lean             *bool  `json:"lean,omitempty"`
 	ShapeTools       bool   `json:"shape_tools,omitempty"`
@@ -48,20 +40,18 @@ type Variant struct {
 	Backend          string `json:"backend,omitempty"`
 	Model            string `json:"model,omitempty"`
 	Effort           string `json:"effort,omitempty"`
-	// PromptPrefix goes before every task's prompt; the judge still grades the
-	// task's own prompt, so a brief change is measured against the same task.
+	// PromptPrefix changes the brief without changing the judged task.
 	PromptPrefix       string `json:"prompt_prefix,omitempty"`
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
 	NoSkills           bool   `json:"no_skills,omitempty"`
 }
 
-// ChangesHarness reports whether the variant changes the harness around the
-// model, not only which model runs.
+// ChangesHarness reports changes beyond model selection.
 func (v Variant) ChangesHarness() bool {
 	return v.PromptPrefix != "" || v.AppendSystemPrompt != "" || v.NoSkills
 }
 
-// Key is the name a variant's rows are filed under: its name, else backend[-model][-effort].
+// Key returns Name or backend[-model][-effort].
 func (v Variant) Key() string {
 	if v.Name != "" {
 		return v.Name
@@ -76,8 +66,7 @@ func (v Variant) Key() string {
 	return strings.Join(parts, "-")
 }
 
-// LoadSpec reads an eval spec. A relative dir is taken from the file's
-// directory, as in a batch spec.
+// LoadSpec resolves relative dirs from the spec's directory.
 func LoadSpec(path string) (Spec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -97,10 +86,8 @@ func LoadSpec(path string) (Spec, error) {
 	return spec, nil
 }
 
-// Expand turns an eval spec into the batch that runs it: one task per task,
-// variant and repeat. Retry is deliberately nil, and no_switch set, because an
-// eval measures what a single attempt does; a retried attempt would score the
-// harness, not the backend, and a switched one the other backend.
+// Expand creates one batch task per task, variant and repeat.
+// No retries or switching: each cell measures one attempt on its chosen backend.
 func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	if len(spec.Matrix) == 0 {
 		return batch.Spec{}, fmt.Errorf("matrix is empty: an eval needs at least one variant to compare")
@@ -152,11 +139,11 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 		}
 	}
 
-	bs := spec.Spec // the batch fields carry through unchanged
-	// Shaping is the measured variant's choice, including its false value.
+	bs := spec.Spec
+	// Each variant must control shaping, including false.
 	bs.ShapeTools = false
 	if bs.Worktrees == "" {
-		// Each cell keeps its own worktree until the eval is done with it.
+		// Preserve each cell's worktree for judging and inspection.
 		bs.Worktrees = batch.WorktreesFresh
 	}
 	bs.Retry = nil
@@ -178,7 +165,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 				cell := t
 				cell.ShapeTools = v.ShapeTools
 				cell.ID = fmt.Sprintf("%s.%s.%s.r%d", evalID, t.ID, v.Key(), r)
-				// Pin the measured backend so purpose routing cannot change a cell.
+				// Routing must not change the measured backend.
 				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
 				if v.Lean != nil {
 					if cell.Backend != "claude" && cell.Backend != "codex" {
@@ -187,7 +174,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 					cell.Lean = v.Lean
 				}
 				if v.PromptPrefix != "" {
-					// A Purpose: header on the task's first line would no longer be first.
+					// Prefixing would hide a leading Purpose: header.
 					if cell.Purpose == "" {
 						cell.Purpose = purpose.Declared(t.Prompt)
 					}
@@ -210,8 +197,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	return bs, nil
 }
 
-// checkHarness refuses a harness option the cell's backend would ignore: the
-// variant would score the same harness under another name.
+// Ignored options would score the same harness under different names.
 func checkHarness(o agent.Options, backend string) error {
 	if o.AppendSystemPrompt == "" && !o.NoSkills {
 		return nil
@@ -232,8 +218,7 @@ func checkHarness(o agent.Options, backend string) error {
 	return nil
 }
 
-// checkPart rejects anything that would break the cell id, which is read back
-// by splitting on dots: <evalid>.<task>.<variant>.r<n>.
+// Dots delimit the persisted cell id: <evalid>.<task>.<variant>.r<n>.
 func checkPart(kind, value string) error {
 	if !partRE.MatchString(value) {
 		return fmt.Errorf("%s %q: use letters, digits, '_' and '-' (no dots: they separate the parts of a cell id)", kind, value)
@@ -252,58 +237,49 @@ func firstOf(values ...string) string {
 	return ""
 }
 
-// VariantRow is what one variant did across every task and repeat.
+// VariantRow aggregates one variant's tasks and repeats.
 type VariantRow struct {
 	Name     string `json:"name"`
 	Attempts int    `json:"attempts"`
 	Passed   int    `json:"passed"`
-	// DidNotAct counts the cells among Attempts that ended ok without a tool
-	// call, a second turn or a change; they are left out of the pass rate.
-	DidNotAct int `json:"did_not_act,omitempty"`
-	// AgentCommitted counts the cells whose agent moved its branch or HEAD with git, which a prompt may forbid.
+	// DidNotAct excludes idle successes (no tools, second turn or change) from pass rates.
+	DidNotAct   int `json:"did_not_act,omitempty"`
+	DidNotStart int `json:"did_not_start,omitempty"`
+	// AgentCommitted counts cells whose agent moved its branch or HEAD with git, which a prompt may forbid.
 	AgentCommitted int `json:"agent_committed,omitempty"`
-	// Unchanged counts the passes that committed nothing: right for "find
-	// the bug, if any", suspicious for "fix the typos".
+	// Unchanged counts passes without commits, valid for inspection tasks.
 	Unchanged     int            `json:"passed_unchanged,omitempty"`
 	Statuses      map[string]int `json:"statuses"` // run status histogram
 	MedianCostUSD float64        `json:"median_cost_usd"`
 	TotalCostUSD  float64        `json:"total_cost_usd"`
 	CostEstimate  bool           `json:"cost_is_estimate,omitempty"`
-	// CellsWithoutCost counts cells whose cost is unknown; the total and
-	// median cover the rest.
+	// CellsWithoutCost excludes unknowns from cost totals and medians.
 	CellsWithoutCost int `json:"cells_without_cost,omitempty"`
-	// CostCounted marks rows Summarize counted; older rows lack it and fall back to the median.
+	// CostCounted distinguishes counted costs from old rows' median fallback.
 	CostCounted    bool          `json:"cost_counted,omitempty"`
 	MedianDuration time.Duration `json:"median_duration_ns"`
 	MedianTurns    float64       `json:"median_turns"`
 	MedianTools    float64       `json:"median_tool_calls"`
-	// MedianContext counts every input token once, cached or not: what the
-	// model was given, not what was billed at full rate.
+	// MedianContext counts cached and uncached input once, regardless of billing.
 	MedianContext float64 `json:"median_context_tokens"`
-	// The same medians over passing cells only: a variant that fails cheaply
-	// looks efficient over all of them.
+	// MedianCostPassedUSD and MedianContextPassed exclude cheap failures from efficiency comparisons.
 	MedianCostPassedUSD float64 `json:"median_cost_usd_passed,omitempty"`
 	PassedCostKnown     bool    `json:"passed_cost_known,omitempty"`
 	MedianContextPassed float64 `json:"median_context_tokens_passed,omitempty"`
-	// Judged counts the cells the judge scored; MeanScore is the mean of
-	// their verdicts, 0-10.
+	// Judged counts scored cells; MeanScore averages verdicts, 0-10.
 	Judged    int     `json:"judged,omitempty"`
 	MeanScore float64 `json:"mean_score,omitempty"`
-	// ScoreMin and ScoreMax bound the mean of each judge repeat when there
-	// were JudgeRepeats > 1: how far the score moves when only the judge reruns.
+	// JudgeRepeats > 1 measures repeat-mean variation in ScoreMin/ScoreMax.
 	JudgeRepeats int     `json:"judge_repeats,omitempty"`
 	ScoreMin     float64 `json:"score_min,omitempty"`
 	ScoreMax     float64 `json:"score_max,omitempty"`
 
-	// Setup is the agent setup of the first cell of SetupTask, the spec's first
-	// task, its digest covering the variant's prompt_prefix too. SetupMixed says
-	// repeats of one task started with setups that differ beyond their options.
+	// Setup includes the first task's prompt_prefix; SetupMixed flags base-setup drift within task repeats.
 	Setup      *agent.Setup `json:"setup,omitempty"`
 	SetupTask  string       `json:"setup_task,omitempty"`
 	SetupMixed bool         `json:"setup_mixed,omitempty"`
 }
 
-// judgeScore is a row's judge columns, shared by variant and task rows.
 type judgeScore struct {
 	judged   int
 	mean     float64
@@ -315,12 +291,10 @@ func (v VariantRow) judge() judgeScore {
 	return judgeScore{v.Judged, v.MeanScore, v.JudgeRepeats, v.ScoreMin, v.ScoreMax}
 }
 
-// spread is the judge's own spread, and whether it was measured.
 func (j judgeScore) spread() (float64, bool) {
 	return j.max - j.min, j.repeats > 1
 }
 
-// scoreOf sums a row's scored verdicts, given per cell.
 func scoreOf(cells [][]Judgement) judgeScore {
 	var out judgeScore
 	total, count := 0, 0
@@ -332,7 +306,7 @@ func scoreOf(cells [][]Judgement) judgeScore {
 		for _, v := range cell {
 			total += v.Score
 			count++
-			// A record from before repeats has no repeat number: it was the first.
+			// Missing repeat numbers in saved records mean the first repeat.
 			repeats[max(1, v.Repeat)] = true
 		}
 	}
@@ -343,8 +317,7 @@ func scoreOf(cells [][]Judgement) judgeScore {
 	if len(repeats) < 2 {
 		return out
 	}
-	// Only cells scored in every repeat: a missing verdict would move one
-	// repeat's mean by that cell's difficulty, not by the judge's noise.
+	// Use complete repeats so task difficulty cannot masquerade as judge noise.
 	sums := map[int][2]int{}
 	for _, cell := range cells {
 		byRepeat := map[int]int{}
@@ -380,14 +353,13 @@ func (v VariantRow) CostKnown() bool {
 
 // PassRate is the share of the cells that acted which passed.
 func (v VariantRow) PassRate() float64 {
-	acted := v.Attempts - v.DidNotAct
+	acted := v.Attempts - v.DidNotAct - v.DidNotStart
 	if acted <= 0 {
 		return 0
 	}
 	return float64(v.Passed) / float64(acted)
 }
 
-// neverActed is a cell whose run ended ok in one turn with no tool call and no change.
 func neverActed(tr batch.TaskResult) bool {
 	if len(tr.Attempts) == 0 || tr.Commit != "" {
 		return false
@@ -396,15 +368,15 @@ func neverActed(tr batch.TaskResult) bool {
 	return r.Status == agent.StatusOK && r.ToolCalls == 0 && r.Turns <= 1
 }
 
-// TaskRow is one task's score under one variant, over the repeats.
+// TaskRow aggregates a task's repeats under one variant.
 type TaskRow struct {
 	Task    string `json:"task"`
 	Variant string `json:"variant"`
 	Passed  int    `json:"passed"`
 	Total   int    `json:"total"`
-	// DidNotAct counts the cells among Total that never acted, as in VariantRow.
-	DidNotAct int `json:"did_not_act,omitempty"`
-	// The judge fields are as in VariantRow, for this task alone.
+	// DidNotAct counts idle cells as in VariantRow.
+	DidNotAct    int     `json:"did_not_act,omitempty"`
+	DidNotStart  int     `json:"did_not_start,omitempty"`
 	Judged       int     `json:"judged,omitempty"`
 	MeanScore    float64 `json:"mean_score,omitempty"`
 	JudgeRepeats int     `json:"judge_repeats,omitempty"`
@@ -416,13 +388,14 @@ func (r TaskRow) judge() judgeScore {
 	return judgeScore{r.Judged, r.MeanScore, r.JudgeRepeats, r.ScoreMin, r.ScoreMax}
 }
 
-// Score reads as "2/3" over the cells that acted ("2/2 +1 did not act" when one
-// never did), then the judge's mean score and the spread of its repeats:
-// "2/3 7.5 (7.0-8.0)".
+// Score formats passes/acted cells, idle counts and judge mean/range.
 func (r TaskRow) Score() string {
-	s := fmt.Sprintf("%d/%d", r.Passed, r.Total-r.DidNotAct)
+	s := fmt.Sprintf("%d/%d", r.Passed, r.Total-r.DidNotAct-r.DidNotStart)
 	if r.DidNotAct > 0 {
 		s += fmt.Sprintf(" +%d did not act", r.DidNotAct)
+	}
+	if r.DidNotStart > 0 {
+		s += fmt.Sprintf(" +%d did not start", r.DidNotStart)
 	}
 	if r.Judged > 0 {
 		s += fmt.Sprintf(" %.1f", r.MeanScore)
@@ -438,9 +411,7 @@ type Table struct {
 	Tasks    []TaskRow    `json:"tasks"`
 }
 
-// Totals sums the whole eval: cells run, cells passed, and what it cost,
-// judge included, with whether any cost is known or an estimate and how many
-// cells' costs are unknown.
+// Totals returns cell counts, costs including judging, and cost availability/estimate flags.
 func (r Record) Totals() (cells, passed int, costUSD float64, known, estimate bool, withoutCost int) {
 	costUSD = r.JudgeCostUSD
 	known = r.JudgeCostUSD != 0
@@ -448,7 +419,7 @@ func (r Record) Totals() (cells, passed int, costUSD float64, known, estimate bo
 		cells += v.Attempts
 		passed += v.Passed
 		costUSD += v.TotalCostUSD
-		// An old row's zero median can hide a costed cell; a non-zero total cannot.
+		// Old zero medians can hide known costs; nonzero totals prove them.
 		known = known || v.CostKnown() || v.TotalCostUSD != 0
 		estimate = estimate || v.CostEstimate
 		withoutCost += v.CellsWithoutCost
@@ -459,7 +430,7 @@ func (r Record) Totals() (cells, passed int, costUSD float64, known, estimate bo
 	return cells, passed, costUSD, known, estimate, withoutCost
 }
 
-// Record is one eval, saved under $HRN_HOME/evals.
+// Record saves an eval in $HRN_HOME/evals with its backing BatchID.
 type Record struct {
 	RetrievalManifest   *RetrievalManifest   `json:"retrieval_manifest,omitempty"`
 	RetrievalComparison *RetrievalComparison `json:"retrieval_comparison,omitempty"`
@@ -469,16 +440,14 @@ type Record struct {
 	Duration            time.Duration        `json:"duration_ns"`
 	Spec                Spec                 `json:"spec"`
 	Table               Table                `json:"table"`
-	// Judgements are the judge's verdicts, one per passing cell and judge repeat.
+	// Judgements holds a verdict per passing cell and judge repeat.
 	Judgements   []Judgement `json:"judgements,omitempty"`
 	JudgeCostUSD float64     `json:"judge_cost_usd,omitempty"`
-	// SetupComparison is on the candidate's record of `hrn eval setup`.
+	// SetupComparison belongs to the candidate's setup eval.
 	SetupComparison *SetupComparison `json:"setup_comparison,omitempty"`
 }
 
-// Run expands the spec, runs it as a batch and scores the result. The batch
-// result comes back too: the worktrees are still there, so the caller can look
-// at them before removing them.
+// Run scores the expanded batch, retaining worktrees for inspection.
 func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batch.Result, error) {
 	started := time.Now()
 	id, err := newID()
@@ -508,16 +477,25 @@ func Run(ctx context.Context, spec Spec, notify func(batch.Event)) (Record, batc
 	return rec, res, runErr
 }
 
-// Summarize scores a finished batch against the eval that produced it, with
-// the judge's verdicts when there are any. It reads the ids the expansion
-// wrote, so it works on a record loaded later.
+// neverStarted is true only when no attempt reached the task: one that ran and failed is a real failure.
+func neverStarted(tr batch.TaskResult) bool {
+	for _, a := range tr.Attempts {
+		if a.DidNotStart == "" {
+			return false
+		}
+	}
+	return len(tr.Attempts) > 0
+}
+
+// Summarize scores a batch and judge verdicts by persisted cell ids.
 func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	type cell struct {
 		task, variant string
 		passed        bool
 		tr            batch.TaskResult
-		verdicts      []Judgement // the scored ones
+		verdicts      []Judgement
 		idle          bool
+		unstarted     bool
 	}
 	answerOnly := map[string]bool{}
 	for _, t := range spec.Tasks {
@@ -535,11 +513,11 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		if !ok {
 			continue
 		}
-		passed := tr.Status == batch.StatusPass
-		cells = append(cells, cell{task, variant, passed, tr, scores[tr.ID], !passed && !answerOnly[task] && neverActed(tr)})
+		unstarted := neverStarted(tr)
+		passed := tr.Status == batch.StatusPass && !unstarted
+		cells = append(cells, cell{task, variant, passed, tr, scores[tr.ID], !unstarted && !passed && !answerOnly[task] && neverActed(tr), unstarted})
 	}
 
-	// Variant order follows the matrix, so the table reads like the spec.
 	var table Table
 	for _, v := range spec.Matrix {
 		name := v.Key()
@@ -555,9 +533,13 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 			if c.tr.AgentCommitted() {
 				row.AgentCommitted++
 			}
-			if c.idle {
-				// It measured the eval's setup, not the variant: out of the pass rate and the medians.
-				row.DidNotAct++
+			if c.idle || c.unstarted {
+				// Setup failures cannot measure task performance.
+				if c.unstarted {
+					row.DidNotStart++
+				} else {
+					row.DidNotAct++
+				}
 				row.Statuses[string(c.tr.Attempts[len(c.tr.Attempts)-1].Result.Status)]++
 				continue
 			}
@@ -574,14 +556,14 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 				a := c.tr.Attempts[n-1]
 				status = string(a.Result.Status)
 				if s := runSetup(a.RunID); s != nil {
-					// The first task only, so both sides of a diff compare the same task.
+					// Compare the same first task on both sides of a diff.
 					if row.Setup == nil && len(spec.Tasks) > 0 && c.task == spec.Tasks[0].ID {
 						row.Setup, row.SetupTask = s, c.task
 						if v.PromptPrefix != "" {
 							row.Setup = s.WithOptions(agent.PromptPrefixOption(v.PromptPrefix))
 						}
 					}
-					// Tasks may set their own MCP configs, so only repeats of one task must agree.
+					// Task-specific MCP configs may differ; repeats must agree.
 					if was, ok := taskSetups[c.task]; !ok {
 						taskSetups[c.task] = s.BaseDigest
 					} else if was != s.BaseDigest {
@@ -631,7 +613,6 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		table.Variants = append(table.Variants, row)
 	}
 
-	// One row per task and variant, in spec order.
 	for _, t := range spec.Tasks {
 		for _, v := range spec.Matrix {
 			name := v.Key()
@@ -642,6 +623,10 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 					continue
 				}
 				row.Total++
+				if c.unstarted {
+					row.DidNotStart++
+					continue
+				}
 				if c.idle {
 					row.DidNotAct++
 				}
@@ -660,7 +645,6 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	return table
 }
 
-// runSetup is the setup a run recorded; nil for a run that is gone or older than the field.
 func runSetup(id string) *agent.Setup {
 	if id == "" {
 		return nil
@@ -672,10 +656,7 @@ func runSetup(id string) *agent.Setup {
 	return rec.Setup
 }
 
-// splitID reads back what Expand wrote: <evalid>.<task>.<variant>.r<n>. The
-// task id cannot contain a dot (batch ids allow one, so this is checked when
-// the spec is expanded), but a variant name can, so the split works from both
-// ends.
+// Split persisted <evalid>.<task>.<variant>.r<n> from both ends for dotted variants.
 func splitID(id string) (task, variant string, ok bool) {
 	i := strings.Index(id, ".")
 	j := strings.LastIndex(id, ".r")
@@ -716,10 +697,7 @@ func LoadRecord(id string) (Record, error) {
 	return rec, json.Unmarshal(data, &rec)
 }
 
-// List returns saved evals, newest first.
-// ListAll returns every saved eval, newest first, and how many records could
-// not be read. It reads them all: eval ids are random, so only the records
-// themselves say which are newest.
+// ListAll returns saved evals newest first and counts unreadable records.
 func ListAll() (out []Record, unreadable int, err error) {
 	entries, err := os.ReadDir(dir())
 	if os.IsNotExist(err) {
@@ -742,15 +720,12 @@ func ListAll() (out []Record, unreadable int, err error) {
 		}
 		out = append(out, rec)
 	}
-	// Eval ids are random, not timestamps, so the order comes from the records.
+	// Random ids cannot establish record order.
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Started.After(out[j].Started) })
 	return out, unreadable, nil
 }
 
-// newID is five hex characters: short enough to read in a branch name, wide
-// enough that two evals in one repository do not collide. A draw that already
-// names a saved eval is thrown back, because reusing one would overwrite its
-// record and collide with its branches.
+// Reject saved ids to prevent overwriting records and colliding with their branches.
 func newID() (string, error) {
 	for try := 0; try < 10; try++ {
 		b := make([]byte, 3)

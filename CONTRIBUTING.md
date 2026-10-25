@@ -43,7 +43,7 @@ See [SECURITY.md](SECURITY.md) for the security boundaries and private vulnerabi
 
 Releases are cut by pushing a `v*` tag that matches `agent.Version` in
 `internal/agent/agent.go`: the release workflow runs the tests, builds with
-`.github/release.sh`, and publishes. Tags and releases are the owner's to create.
+`.github/release.sh`, and publishes. Tags and releases are a maintainer's to create.
 A pushed `v*` tag cannot be moved or deleted (a GitHub ruleset refuses it). A tag
 on the wrong commit, or a release that needs a code fix, is followed by a new
 version: bump `agent.Version` and tag again. A workflow that failed for another

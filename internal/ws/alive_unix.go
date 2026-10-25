@@ -7,8 +7,7 @@ import (
 	"syscall"
 )
 
-// alive reports whether a process with this pid exists. Signal 0 checks
-// without sending anything; EPERM means it exists under another user.
+// Signal 0 checks existence harmlessly; EPERM also proves existence.
 func alive(pid int) bool {
 	if pid <= 0 {
 		return false
