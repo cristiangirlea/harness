@@ -20,12 +20,22 @@ func RemoveRecord(id string, dryRun bool) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	size := info.Size()
+	flowInfo, flowErr := os.Stat(FlowPath(id))
+	if flowErr == nil {
+		size += flowInfo.Size()
+	}
 	if !dryRun {
 		if err := os.Remove(path); err != nil {
 			return 0, err
 		}
+		if flowErr == nil {
+			if err := os.Remove(FlowPath(id)); err != nil {
+				return 0, err
+			}
+		}
 	}
-	return info.Size(), nil
+	return size, nil
 }
 
 // WorktreesRemain reports owned worktrees or slot/waiting branches that still need the record for cleanup.

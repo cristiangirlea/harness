@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -352,6 +353,7 @@ func (w *accessWriter) begin(status int) {
 func (s *server) publicLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		aw := &accessWriter{ResponseWriter: w}
+		r = r.WithContext(context.WithValue(r.Context(), accessContextKey{}, aw))
 		aw.start = func() { s.writeAccessRow(r, aw, "start") }
 		defer func() {
 			if aw.status == 0 {

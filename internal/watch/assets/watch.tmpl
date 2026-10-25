@@ -82,7 +82,7 @@
 {{if .Batches}}<div class="table-wrap" tabindex="0" role="region" aria-label="Batches"><table class="list">
 <thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Passed</th><th scope="col">Backends</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">Tasks</th></tr></thead>
 <tbody>{{range .Batches}}<tr>
-<td class="name">{{template "name" .}}</td>
+<td class="name">{{template "name" .}} <a class="of-batch" href="/flow/{{.ID}}">Execution flow</a></td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
 <td class="meta">{{.Tasks}}</td>
 <td class="meta">{{.Backend}}</td>
@@ -97,7 +97,7 @@
 {{if .Runs}}<div class="table-wrap" tabindex="0" role="region" aria-label="Runs"><table class="list">
 <thead><tr><th scope="col">Run</th><th scope="col">Backend</th><th scope="col">Purpose</th><th scope="col">Status</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">Prompt</th></tr></thead>
 <tbody>{{range .Runs}}<tr>
-<td class="name">{{template "name" .}}{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
+<td class="name">{{template "name" .}} <a class="of-batch" href="/flow/{{.ID}}">Execution flow</a>{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
 <td class="meta">{{.Backend}}</td>
 <td class="meta purpose"{{with .Rule}} title="{{.}}"{{end}}>{{.Purpose}}</td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
@@ -115,6 +115,7 @@
 
 {{define "run"}}{{template "head" .}}
 <p class="eyebrow">Run <span class="mono">{{.ID}}</span>{{with .Continues}} · continues <a class="mono" href="/run/{{.}}">{{.}}</a>{{end}}</p>
+<p><a href="/flow/{{.ID}}">Execution flow</a></p>
 <h1 class="prompt-line">{{.PromptLine}}</h1>
 {{if .PromptMore}}<details class="prompt" data-key="prompt"><summary>Whole prompt</summary><pre>{{.Prompt}}</pre></details>{{end}}
 {{template "facts" .Facts}}
@@ -165,6 +166,7 @@
 
 {{define "batch"}}{{template "head" .}}
 <p class="eyebrow">Batch <span class="mono">{{.ID}}</span></p>
+<p><a href="/flow/{{.ID}}">Execution flow</a></p>
 <h1>{{.Title}}</h1>
 <div id="live"{{with .Stream}} data-stream="{{.}}" data-replace{{end}}>{{template "batchbody" .Body}}</div>
 {{template "foot" .}}{{end}}
@@ -195,6 +197,26 @@
 </section>{{end}}
 {{end}}
 
+{{define "flow"}}{{template "head" .}}
+<p class="eyebrow">Execution flow · <span class="mono">{{.ID}}</span></p>
+<h1>What happened</h1>
+<div id="live"{{with .Stream}} data-stream="{{.}}" data-replace{{end}}>{{template "flowbody" .}}</div>
+{{template "foot" .}}{{end}}
+
+{{define "flowbody"}}
+<p class="flow-summary">{{.Summary}}</p>
+<p class="muted">hrn shows recorded steps and reasons, not the model&#39;s private reasoning.</p>
+<nav class="flow-level">Level: <a href="?level=simple">simple</a> · <a href="?level=technical">technical</a> · <a href="?level=debug">debug</a> · <a href="/flow/{{.ID}}/json">JSON</a></nav>
+<div class="flow-tree">{{range .Tree}}{{template "flowNode" .}}{{end}}</div>
+{{end}}
+
+{{define "flowNode"}}<details open class="flow-node"><summary><span class="badge {{.StatusClass}}">{{.Node.Status}}</span> <span class="tag">{{.Node.Kind}}</span> {{.Node.Name}}{{with .Duration}} · {{.}}{{end}}</summary>
+{{if .Debug}}<p class="muted small mono">{{.Node.Step}}{{if .Node.Derived}} · derived{{end}}</p>{{end}}
+{{with .Node.Text}}<p>{{.}}</p>{{end}}{{with .Node.Reason}}<p><strong>Why:</strong> {{.}}</p>{{end}}{{with .Node.Next}}<p><strong>Next:</strong> {{.}}</p>{{end}}
+{{if .Node.Run}}<p><a href="/run/{{.Node.Run}}">Open run and tool evidence</a></p>{{end}}
+{{if .Node.Orphan}}<p class="muted">(gap: parent not recorded)</p>{{end}}
+{{range .Children}}{{template "flowNode" .}}{{end}}</details>{{end}}
+
 {{define "problem"}}<p class="notice bad">{{.}}</p>{{end}}
 
 {{define "missing"}}{{template "head" .}}
@@ -219,6 +241,7 @@
 <label>Snooze <select id="bot-snooze"><option value="0">off</option><option value="15">15 minutes</option><option value="60">an hour</option><option value="-1">until I unmute</option></select></label>
 </p>
 <p id="bot-quiet" class="muted small" hidden></p>
+<p class="bot-question"><label for="bot-question">Ask about a run or batch</label> <input type="text" id="bot-question" placeholder="Why did it fail?" maxlength="500" autocomplete="off"></p>
 {{if .Local}}<p class="small"><a href="/voice">Record my voice</a>: the voice I will speak in, recorded and kept on this computer.</p>{{end}}
 </section>
 <div id="live" data-stream="/stream/bot" data-replace>{{template "botnow" .Now}}</div>

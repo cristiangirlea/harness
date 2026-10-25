@@ -101,6 +101,39 @@ func TestARoutedRunKeepsItsRowAndAnOldRecordLoadsWithoutOne(t *testing.T) {
 	}
 }
 
+func TestRouteNoteIsSavedForTaskAndResultAndOldRecordsLoad(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := CreateRouted("stub", agent.Task{Prompt: "p"}, "", "", nil, "backend stub was named for this run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(w.Dir(), "task.json"))
+	if err != nil || !strings.Contains(string(data), `"route_note": "backend stub was named for this run"`) {
+		t.Fatalf("task: %s %v", data, err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(w.Dir(), "result.json"))
+	if err != nil || !strings.Contains(string(data), `"route_note": "backend stub was named for this run"`) {
+		t.Fatalf("result: %s %v", data, err)
+	}
+	if _, err := Load(w.ID()); err != nil {
+		t.Fatal(err)
+	}
+	oldID := "20261014-120000-abcdee"
+	oldDir := filepath.Join(Root(), oldID)
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "task.json"), []byte(`{"id":"`+oldID+`","backend":"stub","task":{"prompt":"old"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := Load(oldID); err != nil || rec.RouteNote != "" {
+		t.Fatalf("legacy record=%+v err=%v", rec, err)
+	}
+}
+
 func TestRecordsKeepContextAndStillLoadResultsWithoutIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, n := range []int{285000, 0} {

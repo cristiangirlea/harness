@@ -776,13 +776,43 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-22: attempts whose backend never started are classified and left out of eval pass
+  rates, Ada answers questions about a run or batch from its records, and the exec protocol
+  routes an omitted backend (#567, #576, #577 toward #580; PR #636). `did_not_start` is set only
+  from evidence that no model was reached (no turns, tool calls, final answer or tokens), a cell
+  counts only when every attempt did not start, and the routing table skips such cells. Ada's
+  answers (`/bot/answer`) use fixed keyword rules, the viewer's permissions, the flow page's
+  masking and path shortening, and read a bounded set of records; today's count is bounded by
+  its own two-day window so the number it states is exact. A continuation through the exec
+  protocol is never routed: it stays on the earlier run's backend. The eval rerun policy for
+  unstarted cells, live push of flow events and organisations with grants (#575) are left for
+  later slices.
+- 2026-10-21: the execution flow page updates while its batch or run is going, runs record why no
+  route row applied, and `hrn mcp` serves a `flow` tool (#576, #577; PR #633 into #632). A record
+  caught mid-write keeps the last good tree instead of ending the stream; a batch that fails to
+  read is still a batch, never a missing run. `route_note` holds what was only a stderr warning
+  before: a named backend, no row for the purpose, a disabled or unknown backend, the default
+  backend used, or the limit that moved the run; a continuation keeps "continues run X" and adds
+  the limit's reason when one was weighed. The shared renderer lives in `internal/flowview`;
+  moving it there had double-encoded its `✓ ✗ ⊘ … —`, which a review caught and a test now pins.
+- 2026-10-21: run and batch records carry a local owner, batches write a versioned execution-event
+  file, and the dashboard, `hrn flow` and Ada show the recorded steps, reasons and next actions
+  (#575, #576, #577 toward #580's Transparent Local; PR #632). `internal/flow` is the envelope
+  (version, sequence, step and parent ids, status, reason, next); `hrn batch` appends to
+  `batch-flows/<id>.jsonl` and older batches and every run are rebuilt from their records with the
+  same step ids, checked both ways. `internal/owner` names the local user (`local:<OS user>` or
+  `$HRN_OWNER`); records without the field belong to the local user, and every watch route answers
+  "not found" for a record the viewer may not read. Reasons are only recorded causes, never model
+  reasoning. Text is redacted before any cut: three review rounds found the same bug in different
+  places. Organisations, grants and an admin flag, live push of events, Ada answering flow
+  questions and #567's did-not-start class are left for later slices.
 - 2026-10-21: the purpose classifier closes the gaps measured on real runs (#614, PR #621).
   `internal/purpose` gained an anchored review-brief rule, skips hand-over headings, lets a
   continuation inherit its parent run's resolved purpose (`purpose.Inherited`, saved in
   `task.purpose`), and keeps the CI, deploy and compare keywords to the lead's first sentence and
-  off branch, file and path names. Re-measured over the owner's local run records, undeclared runs
+  off branch, file and path names. Re-measured over 2,450 local run records, undeclared runs
   classified unknown fell from 30.4% to 24.9% and agreement with declared purposes rose from 25.2%
-  to 60.9%. Open: whether "Fix round for ..." briefs are implement or debug is the owner's call
+  to 60.9%. Open: whether "Fix round for ..." briefs are implement or debug is still to be decided
   (`debug.fix` unchanged; 63 runs). The rules stay deterministic; hosted decision models were
   declined.
 - 2026-10-20: a loaded run record takes the id it was loaded by, not the one stored in it (PR
