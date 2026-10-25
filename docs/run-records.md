@@ -283,8 +283,33 @@ record belongs to, as `kind:value`. A local install writes `local:<OS user name>
 `$HRN_OWNER` when it holds a valid `local:`, `email:` or `user:` principal. Records written
 before the field have none and belong to the local user, so nothing on disk is rewritten. Every
 read that crosses an access boundary (the watch server, `hrn flow`) goes through one decision,
-`owner.Viewer.CanRead`: a record's owner reads it, an admin grant reads all, and anyone else
-is told the record does not exist, so ids cannot be probed.
+`owner.Viewer.CanReadRecord` (or `CanRead` without a directory): a record's owner reads
+it, an admin grant reads all, and a project grant permits the named viewer to read
+the named owner's records in that project. Anyone else is told the record does not
+exist, so ids cannot be probed.
+
+Project grants are a JSON list in `$HRN_HOME/grants.json` (default
+`~/.hrn/grants.json`), for example:
+
+```json
+[{"viewer":"email:reader@example.com","owner":"local:me","project":"/absolute/path/to/repo"}]
+```
+
+`viewer` is an `email:` principal with a lowercase address or a `user:` principal.
+`owner` is optional and defaults to the local owner; this also covers records written
+before ownership. `project` is an absolute repository directory. A run's task
+directory is resolved to its repository root by looking for `.git` in its parents
+when available, falling back to the task directory. A batch uses `Result.Dir`.
+The directory must equal the granted project or be below it after path cleaning,
+with case ignored on Windows and a directory boundary required (`/repo2` is outside
+`/repo`). Batch timelines check child runs independently; worktrees inside the
+granted repository qualify, while runs outside it require their own access.
+
+hrn never writes the grants file. Public watch loads it at startup; absent means no
+project grants, and malformed means no project grants plus one stderr error. Restart
+watch after editing it. Local offline and LAN ownership behavior is unchanged.
+Public record requests audit the requested id, decision and access basis in
+`watch-access.log`; see [public watch](watch.md#behind-cloudflare-access).
 
 A batch also appends its execution events to `batch-flows/<id>.jsonl`, one JSON object per
 line. Each event has a version `v` (1), a sequence `seq` that continues when the file is reopened,
