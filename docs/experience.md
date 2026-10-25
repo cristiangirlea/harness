@@ -60,8 +60,11 @@ One exercise a day, from the person's own records and pull requests (read with `
 
 The rules:
 
+- **Every day is a UTC date**: the seed, `reps/<date>.json`, `rep:<date>`, the streak and
+  the caps all use it, so they never disagree about which day an answer belongs to.
 - **One exercise a day**, of any of the four kinds. On top of it, up to three reads before
-  merging a day, one per pull request. The day's material is picked by a seed of the date and
+  merging a day, one per pull request; a read before merging done as the day's exercise also
+  earns its `read:` event and counts towards the three. The day's material is picked by a seed of the date and
   an attempt number (FNV-1a), so a reload never changes it. The person may swap it before
   answering; the attempt number goes up.
 - **The answer is hidden server-side.** The record holds what is shown afterwards, but no
