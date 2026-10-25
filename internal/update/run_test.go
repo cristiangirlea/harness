@@ -465,3 +465,122 @@ func TestRunSkipsATargetThatIsTheCandidateItself(t *testing.T) {
 		t.Errorf("the watch on the candidate was not restarted: stopped %v, started %q", s.starter.stopped, s.starter.exe)
 	}
 }
+
+func TestSameBytesComparesWholeFilesAndRejectsUnreadablePaths(t *testing.T) {
+	dir := t.TempDir()
+	lastByteDiffers := bytes.Repeat([]byte("a"), 64*1024)
+	lastByteDiffers[len(lastByteDiffers)-1] = 'b'
+	for name, data := range map[string][]byte{
+		"empty":                {},
+		"empty-copy":           {},
+		"block":                bytes.Repeat([]byte("a"), 32*1024),
+		"block-copy":           bytes.Repeat([]byte("a"), 32*1024),
+		"block-plus-one":       bytes.Repeat([]byte("a"), 32*1024+1),
+		"two-blocks":           bytes.Repeat([]byte("a"), 64*1024),
+		"two-blocks-last-byte": lastByteDiffers,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "directory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, a, b string
+		want       bool
+	}{
+		{"empty files match", "empty", "empty-copy", true},
+		{"identical 32 KiB files match", "block", "block-copy", true},
+		{"32 KiB and 32 KiB plus one differ", "block", "block-plus-one", false},
+		{"64 KiB files differing in the last byte differ", "two-blocks", "two-blocks-last-byte", false},
+		{"missing second file differs", "empty", "missing", false},
+		{"missing first file differs", "missing", "empty", false},
+		{"file and directory differ", "empty", "directory", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameBytes(filepath.Join(dir, tc.a), filepath.Join(dir, tc.b)); got != tc.want {
+				t.Errorf("sameBytes(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunInstallsADirtyBuildOverAnotherDirtyBuildOfTheSameCommit(t *testing.T) {
+	for _, marker := range []string{"new build", "OLD"} {
+		t.Run(marker, func(t *testing.T) {
+			const dirty = "hrn 0.2.0 (go1.26.4, a0e5d2f12345, modified)"
+			s := newSite(t)
+			fakeHrn(t, s.candidate, marker)
+			s.versionMap = map[string]string{s.a: dirty, s.b: dirty, s.candidate: dirty}
+			s.version = fakeVersion(t, s.versionMap)
+			code, err := s.run(s.options())
+			if err != nil || code != 0 {
+				t.Fatalf("code %d, err %v\n%s", code, err, s.out.String())
+			}
+			wantLines(t, s.out.String(), "updated "+s.a, "updated "+s.b)
+			for _, target := range []string{s.a, s.b} {
+				if !sameFile(t, target, s.candidate) {
+					t.Errorf("%s was not replaced", target)
+				}
+			}
+		})
+	}
+}
+
+func TestRunStopsWhenADirtyCandidateHasTheInstalledBytes(t *testing.T) {
+	const dirty = "hrn 0.2.0 (go1.26.4, a0e5d2f12345, modified)"
+	s := newSite(t)
+	fakeHrn(t, s.candidate, "old")
+	s.versionMap = map[string]string{s.a: dirty, s.b: dirty, s.candidate: dirty}
+	s.version = fakeVersion(t, s.versionMap)
+	code, err := s.run(s.options())
+	if err != nil || code != 0 {
+		t.Fatalf("code %d, err %v\n%s", code, err, s.out.String())
+	}
+	wantLines(t, s.out.String(), "already current")
+	if strings.Contains(s.out.String(), "updated") || len(s.starter.stopped) != 0 {
+		t.Errorf("the targets were touched:\n%s", s.out.String())
+	}
+	for _, target := range []string{s.a, s.b} {
+		if backups, err := Backups(target); err != nil || len(backups) != 0 {
+			t.Errorf("backups beside %s: %v, err %v", target, backups, err)
+		}
+	}
+}
+
+func TestRunDoesNotTreatAnUnreadableModifiedTargetAsCurrent(t *testing.T) {
+	for _, kind := range []string{"missing", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			const dirty = "hrn 0.2.0 (go1.26.4, a0e5d2f12345, modified)"
+			s := newSite(t)
+			fakeHrn(t, s.candidate, "old")
+			s.versionMap = map[string]string{s.a: dirty, s.b: dirty, s.candidate: dirty}
+			inner := fakeVersion(t, s.versionMap)
+			s.version = func(ctx context.Context, path string) (Version, error) {
+				v, err := inner(ctx, path)
+				if path == s.candidate {
+					if err := os.Remove(s.a); err != nil {
+						t.Fatal(err)
+					}
+					if kind == "directory" {
+						if err := os.Mkdir(s.a, 0o755); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				return v, err
+			}
+			o := s.options()
+			o.DryRun = true
+			code, err := s.run(o)
+			if err != nil || code != 0 {
+				t.Fatalf("code %d, err %v\n%s", code, err, s.out.String())
+			}
+			wantLines(t, s.out.String(), "would rename "+s.a, s.b+" already current")
+			if strings.Contains(s.out.String(), s.a+" already current") {
+				t.Errorf("the unreadable target was skipped:\n%s", s.out.String())
+			}
+		})
+	}
+}

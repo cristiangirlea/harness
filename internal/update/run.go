@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -121,7 +122,7 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		fmt.Fprintf(out, "installed: %s\ncandidate: %s\n", installed.Line, want.Line)
 		for _, t := range hrn {
 			// The candidate file may still run an old watch process.
-			if versions[t].Same(want) && !isSameFile(candidate, t) {
+			if versions[t].Same(want) && (!want.Modified || sameBytes(candidate, t)) && !isSameFile(candidate, t) {
 				current[t] = true
 			}
 		}
@@ -303,6 +304,31 @@ func boolCount(bs ...bool) int {
 		}
 	}
 	return n
+}
+
+// A modified build's version line cannot identify its edits; unreadable files must not be skipped.
+func sameBytes(a, b string) bool {
+	fa, err := os.Open(a)
+	if err != nil {
+		return false
+	}
+	defer fa.Close()
+	fb, err := os.Open(b)
+	if err != nil {
+		return false
+	}
+	defer fb.Close()
+	var ba, bb [32 * 1024]byte
+	for {
+		na, ea := io.ReadFull(fa, ba[:])
+		nb, eb := io.ReadFull(fb, bb[:])
+		if na != nb || !bytes.Equal(ba[:na], bb[:nb]) {
+			return false
+		}
+		if ea != nil || eb != nil {
+			return ea == eb && (ea == io.EOF || ea == io.ErrUnexpectedEOF)
+		}
+	}
 }
 
 func isSameFile(a, b string) bool {
