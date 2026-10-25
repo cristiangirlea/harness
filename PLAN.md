@@ -776,6 +776,23 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-25: records can be shared by project, and every read decision in public mode is
+  logged (#575 toward #580; PR #650). `$HRN_HOME/grants.json` lists `{viewer, owner?, project}`;
+  a grant opens that owner's records whose repository root is the project or inside it, matched
+  on directory boundaries (case-insensitive on Windows), with the repository found by walking
+  parents for `.git` and only when a grant is checked. hrn never writes the file; a malformed one
+  fails closed. The decision stays one function used by every read path, so Ada and the MCP flow
+  tool follow it, and batch child runs are checked on their own. In public mode each record read
+  logs `record`, `decision` and `basis` in `watch-access.log`; a denied read still looks missing.
+  Organisations, membership and revocation without a restart remain for the Team release.
+- 2026-10-25: unstarted eval cells are rerun under a bounded policy, the flow page wakes on new
+  steps between polls, and parallel lanes, per-run numbers and next actions show on the flow page
+  (#567, #576, #577; PR #646). `rerun_unstarted` (default 1) reruns only cells whose every attempt
+  did not start, under ids ending `.u<round>`; the first round's raw results are kept, `start_rate`
+  reports started over scheduled cells, setup comparisons pair a rerun with its first-round cell,
+  and a kept eval names every rerun batch. The flow watcher checks at a quarter of the poll but
+  wakes at most once per poll, keeping a change made in the cooldown; `hrn runs prune` removes
+  orphan flow files. Lanes are pure CSS; commands are text to copy, never links.
 - 2026-10-20: gc also removes a batch task's worktree when merging its commit into the default
   branch changes nothing (#626, PR #627). This reopens the 2026-10-13 decision of #85: a change
   that landed split over several commits, or inside a larger one, matched no single patch id and
