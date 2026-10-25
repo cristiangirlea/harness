@@ -174,8 +174,34 @@ func TestALongSlashHeavyTestNameFallsBackQuickly(t *testing.T) {
 	size := 256 << 10
 	slashed := run("TestA/" + strings.Repeat("a/", size/2))
 	flat := run("TestA/" + strings.Repeat("a", size))
-	if slashed > 10*flat {
+	if slashHeavyNameTooSlow(slashed, flat) {
 		t.Errorf("a slash-heavy name took %v, a flat one of the same length %v", slashed, flat)
+	}
+}
+
+func slashHeavyNameTooSlow(slashed, flat time.Duration) bool {
+	// Coarse timers can round the flat case down to zero.
+	return slashed > 10*max(flat, time.Millisecond)
+}
+
+func TestSlashHeavyNameTimingUsesAFloorWithoutHidingSlowNames(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		slashed, flat time.Duration
+		wantSlow      bool
+	}{
+		{"zero flat timing", 2500 * time.Microsecond, 0, false},
+		{"submillisecond flat timing", 2500 * time.Microsecond, time.Microsecond, false},
+		{"floor boundary", 10 * time.Millisecond, 0, false},
+		{"over floor", 10*time.Millisecond + time.Nanosecond, 0, true},
+		{"measured boundary", 20 * time.Millisecond, 2 * time.Millisecond, false},
+		{"over measured limit", 20*time.Millisecond + time.Nanosecond, 2 * time.Millisecond, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := slashHeavyNameTooSlow(tc.slashed, tc.flat); got != tc.wantSlow {
+				t.Errorf("slash-heavy timing %v, flat timing %v: slow=%v, want %v", tc.slashed, tc.flat, got, tc.wantSlow)
+			}
+		})
 	}
 }
 

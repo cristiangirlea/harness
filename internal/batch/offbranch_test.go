@@ -330,10 +330,7 @@ func TestMovingOffTheBranchWithNothingWrittenChangesNothing(t *testing.T) {
 				}})
 				res, _ := run(t, Spec{Dir: dir, Backend: backend, Worktrees: mode, Tasks: []Task{{ID: "moved", Prompt: "p"}}})
 				defer Remove(res)
-				tr := res.Tasks[0]
-				// ws cannot count an unborn HEAD's unpushed commits, so it keeps that slot.
-				keptOK := name == "empty orphan" && mode == WorktreesSlots
-				if tr.Status != StatusPass || tr.Commit != "" || (!keptOK && strings.Contains(tr.Error, "kept")) {
+				if tr := res.Tasks[0]; tr.Status != StatusPass || tr.Commit != "" || strings.Contains(tr.Error, "kept") {
 					t.Errorf("status %s, commit %q, error %q: want a pass with nothing recorded and the slot given back", tr.Status, tr.Commit, tr.Error)
 				}
 			})

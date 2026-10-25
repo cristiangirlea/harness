@@ -100,6 +100,8 @@ The task's branch is
 made from the batch's base and checked out in the slot. When the task ends, pass, fail or
 error, the slot is detached at the base and given back. Its ignored files stay for the
 next task, and the work stays on branch `hrn/<id>`, which `diff`, `merge` and `rm` read.
+An agent that ends on an empty orphan branch has no commits to keep; its slot is
+detached at the base and given back too.
 A failed task's line reads `branch hrn/<id> kept` rather than naming a folder, and the
 record names the slot each task ran in (`worktree` and `slot`).
 

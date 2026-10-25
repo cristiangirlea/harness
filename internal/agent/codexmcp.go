@@ -89,6 +89,9 @@ func codexMCPEnv(t Task) ([]string, error) {
 			if k == "" || strings.Contains(k, "=") {
 				return nil, fmt.Errorf("mcp %s: %q is not an environment variable name", s.Name, k)
 			}
+			if k == "CODEX_HOME" || runtime.GOOS == "windows" && strings.EqualFold(k, "CODEX_HOME") {
+				return nil, fmt.Errorf("mcp %s: %s is not allowed in a server's env; codex must use the home hrn reads", s.Name, k)
+			}
 			if len(agentEnv([]string{k + "="})) == 0 {
 				return nil, fmt.Errorf("mcp %s: hrn keeps %s out of an agent's environment, and codex would get it too", s.Name, k)
 			}

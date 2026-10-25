@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -576,9 +577,22 @@ func TryLock(p string) (unlock func(), ok bool, err error) {
 func stranded(ctx context.Context, dir string) (int, error) {
 	out, err := gitOut(ctx, dir, "rev-list", "--count", "HEAD", "--not", "--remotes", "--branches", "--tags")
 	if err != nil {
+		if unbornHEAD(ctx, dir) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	return strconv.Atoi(out)
+}
+
+// A quiet missing HEAD has no commits to strand; other git failures keep the slot.
+func unbornHEAD(ctx context.Context, dir string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	_, err := gitCommand(ctx, dir, "rev-parse", "-q", "--verify", "HEAD").Output()
+	var exit *exec.ExitError
+	// On Windows a git killed by the context also exits 1 with no stderr.
+	return ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 1 && len(exit.Stderr) == 0
 }
 
 type worktree struct {
@@ -714,7 +728,15 @@ func Free(ctx context.Context, path string) (Taken, error) {
 		}
 		return Taken{}, fmt.Errorf("slot %d has %d %s on no remote, so it stays taken; push them first", n, count, word)
 	}
-	if _, err := gitOut(ctx, slot, "switch", "--detach"); err != nil {
+	detach := []string{"switch", "--detach"}
+	if unbornHEAD(ctx, slot) {
+		base, err := commitOf(ctx, main, "HEAD")
+		if err != nil {
+			return Taken{}, err
+		}
+		detach = append(detach, base)
+	}
+	if _, err := gitOut(ctx, slot, detach...); err != nil {
 		return Taken{}, err
 	}
 	if err := removeOwn(lp); err != nil {
@@ -804,6 +826,9 @@ func unpushed(ctx context.Context, dir string) (int, error) {
 	}
 	out, err := gitOut(ctx, dir, args...)
 	if err != nil {
+		if unbornHEAD(ctx, dir) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	return strconv.Atoi(out)
