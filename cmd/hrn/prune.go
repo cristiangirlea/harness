@@ -127,6 +127,9 @@ func cmdPrune(args []string) error {
 	}
 	fmt.Printf("%s %d runs, %d batch records and %d eval records older than %s (%s)\n",
 		verb, len(runs.Removed), len(oldBatches), len(oldEvals), *olderThan, report.Bytes(bytes))
+	if runs.OrphanFlows > 0 {
+		fmt.Printf("%s %d orphan batch flow files\n", verb, runs.OrphanFlows)
+	}
 	for _, id := range live {
 		fmt.Printf("kept batch %s: its worktrees are still on disk; hrn batch rm %s removes them\n", id, id)
 	}

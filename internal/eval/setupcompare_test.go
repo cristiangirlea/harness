@@ -322,3 +322,24 @@ func TestASetupComparisonOnAHeldOutShareRecordsHowToRebuildIt(t *testing.T) {
 		t.Errorf("err = %v, want a refusal for a share that leaves no task", err)
 	}
 }
+
+func TestARerunPairsWithItsFirstRoundCellInASetupComparison(t *testing.T) {
+	var spec Spec
+	for i := 0; i < 4; i++ {
+		spec.Tasks = append(spec.Tasks, batch.Task{ID: fmt.Sprintf("task%d", i), Gate: []string{"true"}})
+	}
+	spec.Matrix, spec.Repeats = []Variant{{Backend: "claude"}}, 3
+	base, cand := cellsOf("aaaaa", 4, 3, steady(1000)), cellsOf("bbbbb", 4, 3, steady(1000))
+	// One candidate cell failed to launch, and its rerun ran and passed.
+	unstarted := &cand.Tasks[0]
+	rerun := *unstarted
+	rerun.ID += ".u1"
+	unstarted.Status = batch.StatusFail
+	unstarted.Attempts = []batch.Attempt{{Backend: "claude", DidNotStart: "launch refused",
+		Result: agent.Result{Backend: "claude", Status: agent.StatusError, Error: "launch refused"}}}
+	cand.Tasks = append(cand.Tasks, rerun)
+	c := CompareSetups(spec, base, cand)
+	if c.Candidate.Cells != 12 || c.Candidate.Acted != 12 || c.Unpaired != 0 {
+		t.Fatalf("candidate %+v, unpaired %v: the rerun must stand in for its cell, not add one", c.Candidate, c.Unpaired)
+	}
+}

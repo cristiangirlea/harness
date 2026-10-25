@@ -1,12 +1,16 @@
 package watch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/flow"
@@ -23,6 +27,8 @@ type flowPageData struct {
 type flowNode struct {
 	Node                  *flow.Node
 	StatusClass, Duration string
+	Lane                  int
+	Numbers, Action, Hint string
 	Debug                 bool
 	Children              []flowNode
 }
@@ -101,12 +107,65 @@ func flowLevel(level string) string {
 
 func (s *server) flowData(r *http.Request, id, level string, events []flow.Event, kind string) flowPageData {
 	events = s.prepareFlowEvents(r, events, id)
-	nodes := flow.Build(events)
+	tree := buildFlowTree(events, level)
+	s.flowDetails(s.who(r), id, kind, tree)
+	nodes := make([]*flow.Node, len(tree))
+	for i, n := range tree {
+		nodes[i] = n.Node
+	}
 	summary := flowSummary(nodes)
 	if kind == "run" {
 		summary += " Open the run for tool calls and their recorded output."
 	}
-	return flowPageData{page: page{Title: "Execution flow " + id, Home: s.homeFor(r)}, ID: id, Level: level, Summary: summary, Tree: buildFlowTree(events, level)}
+	return flowPageData{page: page{Title: "Execution flow " + id, Home: s.homeFor(r)}, ID: id, Level: level, Summary: summary, Tree: tree}
+}
+
+func (s *server) flowDetails(v owner.Viewer, id, kind string, tree []flowNode) {
+	commits := map[string]string{}
+	if kind == "batch" {
+		if res, err := batch.LoadResultFor(v, id); err == nil {
+			for _, task := range res.Tasks {
+				commits[task.ID] = task.Commit
+			}
+		}
+	}
+	var walk func([]flowNode)
+	walk = func(nodes []flowNode) {
+		for i := range nodes {
+			n := &nodes[i]
+			if n.Node.Kind == flow.KindRun && n.Node.Run != "" {
+				if rec, err := runlog.LoadFor(v, n.Node.Run); err == nil && rec.Done {
+					res := rec.Result
+					n.Numbers = fmt.Sprintf("%d turns · %d tool calls", res.Turns, res.ToolCalls)
+					if res.CostUSD > 0 {
+						n.Numbers += " · " + cost(res.CostUSD, res.CostEstimate)
+					}
+				}
+			}
+			if n.Node.Kind == flow.KindTask && kind == "batch" {
+				switch {
+				case n.Node.Status == flow.StatusFailed:
+					n.Action = "hrn batch show " + id
+					n.Hint = "Inspect the batch; retry is not available."
+				case n.Node.Status == flow.StatusOK && commits[n.Node.Task] != "" && safeFlowTask(n.Node.Task):
+					n.Action = "hrn batch merge " + id + " " + n.Node.Task
+					n.Hint = "After reviewing the diff, merge this task:"
+				}
+				if n.Action != "" {
+					n.Node.Next = n.Hint + " " + n.Action
+				}
+			}
+			walk(n.Children)
+		}
+	}
+	walk(tree)
+}
+
+// Keep copied commands safe in both POSIX shells and PowerShell.
+func safeFlowTask(task string) bool {
+	return task != "" && strings.IndexFunc(task, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.')
+	}) == -1
 }
 
 func (s *server) flowUnfinished(r *http.Request, id, kind string) bool {
@@ -126,10 +185,18 @@ func (s *server) streamFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := s.who(r)
-	if _, _, err := s.flowEvents(v, id); err != nil {
+	_, kind, err := s.flowEvents(v, id)
+	if err != nil {
 		s.missing(w, r, "Flow "+id, os.ErrNotExist)
 		return
 	}
+	path := filepath.Join(runlog.Root(), id, "events.jsonl")
+	if kind == "batch" {
+		path = batch.FlowPath(id)
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	wake := watchFlowFile(ctx, path, s.opt.Poll)
 	level := flowLevel(r.URL.Query().Get("level"))
 	st := s.startStream(w)
 	var last *flowPageData
@@ -144,7 +211,7 @@ func (s *server) streamFlow(w http.ResponseWriter, r *http.Request) {
 		}
 		last = &p
 		return p, end, nil
-	}, "flowbody")
+	}, "flowbody", wake)
 }
 
 // flowState renders the flow and says whether its batch or run has ended.
@@ -228,16 +295,57 @@ func buildFlowTree(events []flow.Event, level string) []flowNode {
 	var convert func([]*flow.Node) []flowNode
 	convert = func(nodes []*flow.Node) []flowNode {
 		result := make([]flowNode, 0, len(nodes))
-		for _, n := range nodes {
+		lanes, _ := flowLanes(nodes)
+		for i, n := range nodes {
 			duration := ""
 			if !n.Ended.IsZero() && !n.Started.IsZero() {
 				duration = short(n.Ended.Sub(n.Started))
 			}
-			result = append(result, flowNode{Node: n, StatusClass: statusClass(string(n.Status)), Duration: duration, Debug: level == "debug", Children: convert(n.Children)})
+			result = append(result, flowNode{Node: n, StatusClass: statusClass(string(n.Status)), Duration: duration, Lane: min(lanes[i], 4), Debug: level == "debug", Children: convert(n.Children)})
 		}
 		return result
 	}
 	return convert(flow.Build(events))
+}
+
+func flowLanes(nodes []*flow.Node) ([]int, int) {
+	order := make([]int, len(nodes))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool { return nodes[order[i]].Started.Before(nodes[order[j]].Started) })
+	lanes := make([]int, len(nodes))
+	var ends []time.Time
+	for _, i := range order {
+		n := nodes[i]
+		if n.Started.IsZero() || !n.Ended.IsZero() && !n.Ended.After(n.Started) {
+			continue
+		}
+		lane := 0
+		for lane < len(ends) && (ends[lane].IsZero() || n.Started.Before(ends[lane])) {
+			lane++
+		}
+		if lane == len(ends) {
+			ends = append(ends, n.Ended)
+		} else {
+			ends[lane] = n.Ended
+		}
+		lanes[i] = lane
+	}
+	return lanes, len(ends)
+}
+
+func flowParallelPeak(nodes []*flow.Node) int {
+	var tasks []*flow.Node
+	peak := 0
+	for _, n := range nodes {
+		if n.Kind == flow.KindTask {
+			tasks = append(tasks, n)
+		}
+		peak = max(peak, flowParallelPeak(n.Children))
+	}
+	_, lanes := flowLanes(tasks)
+	return max(peak, lanes)
 }
 
 // flowSummary reads only the tree: what ended, each failed task's last recorded cause, and what is next.
@@ -274,6 +382,9 @@ func flowSummary(nodes []*flow.Node) string {
 	switch {
 	case tasks+running > 0:
 		parts = append(parts, fmt.Sprintf("%d of %d tasks passed.", passed, tasks+running))
+		if peak := flowParallelPeak(nodes); peak > 1 {
+			parts = append(parts, fmt.Sprintf("%d tasks ran side by side at peak.", peak))
+		}
 		if running > 0 {
 			parts = append(parts, fmt.Sprintf("%d still going.", running))
 		}
