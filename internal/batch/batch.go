@@ -1173,6 +1173,8 @@ var (
 	rangeComputed    func(max int)
 	failSave         func(Result) error
 	failWorktreeList func() error
+	saveRename       = (*os.Root).Rename
+	saveSleep        = time.Sleep
 )
 
 func dropBranch(root, branch string) {
@@ -2281,16 +2283,20 @@ func save(res Result) error {
 	if err := root.WriteFile(name+".tmp", data, 0o644); err != nil {
 		return err
 	}
-	for try := 1; ; try++ {
-		err = root.Rename(name+".tmp", name)
+	const budget = 2 * time.Second
+	for delay, waited := 10*time.Millisecond, time.Duration(0); ; {
+		err = saveRename(root, name+".tmp", name)
 		if err == nil {
 			return nil
 		}
-		if try == 20 {
+		if !renameBusy(err) || waited >= budget {
 			_ = root.Remove(name + ".tmp")
 			return err
 		}
-		time.Sleep(10 * time.Millisecond)
+		pause := min(delay, budget-waited)
+		saveSleep(pause)
+		waited += pause
+		delay = min(2*delay, 200*time.Millisecond)
 	}
 }
 

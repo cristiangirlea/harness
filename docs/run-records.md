@@ -6,6 +6,10 @@
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 
+Batch record saves retry permission errors during rename with growing pauses for up to
+two seconds. On Windows, sharing and byte-range lock violations are retried too.
+Other rename errors return immediately.
+
 Batch gate output is stored as UTF-8 after decoding detected UTF-16 shell output.
 A gate whose shell cannot start or be waited for includes an optional `infrastructure_error`
 reason; the task fails with that reason without retrying. Older gate records
