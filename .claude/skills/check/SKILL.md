@@ -23,7 +23,7 @@ test -z "$(git ls-files -co --exclude-standard -- '*.go' | xargs -r gofmt -l)"
 The gofmt step lists the repository's own Go files, so it does not walk batch worktrees under
 `.hrn/worktrees`; CI's `gofmt -l .` sees the same files on a clean checkout.
 
-CI also runs `go test -race -count=1 ./...` on Linux. It needs cgo: run it only where
+CI also runs `go test -race -count=1 -timeout 40m ./...` on Linux. It needs cgo: run it only where
 `go env CGO_ENABLED` prints 1 and a C compiler is present; on a Windows PC without one report it as
 "left to CI" and run `go test -count=3 -timeout 40m ./...` instead. The release dry run writes `dist/`
 (ignored). Nothing here may call a model API: never run `scripts/api-check.sh` or `hrn run`.
