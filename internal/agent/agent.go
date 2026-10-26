@@ -92,7 +92,24 @@ const (
 	EventUsage EventKind = "usage"
 	// EventCompaction puts its trigger in Text and prior context in Usage.ContextTokens.
 	EventCompaction EventKind = "compaction"
+	// EventQuota is how much of the plan's quota the backend reported used,
+	// in Event.Quota: the numbers only.
+	EventQuota EventKind = "quota"
 )
+
+// Quota is a plan's usage per window as a backend reported it. A window the
+// report did not carry is nil.
+type Quota struct {
+	FiveHour *QuotaWindow `json:"five_hour,omitempty"`
+	Week     *QuotaWindow `json:"week,omitempty"`
+}
+
+// QuotaWindow is one window: the percent of it used, 0 to 100, and when it
+// resets, in Unix seconds.
+type QuotaWindow struct {
+	UsedPercent float64 `json:"used_percent"`
+	ResetsAt    int64   `json:"resets_at"`
+}
 
 // Usage records per-call tokens including cached input.
 type Usage struct {
@@ -113,6 +130,7 @@ type Event struct {
 	IsError bool            `json:"is_error,omitempty"`
 	// Usage holds per-call counters, unlike Result.Usage.
 	Usage *Usage `json:"usage,omitempty"`
+	Quota *Quota `json:"quota,omitempty"`
 
 	// Partial fragments are rendered but excluded from transcripts.
 	Partial bool `json:"-"`

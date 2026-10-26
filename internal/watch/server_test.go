@@ -1773,3 +1773,41 @@ func TestBotMasksBeforeMakingWords(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaEventsStayOffTheRunTimeline(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quota := agent.Event{Kind: agent.EventQuota, Quota: &agent.Quota{Week: &agent.QuotaWindow{UsedPercent: 20, ResetsAt: 1793000000}}}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "first"})
+	w.Event(quota)
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	s, stop := openStream(t, srv.URL+"/stream/run/"+w.ID(), "")
+	defer stop()
+	// The live stream sends one item per listed event: the quota event, between
+	// the two texts, must not be one of them.
+	w.Event(agent.Event{Kind: agent.EventText, Text: "second"})
+	var items []string
+	for len(items) < 2 {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("stream ended early")
+		}
+		if m.event == "item" {
+			items = append(items, m.data)
+		}
+	}
+	if !strings.Contains(items[0], "first") || !strings.Contains(items[1], "second") {
+		t.Fatalf("the live stream lists the quota event: %q", items)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	page := viewAs(t, New(context.Background(), Options{}), "/run/"+w.ID(), "127.0.0.1:6000")
+	if !strings.Contains(page, "first") || strings.Contains(page, `<span class="tag">quota</span>`) || strings.Contains(page, ">quota<") {
+		t.Fatalf("the timeline lists the quota event:\n%s", page)
+	}
+}

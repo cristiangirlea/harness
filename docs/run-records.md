@@ -127,10 +127,10 @@ an ordinary follow-up, and old records without it still load.
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
   and, where the backend reports them, each model call's `usage` and each `compaction`
-  (see [Usage per turn](#usage-per-turn)). Codex's `Reconnecting... n/5` line is an `info`
-  event: the CLI retries its dropped model stream itself, and the run's status is what the
-  turn's end says. It is the run's error only when the stream ends on it (an `error`
-  event with the notice is then written at the end, since the CLI exits clean, and the
+  (see [Usage per turn](#usage-per-turn)) and each plan `quota` report (see [Quota](#quota)).
+  Codex's `Reconnecting... n/5` line is an `info` event: the CLI retries its dropped model
+  stream itself, and the run's status is what the turn's end says. It is the run's error
+  only when the stream ends on it (an `error` event with the notice is then written at the end, since the CLI exits clean, and the
   usage is `missing` as after `turn.failed`), or the turn then fails with no word of its
   own; an error before it stays the run's error (a usage limit then ends the run `limited`).
   When a CLI exits non-zero with the same text as the stream's last `error` event, that
@@ -366,6 +366,22 @@ than half from the turn before as a *probable* compaction; that is a reading of 
 numbers, never written to the record.
 
 Runs recorded before these events existed have none; the result's totals still hold.
+
+## Quota
+
+A `quota` event in `events.jsonl` is how much of the plan's quota the backend reported
+used, numbers only:
+
+```json
+{"t":"...","kind":"quota","quota":{"five_hour":{"used_percent":38,"resets_at":1792600000},
+ "week":{"used_percent":20,"resets_at":1793000000}}}
+```
+
+`used_percent` is 0 to 100 and `resets_at` is in Unix seconds; a window the report did not
+carry is left out. Claude Code's `rate_limit_event` writes one: its
+`rate_limit_info.unifiedWindows` (`five_hour`, `seven_day`, `utilization` 0 to 1), or, when
+those are missing, the one window its `rateLimitType` names. No other backend writes one;
+the watch Backends card and `hrn backends` read codex's quota from codex's own session files.
 
 ## The experience ledger
 

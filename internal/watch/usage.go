@@ -70,7 +70,11 @@ type turnRow struct {
 	Note                                          string
 }
 
-func isUsage(l Line) bool { return l.Err == nil && l.Event.Kind == agent.EventUsage }
+// isUsage reports whether an event stays off the timeline: a usage event is
+// drawn, never listed, and a quota event is shown on the Backends card.
+func isUsage(l Line) bool {
+	return l.Err == nil && (l.Event.Kind == agent.EventUsage || l.Event.Kind == agent.EventQuota)
+}
 
 func feedsChart(l Line) bool {
 	return l.Err == nil && (l.Event.Kind == agent.EventUsage || l.Event.Kind == agent.EventCompaction)
