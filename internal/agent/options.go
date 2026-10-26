@@ -164,6 +164,9 @@ func (o Options) Validate() error {
 	if o.AllowDangerous && tools.Guarded() {
 		return ErrGuardedRun
 	}
+	if o.InheritEnv && tools.Guarded() {
+		return ErrGuardedInherit
+	}
 	if math.IsNaN(o.MaxCostUSD) || math.IsInf(o.MaxCostUSD, 0) {
 		return fmt.Errorf("max cost must be finite")
 	}
@@ -175,6 +178,11 @@ func (o Options) Validate() error {
 // its CLI started with its environment. Lifting the guard is the operator's
 // call. The text names no variable: the model reads it.
 var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run: only the operator can lift the guard")
+
+// ErrGuardedInherit refuses inherit_env inside a guarded run for the same
+// reason: it would bring back the operator's own claude settings, plugins and
+// MCP servers that the run's agent was started without.
+var ErrGuardedInherit = errors.New("inherit_env is refused inside a guarded run: only the operator can give an agent their environment")
 
 // Over returns o with every unset field taken from base: a task's options over
 // its spec's. A switch left off inherits the spec's, so a task can turn one on

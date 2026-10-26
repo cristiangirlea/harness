@@ -23,6 +23,7 @@ func TestTheChildEnvironmentKeepsOnlyTheAllowlist(t *testing.T) {
 		"SSH_AUTH_SOCK=/agent", "AWS_ACCESS_KEY_ID=AKIA", "ANTHROPIC_API_KEY=sk", "OPENAI_API_KEY=sk", "NPM_TOKEN=n",
 		"DB_PASSWORD=p", "MY_SECRET=s", "SERVICE_CREDENTIALS=c", "DEPLOY_PRIVATE_KEY=k", "HRN_TENANT_TOKEN=t",
 		"OPERATOR_SETTING=x", "EDITOR=vim", "CLAUDECODE=1", "GOOGLE_API_KEY=g",
+		"HRN_TEST_DATABASE_URL=postgres://u:p@db", "HRN_SERVER_URL=https://u:p@hrn", "HRN_TLS_KEY_FILE=/k.pem",
 	}
 	windows := []string{
 		"SystemRoot=C:\\Windows", "ComSpec=C:\\Windows\\system32\\cmd.exe", "PATHEXT=.COM;.EXE", "APPDATA=C:\\a",
@@ -39,21 +40,28 @@ func TestTheChildEnvironmentKeepsOnlyTheAllowlist(t *testing.T) {
 		{"windows", concat(common, dropped, windows), concat(common, windows), len(dropped)},
 	} {
 		t.Run(tc.goos, func(t *testing.T) {
-			got, n := sanitizedEnv(tc.in, tc.goos)
+			got, n, secrets := sanitizedEnv(tc.in, tc.goos)
 			if !sameSet(got, tc.kept) {
 				t.Errorf("kept:\n got %v\nwant %v", got, tc.kept)
 			}
 			if n != tc.dropped {
 				t.Errorf("dropped %d, want %d", n, tc.dropped)
 			}
+			// The secret-looking ones are named, for the guard's line.
+			want := []string{"ANTHROPIC_API_KEY", "AWS_ACCESS_KEY_ID", "DB_PASSWORD", "DEPLOY_PRIVATE_KEY", "GH_TOKEN", "GITHUB_TOKEN",
+				"GIT_ASKPASS", "GOOGLE_API_KEY", "HRN_TENANT_TOKEN", "MY_SECRET", "NPM_TOKEN", "OPENAI_API_KEY",
+				"SERVICE_CREDENTIALS", "SSH_AUTH_SOCK"}
+			if !slices.Equal(secrets, want) {
+				t.Errorf("secret names:\n got %v\nwant %v", secrets, want)
+			}
 		})
 	}
 	// The CLI's own plan login passes though its name says token.
-	if got, _ := sanitizedEnv([]string{"CLAUDE_CODE_OAUTH_TOKEN=plan", "GH_TOKEN=x"}, "linux", "CLAUDE_CODE_OAUTH_TOKEN"); !slices.Equal(got, []string{"CLAUDE_CODE_OAUTH_TOKEN=plan"}) {
+	if got, _, _ := sanitizedEnv([]string{"CLAUDE_CODE_OAUTH_TOKEN=plan", "GH_TOKEN=x"}, "linux", "CLAUDE_CODE_OAUTH_TOKEN"); !slices.Equal(got, []string{"CLAUDE_CODE_OAUTH_TOKEN=plan"}) {
 		t.Errorf("the plan login must pass to its own CLI: %v", got)
 	}
 	// Windows names are case-insensitive; the original spelling is kept.
-	if got, _ := sanitizedEnv([]string{"Path=C:\\bin", "gh_token=x"}, "windows"); !slices.Equal(got, []string{"Path=C:\\bin"}) {
+	if got, _, _ := sanitizedEnv([]string{"Path=C:\\bin", "gh_token=x"}, "windows"); !slices.Equal(got, []string{"Path=C:\\bin"}) {
 		t.Errorf("names must match in any case: %v", got)
 	}
 }
@@ -83,17 +91,26 @@ func TestACLIChildDoesNotSeeThePlantedToken(t *testing.T) {
 	if got["GH_TOKEN"] != "" || got["OPERATOR_SETTING"] != "" || got["PATH_SET"] != "true" {
 		t.Fatalf("the sanitized CLI saw %v; want no GH_TOKEN, no OPERATOR_SETTING and a PATH", got)
 	}
-	line := ""
+	line, guard := "", ""
 	for _, l := range info {
-		if strings.HasPrefix(l, "environment:") {
+		switch {
+		case strings.HasPrefix(l, "environment:"):
 			line = l
+		case strings.HasPrefix(l, "guard:"):
+			guard = l
 		}
-		if strings.Contains(l, "GH_TOKEN") || strings.Contains(l, "OPERATOR_SETTING") || strings.Contains(l, "ghp_planted") || strings.Contains(l, "operator-value") {
-			t.Errorf("an info line names a dropped variable: %q", l)
+		// Never a value, and never an ordinary variable's name.
+		if strings.Contains(l, "OPERATOR_SETTING") || strings.Contains(l, "ghp_planted") || strings.Contains(l, "operator-value") {
+			t.Errorf("an info line names a dropped variable or shows a value: %q", l)
 		}
 	}
-	if !strings.Contains(line, "sanitized") || !strings.Contains(line, "variables dropped") {
-		t.Errorf("the run must say its environment was sanitized and how many variables were dropped: %q", info)
+	if !strings.Contains(line, "sanitized") || !strings.Contains(line, "variables dropped") || strings.Contains(line, "GH_TOKEN") {
+		t.Errorf("the run must say its environment was sanitized and how many variables were dropped, naming none: %q", info)
+	}
+	// The guard's line names the secret-looking ones, as it always has, so a
+	// CLI that logs in with a key says why it cannot, and how to let it.
+	if !strings.Contains(guard, "GH_TOKEN") || !strings.Contains(guard, "--inherit-env") {
+		t.Errorf("with the guard lifted the run must name the tokens the sanitized environment still leaves out: %q", guard)
 	}
 
 	got, info = run(Options{Mode: ModeYolo, AllowDangerous: true, InheritEnv: true})

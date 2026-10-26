@@ -185,10 +185,12 @@ yours as a whole (#411). They get:
 Anything else stays out: `GH_*`, `GIT_CONFIG_GLOBAL` and your own `GIT_CONFIG_*`
 entries, `SSH_AUTH_SOCK`, a `DATABASE_URL`, editor and tool settings. A name that says it
 holds a secret ([the guard's patterns](permissions.md#the-guard-for-every-backend))
-stays out even when it matches the list, `ANTHROPIC_API_KEY` among them: the api backend
-uses that key in-process, and the CLIs log in on their own. The guard still applies on
-top. The run's info events say `environment: sanitized, N variables dropped`, never
-which.
+stays out even when it matches the list, and so do hrn's own addresses and key files
+(`HRN_*_URL*`, `HRN_*KEY_FILE`). `ANTHROPIC_API_KEY` never reaches a CLI, with
+`--inherit-env` either: the api backend uses that key in-process, and the CLIs log in on
+their own. The guard still applies on top. The run's info events say `environment:
+sanitized, N variables dropped`, never which; the guard's line names the secret-looking
+ones, as it always has, so a CLI that logs in with a key says why it cannot.
 
 The claude backend also loads only the repository's own settings (`--setting-sources
 project`): your user and local settings, with their hooks, plugins and permission rules,
@@ -201,7 +203,8 @@ recorded in `task.json`) turns all of this off: the CLI gets your environment as
 and claude loads every setting source and MCP server. Use it for a repository whose
 installs or tests need something from your environment, a package registry token or a
 database address. The guard still applies, so a secret-looking token stays withheld
-without `--allow-dangerous` as well. The api backend does not start a CLI, so the option
+without `--allow-dangerous` as well. An hrn inside a guarded run refuses `inherit_env`, like
+`allow_dangerous`. The api backend does not start a CLI, so the option
 changes nothing there.
 
 ### Compaction window

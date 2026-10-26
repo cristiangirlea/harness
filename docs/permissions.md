@@ -100,7 +100,9 @@ whether a CLI passes its environment on to the servers it starts is that CLI's b
 An hrn that does see the guard refuses it too: the guarded environment sets `HRN_GUARDED`
 (it reaches codex's commands, checked live), the api loop sets it for its own MCP servers,
 and `hrn run --allow-dangerous` from an agent's shell is refused. A refused command tells
-the model only that the operator can lift the guard.
+the model only that the operator can lift the guard. `inherit_env` is refused inside a
+guarded run the same way: it would hand the agent's own hrn runs the operator's claude
+settings, plugins and MCP servers that the agent was started without.
 
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.
@@ -193,11 +195,14 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   from [an allowlisted environment](backends.md#a-clean-environment-for-cli-workers)
   without it unless the run passes `--inherit-env`;
 - a CLI that logs in with an API key (opencode or gemini with a key, claude on Bedrock or
-  Vertex) needs `--allow-dangerous`, which lifts the push guard as well;
+  Vertex) needs `--allow-dangerous --inherit-env`: the allowlisted environment leaves the
+  key out before the guard does, and `--allow-dangerous` lifts the push guard as well.
+  `ANTHROPIC_API_KEY` never reaches a CLI, whatever the switches: it is the api backend's;
 - under the guard no backend can push or open a pull request itself: handing work
   over is hrn's (batch keeps a branch per task) or the operator's.
 
-Every run says whether the guard is on, names the variables it withheld, and says what
-its backend leaves open: on codex, gemini and opencode, the secret files, the wrangler
-and cargo logins, and gh's login in the credential store. `--allow-dangerous` lifts all
-of it.
+Every run says whether the guard is on, names the secret-looking variables it or the
+allowlisted environment withheld, and says what its backend leaves open: on codex, gemini
+and opencode, the secret files, the wrangler and cargo logins, and gh's login in the
+credential store. `--allow-dangerous` lifts all of it; the variables the allowlisted
+environment left out need `--inherit-env` as well, and the line says so.

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -193,15 +194,18 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	// A nested Claude Code session refuses to start when it thinks it is
 	// inside another one.
 	cmd.Env = withoutEnv(os.Environ(), "CLAUDECODE")
+	// The api backend's key is for hrn itself; a CLI that found it would bill
+	// per token instead of logging in on its own.
+	cmd.Env = withoutEnv(cmd.Env, "ANTHROPIC_API_KEY")
 	cmd.Env = retrieval.ExecutorEnv(cmd.Env)
 	envLine := "environment: inherited (--inherit-env)"
+	var withheld []string
 	if !task.InheritEnv {
 		var dropped int
-		cmd.Env, dropped = sanitizedEnv(cmd.Env, runtime.GOOS, c.loginEnv...)
+		cmd.Env, dropped, withheld = sanitizedEnv(cmd.Env, runtime.GOOS, c.loginEnv...)
 		envLine = fmt.Sprintf("environment: sanitized, %d variables dropped (--inherit-env keeps them)", dropped)
 	}
 	guarded := !task.AllowDangerous
-	var withheld []string
 	if guarded {
 		// The logins tools keep on disk are looked for in an empty directory
 		// of the run's own.
@@ -210,7 +214,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 			return fail(StatusError, err)
 		}
 		defer os.RemoveAll(guardDir)
-		cmd.Env, withheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
+		var guardWithheld []string
+		cmd.Env, guardWithheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
+		withheld = slices.Compact(slices.Sorted(slices.Values(append(withheld, guardWithheld...))))
 	}
 	if c.promptStdin {
 		prompt := task.Prompt
@@ -233,10 +239,18 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
 	if guarded {
-		emit(Event{Time: time.Now(), Kind: EventInfo, Text: c.guardLine(withheld)})
-	} else {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: c.guardLine(withheld, task.InheritEnv)})
+	} else if task.InheritEnv {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the operator's credentials", c.name)})
+	} else {
+		// The tokens the allowlist dropped stay dropped: only the logins
+		// tools keep on disk and in the system's store are within reach.
+		text := fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the logins kept on disk and in the system's store", c.name)
+		if len(withheld) > 0 {
+			text += "; the sanitized environment still leaves out " + strings.Join(withheld, ", ") + " (--inherit-env passes them)"
+		}
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text})
 	}
 	tree, err := tools.StartTree(cmd)
 	if err != nil {
@@ -421,7 +435,7 @@ func init() {
 // guardLine is what a guarded run says about the guard, with what this CLI
 // leaves open. It says "pointed", not "cannot": an agent set on undoing the
 // guarded environment can, and the README says how.
-func (c *CLIBackend) guardLine(withheld []string) string {
+func (c *CLIBackend) guardLine(withheld []string, inherited bool) string {
 	text := "guard: git pushes are pointed at a dead end; gh, npm, cloud and container logins are out of reach; tokens and keys are withheld"
 	if len(withheld) > 0 {
 		// A CLI that logs in with one of these fails under the guard; this
@@ -432,6 +446,10 @@ func (c *CLIBackend) guardLine(withheld []string) string {
 		text += "; the CLI's own rules refuse publishing commands and secret files"
 	} else {
 		text += fmt.Sprintf("; unguarded on the %s backend: reading and writing secret files (.env, keys, .private), the wrangler and cargo logins, and gh's login in the system's credential store (gh auth token --user)", c.name)
+	}
+	if !inherited {
+		// The allowlist drops the tokens before the guard sees them.
+		return text + "; --allow-dangerous with --inherit-env lifts it"
 	}
 	return text + "; --allow-dangerous lifts it"
 }

@@ -43,3 +43,21 @@ func TestAGuardedRunCannotLiftTheGuard(t *testing.T) {
 		t.Errorf("the operator's hrn: %v", err)
 	}
 }
+
+// Nor does it hand an agent the operator's environment, and with it claude's
+// own settings, plugins and MCP servers.
+func TestAGuardedRunCannotInheritTheEnvironment(t *testing.T) {
+	t.Setenv(tools.GuardedVar, "1")
+	if err := (Options{InheritEnv: true}).Validate(); !errors.Is(err, ErrGuardedInherit) {
+		t.Errorf("Validate = %v, want ErrGuardedInherit", err)
+	}
+	runs := 0
+	res := Run(context.Background(), counting{&runs}, Task{Prompt: "p", Options: Options{InheritEnv: true}}, func(Event) {})
+	if runs != 0 || res.Status != StatusRefused {
+		t.Errorf("runs = %d, status %s; want refused before the backend runs", runs, res.Status)
+	}
+	t.Setenv(tools.GuardedVar, "")
+	if err := (Options{InheritEnv: true}).Validate(); err != nil {
+		t.Errorf("the operator's hrn: %v", err)
+	}
+}

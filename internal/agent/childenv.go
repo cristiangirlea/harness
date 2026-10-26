@@ -46,26 +46,37 @@ var childEnvWindows = []string{
 var childEnvPrefixes = []string{"LC_", "GCM_", "HRN_"}
 
 // sanitizedEnv returns the allowlisted part of env for an agent CLI on goos,
-// and how many variables it left out. keep names the CLI's plan login, which
-// passes although its name says secret.
-func sanitizedEnv(env []string, goos string, keep ...string) ([]string, int) {
-	out := make([]string, 0, len(childEnvNames))
-	dropped := 0
+// how many variables it left out, and the set ones among them whose names say
+// secret, by name, for the guard's line to list as it always has (a CLI that
+// logs in with a key fails without it). keep names the CLI's plan login,
+// which passes although its name says secret.
+func sanitizedEnv(env []string, goos string, keep ...string) (out []string, dropped int, secrets []string) {
+	out = make([]string, 0, len(childEnvNames))
 	for _, kv := range env {
-		k, _, _ := strings.Cut(kv, "=")
+		k, v, _ := strings.Cut(kv, "=")
 		key := strings.ToUpper(k) // Windows names are case-insensitive
-		if slices.Contains(keep, key) || !tools.SecretEnv(key) && childEnvAllowed(key, goos) {
+		secret := tools.SecretEnv(key)
+		if slices.Contains(keep, key) || !secret && childEnvAllowed(key, goos) {
 			out = append(out, kv)
-		} else {
-			dropped++
+			continue
+		}
+		dropped++
+		if secret && v != "" && !slices.Contains(secrets, key) {
+			secrets = append(secrets, key)
 		}
 	}
-	return out, dropped
+	slices.Sort(secrets)
+	return out, dropped, secrets
 }
 
 func childEnvAllowed(key, goos string) bool {
 	if slices.Contains(childEnvNames, key) || goos == "windows" && slices.Contains(childEnvWindows, key) {
 		return true
+	}
+	// hrn's own addresses and files stay out: a database or server address
+	// can carry a password, and a key file is a key (HRN_TLS_KEY_FILE).
+	if strings.HasPrefix(key, "HRN_") && (strings.Contains(key, "_URL") || strings.HasSuffix(key, "KEY_FILE")) {
+		return false
 	}
 	return slices.ContainsFunc(childEnvPrefixes, func(p string) bool { return strings.HasPrefix(key, p) })
 }
