@@ -21,6 +21,11 @@ type PruneResult struct {
 // Prune selects old runs except keep newest, protected ids, active writers and unknown names.
 // Retain kept continuation chains; dryRun only reports.
 func Prune(cutoff time.Time, keep int, protect map[string]bool, dryRun bool) (PruneResult, error) {
+	return PruneOnly(cutoff, keep, protect, nil, dryRun)
+}
+
+// PruneOnly is Prune that removes no run outside only, so a caller can act on a dry run's list first.
+func PruneOnly(cutoff time.Time, keep int, protect, only map[string]bool, dryRun bool) (PruneResult, error) {
 	var res PruneResult
 	entries, err := os.ReadDir(Root())
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -37,7 +42,7 @@ func Prune(cutoff time.Time, keep int, protect map[string]bool, dryRun bool) (Pr
 	remove := map[string]bool{}
 	var kept []string
 	for i, id := range ids {
-		if i < keep || protect[id] || !idBefore(id, cutoff) || stillRunning(id) {
+		if i < keep || protect[id] || only != nil && !only[id] || !idBefore(id, cutoff) || stillRunning(id) {
 			kept = append(kept, id)
 			continue
 		}

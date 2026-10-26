@@ -118,6 +118,12 @@ func keptFiles(root string) []string {
 	return files
 }
 
+// Kept reports whether file starts with a kept-script header, as scripts/verify.sh reads it.
+func Kept(file string) bool {
+	header := readHeader(file)
+	return header["name"] != "" && header["summary"] != ""
+}
+
 // Match scripts/verify.sh header boundaries so hints describe the verified script.
 func readHeader(file string) map[string]string {
 	header := map[string]string{}
