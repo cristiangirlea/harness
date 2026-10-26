@@ -16,9 +16,7 @@ func BackendPreferences(home string) (prefs.Prefs, error) {
 	return p, nil
 }
 
-// DefaultBackendNameIn selects an installed preferred backend. Entry points
-// validate the preferences separately so malformed files are reported as errors.
-// Without a preference the historical default is unchanged.
+// DefaultBackendNameIn prefers installed, enabled backends.
 func DefaultBackendNameIn(home string) string {
 	p, err := BackendPreferences(home)
 	if err != nil || len(p.EnabledNames) == 0 {
@@ -38,10 +36,15 @@ func DefaultBackendNameIn(home string) string {
 	if p.Enabled("api") && installed("api") {
 		return "api"
 	}
-	for _, name := range p.Filter(Names()) {
+	enabled := p.Filter(Names())
+	for _, name := range enabled {
 		if installed(name) {
 			return name
 		}
 	}
-	return "claude"
+	// None is installed: name an enabled one, so the error says it is missing, not disabled.
+	if p.Default() != "" {
+		return p.Default()
+	}
+	return enabled[0] // never empty: BackendPreferences refuses unregistered names
 }

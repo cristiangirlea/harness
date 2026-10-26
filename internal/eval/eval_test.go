@@ -2,9 +2,12 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +16,73 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func TestVariantsOverrideLeanAndPreserveUnsetValues(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, taskLean := range []*bool{nil, agent.Bool(false), agent.Bool(true)} {
+		var spec Spec
+		if err := json.Unmarshal([]byte(`{"backend":"claude","lean":true,"matrix":[{"name":"inherit"},{"name":"lean","lean":true},{"name":"full","lean":false}],"tasks":[{"id":"one","prompt":"test"}]}`), &spec); err != nil {
+			t.Fatal(err)
+		}
+		spec.Tasks[0].Lean = taskLean
+		bs, err := Expand(spec, "abc12")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, want := range []*bool{taskLean, agent.Bool(true), agent.Bool(false)} {
+			got := bs.Tasks[i].Lean
+			if (got == nil) != (want == nil) || got != nil && want != nil && *got != *want {
+				t.Errorf("task lean %v, variant %s: lean = %v, want %v", taskLean, spec.Matrix[i].Name, got, want)
+			}
+		}
+		if !bs.IsLean() {
+			t.Error("spec lean default was lost")
+		}
+		data, err := json.Marshal(spec.Matrix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var variants []map[string]any
+		if err := json.Unmarshal(data, &variants); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := variants[0]["lean"]; present || variants[1]["lean"] != true || variants[2]["lean"] != false {
+			t.Errorf("variant lean values did not round-trip: %s", data)
+		}
+	}
+}
+
+func TestVariantLeanRequiresAResolvedBackendThatAppliesIt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, source := range []string{"variant", "task", "spec", "default"} {
+		for _, backend := range []string{"claude", "codex", "api", "gemini", "opencode", "agy"} {
+			for _, lean := range []bool{false, true} {
+				var spec Spec
+				if err := json.Unmarshal([]byte(`{"matrix":[{"name":"test","lean":`+fmt.Sprint(lean)+`}],"tasks":[{"id":"one","prompt":"test"}]}`), &spec); err != nil {
+					t.Fatal(err)
+				}
+				switch source {
+				case "variant":
+					spec.Matrix[0].Backend = backend
+				case "task":
+					spec.Tasks[0].Backend = backend
+				case "spec":
+					spec.Backend = backend
+				case "default":
+					backend = agent.DefaultBackendNameIn(runlog.Home())
+				}
+				_, err := Expand(spec, "abc12")
+				if backend == "claude" || backend == "codex" {
+					if err != nil {
+						t.Errorf("%s lean=%v: %v", source, lean, err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), "lean") || !strings.Contains(err.Error(), "claude and codex") {
+					t.Errorf("%s backend=%s lean=%v: got %v, want a claude-and-codex-only lean error", source, backend, lean, err)
+				}
+			}
+		}
+	}
+}
 
 func TestExpandShapeToolsVariants(t *testing.T) {
 	spec := testSpec("somewhere")
@@ -45,7 +115,8 @@ func (s stub) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent
 		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt), 0o644)
 	}
 	return agent.Result{Backend: s.name, Model: task.Model, Status: agent.StatusOK,
-		Final: "done", Turns: 2, InputTokens: 100, OutputTokens: 10, CostUSD: 0.25, CostEstimate: true}
+		Final: "done", Turns: 2, InputTokens: 100, OutputTokens: 10, CostUSD: 0.25, CostEstimate: true,
+		Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "reported"}}
 }
 
 func init() {
@@ -182,6 +253,29 @@ func TestExpandRejectsBadSpecs(t *testing.T) {
 	}
 }
 
+// A cell with its own empty gate list would run gateless but be saved and
+// diffed as gated, so the eval is refused before any cell runs or is recorded.
+func TestAnEvalRefusesATaskWithAnEmptyGateList(t *testing.T) {
+	dir := initRepo(t)
+	p := filepath.Join(t.TempDir(), "eval.json")
+	body := `{"dir":` + strconv.Quote(dir) + `,"gate":["test -f out.txt"],"matrix":[{"backend":"ev-ok"}],` +
+		`"tasks":[{"id":"alpha","prompt":"do alpha"},{"id":"beta","prompt":"do beta","gate":[]}]}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := LoadSpec(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, res, err := Run(context.Background(), spec, nil); err == nil || !strings.Contains(err.Error(), "beta") ||
+		!strings.Contains(err.Error(), "empty gate list") || len(res.Tasks) != 0 {
+		t.Fatalf("err = %v, tasks = %d; want beta refused before anything ran", err, len(res.Tasks))
+	}
+	if recs, _, err := ListAll(); err != nil || len(recs) != 0 {
+		t.Errorf("no eval should be recorded: %d records, err = %v", len(recs), err)
+	}
+}
+
 func TestRunScoresEachVariant(t *testing.T) {
 	dir := initRepo(t)
 	rec, res, err := Run(context.Background(), testSpec(dir), nil)
@@ -203,7 +297,7 @@ func TestRunScoresEachVariant(t *testing.T) {
 		t.Errorf("ok = %+v, lazy = %+v", ok, lazy)
 	}
 	if ok.MedianContext != 100 {
-		t.Errorf("context should count prompt tokens and cache reads: %+v", ok)
+		t.Errorf("context should count every input token once: %+v", ok)
 	}
 	if ok.MedianCostUSD != 0.25 || !ok.CostEstimate {
 		t.Errorf("cost should come from the attempts: %+v", ok)
@@ -269,5 +363,148 @@ func TestAnEvalNeverSwitchesBackends(t *testing.T) {
 	// the other one under its name.
 	if !bs.NoSwitch {
 		t.Error("the batch an eval runs must set no_switch")
+	}
+}
+
+func TestAnEvalFailsACellThatChangedAProtectedFileUnlessItSaysOtherwise(t *testing.T) {
+	bs, err := Expand(testSpec("somewhere"), "abc12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bs.ProtectMode != batch.ProtectFail {
+		t.Errorf("protect_mode = %q, want %q by default in an eval", bs.ProtectMode, batch.ProtectFail)
+	}
+	spec := testSpec("somewhere")
+	spec.ProtectMode = batch.ProtectReport
+	if bs, err = Expand(spec, "abc12"); err != nil || bs.ProtectMode != batch.ProtectReport {
+		t.Errorf("protect_mode = %q (%v), want the spec's own %q", bs.ProtectMode, err, batch.ProtectReport)
+	}
+}
+
+// ev-tamper does the work and also changes README.md, which a spec may protect.
+type tamperStub struct{ stub }
+
+func (s tamperStub) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	_ = os.WriteFile(filepath.Join(task.Dir, "README.md"), []byte("weakened\n"), 0o644)
+	return s.stub.Run(ctx, task, emit)
+}
+
+func init() { agent.Register(tamperStub{stub{"ev-tamper", true}}) }
+
+func TestAnEvalCellThatChangedAProtectedFileFailsByDefault(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		protect  []string
+		specMode string
+		taskMode string
+		passed   int
+	}{
+		{"changed, eval default", []string{"README.md"}, "", "", 0},
+		{"changed, spec says report", []string{"README.md"}, batch.ProtectReport, "", 1},
+		{"changed, task says report", []string{"README.md"}, "", batch.ProtectReport, 1},
+		{"only an added file is protected", []string{"out.txt"}, "", "", 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var spec Spec
+			spec.Dir = initRepo(t)
+			spec.Gate = []string{"test -f out.txt"}
+			spec.Protect, spec.ProtectMode = c.protect, c.specMode
+			spec.Tasks = []batch.Task{{ID: "alpha", Prompt: "do alpha", ProtectMode: c.taskMode}}
+			spec.Matrix = []Variant{{Backend: "ev-tamper"}}
+			rec, res, err := Run(context.Background(), spec, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rec.Table.Variants[0].Passed; got != c.passed {
+				t.Errorf("passed = %d, want %d: %+v", got, c.passed, res.Tasks[0].Attempts)
+			}
+		})
+	}
+}
+
+// ev-half does task alpha at a full context and, after one look, gives up on the others cheaply.
+type halfStub struct{ stub }
+
+func (s halfStub) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	emit(agent.Event{Kind: agent.EventToolCall, Tool: "Read", Text: "out.txt"})
+	tokens := int64(10)
+	if strings.Contains(task.Prompt, "alpha") {
+		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt), 0o644)
+		tokens = 1000
+	}
+	return agent.Result{Backend: s.name, Status: agent.StatusOK, Final: "done", Turns: 1,
+		InputTokens: tokens, CostUSD: float64(tokens) / 1000, Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "reported"}}
+}
+
+func init() { agent.Register(halfStub{stub{"ev-half", false}}) }
+
+func TestAVariantsMediansOverPassingCellsLeaveCheapFailuresOut(t *testing.T) {
+	spec := testSpec(initRepo(t))
+	spec.Matrix = []Variant{{Backend: "ev-half"}}
+	rec, _, err := Run(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := rec.Table.Variants[0]
+	if v.Passed != 2 || v.MedianContext != 505 || v.MedianContextPassed != 1000 || v.MedianCostPassedUSD != 1 || !v.PassedCostKnown {
+		t.Errorf("row = %+v; want 2 passes, all-cells context 505, passing context 1000 and cost $1", v)
+	}
+}
+
+// ev-idle works on alpha and, on any other task, answers in one turn without a tool call or a change.
+type idleStub struct{ stub }
+
+func (s idleStub) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	if strings.Contains(task.Prompt, "alpha") {
+		emit(agent.Event{Kind: agent.EventToolCall, Tool: "Write", Text: "out.txt"})
+		_ = os.WriteFile(filepath.Join(task.Dir, "out.txt"), []byte(task.Prompt), 0o644)
+		return s.stub.Run(ctx, task, emit)
+	}
+	return agent.Result{Backend: s.name, Status: agent.StatusOK, Final: "I can't access the repository files.", Turns: 1,
+		InputTokens: 34000, Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "reported"}}
+}
+
+func init() { agent.Register(idleStub{stub{"ev-idle", false}}) }
+
+func TestACellThatNeverActedIsCountedApartFromFailures(t *testing.T) {
+	spec := testSpec(initRepo(t))
+	spec.Matrix = []Variant{{Backend: "ev-idle"}}
+	rec, _, err := Run(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := rec.Table.Variants[0]
+	if v.Attempts != 4 || v.Passed != 2 || v.DidNotAct != 2 || v.PassRate() != 1 {
+		t.Errorf("row = %+v (pass rate %v); want 4 cells, 2 passes, 2 that did not act, a pass rate of 1 over the cells that acted", v, v.PassRate())
+	}
+	if v.MedianContext != 100 || v.MedianTurns != 2 {
+		t.Errorf("medians = context %v, turns %v; the cells that never acted must stay out of them", v.MedianContext, v.MedianTurns)
+	}
+	for _, row := range rec.Table.Tasks {
+		want := map[string]string{"alpha": "2/2", "beta": "0/0 +2 did not act"}[row.Task]
+		if row.Score() != want {
+			t.Errorf("task %s scores %q, want %q", row.Task, row.Score(), want)
+		}
+	}
+}
+
+func TestAnAnswerOnlyTaskThatFailsWithoutAToolCallStillActed(t *testing.T) {
+	var spec Spec
+	spec.Dir = initRepo(t)
+	spec.Tasks = []batch.Task{{ID: "beta", Prompt: "is there a bug in beta?", Expect: "^yes"}}
+	spec.Matrix = []Variant{{Backend: "ev-idle"}}
+	rec, _, err := Run(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := rec.Table.Variants[0]; v.DidNotAct != 0 || v.Attempts != 1 || v.Passed != 0 {
+		t.Errorf("row = %+v; the answer is the work, so a wrong one is a failure", v)
+	}
+}
+
+func TestATasksScoreKeepsTheCellsThatNeverActedBesideItsCount(t *testing.T) {
+	r := TaskRow{Passed: 1, Total: 2, DidNotAct: 1, Judged: 1, MeanScore: 8}
+	if got := r.Score(); got != "1/1 +1 did not act 8.0" {
+		t.Errorf("score = %q", got)
 	}
 }

@@ -53,6 +53,35 @@ with `HRN_CONTROL_URL`, `HRN_FIXTURE_API_URL`, `HRN_PROJECT_ID`,
 `HRN_WORKER_TOKEN`, and an existing absolute `HRN_WORKSPACE_ROOT`. The worker
 command is `go run ./cmd/hrn-worker`.
 
+Tenant budgets and spending reservation are not enforced yet (still open in
+the durable workers spec): any tenant can queue any number of jobs, each up to
+its own `max_cost_usd`. Set `HRN_MAX_COST_USD_PER_JOB` (a positive number of
+USD) to cap that ceiling: a submission above it is refused with 422
+`cost_limit` naming the limit, and an invalid value stops startup. Unset means
+no server cap. Clients can add their own with `HRN_REMOTE_MAX_COST_USD`.
+
+## Job events
+
+`GET /v1/jobs/{job}/events?tenant_id=...&project_id=...` requires the tenant's
+bearer token. By default it returns a JSON page of up to 100 events. Set
+`Accept: text/event-stream` to receive the backlog and then live events, polled
+once per second. Resume after the last received event ID using `after` or
+`Last-Event-ID`; if both are supplied they must match. A job's event IDs
+become visible in increasing order, because each event is written while its job's
+row is locked, so a cursor never skips an event that commits later.
+
+Each control service instance allows at most four open SSE streams per tenant,
+shared across its projects and jobs. Further streams receive HTTP 429 with a
+JSON `stream_limit` error. A slot is released whenever its stream ends, including
+client disconnects. JSON event requests do not consume stream slots.
+
+A stream drains the backlog and closes when the job is `succeeded`, `failed`,
+or `canceled`, including when it receives that terminal event live. An already
+terminal job with no events after the cursor closes immediately. States such as
+`waiting_approval` and `recovery_required` remain live. Streams also close after
+30 minutes; reconnect with the last received cursor to continue without replaying
+earlier events.
+
 ## Schema and recovery
 
 Migration 001 creates the control schema. Migration 002 snapshots the project
@@ -60,10 +89,28 @@ repository URL when a job is accepted. It refuses to upgrade a schema 1
 database that contains jobs, because their accepted URLs cannot be recovered
 safely. Migration 003 adds scoped, immutable project knowledge and retrieval
 records. The integration tests cover both refusal and the empty schema upgrade.
+Opening an older schema requests the explicit `migrate` command; startup never
+migrates it automatically.
 The worker uses version 2 workspace manifests and refuses older or mismatched
 manifests. An uncertain operation enters `recovery_required` instead of being
 silently replayed. The control service does not independently verify that an
 old worker or node has stopped.
+
+The checkpoint store is a trust boundary: it must commit before acknowledging a
+save, fence stale owners, and preserve immutable versions. The API checkpoint's
+task digest binds task settings, not the stored `Result.CostUSD`, `Started`, or
+`Deadline`. Recovery trusts those values from the store; changing them can reset
+spent budget or the clock. Keep checkpoint write access and store credentials
+outside execution tools and untrusted workspace/model content.
+
+The cost ceiling prevents the next model request. Tools from an already paid,
+checkpointed response still run on recovery even if that response reached the
+ceiling; their committed outcomes are not repeated. The original deadline still
+applies. Cancellation or timeout between committed operations reports `canceled`
+or `timeout` without `recovery_required`. A definite non-retryable HTTP 4xx is
+an error without recovery; a context-management 400 retries without that feature
+after saving a new model intent. Interrupted requests, retryable HTTP errors,
+and failed checkpoint saves remain uncertain and require recovery.
 
 ## Approved project knowledge
 
@@ -73,6 +120,16 @@ rejected. Read clients use `HRN_SERVER_URL`, `HRN_TENANT_TOKEN` (or the exact
 project's worker token), and optionally `HRN_SERVER_CA_FILE`. Knowledge
 commands use `HRN_OPERATOR_TOKEN` for mutations and never fall back to the
 read credential. Credentials stay outside request files and packets.
+Operator review is the control: the import deny list screens every text field
+but catches obvious mistakes only, including private credential paths, key
+headers, common token shapes, and a few instruction-injection phrases.
+The `.env` path check matches whole segments (split on `/`, whitespace, quotes,
+`=`, `,` and `;`) and `.env.<suffix>` files; `.envrc` and `docs/.environment.md`
+are allowed. Path checks apply to paths, keys and identifiers, not to the prose
+of `content`, `evidence` and `review_evidence`, so a note such as "copy
+.env.example to .env" imports; key headers and token shapes are refused in every field.
+Import refusals name the field and deny-list pattern that matched, without
+including the submitted text.
 
 The API uses these scoped JSON operations:
 
@@ -117,6 +174,11 @@ rollback need scope and expected_generation. `search.json` adds query and
 optionally version_id; `inspect.json` adds version_id. Inputs reject unknown
 fields, including credential fields. Search matches exact scope and ranks
 identifiers, paths, and errors before `simple` text matches, with stable ties.
+Identifiers may include spaces for multi-word errors. Exact query candidates
+also omit trailing sentence periods and colons, preserving internal path punctuation.
+Joined candidates contain at most 8 words; each search sends at most 256 exact
+candidates, each limited to 256 bytes.
+The optional search `attempt` must be between 0 and 2147483647 inclusive.
 An empty or no-match packet is valid; packets contain at most 8192 bytes of
 reference text and an audit ID.
 

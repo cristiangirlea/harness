@@ -317,20 +317,70 @@ func TestPrintBatchTable(t *testing.T) {
 	r := newRenderer(false)
 	r.out, r.color = &out, false
 	printBatch(r, batch.Result{ID: "b1", Dir: "/repo", Duration: 90 * time.Second, Tasks: []batch.TaskResult{
-		{ID: "done", Status: batch.StatusPass, Branch: "hrn/done", Attempts: []batch.Attempt{{Backend: "api"}}},
+		{ID: "done", Purpose: "review", Status: batch.StatusPass, Branch: "hrn/done", Attempts: []batch.Attempt{{Backend: "api"}}},
+		{ID: "own", Status: batch.StatusPass, Branch: "hrn/own", Attempts: []batch.Attempt{{Backend: "codex", AgentCommitted: true}}},
 		{ID: "going", Status: batch.StatusRunning, Branch: "hrn/going"},
 		{ID: "failed", Status: batch.StatusFail, Branch: "hrn/failed", Attempts: []batch.Attempt{{Backend: "claude"}, {Backend: "claude"}}},
 	}})
 	text := out.String()
+	if strings.Count(text, "agent committed") != 1 {
+		t.Errorf("only the task whose agent committed is marked:\n%s", text)
+	}
 	for _, want := range []string{
-		"done", "pass", "hrn/done", "1 attempt(s)",
+		"done", "pass", "review", "hrn/done", "1 attempt(s)",
 		"going", "running",
 		"failed", "2 attempt(s)",
-		"1/3 passed", "1 still running", "hrn batch merge b1", "hrn batch rm b1",
+		"own", "agent committed",
+		"2/4 passed", "1 still running", "hrn batch merge b1", "hrn batch rm b1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("table is missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestBatchShowDisplaysPassingAttemptNotes(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	note := "commit not recorded: the branch tip abc1234 does not contain the base"
+	res := batch.Result{ID: "notes", Tasks: []batch.TaskResult{{
+		ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: note}},
+	}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	var table strings.Builder
+	r := newRenderer(false)
+	r.out, r.color = &table, false
+	printBatch(r, res)
+	if !strings.Contains(table.String(), "\n    attempt 1 note: "+note+"\n") {
+		t.Errorf("table omitted the attempt note: %s", table.String())
+	}
+	rd, wr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = wr
+	defer func() { os.Stdout = old }()
+	code, showErr := cmdBatchShow([]string{res.ID})
+	_ = wr.Close()
+	out, err := io.ReadAll(rd)
+	_ = rd.Close()
+	if err != nil || showErr != nil || code != 0 || !strings.Contains(string(out), note) {
+		t.Errorf("batch show = %d, %v, %v, %s: want the passing attempt note", code, showErr, err, out)
+	}
+}
+
+func TestBatchAttemptNotesCannotSendTerminalControls(t *testing.T) {
+	res := batch.Result{ID: "controls", Tasks: []batch.TaskResult{{
+		ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: "commit: \x1b]0;title\x07 \x1b[31mred\u009b"}},
+	}}}
+	var table strings.Builder
+	r := newRenderer(false)
+	r.out, r.color = &table, false
+	printBatch(r, res)
+	if out := table.String(); strings.ContainsAny(out, "\x1b\x07\u009b") || !strings.Contains(out, "attempt 1 note: commit:") {
+		t.Errorf("the note reached the terminal with its control characters: %q", out)
 	}
 }
 

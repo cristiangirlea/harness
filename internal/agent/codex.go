@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"cmp"
 	"encoding/json"
 	"math"
@@ -12,13 +13,12 @@ import (
 	"time"
 )
 
-// ---- codex ----------------------------------------------------------------
+// NewCodexBackend drives the Codex CLI.
 func NewCodexBackend() *CLIBackend {
 	return &CLIBackend{
 		name: "codex",
 		candidates: func() []string {
 			c := npmShim("codex")
-			// The Codex desktop app ships its own CLI, in one directory per build.
 			if runtime.GOOS == "windows" {
 				c = append(c, newestFile(filepath.Join(os.Getenv("LOCALAPPDATA"), "OpenAI", "Codex", "bin"), "codex.exe")...)
 			}
@@ -26,7 +26,7 @@ func NewCodexBackend() *CLIBackend {
 		},
 		promptStdin: true,
 		args: func(t Task, _ string) []string {
-			// exec's own options go before a fork subcommand, which applies them.
+			// exec's options go before a fork subcommand, which applies them.
 			a := []string{"exec", "--json", "--skip-git-repo-check", "-C", t.Dir}
 			if t.Model != "" {
 				a = append(a, "-m", t.Model)
@@ -34,12 +34,12 @@ func NewCodexBackend() *CLIBackend {
 			if t.Effort != "" {
 				a = append(a, "-c", "model_reasoning_effort="+t.Effort)
 			}
+			a = append(a, codexMCPArgs(t)...)
 			switch t.Mode {
 			case ModeReadOnly, ModeAsk:
 				a = append(a, "--sandbox", "read-only")
 			case ModeAuto:
-				// What --full-auto meant before codex 0.155 dropped it: exec never
-				// asks, so the sandbox is the whole policy.
+				// Exec cannot prompt, so its sandbox must enforce the policy.
 				a = append(a, "--sandbox", "workspace-write")
 			case ModeYolo:
 				a = append(a, "--dangerously-bypass-approvals-and-sandbox")
@@ -49,19 +49,106 @@ func NewCodexBackend() *CLIBackend {
 			}
 			return append(a, "-")
 		},
+		env:        codexMCPEnv,
 		parse:      parseCodexStream,
 		end:        codexStreamEnded,
+		exited:     codexReportModel,
 		forks:      true,
 		mapsEffort: true,
 		mapsModes:  []Mode{ModeReadOnly, ModeAuto, ModeYolo},
 		mapsModel:  true,
+		mapsMCP:    true,
+		mapsLean:   true,
 		limits:     true,
 	}
 }
 
-// newestFile lists root/<dir>/name for every subdirectory that has one, most
-// recently modified first. The Codex app names its build directories by hash,
-// so their names say nothing about which is current.
+// codexReportModel takes the model from the session's rollout file: exec --json names none.
+func codexReportModel(t Task, started time.Time, res *Result) {
+	model, version := codexRollout(codexHomeDir(t.Dir), res.Session, started, time.Now())
+	res.CLIVersion = version
+	if model == "" {
+		return
+	}
+	res.Model, res.ModelReported = model, true
+	if res.Usage != nil {
+		estimateCodexCost(res)
+	}
+}
+
+// codexRollout reads the last turn's model and the CLI version codex recorded for session.
+func codexRollout(home, session string, started, now time.Time) (model, version string) {
+	if home == "" || !sessionID.MatchString(session) {
+		return "", ""
+	}
+	// Folders are named by the session's local start date; a day either side covers time zones.
+	first := started.AddDate(0, 0, -1)
+	first = time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, first.Location())
+	for day := first; !day.After(now.AddDate(0, 0, 1)); day = day.AddDate(0, 0, 1) {
+		dir := filepath.Join(home, "sessions", filepath.FromSlash(day.Format("2006/01/02")))
+		// ReadDir, not Glob: a home path may hold pattern characters such as [.
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, "-"+session+".jsonl") {
+				continue
+			}
+			if model, version, ok := readCodexRollout(filepath.Join(dir, name), session); ok {
+				return model, version
+			}
+		}
+	}
+	return "", ""
+}
+
+func readCodexRollout(path, session string) (model, version string, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", false
+	}
+	defer f.Close()
+	r := bufio.NewReader(f)
+	for {
+		raw, err := r.ReadBytes('\n')
+		if len(raw) == 0 && err != nil {
+			break
+		}
+		var line struct {
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		// A line codex cut short when it was killed is skipped, not fatal.
+		if json.Unmarshal(raw, &line) != nil {
+			continue
+		}
+		var p struct {
+			ID         string `json:"id"`
+			Model      string `json:"model"`
+			CLIVersion string `json:"cli_version"`
+		}
+		if (line.Type != "session_meta" || ok) && line.Type != "turn_context" || json.Unmarshal(line.Payload, &p) != nil {
+			continue
+		}
+		switch line.Type {
+		case "session_meta":
+			// The first session_meta names the file's own session; later ones are ignored.
+			if p.ID != session {
+				return "", "", false
+			}
+			ok = true
+			if ValidModel(p.CLIVersion) {
+				version = p.CLIVersion
+			}
+		case "turn_context":
+			if ValidModel(p.Model) {
+				model = p.Model
+			}
+		}
+	}
+	return model, version, ok
+}
+
+// Hashed build names require ordering by modification time.
 func newestFile(root, name string) []string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -106,7 +193,7 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			OutputTokens      *int64 `json:"output_tokens"`
 		} `json:"usage"`
 		Message string `json:"message"`
-		// turn.failed carries its text here rather than in Message.
+		// Error carries turn.failed diagnostics outside Message.
 		Error struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -117,7 +204,6 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 	now := time.Now()
 	switch l.Type {
 	case "thread.started":
-		// A fork reports its new thread here, not the one it copied.
 		res.Session = l.ThreadID
 	case "item.started":
 		if l.Item.Type == "command_execution" {
@@ -137,7 +223,6 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 	case "turn.completed":
 		res.Turns++
 		if codexReconnecting(res.Error) {
-			// The turn survived its reconnects: the notice was not the end.
 			res.Status, res.Error = "", ""
 		}
 		if l.Usage == nil || l.Usage.InputTokens == nil || l.Usage.CachedInputTokens == nil || l.Usage.OutputTokens == nil {
@@ -146,7 +231,6 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 			if res.Usage == nil {
 				res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "reported", CostStatus: "missing"}
 			}
-			// Check the whole turn before adding it; missing usage stays missing.
 			for _, counter := range [][2]int64{
 				{res.InputTokens, *l.Usage.InputTokens},
 				{res.CacheRead, *l.Usage.CachedInputTokens},
@@ -166,12 +250,7 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 	case "error", "turn.failed":
 		msg := cmp.Or(l.Message, l.Error.Message)
 		if l.Type == "error" && codexReconnecting(msg) {
-			// The CLI lost its model stream and retries by itself; the turn
-			// goes on. The notice is shown as information and stands as the
-			// run's error only until turn.completed, so a stream that ends on
-			// it still says why. An error already recorded (a usage limit)
-			// stays: it is what the reader and the limit check need. The
-			// usage the turn reports later is whole.
+			// Reconnect notices remain provisional; preserve earlier errors.
 			emit(Event{Time: now, Kind: EventInfo, Text: msg})
 			if res.Error == "" || codexReconnecting(res.Error) {
 				res.Status, res.Error = StatusError, msg
@@ -181,9 +260,7 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 		res.Usage = &UsageMetadata{InputSemantics: "inclusive_cache", Status: "missing", CostStatus: "missing"}
 		estimateCodexCost(res)
 		if msg == "" || msg == res.Error {
-			// A turn.failed after the error line that said why: keep that text,
-			// which is what a reader and the limit check need. A reconnect
-			// notice was shown as information, so the failure is reported here.
+			// Keep the failure text needed for display and plan-limit detection.
 			if res.Error != "" && !codexReconnecting(res.Error) {
 				break
 			}
@@ -195,13 +272,7 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 	return true
 }
 
-// codexStreamEnded runs when the CLI exited clean. A stream that ends on a
-// pending reconnect notice never completed its turn: parseCodexStream showed
-// the notice as information, and a clean exit writes no error event, so the
-// failure is reported here with the notice as its text, unless a turn.failed
-// after the notice already reported it. The turn's usage was never reported
-// either, so what an earlier turn reported is marked missing, as turn.failed
-// marks it; the counters so far are kept.
+// Exit during reconnect means failure and missing turn usage.
 func codexStreamEnded(emit func(Event), res *Result, errored bool) {
 	if res.Status != StatusError || !codexReconnecting(res.Error) {
 		return
@@ -213,9 +284,6 @@ func codexStreamEnded(emit func(Event), res *Result, errored bool) {
 	}
 }
 
-// codexReconnecting reports whether a codex error line is the CLI saying it is
-// retrying a dropped model stream ("Reconnecting... 2/5 (...)"), which the turn
-// may still survive.
 func codexReconnecting(msg string) bool {
 	return strings.HasPrefix(msg, "Reconnecting...")
 }

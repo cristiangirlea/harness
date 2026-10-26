@@ -5,8 +5,7 @@ import (
 	"math"
 )
 
-// UsageMetadata disambiguates provider counters without changing old records.
-// Empty metadata on historical records is inferred only for known adapters.
+// UsageMetadata describes run totals, inferred only for known adapters.
 type UsageMetadata struct {
 	InputSemantics string `json:"input_semantics"`       // inclusive_cache or exclusive_cache
 	Status         string `json:"status"`                // reported, estimated, missing
@@ -25,9 +24,9 @@ func (r Result) ModelTokens() (int64, bool, bool) {
 	} else if r.InputTokens+r.OutputTokens+r.CacheRead+r.CacheWrite > 0 {
 		status = "reported"
 		switch r.Backend {
-		case "codex":
+		case "codex", "gemini":
 			semantics = "inclusive_cache"
-		case "api", "claude", "agy":
+		case "api", "claude", "agy", "opencode":
 			semantics = "exclusive_cache"
 		}
 	}
@@ -78,4 +77,26 @@ func (r Result) ValidateUsage() error {
 		return fmt.Errorf("invalid usage or cost")
 	}
 	return nil
+}
+
+// UsageMissing marks counters unsafe to display or sum as known.
+func (r Result) UsageMissing() bool {
+	return r.ValidateUsage() != nil || (r.Usage != nil && r.Usage.Status == "missing")
+}
+
+func (r *Result) addUsage(semantics string, input, output, cacheRead, cacheWrite int64) bool {
+	for _, c := range [][2]int64{{r.InputTokens, input}, {r.OutputTokens, output}, {r.CacheRead, cacheRead}, {r.CacheWrite, cacheWrite}} {
+		if c[0] < 0 || c[1] < 0 || c[1] > math.MaxInt64-c[0] {
+			if r.Usage == nil {
+				r.Usage = &UsageMetadata{InputSemantics: semantics}
+			}
+			r.Usage.Status = "missing"
+			return false
+		}
+	}
+	r.InputTokens += input
+	r.OutputTokens += output
+	r.CacheRead += cacheRead
+	r.CacheWrite += cacheWrite
+	return true
 }

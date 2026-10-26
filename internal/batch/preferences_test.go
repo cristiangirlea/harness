@@ -48,3 +48,28 @@ func TestBatchRefusesDisabledBackendsAndFiltersRetries(t *testing.T) {
 		})
 	}
 }
+
+func TestBatchWithoutAPreferenceFileKeepsEveryRetry(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	s := Spec{Backend: "api", Retry: []string{"claude", "api", "codex"}, Tasks: []Task{{Prompt: "hello", Backend: "codex", Retry: []string{"api"}}}}
+	if err := s.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(s.Retry, []string{"claude", "api", "codex"}) || !reflect.DeepEqual(s.Tasks[0].Retry, []string{"api"}) {
+		t.Fatalf("retries: %v, %v", s.Retry, s.Tasks[0].Retry)
+	}
+}
+
+func TestBatchAcceptsAnEmptySpecRetryList(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	s := Spec{Retry: []string{}, Tasks: []Task{{Prompt: "hello"}}}
+	if err := s.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if s.Retry == nil || len(s.Retry) != 0 {
+		t.Fatalf("retry: %#v", s.Retry)
+	}
+}

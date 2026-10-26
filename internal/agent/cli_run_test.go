@@ -30,6 +30,17 @@ func TestHelperCLIError(t *testing.T) {
 		fmt.Println(`{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 16th, 2099 3:29 PM."}`)
 		fmt.Println(`{"type":"turn.failed","error":{"message":""}}`)
 		os.Exit(1)
+	case "codexlimitreconnect", "codexlimitreconnectok":
+		// A usage limit, then the CLI's reconnect notice: the limit is what
+		// ended the run. "codexlimitreconnectok" completes the turn and exits 0.
+		fmt.Println(`{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000003"}`)
+		fmt.Println(`{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 16th, 2099 3:29 PM."}`)
+		fmt.Println(`{"type":"error","message":"Reconnecting... 1/5 (We’re currently experiencing high demand, which may cause temporary errors.)"}`)
+		if os.Getenv("HRN_CLI_HELPER") == "codexlimitreconnectok" {
+			fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`)
+			os.Exit(0)
+		}
+		os.Exit(1)
 	case "codexreconnect", "codexreconnectend", "codexreconnectfailed", "codexreconnectafterturn":
 		// What codex printed in run 20261014-180728-7102ef: a dropped model
 		// stream is an error line the CLI retries by itself, and the turn
@@ -62,9 +73,9 @@ func TestHelperCLIError(t *testing.T) {
 		os.Exit(1)
 	case "env":
 		// What the CLI was started with, as its final answer.
-		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s",
+		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s;GIT_DIR=%s;GIT_INDEX_FILE=%s;GIT_WORK_TREE=%s",
 			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
-			os.Getenv("HRN_GUARDED"))
+			os.Getenv("HRN_GUARDED"), os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"), os.Getenv("GIT_WORK_TREE"))
 		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
 		fmt.Println(string(out))
 		os.Exit(0)
@@ -166,15 +177,21 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 		mapsLean   bool
 		// mapsCompact: the adapter passes compact_window on.
 		mapsCompact bool
+		// mapsHarness: the adapter passes append_system_prompt and no_skills on.
+		mapsHarness bool
 	}{
-		{NewCodexBackend, true, false, false},
-		{NewClaudeBackend, true, true, true},
-		{NewGeminiBackend, false, false, false},
-		{NewOpencodeBackend, false, false, false},
+		{NewCodexBackend, true, true, false, false},
+		{NewClaudeBackend, true, true, true, true},
+		{NewGeminiBackend, false, false, false, false},
+		{NewOpencodeBackend, false, false, false, false},
+		{NewAgyBackend, true, false, false, false},
 	} {
 		b := adapter.newBackend()
 		if AppliesLean(b) != adapter.mapsLean {
 			t.Errorf("%s: AppliesLean = %v, want %v", b.Name(), AppliesLean(b), adapter.mapsLean)
+		}
+		if AppliesSystemPrompt(b) != adapter.mapsHarness || AppliesNoSkills(b) != adapter.mapsHarness {
+			t.Errorf("%s: AppliesSystemPrompt = %v, AppliesNoSkills = %v, want %v", b.Name(), AppliesSystemPrompt(b), AppliesNoSkills(b), adapter.mapsHarness)
 		}
 		t.Run(b.Name(), func(t *testing.T) {
 			// Keep the adapter's capabilities, but run only the test binary.
@@ -190,6 +207,9 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{Lean: Bool(false)},
 				{CompactWindow: "auto"},
 				{Lean: Bool(true), CompactWindow: "200000"},
+				{AppendSystemPrompt: "rule"},
+				{NoSkills: true, Effort: "high"},
+				{Skills: Bool(true)},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {
@@ -209,11 +229,20 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				if options.Effort != "" && !adapter.mapsEffort {
 					want = append(want, "effort")
 				}
-				if options.IsLean() && !adapter.mapsLean {
+				if options.Lean != nil && *options.Lean && !adapter.mapsLean {
 					want = append(want, "lean")
 				}
 				if options.CompactWindow != "" && !adapter.mapsCompact {
 					want = append(want, "compact_window")
+				}
+				if options.AppendSystemPrompt != "" && !adapter.mapsHarness {
+					want = append(want, "append_system_prompt")
+				}
+				if options.NoSkills && !adapter.mapsHarness {
+					want = append(want, "no_skills")
+				}
+				if options.Skills != nil && *options.Skills && !adapter.mapsHarness {
+					want = append(want, "skills")
 				}
 				if len(want) == 0 {
 					if len(infos) != 0 {
@@ -306,6 +335,32 @@ func TestCodexReportsItsUsageLimitAsLimited(t *testing.T) {
 	// the time is not believed, but the message itself is kept.
 	if !strings.Contains(res.Error, "hit your usage limit") {
 		t.Errorf("error = %q, want codex's own message rather than the exit status", res.Error)
+	}
+}
+
+func TestCodexAUsageLimitFollowedByAReconnectNoticeEndsLimited(t *testing.T) {
+	for _, helper := range []string{"codexlimitreconnect", "codexlimitreconnectok"} {
+		t.Run(helper, func(t *testing.T) {
+			t.Setenv("HRN_CLI_HELPER", helper)
+			b := helperCLI(parseCodexStream)
+			b.limits = true
+			b.end = NewCodexBackend().end
+			var notices, errsAfter []string
+			res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(e Event) {
+				switch {
+				case e.Kind == EventInfo && strings.HasPrefix(e.Text, "Reconnecting..."):
+					notices = append(notices, e.Text)
+				case e.Kind == EventError && len(notices) > 0:
+					errsAfter = append(errsAfter, e.Text)
+				}
+			})
+			if res.Status != StatusLimited || !strings.Contains(res.Error, "hit your usage limit") {
+				t.Fatalf("status %s, error %q: the limit came first and is what ended the run", res.Status, res.Error)
+			}
+			if len(notices) != 1 || len(errsAfter) != 0 {
+				t.Errorf("notices %q, error events after the notice %q: want the notice once as info and no error after it", notices, errsAfter)
+			}
+		})
 	}
 }
 
@@ -446,5 +501,22 @@ func TestAnAdapterWithoutLimitWordsKeepsTheError(t *testing.T) {
 	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAuto}}, func(Event) {})
 	if res.Status != StatusError {
 		t.Fatalf("status = %s: only claude and codex are read for limits", res.Status)
+	}
+}
+
+// hrn started from a git hook carries GIT_DIR and friends; an agent must act
+// on its own workspace, guarded or not.
+func TestACLIDoesNotInheritARepositoryFromHrnsEnvironment(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "env")
+	t.Setenv("GIT_DIR", "/elsewhere/.git")
+	t.Setenv("GIT_INDEX_FILE", "/elsewhere/.git/index")
+	t.Setenv("GIT_WORK_TREE", "/elsewhere")
+	for _, opts := range []Options{{Mode: ModeYolo}, {Mode: ModeYolo, AllowDangerous: true}} {
+		res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: opts}, func(Event) {})
+		for _, v := range []string{"GIT_DIR=;", "GIT_INDEX_FILE=;", "GIT_WORK_TREE=;"} {
+			if !strings.Contains(";"+res.Final+";", ";"+v) {
+				t.Errorf("allow dangerous %v: the CLI saw %s", opts.AllowDangerous, res.Final)
+			}
+		}
 	}
 }

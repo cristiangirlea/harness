@@ -1,0 +1,1 @@
+# Existing comment-rule violations: only --prune removes lines; a renamed file may have its path edited.

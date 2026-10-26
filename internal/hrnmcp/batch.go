@@ -16,19 +16,14 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// The batch tools let a host fan work out: one call runs several tasks in
-// their own git worktrees and branches, gates them, and returns; batch_show
-// reads the results and diffs back; batch_merge lands the branches. They are
-// the hrn batch subcommands with the same package calls behind them.
-
-const specDescription = `A batch spec, the same JSON as an hrn batch file. Fields: tasks (required; each has prompt, and optionally id, purpose (review, debug, implement, refactor, test, research, plan, ops; otherwise a leading Purpose: category header is used), backend, gate, retry, expect and any run option), and on the spec: dir, parallel (default 4), backend, gate (commands that must exit 0 in each worktree), retry (backends to try after a failed attempt), allow_dirty, worktrees ("slots", the default: each task runs in one of the repository's reusable slots, which keep their build output, and gives it back when it ends; "fresh": a new worktree per task, kept until hrn batch rm), and the run options (model, mode, max_turns, effort, timeout, max_cost_usd, ...) every task starts from. mode defaults to auto here too, because nothing can approve a prompt inside a batch; use yolo when a task must build or test. Unknown fields are refused, so a misspelt one cannot be silently ignored.`
+const specDescription = `A batch spec, the same JSON as an hrn batch file. Fields: tasks (required; each has prompt, and optionally id, purpose (review, debug, implement, refactor, test, research, plan, ops; otherwise a leading Purpose: category header is used), backend, gate, retry, expect, protect, protect_mode and any run option), and on the spec: dir, parallel (default 4), backend, gate (commands that must exit 0 in each worktree), retry (backends to try after a failed attempt), protect (globs of the files the gates rely on, such as **/*_test.go), protect_mode (report, the default, or fail: what an attempt that changed or removed one of them gets), allow_dirty, worktrees ("slots", the default: each task runs in one of the repository's reusable slots, which keep their build output, and gives it back when it ends; "fresh": a new worktree per task, kept until hrn batch rm), and the run options (model, mode, max_turns, effort, timeout, max_cost_usd, ...) every task starts from. mode defaults to auto here too, because nothing can approve a prompt inside a batch; use yolo when a task must build or test. Unknown fields are refused, so a misspelt one cannot be silently ignored.`
 
 func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	return mcp.Tool{
 		Name:  "batch",
 		Title: "Run tasks in parallel worktrees",
 		Description: "Run several coding tasks at once, each on its own branch hrn/<id> in its own git worktree, " +
-			"then run the gate commands in each. Waits for every task and returns one line per task plus the batch id. " +
+			"then run the gate commands in each. Waits for every task and returns a summary with attempt notes and the batch id. " +
 			"The repository must have no modified tracked files unless allow_dirty is set. " +
 			"Read a task's changes with batch_show and land them with batch_merge.",
 		InputSchema: map[string]any{
@@ -57,7 +52,7 @@ func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if e.Kind == "tool" {
 					return // one line per agent tool call would drown the host
 				}
-				call.Progress(fmt.Sprintf("[%s] %s", e.Task, tools.OneLine(e.Text, 200)))
+				call.Progress(fmt.Sprintf("[%s] %s", e.Task, printableNote(e.Text, 200)))
 			})
 			if runErr != nil && res.ID == "" {
 				return mcp.CallResult{}, runErr
@@ -71,10 +66,8 @@ func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	}
 }
 
-// decodeSpec reads a spec the way hrn batch reads a file, except that a
-// relative dir is taken from the server's workspace rather than a file's
-// directory, and unknown fields are refused: the spec is written by a model,
-// and a misspelt "gates" would otherwise run with no gate at all.
+// Reject unknown fields so a model's misspelt gates cannot silently disable checks.
+// Relative paths use the server workspace because there is no spec-file directory.
 func decodeSpec(raw json.RawMessage, defaultDir string) (batch.Spec, error) {
 	var spec batch.Spec
 	if len(raw) == 0 || string(raw) == "null" {
@@ -103,23 +96,26 @@ func passed(res batch.Result) int {
 	return n
 }
 
-// batchSummary is one line per task and a footer that says what to do next.
+// batchSummary includes attempt notes so a passing task cannot hide work left out of its commit.
 func batchSummary(res batch.Result) string {
 	var b strings.Builder
 	running := 0
 	for _, t := range res.Tasks {
 		fmt.Fprintf(&b, "%s: %s", t.ID, t.Status)
+		if t.Purpose != "" {
+			fmt.Fprintf(&b, " (purpose %s)", t.Purpose)
+		}
 		if n := len(t.Attempts); n > 0 {
 			last := t.Attempts[n-1]
 			fmt.Fprintf(&b, " on %s after %d attempt(s)", last.Backend, n)
 			if g := failedGateOf(last); g != nil {
-				fmt.Fprintf(&b, "; gate `%s` %s", tools.OneLine(g.Command, 80), g.Outcome())
+				fmt.Fprintf(&b, "; gate `%s` %s", printableNote(g.Command, 80), g.Outcome())
 			} else if last.Result.Error != "" {
-				fmt.Fprintf(&b, "; %s", tools.OneLine(last.Result.Error, 160))
+				fmt.Fprintf(&b, "; %s", printableNote(last.Result.Error, 160))
 			}
 		}
 		if t.Error != "" {
-			fmt.Fprintf(&b, "; %s", tools.OneLine(t.Error, 160))
+			fmt.Fprintf(&b, "; %s", printableNote(t.Error, 160))
 		}
 		switch {
 		case t.Status == batch.StatusRunning:
@@ -130,6 +126,11 @@ func batchSummary(res batch.Result) string {
 			b.WriteString(" · changed nothing")
 		}
 		b.WriteString("\n")
+		for i, att := range t.Attempts {
+			if att.Error != "" {
+				fmt.Fprintf(&b, "  attempt %d note: %s\n", i+1, printableNote(att.Error, 500))
+			}
+		}
 	}
 	fmt.Fprintf(&b, "\nbatch %s · %d/%d passed", res.ID, passed(res), len(res.Tasks))
 	if running > 0 {
@@ -149,10 +150,7 @@ func batchSummary(res batch.Result) string {
 	return b.String()
 }
 
-// batchBrief is what a host model is handed as structured content. Hosts may
-// show it instead of the text, so it carries the same facts and the next step,
-// and leaves out what only a person debugging needs: worktree paths, the
-// prompts sent back, token counts and gate output are all in the record.
+// Hosts may display structured content instead of text, so preserve the same facts and next step.
 type batchBrief struct {
 	ID     string      `json:"batch_id"`
 	Passed int         `json:"passed"`
@@ -162,22 +160,23 @@ type batchBrief struct {
 }
 
 type taskBrief struct {
-	ID       string `json:"id"`
-	Purpose  string `json:"purpose,omitempty"`
-	Status   string `json:"status"`
-	Backend  string `json:"backend,omitempty"`
-	Attempts int    `json:"attempts"`
-	Branch   string `json:"branch,omitempty"`
-	Commit   string `json:"commit,omitempty"`
-	Changed  bool   `json:"changed"`
-	Failed   string `json:"failed,omitempty"` // the gate or error that stopped it
+	ID       string   `json:"id"`
+	Purpose  string   `json:"purpose,omitempty"`
+	Status   string   `json:"status"`
+	Backend  string   `json:"backend,omitempty"`
+	Attempts int      `json:"attempts"`
+	Branch   string   `json:"branch,omitempty"`
+	Commit   string   `json:"commit,omitempty"`
+	Changed  bool     `json:"changed"`
+	Failed   string   `json:"failed,omitempty"` // the gate or error that stopped it
+	Notes    []string `json:"notes,omitempty"`
 }
 
 func brief(res batch.Result) batchBrief {
 	out := batchBrief{ID: res.ID, Passed: passed(res), Total: len(res.Tasks),
 		Next: fmt.Sprintf("batch_show {batch_id: %q, task: <id>} for a diff; batch_merge {batch_id: %q} to land passing branches", res.ID, res.ID)}
 	for _, t := range res.Tasks {
-		tb := taskBrief{ID: t.ID, Purpose: t.Purpose, Status: string(t.Status), Attempts: len(t.Attempts), Changed: t.Commit != "", Failed: tools.OneLine(t.Error, 200)}
+		tb := taskBrief{ID: t.ID, Purpose: t.Purpose, Status: string(t.Status), Attempts: len(t.Attempts), Changed: t.Commit != "", Failed: printableNote(t.Error, 200)}
 		if t.Commit != "" {
 			tb.Branch, tb.Commit = t.Branch, tools.ShortSHA(t.Commit)
 		}
@@ -185,14 +184,29 @@ func brief(res batch.Result) batchBrief {
 			last := t.Attempts[n-1]
 			tb.Backend = last.Backend
 			if g := failedGateOf(last); g != nil {
-				tb.Failed = fmt.Sprintf("gate `%s` %s", tools.OneLine(g.Command, 80), g.Outcome())
+				tb.Failed = fmt.Sprintf("gate `%s` %s", printableNote(g.Command, 80), g.Outcome())
 			} else if t.Status != batch.StatusPass && last.Result.Error != "" {
-				tb.Failed = tools.OneLine(last.Result.Error, 200)
+				tb.Failed = printableNote(last.Result.Error, 200)
+			}
+		}
+		for i, att := range t.Attempts {
+			if att.Error != "" {
+				tb.Notes = append(tb.Notes, fmt.Sprintf("attempt %d: %s", i+1, printableNote(att.Error, 500)))
 			}
 		}
 		out.Tasks = append(out.Tasks, tb)
 	}
 	return out
+}
+
+// Decoded notes may be printed directly to a terminal by MCP clients.
+func printableNote(s string, max int) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && (r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)) {
+			return '\ufffd'
+		}
+		return r
+	}, tools.OneLine(s, max))
 }
 
 func failedGateOf(att batch.Attempt) *batch.GateResult {
@@ -208,7 +222,7 @@ func batchShowTool() mcp.Tool {
 	return mcp.Tool{
 		Name:  "batch_show",
 		Title: "Show a batch",
-		Description: "Without batch_id: the most recent batches. With batch_id: one line per task. " +
+		Description: "Without batch_id: the most recent batches. With batch_id: one line per task plus attempt notes. " +
 			"With batch_id and task: that task's diff against the commit the batch started from, " +
 			"and any untracked files the diff cannot show.",
 		InputSchema: map[string]any{
@@ -330,14 +344,16 @@ func batchMergeTool() mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			merged, mergeErr := batch.Merge(ctx, res, args.Tasks, args.Squash)
+			filtered := slices.Clone(merged)
 			var b strings.Builder
 			done := 0
-			for _, m := range merged {
+			for i, m := range merged {
+				filtered[i].Error = printableNote(m.Error, 200)
 				switch {
 				case m.Conflict:
 					fmt.Fprintf(&b, "%s: conflict merging %s; the tree is back as it was, merge it by hand with `git merge %s`\n", m.Task, m.Branch, m.Branch)
 				case m.Error != "":
-					fmt.Fprintf(&b, "%s: could not merge %s: %s\n", m.Task, m.Branch, tools.OneLine(m.Error, 200))
+					fmt.Fprintf(&b, "%s: could not merge %s: %s\n", m.Task, m.Branch, printableNote(m.Error, 200))
 				case m.Skipped != "":
 					fmt.Fprintf(&b, "%s: skipped, %s\n", m.Task, m.Skipped)
 				default:
@@ -350,9 +366,9 @@ func batchMergeTool() mcp.Tool {
 				fmt.Fprintf(&b, "\nundo with: git reset --hard %s", before)
 			}
 			if mergeErr != nil {
-				fmt.Fprintf(&b, "\nerror: %v", mergeErr)
+				fmt.Fprintf(&b, "\nerror: %s", printableNote(mergeErr.Error(), 200))
 			}
-			return text(b.String(), map[string]any{"batch_id": res.ID, "merged": merged}, mergeErr != nil), nil
+			return text(b.String(), map[string]any{"batch_id": res.ID, "merged": filtered}, mergeErr != nil), nil
 		},
 	}
 }

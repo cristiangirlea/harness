@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,7 +20,38 @@ import (
 
 var knowledgeID = regexp.MustCompile(`^[a-z]_[0-9a-f]{32,64}$`)
 var exactWords = regexp.MustCompile(`[A-Za-z0-9_./:\\-]+`)
+var knowledgeIdentifier = regexp.MustCompile(`^[A-Za-z0-9_./:\\-]+( +[A-Za-z0-9_./:\\-]+)*$`)
+var knowledgeToken = regexp.MustCompile(`\bakia[a-z0-9]{16}\b|\beyj[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+\b`)
 var ErrRetrievalBusy = errors.New("retrieval capacity unavailable")
+
+func knowledgeQueryIdentifiers(query string) []string {
+	words := []string{}
+	seen := map[string]bool{}
+	spans := exactWords.FindAllStringIndex(query, -1)
+	for i, start := range spans {
+		for j := i; j < len(spans) && j < i+8; j++ {
+			end := spans[j]
+			if end[1]-start[0] > retrieval.MaxIdentifierBytes {
+				break
+			}
+			if j > i && strings.Trim(query[spans[j-1][1]:end[0]], " ") != "" {
+				break
+			}
+			word := query[start[0]:end[1]]
+			// Preserve literal identifiers while also dropping sentence punctuation.
+			for _, candidate := range []string{word, strings.TrimRight(word, ".:")} {
+				if candidate != "" && !seen[candidate] {
+					seen[candidate] = true
+					words = append(words, candidate)
+					if len(words) == 256 {
+						return words
+					}
+				}
+			}
+		}
+	}
+	return words
+}
 
 func digestKnowledge(v any) string {
 	b, _ := json.Marshal(v)
@@ -40,22 +72,68 @@ func unsafeKnowledgeFrame(v string) bool {
 	return false
 }
 func unsafeKnowledgeSource(e retrieval.Entry) bool {
-	if unsafeKnowledgeFrame(e.Content) || unsafeKnowledgeFrame(e.Source) || unsafeKnowledgeFrame(e.Evidence) {
-		return true
-	}
-	source := strings.ToLower(strings.ReplaceAll(e.Source, `\`, "/"))
-	for _, private := range []string{".codex/auth.json", ".ssh/", ".aws/credentials", ".env", "credentials.json"} {
-		if strings.Contains(source, private) {
+	for _, text := range append([]string{e.ID, e.Key, e.Source}, e.Identifiers...) {
+		if unsafeKnowledgePattern(text, true) != "" {
 			return true
 		}
 	}
-	text := strings.ToLower(e.Content)
-	for _, secret := range []string{"-----begin private key-----", "-----begin rsa private key-----", "authorization: bearer ", "ignore previous instructions", "disable permission checks"} {
+	return unsafeKnowledgePattern(e.Content, false) != "" || unsafeKnowledgePattern(e.Evidence, false) != ""
+}
+
+// Notes may name private paths ("copy .env.example to .env"); only path fields are screened for them.
+var knowledgeProseFields = map[string]bool{"content": true, "evidence": true, "review_evidence": true}
+
+func unsafeKnowledgePattern(text string, paths bool) string {
+	text = strings.ToLower(text)
+	for _, marker := range []string{"<project-reference", "</project-reference>", "[reference ", "[/reference]"} {
+		if strings.Contains(text, marker) {
+			return marker
+		}
+	}
+	if pattern := unsafeKnowledgePath(text); paths && pattern != "" {
+		return pattern
+	}
+	for _, secret := range []string{"-----begin private key-----", "-----begin rsa private key-----", "-----begin openssh private key-----", "-----begin ec private key-----", "-----begin encrypted private key-----", "sk-ant-", "ghp_", "github_pat_", "authorization: bearer ", "ignore previous instructions", "disable permission checks"} {
 		if strings.Contains(text, secret) {
-			return true
+			return secret
 		}
 	}
-	return false
+	if knowledgeToken.MatchString(text) {
+		return knowledgeToken.String()
+	}
+	return ""
+}
+func unsafeKnowledgePath(text string) string {
+	text = strings.ReplaceAll(text, `\`, "/")
+	for _, private := range []string{".codex/auth.json", ".ssh/", ".aws/credentials", "credentials.json"} {
+		if strings.Contains(text, private) {
+			return private
+		}
+	}
+	for _, segment := range strings.FieldsFunc(text, func(r rune) bool {
+		return r == '/' || r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '"' || r == '\'' || r == '`' || r == '=' || r == ',' || r == ';'
+	}) {
+		if segment == ".env" {
+			return ".env"
+		}
+		if strings.HasPrefix(segment, ".env.") && len(segment) > len(".env.") {
+			return ".env.*"
+		}
+	}
+	return ""
+}
+
+type knowledgeTextField struct {
+	name, text string
+}
+
+func knowledgeTextRefusal(fields ...knowledgeTextField) error {
+	for _, field := range fields {
+		if pattern := unsafeKnowledgePattern(field.text, !knowledgeProseFields[field.name]); pattern != "" {
+			return fmt.Errorf("%w: field %s matched pattern %q", ErrUnsupported, field.name, pattern)
+		}
+	}
+	return nil
 }
 func validKnowledgeScope(s retrieval.Scope) bool {
 	return knowledgeID.MatchString(s.TenantID) && knowledgeID.MatchString(s.ProjectID) && refPattern.MatchString(s.Revision) && len(s.Backend) > 0 && len(s.Backend) <= 64 && len(s.Model) > 0 && len(s.Model) <= 128
@@ -87,6 +165,14 @@ func knowledgeProject(ctx context.Context, tx pgx.Tx, sc retrieval.Scope) error 
 }
 
 func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (string, error) {
+	if err := knowledgeTextRefusal(
+		knowledgeTextField{"tenant_id", in.TenantID}, knowledgeTextField{"project_id", in.ProjectID},
+		knowledgeTextField{"backend", in.Backend}, knowledgeTextField{"model", in.Model},
+		knowledgeTextField{"revision", in.Revision}, knowledgeTextField{"origin", in.Origin},
+		knowledgeTextField{"reviewed_by", in.ReviewedBy}, knowledgeTextField{"review_evidence", in.ReviewEvidence},
+	); err != nil {
+		return "", err
+	}
 	if !validKnowledgeScope(in.Scope) || in.Origin != "reviewed_source" || strings.TrimSpace(in.ReviewedBy) == "" || strings.TrimSpace(in.ReviewEvidence) == "" || len(in.ReviewedBy) > 256 || len(in.ReviewEvidence) > 2048 || unsafeKnowledgeFrame(in.ReviewEvidence) || len(in.Entries) > 100 || len(in.Entries) == 0 {
 		return "", ErrUnsupported
 	}
@@ -95,11 +181,23 @@ func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (strin
 	seen := map[string]bool{}
 	for i := range entries {
 		e := &entries[i]
-		if unsafeKnowledgeSource(*e) || e.Key == "" || len(e.Key) > retrieval.MaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > retrieval.MaxEntryIdentifiers || !utf8.ValidString(e.Content) {
+		if err := knowledgeTextRefusal(
+			knowledgeTextField{"id", e.ID}, knowledgeTextField{"key", e.Key},
+			knowledgeTextField{"content", e.Content}, knowledgeTextField{"source", e.Source},
+			knowledgeTextField{"evidence", e.Evidence},
+		); err != nil {
+			return "", fmt.Errorf("entries[%d]: %w", i, err)
+		}
+		for j, id := range e.Identifiers {
+			if err := knowledgeTextRefusal(knowledgeTextField{"identifiers", id}); err != nil {
+				return "", fmt.Errorf("entries[%d].identifiers[%d]: %w", i, j, err)
+			}
+		}
+		if e.Key == "" || len(e.Key) > retrieval.MaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > retrieval.MaxEntryIdentifiers || !utf8.ValidString(e.Content) {
 			return "", ErrUnsupported
 		}
 		for _, id := range e.Identifiers {
-			if len(id) == 0 || len(id) > retrieval.MaxIdentifierBytes || exactWords.FindString(id) != id {
+			if len(id) == 0 || len(id) > retrieval.MaxIdentifierBytes || !knowledgeIdentifier.MatchString(id) {
 				return "", ErrUnsupported
 			}
 		}
@@ -262,7 +360,7 @@ func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retri
 func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retrieval.Packet, error) {
 	started := time.Now()
 	out := retrieval.Packet{Entries: []retrieval.Entry{}, Ranking: retrieval.RankingVersion, QueryDigest: retrieval.TextDigest(in.Query)}
-	if len(in.Query) > 2048 || len(in.RunRef) > 256 || in.Attempt < 0 || !utf8.ValidString(in.Query) {
+	if len(in.Query) > 2048 || len(in.RunRef) > 256 || in.Attempt < 0 || in.Attempt > math.MaxInt32 || !utf8.ValidString(in.Query) {
 		return out, ErrUnsupported
 	}
 	ctx, done, err := s.knowledgeContext(ctx)
@@ -291,10 +389,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 		if err = checkKnowledgeVersion(ctx, tx, in.Scope, out.VersionID); err != nil {
 			return out, err
 		}
-		words := exactWords.FindAllString(in.Query, -1)
-		if words == nil {
-			words = []string{}
-		}
+		words := knowledgeQueryIdentifiers(in.Query)
 		rows, err := tx.Query(ctx, `SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
  FROM knowledge_members m JOIN knowledge_entries e ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id)
  WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3

@@ -10,17 +10,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var ErrMalformedEvent = errors.New("malformed event from control service")
 var ErrEventOutput = errors.New("failed to write event output")
+
+var jobID = regexp.MustCompile("^j_[0-9a-f]{32}$")
 
 // Client uses tenant credentials only. It never sends a token to a redirect.
 type Client struct {
@@ -128,8 +133,12 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 				}
 			} else {
 				failures = 0
-				after, err = ReadEvents(response.Body, after, out)
+				var terminal bool
+				after, terminal, err = readEvents(response.Body, after, out, true)
 				response.Body.Close()
+				if terminal {
+					return nil
+				}
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -159,13 +168,135 @@ func (c *Client) Watch(ctx context.Context, path string, after int64, out io.Wri
 	}
 }
 
+// WatchJob reads state first because a finished job may have no terminal event after the cursor.
+func (c *Client) WatchJob(ctx context.Context, job string, scope url.Values, after int64, out io.Writer) error {
+	if !jobID.MatchString(job) {
+		return errors.New("job must be a server-issued ID")
+	}
+	data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"?"+scope.Encode(), nil)
+	if err != nil && watchRetries(err) {
+		return c.Watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)
+	}
+	if err != nil {
+		return err
+	}
+	var current struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &current); err != nil {
+		return errors.New("invalid job from control service")
+	}
+	if !terminalState(current.State) {
+		return c.Watch(ctx, "/v1/jobs/"+job+"/events?"+scope.Encode(), after, out)
+	}
+	query := url.Values{}
+	maps.Copy(query, scope)
+	for {
+		query.Set("after", strconv.FormatInt(after, 10))
+		data, err := c.Request(ctx, http.MethodGet, "/v1/jobs/"+job+"/events?"+query.Encode(), nil)
+		if err != nil {
+			return err
+		}
+		var page struct {
+			Events []json.RawMessage `json:"events"`
+		}
+		if err := json.Unmarshal(data, &page); err != nil {
+			return fmt.Errorf("%w: invalid event page", ErrMalformedEvent)
+		}
+		if len(page.Events) == 0 {
+			return nil
+		}
+		for _, raw := range page.Events {
+			var event struct {
+				ID int64 `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &event); err != nil || event.ID <= after {
+				return fmt.Errorf("%w: event ID does not follow the cursor", ErrMalformedEvent)
+			}
+			var line bytes.Buffer
+			if err := json.Compact(&line, raw); err != nil {
+				return fmt.Errorf("%w: invalid JSON", ErrMalformedEvent)
+			}
+			if _, err := fmt.Fprintln(out, line.String()); err != nil {
+				return fmt.Errorf("%w: %w", ErrEventOutput, err)
+			}
+			after = event.ID
+		}
+	}
+}
+
+// Retry availability failures, but never certificate failures.
+func watchRetries(err error) bool {
+	var status *HTTPError
+	if errors.As(err, &status) {
+		return status.Status >= 500
+	}
+	var unknown x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &unknown) || errors.As(err, &hostname) || errors.As(err, &invalid) {
+		return false
+	}
+	var transport *url.Error
+	return errors.As(err, &transport)
+}
+
 func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
+	after, _, err := readEvents(input, after, out, false)
+	return after, err
+}
+
+// terminalEvent must keep in step with server/platform/types.go's terminal States; they also arrive in details.state.
+func terminalEvent(kind, data string) bool {
+	state := kind
+	if kind == "admission_timeout" || kind == "recovery_resolved" {
+		var event struct {
+			Details struct {
+				State string `json:"state"`
+			} `json:"details"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return false
+		}
+		state = event.Details.State
+	}
+	return terminalState(state)
+}
+
+func terminalState(state string) bool {
+	switch state {
+	case "succeeded", "failed", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+const maxEventData = 1 << 20
+
+// Escape C1 and invalid UTF-8 so JSON text cannot execute terminal controls.
+func escapeC1(data string) string {
+	var out strings.Builder
+	for i, r := range data {
+		invalid := r == utf8.RuneError && !strings.HasPrefix(data[i:], string(utf8.RuneError))
+		if r >= 0x80 && r <= 0x9f || invalid {
+			fmt.Fprintf(&out, `\u%04x`, r)
+		} else {
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
+}
+
+func readEvents(input io.Reader, after int64, out io.Writer, stop bool) (int64, bool, error) {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	var currentID int64
-	var data string
+	var kind string
+	var data []byte
+	var terminal bool
 	emit := func() error {
-		if data == "" {
+		if len(data) == 0 {
 			return nil
 		}
 		if currentID <= 0 {
@@ -174,49 +305,62 @@ func ReadEvents(input io.Reader, after int64, out io.Writer) (int64, error) {
 		if currentID <= after {
 			return nil
 		}
-		if !json.Valid([]byte(data)) {
+		if !json.Valid(data) {
 			return fmt.Errorf("%w: invalid JSON", ErrMalformedEvent)
 		}
-		if _, err := fmt.Fprintln(out, data); err != nil {
+		if _, err := fmt.Fprintln(out, escapeC1(string(data))); err != nil {
 			return fmt.Errorf("%w: %w", ErrEventOutput, err)
 		}
 		after = currentID
+		terminal = terminalEvent(kind, string(data))
 		return nil
 	}
 	for scanner.Scan() {
 		line := strings.TrimSuffix(scanner.Text(), "\r")
 		if line == "" {
 			if err := emit(); err != nil {
-				return after, err
+				return after, false, err
 			}
-			currentID, data = 0, ""
+			if terminal && stop {
+				return after, true, nil
+			}
+			currentID, kind, data = 0, "", data[:0]
 			continue
 		}
-		if value, ok := strings.CutPrefix(line, "id: "); ok {
+		// SSE permits the colon without a following space.
+		field, value, _ := strings.Cut(line, ":")
+		value = strings.TrimPrefix(value, " ")
+		switch field {
+		case "id":
 			id, err := strconv.ParseInt(value, 10, 64)
 			if err != nil || id < 0 {
-				return after, fmt.Errorf("%w: invalid ID", ErrMalformedEvent)
+				return after, false, fmt.Errorf("%w: invalid ID", ErrMalformedEvent)
 			}
 			currentID = id
-		} else if value, ok := strings.CutPrefix(line, "data: "); ok {
-			if data != "" {
-				data += "\n"
+		case "event":
+			kind = value
+		case "data":
+			if len(data)+1+len(value) > maxEventData {
+				return after, false, fmt.Errorf("%w: event data exceeds 1 MiB", ErrMalformedEvent)
 			}
-			data += value
+			if len(data) > 0 {
+				data = append(data, '\n')
+			}
+			data = append(data, value...)
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
-			return after, fmt.Errorf("event line exceeds 1 MiB limit: %w", err)
+			return after, false, fmt.Errorf("event line exceeds 1 MiB limit: %w", err)
 		}
-		return after, err
+		return after, false, err
 	}
-	if data != "" {
+	if len(data) > 0 {
 		if err := emit(); err != nil {
-			return after, err
+			return after, false, err
 		}
 	}
-	return after, nil
+	return after, terminal, nil
 }
 
 // HTTPError omits untrusted error bodies, which could echo credentials.

@@ -138,6 +138,102 @@ func TestTheRunStreamRedrawsTheChartAsTurnsArrive(t *testing.T) {
 	}
 }
 
+// Turns that arrive together redraw the chart once, after the steps they
+// came with, not once a turn.
+func TestTheRunStreamRedrawsTheChartOncePerPoll(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close(agent.Result{Status: agent.StatusOK}) })
+	w.Event(turnEvent("m", 10000, 0))
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	_, page := get(t, srv.URL+"/run/"+w.ID())
+	i := strings.Index(page, `data-stream="`)
+	if i < 0 {
+		t.Fatal("a running run's page has no stream")
+	}
+	url := page[i+len(`data-stream="`):]
+	url = strings.ReplaceAll(url[:strings.Index(url, `"`)], "&amp;", "&")
+	// Written before the stream opens, so its first poll reads them all.
+	w.Event(turnEvent("m", 20000, 10000))
+	w.Event(agent.Event{Kind: agent.EventText, Text: "working"})
+	w.Event(turnEvent("m", 30000, 20000))
+	w.Event(turnEvent("m", 40000, 30000))
+	st, closeStream := openStream(t, srv.URL+url, "")
+	defer closeStream()
+	m, ok := st.next(t)
+	if !ok || m.event != "item" || !strings.Contains(m.data, "working") {
+		t.Fatalf("first message = %+v, want the step", m)
+	}
+	m, ok = st.next(t)
+	if !ok || m.event != "usage" || !strings.Contains(m.data, "4 turns") {
+		t.Fatalf("second message = %+v, want the chart over all four turns", m)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "still working"})
+	if m, ok = st.next(t); !ok || m.event != "item" {
+		t.Errorf("next message = %+v, want the new step and no other chart", m)
+	}
+}
+
+// A long run draws its line through every turn but a point and a row for
+// about 500 of them: the last, each compaction, and an even spread.
+func TestTheChartThinsItsPointsAndRowsPastFiveHundredTurns(t *testing.T) {
+	var events []agent.Event
+	for n := 1; n <= 3000; n++ {
+		if n == 1234 {
+			events = append(events, agent.Event{Kind: agent.EventCompaction, Text: "auto"})
+		}
+		events = append(events, turnEvent("m", int64(1000+n), 0))
+	}
+	v := usageOf(events)
+	if v.Turns != 3000 || strings.Count(v.Panels[0].Points, ",") != 3000 {
+		t.Fatalf("turns %d, line points %d: want every turn on the line", v.Turns, strings.Count(v.Panels[0].Points, ","))
+	}
+	if len(v.Rows) > 520 || len(v.Rows) < 450 || len(v.Panels[0].Dots) != len(v.Rows) || len(v.Panels[1].Dots) != len(v.Rows) {
+		t.Fatalf("rows %d, dots %d and %d: want about 500 each", len(v.Rows), len(v.Panels[0].Dots), len(v.Panels[1].Dots))
+	}
+	shown := map[int]bool{}
+	for _, r := range v.Rows {
+		shown[r.N] = true
+	}
+	if !shown[1] || !shown[3000] || !shown[1234] {
+		t.Errorf("the first, last and compacted turns must keep their rows")
+	}
+	html, err := render("usage", v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, "every turn") || len(html) > 300_000 {
+		t.Errorf("the thinned chart is %d bytes and must say it is thinned:\n%.2000s", len(html), html)
+	}
+	if few := usageOf(events[:200]); len(few.Rows) != 200 || few.Every > 1 {
+		t.Errorf("a short run lost rows: %d of 200", len(few.Rows))
+	}
+}
+
+// The page's own pass blanks only the environment's secrets; a model name is
+// also masked like any record text, so a key shaped like one stays hidden.
+func TestTheChartMasksAKeyShapedModelName(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	const secret = "sk-ant-Abcdefghijklmnop"
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(turnEvent(secret, 10000, 0))
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(New(context.Background(), Options{}))
+	defer srv.Close()
+	if _, page := get(t, srv.URL+"/run/"+w.ID()); strings.Contains(page, secret) {
+		t.Errorf("the page shows a key-shaped model name:\n%s", chartOf(t, page))
+	}
+}
+
 // A model name comes from a CLI's output or a record, so it is blanked of
 // the environment's secrets like every other text the page shows.
 func TestTheChartBlanksASecretInAModelName(t *testing.T) {

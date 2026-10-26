@@ -10,9 +10,7 @@ import (
 	"syscall"
 )
 
-// parseProcStat reads state (field 3) and process group (field 5). The comm
-// field can contain spaces and closing parentheses, so its final ')' marks
-// the start of the remaining fields.
+// comm may contain spaces and ')'; split at the final ')'.
 func parseProcStat(line string) (pgid int, state byte, err error) {
 	open, close := strings.IndexByte(line, '('), strings.LastIndexByte(line, ')')
 	if open < 0 || close <= open {
@@ -29,9 +27,6 @@ func parseProcStat(line string) (pgid int, state byte, err error) {
 	return pgid, fields[0][0], nil
 }
 
-// countRunningGroup scans Linux procfs. Vanished and permission-denied entries
-// are skipped; other failures make the caller fall back to the group probe.
-// Taking a root argument also lets tests use fixtures on Windows.
 func countRunningGroup(root string, pgid int) (int, error) {
 	return countRunningGroupWith(root, pgid, os.ReadFile)
 }

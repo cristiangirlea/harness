@@ -76,7 +76,13 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 	if task.ForkSession != "" {
 		return fail(fmt.Errorf("retrieval is unsupported for native session continuation"))
 	}
+	if previous != nil && enabled && task.Resume == nil && task.Retrieval == previous.Mode && !previous.Replayed && previous.Packet == nil && previous.Failure != "" && previous.Failure != "optional retrieval unavailable" {
+		previous = nil
+	}
 	if previous != nil {
+		state.Scope = previous.Scope // a refused replay still records the pin
+		state.Mode = previous.Mode
+		state.Packet = previous.Packet
 		if task.Resume != nil {
 			if err := ValidateContinuationPin(previous, task.Resume); err != nil {
 				return fail(err)
@@ -91,9 +97,6 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		if previous.Failure != "" && previous.Failure != "optional retrieval unavailable" {
 			return fail(fmt.Errorf("previous retrieval failed; pin cannot be resumed"))
 		}
-		state.Scope = previous.Scope
-		state.Mode = previous.Mode
-		state.Packet = previous.Packet
 		state.Failure = previous.Failure
 		state.Replayed = true
 		sc := state.Scope
@@ -111,8 +114,7 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		}
 		state.Scope = retrieval.Scope{TenantID: task.RetrievalTenant, ProjectID: task.RetrievalProject, Revision: task.RetrievalRevision, Backend: backend, Model: task.Model}
 	}
-	// Resumes already contain the previous packet in committed history. Never
-	// retrieve again or append it to the new user turn.
+	// Resumes already contain the pinned packet; retrieving again would duplicate it.
 	search := previous == nil || (task.Resume == nil && task.RetrievalRepair && state.Packet != nil && state.Packet.VersionID != "")
 	if search {
 		client, err := remote.NewFromEnv()
@@ -163,8 +165,7 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 	return task, state, nil
 }
 
-// ValidateContinuationPin detects missing or replaced metadata before a saved
-// API history can be resumed. Conversation history itself remains append-only.
+// ValidateContinuationPin checks saved pins without altering history.
 func ValidateContinuationPin(record *retrieval.Record, conv *Conversation) error {
 	if conv == nil {
 		return fmt.Errorf("missing saved conversation")
@@ -178,8 +179,7 @@ func ValidateContinuationPin(record *retrieval.Record, conv *Conversation) error
 	a, b := record, conv.Retrieval
 	for _, r := range []*retrieval.Record{a, b} {
 		s := r.Scope
-		// Scope binds the requested model; providers can report a resolved model
-		// name. The run log checks that reported identity against its result.
+		// Providers may report a resolved model; the run log checks it against the requested scope.
 		if (r.Mode != "optional" && r.Mode != "required") || s.TenantID == "" || s.ProjectID == "" || s.Revision == "" || s.Backend != "api" || s.Model == "" || conv.Model == "" {
 			return fmt.Errorf("invalid saved retrieval scope or mode")
 		}

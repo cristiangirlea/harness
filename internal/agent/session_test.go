@@ -124,7 +124,23 @@ func TestClaudeForksTheSessionItIsGiven(t *testing.T) {
 	}
 }
 
+// A fresh hand-over leaves Task.ForkSession empty; no CLI may then be told to
+// pick a session up, whatever mode it runs in.
+func TestATaskWithoutASessionGivesNoCLIASessionFlag(t *testing.T) {
+	for _, b := range []*CLIBackend{NewClaudeBackend(), NewCodexBackend(), NewAgyBackend()} {
+		for _, mode := range []Mode{ModeReadOnly, ModeAuto, ModeYolo} {
+			args := b.args(Task{Prompt: "p", Dir: "/w", Options: Options{Mode: mode, Model: "m"}}, "")
+			for _, flag := range []string{"--resume", "--fork-session", "fork", "resume", "--conversation", "--continue"} {
+				if slices.Contains(args, flag) {
+					t.Errorf("%s/%s: %q in %q", b.Name(), mode, flag, args)
+				}
+			}
+		}
+	}
+}
+
 func TestCodexArgs(t *testing.T) {
+	codexHome(t, "")
 	b := NewCodexBackend()
 	for _, tc := range []struct {
 		task Task

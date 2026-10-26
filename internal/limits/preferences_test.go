@@ -1,6 +1,10 @@
 package limits
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +42,7 @@ func TestChooseAndAfterUseOnlyAnEnabledInstalledPartner(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got := Partner("codex"); got != tc.want {
+			if got := Partner("codex", time.Now(), nil); got != tc.want {
 				t.Errorf("partner %q, want %q", got, tc.want)
 			}
 			want := tc.want
@@ -110,7 +114,7 @@ func TestAnEnabledAPIAheadOfAPlanBackendIsSkippedAsAPartner(t *testing.T) {
 	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "api", "claude"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := Partner("codex"); got != "claude" {
+	if got := Partner("codex", time.Now(), nil); got != "claude" {
 		t.Fatalf("partner %q, want claude: api bills per token and must be passed over", got)
 	}
 	if got, _ := Choose("codex", ""); got != "claude" {
@@ -123,5 +127,99 @@ func TestAnEnabledAPIAheadOfAPlanBackendIsSkippedAsAPartner(t *testing.T) {
 	}
 	if next == nil || next.To != "claude" {
 		t.Fatalf("carry-on %+v, %s", next, why)
+	}
+}
+
+func TestTheChoiceContinuesPastALimitedOrMeteredPartner(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		limited []string
+		metered string
+		want    string
+	}{
+		{"claude and codex limited", []string{"claude", "codex"}, "", "gemini"},
+		{"codex metered", []string{"claude"}, "CODEX_API_KEY", "gemini"},
+		{"all limited", []string{"claude", "codex", "gemini"}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, true, true)
+			if tc.metered != "" {
+				t.Setenv(tc.metered, "set")
+			}
+			orig, _ := agent.Get("gemini")
+			agent.Register(stub{"gemini", true})
+			t.Cleanup(func() { agent.Register(orig) })
+			if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude", "codex", "gemini"}}); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			for _, name := range tc.limited {
+				if err := Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pick, why, both := Pick("claude", now, nil)
+			stay := tc.want == ""
+			if stay && (pick != "claude" || !both || !strings.Contains(why, "usage limit")) {
+				t.Errorf("Pick = %q, %q, both out %v; want claude kept, all out", pick, why, both)
+			}
+			if !stay && (pick != tc.want || both) {
+				t.Errorf("Pick = %q, %q, both out %v; want %s", pick, why, both, tc.want)
+			}
+			if got, _ := Choose("claude", ""); got != tc.want && !(stay && got == "claude") {
+				t.Errorf("Choose = %q, want %q", got, tc.want)
+			}
+			if got := Partner("claude", now, Spent{"gemini": true}); got == "gemini" {
+				t.Error("a backend spent in the caller's work was chosen")
+			}
+			prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
+			res := agent.Result{Backend: "codex", Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}
+			next, why, err := After(limitedRun(t, prev), "codex", prev, res)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stay && (next != nil || !strings.Contains(why, "stays limited")) {
+				t.Errorf("carry-on %+v, %q; want none", next, why)
+			}
+			if !stay && (next == nil || next.To != tc.want) {
+				t.Errorf("carry-on %+v, %q; want %s", next, why, tc.want)
+			}
+		})
+	}
+}
+
+func TestNoteReportsAMalformedPreferenceFile(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "backends.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	if err == nil || !strings.Contains(err.Error(), "backends.json") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAnAgyLimitWithNoPartnerEndsLimitedAndIsRemembered(t *testing.T) {
+	for _, enabled := range [][]string{nil, {"agy"}, {"agy", "claude"}} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, false, false)
+			if enabled != nil {
+				if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: enabled}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			until := time.Now().Add(167 * time.Hour).Truncate(time.Second)
+			res := agent.Result{Backend: "agy", Status: agent.StatusLimited, LimitResets: until}
+			prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
+			next, why, err := After(limitedRun(t, prev), "agy", prev, res)
+			if err != nil || next != nil {
+				t.Fatalf("carry-on %+v, %q, %v; want none without a partner", next, why, err)
+			}
+			if got := Until("agy", time.Now()); !got.Equal(until) {
+				t.Fatalf("remembered %v, want %v", got, until)
+			}
+		})
 	}
 }

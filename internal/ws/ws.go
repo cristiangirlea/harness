@@ -1,10 +1,4 @@
-// Package ws keeps a fixed set of reusable worktrees ("slots") per
-// repository, at <main checkout>/.hrn/slots/<n>, so a checkout keeps its
-// build output from one task to the next. A slot is a locked worktree, which
-// hrn gc and `git worktree prune` leave alone. Who holds a slot is a lease
-// file beside it, <n>.lease, created with O_EXCL so two callers never get the
-// same slot; a lease that names a process which has exited is stale and may
-// be taken over.
+// Package ws reuses git-locked worktrees and build output under O_EXCL leases.
 package ws
 
 import (
@@ -15,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -23,21 +18,18 @@ import (
 	"time"
 )
 
-// DefaultMax is how many slots Take tries when TakeOptions.Max is 0.
+// DefaultMax is Take's default slot count.
 const DefaultMax = 5
 
-// Limit is the most slots a repository may use.
+// Limit caps slots per repository.
 const Limit = 10
 
 const lockReason = "hrn ws slot"
 
-// createLockWait bounds how long a take waits for the slots' .create.lock.
 var createLockWait = 2 * time.Minute
 
-// Lease is the JSON in <n>.lease: who holds the slot, since when, and the
-// branch they asked for (empty: detached). A lease with a PID is stale once
-// that process has exited or the PID belongs to another process; one without
-// is held until Free.
+// Lease records <n>.lease ownership, stale on process exit or proven PID reuse.
+// Without a PID it stays held until Free.
 type Lease struct {
 	Holder string    `json:"holder"`
 	PID    int       `json:"pid,omitempty"`
@@ -46,7 +38,7 @@ type Lease struct {
 	Branch string    `json:"branch"`
 }
 
-// TakeOptions says which repository to take a slot of and what to check out.
+// TakeOptions selects a repository, checkout and lease holder.
 type TakeOptions struct {
 	Repo    string // any directory of the repository (default: the current one)
 	Branch  string // check out this branch, or create it from the base; empty detaches at the base
@@ -57,7 +49,7 @@ type TakeOptions struct {
 	NoFetch bool   // use what origin's refs already say
 }
 
-// Taken is a slot handed out by Take, or given back by Free.
+// Taken describes a slot taken or freed.
 type Taken struct {
 	N     int
 	Path  string
@@ -65,7 +57,7 @@ type Taken struct {
 	Notes []string // slots passed over and why, fetches that failed
 }
 
-// Status is one row of List: a slot folder, a lease, or both.
+// Status describes a slot folder, lease or both.
 type Status struct {
 	N        int       `json:"n"`
 	Path     string    `json:"path"`
@@ -79,8 +71,7 @@ type Status struct {
 	Contents string    `json:"contents"` // clean, no folder, or what is in it
 }
 
-// MainCheckout returns the main checkout of the repository dir is in, from
-// any of its worktrees. A bare repository has none and is refused.
+// MainCheckout finds dir's main checkout, rejecting bare repositories.
 func MainCheckout(ctx context.Context, dir string) (string, error) {
 	common, err := gitOut(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
@@ -100,18 +91,13 @@ func MainCheckout(ctx context.Context, dir string) (string, error) {
 	return main, nil
 }
 
-// SlotsDir is where a main checkout's slots and leases live.
+// SlotsDir locates main's slots and leases.
 func SlotsDir(main string) string { return filepath.Join(main, ".hrn", "slots") }
 
 func leasePath(dir string, n int) string { return filepath.Join(dir, strconv.Itoa(n)+".lease") }
 
-// Take leases the first free slot of the repository, creating it on first
-// use, and checks out what opt asks for in it. A slot whose folder holds
-// changes, untracked files or commits on no remote, branch or tag is
-// skipped, never cleaned; ignored files (build output) stay as they are.
-// When ctx ends, the error says so, wherever the take stopped: the git
-// commands before the create lock run under ctx too, and a killed one would
-// otherwise read as a broken repository.
+// Take leases and switches a slot, preserving ignored files and skipping changes or stranded commits.
+// Errors preserve cancellation to distinguish interrupted git from repository damage.
 func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	t, err := take(ctx, opt)
 	if err != nil && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
@@ -158,7 +144,6 @@ func take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Taken{}, err
 	}
-	// Keep the slots out of the repository's status, as batch does.
 	if _, err := os.Stat(filepath.Join(main, ".hrn", ".gitignore")); err != nil {
 		_ = os.WriteFile(filepath.Join(main, ".hrn", ".gitignore"), []byte("*\n"), 0o644)
 	}
@@ -209,19 +194,13 @@ func take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Holders: holders, Passed: passed, Unreadable: unreadable}
 }
 
-// NoSlotError is Take's error when every slot up to Max is taken or skipped,
-// so a caller can wait for one rather than fail.
+// NoSlotError allows waiting when all slots are held or skipped.
 type NoSlotError struct {
 	Max     int
 	Held    int      // how many were passed over for a lease someone holds; the rest were skipped
 	Holders []Lease  // the leases of those, in slot order, less any that could not be read
 	Passed  []string // one line per slot: its path and who holds it, or why it was skipped
-	// Unreadable is the slots among Held whose lease gave no Lease, in slot
-	// order: an empty one being written, one that is not JSON, or a stale one
-	// a left <n>.lease.takeover file keeps from being taken over. A slot
-	// whose lease changed hands under the take, a live process taking it
-	// over or freeing it meanwhile, counts in Held but is in neither
-	// Holders nor Unreadable.
+	// Unreadable lists held slots with unreadable leases or blocked takeovers, excluding changed hands.
 	Unreadable []int
 }
 
@@ -234,9 +213,6 @@ func (e *NoSlotError) Error() string {
 		e.Max, strings.Join(e.Passed, "\n  "), advice)
 }
 
-// resolveBase returns the commit a new branch or a detached slot starts
-// from: opt.Base; origin's default branch, fetched unless opt.NoFetch; or,
-// without an origin, the main checkout's HEAD.
 func resolveBase(ctx context.Context, main string, opt TakeOptions, notes *[]string) (string, error) {
 	if opt.Base != "" {
 		sha, err := commitOf(ctx, main, opt.Base)
@@ -253,8 +229,7 @@ func resolveBase(ctx context.Context, main string, opt TakeOptions, notes *[]str
 		return sha, nil
 	}
 	if opt.NoFetch {
-		// Only origin/HEAD says which branch is the default; guessing main
-		// or master could start from the wrong one.
+		// Require origin/HEAD; guessing main or master can pick the wrong branch.
 		if sha, err := commitOf(ctx, main, "refs/remotes/origin/HEAD"); err == nil {
 			return sha, nil
 		}
@@ -276,10 +251,7 @@ func resolveBase(ctx context.Context, main string, opt TakeOptions, notes *[]str
 	return fetchRemote(ctx, main, name, notes)
 }
 
-// fetchRemote fetches origin's branch name into refs/remotes/origin/<name>
-// and returns its commit. When the fetch fails (another take fetching the
-// same ref at once, no network) and the ref is already there, that commit is
-// used and a note says so.
+// Report cached-ref fallback on fetch failure because it may be stale.
 func fetchRemote(ctx context.Context, main, name string, notes *[]string) (string, error) {
 	ref := "refs/remotes/origin/" + name
 	_, ferr := gitOut(ctx, main, "fetch", "-q", "origin", "+refs/heads/"+name+":"+ref)
@@ -296,9 +268,6 @@ func fetchRemote(ctx context.Context, main, name string, notes *[]string) (strin
 	return sha, nil
 }
 
-// planSwitch returns the git switch that puts a slot where opt asks: an
-// existing local branch, origin's branch of that name tracked, a new branch
-// from base, or base detached.
 func planSwitch(ctx context.Context, main, base string, opt TakeOptions, notes *[]string) ([]string, error) {
 	b := opt.Branch
 	if b == "" {
@@ -336,16 +305,10 @@ func commitOf(ctx context.Context, dir, ref string) (string, error) {
 	return gitOut(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 }
 
-// beforeTakeoverLock, set only by tests, runs between acquire's read of a
-// stale lease and taking the slot's lock to take it over.
 var beforeTakeoverLock func()
 
-// acquire creates the lease file with O_EXCL. When one exists it returns why
-// the slot is busy, with the lease it read when it could, unless the lease
-// is stale, in which case it takes it over and tries once more. changed
-// reports that the slot changed hands under it instead, a live process
-// taking it over or freeing it meanwhile: contention, which clears in a
-// moment, not a lease that cannot be read.
+// O_EXCL prevents shared ownership; replace only proven stale leases under the takeover lock.
+// changed distinguishes handover contention from unreadable leases.
 func acquire(p string, l Lease) (busy string, holder *Lease, changed bool, err error) {
 	data, err := json.Marshal(l)
 	if err != nil {
@@ -386,12 +349,9 @@ func acquire(p string, l Lease) (busy string, holder *Lease, changed bool, err e
 	return leaseChanged, nil, true, nil
 }
 
-// leaseChanged is why a slot is busy when its lease changed hands under
-// acquire.
 const leaseChanged = "its lease changed while it was being taken over"
 
-// readLease reads a lease file. One that is empty is being written by the
-// caller that just created it, and counts as held.
+// Treat empty leases as held: O_EXCL creation precedes writing.
 func readLease(p string) (Lease, []byte, error) {
 	raw, err := os.ReadFile(p)
 	if err != nil {
@@ -412,8 +372,7 @@ func (l Lease) processHolds() bool {
 		return false
 	}
 	if l.Start != "" {
-		// Only identities of one platform compare: a slot folder can be shared by
-		// Windows hrn and hrn under WSL, and there another platform's is unknown.
+		// Shared Windows/WSL slots require same-platform start ids to prove PID reuse.
 		if id, known := startID(l.PID); known && samePlatform(id, l.Start) && id != l.Start {
 			return false
 		}
@@ -421,11 +380,9 @@ func (l Lease) processHolds() bool {
 	return true
 }
 
-// StartID returns a process's platform-specific start identity when available.
+// StartID returns a process's platform-specific start identity if known.
 func StartID(pid int) (string, bool) { return startID(pid) }
 
-// samePlatform reports whether two start identities carry the same prefix
-// ("win:", "linux:").
 func samePlatform(a, b string) bool {
 	pa, _, _ := strings.Cut(a, ":")
 	pb, _, _ := strings.Cut(b, ":")
@@ -445,10 +402,7 @@ func describe(l Lease) string {
 	return s
 }
 
-// removeLease removes the lease at p if it still holds want, under
-// lockLease, so two callers taking over or freeing the same lease never
-// remove a lease someone made after it. It returns why it did not, or "",
-// and whether that is because the lease changed meanwhile.
+// Recheck bytes under lock to avoid deleting a successor's lease.
 func removeLease(p string, want []byte) (why string, changed bool) {
 	unlock, why := lockLease(p)
 	if why != "" {
@@ -470,9 +424,7 @@ func removeLease(p string, want []byte) (why string, changed bool) {
 	return "", false
 }
 
-// lockLease creates the lease's <n>.lease.takeover file with O_EXCL, which
-// whoever takes over or frees the lease holds while doing it. It returns the
-// function that removes it, or why it could not.
+// O_EXCL serializes takeover/free; remove leftover locks only with all hrn commands stopped.
 func lockLease(p string) (unlock func(), why string) {
 	lock := p + ".takeover"
 	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -486,9 +438,7 @@ func lockLease(p string) (unlock func(), why string) {
 	return func() { os.Remove(lock) }, ""
 }
 
-// removeOwn removes a lease this caller holds. Windows refuses to remove a
-// file another process has open for a moment (a reader), so it retries
-// briefly.
+// Windows readers can briefly deny deletion; retry owned-lease removal.
 func removeOwn(p string) error {
 	var err error
 	for i := 0; i < 10; i++ {
@@ -503,11 +453,7 @@ func removeOwn(p string) error {
 	return err
 }
 
-// prepare makes a slot ready to switch: it creates and locks the worktree on
-// first use, or checks that the folder there is a worktree of this
-// repository with nothing in it and no commits a switch would strand. It
-// returns why the slot must be skipped, or
-// "".
+// prepare runs with the caller holding the lease; it creates and locks the worktree on first use, else says why a switch would lose work.
 func prepare(ctx context.Context, main, path, base string) (skip string, err error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -552,9 +498,7 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 	return "", nil
 }
 
-// lockExisting checks that path is a worktree of this repository and locks
-// it if it is not locked yet, under the create lock, since listing and
-// locking worktrees fail while another take is adding one.
+// Lock listing and locking against adds, which expose incomplete git admin directories.
 func lockExisting(ctx context.Context, main, path string) (skip string, err error) {
 	unlock, err := lockCreate(ctx, filepath.Dir(path))
 	if err != nil {
@@ -576,14 +520,8 @@ func lockExisting(ctx context.Context, main, path string) (skip string, err erro
 	return "", nil
 }
 
-// lockCreate takes an OS lock on dir's .create.lock, waiting for whoever
-// holds it, and returns the function that releases it. Takes, in this process
-// or another, hold it while they add, list or lock worktrees: git writes a
-// new worktree's admin folder in steps, and every git command that lists the
-// worktrees dies on one half written (issue #188).
-//
-// The OS releases the lock when its holder closes the file or dies, so a
-// crash leaves only the file, which is never removed and blocks nobody.
+// Lease first, then serialize git add/list/lock to hide incomplete admin directories.
+// Never remove this file: OS ownership releases on close or death.
 func lockCreate(ctx context.Context, dir string) (unlock func(), err error) {
 	p := filepath.Join(dir, ".create.lock")
 	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0o644)
@@ -618,15 +556,43 @@ func lockCreate(ctx context.Context, dir string) (unlock func(), err error) {
 	}
 }
 
-// stranded counts the commits at HEAD that a switch away would leave on no
-// ref: on no remote-tracking ref, local branch or tag. A slot Release gave
-// back sits on its task's local branch, which keeps those commits.
+// TryLock creates p and tries an exclusive lock, returning ok false if held.
+// The OS releases ownership on close or death.
+func TryLock(p string) (unlock func(), ok bool, err error) {
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, false, err
+	}
+	if ok, err = tryLock(f); !ok || err != nil {
+		f.Close()
+		return nil, false, err
+	}
+	return func() {
+		unlockFile(f)
+		f.Close()
+	}, true, nil
+}
+
+// Local branches and tags preserve commits across switches without a push.
 func stranded(ctx context.Context, dir string) (int, error) {
 	out, err := gitOut(ctx, dir, "rev-list", "--count", "HEAD", "--not", "--remotes", "--branches", "--tags")
 	if err != nil {
+		if unbornHEAD(ctx, dir) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	return strconv.Atoi(out)
+}
+
+// A quiet missing HEAD has no commits to strand; other git failures keep the slot.
+func unbornHEAD(ctx context.Context, dir string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	_, err := gitCommand(ctx, dir, "rev-parse", "-q", "--verify", "HEAD").Output()
+	var exit *exec.ExitError
+	// On Windows a git killed by the context also exits 1 with no stderr.
+	return ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 1 && len(exit.Stderr) == 0
 }
 
 type worktree struct {
@@ -634,7 +600,6 @@ type worktree struct {
 	locked bool
 }
 
-// worktreeAt finds path among the repository's registered worktrees.
 func worktreeAt(ctx context.Context, main, path string) (worktree, bool, error) {
 	out, err := gitStdout(ctx, main, "worktree", "list", "--porcelain")
 	if err != nil {
@@ -658,8 +623,6 @@ func worktreeAt(ctx context.Context, main, path string) (worktree, bool, error) 
 	return worktree{}, false, nil
 }
 
-// changes lists what `git status --porcelain` shows in a worktree: tracked
-// changes and untracked files, not ignored ones.
 func changes(ctx context.Context, dir string) ([]string, error) {
 	out, err := gitStdout(ctx, dir, "status", "--porcelain", "--untracked-files=normal")
 	if err != nil {
@@ -682,15 +645,12 @@ func firstFew(lines []string) string {
 	return fmt.Sprintf("%s and %d more", strings.Join(lines[:few], ", "), len(lines)-few)
 }
 
-// isWorktreeRoot reports whether dir is the top of a worktree, so git run
-// there does not walk up to the main checkout.
+// Require a worktree root so git cannot act on the enclosing main checkout.
 func isWorktreeRoot(ctx context.Context, dir string) bool {
 	top, err := gitOut(ctx, dir, "rev-parse", "--show-toplevel")
 	return err == nil && samePath(top) == samePath(dir)
 }
 
-// slotOf returns the slot number and folder that path lies in, if it lies in
-// one of main's slots.
 func slotOf(main, path string) (int, string, bool) {
 	dir := samePath(SlotsDir(main))
 	rel, err := filepath.Rel(dir, samePath(path))
@@ -705,14 +665,10 @@ func slotOf(main, path string) (int, string, bool) {
 	return n, filepath.Join(SlotsDir(main), first), true
 }
 
-// beforeFreeLock, set only by tests, runs between Free's first read of the
-// lease and taking the slot's lock.
 var beforeFreeLock func()
 
-// Free gives back the slot that path (anywhere inside it) lies in. It
-// refuses while the slot holds changes, untracked files or commits on no
-// remote, and while the lease names its running holder; otherwise it detaches HEAD where it is, so the branch is free for
-// other checkouts and for gc, and removes the lease.
+// Free releases path's slot unless held by a live process, changed or unpushed.
+// Detaching HEAD frees its branch for other checkouts and gc.
 func Free(ctx context.Context, path string) (Taken, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -741,9 +697,7 @@ func Free(ctx context.Context, path string) (Taken, error) {
 	if beforeFreeLock != nil {
 		beforeFreeLock()
 	}
-	// Hold the takeover lock from here to the lease's removal, so no take
-	// can take over a stale lease and check out a branch that free then
-	// detaches.
+	// Lock through lease removal to avoid detaching a new holder's branch.
 	unlock, why := lockLease(lp)
 	if why != "" {
 		return Taken{}, fmt.Errorf("slot %d: %s", n, why)
@@ -774,7 +728,15 @@ func Free(ctx context.Context, path string) (Taken, error) {
 		}
 		return Taken{}, fmt.Errorf("slot %d has %d %s on no remote, so it stays taken; push them first", n, count, word)
 	}
-	if _, err := gitOut(ctx, slot, "switch", "--detach"); err != nil {
+	detach := []string{"switch", "--detach"}
+	if unbornHEAD(ctx, slot) {
+		base, err := commitOf(ctx, main, "HEAD")
+		if err != nil {
+			return Taken{}, err
+		}
+		detach = append(detach, base)
+	}
+	if _, err := gitOut(ctx, slot, detach...); err != nil {
 		return Taken{}, err
 	}
 	if err := removeOwn(lp); err != nil {
@@ -783,13 +745,8 @@ func Free(ctx context.Context, path string) (Taken, error) {
 	return Taken{N: n, Path: slot, Lease: lease}, nil
 }
 
-// Release gives back a slot that Take handed out, as Free does, but for a
-// holder whose work stays on a local branch by design (a batch task's
-// hrn/<id>, which batch merge and batch rm read): it does not ask for a push.
-// It refuses, and leaves the lease, while the slot holds changes, untracked
-// files or commits at HEAD on no remote, branch or tag, or when the lease is no longer exactly t's; otherwise it detaches
-// HEAD at detachAt (empty: where HEAD is) and removes the lease, both under
-// the slot's takeover lock.
+// Release detaches t's clean slot at detachAt (empty: HEAD), removing only its exact lease under lock.
+// Local branches preserve unpushed batch results; stranded commits prevent release.
 func Release(ctx context.Context, t Taken, detachAt string) error {
 	if strings.HasPrefix(detachAt, "-") {
 		return fmt.Errorf("%q is not a commit", detachAt)
@@ -855,9 +812,7 @@ func Release(ctx context.Context, t Taken, detachAt string) error {
 	return nil
 }
 
-// unpushed counts the commits at HEAD that no remote-tracking ref holds. A
-// repository without remotes counts the ones no branch or tag holds instead,
-// since those are what a later checkout would lose.
+// Without remotes, branches and tags suffice to preserve commits.
 func unpushed(ctx context.Context, dir string) (int, error) {
 	remotes, err := gitOut(ctx, dir, "remote")
 	if err != nil {
@@ -871,14 +826,15 @@ func unpushed(ctx context.Context, dir string) (int, error) {
 	}
 	out, err := gitOut(ctx, dir, args...)
 	if err != nil {
+		if unbornHEAD(ctx, dir) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	return strconv.Atoi(out)
 }
 
-// CountLeases counts the leases of the repository repo is in that match,
-// reading only the lease files: a lease being written or unreadable is not
-// counted. A batch counts the slots it holds itself this way.
+// CountLeases counts matching readable leases, excluding incomplete files.
 func CountLeases(ctx context.Context, repo string, match func(Lease) bool) (int, error) {
 	main, err := MainCheckout(ctx, repo)
 	if err != nil {
@@ -908,13 +864,8 @@ func CountLeases(ctx context.Context, repo string, match func(Lease) bool) (int,
 	return n, nil
 }
 
-// RangeBeyondSessions returns the Max a Take needs for n slots other than
-// sessions' to lie within it, capped at Limit when there are too few. A
-// session's lease (hrn ws take, no pid) is
-// held until hrn ws free, so its slot is skipped; every other slot number
-// counts: free, leased by a process, or with a lease that cannot be read.
-// Slot numbers are walked from 1 until n have counted or Limit is reached,
-// so a session past them widens nothing.
+// RangeBeyondSessions returns Take's Max for n non-session slots, capped at Limit.
+// Skip PID-free sessions held until Free; count process-held and unreadable slots.
 func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
 	if n < 1 {
 		return 0, fmt.Errorf("a range of %d slots is none", n)
@@ -939,9 +890,7 @@ func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
 	return Limit, nil
 }
 
-// List reports every slot of the repository repo is in: each slot folder and
-// each lease, so a lease without a folder and a folder without a lease both
-// show.
+// List includes orphan leases and unleased slot folders.
 func List(ctx context.Context, repo string) ([]Status, error) {
 	main, err := MainCheckout(ctx, repo)
 	if err != nil {

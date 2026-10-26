@@ -18,9 +18,21 @@ import (
 	"time"
 )
 
+// gitWait bounds one fixture git command, so a stuck one fails its test with
+// the command named instead of hanging until the package timeout.
+const gitWait = 2 * time.Minute
+
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), gitWait)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	// A child git leaves behind (auto gc, a daemon) can hold the output pipe open.
+	cmd.WaitDelay = 10 * time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("git %v in %s still running after %s\n%s", args, dir, gitWait, out)
+	}
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -834,6 +846,86 @@ func TestReleaseRefusesADetachedCommitOnNoRefAndKeepsTheLease(t *testing.T) {
 	}
 }
 
+func TestFreeGivesBackASlotOnAnEmptyOrphanBranch(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := takeWithExitedPID(t, f, TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1"})
+	git(t, got.Path, "switch", "--orphan", "empty")
+	if _, err := Free(context.Background(), got.Path); err != nil {
+		t.Fatalf("free of an empty orphan branch: %v", err)
+	}
+	if b, h := git(t, got.Path, "branch", "--show-current"), git(t, got.Path, "rev-parse", "HEAD"); b != "" || h != base {
+		t.Errorf("HEAD on %q at %s, want detached at %s", b, h, base)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, ".hrn", "slots", "1.lease")); !os.IsNotExist(err) {
+		t.Errorf("the lease should be gone: %v", err)
+	}
+}
+
+func TestUnbornHEADRequiresAQuietMissingHEAD(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if unbornHEAD(ctx, f.repo) {
+		t.Error("a valid HEAD is not unborn")
+	}
+	git(t, f.repo, "switch", "--orphan", "empty")
+	if !unbornHEAD(ctx, f.repo) {
+		t.Error("an unborn HEAD should be recognised")
+	}
+	t.Setenv("GIT_TRACE", "1")
+	_, err := gitCommand(ctx, f.repo, "rev-parse", "-q", "--verify", "HEAD").Output()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || len(exit.Stderr) == 0 {
+		t.Fatalf("traced missing HEAD: %v; want exit 1 with stderr", err)
+	}
+	if unbornHEAD(ctx, f.repo) {
+		t.Error("a git failure with stderr is not unborn")
+	}
+	t.Setenv("GIT_TRACE", "0")
+	if unbornHEAD(ctx, t.TempDir()) {
+		t.Error("a directory outside a repository is not unborn")
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if unbornHEAD(cancelled, f.repo) {
+		t.Error("a cancelled git command is not an unborn HEAD")
+	}
+}
+
+func TestReleaseGivesBackASlotOnAnEmptyOrphanBranch(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	git(t, got.Path, "switch", "--orphan", "empty")
+	if err := Release(context.Background(), got, base); err != nil {
+		t.Fatalf("release of an empty orphan branch: %v", err)
+	}
+	if b, h := git(t, got.Path, "branch", "--show-current"), git(t, got.Path, "rev-parse", "HEAD"); b != "" || h != base {
+		t.Errorf("HEAD on %q at %s, want detached at %s", b, h, base)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo, ".hrn", "slots", "1.lease")); !os.IsNotExist(err) {
+		t.Errorf("the lease should be gone: %v", err)
+	}
+}
+
+func TestReleaseKeepsTheSlotWhenReadingCommitsFails(t *testing.T) {
+	f := newFixture(t)
+	base := git(t, f.repo, "rev-parse", "HEAD")
+	got := f.take(TakeOptions{Branch: "hrn/t1", Holder: "batch b task t1", PID: os.Getpid()})
+	f.write(f.repo, ".git/refs/tags/broken", "not an object id\n")
+	lp := filepath.Join(f.repo, ".hrn", "slots", "1.lease")
+	_, before := readLeaseT(t, lp)
+	if err := Release(context.Background(), got, base); err == nil || !strings.Contains(err.Error(), "git rev-list") {
+		t.Errorf("release with an unreadable ref: %v", err)
+	}
+	if b, h := git(t, got.Path, "branch", "--show-current"), git(t, got.Path, "rev-parse", "HEAD"); b != "hrn/t1" || h != base {
+		t.Errorf("HEAD on %q at %s, want hrn/t1 at %s", b, h, base)
+	}
+	if _, after := readLeaseT(t, lp); after != before {
+		t.Errorf("a refused release must leave the lease:\n%s\nwant\n%s", after, before)
+	}
+}
+
 func TestReleaseOfALeaseThatChangedLeavesHEADWhereItIs(t *testing.T) {
 	f := newFixture(t)
 	base := git(t, f.repo, "rev-parse", "HEAD")
@@ -1117,11 +1209,30 @@ func TestCreateLockIsNeverTakenFromAHolderSlowerThanTheWait(t *testing.T) {
 	createLockWait = 200 * time.Millisecond
 	unlock := f.holdCreateLock()
 	defer unlock()
-	// The holder's git commands outlast the wait, as a slow add can.
-	time.Sleep(3 * createLockWait)
-	if second, err := lockCreate(context.Background(), SlotsDir(f.repo)); err == nil {
-		second()
-		t.Fatal("a second caller got the create lock while its holder still held it")
+	// The holder keeps the lock until the second caller's own wait has run out,
+	// as a slow add can; the outer bound only turns a hang into a failure.
+	got := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		second, err := lockCreate(context.Background(), SlotsDir(f.repo))
+		if err == nil {
+			second()
+		}
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		if err == nil {
+			t.Fatal("a second caller got the create lock while its holder still held it")
+		}
+		if !strings.Contains(err.Error(), "waited "+createLockWait.String()) {
+			t.Fatalf("second caller: %v, want it to give up after its wait", err)
+		}
+		if waited := time.Since(start); waited < createLockWait {
+			t.Fatalf("second caller gave up after %s, before its wait of %s", waited, createLockWait)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("a second caller kept waiting past its wait for the create lock")
 	}
 }
 

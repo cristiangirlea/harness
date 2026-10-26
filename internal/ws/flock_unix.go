@@ -8,9 +8,7 @@ import (
 	"syscall"
 )
 
-// tryLock takes an exclusive lock on f without waiting, and reports false
-// when another handle holds it. The lock goes with the open file, so the
-// kernel drops it when its holder closes f or dies.
+// Nonblocking kernel locks release on close or death, preventing stale ownership.
 func tryLock(f *os.File) (bool, error) {
 	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if errors.Is(err, syscall.EWOULDBLOCK) {

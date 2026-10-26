@@ -9,10 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
-// ShellResult is the outcome of a command RunShell managed to start.
+// ShellResult describes a started command.
 type ShellResult struct {
 	Output    string // combined stdout and stderr; head and tail are kept when long
 	OutputCut bool   // full capture exceeded its ceiling; Output is the existing cut
@@ -20,16 +21,19 @@ type ShellResult struct {
 	TimedOut  bool
 }
 
-// RunShell runs one command line through Shell() in dir. A zero timeout means
-// none. On timeout or cancellation the whole process tree is killed, not just
-// the shell, so a hung test cannot keep running and hold the directory. Only
-// a failure to start is an error; a non-zero exit is a result. env is the
-// command's environment; nil is hrn's own.
+// RunShell kills the whole tree on timeout or cancellation; only a start failure or ErrWait is an error.
+// A non-zero exit is a result, a zero timeout means none, and a nil env is hrn's own.
 func RunShell(ctx context.Context, dir, command string, timeout time.Duration, env []string) (ShellResult, error) {
 	return runShell(ctx, dir, command, timeout, env, false)
 }
 
 const maxCapture = 8 << 20
+
+// ErrWait marks a shell that started but whose Wait failed, so callers do not
+// report it as a start failure.
+var ErrWait = errors.New("waiting for the shell failed")
+
+var waitShell = (*exec.Cmd).Wait
 
 func runShell(ctx context.Context, dir, command string, timeout time.Duration, env []string, capture bool) (ShellResult, error) {
 	if timeout > 0 {
@@ -41,19 +45,17 @@ func runShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	parts := argv(command)
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
 	cmd.Dir = dir
-	// GuardEnv already withholds *_TOKEN. ExecutorEnv also removes the
-	// operator token and database URL if a caller supplies them explicitly.
+	// Strip explicit operator credentials too.
 	if env == nil {
 		env = os.Environ()
 	}
-	cmd.Env = retrieval.ExecutorEnv(env)
+	cmd.Env = retrieval.ExecutorEnv(gitenv.WithoutRepoVars(env))
 	out := &boundedBuffer{keepHead: maxOutput * 2 / 3, keepTail: maxOutput / 3}
 	if capture {
 		out.fullLimit = maxCapture
 	}
 	cmd.Stdout, cmd.Stderr = out, out
-	// Stop waiting on the pipes if something survived the kill or was left
-	// running in the background.
+	// Descendants may hold pipes open.
 	cmd.WaitDelay = 5 * time.Second
 	tree, err := StartTree(cmd)
 	if err != nil {
@@ -61,18 +63,18 @@ func runShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	}
 	defer tree.Close()
 
-	err = cmd.Wait()
+	err = waitShell(cmd)
 	res := ShellResult{Output: out.String(), OutputCut: out.fullDropped, TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded)}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil, errors.Is(err, exec.ErrWaitDelay):
-		// Exited with status 0; ErrWaitDelay only means a grandchild kept the pipes open.
+		// ErrWaitDelay means open pipes, not a failed command.
 	case errors.As(err, &exitErr):
 		res.ExitCode = exitErr.ExitCode()
 	case ctx.Err() != nil:
 		// Killed before it produced an exit status.
 	default:
-		return res, err
+		return res, fmt.Errorf("%w: %v", ErrWait, err)
 	}
 	if ctx.Err() != nil {
 		res.ExitCode = -1
@@ -80,17 +82,13 @@ func runShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	return res, nil
 }
 
-// boundedBuffer keeps the first keepHead and last keepTail bytes written to
-// it, so a chatty command cannot grow memory without bound while its output
-// still renders the way Truncate would. Safe for the concurrent stdout and
-// stderr copies exec runs.
+// Cap bytes without racing stdout/stderr copies.
 type boundedBuffer struct {
 	mu                 sync.Mutex
 	keepHead, keepTail int
 	head, tail         []byte
 	dropped            int
-	// Opt-in full capture still feeds the bounded buffer, so crossing the
-	// ceiling can discard the full copy and return the same head-and-tail cut.
+	// Retain head/tail on capture overflow.
 	fullLimit   int
 	full        []byte
 	fullDropped bool

@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,17 +13,14 @@ import (
 	"time"
 )
 
-// Source says where the candidate comes from: one of a built file, a ref to
-// go install, or a release (the default when the other two are empty).
+// Source selects a local file, go install ref, or release (the default).
 type Source struct {
 	File    string
 	Ref     string
 	Release *ReleaseSource
 }
 
-// Options drive one run. Every function field has a real default; tests
-// hand in fakes. Targets, when set, replaces the search over Running and
-// Dirs.
+// Options configures update hooks and optional explicit targets.
 type Options struct {
 	Source   Source
 	DryRun   bool
@@ -40,9 +38,7 @@ type Options struct {
 	Now       func() time.Time
 }
 
-// Run updates (or rolls back) every target and returns the exit code: 0, or
-// 1 when a target or a watch restart failed. An error is for a run that
-// could not start at all.
+// Run updates or rolls back targets: 0 succeeds, 1 means target/restart failure, 2 plus error means startup failure.
 func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 	if err := o.defaults(); err != nil {
 		return 2, err
@@ -51,7 +47,6 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		return 2, errors.New("choose one of --file, --ref (or --main) and the release")
 	}
 
-	// Targets and what each says.
 	targets := o.Targets
 	if targets == nil {
 		var err error
@@ -62,8 +57,7 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 	if len(targets) == 0 {
 		return 2, errors.New("no hrn binary found to update")
 	}
-	// hrn holds the copies that answer version; a stranger named hrn (another
-	// tool first on PATH) is listed and left alone, never counted or rolled back.
+	// Leave unrelated programs named hrn untouched and uncounted.
 	versions := map[string]Version{}
 	var hrn, strangers []string
 	for _, t := range targets {
@@ -83,8 +77,7 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		return 2, errors.New("no hrn binary found to update")
 	}
 
-	// The processes, before any file is renamed: a renamed running binary
-	// reports its new name afterwards.
+	// Renaming changes process paths, so capture them first.
 	var watches []Watch
 	var mcps []Process
 	if procs, err := o.Lister.Processes(); err != nil {
@@ -94,7 +87,7 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 	}
 
 	failed := 0
-	done := map[string]bool{}
+	done, current := map[string]bool{}, map[string]bool{}
 	if o.Rollback {
 		for _, t := range hrn {
 			if o.DryRun {
@@ -127,7 +120,13 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		}
 		installed := versions[hrn[0]]
 		fmt.Fprintf(out, "installed: %s\ncandidate: %s\n", installed.Line, want.Line)
-		if installed.Same(want) {
+		for _, t := range hrn {
+			// The candidate file may still run an old watch process.
+			if versions[t].Same(want) && (!want.Modified || sameBytes(candidate, t)) && !isSameFile(candidate, t) {
+				current[t] = true
+			}
+		}
+		if len(current) == len(hrn) {
 			fmt.Fprintln(out, "already current")
 			return 0, nil
 		}
@@ -140,8 +139,12 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		}
 		for _, t := range hrn {
 			old := versions[t]
+			if current[t] {
+				fmt.Fprintf(out, "  %s already current\n", t)
+				continue
+			}
 			if isSameFile(candidate, t) {
-				// --file named this copy: renaming it aside would remove the source.
+				// Renaming --file's own copy would remove the source.
 				fmt.Fprintf(out, "  %s is the candidate itself\n", t)
 				done[t] = true
 				continue
@@ -162,7 +165,6 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 		}
 	}
 
-	// The watch, from the binary it was running.
 	for _, w := range watches {
 		exe := Resolved(w.Exe)
 		target := ""
@@ -170,6 +172,9 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 			if samePath(exe, Resolved(t)) {
 				target = t
 			}
+		}
+		if current[target] {
+			continue
 		}
 		if !done[target] {
 			fmt.Fprintf(out, "watch (pid %d) left running on the old build: %s was not replaced\n", w.PID, target)
@@ -202,8 +207,6 @@ func Run(ctx context.Context, out io.Writer, o Options) (int, error) {
 	return 0, nil
 }
 
-// candidate gets the new binary from the source and reads its version. The
-// cleanup removes a temp dir this run made.
 func (o *Options) candidate(ctx context.Context, out io.Writer) (path string, v Version, cleanup func(), err error) {
 	switch {
 	case o.Source.File != "":
@@ -247,8 +250,7 @@ func (o *Options) candidate(ctx context.Context, out io.Writer) (path string, v 
 			fmt.Fprintf(out, "source: release %s (%s)\n", tag, filepath.Base(path))
 		}
 	}
-	// The candidate is run with version and nothing else, after the
-	// checksum (for a release) has passed.
+	// Fetch must verify the release checksum before execution.
 	if v, err = o.Version(ctx, path); err != nil {
 		return "", Version{}, cleanup, fmt.Errorf("candidate: %w", err)
 	}
@@ -304,8 +306,31 @@ func boolCount(bs ...bool) int {
 	return n
 }
 
-// isSameFile reports whether two paths name one file, through symlinks and
-// case-insensitive file systems alike.
+// A modified build's version line cannot identify its edits; unreadable files must not be skipped.
+func sameBytes(a, b string) bool {
+	fa, err := os.Open(a)
+	if err != nil {
+		return false
+	}
+	defer fa.Close()
+	fb, err := os.Open(b)
+	if err != nil {
+		return false
+	}
+	defer fb.Close()
+	var ba, bb [32 * 1024]byte
+	for {
+		na, ea := io.ReadFull(fa, ba[:])
+		nb, eb := io.ReadFull(fb, bb[:])
+		if na != nb || !bytes.Equal(ba[:na], bb[:nb]) {
+			return false
+		}
+		if ea != nil || eb != nil {
+			return ea == eb && (ea == io.EOF || ea == io.ErrUnexpectedEOF)
+		}
+	}
+}
+
 func isSameFile(a, b string) bool {
 	fa, err := os.Stat(a)
 	if err != nil {

@@ -39,14 +39,24 @@ in eval cost comparisons and routing through the same cost fields as api estimat
 Older records are not repriced.
 
 `hrn run`, batch tasks (after inheriting spec options), and MCP `run` apply the
-classified purpose's row only when backend, model **and** effort are all empty.
+purpose's row only when backend, model **and** effort are all empty. The purpose is
+the declared one (`--purpose`, the MCP `purpose` field, a batch task's `purpose`,
+or a leading `Purpose: <category>` header), else the prompt's classified category.
 Naming any of the three disables routing: routing never substitutes a named
-model. Missing rows keep the existing backend default. A row naming an unknown
-backend is ignored with a warning on stderr. Continued runs retain inherited
-choices, and the existing plan-limit switching rules still apply.
+model. Missing rows keep the existing backend default. An invalid row, whether it
+names an unknown or disabled backend or an unknown effort, is skipped with a
+warning on stderr and the run goes on unrouted; it never refuses the run.
+Continued runs retain inherited choices, and the existing plan-limit switching
+rules still apply. When a plan limit moves a routed run to the partner backend,
+the routed model and effort are dropped and the run records no `routed_by`, so the
+partner's results are not credited to the row. A batch attempt on any backend other
+than the one its model and effort were chosen for (a limit switch or a retry) drops
+them and `routed_by` the same way, whether they were routed or named.
 
-The additive `routed_by` record field contains `category`, `eval` (absent for a
-manual row), and `set`. It is omitted for unrouted runs; older records still load.
+The additive `routed_by` record field contains `category`, `declared` (true when
+the purpose was declared rather than classified; omitted otherwise), `eval`
+(absent for a manual row), and `set`. It is omitted for unrouted runs; older
+records still load.
 `hrn report --by routed` groups them as `<category> via <eval id>` or
 `<category> via hand`, with unrouted runs under `-`, using the usual runs, ok,
 and cost columns.
@@ -80,7 +90,13 @@ research, plan, ops or unknown) or `--by day` (the day the run started, on this 
 calendar; days are listed in date order rather than largest first). The purpose is the one the run declared (`--purpose`, the MCP `purpose`
 field, or a valid leading `Purpose: <category>` header); otherwise it comes from ordered keyword
 rules on the prompt's first paragraph, or its second when the first matches no rule, with leading
-`Label: value` lines skipped, since a brief's later paragraphs mention every keyword; the first rule
+`Label: value` lines skipped for an anchored instruction before trying the paragraph
+as written, then with labels skipped as a fallback. A label's colon must be followed by a space or the
+end of the line; URLs and Windows drive paths stay intact. A label's bracketed part and its
+value are each kept to 600 characters, so a long note stays a label and a long value is not
+cut short by its label. Each lead is lowercased
+from a bounded prefix and capped at 600 bytes without splitting a UTF-8 rune.
+Since a brief's later paragraphs mention every keyword, the first rule
 that matches wins, and a prompt no rule matches (a vague one) is `unknown`. Columns: runs, how many ended `ok`, median duration, median turns, total and
 median cost, and the cache share (cache-read tokens over every input token, cache writes included;
 `-` when the backend reported no token counts). A `~` marks a list-price estimate
@@ -89,7 +105,7 @@ computed by hrn. The api and codex estimates come from the Claude table in
 Every cost hrn shows should be treated as an estimate, never a bill; other CLIs
 may supply their own cost figures rather than use either hrn table. Codex uses
 standard short-context prices, without service-tier or regional adjustments.
-It also shows `-` when Codex usage is marked missing; Codex's cache share divides
+It also shows `-` when Codex usage is marked missing; Codex's and gemini's cache share divides
 cache reads by input tokens that already include those reads.
 Unknown costs are never summed as zero or included in the cost median. When no cost
 is known, cost cells show `-`; otherwise the total counts runs without a known cost
@@ -101,12 +117,20 @@ Batches group by repository; their cost sums every attempt, passed or not. Runs 
 a result (still running or killed), batches with a task still running, and records that
 cannot be read are counted under the tables and left out of them.
 The tokens table sums each group's input, output, cache-read and cache-write tokens from the
-runs' results, and gives the median and peak context a model call carried (input including cache
+runs' results. A run whose usage is missing has only partial counters, so it is left out of those
+totals and counted beside the input total, for example `1.2k (1 unknown)`; the cells show `-` when
+no run in the group has known usage, and JSON rows carry `runs_without_tokens` when nonzero.
+The table also gives the median and peak context a model call carried (input including cache
 reads and writes, counted once). Those come from a run's `usage` events when it has them (see
-[Usage per turn](run-records.md#usage-per-turn)): every turn counts. A run without them (codex,
-gemini, older records) counts once, as its average, its totals over its turns, and its peak
-is the larger of that average and its recorded last-call context. `from` says which: `turns`,
-`totals`, `mixed`, or `-` when no run in the group reported tokens.
+[Usage per turn](run-records.md#usage-per-turn)): every turn counts. A codex run or an older
+record without them counts once, as its average, its totals over its turns, and its peak
+is the larger of that average and its recorded last-call context. gemini records carry no turn
+count, so a gemini run adds no context figure; its prompt count already includes its cached
+tokens, which its cache share and totals count once, as codex's do. `from` says which: `turns`,
+`totals`, `mixed`, or `-` when no run in the group reported tokens. In a `mixed` row the
+median is over one average a run (a run with `usage` events gives the mean of its turns), so
+per-turn values and per-run averages are never counted together; the peak is still the
+largest of any run.
 `--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
 JSON for scripts.
 
@@ -122,7 +146,8 @@ excluded; unreadable finished records in the window are counted and excluded.
 
 `shapes` classifies UTF-8 tool-result bytes as `test`, `log`, `json`, `table`,
 `terminal`, or `other`, in that priority order. Tests have `go test`, `ok`, `FAIL`,
-`=== RUN`, or `--- PASS|FAIL|SKIP|BENCH` lines; unified diff headers do not match.
+`=== RUN`, or `--- PASS|FAIL|SKIP|BENCH` lines, or are `go test -json` output
+(every non-empty line an object with an `Action`); unified diff headers do not match.
 Logs have timestamp or level prefixes; JSON must parse; CSV/TSV
 needs at least two rows with a consistent field count. Shell results otherwise
 count as terminal output. For unnamed results, a pending shell call (or a batch
@@ -159,7 +184,9 @@ input fields are supported; shell calls without either use the event's `text`
 (including Codex command events). Normalisation is a heuristic, not proof that two
 scripts are interchangeable. Totals cover all groups, including those beyond
 20; repeated bytes include every occurrence of groups seen more than once,
-even within one run. Keeping a script still costs its invocation and result.
+even within one run. `inline_script_totals` gives each of the five labels, in
+that order, its count, distinct run count and command bytes over all groups, so
+a label whose groups never reach the top 20 still shows. Keeping a script still costs its invocation and result.
 `inline_script_input_share_replayed_estimate` weights command bytes / 4 by
 usage events after the command, or `max(0, n - i)` using its ordinal
 among all tool calls when usage is absent, over the same token denominator.
@@ -197,14 +224,34 @@ task with the id `<evalid>.<task>.<variant>.r<n>`, so branches from different ev
 collide. Retries are off for every cell on purpose: an eval measures what one attempt
 does, and a retried attempt would score the harness rather than the backend. Everything
 else, gates and mode and the budgets, `lean` and `compact_window`, carries through from the
-spec; cells on claude are lean unless the spec or task says `"lean": false` (see
-[Lean claude workers](backends.md#lean-claude-workers)).
+spec; cells on claude and codex are lean unless the spec or task says `"lean": false` (see
+[What a run loads](backends.md#what-a-run-loads)). `protect` carries through too,
+but `protect_mode` defaults to `fail` in an eval: a cell that changed a file its gates rely
+on did not earn its pass (see [Batches](batches.md#batches)).
+
+A variant may set `"lean": true` or `"lean": false`, overriding the task and spec.
+Omitting it preserves the task/spec setting and the lean default. A variant's
+`lean` field is refused if any of its cells resolves to a backend other than `claude` or `codex`.
+Give variants distinct names to compare lean within one eval, for example:
+
+```json
+"matrix": [
+  {"name": "lean", "backend": "claude", "lean": true},
+  {"name": "full", "backend": "claude", "lean": false}
+]
+```
 
 Variants may set `retrieval` (`off`, `optional` or `required`) and
 `retrieval_version`. An eval record may include `retrieval_manifest` and
 `retrieval_comparison`: held-out tasks, coverage, preparation and online overhead,
-and a gate requiring equal success with at least 10% lower median model tokens
-across complete comparable cells. Failed attempts count in per-success usage;
+and a gate. With equal success over complete comparable cells, the candidate passes
+when its median model tokens over the pairs where both cells passed is lower by at
+least the saving threshold: the larger of 10% and the baseline's own movement, the
+range of its per-repeat passing medians over their mean (`baseline_median_movement`,
+`saving_threshold`). A variant that fails cheaply is not efficient, and a saving
+smaller than the baseline moves between repeats is noise. When the baseline passed in
+fewer than two repeats the noise was not measured and there is no saving verdict. The
+all-pairs medians stay in the record beside the passing ones. Failed attempts count in per-success usage;
 zero successes leave that ratio null. The bundled synthetic fixture tests the
 accounting and establishes no real model savings.
 
@@ -212,8 +259,8 @@ accounting and establishes no real model savings.
 
 ```
   variant                pass  attempts  median cost median time   turns   tools   context
-  sonnet                   0%         1        $0.15        13s       2       1    101061
-  haiku                  100%         1        $0.05        14s       2       1     71814
+  sonnet                   0%         1        $0.15         13s       2       1    101061
+  haiku                  100%         1        $0.05         14s       2       1     71814
 
   task                     sonnet      haiku
   greet                       0/1        1/1
@@ -228,7 +275,71 @@ there to say why, which is the point of keeping them.
 that takes eight greps to read one file shows up here and not in `turns`. Under a variant,
 a dim line gives the run statuses when any cell did not finish `ok`, and how many passes
 changed nothing: right for "find the bug, if there is one", suspicious for "fix the
-typos".
+typos", how many cells committed on their own (the agent moved its branch or `HEAD` with git
+itself, by a commit, reset or rename, which a prompt saying "do not run git" forbids;
+recorded, not failed), how many cells have no known
+cost, and when some cells failed, the passing
+cells' median cost and context, since cheap failures pull the all-cells medians down.
+
+A failed cell whose run ended `ok` in one turn, with no tool call and no change, *did not
+act*: an agent that answered "I can't access the files" or that misread the task's own
+instructions measured the eval's setup, not the variant. Such cells are counted apart
+(`did not act` under the variant, `+1 did not act` after a task's score), left out of the
+pass rate and the medians, and the footer says to re-run them; `hrn eval diff` notes a side
+that has them, and the routing table built from an eval and `hrn eval list` count the
+same way. A task whose deliverable is the answer (an `expect` and no gate) is the
+exception: there the answer is the work, so a wrong one is a failure.
+
+A cell *did not start* when every one of its attempts records `did_not_start`: the
+run ended `error` with an error and no sign that a model was reached (no turns, tool
+calls, final answer or tokens; some adapters never count turns, so tokens decide).
+The reason is the first line of that error, such as a missing CLI, a refused launch
+or an unsupported resume or option. A gate that could not start is a gate failure,
+not a start failure: the agent ran before it. A cell with one attempt that ran and
+failed and a retry that never started is a failure. These cells are counted
+separately on variant and task rows, beside `did not act`, and in `hrn eval diff`.
+Both counts are excluded from pass-rate denominators and medians, including in
+`hrn eval list`; the status histogram and total cell count still include them.
+Any turn or tool call rules out this classification. Short duration alone,
+timeouts, cancellations, an ordinary failing gate, and a successful idle answer
+are not evidence of a failed start. Old records without the field retain their
+previous classification. Batch retries are unchanged.
+
+After every first-round cell finishes, `rerun_unstarted` gives cells whose every
+attempt did not start extra rounds. An omitted JSON field defaults to 1; `0`
+disables reruns and negative values are refused. A Go caller constructing a `Spec`
+sets `RerunUnstarted` explicitly (its zero value disables reruns). Each round runs
+only cells still unstarted, through the same batch path, on the same base commit
+with the original prompt, backend, model and options. Each gets a fresh task id
+with `.u<round>` appended, such as `e.task.variant.r1.u1`. A cell that started is
+never rerun, even when it failed. Cancellation or a batch infrastructure error
+stops further rounds.
+
+The eval record's `results` retains every first-round `TaskResult` followed by
+every rerun result, including all attempts, diagnostics, tokens and timing.
+The first rerun that starts replaces the original for scoring, whether it passes
+or fails; unsuccessful launches remain in the record. The backing `batch_id`
+identifies the first batch; extra rounds also have their ordinary batch records, listed in `rerun_batch_ids`; with `--keep`, `hrn eval` prints a `hrn batch rm` for each.
+All known attempt costs, including unsuccessful launches and reruns, count in
+`total_cost_usd` and eval totals. Performance medians use the selected result.
+
+Variant and task rows record `reruns` (distinct cells given an extra round, not
+the number of rounds) and `reruns_exhausted` (rerun cells still unstarted after
+all configured rounds). Zero counts are omitted. Scheduled cells remain the
+sum of first-round cells: variant `attempts` and task `total` never grow with
+reruns. `did_not_start` counts cells still unstarted after reruns; pass rate is
+`passed / (scheduled - did_not_start - did_not_act)`, or zero when none acted.
+Variant `start_rate` (`BackendStartRate` in Go) measures first-round started
+cells / scheduled cells, or zero with no cells. It stays below 100% after a
+recovered launch, so recovery cannot hide launch reliability. The table and
+`hrn eval diff` show start rate beside the did-not-start and rerun counts.
+Old rows without `start_rate` derive it from their original `attempts` and
+`did_not_start`; their pass rates are unchanged, and absent rerun counts are zero.
+
+As in `hrn report`, an unknown cost (a
+codex cell marked missing, a cell with no attempt) is never counted as zero: the median
+cost and `total_cost_usd` cover the known costs, `cells_without_cost` counts the rest,
+`median cost` is `-` only when no cell's cost is known, and a known zero shows `$0.00`.
 
 The record goes to `~/.hrn/evals/<id>.json`; `--json` prints it, `hrn eval show <id>`
 reprints it, `hrn eval list` finds it, `-v` streams every agent's tool calls. The worktrees are removed once the
@@ -241,6 +352,45 @@ harness rather than the backend, and for the same reason an eval sets `no_switch
 whose backend reaches its usage limit ends `limited`. The `context` column counts prompt tokens and cache
 reads together, which is what the model was given rather than what was billed at full
 rate.
+
+### Harness variants
+
+A variant can also change the harness around the model, so a reworded brief, a new rule
+or a skills set is scored by the same gates as a model change:
+
+- `prompt_prefix` goes before every task's prompt, separated by a blank line, on every
+  backend. The judge still grades against the task's own prompt.
+- `append_system_prompt` is added after the backend's own system prompt: a rule, or tool
+  guidance. The api backend sends it as its own system block (cached with the rest);
+  claude gets `--append-system-prompt`. At most 16 KiB.
+- `no_skills: true` starts the claude CLI with its skills off (`--disable-slash-commands`),
+  to measure what they add. A lean cell already runs without skills, so the spec or task
+  sets `"skills": true` (or `"lean": false`) for the comparison; `no_skills` on a lean
+  claude cell without them is refused.
+
+```json
+"skills": true,
+"matrix": [
+  {"name": "base",  "backend": "claude"},
+  {"name": "rule",  "backend": "claude", "append_system_prompt": "Run the tests before you answer."},
+  {"name": "brief", "backend": "claude", "prompt_prefix": "Read the failing test first."},
+  {"name": "bare",  "backend": "claude", "no_skills": true}
+]
+```
+
+As with `lean`, a cell whose backend would ignore the field is refused before anything
+runs: `append_system_prompt` on anything but `api` and `claude`, `no_skills` on anything
+but `claude`. The check covers the value a cell ends up with, whether the variant, the
+task or the spec set it. The two run options work outside an eval too (`hrn run
+--append-system-prompt`, `--no-skills`, a batch spec, the MCP `run` tool); there, a backend
+that cannot apply them says `not enforced`. The claude CLI is refused the system prompt
+when it is installed as an npm `.cmd` shim, since `cmd.exe` would read the text as
+commands; the native `claude.exe` takes it.
+
+A route row holds only a backend, model and effort, so `hrn route from-eval` skips harness
+variants (and tasks or specs that set the two run options): their score would be credited to
+the model and routed without the change. A retrieval comparison refuses them for the same
+reason.
 
 ### The judge
 
@@ -259,8 +409,16 @@ from 0 to 10:
 `rubric` applies to every task and `rubrics` replaces it for the tasks it names; every
 task needs one or the other, and both are checked before any agent starts. The judge is
 shown the task, the rubric, the agent's final answer and the diff (the first 60 KB, and
-the names of untracked files), and runs read-only in the cell's worktree so it can open
-a file the diff only touches. `backend` defaults to the default backend, `timeout` to 5
+the names of untracked files), and runs read-only in a copy of the cell's files so it can
+open a file the diff only touches. The judge is blind to the variant: the prompt never
+names it, and the copy is a fresh repository in a temporary directory named
+`hrn-judge-<random>` holding two commits on branch `candidate`: `base` (where the eval
+started) and `candidate` (the cell's files), so `git diff HEAD~1` shows the whole change
+past the 60 KB the prompt holds. Neither its path, its branch nor its history says which
+variant made the change (the cell's own worktree and branch do). A cell's copy is
+removed once its last verdict is in.
+Verdicts are asked for in a shuffled order seeded by the batch id, not variant by
+variant. `backend` defaults to the default backend, `timeout` to 5
 minutes per verdict. Cells that failed are not judged: they already scored where it
 counts, and judging them would only spend money.
 
@@ -268,7 +426,16 @@ The scores join the table as a `judge` column per variant (the mean) and after e
 task's pass count (`1/1 10.0`). Every verdict is in the record under `judgements`, with
 its reason and the run id of the judge's own recorded run; a judge that fails or answers
 without a `{"score": ...}` object is recorded as an error rather than a zero, and the
-footer counts those. On the `claude` backend the first verdicts cost more than the
+footer counts those.
+
+A judge is a model, and it may not give the same diff the same score twice. `"repeats": 3`
+in the judge scores every passing cell three times, on the same prompt (the diff and the
+answer are read once per cell), each verdict its own run with its `repeat` number in
+`judgements`. The mean then covers every verdict, and a `spread` column shows the lowest
+and highest mean of a single repeat, over the cells scored in every repeat (a verdict that
+failed in one repeat would otherwise move that mean by the cell's difficulty): how far the
+variant's score moves when only the judge runs again. Task rows show it too (`2/2 7.5 (7.0-8.0)`), and the footer says `(3 per cell)`.
+Repeats multiply the judge's cost, not the agents'; the default is 1. On the `claude` backend the first verdicts cost more than the
 answer: Claude Code writes its own system prompt to the cache in the read-only mode the
 judge uses, about 64k tokens, once per judge that starts before the cache exists.
 
@@ -299,3 +466,73 @@ backticks. The first prompt ended "containing exactly the line: hx rocks. Do not
 git.", and Sonnet took the sentence's full stop as part of the line; with the text fenced
 it passed. A judge score column appears when either eval was judged; `--json` prints the
 pairs as data.
+
+When either side's judge ran with repeats, the score shows its spread (`8.0 (7.0-9.0) →
+8.5`), and a change smaller than the larger of the two spreads is marked `(within noise)`
+(`within_noise` in `--json`), on variant and task rows alike: the judge disagreed with
+itself by more than that. With no repeats on either side there is no spread to compare
+and nothing is marked. A different number of judge repeats does not count as a changed
+judge; a variant that changes its backend, model, effort, `prompt_prefix`,
+`append_system_prompt`, `no_skills`, `lean`, `shape_tools`, `retrieval` or
+`retrieval_version` under the same name gets a note.
+
+Every run records the agent setup it started with ([run records](run-records.md)): the
+instruction files its backend loads, its MCP servers, plugins and skills, and its harness
+options. When a variant's runs started with a different setup on the two sides beyond the
+variant's own options (`base_digest` differs), the diff says so and names what differs, so
+a score moved by an unrelated AGENTS.md, rule or skill edit is not credited to the change
+under test:
+
+```
+  note: variant base started with another agent setup in 847f6, beyond its variant fields: files .claude/rules/tests.md; skills check
+  note: variant base's cells in cb867 did not all start with the same agent setup
+```
+
+The second note means repeats of one task on that side started with setups that differ
+beyond their options, so its row already mixes setups. The comparison uses the first cell
+of each spec's first task, and only when both specs start with the same task: tasks may set
+their own MCP configs. A variant that changed its backend, whether the variant, the spec, a
+task or the default backend changed it, loads other files by design and gets only the
+variant note. When the first task's run is gone, or the eval is older than the field, there
+is no setup to compare and no note. `setup_changed` in `--json` lists the same.
+
+### Comparing a setup change
+
+A branch that edits AGENTS.md, CLAUDE.md, rules or skills changes how every later task
+runs, and review cannot see whether that helped. `hrn eval setup` measures it: it runs the
+spec's one variant twice on the branch's code, once with the base's setup files and once
+with the branch's own, and compares the two cell by cell.
+
+```
+hrn eval setup --base origin/main --held-out 0.5 --seed 7 setup-eval.json
+```
+
+The baseline runs on a commit hrn makes on top of `HEAD` whose setup files are as they were
+where the branch left `--base` (their merge base, so setup edits made on `main` since do not
+count as the branch's): every `AGENTS.md`, `CLAUDE.md` and `HRN.md` in the tree and
+everything under `.claude`, or the git pathspecs `--paths` names, comma-separated. Nothing is checked out for it and the
+checkout is left alone; when those files are the same on both sides there is nothing to
+compare and it refuses. Both sides then run as ordinary evals with the same tasks, gates
+and budgets, and the candidate's record holds the comparison under `setup_comparison`.
+The spec needs exactly one variant, on a plan backend named in it (`claude` or `codex`),
+since every task runs twice, and at least two repeats. `--held-out 0.5 --seed 7` runs half
+the tasks of each purpose, picked in an order the seed fixes, so a later comparison can run
+on the same ones; the record keeps the task ids, the share and the seed. Both batches'
+worktrees are removed when it ends, also after an error, unless `--keep`; `--json` prints
+only the comparison on standard output, with the progress on standard error, and
+`-v` streams every agent's tool calls.
+
+The verdict is `better`, `worse`, `same` or `inconclusive`. Cells are compared in pairs of
+the same task and repeat: when either cell of a pair never acted, or a cell ran on one side
+only, the pair is left out of both sides (the reason counts them, and says to re-run the
+cells that did not act), so a setup
+that makes the agent give up on a hard task cannot drop that task from one side only. A pass rate counts as higher or lower
+only when the difference is larger than the baseline's own pass rate moves between repeats.
+With the same pass rate, the token saving is read over pairs of the same task and repeat
+where both cells passed (reported counts only, not estimates), and must reach the larger of
+10% and the baseline's passing median's own movement between repeats; a cost that grows by
+as much is `worse`. When the baseline passed in fewer than two repeats that movement was not
+measured, and with fewer than two pairs passing on both sides there is too little to compare:
+both are `inconclusive`. Each side also reports the tokens its failures spent and its tokens per
+success. A judge's scores, when the spec has one, appear in the diff printed above the
+verdict and never change it: the gates decide passing.

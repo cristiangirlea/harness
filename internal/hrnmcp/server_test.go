@@ -20,9 +20,20 @@ import (
 
 type stubBackend struct{}
 
+// typed is a prompt without the commit block agent.Run puts first.
+func typed(prompt string) string {
+	rest, ok := strings.CutPrefix(prompt, "# How to commit\n\n")
+	if !ok {
+		return prompt
+	}
+	_, after, _ := strings.Cut(rest, "\n\n")
+	return after
+}
+
 func (stubBackend) Name() string            { return "stub" }
 func (stubBackend) Detect() (string, error) { return "built-in stub", nil }
 func (stubBackend) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	task.Prompt = typed(task.Prompt)
 	if task.Prompt == "record-write-failure" {
 		// Invalid tool input forces event encoding to fail without a real backend.
 		for range 2 {
@@ -117,13 +128,13 @@ func TestRunThenInspect(t *testing.T) {
 	for _, tool := range tools {
 		seen[tool.Name] = true
 	}
-	for _, name := range []string{"run", "runs", "show", "backends", "batch", "batch_show", "batch_merge",
+	for _, name := range []string{"run", "runs", "show", "flow", "backends", "batch", "batch_show", "batch_merge",
 		"remote_submit", "remote_status", "remote_events", "remote_cancel"} {
 		if !seen[name] {
 			t.Errorf("missing tool %s", name)
 		}
 	}
-	if len(tools) != 11 || !tools[1].Annotations.ReadOnly() {
+	if len(tools) != 12 || !tools[1].Annotations.ReadOnly() {
 		t.Fatalf("tools = %+v", tools)
 	}
 
@@ -166,8 +177,50 @@ func TestRunThenInspect(t *testing.T) {
 			t.Errorf("show missing %q:\n%s", want, text)
 		}
 	}
+	flowResult := s.call(t, "flow", `{"id":"`+id+`"}`)
+	if flowResult.IsError || !strings.Contains(flowResult.Text(), "tool read_file") || !strings.Contains(flowResult.Text(), "run "+id+": ok") {
+		t.Fatalf("flow = %+v", flowResult)
+	}
+	flowData := flowResult.StructuredContent.(map[string]any)
+	if flowData["version"] != float64(1) || flowData["summary"] == "" {
+		t.Fatalf("flow structured content = %#v", flowData)
+	}
+	if simple := s.call(t, "flow", `{"id":"`+id+`","level":"simple"}`); simple.IsError || strings.Contains(simple.Text(), "tool read_file") {
+		t.Fatalf("simple flow = %+v", simple)
+	}
 	if text := s.call(t, "backends", `{}`).Text(); !strings.Contains(text, "✓ stub") {
 		t.Errorf("backends = %q", text)
+	}
+}
+
+func TestMCPFlowBatchReasonsErrorsAndRedaction(t *testing.T) {
+	t.Setenv("HRN_OWNER", "local:one")
+	s := connect(t, t.TempDir())
+	res := batch.Result{ID: "20261021-120000-abcdef", Owner: "local:one", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "task-a", Status: batch.StatusFail, Attempts: []batch.Attempt{{Backend: "stub", Result: agent.Result{Status: agent.StatusError}, Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1, Output: "FAIL"}}}}}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	got := s.call(t, "flow", `{"id":"20261021-120000-abcdef"}`)
+	if got.IsError || !strings.Contains(got.Text(), "gate go test ./...: exited 1") || !strings.Contains(got.Text(), "why:") {
+		t.Fatalf("batch flow = %+v", got)
+	}
+	for _, id := range []string{"no-such-run", "../x"} {
+		bad := s.call(t, "flow", `{"id":"`+id+`"}`)
+		if !bad.IsError || !strings.Contains(bad.Text(), "no run or batch "+id) {
+			t.Errorf("flow %q = %+v", id, bad)
+		}
+	}
+	w, err := runlog.Create("stub", agent.Task{Prompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "ghp_abcdefghijklmnop1234"})
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	secret := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	if strings.Contains(secret.Text(), "ghp_abcdefghijklmnop1234") {
+		t.Fatalf("flow exposed secret: %s", secret.Text())
 	}
 }
 
@@ -386,7 +439,7 @@ func TestRunPassesLean(t *testing.T) {
 	if rec, err := runlog.Load(id); err != nil || !rec.Task.IsLean() {
 		t.Fatalf("lean should reach the task: %+v err=%v", rec.Task, err)
 	}
-	// Like hrn run, the tool is not lean unless asked.
+	// Unasked, the record leaves lean unset and the backend's default applies.
 	res = s.call(t, "run", `{"prompt":"x","backend":"stub-lean"}`)
 	id = res.StructuredContent.(map[string]any)["run_id"].(string)
 	if rec, err := runlog.Load(id); err != nil || rec.Task.Lean != nil {
@@ -395,14 +448,53 @@ func TestRunPassesLean(t *testing.T) {
 }
 
 func TestRunPassesCompactWindow(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	s := connect(t, t.TempDir())
-	res := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":200000}`)
-	id := res.StructuredContent.(map[string]any)["run_id"].(string)
-	if rec, err := runlog.Load(id); err != nil || rec.Task.CompactWindow != "200000" {
-		t.Fatalf("compact_window should reach the task: %+v err=%v", rec.Task, err)
+	for _, value := range []string{`200000`, `"200000"`, `"100000"`, `"1000000"`, `"auto"`} {
+		t.Run(value, func(t *testing.T) {
+			res := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":`+value+`}`)
+			if res.IsError {
+				t.Fatal(res.Text())
+			}
+			id := res.StructuredContent.(map[string]any)["run_id"].(string)
+			if rec, err := runlog.Load(id); err != nil || string(rec.Task.CompactWindow) != strings.Trim(value, `"`) {
+				t.Fatalf("compact_window should reach the task: %+v err=%v", rec.Task, err)
+			}
+		})
 	}
-	if r := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":50000}`); !r.IsError || !strings.Contains(r.Text(), "compact_window") {
-		t.Errorf("an out-of-range window must be refused before the run: %s", r.Text())
+	for _, value := range []string{`50000`, `"99999"`, `"1000001"`, `"200k"`, `""`} {
+		if r := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":`+value+`}`); !r.IsError || !strings.Contains(r.Text(), "compact_window") {
+			t.Errorf("invalid window %s must be refused before the run: %s", value, r.Text())
+		}
+	}
+}
+
+func TestRunAdvertisesSkillsAsABoolean(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	props := runTool(t.TempDir(), false).InputSchema["properties"].(map[string]any)
+	skills, ok := props["skills"].(map[string]any)
+	if !ok || skills["type"] != "boolean" {
+		t.Errorf("skills schema = %v, want a boolean", props["skills"])
+	}
+}
+
+func TestRunAdvertisesCompactWindowAsAString(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	props := runTool(t.TempDir(), false).InputSchema["properties"].(map[string]any)
+	window := props["compact_window"].(map[string]any)
+	if typ, ok := window["type"].(string); !ok || typ != "string" {
+		t.Errorf("compact_window schema type = %v, want string", window["type"])
+	}
+}
+
+func TestBatchReadsQuotedCompactWindowsOnSpecsAndTasks(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	spec, err := decodeSpec(json.RawMessage(`{"compact_window":"200000","tasks":[{"prompt":"x","compact_window":"200000"}]}`), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.CompactWindow != "200000" || len(spec.Tasks) != 1 || spec.Tasks[0].CompactWindow != "200000" {
+		t.Fatalf("quoted compact_window must reach the spec and task: %+v", spec)
 	}
 }
 
@@ -542,9 +634,78 @@ func TestRunContinueHandsTheConversationToAnotherBackend(t *testing.T) {
 	}
 }
 
+func TestRunContinueInheritsThePurposeUnlessTheCallOrHeaderNamesOne(t *testing.T) {
+	s := connect(t, t.TempDir())
+	first := s.call(t, "run", `{"prompt":"look","backend":"stub-ask","mode":"auto","purpose":"review"}`)
+	id := first.StructuredContent.(map[string]any)["run_id"].(string)
+	for _, tc := range []struct{ extra, prompt, want string }{
+		{"", "now fix what you found", "review"},
+		{`"purpose":"debug",`, "now fix what you found", "debug"},
+		{"", `Purpose: test\nnow fix what you found`, "test"},
+	} {
+		r := s.call(t, "run", `{`+tc.extra+`"prompt":"`+tc.prompt+`","backend":"stub","continue_run_id":"`+id+`"}`)
+		if r.IsError {
+			t.Fatalf("continue: %s", r.Text())
+		}
+		rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string))
+		if err != nil || rec.Task.Purpose != tc.want {
+			t.Errorf("%s%s: purpose = %q, want %q (%v)", tc.extra, tc.prompt, rec.Task.Purpose, tc.want, err)
+		}
+	}
+}
+
+func TestRunContinueInheritsAClassifiedPurposeWhenNoneWasDeclared(t *testing.T) {
+	for _, tc := range []struct{ first, want string }{
+		{"Review the diff on this branch.", "review"},
+		{"Hello there.", ""},
+	} {
+		s := connect(t, t.TempDir())
+		first := s.call(t, "run", `{"prompt":"`+tc.first+`","backend":"stub-ask","mode":"auto"}`)
+		id := first.StructuredContent.(map[string]any)["run_id"].(string)
+		if rec, err := runlog.Load(id); err != nil || rec.Task.Purpose != "" {
+			t.Fatalf("%q: an undeclared first run stored purpose %q (%v)", tc.first, rec.Task.Purpose, err)
+		}
+		r := s.call(t, "run", `{"prompt":"now fix what you found","backend":"stub","continue_run_id":"`+id+`"}`)
+		if r.IsError {
+			t.Fatalf("continue: %s", r.Text())
+		}
+		rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string))
+		if err != nil || rec.Task.Purpose != tc.want {
+			t.Errorf("%q: continuation purpose = %q, want %q (%v)", tc.first, rec.Task.Purpose, tc.want, err)
+		}
+	}
+}
+
+func TestRunContinueIgnoresAnInvalidStoredPurpose(t *testing.T) {
+	dir := t.TempDir()
+	s := connect(t, dir)
+	w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir, Purpose: "Bogus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub-1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "stub", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	r := s.call(t, "run", `{"prompt":"again","backend":"stub","continue_run_id":"`+w.ID()+`"}`)
+	if r.IsError {
+		t.Fatalf("continue: %s", r.Text())
+	}
+	rec, err := runlog.Load(r.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Task.Purpose != "" {
+		t.Errorf("an invalid stored purpose was inherited: %q (%v)", rec.Task.Purpose, err)
+	}
+}
+
 func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T) {
-	for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
+	for _, tc := range []struct {
+		tokens  int64
+		handoff bool
+	}{{0, false}, {149999, false}, {150000, false}, {150001, false}, {285000, false}, {285000, true}} {
+		n := tc.tokens
+		t.Run(fmt.Sprintf("context=%d/handoff=%v", n, tc.handoff), func(t *testing.T) {
 			dir := t.TempDir()
 			s := connect(t, dir)
 			w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir})
@@ -554,14 +715,35 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 			if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub-1"}`), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			backend := "stub"
+			if tc.handoff {
+				backend = "stub-ask"
+			}
 			if err := w.Close(agent.Result{Backend: "stub", Status: agent.StatusOK, ContextTokens: n}); err != nil {
 				t.Fatal(err)
 			}
-			r := s.call(t, "run", `{"prompt":"again","backend":"stub","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)
+			r := s.call(t, "run", `{"prompt":"again","backend":"`+backend+`","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)
 			if r.IsError {
 				t.Fatalf("continuation refused: %s", r.Text())
 			}
-			if n > 150000 {
+			events, err := runlog.Events(r.StructuredContent.(map[string]any)["run_id"].(string))
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, e := range events {
+				if e.Kind == agent.EventInfo && strings.Contains(e.Text, "short hand-over") {
+					count++
+				}
+			}
+			want := 0
+			if n > 150000 && !tc.handoff {
+				want = 1
+			}
+			if count != want {
+				t.Errorf("recorded warnings = %d, want %d", count, want)
+			}
+			if n > 150000 && !tc.handoff {
 				for _, want := range []string{"warning:", w.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
 					if !strings.Contains(r.Text(), want) {
 						t.Errorf("answer lacks %q: %s", want, r.Text())
@@ -571,5 +753,108 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 				t.Errorf("unneeded warning: %s", r.Text())
 			}
 		})
+	}
+}
+
+func TestRunSummarySaysWhenUsageIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		usage *agent.UsageMetadata
+		want  bool
+	}{{nil, false}, {&agent.UsageMetadata{Status: "missing"}, true}} {
+		s := summary("r1", agent.Result{Status: agent.StatusOK, Backend: "codex", InputTokens: 5, Usage: tc.usage})
+		if got := strings.Contains(s, "usage missing"); got != tc.want || !strings.Contains(s, "5 in") {
+			t.Errorf("usage %+v: summary = %q", tc.usage, s)
+		}
+	}
+}
+
+func TestMCPRoutesByTheDeclaredPurpose(t *testing.T) {
+	s := connect(t, t.TempDir())
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"nope"},"review":{"backend":"stub","model":"routed"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "run", `{"prompt":"Implement a widget","purpose":"review","no_switch":true}`)
+	if res.IsError {
+		t.Fatal(res.Text())
+	}
+	rec, err := runlog.Load(res.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Backend != "stub" || rec.RoutedBy == nil || rec.RoutedBy.Category != "review" || !rec.RoutedBy.Declared {
+		t.Fatalf("declared purpose did not route: %+v %v", rec, err)
+	}
+}
+
+func TestMCPRunRecordsExplicitBackendNote(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := s.call(t, "run", `{"prompt":"hello","backend":"stub"}`)
+	if res.IsError {
+		t.Fatal(res.Text())
+	}
+	id := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(id)
+	if err != nil || rec.RouteNote != "backend stub was named for this run" {
+		t.Fatalf("record=%+v err=%v", rec, err)
+	}
+}
+
+func TestMCPContinuationKeepsItsContinuesReasonInsteadOfANote(t *testing.T) {
+	s := connect(t, t.TempDir())
+	first := s.call(t, "run", `{"prompt":"hello","backend":"stub"}`)
+	if first.IsError {
+		t.Fatal(first.Text())
+	}
+	id := first.StructuredContent.(map[string]any)["run_id"].(string)
+	next := s.call(t, "run", `{"prompt":"again","fresh":true,"no_switch":true,"continue_run_id":"`+id+`"}`)
+	if next.IsError {
+		t.Fatal(next.Text())
+	}
+	rec, err := runlog.Load(next.StructuredContent.(map[string]any)["run_id"].(string))
+	if err != nil || rec.Continues != id || rec.RouteNote != "" {
+		t.Fatalf("continuation record = %+v (%v): its backend came from the run it continues, not a choice", rec, err)
+	}
+}
+
+func TestMCPFlowCapsALargeTreeAndFiltersControls(t *testing.T) {
+	s := connect(t, t.TempDir())
+	w, err := runlog.Create("stub", agent.Task{Prompt: "big"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: "echo \x1b]52;c;cGF5bG9hZA==\x07"})
+	small := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	if small.IsError || strings.ContainsRune(small.Text(), 0x1b) {
+		t.Fatalf("flow text: %q", small.Text())
+	}
+	if data, _ := json.Marshal(small.StructuredContent); strings.Contains(string(data), `\u001b`) {
+		t.Fatalf("structured content carried a control character: %s", data)
+	}
+	for i := 0; i < 600; i++ {
+		w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "shell", Text: strings.Repeat("long command text ", 12)})
+	}
+	big := s.call(t, "flow", `{"id":"`+w.ID()+`"}`)
+	content, _ := big.StructuredContent.(map[string]any)
+	if big.IsError || !strings.Contains(big.Text(), "truncated at 64 KiB") || content["truncated"] != true {
+		t.Fatalf("a large flow must be cut and say so: truncated=%v", content["truncated"])
+	}
+	if tree, _ := content["tree"].([]any); len(tree) != 0 {
+		t.Fatalf("the structured tree of a cut flow must not be returned whole, got %d roots", len(tree))
+	}
+}
+
+func TestMCPFlowFiltersTaskAndStatusInStructuredContent(t *testing.T) {
+	s := connect(t, t.TempDir())
+	res := batch.Result{ID: "20261021-130000-aabbcc", Started: time.Now(), Tasks: []batch.TaskResult{{ID: "t", Status: batch.StatusPass}}}
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"v":1,"seq":1,"step":"batch","kind":"batch","task":"t\u001b]52;c;eA==\u0007","status":"ok\u001b[2J"}` + "\n"
+	if err := os.MkdirAll(filepath.Dir(batch.FlowPath(res.ID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(batch.FlowPath(res.ID), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := s.call(t, "flow", `{"id":"`+res.ID+`","level":"debug"}`)
+	if data, _ := json.Marshal(out.StructuredContent); out.IsError || strings.Contains(string(data), `\u001b`) || strings.Contains(string(data), `\u0007`) {
+		t.Fatalf("structured content carried a control character: %s", data)
 	}
 }

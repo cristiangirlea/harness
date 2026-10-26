@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -48,6 +50,7 @@ func (s *checkpointStore) save(_ context.Context, cp APICheckpoint) error {
 
 func durableFixture(t *testing.T, store *checkpointStore) (*APIBackend, Task, *fakeAPI, *int) {
 	t.Helper()
+	t.Setenv("HRN_HOME", t.TempDir())
 	fake := &fakeAPI{turns: [][]string{toolTurn("effect-1", "effect", `{}`), textTurn("done")}}
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
@@ -132,12 +135,46 @@ func TestDurableStopsAtFailedSavesAndResumesOnlyConfirmedOperations(t *testing.T
 func TestDurableResumeRejectsChangedTask(t *testing.T) {
 	store := &checkpointStore{failBoundary: "model_response", commitThenFail: true}
 	backend, task, fake, effects := durableFixture(t, store)
+	task.AttemptID = "attempt-1"
 	backend.Run(context.Background(), task, func(Event) {})
+	for _, mutate := range []func(*Task){
+		func(t *Task) { t.Prompt = "other" },
+		func(t *Task) { t.Mode = ModeReadOnly },
+		func(t *Task) { t.Model = "other-model" },
+	} {
+		changed := task
+		changed.AttemptID = "attempt-2"
+		changed.Durable = &DurableExecution{Resume: store.latest, Save: store.save}
+		mutate(&changed)
+		result := backend.Run(context.Background(), changed, func(Event) {})
+		if result.Status != StatusError || !strings.Contains(result.Error, "task identity does not match") || fake.served != 1 || *effects != 0 {
+			t.Fatalf("changed task accepted: %+v", result)
+		}
+	}
+}
+
+func TestDurableResumeAcceptsChangedAttemptIDAndOldCheckpoint(t *testing.T) {
+	store := &checkpointStore{failBoundary: "model_response", commitThenFail: true}
+	backend, task, fake, effects := durableFixture(t, store)
+	// Old-format checkpoint written when the task had no AttemptID.
+	first := Run(context.Background(), backend, task, func(Event) {})
+	if !first.RecoveryRequired || store.latest == nil {
+		t.Fatalf("response was not checkpointed: %+v", first)
+	}
+	withoutAttemptDigest := store.latest.TaskDigest
+	store.failBoundary = "turn_complete"
+	task.AttemptID = "attempt-1"
 	task.Durable.Resume = store.latest
-	task.Mode = ModeReadOnly
-	result := backend.Run(context.Background(), task, func(Event) {})
-	if result.Status != StatusError || !strings.Contains(result.Error, "identity") || fake.served != 1 || *effects != 0 {
-		t.Fatalf("changed permissions accepted: %+v", result)
+	second := Run(context.Background(), backend, task, func(Event) {})
+	if !second.RecoveryRequired || store.latest == nil || store.latest.TaskDigest != withoutAttemptDigest || fake.served != 1 || *effects != 1 {
+		t.Fatalf("old checkpoint was not resumed with attempt_id: result=%+v digest=%s want=%s requests=%d effects=%d", second, store.latest.TaskDigest, withoutAttemptDigest, fake.served, *effects)
+	}
+	store.failBoundary = ""
+	task.AttemptID = "attempt-2"
+	task.Durable.Resume = store.latest
+	third := Run(context.Background(), backend, task, func(Event) {})
+	if third.Status != StatusOK || third.RecoveryRequired || third.Final != "done" || fake.served != 2 || *effects != 1 {
+		t.Fatalf("retry with a new attempt_id did not resume checkpoint: result=%+v requests=%d effects=%d", third, fake.served, *effects)
 	}
 }
 
@@ -175,6 +212,68 @@ func TestDurableResumeRefusesInvalidToolOutcomesBeforeRunningTools(t *testing.T)
 				t.Fatalf("invalid outcome started execution: result=%+v requests=%d effects=%d", result, fake.served, *effects)
 			}
 		})
+	}
+}
+
+func TestDurableToolCallFollowsSavedIntent(t *testing.T) {
+	for _, boundary := range []string{"", "tool_intent"} {
+		t.Run("fail="+boundary, func(t *testing.T) {
+			store := &checkpointStore{failBoundary: boundary}
+			backend, task, _, effects := durableFixture(t, store)
+			calls, outcomes := 0, 0
+			result := backend.Run(context.Background(), task, func(e Event) {
+				switch e.Kind {
+				case EventToolCall:
+					calls++
+					if store.latest.Boundary != "tool_intent" {
+						t.Errorf("call emitted before saved intent: boundary=%s", store.latest.Boundary)
+					}
+				case EventToolResult:
+					outcomes++
+				}
+			})
+			if boundary != "" {
+				if result.Status != StatusError || !result.RecoveryRequired || calls != 0 || outcomes != 0 || *effects != 0 {
+					t.Fatalf("failed intent emitted a call or ran a tool: result=%+v calls=%d outcomes=%d effects=%d", result, calls, outcomes, *effects)
+				}
+			} else if result.Status != StatusOK || calls != 1 || outcomes != 1 || *effects != 1 {
+				t.Fatalf("saved intent lost tool events: result=%+v calls=%d outcomes=%d effects=%d", result, calls, outcomes, *effects)
+			}
+		})
+	}
+}
+
+func TestDurableStoppedContextPreservesCheckpointErrors(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		for _, corruption := range []string{"outcome ID", "response JSON"} {
+			t.Run(fmt.Sprintf("deadline=%t/%s", deadline, corruption), func(t *testing.T) {
+				store := &checkpointStore{failBoundary: "model_response", commitThenFail: true}
+				backend, task, fake, effects := durableFixture(t, store)
+				first := backend.Run(context.Background(), task, func(Event) {})
+				if !first.RecoveryRequired || store.latest == nil {
+					t.Fatalf("response was not checkpointed: %+v", first)
+				}
+				want := "tool outcome ID mismatch"
+				if corruption == "outcome ID" {
+					store.latest.ToolResults = []map[string]any{{"tool_use_id": "wrong"}}
+				} else {
+					store.latest.Response = json.RawMessage(`"invalid response"`)
+					want = "cannot unmarshal"
+				}
+				task.Durable.Resume = store.latest
+				store.failBoundary = ""
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				if deadline {
+					ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+					defer cancel()
+				}
+				result := backend.Run(ctx, task, func(Event) {})
+				if result.Status != StatusError || !result.RecoveryRequired || !strings.Contains(result.Error, want) || fake.served != 1 || *effects != 0 {
+					t.Fatalf("stopped context hid checkpoint error: result=%+v requests=%d effects=%d", result, fake.served, *effects)
+				}
+			})
+		}
 	}
 }
 
@@ -347,9 +446,24 @@ func TestDurableAndLocalRunsCountUnknownGuardedAndDeniedToolCallsTheSame(t *test
 			task.Mode = ModeAsk
 			approvals := 0
 			task.Approve = func(ApprovalRequest) bool { approvals++; return false }
-			result := Run(context.Background(), backend, task, func(Event) {})
+			var events []Event
+			result := Run(context.Background(), backend, task, func(e Event) {
+				if e.Kind == EventToolCall || e.Kind == EventToolResult {
+					events = append(events, e)
+				}
+			})
 			if result.Status != StatusOK || result.ToolCalls != 3 || fake.served != 2 || approvals != 1 {
 				t.Fatalf("tool calls were not counted: result=%+v requests=%d approvals=%d", result, fake.served, approvals)
+			}
+			if len(events) != 2*result.ToolCalls {
+				t.Fatalf("tool events = %d, want %d", len(events), 2*result.ToolCalls)
+			}
+			for i, tool := range []string{"missing_tool", "run_command", "write_file"} {
+				call, outcome := events[2*i], events[2*i+1]
+				if call.Kind != EventToolCall || call.Tool != tool || len(call.Input) == 0 || call.Text == "" ||
+					outcome.Kind != EventToolResult || outcome.Tool != tool || !outcome.IsError {
+					t.Fatalf("unmatched tool events: call=%+v outcome=%+v", call, outcome)
+				}
 			}
 			messages := fake.requests[1]["messages"].([]any)
 			outcomes := messages[len(messages)-1].(map[string]any)["content"].([]any)
@@ -360,6 +474,168 @@ func TestDurableAndLocalRunsCountUnknownGuardedAndDeniedToolCallsTheSame(t *test
 				outcome := outcomes[i].(map[string]any)
 				if outcome["is_error"] != true || !strings.Contains(fmt.Sprint(outcome["content"]), want) {
 					t.Fatalf("outcome %d was not refused as expected: %v", i, outcome)
+				}
+			}
+		})
+	}
+}
+
+func TestDurableStopsBetweenToolCallsWithoutRequiringRecovery(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deadline=%t", deadline), func(t *testing.T) {
+			store := &checkpointStore{}
+			backend, task, fake, effects := durableFixture(t, store)
+			turn := toolTurn("effect-1", "effect", `{}`)[:4]
+			for _, event := range toolTurn("effect-2", "effect", `{}`)[1:4] {
+				turn = append(turn, strings.ReplaceAll(event, `"index":0`, `"index":1`))
+			}
+			turn = append(turn, messageEnd("tool_use")...)
+			fake.turns = [][]string{turn}
+			ctx, cancel := context.WithCancel(context.Background())
+			want := StatusCanceled
+			if deadline {
+				cancel()
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+				task.Timeout = Duration(500 * time.Millisecond)
+				want = StatusTimeout
+			}
+			defer cancel()
+			result := backend.Run(ctx, task, func(e Event) {
+				if e.Kind == EventToolResult {
+					if deadline {
+						<-ctx.Done()
+					} else {
+						cancel()
+					}
+				}
+			})
+			if result.Status != want || result.RecoveryRequired || result.ToolCalls != 1 || *effects != 1 || fake.served != 1 {
+				t.Fatalf("stop between tools was uncertain or started second effect: result=%+v effects=%d requests=%d", result, *effects, fake.served)
+			}
+			if store.latest.Pending != nil || len(store.latest.ToolResults) != 1 {
+				t.Fatalf("checkpoint is not resumable: %+v", store.latest)
+			}
+			task.Durable.Resume = store.latest
+			fake.turns = append(fake.turns, textTurn("done"))
+			resumed := backend.Run(context.Background(), task, func(Event) {})
+			if deadline {
+				if resumed.Status != StatusTimeout || resumed.RecoveryRequired || *effects != 1 || fake.served != 1 {
+					t.Fatalf("expired resume started second effect: result=%+v effects=%d requests=%d", resumed, *effects, fake.served)
+				}
+			} else if resumed.Status != StatusOK || resumed.RecoveryRequired || resumed.ToolCalls != 2 || *effects != 2 || fake.served != 2 {
+				t.Fatalf("resume repeated confirmed effect: result=%+v effects=%d requests=%d", resumed, *effects, fake.served)
+			}
+		})
+	}
+}
+
+func TestDurableDistinguishesCertainHTTPFailuresFromUncertainRequests(t *testing.T) {
+	for _, status := range []int{400, 401, 403, 408, 409, 429, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			store := &checkpointStore{}
+			backend, task, _, effects := durableFixture(t, store)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				http.Error(w, "request refused", status)
+			}))
+			t.Cleanup(server.Close)
+			backend.BaseURL = server.URL
+			result := backend.Run(context.Background(), task, func(Event) {})
+			uncertain := status == 408 || status == 409 || status == 429 || status >= 500
+			if result.Status != StatusError || result.RecoveryRequired != uncertain || requests != 1 || *effects != 0 {
+				t.Fatalf("HTTP failure misclassified or retried: result=%+v requests=%d effects=%d", result, requests, *effects)
+			}
+			if (store.latest.Pending != nil) != uncertain {
+				t.Fatalf("pending operation disagrees with certainty: %+v", store.latest)
+			}
+		})
+	}
+}
+
+func TestDurableFailedRejectionSaveStillRequiresRecovery(t *testing.T) {
+	store := &checkpointStore{failBoundary: "model_rejected"}
+	backend, task, _, effects := durableFixture(t, store)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "context_management is unsupported", 400)
+	}))
+	t.Cleanup(server.Close)
+	backend.BaseURL = server.URL
+	result := backend.Run(context.Background(), task, func(Event) {})
+	if result.Status != StatusError || !result.RecoveryRequired || requests != 1 || *effects != 0 || store.latest.Pending == nil {
+		t.Fatalf("failed rejection save was certain or retried: result=%+v requests=%d effects=%d", result, requests, *effects)
+	}
+}
+
+func TestDurableCanceledOutcomeSaveStillRequiresRecovery(t *testing.T) {
+	store := &checkpointStore{}
+	backend, task, _, effects := durableFixture(t, store)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	task.Durable.Save = func(ctx context.Context, cp APICheckpoint) error {
+		if cp.Boundary == "tool_outcome" {
+			cancel()
+			return ctx.Err()
+		}
+		return store.save(ctx, cp)
+	}
+	result := backend.Run(ctx, task, func(Event) {})
+	if result.Status != StatusError || !result.RecoveryRequired || *effects != 1 || store.latest.Pending == nil {
+		t.Fatalf("failed outcome save was treated as safe cancellation: result=%+v effects=%d", result, *effects)
+	}
+}
+
+func TestDurableRetriesRefusedContextManagementWithANewSavedIntent(t *testing.T) {
+	for _, failRetrySave := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fail_retry_save=%t", failRetrySave), func(t *testing.T) {
+			store := &checkpointStore{}
+			backend, task, fake, effects := durableFixture(t, store)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				var req apiRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+				}
+				if req.ContextManagement != nil {
+					http.Error(w, "context_management is unsupported", 400)
+					return
+				}
+				var saved apiRequest
+				if err := json.Unmarshal(store.latest.Request, &saved); err != nil {
+					t.Error(err)
+				}
+				if store.latest.Boundary != "model_intent" || store.latest.Pending == nil || saved.ContextManagement != nil ||
+					strings.Contains(strings.Join(store.latest.Betas, ","), betaContextEdits) || strings.Contains(r.Header.Get("anthropic-beta"), betaContextEdits) {
+					t.Error("retry did not save and send an intent without context management")
+				}
+				data, _ := json.Marshal(req)
+				r.Body = io.NopCloser(strings.NewReader(string(data)))
+				fake.ServeHTTP(w, r)
+			}))
+			t.Cleanup(server.Close)
+			backend.BaseURL = server.URL
+			if failRetrySave {
+				task.Durable.Save = func(ctx context.Context, cp APICheckpoint) error {
+					if cp.Boundary == "model_intent" && cp.Sequence > 1 {
+						return errors.New("retry intent save failed")
+					}
+					return store.save(ctx, cp)
+				}
+			}
+			result := backend.Run(context.Background(), task, func(Event) {})
+			if failRetrySave {
+				if result.Status != StatusError || !result.RecoveryRequired || requests != 1 || *effects != 0 {
+					t.Fatalf("retry crossed failed save: result=%+v requests=%d effects=%d", result, requests, *effects)
+				}
+			} else if result.Status != StatusOK || result.RecoveryRequired || requests != 3 || *effects != 1 {
+				t.Fatalf("refused context management stopped the run: result=%+v requests=%d effects=%d", result, requests, *effects)
+			}
+			for _, cp := range store.records {
+				if cp.Boundary == "model_rejected" && cp.Finished {
+					t.Fatal("a rejection that is retried finished the checkpoint")
 				}
 			}
 		})
@@ -436,5 +712,41 @@ func TestDurableUsesCheckpointsInsteadOfAConversationFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(task.RunDir, "messages.json")); !os.IsNotExist(err) {
 		t.Fatalf("durable run wrote a conversation file: %v", err)
+	}
+}
+
+func TestDurableModelRejectionFinishesTheCheckpointSoAResumeSendsNothing(t *testing.T) {
+	store := &checkpointStore{}
+	backend, task, _, effects := durableFixture(t, store)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "request refused", 400)
+	}))
+	t.Cleanup(server.Close)
+	backend.BaseURL = server.URL
+	first := backend.Run(context.Background(), task, func(Event) {})
+	saved := store.latest
+	if first.Status != StatusError || saved.Boundary != "model_rejected" || !saved.Finished || saved.Pending != nil ||
+		saved.Result.Status != StatusError || saved.Result.Error == "" || saved.Result.RecoveryRequired {
+		t.Fatalf("rejection left a resumable checkpoint: result=%+v boundary=%s finished=%t pending=%+v saved=%+v", first, saved.Boundary, saved.Finished, saved.Pending, saved.Result)
+	}
+	task.Durable.Resume = saved
+	second := backend.Run(context.Background(), task, func(Event) {})
+	if second.Status != StatusError || second.RecoveryRequired || requests != 1 || *effects != 0 || store.latest != saved {
+		t.Fatalf("resume resent the rejected request: result=%+v requests=%d effects=%d", second, requests, *effects)
+	}
+}
+
+func TestDurableTaskDigestIsPinned(t *testing.T) {
+	task := Task{Prompt: "test", Dir: "/work", AttemptID: "attempt-1", Options: Options{Mode: ModeYolo, MaxTurns: 3, Timeout: Duration(time.Minute)},
+		Durable: &DurableExecution{Save: func(context.Context, APICheckpoint) error { return nil }}}
+	durable, err := prepareDurable(task, &apiRequest{}, &Result{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "edd8f6d631b9e0ac888c5456822fed04764a7c0e1a5061002851f6766caf20d2"
+	if got := durable.checkpoint.TaskDigest; got != want {
+		t.Fatalf("task identity digest changed; stored checkpoints would stop matching: got %s want %s", got, want)
 	}
 }

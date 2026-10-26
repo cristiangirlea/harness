@@ -13,8 +13,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/watch"
 )
 
-// Watch is a running `hrn watch`: which binary, its arguments as typed, and
-// the address it serves.
+// Watch describes a running watch's executable, arguments and address.
 type Watch struct {
 	PID  int
 	Exe  string
@@ -31,13 +30,11 @@ func WatchesOf(procs []Process, targets []string) []Watch {
 	return out
 }
 
-// MCPServersOf picks the hrn mcp processes running from one of targets.
-// They are listed, never stopped: their host restarts them.
+// MCPServersOf lists target MCP processes; only their hosts should restart them.
 func MCPServersOf(procs []Process, targets []string) []Process {
 	return fromTargets(procs, targets, "mcp")
 }
 
-// watchAddr reads --addr from a watch's arguments, else the default.
 func watchAddr(args []string) string {
 	for i := 1; i < len(args); i++ {
 		a := strings.TrimLeft(args[i], "-")
@@ -51,8 +48,6 @@ func watchAddr(args []string) string {
 	return watch.DefaultAddr
 }
 
-// watchLog is the file a restarted watch writes to when the old one's logs
-// cannot be found: watch-<port>.log under HRN_HOME.
 func watchLog(home, addr string) string {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil || port == "" {
@@ -61,9 +56,7 @@ func watchLog(home, addr string) string {
 	return filepath.Join(home, "watch-"+port+".log")
 }
 
-// Restarter stops a watch and starts the new binary in its place. The zero
-// value has no functions: cmd/hrn fills in Stop(lister), StartDetached and
-// processLogs; tests record calls.
+// Restarter replaces watches using caller-supplied hooks.
 type Restarter struct {
 	Stop  func(ctx context.Context, pid int) error
 	Start func(exe string, args []string, stdout, stderr string) (pid int, err error)
@@ -71,9 +64,7 @@ type Restarter struct {
 	Home  string
 }
 
-// Restart stops w, then starts exe with w's arguments, detached, writing
-// where the old watch wrote when that is known, else to watchLog. It
-// returns the new pid and the stdout log.
+// Restart stops w before starting exe with its arguments, returning the pid and reused or fallback log.
 func (r Restarter) Restart(ctx context.Context, w Watch, exe string) (int, string, error) {
 	var stdout, stderr string
 	if r.Logs != nil {
@@ -95,8 +86,7 @@ func (r Restarter) Restart(ctx context.Context, w Watch, exe string) (int, strin
 	return pid, stdout, nil
 }
 
-// StartDetached starts exe with args so that it outlives this process, with
-// stdout and stderr appended to the named files.
+// StartDetached launches exe independently, appending output to named files.
 func StartDetached(exe string, args []string, stdout, stderr string) (int, error) {
 	if err := os.MkdirAll(filepath.Dir(stdout), 0o755); err != nil {
 		return 0, err
@@ -129,6 +119,5 @@ func StartDetached(exe string, args []string, stdout, stderr string) (int, error
 	return pid, nil
 }
 
-// LogsOf says which files a process writes its output to, where the system
-// lets another process see that.
+// LogsOf returns output files where the platform exposes them.
 func LogsOf(pid int) (stdout, stderr string) { return processLogs(pid) }

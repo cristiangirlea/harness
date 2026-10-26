@@ -4,7 +4,6 @@ package route
 import (
 	"math"
 	"slices"
-	"strings"
 
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/purpose"
@@ -19,26 +18,35 @@ type RoutedBy = table.RoutedBy
 func Load() (Table, error) { return table.Load(runlog.Home()) }
 func Save(t Table) error   { return table.Save(runlog.Home(), t) }
 
-// FromEval compares pass rates within each purpose. Costs are the variant's
-// recorded median across the eval: task rows do not store individual costs.
-// First reduce each backend/model family to its cheapest qualifying effort,
-// then compare those winners. Equal costs prefer plan CLIs, then lower effort;
-// the variant name makes remaining ties deterministic.
+// FromEval picks qualifying family efforts by eval-wide median cost, then purpose winners.
+// Ties prefer plan CLIs, lower effort, then name for determinism.
 func FromEval(rec eval.Record, margin float64) Table {
 	out := Table{}
 	if math.IsNaN(margin) || math.IsInf(margin, 0) || margin < 0 || margin > 1 {
 		return out
 	}
+	// Routing cannot reproduce harness changes, so exclude their scores.
+	if rec.Spec.AppendSystemPrompt != "" || rec.Spec.NoSkills {
+		return out
+	}
 	categories := map[string]string{}
 	tasks := map[string]struct{ backend, model, effort string }{}
 	for _, t := range rec.Spec.Tasks {
+		if t.AppendSystemPrompt != "" || t.NoSkills {
+			continue
+		}
 		categories[t.ID] = purpose.Classify(t.Prompt).Category
 		tasks[t.ID] = struct{ backend, model, effort string }{t.Backend, t.Model, t.Effort}
+	}
+	// Left out of the bar too, so a better harness does not disqualify every plain variant.
+	harnessed := map[string]bool{}
+	for _, v := range rec.Spec.Matrix {
+		harnessed[v.Key()] = v.ChangesHarness()
 	}
 	groups := map[string]map[string]eval.VariantRow{}
 	for _, t := range rec.Table.Tasks {
 		cat, ok := categories[t.Task]
-		if !ok || t.Total <= 0 {
+		if !ok || t.Total-t.DidNotAct-t.DidNotStart <= 0 || harnessed[t.Variant] {
 			continue
 		}
 		if groups[cat] == nil {
@@ -47,6 +55,8 @@ func FromEval(rec eval.Record, margin float64) Table {
 		r := groups[cat][t.Variant]
 		r.Name = t.Variant
 		r.Attempts += t.Total
+		r.DidNotAct += t.DidNotAct
+		r.DidNotStart += t.DidNotStart
 		r.Passed += t.Passed
 		groups[cat][t.Variant] = r
 	}
@@ -80,27 +90,16 @@ func FromEval(rec eval.Record, margin float64) Table {
 		}
 		families := map[string]candidate{}
 		for _, v := range rec.Spec.Matrix {
-			name := v.Name
-			if name == "" {
-				parts := []string{v.Backend}
-				if v.Model != "" {
-					parts = append(parts, v.Model)
-				}
-				if v.Effort != "" {
-					parts = append(parts, v.Effort)
-				}
-				name = strings.Join(parts, "-")
-			}
+			name := v.Key()
 			r, ok := rows[name]
-			if !ok || r.Attempts == 0 || r.PassRate()+margin+1e-12 < best {
+			if !ok || r.Attempts <= r.DidNotAct+r.DidNotStart || r.PassRate()+margin+1e-12 < best {
 				continue
 			}
 			cost, ok := costs[name]
 			if !ok || cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
 				continue
 			}
-			// Expand inherits variant over task over spec. Only a uniform
-			// measured choice can be represented by a single purpose row.
+			// Only uniform variant-over-task-over-spec choices fit a single routing row.
 			first := func(values ...string) string {
 				for _, s := range values {
 					if s != "" {
@@ -112,7 +111,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 			var effective eval.Variant
 			found, mixed := false, false
 			for _, tr := range rec.Table.Tasks {
-				if tr.Variant != name || tr.Total <= 0 || categories[tr.Task] != cat {
+				if tr.Variant != name || tr.Total-tr.DidNotAct-tr.DidNotStart <= 0 || categories[tr.Task] != cat {
 					continue
 				}
 				t := tasks[tr.Task]

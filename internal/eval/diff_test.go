@@ -1,6 +1,8 @@
 package eval
 
 import (
+	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -156,8 +158,69 @@ func TestRecordTotals(t *testing.T) {
 	a.Table.Variants[0].TotalCostUSD, a.Table.Variants[1].TotalCostUSD = 0.3, 0.1
 	a.Table.Variants[1].CostEstimate = true
 	a.JudgeCostUSD = 0.05
-	cells, passed, cost, estimate := a.Totals()
-	if cells != 8 || passed != 6 || cost < 0.4499 || cost > 0.4501 || !estimate {
-		t.Errorf("totals = %d %d %v %v", cells, passed, cost, estimate)
+	cells, passed, cost, known, estimate, without := a.Totals()
+	if cells != 8 || passed != 6 || cost < 0.4499 || cost > 0.4501 || !known || !estimate || without != 0 {
+		t.Errorf("totals = %d %d %v %v %v %d", cells, passed, cost, known, estimate, without)
+	}
+}
+
+func TestRecordTotalsCountCellsWithoutACostAndKnowAZero(t *testing.T) {
+	a, _ := twoEvals()
+	for i := range a.Table.Variants {
+		v := &a.Table.Variants[i]
+		v.TotalCostUSD, v.MedianCostUSD, v.CostCounted, v.CellsWithoutCost = 0, 0, true, 1
+	}
+	_, _, cost, known, _, without := a.Totals()
+	if cost != 0 || !known || without != 2 {
+		t.Errorf("known zero with two unknown cells: cost=%v known=%v without=%d", cost, known, without)
+	}
+	for i := range a.Table.Variants {
+		a.Table.Variants[i].CellsWithoutCost = a.Table.Variants[i].Attempts
+	}
+	if _, _, _, known, _, without := a.Totals(); known || without != 8 {
+		t.Errorf("no known cost: known=%v without=%d", known, without)
+	}
+}
+
+func TestRecordTotalsOldRowWithAZeroMedianKnowsItsTotal(t *testing.T) {
+	a, _ := twoEvals()
+	a.JudgeCostUSD = 0
+	for i := range a.Table.Variants {
+		v := &a.Table.Variants[i]
+		v.TotalCostUSD, v.MedianCostUSD, v.CostCounted, v.CellsWithoutCost = 0, 0, false, 0
+	}
+	a.Table.Variants[0].TotalCostUSD = 0.5
+	if _, _, cost, known, _, _ := a.Totals(); cost != 0.5 || !known {
+		t.Errorf("old row with a zero median and a $0.50 total: cost=%v known=%v", cost, known)
+	}
+}
+
+// A task without its own gate runs the spec's, and a saved and reloaded record
+// must read it the same way, so the diff sees what ran.
+func TestAReloadedRecordDiffsATaskWithoutAGateAsTheSpecs(t *testing.T) {
+	spec := Spec{Spec: batch.Spec{Gate: []string{"go test ./..."}, Tasks: []batch.Task{{ID: "vet", Prompt: "run vet"}}},
+		Matrix: []Variant{{Backend: "ev-ok"}}}
+	bs, err := Expand(spec, "aaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bs.Tasks[0].Gate != nil || !slices.Equal(bs.Gate, spec.Gate) {
+		t.Fatalf("cell gate = %v, spec gate = %v; the cell should inherit", bs.Tasks[0].Gate, bs.Gate)
+	}
+	data, err := json.Marshal(Record{ID: "aaaaa", Spec: spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Record
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	explicit := Record{ID: "bbbbb", Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "vet", Prompt: "run vet", Gate: []string{"go test ./..."}}}}}}
+	if d := Compare(saved, explicit); len(d.GateChanged) != 0 {
+		t.Errorf("inherited and explicit gates are the same gates: %v", d.GateChanged)
+	}
+	explicit.Spec.Tasks[0].Gate = []string{"true"}
+	if d := Compare(saved, explicit); join(d.GateChanged) != "vet" {
+		t.Errorf("gate changed = %v, want vet", d.GateChanged)
 	}
 }

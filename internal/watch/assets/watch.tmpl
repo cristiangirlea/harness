@@ -83,7 +83,7 @@
 {{if .Batches}}<div class="table-wrap" tabindex="0" role="region" aria-label="Batches"><table class="list">
 <thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Passed</th><th scope="col">Backends</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">Tasks</th></tr></thead>
 <tbody>{{range .Batches}}<tr>
-<td class="name">{{template "name" .}}</td>
+<td class="name">{{template "name" .}} <a class="of-batch" href="/flow/{{.ID}}">Execution flow</a></td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
 <td class="meta">{{.Tasks}}</td>
 <td class="meta">{{.Backend}}</td>
@@ -98,9 +98,9 @@
 {{if .Runs}}<div class="table-wrap" tabindex="0" role="region" aria-label="Runs"><table class="list">
 <thead><tr><th scope="col">Run</th><th scope="col">Backend</th><th scope="col">Purpose</th><th scope="col">Status</th><th scope="col" class="num">Duration</th><th scope="col" class="num">Cost</th><th scope="col">Prompt</th></tr></thead>
 <tbody>{{range .Runs}}<tr>
-<td class="name">{{template "name" .}}{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
+<td class="name">{{template "name" .}} <a class="of-batch" href="/flow/{{.ID}}">Execution flow</a>{{with .Batch}}<a class="of-batch" href="/batch/{{.}}">batch {{.}}</a>{{end}}</td>
 <td class="meta">{{.Backend}}</td>
-<td class="meta"{{with .Rule}} title="{{.}}"{{end}}>{{.Purpose}}</td>
+<td class="meta purpose"{{with .Rule}} title="{{.}}"{{end}}>{{.Purpose}}</td>
 <td><span class="badge {{.Class}}">{{.Status}}</span></td>
 <td class="num meta">{{template "took" .}}</td>
 <td class="num meta">{{.Cost}}</td>
@@ -116,13 +116,14 @@
 
 {{define "run"}}{{template "head" .}}
 <p class="eyebrow">Run <span class="mono">{{.ID}}</span>{{with .Continues}} · continues <a class="mono" href="/run/{{.}}">{{.}}</a>{{end}}</p>
+<p><a href="/flow/{{.ID}}">Execution flow</a></p>
 <h1 class="prompt-line">{{.PromptLine}}</h1>
 {{if .PromptMore}}<details class="prompt" data-key="prompt"><summary>Whole prompt</summary><pre>{{.Prompt}}</pre></details>{{end}}
 {{template "facts" .Facts}}
 {{if .Since}}<p class="muted clock">Running for <span data-since="{{.Since}}">a while</span>{{if .Last}} · last step <span data-ago="{{.Last}}">a moment</span> ago{{end}}</p>{{end}}
 <div id="usage">{{template "usage" .Usage}}</div>
 <ol id="timeline" class="timeline"{{with .Stream}} data-stream="{{.}}"{{end}}>{{range .Events}}{{template "event" .}}{{end}}</ol>
-<div id="result">{{with .Result}}{{template "result" .}}{{else}}<p class="muted">Running. New steps appear above as hrn records them.</p>{{end}}</div>
+<div id="result">{{if .Stopped}}{{template "stopped" .Stopped}}{{else}}{{with .Result}}{{template "result" .}}{{else}}<p class="muted">Running. New steps appear above as hrn records them.</p>{{end}}{{end}}</div>
 {{template "foot" .}}{{end}}
 
 {{define "event"}}<li class="ev {{.Class}}"{{with .When}} data-at="{{.}}"{{end}}>
@@ -148,11 +149,14 @@
 <text class="chart-axis chart-end" x="{{.Right}}" y="{{.AxisY}}">{{.Last}}</text>
 </svg>
 {{if .Keyed}}<p class="chart-key small"><span class="key-mark">compacted, as the backend reported</span> <span class="key-mark probable">probably compacted: the context fell by more than half</span></p>{{end}}
+{{if gt .Every 1}}<p class="small muted">One turn in {{.Every}} has a point and a row, with the last and each compaction; the line runs through every turn.</p>{{end}}
 <details data-key="usage-table"><summary>Turns as a table</summary><div class="table-wrap"><table>
 <thead><tr><th scope="col" class="num">Turn</th><th scope="col">Model</th><th scope="col" class="num">Input</th><th scope="col" class="num">Output</th><th scope="col" class="num">Cache read</th><th scope="col" class="num">Cache write</th><th scope="col" class="num">Context</th><th scope="col" class="num">Cache read so far</th><th scope="col">Compaction</th></tr></thead>
 <tbody>{{range .Rows}}<tr><td class="num">{{.N}}</td><td>{{.Model}}</td><td class="num">{{.Input}}</td><td class="num">{{.Output}}</td><td class="num">{{.CacheRead}}</td><td class="num">{{.CacheWrite}}</td><td class="num">{{.Context}}</td><td class="num">{{.SoFar}}</td><td>{{.Note}}</td></tr>
 {{end}}</tbody></table></div></details>
 </section>{{end}}{{end}}
+
+{{define "stopped"}}<p class="muted">stopped · {{.}}</p>{{end}}
 
 {{define "result"}}<section class="card result" aria-labelledby="result-h">
 <h2 id="result-h">Finished <span class="badge {{.Class}}">{{.Status}}</span></h2>
@@ -163,12 +167,13 @@
 
 {{define "batch"}}{{template "head" .}}
 <p class="eyebrow">Batch <span class="mono">{{.ID}}</span></p>
+<p><a href="/flow/{{.ID}}">Execution flow</a></p>
 <h1>{{.Title}}</h1>
 <div id="live"{{with .Stream}} data-stream="{{.}}" data-replace{{end}}>{{template "batchbody" .Body}}</div>
 {{template "foot" .}}{{end}}
 
 {{define "batchbody"}}
-<p><span class="badge {{.Class}}">{{.Status}}</span>{{with .Since}} · running for <span data-since="{{.}}">a while</span>{{end}}</p>
+<p><span class="badge {{.Class}}">{{.Status}}</span>{{with .Stopped}} · {{.}}{{end}}{{with .Since}} · running for <span data-since="{{.}}">a while</span>{{end}}</p>
 {{template "facts" .Facts}}
 {{range .Tasks}}<section class="card task" aria-labelledby="task-{{.ID}}">
 <h2 id="task-{{.ID}}"><span class="mono">{{.ID}}</span> <span class="badge {{.Class}}">{{.Status}}</span></h2>
@@ -192,6 +197,28 @@
 </div>{{end}}
 </section>{{end}}
 {{end}}
+
+{{define "flow"}}{{template "head" .}}
+<p class="eyebrow">Execution flow · <span class="mono">{{.ID}}</span></p>
+<h1>What happened</h1>
+<div id="live"{{with .Stream}} data-stream="{{.}}" data-replace{{end}}>{{template "flowbody" .}}</div>
+{{template "foot" .}}{{end}}
+
+{{define "flowbody"}}
+<p class="flow-summary">{{.Summary}}</p>
+<p class="muted">hrn shows recorded steps and reasons, not the model&#39;s private reasoning.</p>
+<nav class="flow-level">Level: <a href="?level=simple">simple</a> · <a href="?level=technical">technical</a> · <a href="?level=debug">debug</a> · <a href="/flow/{{.ID}}/json">JSON</a></nav>
+<div class="flow-tree">{{range .Tree}}{{template "flowNode" .}}{{end}}</div>
+{{end}}
+
+{{define "flowNode"}}<details open class="flow-node lane-{{.Lane}}" data-lane="{{.Lane}}"><summary><span class="badge {{.StatusClass}}">{{.Node.Status}}</span> <span class="tag">{{.Node.Kind}}</span> {{.Node.Name}}{{with .Duration}} · {{.}}{{end}}</summary>
+{{with .Numbers}}<p class="muted small">{{.}}</p>{{end}}
+{{if .Action}}<p class="muted small">{{.Hint}} <code>{{.Action}}</code></p>{{end}}
+{{if .Debug}}<p class="muted small mono">{{.Node.Step}}{{if .Node.Derived}} · derived{{end}}</p>{{end}}
+{{with .Node.Text}}<p>{{.}}</p>{{end}}{{with .Node.Reason}}<p><strong>Why:</strong> {{.}}</p>{{end}}{{if not .Action}}{{with .Node.Next}}<p><strong>Next:</strong> {{.}}</p>{{end}}{{end}}
+{{if .Node.Run}}<p><a href="/run/{{.Node.Run}}">Open run and tool evidence</a></p>{{end}}
+{{if .Node.Orphan}}<p class="muted">(gap: parent not recorded)</p>{{end}}
+{{if .Children}}<div class="flow-tree">{{range .Children}}{{template "flowNode" .}}{{end}}</div>{{end}}</details>{{end}}
 
 {{define "problem"}}<p class="notice bad">{{.}}</p>{{end}}
 
@@ -217,6 +244,7 @@
 <label>Snooze <select id="bot-snooze"><option value="0">off</option><option value="15">15 minutes</option><option value="60">an hour</option><option value="-1">until I unmute</option></select></label>
 </p>
 <p id="bot-quiet" class="muted small" hidden></p>
+<p class="bot-question"><label for="bot-question">Ask about a run or batch</label> <input type="text" id="bot-question" placeholder="Why did it fail?" maxlength="500" autocomplete="off"></p>
 {{if .Local}}<p class="small"><a href="/voice">Record my voice</a>: the voice I will speak in, recorded and kept on this computer.</p>{{end}}
 </section>
 <div id="live" data-stream="/stream/bot" data-replace>{{template "botnow" .Now}}</div>
@@ -241,8 +269,9 @@
 {{/* Ada, a robot scarlet macaw, drawn with gradients for a lit, rounded
      look. Colours are attributes, not style, as the page's policy allows no
      inline style; watch.css moves her: the lower beak while she talks, a
-     blink, a slow bob of the head, and the glow of her lights. */}}
-{{define "ada"}}<svg class="bot-face ada" viewBox="0 0 240 240" role="img" aria-label="Ada, a robot parrot">
+     blink, a slow bob of the head, and the glow of her lights. Hidden from
+     screen readers: the heading beside her already names her. */}}
+{{define "ada"}}<svg class="bot-face ada" viewBox="0 0 240 240" aria-hidden="true">
 <defs>
 <radialGradient id="ada-head" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#ff8273"/><stop offset=".42" stop-color="#ea3540"/><stop offset=".85" stop-color="#b3192c"/><stop offset="1" stop-color="#851021"/></radialGradient>
 <radialGradient id="ada-body" cx=".42" cy=".28" r=".85"><stop offset="0" stop-color="#f4504a"/><stop offset=".55" stop-color="#cc2131"/><stop offset="1" stop-color="#7a0e1c"/></radialGradient>
