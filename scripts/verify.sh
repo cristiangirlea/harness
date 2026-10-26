@@ -75,7 +75,8 @@ for file in scripts/*.go scripts/*/*.go scripts/*.sh; do
     printf -- '- `%s`: %s (not verified: %s)\n' "$file" "$summary" "$reason" >> "$tmp/index"
     continue
   fi
-  if ! bash -c "$example" > "$tmp/output" 2>&1; then
+  if { [[ $file != scripts/*/*.go ]] || [[ ! -f ${file%/*}.sh ]]; } &&
+    ! bash -c "$example" > "$tmp/output" 2>&1; then
     error "example failed: $file"
     tail -c 2000 "$tmp/output" >&2
     status=1

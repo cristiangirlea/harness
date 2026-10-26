@@ -129,6 +129,12 @@ otherwise run with no gate. The structured result is a short summary rather than
 whole record, since some hosts, Claude Code among them, show it to the model in place of
 the text. Worktrees stay after a merge; `hrn batch rm <id>` removes them.
 
-Batch progress messages and errors in the `batch_merge` result (text and structured)
-replace terminal control characters (C0 except newline and tab, DEL and C1) with
-U+FFFD, using the same filter as batch summary errors and attempt notes.
+Progress messages from `run` and `batch`, final answers and errors in the `run`
+result, event text, tool names and tool-call arguments in `show` (run replay), and
+errors in the `batch` and `batch_merge` results replace terminal control characters
+(C0 except newline and tab, DEL and C1) with U+FFFD, using the same filter as batch
+summary errors and attempt notes. Structured results filter the corresponding fields too, including the run
+result in `show`. Tool-call arguments filter nested string values and object keys;
+invalid JSON becomes a filtered JSON string. Multiline bodies retain newlines and tabs;
+saved records are unchanged. Tool names in `run` progress are collapsed to one line
+and truncated at 80 characters.

@@ -4,7 +4,7 @@
 # effects: read, exec
 # parameters: none
 # example: bash scripts/verify_test.sh
-# hash: 4ceb155d51836e179f091cf6bcb09013fc862dfe7e0aa7a4f17916f394e85811
+# hash: 35e79942e2f3505a2bc63800489ac3741916fffa26c9b0167dc1ab8f24299201
 set -euo pipefail
 runner=$(cd "$(dirname "$0")" && pwd)/verify.sh
 tmp=$(mktemp -d)
@@ -79,14 +79,33 @@ for extra in tool.py nested/tool.ps1 .hidden.sh .hidden/tool.go nested/deep/tool
   check_fails "unsupported file: scripts/$extra" "$clean"
   rm "$clean/scripts/$extra"
 done
-printf '// name: nested\n// summary: nested program.\n// effects: read\n// parameters: none\n// example: true\n// hash: pending\npackage main\n' > "$clean/scripts/nested/main.go"
+printf '// name: nested\n// summary: nested program.\n// effects: read\n// parameters: none\n// example: touch ran-main; false\n// hash: pending\npackage main\n' > "$clean/scripts/nested/main.go"
+if bash "$runner" --root "$clean" > "$tmp/out" 2>&1; then fail nested-without-entry-example-failure; fi
+grep -q 'example failed: scripts/nested/main.go' "$tmp/out" || fail nested-without-entry-diagnostic
+[[ -f $clean/ran-main ]] || fail nested-without-entry-example-ran
+rm "$clean/ran-main"
+fixture nested true "$clean"
+for name in defs main_test; do
+  sed "s/ran-main/ran-$name/" "$clean/scripts/nested/main.go" > "$clean/scripts/nested/$name.go"
+done
 mkdir -p "$clean/scripts/testdata/case"
 printf 'fixture\n' > "$clean/scripts/testdata/case/input.json"
-bash "$runner" --root "$clean" > "$tmp/out"
-grep -Eq '^// hash: [0-9a-f]{64}$' "$clean/scripts/nested/main.go" || fail nested-stamp
-grep -q 'scripts/nested/main.go`: nested program.' "$clean/AGENTS.md" || fail nested-index
-printf '# changed\n' >> "$clean/scripts/nested/main.go"
+bash "$runner" --root "$clean" > "$tmp/out" 2>&1 || fail nested-example-skipped
+for name in main defs main_test; do
+  [[ ! -e $clean/ran-$name ]] || fail "nested-$name-example-not-run"
+  grep -Eq '^// hash: [0-9a-f]{64}$' "$clean/scripts/nested/$name.go" || fail "nested-$name-stamp"
+  grep -qF "scripts/nested/$name.go"'`: nested program.' "$clean/AGENTS.md" || fail "nested-$name-index"
+done
+bash "$runner" --root "$clean" --check > "$tmp/out"
+printf '// changed\n' >> "$clean/scripts/nested/main.go"
+cp "$clean/scripts/nested/main.go" "$tmp/nested"
 check_fails 'stale hash: scripts/nested/main.go' "$clean"
+cmp "$clean/scripts/nested/main.go" "$tmp/nested" || fail nested-check-wrote-hash
+bash "$runner" --root "$clean" > "$tmp/out"
+bash "$runner" --root "$clean" --check > "$tmp/out"
+for name in main defs main_test; do
+  [[ ! -e $clean/ran-$name ]] || fail "nested-$name-check-example-not-run"
+done
 rm -r "$clean/scripts/nested"
 # A quote in a file name must not break the error object.
 printf 'true\n' > "$clean/scripts/q\"x.sh"
