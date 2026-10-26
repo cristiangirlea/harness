@@ -98,9 +98,10 @@ func span(d time.Duration) string {
 const cacheFor = 30 * time.Second
 
 type cached struct {
-	at         time.Time
-	q          Quota
-	refreshing bool
+	at time.Time // zero until a first answer is known
+	q  Quota
+	// done is set while a refresh is in flight and closed when it ends.
+	done chan struct{}
 }
 
 var (
@@ -111,32 +112,57 @@ var (
 // For is the quota of a plan backend (claude, codex) as last reported, cached
 // for 30 seconds; other backends have no plan quota and get nothing.
 func For(backend string, now time.Time) Quota {
-	var key string
-	var read func() Quota
 	switch backend {
 	case "codex":
 		root := codexSessions()
-		key, read = "codex\x00"+root, func() Quota { return codexFrom(root) }
+		return cachedRead("codex\x00"+root, now, func() Quota { return codexFrom(root) })
 	case "claude":
 		root := runlog.Root()
-		key, read = "claude\x00"+root, func() Quota { return claudeFrom(root) }
-	default:
-		return Quota{}
+		return cachedRead("claude\x00"+root, now, func() Quota { return claudeFrom(root) })
 	}
+	return Quota{}
+}
+
+// cachedRead answers from the cache under key, refreshing it with read once it
+// is older than cacheFor; the lock is never held while read runs.
+func cachedRead(key string, now time.Time, read func() Quota) Quota {
 	mu.Lock()
-	c, ok := cache[key]
-	// A refresh in progress answers with what is known, so a stuck read never blocks a page.
-	if ok && (c.refreshing || now.Sub(c.at) >= 0 && now.Sub(c.at) < cacheFor) {
+	c := cache[key]
+	known := !c.at.IsZero()
+	// A refresh in flight answers with what is known, so a stuck read never blocks a page.
+	if known && (c.done != nil || now.Sub(c.at) >= 0 && now.Sub(c.at) < cacheFor) {
 		mu.Unlock()
 		return c.q
 	}
-	c.refreshing = true
+	if c.done != nil {
+		done := c.done
+		mu.Unlock()
+		<-done
+		mu.Lock()
+		defer mu.Unlock()
+		return cache[key].q
+	}
+	done := make(chan struct{})
+	c.done = done
 	cache[key] = c
 	mu.Unlock()
-	q := read()
-	mu.Lock()
-	cache[key] = cached{at: now, q: q}
-	mu.Unlock()
+	var q Quota
+	finished := false
+	// Deferred so a panicking read still ends the refresh and wakes its waiters.
+	defer func() {
+		mu.Lock()
+		if finished {
+			cache[key] = cached{at: now, q: q}
+		} else {
+			c := cache[key]
+			c.done = nil
+			cache[key] = c
+		}
+		mu.Unlock()
+		close(done)
+	}()
+	q = read()
+	finished = true
 	return q
 }
 
@@ -202,12 +228,13 @@ func tail(path string) ([]byte, bool, error) {
 }
 
 // maxEntries bounds what one folder costs to list: a huge runs or sessions
-// folder is read only this far, at the risk of missing its newest entries.
+// folder keeps only its greatest names, which are its newest entries.
 const maxEntries = 10000
 
 var entryBudget = maxEntries
 
-// readDir lists dir by name, in chunks and up to entryBudget entries.
+// readDir lists dir by name, reading it in chunks to the end and keeping only
+// the greatest entryBudget names.
 func readDir(dir string) []os.DirEntry {
 	f, err := os.Open(dir)
 	if err != nil {
@@ -215,15 +242,17 @@ func readDir(dir string) []os.DirEntry {
 	}
 	defer f.Close()
 	var out []os.DirEntry
-	for len(out) < entryBudget {
-		chunk, err := f.ReadDir(min(1000, entryBudget-len(out)))
+	for {
+		chunk, err := f.ReadDir(1000)
 		out = append(out, chunk...)
-		if err != nil {
-			break
+		slices.SortFunc(out, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+		if len(out) > entryBudget {
+			out = append(out[:0], out[len(out)-entryBudget:]...)
+		}
+		if err != nil || len(chunk) == 0 {
+			return out
 		}
 	}
-	slices.SortFunc(out, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
-	return out
 }
 
 // lines splits data into lines, dropping the first one when it is partial.

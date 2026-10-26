@@ -128,8 +128,8 @@ an ordinary follow-up, and old records without it still load.
   and, where the backend reports them, each model call's `usage` and each `compaction`
   (see [Usage per turn](#usage-per-turn)) and each plan `quota` report (see [Quota](#quota)).
   Codex's `Reconnecting... n/5` line is an `info` event: the CLI retries its dropped model
-  stream itself, and the run's status is what the turn's end says. It is the run's error only when the stream ends on it (an `error`
-  event with the notice is then written at the end, since the CLI exits clean, and the
+  stream itself, and the run's status is what the turn's end says. It is the run's error
+  only when the stream ends on it (an `error` event with the notice is then written at the end, since the CLI exits clean, and the
   usage is `missing` as after `turn.failed`), or the turn then fails with no word of its
   own; an error before it stays the run's error (a usage limit then ends the run `limited`).
   When a CLI exits non-zero with the same text as the stream's last `error` event, that

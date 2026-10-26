@@ -350,10 +350,72 @@ func TestARefreshInProgressAnswersWithWhatIsKnown(t *testing.T) {
 	key := "claude\x00" + runlog.Root()
 	known := Quota{Week: &Window{Left: 55}}
 	mu.Lock()
-	cache[key] = cached{at: now.Add(-time.Hour), q: known, refreshing: true}
+	cache[key] = cached{at: now.Add(-time.Hour), q: known, done: make(chan struct{})}
 	mu.Unlock()
 	t.Cleanup(func() { mu.Lock(); delete(cache, key); mu.Unlock() })
 	if q := For("claude", now); q.Week == nil || q.Week.Left != 55 {
 		t.Fatalf("during a refresh = %+v, want the known 55%%", q.Week)
+	}
+}
+
+func TestAFolderOverItsBudgetKeepsItsGreatestNames(t *testing.T) {
+	dir := t.TempDir()
+	for i := 2500; i > 0; i-- {
+		writeFile(t, filepath.Join(dir, fmt.Sprintf("20261015-%06d", i)), "")
+	}
+	entryBudget = 1200
+	t.Cleanup(func() { entryBudget = maxEntries })
+	got := readDir(dir)
+	if len(got) != 1200 || got[0].Name() != "20261015-001301" || got[1199].Name() != "20261015-002500" {
+		t.Fatalf("kept %d entries from %s to %s, want the greatest 1200", len(got), got[0].Name(), got[len(got)-1].Name())
+	}
+}
+
+func TestAPanickingReadEndsItsRefresh(t *testing.T) {
+	key := "test\x00panic"
+	t.Cleanup(func() { mu.Lock(); delete(cache, key); mu.Unlock() })
+	func() {
+		defer func() { _ = recover() }()
+		cachedRead(key, time.Now(), func() Quota { panic("read failed") })
+	}()
+	mu.Lock()
+	stuck := cache[key].done != nil
+	mu.Unlock()
+	if stuck {
+		t.Fatal("a panicking read left its refresh in flight")
+	}
+	if q := cachedRead(key, time.Now(), func() Quota { return Quota{Week: &Window{Left: 40}} }); q.Week == nil || q.Week.Left != 40 {
+		t.Fatalf("after a panic = %+v, want a fresh read", q.Week)
+	}
+}
+
+func TestAFirstCallWaitsForTheRefreshInFlight(t *testing.T) {
+	key := "test\x00first"
+	t.Cleanup(func() { mu.Lock(); delete(cache, key); mu.Unlock() })
+	now := time.Now()
+	started, release := make(chan struct{}), make(chan struct{})
+	first := make(chan Quota)
+	go func() {
+		first <- cachedRead(key, now, func() Quota {
+			close(started)
+			<-release
+			return Quota{Week: &Window{Left: 70}}
+		})
+	}()
+	<-started
+	second := make(chan Quota)
+	go func() {
+		second <- cachedRead(key, now, func() Quota { t.Error("a second read ran"); return Quota{} })
+	}()
+	select {
+	case q := <-second:
+		t.Fatalf("the second first call answered %+v before the refresh ended", q)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	for _, c := range []chan Quota{first, second} {
+		if q := <-c; q.Week == nil || q.Week.Left != 70 {
+			t.Fatalf("a first call = %+v, want the refreshed 70%%", q.Week)
+		}
 	}
 }
