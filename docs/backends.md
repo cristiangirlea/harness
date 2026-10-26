@@ -211,6 +211,71 @@ Before #204, lean also passed `--setting-sources project`, which kept the user's
 `CLAUDE.md`, rules, plugins and skills out as well; workers then lost the user's own rules,
 which is why it was dropped.
 
+### A clean environment for CLI workers
+
+claude, codex, gemini, opencode and agy start from an allowlisted environment, not
+yours as a whole (#411). They get:
+
+- the shell, the user and the terminal: `HOME`, `USER`/`USERNAME`, `LOGNAME`, `PATH`,
+  `SHELL`, `TERM`, `COLORTERM`, `LANG`, `LC_*`, `TZ`, `TMP`/`TEMP`/`TMPDIR` and the
+  `XDG_*` directories;
+- the proxies (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, any case) and the
+  certificates they need (`SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`);
+- where each CLI keeps its login and settings (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+  `GEMINI_CLI_HOME`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`), and claude's plan login
+  `CLAUDE_CODE_OAUTH_TOKEN`, for claude only;
+- for gemini only, which Cloud project and sign-in route it uses (`GOOGLE_CLOUD_PROJECT`,
+  `GOOGLE_CLOUD_QUOTA_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_GENAI_USE_VERTEXAI`,
+  `GOOGLE_GENAI_USE_GCA`, and the service-account file `GOOGLE_APPLICATION_CREDENTIALS`,
+  which the guard still withholds, so it reaches gemini only with `--allow-dangerous`);
+- for agy only, which account and Cloud project it signs in with and where it keeps its
+  state (`AGY_ACCOUNT`, `AGY_ADC_AUTH`, `ANTIGRAVITY_GEMINI_DIR`, `ANTIGRAVITY_APP_DATA_DIR`,
+  `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_QUOTA_PROJECT`, `GOOGLE_CLOUD_LOCATION`,
+  `GOOGLE_CLOUD_REGION`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_GENAI_USE_ENTERPRISE`, and
+  `GOOGLE_APPLICATION_CREDENTIALS`, which the guard still withholds); its Google sign-in
+  itself is on disk;
+- where the usual toolchains are (`GOPATH`, `GOROOT`, `GOCACHE`, `GOMODCACHE`,
+  `GOTOOLCHAIN`, `GOPROXY`, `GOPRIVATE`, `GONOSUMDB`, `GOFLAGS`, `JAVA_HOME`,
+  `CARGO_HOME`, `RUSTUP_HOME`, `NVM_DIR`, `PNPM_HOME`, `BUN_INSTALL`, `VIRTUAL_ENV`,
+  `PYENV_ROOT`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`), Git Credential Manager's `GCM_*`
+  settings and hrn's own `HRN_*`;
+- on Windows also what nothing starts without and where programs find their files:
+  `SystemRoot`, `windir`, `SystemDrive`, `ComSpec`, `PATHEXT`, `APPDATA`,
+  `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, the `ProgramFiles`,
+  `CommonProgramFiles` and `ProgramData` family, `ALLUSERSPROFILE`, `PUBLIC`, `OS`,
+  `COMPUTERNAME`, `USERDOMAIN`, `PROCESSOR_ARCHITECTURE`, `NUMBER_OF_PROCESSORS`,
+  `PSModulePath` and `CLAUDE_CODE_GIT_BASH_PATH`.
+
+Anything else stays out: `GH_*`, `GIT_CONFIG_GLOBAL` and your own `GIT_CONFIG_*`
+entries, `SSH_AUTH_SOCK`, a `DATABASE_URL`, editor and tool settings. A name that says it
+holds a secret ([the guard's patterns](permissions.md#the-guard-for-every-backend))
+stays out even when it matches the list, and so do hrn's own addresses and key files
+(`HRN_*_URL*`, `HRN_*KEY_FILE`); a `GCM_*` name that says secret stays out too. Proxy
+URLs (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `GCM_HTTP_PROXY` and each entry of
+`GOPROXY`) pass without a user and password. `ANTHROPIC_API_KEY` never reaches a CLI, with
+`--inherit-env` either: the api backend uses that key in-process, and the CLIs log in on
+their own. A codex run refuses an `--mcp` server whose env sets it, since the server would
+start without it. The guard still applies on top. The run's
+info events say `environment: sanitized, N variables dropped`, never which; under the guard
+its line names the secret-looking ones, as it always has, and with `--allow-dangerous` the
+line only counts them, so a CLI that logs in with a key says why it cannot.
+
+MCP servers set up in a CLI's own config that expand `${VAR}` from the environment now see
+only the allowlisted variables, unless the run has `--inherit-env`.
+
+The allowlist changes only the environment: a claude worker still loads your
+`~/.claude` CLAUDE.md, rules, plugins and skills as before, and its MCP servers follow
+[what a run loads](#what-a-run-loads).
+
+`--inherit-env` (spec or task field `inherit_env`, MCP `run` argument of the same name,
+recorded in `task.json`) turns all of this off: the CLI gets your environment as before.
+Use it for a repository whose
+installs or tests need something from your environment, a package registry token or a
+database address. The guard still applies, so a secret-looking token stays withheld
+without `--allow-dangerous` as well. An hrn inside a guarded run refuses `inherit_env`, like
+`allow_dangerous`. The api backend does not start a CLI, so the option
+changes nothing there.
+
 ### Compaction window
 
 Claude Code compacts a conversation (summarises its history into one message) when the

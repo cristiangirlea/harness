@@ -18,6 +18,10 @@ var withheldEnv = []string{
 	"SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS",
 }
 
+// SecretEnv reports whether a variable's name says it holds a secret, or
+// hands one out: the names the guard withholds.
+func SecretEnv(name string) bool { return secretEnv(name) }
+
 func secretEnv(name string) bool {
 	n := strings.ToUpper(name)
 	if slices.Contains(withheldEnv, n) {
