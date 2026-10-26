@@ -16,4 +16,4 @@ paths:
   `~/.hrn`. Git-backed tests (`internal/batch`, `internal/eval`, `internal/hrnmcp`) make their own
   repo in `t.TempDir()`. On Windows compare paths after `filepath.EvalSymlinks` (8.3 short names).
 - A fuzzer crash: add the input as an `f.Add` seed or a `testdata/fuzz` file with the fix.
-- Locally `go test -count=3 ./...`; `-race` needs cgo; on a PC without a C compiler it runs only in CI.
+- Locally `go test -count=3 -timeout 40m ./...`; `-race` needs cgo; on a PC without a C compiler it runs only in CI.
