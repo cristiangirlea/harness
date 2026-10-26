@@ -188,3 +188,19 @@ func TestPruneKeepsWhatAKeptRunContinues(t *testing.T) {
 		}
 	}
 }
+
+func TestPruneOnlyRemovesNoRunOutsideTheGivenList(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	listed := runAged(t, 40, "aaaaaa", 10)
+	unlisted := runAged(t, 40, "bbbbbb", 10)
+	res, err := PruneOnly(time.Now().AddDate(0, 0, -30), 0, nil, map[string]bool{listed: true}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Removed) != 1 || res.Removed[0] != listed {
+		t.Fatalf("removed %v, want only %s", res.Removed, listed)
+	}
+	if exists(filepath.Join(Root(), listed)) || !exists(filepath.Join(Root(), unlisted)) {
+		t.Fatal("PruneOnly must remove the listed run and keep the one it was not given")
+	}
+}

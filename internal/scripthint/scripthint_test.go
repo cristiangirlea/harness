@@ -261,3 +261,18 @@ func TestRecordIgnoresAnUnwritablePath(t *testing.T) {
 	}
 	Record(filepath.Join(file, "x.jsonl"), Hint{}, time.Now())
 }
+
+func TestKeptNeedsANameAndASummaryInTheHeader(t *testing.T) {
+	root := repo(t, map[string]string{
+		"kept.sh":      "#!/usr/bin/env bash\n# name: kept\n# summary: Do one thing.\necho kept\n",
+		"kept.go":      "// name: kept-go\n// summary: Do one thing in Go.\npackage main\n",
+		"plain.sh":     "#!/usr/bin/env bash\necho plain\n",
+		"nosummary.sh": "# name: half\necho half\n",
+		"late.sh":      "echo first\n# name: late\n# summary: Too late.\n",
+	})
+	for name, want := range map[string]bool{"kept.sh": true, "kept.go": true, "plain.sh": false, "nosummary.sh": false, "late.sh": false, "missing.sh": false} {
+		if got := Kept(filepath.Join(root, "scripts", name)); got != want {
+			t.Errorf("Kept(%s) = %v, want %v", name, got, want)
+		}
+	}
+}

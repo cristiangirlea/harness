@@ -2,7 +2,8 @@
 
 [← README](../README.md)
 
-Status: design. Nothing here is built yet; the slices are listed at the end.
+Status: slice 1 is built: the ledger, its rebuild, fold-before-prune, the switch and
+`hrn bot stats`. The rest is design; the slices are listed at the end.
 
 The person earns experience by working with agents through hrn, from real outcomes only,
 never from keystrokes, turns or chatter. Ada has her own growth, from what she has learned,
@@ -111,6 +112,8 @@ A badge is recorded as an event when it is earned (`track` `badge`, `xp` 0, key
 | Defect hunter | 10 find-the-defect exercises |
 | Fresh eyes | 10 reads before merging |
 
+Full crew waits for a record of which CLI backends were enabled each day, which hrn does not keep yet.
+
 ## Ada's growth
 
 Ada's level is about what she has learned, not what the person did, and is shown on her own
@@ -154,8 +157,8 @@ The rules that make it rebuildable and safe to prune:
 
 ## Where it shows
 
-- `hrn bot stats`, a new subcommand, in the terminal: level, experience by track this week,
-  streak, badges, and Ada's growth on its own line.
+- `hrn bot stats`, in the terminal: level, experience by track this week and badges.
+  The streak and Ada's line come with the practice and Ada slices.
 - hrn watch: a card on the index page. On loopback it may show the day's exercise; over
   `--lan` it shows the level, streak and badges only, since anyone on those networks can
   read the page. Material, answers and reveals are never served over `--lan`, and nothing of
