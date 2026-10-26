@@ -62,7 +62,9 @@ a lean run; see [What a run loads](backends.md#what-a-run-loads)),
 `--append-system-prompt TEXT` (api and claude: added after the backend's own system prompt,
 at most 16 KiB), `--no-skills` (claude: skills off; see
 [Harness variants](evaluations.md#harness-variants)),
-`--allow-dangerous`, `--no-switch` (see
+`--allow-dangerous`, `--inherit-env` (CLI backends: your whole environment; see
+[A clean environment for CLI workers](backends.md#a-clean-environment-for-cli-workers)),
+`--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
 budgets below.
 `--shape-tools` opts the api backend into summaries of large terminal, log and

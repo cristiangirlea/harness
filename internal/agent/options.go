@@ -59,6 +59,10 @@ type Options struct {
 	// AllowDangerous lifts command and environment guards.
 	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Lift the guard: let agents push, merge and deploy with your credentials, and let run_command run sudo, rm -rf / and the like."`
 
+	// InheritEnv starts an agent CLI with the operator's whole environment
+	// instead of the allowlisted one (sanitizedEnv); the guard still applies.
+	InheritEnv bool `json:"inherit_env,omitempty" flag:"inherit-env" desc:"Start agent CLIs with your whole environment instead of an allowlisted one; the guard still applies (CLI backends)."`
+
 	// Timeout ends the run when it passes; zero means no deadline.
 	Timeout Duration `json:"timeout,omitempty" desc:"Stop the run after this long, e.g. 20m."`
 
@@ -182,6 +186,9 @@ func (o Options) Validate() error {
 	if o.AllowDangerous && tools.Guarded() {
 		return ErrGuardedRun
 	}
+	if o.InheritEnv && tools.Guarded() {
+		return ErrGuardedInherit
+	}
 	if math.IsNaN(o.MaxCostUSD) || math.IsInf(o.MaxCostUSD, 0) {
 		return fmt.Errorf("max cost must be finite")
 	}
@@ -193,6 +200,9 @@ const MaxAppendSystemPrompt = 16 << 10
 
 // ErrGuardedRun reserves lifting the guard for the operator; its text names no variable because the model reads it.
 var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run: only the operator can lift the guard")
+
+// ErrGuardedInherit refuses inherit_env inside a guarded run: it would hand the agent's runs the operator's whole environment, which only the operator may do.
+var ErrGuardedInherit = errors.New("inherit_env is refused inside a guarded run: only the operator can give an agent their environment")
 
 // Over inherits unset values; non-nil pointers and lists override base.
 func (o Options) Over(base Options) Options {

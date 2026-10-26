@@ -116,7 +116,8 @@ an ordinary follow-up, and old records without it still load.
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
   off, or absent when the run left it to the default, which is lean; `skills` is `true` when a
   lean claude run kept its skills, absent otherwise; `compact_window` is a number or `"auto"`;
-  `append_system_prompt` and `no_skills` are omitted when unset)
+  `append_system_prompt` and `no_skills` are omitted when unset; `inherit_env` is `true` when
+  the CLI got the operator's whole environment, absent otherwise)
   and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
   the declared category from `--purpose`, MCP `purpose`, a batch task's `purpose`,
   or a valid leading `Purpose: <category>` header; a continuation without one stores
