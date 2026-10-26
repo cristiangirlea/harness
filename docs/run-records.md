@@ -116,7 +116,8 @@ an ordinary follow-up, and old records without it still load.
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
   off, or absent when the run left it to the default, which is lean; `skills` is `true` when a
   lean claude run kept its skills, absent otherwise; `compact_window` is a number or `"auto"`;
-  `append_system_prompt` and `no_skills` are omitted when unset; `issue` and `take_over` are
+  `append_system_prompt` and `no_skills` are omitted when unset; `inherit_env` is `true` when
+  the CLI got the operator's whole environment, absent otherwise; `issue` and `take_over` are
   the leased GitHub issue and whether the run took it over, omitted when unset, see
   [Issue leases](workspaces.md#issue-leases))
   and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
@@ -128,10 +129,10 @@ an ordinary follow-up, and old records without it still load.
 - `events.jsonl` — text, thinking, tool calls, tool results, info, errors and session ids (timestamped),
   one per line, appended while the run goes (`hrn show -f` and `hrn watch` follow it)
   and, where the backend reports them, each model call's `usage` and each `compaction`
-  (see [Usage per turn](#usage-per-turn)). Codex's `Reconnecting... n/5` line is an `info`
-  event: the CLI retries its dropped model stream itself, and the run's status is what the
-  turn's end says. It is the run's error only when the stream ends on it (an `error`
-  event with the notice is then written at the end, since the CLI exits clean, and the
+  (see [Usage per turn](#usage-per-turn)) and each plan `quota` report (see [Quota](#quota)).
+  Codex's `Reconnecting... n/5` line is an `info` event: the CLI retries its dropped model
+  stream itself, and the run's status is what the turn's end says. It is the run's error
+  only when the stream ends on it (an `error` event with the notice is then written at the end, since the CLI exits clean, and the
   usage is `missing` as after `turn.failed`), or the turn then fails with no word of its
   own; an error before it stays the run's error (a usage limit then ends the run `limited`).
   When a CLI exits non-zero with the same text as the stream's last `error` event, that
@@ -367,3 +368,64 @@ than half from the turn before as a *probable* compaction; that is a reading of 
 numbers, never written to the record.
 
 Runs recorded before these events existed have none; the result's totals still hold.
+
+## Quota
+
+A `quota` event in `events.jsonl` is how much of the plan's quota the backend reported
+used, numbers only:
+
+```json
+{"t":"...","kind":"quota","quota":{"five_hour":{"used_percent":38,"resets_at":1792600000},
+ "week":{"used_percent":20,"resets_at":1793000000}}}
+```
+
+`used_percent` is 0 to 100 and `resets_at` is in Unix seconds; a window the report did not
+carry is left out. Claude Code's `rate_limit_event` writes one: its
+`rate_limit_info.unifiedWindows` (`five_hour`, `seven_day`, `utilization` 0 to 1), or, when
+those are missing, the one window its `rateLimitType` names. No other backend writes one;
+the watch Backends card and `hrn backends` read codex's quota from codex's own session files.
+
+## The experience ledger
+
+`$HRN_HOME/game/` (default `~/.hrn/game/`) holds:
+
+- `events.jsonl`: one event per line, appended, never edited. A fold appends only
+  keys the ledger lacks; when two folds meet, a repeated key is ignored when the
+  ledger is read (the first line wins).
+  Fields are `key` (source identity), `kind`, `track` (`delivery`, `practice`, `ada` or
+  `badge`), `xp`, `at` and `repo` (GitHub owner/name, a folder name when no remote is
+  set, or empty). Optional `cancels` names the key a correction takes back.
+- `settings.json`: optional `enabled` boolean. The game is on when the file or field
+  is missing. `false` hides the scores; the ledger keeps recording.
+
+This version writes these kinds:
+
+| Kind | Key | XP | When |
+|---|---|---|---|
+| `review_clean` | `review:<run id>` | 20 | A finished review ends `ok` with a non-empty final answer and no standalone word `blocking`. |
+| `inside_ceiling` | `ceiling:<run id>` | 5 | A run ends `ok` with a timeout, or an api run has a cost ceiling and a known positive cost. |
+| `routed_passed` | `routed:<run id>` | 10 | A routed run ends `ok` and, for a settled batch attempt, all its gates pass. |
+| `routed_failed` | `routed:<run id>` | 0 | A routed batch attempt ends `ok` but its settled gates failed; it holds the key so the run never counts later. |
+| `script_reused` | `script:<run id>/<name>` | 5 | A finished run calls a kept script, once per run and script. |
+| `bug_squashed` | `batch:<batch id>/<task id>` | 15 | A task is no longer running, and a failed gate, apart from guards and infrastructure errors, is followed by an attempt with gates that all pass. |
+| `first_use` | `first:batch`, `first:slot`, `first:eval`, `first:routed` | 25 | The earliest record of each feature, including a batch using a reusable slot. |
+| `badge` | `badge:budget-keeper`, `badge:cheap-and-right`, `badge:veteran` | 0 | The twentieth run inside its ceiling, tenth routed pass, or delivery and practice experience reaching 5,000. |
+
+An attempt is settled when its task is no longer running or a later attempt exists.
+A routed run not yet recorded as an attempt waits while its worktree's task runs.
+A syntax check (`bash -n`) is not a script reuse.
+
+`at` is the run's end, the batch's start or the eval's start, in UTC. First-use
+events use their source record's time; badges use the event that earned them.
+Cancelled events are dropped before daily caps are applied, in order of `at`, then
+`key`. Caps per kind and UTC date are four reviews, three bugs,
+ten runs inside their ceiling, three routed passes and five script reuses.
+First uses and routed failures have no daily cap; badges remain once earned.
+
+`hrn bot stats` folds every record on disk before it prints. `hrn runs prune` folds
+every record on disk first and removes nothing if that or reading a run it would
+remove fails; missing or malformed JSON run records have nothing to fold and may
+be removed. When prune removes a batch whose task is still marked running, its
+unfinished attempts are decided as failed first, even if all recorded gates passed.
+`--dry-run` writes no ledger. Events whose records were pruned live
+only in the ledger. See [Experience](experience.md) for the remaining design.

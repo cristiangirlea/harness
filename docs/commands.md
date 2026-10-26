@@ -8,7 +8,7 @@
 |---|---|
 | `hrn run [flags] [--purpose CATEGORY] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`; optionally declare its purpose (see [Declared purpose](#declared-purpose)). |
 | `hrn exec --protocol v1` | Run one recorded task over the supervisor JSONL protocol (see [hrn exec](#hrn-exec)). |
-| `hrn backends` | Show enabled/disabled, default, availability and remembered limits (see [Backend preferences](backends.md#choosing-which-backends-hrn-may-use)). |
+| `hrn backends` | Show enabled/disabled, default, availability, remembered limits and, under claude and codex when known, the plan's quota left per window (see [Backend preferences](backends.md#choosing-which-backends-hrn-may-use)). |
 | `hrn backends set --only NAMES [--default NAME]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. |
 | `hrn backends reset` | Remove the preference file and restore unrestricted backend selection. |
 | `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
@@ -21,12 +21,13 @@
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn update [--main \| --ref REF \| --file PATH] [--dry-run] [--rollback]` | Replace every hrn copy on this computer with the newest release, a build of a ref or a file, each under a backup, and restart a running `hrn watch`; `--rollback` puts the backups back (see [hrn update](#hrn-update)). |
 | `hrn runs [-n N]` | List recent runs. |
-| `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records (see [Run records](run-records.md#run-records)). |
+| `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records; first fold what it removes into the experience ledger, removing nothing if that fails (see [Run records](run-records.md#the-experience-ledger)). |
 | `hrn show [--json] <id>` | Replay a recorded run. |
 | `hrn flow <run-or-batch-id> [--level simple\|technical\|debug] [--json]` | Show the recorded execution tree for a run or batch; `technical` is the default and includes tool steps, while `debug` adds info steps and IDs. |
 | `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](watch.md#watching-runs-live)). |
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
 | `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). `--owner-email` (repeatable) names the verified emails that see this install's runs and batches; other verified visitors see only records they own. |
+| `hrn bot stats` | Show your level, this week's experience and your badges from hrn's records (see [Experience](experience.md)). |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table and attempt notes, while it runs or long afterwards. |
@@ -62,7 +63,9 @@ a lean run; see [What a run loads](backends.md#what-a-run-loads)),
 `--append-system-prompt TEXT` (api and claude: added after the backend's own system prompt,
 at most 16 KiB), `--no-skills` (claude: skills off; see
 [Harness variants](evaluations.md#harness-variants)),
-`--allow-dangerous`, `--no-switch` (see
+`--allow-dangerous`, `--inherit-env` (CLI backends: your whole environment; see
+[A clean environment for CLI workers](backends.md#a-clean-environment-for-cli-workers)),
+`--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)),
 `--issue REF` (the GitHub issue the run works on: `owner/name#N`, its URL, or `#N` for the
 workspace's origin; leased before the agent starts, so a second run for it exits 2 naming the

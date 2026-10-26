@@ -163,9 +163,23 @@ when watch's one-hour quiet rule displays the run as stopped.
 
 The index's Backends card, above "What the runs were for", shows every registered
 backend to every viewer: installed or not, enabled or disabled, the configured
-default (or "chosen: X" when none is configured), and any remembered limit's end
-time. Unreadable or malformed preferences show a single notice without a path.
+default (or "chosen: X" when none is configured), and any remembered limit, highlighted
+as `at its limit, resets in 2h 5m` (any backend, agy included, whose run ended at its plan
+limit with a reset time). Unreadable or malformed preferences show a single notice without a path.
 Reload the index to refresh the card.
+
+The Quota left column shows what is left of claude's and codex's plans, per window, as the
+CLI last reported it: `5h: 62% left, resets in 1h 12m / week: 80% left, resets in 3d 4h`.
+A window under 10% left is highlighted; once its reset time has passed it reads
+`... left before its reset 5m ago (stale)` until the CLI reports again. Codex's figures come
+from the tails of its newest session files under `$CODEX_HOME/sessions` (default
+`~/.codex/sessions`); claude's from the `quota` events of the 40 newest runs
+([Run records](run-records.md#quota)), each window as last reported by any claude run among
+them. A claude figure comes from the newest report found within each run's last 64 KiB of
+events, so a run whose last report lies further back gives none. Only the numbers are read;
+nothing else from those files is kept or shown. A plan that reports only one window (codex on some plans has only
+the weekly one) shows only that window, and a backend with nothing reported shows nothing.
+Answers are reused for 30 seconds.
 
 Loopback viewers can change the enabled checkboxes and default radio buttons,
 then click Apply. In public mode every Cloudflare Access-verified viewer can do

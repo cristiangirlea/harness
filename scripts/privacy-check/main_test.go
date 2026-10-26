@@ -3,7 +3,7 @@
 // effects: read, write-workspace, exec
 // parameters: none
 // example: go test -count=1 ./scripts/privacy-check
-// hash: f5c1e357a63462b1c1ad67bab6ef5e048afcbec3fbeebd26b3a187a73e8f6e0c
+// hash: 721eb2c34d3d101cfd769be49f02ac7ef2beba6f31c63e82592446f88f37d1cc
 package main
 
 import (
@@ -157,6 +157,71 @@ func TestTheRunReadsTrackedFilesAndFailsOnAFinding(t *testing.T) {
 		var r report
 		if err := json.Unmarshal(stdout.Bytes(), &r); err != nil || code != tc.code || r.Files != 1 || len(r.Findings) != tc.code {
 			t.Errorf("%q: code %d, report %s (%v); want code %d over one file", tc.content, code, stdout.String(), err, tc.code)
+		}
+	}
+}
+
+func TestTheRunReportsEachFindingOnceInAConflictedFile(t *testing.T) {
+	root := gitFixture(t, map[string]string{"tracked.md": "base\n"})
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			env = append(env, kv)
+		}
+	}
+	git := func(args ...string) ([]byte, error) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+			"-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "-c", "merge.conflictStyle=merge"}, args...)...)
+		cmd.Dir, cmd.Env = root, env
+		return cmd.CombinedOutput()
+	}
+	mustGit := func(args ...string) {
+		t.Helper()
+		if out, err := git(args...); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	mustGit("commit", "-qm", "base")
+	mustGit("branch", "right")
+	for _, branch := range []string{"left", "right"} {
+		if branch == "left" {
+			mustGit("checkout", "-qb", branch)
+		} else {
+			mustGit("checkout", "-q", branch)
+		}
+		if err := os.WriteFile(filepath.Join(root, "tracked.md"), []byte(branch+" "+work+" "+phrase+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGit("add", "tracked.md")
+		mustGit("commit", "-qm", branch)
+	}
+	if out, err := git("merge", "left"); err == nil {
+		t.Fatalf("merge succeeded; want an unresolved conflict: %s", out)
+	}
+	if out, err := git("ls-files", "-u"); err != nil || strings.Count(string(out), "\ttracked.md\n") != 3 {
+		t.Fatalf("unmerged entries: %s (%v); want three stages for tracked.md", out, err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--root", root}, &stdout, &stderr); code != 1 || stderr.Len() != 0 {
+		t.Fatalf("code %d, stderr %q; want 1 and no error", code, stderr.String())
+	}
+	var r report
+	if err := json.Unmarshal(stdout.Bytes(), &r); err != nil {
+		t.Fatal(err)
+	}
+	want := []finding{
+		{"tracked.md", 2, "local-work-path"},
+		{"tracked.md", 4, "local-work-path"},
+		{"tracked.md", 2, "narrates-a-person"},
+		{"tracked.md", 4, "narrates-a-person"},
+	}
+	if r.Files != 1 || r.Truncated || len(r.Findings) != len(want) {
+		t.Fatalf("report %s; want one file and four findings without truncation", stdout.String())
+	}
+	for i, f := range want {
+		if r.Findings[i] != f {
+			t.Errorf("finding %d = %+v; want %+v", i, r.Findings[i], f)
 		}
 	}
 }

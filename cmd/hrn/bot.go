@@ -11,15 +11,20 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/game"
 	"github.com/cristiangirlea/harness/internal/watch"
 )
 
 func cmdBot(args []string) error {
+	if len(args) > 0 && args[0] == "stats" {
+		return cmdBotStats(args[1:])
+	}
 	fs := flag.NewFlagSet("bot", flag.ContinueOnError)
 	addr := fs.String("addr", watch.DefaultAddr, "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -57,6 +62,45 @@ func cmdBot(args []string) error {
 		fmt.Fprintf(os.Stderr, "hrn bot: no window opened (%v); open %s in a browser\n", err, url)
 	}
 	return watch.Serve(ctx, watch.Options{}, ln)
+}
+
+func cmdBotStats(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("unexpected argument %q: hrn bot stats takes none", args[0])
+	}
+	if err := game.Rebuild(); err != nil {
+		return err
+	}
+	settings, err := game.LoadSettings()
+	if err != nil {
+		return err
+	}
+	if !settings.On() {
+		fmt.Printf("hrn bot stats: the game is off (enabled is false in %s); the ledger keeps recording\n", filepath.Join(game.Dir(), "settings.json"))
+		return nil
+	}
+	events, unreadable, err := game.Load()
+	if err != nil {
+		return err
+	}
+	if unreadable > 0 {
+		fmt.Fprintf(os.Stderr, "hrn bot stats: %d ledger lines could not be read and were left out\n", unreadable)
+	}
+	totals := game.Sum(events)
+	level := game.Level(totals.Person)
+	fmt.Printf("level %d, %d xp (%d more for level %d)\n", level, totals.Person, 50*(level+1)*(level+1)-totals.Person, level+1)
+	week := game.WeekStart(time.Now())
+	xp := totals.Since(week)
+	fmt.Printf("this week, from %s UTC: delivery %d xp, practice %d xp\n", week.Format("Monday 2 January 2006"), xp[game.TrackDelivery], xp[game.TrackPractice])
+	var badges []string
+	for _, badge := range totals.Badges {
+		badges = append(badges, game.BadgeName(badge.Key)+" ("+badge.At.UTC().Format("2 January 2006")+")")
+	}
+	if len(badges) == 0 {
+		badges = append(badges, "none yet")
+	}
+	fmt.Printf("badges: %s\n", strings.Join(badges, ", "))
+	return nil
 }
 
 // Verify bot support because another service or an older watch may own the port.

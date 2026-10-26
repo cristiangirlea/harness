@@ -41,6 +41,8 @@ p { margin: 6px 0 12px; }
 .notice { padding: 10px 14px; border-left: 4px solid; border-radius: 0 8px 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .notice.bad { border-color: var(--bad-fg); background: var(--bad-bg); color: var(--bad-fg); }
 .notice.warn { border-color: var(--warn-fg); background: var(--warn-bg); color: var(--warn-fg); }
+.quota-low { background: var(--warn-bg); color: var(--warn-fg); font-weight: 700; }
+.quota-stale { color: var(--muted); font-style: italic; }
 .urls { padding-left: 20px; }
 .urls li { margin: 4px 0; overflow-wrap: anywhere; }
 .small { font-size: .85rem; }

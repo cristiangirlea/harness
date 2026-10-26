@@ -4,9 +4,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/game"
+	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/watch"
 )
 
@@ -109,5 +115,80 @@ func TestBotDoesNotIdentifyAnUnrelatedForbiddenServerAsPublicWatch(t *testing.T)
 	want := addr + " answered 403: another program holds the port, possibly an hrn watch --public (which refuses this computer's browser); start the bot on another port with --addr"
 	if err := cmdBot([]string{"--addr", addr}); err == nil || err.Error() != want {
 		t.Fatalf("hrn bot on unrelated service's port = %v; want %q", err, want)
+	}
+}
+
+func TestBotStatsPrintsTheLevelThisWeeksExperienceAndTheBadges(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	now := time.Now().UTC()
+	if _, err := game.Append([]game.Event{
+		{Key: "test:old", Kind: "test", Track: game.TrackDelivery, XP: 200, At: now.AddDate(0, 0, -30), Repo: "example/app"},
+		{Key: "review:r1", Kind: "review_clean", Track: game.TrackDelivery, XP: 20, At: now, Repo: "example/app"},
+		{Key: "rep:today", Kind: "daily_practice", Track: game.TrackPractice, XP: 30, At: now},
+		{Key: "badge:budget-keeper", Kind: "badge", Track: game.TrackBadge, At: now.AddDate(0, 0, -2)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"level 2, 250 xp", "200 more for level 3", "this week", "delivery 20 xp", "practice 30 xp", "badges: Budget keeper ("} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("hrn bot stats lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestBotStatsSaysNoBadgesYetOnAnEmptyLedger(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"level 0, 0 xp", "50 more for level 1", "badges: none yet"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("hrn bot stats lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestBotStatsShowsNothingWhenTheGameIsOffButTheLedgerStillRecords(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := os.MkdirAll(game.Dir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(game.Dir(), "settings.json"), []byte(`{"enabled": false}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := "20261026-100000-aaaaaa"
+	writeJSONFile(t, filepath.Join(runlog.Root(), id, "result.json"), runlog.Record{
+		ID: id, Backend: "claude", Started: time.Now().Add(-time.Hour),
+		Task:   agent.Task{Prompt: "review the branch", Purpose: "review", Dir: home},
+		Result: agent.Result{Backend: "claude", Status: agent.StatusOK, Final: "No defects."},
+	})
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(out); strings.Contains(s, "level") || strings.Contains(s, "xp") || !strings.Contains(s, "off") {
+		t.Fatalf("with the game off, hrn bot stats printed %q; want only a line saying it is off", s)
+	}
+	events, _, err := game.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Key != "review:"+id {
+		t.Fatalf("ledger %+v, want the review recorded while the game is off", events)
+	}
+}
+
+func TestBotRefusesArgumentsOtherThanStats(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, args := range [][]string{{"stat"}, {"stats", "extra"}} {
+		if err := cmdBot(args); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+			t.Errorf("hrn bot %v: err = %v, want an unexpected argument", args, err)
+		}
 	}
 }
