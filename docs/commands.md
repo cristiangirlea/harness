@@ -155,6 +155,7 @@ one a session built in a scratch folder. Whatever the source, the candidate is r
 `candidate:` lines and stops with `already current` when every target names the same commit or
 module version as the candidate; otherwise a target that already does is listed as `already
 current` and left alone (no backup, its watch not restarted), and the others are updated.
+Two `modified` builds of one commit count as the same only when their files contain identical bytes.
 
 **Targets.** The running executable (resolved through symlinks) and every `hrn` (`hrn.exe`) on
 `PATH`, in `$GOPATH/bin` or `~/go/bin` and, on Windows, in `%LOCALAPPDATA%\hrn`, each listed

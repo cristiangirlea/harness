@@ -236,6 +236,7 @@ type server struct {
 	system []string
 	access *accessVerifier
 	logMu  sync.Mutex
+	grants []owner.Grant
 
 	batches batchCache
 }
@@ -259,18 +260,27 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 			access = &accessVerifier{opt: *opt.Public}
 		}
 		s.access = access
+		var err error
+		s.grants, err = owner.ReadGrants(filepath.Join(runlog.Home(), "grants.json"))
+		if err != nil {
+			out := opt.Public.Errors
+			if out == nil {
+				out = os.Stderr
+			}
+			fmt.Fprintf(out, "hrn watch: grants.json: %v; no project grants loaded\n", err)
+		}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("POST /backends", s.saveBackends)
-	mux.HandleFunc("GET /run/{id}", s.run)
-	mux.HandleFunc("GET /batch/{id}", s.batch)
-	mux.HandleFunc("GET /flow/{id}/json", s.flowJSON)
-	mux.HandleFunc("GET /flow/{id}", s.flowPage)
+	mux.HandleFunc("GET /run/{id}", s.recordRoute(s.run))
+	mux.HandleFunc("GET /batch/{id}", s.recordRoute(s.batch))
+	mux.HandleFunc("GET /flow/{id}/json", s.recordRoute(s.flowJSON))
+	mux.HandleFunc("GET /flow/{id}", s.recordRoute(s.flowPage))
 	mux.HandleFunc("GET /stream/index", s.streamIndex)
-	mux.HandleFunc("GET /stream/run/{id}", s.streamRun)
-	mux.HandleFunc("GET /stream/batch/{id}", s.streamBatch)
-	mux.HandleFunc("GET /stream/flow/{id}", s.streamFlow)
+	mux.HandleFunc("GET /stream/run/{id}", s.recordRoute(s.streamRun))
+	mux.HandleFunc("GET /stream/batch/{id}", s.recordRoute(s.streamBatch))
+	mux.HandleFunc("GET /stream/flow/{id}", s.recordRoute(s.streamFlow))
 	mux.HandleFunc("GET /bot", s.bot)
 	mux.HandleFunc("GET /bot/answer", s.answerBot)
 	mux.HandleFunc("GET /stream/bot", s.streamBot)
@@ -475,7 +485,7 @@ func (s *server) lists(r *http.Request) lists {
 	}
 	visible := batches[:0]
 	for _, res := range batches {
-		if who.CanRead(res.Owner) {
+		if who.CanReadRecord(res.Owner, res.Dir) {
 			visible = append(visible, res)
 		}
 	}
@@ -552,6 +562,24 @@ func (s *server) viewerOf(r *http.Request) viewer {
 type accessContextKey struct{}
 
 func (s *server) who(r *http.Request) owner.Viewer {
+	v := s.identity(r)
+	if s.opt.Public != nil {
+		v.Grants = s.grants
+		if aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter); aw != nil {
+			v.OnRead = func(id, basis string) {
+				if id == aw.record {
+					aw.basis, aw.decision = basis, "denied"
+					if basis != "none" {
+						aw.decision = "allowed"
+					}
+				}
+			}
+		}
+	}
+	return v
+}
+
+func (s *server) identity(r *http.Request) owner.Viewer {
 	if s.opt.Public == nil || s.fromThisComputer(r) {
 		return owner.LocalViewer()
 	}
@@ -590,7 +618,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	}
 	f, rec, err := NewFollower(r.PathValue("id"), 0)
 	// A public viewer gets one answer for missing, unreadable and foreign records, so ids cannot be probed.
-	if err != nil && s.opt.Public != nil || err == nil && !s.who(r).CanRead(rec.Owner) {
+	if err != nil && s.opt.Public != nil || err == nil && !s.who(r).ReadRecord(r.PathValue("id"), rec.Owner, rec.Task.Dir) {
 		err = os.ErrNotExist
 	}
 	if err != nil {
@@ -848,7 +876,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// The follower reads a half-written result's task.json; the ownership check is on that record.
 	f, rec, err := NewFollower(id, cur.off)
-	if err != nil || !s.who(r).CanRead(rec.Owner) {
+	if err != nil || !s.who(r).ReadRecord(id, rec.Owner, rec.Task.Dir) {
 		http.Error(w, "run not found", http.StatusNotFound)
 		return
 	}

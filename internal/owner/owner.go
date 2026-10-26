@@ -70,17 +70,16 @@ func Email(addr string) string { return "email:" + strings.ToLower(strings.TrimS
 
 // Viewer is who is asking; Admin reads every record and is a separate grant from ownership.
 type Viewer struct {
-	ID    string
-	Admin bool
+	ID     string
+	Admin  bool
+	Grants []Grant
+	OnRead func(id, basis string)
 }
 
 // LocalViewer is the person at this install.
 func LocalViewer() Viewer { return Viewer{ID: Local()} }
 
-// CanRead is the single read decision every access boundary uses.
+// CanRead keeps ownership checks available when no directory is known.
 func (v Viewer) CanRead(recorded string) bool {
-	if v.Admin {
-		return true
-	}
-	return v.ID != "" && Of(recorded) == v.ID
+	return v.CanReadRecord(recorded, "")
 }

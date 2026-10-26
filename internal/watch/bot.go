@@ -594,7 +594,7 @@ func (b *botWatcher) look() botSnapshot {
 	}
 	visible := batches[:0]
 	for _, res := range batches {
-		if who.CanRead(res.Owner) {
+		if who.CanReadRecord(res.Owner, res.Dir) {
 			visible = append(visible, res)
 		}
 	}
