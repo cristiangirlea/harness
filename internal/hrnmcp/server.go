@@ -23,6 +23,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 const instructions = `hrn runs coding tasks on an agent backend of your choice (its own API loop, or the claude, codex, gemini, opencode or agy CLIs) and records every run.
@@ -245,6 +246,13 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 			}
 			task.RunDir = rec.Dir()
+			issue, err := takeRunIssue(ctx, args.Options, dir, rec.ID(), args.Backend)
+			if err != nil {
+				_ = rec.Close(agent.Result{Status: agent.StatusError, Error: err.Error()})
+				return text("run: "+err.Error(), map[string]any{"run_id": rec.ID()}, true), nil
+			}
+			issueReason := "run " + rec.ID() + " ended"
+			defer issue.Release(ctx, issueReason)
 			if args.Mode == agent.ModeAsk && call.ClientSupports("elicitation") {
 				// Named by run, because two runs may be asking at once.
 				task.Approve = approver(ctx, call, rec.ID())
@@ -259,6 +267,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				}
 			}
 			var notes []string
+			if issue != nil {
+				notes = append(notes, issue.Notes...)
+			}
 			if warning := plan.ContextWarning(); warning != "" {
 				call.Progress(warning)
 				notes = append(notes, warning)
@@ -326,6 +337,13 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				structured = map[string]any{"run_id": nrec.ID(), "result": res, "limited_run_id": limitedID}
 			}
 
+			if issue != nil {
+				seen := len(issue.Notes)
+				if err := issue.Release(ctx, issueReason); err != nil {
+					notes = append(notes, err.Error())
+				}
+				notes = append(notes, issue.Notes[seen:]...)
+			}
 			res.Error, res.Final = printableFlow(res.Error), printableFlow(res.Final)
 			structured["result"] = res
 			body := res.Final
@@ -349,6 +367,14 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				structured, res.Status != agent.StatusOK || runlog.ResultNotSaved(recordErr)), nil
 		},
 	}
+}
+
+// takeRunIssue leases the run's issue before its agent starts; nil when it names none.
+func takeRunIssue(ctx context.Context, opts agent.Options, dir, run, backend string) (*ws.IssueLease, error) {
+	if opts.Issue == "" {
+		return nil, nil
+	}
+	return ws.TakeRunIssue(ctx, runlog.Home(), opts.Issue, dir, ws.Lease{Holder: "hrn mcp run", Run: run, Backend: backend}, opts.TakeOver)
 }
 
 func runsTool() mcp.Tool {
@@ -505,11 +531,14 @@ func flowTool() mcp.Tool {
 			}
 			tree := flowview.Filter(view.Tree, args.Level)
 			var b strings.Builder
-			if err := flowview.WriteText(&b, view.Summary, tree, args.Level); err != nil {
+			if err := flowview.WriteText(&b, view.Summary, view.Issues, tree, args.Level); err != nil {
 				return mcp.CallResult{}, err
 			}
 			body, cut := truncateFlowText(printableFlow(b.String()), 64*1024)
 			structured := map[string]any{"version": view.Version, "summary": printableFlow(view.Summary), "tree": cleanFlowTree(tree)}
+			if len(view.Issues) > 0 {
+				structured["issues"] = cleanIssues(view.Issues)
+			}
 			if cut {
 				body += "\n[flow text truncated at 64 KiB]\n"
 				// The tree is at least as large as the text; a lower level or hrn flow --json gives it whole.
@@ -532,6 +561,17 @@ func cleanFlowTree(nodes []*flow.Node) []*flow.Node {
 		copy.Status = flow.Status(printableFlow(string(copy.Status)))
 		copy.Children = cleanFlowTree(copy.Children)
 		out[i] = &copy
+	}
+	return out
+}
+
+func cleanIssues(issues []ws.IssueStatus) []ws.IssueStatus {
+	out := make([]ws.IssueStatus, len(issues))
+	for i, s := range issues {
+		for _, f := range []*string{&s.Issue, &s.State, &s.Why, &s.Holder, &s.Run, &s.Backend, &s.Branch, &s.PR} {
+			*f = printableFlow(*f)
+		}
+		out[i] = s
 	}
 	return out
 }

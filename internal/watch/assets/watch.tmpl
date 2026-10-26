@@ -206,7 +206,8 @@
 
 {{define "flowbody"}}
 <p class="flow-summary">{{.Summary}}</p>
-<p class="muted">hrn shows recorded steps and reasons, not the model&#39;s private reasoning.</p>
+{{range .Issues}}<p class="flow-issue">{{.}}</p>
+{{end}}<p class="muted">hrn shows recorded steps and reasons, not the model&#39;s private reasoning.</p>
 <nav class="flow-level">Level: <a href="?level=simple">simple</a> · <a href="?level=technical">technical</a> · <a href="?level=debug">debug</a> · <a href="/flow/{{.ID}}/json">JSON</a></nav>
 <div class="flow-tree">{{range .Tree}}{{template "flowNode" .}}{{end}}</div>
 {{end}}

@@ -139,3 +139,72 @@ the slot back:
 `free`, `taken` or `stale`, the holder, since when, the branch (or the detached commit),
 and `clean` or what is in it. A lease without a folder and a folder without a lease
 both show.
+
+## Issue leases
+
+`hrn run --issue REF`, the MCP `run` tool's `issue` and a batch task's `issue` lease a GitHub
+issue to one run, so two runs never work on the same issue. REF is `owner/name#N`,
+`https://github.com/owner/name/issues/N`, or `#N` (or `N`) for the repository of the
+workspace's `origin` remote. Owner and name are lower-cased, as GitHub ignores their case.
+
+- **Where.** `~/.hrn/leases/issues/<owner>__<name>__<N>.lease` (under `$HRN_HOME` when set), so
+  every checkout of the repository on this computer sees the same lease. The file is a slot
+  lease with `issue`, `run` (the run id, or `<batch id>/<task id>`), `backend`, once
+  known, `pr`, and `retired` while a Released comment is owed. It is taken after the run record exists and before the agent starts.
+- **Refusal.** A lease held by a live process refuses the take, even one of the same `hrn
+  mcp` server: two runs are two holders. `hrn run` exits 2 and the MCP tool returns a tool
+  error, naming the holder, its run, backend, branch and age; the run record is closed as an
+  error. `--take-over` (`take_over` in a spec or MCP call) replaces the holder and notes whom.
+  A lease whose process exited, or whose process id now names another process (the same start
+  identity check as slots), is stale and taken over by the next take.
+- **GitHub.** A take also asks GitHub through `gh`: an open pull request whose closing
+  references or body (`Fixes #N`, `closes: owner/name#N`, the issue's URL, with any of
+  close/closes/closed/fix/fixes/fixed/resolve/resolves/resolved) close the issue, other than
+  one from the run's own branch, refuses it like a live holder; so does a live claim comment
+  by another worker. A claim is the first line ``Claim: <worker> on branch `<branch>` ``, and
+  a later `Released: <worker>` closes it. Only comments by the account gh is logged in as
+  count: every worker posts as that account, and anyone can comment on a public issue. It is stale after 24 hours when its branch has had no
+  commit in 24 hours or does not exist. When the issue is free hrn adds the `claimed` label
+  (created if missing) and comments ``Claim: hrn <run> (<backend>) on branch `<branch>` ``,
+  plus `Takes over from <holder>.` on a takeover. These formats are shared with a claim tool
+  outside hrn. A bare mention of the issue never holds it.
+- **Replaced holders.** When a take replaces a lease (its process ended, its pull request is
+  merged or closed, or `--take-over`), the replaced worker's claim does not hold the issue: hrn
+  comments, when that claim is open, `Released: <old worker>`, a blank line and why (`its process
+  ended`, `pull request <url> is merged or closed`, `taken over by <worker>`). A dead or closed
+  holder is released as soon as the claims are read, even if the take is then refused; a live
+  holder only after hrn's own claim. A takeover releases other workers' live claims the same way.
+  A Released comment that fails is owed: its worker goes into the new lease's `retired` list,
+  the run's release posts it first (`retired by <worker>`) and keeps the lease if it fails
+  again, and a take that replaces the lease releases those workers too. A refused take that
+  owes one puts the replaced lease back.
+- **Two claims at once.** After commenting, hrn reads the claims again; the oldest open claim
+  that is not stale or replaced wins. If that is another worker's, hrn comments
+  `Released: <worker>`, a blank line and `claimed at the same time as <winner>`, gives the
+  local lease back and refuses the take naming the winner. If that comment fails, the lease
+  stays until the process ends, so the next take releases the claim.
+- **gh failing** (not installed, not logged in, not a GitHub repository) keeps the local
+  lease and prints `GitHub claim skipped: <reason>`; the run goes on. With no branch (a
+  detached `HEAD`, or not a git checkout) hrn keeps the local lease and prints
+  `GitHub claim skipped: no branch (detached HEAD or not a git checkout)`; a branch with a
+  backtick or a control character, which the Claim line cannot carry, is skipped the same way.
+  Either way a replaced dead holder's release is owed, since its claim may be open.
+- **Release.** When the run (or batch task) ends, an open pull request from its branch keeps
+  the issue: the lease is rewritten without a process and with `pr` set, so it outlives hrn.
+  When gh finds none and hrn claimed the issue, it comments `Released: <worker>`, a blank line
+  and the reason (`run <id> ended`), then removes the lease and the label when no other claim
+  is open; if that comment fails the lease stays for the next take to release. When that lookup fails, the lease and the claim stay and the
+  error is printed: the lease goes stale when the process ends, and the next take releases it.
+- **Held by a pull request.** That lease is checked when a take or `hrn ws issues` reads it
+  (`gh pr view <url> --json state`): merged or closed makes it free (listed as `released`,
+  removed by the next take, which also releases its claim); an open pull request, or gh
+  failing, keeps it held. Nothing polls.
+
+`hrn ws issues [--json]` lists every issue lease: `held`, `held by pull request`, `stale` (and
+why) or `released`, with holder, run, backend, branch, since and pull request. It removes
+nothing and asks GitHub only for the state of a holding pull request. `--free owner/name#N`
+removes one by hand, refusing while a running process holds it. `hrn flow`, the MCP `flow` tool
+and the `hrn watch` flow page show a line per issue its run or batch holds (also a lease kept
+under the first id of a run that switched backend and carried on, up to 20 steps back and only
+through runs the viewer may read), read from disk alone and redacted and filtered like the rest
+of the flow.

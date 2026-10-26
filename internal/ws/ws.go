@@ -36,6 +36,12 @@ type Lease struct {
 	Start  string    `json:"start,omitempty"` // holder process's start identity, platform-specific, compared for equality; empty in old leases or where unknown
 	Taken  time.Time `json:"taken"`
 	Branch string    `json:"branch"`
+	// Issue lease fields; empty on slot leases.
+	Issue   string   `json:"issue,omitempty"`
+	Run     string   `json:"run,omitempty"` // run or batch id, plus /task for a batch task
+	Backend string   `json:"backend,omitempty"`
+	PR      string   `json:"pr,omitempty"`      // with PID 0, the open pull request that keeps holding the issue
+	Retired []string `json:"retired,omitempty"` // workers whose GitHub Released comment is still owed
 }
 
 // TakeOptions selects a repository, checkout and lease holder.

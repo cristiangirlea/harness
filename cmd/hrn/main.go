@@ -107,6 +107,9 @@ Usage:
   hrn ws free [PATH]              give the slot back once its work is pushed: HEAD detached, lease removed
   hrn ws list [--repo DIR] [--json]
                                  the slots: who holds each, since when, its branch and what is in it
+  hrn ws issues [--json] [--free owner/name#N]
+                                 the issue leases (hrn run --issue): who holds each, on which branch, or which
+                                 pull request; --free removes one no running process holds
   hrn scripts hint                a Claude Code PreToolUse hook: names the kept script (a matches: header)
                                  that covers the inline script a command is about to run; advice only
 
@@ -154,6 +157,9 @@ Run flags:
                        (every backend), and run_command may run sudo, rm -rf / and the like
       --inherit-env    start agent CLIs with your whole environment instead of an allowlisted one
       --no-switch      stay on this backend at its usage limit instead of using an enabled partner
+      --issue REF      the GitHub issue this run works on (owner/name#N, its URL, or #N for origin's
+                       repository), leased so a second run for it is refused, and claimed on GitHub
+      --take-over      take the issue lease from its current holder
 
 Eval flags:
       --parallel N     cells at once (default: the file's value, else 4)
@@ -404,6 +410,15 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+
+	issue, err := takeRunIssue(ctx, opts, absDir, rec.ID(), backend)
+	if err != nil {
+		if cerr := rec.Close(agent.Result{Status: agent.StatusError, Error: err.Error()}); cerr != nil {
+			fmt.Fprintln(os.Stderr, "hrn: "+runlog.CloseMessage(cerr))
+		}
+		return 2, err
+	}
+	defer releaseRunIssue(ctx, issue, "run "+rec.ID()+" ended")
 
 	var emit func(agent.Event)
 	var r *renderer

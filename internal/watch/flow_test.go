@@ -17,6 +17,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 func TestFlowTaskLanesAndActions(t *testing.T) {
@@ -113,6 +114,39 @@ func TestFlowRunNumbersAtEveryLevel(t *testing.T) {
 		_, body := get(t, srv.URL+"/flow/"+id+"?level="+level)
 		if !strings.Contains(body, `<p class="muted small">7 turns · 4 tool calls · ~$0.0123</p>`) {
 			t.Errorf("%s missing run numbers", level)
+		}
+	}
+}
+
+func TestFlowPageShowsTheRunsIssueEscapedAndOnlyToItsOwner(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:other")
+	foreign := saveRun(t, "fake", "prompt", &agent.Result{Status: agent.StatusOK})
+	t.Setenv("HRN_OWNER", "local:test")
+	id := saveRun(t, "fake", "prompt", &agent.Result{Status: agent.StatusOK})
+	for n, run := range map[int]string{1: id, 2: foreign} {
+		il, err := ws.TakeIssue(t.Context(), runlog.Home(), ws.IssueRef{Repo: "o/n", Number: n},
+			ws.Lease{Holder: "hrn run", Run: run, Backend: "codex", Branch: "fix<b>"}, ws.IssueOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { il.Release(t.Context(), "") })
+	}
+	srv := httptest.NewServer(New(context.Background(), Options{}))
+	defer srv.Close()
+	_, body := get(t, srv.URL+"/flow/"+id)
+	if want := `<p class="flow-issue">issue o/n#1: held by hrn ` + id + ` (codex) on fix&lt;b&gt; since `; !strings.Contains(body, want) {
+		t.Errorf("page lacks %q", want)
+	}
+	if strings.Contains(body, "o/n#2") {
+		t.Error("the page shows another owner's issue")
+	}
+	if _, js := get(t, srv.URL+"/flow/"+id+"/json"); !strings.Contains(js, `"issues":["issue o/n#1: held by hrn `) {
+		t.Errorf("json = %s", js)
+	}
+	for _, path := range []string{"/flow/" + foreign, "/flow/" + foreign + "/json"} {
+		if code, body := get(t, srv.URL+path); code != 404 || strings.Contains(body, "o/n#2") {
+			t.Errorf("%s: another owner's run gave %d with its issue shown %t", path, code, strings.Contains(body, "o/n#2"))
 		}
 	}
 }

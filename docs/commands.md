@@ -47,6 +47,7 @@
 | `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch (see [Reusable workspaces](workspaces.md#take)). |
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
 | `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it (see [List](workspaces.md#list)). |
+| `hrn ws issues [--json] [--free owner/name#N]` | The issue leases: state (`held`, `held by pull request`, `stale`, `released`), holder, run, backend, branch, pull request and since; `--free` removes one no running process holds (see [Issue leases](workspaces.md#issue-leases)). |
 | `hrn scripts hint` | A Claude Code PreToolUse hook that reads the payload on stdin and names the kept script whose `matches:` header covers the inline script a command is about to run; advice only, silent otherwise (see [The hint hook](scripts.md#the-hint-hook)). |
 
 Run flags: `-b/--backend` (api, claude, codex, gemini, opencode, agy), `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
@@ -65,8 +66,11 @@ at most 16 KiB), `--no-skills` (claude: skills off; see
 `--allow-dangerous`, `--inherit-env` (CLI backends: your whole environment; see
 [A clean environment for CLI workers](backends.md#a-clean-environment-for-cli-workers)),
 `--no-switch` (see
-[When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)), and the
-budgets below.
+[When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)),
+`--issue REF` (the GitHub issue the run works on: `owner/name#N`, its URL, or `#N` for the
+workspace's origin; leased before the agent starts, so a second run for it exits 2 naming the
+holder) and `--take-over` (take that lease from its holder; see
+[Issue leases](workspaces.md#issue-leases)), and the budgets below.
 `--shape-tools` opts the api backend into summaries of large terminal, log and
 test-runner results from shell and MCP tools, with the full original saved behind
 a handle (see [Run records](run-records.md#run-records)). It is off by default

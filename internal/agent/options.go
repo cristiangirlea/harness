@@ -74,6 +74,10 @@ type Options struct {
 
 	// NoSwitch prevents continuation on a partner backend.
 	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its usage limit, instead of carrying on on an enabled partner (claude and codex pair by default)."`
+
+	// Issue is leased for the run so that a second run for it is refused.
+	Issue    string `json:"issue,omitempty" desc:"GitHub issue this run works on (owner/name#N, its URL, or #N for this repository's origin); taken as a lease so a second run for it is refused."`
+	TakeOver bool   `json:"take_over,omitempty" flag:"take-over" desc:"Take the issue lease from its current holder."`
 }
 
 // Route fills an unspecified backend/model/effort from evidence.

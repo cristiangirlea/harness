@@ -117,7 +117,9 @@ an ordinary follow-up, and old records without it still load.
   off, or absent when the run left it to the default, which is lean; `skills` is `true` when a
   lean claude run kept its skills, absent otherwise; `compact_window` is a number or `"auto"`;
   `append_system_prompt` and `no_skills` are omitted when unset; `inherit_env` is `true` when
-  the CLI got the operator's whole environment, absent otherwise)
+  the CLI got the operator's whole environment, absent otherwise; `issue` and `take_over` are
+  the leased GitHub issue and whether the run took it over, omitted when unset, see
+  [Issue leases](workspaces.md#issue-leases))
   and, for exec runs, the supervisor's `attempt_id`. Optional `task.purpose` stores
   the declared category from `--purpose`, MCP `purpose`, a batch task's `purpose`,
   or a valid leading `Purpose: <category>` header; a continuation without one stores

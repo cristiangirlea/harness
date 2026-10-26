@@ -122,6 +122,30 @@ func TestOverInheritsWhatIsUnset(t *testing.T) {
 	}
 }
 
+func TestIssueOptionsComeFromFlagsAndATaskIssueWinsOverTheSpec(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var o Options
+	BindFlags(fs, &o)
+	if err := fs.Parse([]string{"--issue", "o/n#12", "--take-over"}); err != nil || o.Issue != "o/n#12" || !o.TakeOver {
+		t.Fatalf("flags = %+v, %v", o, err)
+	}
+	b, _ := json.Marshal(o)
+	if !strings.Contains(string(b), `"issue":"o/n#12"`) || !strings.Contains(string(b), `"take_over":true`) {
+		t.Errorf("record = %s", b)
+	}
+	if b, _ := json.Marshal(Options{}); strings.Contains(string(b), "issue") || strings.Contains(string(b), "take_over") {
+		t.Errorf("unset issue options must be omitted: %s", b)
+	}
+	spec := Options{Issue: "o/n#1", TakeOver: true}
+	if got := (Options{Issue: "o/n#2"}).Over(spec); got.Issue != "o/n#2" || !got.TakeOver {
+		t.Errorf("a task's issue must win and take_over only enable: %+v", got)
+	}
+	if got := (Options{}).Over(Options{Issue: "o/n#1"}); got.Issue != "o/n#1" || got.TakeOver {
+		t.Errorf("an unset issue inherits the spec's: %+v", got)
+	}
+}
+
 // Lean has three states: unset takes the entry point's default (on in a
 // batch, off for hrn run), and an explicit false is honoured, also over a
 // spec that turned it on.

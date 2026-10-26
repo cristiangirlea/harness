@@ -38,6 +38,16 @@ tasks on claude and codex and a task can set it to `false` (see
 empty list (`"mcp": []`) means no servers at all, not even `~/.hrn/mcp.json`. Every list
 is checked before the first task starts.
 
+`issue` names the GitHub issue a task works on (`owner/name#N`, its URL, or `#N` for the
+repository's origin) and `take_over` takes that issue from its holder; a task's `issue` replaces
+the spec's, and `take_over` only turns on. Before any task starts the batch refuses two tasks
+that name the same issue, naming both, and takes every task's lease (run `<batch id>/<task id>`,
+branch `hrn/<task id>`, and the task's or spec's `backend` only when one is set, since routing
+picks an unset one later); if one is held, it gives back those it took and starts nothing. Each
+task gives its issue back when it ends, is canceled, or the batch cannot save its record; lease
+notes print as `[task] …` lines (see
+[Issue leases](workspaces.md#issue-leases)).
+
 Each task may also set `purpose`: `review`, `debug`, `implement`, `refactor`,
 `test`, `research`, `plan` or `ops`. It is a task field, not a spec-wide default.
 An invalid value is refused before any task starts. If omitted or empty, a valid
