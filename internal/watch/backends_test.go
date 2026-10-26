@@ -78,7 +78,7 @@ func TestBackendsCardShowsStateAndControlsOnlyToAllowedViewers(t *testing.T) {
 				enabled := "disabled"
 				if name == "claude" {
 					enabled = "enabled"
-					for _, want := range []string{">default<", "limited until " + until.Format(time.RFC3339)} {
+					for _, want := range []string{">default<", `<span class="quota-low">at its limit, resets in `} {
 						if !strings.Contains(html.UnescapeString(row), want) {
 							t.Errorf("claude row lacks %q", want)
 						}
@@ -308,6 +308,10 @@ func TestBackendsCardShowsEachPlanBackendsQuotaMarkingLowAndStaleWindows(t *test
 		t.Fatal(err)
 	}
 
+	if err := limits.Note("agy", agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(3*time.Hour + 30*time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+
 	card := backendCardHTML(t, backendRequest(New(context.Background(), Options{}), "GET", "/", "127.0.0.1:1234", "127.0.0.1:8089", "", "", ""))
 	row := func(name string) string {
 		_, r, ok := strings.Cut(card, `data-backend="`+name+`"`)
@@ -326,6 +330,10 @@ func TestBackendsCardShowsEachPlanBackendsQuotaMarkingLowAndStaleWindows(t *test
 	}
 	if !strings.Contains(r, `class="quota-stale">5h: 80% left before its reset 5m ago (stale)`) {
 		t.Fatalf("codex row has no stale five-hour window: %s", r)
+	}
+	// agy reports a reset only when a run hits its limit, never a share of a window.
+	if r := row("agy"); !strings.Contains(r, `class="quota-low">at its limit, resets in 3h 0m`) || strings.Contains(r, "left") {
+		t.Fatalf("agy row = %s", r)
 	}
 	if r := row("gemini"); strings.Contains(r, "left") {
 		t.Fatalf("gemini has no plan quota to show: %s", r)

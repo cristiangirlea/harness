@@ -1,7 +1,6 @@
-// Package quota tells how much of a subscription plan's quota is left, per
-// window (five hours, a week), as the plan's own CLI last reported it: codex
-// in its session files, claude in the quota events hrn records from its runs.
-// Only the numbers are read; nothing else from those files is kept or shown.
+// Package quota tells how much of a plan's five-hour and weekly windows is left,
+// as codex's session files or claude's recorded quota events last said; only the
+// numbers are read, since those files hold the user's conversations.
 package quota
 
 import (
@@ -61,6 +60,15 @@ func (q Quota) Parts(now time.Time) []Part {
 		out = append(out, Part{Text: left + ", resets in " + span(w.w.ResetsAt.Sub(now)), Low: w.w.Left < lowPercent})
 	}
 	return out
+}
+
+// Limit describes a remembered plan limit in the windows' words, so the card
+// says "resets in" one way; zero until means no limit is known.
+func Limit(until, now time.Time) Part {
+	if until.IsZero() || !until.After(now) {
+		return Part{}
+	}
+	return Part{Text: "at its limit, resets in " + span(until.Sub(now)), Low: true}
 }
 
 // String is Parts on one line, or "" when nothing is known.

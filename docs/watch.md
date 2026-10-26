@@ -163,8 +163,9 @@ when watch's one-hour quiet rule displays the run as stopped.
 
 The index's Backends card, above "What the runs were for", shows every registered
 backend to every viewer: installed or not, enabled or disabled, the configured
-default (or "chosen: X" when none is configured), and any remembered limit's end
-time. Unreadable or malformed preferences show a single notice without a path.
+default (or "chosen: X" when none is configured), and any remembered limit, highlighted
+as `at its limit, resets in 2h 5m` (any backend, agy included, whose run ended at its plan
+limit with a reset time). Unreadable or malformed preferences show a single notice without a path.
 Reload the index to refresh the card.
 
 The Quota left column shows what is left of claude's and codex's plans, per window, as the

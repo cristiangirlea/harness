@@ -232,3 +232,15 @@ func TestForKnowsOnlyThePlanBackendsAndCachesTheAnswer(t *testing.T) {
 		}
 	}
 }
+
+func TestLimitSaysWhenARememberedLimitLiftsInTheWindowsWords(t *testing.T) {
+	now := time.Date(2026, 10, 15, 18, 0, 0, 0, time.UTC)
+	if got := Limit(now.Add(2*time.Hour+5*time.Minute), now); got.Text != "at its limit, resets in 2h 5m" || !got.Low || got.Stale {
+		t.Fatalf("Limit = %+v", got)
+	}
+	for _, until := range []time.Time{{}, now, now.Add(-time.Minute)} {
+		if got := Limit(until, now); got != (Part{}) {
+			t.Fatalf("Limit(%v) = %+v, want nothing", until, got)
+		}
+	}
+}

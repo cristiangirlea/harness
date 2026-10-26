@@ -75,8 +75,9 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 }
 
 type backendRow struct {
-	Name, Limit                 string
+	Name                        string
 	Installed, Enabled, Default bool
+	Limit                       quota.Part   // a run ended at the plan's limit; when it lifts
 	Quota                       []quota.Part // what is left of the plan, as last reported
 }
 
@@ -111,9 +112,7 @@ func (s *server) backendsCard(w http.ResponseWriter, r *http.Request) backendCar
 		b, _ := agent.Get(name)
 		_, err := b.Detect()
 		row := backendRow{Name: name, Installed: err == nil, Enabled: p.Enabled(name), Default: p.Default() == name}
-		if until := limits.Until(name, now); !until.IsZero() {
-			row.Limit = "limited until " + until.Format(time.RFC3339)
-		}
+		row.Limit = quota.Limit(limits.Until(name, now), now)
 		row.Quota = quota.For(name, now).Parts(now)
 		c.Rows = append(c.Rows, row)
 	}
