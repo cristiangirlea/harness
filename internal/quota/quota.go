@@ -98,8 +98,9 @@ func span(d time.Duration) string {
 const cacheFor = 30 * time.Second
 
 type cached struct {
-	at time.Time
-	q  Quota
+	at         time.Time
+	q          Quota
+	refreshing bool
 }
 
 var (
@@ -123,12 +124,19 @@ func For(backend string, now time.Time) Quota {
 		return Quota{}
 	}
 	mu.Lock()
-	defer mu.Unlock()
-	if c, ok := cache[key]; ok && now.Sub(c.at) >= 0 && now.Sub(c.at) < cacheFor {
+	c, ok := cache[key]
+	// A refresh in progress answers with what is known, so a stuck read never blocks a page.
+	if ok && (c.refreshing || now.Sub(c.at) >= 0 && now.Sub(c.at) < cacheFor) {
+		mu.Unlock()
 		return c.q
 	}
+	c.refreshing = true
+	cache[key] = c
+	mu.Unlock()
 	q := read()
+	mu.Lock()
 	cache[key] = cached{at: now, q: q}
+	mu.Unlock()
 	return q
 }
 
@@ -155,17 +163,35 @@ const defaultTailBytes = 64 << 10
 
 var tailBytes int64 = defaultTailBytes
 
+// openRegular opens path only when it is a regular file: opening a FIFO or a
+// device would block or read without end.
+func openRegular(path string) (*os.File, os.FileInfo, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("not a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := f.Stat()
+	if err != nil || !os.SameFile(before, info) {
+		f.Close()
+		return nil, nil, fmt.Errorf("changed while opened")
+	}
+	return f, info, nil
+}
+
 // tail is the last tailBytes of a file, and whether it starts inside a line.
 func tail(path string) ([]byte, bool, error) {
-	f, err := os.Open(path)
+	f, info, err := openRegular(path)
 	if err != nil {
 		return nil, false, err
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, false, fmt.Errorf("not a regular file")
-	}
 	// One byte more than the tail says whether it starts on a line's start.
 	start := max(0, info.Size()-tailBytes-1)
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
@@ -173,6 +199,31 @@ func tail(path string) ([]byte, bool, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(f, tailBytes+1))
 	return data, start > 0, err
+}
+
+// maxEntries bounds what one folder costs to list: a huge runs or sessions
+// folder is read only this far, at the risk of missing its newest entries.
+const maxEntries = 10000
+
+var entryBudget = maxEntries
+
+// readDir lists dir by name, in chunks and up to entryBudget entries.
+func readDir(dir string) []os.DirEntry {
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var out []os.DirEntry
+	for len(out) < entryBudget {
+		chunk, err := f.ReadDir(min(1000, entryBudget-len(out)))
+		out = append(out, chunk...)
+		if err != nil {
+			break
+		}
+	}
+	slices.SortFunc(out, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return out
 }
 
 // lines splits data into lines, dropping the first one when it is partial.
@@ -267,11 +318,8 @@ func codexFrom(root string) Quota {
 	// Year, month and day folders, newest first; anything else is passed over.
 	var walk func(dir string, depth int) bool
 	walk = func(dir string, depth int) bool {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return true
-		}
-		slices.Reverse(entries) // ReadDir sorts by name
+		entries := readDir(dir)
+		slices.Reverse(entries)
 		for _, e := range entries {
 			name := e.Name()
 			if depth < 3 {
@@ -280,7 +328,7 @@ func codexFrom(root string) Quota {
 				}
 				continue
 			}
-			if e.IsDir() || !strings.HasSuffix(name, ".jsonl") {
+			if !e.Type().IsRegular() || !strings.HasSuffix(name, ".jsonl") {
 				continue
 			}
 			if data, partial, err := tail(filepath.Join(dir, name)); err == nil {
@@ -308,14 +356,11 @@ func digits(name string, depth int) bool {
 // maxClaudeRuns bounds a reading: the newest runs, by id.
 const maxClaudeRuns = 40
 
-// claudeFrom reads the quota events of the newest claude runs under root,
-// stopping once both windows are known.
+// claudeFrom reads the quota events of the newest claude runs under root and
+// keeps each window's latest report: the quota is the account's and runs overlap.
 func claudeFrom(root string) Quota {
 	var q Quota
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return q
-	}
+	entries := readDir(root)
 	slices.Reverse(entries) // run ids start with when they started
 	runs := 0
 	for _, e := range entries {
@@ -333,7 +378,6 @@ func claudeFrom(root string) Quota {
 		if err != nil {
 			continue
 		}
-		var got Quota
 		for _, line := range lines(data, partial) {
 			if !bytes.Contains(line, []byte(`"quota"`)) {
 				continue
@@ -349,17 +393,7 @@ func claudeFrom(root string) Quota {
 			if w := ev.Quota.Week; w != nil {
 				this.Week = windowOf(w.UsedPercent, w.ResetsAt, ev.Time)
 			}
-			got.newer(this)
-		}
-		// A newer run's window stands; an older run only fills what is missing.
-		if q.FiveHour == nil {
-			q.FiveHour = got.FiveHour
-		}
-		if q.Week == nil {
-			q.Week = got.Week
-		}
-		if q.FiveHour != nil && q.Week != nil {
-			break
+			q.newer(this)
 		}
 	}
 	return q
@@ -367,7 +401,7 @@ func claudeFrom(root string) Quota {
 
 // claudeRun reports whether the run in dir ran on claude, from its task.json.
 func claudeRun(dir string) bool {
-	f, err := os.Open(filepath.Join(dir, "task.json"))
+	f, _, err := openRegular(filepath.Join(dir, "task.json"))
 	if err != nil {
 		return false
 	}

@@ -244,3 +244,116 @@ func TestLimitSaysWhenARememberedLimitLiftsInTheWindowsWords(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeKeepsTheLatestReportWhateverRunStartedLast(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	five, week := now.Add(time.Hour), now.Add(80*time.Hour)
+	used := func(p float64) *agent.Quota {
+		return &agent.Quota{FiveHour: &agent.QuotaWindow{UsedPercent: p, ResetsAt: five.Unix()}, Week: &agent.QuotaWindow{UsedPercent: p, ResetsAt: week.Unix()}}
+	}
+	// A started first but reported last; B started later and reported early.
+	writeRun(t, "20261015-100000-aaaaaa", "claude", agent.Event{Time: now, Kind: agent.EventQuota, Quota: used(80)})
+	writeRun(t, "20261015-110000-bbbbbb", "claude", agent.Event{Time: now.Add(-55 * time.Minute), Kind: agent.EventQuota, Quota: used(30)})
+	got := claudeFrom(runlog.Root())
+	sameWindow(t, "five hour", got.FiveHour, 20, five, now)
+	sameWindow(t, "week", got.Week, 20, week, now)
+}
+
+func TestClaudeReadsOnlyTheNewestRuns(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	week := &agent.Quota{Week: &agent.QuotaWindow{UsedPercent: 5, ResetsAt: now.Add(time.Hour).Unix()}}
+	writeRun(t, "20261014-000000-aaaaaa", "claude", agent.Event{Time: now, Kind: agent.EventQuota, Quota: week})
+	for i := range maxClaudeRuns {
+		writeRun(t, fmt.Sprintf("20261015-%06d-codexx", i), "codex")
+	}
+	if q := claudeFrom(runlog.Root()); q.Week != nil {
+		t.Fatalf("week = %+v, want none: only the %d newest runs are read", q.Week, maxClaudeRuns)
+	}
+}
+
+func TestClaudeReadsAnEventsTailThatStartsInsideALine(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	week := now.Add(time.Hour)
+	quota := func(at time.Time, used float64) string {
+		return fmt.Sprintf(`{"t":%q,"kind":"quota","quota":{"week":{"used_percent":%v,"resets_at":%d}}}`, at.Format(time.RFC3339Nano), used, week.Unix())
+	}
+	// The tail starts at the space inside a long line, whose rest would read
+	// as a newer whole report if the partial line were not dropped.
+	cut, last := quota(now.Add(time.Minute), 99), quota(now, 40)+"\n"
+	tailBytes = int64(len(cut) + 1 + len(last))
+	t.Cleanup(func() { tailBytes = defaultTailBytes })
+	long := `{"t":"2026-10-15T10:00:00Z","kind":"text","text":"` + strings.Repeat("x", 3*int(tailBytes)) + " " + cut
+	dir := filepath.Join(runlog.Root(), "20261015-100000-aaaaaa")
+	writeFile(t, filepath.Join(dir, "task.json"), `{"backend":"claude"}`)
+	writeFile(t, filepath.Join(dir, "events.jsonl"), quota(now.Add(-2*time.Hour), 10)+"\n"+long+"\n"+last)
+	sameWindow(t, "week", claudeFrom(runlog.Root()).Week, 60, week, now)
+}
+
+func TestNonRegularFilesAreNotOpened(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 10, 15, 18, 0, 0, 0, time.UTC)
+	week := now.Add(72 * time.Hour)
+	day := filepath.Join(root, "2026", "10", "15")
+	target := filepath.Join(t.TempDir(), "target.jsonl")
+	writeFile(t, target, codexLine(now, "codex", window(90, 10080, week), "null")+"\n")
+	if err := os.MkdirAll(filepath.Join(day, "rollout-dir.jsonl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(day, "rollout-link.jsonl")); err != nil {
+		t.Logf("no symlink here: %v", err)
+	}
+	if q := codexFrom(root); q.Week != nil {
+		t.Fatalf("week = %+v, want none: a folder or link named .jsonl is not read", q.Week)
+	}
+	if _, _, err := tail(filepath.Join(day, "rollout-dir.jsonl")); err == nil {
+		t.Fatal("tail opened a folder")
+	}
+	if _, err := os.Lstat(filepath.Join(day, "rollout-link.jsonl")); err == nil {
+		if _, _, err := tail(filepath.Join(day, "rollout-link.jsonl")); err == nil {
+			t.Fatal("tail followed a link")
+		}
+	}
+
+	t.Setenv("HRN_HOME", t.TempDir())
+	run := filepath.Join(runlog.Root(), "20261015-100000-aaaaaa")
+	if err := os.MkdirAll(filepath.Join(run, "task.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if claudeRun(run) {
+		t.Fatal("a folder named task.json reads as a claude run")
+	}
+}
+
+func TestAFolderIsListedOnlyUpToItsEntryBudget(t *testing.T) {
+	dir := t.TempDir()
+	for i := range 7 {
+		writeFile(t, filepath.Join(dir, fmt.Sprintf("f%d", i)), "")
+	}
+	entryBudget = 3
+	t.Cleanup(func() { entryBudget = maxEntries })
+	if got := readDir(dir); len(got) != 3 {
+		t.Fatalf("listed %d entries, want the budget of 3", len(got))
+	}
+	entryBudget = maxEntries
+	got := readDir(dir)
+	if len(got) != 7 || got[0].Name() != "f0" || got[6].Name() != "f6" {
+		t.Fatalf("listed %d entries, want all 7 by name", len(got))
+	}
+}
+
+func TestARefreshInProgressAnswersWithWhatIsKnown(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	now := time.Now()
+	key := "claude\x00" + runlog.Root()
+	known := Quota{Week: &Window{Left: 55}}
+	mu.Lock()
+	cache[key] = cached{at: now.Add(-time.Hour), q: known, refreshing: true}
+	mu.Unlock()
+	t.Cleanup(func() { mu.Lock(); delete(cache, key); mu.Unlock() })
+	if q := For("claude", now); q.Week == nil || q.Week.Left != 55 {
+		t.Fatalf("during a refresh = %+v, want the known 55%%", q.Week)
+	}
+}

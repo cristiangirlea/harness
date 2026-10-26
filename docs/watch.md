@@ -173,9 +173,11 @@ CLI last reported it: `5h: 62% left, resets in 1h 12m / week: 80% left, resets i
 A window under 10% left is highlighted; once its reset time has passed it reads
 `... left before its reset 5m ago (stale)` until the CLI reports again. Codex's figures come
 from the tails of its newest session files under `$CODEX_HOME/sessions` (default
-`~/.codex/sessions`); claude's from the `quota` events of the newest claude runs
-([Run records](run-records.md#quota)). Only the numbers are read; nothing else from those
-files is kept or shown. A plan that reports only one window (codex on some plans has only
+`~/.codex/sessions`); claude's from the `quota` events of the 40 newest runs
+([Run records](run-records.md#quota)), each window as last reported by any claude run among
+them. A claude figure comes from the newest report found within each run's last 64 KiB of
+events, so a run whose last report lies further back gives none. Only the numbers are read;
+nothing else from those files is kept or shown. A plan that reports only one window (codex on some plans has only
 the weekly one) shows only that window, and a backend with nothing reported shows nothing.
 Answers are reused for 30 seconds.
 
