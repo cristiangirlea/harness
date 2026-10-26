@@ -53,6 +53,11 @@ func NewAgyBackend() *CLIBackend {
 			}
 			return a
 		},
+		// The Google sign-in lives on disk; these pick the account, the ADC
+		// sign-in and its Cloud project, and where agy keeps its state.
+		ownEnv: []string{"AGY_ACCOUNT", "AGY_ADC_AUTH", "ANTIGRAVITY_GEMINI_DIR", "ANTIGRAVITY_APP_DATA_DIR",
+			"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_QUOTA_PROJECT", "GOOGLE_CLOUD_LOCATION",
+			"GOOGLE_CLOUD_REGION", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_ENTERPRISE"},
 		newParse: newAgyParse,
 		end:      agyStreamEnded,
 		// Agy uses the fork hook but resumes its session in place.

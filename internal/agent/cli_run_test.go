@@ -73,9 +73,16 @@ func TestHelperCLIError(t *testing.T) {
 		os.Exit(1)
 	case "env":
 		// What the CLI was started with, as its final answer.
-		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s;GIT_DIR=%s;GIT_INDEX_FILE=%s;GIT_WORK_TREE=%s",
+		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s;GIT_DIR=%s;GIT_INDEX_FILE=%s;GIT_WORK_TREE=%s;OPERATOR_SETTING=%s;PATH_SET=%t;AGY_ACCOUNT=%s;GOOGLE_APPLICATION_CREDENTIALS=%s",
 			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
-			os.Getenv("HRN_GUARDED"), os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"), os.Getenv("GIT_WORK_TREE"))
+			os.Getenv("HRN_GUARDED"), os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"), os.Getenv("GIT_WORK_TREE"), os.Getenv("OPERATOR_SETTING"), os.Getenv("PATH") != "",
+			os.Getenv("AGY_ACCOUNT"), os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+		// A test names any further variables it wants reported.
+		for _, k := range strings.Split(os.Getenv("HRN_CLI_HELPER_VARS"), ",") {
+			if k != "" {
+				report += ";" + k + "=" + os.Getenv(k)
+			}
+		}
 		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
 		fmt.Println(string(out))
 		os.Exit(0)
@@ -120,9 +127,23 @@ func TestACLIRunsUnderTheGuard(t *testing.T) {
 		t.Errorf("the claude CLI lost its plan login under the guard: %v", got)
 	}
 
-	got = saw(helperCLI(parseClaudeStream), Options{Mode: ModeYolo, AllowDangerous: true})
+	// The guard applies on top of an inherited environment too: the
+	// operator's ordinary variables come back, the tokens do not.
+	t.Setenv("OPERATOR_SETTING", "operator-value")
+	got = saw(helperCLI(parseClaudeStream), Options{Mode: ModeYolo, InheritEnv: true})
+	if got["GH_TOKEN"] == "ghp_secret" || got["GH_TOKEN"] == "" || got["ANTHROPIC_API_KEY"] != "" || got["GH_CONFIG_DIR"] == "operator-gh" ||
+		got["HRN_GUARDED"] != "1" || got["OPERATOR_SETTING"] != "operator-value" {
+		t.Fatalf("with --inherit-env under the guard the CLI saw %v; want the operator's settings with the guard's stand-ins", got)
+	}
+
+	got = saw(helperCLI(parseClaudeStream), Options{Mode: ModeYolo, AllowDangerous: true, InheritEnv: true})
 	if got["GH_TOKEN"] != "ghp_secret" || got["GH_CONFIG_DIR"] != "operator-gh" || got["HRN_GUARDED"] != "" {
 		t.Fatalf("with --allow-dangerous the CLI saw %v; want the operator's environment as it is", got)
+	}
+	// Except the api backend's key, which is hrn's: a CLI that found it
+	// would bill per token instead of logging in on its own.
+	if got["ANTHROPIC_API_KEY"] != "" {
+		t.Errorf("a CLI saw ANTHROPIC_API_KEY with --allow-dangerous --inherit-env")
 	}
 }
 
@@ -281,6 +302,17 @@ func TestCLISaysWhetherTheGuardApplies(t *testing.T) {
 	if lines := guardLines(helperCLI(parseOpencodeStream), Options{Mode: ModeYolo, AllowDangerous: true}); len(lines) != 1 || !strings.Contains(lines[0], "lifted") {
 		t.Errorf("--allow-dangerous: %v; want one line saying the guard is lifted", lines)
 	}
+	// A key the sanitized environment dropped is named, and the way to pass
+	// it is both switches; with the environment inherited, the guard alone.
+	t.Setenv("GEMINI_API_KEY", "planted-key")
+	if lines := guardLines(helperCLI(parseOpencodeStream), Options{Mode: ModeYolo}); len(lines) != 1 ||
+		!strings.Contains(lines[0], "GEMINI_API_KEY") || !strings.HasSuffix(lines[0], "--allow-dangerous with --inherit-env lifts it") {
+		t.Errorf("sanitized: %v; want the dropped key named and both switches as the way to pass it", lines)
+	}
+	if lines := guardLines(helperCLI(parseOpencodeStream), Options{Mode: ModeYolo, InheritEnv: true}); len(lines) != 1 ||
+		!strings.Contains(lines[0], "GEMINI_API_KEY") || !strings.HasSuffix(lines[0], "; --allow-dangerous lifts it") {
+		t.Errorf("inherited: %v; want the withheld key named and --allow-dangerous as the way to pass it", lines)
+	}
 }
 
 // What the guard leaves open differs by CLI, and each run says it: codex,
@@ -288,7 +320,7 @@ func TestCLISaysWhetherTheGuardApplies(t *testing.T) {
 func TestEachCLIsGuardLineSaysWhatItLeavesOpen(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "error")
 	for _, b := range []*CLIBackend{NewCodexBackend(), NewGeminiBackend(), NewOpencodeBackend(), NewClaudeBackend()} {
-		line := b.guardLine(nil)
+		line := b.guardLine(nil, false)
 		open := strings.Contains(line, "unguarded on the "+b.name+" backend: reading and writing secret files")
 		if b.fileRules == open {
 			t.Errorf("%s: %q; want the secret files named as unguarded exactly when the CLI takes no file rules", b.name, line)

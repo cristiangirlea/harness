@@ -104,7 +104,9 @@ whether a CLI passes its environment on to the servers it starts is that CLI's b
 An hrn that does see the guard refuses it too: the guarded environment sets `HRN_GUARDED`
 (it reaches codex's commands, checked live), the api loop sets it for its own MCP servers,
 and `hrn run --allow-dangerous` from an agent's shell is refused. A refused command tells
-the model only that the operator can lift the guard.
+the model only that the operator can lift the guard. `inherit_env` is refused inside a
+guarded run the same way: it would hand the agent's own hrn runs the operator's whole
+environment, which only the operator may do.
 
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.
@@ -190,7 +192,7 @@ every command the api backend's `run_command` runs:
 - the ssh agent is out of reach (on Windows `SSH_AUTH_SOCK` names a pipe nobody
   listens on, since Windows' ssh otherwise falls back to its agent's own pipe);
 - git points every push at `push-refused-by-hrn://`, which it cannot reach, through
-  `GIT_CONFIG_*` (your own `GIT_CONFIG_*` entries stay): the usual prefixes and an empty
+  `GIT_CONFIG_*` (your own `GIT_CONFIG_*` entries stay where the environment is inherited): the usual prefixes and an empty
   one that catches the rest (scp-style aliases, shorthands, upper case, local paths),
   so `git push`, `git -C dir push` and `bash -c "git push"` fail at once without
   touching the network unless a longer existing `pushInsteadOf` wins (see below).
@@ -260,14 +262,19 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   `grep -r` from the shell, a tool that loads `.env` itself) is not seen, and nor is a
   login named by a relative path after a `cd` (`cd ~/.codex && cat auth.json`), since
   the logins that are secret only with their folder are matched in the command's text;
-- secrets inside ordinary variables stay: a `DATABASE_URL` with a password in it, since
-  local tests need it;
+- secrets inside ordinary variables stay for the api backend's `run_command`: a
+  `DATABASE_URL` with a password in it, since local tests need it. A CLI backend starts
+  from [an allowlisted environment](backends.md#a-clean-environment-for-cli-workers)
+  without it unless the run passes `--inherit-env`;
 - a CLI that logs in with an API key (opencode or gemini with a key, claude on Bedrock or
-  Vertex) needs `--allow-dangerous`, which lifts the push guard as well;
+  Vertex) needs `--allow-dangerous --inherit-env`: the allowlisted environment leaves the
+  key out before the guard does, and `--allow-dangerous` lifts the push guard as well.
+  `ANTHROPIC_API_KEY` never reaches a CLI, whatever the switches: it is the api backend's;
 - handing work over is hrn's (batch keeps a branch per task) or the operator's; the
   guard is intended to prevent backend pushes and pull requests, subject to the gaps above.
 
-Every run says whether the guard is on, names the variables it withheld, and says what
-its backend leaves open: on codex, gemini and opencode, the secret files, the wrangler
-and cargo logins, and gh's login in the credential store. `--allow-dangerous` lifts all
-of it.
+Every run says whether the guard is on, names the secret-looking variables it or the
+allowlisted environment withheld, and says what its backend leaves open: on codex, gemini
+and opencode, the secret files, the wrangler and cargo logins, and gh's login in the
+credential store. `--allow-dangerous` lifts all of it; the variables the allowlisted
+environment left out need `--inherit-env` as well, and the line says so.
