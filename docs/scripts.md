@@ -85,8 +85,9 @@ violation or stale baseline entry is found. Only `--prune` removes stale lines
 from the baseline (without adding new ones), while a renamed file may have its
 baseline path edited by hand.
 
-`privacy-check.sh [--root DIR]` reads the files `git ls-files` lists (binary
-files skipped) and flags a Windows user folder other than a placeholder (`dev`,
+`privacy-check.sh [--root DIR]` reads each file `git ls-files` lists once, even
+with unresolved merge conflicts (binary files skipped), and flags a Windows
+user folder other than a placeholder (`dev`,
 `me`, `user`, `%USERNAME%` and the like: `user-folder`), a local work-folder
 path (`local-work-path`), and text that narrates a person, the word *owner*
 after *the*, in Markdown files and Go comments (`narrates-a-person`). It prints
