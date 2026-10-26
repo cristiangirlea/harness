@@ -41,13 +41,16 @@ collapsed to one space. A script with no `matches:` line is never hinted.
 - Compose by calling scripts, never copying their code.
 
 `bash scripts/verify.sh` reads headers of `scripts/*.sh`, `scripts/*.go` and
-`scripts/*/*.go`, runs each example, stamps SHA-256 excluding the hash line, and
-replaces the marked index in AGENTS.md with sorted paths and summaries. Failed
-examples are reported, omitted from the index and cause a non-zero exit. Header
-errors also fail, and so does any other file: in `scripts/` only `.sh`, `.go`
-and `.txt` data (such as the comment baseline) are allowed, one directory down
-only `.go`; `scripts/testdata/` is not checked. Shell scripts are mode 100755
-but are always run through `bash`.
+`scripts/*/*.go`, runs examples, stamps SHA-256 excluding the hash line, and
+replaces the marked index in AGENTS.md with sorted paths and summaries.
+Nested Go files (`scripts/*/*.go`) are hashed, but their examples run through
+their entry script `scripts/<dir>.sh` when it exists, whose own example must run
+`go test` on that directory. Without an entry script, the verifier runs each example itself. Failed examples are reported, omitted
+from the index and cause a non-zero exit. Header errors also fail, and so does
+any other file: in `scripts/` only `.sh`, `.go` and `.txt` data (such as the
+comment baseline) are allowed, one directory down only `.go`;
+`scripts/testdata/` is not checked. Shell scripts are mode 100755 but are
+always run through `bash`.
 Writes are in place so Windows can handle files held open by other processes.
 
 `bash scripts/verify.sh --check` performs the same examples but writes nothing.
