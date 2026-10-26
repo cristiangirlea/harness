@@ -14,7 +14,6 @@ import (
 	"github.com/cristiangirlea/harness/internal/report"
 )
 
-// cmdReport prints one table over the finished runs and one over the batches.
 func cmdReport(args []string) error {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	since := fs.String("since", "", "")
@@ -70,7 +69,6 @@ func cmdReport(args []string) error {
 		}
 		fmt.Print(table(t, 1))
 
-		// Context per turn is from the runs' usage events, their totals, or both.
 		fmt.Printf("\ntokens by %s, %s\n", rep.By, scope)
 		t = [][]string{{rep.By, "input", "output", "cache read", "cache write", "med context", "peak context", "from"}}
 		for _, r := range append(rep.Runs, rep.RunsAll) {
@@ -78,8 +76,14 @@ func cmdReport(args []string) error {
 			if r.ContextFrom != "" {
 				median, peak, from = report.Tokens(int64(math.Round(r.MedianContext))), report.Tokens(r.PeakContext), r.ContextFrom
 			}
-			t = append(t, []string{shortKey(r.Key, 48), report.Tokens(r.InputTokens), report.Tokens(r.OutputTokens),
-				report.Tokens(r.CacheRead), report.Tokens(r.CacheWrite), median, peak, from})
+			in, out, read, write := "-", "-", "-", "-"
+			if r.Runs > r.RunsWithoutTokens {
+				in, out, read, write = report.Tokens(r.InputTokens), report.Tokens(r.OutputTokens), report.Tokens(r.CacheRead), report.Tokens(r.CacheWrite)
+				if r.RunsWithoutTokens > 0 {
+					in += fmt.Sprintf(" (%d unknown)", r.RunsWithoutTokens)
+				}
+			}
+			t = append(t, []string{shortKey(r.Key, 48), in, out, read, write, median, peak, from})
 		}
 		fmt.Print(table(t, 1))
 	}
@@ -104,26 +108,16 @@ func cmdReport(args []string) error {
 	return nil
 }
 
-// reportCost preserves a known zero and counts missing costs beside a partial total.
+// Preserve known zero and disclose missing costs so partial totals cannot look complete.
 func reportCost(cost float64, known, estimated bool, unknown int) string {
-	if !known {
-		return "-"
-	}
-	value := report.Money(cost, estimated)
-	if cost == 0 {
-		value = "$0.00"
-		if estimated {
-			value = "~" + value
-		}
-	}
-	if unknown > 0 {
+	value := report.KnownMoney(cost, known, estimated)
+	if known && unknown > 0 {
 		value += fmt.Sprintf(" (%d unknown)", unknown)
 	}
 	return value
 }
 
-// shortKey keeps the end of a long key: for a path, that is the part that
-// tells two repositories apart.
+// Preserve path suffixes because they distinguish repositories.
 func shortKey(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -132,8 +126,6 @@ func shortKey(s string, n int) string {
 	return "…" + string(r[len(r)-n+1:])
 }
 
-// table renders rows as aligned columns. Columns before rightFrom are labels
-// and align left; the rest are numbers and align right.
 func table(rows [][]string, rightFrom int) string {
 	widths := make([]int, len(rows[0]))
 	for _, r := range rows {

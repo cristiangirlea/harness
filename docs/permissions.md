@@ -53,11 +53,11 @@ the tool itself never writes them.
 | `secret-file` | a command line naming a secret file (the list below) as an argument, a redirect's target or a flag's value: `cat .env`, `echo x > .env`, `cp .env.example .env`, `Get-Content .\.env`, `cat ~/.ssh/id_ed25519` |
 | `sudo` | `sudo` in any case — a password prompt hangs a run with no terminal |
 | `rm-root` | `rm -r` whose target is a root: `/`, `/*`, `~/`, `"$HOME"`, `C:\`, `C:/`, `/c/` |
-| `pipe-to-shell` | `curl`/`wget`/`irm`/`iwr`/`Invoke-RestMethod`/`Invoke-WebRequest` piped into a shell, `iex` or `Invoke-Expression`, however many stages the pipe has; also `iex` or `Invoke-Expression` (with or without `-Command`) given a parenthesized or `$(...)` download from those commands or `(New-Object Net.WebClient).DownloadString(...)` (`System.Net.WebClient` too); names match in any case. Non-download arguments such as `iex $script` stay allowed |
+| `pipe-to-shell` | `curl`/`wget`/`irm`/`iwr`/`Invoke-RestMethod`/`Invoke-WebRequest` piped into a shell, `iex` or `Invoke-Expression`, however many stages the pipe has, including a shell invoked through PowerShell's `&` call operator or dot-sourced with `.`, quoted or by full path (`& "pwsh"`, `& 'C:/.../powershell.exe'`, `/bin/bash`); also `iex` or `Invoke-Expression` (with or without `-Command`) given a parenthesized or `$(...)` download from those commands or `(New-Object Net.WebClient).DownloadString(...)` (`System.Net.WebClient` too); names match in any case. Invoking a downloaded scriptblock through `& ([scriptblock]::Create((irm u)))`, `.([scriptblock]::Create((irm u)))` or `[scriptblock]::Create((irm u)).Invoke()` (`.InvokeReturnAsIs()` too) is refused too, with `$(...)`, a `(New-Object Net.WebClient).DownloadString(...)` download, or the full type name `[System.Management.Automation.ScriptBlock]`; constructing the scriptblock without invoking it, `&` with ordinary programs, and non-download arguments such as `iex $script` stay allowed |
 | `disk` | `mkfs`, `format X:`, `dd of=/dev/…`; program names match in any case |
-| `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility`; `gh api` with PUT, PATCH or DELETE (any case, quoted or escaped); and `gh api` to `/releases`, `/git/refs`, `/git/tags`, `/rulesets`, `/keys`, `/hooks`, `/collaborators`, `/actions/workflows/<x>/dispatches`, `/dispatches`, `/merges`, `/environments`, `/actions/secrets` or `/actions/variables` (including paths below them), or `gh api graphql` with a mutation in the line (any case). Endpoint refusals include GET to keep implicit POSTs covered; ordinary POSTs such as issue and pull request creation or comments stay allowed |
+| `gh-publish` | `gh pr merge`, `gh release create/upload/edit/delete`, `gh repo delete/archive/rename` or `--visibility` (`gh` in any case); `gh api` with PUT, PATCH or DELETE (any case, quoted or escaped); and `gh api` to `/releases`, `/git/refs`, `/git/tags`, `/rulesets`, `/keys`, `/hooks`, `/collaborators`, `/actions/workflows/<x>/dispatches`, `/dispatches`, `/merges`, `/environments`, `/actions/secrets`, `/actions/variables`, `/transfer`, `/deployments`, `/actions/runs/<id>/pending_deployments`, `/statuses/<sha>`, `/actions/runners/registration-token`, `/actions/runners/generate-jitconfig`, `/actions/runners/remove-token`, `/branches/<b>/rename`, `/merge-upstream`, `/forks`, `user/repos`, `orgs/<org>/repos`, `gists` (as the endpoint itself or after a `/`, so a field that only mentions the word stays allowed) or `/pages` (including paths below them), or `gh api graphql` with a mutation in the line (any case). All `gh api` patterns also match `gh.exe`, any case of the executable name, and full paths (quoted too). Endpoint refusals include GET to keep implicit POSTs covered; ordinary POSTs such as issue and pull request creation or comments stay allowed |
 | `gh-token` | `gh auth token` (with `--user` too), `gh auth git-credential` and `gh auth status --show-token`/`-t`: gh keeps its login in the system's credential store, which no variable hides, and these hand it out |
-| `deploy` | `wrangler deploy`, `npm`/`pnpm`/`yarn`/`bun`/`cargo publish`, a project's deploy script (`npm run deploy`, `deploy:prod`, `deploy-docs`, with `pnpm`, `yarn` or `bun` too), `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `terraform`/`tofu apply/destroy`, `helm install/upgrade/uninstall`, `vercel --prod`, `fly`/`netlify deploy` |
+| `deploy` | `wrangler deploy` or `publish` (including `pages deploy`/`pages publish`), `npm`/`pnpm`/`yarn`/`bun`/`cargo publish`, a project's deploy script (`npm run deploy`, `deploy:prod`, `deploy-docs`, with `pnpm`, `yarn` or `bun` too; flags and workspace selectors may intervene, as in `pnpm --filter web run deploy`, `npm -w web run deploy`, `npm --prefix site run deploy`, `yarn workspace web deploy`; `npm run-script deploy` too), `deploy/push.sh`, `kubectl apply/delete/replace/patch/rollout`, `docker push`, `terraform`/`tofu apply/destroy`, `helm install/upgrade/uninstall`, `vercel --prod`, `fly`/`netlify deploy` |
 
 The api backend's file tools refuse the secret files as well (rule `secret-file`):
 `read_file`, `write_file`, `edit_file` and `grep` on a `.env*` file, `.dev.vars`,
@@ -67,7 +67,8 @@ The api backend's file tools refuse the secret files as well (rule `secret-file`
 (`.config/gh/`, `GitHub CLI/` on Windows), gcloud's, `.docker/config.json`,
 `.cargo/credentials*`, wrangler's `.wrangler/config/` (a worker project's own `.wrangler`
 holds local state and stays open), and the agent CLIs' plan logins
-(`.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`). A path is
+(`.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`,
+`.local/share/opencode/auth.json`). A path is
 judged inside the workspace, both as written and where its links lead, Windows directory
 junctions included (`notes.txt -> .env` is `.env`), with Windows' other spellings of a
 name (`.env.`, `.env::$DATA`, a short `8.3` name) read as the name; `grep` over a
@@ -75,7 +76,8 @@ directory passes over secret files, and a link among them that leads to one.
 `.env.example` is refused too: a template costs the agent one turn, and `.env.staging`
 or `.envrc` are what the pattern is for. The command rule reads words (and quoted paths,
 and git's `REV:path`), so `echo "*.pem" >> .gitignore` is refused as well (`edit_file` on
-`.gitignore` is not), and so is a `jq '.key'` filter.
+`.gitignore` is not), and so is a `jq '.key'` filter. Unlike the file tools, the command
+rule does not expand short `8.3` names: `cat ~/SSH~1/id_ed25519` gets past it.
 
 `rm-root` reads the arguments rather than matching one pattern, because the spelling
 that matters is not the famous one: `rm -rf /` is refused by `rm` itself without
@@ -87,6 +89,8 @@ prompt, so `ask` mode never asks for a yes it would then ignore. Matching is tex
 leans towards refusing too much: `echo "git push"` and `git commit -m "push later"` are
 refused as well, which costs a turn and is the trade this makes on purpose.
 Separators inside quotes do not end a pipeline stage for the guard.
+A GraphQL query read from a file (`-F query=@m.graphql`) is outside this textual
+guard: it does not inspect the file contents.
 
 This is a guard rail, not a sandbox — an agent that wants around a pattern can get
 around it. What decides whether commands run at all is the [permission mode](#permission-modes);
@@ -106,7 +110,59 @@ settings, plugins and MCP servers that the agent was started without.
 
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.
+Gates keep hrn's full environment (less the git repository variables below) and execute the code the agent wrote, including
+tests, so that code can use the operator's credentials. hrn's own batch `git status`,
+`git add` and `git commit`, and in the operator's repository `hrn batch merge` and the
+`git worktree add` of a fresh task worktree, neutralise repository config keys that run programs
+(`-c core.hooksPath=<empty temporary directory>`, `-c maintenance.auto=false`,
+`-c gc.auto=0`; `GIT_NO_LAZY_FETCH=1` always, and `-c protocol.allow=never` when the
+repository config names a promisor remote (`extensions.partialClone`, `remote.<name>.promisor`,
+`remote.<name>.partialCloneFilter`),
+so that remote cannot have git fetch a missing object through its `uploadpack` program; `-c core.fsmonitor=false`
+when the repository config sets `core.fsmonitor`; `-c commit.gpgSign=false` and
+`-c merge.verifySignatures=false` when it sets a `gpg.*program` or `gpg.ssh.defaultKeyCommand`,
+so neither signing the merge commit nor verifying a branch tip's signature runs that program
+(with the operator's own `gpg.program`, a `merge.verifySignatures` still applies); and empty `filter.<name>.clean`, `filter.<name>.smudge`,
+`filter.<name>.process` with `filter.<name>.required=false` for every filter driver it
+defines; and `merge.<name>.driver=false` for every merge driver it defines, so a path that
+driver would merge becomes a conflict and `hrn batch merge` undoes that merge), so settings
+an agent writes to the shared repository config (`core.hooksPath`, `core.fsmonitor`, filter
+and merge drivers, `gpg.*` with `merge.verifySignatures`, promisor remotes,
+`gc.recentObjectsHook`) cannot make that commit run a command. "Repository config" is the local and worktree
+scope (`git config --show-scope`): what the operator's global or system config defines,
+such as the Git LFS filter, still runs, unless the repository config redefines it.
+In the operator's repository the hooks path is the `core.hooksPath` from the operator's global
+or system config when one is set, and otherwise the repository's own hooks directory
+(`<common-dir>/hooks`), rather than an empty one: the operator's hooks still run there and a
+`core.hooksPath` in the shared config does not, which also means a hooks path set in the
+repository config by the operator (as husky does) is not followed. The limit this leaves: an
+agent that can write files outside its worktree can place a `post-merge` or `post-checkout`
+hook in `<common-dir>/hooks` (or change the operator's global config), and hrn's merge and
+worktree add run it; an agent limited to `git config` cannot. hrn reads the repository config again right before each of those commands, which leaves
+a process the agent left running only the moment between that read and the command; and it
+pins `GIT_DIR` and `GIT_WORK_TREE` to the tree it means, so a `core.worktree` the agent sets
+cannot make that commit take files from outside the task's worktree. The next `hrn batch`
+finds the repository root from the `.git` entry above its directory, not from
+`rev-parse --show-toplevel`, so that `core.worktree` cannot move the batch to another tree.
+These overrides travel as `GIT_CONFIG_*` environment variables, so they also reach the
+operator's own hooks during `hrn batch merge` and `git worktree add`: in a repository whose own
+config names a promisor remote, a hook that fetches or pushes fails there. In a partial clone
+hrn does not fetch missing objects either; if a merge reports a missing object, run
+`git fetch` (or `git backfill`) first. Slots, the default
+(`"worktrees": "slots"`), are still made and switched with plain git (`internal/ws`), so the
+shared config's hooks and filters can run there.
+`hrn batch diff` runs `git diff --no-ext-diff --no-textconv --ignore-submodules=all`, so
+`diff.external`, a diff driver's command or textconv, and a submodule's config cannot make
+it run a command either. Neither command guard refuses `git config` for those keys,
+and the settings remain in the shared config for other git commands, including the
+operator's later commits.
 The agent CLIs run their own shells; the next section is their guard.
+
+Guarded or not, hrn drops `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
+`GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_NAMESPACE` from the
+environment of its own git commands, of agent CLIs, of the api backend's commands and MCP
+servers, and of gates (an MCP server's own `env` in its config still applies). A git hook or a `!` alias that starts hrn sets some of them, and git would then act
+on that repository instead of the task's.
 
 #### The guard for every backend
 
@@ -124,7 +180,8 @@ every command the api backend's `run_command` runs:
   private fetch needs them. git's askpass helpers
   go too (`GIT_ASKPASS`, `SSH_ASKPASS`, VS Code's `VSCODE_GIT_*`), since they hand out
   a login when git asks for one. `CLAUDE_CODE_OAUTH_TOKEN`, claude's plan login,
-  reaches the claude CLI and no other;
+  reaches the claude CLI and no other. Claude's own Bash inherits it too: a plain
+  `env` can put the token into the run record;
 - the logins tools keep on disk are looked for in an empty directory of the run's own:
   gh (`GH_CONFIG_DIR`), npm (`NPM_CONFIG_USERCONFIG`), kubectl (`KUBECONFIG`), docker
   (`DOCKER_CONFIG`), aws (`AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`), gcloud
@@ -138,7 +195,8 @@ every command the api backend's `run_command` runs:
   `GIT_CONFIG_*` (your own `GIT_CONFIG_*` entries stay where the environment is inherited): the usual prefixes and an empty
   one that catches the rest (scp-style aliases, shorthands, upper case, local paths),
   so `git push`, `git -C dir push` and `bash -c "git push"` fail at once without
-  touching the network. Fetching keeps its address.
+  touching the network unless a longer existing `pushInsteadOf` wins (see below).
+  Fetching keeps its address.
 
 The claude backend also gets the guard as Claude Code's own deny rules
 (`--disallowedTools`), which hold in every permission mode, `bypassPermissions`
@@ -164,6 +222,10 @@ tool, and writing secret files from Bash (`echo X=3 > .env.staging`, `printf …
 the environment's dead end, and the remote stayed empty. A PowerShell `Set-Content` of
 `.env.test` was refused too, but by Claude Code's working-directory check rather than a
 deny rule, so that path is not shown to hold by the rules alone.
+Claude's Read and Edit globs have not been checked live with short `8.3` names such as
+`SSH~1`, stream suffixes such as `x.key::$DATA`, trailing dots such as `auth.json.`, or
+case variants such as `.ENV`; the api file tools' handling of these spellings does not
+establish Claude Code's behavior.
 
 What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
 
@@ -177,10 +239,20 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   quoted, `declare -g +x`).
   The credential helper itself is left alone, because fetching private repositories and
   Go modules needs it;
+- an operator's existing longer `pushInsteadOf` in `~/.gitconfig` can already beat the
+  guard's prefixes: git uses the longest matching prefix, even when the guard's entry
+  comes from `GIT_CONFIG_*`. An HTTPS-to-SSH or SSH-to-HTTPS rewrite for a particular
+  host or repository can therefore restore a usable push address without the agent
+  changing any config;
 - an ssh key file on disk without a passphrase still works for an ssh remote;
-- logins kept where no variable moves them: wrangler's and cargo's, so under codex,
-  gemini or opencode a `npx wrangler deploy` or `npm run deploy` would still deploy;
-  claude and the api backend refuse those commands, the others get the environment only;
+- logins kept where no variable moves them: wrangler's, cargo's, fly's, netlify's and
+  vercel's, Terraform Cloud's `~/.terraform.d/credentials.tfrc.json`, `~/.pypirc`
+  (read by twine and uv themselves), and yarn berry's `~/.yarnrc.yml`. Under codex,
+  gemini or opencode a `npx wrangler deploy` or `npm run deploy` can still deploy;
+  claude and the api backend refuse those commands, the others get the environment only.
+  `yarn npm publish` is not in claude's command rules. File protection and command
+  refusal are separate: protecting `.pypirc` from a direct read does not stop a
+  publishing tool from loading it itself;
 - gh's login in the system's credential store: `gh auth token --user NAME` reads it
   whatever `GH_TOKEN` says. Claude and the api backend refuse `gh auth token`; under
   codex, gemini or opencode an agent that runs `gh auth token --user NAME` gets your
@@ -198,8 +270,8 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   Vertex) needs `--allow-dangerous --inherit-env`: the allowlisted environment leaves the
   key out before the guard does, and `--allow-dangerous` lifts the push guard as well.
   `ANTHROPIC_API_KEY` never reaches a CLI, whatever the switches: it is the api backend's;
-- under the guard no backend can push or open a pull request itself: handing work
-  over is hrn's (batch keeps a branch per task) or the operator's.
+- handing work over is hrn's (batch keeps a branch per task) or the operator's; the
+  guard is intended to prevent backend pushes and pull requests, subject to the gaps above.
 
 Every run says whether the guard is on, names the secret-looking variables it or the
 allowlisted environment withheld, and says what its backend leaves open: on codex, gemini

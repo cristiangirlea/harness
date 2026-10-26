@@ -1,13 +1,16 @@
-// Package prefs stores backend preferences without depending on execution or records.
+// Package prefs stores execution-independent backend preferences.
 package prefs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 type Prefs struct {
@@ -34,7 +37,7 @@ func (p Prefs) Filter(names []string) []string {
 	return filtered
 }
 
-// Check refuses a disabled explicit choice; an empty name leaves selection to the caller.
+// Check rejects disabled choices; empty leaves selection to the caller.
 func (p Prefs) Check(name string) error {
 	if name != "" && !p.Enabled(name) {
 		return fmt.Errorf("backend %s is disabled; enabled: %s (hrn backends set)", name, strings.Join(p.EnabledNames, ", "))
@@ -49,9 +52,22 @@ func (p Prefs) validate() error {
 	return nil
 }
 
+// Retry Windows sharing conflicts between readers and renames.
+func retry(f func() error) error {
+	var err error
+	for i := 0; i < 20; i++ {
+		if err = f(); err == nil || errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return err
+}
+
 func Load(home string) (Prefs, error) {
 	path := filepath.Join(home, "backends.json")
-	data, err := os.ReadFile(path)
+	var data []byte
+	err := retry(func() (err error) { data, err = os.ReadFile(path); return err })
 	if os.IsNotExist(err) {
 		return Prefs{}, nil
 	}
@@ -94,5 +110,5 @@ func Save(home string, p Prefs) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(home, "backends.json"))
+	return retry(func() error { return os.Rename(f.Name(), filepath.Join(home, "backends.json")) })
 }

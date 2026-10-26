@@ -260,8 +260,8 @@ func TestACloseOnlyStorageFailureReportsOneFatalErrorAndTheRecordError(t *testin
 		emit(agent.Event{Kind: agent.EventText, Text: "saved"})
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
 	})
-	h := openHarness(t, func(backend string, task agent.Task, continues string) (record, error) {
-		w, err := runlog.CreateContinuing(backend, task, continues)
+	h := openHarness(t, func(backend string, task agent.Task, continues, route string, routed *runlog.RoutedBy, note string) (record, error) {
+		w, err := runlog.CreateRouted(backend, task, continues, route, routed, note)
 		return closeOnlyFailure{w}, err
 	})
 	h.next(t, "hello")

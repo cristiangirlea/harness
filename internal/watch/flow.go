@@ -1,0 +1,437 @@
+package watch
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/flow"
+	"github.com/cristiangirlea/harness/internal/owner"
+	"github.com/cristiangirlea/harness/internal/runlog"
+)
+
+type flowPageData struct {
+	page
+	ID, Level, Summary, Stream string
+	Tree                       []flowNode
+}
+
+type flowNode struct {
+	Node                  *flow.Node
+	StatusClass, Duration string
+	Lane                  int
+	Numbers, Action, Hint string
+	Debug                 bool
+	Children              []flowNode
+}
+
+func (s *server) flowEvents(v owner.Viewer, id string) ([]flow.Event, string, error) {
+	if _, err := batch.LoadResultFor(v, id); err == nil {
+		events, err := batch.Timeline(v, id)
+		return events, "batch", err
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// A batch caught mid-save is still a batch; reading it as a missing run would end a live stream.
+		return nil, "batch", err
+	}
+	rec, err := runlog.LoadFor(v, id)
+	if err != nil {
+		return nil, "", err
+	}
+	events, err := runlog.Events(id)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, "", err
+	}
+	return flow.FromRun(rec, events, ""), "run", nil
+}
+
+func (s *server) flowJSON(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !idRE.MatchString(id) {
+		http.Error(w, "flow not found", 404)
+		return
+	}
+	events, _, err := s.flowEvents(s.who(r), id)
+	if err != nil {
+		http.Error(w, "flow not found", 404)
+		return
+	}
+	events = s.prepareFlowEvents(r, events, id)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(struct {
+		Version int          `json:"version"`
+		Tree    []*flow.Node `json:"tree"`
+	}{flow.Version, nonNilNodes(flow.Build(events))})
+}
+
+func nonNilNodes(nodes []*flow.Node) []*flow.Node {
+	if nodes == nil {
+		return []*flow.Node{}
+	}
+	return nodes
+}
+
+func (s *server) flowPage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !idRE.MatchString(id) {
+		s.missing(w, r, "Flow "+id, os.ErrNotExist)
+		return
+	}
+	events, kind, err := s.flowEvents(s.who(r), id)
+	if err != nil {
+		s.missing(w, r, "Flow "+id, os.ErrNotExist)
+		return
+	}
+	level := r.URL.Query().Get("level")
+	level = flowLevel(level)
+	p := s.flowData(r, id, level, events, kind)
+	if s.flowUnfinished(r, id, kind) {
+		p.Stream = "/stream/flow/" + id + "?level=" + level
+	}
+	s.page(w, 200, "flow", p)
+}
+
+func flowLevel(level string) string {
+	if level != "simple" && level != "technical" && level != "debug" {
+		return "technical"
+	}
+	return level
+}
+
+func (s *server) flowData(r *http.Request, id, level string, events []flow.Event, kind string) flowPageData {
+	events = s.prepareFlowEvents(r, events, id)
+	tree := buildFlowTree(events, level)
+	s.flowDetails(s.who(r), id, kind, tree)
+	nodes := make([]*flow.Node, len(tree))
+	for i, n := range tree {
+		nodes[i] = n.Node
+	}
+	summary := flowSummary(nodes)
+	if kind == "run" {
+		summary += " Open the run for tool calls and their recorded output."
+	}
+	return flowPageData{page: page{Title: "Execution flow " + id, Home: s.homeFor(r)}, ID: id, Level: level, Summary: summary, Tree: tree}
+}
+
+func (s *server) flowDetails(v owner.Viewer, id, kind string, tree []flowNode) {
+	commits := map[string]string{}
+	if kind == "batch" {
+		if res, err := batch.LoadResultFor(v, id); err == nil {
+			for _, task := range res.Tasks {
+				commits[task.ID] = task.Commit
+			}
+		}
+	}
+	var walk func([]flowNode)
+	walk = func(nodes []flowNode) {
+		for i := range nodes {
+			n := &nodes[i]
+			if n.Node.Kind == flow.KindRun && n.Node.Run != "" {
+				if rec, err := runlog.LoadFor(v, n.Node.Run); err == nil && rec.Done {
+					res := rec.Result
+					n.Numbers = fmt.Sprintf("%d turns · %d tool calls", res.Turns, res.ToolCalls)
+					if res.CostUSD > 0 {
+						n.Numbers += " · " + cost(res.CostUSD, res.CostEstimate)
+					}
+				}
+			}
+			if n.Node.Kind == flow.KindTask && kind == "batch" {
+				switch {
+				case n.Node.Status == flow.StatusFailed:
+					n.Action = "hrn batch show " + id
+					n.Hint = "Inspect the batch; retry is not available."
+				case n.Node.Status == flow.StatusOK && commits[n.Node.Task] != "" && safeFlowTask(n.Node.Task):
+					n.Action = "hrn batch merge " + id + " " + n.Node.Task
+					n.Hint = "After reviewing the diff, merge this task:"
+				}
+				if n.Action != "" {
+					n.Node.Next = n.Hint + " " + n.Action
+				}
+			}
+			walk(n.Children)
+		}
+	}
+	walk(tree)
+}
+
+// Keep copied commands safe in both POSIX shells and PowerShell.
+func safeFlowTask(task string) bool {
+	return task != "" && strings.IndexFunc(task, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.')
+	}) == -1
+}
+
+func (s *server) flowUnfinished(r *http.Request, id, kind string) bool {
+	v := s.who(r)
+	if kind == "batch" {
+		res, err := batch.LoadResultFor(v, id)
+		return err == nil && batchUnfinished(res) && batchStopped(res).IsZero()
+	}
+	rec, err := runlog.LoadFor(v, id)
+	return err == nil && !rec.Done && runStopped(rec).IsZero()
+}
+
+func (s *server) streamFlow(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !idRE.MatchString(id) {
+		s.missing(w, r, "Flow "+id, os.ErrNotExist)
+		return
+	}
+	v := s.who(r)
+	_, kind, err := s.flowEvents(v, id)
+	if err != nil {
+		s.missing(w, r, "Flow "+id, os.ErrNotExist)
+		return
+	}
+	path := filepath.Join(runlog.Root(), id, "events.jsonl")
+	if kind == "batch" {
+		path = batch.FlowPath(id)
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	wake := watchFlowFile(ctx, path, s.opt.Poll)
+	level := flowLevel(r.URL.Query().Get("level"))
+	st := s.startStream(w)
+	var last *flowPageData
+	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, string, error) {
+		p, end, err := s.flowState(r, v, id, level)
+		if err != nil {
+			// A record caught mid-write reads as broken for one poll: keep the last good tree.
+			if last != nil && !errors.Is(err, os.ErrNotExist) {
+				return *last, "", nil
+			}
+			return nil, "", err
+		}
+		last = &p
+		return p, end, nil
+	}, "flowbody", wake)
+}
+
+// flowState renders the flow and says whether its batch or run has ended.
+func (s *server) flowState(r *http.Request, v owner.Viewer, id, level string) (flowPageData, string, error) {
+	events, kind, err := s.flowEvents(v, id)
+	if err != nil {
+		return flowPageData{}, "", err
+	}
+	end := ""
+	if kind == "batch" {
+		res, err := batch.LoadResultFor(v, id)
+		if err != nil {
+			return flowPageData{}, "", err
+		}
+		if at := batchStopped(res); !at.IsZero() {
+			end = "stopped"
+		} else if !batchUnfinished(res) {
+			end = "done"
+		}
+	} else {
+		rec, err := runlog.LoadFor(v, id)
+		if err != nil {
+			return flowPageData{}, "", err
+		}
+		if rec.Done {
+			end = "done"
+		} else if at := runStopped(rec); !at.IsZero() {
+			end = "stopped"
+		}
+	}
+	return s.flowData(r, id, level, events, kind), end, nil
+}
+
+func (s *server) cleanFlowEvent(e flow.Event) flow.Event {
+	e = flow.Clean(e)
+	if s.redact != nil {
+		e.Name = s.redact.Replace(e.Name)
+		e.Text = s.redact.Replace(e.Text)
+		e.Reason = s.redact.Replace(e.Reason)
+		e.Next = s.redact.Replace(e.Next)
+	}
+	return e
+}
+
+func (s *server) prepareFlowEvents(r *http.Request, events []flow.Event, id string) []flow.Event {
+	vw := s.viewerOf(r)
+	var sh shortener
+	taskShorteners := map[string]shortener{}
+	if res, err := batch.LoadResultFor(s.who(r), id); err == nil {
+		sh = vw.shortener(res.Dir)
+		for _, task := range res.Tasks {
+			taskShorteners[task.ID] = vw.shortener(task.Worktree)
+		}
+	} else if rec, err := runlog.LoadFor(s.who(r), id); err == nil {
+		sh = vw.shortener(rec.Task.Dir)
+	}
+	for i := range events {
+		events[i] = s.cleanFlowEvent(events[i])
+		eventSh := sh
+		if taskSh, ok := taskShorteners[events[i].Task]; ok {
+			eventSh = taskSh
+		}
+		events[i].Name = eventSh.shorten(events[i].Name)
+		events[i].Text = eventSh.shorten(events[i].Text)
+		events[i].Reason = eventSh.shorten(events[i].Reason)
+		events[i].Next = eventSh.shorten(events[i].Next)
+	}
+	return events
+}
+
+func buildFlowTree(events []flow.Event, level string) []flowNode {
+	if level == "simple" {
+		kept := events[:0]
+		for _, e := range events {
+			if e.Kind != flow.KindTool {
+				kept = append(kept, e)
+			}
+		}
+		events = kept
+	}
+	var convert func([]*flow.Node) []flowNode
+	convert = func(nodes []*flow.Node) []flowNode {
+		result := make([]flowNode, 0, len(nodes))
+		lanes, _ := flowLanes(nodes)
+		for i, n := range nodes {
+			duration := ""
+			if !n.Ended.IsZero() && !n.Started.IsZero() {
+				duration = short(n.Ended.Sub(n.Started))
+			}
+			result = append(result, flowNode{Node: n, StatusClass: statusClass(string(n.Status)), Duration: duration, Lane: min(lanes[i], 4), Debug: level == "debug", Children: convert(n.Children)})
+		}
+		return result
+	}
+	return convert(flow.Build(events))
+}
+
+func flowLanes(nodes []*flow.Node) ([]int, int) {
+	order := make([]int, len(nodes))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool { return nodes[order[i]].Started.Before(nodes[order[j]].Started) })
+	lanes := make([]int, len(nodes))
+	var ends []time.Time
+	for _, i := range order {
+		n := nodes[i]
+		if n.Started.IsZero() || !n.Ended.IsZero() && !n.Ended.After(n.Started) {
+			continue
+		}
+		lane := 0
+		for lane < len(ends) && (ends[lane].IsZero() || n.Started.Before(ends[lane])) {
+			lane++
+		}
+		if lane == len(ends) {
+			ends = append(ends, n.Ended)
+		} else {
+			ends[lane] = n.Ended
+		}
+		lanes[i] = lane
+	}
+	return lanes, len(ends)
+}
+
+func flowParallelPeak(nodes []*flow.Node) int {
+	var tasks []*flow.Node
+	peak := 0
+	for _, n := range nodes {
+		if n.Kind == flow.KindTask {
+			tasks = append(tasks, n)
+		}
+		peak = max(peak, flowParallelPeak(n.Children))
+	}
+	_, lanes := flowLanes(tasks)
+	return max(peak, lanes)
+}
+
+// flowSummary reads only the tree: what ended, each failed task's last recorded cause, and what is next.
+func flowSummary(nodes []*flow.Node) string {
+	var tasks, passed, running int
+	var failed []string
+	var next string
+	var run *flow.Node
+	flow.Walk(nodes, func(n *flow.Node, _ int) {
+		switch n.Kind {
+		case flow.KindTask:
+			switch {
+			case n.Status == flow.StatusOK:
+				tasks++
+				passed++
+			case n.Status.Done():
+				tasks++
+			default:
+				running++
+			}
+			if n.Status == flow.StatusFailed {
+				failed = append(failed, "Task "+n.Name+" failed"+failureOf(n)+".")
+			}
+			if next == "" && n.Next != "" {
+				next = n.Next
+			}
+		case flow.KindRun:
+			if run == nil {
+				run = n
+			}
+		}
+	})
+	var parts []string
+	switch {
+	case tasks+running > 0:
+		parts = append(parts, fmt.Sprintf("%d of %d tasks passed.", passed, tasks+running))
+		if peak := flowParallelPeak(nodes); peak > 1 {
+			parts = append(parts, fmt.Sprintf("%d tasks ran side by side at peak.", peak))
+		}
+		if running > 0 {
+			parts = append(parts, fmt.Sprintf("%d still going.", running))
+		}
+		parts = append(parts, failed...)
+	case run != nil:
+		st := string(run.Status)
+		if st == "" || st == string(flow.StatusStarted) {
+			st = "is still going"
+		}
+		line := "The run " + st
+		if run.Status.Done() && run.Text != "" {
+			line += ": " + run.Text
+		}
+		parts = append(parts, line+".")
+		if run.Reason != "" {
+			parts = append(parts, "Why it ran here: "+run.Reason+".")
+		}
+	default:
+		parts = append(parts, "No steps are recorded.")
+	}
+	if next != "" {
+		parts = append(parts, "Next: "+next+".")
+	}
+	return strings.Join(parts, " ")
+}
+
+// failureOf names the failed gate of a task's last attempt, else that attempt's recorded error.
+func failureOf(task *flow.Node) string {
+	var last *flow.Node
+	for _, c := range task.Children {
+		if c.Kind == flow.KindAttempt {
+			last = c
+		}
+	}
+	if last == nil {
+		if task.Text != "" {
+			return ": " + task.Text
+		}
+		return ""
+	}
+	for _, c := range last.Children {
+		if c.Kind == flow.KindGate && c.Status == flow.StatusFailed {
+			return " at gate " + c.Name + " (" + c.Reason + ")"
+		}
+	}
+	if last.Text != "" {
+		return ": " + last.Text
+	}
+	return ""
+}

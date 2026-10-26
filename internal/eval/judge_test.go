@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -93,8 +94,8 @@ func TestJudgeScoresPassingCells(t *testing.T) {
 		if task.Mode != agent.ModeReadOnly || task.Model != "haiku" || !task.NoInstructions {
 			t.Errorf("judge options = %+v: read-only, the judge's model, no house rules", task.Options)
 		}
-		if !strings.Contains(task.Dir, "worktrees") {
-			t.Errorf("judge dir = %s, want the cell's worktree", task.Dir)
+		if task.Dir == "" || strings.Contains(task.Dir, "worktrees") {
+			t.Errorf("judge dir = %s, want a checkout of its own", task.Dir)
 		}
 		if !strings.Contains(task.Prompt, "+++ b/out.txt") || !strings.Contains(task.Prompt, "## Agent's final answer") {
 			t.Errorf("the judge must see the diff and the answer:\n%s", task.Prompt)
@@ -226,6 +227,70 @@ func TestSummarizeCountsUnchangedPassesAndToolCalls(t *testing.T) {
 	}
 }
 
+func TestSummarizeCountsCellsWhoseAgentCommittedOnItsOwn(t *testing.T) {
+	spec := Spec{Matrix: []Variant{{Backend: "ev-ok"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	att := func(own bool) []batch.Attempt {
+		return []batch.Attempt{{Result: agent.Result{Status: agent.StatusOK, ToolCalls: 2}, AgentCommitted: own}}
+	}
+	res := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "e.a.ev-ok.r1", Status: batch.StatusPass, Commit: "abc", Attempts: att(true)},
+		{ID: "e.a.ev-ok.r2", Status: batch.StatusPass, Commit: "def", Attempts: att(false)},
+		{ID: "e.a.ev-ok.r3", Status: batch.StatusFail, Commit: "123", Attempts: att(true)},
+	}}
+	row := Summarize(spec, res, nil).Variants[0]
+	if row.AgentCommitted != 2 || row.Unchanged != 0 {
+		t.Errorf("row = %+v: two cells committed on their own, none is unchanged", row)
+	}
+}
+
+func TestSummarizeLeavesUnknownCostsOutOfTheTotalAndMedian(t *testing.T) {
+	spec := Spec{Matrix: []Variant{{Backend: "codex"}, {Backend: "claude"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	att := func(cost float64, status string, estimate bool) []batch.Attempt {
+		return []batch.Attempt{{Result: agent.Result{Status: agent.StatusOK, CostUSD: cost, CostEstimate: estimate,
+			Usage: &agent.UsageMetadata{CostStatus: status}}}}
+	}
+	res := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "e.a.codex.r1", Status: batch.StatusPass, Attempts: att(9, "missing", true)},
+		{ID: "e.a.codex.r2", Status: batch.StatusPass, Attempts: att(0, "missing", false)},
+		{ID: "e.a.codex.r3", Status: batch.StatusFail},
+		{ID: "e.a.claude.r1", Status: batch.StatusPass, Attempts: att(0, "reported", false)},
+		{ID: "e.a.claude.r2", Status: batch.StatusPass, Attempts: att(0, "reported", false)},
+		{ID: "e.a.claude.r3", Status: batch.StatusPass, Attempts: att(3, "reported", false)},
+		{ID: "e.a.claude.r4", Status: batch.StatusPass, Attempts: att(5, "missing", true)},
+	}}
+	rows := Summarize(spec, res, nil).Variants
+	codex, claude := rows[0], rows[1]
+	if codex.CellsWithoutCost != 3 || codex.TotalCostUSD != 0 || codex.MedianCostUSD != 0 || codex.CostEstimate {
+		t.Errorf("codex = %+v: a missing cost and a cell with no attempt are unknown, not zero", codex)
+	}
+	if claude.CellsWithoutCost != 1 || claude.TotalCostUSD != 3 || claude.MedianCostUSD != 0 || claude.CostEstimate {
+		t.Errorf("claude = %+v: want total 3 and median 0 over the three known costs", claude)
+	}
+}
+
+func TestCostKnownFallsBackToTheMedianForRowsSummarizeDidNotCount(t *testing.T) {
+	var old VariantRow
+	if err := json.Unmarshal([]byte(`{"name":"codex","attempts":3,"median_cost_usd":0}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.CostKnown() {
+		t.Errorf("an old row with a zero median should show no known cost: %+v", old)
+	}
+	old.MedianCostUSD = 0.2
+	if !old.CostKnown() {
+		t.Errorf("an old row with a median should show a known cost: %+v", old)
+	}
+	spec := Spec{Matrix: []Variant{{Backend: "claude"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	res := batch.Result{Tasks: []batch.TaskResult{{ID: "e.a.claude.r1", Status: batch.StatusPass,
+		Attempts: []batch.Attempt{{Result: agent.Result{Status: agent.StatusOK, Usage: &agent.UsageMetadata{CostStatus: "reported"}}}}}}}
+	if row := Summarize(spec, res, nil).Variants[0]; !row.CostCounted || !row.CostKnown() {
+		t.Errorf("a counted row with a known zero cost should show it: %+v", row)
+	}
+}
+
 // slowJudge holds each verdict until a second one is running, or gives up
 // after a while, and records the most it saw at once.
 type slowJudge struct {
@@ -274,5 +339,29 @@ func TestJudgeUsesTheBatchDefaultParallelism(t *testing.T) {
 	slow.mu.Unlock()
 	if peak < 2 {
 		t.Errorf("at most %d verdict(s) ran at once; an unset parallel must mean the batch default, %d", peak, batch.DefaultParallel)
+	}
+}
+
+func TestSummarizeLeavesMissingUsageOutOfTheContextMedian(t *testing.T) {
+	spec := Spec{Matrix: []Variant{{Backend: "ev-ok"}}}
+	spec.Tasks = []batch.Task{{ID: "a"}}
+	att := func(r agent.Result) []batch.Attempt {
+		r.Status = agent.StatusOK
+		return []batch.Attempt{{Result: r}}
+	}
+	res := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "e.a.ev-ok.r1", Status: batch.StatusPass, Attempts: att(agent.Result{Backend: "api", InputTokens: 100})},
+		{ID: "e.a.ev-ok.r2", Status: batch.StatusPass, Attempts: att(agent.Result{Backend: "api", InputTokens: 5, Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "missing"}})},
+		{ID: "e.a.ev-ok.r3", Status: batch.StatusPass, Attempts: att(agent.Result{Backend: "api", InputTokens: 5, Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "missing"}})},
+	}}
+	if row := Summarize(spec, res, nil).Variants[0]; row.MedianContext != 100 {
+		t.Errorf("median context = %v, want 100 from the one run whose usage is known", row.MedianContext)
+	}
+	// Gemini's prompt count already includes its cached tokens.
+	res.Tasks = []batch.TaskResult{
+		{ID: "e.a.ev-ok.r1", Status: batch.StatusPass, Attempts: att(agent.Result{Backend: "gemini", InputTokens: 100, CacheRead: 80, OutputTokens: 10})},
+	}
+	if row := Summarize(spec, res, nil).Variants[0]; row.MedianContext != 100 {
+		t.Errorf("gemini median context = %v, want 100 counting cached tokens once", row.MedianContext)
 	}
 }

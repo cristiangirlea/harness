@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -16,19 +18,18 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// Judge scores what each passing cell did against a rubric, with a model.
-// Gates prove the build and expect proves the answer; neither can tell a
-// typo fix from a spelling change. The judge reads the diff and says.
+// Judge grades passing cells against a rubric beyond deterministic checks.
 type Judge struct {
 	Backend string `json:"backend,omitempty"` // default: the default backend
 	Model   string `json:"model,omitempty"`
 	Effort  string `json:"effort,omitempty"`
-	// Rubric applies to every task; Rubrics replaces it for the tasks it
-	// names. Every task needs one or the other.
+	// Rubric is required unless Rubrics supplies a task-specific replacement.
 	Rubric  string            `json:"rubric,omitempty"`
 	Rubrics map[string]string `json:"rubrics,omitempty"`
 	// Timeout is per judgement; default 5m.
 	Timeout agent.Duration `json:"timeout,omitempty"`
+	// Repeats defaults to 1; repeats measure judge noise.
+	Repeats int `json:"repeats,omitempty"`
 }
 
 // Judgement is the judge's verdict on one cell.
@@ -39,7 +40,8 @@ type Judgement struct {
 	RunID        string  `json:"run_id,omitempty"`
 	CostUSD      float64 `json:"cost_usd,omitempty"`
 	CostEstimate bool    `json:"cost_is_estimate,omitempty"`
-	Error        string  `json:"error,omitempty"` // the judge could not score this cell
+	Error        string  `json:"error,omitempty"`  // the judge could not score this cell
+	Repeat       int     `json:"repeat,omitempty"` // 1-based when the judge repeats; unset otherwise
 }
 
 // Scored reports whether the judgement carries a score.
@@ -58,7 +60,6 @@ func (j *Judge) rubricFor(task string) string {
 	return j.Rubric
 }
 
-// check rejects a judge that could only fail once the agents have run.
 func (j *Judge) check(tasks []batch.Task) error {
 	p, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {
@@ -75,8 +76,10 @@ func (j *Judge) check(tasks []batch.Task) error {
 	if j.Timeout < 0 {
 		return fmt.Errorf("judge: timeout %s is negative", time.Duration(j.Timeout))
 	}
-	// The judge runs after every cell has, so a level its CLI would refuse must be
-	// caught here, not once the agents have been paid for.
+	if j.Repeats < 0 {
+		return fmt.Errorf("judge: repeats %d is negative", j.Repeats)
+	}
+	// Validate effort before spending on cells the judge cannot grade.
 	if err := (agent.Options{Effort: j.Effort}).Validate(); err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
@@ -95,13 +98,10 @@ func (j *Judge) check(tasks []batch.Task) error {
 	return nil
 }
 
-// judgeAll scores every passing cell, spec.Parallel at a time. A cell that
-// failed its gates is not judged: it already scored zero where it counts, and
-// judging it would only spend money. The worktrees must still exist.
+// Failed gates need no paid judging; passing worktrees must remain available.
 func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batch.Event)) []Judgement {
 	j := spec.Judge
-	// Verdicts arrive from several goroutines; callers expect one at a time,
-	// as batch.Run delivers its own events.
+	// Serialize callbacks to preserve batch.Run's notification contract.
 	var notifyMu sync.Mutex
 	report := notify
 	notify = func(e batch.Event) {
@@ -128,29 +128,73 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 			cells = append(cells, tr)
 		}
 	}
-	out := make([]Judgement, len(cells))
-	// The spec as loaded, not as batch.Run normalised it: an unset parallel
-	// is 0 here, and must mean the batch default rather than one at a time.
+	// Lazy copies give repeats identical evidence without accumulating unused trees.
+	dirs := make([]string, len(cells)) // each written once, by its cell's first verdict
+	shown := make([]func() evidence, len(cells))
+	for i, tr := range cells {
+		task, _, _ := splitID(tr.ID)
+		shown[i] = sync.OnceValue(func() evidence {
+			ev := evidenceOf(ctx, res, tr, prompts[task], j.rubricFor(task))
+			dirs[i] = ev.dir
+			return ev
+		})
+	}
+	repeats := max(1, j.Repeats)
+	out := make([]Judgement, len(cells)*repeats)
+	// The unnormalized spec's zero still means batch.DefaultParallel.
 	parallel := spec.Parallel
 	if parallel <= 0 {
 		parallel = batch.DefaultParallel
 	}
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
-	for i, tr := range cells {
+	// Remove after the final repeat to bound checkout storage.
+	left := make([]atomic.Int32, len(cells))
+	for i := range left {
+		left[i].Store(int32(repeats))
+	}
+	// Cancellation can leave copies whose final repeat never ran.
+	defer func() {
+		for i, dir := range dirs {
+			if dir == "" || left[i].Load() == 0 {
+				continue
+			}
+			if err := os.RemoveAll(dir); err != nil {
+				notify(batch.Event{Task: cells[i].ID, Kind: "judge", Text: "judge: leaving its checkout behind: " + err.Error()})
+			}
+		}
+	}()
+	for _, n := range judgeOrder(len(out), res.ID) {
+		tr, evidenceFor := cells[n/repeats], shown[n/repeats]
+		repeat, label := 0, "judge"
+		if repeats > 1 {
+			repeat = n%repeats + 1
+			label = fmt.Sprintf("judge %d/%d", repeat, repeats)
+		}
 		if ctx.Err() != nil {
-			out[i] = Judgement{Cell: tr.ID, Error: "canceled"}
+			out[n] = Judgement{Cell: tr.ID, Error: "canceled", Repeat: repeat}
 			continue
 		}
 		sem <- struct{}{}
 		wg.Add(1)
 		go func() {
 			defer func() { <-sem; wg.Done() }()
-			task, _, _ := splitID(tr.ID)
-			out[i] = judgeCell(ctx, b, j, res, tr, prompts[task], j.rubricFor(task))
-			text := fmt.Sprintf("judge: %d/10 · %s", out[i].Score, tools.OneLine(out[i].Reason, 120))
-			if !out[i].Scored() {
-				text = "judge: " + tools.OneLine(out[i].Error, 160)
+			// A cancel may land while this verdict waited for its turn.
+			if ctx.Err() != nil {
+				out[n] = Judgement{Cell: tr.ID, Error: "canceled", Repeat: repeat}
+				return
+			}
+			ev := canceledOr(ctx, evidenceFor())
+			out[n] = judgeCell(ctx, b, j, tr, ev)
+			out[n].Repeat = repeat
+			if left[n/repeats].Add(-1) == 0 && ev.dir != "" {
+				if err := os.RemoveAll(ev.dir); err != nil {
+					notify(batch.Event{Task: tr.ID, Kind: "judge", Text: "judge: leaving its checkout behind: " + err.Error()})
+				}
+			}
+			text := fmt.Sprintf("%s: %d/10 · %s", label, out[n].Score, tools.OneLine(out[n].Reason, 120))
+			if !out[n].Scored() {
+				text = label + ": " + tools.OneLine(out[n].Error, 160)
 			}
 			notify(batch.Event{Task: tr.ID, Kind: "judge", Text: text})
 		}()
@@ -159,16 +203,41 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 	return out
 }
 
-func judgeCell(ctx context.Context, b agent.Backend, j *Judge, res batch.Result, tr batch.TaskResult, prompt, rubric string) Judgement {
-	jd := Judgement{Cell: tr.ID}
+type evidence struct {
+	prompt string
+	dir    string
+	err    error
+}
+
+// Report cancellation rather than an incidental git failure it caused.
+func canceledOr(ctx context.Context, ev evidence) evidence {
+	if ev.err != nil && ctx.Err() != nil {
+		ev.err = errors.New("canceled")
+	}
+	return ev
+}
+
+func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prompt, rubric string) evidence {
 	diff, untracked, err := batch.Diff(ctx, res, tr.ID)
 	if err != nil {
-		jd.Error = "reading the diff: " + err.Error()
-		return jd
+		return evidence{err: fmt.Errorf("reading the diff: %w", err)}
 	}
 	var final string
 	if n := len(tr.Attempts); n > 0 {
 		final = tr.Attempts[n-1].Result.Final
+	}
+	dir, err := blindCheckout(ctx, res.Dir, res.Base, firstOf(tr.Commit, res.Base))
+	if err != nil {
+		return evidence{err: fmt.Errorf("preparing the judge's checkout: %w", err)}
+	}
+	return evidence{prompt: judgePrompt(prompt, rubric, final, diff, untracked), dir: dir}
+}
+
+func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResult, ev evidence) Judgement {
+	jd := Judgement{Cell: tr.ID}
+	if ev.err != nil {
+		jd.Error = ev.err.Error()
+		return jd
 	}
 
 	timeout := time.Duration(j.Timeout)
@@ -176,10 +245,9 @@ func judgeCell(ctx context.Context, b agent.Backend, j *Judge, res batch.Result,
 		timeout = defaultJudgeTimeout
 	}
 	task := agent.Task{
-		Prompt: judgePrompt(prompt, rubric, final, diff, untracked),
-		// The worktree, read-only: the judge may open a file the diff only
-		// touches, but it cannot change the evidence.
-		Dir: tr.Worktree,
+		Prompt: ev.prompt,
+		// Neutral read-only copies expose context without revealing the variant.
+		Dir: ev.dir,
 		Options: agent.Options{Mode: agent.ModeReadOnly, Model: j.Model, Effort: j.Effort,
 			Timeout: agent.Duration(timeout), NoInstructions: true},
 	}
@@ -238,7 +306,6 @@ func judgePrompt(prompt, rubric, final, diff string, untracked []string) string 
 	return b.String()
 }
 
-// clip keeps the start of s and says how much was cut.
 func clip(s string, limit int) string {
 	if len(s) <= limit {
 		return s
@@ -250,7 +317,6 @@ func clip(s string, limit int) string {
 	return s[:cut] + fmt.Sprintf("\n[... %d more bytes not shown]", len(s)-cut)
 }
 
-// fence returns a code fence longer than any run of backticks in s.
 func fence(s string) string {
 	f := "```"
 	for strings.Contains(s, f) {
@@ -259,8 +325,7 @@ func fence(s string) string {
 	return f
 }
 
-// parseVerdict reads the last JSON object in the judge's answer that has a
-// score. Models wrap JSON in prose or fences, so it scans from the end.
+// Scan backward because models may wrap the final verdict in prose or fences.
 func parseVerdict(text string) (int, string, error) {
 	for i := strings.LastIndex(text, "{"); i >= 0; i = strings.LastIndex(text[:i], "{") {
 		var v struct {

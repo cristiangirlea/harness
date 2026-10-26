@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -30,7 +31,7 @@ func TestRunRefusesInvalidPurposeBeforeStarting(t *testing.T) {
 		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 {
 			t.Fatalf("purpose %q: error=%v, stderr=%s", value, err, &stderr)
 		}
-		if !strings.Contains(stderr.String(), "run: --purpose "+value+": one of review, debug, implement, refactor, test, research, plan, ops") {
+		if !strings.Contains(stderr.String(), "run: --purpose "+value+": one of "+strings.Join(purpose.Declarable(), ", ")) {
 			t.Errorf("purpose %q: stderr=%s", value, &stderr)
 		}
 	}
@@ -59,8 +60,8 @@ func TestRunStoresTheDeclarationWithoutChangingThePrompt(t *testing.T) {
 				t.Fatalf("code=%d error=%v", code, err)
 			}
 			task := <-recorded
-			if task.Prompt != tc.prompt {
-				t.Errorf("backend prompt = %q, want %q", task.Prompt, tc.prompt)
+			if !strings.HasSuffix(task.Prompt, "\n\n"+tc.prompt) {
+				t.Errorf("backend prompt = %q, want it to end with %q", task.Prompt, tc.prompt)
 			}
 			recs, err := runlog.List(0)
 			if err != nil || len(recs) != 1 {

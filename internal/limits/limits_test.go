@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -52,7 +54,7 @@ func standIn(t *testing.T, claudeInstalled, codexInstalled bool) {
 
 func TestOnlyClaudeAndCodexStandInForEachOther(t *testing.T) {
 	for backend, want := range map[string]string{"claude": "codex", "codex": "claude", "api": "", "gemini": "", "opencode": "", "": ""} {
-		if got := Partner(backend); got != want {
+		if got := Partner(backend, time.Now(), nil); got != want {
 			t.Errorf("Partner(%q) = %q, want %q", backend, got, want)
 		}
 	}
@@ -244,6 +246,67 @@ func TestAfterCarriesALimitedRunOnToItsPartner(t *testing.T) {
 	}
 }
 
+func TestAfterRefusesToRepinRetrievalOnThePartner(t *testing.T) {
+	for _, mode := range []string{"required", "off"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, true, true)
+			prev := agent.Task{Prompt: "fix the bug", Dir: t.TempDir(), Options: agent.Options{Retrieval: mode}}
+			rec, err := runlog.Create("codex", prev)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.",
+				Retrieval: &retrieval.Record{Mode: "required", Packet: &retrieval.Packet{VersionID: "kv-7"}}}
+			if err := rec.Close(res); err != nil {
+				t.Fatal(err)
+			}
+			next, why, err := After(rec.ID(), "codex", prev, res)
+			if mode == "off" {
+				if err != nil || next == nil {
+					t.Fatalf("retrieval off should still carry on: %v %s", err, why)
+				}
+				return
+			}
+			if next != nil || err == nil || !strings.Contains(err.Error(), "kv-7") {
+				t.Fatalf("claude would repin silently: next = %+v, err = %v", next, err)
+			}
+		})
+	}
+}
+
+func TestACarryOnAfterAFreshHandoverDoesNotReachPastIt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := runlog.Create("claude", agent.Task{Prompt: "one", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, Session: "s1", Final: "a1"}); err != nil {
+		t.Fatal(err)
+	}
+	prev := agent.Task{Prompt: "two", Dir: dir}
+	rec, err := runlog.CreateContinuingRoute("codex", prev, old.ID(), runlog.RouteFreshHandover)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
+	if err := rec.Close(res); err != nil {
+		t.Fatal(err)
+	}
+	next, why, err := After(rec.ID(), "codex", prev, res)
+	if err != nil || next == nil {
+		t.Fatalf("no carry-on: %s err=%v", why, err)
+	}
+	if next.Plan.ForkSession != "" || len(next.Plan.Handoff) != 1 || next.Plan.Handoff[0].ID != rec.ID() {
+		t.Errorf("claude must not fork the session the fresh run left behind: %+v", next.Plan)
+	}
+}
+
 func TestAfterLeavesARunAloneWhenItShould(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	standIn(t, true, true)
@@ -411,6 +474,54 @@ func TestAPartnerThatWouldBillPerTokenDoesNotStandIn(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_USE_VERTEX", "0")
 	if ok, why := Ready("claude", time.Now(), nil); !ok {
 		t.Errorf("CLAUDE_CODE_USE_VERTEX=0 refused claude: %s", why)
+	}
+}
+
+func TestMeteredKeysTreatEveryNonEmptyValueAsSet(t *testing.T) {
+	for backend, names := range metered {
+		for _, name := range names {
+			for _, value := range []string{"", "0", "false", "FALSE", "1", "fake-secret-value"} {
+				t.Run(name+"/"+value, func(t *testing.T) {
+					t.Setenv("HRN_HOME", t.TempDir())
+					standIn(t, true, true)
+					t.Setenv(name, value)
+					want := value != ""
+					if strings.HasPrefix(name, "CLAUDE_CODE_USE_") && (value == "0" || strings.EqualFold(value, "false")) {
+						want = false
+					}
+					got := meteredBy(backend)
+					if want && got != name || !want && got != "" {
+						t.Errorf("meteredBy(%q) = %q, want set=%v for %s", backend, got, want, name)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestPickAndChooseExplainWhyAMeteredPartnerWasSkipped(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+	now := time.Now()
+	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	pick, why, both := Pick("codex", now, nil)
+	if pick != "codex" || both || !strings.Contains(why, "ANTHROPIC_API_KEY") || !strings.Contains(why, "per token") {
+		t.Errorf("Pick = %q, %q, %v; want codex and the refusal reason", pick, why, both)
+	}
+	for _, backend := range []string{"codex", ""} {
+		// An implicit backend comes from the continued record, without changing
+		// the caller's empty selection when the partner cannot take over.
+		id := limitedRun(t, agent.Task{Prompt: "p", Dir: t.TempDir()})
+		chosen, reason := Choose(backend, id)
+		if chosen != backend || !strings.Contains(reason, "ANTHROPIC_API_KEY") || !strings.Contains(reason, "per token") {
+			t.Errorf("Choose = %q, %q; want %q and the refusal reason", chosen, reason, backend)
+		}
+		if strings.Contains(reason, "fake-secret-value") {
+			t.Error("Choose exposed the key value")
+		}
 	}
 }
 

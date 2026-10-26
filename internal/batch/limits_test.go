@@ -10,6 +10,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -85,6 +86,42 @@ func TestALimitedAttemptIsCarriedOnInTheSameWorktree(t *testing.T) {
 	}
 }
 
+func TestALeanClaudeAttemptCarriesOnToCodexWithoutLean(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	agent.Register(leanStub{stub{"claude", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "claude", Status: agent.StatusLimited, Error: "You've hit your usage limit."}
+	}}})
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "codex", Status: agent.StatusOK, Final: "finished", Turns: 1}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "claude", Tasks: []Task{{Prompt: "finish the work"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v, want a limited claude attempt followed by codex", tr)
+	}
+	a1, a2 := tr.Attempts[0], tr.Attempts[1]
+	if a1.Backend != "claude" || a1.Result.Status != agent.StatusLimited {
+		t.Fatalf("first attempt = %+v, want limited claude", a1)
+	}
+	if rec := firstRun(t, tr); !rec.Task.IsLean() {
+		t.Fatal("the claude attempt must record the batch's lean default")
+	}
+	if a2.Backend != "codex" || !a2.Continued || a2.SwitchedFrom != "claude" {
+		t.Fatalf("second attempt = %+v, want a carry-on on codex", a2)
+	}
+	rec, err := runlog.Load(a2.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Continues != a1.RunID || rec.Result.Backend != "codex" {
+		t.Errorf("codex record must continue the limited claude run: %+v", rec)
+	}
+	if rec.Task.Lean != nil {
+		t.Errorf("codex record must leave lean unset, got %v", rec.Task.Lean)
+	}
+}
+
 func TestACarryOnDoesNotUseUpARetry(t *testing.T) {
 	dir := initRepo(t)
 	standIn(t)
@@ -120,6 +157,23 @@ func TestAnAttemptMeantForALimitedBackendStartsOnItsPartner(t *testing.T) {
 	}
 	if s := eventTexts(events, "switch"); !strings.Contains(s, "codex is at its usage limit") {
 		t.Errorf("switch events = %q", s)
+	}
+}
+
+func TestARoutedAttemptMovedByALimitDropsTheRoutedChoice(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	_ = limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"codex","model":"routed","effort":"medium","eval":"e1"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Tasks: []Task{{ID: "moved", Prompt: "Implement a widget"}}})
+	tr := res.Tasks[0]
+	if len(tr.Attempts) != 1 || tr.Attempts[0].Backend != "claude" || tr.Attempts[0].SwitchedFrom != "codex" {
+		t.Fatalf("attempts = %+v, want one moved from codex to claude", tr.Attempts)
+	}
+	if rec := firstRun(t, tr); rec.Task.Model != "" || rec.Task.Effort != "" || rec.RoutedBy != nil {
+		t.Errorf("moved attempt kept model %q, effort %q, routed by %+v", rec.Task.Model, rec.Task.Effort, rec.RoutedBy)
 	}
 }
 
@@ -204,5 +258,122 @@ func TestALimitedAttemptIsNotCarriedOnToAPartnerThatBillsPerToken(t *testing.T) 
 	}
 	if strings.Contains(switches, "fake-secret-value") {
 		t.Errorf("an event shows the key's value: %q", switches)
+	}
+}
+
+func TestABatchExplainsAMeteredPartnerBeforeTheAttemptStarts(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+	if err := limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	_, events := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "kept", Prompt: "p"}}})
+	said := false
+	for _, e := range events {
+		if e.Kind == "start" {
+			if !said {
+				t.Fatal("no metered partner reason before the attempt started")
+			}
+			return
+		}
+		if e.Kind == "switch" {
+			t.Errorf("unexpected switch event when nothing switched: %+v", e)
+		}
+		said = said || e.Kind == "info" && strings.Contains(e.Text, "ANTHROPIC_API_KEY") && strings.Contains(e.Text, "per token")
+		if strings.Contains(e.Text, "fake-secret-value") {
+			t.Error("event exposed the key value")
+		}
+	}
+	t.Fatal("no attempt started")
+}
+
+func TestABatchDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		cancel()
+		return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "usage limit"}
+	}})
+	res, err := Run(ctx, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "stopped", Prompt: "p"}}}, func(Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Tasks) != 1 || res.Tasks[0].Status != StatusCanceled || len(res.Tasks[0].Attempts) != 1 {
+		t.Fatalf("tasks = %+v, want one canceled task with one attempt", res.Tasks)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" {
+		t.Fatalf("records = %+v, err=%v; want only the limited run", recs, err)
+	}
+}
+
+// preferThird enables codex, claude and gemini (plus extra) with a gemini stub
+// that finishes, and claude limited as well as codex.
+func preferThird(t *testing.T, extra ...string) {
+	t.Helper()
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: append([]string{"codex", "claude", "gemini"}, extra...)}); err != nil {
+		t.Fatal(err)
+	}
+	standIn(t)
+	for _, name := range limits.MeteredEnv("gemini") {
+		t.Setenv(name, "")
+	}
+	for _, s := range []stub{
+		{"claude", func(context.Context, agent.Task) agent.Result {
+			return agent.Result{Backend: "claude", Status: agent.StatusLimited, Error: "You've reached your Fable limit."}
+		}},
+		{"gemini", func(_ context.Context, task agent.Task) agent.Result {
+			_ = os.WriteFile(filepath.Join(task.Dir, "done.txt"), []byte("second half\n"), 0o644)
+			return agent.Result{Backend: "gemini", Status: agent.StatusOK, Final: "finished", Turns: 1}
+		}},
+	} {
+		orig, err := agent.Get(s.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent.Register(s)
+		t.Cleanup(func() { agent.Register(orig) })
+	}
+}
+
+func TestWithAPreferenceACarryOnGoesPastTwoSpentBackends(t *testing.T) {
+	dir := initRepo(t)
+	preferThird(t)
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Gate: []string{"test -f half.txt && test -f done.txt"},
+		Tasks: []Task{{ID: "third", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	var got []string
+	for _, a := range tr.Attempts {
+		got = append(got, a.Backend)
+	}
+	if tr.Status != StatusPass || strings.Join(got, ",") != "codex,claude,gemini" {
+		t.Fatalf("status %s, attempts %v", tr.Status, got)
+	}
+	if a := tr.Attempts[2]; !a.Continued || a.SwitchedFrom != "claude" {
+		t.Errorf("attempt 3: continued %v, switched from %q", a.Continued, a.SwitchedFrom)
+	}
+}
+
+func TestWithAPreferenceARetryMeantForASpentBackendStartsOnTheThird(t *testing.T) {
+	dir := initRepo(t)
+	preferThird(t, "wb-bad")
+	resets := time.Now().Add(time.Hour)
+	for _, name := range []string{"codex", "claude"} {
+		if err := limits.Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: resets}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-bad", Retry: []string{"codex"},
+		Tasks: []Task{{ID: "retried", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if a := tr.Attempts[1]; a.Backend != "gemini" || a.SwitchedFrom != "codex" {
+		t.Errorf("the retry ran on %s, switched from %q", a.Backend, a.SwitchedFrom)
 	}
 }

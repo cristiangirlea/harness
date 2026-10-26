@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -51,12 +53,16 @@ func run() error {
 	if err := validateListen(address, certFile, keyFile); err != nil {
 		return err
 	}
+	maxCost, err := maxCostPerJob(os.Getenv("HRN_MAX_COST_USD_PER_JOB"))
+	if err != nil {
+		return err
+	}
 	store, err := platform.Open(ctx, dsn)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	server := &http.Server{Addr: address, Handler: (&platform.HTTPServer{Store: store, OperatorToken: operator, ScalerToken: scaler}).Handler(),
+	server := &http.Server{Addr: address, Handler: (&platform.HTTPServer{Store: store, OperatorToken: operator, ScalerToken: scaler, MaxCostUSDPerJob: maxCost}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -91,6 +97,17 @@ func run() error {
 		return nil
 	}
 	return fmt.Errorf("serve: %w", err)
+}
+
+func maxCostPerJob(raw string) (float64, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	limit, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(limit) || math.IsInf(limit, 0) || limit <= 0 {
+		return 0, fmt.Errorf("HRN_MAX_COST_USD_PER_JOB must be a positive number of USD, got %q", raw)
+	}
+	return limit, nil
 }
 
 func validateListen(address, certFile, keyFile string) error {

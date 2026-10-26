@@ -20,44 +20,37 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/mask"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// DefaultAddr is where hrn watch listens unless told otherwise: next to hrn
-// sessions' 8088, so both can run.
+// DefaultAddr is a loopback address on a port separate from hrn sessions.
 const DefaultAddr = "127.0.0.1:8089"
 
-// Options tunes a watch server. The zero value is the hrn watch default.
+// Options configures a watch server with defaults for zero fields.
 type Options struct {
 	Poll time.Duration // how often records are checked for changes; default 500ms
 	Runs int           // runs on the index page; default 50
-	// LAN is where hrn watch --lan also serves the page: this computer's
-	// private network addresses. Requests naming one of them are let in, and
-	// the index shows them as links for a phone.
+	// LAN authorizes these private listener addresses as request hosts.
 	LAN []Endpoint
 	// Public serves only the named HTTPS origin behind Cloudflare Access.
 	// The listener remains on loopback and every request needs a valid JWT.
 	Public *PublicAccess
-	// Key is what a request that would act on hrn (anything but GET and
-	// HEAD) must send in X-Hrn-Watch-Key, from this computer or the network
-	// alike. Viewing needs none. Empty refuses every action.
-	Key string
+	// Key is required in X-Hrn-Watch-Key for all non-GET/HEAD requests; empty denies actions.
+	Key         string
+	OwnerEmails []string
 }
 
 // Endpoint is one private network address the page is served on.
 type Endpoint struct {
 	Addr      string // ip:port, as listened on
-	Interface string // the network adapter's name, such as Wi-Fi
+	Interface string
 	URL       string
 }
 
-// ListenLAN listens on port at each private IPv4 address of this computer's
-// network adapters that are up, leaving out point-to-point links such as most
-// VPN tunnels. Never 0.0.0.0, which would take in a public address too. A VPN
-// that shows up as an ordinary adapter with a private address is still taken:
-// the caller lists every endpoint so the person running it sees each network.
-// only, when set, keeps one adapter: its name (any case) or its address.
-// The page is read-only: anything that acts on hrn needs a key (see guard).
+// ListenLAN binds private IPv4 adapters, optionally filtered by name or address, never a public wildcard.
+// A VPN that looks like an ordinary private adapter is included; callers list every endpoint so each network is visible.
 func ListenLAN(port, only string) ([]net.Listener, []Endpoint, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -94,7 +87,6 @@ func ListenLAN(port, only string) ([]net.Listener, []Endpoint, error) {
 	return lns, eps, nil
 }
 
-// adapter is what ListenLAN needs to know of a network interface.
 type adapter struct {
 	name  string
 	flags net.Flags
@@ -103,8 +95,6 @@ type adapter struct {
 
 type lanAddr struct{ ip, name string }
 
-// lanAddrs picks the addresses --lan serves on: the private IPv4 addresses
-// of adapters that are up and are neither loopback nor point-to-point.
 func lanAddrs(adapters []adapter) []lanAddr {
 	var out []lanAddr
 	for _, a := range adapters {
@@ -118,8 +108,6 @@ func lanAddrs(adapters []adapter) []lanAddr {
 	return out
 }
 
-// pickLAN keeps the address or the adapter --lan=NAME names; with no name,
-// all of them. A name that matches nothing is an error naming the choices.
 func pickLAN(all []lanAddr, only string) ([]lanAddr, error) {
 	if only == "" {
 		return all, nil
@@ -140,8 +128,7 @@ func pickLAN(all []lanAddr, only string) ([]lanAddr, error) {
 	return out, nil
 }
 
-// privateAddrs keeps the private IPv4 addresses (RFC 1918) of an adapter.
-// IPv6 is left out: a phone's address bar takes an IPv4 address more easily.
+// IPv4 keeps addresses easy to enter on a phone; public addresses must never be offered.
 func privateAddrs(addrs []net.Addr) []string {
 	var out []string
 	for _, a := range addrs {
@@ -156,9 +143,7 @@ func privateAddrs(addrs []net.Addr) []string {
 	return out
 }
 
-// LoopbackAddr checks that addr is a loopback IP, or localhost, and a port,
-// and returns it ready to listen on. Records hold prompts, file contents and
-// command output, so the page is never offered beyond this computer.
+// LoopbackAddr validates a loopback host and port to keep private run contents local by default.
 func LoopbackAddr(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -177,9 +162,8 @@ func LoopbackAddr(addr string) (string, error) {
 	return net.JoinHostPort(ip.Unmap().String(), port), nil
 }
 
-// Serve answers on every listener until ctx ends. It refuses a listener that
-// is neither on a loopback address nor one of opt.LAN's private addresses;
-// public mode permits loopback only, whoever opened the listener.
+// Serve handles listeners until ctx ends, accepting only loopback or authorized private LAN addresses.
+// Public mode requires loopback even when the caller supplied the listener.
 func Serve(ctx context.Context, opt Options, lns ...net.Listener) error {
 	lan := opt.LAN
 	if opt.Public != nil {
@@ -206,7 +190,7 @@ func Serve(ctx context.Context, opt Options, lns ...net.Listener) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		// No WriteTimeout: streams stay open. Each write sets its own deadline.
-		// "OPTIONS *" goes to the handler, and so through the door, too.
+		// Route "OPTIONS *" through authentication too.
 		DisableGeneralOptionsHandler: true,
 	}
 	errs := make(chan error, len(lns))
@@ -241,23 +225,23 @@ func checkListener(a net.Addr, lan []Endpoint) error {
 	return fmt.Errorf("hrn watch serves on a loopback address, and with --lan on this computer's private network addresses; not on %s", a)
 }
 
-// idRE is the shape of every run and batch id hrn makes (runlog.NewID). An id
-// from a request must have it before it is used as a file name: on Windows 10
-// a name such as CON opens a device.
+// Validate request IDs before file access: Windows names such as CON open devices.
 var idRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`)
 
 type server struct {
 	ctx    context.Context // ends every stream when the server stops
 	opt    Options
-	redact *strings.Replacer // blanks secret values; see secretReplacer
-	home   string            // the user's home folder, shown as ~
-	system []string          // folders whose programs are shown by name; see systemFolders
+	redact *strings.Replacer
+	home   string
+	system []string
 	access *accessVerifier
 	logMu  sync.Mutex
+	grants []owner.Grant
+
+	batches batchCache
 }
 
-// New is the watch page's handler. Streams end when ctx does, so a server
-// shutting down does not wait for its browsers to leave.
+// New returns a watch handler whose streams end with ctx so shutdown need not wait for browsers.
 func New(ctx context.Context, opt Options) http.Handler {
 	return newHandler(ctx, opt, nil)
 }
@@ -269,23 +253,36 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt, redact: secretReplacer(os.Environ()), system: systemFolders()}
+	s := &server{ctx: ctx, opt: opt, redact: mask.Env(os.Environ()), system: systemFolders()}
 	s.home, _ = os.UserHomeDir()
 	if opt.Public != nil {
 		if access == nil {
 			access = &accessVerifier{opt: *opt.Public}
 		}
 		s.access = access
+		var err error
+		s.grants, err = owner.ReadGrants(filepath.Join(runlog.Home(), "grants.json"))
+		if err != nil {
+			out := opt.Public.Errors
+			if out == nil {
+				out = os.Stderr
+			}
+			fmt.Fprintf(out, "hrn watch: grants.json: %v; no project grants loaded\n", err)
+		}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("POST /backends", s.saveBackends)
-	mux.HandleFunc("GET /run/{id}", s.run)
-	mux.HandleFunc("GET /batch/{id}", s.batch)
+	mux.HandleFunc("GET /run/{id}", s.recordRoute(s.run))
+	mux.HandleFunc("GET /batch/{id}", s.recordRoute(s.batch))
+	mux.HandleFunc("GET /flow/{id}/json", s.recordRoute(s.flowJSON))
+	mux.HandleFunc("GET /flow/{id}", s.recordRoute(s.flowPage))
 	mux.HandleFunc("GET /stream/index", s.streamIndex)
-	mux.HandleFunc("GET /stream/run/{id}", s.streamRun)
-	mux.HandleFunc("GET /stream/batch/{id}", s.streamBatch)
+	mux.HandleFunc("GET /stream/run/{id}", s.recordRoute(s.streamRun))
+	mux.HandleFunc("GET /stream/batch/{id}", s.recordRoute(s.streamBatch))
+	mux.HandleFunc("GET /stream/flow/{id}", s.recordRoute(s.streamFlow))
 	mux.HandleFunc("GET /bot", s.bot)
+	mux.HandleFunc("GET /bot/answer", s.answerBot)
 	mux.HandleFunc("GET /stream/bot", s.streamBot)
 	mux.HandleFunc("GET /voice", s.voice)
 	mux.HandleFunc("GET /static/{name}", s.static)
@@ -303,15 +300,8 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
 	"base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
-// guard is hrn sessions' guard: local requests only, and headers that keep
-// the page to itself. lan holds the ip:port addresses hrn watch --lan serves
-// on; a Host naming one exactly is let in too. A rebinding attack needs a DNS
-// name, so IP literals keep that defence.
-//
-// Anything but GET and HEAD would act on hrn, so it must also carry key in
-// X-Hrn-Watch-Key. A custom header is also the CSRF check: a form on another
-// site cannot set one, and a script elsewhere cannot send one here without a
-// CORS answer this server never gives.
+// Exact LAN IP hosts prevent DNS rebinding; public requests require Access verification.
+// The action key's custom header blocks CSRF because cross-site scripts need CORS, which we deny.
 func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -324,13 +314,19 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		if s.opt.Public != nil {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
-			aw := w.(*accessWriter)
+			aw, ok := w.(*accessWriter)
+			if !ok {
+				http.Error(w, "Public watch needs its access log", http.StatusInternalServerError)
+				return
+			}
 			publicHost := strings.TrimPrefix(s.opt.Public.Origin, "https://")
 			if !publicHostMatches(r.Host, publicHost) {
 				aw.reason = "bad host"
 			}
-			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document")
-			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.opt.Public.Origin) {
+			// Only document navigation with absent/null Origin may bypass origin checks.
+			origin := r.Header.Get("Origin")
+			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document") && (origin == "" || origin == "null")
+			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || origin != "" && origin != s.opt.Public.Origin) {
 				aw.reason = "bad origin"
 			}
 			if aw.reason == "" {
@@ -369,8 +365,7 @@ func publicHostMatches(authority, host string) bool {
 	return strings.EqualFold(authority, host) || strings.EqualFold(authority, host+":443")
 }
 
-// isLoopbackHost checks the Host header, so a DNS name an attacker rebinds to
-// 127.0.0.1 cannot have a browser read the page for them.
+// Check Host to prevent attacker-controlled DNS names rebinding to loopback.
 func isLoopbackHost(authority string) bool {
 	if authority == "" {
 		return false
@@ -393,7 +388,6 @@ func isLoopbackHost(authority string) bool {
 	return err == nil && ip.Zone() == "" && ip.Unmap().IsLoopback()
 }
 
-// withPort is a Host header with the port a browser leaves out of it.
 func withPort(host string) string {
 	if _, _, err := net.SplitHostPort(host); err == nil {
 		return host
@@ -401,8 +395,7 @@ func withPort(host string) string {
 	return net.JoinHostPort(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"), "80")
 }
 
-// isSameOrigin: Origin is absent on navigation and most same-origin GETs;
-// when present it must be this server.
+// Navigation may omit Origin; any supplied Origin must name this server.
 func isSameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -415,9 +408,7 @@ func isSameOrigin(r *http.Request) bool {
 	return u.Scheme == "http" && strings.EqualFold(u.Host, r.Host)
 }
 
-// render runs a template and blanks any secret value in what it made: a key
-// or token in hrn watch's environment may have reached a run (an agent that
-// ran env), and the page may be open to the network.
+// Mask the finished page as a backstop against environment secrets leaked by recorded commands.
 func (s *server) render(name string, data any) (string, error) {
 	out, err := render(name, data)
 	if err == nil && s.redact != nil {
@@ -426,8 +417,7 @@ func (s *server) render(name string, data any) (string, error) {
 	return out, err
 }
 
-// homeFor is the hrn home to show: to this computer only, as it names the
-// user's account.
+// The home path reveals the user's account and must stay local.
 func (s *server) homeFor(r *http.Request) string {
 	if s.fromThisComputer(r) {
 		return runlog.Home()
@@ -464,9 +454,10 @@ func (s *server) missing(w http.ResponseWriter, r *http.Request, what string, er
 	}{page{Title: "Not found", Home: s.homeFor(r)}, msg})
 }
 
-func (s *server) lists() lists {
+func (s *server) lists(r *http.Request) lists {
 	var l lists
-	runs, err := runlog.List(s.opt.Runs)
+	who := s.who(r)
+	runs, err := runlog.ListFor(who, s.opt.Runs)
 	if err != nil {
 		msg := "Runs could not be listed."
 		if s.opt.Public == nil {
@@ -474,9 +465,10 @@ func (s *server) lists() lists {
 		}
 		l.Problems = append(l.Problems, msg)
 	}
-	// The rows are the same for every viewer: shortened, never with a title.
-	// A run's purpose comes from its prompt as recorded, as hrn report has
-	// it; only the prompt shown is shortened.
+	if len(runs) > s.opt.Runs {
+		runs = runs[:s.opt.Runs]
+	}
+	// Derive purpose before shortening prompts; never expose full-path hover titles in shared rows.
 	vw := viewer{home: s.home, system: s.system}
 	for i, rec := range runs {
 		runs[i] = s.cleanRecord(rec)
@@ -485,13 +477,19 @@ func (s *server) lists() lists {
 		l.Runs = append(l.Runs, r)
 	}
 	l.Purposes = purposesOf(runs)
-	batches, unreadable, err := batch.List()
+	batches, unreadable, err := s.listBatches()
 	if unreadable > 0 {
-		// Most likely one caught mid-save: on Windows a read can land on
-		// the rename. Look again before calling it unreadable.
+		// Retry Windows rename races before reporting unreadable records.
 		time.Sleep(50 * time.Millisecond)
-		batches, unreadable, err = batch.List()
+		batches, unreadable, err = s.listBatches()
 	}
+	visible := batches[:0]
+	for _, res := range batches {
+		if who.CanReadRecord(res.Owner, res.Dir) {
+			visible = append(visible, res)
+		}
+	}
+	batches = visible
 	if err != nil {
 		msg := "Batches could not be listed."
 		if s.opt.Public == nil {
@@ -503,13 +501,12 @@ func (s *server) lists() lists {
 		l.Problems = append(l.Problems, fmt.Sprintf("%d batch record(s) could not be read.", unreadable))
 	}
 	for i, res := range batches {
-		batches[i] = vw.batch(s.cleanBatch(res)) // the task names below come from these too
+		batches[i] = vw.batch(res) // the task names below come from these too
 		if i < 20 {
 			l.Batches = append(l.Batches, batchRow(batches[i]))
 		}
 	}
-	// Every batch attempt is a run too: link each one back to its batch and
-	// lead with its task, from every batch on disk, not only the 20 listed.
+	// Include every batch on disk so runs of unlisted batches still have ownership links.
 	of, task := batchOf(batches), taskNameOf(batches)
 	for i := range l.Runs {
 		r := &l.Runs[i]
@@ -519,7 +516,6 @@ func (s *server) lists() lists {
 	return l
 }
 
-// taskNameOf maps each run that was a batch task's attempt to the task's name.
 func taskNameOf(batches []batch.Result) map[string]string {
 	m := map[string]string{}
 	for _, res := range batches {
@@ -534,7 +530,6 @@ func taskNameOf(batches []batch.Result) map[string]string {
 	return m
 }
 
-// batchOf maps each run that was a batch task's attempt to its batch.
 func batchOf(batches []batch.Result) map[string]string {
 	m := map[string]string{}
 	for _, res := range batches {
@@ -550,10 +545,9 @@ func batchOf(batches []batch.Result) map[string]string {
 }
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
-	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists()}
+	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists(r)}
 	p.Backends = s.backendsCard(w, r)
-	// The phone links and the hints about --lan are for the person at this
-	// computer; a phone that came in over the network needs neither.
+	// Keep network discovery links and LAN hints local.
 	if s.fromThisComputer(r) {
 		p.Local = true
 		p.Phone = phoneLinks(s.opt.LAN)
@@ -565,8 +559,46 @@ func (s *server) viewerOf(r *http.Request) viewer {
 	return viewer{local: s.fromThisComputer(r), home: s.home, system: s.system}
 }
 
-// fromThisComputer: the connection came from a loopback address. A request
-// to this computer's network address comes from that address, not loopback.
+type accessContextKey struct{}
+
+func (s *server) who(r *http.Request) owner.Viewer {
+	v := s.identity(r)
+	if s.opt.Public != nil {
+		v.Grants = s.grants
+		if aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter); aw != nil {
+			v.OnRead = func(id, basis string) {
+				if id == aw.record {
+					aw.basis, aw.decision = basis, "denied"
+					if basis != "none" {
+						aw.decision = "allowed"
+					}
+				}
+			}
+		}
+	}
+	return v
+}
+
+func (s *server) identity(r *http.Request) owner.Viewer {
+	if s.opt.Public == nil || s.fromThisComputer(r) {
+		return owner.LocalViewer()
+	}
+	aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter)
+	if aw == nil || aw.email == "" {
+		return owner.Viewer{}
+	}
+	if len(s.opt.OwnerEmails) == 0 {
+		return owner.LocalViewer()
+	}
+	for _, email := range s.opt.OwnerEmails {
+		if strings.EqualFold(strings.TrimSpace(email), aw.email) {
+			return owner.LocalViewer()
+		}
+	}
+	return owner.Viewer{ID: owner.Email(aw.email)}
+}
+
+// Requests via a local LAN address are not loopback and must not receive private local details.
 func (s *server) fromThisComputer(r *http.Request) bool {
 	if s.opt.Public != nil {
 		return false
@@ -579,14 +611,16 @@ func (s *server) fromThisComputer(r *http.Request) bool {
 	return err == nil && ip.Unmap().IsLoopback()
 }
 
-// run renders the run as it stands; a run still going streams the rest from
-// where this left off.
 func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	if !idRE.MatchString(r.PathValue("id")) {
 		s.missing(w, r, "Run "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
-	f, _, err := NewFollower(r.PathValue("id"), 0)
+	f, rec, err := NewFollower(r.PathValue("id"), 0)
+	// A public viewer gets one answer for missing, unreadable and foreign records, so ids cannot be probed.
+	if err != nil && s.opt.Public != nil || err == nil && !s.who(r).ReadRecord(r.PathValue("id"), rec.Owner, rec.Task.Dir) {
+		err = os.ErrNotExist
+	}
 	if err != nil {
 		s.missing(w, r, "Run "+r.PathValue("id"), err)
 		return
@@ -602,6 +636,9 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	events := make([]eventView, 0, len(lines))
 	var usage []agent.Event
 	for _, l := range lines {
+		if backendStart(l.Event, rec.Result.Backend) {
+			continue
+		}
 		var v eventView
 		l.Event = sh.event(s.cleanEvent(l.Event))
 		if feedsChart(l) {
@@ -616,7 +653,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 	p := runPageOf(sh.record(s.cleanRecord(rec)), events, prev, vw)
 	p.Usage = usageOf(usage)
 	p.Home = s.homeFor(r)
-	if !done {
+	if !done && p.Stopped == "" {
 		p.Stream = fmt.Sprintf("/stream/run/%s?after=%s", url.PathEscape(f.ID()), cursor{f.Offset(), prev})
 	}
 	s.page(w, http.StatusOK, "run", p)
@@ -627,7 +664,7 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 		s.missing(w, r, "Batch "+r.PathValue("id"), os.ErrNotExist)
 		return
 	}
-	res, err := batch.LoadResult(r.PathValue("id"))
+	res, err := batch.LoadResultFor(s.who(r), r.PathValue("id"))
 	if err != nil {
 		s.missing(w, r, "Batch "+r.PathValue("id"), err)
 		return
@@ -651,9 +688,7 @@ func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// cursor is where a run's stream resumes: the byte offset after the last
-// event sent, and that event's time, so the gap before the next one is right
-// after a reconnect too. It is each message's SSE id.
+// SSE IDs encode byte-offset.UnixNano so reconnects preserve both position and event gaps.
 type cursor struct {
 	off  int64
 	prev time.Time
@@ -681,7 +716,6 @@ func parseCursor(s string) (cursor, error) {
 	return c, nil
 }
 
-// stream is one Server-Sent Events response.
 type stream struct {
 	w    http.ResponseWriter
 	rc   *http.ResponseController
@@ -696,9 +730,7 @@ func (s *server) startStream(w http.ResponseWriter) *stream {
 	return st
 }
 
-// send writes one message. SSE ends a line at \r, \n or \r\n, so data is
-// split on all three: event text can never end a data line early and forge an
-// event, an id or a retry of its own.
+// Split CR, LF and CRLF so event text cannot forge SSE fields or messages.
 func (st *stream) send(event, id, data string) error {
 	var b strings.Builder
 	b.WriteString("event: " + event + "\n")
@@ -724,11 +756,14 @@ func (st *stream) write(s string) error {
 
 const keepAlive = 15 * time.Second
 
-// loop calls step every interval until step says it is done or fails, the
-// browser leaves or the server stops. It keeps a quiet connection alive.
-func (s *server) loop(r *http.Request, st *stream, every time.Duration, step func() (bool, error)) {
+// Stop on either context so shutdown never waits for an idle browser to disconnect.
+func (s *server) loop(r *http.Request, st *stream, every time.Duration, step func() (bool, error), wake ...<-chan struct{}) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
+	var changed <-chan struct{}
+	if len(wake) > 0 {
+		changed = wake[0]
+	}
 	for {
 		if done, err := step(); done || err != nil {
 			return
@@ -742,16 +777,16 @@ func (s *server) loop(r *http.Request, st *stream, every time.Duration, step fun
 		case <-s.ctx.Done():
 			return
 		case <-tick.C:
+		case <-changed:
 		}
 	}
 }
 
-// streamChanges sends the part a template renders whenever it changes, and
-// ends once it says nothing more will.
-func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration, next func() (data any, final bool, err error), name string) {
+// next returns end as "done", "stopped" or ""; clients receive it in the final SSE event.
+func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration, next func() (data any, end string, err error), name string, wake ...<-chan struct{}) {
 	last := ""
 	s.loop(r, st, every, func() (bool, error) {
-		data, final, err := next()
+		data, end, err := next()
 		if err != nil {
 			return true, s.problem(r, st, err)
 		}
@@ -765,11 +800,11 @@ func (s *server) streamChanges(r *http.Request, st *stream, every time.Duration,
 				return true, err
 			}
 		}
-		if final {
-			return true, st.send("end", "", "done")
+		if end != "" {
+			return true, st.send("end", "", end)
 		}
 		return false, nil
-	})
+	}, wake...)
 }
 
 func (s *server) problem(r *http.Request, st *stream, err error) error {
@@ -784,7 +819,7 @@ func (s *server) problem(r *http.Request, st *stream, err error) error {
 
 func (s *server) streamIndex(w http.ResponseWriter, r *http.Request) {
 	st := s.startStream(w)
-	s.streamChanges(r, st, 4*s.opt.Poll, func() (any, bool, error) { return s.lists(), false, nil }, "lists")
+	s.streamChanges(r, st, 4*s.opt.Poll, func() (any, string, error) { return s.lists(r), "", nil }, "lists")
 }
 
 func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
@@ -793,24 +828,32 @@ func (s *server) streamBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
 	}
-	last, err := batch.LoadResult(id)
+	v := s.who(r)
+	last, err := batch.LoadResultFor(v, id)
 	if err != nil {
 		http.Error(w, "batch not found", http.StatusNotFound)
 		return
 	}
 	vw := s.viewerOf(r)
 	st := s.startStream(w)
-	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, bool, error) {
-		res, err := batch.LoadResult(id)
+	s.streamChanges(r, st, 2*s.opt.Poll, func() (any, string, error) {
+		res, err := batch.LoadResultFor(v, id)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
-			return nil, true, fmt.Errorf("batch %s was removed", id)
+			return nil, "", fmt.Errorf("batch %s was removed", id)
 		case err != nil:
 			// Caught mid-save (a rename on Windows): show the last good copy.
 			res = last
 		}
 		last = res
-		return batchBodyOf(vw.batch(s.cleanBatch(res)), vw), !batchGoing(res), nil
+		body := batchBodyOf(vw.batch(s.cleanBatch(res)), vw)
+		end := ""
+		if body.Stopped != "" {
+			end = "stopped"
+		} else if !batchUnfinished(res) {
+			end = "done"
+		}
+		return body, end, nil
 	}, "batchbody")
 }
 
@@ -823,7 +866,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 	var cur cursor
 	var err error
 	if last := r.Header.Get("Last-Event-ID"); last != "" {
-		cur, err = parseCursor(last) // a browser reconnecting resumes here
+		cur, err = parseCursor(last)
 	} else if after := r.URL.Query().Get("after"); after != "" {
 		cur, err = parseCursor(after)
 	}
@@ -831,8 +874,9 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The follower reads a half-written result's task.json; the ownership check is on that record.
 	f, rec, err := NewFollower(id, cur.off)
-	if err != nil {
+	if err != nil || !s.who(r).ReadRecord(id, rec.Owner, rec.Task.Dir) {
 		http.Error(w, "run not found", http.StatusNotFound)
 		return
 	}
@@ -841,35 +885,36 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 		prev = rec.Started
 	}
 	sh := s.viewerOf(r).shortener(rec.Task.Dir)
-	// The chart is drawn over every turn, so a stream that starts partway
-	// reads the turns before it first.
-	before := Tail{Path: filepath.Join(runlog.Root(), id, "events.jsonl")}
-	earlier, err := before.Read()
-	if err != nil {
-		http.Error(w, "run not readable", http.StatusInternalServerError)
-		return
-	}
+	// Rebuild earlier usage on reconnect so the chart still covers every turn.
 	var usage []agent.Event
-	for _, l := range earlier {
-		if l.End <= cur.off && feedsChart(l) {
-			usage = append(usage, sh.event(s.cleanEvent(l.Event)))
+	if cur.off > 0 {
+		ef, err := os.Open(filepath.Join(runlog.Root(), id, "events.jsonl"))
+		var earlier []agent.Event
+		if err == nil {
+			earlier, err = runlog.UsageEvents(io.LimitReader(ef, cur.off))
+			ef.Close()
+		}
+		if err != nil {
+			http.Error(w, "run not readable", http.StatusInternalServerError)
+			return
+		}
+		for _, e := range earlier {
+			usage = append(usage, sh.event(s.cleanEvent(e)))
 		}
 	}
 	st := s.startStream(w)
 	s.loop(r, st, s.opt.Poll, func() (bool, error) {
 		lines, rec, done, err := f.Poll()
+		redraw := false
 		for _, l := range lines {
+			if backendStart(l.Event, rec.Result.Backend) {
+				continue
+			}
 			var v eventView
 			l.Event = sh.event(s.cleanEvent(l.Event))
 			if feedsChart(l) {
 				usage = append(usage, l.Event)
-				html, rerr := s.render("usage", usageOf(usage))
-				if rerr != nil {
-					return true, s.problem(r, st, rerr)
-				}
-				if werr := st.send("usage", cursor{l.End, prev}.String(), html); werr != nil {
-					return true, werr
-				}
+				redraw = true
 			}
 			if isUsage(l) {
 				continue
@@ -883,10 +928,30 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 				return true, werr
 			}
 		}
+		// Draw once per poll after steps so the large chart uses their final cursor.
+		if redraw {
+			html, rerr := s.render("usage", usageOf(usage))
+			if rerr != nil {
+				return true, s.problem(r, st, rerr)
+			}
+			if werr := st.send("usage", cursor{lines[len(lines)-1].End, prev}.String(), html); werr != nil {
+				return true, werr
+			}
+		}
 		if err != nil {
 			return true, s.problem(r, st, err)
 		}
 		if !done {
+			if at := runStopped(rec); !at.IsZero() {
+				html, err := s.render("stopped", noWord(at))
+				if err != nil {
+					return true, s.problem(r, st, err)
+				}
+				if err := st.send("result", "", html); err != nil {
+					return true, err
+				}
+				return true, st.send("end", "", "stopped")
+			}
 			return false, nil
 		}
 		html, err := s.render("result", resultOf(sh.record(s.cleanRecord(rec)).Result))

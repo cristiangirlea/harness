@@ -75,13 +75,13 @@ func TestFlagsSetTheOptions(t *testing.T) {
 	BindFlags(fs, &o)
 	err := fs.Parse([]string{"--model", "claude-sonnet-5", "--mode", "yolo", "--max-turns", "7", "--effort", "low",
 		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--lean", "--compact-window", "300000", "--allow-dangerous", "--inherit-env",
-		"--timeout", "90s", "--max-cost", "2.5", "--task-budget", "30000"})
+		"--timeout", "90s", "--max-cost", "2.5", "--task-budget", "30000", "--append-system-prompt", "be brief", "--no-skills"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Options{Model: "claude-sonnet-5", Mode: ModeYolo, MaxTurns: 7, Effort: "low", MCP: []string{"a.json", "b.json"},
 		NoInstructions: true, NoContextEdits: true, Lean: Bool(true), CompactWindow: "300000", AllowDangerous: true, InheritEnv: true,
-		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000}
+		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000, AppendSystemPrompt: "be brief", NoSkills: true}
 	if !reflect.DeepEqual(o, want) {
 		t.Errorf("parsed = %+v\nwant     %+v", o, want)
 	}
@@ -168,7 +168,9 @@ func TestLeanIsTriState(t *testing.T) {
 func TestCompactWindow(t *testing.T) {
 	for _, tc := range []struct {
 		json, want string
-	}{{`{}`, ""}, {`{"compact_window":200000}`, "200000"}, {`{"compact_window":"auto"}`, "auto"}} {
+	}{{`{}`, ""}, {`{"compact_window":200000}`, "200000"}, {`{"compact_window":"200000"}`, "200000"},
+		{`{"compact_window":"100000"}`, "100000"}, {`{"compact_window":"1000000"}`, "1000000"},
+		{`{"compact_window":"auto"}`, "auto"}} {
 		var o Options
 		if err := json.Unmarshal([]byte(tc.json), &o); err != nil {
 			t.Fatalf("%s: %v", tc.json, err)
@@ -188,7 +190,9 @@ func TestCompactWindow(t *testing.T) {
 	if b, _ := json.Marshal(Options{CompactWindow: "200000"}); !strings.Contains(string(b), `"compact_window":200000`) {
 		t.Errorf("a window is written as a number: %s", b)
 	}
-	for _, bad := range []string{`{"compact_window":"200000"}`, `{"compact_window":"200k"}`, `{"compact_window":true}`, `{"compact_window":2.5e5}`} {
+	for _, bad := range []string{`{"compact_window":"200k"}`, `{"compact_window":true}`, `{"compact_window":2.5e5}`,
+		`{"compact_window":"99999"}`, `{"compact_window":"1000001"}`, `{"compact_window":"0200000"}`,
+		`{"compact_window":"+200000"}`, `{"compact_window":"2.5e5"}`, `{"compact_window":""}`} {
 		var o Options
 		if err := json.Unmarshal([]byte(bad), &o); err == nil {
 			t.Errorf("%s must be refused, got %q", bad, o.CompactWindow)
@@ -231,6 +235,10 @@ func TestValidate(t *testing.T) {
 		{Options{MaxCostUSD: math.Inf(1)}, "finite"},
 		{Options{MaxCostUSD: math.Inf(-1)}, "finite"},
 		{Options{TaskBudget: 100}, "20000"},
+		{Options{AppendSystemPrompt: strings.Repeat("x", MaxAppendSystemPrompt+1)}, "at most 16384 fit"},
+		{Options{AppendSystemPrompt: strings.Repeat(`"`, MaxAppendSystemPrompt/2+1)}, "at most 16384 fit"},
+		{Options{AppendSystemPrompt: strings.Repeat(`\`, MaxAppendSystemPrompt/2+1)}, "at most 16384 fit"},
+		{Options{AppendSystemPrompt: "a\x00b"}, "NUL"},
 	} {
 		if err := tc.o.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%+v: err = %v, want %q", tc.o, err, tc.want)

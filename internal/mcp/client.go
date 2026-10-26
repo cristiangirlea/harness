@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
@@ -28,27 +29,21 @@ type ServerConfig struct {
 	Dir string `json:"-"`
 }
 
-// Client talks to one MCP server. Zero value fields are optional; call Start
-// (spawn a process) or Connect (existing pipes) before anything else.
+// Client requires Start or Connect before talking to an MCP server.
 type Client struct {
-	// Info is sent as clientInfo. Defaults to hrn.
-	Info Implementation
-	// Roots are the directories reported to servers that ask (roots/list).
+	// Info defaults to hrn in the handshake.
+	Info  Implementation
 	Roots []string
-	// Capabilities are declared to the server on top of roots, so it knows what
-	// it may ask this client to do.
+	// Capabilities extends roots with permitted server requests.
 	Capabilities map[string]any
-	// Elicit answers a server's elicitation/create. Nil means the client cannot
-	// ask its user anything, and the server is told so.
+	// Elicit enables user questions; nil advertises no elicitation.
 	Elicit func(ctx context.Context, params json.RawMessage) (any, error)
 	// Log receives the server's warning/error log notifications. Nil discards.
 	Log func(string)
-	// Progress receives progress messages for in-flight tool calls. When set,
-	// calls ask the server for progress; when nil they do not.
+	// Progress enables and receives call progress messages.
 	Progress func(string)
 
-	// StartupTimeout bounds the initialize handshake. Default 60s: npx servers
-	// may install on first use.
+	// StartupTimeout defaults to 60s to allow first-use npx installs.
 	StartupTimeout time.Duration
 
 	cmd    *exec.Cmd
@@ -59,8 +54,7 @@ type Client struct {
 	mu      sync.Mutex
 	nextID  int64
 	pending map[string]chan *message
-	// asking holds the questions this client is putting to its user, so a
-	// request the server withdraws stops waiting for an answer.
+	// Withdrawn questions must stop waiting for user answers.
 	asking  map[string]context.CancelFunc
 	done    chan struct{} // closed when the read loop exits
 	exitErr error
@@ -77,7 +71,8 @@ func (c *Client) Start(ctx context.Context, cfg ServerConfig) error {
 	}
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Dir = cfg.Dir
-	cmd.Env = os.Environ()
+	// Strip hrn's git repo variables; allow explicit server overrides.
+	cmd.Env = gitenv.WithoutRepoVars(os.Environ())
 	for k, v := range cfg.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -106,8 +101,7 @@ func (c *Client) Start(ctx context.Context, cfg ServerConfig) error {
 	return nil
 }
 
-// Connect performs the handshake over an existing pair of streams (r carries
-// the server's output, w feeds its input) and lists the server's tools.
+// Connect handshakes and lists tools over server output r and input w.
 func (c *Client) Connect(ctx context.Context, r io.Reader, w io.Writer) error {
 	if c.Info.Name == "" {
 		c.Info = Implementation{Name: "hrn", Version: "dev"}
@@ -167,13 +161,16 @@ func (c *Client) listTools(ctx context.Context) ([]ToolInfo, error) {
 	}
 }
 
-// ServerInfo, Instructions and Tools report what the handshake returned.
+// ServerInfo returns the handshake's implementation.
 func (c *Client) ServerInfo() Implementation { return c.server }
-func (c *Client) Instructions() string       { return c.instructions }
-func (c *Client) Tools() []ToolInfo          { return c.tools }
 
-// CallTool invokes a tool. A tool-reported failure comes back as
-// CallResult.IsError with a nil error; a nil error and IsError false is success.
+// Instructions returns the handshake's server instructions.
+func (c *Client) Instructions() string { return c.instructions }
+
+// Tools returns the tools listed after the handshake.
+func (c *Client) Tools() []ToolInfo { return c.tools }
+
+// CallTool reports tool failures via IsError, distinct from RPC errors.
 func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage) (CallResult, error) {
 	if len(args) == 0 {
 		args = json.RawMessage("{}")
@@ -192,8 +189,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	return c.call(ctx, "ping", nil, nil)
 }
 
-// Close ends the session. A spawned server gets its stdin closed first and is
-// killed if it does not exit promptly.
+// Close closes spawned servers' stdin before killing them if needed.
 func (c *Client) Close() error {
 	if c.stdin != nil {
 		_ = c.stdin.Close()
@@ -298,7 +294,7 @@ func (c *Client) readLoop() {
 	}
 }
 
-// handleRequest answers the few requests a server may send to a client.
+// Refuse server requests beyond ping, enabled elicitation and roots/list.
 func (c *Client) handleRequest(m *message) {
 	switch m.Method {
 	case "ping":
@@ -389,7 +385,6 @@ func fileURI(dir string) string {
 	return (&url.URL{Scheme: "file", Path: p}).String()
 }
 
-// tail keeps the last lines written to it, for error messages.
 type tail struct {
 	mu    sync.Mutex
 	max   int

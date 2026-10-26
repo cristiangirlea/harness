@@ -91,6 +91,20 @@ func TestALowerBoundIsNotFlooredBelowAnExactDecimalSum(t *testing.T) {
 	}
 }
 
+func TestALowerBoundOfManyCostsAboveAHundredDollarsIsTheirExactSum(t *testing.T) {
+	var runs []runlog.Record
+	for range 45 {
+		runs = append(runs, runlog.Record{Backend: "claude", Done: true, Task: agent.Task{Prompt: "fix the login bug"},
+			Result: agent.Result{Backend: "claude", Status: agent.StatusOK, CostUSD: 2.71}})
+	}
+	runs = append(runs, runlog.Record{Backend: "codex", Done: true, Task: agent.Task{Prompt: "fix the logout bug"},
+		Result: agent.Result{Backend: "codex", Status: agent.StatusOK}})
+
+	if r := purposeRowOf(t, purposesOf(runs), "debug"); r.Cost != "≥ $121.9500" {
+		t.Errorf("debug row = %+v", r)
+	}
+}
+
 func TestAllCostsKnownGiveTheSumAndNoneKnownGiveADash(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.01, InputTokens: 1000, OutputTokens: 200, CacheRead: 300, CacheWrite: 5000})
@@ -103,6 +117,30 @@ func TestAllCostsKnownGiveTheSumAndNoneKnownGiveADash(t *testing.T) {
 	}
 	if r := purposeRowOf(t, c, "implement"); r.Cost != "-" || r.NoCost != "1 run reports no cost" || r.Tokens != "40" {
 		t.Errorf("implement row = %+v", r)
+	}
+}
+
+func TestAKnownCostTooSmallToRoundIsStillANumber(t *testing.T) {
+	runs := []runlog.Record{{Backend: "claude", Done: true, Task: agent.Task{Prompt: "fix the login bug"},
+		Result: agent.Result{Backend: "claude", Status: agent.StatusOK, CostUSD: 1e-9}}}
+	if r := purposeRowOf(t, purposesOf(runs), "debug"); r.Cost != "$0.0000" || r.NoCost != "" {
+		t.Errorf("debug row = %+v", r)
+	}
+	runs[0].Result.CostEstimate = true
+	if r := purposeRowOf(t, purposesOf(runs), "debug"); r.Cost != "~$0.0000" {
+		t.Errorf("estimated debug row = %+v", r)
+	}
+}
+
+// Only a corrupted record holds such a cost: it is not added, so the sum of the
+// others stays right on every platform.
+func TestACostTooLargeForTheSumIsNotAdded(t *testing.T) {
+	runs := []runlog.Record{
+		{Backend: "claude", Done: true, Task: agent.Task{Prompt: "fix the login bug"}, Result: agent.Result{Backend: "claude", Status: agent.StatusOK, CostUSD: 1e300}},
+		{Backend: "claude", Done: true, Task: agent.Task{Prompt: "fix the logout bug"}, Result: agent.Result{Backend: "claude", Status: agent.StatusOK, CostUSD: 0.5}},
+	}
+	if r := purposeRowOf(t, purposesOf(runs), "debug"); r.Cost != "≥ $0.5000" || r.NoCost != "1 run reports no cost" {
+		t.Errorf("debug row = %+v", r)
 	}
 }
 
@@ -262,10 +300,10 @@ func TestTheIndexAndItsStreamShowPurposes(t *testing.T) {
 				t.Errorf("%s lacks %q", where, want)
 			}
 		}
-		if row := runRowOf(t, html, fix); !strings.Contains(row, `title="debug.fix">debug</td>`) {
+		if row := runRowOf(t, html, fix); !strings.Contains(row, `<td class="meta purpose" title="debug.fix">debug</td>`) {
 			t.Errorf("%s: the purpose cell lacks its rule id:\n%s", where, row)
 		}
-		if row := runRowOf(t, html, other); !strings.Contains(row, `<td class="meta">unknown</td>`) {
+		if row := runRowOf(t, html, other); !strings.Contains(row, `<td class="meta purpose">unknown</td>`) {
 			t.Errorf("%s: an unknown purpose has a title or no cell:\n%s", where, row)
 		}
 	}
@@ -307,5 +345,14 @@ func TestWatchPrefersDeclaredPurposesAndKeepsClassifierTitles(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %s", want)
 		}
+	}
+}
+
+func TestARunsPurposeStaysOnOneLine(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
+	defer srv.Close()
+	if _, css := get(t, srv.URL+"/static/watch.css"); !strings.Contains(css, "td.purpose { white-space: nowrap; }") {
+		t.Error("the stylesheet lets a run's purpose break across lines")
 	}
 }

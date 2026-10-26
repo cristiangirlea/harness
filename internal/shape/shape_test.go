@@ -1,8 +1,10 @@
 package shape
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClassify(t *testing.T) {
@@ -120,9 +122,113 @@ func TestAmbiguousParallelDiagnosticsFallBack(t *testing.T) {
 	for _, text := range []string{
 		"counts 0 2\n=== RUN   TestA\n=== RUN   TestB\n    unattributed diagnostic\n--- FAIL: TestA (0.00s)\n--- FAIL: TestB (0.00s)\nFAIL\n",
 		"counts 0 2\n    first unattributed diagnostic\n    second unattributed diagnostic\n--- FAIL: TestA (0.00s)\n--- FAIL: TestB (0.00s)\nFAIL\n",
+		"=== RUN   TestP\n=== RUN   TestP/a\n=== PAUSE TestP/a\n=== RUN   TestP/b\n=== PAUSE TestP/b\n=== CONT  TestP/a\n=== CONT  TestP/b\n=== RUN   TestP/a/s\n    unattributed diagnostic\n--- FAIL: TestP (0.00s)\n    --- FAIL: TestP/a (0.00s)\n        --- FAIL: TestP/a/s (0.00s)\n    --- FAIL: TestP/b (0.00s)\nFAIL\n",
 	} {
 		if _, ok := Summarize(Test, text); ok {
 			t.Fatal("accepted diagnostics with ambiguous ownership")
+		}
+	}
+}
+
+func TestSequentialSubtestDiagnosticsStayWithTheirSubtest(t *testing.T) {
+	text := "=== RUN   TestA\n    a_test.go:3: setup\n=== RUN   TestA/one\n    a_test.go:5: one got 1\n=== RUN   TestA/two\n    a_test.go:9: two logged\n=== RUN   TestA/three\n    a_test.go:12: three got 3\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/one (0.00s)\n    --- PASS: TestA/two (0.00s)\n    --- FAIL: TestA/three (0.00s)\nFAIL\n"
+	want := "tests: passed=1 failed=3\n=== RUN   TestA\n    a_test.go:3: setup\n=== RUN   TestA/one\n    a_test.go:5: one got 1\n=== RUN   TestA/three\n    a_test.go:12: three got 3\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/one (0.00s)\n    --- FAIL: TestA/three (0.00s)\nFAIL"
+	if s, ok := Summarize(Test, text); !ok || s != want {
+		t.Fatalf("sequential subtest output fell back: %q ok=%v", s, ok)
+	}
+	if valid(Test, text, strings.Replace(want, "=== RUN   TestA/three\n", "", 1)) {
+		t.Fatal("accepted a diagnostic moved to an earlier subtest")
+	}
+}
+
+func TestSubtestNamesWithSlashesEndTheirSiblings(t *testing.T) {
+	for _, tc := range []struct{ name, text, want string }{
+		{"slashed last",
+			"counts 1 2\n=== RUN   TestA\n=== RUN   TestA/c\n=== RUN   TestA/a/b\n    a_test.go:5: b got 1\n--- FAIL: TestA (0.00s)\n    --- PASS: TestA/c (0.00s)\n    --- FAIL: TestA/a/b (0.00s)\nFAIL\n",
+			"tests: passed=1 failed=2\n=== RUN   TestA\n=== RUN   TestA/a/b\n    a_test.go:5: b got 1\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/a/b (0.00s)\nFAIL"},
+		{"slashed first",
+			"counts 1 2\n=== RUN   TestA\n=== RUN   TestA/a/b\n=== RUN   TestA/c\n    a_test.go:5: c got 1\n--- FAIL: TestA (0.00s)\n    --- PASS: TestA/a/b (0.00s)\n    --- FAIL: TestA/c (0.00s)\nFAIL\n",
+			"tests: passed=1 failed=2\n=== RUN   TestA\n=== RUN   TestA/c\n    a_test.go:5: c got 1\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/c (0.00s)\nFAIL"},
+	} {
+		if s, ok := Summarize(Test, tc.text); !ok || s != tc.want {
+			t.Errorf("%s: %q ok=%v", tc.name, s, ok)
+		}
+	}
+}
+
+func TestALongSlashHeavyTestNameFallsBackQuickly(t *testing.T) {
+	run := func(name string) time.Duration {
+		var b strings.Builder
+		for i := range 21 {
+			fmt.Fprintf(&b, "=== RUN   TestA%s\n", strings.Repeat("/x", i))
+		}
+		fmt.Fprintf(&b, "=== RUN   %s\n--- FAIL: TestA (0.00s)\nFAIL\n", name)
+		best := time.Duration(1 << 62)
+		for range 3 {
+			start := time.Now()
+			Summarize(Test, b.String())
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	size := 256 << 10
+	slashed := run("TestA/" + strings.Repeat("a/", size/2))
+	flat := run("TestA/" + strings.Repeat("a", size))
+	if slashHeavyNameTooSlow(slashed, flat) {
+		t.Errorf("a slash-heavy name took %v, a flat one of the same length %v", slashed, flat)
+	}
+}
+
+func slashHeavyNameTooSlow(slashed, flat time.Duration) bool {
+	// Coarse timers can round the flat case down to zero.
+	return slashed > 10*max(flat, time.Millisecond)
+}
+
+func TestSlashHeavyNameTimingUsesAFloorWithoutHidingSlowNames(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		slashed, flat time.Duration
+		wantSlow      bool
+	}{
+		{"zero flat timing", 2500 * time.Microsecond, 0, false},
+		{"submillisecond flat timing", 2500 * time.Microsecond, time.Microsecond, false},
+		{"floor boundary", 10 * time.Millisecond, 0, false},
+		{"over floor", 10*time.Millisecond + time.Nanosecond, 0, true},
+		{"measured boundary", 20 * time.Millisecond, 2 * time.Millisecond, false},
+		{"over measured limit", 20*time.Millisecond + time.Nanosecond, 2 * time.Millisecond, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := slashHeavyNameTooSlow(tc.slashed, tc.flat); got != tc.wantSlow {
+				t.Errorf("slash-heavy timing %v, flat timing %v: slow=%v, want %v", tc.slashed, tc.flat, got, tc.wantSlow)
+			}
+		})
+	}
+}
+
+func TestANameMarkerGivesTheParentItsDiagnosticAfterASubtest(t *testing.T) {
+	text := "=== RUN   TestA\n=== RUN   TestA/one\n=== NAME  TestA\n    a_test.go:1: parent got 2\n--- FAIL: TestA (0.00s)\n    --- PASS: TestA/one (0.00s)\nFAIL\n"
+	want := "tests: passed=1 failed=1\n=== RUN   TestA\n=== NAME  TestA\n    a_test.go:1: parent got 2\n--- FAIL: TestA (0.00s)\nFAIL"
+	if s, ok := Summarize(Test, text); !ok || s != want {
+		t.Fatalf("parent diagnostic lost: %q ok=%v", s, ok)
+	}
+}
+
+func TestManyRunLinesWithoutResultsStayFast(t *testing.T) {
+	var flat, nested, named strings.Builder
+	for i := range 20000 {
+		fmt.Fprintf(&flat, "=== RUN   TestCase%d\n", i)
+		fmt.Fprintf(&nested, "=== RUN   TestCase%d\n=== RUN   TestCase%d/sub\n", i, i)
+		fmt.Fprintf(&named, "=== RUN   TestCase%d\n", i)
+	}
+	named.WriteString("=== NAME  TestCase0\n")
+	for range 20000 {
+		named.WriteString("    case_test.go:1: still logging\n")
+	}
+	for _, text := range []string{flat.String(), nested.String(), named.String()} {
+		start := time.Now()
+		testFailures(strings.Split(text, "\n"))
+		if d := time.Since(start); d > 5*time.Second {
+			t.Fatalf("%d lines took %s", strings.Count(text, "\n"), d)
 		}
 	}
 }

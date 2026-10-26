@@ -21,8 +21,7 @@ import (
 
 const DefaultAPIModel = "claude-opus-5"
 
-// APIBackend is the harness's own agent loop over the Anthropic Messages API,
-// using the client-side tools in package tools.
+// APIBackend runs the Anthropic Messages loop with local tools.
 type APIBackend struct {
 	Tools []tools.Tool
 	// BaseURL and APIKey override ANTHROPIC_BASE_URL and the env credentials.
@@ -37,6 +36,40 @@ func NewAPIBackend() *APIBackend {
 }
 
 func (b *APIBackend) Name() string { return "api" }
+
+// AppliesSystemPrompt reports support for appended guidance.
+func (b *APIBackend) AppliesSystemPrompt() bool { return true }
+
+func (b *APIBackend) offeredTools(task Task, mcpTools []tools.Tool) (map[string]tools.Tool, []apiTool) {
+	toolset := b.Tools
+	if task.ShapeTools {
+		toolset = append(append([]tools.Tool(nil), toolset...), tools.ReadOriginal())
+	}
+	toolset = append(append([]tools.Tool(nil), toolset...), mcpTools...)
+	byName := map[string]tools.Tool{}
+	var apiTools []apiTool
+	for _, t := range toolset {
+		if task.Mode == ModeReadOnly && t.Effect != tools.EffectRead {
+			continue // don't offer tools the mode can never allow
+		}
+		byName[t.Name] = t
+		schema := t.Schema
+		if schema == nil {
+			schema = map[string]any{"type": "object", "properties": t.Properties}
+			if len(t.Required) > 0 {
+				schema["required"] = t.Required
+			}
+		}
+		apiTools = append(apiTools, apiTool{Name: t.Name, Description: t.Description, InputSchema: schema})
+	}
+	return byName, apiTools
+}
+
+// ToolDefinitions excludes MCP tools until servers start.
+func (b *APIBackend) ToolDefinitions(task Task) ([]byte, error) {
+	_, apiTools := b.offeredTools(task, nil)
+	return json.Marshal(apiTools)
+}
 
 func (b *APIBackend) Detect() (string, error) {
 	if b.APIKey != "" {
@@ -91,7 +124,6 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	res := Result{Backend: b.Name(), Model: model, CostEstimate: true}
 	if _, priced := priceOf(model); !priced {
-		// Without a price the cost reads as zero, which looks like free.
 		text := fmt.Sprintf("no price known for %s: its cost is not estimated", model)
 		if task.MaxCostUSD > 0 {
 			text = fmt.Sprintf("max_cost cannot be enforced: no price known for %s", model)
@@ -99,12 +131,11 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text})
 	}
 	if task.CompactWindow != "" {
-		// The api loop has no compaction of its own; context editing, on by
-		// default, is what keeps its requests small.
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "compact_window: not enforced by the api backend"})
 	}
-	// req is built below; saveConversation closes over it so every exit path
-	// leaves a resumable history behind.
+	if task.NoSkills {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "no_skills: not enforced by the api backend"})
+	}
 	var req apiRequest
 	saveConversation := func() {
 		if task.RunDir == "" || task.Durable != nil {
@@ -112,13 +143,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		msgs := resumable(req.Messages)
 		if len(msgs) == 0 {
-			// A run that failed before it built a request has nothing to
-			// continue from, and an empty file would look like it had.
 			return
 		}
 		conv := Conversation{Model: res.Model, Messages: msgs, Retrieval: task.RetrievalState}
-		// Compact: this file is read back by hrn, not by people, and it already
-		// repeats every tool result the transcript holds.
 		if data, err := json.Marshal(conv); err == nil {
 			_ = os.WriteFile(filepath.Join(task.RunDir, "messages.json"), data, 0o644)
 		}
@@ -152,10 +179,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		maxTurns = 50
 	}
 
-	toolset := b.Tools
-	if task.ShapeTools {
-		toolset = append(append([]tools.Tool(nil), toolset...), tools.ReadOriginal())
-	}
+	var mcpTools []tools.Tool
 	if len(task.MCP) > 0 {
 		clients, extra := startMCP(ctx, task, ws.Root, emit)
 		defer func() {
@@ -163,25 +187,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 				_ = c.Close()
 			}
 		}()
-		toolset = append(append([]tools.Tool(nil), toolset...), extra...)
+		mcpTools = extra
 	}
-
-	byName := map[string]tools.Tool{}
-	var apiTools []apiTool
-	for _, t := range toolset {
-		if task.Mode == ModeReadOnly && t.Effect != tools.EffectRead {
-			continue // don't offer tools the mode can never allow
-		}
-		byName[t.Name] = t
-		schema := t.Schema
-		if schema == nil {
-			schema = map[string]any{"type": "object", "properties": t.Properties}
-			if len(t.Required) > 0 {
-				schema["required"] = t.Required
-			}
-		}
-		apiTools = append(apiTools, apiTool{Name: t.Name, Description: t.Description, InputSchema: schema})
-	}
+	byName, apiTools := b.offeredTools(task, mcpTools)
 
 	shell, _ := tools.Shell()
 	guard := "on (a few destructive or publishing command lines are refused)"
@@ -195,8 +203,6 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	system := []block{{"type": "text", "text": systemPrompt}}
 	if !task.NoInstructions {
 		if text, names, truncated, err := loadInstructions(ws); err != nil {
-			// Missing files are normal; an unreadable one is worth saying out
-			// loud, but it must not fail the run.
 			emit(Event{Time: time.Now(), Kind: EventError, Text: "project instructions: " + err.Error()})
 		} else if text != "" {
 			system = append(system, block{"type": "text", "text": text})
@@ -208,8 +214,10 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 				Text: fmt.Sprintf("instructions: %s (%.1f KB%s)", strings.Join(names, ", "), float64(len(text))/1024, note)})
 		}
 	}
-	// Constant for the whole run, so this breakpoint caches tools, prompt and
-	// instructions together.
+	if task.AppendSystemPrompt != "" {
+		system = append(system, block{"type": "text", "text": task.AppendSystemPrompt})
+	}
+	// Cache tools, prompt, and instructions as one constant prefix.
 	system = append(system, block{"type": "text", "text": env, "cache_control": ephemeral})
 
 	req = apiRequest{
@@ -218,7 +226,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		System:    system,
 		Tools:     apiTools,
 		Thinking:  block{"type": "adaptive", "display": "summarized"},
-		// Top-level breakpoint follows the conversation so history is cached too.
+		// Cache history as well as the constant prefix.
 		CacheControl: ephemeral,
 		Messages:     resumeMessages(task),
 	}
@@ -229,22 +237,16 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		if req.OutputConfig == nil {
 			req.OutputConfig = block{}
 		}
-		// remaining stays unset: hrn resends the whole history every turn, so
-		// the server tracks the countdown better than the client could.
+		// Leave remaining unset: the server counts down better across full-history resends.
 		req.OutputConfig["task_budget"] = block{"type": "tokens", "total": task.TaskBudget}
 		req.betas = append(req.betas, betaTaskBudget)
 	}
 	if !task.NoContextEdits {
-		// The client history stays append-only and the whole of it is still
-		// uploaded; what the server clears is what the model is given, which
-		// is what fills the context window and what the input is billed on. A
-		// clear invalidates the cached prefix from that point, which is the
-		// trade, and it is unmeasured against a real long run.
+		// Server clearing cuts billed context without rewriting client history.
 		req.ContextManagement = block{"edits": []block{{"type": "clear_tool_uses_20250919"}}}
 		req.betas = append(req.betas, betaContextEdits)
 	}
 	if supportsDefaultFallbacks(model) {
-		// A refusal is re-served by a fallback model inside the same call.
 		req.Fallbacks = "default"
 		req.betas = append(req.betas, betaFallback)
 	}
@@ -275,8 +277,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	firstTurn := 1
 	if durable != nil {
-		// Generic HTTP retries can repeat requests whose effects are unknown.
-		// The local path retains its historical retry behavior.
+		// Unknown request effects forbid automatic retries.
 		client.maxRetries = 0
 		firstTurn = durable.checkpoint.NextTurn
 		if durable.checkpoint.Finished {
@@ -289,6 +290,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 	}
 	durableFailure := func(err error) Result {
+		if durable.checkpoint.Pending == nil && ctx.Err() != nil && err == ctx.Err() {
+			return fail(stopStatus(ctx), ctx.Err())
+		}
 		res.RecoveryRequired = true
 		return fail(StatusError, fmt.Errorf("durable execution: %w", err))
 	}
@@ -319,12 +323,38 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 					return durableFailure(err)
 				}
 			}
-			msg, err = client.stream(ctx, req, onDelta, onBlock)
-		}
-		if err != nil && durable == nil && dropContextEdits(&req, err) {
-			// A beta hrn sends by default must never make every run fail.
-			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
-			msg, err = client.stream(ctx, req, onDelta, onBlock)
+			for {
+				msg, err = client.stream(ctx, req, onDelta, onBlock)
+				retry := err != nil && dropContextEdits(&req, err)
+				if err != nil && durable != nil {
+					var apiErr *apiError
+					if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && !apiErr.retryable() {
+						// A definite rejection had no effect; Finished stops a resume resending it.
+						durable.checkpoint.Pending = nil
+						rejected := res
+						if !retry {
+							durable.checkpoint.Finished = true
+							rejected.Status, rejected.Error = StatusError, err.Error()
+						}
+						if saveErr := durable.persist(ctx, "model_rejected", req, rejected); saveErr != nil {
+							return durableFailure(saveErr)
+						}
+					}
+				}
+				if !retry {
+					break
+				}
+				emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
+				if durable != nil {
+					if err := ctx.Err(); err != nil {
+						return fail(stopStatus(ctx), err)
+					}
+					durable.checkpoint.Pending = &PendingOperation{Kind: "model", ID: fmt.Sprintf("turn-%d", turn)}
+					if err := durable.persist(ctx, "model_intent", req, res); err != nil {
+						return durableFailure(err)
+					}
+				}
+			}
 		}
 		if msg != nil && !restoredResponse {
 			turn := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens,
@@ -333,15 +363,14 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			emit(Event{Time: time.Now(), Kind: EventUsage, Usage: &Usage{Model: servedModel(msg.Model, model),
 				InputTokens: turn.InputTokens, OutputTokens: turn.OutputTokens,
 				CacheRead: turn.CacheRead, CacheWrite: turn.CacheWrite, ContextTokens: res.ContextTokens}})
-			res.InputTokens += turn.InputTokens
-			res.OutputTokens += turn.OutputTokens
-			res.CacheRead += turn.CacheRead
-			res.CacheWrite += turn.CacheWrite
-			// Each turn at the price of the model that served it: a server-side
-			// fallback can answer a refused turn with another model.
-			res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
+			if res.addUsage("exclusive_cache", turn.InputTokens, turn.OutputTokens, turn.CacheRead, turn.CacheWrite) {
+				// Fallback turns must use their serving model's price.
+				res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
+			} else {
+				res.Usage.CostStatus = "missing"
+			}
 		}
-		if err != nil && durable != nil {
+		if err != nil && durable != nil && durable.checkpoint.Pending != nil {
 			return durableFailure(err)
 		}
 		if err != nil {
@@ -355,8 +384,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			res.ModelReported = true
 		}
 		if present(msg.ContextManagement) {
-			// Verbatim, so a comparison of two runs can attribute a token
-			// difference to what the server cleared.
+			// Preserve edits for context-cost comparisons.
 			var compact bytes.Buffer
 			if json.Compact(&compact, msg.ContextManagement) != nil {
 				compact.Reset()
@@ -364,7 +392,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			}
 			emit(Event{Time: time.Now(), Kind: EventInfo, Text: "server context management, turn " + strconv.Itoa(turn) + ": " + compact.String()})
 		}
-		// History is append-only: the assistant turn goes back exactly as received.
+		// Return assistant blocks verbatim to preserve thinking signatures.
 		if !restoredResponse {
 			req.Messages = append(req.Messages, apiMessage{Role: "assistant", Content: msg.Content})
 			if durable != nil {
@@ -469,7 +497,7 @@ func (b *APIBackend) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 	}
 	var reads, others []job
 
-	// Approvals are decided up front and in order, so prompts never interleave.
+	// Decide approvals up front and in order, so prompts never interleave.
 	for i, call := range calls {
 		name, id := str(call["name"]), str(call["id"])
 		input, _ := json.Marshal(call["input"])
@@ -484,9 +512,8 @@ func (b *APIBackend) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 			result(i, name, fmt.Sprintf("unknown tool %q", name), true)
 		case invalid[id] != "":
 			result(i, name, "tool input was not valid JSON: "+invalid[id], true)
+		// Refuse before asking: a yes for a call the guard refuses is wasted.
 		case refusalOf(t, ws, input) != "":
-			// Asked before the approval below: prompting for a command the
-			// harness will refuse anyway only wastes the operator's yes.
 			result(i, name, tools.GuardError(refusalOf(t, ws, input)).Error(), true)
 		case !allowed(task, t, summary):
 			result(i, name, "Permission denied by the user's harness settings.", true)
@@ -509,8 +536,7 @@ func (b *APIBackend) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 		result(j.i, j.tool.Name, out, err != nil)
 	}
 
-	// Reads have no side effects and run in parallel; writes and commands run
-	// one at a time in the order the model asked for them.
+	// Only reads may overlap; keep side effects in model order.
 	var wg sync.WaitGroup
 	for _, j := range reads {
 		wg.Add(1)
@@ -523,7 +549,6 @@ func (b *APIBackend) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 	return results
 }
 
-// refusalOf asks a tool whether it declines this call outright.
 func refusalOf(t tools.Tool, ws *tools.Workspace, input json.RawMessage) string {
 	if t.Refuse == nil {
 		return ""
@@ -548,8 +573,6 @@ func allowed(task Task, t tools.Tool, summary string) bool {
 	return task.Approve(ApprovalRequest{Tool: t.Name, Summary: summary})
 }
 
-// resumeMessages starts the history: an earlier conversation when the task
-// continues one, then this task's prompt as the new user turn.
 func resumeMessages(task Task) []apiMessage {
 	var msgs []apiMessage
 	if task.Resume != nil {
@@ -558,8 +581,7 @@ func resumeMessages(task Task) []apiMessage {
 	return append(msgs, apiMessage{Role: "user", Content: []block{{"type": "text", "text": task.Prompt}}})
 }
 
-// resumable drops a trailing assistant turn whose tool calls were never
-// answered: the API refuses a history that ends on an unanswered call.
+// The API refuses history ending with unanswered tool calls.
 func resumable(msgs []apiMessage) []apiMessage {
 	if n := len(msgs); n > 0 && msgs[n-1].Role == "assistant" {
 		for _, bl := range msgs[n-1].Content {
@@ -571,8 +593,7 @@ func resumable(msgs []apiMessage) []apiMessage {
 	return msgs
 }
 
-// dropContextEdits removes the context-management request when the API is the
-// one refusing it, so the run continues instead of failing on every turn.
+// Retry without context management when the API refuses it.
 func dropContextEdits(req *apiRequest, err error) bool {
 	var apiErr *apiError
 	if req.ContextManagement == nil || !errors.As(err, &apiErr) || apiErr.Status != 400 {
@@ -596,18 +617,14 @@ func supportsDefaultFallbacks(model string) bool {
 	return model == "claude-opus-5" || model == "claude-fable-5-1"
 }
 
-// price is USD per million tokens. The API returns token counts, never money,
-// so every cost hrn shows for the api backend comes from this table.
+// price is USD per million tokens.
 type price struct {
 	in, out float64
-	// cacheRead is set where it is not the usual 0.1x input: the newest
-	// models price cache reads on their own. 5-minute cache writes are 1.25x
-	// input on every model.
+	// cacheRead overrides 0.1x input; writes cost 1.25x.
 	cacheRead float64
 }
 
-// prices are Anthropic's first-party list prices, as published on 2026-06-24.
-// Bedrock and Vertex price separately; their costs here are estimates at best.
+// First-party rates may differ from Bedrock and Vertex.
 var prices = map[string]price{
 	"claude-fable-5-1":  {in: 10, out: 50, cacheRead: 0.25},
 	"claude-mythos-5-1": {in: 10, out: 50},
@@ -622,11 +639,8 @@ var prices = map[string]price{
 	"claude-haiku-4-5":  {in: 1, out: 5},
 }
 
-// datedSuffix is a snapshot date on a model id: -20251001, or @20251001 on
-// Vertex. The snapshot bills as its model.
 var datedSuffix = regexp.MustCompile(`[-@]\d{8}$`)
 
-// priceOf finds a model's price, looking a dated snapshot id up by its model.
 func priceOf(model string) (price, bool) {
 	if p, ok := prices[model]; ok {
 		return p, true
@@ -635,8 +649,6 @@ func priceOf(model string) (price, bool) {
 	return p, ok
 }
 
-// servedModel is the model to price a turn at: the one the response names when
-// the table knows it, otherwise the one the run asked for.
 func servedModel(reported, requested string) string {
 	if _, ok := priceOf(reported); ok {
 		return reported

@@ -15,6 +15,36 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
+func TestLoadUsesDirectoryID(t *testing.T) {
+	for _, file := range []string{"result.json", "task.json"} {
+		for _, storedID := range []string{"../outside", "20261014-120000-abcdef"} {
+			t.Run(file+"/"+storedID, func(t *testing.T) {
+				t.Setenv("HRN_HOME", t.TempDir())
+				id := "20261014-130000-abcdef"
+				dir := filepath.Join(Root(), id)
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				want := Record{ID: storedID, Backend: "stub", Task: agent.Task{Prompt: "keep me"}}
+				if err := writeJSON(filepath.Join(dir, file), want); err != nil {
+					t.Fatal(err)
+				}
+				rec, err := Load(id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rec.ID != id || rec.Done != (file == "result.json") || rec.Backend != want.Backend || rec.Task.Prompt != want.Task.Prompt {
+					t.Fatalf("loaded record = %+v, want ID %q and contents preserved", rec, id)
+				}
+				recs, err := List(0)
+				if err != nil || len(recs) != 1 || recs[0].ID != id {
+					t.Fatalf("listed records = %+v, error = %v", recs, err)
+				}
+			})
+		}
+	}
+}
+
 func TestOldTaskRecordsLoadWithoutAPurpose(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	id := "20261014-120000-abcdef"
@@ -36,9 +66,9 @@ func TestOldTaskRecordsLoadWithoutAPurpose(t *testing.T) {
 	}
 }
 
-func TestRoutingRecordAndLegacy(t *testing.T) {
+func TestARoutedRunKeepsItsRowAndAnOldRecordLoadsWithoutOne(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	by := &RoutedBy{Category: "implement", Eval: "e1", Set: "2026-10-12"}
+	by := &RoutedBy{Category: "implement", Declared: true, Eval: "e1", Set: "2026-10-12"}
 	w, err := CreateContinuing("codex", agent.Task{Prompt: "Implement widget"}, "", by)
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +98,39 @@ func TestRoutingRecordAndLegacy(t *testing.T) {
 	data, _ = json.Marshal(r)
 	if strings.Contains(string(data), "routed_by") {
 		t.Fatalf("legacy gained field: %s", data)
+	}
+}
+
+func TestRouteNoteIsSavedForTaskAndResultAndOldRecordsLoad(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := CreateRouted("stub", agent.Task{Prompt: "p"}, "", "", nil, "backend stub was named for this run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(w.Dir(), "task.json"))
+	if err != nil || !strings.Contains(string(data), `"route_note": "backend stub was named for this run"`) {
+		t.Fatalf("task: %s %v", data, err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(w.Dir(), "result.json"))
+	if err != nil || !strings.Contains(string(data), `"route_note": "backend stub was named for this run"`) {
+		t.Fatalf("result: %s %v", data, err)
+	}
+	if _, err := Load(w.ID()); err != nil {
+		t.Fatal(err)
+	}
+	oldID := "20261014-120000-abcdee"
+	oldDir := filepath.Join(Root(), oldID)
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "task.json"), []byte(`{"id":"`+oldID+`","backend":"stub","task":{"prompt":"old"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := Load(oldID); err != nil || rec.RouteNote != "" {
+		t.Fatalf("legacy record=%+v err=%v", rec, err)
 	}
 }
 

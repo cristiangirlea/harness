@@ -21,8 +21,6 @@ const (
 	reset = "\x1b[0m"
 )
 
-// renderer prints events for a human. It tracks whether the last output ended
-// mid-line so tool lines always start on a fresh line.
 type renderer struct {
 	mu        sync.Mutex
 	out       io.Writer
@@ -60,6 +58,7 @@ func (r *renderer) newline() {
 func (r *renderer) Event(e agent.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Live text is masked per fragment, so a token split across two can show in halves.
 	e.Text, e.Tool = printable(mask.Text(e.Text)), printable(mask.Text(e.Tool))
 	if e.Kind != agent.EventThinking && r.inThought {
 		r.newline()
@@ -137,8 +136,12 @@ func (r *renderer) Summary(runID string, res agent.Result) {
 	if res.Status != agent.StatusOK {
 		status = r.c(red, status)
 	}
-	r.write(r.c(dim, fmt.Sprintf("── %s · %s · %s · %d turns · %s in / %s out (cache %s read)%s · %s ──",
-		status, res.Backend, res.Model, res.Turns, human(res.InputTokens), human(res.OutputTokens), human(res.CacheRead),
+	missing := ""
+	if res.UsageMissing() {
+		missing = ", usage missing"
+	}
+	r.write(r.c(dim, fmt.Sprintf("── %s · %s · %s · %d turns · %s in / %s out (cache %s read%s)%s · %s ──",
+		status, res.Backend, res.Model, res.Turns, human(res.InputTokens), human(res.OutputTokens), human(res.CacheRead), missing,
 		cost, res.Duration.Round(100_000_000))) + "\n")
 	r.write(r.c(dim, "run "+runID) + "\n")
 }
@@ -175,11 +178,8 @@ func (r *renderer) Line(s string) {
 	r.write(mask.Text(s) + "\n")
 }
 
-// printable is record text made safe for a terminal. Records hold whatever an
-// agent read, and a terminal acts on control characters: escape sequences set
-// the title, write the clipboard, clear the screen or move the cursor, and a
-// lone carriage return lets a line be overwritten. Each one becomes U+FFFD;
-// newlines and tabs stay, and a CRLF line ending is a newline.
+// Replace terminal controls from untrusted records to prevent clipboard writes and line spoofing.
+// Preserve tabs and newlines, treating CRLF as a newline.
 func printable(s string) string {
 	if s == "" {
 		return s

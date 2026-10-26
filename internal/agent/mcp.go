@@ -11,11 +11,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// startMCP launches the servers named in task.MCP with the workspace as their
-// working directory and root, and returns their tools. Servers start in
-// parallel (npx-based ones take seconds); events are emitted afterwards, in
-// order, so the caller's emit is never called concurrently. A server that
-// fails to start is reported and skipped; the run continues with the rest.
+// Start servers in parallel but emit afterwards, so emit is never concurrent; a failed server is skipped.
 func startMCP(ctx context.Context, task Task, root string, emit func(Event)) ([]*mcp.Client, []tools.Tool) {
 	cfgs, skipped, err := mcp.LoadConfigs(task.MCP)
 	if err != nil {
@@ -37,9 +33,7 @@ func startMCP(ctx context.Context, task Task, root string, emit func(Event)) ([]
 		go func() {
 			defer wg.Done()
 			cfg.Dir = root
-			// A server keeps hrn's environment, which its tools may need;
-			// under the guard it is told so, and an hrn among them then
-			// refuses to lift the guard.
+			// Preserve the guard in child servers so nested hrn cannot lift it.
 			if !task.AllowDangerous {
 				if cfg.Env == nil {
 					cfg.Env = map[string]string{}

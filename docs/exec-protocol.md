@@ -48,7 +48,7 @@ hrn       -> result                (always the last line after accepted; then ex
     "modes":["readonly","auto","yolo"],
     "efforts":["low","medium","high","xhigh","max"],
     "sessions":"fork",
-    "options":["model","mode","effort","timeout"],
+    "options":["model","mode","effort","timeout","mcp"],
     "approvals":false}
  ]}
 ```
@@ -75,11 +75,31 @@ hrn       -> result                (always the last line after accepted; then ex
 
 - `attempt_id` is the caller's identity for this attempt: 1 to 128 characters from
   `[A-Za-z0-9._-]`. hrn records it with the run and echoes it on every later line.
-- `prompt`, `dir`, `backend` and `mode` are required. There is no default backend and no default
-  mode: a supervisor states both.
+- `model`, when set, is 1 to 128 characters from `[A-Za-z0-9._:/@+[]-]`, starting with a letter
+  or digit; anything else is `bad_request`, as is a continuation whose earlier run recorded such
+  a model. The model becomes a CLI argument, and on Windows the CLIs run through `cmd.exe`.
+- `prompt`, `dir` and `mode` are required. When `backend` is omitted or empty, hrn routes by the
+  task's purpose and prompt as `hrn run` does, then uses the default backend if routing did not
+  select one. A named model or effort bypasses routing. The run record stores `routed_by` for a
+  selected route, or `route_note` explaining the default or named choice; a named backend records
+  `backend X was named for this run`. `accepted.requested.backend` reports the resolved backend.
 - `continue_run_id` continues a finished run, as `hrn run --continue` does; `accepted` says how
-  (`notes`).
+  (`notes`). A continuation is never routed: with `backend` omitted it stays on the earlier run's
+  backend, and its record carries no `route_note`.
+  When the saved session or conversation being carried over ended above 150,000 tokens of
+  context, these notes include the same fresh-run warning as the CLI and MCP. The new run
+  also records it once as an `info` event. A transcript hand-over alone does not warn.
   It is accepted for every backend independently of `options` and is not listed there.
+- `purpose` optionally declares what the run is for: `review`, `debug`, `implement`, `refactor`,
+  `test`, `research`, `plan` or `ops`, lowercase. Any other value is rejected as `bad_request`.
+  Without it, a `Purpose: <category>` header on the prompt's first non-blank line is used, as
+  for `hrn run`; either is recorded in `task.purpose`. A continuation does not inherit the
+  earlier run's purpose here: the supervisor states it, as it states the mode. Like
+  `continue_run_id`, it is accepted for every backend and is not listed in `options`.
+- `fresh: true` with `continue_run_id` starts a new session handed the earlier run over
+  from its record instead of resuming or forking anything, as `hrn run --continue --fresh`
+  does (see [A fresh hand-over](backends.md#a-fresh-hand-over)). Without `continue_run_id`
+  it is rejected with `bad_request`.
 
 ### `accepted` or `rejected` (hrn)
 
@@ -95,7 +115,7 @@ hrn       -> result                (always the last line after accepted; then ex
 ```
 
 A rejected start creates no run record. Codes: `bad_request` (malformed line, missing or unknown
-field or bad attempt id), `unsupported` (a mode, effort or option the backend cannot
+field, bad attempt id or bad model id), `unsupported` (a mode, effort or option the backend cannot
 honour), `unavailable` (the backend's CLI or credentials are not
 found), `storage` (the run record could not be created). hrn exits 2 after `rejected`.
 
@@ -153,7 +173,7 @@ not stop the run.
 model after applying the continuation plan, including any inherited model; `accepted.requested.model`
 reports the same value. `resolved_model` is what the backend reported running (empty when it did not say).
 `status` is one of `ok`, `error`, `refused`, `max_turns`, `timeout`, `budget`, `canceled` and
-`limited`. `limited` means a claude or codex plan reached its usage limit; `limit_resets` says
+`limited`. `limited` means a claude, codex or agy plan reached its usage limit; `limit_resets` says
 when it lifts, when the CLI said so. exec does not carry a limited run on to another backend, as
 `hrn run` does: the supervisor decides. A caller treats a status it does not know as not ok.
 `record_error` is set when the run record is incomplete. hrn exits 0 after `result`, whatever the

@@ -34,6 +34,9 @@ in that tenant's namespace:
   scaler combines bearer and TLS authentication. Do not copy the control
   server private key into a tenant namespace.
 
+`secrets.caName` is required. The worker always mounts that Secret at
+`/etc/hrn-control-ca` and sets `SSL_CERT_FILE` to its `ca.crt` file.
+
 Use distinct tokens for operator, tenant, project worker, and scaler. Never
 place token values in Helm values or source control. The control service
 requires both `HRN_TLS_CERT_FILE` and `HRN_TLS_KEY_FILE` unless `HRN_LISTEN`
@@ -51,6 +54,9 @@ Build the development image from the repository root:
 
     docker build -f server/Dockerfile -t hrn-durable-fixture:local .
 
+The image downloads server modules before copying the remaining server sources,
+so server source changes can reuse the dependency download layer.
+
 The chart requires an immutable image digest. In a disposable single-node
 k3d cluster, the local image can be imported and aliased by digest in
 containerd. A shared or hosted cluster requires a registry digest. Publish
@@ -66,10 +72,22 @@ other namespace. Example render validation:
 
     python -m pip install PyYAML==6.0.3
     python server/deploy/verify_charts.py
+    python -m unittest discover -s server/deploy -p test_verify_charts.py
 
-`HELM_BIN` can point to a Helm 4.3.0 binary. The verifier runs Helm lint,
+`HELM_BIN` can point to a Helm 4.3.0 binary. The verifier checks the module
+download layer and unconditional CA wiring, runs Helm lint,
 renders all three charts, checks scaling, storage, isolation, credential references,
-and rejects unsafe values. It does not query a Kubernetes API or prove KEDA
+and rejects unsafe values: unpinned images, missing required Secret names,
+malformed tenant/project IDs, and control URLs with HTTP or a path. It also
+rejects repeated document kinds, checks the control container's image and
+security settings (including inherited seccomp), forbids `capabilities.add` on
+the control, worker and fake-model containers, verifies DNS/control/PostgreSQL
+egress selectors and ports and the control ingress sources (project workers,
+KEDA, hrn-admin) and port 8443, forbids `envFrom` on both worker containers, and
+requires exactly four scaler Secret references. It parses every YAML document
+in `fixtures/postgres.yaml`. The regression tests exercise broken rendered
+documents and simulate Helm accepting forbidden values, without editing charts.
+These checks do not query a Kubernetes API or prove KEDA
 activation. A live disposable-cluster test must observe 0 -> 1 -> 0 replicas,
 persisted workspace bytes, admission during scale-down, scaler outages, and
 worker/pod termination before this gate can be called complete. Never use an

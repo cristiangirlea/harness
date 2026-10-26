@@ -229,9 +229,22 @@ func TestHelperMCPServer(t *testing.T) {
 	case "crash":
 		fmt.Fprintln(os.Stderr, "helper crashing on purpose")
 		os.Exit(3)
+	case "gitenv":
+		if os.Getenv("GIT_DIR") != "" || os.Getenv("GIT_INDEX_FILE") != "" {
+			fmt.Fprintln(os.Stderr, "inherited", os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"))
+			os.Exit(5)
+		}
+		_ = echoServer().Serve(context.Background(), os.Stdin, os.Stdout)
+		os.Exit(0)
 	case "env":
 		if os.Getenv("HRN_WORKER_TOKEN") != "" || os.Getenv("HRN_SCALER_TOKEN") != "" {
 			os.Exit(4)
+		}
+		for _, key := range []string{"HRN_TENANT_TOKEN", "HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL"} {
+			if _, present := os.LookupEnv(key); present {
+				fmt.Fprintln(os.Stderr, "executor environment leaked", key)
+				os.Exit(4)
+			}
 		}
 		_ = echoServer().Serve(context.Background(), os.Stdin, os.Stdout)
 		os.Exit(0)
@@ -275,6 +288,33 @@ func TestChildMCPServerCannotSeeWorkerOrScalerTokens(t *testing.T) {
 	}
 }
 
+func TestChildMCPServerCannotSeeRetrievalCredentials(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, key := range []string{"HRN_TENANT_TOKEN", "HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL"} {
+		t.Setenv(key, "inherited-fixture")
+	}
+	for _, override := range []bool{false, true} {
+		t.Run(fmt.Sprintf("configured_overrides=%t", override), func(t *testing.T) {
+			cfg := helperConfig("env")
+			cfg.Dir = t.TempDir()
+			if override {
+				for _, key := range []string{"HRN_TENANT_TOKEN", "HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL"} {
+					cfg.Env[key] = "configured-fixture"
+				}
+			}
+			cl := &Client{}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := cl.Start(ctx, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := cl.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestStartFailureIncludesStderr(t *testing.T) {
 	err := (&Client{}).Start(context.Background(), helperConfig("crash"))
 	if err == nil || !strings.Contains(err.Error(), "helper crashing on purpose") {
@@ -285,12 +325,28 @@ func TestStartFailureIncludesStderr(t *testing.T) {
 	}
 }
 
+func TestExpandReadsHrnsSecretsAsUnset(t *testing.T) {
+	t.Setenv("HRN_DATABASE_URL", "postgres://secret")
+	t.Setenv("HRN_TENANT_TOKEN", "tenant-secret")
+	t.Setenv("HRN_TEST_PLAIN", "plain")
+	for in, want := range map[string]string{
+		"${HRN_DATABASE_URL}":         "",
+		"x${HRN_TENANT_TOKEN:-none}x": "xnonex",
+		"${hrn_tenant_token}":         "",
+		"${HRN_TEST_PLAIN}":           "plain",
+	} {
+		if got := expand(in); got != want {
+			t.Errorf("expand(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
-	t.Setenv("HRN_TEST_TOKEN", "tok")
+	t.Setenv("HRN_TEST_VALUE", "tok")
 	t.Setenv("HRN_TEST_EMPTY", "")
 	p := filepath.Join(t.TempDir(), "mcp.json")
 	if err := os.WriteFile(p, []byte(`{"mcpServers":{
-		"zeta":{"command":"z","args":["--token","${HRN_TEST_TOKEN}","${HRN_TEST_EMPTY:-dflt}","${HRN_NOPE_UNSET}","literal $x"],"env":{"K":"${HRN_TEST_TOKEN}"}},
+		"zeta":{"command":"z","args":["--token","${HRN_TEST_VALUE}","${HRN_TEST_EMPTY:-dflt}","${HRN_NOPE_UNSET}","literal $x"],"env":{"K":"${HRN_TEST_VALUE}"}},
 		"alpha":{"command":"a"},
 		"remote":{"type":"http","url":"https://x"},
 		"sse":{"url":"https://y"}}}`), 0o644); err != nil {
@@ -475,4 +531,16 @@ func TestServeStopsWhenTheClientLeavesMidQuestion(t *testing.T) {
 		t.Fatal("Serve did not return: it waited for a handler it had not cancelled")
 	}
 	serverOut.Close()
+}
+
+func TestAnMCPServerDoesNotInheritARepositoryFromHrnsEnvironment(t *testing.T) {
+	t.Setenv("GIT_DIR", "/elsewhere/.git")
+	t.Setenv("GIT_INDEX_FILE", "/elsewhere/.git/index")
+	cl := &Client{}
+	cfg := helperConfig("gitenv")
+	cfg.Dir = t.TempDir()
+	if err := cl.Start(context.Background(), cfg); err != nil {
+		t.Fatalf("the server saw hrn's GIT_DIR or GIT_INDEX_FILE: %v", err)
+	}
+	cl.Close()
 }

@@ -16,13 +16,10 @@ var (
 	procGetVolumePathNameW  = kernel32.NewProc("GetVolumePathNameW")
 )
 
-// errSharingViolation is ERROR_SHARING_VIOLATION: the file is open elsewhere
-// in a way this open does not share.
+// An incompatible open handle yields ERROR_SHARING_VIOLATION.
 const errSharingViolation syscall.Errno = 32
 
-// diskFree asks the volume holding path how much it has free for this user,
-// and names the volume by its mount point (E:\, or E:\mount\ for a volume
-// mounted in a folder), not by the drive letter alone.
+// Use the volume mount point: a drive letter can contain multiple mounted volumes.
 func diskFree(path string) (Drive, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -45,9 +42,7 @@ func diskFree(path string) (Drive, error) {
 	return Drive{ID: strings.ToUpper(syscall.UTF16ToString(mount)), Free: int64(avail)}, nil
 }
 
-// lockHeld reports whether a build holds the lock file. Cargo keeps
-// .cargo-lock open while it builds, so an open that shares nothing fails with
-// a sharing violation while one runs. A missing file is held by nobody.
+// Cargo keeps the lock open while building; a no-sharing open detects its handle.
 func lockHeld(path string) (bool, error) {
 	p, err := syscall.UTF16PtrFromString(path)
 	if err != nil {

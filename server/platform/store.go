@@ -25,6 +25,16 @@ type Store struct {
 	retrievalSlots chan struct{}
 }
 
+func checkSchemaVersion(version int) error {
+	if version < 3 {
+		return fmt.Errorf("unsupported schema version %d: run the explicit migrate command", version)
+	}
+	if version != 3 {
+		return fmt.Errorf("unsupported schema version %d", version)
+	}
+	return nil
+}
+
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -39,9 +49,9 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("database is not initialized: run the explicit migrate command: %w", err)
 	}
-	if version != 3 {
+	if err := checkSchemaVersion(version); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("unsupported schema version %d", version)
+		return nil, err
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -203,6 +213,13 @@ func (s *Store) WorkerAuthorized(ctx context.Context, projectID, token string) (
 	return subtle.ConstantTimeCompare(wanted, digest[:]) == 1, nil
 }
 
+// IdempotentJobExists reports whether a job was already submitted under this idempotency key.
+func (s *Store) IdempotentJobExists(ctx context.Context, tenantID, projectID, key string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM jobs WHERE tenant_id=$1 AND project_id=$2 AND idempotency_key=$3)", tenantID, projectID, key).Scan(&exists)
+	return exists, err
+}
+
 func (s *Store) Submit(ctx context.Context, input Submission) (Job, bool, error) {
 	if err := validateSubmission(input); err != nil {
 		return Job{}, false, err
@@ -306,6 +323,11 @@ func appendEvent(ctx context.Context, tx pgx.Tx, tenantID, projectID, jobID, kin
 	}
 	payload, err := json.Marshal(details)
 	if err != nil {
+		return err
+	}
+	// Holding the job row until commit makes one job's event IDs commit in order,
+	// so a reader's after cursor cannot pass an ID that is still uncommitted.
+	if _, err = tx.Exec(ctx, "SELECT 1 FROM jobs WHERE id=$1 FOR NO KEY UPDATE", jobID); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, "INSERT INTO job_events(tenant_id,project_id,job_id,kind,details) VALUES($1,$2,$3,$4,$5)",

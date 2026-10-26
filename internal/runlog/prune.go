@@ -7,33 +7,23 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
-// PruneResult is what Prune removed, or would remove on a dry run.
+// PruneResult lists actual or dry-run removals.
 type PruneResult struct {
-	Removed []string `json:"removed"` // run ids, newest first
-	Bytes   int64    `json:"bytes"`
+	Removed     []string `json:"removed"` // run ids, newest first
+	Bytes       int64    `json:"bytes"`
+	OrphanFlows int      `json:"orphan_flows,omitempty"`
 }
 
-// activeWindow is how recently an unfinished run must have written to count as
-// still running rather than crashed.
-const activeWindow = time.Hour
-
-// Prune removes the run directories whose id says they started before cutoff.
-// These stay whatever their age: the newest keep runs; any run in protect,
-// because a record that is being kept still cites it; a run with no result
-// that wrote within the last hour, because it is probably still running; every
-// run a kept run continues from, down the whole chain; and any directory whose
-// name is not a run id, since nothing says how old it is. With dryRun it
-// reports what it would remove and removes nothing.
+// Prune selects old runs except keep newest, protected ids, active writers and unknown names.
+// Retain kept continuation chains; dryRun only reports.
 func Prune(cutoff time.Time, keep int, protect map[string]bool, dryRun bool) (PruneResult, error) {
 	var res PruneResult
 	entries, err := os.ReadDir(Root())
-	if errors.Is(err, os.ErrNotExist) {
-		return res, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return res, err
 	}
 	var ids []string
@@ -42,7 +32,6 @@ func Prune(cutoff time.Time, keep int, protect map[string]bool, dryRun bool) (Pr
 			ids = append(ids, e.Name())
 		}
 	}
-	// Ids start with their timestamp, so the newest sort first.
 	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
 
 	remove := map[string]bool{}
@@ -54,7 +43,7 @@ func Prune(cutoff time.Time, keep int, protect map[string]bool, dryRun bool) (Pr
 		}
 		remove[id] = true
 	}
-	// A kept run keeps the run it continues, and that one keeps its own.
+	// Preserve every ancestor, not just the direct predecessor.
 	for len(kept) > 0 {
 		id := kept[0]
 		kept = kept[1:]
@@ -81,26 +70,46 @@ func Prune(cutoff time.Time, keep int, protect map[string]bool, dryRun bool) (Pr
 		res.Removed = append(res.Removed, id)
 		res.Bytes += size
 	}
-	return res, nil
+	err = pruneOrphanFlows(&res, dryRun)
+	return res, err
 }
 
-// stillRunning reports whether a run has no result yet and wrote to its
-// transcript recently: removing it would pull the directory out from under its
-// writer. An unfinished run that went quiet long ago crashed, and can go.
-func stillRunning(id string) bool {
-	dir := filepath.Join(Root(), id)
-	if _, err := os.Stat(filepath.Join(dir, "result.json")); err == nil {
-		return false
+func pruneOrphanFlows(res *PruneResult, dryRun bool) error {
+	dir := filepath.Join(Home(), "batch-flows")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	info, err := os.Stat(filepath.Join(dir, "events.jsonl"))
 	if err != nil {
-		info, err = os.Stat(dir)
+		return err
 	}
-	return err == nil && time.Since(info.ModTime()) < activeWindow
+	for _, e := range entries {
+		id, ok := strings.CutSuffix(e.Name(), ".jsonl")
+		if !ok || !isRunID(id) || !e.Type().IsRegular() {
+			continue
+		}
+		_, err := os.Lstat(filepath.Join(Home(), "batches", id+".json"))
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		if !dryRun {
+			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+				return fmt.Errorf("removing orphan flow %s: %w", id, err)
+			}
+		}
+		res.OrphanFlows++
+		res.Bytes += info.Size()
+	}
+	return nil
 }
 
-// isRunID reports whether name is shaped like an id NewID makes, so its age
-// can be read from it.
 func isRunID(name string) bool {
 	if validID(name) != nil || len(name) < len(idTimeLayout) {
 		return false

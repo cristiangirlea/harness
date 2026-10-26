@@ -21,6 +21,7 @@ type writer struct{}
 func (writer) Name() string            { return "mcp-writer" }
 func (writer) Detect() (string, error) { return "stub", nil }
 func (writer) Run(_ context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	task.Prompt = typed(task.Prompt)
 	name := strings.Fields(task.Prompt)[0] + ".txt"
 	emit(agent.Event{Kind: agent.EventToolCall, Tool: "write_file", Text: name})
 	_ = os.WriteFile(filepath.Join(task.Dir, name), []byte(task.Prompt+"\n"), 0o644)
@@ -184,5 +185,152 @@ func TestBatchReportsAKilledGateAsSuch(t *testing.T) {
 	b := brief(res)
 	if b.Tasks[0].Failed != timeoutLine || b.Tasks[1].Failed != "gate `go vet ./...` canceled" {
 		t.Errorf("failed = %q, %q", b.Tasks[0].Failed, b.Tasks[1].Failed)
+	}
+}
+
+func TestBatchSummaryShowsADeclaredPurpose(t *testing.T) {
+	res := batch.Result{ID: "b1", Tasks: []batch.TaskResult{
+		{ID: "a", Purpose: "review", Status: batch.StatusPass},
+		{ID: "b", Status: batch.StatusPass},
+	}}
+	summary := batchSummary(res)
+	if !strings.Contains(summary, "a: pass (purpose review)") {
+		t.Errorf("summary lacks the declared purpose:\n%s", summary)
+	}
+	if strings.Contains(summary, "b: pass (") {
+		t.Errorf("a task with no declared purpose shows one:\n%s", summary)
+	}
+}
+
+func TestBatchSummariesShowAttemptNotesEvenWhenTheTaskPassed(t *testing.T) {
+	note := "commit not recorded: the branch tip abc1234 does not contain the base"
+	res := batch.Result{ID: "notes", Tasks: []batch.TaskResult{
+		{ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: note}, {Backend: "stub"}}},
+		{ID: "two", Status: batch.StatusPass},
+	}}
+	if got := batchSummary(res); !strings.Contains(got, "\n  attempt 1 note: "+note+"\n") {
+		t.Errorf("text summary omitted the attempt note: %s", got)
+	}
+	data, err := json.Marshal(brief(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Tasks []struct {
+			Notes  []string `json:"notes"`
+			Failed string   `json:"failed"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tasks[0].Notes) != 1 || got.Tasks[0].Notes[0] != "attempt 1: "+note || got.Tasks[0].Failed != "" {
+		t.Errorf("structured summary omitted or treated the note as a failure: %s", data)
+	}
+	if strings.Count(string(data), `"notes":`) != 1 {
+		t.Errorf("empty notes must be omitted: %s", data)
+	}
+}
+
+func TestBatchAttemptNotesCannotSendTerminalControls(t *testing.T) {
+	note := "commit: \x1b]0;title\x07 \x1b[31mred\u009b \x00\x1f\x7f\u0080\u009f"
+	want := "commit: \ufffd]0;title\ufffd \ufffd[31mred\ufffd \ufffd\ufffd\ufffd\ufffd\ufffd"
+	res := batch.Result{ID: "controls", Tasks: []batch.TaskResult{{
+		ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{{Backend: "stub", Error: note}},
+	}}}
+	if got := batchSummary(res); !strings.Contains(got, "attempt 1 note: "+want+"\n") {
+		t.Errorf("text summary did not replace terminal controls: %q", got)
+	}
+	data, err := json.Marshal(brief(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got batchBrief
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if notes := got.Tasks[0].Notes; len(notes) != 1 || notes[0] != "attempt 1: "+want {
+		t.Errorf("decoded notes did not replace terminal controls: %q", notes)
+	}
+}
+
+func TestBatchSummariesCarryNoTerminalControlsInErrors(t *testing.T) {
+	bad := "x\x1b[31m\x07\u009b"
+	res := batch.Result{ID: "controls", Tasks: []batch.TaskResult{
+		{ID: "failed", Status: batch.StatusError, Error: "task " + bad,
+			Attempts: []batch.Attempt{{Backend: "stub", Result: agent.Result{Error: "result " + bad}}}},
+		{ID: "gated", Status: batch.StatusFail,
+			Attempts: []batch.Attempt{{Backend: "stub", Gates: []batch.GateResult{{Command: "gate " + bad, ExitCode: 1}}}}},
+	}}
+	if got := batchSummary(res); strings.ContainsAny(got, "\x1b\x07\u009b") {
+		t.Errorf("text summary carries terminal controls: %q", got)
+	}
+	data, err := json.Marshal(brief(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got batchBrief
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, tb := range got.Tasks {
+		if strings.ContainsAny(tb.Failed, "\x1b\x07\u009b") || tb.Failed == "" {
+			t.Errorf("task %s: decoded failure %q is empty or carries terminal controls", tb.ID, tb.Failed)
+		}
+	}
+}
+
+func TestBatchProgressCannotSendTerminalControls(t *testing.T) {
+	const bad = "run: \x1b[31m\x07\u009b"
+	const want = "run: \ufffd[31m\ufffd\ufffd"
+	orig, err := agent.Get("stub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(scripted{"stub", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusError, Error: bad}
+	}})
+	t.Cleanup(func() { agent.Register(orig) })
+	s := connect(t, gitRepo(t))
+	res := s.call(t, "batch", `{"spec":{"backend":"stub","tasks":[{"id":"one","prompt":"fail"}]}}`)
+	if !res.IsError {
+		t.Fatalf("batch should fail: %s", res.Text())
+	}
+	s.mu.Lock()
+	progress := strings.Join(s.progress, "\n")
+	s.mu.Unlock()
+	if strings.ContainsAny(progress, "\x1b\x07\u009b") || !strings.Contains(progress, want) {
+		t.Errorf("progress did not replace terminal controls: %q", progress)
+	}
+}
+
+func TestBatchMergeErrorLineCannotSendTerminalControls(t *testing.T) {
+	const bad = "merge: \x1b[31m\x07\u009b"
+	const want = "merge: \ufffd[31m\ufffd\ufffd"
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := gitRepo(t)
+	s := connect(t, dir)
+	res := s.call(t, "batch", `{"spec":{"backend":"mcp-writer","tasks":[{"id":"one","prompt":"alpha"}]}}`)
+	if res.IsError {
+		t.Fatalf("batch: %s", res.Text())
+	}
+	id := res.StructuredContent.(map[string]any)["batch_id"].(string)
+	hook := filepath.Join(dir, ".git", "hooks", "pre-merge-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf '"+bad+"\\n' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	merged := s.call(t, "batch_merge", `{"batch_id":"`+id+`"}`)
+	line, _, _ := strings.Cut(merged.Text(), "\n")
+	if !merged.IsError || !strings.Contains(line, "one: could not merge hrn/one:") {
+		t.Fatalf("merge did not report a merge error: %q", merged.Text())
+	}
+	if strings.ContainsAny(merged.Text(), "\x1b\x07\u009b") || !strings.Contains(line, want) {
+		t.Errorf("merge error text did not replace terminal controls: %q", merged.Text())
+	}
+	rows := merged.StructuredContent.(map[string]any)["merged"].([]any)
+	mergeError := rows[0].(map[string]any)["error"].(string)
+	if strings.ContainsAny(mergeError, "\x1b\x07\u009b") || !strings.Contains(mergeError, want) {
+		t.Errorf("structured merge error did not replace terminal controls: %q", mergeError)
 	}
 }

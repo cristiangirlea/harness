@@ -27,7 +27,7 @@ func TestRouteIgnoresADisabledBackendWithoutRecordingEvidence(t *testing.T) {
 	defer func() { os.Stderr = old }()
 	var o Options
 	var backend string
-	routed, err := o.Route("Purpose: review\nReview the change", &backend, home)
+	routed, err := o.Route("", "Purpose: review\nReview the change", &backend, home)
 	if err != nil || routed != nil || backend != "" || o.Model != "" || o.Effort != "" {
 		t.Fatalf("got %+v, %s, %+v, %v", routed, backend, o, err)
 	}
@@ -37,5 +37,77 @@ func TestRouteIgnoresADisabledBackendWithoutRecordingEvidence(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "hrn: warning: ignoring route for review: backend codex is disabled") {
 		t.Fatalf("warning: %s", data)
+	}
+}
+
+func TestRouteUsesItsBackendWithoutAPreferenceFile(t *testing.T) {
+	home := t.TempDir()
+	if err := table.Save(home, table.Table{"review": {Backend: "codex", Model: "model", Effort: "high", Eval: "evidence"}}); err != nil {
+		t.Fatal(err)
+	}
+	var o Options
+	var backend string
+	routed, err := o.Route("", "Purpose: review\nReview the change", &backend, home)
+	if err != nil || routed == nil || backend != "codex" || o.Model != "model" || o.Effort != "high" {
+		t.Fatalf("got %+v, %s, %+v, %v", routed, backend, o, err)
+	}
+}
+
+func TestRouteWithNote(t *testing.T) {
+	for _, tc := range []struct {
+		name, declared string
+		backend        string
+		model          string
+		effort         string
+		row            table.Row
+		prefs          []string
+		wantNote       string
+		wantContains   string
+		wantRoute      bool
+	}{
+		{name: "explicit backend", backend: "codex", wantNote: "backend codex was named for this run"},
+		{name: "no row", declared: "implement", wantNote: "no route row for purpose implement"},
+		{name: "disabled backend", declared: "review", row: table.Row{Backend: "codex", Model: "m"}, prefs: []string{"claude"}, wantNote: "ignoring route for review: backend codex is disabled"},
+		{name: "unknown backend", declared: "review", row: table.Row{Backend: "missing", Model: "m"}, wantContains: `ignoring route for review: unknown backend "missing"`},
+		{name: "invalid effort", declared: "review", row: table.Row{Effort: "bogus"}, wantContains: `ignoring route for review: unknown effort "bogus"`},
+		{name: "applied", declared: "review", row: table.Row{Backend: "codex", Model: "m", Effort: "high"}, wantRoute: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.row != (table.Row{}) {
+				if err := table.Save(home, table.Table{tc.declared: tc.row}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.prefs != nil {
+				if err := prefs.Save(home, prefs.Prefs{EnabledNames: tc.prefs}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			o := Options{Model: tc.model, Effort: tc.effort}
+			backend := tc.backend
+			routed, note, err := o.RouteWithNote(tc.declared, "", &backend, home)
+			if err != nil || note != tc.wantNote && !strings.Contains(note, tc.wantContains) || (routed != nil) != tc.wantRoute {
+				t.Fatalf("route=%+v note=%q err=%v", routed, note, err)
+			}
+		})
+	}
+}
+
+func TestWithDefaultNamesTheDefaultBackend(t *testing.T) {
+	if got := WithDefault("", "claude"); got != "default backend claude was used" {
+		t.Fatalf("got %q", got)
+	}
+	if got := WithDefault("no route row for purpose plan", "codex"); got != "no route row for purpose plan; default backend codex was used" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestContinuationNoteSaysWhyALimitMovedIt(t *testing.T) {
+	if got := ContinuationNote("r1", ""); got != "" {
+		t.Fatalf("a continuation on its own backend needs no note, got %q", got)
+	}
+	if got := ContinuationNote("r1", "codex is at its limit; carrying on on claude"); got != "continues run r1; codex is at its limit; carrying on on claude" {
+		t.Fatalf("got %q", got)
 	}
 }

@@ -150,6 +150,24 @@ func TestRemoteMCPRejectsUnsupportedInput(t *testing.T) {
 	}
 }
 
+func TestRemoteStatusAndCancelRejectABadJobIDBeforeSending(t *testing.T) {
+	session, requests := remoteFixture(t)
+	for _, tool := range []string{"remote_status", "remote_cancel"} {
+		for _, job := range []string{"", "j_../x", "j_" + strings.Repeat("C", 32), "j_" + strings.Repeat("c", 31), testRemoteProject} {
+			t.Run(tool+"/"+job, func(t *testing.T) {
+				args := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"job_id":%q}`, testRemoteTenant, testRemoteProject, job)
+				result := session.call(t, tool, args)
+				if !result.IsError || !strings.Contains(result.Text(), "job_id must be a server-issued ID") {
+					t.Fatalf("bad job_id result: %+v", result)
+				}
+			})
+		}
+	}
+	if len(*requests) != 0 {
+		t.Fatalf("bad job IDs sent %d requests", len(*requests))
+	}
+}
+
 func TestRemoteToolsRejectCredentialFieldsBeforeSendingRequests(t *testing.T) {
 	session, requests := remoteFixture(t)
 	submit := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"prompt":"inspect","base_ref":%q,"idempotency_key":"mcp-credential","max_cost_usd":0.25`,
@@ -175,5 +193,25 @@ func TestRemoteToolsRejectCredentialFieldsBeforeSendingRequests(t *testing.T) {
 	}
 	if len(*requests) != 0 {
 		t.Fatalf("credential fields sent %d requests", len(*requests))
+	}
+}
+
+func TestRemoteSubmitRefusesCostAboveTheClientCapBeforeSending(t *testing.T) {
+	session, requests := remoteFixture(t)
+	t.Setenv("HRN_REMOTE_MAX_COST_USD", "1")
+	args := fmt.Sprintf(`{"tenant_id":%q,"project_id":%q,"prompt":"inspect","base_ref":%q,"idempotency_key":"mcp-cap","max_cost_usd":%%s}`,
+		testRemoteTenant, testRemoteProject, testRemoteRef)
+	result := session.call(t, "remote_submit", fmt.Sprintf(args, "5"))
+	if !result.IsError || !strings.Contains(fmt.Sprint(result.Content), "HRN_REMOTE_MAX_COST_USD") {
+		t.Fatalf("cost above the cap: %+v", result)
+	}
+	if len(*requests) != 0 {
+		t.Fatalf("cost above the cap reached control: %+v", *requests)
+	}
+	if result := session.call(t, "remote_submit", fmt.Sprintf(args, "1")); result.IsError {
+		t.Fatalf("cost at the cap: %+v", result)
+	}
+	if len(*requests) != 1 {
+		t.Fatalf("cost at the cap sent %d requests, want 1", len(*requests))
 	}
 }

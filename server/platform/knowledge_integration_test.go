@@ -390,3 +390,23 @@ func TestKnowledgeSearchTreatsTsqueryOperatorsAsPlainTextAndAcceptsLongQueries(t
 		}
 	}
 }
+
+func TestKnowledgeSearchMatchesMultiWordAndPunctuatedIdentifiersThroughSQL(t *testing.T) {
+	s := testStore(t)
+	p, _ := testProject(t, s)
+	in := knowledgeFixture(p)
+	in.Entries = append(in.Entries, retrieval.Entry{Key: "dial", Content: "Start the database fixture first.", Source: "docs/dial.md", Evidence: "fixture check", Identifiers: []string{"connection refused", "main.go"}})
+	id, err := s.ImportKnowledge(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"Why does it say connection refused", "Please inspect main.go."} {
+		packet, err := s.SearchKnowledge(context.Background(), retrieval.Search{Scope: in.Scope, VersionID: id, Query: query})
+		if err != nil {
+			t.Fatalf("query %q: %v", query, err)
+		}
+		if len(packet.Entries) == 0 || packet.Entries[0].Key != "dial" {
+			t.Fatalf("query %q missed the exact identifier: %+v", query, packet.Entries)
+		}
+	}
+}

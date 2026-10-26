@@ -7,15 +7,14 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// ---- opencode -------------------------------------------------------------
+// NewOpencodeBackend drives the OpenCode CLI.
 func NewOpencodeBackend() *CLIBackend {
 	return &CLIBackend{
 		name:       "opencode",
 		mapsModes:  []Mode{ModeYolo},
 		mapsModel:  true,
 		candidates: func() []string { return npmShim("opencode") },
-		// Windows .cmd shims mangle multi-line arguments, so the prompt travels
-		// as an attached file.
+		// Use a prompt file because Windows .cmd shims mangle multiline arguments.
 		args: func(t Task, promptFile string) []string {
 			// The message goes first: -f is an array flag and would swallow it.
 			a := []string{"run", "Follow the instructions in the attached file.", "--format", "json", "--dir", t.Dir}
@@ -81,10 +80,7 @@ func parseOpencodeStream(line []byte, emit func(Event), res *Result) bool {
 			emit(Event{Time: now, Kind: EventUsage, Usage: &u})
 		}
 		res.Turns++
-		res.InputTokens += l.Part.Tokens.Input
-		res.OutputTokens += l.Part.Tokens.Output
-		res.CacheRead += l.Part.Tokens.Cache.Read
-		res.CacheWrite += l.Part.Tokens.Cache.Write
+		res.addUsage("exclusive_cache", l.Part.Tokens.Input, l.Part.Tokens.Output, l.Part.Tokens.Cache.Read, l.Part.Tokens.Cache.Write)
 		res.CostUSD += l.Part.Cost
 	case "error":
 		msg := string(l.Error)

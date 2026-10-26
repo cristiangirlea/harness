@@ -1,21 +1,15 @@
-// Package purpose says what a run was for (review, debug, implement, ...) from
-// its prompt, with ordered keyword rules: the first rule that matches wins.
-//
-// hrn prompts are long briefs whose later paragraphs mention every keyword
-// ("review the diff", "CI", "deploy"), so only the first two non-blank paragraphs
-// can supply the lead: the second is tried only if no rule matches the first.
-// A paragraph is read as written, then with its leading label lines
-// ("Repository: hrn") skipped. Each lead is lowercased and capped at maxLead bytes.
+// Package purpose classifies prompt leads using ordered keyword rules.
 package purpose
 
 import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
-// Categories in the order hrn lists them. Unknown means no rule fired.
+// Categories lists review, debug, implement, refactor, test, research, plan, ops and unknown in display order.
 var Categories = []string{"review", "debug", "implement", "refactor", "test", "research", "plan", "ops", "unknown"}
 
 // Unknown is the category of a prompt no rule matches.
@@ -26,60 +20,90 @@ func Valid(c string) bool {
 	return c != Unknown && slices.Contains(Categories, c)
 }
 
-// Declared reads a Purpose: <category> header on the first non-blank line.
-// The label and category are case-insensitive. A non-category value, including
-// unknown or free text, is ignored rather than treated as an error.
+// Declarable returns the categories callers may declare, in listing order.
+func Declarable() []string {
+	var categories []string
+	for _, c := range Categories {
+		if c != Unknown {
+			categories = append(categories, c)
+		}
+	}
+	return categories
+}
+
+// Declared reads a case-insensitive Purpose header, ignoring unknown or invalid categories.
 func Declared(prompt string) string {
-	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
-	for line := range strings.Lines(prompt) {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	line, _ := firstNonBlankLine(prompt)
+	label, value, ok := strings.Cut(line, ":")
+	if ok && strings.EqualFold(label, "Purpose") {
+		value = strings.TrimSpace(value)
+		for _, category := range Categories {
+			if category != Unknown && strings.EqualFold(value, category) {
+				return category
+			}
 		}
-		label, value, ok := strings.Cut(line, ":")
-		value = strings.ToLower(strings.TrimSpace(value))
-		if ok && strings.EqualFold(label, "Purpose") && Valid(value) {
-			return value
-		}
-		break
 	}
 	return ""
 }
 
 // Resolve prefers an explicit declaration, then a header, then keyword rules.
 func Resolve(declared, prompt string) Result {
-	if declared == "" {
+	if !Valid(declared) {
 		declared = Declared(prompt)
 	}
 	if declared != "" {
 		return Result{Category: declared, Rule: "declared"}
 	}
+	// A free-text Purpose header is metadata, not classifier input.
+	first, rest := firstNonBlankLine(prompt)
+	if label, _, ok := strings.Cut(first, ":"); ok && strings.EqualFold(label, "Purpose") {
+		prompt = rest
+	}
 	return Classify(prompt)
 }
 
-// Result is a prompt's category and the id of the rule that put it there ("" for
-// unknown). It never carries prompt text.
+// Inherited is a continuation's purpose from its parent run, "" when that was unknown.
+func Inherited(declared, prompt string) string {
+	if c := Resolve(declared, prompt).Category; c != Unknown {
+		return c
+	}
+	return ""
+}
+
+// Result contains a category and rule id (empty for unknown), never prompt text.
 type Result struct {
 	Category string `json:"category"`
 	Rule     string `json:"rule,omitempty"`
 }
 
-// maxLead caps the bytes of the lead the rules see.
 const maxLead = 600
 
 type rule struct {
 	id, category string
 	re           *regexp.Regexp
+	// Keeps a keyword rule off constraints after the instruction ("no docker").
+	firstSentence bool
 }
 
 func r(id, category, expr string) rule {
 	return rule{id: id, category: category, re: regexp.MustCompile(expr)}
 }
 
-// rules are tried in order. The first is hrn's own reviewer brief; the rest
-// are adapted from classify-sessions rules-v1.
+func r1(id, category, expr string) rule {
+	return rule{id: id, category: category, re: regexp.MustCompile(expr), firstSentence: true}
+}
+
+// Branch, file and path names ("ci/pin", "deploy-x", "ci.yml") are not keywords.
+const (
+	nameStart = `(?:^|[^\w/\\.-])`
+	nameEnd   = `(?:[^\w/\\.-]|\.(?:\W|$)|$)`
+)
+
+// First match wins; preserve rule precedence when adding patterns.
 var rules = []rule{
 	r("review.reviewer-role", "review", `\byou are an? ([a-z-]+,? )*(reviewer|auditor)\b`),
+	// Anchored: implement briefs often name the review that follows them.
+	r("review.brief", "review", `^(?:(?:final|narrow|short|bounded|focused|independent|read-only|pre-merge|merged-head|exact-head|verification|follow-up|fix-round|confirmation|attacker-style|second|third|security|code)[ ,]+){1,4}(?:review|verification|security read)(?: (?:of|on|for|at|in|with|and|only)\b| ?[(,.:;]|$)|^(?:(?:final|narrow|short|bounded|focused|independent|read-only)[ ,]+){0,4}re-review\b|^verify (?:the (?:newest|latest|fix|fixes|head)|commit)\b|^you are re-?reviewing\b|^continue the review\b`),
 	r("plan.before-code", "plan", `\bbefore (you )?(writing|write|making|changing|touching|implementing) (any )?(code|changes)\b`),
 	r("plan.write-plan", "plan", `\b(give me|write|draft|propose|outline|sketch|prepare|come up with) (me )?(a |an )?([a-z-]+ )?(plan|design|spec|specification|proposal|rfc|roadmap)\b`),
 	r("plan.lead", "plan", `^(plan|design)\b`),
@@ -90,12 +114,12 @@ var rules = []rule{
 	r("debug.error-message", "debug", `\b[a-z]*(error|exception)\s*:|\btraceback\b|\bpanic:|\bstack ?trace\b|\bsegfault\b|\bsegmentation fault\b`),
 	r("research.how-does", "research", `\bhow does\b[^?]*\b(work|works|handle|handles|implement|implements|manage|manages|resolve|resolves|decide|decides|store|stores|load|loads)\b`),
 	r("research.explain", "research", `^(explain|describe|walk me through|tell me about|what is|what are)\b|\bexplain how\b|\bpoint me (at|to)\b`),
-	r("research.compare", "research", `\bcompare\b|\bpros and cons\b|\btrade-?offs?\b|\bdifference between\b|\bshould (i|we) use\b|\b(versus|vs)\b`),
+	r1("research.compare", "research", nameStart+`(?:compare|versus|vs|trade-?offs?)`+nameEnd+`|\bpros and cons\b|\bdifference between\b|\bshould (i|we) use\b`),
 	r("refactor.refactor", "refactor", `\brefactor`),
 	r("refactor.behaviour-preserving", "refactor", `\bno behaviou?r(al)? changes?\b|\bwithout changing (the |its |any )?behaviou?r\b|\bremove (the )?duplication\b|\bdeduplicate\b`),
 	r("refactor.restructure", "refactor", `^(extract|rename|restructure|reorgani[sz]e|split|inline|simplify|clean up|tidy up|consolidate|decouple|modulari[sz]e)\b`),
-	r("ops.ci-container", "ops", `\b(dockerfile|docker|docker-compose|github actions|gitlab ci|ci|pipeline|kubernetes|k8s|helm|terraform|ansible|nginx)\b`),
-	r("ops.deploy-release", "ops", `\b(deploy|deploys|deployment|release|rollback|roll back|provision)\b`),
+	r1("ops.ci-container", "ops", nameStart+`(?:dockerfile|docker|docker-compose|github actions|gitlab ci|ci|pipeline|kubernetes|k8s|helm|terraform|ansible|nginx)`+nameEnd),
+	r1("ops.deploy-release", "ops", nameStart+`(?:deploy|deploys|deployment|release|rollback|roll back|provision)`+nameEnd),
 	r("ops.dependencies", "ops", `\b(upgrade|bump)\b|\bdependenc(y|ies)\b|\blockfile\b|\b(npm|pip|go mod|poetry|yarn|pnpm) (install|update|tidy|audit)\b|\bmakefile\b|\bbuild script\b`),
 	r("test.coverage", "test", `\b(increase|improve|raise|extend|add|boost|expand)\b[^.;]*\bcoverage\b|\bcoverage (on|for|of)\b`),
 	r("test.write-tests", "test", `\b(write|add|create|extend|expand|generate)\b (a |an |some |more |the |new )?([a-z-]+ ){0,2}(tests?|test cases)\b`),
@@ -103,19 +127,32 @@ var rules = []rule{
 	r("debug.fix", "debug", `^(please )?(fix|debug)\b|\b(investigate|diagnose|troubleshoot)\b`),
 	r("debug.symptom", "debug", `\b(is|are|keeps) (broken|failing|crashing|hanging|flaky)\b|\b(crash|crashes|crashed|hangs|regressed|returns the wrong)\b|\b(doesn't|does not|isn't|is not) work(ing)?\b|\bnot working\b|\bstopped working\b`),
 	r("implement.add", "implement", `^(please )?add\b|\badd (a|an|the|support for|new)\b`),
-	r("implement.build", "implement", `^(please )?(implement|create|build|write|introduce|support|make|generate|scaffold|wire up|set up|integrate)\b`),
+	r("implement.build", "implement", `^(please )?(implement|create|build|write|introduce|support|make|generate|scaffold|wire up|set up|integrate)\b|^you are implementing\b`),
 }
 
-// Classify names what a prompt asks for, from its lead: the first of at most
-// two paragraphs that a rule matches, each read as written first (so "panic:"
-// and "C:\" stay what they are) and then with its leading label lines skipped.
+// Classify matches at most two leading paragraphs to avoid incidental keywords in long briefs.
 func Classify(prompt string) Result {
 	for _, paragraph := range paragraphs(prompt) {
+		u := unlabel(paragraph)
+		var stripped string
+		if u != paragraph {
+			stripped = lead(u)
+			for _, rl := range rules {
+				if !strings.HasPrefix(rl.re.String(), "^") {
+					continue
+				}
+				if loc := rl.re.FindStringIndex(stripped); loc != nil && loc[0] == 0 {
+					// Preserve test precedence over the broader anchored add rule.
+					r, _ := match(stripped)
+					return r
+				}
+			}
+		}
 		if r, ok := match(lead(paragraph)); ok {
 			return r
 		}
-		if u := unlabel(paragraph); u != paragraph {
-			if r, ok := match(lead(u)); ok {
+		if u != paragraph {
+			if r, ok := match(stripped); ok {
 				return r
 			}
 		}
@@ -123,53 +160,246 @@ func Classify(prompt string) Result {
 	return Result{Category: Unknown}
 }
 
-// match tries the rules in order on a lead; false when none fires.
 func match(l string) (Result, bool) {
 	if l == "" {
 		return Result{}, false
 	}
+	first := firstSentence(l)
 	for _, rl := range rules {
-		if rl.re.MatchString(l) {
+		s := l
+		if rl.firstSentence {
+			s = first
+		}
+		if rl.re.MatchString(s) {
 			return Result{Category: rl.category, Rule: rl.id}, true
 		}
 	}
 	return Result{}, false
 }
 
-// paragraphs returns at most the first two non-blank paragraphs. "\r\n", "\n"
-// and a bare "\r" each end a line; whitespace-only lines separate paragraphs.
+// Constraints and context follow the instruction's first sentence; "e.g." and "i.e." do not end it.
+func firstSentence(l string) string {
+	for i := 0; i+1 < len(l); i++ {
+		if strings.IndexByte(".;?!", l[i]) < 0 {
+			continue
+		}
+		if r, _ := utf8.DecodeRuneInString(l[i+1:]); !unicode.IsSpace(r) {
+			continue
+		}
+		if abbreviation(l[:i+1]) {
+			continue
+		}
+		return l[:i]
+	}
+	return l
+}
+
+func abbreviation(s string) bool {
+	if !strings.HasSuffix(s, "e.g.") && !strings.HasSuffix(s, "i.e.") {
+		return false
+	}
+	r, _ := utf8.DecodeLastRuneInString(s[:len(s)-4])
+	return len(s) == 4 || !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '.'
+}
+
+// A hand-over marker ("## Hand-over") is framing, not the instruction; false when nothing follows it.
+func handover(line string) (string, bool) {
+	rest := strings.TrimLeft(strings.TrimLeft(line, "#"), " \t")
+	for _, marker := range []string{"hand-over", "handover"} {
+		if len(rest) < len(marker) || !strings.EqualFold(rest[:len(marker)], marker) {
+			continue
+		}
+		after := rest[len(marker):]
+		if r, _ := utf8.DecodeRuneInString(after); after != "" && (unicode.IsLetter(r) || unicode.IsNumber(r)) {
+			return line, true
+		}
+		after = strings.TrimLeft(after, " \t.:|*-–—")
+		return after, after != ""
+	}
+	return line, true
+}
+
+func nextLine(prompt string) (line, rest string) {
+	if i := strings.IndexAny(prompt, "\r\n"); i >= 0 {
+		end := i + 1
+		if prompt[i] == '\r' && end < len(prompt) && prompt[end] == '\n' {
+			end++
+		}
+		return prompt[:i], prompt[end:]
+	}
+	return prompt, ""
+}
+
+func firstNonBlankLine(prompt string) (line, rest string) {
+	for prompt != "" {
+		line, prompt = nextLine(prompt)
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line, prompt
+		}
+	}
+	return "", ""
+}
+
 func paragraphs(prompt string) []string {
 	var result []string
-	var lines []string
-	prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(prompt)
-	for line := range strings.Lines(prompt) {
+	var paragraph strings.Builder
+	var lastLabel string
+	runes := 0
+	for prompt != "" {
+		var line string
+		line, prompt = nextLine(prompt)
 		line = strings.TrimSpace(line)
+		var keep bool
+		if line, keep = handover(line); !keep {
+			continue
+		}
 		if line == "" {
-			if len(lines) > 0 {
-				result = append(result, strings.Join(lines, "\n"))
+			if paragraph.Len() > 0 || lastLabel != "" {
+				result = append(result, strings.TrimSuffix(lastLabel+paragraph.String(), "\n"))
 				if len(result) == 2 {
 					return result
 				}
-				lines = nil
+				paragraph.Reset()
+				lastLabel = ""
+				runes = 0
 			}
 			continue
 		}
-		lines = append(lines, line)
+		if runes == maxLead {
+			continue
+		}
+		// Bound labels separately so they cannot exhaust the instruction's budget; retain error lines.
+		if runes == 0 {
+			if colon, open := leadingLabel(line); colon >= 0 {
+				lastLabel = boundLabel(line, colon, open)
+				continue
+			}
+		}
+		if paragraph.Len() > 0 || lastLabel != "" {
+			paragraph.WriteByte('\n')
+			if runes > 0 {
+				runes++
+			}
+		}
+		for _, r := range line {
+			if runes == maxLead {
+				break
+			}
+			paragraph.WriteRune(r)
+			runes++
+		}
+		if runes == maxLead && len(result) == 1 {
+			break
+		}
 	}
-	if len(lines) > 0 {
-		result = append(result, strings.Join(lines, "\n"))
+	if paragraph.Len() > 0 || lastLabel != "" {
+		result = append(result, strings.TrimSuffix(lastLabel+paragraph.String(), "\n"))
 	}
 	return result
 }
 
-var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?: *`)
+var errorLine = regexp.MustCompile(`(?i)^([a-z]*(error|exception)|panic)\s*:`)
 
-// unlabel drops a paragraph's leading label lines ("Repository: hrn", "Goal
-// (issue #82): ..."); a last line that is itself a label keeps its value.
-// Lines stay separated by "\n".
+var label = regexp.MustCompile(`^[\p{L}\p{N}/-]+(?: +[\p{L}\p{N}/-]+){0,2}(?: +\([^()]*\))?:(?: +|$)`)
+
+// Avoid regexp scratch allocations, which sync.Pool may discard under -race; bound label length.
+func leadingLabel(line string) (colon, open int) {
+	i := 0
+	for words := 0; words < 3; words++ {
+		start := i
+		for i < len(line) {
+			r, size := utf8.DecodeRuneInString(line[i:])
+			if !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '/' && r != '-' {
+				break
+			}
+			i += size
+		}
+		if i == start {
+			return -1, -1
+		}
+		if i < len(line) && line[i] == ':' {
+			if words == 0 && errorLabel(line[:i]) {
+				return -1, -1
+			}
+			if (i+1 == len(line) || line[i+1] == ' ') && utf8.RuneCountInString(line[:i]) <= maxLead {
+				return i, -1
+			}
+			return -1, -1
+		}
+		if i == len(line) || line[i] != ' ' {
+			return -1, -1
+		}
+		for i < len(line) && line[i] == ' ' {
+			i++
+		}
+		if i < len(line) && line[i] == '(' {
+			open = i
+			i++
+			end := strings.IndexAny(line[i:], "()")
+			if end < 0 || line[i+end] != ')' {
+				return -1, -1
+			}
+			i += end + 1
+			if i < len(line) && line[i] == ':' && (i+1 == len(line) || line[i+1] == ' ') && utf8.RuneCountInString(line[:open]) <= maxLead {
+				return i, open
+			}
+			return -1, -1
+		}
+	}
+	return -1, -1
+}
+
+// Preserve the colon and whole value so truncation cannot turn a label into an instruction.
+func boundLabel(line string, colon, open int) string {
+	if len(line) <= maxLead {
+		return line
+	}
+	prefix := line[:colon+1]
+	if open >= 0 {
+		prefix = line[:open+1] + capRunes(line[open+1:colon-1]) + "):"
+	}
+	if value := capRunes(strings.TrimLeft(line[colon+1:], " ")); value != "" {
+		return prefix + " " + value
+	}
+	return prefix
+}
+
+func capRunes(s string) string {
+	runes := 0
+	for i := range s {
+		if runes == maxLead {
+			return s[:i]
+		}
+		runes++
+	}
+	return s
+}
+
+func errorLabel(name string) bool {
+	if strings.EqualFold(name, "panic") {
+		return true
+	}
+	for _, suffix := range []string{"error", "exception"} {
+		if len(name) < len(suffix) || !strings.EqualFold(name[len(name)-len(suffix):], suffix) {
+			continue
+		}
+		for _, r := range name[:len(name)-len(suffix)] {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r == '\u212a' || r == '\u017f') {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func unlabel(paragraph string) string {
 	lines := strings.Split(paragraph, "\n")
 	for len(lines) > 0 {
+		if errorLine.MatchString(lines[0]) {
+			break
+		}
 		end := label.FindStringIndex(lines[0])
 		if end == nil {
 			break
@@ -183,9 +413,16 @@ func unlabel(paragraph string) string {
 	return strings.Join(lines, "\n")
 }
 
-// lead is a paragraph's lines joined by spaces, lowercased and cut to maxLead
-// bytes without splitting a rune.
 func lead(paragraph string) string {
+	// Lowercasing may shrink UTF-8, but maxLead runes still suffice for maxLead bytes.
+	runes := 0
+	for i := range paragraph {
+		if runes == maxLead {
+			paragraph = paragraph[:i]
+			break
+		}
+		runes++
+	}
 	l := strings.ToLower(strings.ReplaceAll(paragraph, "\n", " "))
 	if len(l) <= maxLead {
 		return l

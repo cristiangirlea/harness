@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -163,10 +164,9 @@ func TestClaudePassesCompactWindowOnlyWhenSet(t *testing.T) {
 }
 
 func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
-	// With the environment inherited, as lean on its own is about MCP servers only.
-	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}, InheritEnv: true}
+	opts := Options{Mode: ModeAuto, MCP: []string{"a.json", "b.json"}, Lean: Bool(false)}
 	plain := NewClaudeBackend().args(Task{Options: opts}, "")
-	opts.Lean = Bool(true)
+	opts.Lean, opts.Skills = Bool(true), Bool(true)
 	lean := NewClaudeBackend().args(Task{Options: opts}, "")
 	for _, flag := range []string{"--strict-mcp-config", "--setting-sources", "--bare"} {
 		if slices.Contains(plain, flag) {
@@ -186,5 +186,39 @@ func TestClaudeLeanAddsOnlyStrictMCPConfig(t *testing.T) {
 	want := slices.Insert(slices.Clone(plain), d, "--strict-mcp-config")
 	if !slices.Equal(lean, want) {
 		t.Errorf("lean args:\n got %v\nwant %v", lean, want)
+	}
+}
+
+func TestClaudeAppendsTheSystemPromptAsOneArgumentAndCanTurnSkillsOff(t *testing.T) {
+	plain := NewClaudeBackend().args(Task{Options: Options{Mode: ModeAuto, Lean: Bool(false)}}, "")
+	for _, flag := range []string{"--disable-slash-commands", appendSystemPromptFlag} {
+		if slices.ContainsFunc(plain, func(a string) bool { return strings.HasPrefix(a, flag) }) {
+			t.Errorf("unset, %s must not be passed: %v", flag, plain)
+		}
+	}
+	text := "-not a flag\nsecond line"
+	args := NewClaudeBackend().args(Task{Options: Options{Mode: ModeAuto, AppendSystemPrompt: text, NoSkills: true}}, "")
+	i := slices.Index(args, appendSystemPromptFlag+"="+text)
+	s := slices.Index(args, "--disable-slash-commands")
+	d := slices.Index(args, "--disallowedTools")
+	if i < 0 || s < 0 || d < i || d < s {
+		t.Errorf("want the text in one argument and the skills switch, both before the deny rules: %q", args)
+	}
+	if shown := strings.Join(shownArgs(args), " "); strings.Contains(shown, "second line") || !strings.Contains(shown, appendSystemPromptFlag+"=<23 bytes>") {
+		t.Errorf("the run's info line names the size, not the text: %s", shown)
+	}
+}
+
+func TestClaudeRefusesASystemPromptThroughABatchFileShim(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "claude.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := NewClaudeBackend()
+	b.name = "hrn-no-such-claude"
+	b.candidates = func() []string { return []string{shim} }
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{AppendSystemPrompt: "a & b"}}, func(Event) {})
+	if res.Status != StatusError || !strings.Contains(res.Error, "cannot be passed safely through claude.cmd") {
+		t.Errorf("res = %+v", res)
 	}
 }

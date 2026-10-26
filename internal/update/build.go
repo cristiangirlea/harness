@@ -17,17 +17,14 @@ const Module = "github.com/cristiangirlea/harness/cmd/hrn"
 // ErrNoGo is the error when --ref is asked for without a Go toolchain.
 var ErrNoGo = errors.New("hrn update --ref needs Go on PATH; use a release instead")
 
-// Builder runs go install. The zero value uses PATH and runs the command;
-// tests replace both.
+// Builder runs go install using PATH unless its hooks are supplied.
 type Builder struct {
 	LookPath func(file string) (string, error)
 	Run      func(cmd *exec.Cmd) error
 }
 
-// BuildRef installs cmd/hrn at ref (a branch, tag or commit) into dir, which
-// becomes GOBIN, and returns the binary's path. GOFLAGS is dropped so the
-// caller's shell settings do not leak into the build; GOPROXY and the rest
-// of the Go environment stay as configured.
+// BuildRef installs cmd/hrn at ref into dir and returns its path.
+// Exclude shell GOFLAGS to isolate build flags; preserve other Go settings.
 func (b Builder) BuildRef(ctx context.Context, ref, dir string) (string, error) {
 	if ref == "" {
 		return "", errors.New("--ref needs a branch, tag or commit")

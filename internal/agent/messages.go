@@ -15,10 +15,7 @@ import (
 	"time"
 )
 
-// Minimal Anthropic Messages API client on the standard library: one streaming
-// POST /v1/messages with retries. Content blocks are kept as generic JSON
-// objects so every block type the API returns (thinking signatures, fallback
-// markers, future types) is echoed back unchanged in the next request.
+// Generic blocks preserve signatures and unknown types on replay.
 
 const (
 	apiVersion       = "2023-06-01"
@@ -72,11 +69,9 @@ type apiResponse struct {
 		Explanation string `json:"explanation"`
 	} `json:"stop_details"`
 	Usage apiUsage `json:"usage"`
-	// ContextManagement is the server's report of the context edits it
-	// applied, kept verbatim: its shape is not documented where this was
-	// written, so it is recorded rather than interpreted.
+	// ContextManagement preserves the server's undocumented schema.
 	ContextManagement json.RawMessage `json:"context_management"`
-	// invalidInput holds tool inputs that were not valid JSON, by tool_use id.
+	// Keep malformed inputs separate so history remains valid JSON.
 	invalidInput map[string]string
 }
 
@@ -88,12 +83,11 @@ type apiClient struct {
 	maxRetries int
 }
 
-// apiError is an HTTP or stream error from the API.
 type apiError struct {
 	Status  int
 	Type    string
 	Message string
-	// RetryAfter is the server-requested delay, if any.
+	// RetryAfter honours server backoff instead of retrying immediately.
 	RetryAfter time.Duration
 }
 
@@ -114,8 +108,6 @@ func (e *apiError) retryable() bool {
 	return false
 }
 
-// credentials reads auth from the environment. ANTHROPIC_API_KEY wins over
-// ANTHROPIC_AUTH_TOKEN (an OAuth bearer token).
 func credentials() (apiKey, authToken, source string) {
 	if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
 		return k, "", "ANTHROPIC_API_KEY"
@@ -126,10 +118,7 @@ func credentials() (apiKey, authToken, source string) {
 	return "", "", ""
 }
 
-// stream sends one request and accumulates the streamed response, calling
-// onDelta for text and thinking fragments and onBlock when a block completes.
-// Failed attempts are retried with backoff before any output is emitted twice:
-// a retry only happens if the failed attempt produced no content blocks.
+// Retry only before any content blocks arrive to avoid duplicate output.
 func (c *apiClient) stream(ctx context.Context, req apiRequest, onDelta func(kind, text string), onBlock func(block)) (*apiResponse, error) {
 	req.Stream = true
 	body, err := json.Marshal(req)
@@ -186,7 +175,6 @@ func (c *apiClient) once(ctx context.Context, body []byte, betas []string, onDel
 		if ctx.Err() != nil {
 			return nil, false, ctx.Err()
 		}
-		// Connection failures are retryable.
 		return nil, false, &apiError{Status: 503, Type: "connection_error", Message: err.Error()}
 	}
 	defer httpResp.Body.Close()
@@ -216,7 +204,6 @@ func readHTTPError(r *http.Response) error {
 	return e
 }
 
-// sseEvent is the union of the stream event payloads the harness reads.
 type sseEvent struct {
 	Type         string          `json:"type"`
 	Index        int             `json:"index"`
@@ -231,8 +218,7 @@ type sseEvent struct {
 		Citation    json.RawMessage `json:"citation"`
 		StopReason  string          `json:"stop_reason"`
 		StopDetails json.RawMessage `json:"stop_details"`
-		// Where the server reports context edits is not documented here, so
-		// both places a message_delta could carry it are read.
+		// ContextManagement may arrive inside or outside delta.
 		ContextManagement json.RawMessage `json:"context_management"`
 	} `json:"delta"`
 	ContextManagement json.RawMessage `json:"context_management"`
@@ -243,8 +229,6 @@ type sseEvent struct {
 	} `json:"error"`
 }
 
-// present reports whether a raw JSON value holds something: not missing, not
-// null, not an empty object or list.
 func present(raw json.RawMessage) bool {
 	s := strings.TrimSpace(string(raw))
 	return s != "" && s != "null" && s != "{}" && s != "[]"
@@ -256,10 +240,7 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 	started := false
 	done := false
 
-	// Text, thinking and signature deltas are gathered per block and written
-	// into it once, at its stop or when the parse ends however it ends. Adding
-	// each delta to the block's string copied the whole text every time, so a
-	// long response took time quadratic in its length.
+	// Accumulate deltas in builders to avoid quadratic copying.
 	grown := map[int]map[string]*strings.Builder{}
 	grow := func(i int, b block, field, s string) {
 		fields := grown[i]
@@ -287,9 +268,6 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 		}
 	}()
 
-	// The buffer starts at the scanner's 4 KiB and doubles as a line needs,
-	// up to 64 MiB for one huge tool input. Starting it at 1 MiB cost that
-	// much for every response, however short.
 	sc := bufio.NewScanner(r)
 	sc.Buffer(nil, 64*1024*1024)
 	var data strings.Builder
@@ -305,9 +283,7 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 		}
 		switch ev.Type {
 		case "message_start":
-			// What the earlier blocks gathered goes into them first: the
-			// decode below can replace or shrink the content even when it
-			// then fails.
+			// Settle builders first: the decode below can replace content even when it fails.
 			for i := range grown {
 				settle(i)
 			}
@@ -378,9 +354,6 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 			}
 			onBlock(b)
 		case "message_delta":
-			// The context_management record of what the server cleared is
-			// kept for the run record; it never changes the client history,
-			// which stays append-only.
 			for _, cm := range []json.RawMessage{ev.ContextManagement, ev.Delta.ContextManagement} {
 				if present(cm) {
 					resp.ContextManagement = cm
@@ -424,7 +397,6 @@ func parseSSE(r io.Reader, onDelta func(kind, text string), onBlock func(block))
 			}
 			data.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 		}
-		// "event:" lines are redundant with the payload's type field.
 	}
 	if err := dispatch(); err != nil {
 		return resp, started, err

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,6 +84,104 @@ type fixture struct {
 	prs    []PR
 }
 
+// Each git process can take seconds on a loaded machine, so the origin and repo
+// pair is built once per test binary and copied into every test.
+var (
+	templateOnce sync.Once
+	templateDir  string
+	templateErr  error
+)
+
+func buildTemplate() (string, error) {
+	dir, err := os.MkdirTemp("", "hrn-gc-fixture-")
+	if err != nil {
+		return "", err
+	}
+	origin, repo := filepath.Join(dir, "origin.git"), filepath.Join(dir, "repo")
+	run := func(dir string, args ...string) error {
+		// Detached auto maintenance would still touch the template while tests copy it.
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)...)
+		cmd.Env = cleanEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git %v: %v\n%s", args, err, out)
+		}
+		return nil
+	}
+	steps := [][]string{
+		{dir, "init", "-q", "--bare", "-b", "main", origin},
+		{dir, "init", "-q", "-b", "main", repo},
+		{repo, "config", "user.email", "test@example.com"},
+		{repo, "config", "user.name", "Test"},
+	}
+	for _, s := range steps {
+		if err := run(s[0], s[1:]...); err != nil {
+			return dir, err
+		}
+	}
+	for name, body := range map[string]string{".gitignore": ".hrn/\ntarget/\n", "README.md": "hello\n"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			return dir, err
+		}
+	}
+	steps = [][]string{
+		{repo, "add", "."},
+		{repo, "commit", "-q", "-m", "init"},
+		{repo, "remote", "add", "origin", origin},
+		// The local transport drops -c, so the receiver gets the settings itself.
+		{repo, "push", "-q", "--receive-pack=git -c maintenance.auto=false -c gc.auto=0 receive-pack", "origin", "main"},
+		{repo, "remote", "set-head", "origin", "main"},
+	}
+	for _, s := range steps {
+		if err := run(s[0], s[1:]...); err != nil {
+			return dir, err
+		}
+	}
+	return dir, nil
+}
+
+func TestGCFixtureBuildsStartNoAutoMaintenance(t *testing.T) {
+	trace := filepath.Join(t.TempDir(), "trace")
+	t.Setenv("GIT_TRACE", trace)
+	dir, err := buildTemplate()
+	defer os.RemoveAll(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, _ := submoduleFixture(t)
+	out, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only a traced receiver proves the push's own maintenance is covered.
+	if !strings.Contains(string(out), "built-in: git receive-pack") {
+		t.Fatalf("the trace holds no receive-pack, so the receiver went unchecked:\n%s", out)
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if strings.Contains(line, "maintenance run") || strings.Contains(line, "gc --auto") {
+			t.Errorf("a fixture build started git's auto maintenance: %s", line)
+		}
+	}
+	// The copies must keep git's defaults, so the settings never reach a config file.
+	for _, root := range []string{dir, f.root} {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || d.Name() != "config" {
+				return err
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(body), "[maintenance]") || strings.Contains(string(body), "[gc]") {
+				t.Errorf("%s holds maintenance settings:\n%s", path, body)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	t.Setenv("HRN_HOME", t.TempDir())
@@ -90,18 +189,17 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	templateOnce.Do(func() { templateDir, templateErr = buildTemplate() })
+	if templateErr != nil {
+		t.Fatalf("fixture template: %v", templateErr)
+	}
 	f := &fixture{t: t, root: root, origin: filepath.Join(root, "origin.git"), repo: filepath.Join(root, "repo")}
-	git(t, root, "init", "-q", "--bare", "-b", "main", f.origin)
-	git(t, root, "init", "-q", "-b", "main", f.repo)
-	git(t, f.repo, "config", "user.email", "test@example.com")
-	git(t, f.repo, "config", "user.name", "Test")
-	f.write(f.repo, ".gitignore", ".hrn/\ntarget/\n")
-	f.write(f.repo, "README.md", "hello\n")
-	git(t, f.repo, "add", ".")
-	git(t, f.repo, "commit", "-q", "-m", "init")
-	git(t, f.repo, "remote", "add", "origin", f.origin)
-	git(t, f.repo, "push", "-q", "origin", "main")
-	git(t, f.repo, "remote", "set-head", "origin", "main")
+	for _, name := range []string{"origin.git", "repo"} {
+		if err := os.CopyFS(filepath.Join(root, name), os.DirFS(filepath.Join(templateDir, name))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, f.repo, "remote", "set-url", "origin", f.origin)
 	f.serve()
 	return f
 }
@@ -478,9 +576,19 @@ func TestGCKeepsAWorktreeWhoseBuildOutputLinksOutOfIt(t *testing.T) {
 	f.pr(1, "done", "MERGED", head, 2*time.Hour)
 	f.pr(2, "inner", "MERGED", head2, 2*time.Hour)
 
+	before := treeWalks.Load()
 	wts := f.scan()
+	if n := treeWalks.Load() - before; n != 2 {
+		t.Errorf("the scan walked the worktrees %d times, want once each (2)", n)
+	}
 	wantVerdict(t, find(t, wts, wt), Keep, "a link out of the worktree inside build output: target/dep")
 	wantVerdict(t, find(t, wts, inner), Remove, "merged") // a link to its own folder goes with it
+
+	before = treeWalks.Load()
+	Apply(context.Background(), wts)
+	if n := treeWalks.Load() - before; n != 1 {
+		t.Errorf("the recheck walked %d times, want 1", n)
+	}
 }
 
 func TestGCFindsABareRepositoryInsideBuildOutput(t *testing.T) {
@@ -589,6 +697,90 @@ func TestGCKeepsTrackedFolderJunctionLeadingOut(t *testing.T) {
 	}
 }
 
+func TestGCKeepsTrackedFolderSymlinkLeadingOutOffWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("git follows junctions on Windows; there the link walk keeps it")
+	}
+	f := newFixture(t)
+	wt, _ := f.worktree("wt", "done")
+	f.write(wt, filepath.Join("data", "item.txt"), "precious\n")
+	git(t, wt, "add", "data")
+	git(t, wt, "commit", "-q", "-m", "track data")
+	head := git(t, wt, "rev-parse", "HEAD")
+	outside := filepath.Join(f.root, "elsewhere")
+	f.write(outside, "item.txt", "precious\n")
+	if err := os.RemoveAll(filepath.Join(wt, "data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(wt, "data")); err != nil {
+		t.Fatal(err)
+	}
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, wt), Keep, "uncommitted")
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 0 || len(errs) != 0 || !exists(filepath.Join(outside, "item.txt")) {
+		t.Fatalf("removed %d, errors %v, outside copy exists: %v", len(removed), errs, exists(filepath.Join(outside, "item.txt")))
+	}
+}
+
+func TestGCLinkWalkKeepsOnlyDirectorySymlinksLeadingOutOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows directory links only on Windows")
+	}
+	root := t.TempDir()
+	wt := filepath.Join(root, "wt")
+	outside := filepath.Join(root, "elsewhere")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "item.txt"), []byte("precious\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "item.txt"), filepath.Join(wt, "file-link")); err != nil {
+		t.Skipf("symbolic links need a privilege here: %v", err)
+	}
+	if why := (&worktreeWalk{wt: wt}).linkRisk(); why != "" {
+		t.Errorf("a file symlink leading out: got %q, want none (git deletes the link)", why)
+	}
+
+	if err := os.Symlink(outside, filepath.Join(wt, "dir-link")); err != nil {
+		t.Fatal(err)
+	}
+	if why := (&worktreeWalk{wt: wt}).linkRisk(); why != "a link out of the worktree: dir-link" {
+		t.Errorf("a directory symlink leading out: got %q", why)
+	}
+	if err := os.Remove(filepath.Join(wt, "dir-link")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(filepath.Join(root, "missing"), filepath.Join(wt, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	if why := (&worktreeWalk{wt: wt}).linkRisk(); why != "a link out of the worktree: dangling" {
+		t.Errorf("a dangling link: got %q", why)
+	}
+}
+
+func TestGCWalksBuildOutputReachedThroughAJunctionStayingInside(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows junctions on Windows; elsewhere a link is an untracked file")
+	}
+	f := newFixture(t)
+	outside := filepath.Join(f.root, "store")
+	f.write(outside, "package.json", "{}\n")
+	wt, head := f.worktree("wt", "done")
+	link(t, filepath.Join(wt, "y", "target", "dep"), outside)
+	link(t, filepath.Join(wt, "x"), filepath.Join(wt, "y")) // git status lists x/target/ first
+	f.pr(1, "done", "MERGED", head, 2*time.Hour)
+
+	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree inside build output: x/target/dep")
+}
+
 func TestGCAllowsTrackedFolderJunctionStayingInside(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("git follows junctions on Windows; elsewhere a link changes a tracked folder")
@@ -646,19 +838,22 @@ func TestGCLinkWalkSkipsListedInnerWorktree(t *testing.T) {
 	f.write(outside, "item.txt", "precious\n")
 	link(t, filepath.Join(inner, "target", "dep"), outside)
 
-	if why := worktreeLinkRisk(outer, []string{outer, inner}); why != "" {
+	if why := (&worktreeWalk{wt: outer, registered: []string{outer, inner}}).linkRisk(); why != "" {
 		t.Errorf("outer worktree found a risk inside its listed inner worktree: %s", why)
 	}
 }
 
 func TestGCLinkWalkKeepsUnreadableWorktree(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
-	if why := worktreeLinkRisk(missing, nil); !strings.Contains(why, "the worktree cannot be read:") {
+	if why := (&worktreeWalk{wt: missing}).linkRisk(); !strings.Contains(why, "the worktree cannot be read:") {
 		t.Errorf("missing worktree: got %q, want an unreadable reason", why)
 	}
 }
 
 func TestGCKeepsAWorktreeWithDotGitLinkLeadingOut(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("git follows junctions on Windows; elsewhere it unlinks a link")
+	}
 	f := newFixture(t)
 	wt, _ := f.worktree("wt", "done")
 	f.write(wt, filepath.Join("sub", "item.txt"), "tracked\n")
@@ -676,7 +871,7 @@ func TestGCKeepsAWorktreeWithDotGitLinkLeadingOut(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree: sub/.git")
 }
 
-func TestGCKeepsTrackedSymlinkLeadingOutOffWindows(t *testing.T) {
+func TestGCRemovesAWorktreeWithATrackedSymlinkLeadingOutOffWindows(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("git may not create tracked symlinks on Windows")
 	}
@@ -696,7 +891,12 @@ func TestGCKeepsTrackedSymlinkLeadingOutOffWindows(t *testing.T) {
 	}
 	f.pr(1, "done", "MERGED", head, 2*time.Hour)
 
-	wantVerdict(t, find(t, f.scan(), wt), Keep, "a link out of the worktree: outside-link")
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, wt), Remove, "merged") // git unlinks a link here, without following it
+	removed, errs := Apply(context.Background(), wts)
+	if len(removed) != 1 || len(errs) != 0 || !exists(filepath.Join(outside, "precious.txt")) {
+		t.Fatalf("removed %d, errors %v, outside copy exists: %v", len(removed), errs, exists(filepath.Join(outside, "precious.txt")))
+	}
 }
 
 func TestGCKeepsBatchWorktreeWithTrackedFolderJunctionLeadingOut(t *testing.T) {
@@ -841,6 +1041,92 @@ func TestGCRemovesTwoCommitBatchChangeLandedAsOneCommit(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
 
+func TestGCRemovesBatchChangeLandedOverTwoCommits(t *testing.T) {
+	f := newFixture(t)
+	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	f.write(task, "second.txt", "second\n")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "second task commit")
+	saveBatch(t, "split", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land the first file")
+	f.write(f.repo, "second.txt", "second\n")
+	f.write(f.repo, "other.txt", "other work\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land the second file with other work")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Remove, "merging it into origin/main changes nothing")
+}
+
+func TestGCKeepsBatchChangeOfWhichOnlyPartLanded(t *testing.T) {
+	f := newFixture(t)
+	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
+	f.write(task, "second.txt", "second\n")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "second task commit")
+	saveBatch(t, "part", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "hrn/task.txt", "hrn/task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land the first file only")
+	git(t, f.repo, "push", "-q", "origin", "main")
+
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
+// The task drops a line that main rewords: a plain merge conflicts, but these settings keep main's side.
+func TestGCKeepsBatchChangeThatAMergeSettingWouldHide(t *testing.T) {
+	lines := "1\n2\n3\n4\n5\n6\n7\n8\n9\n"
+	for _, c := range []struct {
+		name, attrs, key, value, rename, checkout string
+		dropCheckout                              bool
+	}{
+		{name: "union", attrs: "notes.txt merge=union\n"},
+		{name: "driver keeping main's side", attrs: "notes.txt merge=keep\n", key: "merge.keep.driver", value: "true"},
+		{name: "merge.default", key: "merge.default", value: "union"},
+		{name: "a driver named text", key: "merge.text.driver", value: "true"},
+		{name: "union on the name main renamed it to", attrs: "*.log merge=union\n", rename: "notes.log"},
+		{name: "union on main but not in the checkout", attrs: "notes.txt merge=union\n", dropCheckout: true},
+		{name: "union only in the checkout", checkout: "notes.txt merge=union\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			if c.attrs != "" {
+				f.write(f.repo, ".gitattributes", c.attrs)
+			}
+			f.write(f.repo, "notes.txt", lines+"b\n")
+			git(t, f.repo, "add", ".")
+			git(t, f.repo, "commit", "-q", "-m", "notes")
+			git(t, f.repo, "push", "-q", "origin", "main")
+			if c.key != "" {
+				git(t, f.repo, "config", c.key, c.value)
+			}
+			task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+			git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+			f.write(task, "notes.txt", lines)
+			git(t, task, "commit", "-q", "-am", "task drops b")
+			saveBatch(t, "setting", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+			notes := "notes.txt"
+			if c.rename != "" {
+				git(t, f.repo, "mv", notes, c.rename)
+				notes = c.rename
+			}
+			f.write(f.repo, notes, lines+"c\n")
+			git(t, f.repo, "commit", "-q", "-am", "main rewords b")
+			git(t, f.repo, "push", "-q", "origin", "main")
+			if c.dropCheckout {
+				git(t, f.repo, "rm", "-q", ".gitattributes") // from the index too, where git also reads attributes
+			}
+			if c.checkout != "" {
+				f.write(f.repo, ".gitattributes", c.checkout)
+			}
+
+			wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+		})
+	}
+}
+
 func TestGCRemovesBatchChangeAfterLaterEditToSameFile(t *testing.T) {
 	f := newFixture(t)
 	task, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "task"), "hrn/task")
@@ -857,7 +1143,7 @@ func TestGCRemovesBatchChangeAfterLaterEditToSameFile(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as "+landed[:7])
 }
 
-func TestGCKeepsBatchChangeAtCommitComparisonBound(t *testing.T) {
+func TestGCDecidesByMergingAtTheCommitComparisonBound(t *testing.T) {
 	previous := maxCommits
 	maxCommits = 2
 	t.Cleanup(func() { maxCommits = previous })
@@ -872,7 +1158,7 @@ func TestGCKeepsBatchChangeAtCommitComparisonBound(t *testing.T) {
 	git(t, f.repo, "commit", "-q", "-m", "later change")
 	git(t, f.repo, "push", "-q", "origin", "main")
 
-	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "merging it into origin/main changes nothing")
 }
 
 func TestGCKeepsBatchChangeThatLandedDifferently(t *testing.T) {
@@ -956,7 +1242,7 @@ func TestGCComparesBatchChangesWithoutTextconv(t *testing.T) {
 	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
 
-func TestGCKeepsBatchTasksCombinedIntoOneCommit(t *testing.T) {
+func TestGCRemovesBatchTasksCombinedIntoOneCommit(t *testing.T) {
 	f := newFixture(t)
 	a, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "a"), "hrn/a")
 	b, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "b"), "hrn/b")
@@ -970,8 +1256,8 @@ func TestGCKeepsBatchTasksCombinedIntoOneCommit(t *testing.T) {
 	git(t, f.repo, "push", "-q", "origin", "main")
 
 	wts := f.scan()
-	wantVerdict(t, find(t, wts, a), Keep, "not on origin/main")
-	wantVerdict(t, find(t, wts, b), Keep, "not on origin/main")
+	wantVerdict(t, find(t, wts, a), Remove, "merging it into origin/main changes nothing")
+	wantVerdict(t, find(t, wts, b), Remove, "merging it into origin/main changes nothing")
 }
 
 func TestGCKeepsBatchTaskWithEmptyDiff(t *testing.T) {
@@ -990,6 +1276,141 @@ func TestGCKeepsBatchTaskWithEmptyDiff(t *testing.T) {
 	}
 
 	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+}
+
+func TestGCReadsLandedPatchIDsOncePerMergeBaseAsBefore(t *testing.T) {
+	f := newFixture(t)
+	a, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "a"), "hrn/a")
+	b, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "b"), "hrn/b")
+	f.write(f.repo, "hrn/a.txt", "hrn/a\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land a")
+	landedA := git(t, f.repo, "rev-parse", "HEAD")
+	c, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "c"), "hrn/c")
+	f.write(c, "asset.bin", "\x00\x01\x02\xff")
+	git(t, c, "add", ".")
+	git(t, c, "commit", "-q", "-m", "c binary")
+	f.write(f.repo, "asset.bin", "\x00\x01\x02\xff")
+	f.write(f.repo, "hrn/c.txt", "hrn/c\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land c with a binary")
+	git(t, f.repo, "push", "-q", "origin", "main")
+	saveBatch(t, "shared", f.repo,
+		batch.TaskResult{ID: "a", Status: batch.StatusPass, Branch: "hrn/a", Worktree: a},
+		batch.TaskResult{ID: "b", Status: batch.StatusPass, Branch: "hrn/b", Worktree: b},
+		batch.TaskResult{ID: "c", Status: batch.StatusPass, Branch: "hrn/c", Worktree: c})
+
+	previous := landedPatchIDs
+	t.Cleanup(func() { landedPatchIDs = previous })
+	calls := map[string]int{}
+	landedPatchIDs = func(ctx context.Context, repo, base, def string) []patchID {
+		calls[base]++
+		return previous(ctx, repo, base, def)
+	}
+	wts := f.scan()
+	wantVerdict(t, find(t, wts, a), Remove, "landed on origin/main as "+landedA[:7])
+	wantVerdict(t, find(t, wts, b), Keep, "not on origin/main")
+	wantVerdict(t, find(t, wts, c), Remove, "landed on origin/main as")
+
+	t.Run("once per merge base", func(t *testing.T) {
+		if len(calls) != 2 {
+			t.Fatalf("patch ids read for %d merge bases, want 2: %v", len(calls), calls)
+		}
+		for base, n := range calls {
+			if n != 1 {
+				t.Errorf("patch ids for %s read %d times, want once", base, n)
+			}
+		}
+	})
+	t.Run("same ids as the whole log read at once", func(t *testing.T) {
+		ctx := context.Background()
+		def := "refs/remotes/origin/main"
+		for base := range calls {
+			patches, err := gitStdout(ctx, f.repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+fmt.Sprint(maxCommits), base+".."+def)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := gitStdoutInput(ctx, f.repo, patches, "patch-id", "--verbatim")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := logPatchIDs(ctx, f.repo, base, def)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want || strings.TrimSpace(got) == "" {
+				t.Errorf("base %s: streamed ids\n%s\nwant\n%s", base, got, want)
+			}
+		}
+	})
+}
+
+// landedTask lands a batch task's change on origin/main as a squash, after a
+// commit large enough to fill the pipe between git log and git patch-id.
+func landedTask(t *testing.T, f *fixture) string {
+	t.Helper()
+	task := filepath.Join(f.repo, ".hrn", "worktrees", "task")
+	git(t, f.repo, "worktree", "add", "-q", "-b", "hrn/task", task, "main")
+	f.write(task, "task.txt", "task\n")
+	git(t, task, "add", ".")
+	git(t, task, "commit", "-q", "-m", "task")
+	saveBatch(t, "landed", f.repo, batch.TaskResult{ID: "task", Status: batch.StatusPass, Branch: "hrn/task", Worktree: task})
+	f.write(f.repo, "big.txt", strings.Repeat("a line of the big file\n", 1<<16))
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "big file")
+	f.write(f.repo, "task.txt", "task\n")
+	git(t, f.repo, "add", ".")
+	git(t, f.repo, "commit", "-q", "-m", "land task")
+	git(t, f.repo, "push", "-q", "origin", "main")
+	return task
+}
+
+// logPatchIDsWithin calls logPatchIDs and fails the test if it outlasts a
+// minute, well inside its own two-minute limit.
+func logPatchIDsWithin(t *testing.T, repo, base string) error {
+	t.Helper()
+	start := time.Now()
+	_, err := logPatchIDs(context.Background(), repo, base, "refs/remotes/origin/main")
+	if d := time.Since(start); d > time.Minute {
+		t.Fatalf("logPatchIDs took %s", d)
+	}
+	return err
+}
+
+func TestGCFallsBackToMergingWhenGitLogFails(t *testing.T) {
+	f := newFixture(t)
+	task := landedTask(t, f)
+
+	err := logPatchIDsWithin(t, f.repo, "refs/heads/no-such-base")
+	if err == nil || !strings.Contains(err.Error(), "git log") {
+		t.Fatalf("logPatchIDs with a bad base: %v, want a git log error", err)
+	}
+
+	// rev-list and merge-base ignore log.* settings, so only git log fails;
+	// only merge-tree reads merge.conflictStyle.
+	git(t, f.repo, "config", "log.showRoot", "bogus")
+	git(t, f.repo, "config", "merge.conflictStyle", "bogus")
+	wantVerdict(t, find(t, f.scan(), task), Keep, "not on origin/main")
+	git(t, f.repo, "config", "--unset", "merge.conflictStyle")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "merging it into origin/main changes nothing")
+	git(t, f.repo, "config", "--unset", "log.showRoot")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
+}
+
+func TestGCFallsBackToMergingWhenGitPatchIDFails(t *testing.T) {
+	f := newFixture(t)
+	task := landedTask(t, f)
+	git(t, f.repo, "config", "patchid.stable", "bogus")
+	base := git(t, f.repo, "merge-base", "hrn/task", "main")
+
+	err := logPatchIDsWithin(t, f.repo, base)
+	if err == nil || !strings.Contains(err.Error(), "git patch-id") {
+		t.Fatalf("logPatchIDs with a failing patch-id: %v, want a git patch-id error", err)
+	}
+
+	wantVerdict(t, find(t, f.scan(), task), Remove, "merging it into origin/main changes nothing")
+	git(t, f.repo, "config", "--unset", "patchid.stable")
+	wantVerdict(t, find(t, f.scan(), task), Remove, "landed on origin/main as")
 }
 
 func TestGCRemovesBinaryBatchChangeLandedAsSquash(t *testing.T) {
@@ -1151,11 +1572,19 @@ func TestGCFixtureGitIgnoresGuardConfigPassedDownInItsEnvironment(t *testing.T) 
 	t.Setenv("GIT_CONFIG_KEY_0", "url.push-refused-by-hrn://.pushinsteadof")
 	t.Setenv("GIT_CONFIG_VALUE_0", "")
 
+	dir, err := buildTemplate()
+	if dir != "" {
+		defer os.RemoveAll(dir)
+	}
+	if err != nil {
+		t.Fatalf("the template build saw the guard config: %v", err)
+	}
 	f := newFixture(t)
 	wt, head := f.worktree("wt", "branch")
 	if !exists(wt) || head == "" {
 		t.Fatal("the fixture did not create its worktree")
 	}
+	f.land("branch")
 }
 
 func TestGCIgnoresGitConfigPassedDownInItsEnvironment(t *testing.T) {

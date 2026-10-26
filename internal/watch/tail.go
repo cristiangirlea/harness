@@ -1,6 +1,4 @@
-// Package watch follows hrn's run and batch records while they are written:
-// a tail of a run's events.jsonl for hrn show --follow, and a local web page
-// for hrn watch that streams the same timeline with Server-Sent Events.
+// Package watch follows live run and batch records for the CLI and web timeline.
 package watch
 
 import (
@@ -18,29 +16,24 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
-// Line is one line of a run's events.jsonl: its event, or why it could not be
-// read. End is the byte offset just past it, where reading resumes.
+// Line holds an events.jsonl event or parse error, with End as the next byte offset.
 type Line struct {
 	Event agent.Event
 	Err   error
 	End   int64
 }
 
-// Tail reads the lines appended to a file since the last read. It opens the
-// file for each read and closes it again: an open handle on Windows would stop
-// hrn runs prune or batch rm from removing the run.
+// Tail reads appended lines, reopening each time so Windows handles cannot block run removal.
 type Tail struct {
 	Path   string
-	Offset int64 // just past the last line read
+	Offset int64 // byte offset just past the last line read
 }
 
-// Read returns the lines completed since the last read. A last line without
-// its newline is still being written and is left for a later read. A file that
-// does not exist yet reads as empty.
+// Read returns completed lines, treating a missing file as empty.
+// An unterminated line waits for its writer to finish it.
 func (t *Tail) Read() ([]Line, error) { return t.read(false) }
 
-// Finish is Read for a run that has ended: a last line without its newline
-// will never be completed, so it is returned too, as whatever it parses to.
+// Finish reads all remaining lines, including an unterminated line that can no longer be completed.
 func (t *Tail) Finish() ([]Line, error) { return t.read(true) }
 
 func (t *Tail) read(final bool) ([]Line, error) {
@@ -98,8 +91,7 @@ type Follower struct {
 	tail Tail
 }
 
-// NewFollower starts reading run id's events at byte offset from, which is 0
-// or the End of a line read before. It returns the run's record as it stands.
+// NewFollower returns the current record and a follower starting at byte offset from (zero or a prior Line.End).
 func NewFollower(id string, from int64) (*Follower, runlog.Record, error) {
 	rec, err := load(id)
 	if err != nil {
@@ -109,9 +101,7 @@ func NewFollower(id string, from int64) (*Follower, runlog.Record, error) {
 	return f, rec, nil
 }
 
-// load is runlog.Load for a run that may be finishing. Close writes
-// result.json in place, so a reader can catch it half written (on Windows,
-// empty): that run has not finished yet, and its record is in task.json.
+// In-place result.json writes may be partial or empty on Windows; use task.json until they parse.
 func load(id string) (runlog.Record, error) {
 	rec, err := runlog.Load(id) // also refuses an id that leaves the runs directory
 	if err == nil || !rec.Done {
@@ -125,22 +115,19 @@ func load(id string) (runlog.Record, error) {
 	if json.Unmarshal(data, &running) != nil {
 		return runlog.Record{}, err
 	}
+	running.ID = id
 	return running, nil
 }
 
 // ID is the run being followed.
 func (f *Follower) ID() string { return f.id }
 
-// Offset is where the next Poll starts reading.
+// Offset is the byte position where the next Poll starts reading.
 func (f *Follower) Offset() int64 { return f.tail.Offset }
 
-// Poll returns the lines written since the last poll, and the run's record.
-// done is true once the run has saved its result; every line it wrote has
-// been returned by then.
+// Poll returns new lines and the record, with done true only after every line has been returned.
 func (f *Follower) Poll() (lines []Line, rec runlog.Record, done bool, err error) {
-	// Checked before reading: a run closes its events file before it writes
-	// result.json, so a run seen done has every line on disk. A result.json
-	// still being written does not parse, and counts as not done yet.
+	// Check completion first: events close before result.json is written, so done guarantees all lines are on disk.
 	rec, err = load(f.id)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, rec, false, fmt.Errorf("run %s was removed", f.id)
@@ -154,9 +141,8 @@ func (f *Follower) Poll() (lines []Line, rec runlog.Record, done bool, err error
 	return lines, rec, done, err
 }
 
-// Follow calls emit with each event of run id from byte offset from on, as
-// the run writes them, checking every interval. It returns the run's record
-// once the run has saved its result, or ctx's error when ctx ends first.
+// Follow emits events from byte offset from at interval every until completion or ctx cancellation.
+// It returns the final record or ctx's error if cancellation wins.
 func Follow(ctx context.Context, id string, from int64, every time.Duration, emit func(Line)) (runlog.Record, error) {
 	f, rec, err := NewFollower(id, from)
 	if err != nil {

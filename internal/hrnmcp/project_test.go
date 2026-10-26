@@ -47,7 +47,7 @@ func TestProjectProfileScopeAndFreshness(t *testing.T) {
 	if got["retrieval"] != "required" || got["model"] != "test-model" || got["backend"] != "codex" || got["mode"] != nil {
 		t.Fatalf("bad defaults: %s", raw)
 	}
-	for _, args := range []string{`{"backend":"claude"}`, `{"model":"other"}`, `{"dir":"elsewhere"}`, `{"retrieval_project":"other"}`, `{"retrieval_version":"other"}`, `{"continue_run_id":"prior"}`} {
+	for _, args := range []string{`{"backend":"claude"}`, `{"model":"other"}`, `{"dir":"elsewhere"}`, `{"retrieval_project":"other"}`, `{"retrieval_version":"other"}`, `{"continue_run_id":"prior"}`, `{"fresh":true}`} {
 		if _, err := p.arguments(context.Background(), dir, json.RawMessage(args)); err == nil {
 			t.Fatalf("accepted mismatched scope: %s", args)
 		}
@@ -146,4 +146,32 @@ func TestProjectServerExposesOnlyScopedRunAndInspectionTools(t *testing.T) {
 			t.Fatalf("disabled profile: %v", err)
 		}
 	})
+}
+
+func TestTheProfileCheckReadsItsOwnWorkspacesHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	dir, other := t.TempDir(), t.TempDir()
+	for i, d := range []string{dir, other} {
+		for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "--allow-empty", "-m", "c" + string(rune('0'+i))}} {
+			if out, err := exec.Command("git", append([]string{"-C", d}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("git: %s %v", out, err)
+			}
+		}
+	}
+	head, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "source.txt"), []byte("s"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("s"))
+	p := ProjectProfile{Workspace: dir, Backend: "codex", Options: agent.Options{Model: "test-model", Retrieval: "required", RetrievalTenant: "t", RetrievalProject: "p",
+		RetrievalRevision: strings.TrimSpace(string(head)), RetrievalVersion: "v"}, SourceHashes: map[string]string{"source.txt": hex.EncodeToString(sum[:])}}
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	if err := p.validate(context.Background(), dir); err != nil {
+		t.Errorf("the check read the HEAD of the repository GIT_DIR named: %v", err)
+	}
 }

@@ -1,10 +1,15 @@
 package watch
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +50,7 @@ func TestTheBotNamesBackendsAndPlacesAsPeopleSayThem(t *testing.T) {
 			t.Errorf("backendName(%q) = %q, want %q", in, got, want)
 		}
 	}
-	for in, want := range map[string]string{`E:\__Workdir\personal\harness`: "harness", "/home/me/tidedesk/": "tidedesk", "": "", "/": ""} {
+	for in, want := range map[string]string{`D:\src\harness`: "harness", "/home/me/web-shop/": "web-shop", "": "", "/": ""} {
 		if got := place(in); got != want {
 			t.Errorf("place(%q) = %q, want %q", in, got, want)
 		}
@@ -57,6 +62,9 @@ func TestTheBotNamesBackendsAndPlacesAsPeopleSayThem(t *testing.T) {
 		"I want the guard on every backend":     "I want the guard on every backend",
 		"I'm adding the budget":                 "I'm adding the budget",
 		"A flag for prune":                      "a flag for prune",
+		"C++ build":                             "C++ build",
+		"A/B test the page":                     "A/B test the page",
+		"Q&A for the docs":                      "Q&A for the docs",
 		"one two three four five six seven eight nine ten eleven twelve thirteen": "one two three four five six seven eight nine ten eleven twelve…",
 		"   ": "",
 	} {
@@ -119,6 +127,7 @@ func kinds(says []say) []string {
 }
 
 func TestTheFirstLookOnlySaysWhatIsGoing(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	cur := lookAt([]runlog.Record{
 		runRec("20261011-115000-aaaaaa", noon.Add(-10*time.Minute), false, agent.Result{}),
 		runRec("20261011-110000-bbbbbb", noon.Add(-time.Hour), true, agent.Result{Status: agent.StatusOK, Duration: time.Minute}),
@@ -136,6 +145,7 @@ func TestTheFirstLookOnlySaysWhatIsGoing(t *testing.T) {
 }
 
 func TestTheBotAnnouncesARunStartingWorkingAndEnding(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	id := "20261011-115950-aaaaaa"
 	before := lookAt(nil, nil, nil)
 	going := lookAt([]runlog.Record{runRec(id, noon.Add(-10*time.Second), false, agent.Result{})}, nil, nil)
@@ -161,6 +171,7 @@ func TestTheBotAnnouncesARunStartingWorkingAndEnding(t *testing.T) {
 // A run younger than one look may be a batch's attempt whose record the batch
 // has not saved yet: it is held back one look rather than announced twice.
 func TestAJustStartedRunWaitsALookAndABatchsRunsAreNotItsOwn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	runID, batchID := "20261011-115959-aaaaaa", "20261011-115958-bbbbbb"
 	young := lookAt([]runlog.Record{runRec(runID, noon.Add(-time.Second), false, agent.Result{})}, nil, nil)
 	if says := announce(lookAt(nil, nil, nil), young, false); len(says) != 0 {
@@ -188,6 +199,7 @@ func TestAJustStartedRunWaitsALookAndABatchsRunsAreNotItsOwn(t *testing.T) {
 // A batch first seen already over (it ran between two looks) is told by its
 // ending alone, not task by task.
 func TestABatchFirstSeenOverIsToldByItsEnding(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	b := batch.Result{ID: "20261011-115959-cccccc", Started: noon.Add(-5 * time.Second), Dir: "/repo/harness", Duration: 4 * time.Second, Tasks: []batch.TaskResult{
 		{ID: "t1", Prompt: "Add the guard", Status: batch.StatusPass}, {ID: "t2", Prompt: "Add the budget", Status: batch.StatusPass}}}
 	says := announce(lookAt(nil, nil, nil), lookAt(nil, []batch.Result{b}, nil), false)
@@ -202,6 +214,7 @@ func TestABatchFirstSeenOverIsToldByItsEnding(t *testing.T) {
 
 // What a batch's agent is doing is told as the batch's, in a whole sentence.
 func TestTheBotSaysWhatABatchsAgentIsDoing(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	runID := "20261011-115000-aaaaaa"
 	b := batch.Result{ID: "20261011-114959-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/repo/harness", Tasks: []batch.TaskResult{
 		{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning, Attempts: []batch.Attempt{{Backend: "codex", RunID: runID}}},
@@ -225,22 +238,182 @@ func TestTheBotSaysWhatABatchsAgentIsDoing(t *testing.T) {
 // The batch is kept from the look before, or it and its runs would be
 // announced again as new.
 func TestABatchCaughtMidSaveIsNotAnnouncedAgain(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	runID := "20261011-115000-aaaaaa"
 	b := batch.Result{ID: "20261011-114959-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/repo/harness", Tasks: []batch.TaskResult{
 		{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning, Attempts: []batch.Attempt{{Backend: "claude", RunID: runID}}}}}
 	run := runRec(runID, noon.Add(-time.Minute), false, agent.Result{})
 	prev := lookAt([]runlog.Record{run}, []batch.Result{b}, nil)
-	caught := lookAt([]runlog.Record{run}, keepUnread([]batch.Result{b}, nil, 1), nil)
+	caught := lookAt([]runlog.Record{run}, keepUnread([]batch.Result{b}, nil, map[string]bool{b.ID: true}), nil)
 	if says := announce(prev, caught, false); len(says) != 0 {
 		t.Fatalf("a batch that could not be read for one look was announced again: %+v", says)
 	}
-	// Removed for good (hrn batch rm): every record reads, and it is not kept.
-	if got := keepUnread([]batch.Result{b}, nil, 0); len(got) != 0 {
+	// Removed for good (hrn batch rm): its file is gone, and it is not kept.
+	if got := keepUnread([]batch.Result{b}, nil, nil); len(got) != 0 {
 		t.Errorf("a batch gone for good was kept: %+v", got)
 	}
 }
 
+// A batch is kept for as long as its file is on disk and cannot be read, and
+// not a look longer, however many other records never read.
+func TestABatchIsKeptWhileItsFileIsOnDiskAndUnread(t *testing.T) {
+	b := batch.Result{ID: "20261011-114959-bbbbbb", Tasks: []batch.TaskResult{{ID: "guard", Status: batch.StatusRunning}}}
+	other := "20261011-100000-dddddd" // a record that never reads
+	kept := []batch.Result{b}
+	for look := 1; look <= 10; look++ {
+		if kept = keepUnread(kept, nil, map[string]bool{b.ID: true, other: true}); len(kept) != 1 {
+			t.Fatalf("look %d: a batch still on disk was dropped", look)
+		}
+	}
+	if kept = keepUnread(kept, nil, map[string]bool{other: true}); len(kept) != 0 {
+		t.Fatalf("a batch whose file is gone is still kept: %+v", kept)
+	}
+}
+
+// A batch unreadable on the stream's first look that ends before it first
+// reads ended after the stream began: its ending is news. One that had ended
+// before the stream began is not.
+func TestABatchUnreadableOnTheFirstLookThatEndsSince(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(runlog.Home(), "batches")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Add(-time.Hour)
+	ended := batch.Result{ID: "20261011-114959-bbbbbb", Started: started, Dir: "/repo/harness",
+		Tasks: []batch.TaskResult{{ID: "guard", Prompt: "Add the guard", Status: batch.StatusPass}}}
+	old := ended
+	old.ID, old.Duration = "20261011-104959-eeeeee", time.Minute
+	for _, id := range []string{ended.ID, old.ID} {
+		if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte("{"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
+	first := b.look()
+	// Clearly after the first look: a coarse wall clock may otherwise put a just-now end before it.
+	ended.Duration = time.Since(started) + time.Second
+	for _, res := range []batch.Result{ended, old} {
+		if err := batch.SaveResult(res); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cur := b.look()
+	says := announce(b.baseline(first, cur), cur, false)
+	if len(says) == 0 || says[0].Kind != "done" || says[0].Ref != ended.ID {
+		t.Fatalf("says = %+v; want the ending of the batch that ended since (began %v, now %+v)", says, b.began, cur.items)
+	}
+	for _, m := range says {
+		if m.Ref == old.ID {
+			t.Errorf("a batch that ended before the stream was announced: %+v", m)
+		}
+	}
+}
+
+func appendEvent(t *testing.T, path string, e agent.Event) {
+	t.Helper()
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A stopped run that writes again is followed from where it stopped: what it
+// did before is not said again as what it is doing now.
+func TestARunThatWritesAgainIsNotSaidToDoWhatItDidBefore(t *testing.T) {
+	for _, followed := range []bool{true, false} {
+		t.Run(map[bool]string{true: "followed before it stopped", false: "stopped before the stream"}[followed], func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			rec := activityRun(t, time.Now(), false)
+			events := filepath.Join(runlog.Root(), rec.ID, "events.jsonl")
+			appendEvent(t, events, agent.Event{Kind: agent.EventToolCall, Tool: "Read", Text: "old.go"})
+			b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
+			if followed {
+				if b.look(); b.doing[rec.ID] != "reading old.go" {
+					t.Fatalf("doing while running = %q", b.doing[rec.ID])
+				}
+			}
+			ageFile(t, events, time.Now().Add(-61*time.Minute))
+			prev := b.look()
+			appendEvent(t, events, agent.Event{Kind: agent.EventText, Text: "back"})
+			cur := b.look()
+			if says := announce(prev, cur, false); slices.Contains(kinds(says), "working") {
+				t.Errorf("a run writing again was said to be working on what it did before: %+v", says)
+			}
+			appendEvent(t, events, agent.Event{Kind: agent.EventToolCall, Tool: "Read", Text: "new.go"})
+			next := b.look()
+			if says := announce(cur, next, false); len(says) == 0 || says[0].Kind != "working" || !strings.Contains(says[0].Text, "new.go") {
+				t.Errorf("its next tool call: %+v", says)
+			}
+		})
+	}
+}
+
+// A batch that could not be read on a stream's first look was there before the
+// stream began: when it reads, it is not announced as new. One that starts
+// later still is.
+func TestABatchUnreadableOnTheFirstLookIsNotAnnouncedAsNew(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	res := batch.Result{ID: "20261011-114959-bbbbbb", Started: time.Now().Add(-time.Minute), Dir: "/repo/harness",
+		Tasks: []batch.TaskResult{{ID: "guard", Prompt: "Add the guard", Status: batch.StatusRunning}}}
+	dir := filepath.Join(runlog.Home(), "batches")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, res.ID+".json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
+	first := b.look()
+	if err := batch.SaveResult(res); err != nil {
+		t.Fatal(err)
+	}
+	cur := b.look()
+	if says := announce(b.baseline(first, cur), cur, false); len(says) != 0 {
+		t.Fatalf("a batch that was there before the stream was announced: %+v", says)
+	}
+	later := res
+	later.ID = "20261011-120000-cccccc"
+	if err := batch.SaveResult(later); err != nil {
+		t.Fatal(err)
+	}
+	next := b.look()
+	if says := announce(b.baseline(cur, next), next, false); len(says) == 0 || says[0].Kind != "started" || says[0].Ref != later.ID {
+		t.Fatalf("a batch started after the first look: %+v", says)
+	}
+}
+
+// A run quiet for the hour shows stopped: the bot holds no follower for it,
+// and picks it up again if the run writes again.
+func TestTheBotHoldsNoFollowerForAStoppedRunUntilItWritesAgain(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	rec := activityRun(t, time.Now(), false)
+	events := filepath.Join(runlog.Root(), rec.ID, "events.jsonl")
+	b := (&server{opt: Options{Runs: 50}}).newBotWatcher(httptest.NewRequest("GET", "/", nil))
+	for _, step := range []struct {
+		name string
+		at   time.Time
+		want bool
+	}{{"running", time.Now(), true}, {"stopped", time.Now().Add(-61 * time.Minute), false}, {"writing again", time.Now(), true}} {
+		ageFile(t, events, step.at)
+		b.look()
+		if _, ok := b.followers[rec.ID]; ok != step.want {
+			t.Errorf("%s: follower held = %v, want %v", step.name, ok, step.want)
+		}
+	}
+}
+
 func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_OWNER", "local:test")
 	id := "20261011-110000-cccccc"
 	mk := func(s1, s2 batch.Status, d time.Duration) batch.Result {
 		return batch.Result{ID: id, Started: noon.Add(-time.Hour), Dir: "/repo/harness", Duration: d, Tasks: []batch.TaskResult{
@@ -252,12 +425,14 @@ func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
 	if len(says) != 1 || says[0].Kind != "task" || says[0].Text != "Task one of two in harness passed: add the guard." {
 		t.Fatalf("task: %+v", says)
 	}
-	end := lookAt(nil, []batch.Result{mk(batch.StatusPass, batch.StatusFail, 12*time.Minute)}, nil)
+	failed := mk(batch.StatusPass, batch.StatusFail, 12*time.Minute)
+	failed.Tasks[1].Attempts = []batch.Attempt{{Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1}}}}
+	end := lookAt(nil, []batch.Result{failed}, nil)
 	says = announce(one, end, false)
 	if strings.Join(kinds(says), ",") != "task,failed,status" {
 		t.Fatalf("end: %+v", says)
 	}
-	if says[0].Text != "Task two of two in harness failed: add the budget." || says[1].Text != "The batch in harness is done: one of two tasks passed. It took twelve minutes." {
+	if says[0].Text != "Task two of two in harness failed: add the budget. Gate go test ./... exited 1." || says[1].Text != "The batch in harness is done: one of two tasks passed. It took twelve minutes." {
 		t.Errorf("end: %q / %q", says[0].Text, says[1].Text)
 	}
 	all := lookAt(nil, []batch.Result{mk(batch.StatusPass, batch.StatusPass, 3*time.Minute)}, nil)
@@ -299,6 +474,16 @@ func TestTheBotStreamSaysWhatHappensAndBlanksSecrets(t *testing.T) {
 			break
 		}
 	}
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Bash", Text: `powershell.exe -NoProfile -Command "go test ./..."`})
+	for {
+		m := nextSay(t, s)
+		if m.Kind == "working" {
+			if m.Text != "Claude is running go test in harness." {
+				t.Fatalf("working: %+v", m)
+			}
+			break
+		}
+	}
 	if err := w.Close(agent.Result{Status: agent.StatusOK, Duration: time.Minute}); err != nil {
 		t.Fatal(err)
 	}
@@ -310,6 +495,49 @@ func TestTheBotStreamSaysWhatHappensAndBlanksSecrets(t *testing.T) {
 			}
 			break
 		}
+	}
+}
+
+// A batch prompt is blanked before Ada shortens it: a secret with spaces cut
+// in half would no longer match the value the page's last pass blanks.
+func TestTheBotStreamBlanksASecretInABatchPrompt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("BATCH_SECRET", "alpha-secret bravo-secret charlie")
+	srv := httptest.NewServer(New(t.Context(), Options{Poll: 20 * time.Millisecond}))
+	defer srv.Close()
+	s, closeStream := openStream(t, srv.URL+"/stream/bot", "")
+	defer closeStream()
+	if first := nextSay(t, s); first.Text != "Nothing is running." {
+		t.Fatalf("first message %+v", first)
+	}
+
+	res := batch.Result{ID: "20261016-120000-abcdef", Started: time.Now(), Dir: "/repo/harness", Tasks: []batch.TaskResult{
+		{ID: "t1", Prompt: "Add the guard with one two three four five six seven alpha-secret bravo-secret charlie", Status: batch.StatusRunning}}}
+	saveBatch(t, res)
+	seen := func(want string) say {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			m, ok := s.next(t)
+			if !ok {
+				t.Fatal("the stream ended")
+			}
+			if strings.Contains(m.data, "alpha-secret") || strings.Contains(m.data, "bravo-secret") {
+				t.Fatalf("part of a secret reached the stream: %s %q", m.event, m.data)
+			}
+			var v say
+			if m.event == want || m.event == "say" && json.Unmarshal([]byte(m.data), &v) == nil && v.Kind == want {
+				return v
+			}
+		}
+		t.Fatalf("no %s in time", want)
+		return say{}
+	}
+	seen("replace")
+	res.Tasks[0].Status, res.Duration = batch.StatusPass, time.Minute
+	saveBatch(t, res)
+	if v := seen("task"); !strings.Contains(v.Text, "add the guard") || !strings.Contains(v.Text, "[redacted]") {
+		t.Fatalf("task: %+v", v)
 	}
 }
 
@@ -372,17 +600,46 @@ func TestOnlyTheBotPageMayUseTheMicrophone(t *testing.T) {
 	}
 }
 
+// The drawing is decoration next to the heading that names her: a screen
+// reader should not say Ada's name twice.
+func TestTheBotPageNamesAdaOnceToAScreenReader(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(New(t.Context(), Options{}))
+	defer srv.Close()
+	_, body := get(t, srv.URL+"/bot")
+	svg := regexp.MustCompile(`<svg class="bot-face ada"[^>]*>`).FindString(body)
+	if !strings.Contains(svg, `aria-hidden="true"`) || strings.Contains(svg, "aria-label") || strings.Contains(svg, `role="img"`) {
+		t.Errorf("the drawing is announced: %s", svg)
+	}
+	if !strings.Contains(body, `<h1 id="bot-h">Ada</h1>`) {
+		t.Error("the page lost its heading")
+	}
+}
+
+func TestBotJavaScript(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, node, "--test", "testdata/bot.test.cjs").CombinedOutput(); err != nil {
+		t.Fatalf("bot JavaScript tests: %v\n%s", err, out)
+	}
+}
+
 // The card of what is going names who works where, as a heading, not a
 // sentence: no full stop in the middle of a line.
 func TestTheCardOfWhatIsGoingNamesWhoWorksWhere(t *testing.T) {
-	b := batch.Result{ID: "20261011-115900-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/work/tidedesk", Tasks: []batch.TaskResult{
+	t.Setenv("HRN_HOME", t.TempDir())
+	b := batch.Result{ID: "20261011-115900-bbbbbb", Started: noon.Add(-time.Minute), Dir: "/work/demo-api", Tasks: []batch.TaskResult{
 		{ID: "t1", Prompt: "Fix it", Status: batch.StatusRunning}, {ID: "t2", Prompt: "Test it", Status: batch.StatusRunning}}}
 	snap := lookAt([]runlog.Record{runRec("20261011-115000-aaaaaa", noon.Add(-10*time.Minute), false, agent.Result{})}, []batch.Result{b}, nil)
 	html, err := render("botnow", botNowOf(snap))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{">A batch of two tasks in tidedesk</a>", ">Claude in harness</a>", `href="/batch/20261011-115900-bbbbbb"`, `data-mute="20261011-115000-aaaaaa"`} {
+	for _, want := range []string{">A batch of two tasks in demo-api</a>", ">Claude in harness</a>", `href="/batch/20261011-115900-bbbbbb"`, `data-mute="20261011-115000-aaaaaa"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("the card lacks %q:\n%s", want, html)
 		}
@@ -393,14 +650,15 @@ func TestTheCardOfWhatIsGoingNamesWhoWorksWhere(t *testing.T) {
 // so the bot names a task by its id, as the spec did, rather than read the
 // shared opening out four times.
 func TestTheBotNamesABatchsTasksByTheirNames(t *testing.T) {
-	const preamble = "You are working in a git worktree of jobpilot. First read AGENTS.md and follow it.\n\n"
+	t.Setenv("HRN_HOME", t.TempDir())
+	const preamble = "You are working in a git worktree of web-shop. First read AGENTS.md and follow it.\n\n"
 	mk := func(s batch.Status) batch.Result {
-		return batch.Result{ID: "20261011-213338-c6fe69", Started: noon.Add(-time.Hour), Dir: "/work/jobpilot", Tasks: []batch.TaskResult{
-			{ID: "employer-link-lookups", Prompt: preamble + "Look the links up", Status: s},
-			{ID: "german-questions", Prompt: preamble + "Translate the questions", Status: batch.StatusRunning}}}
+		return batch.Result{ID: "20261011-213338-c6fe69", Started: noon.Add(-time.Hour), Dir: "/work/web-shop", Tasks: []batch.TaskResult{
+			{ID: "broken-link-lookups", Prompt: preamble + "Look the links up", Status: s},
+			{ID: "german-translations", Prompt: preamble + "Translate the pages", Status: batch.StatusRunning}}}
 	}
 	says := announce(lookAt(nil, []batch.Result{mk(batch.StatusRunning)}, nil), lookAt(nil, []batch.Result{mk(batch.StatusPass)}, nil), false)
-	if len(says) != 1 || says[0].Text != "Task one of two in jobpilot passed: employer-link-lookups." {
+	if len(says) != 1 || says[0].Text != "Task one of two in web-shop passed: broken-link-lookups." {
 		t.Fatalf("task: %+v", says)
 	}
 	// A task whose id hrn made up (t1, t2, ...) is named by its prompt instead;
@@ -420,5 +678,123 @@ func TestTheBotIsReachableFromTheIndex(t *testing.T) {
 	defer srv.Close()
 	if _, body := get(t, srv.URL+"/"); !strings.Contains(body, `href="/bot"`) {
 		t.Error("the index does not link to the bot")
+	}
+}
+
+// A phone on the network hears and sees Ada with the paths shortened as the
+// run's own page shows them: the workspace as ".", the home as "~".
+func TestALANViewerOfTheBotSeesNoFullWorkspaceOrHomePath(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	home, ws := filepath.Join(t.TempDir(), "Jane Doe"), t.TempDir()
+	if err := os.Mkdir(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	h := New(t.Context(), Options{Poll: 20 * time.Millisecond, LAN: []Endpoint{{Addr: "192.168.1.20:8089"}}})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Host, r.RemoteAddr = "192.168.1.20:8089", "192.168.1.50:6000"
+		h.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	leaks := func(where, text string) {
+		t.Helper()
+		for _, full := range []string{ws, home, filepath.ToSlash(ws), filepath.ToSlash(home)} {
+			if strings.Contains(text, full) {
+				t.Fatalf("%s shows the full path %s: %q", where, full, text)
+			}
+		}
+	}
+
+	s, closeStream := openStream(t, srv.URL+"/stream/bot", "")
+	defer closeStream()
+	nextSay(t, s)
+	w, err := runlog.Create("claude", agent.Task{Prompt: "Fix " + filepath.Join(ws, "main.go") + " from " + filepath.Join(home, "notes.txt"), Dir: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var said []string
+	for {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("the stream ended")
+		}
+		leaks("the stream's "+m.event, m.data)
+		if m.event == "say" {
+			var v say
+			_ = json.Unmarshal([]byte(m.data), &v)
+			leaks("a sentence", v.Text)
+			said = append(said, v.Text)
+			if v.Kind == "started" {
+				break
+			}
+		}
+	}
+	if want := "fix ." + string(filepath.Separator) + "main.go" + " from " + filepath.Join("~", "notes.txt"); !strings.Contains(said[len(said)-1], want) {
+		t.Errorf("started: %q, want it to say %q", said[len(said)-1], want)
+	}
+	_, body := get(t, srv.URL+"/bot")
+	leaks("the bot page", body)
+
+	w.Event(agent.Event{Kind: agent.EventToolCall, Tool: "Edit", Text: filepath.Join(home, "f.go")})
+	for {
+		m := nextSay(t, s)
+		leaks("a sentence", m.Text)
+		if m.Kind == "working" {
+			if !strings.Contains(m.Text, "editing f.go") {
+				t.Errorf("working: %q, want it to say editing f.go", m.Text)
+			}
+			break
+		}
+	}
+
+	if err := w.Close(agent.Result{Status: agent.StatusError, Error: "open " + filepath.Join(ws, "main.go") + ": denied", Duration: time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	b := batch.Result{ID: "20261011-120000-dddddd", Started: time.Now(), Dir: ws, Tasks: []batch.TaskResult{
+		{ID: "t1", Prompt: "Tidy " + filepath.Join(home, "notes.txt"), Status: batch.StatusRunning},
+		{ID: "t2", Prompt: "Wait", Status: batch.StatusRunning}}}
+	if err := batch.SaveResult(b); err != nil {
+		t.Fatal(err)
+	}
+	var ended, task bool
+	for !ended || !task {
+		m, ok := s.next(t)
+		if !ok {
+			t.Fatal("the stream ended")
+		}
+		leaks("the stream's "+m.event, m.data)
+		if m.event != "say" {
+			continue
+		}
+		var v say
+		_ = json.Unmarshal([]byte(m.data), &v)
+		leaks("a sentence", v.Text)
+		switch {
+		case v.Kind == "failed":
+			ended = true
+		case v.Kind == "started" && v.Ref == b.ID:
+			b.Tasks[0].Status = batch.StatusPass
+			if err := batch.SaveResult(b); err != nil {
+				t.Fatal(err)
+			}
+		case v.Kind == "task":
+			task = true
+			if want := "tidy " + filepath.Join("~", "notes.txt"); !strings.Contains(v.Text, want) {
+				t.Errorf("task: %q, want it to say %q", v.Text, want)
+			}
+		}
+	}
+}
+
+func TestAdaGivesTheCauseOfTheLastAttemptOnly(t *testing.T) {
+	gate := batch.Attempt{Gates: []batch.GateResult{{Command: "go test", ExitCode: 1}}}
+	limited := batch.Attempt{Result: agent.Result{Status: agent.StatusLimited}}
+	if got := taskReason(batch.TaskResult{Error: "out of plans", Attempts: []batch.Attempt{gate, limited}}); got != "The attempt failed: out of plans." {
+		t.Fatalf("reason = %q: an earlier attempt's gate is not why the task ended", got)
+	}
+	killed := batch.Attempt{Gates: []batch.GateResult{{Command: "go test", ExitCode: -1, Killed: batch.KilledTimeout, Timeout: agent.Duration(time.Minute)}}}
+	if got := taskReason(batch.TaskResult{Attempts: []batch.Attempt{killed}}); got != "Gate go test was killed after 1m0s by gate_timeout." {
+		t.Fatalf("reason = %q", got)
 	}
 }

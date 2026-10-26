@@ -16,7 +16,9 @@ import (
 
 const perTokenRefusal = "claude would bill per token"
 
-// ---- claude ---------------------------------------------------------------
+const appendSystemPromptFlag = "--append-system-prompt"
+
+// NewClaudeBackend drives the Claude Code CLI.
 func NewClaudeBackend() *CLIBackend {
 	return &CLIBackend{
 		name: "claude",
@@ -28,7 +30,6 @@ func NewClaudeBackend() *CLIBackend {
 				filepath.Join(home, ".claude", "local", "claude"),
 			}
 			c = append(c, npmShim("claude")...)
-			// The Claude desktop app ships its own Claude Code build.
 			if runtime.GOOS == "windows" {
 				c = append(c, newestVersionDir(appData("Claude", "claude-code"), "claude.exe")...)
 			}
@@ -50,22 +51,19 @@ func NewClaudeBackend() *CLIBackend {
 			if mode != "" {
 				a = append(a, "--permission-mode", mode)
 			}
-			if !t.InheritEnv {
-				// Only the repository's own settings: the operator's user and
-				// local settings, with their hooks, plugins and permission
-				// rules, stay out of an unattended run (#411).
-				a = append(a, "--setting-sources", "project")
-			}
-			if t.IsLean() || !t.InheritEnv {
-				// Only the --mcp-config files below: none of the user's other
-				// MCP servers, plugin servers or claude.ai connectors. Lean on
-				// its own keeps every setting source, so the user's CLAUDE.md,
-				// rules, hooks, plugins and skills load too (#204). Not --bare:
-				// it logs in only with an API key, never the subscription.
+			if t.IsLean() {
+				// Limit MCP servers without losing settings or subscription login; --bare requires an API key.
 				a = append(a, "--strict-mcp-config")
 			}
 			if t.CompactWindow != "" {
 				a = append(a, "--autocompact", string(t.CompactWindow))
+			}
+			if t.AppendSystemPrompt != "" {
+				// One argument, so text starting with a dash is never read as a flag.
+				a = append(a, appendSystemPromptFlag+"="+t.AppendSystemPrompt)
+			}
+			if t.NoSkills || (t.IsLean() && (t.Skills == nil || !*t.Skills)) {
+				a = append(a, "--disable-slash-commands")
 			}
 			if !t.AllowDangerous {
 				a = append(append(a, "--disallowedTools"), claudeDenyRules()...)
@@ -78,20 +76,22 @@ func NewClaudeBackend() *CLIBackend {
 			}
 			return a
 		},
-		parse:        parseClaudeStream,
-		newParse:     newClaudeParse,
-		stopWhen:     func(r *Result) bool { return strings.HasPrefix(r.Error, perTokenRefusal) },
-		forks:        true,
-		mapsEffort:   true,
-		mapsModes:    []Mode{ModeReadOnly, ModeAuto, ModeYolo},
-		mapsModel:    true,
-		mapsMaxTurns: true,
-		mapsMCP:      true,
-		mapsLean:     true,
-		mapsCompact:  true,
-		limits:       true,
-		loginEnv:     []string{"CLAUDE_CODE_OAUTH_TOKEN"},
-		fileRules:    true,
+		parse:            parseClaudeStream,
+		newParse:         newClaudeParse,
+		stopWhen:         func(r *Result) bool { return strings.HasPrefix(r.Error, perTokenRefusal) },
+		forks:            true,
+		mapsEffort:       true,
+		mapsModes:        []Mode{ModeReadOnly, ModeAuto, ModeYolo},
+		mapsModel:        true,
+		mapsMaxTurns:     true,
+		mapsMCP:          true,
+		mapsLean:         true,
+		mapsCompact:      true,
+		mapsSystemPrompt: true,
+		mapsNoSkills:     true,
+		limits:           true,
+		loginEnv:         []string{"CLAUDE_CODE_OAUTH_TOKEN"},
+		fileRules:        true,
 	}
 }
 func newestVersionDir(root, exe string) []string {
@@ -167,34 +167,46 @@ type claudeLine struct {
 	} `json:"usage"`
 }
 
-// newClaudeParse is parseClaudeStream for one run. stream-json writes each
-// content block of a message as a line of its own and repeats the message's
-// usage on every one, so the usage event goes out once per message id, with
-// the first line's figures.
+// Message lines repeat usage; emit its largest output once, flushing on nil.
 func newClaudeParse() func([]byte, func(Event), *Result) bool {
-	seen := map[string]bool{}
+	m := &claudeMessage{seen: map[string]bool{}}
 	return func(line []byte, emit func(Event), res *Result) bool {
-		return parseClaudeLine(line, emit, res, seen)
+		if line == nil {
+			m.flush(emit)
+			return false
+		}
+		return parseClaudeLine(line, emit, res, m)
 	}
 }
 
-// parseClaudeStream reads one line on its own: a line with usage is a usage
-// event, whatever came before.
+type claudeMessage struct {
+	id      string
+	pending *Event
+	seen    map[string]bool
+}
+
+func (m *claudeMessage) flush(emit func(Event)) {
+	if m.pending != nil {
+		emit(*m.pending)
+	}
+	m.id, m.pending = "", nil
+}
+
 func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 	return parseClaudeLine(line, emit, res, nil)
 }
 
-func parseClaudeLine(line []byte, emit func(Event), res *Result, seen map[string]bool) bool {
+func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessage) bool {
 	var l claudeLine
-	// A field of an unexpected type (a permission_denied system line carries
-	// its message as a string, not an object) leaves the rest of the line
-	// decoded, so it is read like any other; anything else that is not JSON
-	// with a type is plain text.
+	// Permission-denied lines may mistype message; keep other decoded fields.
 	var mistyped *json.UnmarshalTypeError
 	if err := json.Unmarshal(line, &l); (err != nil && !errors.As(err, &mistyped)) || l.Type == "" {
 		return false
 	}
-	// Every line carries the session id; with --fork-session it is the new one.
+	mainLoop := l.Type == "assistant" && l.ParentToolUseID == nil
+	if m != nil && (!mainLoop || l.Message.ID != m.id) {
+		m.flush(emit)
+	}
 	if l.SessionID != "" {
 		res.Session = l.SessionID
 	}
@@ -215,19 +227,26 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, seen map[string
 				Usage: &Usage{ContextTokens: l.CompactMetadata.PreTokens}})
 		}
 	case "assistant", "user":
-		// A sub-agent's turns (under a parent tool call) fill its own context,
-		// not the main loop's: they count in the run's totals only.
-		if l.Type == "assistant" && l.ParentToolUseID == nil {
+		// Sub-agent usage belongs in run totals, not main-loop context.
+		if mainLoop {
 			u := l.Message.Usage
 			res.ContextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 			id := l.Message.ID
-			if u != (apiUsage{}) && (id == "" || !seen[id]) {
-				if seen != nil && id != "" {
-					seen[id] = true
-				}
-				emit(Event{Time: now, Kind: EventUsage, Usage: &Usage{Model: l.Message.Model,
+			switch {
+			case u == (apiUsage{}):
+			case m != nil && m.pending != nil && id == m.id:
+				m.pending.Usage.OutputTokens = max(m.pending.Usage.OutputTokens, u.OutputTokens)
+			case m != nil && id != "" && m.seen[id]:
+			default:
+				e := Event{Time: now, Kind: EventUsage, Usage: &Usage{Model: l.Message.Model,
 					InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
-					CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens, ContextTokens: res.ContextTokens}})
+					CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens, ContextTokens: res.ContextTokens}}
+				if m == nil || id == "" {
+					emit(e)
+					break
+				}
+				m.seen[id] = true
+				m.id, m.pending = id, &e
 			}
 		}
 		for _, c := range l.Message.Content {
@@ -255,9 +274,7 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, seen map[string
 		res.Status = StatusOK
 		if l.IsError {
 			res.Status = StatusError
-			// The subtype classifies the failure and the result text says what
-			// happened; a login failure arrives as subtype "success" with only
-			// the text. For max_turns the text is the partial answer, not a reason.
+			// Login failures may say success; max_turns text is a partial answer.
 			switch {
 			case l.Subtype == "success" && l.Result != "":
 				res.Error = l.Result

@@ -465,6 +465,72 @@ func TestHTTPSubmissionRefusesUnsupportedOptionsWith422(t *testing.T) {
 	}
 }
 
+func TestHTTPSubmissionAboveThePerJobCostLimitIs422(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	tenantID, tenantToken, err := store.CreateTenant(ctx, "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := store.CreateProject(ctx, Project{TenantID: tenantID, Name: "project", RepositoryURL: "https://example.invalid/example.git", BaseRef: fixtureRef, Backend: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer((&HTTPServer{Store: store, MaxCostUSDPerJob: 0.5}).Handler())
+	defer server.Close()
+	url := server.URL + "/v1/projects/" + project.ID + "/jobs"
+	status, raw := sendJSON(t, server.Client(), http.MethodPost, url, tenantToken, testSubmission(project, "over-limit", "inspect"))
+	if status != http.StatusUnprocessableEntity || !strings.Contains(string(raw), "cost_limit") || !strings.Contains(string(raw), "HRN_MAX_COST_USD_PER_JOB") {
+		t.Fatalf("over the limit: status %d: %s", status, raw)
+	}
+	input := testSubmission(project, "at-limit", "inspect")
+	input.Options.MaxCostUSD = 0.5
+	if status, raw := sendJSON(t, server.Client(), http.MethodPost, url, tenantToken, input); status != http.StatusCreated {
+		t.Fatalf("at the limit: status %d: %s", status, raw)
+	}
+}
+
+func TestHTTPRetryAfterTheCostLimitIsLoweredReturnsTheExistingJob(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	tenantID, tenantToken, err := store.CreateTenant(ctx, "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := store.CreateProject(ctx, Project{TenantID: tenantID, Name: "project", RepositoryURL: "https://example.invalid/example.git", BaseRef: fixtureRef, Backend: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := testSubmission(project, "accepted-before", "inspect")
+	before := httptest.NewServer((&HTTPServer{Store: store, MaxCostUSDPerJob: 5}).Handler())
+	defer before.Close()
+	status, raw := sendJSON(t, before.Client(), http.MethodPost, before.URL+"/v1/projects/"+project.ID+"/jobs", tenantToken, input)
+	if status != http.StatusCreated {
+		t.Fatalf("first submission: status %d: %s", status, raw)
+	}
+	var first Job
+	if err := json.Unmarshal(raw, &first); err != nil {
+		t.Fatal(err)
+	}
+	after := httptest.NewServer((&HTTPServer{Store: store, MaxCostUSDPerJob: 0.5}).Handler())
+	defer after.Close()
+	url := after.URL + "/v1/projects/" + project.ID + "/jobs"
+	status, raw = sendJSON(t, after.Client(), http.MethodPost, url, tenantToken, input)
+	if status != http.StatusOK {
+		t.Fatalf("retry after lowering the limit: status %d: %s", status, raw)
+	}
+	var retried Job
+	if err := json.Unmarshal(raw, &retried); err != nil {
+		t.Fatal(err)
+	}
+	if retried.ID != first.ID {
+		t.Fatalf("retry returned job %s, want %s", retried.ID, first.ID)
+	}
+	if status, raw := sendJSON(t, after.Client(), http.MethodPost, url, tenantToken, testSubmission(project, "new-key", "inspect")); status != http.StatusUnprocessableEntity {
+		t.Fatalf("new key over the lowered limit: status %d: %s", status, raw)
+	}
+}
+
 func TestHTTPCheckpointRejectsSkippedAndReplayedSequences(t *testing.T) {
 	store := testStore(t)
 	project, workerToken := testProject(t, store)

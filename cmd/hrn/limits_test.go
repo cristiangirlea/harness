@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -107,6 +112,81 @@ func TestRunStartsOnTheOtherBackendWhileALimitIsRemembered(t *testing.T) {
 	}
 }
 
+func TestRunExplainsAMeteredPartnerBeforeStartingAndKeepsItsModel(t *testing.T) {
+	for _, continuing := range []bool{false, true} {
+		t.Run(fmt.Sprint(continuing), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t)
+			t.Setenv("ANTHROPIC_API_KEY", "fake-secret-value")
+			dir := t.TempDir()
+			args := []string{"-b", "codex", "-m", "requested-model", "-C", dir}
+			if continuing {
+				rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := rec.Close(agent.Result{Backend: "codex", Status: agent.StatusOK}); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(rec.Dir(), "messages.json"), []byte(`{"model":"previous-model"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--continue", rec.ID())
+			}
+			if err := limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			agent.Register(scripted{"codex", func(task agent.Task) agent.Result {
+				called = true
+				if task.Model != "requested-model" {
+					t.Errorf("model = %q, want requested-model", task.Model)
+				}
+				events, err := runlog.Events(filepath.Base(task.RunDir))
+				if err != nil {
+					t.Fatal(err)
+				}
+				said := false
+				for _, e := range events {
+					said = said || e.Kind == agent.EventInfo && strings.Contains(e.Text, "ANTHROPIC_API_KEY") && strings.Contains(e.Text, "per token")
+					if strings.Contains(e.Text, "fake-secret-value") {
+						t.Error("event exposed the key value")
+					}
+				}
+				if !said {
+					t.Error("no metered partner reason before the backend started")
+				}
+				return agent.Result{Status: agent.StatusOK}
+			}})
+			if code, err := cmdRun(append(args, "fix it")); code != 0 || err != nil || !called {
+				t.Fatalf("code=%d err=%v called=%v", code, err, called)
+			}
+		})
+	}
+}
+
+func TestRunDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		cancel()
+		return agent.Result{Status: agent.StatusLimited, Error: "usage limit", LimitResets: time.Now().Add(time.Hour)}
+	}})
+	code, err := cmdRunContext(ctx, []string{"-b", "codex", "-C", t.TempDir(), "fix it"})
+	if code != 1 || err != nil {
+		t.Errorf("code=%d err=%v, want the limited run's exit code", code, err)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" || recs[0].Result.Status != agent.StatusLimited {
+		t.Fatalf("records = %+v, err=%v; want only the limited run", recs, err)
+	}
+	if limits.Until("codex", time.Now()).IsZero() {
+		t.Error("codex's limit was not remembered in limits.json")
+	}
+}
+
 func TestNoSwitchKeepsTheRunOnItsBackend(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	standIn(t)
@@ -169,4 +249,130 @@ func TestWhenBothReachTheirLimitBothAreRemembered(t *testing.T) {
 			t.Errorf("%s's limit was not remembered", name)
 		}
 	}
+}
+
+func TestLimitCarryOnRecordsContextWarning(t *testing.T) {
+	for _, tokens := range []int64{150000, 150001} {
+		t.Run(fmt.Sprint(tokens), func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t)
+			w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, ContextTokens: tokens}); err != nil {
+				t.Fatal(err)
+			}
+			code, err := cmdRun([]string{"--continue", w.ID(), "-b", "codex", "again"})
+			if code != 0 || err != nil {
+				t.Fatalf("carry-on: code=%d err=%v", code, err)
+			}
+			recs, err := runlog.List(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := 0
+			for _, rec := range recs {
+				if rec.Backend != "claude" || rec.ID == w.ID() {
+					continue
+				}
+				found++
+				prev, err := runlog.Load(rec.Continues)
+				if err != nil || prev.Backend != "codex" || prev.Result.Status != agent.StatusLimited || prev.Continues != w.ID() {
+					t.Fatalf("carry-on predecessor = %+v, err=%v", prev, err)
+				}
+				events, err := runlog.Events(rec.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				for _, e := range events {
+					if e.Kind == agent.EventInfo && strings.Contains(e.Text, "short hand-over") {
+						count++
+						if !strings.Contains(e.Text, w.ID()) || !strings.Contains(e.Text, fmt.Sprintf("%d tokens", tokens)) {
+							t.Errorf("wrong warning: %q", e.Text)
+						}
+					}
+				}
+				want := 0
+				if tokens > 150000 {
+					want = 1
+				}
+				if count != want {
+					t.Errorf("carry-on recorded warnings = %d, want %d", count, want)
+				}
+			}
+			if found != 1 {
+				t.Fatalf("carry-on records = %d, want 1", found)
+			}
+		})
+	}
+}
+
+// resumingAgy resumes its conversation in place and tries a second
+// continuation of prev while it runs.
+type resumingAgy struct {
+	scripted
+	prev    string
+	refused *error
+}
+
+func (s resumingAgy) ForksSessions() bool { return true }
+func (s resumingAgy) Capabilities() agent.Capabilities {
+	return agent.Capabilities{Modes: []agent.Mode{agent.ModeReadOnly, agent.ModeAuto, agent.ModeYolo}, Sessions: "resume"}
+}
+func (s resumingAgy) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
+	p, err := followup.Make(followup.Request{RunID: s.prev})
+	if err == nil {
+		p.Release()
+	}
+	*s.refused = err
+	res := s.scripted.Run(ctx, task, emit)
+	res.Session = task.ForkSession
+	return res
+}
+
+func TestRunReleasesAnAgyConversationAfterCarryingALimitedRunOn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"agy", "codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "agy", Status: agent.StatusOK, Session: "conversation-1", Final: "Parser done."}); err != nil {
+		t.Fatal(err)
+	}
+	var refused error
+	orig, err := agent.Get("agy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(resumingAgy{scripted{"agy", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusOK, Final: "finished", Turns: 1}
+	}}, w.ID(), &refused})
+	t.Cleanup(func() { agent.Register(orig) })
+
+	code, err := cmdRun([]string{"-b", "codex", "--continue", w.ID(), "again"})
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v: agy should have carried the limited run on", code, err)
+	}
+	if refused == nil || !strings.Contains(refused.Error(), "another hrn run") {
+		t.Fatalf("the carry-on did not hold the conversation: %v", refused)
+	}
+	p, err := followup.Make(followup.Request{RunID: w.ID()})
+	if err != nil {
+		t.Fatalf("the conversation was not released after the carry-on: %v", err)
+	}
+	p.Release()
 }

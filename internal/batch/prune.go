@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// RemoveRecord deletes a saved batch record and returns how many bytes it
-// held; with dryRun it only reports the size. It touches neither worktrees nor
-// branches: hrn batch rm does that, and it needs the record to find them.
+// RemoveRecord deletes a record and returns its size in bytes, or just measures it with dryRun.
+// Remove worktrees first: batch rm needs the record to find them.
 func RemoveRecord(id string, dryRun bool) (int64, error) {
 	if id == "" || strings.ContainsAny(id, `/\`) {
 		return 0, fmt.Errorf("invalid batch id %q", id)
@@ -21,18 +20,25 @@ func RemoveRecord(id string, dryRun bool) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	size := info.Size()
+	flowInfo, flowErr := os.Stat(FlowPath(id))
+	if flowErr == nil {
+		size += flowInfo.Size()
+	}
 	if !dryRun {
 		if err := os.Remove(path); err != nil {
 			return 0, err
 		}
+		if flowErr == nil {
+			if err := os.Remove(FlowPath(id)); err != nil {
+				return 0, err
+			}
+		}
 	}
-	return info.Size(), nil
+	return size, nil
 }
 
-// WorktreesRemain reports whether any of the batch's worktrees is still on
-// disk (not one a fresh task does not own, notMine), or for a slot task (whose slot outlives the batch) or one that waited
-// for a slot (branchOnly) its branch, which is when its record must stay:
-// hrn batch rm reads it.
+// WorktreesRemain reports owned worktrees or slot/waiting branches that still need the record for cleanup.
 func WorktreesRemain(res Result) bool {
 	for _, t := range res.Tasks {
 		if branchOnly(t) {

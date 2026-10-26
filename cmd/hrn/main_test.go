@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/route"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -19,14 +21,19 @@ type contextWarningBackend struct{ recorder }
 
 func (r contextWarningBackend) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
 	fmt.Fprintln(os.Stderr, "context test backend started")
+	fmt.Fprintln(os.Stdout, "context test backend started")
 	return r.recorder.Run(ctx, task, emit)
 }
 
-func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *testing.T) {
+func TestContinueWarnsOnceBeforeStartingOnlyAboveTheContextThreshold(t *testing.T) {
 	agent.Register(contextWarningBackend{recorder{name: "stub-context"}})
 	for _, jsonOut := range []bool{false, true} {
-		for _, n := range []int64{0, 149999, 150000, 150001, 285000} {
-			t.Run(fmt.Sprintf("json=%v/context=%d", jsonOut, n), func(t *testing.T) {
+		for _, tc := range []struct {
+			tokens  int64
+			handoff bool
+		}{{0, false}, {149999, false}, {150000, false}, {150001, false}, {285000, false}, {285000, true}} {
+			n := tc.tokens
+			t.Run(fmt.Sprintf("json=%v/context=%d/handoff=%v", jsonOut, n, tc.handoff), func(t *testing.T) {
 				t.Setenv("HRN_HOME", t.TempDir())
 				w, err := runlog.Create("stub-context", agent.Task{Prompt: "first", Dir: t.TempDir()})
 				if err != nil {
@@ -43,10 +50,19 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 					t.Fatal(err)
 				}
 				defer capture.Close()
-				prev := os.Stderr
-				os.Stderr = capture
-				defer func() { os.Stderr = prev }()
+				stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer stdout.Close()
+				prev, prevOut := os.Stderr, os.Stdout
+				os.Stderr, os.Stdout = capture, stdout
+				defer func() { os.Stderr, os.Stdout = prev, prevOut }()
 				args := []string{"--continue", w.ID(), "-b", "stub-context", "--no-switch"}
+				if tc.handoff {
+					agent.Register(contextWarningBackend{recorder{name: "stub-context-other"}})
+					args[3] = "stub-context-other"
+				}
 				if jsonOut {
 					args = append(args, "--json")
 				}
@@ -54,22 +70,66 @@ func TestContinueWarnsOnStderrBeforeStartingOnlyAboveTheContextThreshold(t *test
 				if code != 0 || err != nil {
 					t.Fatalf("continuation refused: code=%d error=%v", code, err)
 				}
+				records, err := runlog.List(0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := 0
+				for _, rec := range records {
+					if rec.Continues != w.ID() {
+						continue
+					}
+					found++
+					events, err := runlog.Events(rec.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					count := 0
+					for _, e := range events {
+						if e.Kind == agent.EventInfo && strings.Contains(e.Text, "short hand-over") {
+							count++
+						}
+					}
+					want := 0
+					if n > 150000 && !tc.handoff {
+						want = 1
+					}
+					if count != want {
+						t.Errorf("recorded warnings = %d, want %d", count, want)
+					}
+				}
+				if found != 1 {
+					t.Fatalf("continued records = %d, want 1", found)
+				}
 				data, err := os.ReadFile(capture.Name())
 				if err != nil {
 					t.Fatal(err)
 				}
-				got := string(data)
+				out, err := os.ReadFile(stdout.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, other := string(data), string(out)
+				if !jsonOut {
+					got, other = other, got
+				}
+				if !jsonOut && strings.Contains(other, "warning: run ") {
+					t.Errorf("plain warning also printed on stderr: %q", other)
+				}
 				start := strings.Index(got, "context test backend started")
 				if start < 0 {
 					t.Fatal("backend never started")
 				}
-				if n > 150000 {
+				if n > 150000 && !tc.handoff {
+					if count := strings.Count(got, "warning: run "); count != 1 {
+						t.Errorf("displayed warnings = %d, want 1: %q", count, got)
+					}
 					for _, want := range []string{"warning:", w.ID(), fmt.Sprintf("%d tokens", n), "fresh run", "short hand-over"} {
 						if !strings.Contains(got[:start], want) {
-							t.Errorf("stderr before start lacks %q: %q", want, got[:start])
+							t.Errorf("output before start lacks %q: %q", want, got[:start])
 						}
 					}
-				} else if strings.Contains(got, "short hand-over") {
+				} else if strings.Contains(got+other, "warning: run ") {
 					t.Errorf("unneeded warning: %q", got)
 				}
 			})
@@ -123,7 +183,7 @@ func TestRunChecksLimitsOnTheRoutedBackend(t *testing.T) {
 	}
 	<-recorded
 	recs, err := runlog.List(1)
-	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].RoutedBy == nil {
+	if err != nil || len(recs) != 1 || recs[0].Backend != partner || recs[0].Task.Model != "" || recs[0].Task.Effort != "" || recs[0].RoutedBy != nil {
 		t.Fatalf("limit after routing: %+v %v", recs, err)
 	}
 }
@@ -163,6 +223,23 @@ func TestRunUsesRoutingAndKeepsNamedModel(t *testing.T) {
 				t.Fatalf("route: %+v %+v", task, recs[0])
 			}
 		})
+	}
+}
+
+func TestRunRoutesByTheDeclaredPurpose(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := route.Save(route.Table{"implement": {Backend: "stub-cmd-b"}, "review": {Backend: "stub-cmd", Model: "routed"}}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"--no-switch", "--purpose", "review", "-C", t.TempDir(), "Implement a widget"})
+	if code != 0 || err != nil {
+		t.Fatalf("run: %d %v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "stub-cmd" || recs[0].RoutedBy == nil || recs[0].RoutedBy.Category != "review" || !recs[0].RoutedBy.Declared {
+		t.Fatalf("declared purpose did not route: %+v %v", recs, err)
 	}
 }
 
@@ -220,8 +297,8 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the backend was never run")
 	}
-	if task.Prompt != "hello world" {
-		t.Errorf("prompt = %q", task.Prompt)
+	if !strings.HasPrefix(task.Prompt, "# How to commit\n\n") || !strings.HasSuffix(task.Prompt, "\n\nhello world") {
+		t.Errorf("prompt = %q, want the commit block, then the prompt", task.Prompt)
 	}
 	for name, ok := range map[string]bool{
 		"mode":             task.Mode == agent.ModeAuto,
@@ -246,6 +323,34 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 	}
 	if recs, err := runlog.List(1); err != nil || len(recs) != 1 || recs[0].Task.Prompt != "hello world" {
 		t.Errorf("the run should be recorded: %+v err=%v", recs, err)
+	}
+}
+
+func TestRunLeanFalseAndSkillsFlagsReachTheTask(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "--lean=false", "--skills", "hello"})
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	select {
+	case task := <-recorded:
+		if task.Lean == nil || *task.Lean || task.Skills == nil || !*task.Skills {
+			t.Errorf("lean = %v, skills = %v; want false and true", task.Lean, task.Skills)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the backend was never run")
+	}
+}
+
+func TestHelpDescribesLeanAndSkillsForClaudeAndCodex(t *testing.T) {
+	for _, want := range []string{"--lean=false", "--skills", "claude and codex"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("hrn --help lacks %q", want)
+		}
+	}
+	if strings.Contains(usage, "skills still load") {
+		t.Error("hrn --help still says skills load in a lean run")
 	}
 }
 
@@ -303,7 +408,9 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", dir, "--mode", "auto", "-m", "stub-model", "first"}); code != 0 || err != nil {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
-	<-recorded
+	if task := <-recorded; strings.Contains(task.Prompt, "fix round") {
+		t.Errorf("a first run is told it is a fix round:\n%s", task.Prompt)
+	}
 	recs, err := runlog.List(1)
 	if err != nil || len(recs) != 1 {
 		t.Fatalf("recs=%+v err=%v", recs, err)
@@ -322,10 +429,106 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 	if !strings.Contains(task.Prompt, "--- request\n> first\n--- answer\n> done") || !strings.HasSuffix(task.Prompt, "second") {
 		t.Errorf("prompt:\n%s", task.Prompt)
 	}
+	if !strings.HasPrefix(task.Prompt, "# How to commit\n\n") || !strings.Contains(task.Prompt, "\nThis is a fix round: one review, one commit; every fix from this review goes into one commit.\n") {
+		t.Errorf("a continued run should get the commit block with the fix-round line:\n%s", task.Prompt)
+	}
 
 	// The stub saves no session, so the same backend has nothing to resume.
 	if code, err := cmdRun([]string{"--continue", first, "x"}); code != 2 || err == nil || !strings.Contains(err.Error(), "no saved conversation") {
 		t.Errorf("code=%d err=%v", code, err)
+	}
+}
+
+func TestRunsMasksPromptExcerpts(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("fake", agent.Task{Prompt: "API_KEY=fake-runs-secret task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdRuns(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); strings.Contains(got, "fake-runs-secret") || !strings.Contains(got, "API_KEY=•••• task") {
+		t.Fatalf("runs did not mask the prompt:\n%s", got)
+	}
+}
+
+func TestContinueInheritsThePurposeUnlessTheFlagOrHeaderNamesOne(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), "--purpose", "review", "first"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"now fix what you found"}, "review"},
+		{[]string{"--purpose", "debug", "now fix what you found"}, "debug"},
+		{[]string{"Purpose: test\nnow fix what you found"}, "test"},
+	} {
+		args := append([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b"}, tc.args...)
+		if code, err := cmdRun(args); code != 0 || err != nil {
+			t.Fatalf("%q: code=%d err=%v", tc.args, code, err)
+		}
+		if task := <-recorded; task.Purpose != tc.want {
+			t.Errorf("%q: purpose = %q, want %q", tc.args, task.Purpose, tc.want)
+		}
+	}
+	for _, name := range []string{"task.json", "result.json"} {
+		path := filepath.Join(runlog.Root(), recs[0].ID, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad := regexp.MustCompile(`("purpose":\s*)"review"`).ReplaceAll(data, []byte(`$1"Bogus"`))
+		if err := os.WriteFile(path, bad, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec, err := runlog.Load(recs[0].ID); err != nil || rec.Task.Purpose != "Bogus" {
+		t.Fatalf("stored purpose = %q, err=%v", rec.Task.Purpose, err)
+	}
+	if code, err := cmdRun([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b", "again"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if task := <-recorded; task.Purpose != "" {
+		t.Errorf("an invalid stored purpose was inherited: %q", task.Purpose)
+	}
+}
+
+func TestContinueInheritsAClassifiedPurposeWhenNoneWasDeclared(t *testing.T) {
+	for _, tc := range []struct{ first, want string }{
+		{"Review the diff on this branch.", "review"},
+		{"Hello there.", ""},
+	} {
+		drain(t)
+		t.Setenv("HRN_HOME", t.TempDir())
+		if code, err := cmdRun([]string{"-b", "stub-cmd", "-C", t.TempDir(), tc.first}); code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v", code, err)
+		}
+		if task := <-recorded; task.Purpose != "" {
+			t.Fatalf("%q: an undeclared first run stored purpose %q", tc.first, task.Purpose)
+		}
+		recs, err := runlog.List(1)
+		if err != nil || len(recs) != 1 {
+			t.Fatalf("recs=%+v err=%v", recs, err)
+		}
+		if code, err := cmdRun([]string{"--continue", recs[0].ID, "-b", "stub-cmd-b", "now fix what you found"}); code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v", code, err)
+		}
+		if task := <-recorded; task.Purpose != tc.want {
+			t.Errorf("%q: continuation purpose = %q, want %q", tc.first, task.Purpose, tc.want)
+		}
 	}
 }
 
@@ -370,5 +573,53 @@ func TestShowMasksHumanOutputOnly(t *testing.T) {
 		} else if strings.Contains(got, "fake-show-secret") || strings.Contains(got, "sk-test-show-secret") || !strings.Contains(got, "••••") {
 			t.Fatal("show did not mask")
 		}
+	}
+}
+
+func TestContinueWithRetrievalOnAnotherBackendThanThePinIsRefusedBeforeItRuns(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := t.TempDir()
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := &retrieval.Record{Mode: "required", Scope: retrieval.Scope{Backend: "api", Model: "m"}, Packet: &retrieval.Packet{VersionID: "kv-7"}}
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK, Final: "a", Retrieval: pin}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "-m", "m", "--retrieval", "required",
+		"--retrieval-tenant", "t", "--retrieval-project", "p", "--retrieval-revision", "r", "x"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "kv-7") || !strings.Contains(err.Error(), "continue on api") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if recs, err := runlog.List(10); err != nil || len(recs) != 1 {
+		t.Fatalf("a refused continuation must record nothing: %d runs, %v", len(recs), err)
+	}
+	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "x"}); code != 0 || err != nil {
+		t.Fatalf("retrieval off should hand the transcript over: code=%d err=%v", code, err)
+	}
+	if task := <-recorded; !strings.Contains(task.Prompt, "--- request\n> p") {
+		t.Errorf("prompt:\n%s", task.Prompt)
+	}
+}
+
+func TestRunRecordsThatTheDefaultBackendWasUsed(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	name := agent.DefaultBackendName()
+	old, _ := agent.Get(name)
+	agent.Register(recorder{name, recorded})
+	defer agent.Register(old)
+	if code, err := cmdRun([]string{"--no-switch", "-C", t.TempDir(), "Implement a widget"}); code != 0 || err != nil {
+		t.Fatalf("run: %d %v", code, err)
+	}
+	<-recorded
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("records: %v %v", recs, err)
+	}
+	if want := "no route row for purpose implement; default backend " + name + " was used"; recs[0].RouteNote != want {
+		t.Fatalf("route note = %q, want %q", recs[0].RouteNote, want)
 	}
 }

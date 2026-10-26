@@ -155,6 +155,12 @@ Permit automatic replay only when an operation is verified to be side-effect-fre
 
 Recovery must preserve spent budget and unresolved reservations. It must not reset the clock, retry count, cost ceiling, or approval state to obtain a fresh allowance.
 
+The API checkpoint store is the trust boundary for recovery. It must commit before acknowledging saves, reject stale owners, and preserve immutable versions. The task digest binds task settings while omitting `AttemptID`, which names an attempt rather than the task so a retry with a new attempt ID can resume the checkpoint; it does not authenticate checkpoint `Result.CostUSD`, `Deadline`, or `Started`. Recovery trusts these stored values, so changing them can reset spent budget or the clock. Untrusted execution tools and workspace/model content must not be able to modify stored checkpoints or access store credentials.
+
+The API cost ceiling gates new model requests. A restored, already paid response may finish its requested tools even when its cost has reached the ceiling; committed tool outcomes are skipped and no further model request starts. The original deadline still applies to those tools.
+
+A deadline or cancellation between confirmed operations reports `timeout` or `canceled` without `recovery_required` and leaves the checkpoint resumable. A definite, non-retryable HTTP 4xx clears the pending model operation at a `model_rejected` checkpoint, marks it finished with the error result, and reports an error; a resume of it returns that result without sending the request again. A context-management 400 instead leaves that checkpoint unfinished and permits one retry without context management, with a new saved model intent. Retryable HTTP errors, interrupted requests, and failed persistence acknowledgements remain uncertain. Every newly handled tool call emits a call event before its result, including unknown, guard-refused, invalid-input, and permission-denied calls; durable `tool_calls` counts committed outcomes.
+
 For native CLI backends:
 
 - Capture explicit session identifiers from verified output.
@@ -178,7 +184,7 @@ Do not mount host homes, host repositories outside the assigned project, Docker/
 
 Use separate process namespaces for trusted coordination and execution. Keep control credentials and API-backend provider keys out of execution-container mounts and environment.
 
-Native CLIs need their own provider credentials inside their execution environment. Scope those to the configured tenant/project/account, document that exposure honestly, and never share the owner's account implicitly across tenants.
+Native CLIs need their own provider credentials inside their execution environment. Scope those to the configured tenant/project/account, document that exposure honestly, and never share an operator's account implicitly across tenants.
 
 Use default-deny network policy with a supporting network-policy implementation. Allow only required DNS, control endpoints, and configured outbound destinations. Implement domain-aware outbound restrictions through a controlled egress proxy or an explicitly configured policy-capable network layer; ordinary NetworkPolicy alone does not enforce arbitrary hostname rules.
 

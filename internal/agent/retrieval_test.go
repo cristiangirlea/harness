@@ -145,12 +145,27 @@ func TestRetrievalRejectsUnsafePacketsAndKeepsTheVersionPinOnRepair(t *testing.T
 	if calls != before {
 		t.Fatal("scope change accepted")
 	}
-	task = Task{Prompt: "durable", Options: retrievalOptions(), Durable: &DurableExecution{}, RunDir: t.TempDir()}
-	Run(context.Background(), b, task, func(Event) {})
-	if calls != before {
-		t.Fatal("durable retrieval accepted")
+}
+
+func TestRetrievalRefusesDurableExecutionBeforeAnyRequest(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("durable retrieval made an HTTP request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	t.Setenv("HRN_SERVER_URL", srv.URL)
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 64))
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	var seen Task
+	calls := 0
+	task := Task{Prompt: "durable", Options: retrievalOptions(), Durable: &DurableExecution{}, RunDir: t.TempDir()}
+	result := Run(context.Background(), retrievalBackend{"api", &seen, &calls}, task, func(Event) {})
+	if result.Status != StatusError || !strings.Contains(result.Error, "retrieval is unsupported for durable execution") || calls != 0 {
+		t.Fatalf("durable retrieval was not refused: result=%+v backend calls=%d", result, calls)
 	}
 }
+
 func TestRetrievalAPIContinuationAppendOnly(t *testing.T) {
 	_, network := retrievalServer(t, 200, "fixture source")
 	fake := &fakeAPI{turns: [][]string{textTurn("first"), textTurn("second")}}
@@ -243,4 +258,68 @@ func TestRetrievalRefusesNativeSessionContinuationBeforeSearch(t *testing.T) {
 	if result.Status != StatusError || calls != 0 || network.Load() != 0 || !strings.Contains(result.Error, "native session") {
 		t.Fatalf("native continuation: result=%+v calls=%d network=%d", result, calls, network.Load())
 	}
+}
+
+func TestRetrievalKeepsThePinThroughAFailedReplay(t *testing.T) {
+	_, network := retrievalServer(t, 200, "verified fixture")
+	var seen Task
+	calls := 0
+	b := retrievalBackend{"codex", &seen, &calls}
+	task := Task{Prompt: "task", Options: retrievalOptions(), RunDir: t.TempDir()}
+	first := Run(context.Background(), b, task, func(Event) {})
+	if first.Status != StatusOK {
+		t.Fatal(first)
+	}
+	_, network = retrievalServer(t, 503, "")
+	task.RetrievalState, task.RunDir, task.RetrievalRepair = first.Retrieval, t.TempDir(), true
+	task.Prompt = "task\nGate failed: ERR_REAL_FAILURE"
+	second := Run(context.Background(), b, task, func(Event) {})
+	if second.Status != StatusError || !strings.Contains(second.Error, "retrieval request rejected or unavailable") {
+		t.Fatal("repair search did not fail", second)
+	}
+	_, network = retrievalServer(t, 200, "verified fixture")
+	pin := first.Retrieval.Packet.VersionID
+	for i, prev := 3, second.Retrieval; i <= 4; i++ {
+		task.RetrievalState, task.RunDir = prev, t.TempDir()
+		res := Run(context.Background(), b, task, func(Event) {})
+		if res.Status != StatusError || !strings.Contains(res.Error, "pin cannot be resumed") || network.Load() != 0 {
+			t.Fatalf("attempt %d: %+v, searches=%d", i, res, network.Load())
+		}
+		if res.Retrieval == nil || res.Retrieval.Packet == nil || res.Retrieval.Packet.VersionID != pin {
+			t.Fatalf("attempt %d dropped pin %s: %+v", i, pin, res.Retrieval)
+		}
+		prev = res.Retrieval
+	}
+	if calls != 1 {
+		t.Fatalf("backend calls=%d", calls)
+	}
+}
+
+func TestRetrievalRetryEdgesOfTheFreshSearch(t *testing.T) {
+	opts := retrievalOptions()
+	scope := retrieval.Scope{TenantID: opts.RetrievalTenant, ProjectID: opts.RetrievalProject, Revision: opts.RetrievalRevision, Backend: "codex", Model: opts.Model}
+	text := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "e_fixture", "fixture.md", opts.RetrievalRevision, "synthetic", "fixture")
+	packet := &retrieval.Packet{VersionID: "v_" + strings.Repeat("d", 64), Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), Entries: []retrieval.Entry{{ID: "e_fixture", Source: "fixture.md", Content: "fixture", Evidence: "synthetic"}}}
+	t.Run("failed with a packet", func(t *testing.T) {
+		_, network := retrievalServer(t, 200, "fixture")
+		var seen Task
+		calls := 0
+		prev := &retrieval.Record{Mode: "required", Scope: scope, Packet: packet, Failure: "retrieval failed: retrieval request rejected or unavailable"}
+		res := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, Task{Prompt: "task", Options: opts, RunDir: t.TempDir(), RetrievalState: prev}, func(Event) {})
+		if res.Status != StatusError || !strings.Contains(res.Error, "pin cannot be resumed") || calls != 0 || network.Load() != 0 {
+			t.Fatalf("result=%+v calls=%d searches=%d", res, calls, network.Load())
+		}
+	})
+	t.Run("optional unavailable", func(t *testing.T) {
+		_, network := retrievalServer(t, 200, "fixture")
+		var seen Task
+		calls := 0
+		o := opts
+		o.Retrieval = "optional"
+		prev := &retrieval.Record{Mode: "optional", Scope: scope, Failure: "optional retrieval unavailable"}
+		res := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, Task{Prompt: "task", Options: o, RunDir: t.TempDir(), RetrievalState: prev}, func(Event) {})
+		if res.Status != StatusOK || calls != 1 || network.Load() != 0 || res.Retrieval == nil || !res.Retrieval.Replayed || res.Retrieval.Packet != nil {
+			t.Fatalf("result=%+v calls=%d searches=%d", res, calls, network.Load())
+		}
+	})
 }

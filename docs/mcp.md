@@ -17,7 +17,8 @@ The format is Claude Code's, so existing `.mcp.json` files work unchanged:
                            "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}}}}
 ```
 
-`${VAR}` and `${VAR:-default}` expand from the environment. Entries with a `url` (HTTP
+`${VAR}` and `${VAR:-default}` expand from the environment, where hrn's own secrets
+(`HRN_DATABASE_URL`, `HRN_*_TOKEN`) read as unset. Entries with a `url` (HTTP
 transports) are skipped: hrn speaks stdio only. Servers run with the workspace as their
 working directory and are told it is the root.
 
@@ -63,9 +64,10 @@ Tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `compact_window`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `inherit_env`, `continue_run_id`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
+| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`, `skills`, `compact_window`, `append_system_prompt`, `no_skills`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `inherit_env`, `continue_run_id`, `fresh` (with `continue_run_id`: a new session with a hand-over, see [backends](backends.md#a-fresh-hand-over)), `timeout`, `max_cost_usd`, `task_budget`, `no_switch` | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
+| `flow` | `id`, `level` | A run or batch execution tree with recorded reasons and next steps; level defaults to `technical` (`simple`, `technical` or `debug`). Text over 64 KiB is cut, and then the structured tree is left out with `truncated: true`; use a lower level or `hrn flow --json`. |
 | `backends` | — | Availability and remembered limits, plus per-backend `enabled` and `default` booleans. The top-level `default` string names the backend selected for a fresh run. |
 | `batch` | `spec` | Runs a batch spec, the same JSON as a batch file, and blocks until every task is done: one line per task (status, backend, attempts, the gate that failed, branch and commit) and the batch id. Task outcomes stream back as progress. |
 | `batch_show` | `batch_id`, `task`, `limit` | No id: recent batches. An id: its tasks. An id and a task: that task's diff and its untracked files. |
@@ -98,7 +100,10 @@ fixtures. The origin may have a trailing `/`, but no credentials, other path,
 query (including an empty `?`), or fragment. The CA path must name a regular
 file; symlinks to regular files are accepted. `remote_submit` accepts only
 read-only `api` jobs on registered projects, with a full commit, positive cost
-ceiling, and idempotency key.
+ceiling, and idempotency key. When `HRN_REMOTE_MAX_COST_USD` is set on the MCP
+server, a `max_cost_usd` above it is refused before any request; a fresh
+idempotency key queues a new job, and tenant budgets are not reserved yet, so
+set this cap for hosts you do not fully trust.
 Unknown and unsupported input fields are refused.
 
 Requests are served concurrently, so parallel tool calls from the host become parallel
@@ -123,3 +128,7 @@ rather than ignored, because the spec is written by a model and a misspelt `gate
 otherwise run with no gate. The structured result is a short summary rather than the
 whole record, since some hosts, Claude Code among them, show it to the model in place of
 the text. Worktrees stay after a merge; `hrn batch rm <id>` removes them.
+
+Batch progress messages and errors in the `batch_merge` result (text and structured)
+replace terminal control characters (C0 except newline and tab, DEL and C1) with
+U+FFFD, using the same filter as batch summary errors and attempt notes.
