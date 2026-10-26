@@ -3,7 +3,7 @@
 // effects: read, write-workspace, exec
 // parameters: none
 // example: go test -count=1 ./scripts/comment-check
-// hash: 56703654dedc84d473d5c23b4aacd36097941d304017f3dda42c9b0ff563e44b
+// hash: 29fb0659d9a1eb65c0cb8fe73529a2bcd9db610b8359ab319859c83d26a8009f
 package main
 
 import (
@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -38,6 +40,133 @@ func runCheck(t *testing.T, args ...string) (report, string, int) {
 		}
 	}
 	return r, stderr.String(), code
+}
+
+func TestGitFilesExcludeIgnoredFilesAndIncludeTrackedAndUntrackedFiles(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init")
+	writeFile(t, dir, "tracked.go", "package p\n")
+	git("add", "tracked.go")
+	writeFile(t, dir, ".gitignore", "ignored.go\nignored/\ntracked.go\n")
+	before, stderr, code := runCheck(t, "--root", dir)
+	if code != 0 || before.Files != 1 {
+		t.Fatalf("expected tracked file despite ignore rule: code=%d stderr=%s report=%+v", code, stderr, before)
+	}
+	bad := "package p\n// issue #12\n"
+	writeFile(t, dir, "ignored.go", bad)
+	writeFile(t, dir, "ignored/nested.go", bad)
+	for _, rel := range []string{"main_test.go", ".hidden/x.go", "testdata/x.go", "vendor/x.go", "dist/x.go", "node_modules/x.go"} {
+		writeFile(t, dir, rel, bad)
+	}
+	after, stderr, code := runCheck(t, "--root", dir)
+	if code != 0 || !reflect.DeepEqual(before, after) {
+		t.Fatalf("ignored files changed report: code=%d stderr=%s before=%+v after=%+v", code, stderr, before, after)
+	}
+	writeFile(t, dir, "untracked space.go", bad)
+	after, stderr, code = runCheck(t, "--root", dir)
+	if code != 1 || after.Files != 2 || len(after.New) != 1 || after.New[0].File != "untracked space.go" || after.CommentShare == before.CommentShare {
+		t.Fatalf("expected untracked file to change report: code=%d stderr=%s report=%+v", code, stderr, after)
+	}
+	if err := os.Remove(filepath.Join(dir, "tracked.go")); err != nil {
+		t.Fatal(err)
+	}
+	after, stderr, code = runCheck(t, "--root", dir)
+	if code != 1 || after.Files != 1 || len(after.New) != 1 || after.New[0].File != "untracked space.go" {
+		t.Fatalf("expected deleted tracked file to be skipped: code=%d stderr=%s report=%+v", code, stderr, after)
+	}
+}
+
+func TestNonRepositoryRootsStillWalkIgnoredFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".gitignore", "sub/\n")
+	writeFile(t, dir, "sub/scratch.go", "package p\n// issue #12\n")
+	r, stderr, code := runCheck(t, "--root", dir)
+	if code != 1 || r.Files != 1 || len(r.New) != 1 || r.New[0].File != "sub/scratch.go" {
+		t.Fatalf("expected non-repository walk: code=%d stderr=%s report=%+v", code, stderr, r)
+	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) []byte {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return out
+}
+
+func TestGitFilesCountAnUnmergedPathOnce(t *testing.T) {
+	dir := t.TempDir()
+	gitOutput(t, dir, "init")
+	gitOutput(t, dir, "config", "user.name", "Test")
+	gitOutput(t, dir, "config", "user.email", "test@example.com")
+	gitOutput(t, dir, "config", "commit.gpgsign", "false")
+	writeFile(t, dir, "conflict.go", "package p\nvar n = 0\n")
+	gitOutput(t, dir, "add", "conflict.go")
+	gitOutput(t, dir, "commit", "-m", "base")
+	gitOutput(t, dir, "checkout", "-b", "side")
+	writeFile(t, dir, "conflict.go", "package p\nvar n = 1\n")
+	gitOutput(t, dir, "commit", "-am", "side")
+	gitOutput(t, dir, "checkout", "-b", "other", "HEAD~1")
+	writeFile(t, dir, "conflict.go", "package p\nvar n = 2\n")
+	gitOutput(t, dir, "commit", "-am", "other")
+	out, err := exec.Command("git", "-C", dir, "merge", "--no-edit", "side").CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected merge conflict: %v: %s", err, out)
+	}
+	if out := gitOutput(t, dir, "ls-files", "--unmerged"); bytes.Count(out, []byte{'\n'}) != 3 {
+		t.Fatalf("expected three unmerged index entries: %s", out)
+	}
+	src := "package p\n// issue #12\nvar n = 3\n"
+	writeFile(t, dir, "conflict.go", src)
+	r, stderr, code := runCheck(t, "--root", dir)
+	if code != 1 || r.Files != 1 || r.SourceBytes != int64(len(src)) || r.CommentBytes != int64(len("// issue #12\n")) || r.Blocks != 1 || r.Violations != 1 || len(r.New) != 1 || r.New[0].File != "conflict.go" {
+		t.Fatalf("expected unmerged path counted once: code=%d stderr=%s report=%+v", code, stderr, r)
+	}
+}
+
+func TestGitSubdirectoryRootsUseRelativePathsAndExcludeIgnoredFiles(t *testing.T) {
+	dir := t.TempDir()
+	gitOutput(t, dir, "init")
+	bad := "package p\n// issue #12\n"
+	writeFile(t, dir, "sub/tracked.go", bad)
+	gitOutput(t, dir, "add", "sub/tracked.go")
+	writeFile(t, dir, ".gitignore", "sub/ignored.go\n")
+	writeFile(t, dir, "sub/ignored.go", bad)
+	writeFile(t, dir, "outside.go", bad)
+	r, stderr, code := runCheck(t, "--root", filepath.Join(dir, "sub"))
+	if code != 1 || r.Files != 1 || len(r.New) != 1 || r.New[0].File != "tracked.go" {
+		t.Fatalf("expected subdirectory-relative tracked path only: code=%d stderr=%s report=%+v", code, stderr, r)
+	}
+}
+
+func TestGitFilesIncludeUntrackedNonASCIINames(t *testing.T) {
+	dir := t.TempDir()
+	gitOutput(t, dir, "init")
+	gitOutput(t, dir, "config", "core.quotePath", "true")
+	name := "\u00fc.go"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("package p\n// issue #12\n"), 0o644); err != nil {
+		t.Skipf("filesystem cannot create non-ASCII filename: %v", err)
+	}
+	out, err := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard", "-z").CombinedOutput()
+	if err != nil {
+		t.Skipf("git cannot list non-ASCII filename %q: %v: %s", name, err, out)
+	}
+	if !bytes.Contains(out, []byte(name+"\x00")) {
+		t.Skipf("git cannot represent non-ASCII filename %q: %q", name, out)
+	}
+	r, stderr, code := runCheck(t, "--root", dir)
+	if code != 1 || r.Files != 1 || len(r.New) != 1 || r.New[0].File != name {
+		t.Fatalf("expected untracked non-ASCII path: code=%d stderr=%s report=%+v", code, stderr, r)
+	}
 }
 
 func TestABlockOfSixLinesFailsAndABlankLineSplitsBlocks(t *testing.T) {
