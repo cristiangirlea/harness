@@ -73,9 +73,10 @@ func TestHelperCLIError(t *testing.T) {
 		os.Exit(1)
 	case "env":
 		// What the CLI was started with, as its final answer.
-		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s;GIT_DIR=%s;GIT_INDEX_FILE=%s;GIT_WORK_TREE=%s;OPERATOR_SETTING=%s;PATH_SET=%t",
+		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s;GIT_DIR=%s;GIT_INDEX_FILE=%s;GIT_WORK_TREE=%s;OPERATOR_SETTING=%s;PATH_SET=%t;AGY_ACCOUNT=%s;GOOGLE_APPLICATION_CREDENTIALS=%s",
 			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
-			os.Getenv("HRN_GUARDED"), os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"), os.Getenv("GIT_WORK_TREE"), os.Getenv("OPERATOR_SETTING"), os.Getenv("PATH") != "")
+			os.Getenv("HRN_GUARDED"), os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"), os.Getenv("GIT_WORK_TREE"), os.Getenv("OPERATOR_SETTING"), os.Getenv("PATH") != "",
+			os.Getenv("AGY_ACCOUNT"), os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
 		fmt.Println(string(out))
 		os.Exit(0)

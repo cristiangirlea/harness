@@ -7,12 +7,8 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// An agent CLI starts from an allowlisted environment rather than the
-// operator's whole one: an unattended run gets what a shell, the CLI's own
-// login and the usual toolchains need, and nothing the operator set for
-// something else (#411). Names that say they hold a secret stay out even when
-// they match, except the CLI's own plan login; the guard (tools.GuardEnv)
-// still applies on top. Options.InheritEnv turns this off.
+// An unattended CLI gets what a shell, its login and the toolchains need, not
+// the operator's whole environment; the guard still applies on top.
 
 // childEnvNames are the variables passed on every system.
 var childEnvNames = []string{
@@ -48,8 +44,8 @@ var childEnvPrefixes = []string{"LC_", "GCM_", "HRN_"}
 // sanitizedEnv returns the allowlisted part of env for an agent CLI on goos,
 // how many variables it left out, and the set ones among them whose names say
 // secret, by name, for the guard's line to list as it always has (a CLI that
-// logs in with a key fails without it). keep names the CLI's plan login,
-// which passes although its name says secret.
+// logs in with a key fails without it). keep names the CLI's own variables,
+// which pass although they are not on the list or their names say secret.
 func sanitizedEnv(env []string, goos string, keep ...string) (out []string, dropped int, secrets []string) {
 	out = make([]string, 0, len(childEnvNames))
 	for _, kv := range env {

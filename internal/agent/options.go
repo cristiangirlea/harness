@@ -60,9 +60,8 @@ type Options struct {
 	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Lift the guard: let agents push, merge and deploy with your credentials, and let run_command run sudo, rm -rf / and the like."`
 
 	// InheritEnv starts an agent CLI with the operator's whole environment
-	// instead of the allowlisted one (sanitizedEnv), and lets claude load
-	// every setting source and MCP server. The guard still applies on top.
-	InheritEnv bool `json:"inherit_env,omitempty" flag:"inherit-env" desc:"Start agent CLIs with your whole environment instead of an allowlisted one, and let claude load your own settings, hooks, plugins and MCP servers; the guard still applies (CLI backends)."`
+	// instead of the allowlisted one (sanitizedEnv); the guard still applies.
+	InheritEnv bool `json:"inherit_env,omitempty" flag:"inherit-env" desc:"Start agent CLIs with your whole environment instead of an allowlisted one; the guard still applies (CLI backends)."`
 
 	// Timeout ends the run when it passes; zero means no deadline.
 	Timeout Duration `json:"timeout,omitempty" desc:"Stop the run after this long, e.g. 20m."`

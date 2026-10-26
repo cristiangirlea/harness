@@ -50,6 +50,9 @@ type CLIBackend struct {
 	resumesInPlace bool
 	// Pass login secrets only to their owning CLI.
 	loginEnv []string
+	// ownEnv passes the allowlist for this CLI only: where it keeps its state
+	// and which account it signs in with. The guard still applies.
+	ownEnv []string
 	// fileRules requires native CLI secret-file protection.
 	fileRules bool
 	// Advertise effort only when the adapter enforces it.
@@ -207,7 +210,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	var withheld []string
 	if !task.InheritEnv {
 		var dropped int
-		cmd.Env, dropped, withheld = sanitizedEnv(cmd.Env, runtime.GOOS, c.loginEnv...)
+		cmd.Env, dropped, withheld = sanitizedEnv(cmd.Env, runtime.GOOS, slices.Concat(c.loginEnv, c.ownEnv)...)
 		envLine = fmt.Sprintf("environment: sanitized, %d variables dropped (--inherit-env keeps them)", dropped)
 	}
 	// Variables hrn sets for the CLI itself go on after the allowlist; the

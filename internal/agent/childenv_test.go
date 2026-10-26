@@ -122,32 +122,51 @@ func TestACLIChildDoesNotSeeThePlantedToken(t *testing.T) {
 	}
 }
 
-// Unless the environment is inherited, claude loads only the repository's
-// own settings and only hrn's --mcp-config servers: the operator's hooks,
-// plugins, permission rules and MCP servers stay out.
-func TestClaudeLoadsOnlyProjectSettingsAndHrnsMCPServers(t *testing.T) {
-	opts := Options{Mode: ModeAuto, MCP: []string{"a.json"}}
-	clean := NewClaudeBackend().args(Task{Options: opts}, "")
-	d := slices.Index(clean, "--disallowedTools")
-	s := slices.Index(clean, "--setting-sources")
-	m := slices.Index(clean, "--strict-mcp-config")
-	if s < 0 || s+1 >= len(clean) || clean[s+1] != "project" || m < 0 {
-		t.Fatalf("want --setting-sources project and --strict-mcp-config: %v", clean)
+// The allowlist touches only the environment: claude keeps every setting
+// source, so the operator's CLAUDE.md, rules, plugins and skills still load,
+// and its argv is the same with the environment inherited or not.
+func TestClaudeKeepsTheOwnersSettingsUnderTheAllowlist(t *testing.T) {
+	for _, lean := range []*bool{nil, Bool(true), Bool(false)} {
+		opts := Options{Mode: ModeAuto, MCP: []string{"a.json"}, Lean: lean}
+		clean := NewClaudeBackend().args(Task{Options: opts}, "")
+		if slices.Contains(clean, "--setting-sources") {
+			t.Errorf("lean=%v: claude must load every setting source: %v", lean, clean)
+		}
+		if strict := slices.Contains(clean, "--strict-mcp-config"); strict != (Task{Options: opts}).IsLean() {
+			t.Errorf("lean=%v: --strict-mcp-config follows lean alone: %v", lean, clean)
+		}
+		opts.InheritEnv = true
+		if inherit := NewClaudeBackend().args(Task{Options: opts}, ""); !slices.Equal(inherit, clean) {
+			t.Errorf("lean=%v: --inherit-env must not change claude's argv:\n got %v\nwant %v", lean, inherit, clean)
+		}
 	}
-	if d < 0 || s > d || m > d {
-		t.Errorf("both flags must come before the deny rules: %v", clean)
+}
+
+// agy signs in from disk, but its account, its ADC sign-in and Cloud project
+// are chosen by variables only agy gets; the guard still withholds the ADC file.
+func TestAgyKeepsItsOwnLoginVariables(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "env")
+	t.Setenv("AGY_ACCOUNT", "op@example.com")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/adc.json")
+	run := func(b *CLIBackend, opts Options) map[string]string {
+		res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: opts}, func(Event) {})
+		got := map[string]string{}
+		for _, kv := range strings.Split(res.Final, ";") {
+			k, v, _ := strings.Cut(kv, "=")
+			got[k] = v
+		}
+		return got
 	}
-	if !slices.Contains(clean, "--mcp-config") {
-		t.Errorf("hrn's own MCP configs must still be passed: %v", clean)
+	agy := helperCLI(parseClaudeStream)
+	agy.ownEnv = NewAgyBackend().ownEnv
+	if got := run(agy, Options{Mode: ModeYolo}); got["AGY_ACCOUNT"] != "op@example.com" || got["GOOGLE_APPLICATION_CREDENTIALS"] != "" {
+		t.Errorf("guarded agy saw %v; want its account and no ADC file", got)
 	}
-	opts.Lean = Bool(true)
-	if lean := NewClaudeBackend().args(Task{Options: opts}, ""); countOf(lean, "--strict-mcp-config") != 1 {
-		t.Errorf("lean and a sanitized run pass --strict-mcp-config once: %v", lean)
+	if got := run(agy, Options{Mode: ModeYolo, AllowDangerous: true}); got["AGY_ACCOUNT"] != "op@example.com" || got["GOOGLE_APPLICATION_CREDENTIALS"] != "/adc.json" {
+		t.Errorf("agy with the guard lifted saw %v; want its account and ADC file", got)
 	}
-	opts.Lean, opts.InheritEnv = nil, true
-	inherit := NewClaudeBackend().args(Task{Options: opts}, "")
-	if slices.Contains(inherit, "--setting-sources") || slices.Contains(inherit, "--strict-mcp-config") {
-		t.Errorf("--inherit-env keeps every setting source and MCP server: %v", inherit)
+	if got := run(helperCLI(parseClaudeStream), Options{Mode: ModeYolo, AllowDangerous: true}); got["AGY_ACCOUNT"] != "" || got["GOOGLE_APPLICATION_CREDENTIALS"] != "" {
+		t.Errorf("another CLI saw agy's variables: %v", got)
 	}
 }
 
@@ -164,14 +183,4 @@ func sameSet(a, b []string) bool {
 	slices.Sort(a)
 	slices.Sort(b)
 	return slices.Equal(a, b)
-}
-
-func countOf(list []string, s string) int {
-	n := 0
-	for _, v := range list {
-		if v == s {
-			n++
-		}
-	}
-	return n
 }

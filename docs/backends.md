@@ -224,6 +224,12 @@ yours as a whole (#411). They get:
 - where each CLI keeps its login and settings (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
   `GEMINI_CLI_HOME`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`), and claude's plan login
   `CLAUDE_CODE_OAUTH_TOKEN`, for claude only;
+- for agy only, which account and Cloud project it signs in with and where it keeps its
+  state (`AGY_ACCOUNT`, `AGY_ADC_AUTH`, `ANTIGRAVITY_GEMINI_DIR`, `ANTIGRAVITY_APP_DATA_DIR`,
+  `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_QUOTA_PROJECT`, `GOOGLE_CLOUD_LOCATION`,
+  `GOOGLE_CLOUD_REGION`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_GENAI_USE_ENTERPRISE`, and
+  `GOOGLE_APPLICATION_CREDENTIALS`, which the guard still withholds); its Google sign-in
+  itself is on disk;
 - where the usual toolchains are (`GOPATH`, `GOROOT`, `GOCACHE`, `GOMODCACHE`,
   `GOTOOLCHAIN`, `GOPROXY`, `GOPRIVATE`, `GONOSUMDB`, `GOFLAGS`, `JAVA_HOME`,
   `CARGO_HOME`, `RUSTUP_HOME`, `NVM_DIR`, `PNPM_HOME`, `BUN_INSTALL`, `VIRTUAL_ENV`,
@@ -246,15 +252,13 @@ their own. The guard still applies on top. The run's info events say `environmen
 sanitized, N variables dropped`, never which; the guard's line names the secret-looking
 ones, as it always has, so a CLI that logs in with a key says why it cannot.
 
-The claude backend also loads only the repository's own settings (`--setting-sources
-project`): your user and local settings, with their hooks, plugins and permission rules,
-stay out of an unattended run, while the repository's `.claude/settings.json` and
-`CLAUDE.md` still apply. It gets only hrn's MCP servers (`--strict-mcp-config`), so the
-run's `--mcp` files and `~/.hrn/mcp.json` keep working and nothing else is started.
+The allowlist changes only the environment: a claude worker still loads your
+`~/.claude` CLAUDE.md, rules, plugins and skills as before, and its MCP servers follow
+[what a run loads](#what-a-run-loads).
 
 `--inherit-env` (spec or task field `inherit_env`, MCP `run` argument of the same name,
-recorded in `task.json`) turns all of this off: the CLI gets your environment as before,
-and claude loads every setting source and MCP server. Use it for a repository whose
+recorded in `task.json`) turns all of this off: the CLI gets your environment as before.
+Use it for a repository whose
 installs or tests need something from your environment, a package registry token or a
 database address. The guard still applies, so a secret-looking token stays withheld
 without `--allow-dangerous` as well. An hrn inside a guarded run refuses `inherit_env`, like
