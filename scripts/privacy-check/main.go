@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: --root:path=.
 // example: go test -count=1 ./scripts/privacy-check
-// hash: a99acdd51f317a9de392f73880a3971e31c35d38eb9c50b0676fc836d1c49f08
+// hash: cd42c8a76e989b0cb0a6f9de36b638ca6b84ec9256831ee1cb1c05d35ed9ee05
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -67,7 +68,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			files = append(files, f)
 		}
 	}
-	r, err := check(root, files)
+	slices.Sort(files)
+	r, err := check(root, slices.Compact(files))
 	if err != nil {
 		return fail(stderr, err.Error())
 	}
