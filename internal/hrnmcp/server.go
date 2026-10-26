@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -251,9 +253,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				rec.Event(e)
 				switch e.Kind {
 				case agent.EventToolCall:
-					call.Progress(strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120)))
+					call.Progress(printableFlow(strings.TrimSpace("→ " + tools.OneLine(e.Tool, 80) + " " + tools.OneLine(e.Text, 120))))
 				case agent.EventError:
-					call.Progress("error: " + tools.OneLine(e.Text, 200))
+					call.Progress("error: " + printableNote(e.Text, 200))
 				}
 			}
 			var notes []string
@@ -324,6 +326,8 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				structured = map[string]any{"run_id": nrec.ID(), "result": res, "limited_run_id": limitedID}
 			}
 
+			res.Error, res.Final = printableFlow(res.Error), printableFlow(res.Final)
+			structured["result"] = res
 			body := res.Final
 			if res.Status != agent.StatusOK {
 				body = fmt.Sprintf("status: %s\n%s", res.Status, res.Error)
@@ -417,6 +421,7 @@ func showTool() mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("run %s: %w", args.RunID, err)
 			}
+			rec.Result.Error, rec.Result.Final = printableFlow(rec.Result.Error), printableFlow(rec.Result.Final)
 			var b strings.Builder
 			fmt.Fprintf(&b, "%s\n%s · %s · mode %s%s\n\n", tools.OneLine(rec.Task.Prompt, 200), rec.Backend, rec.Task.Dir, rec.Task.Mode, continues(rec))
 			if rec.RecordError != "" {
@@ -427,7 +432,11 @@ func showTool() mcp.Tool {
 				if events, err = runlog.Events(args.RunID); err != nil {
 					return mcp.CallResult{}, err
 				}
-				for _, e := range events {
+				for i := range events {
+					events[i].Text = printableFlow(events[i].Text)
+					events[i].Tool = printableFlow(events[i].Tool)
+					events[i].Input = printableInput(events[i].Input)
+					e := events[i]
 					switch e.Kind {
 					case agent.EventText:
 						b.WriteString(strings.TrimRight(e.Text, "\n") + "\n")
@@ -525,6 +534,48 @@ func cleanFlowTree(nodes []*flow.Node) []*flow.Node {
 		out[i] = &copy
 	}
 	return out
+}
+
+// Decoded notes may be printed directly to a terminal by MCP clients.
+func printableNote(s string, max int) string {
+	return printableFlow(tools.OneLine(s, max))
+}
+
+func printableInput(input json.RawMessage) json.RawMessage {
+	if len(input) == 0 {
+		return input
+	}
+	var value any
+	dec := json.NewDecoder(strings.NewReader(string(input)))
+	dec.UseNumber()
+	if err := dec.Decode(&value); err != nil || !json.Valid(input) {
+		value = string(input)
+	}
+	data, _ := json.Marshal(printableJSONValue(value))
+	return data
+}
+
+func printableJSONValue(value any) any {
+	switch v := value.(type) {
+	case string:
+		return printableFlow(v)
+	case []any:
+		for i := range v {
+			v[i] = printableJSONValue(v[i])
+		}
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for _, key := range slices.Sorted(maps.Keys(v)) {
+			// Keys that differ only in filtered characters must not merge and hide an argument.
+			k := printableFlow(key)
+			for _, taken := out[k]; taken; _, taken = out[k] {
+				k += "�"
+			}
+			out[k] = printableJSONValue(v[key])
+		}
+		return out
+	}
+	return value
 }
 
 func printableFlow(s string) string {
