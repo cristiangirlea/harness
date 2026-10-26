@@ -1771,3 +1771,21 @@ func TestBotMasksBeforeMakingWords(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaEventsStayOffTheRunTimeline(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quota := agent.Event{Kind: agent.EventQuota, Quota: &agent.Quota{Week: &agent.QuotaWindow{UsedPercent: 20, ResetsAt: 1793000000}}}
+	w.Event(agent.Event{Kind: agent.EventText, Text: "first"})
+	w.Event(quota)
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	page := viewAs(t, New(context.Background(), Options{}), "/run/"+w.ID(), "127.0.0.1:6000")
+	if !strings.Contains(page, "first") || strings.Contains(page, `<span class="tag">quota</span>`) || strings.Contains(page, ">quota<") {
+		t.Fatalf("the timeline lists the quota event:\n%s", page)
+	}
+}
