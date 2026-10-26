@@ -59,7 +59,7 @@ func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			body := batchSummary(res)
 			if runErr != nil {
-				body = "error: " + runErr.Error() + "\n\n" + body
+				body = "error: " + printableNote(runErr.Error(), 500) + "\n\n" + body
 			}
 			return text(body, brief(res), runErr != nil || passed(res) < len(res.Tasks)), nil
 		},
@@ -197,16 +197,6 @@ func brief(res batch.Result) batchBrief {
 		out.Tasks = append(out.Tasks, tb)
 	}
 	return out
-}
-
-// Decoded notes may be printed directly to a terminal by MCP clients.
-func printableNote(s string, max int) string {
-	return strings.Map(func(r rune) rune {
-		if r != '\n' && r != '\t' && (r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)) {
-			return '\ufffd'
-		}
-		return r
-	}, tools.OneLine(s, max))
 }
 
 func failedGateOf(att batch.Attempt) *batch.GateResult {

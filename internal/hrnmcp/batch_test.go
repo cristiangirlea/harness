@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -301,6 +302,40 @@ func TestBatchProgressCannotSendTerminalControls(t *testing.T) {
 	s.mu.Unlock()
 	if strings.ContainsAny(progress, "\x1b\x07\u009b") || !strings.Contains(progress, want) {
 		t.Errorf("progress did not replace terminal controls: %q", progress)
+	}
+}
+
+func TestBatchRunErrorLineCannotSendTerminalControls(t *testing.T) {
+	const bad = "run: \x1b[31m\x07\u009b"
+	const want = "run: \ufffd[31m\ufffd\ufffd"
+	orig, err := agent.Get("stub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := connect(t, gitRepo(t))
+	home := os.Getenv("HRN_HOME")
+	t.Setenv("HRN_HOME", home)
+	// Windows refuses the name; elsewhere a file blocks the record directory.
+	if runtime.GOOS != "windows" {
+		if err := os.WriteFile(filepath.Join(home, bad), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agent.Register(scripted{"stub", func(agent.Task) agent.Result {
+		// A bad record path forces the final batch save to return a run error.
+		if err := os.Setenv("HRN_HOME", filepath.Join(home, bad)); err != nil {
+			return agent.Result{Status: agent.StatusError, Error: err.Error()}
+		}
+		return agent.Result{Status: agent.StatusError, Error: "asked to fail"}
+	}})
+	t.Cleanup(func() { agent.Register(orig) })
+	res := s.call(t, "batch", `{"spec":{"backend":"stub","tasks":[{"id":"one","prompt":"fail"}]}}`)
+	line, _, _ := strings.Cut(res.Text(), "\n")
+	if !res.IsError || !strings.HasPrefix(line, "error: saving batch record:") {
+		t.Fatalf("batch did not report a run error: %q", res.Text())
+	}
+	if strings.ContainsAny(res.Text(), "\x1b\x07\u009b") || !strings.Contains(line, want) {
+		t.Errorf("batch run error did not replace terminal controls: %q", res.Text())
 	}
 }
 
