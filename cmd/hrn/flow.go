@@ -11,12 +11,14 @@ import (
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/flowview"
 	"github.com/cristiangirlea/harness/internal/owner"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 type flowDocument struct {
-	Version int          `json:"version"`
-	Events  []flow.Event `json:"events"`
-	Tree    []*flow.Node `json:"tree"`
+	Version int              `json:"version"`
+	Issues  []ws.IssueStatus `json:"issues,omitempty"`
+	Events  []flow.Event     `json:"events"`
+	Tree    []*flow.Node     `json:"tree"`
 }
 
 func cmdFlow(args []string) error {
@@ -61,16 +63,28 @@ func cmdFlow(args []string) error {
 		return err
 	}
 	tree := flowview.Filter(view.Tree, *level)
+	issues := safeIssues(view.Issues)
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(flowDocument{Version: view.Version, Events: view.Events, Tree: tree})
+		return enc.Encode(flowDocument{Version: view.Version, Issues: issues, Events: view.Events, Tree: tree})
 	}
-	return flowview.WriteText(os.Stdout, safeFlowText(view.Summary), safeTree(tree), *level)
+	return flowview.WriteText(os.Stdout, safeFlowText(view.Summary), issues, safeTree(tree), *level)
 }
 
 // safeFlowText keeps secrets and terminal controls in records out of the terminal.
 func safeFlowText(s string) string { return printable(flow.Redact(s)) }
+
+func safeIssues(issues []ws.IssueStatus) []ws.IssueStatus {
+	out := make([]ws.IssueStatus, len(issues))
+	for i, s := range issues {
+		for _, f := range []*string{&s.Issue, &s.State, &s.Why, &s.Holder, &s.Run, &s.Backend, &s.Branch, &s.PR} {
+			*f = safeFlowText(*f)
+		}
+		out[i] = s
+	}
+	return out
+}
 
 func flowNotFound(id string) error { return fmt.Errorf("hrn flow: no run or batch %s", id) }
 

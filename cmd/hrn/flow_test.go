@@ -12,6 +12,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 func TestFlowRunTextAndJSON(t *testing.T) {
@@ -112,6 +113,43 @@ func TestFlowPrintsNoTerminalControlsOrSecretsFromRecords(t *testing.T) {
 	}
 	if strings.ContainsRune(string(out), 0x1b) || strings.Contains(string(out), "ghp_abcdefghijklmnop1234") {
 		t.Fatalf("flow printed a control sequence or a secret: %q", out)
+	}
+}
+
+func TestFlowPrintsNoTerminalControlsFromAnIssueLease(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("codex", agent.Task{Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	il, err := ws.TakeIssue(t.Context(), runlog.Home(), ws.IssueRef{Repo: "o/n", Number: 1},
+		ws.Lease{Holder: "hrn run", Run: w.ID(), Backend: "codex\x1b[2J", Branch: "fix\x1b]52;c;cGF5bG9hZA==\x07-x"}, ws.IssueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { il.Release(t.Context(), "") })
+	out, err := captureStdout(t, func() error { return cmdFlow([]string{w.ID()}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "issue o/n#1") || strings.ContainsRune(string(out), 0x1b) || strings.ContainsRune(string(out), 0x07) {
+		t.Fatalf("flow text printed a control sequence from the lease: %q", out)
+	}
+	out, err = captureStdout(t, func() error { return cmdFlow([]string{"--json", w.ID()}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Issues []ws.IssueStatus `json:"issues"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil || len(doc.Issues) != 1 {
+		t.Fatalf("json = %s (%v)", out, err)
+	}
+	if s := doc.Issues[0]; strings.ContainsAny(s.Branch+s.Backend, "\x1b\x07") {
+		t.Errorf("flow JSON carries a control sequence from the lease: %+v", s)
 	}
 }
 

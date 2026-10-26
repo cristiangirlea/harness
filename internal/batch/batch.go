@@ -196,7 +196,7 @@ func (g GateResult) Brief() string {
 	return fmt.Sprintf("exited %d", g.ExitCode)
 }
 
-// Event is progress for a caller; Kind is start, tool, run, gate, retry, switch, wait or done.
+// Event is progress for a caller; Kind is start, tool, run, gate, retry, switch, wait, issue or done.
 type Event struct {
 	Task string
 	Kind string
@@ -485,7 +485,12 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 
-	res := Result{ID: runlog.NewID(), Owner: owner.Local(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
+	id := runlog.NewID()
+	issues, err := takeIssues(ctx, &spec, root, id, notify)
+	if err != nil {
+		return Result{}, err
+	}
+	res := Result{ID: id, Owner: owner.Local(), Started: started, Dir: root, Base: base, Parallel: spec.Parallel, Tasks: make([]TaskResult, len(spec.Tasks)), Ownership: OwnershipClaim}
 	for i, t := range spec.Tasks {
 		res.Tasks[i] = TaskResult{ID: t.ID, Prompt: t.Prompt, Purpose: t.Purpose, Status: StatusRunning, Branch: "hrn/" + t.ID, Attempts: []Attempt{}}
 		if fresh {
@@ -493,6 +498,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		}
 	}
 	if err := save(res); err != nil {
+		releaseIssues(ctx, issues, "batch "+id+" did not start", notify, spec.Tasks)
 		return Result{}, fmt.Errorf("saving batch record: %w", err)
 	}
 	flowWriter, _ := flow.Open(FlowPath(res.ID), flow.Event{Owner: res.Owner, Batch: res.ID})
@@ -520,6 +526,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 				tr := runTask(ctx, &spec, res.ID, kept, spec.Tasks[i], res.Tasks[i], root, base, flowWriter, notify,
 					func(tr TaskResult) error { return update(i, tr) })
 				update(i, tr)
+				releaseIssue(ctx, issues[i], "batch "+res.ID+" task "+spec.Tasks[i].ID+" ended", notify, spec.Tasks[i].ID)
 			}
 		}()
 	}
@@ -534,6 +541,63 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 	}
 	flowWriter.Emit(flow.Event{Step: BatchStep, Kind: flow.KindBatch, Status: batchStatus(res), Text: tally(res)})
 	return res, nil
+}
+
+// takeIssues leases every task's issue before any task starts, so a refusal starts nothing.
+func takeIssues(ctx context.Context, spec *Spec, root, id string, notify func(Event)) ([]*ws.IssueLease, error) {
+	refs := make([]ws.IssueRef, len(spec.Tasks))
+	owners := map[ws.IssueRef]string{}
+	for i, t := range spec.Tasks {
+		issue := t.Options.Over(spec.Options).Issue
+		if issue == "" {
+			continue
+		}
+		ref, err := ws.ParseIssue(issue, root)
+		if err != nil {
+			return nil, fmt.Errorf("task %s: %w", t.ID, err)
+		}
+		if other, ok := owners[ref]; ok {
+			return nil, fmt.Errorf("tasks %s and %s both name issue %s; one run per issue, so give each task its own", other, t.ID, ref)
+		}
+		owners[ref], refs[i] = t.ID, ref
+	}
+	leases := make([]*ws.IssueLease, len(spec.Tasks))
+	for i, t := range spec.Tasks {
+		if refs[i].Repo == "" {
+			continue
+		}
+		// Routing picks an unset backend later, so only an explicit one names the worker.
+		l := ws.Lease{Holder: "hrn batch", Run: id + "/" + t.ID, Backend: firstOf(t.Backend, spec.Backend), Branch: "hrn/" + t.ID}
+		il, err := ws.TakeIssue(ctx, runlog.Home(), refs[i], l, ws.IssueOptions{TakeOver: t.Options.Over(spec.Options).TakeOver, GitHub: true})
+		if err != nil {
+			releaseIssues(ctx, leases, "batch "+id+" did not start", notify, spec.Tasks)
+			return nil, fmt.Errorf("task %s: %w", t.ID, err)
+		}
+		leases[i] = il
+		for _, n := range il.Notes {
+			notify(Event{Task: t.ID, Kind: "issue", Text: n})
+		}
+	}
+	return leases, nil
+}
+
+func releaseIssues(ctx context.Context, leases []*ws.IssueLease, reason string, notify func(Event), tasks []Task) {
+	for i, il := range leases {
+		releaseIssue(ctx, il, reason, notify, tasks[i].ID)
+	}
+}
+
+func releaseIssue(ctx context.Context, il *ws.IssueLease, reason string, notify func(Event), task string) {
+	if il == nil {
+		return
+	}
+	seen := len(il.Notes)
+	if err := il.Release(ctx, reason); err != nil {
+		notify(Event{Task: task, Kind: "issue", Text: err.Error()})
+	}
+	for _, n := range il.Notes[seen:] {
+		notify(Event{Task: task, Kind: "issue", Text: n})
+	}
 }
 
 type attemptPlan struct {

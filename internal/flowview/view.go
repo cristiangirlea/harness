@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 // ErrNotFound covers missing, unreadable and foreign ids alike, so callers cannot tell them apart.
@@ -21,8 +23,74 @@ var ErrNotFound = errors.New("no run or batch")
 type View struct {
 	Version int
 	Summary string
+	Issues  []ws.IssueStatus `json:"issues,omitempty"`
 	Events  []flow.Event
 	Tree    []*flow.Node
+}
+
+// IssuesOf lists the redacted issue leases of run or batch id and its tasks, from disk alone so a refreshing view never calls GitHub.
+// The caller has checked that v may load id; the runs id continues are checked here.
+func IssuesOf(v owner.Viewer, id string) []ws.IssueStatus {
+	all, err := ws.ReadIssues(runlog.Home())
+	if err != nil {
+		return nil
+	}
+	ids := continuedRuns(v, id)
+	var out []ws.IssueStatus
+	for _, s := range all {
+		if slices.Contains(ids, s.Run) || strings.HasPrefix(s.Run, id+"/") {
+			out = append(out, redactIssue(s))
+		}
+	}
+	return out
+}
+
+const maxContinues = 20
+
+// A backend switch continues the run under a new id while the lease keeps the first one.
+// The walk stops at the first run v may not load, so nothing of another owner's chain shows.
+func continuedRuns(v owner.Viewer, id string) []string {
+	ids := []string{id}
+	rec, err := runlog.LoadFor(v, id)
+	for range maxContinues {
+		if err != nil || rec.Continues == "" || slices.Contains(ids, rec.Continues) {
+			break
+		}
+		prev := rec.Continues
+		if rec, err = runlog.LoadFor(v, prev); err != nil {
+			break
+		}
+		ids = append(ids, prev)
+	}
+	return ids
+}
+
+func redactIssue(s ws.IssueStatus) ws.IssueStatus {
+	for _, f := range []*string{&s.Issue, &s.Why, &s.Holder, &s.Run, &s.Backend, &s.Branch, &s.PR} {
+		*f = flow.Redact(*f)
+	}
+	return s
+}
+
+// IssueLine says who holds an issue, for the text and page views.
+func IssueLine(s ws.IssueStatus) string {
+	if s.State == "held by pull request" {
+		return "issue " + s.Issue + ": held by pull request " + s.PR
+	}
+	line := "issue " + s.Issue + ": held by hrn " + s.Run
+	if s.Backend != "" {
+		line += " (" + s.Backend + ")"
+	}
+	if s.Branch != "" {
+		line += " on " + s.Branch
+	}
+	if !s.Since.IsZero() {
+		line += " since " + s.Since.Local().Format("2006-01-02 15:04")
+	}
+	if s.State == "stale" {
+		line += ", stale: " + s.Why
+	}
+	return line
 }
 
 // Load resolves an id with the same batch-first rules as hrn flow.
@@ -58,7 +126,7 @@ func Load(v owner.Viewer, id string) (View, error) {
 	if !isBatch {
 		summary = RunSummary(roots)
 	}
-	return View{Version: flow.Version, Summary: flow.Redact(summary), Events: events, Tree: roots}, nil
+	return View{Version: flow.Version, Summary: flow.Redact(summary), Issues: IssuesOf(v, id), Events: events, Tree: roots}, nil
 }
 
 // Filter returns a tree containing only the steps visible at level.
@@ -151,10 +219,15 @@ func BatchSummary(res batch.Result) string {
 	return line
 }
 
-// WriteText renders the summary and tree in hrn flow's text format.
-func WriteText(w io.Writer, summary string, tree []*flow.Node, level string) error {
+// WriteText renders the summary, issue holders and tree in hrn flow's text format.
+func WriteText(w io.Writer, summary string, issues []ws.IssueStatus, tree []*flow.Node, level string) error {
 	if _, err := fmt.Fprintln(w, summary); err != nil {
 		return err
+	}
+	for _, s := range issues {
+		if _, err := fmt.Fprintln(w, IssueLine(s)); err != nil {
+			return err
+		}
 	}
 	var writeErr error
 	flow.Walk(tree, func(n *flow.Node, depth int) {

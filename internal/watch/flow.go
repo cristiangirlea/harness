@@ -14,6 +14,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/flow"
+	"github.com/cristiangirlea/harness/internal/flowview"
 	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -21,7 +22,21 @@ import (
 type flowPageData struct {
 	page
 	ID, Level, Summary, Stream string
+	Issues                     []string
 	Tree                       []flowNode
+}
+
+// flowIssues reads leases only for an id the viewer was already allowed to load.
+func (s *server) flowIssues(v owner.Viewer, id string) []string {
+	var lines []string
+	for _, st := range flowview.IssuesOf(v, id) {
+		line := flowview.IssueLine(st)
+		if s.redact != nil {
+			line = s.redact.Replace(line)
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 type flowNode struct {
@@ -67,8 +82,9 @@ func (s *server) flowJSON(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(struct {
 		Version int          `json:"version"`
+		Issues  []string     `json:"issues,omitempty"`
 		Tree    []*flow.Node `json:"tree"`
-	}{flow.Version, nonNilNodes(flow.Build(events))})
+	}{flow.Version, s.flowIssues(s.who(r), id), nonNilNodes(flow.Build(events))})
 }
 
 func nonNilNodes(nodes []*flow.Node) []*flow.Node {
@@ -117,7 +133,7 @@ func (s *server) flowData(r *http.Request, id, level string, events []flow.Event
 	if kind == "run" {
 		summary += " Open the run for tool calls and their recorded output."
 	}
-	return flowPageData{page: page{Title: "Execution flow " + id, Home: s.homeFor(r)}, ID: id, Level: level, Summary: summary, Tree: tree}
+	return flowPageData{page: page{Title: "Execution flow " + id, Home: s.homeFor(r)}, ID: id, Level: level, Summary: summary, Issues: s.flowIssues(s.who(r), id), Tree: tree}
 }
 
 func (s *server) flowDetails(v owner.Viewer, id, kind string, tree []flowNode) {
