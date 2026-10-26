@@ -619,8 +619,9 @@ order they are worth taking:
       recorded under `~/.hrn` so reports and hrn watch include the user's own sessions
       ([#305](https://github.com/cristiangirlea/harness/issues/305)); and Ada gamified, experience
       gathered by working with the AI, from real outcomes only, with Ada's own growth beside it
-      ([#306](https://github.com/cristiangirlea/harness/issues/306), four maintainer decisions
-      before any slice). #304 done: PR #314, 2026-10-14.
+      ([#306](https://github.com/cristiangirlea/harness/issues/306); the four maintainer
+      decisions answered on the issue 2026-10-25, the design in `docs/experience.md`: PR #642,
+      2026-10-25; the ledger slice next). #304 done: PR #314, 2026-10-14.
 12. **Guard rails**, in this order:
     - ~~[#36](https://github.com/cristiangirlea/harness/issues/36): what agents may do.~~
       Done as PR X (#44, closes #36): the guarded environment for every backend, claude's
@@ -776,6 +777,11 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-25: experience is two tracks, delivery and daily practice, with Ada's growth apart
+  (#306; PR #642, `docs/experience.md`). The streak counts practice only, never merges, so the
+  game never pushes towards merging every day. The ledger is an append-only file keyed by
+  source record, with caps applied when it is summed, and `hrn runs prune` folds records into
+  it before deleting them. Only a revert takes experience away; no model grades practice.
 - 2026-10-25: records can be shared by project, and every read decision in public mode is
   logged (#575 toward #580; PR #650). `$HRN_HOME/grants.json` lists `{viewer, owner?, project}`;
   a grant opens that owner's records whose repository root is the project or inside it, matched
