@@ -72,6 +72,7 @@ Usage:
   hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
                                  English, out loud and as notifications, with skip, snooze and a few
                                  spoken commands; serves hrn watch on loopback unless one already does
+  hrn bot stats                   your level, this week's experience and your badges, from hrn's records
   hrn mcp [--dir PATH] [--allow-dangerous-runs] [--retrieval-profile FILE]
                                  serve hrn as an MCP server on stdio; --dir is the default workspace (default: current
                                  directory); allow_dangerous is refused unless --allow-dangerous-runs is given
@@ -151,6 +152,7 @@ Run flags:
       --allow-dangerous
                        lift the guard: agents may push, merge and deploy with your credentials
                        (every backend), and run_command may run sudo, rm -rf / and the like
+      --inherit-env    start agent CLIs with your whole environment instead of an allowlisted one
       --no-switch      stay on this backend at its usage limit instead of using an enabled partner
 
 Eval flags:

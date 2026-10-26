@@ -274,6 +274,10 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		emit(Event{Time: time.Now(), Kind: EventError, Text: ErrGuardedRun.Error()})
 		return Result{Backend: b.Name(), Status: StatusRefused, Error: ErrGuardedRun.Error()}
 	}
+	if task.InheritEnv && tools.Guarded() {
+		emit(Event{Time: time.Now(), Kind: EventError, Text: ErrGuardedInherit.Error()})
+		return Result{Backend: b.Name(), Status: StatusRefused, Error: ErrGuardedInherit.Error()}
+	}
 	prepared, state, err := prepareRetrieval(ctx, b.Name(), task)
 	if err != nil {
 		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state}

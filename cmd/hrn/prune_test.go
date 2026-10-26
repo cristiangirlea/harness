@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/game"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -163,5 +165,248 @@ func TestPruneKeepsTheJudgeRunsOfAKeptEval(t *testing.T) {
 	}
 	if pathExists(filepath.Join(runlog.Root(), oldJudge)) {
 		t.Error("the judge run of a removed eval should go with it")
+	}
+}
+
+// oldRecords makes a review run, a batch with a squashed bug and an eval, all 40 days old.
+func oldRecords(t *testing.T, home string) (runID, batchID string, paths []string) {
+	t.Helper()
+	started := time.Now().AddDate(0, 0, -40)
+	runID = started.Format("20060102-150405") + "-aaaaaa"
+	batchID = started.Format("20060102-150405") + "-b1b1b1"
+	writeJSONFile(t, filepath.Join(runlog.Root(), runID, "result.json"), runlog.Record{
+		ID: runID, Backend: "claude", Started: started,
+		Task:   agent.Task{Prompt: "review the branch", Purpose: "review", Dir: home},
+		Result: agent.Result{Backend: "claude", Status: agent.StatusOK, Final: "No defects."},
+	})
+	writeJSONFile(t, filepath.Join(runlog.Home(), "batches", batchID+".json"), batch.Result{ID: batchID, Started: started, Dir: home,
+		Tasks: []batch.TaskResult{{ID: "t1", Status: batch.StatusPass, Worktree: filepath.Join(home, "gone"), Attempts: []batch.Attempt{
+			{Backend: "claude", Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1}}},
+			{Backend: "claude", Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 0}}},
+		}}}})
+	agedEval(t, "e1old", 40, batchID)
+	return runID, batchID, []string{
+		filepath.Join(runlog.Root(), runID),
+		filepath.Join(runlog.Home(), "batches", batchID+".json"),
+		filepath.Join(runlog.Home(), "evals", "e1old.json"),
+	}
+}
+
+func TestPruneFoldsWhatItDeletesIntoTheLedgerFirst(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	runID, batchID, paths := oldRecords(t, home)
+	if _, err := captureStdout(t, func() error { return cmdPrune([]string{"--older-than", "30d"}) }); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range paths {
+		if pathExists(p) {
+			t.Errorf("%s was not pruned", p)
+		}
+	}
+	events, _, err := game.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, e := range events {
+		have[e.Key] = true
+	}
+	for _, key := range []string{"review:" + runID, "batch:" + batchID + "/t1", "first:batch", "first:eval"} {
+		if !have[key] {
+			t.Errorf("the ledger lacks %s after the prune; it holds %v", key, have)
+		}
+	}
+}
+
+func TestPruneDeletesNothingWhenTheLedgerCannotTakeTheRecords(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	_, _, paths := oldRecords(t, home)
+	// A file where the game directory belongs: the ledger cannot be written.
+	if err := os.WriteFile(game.Dir(), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := captureStdout(t, func() error { return cmdPrune([]string{"--older-than", "30d"}) })
+	if err == nil || !strings.Contains(err.Error(), "ledger") || !strings.Contains(err.Error(), "nothing was removed") {
+		t.Fatalf("err = %v, want a refusal saying the ledger failed and nothing was removed", err)
+	}
+	for _, p := range paths {
+		if !pathExists(p) {
+			t.Errorf("%s was removed although the ledger could not take it", p)
+		}
+	}
+}
+
+func TestPruneDryRunLeavesTheLedgerAlone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	_, _, paths := oldRecords(t, home)
+	if _, err := captureStdout(t, func() error { return cmdPrune([]string{"--older-than", "30d", "--dry-run"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(game.Dir()) {
+		t.Error("a dry run wrote the ledger")
+	}
+	for _, p := range paths {
+		if !pathExists(p) {
+			t.Errorf("a dry run removed %s", p)
+		}
+	}
+}
+
+func ledgerEvent(t *testing.T, key string) (game.Event, bool) {
+	t.Helper()
+	events, _, err := game.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Key == key {
+			return e, true
+		}
+	}
+	return game.Event{}, false
+}
+
+func TestPruneKeepsTheVerdictOfARoutedRunWhoseBatchGoes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	started := time.Now().AddDate(0, 0, -40)
+	runID := started.Format("20060102-150405") + "-aaaaaa"
+	writeJSONFile(t, filepath.Join(runlog.Root(), runID, "result.json"), runlog.Record{
+		ID: runID, Backend: "claude", Started: started, RoutedBy: &runlog.RoutedBy{Category: "implement", Set: "2026-10-19"},
+		Task:   agent.Task{Prompt: "implement it", Dir: home},
+		Result: agent.Result{Backend: "claude", Status: agent.StatusOK},
+	})
+	batchID := started.Format("20060102-150405") + "-b1b1b1"
+	writeJSONFile(t, filepath.Join(runlog.Home(), "batches", batchID+".json"), batch.Result{ID: batchID, Started: started, Dir: home,
+		Tasks: []batch.TaskResult{{ID: "t1", Status: batch.StatusFail, Worktree: filepath.Join(home, "gone"), Attempts: []batch.Attempt{
+			{Backend: "claude", RunID: runID, Gates: []batch.GateResult{{Command: "go test ./...", ExitCode: 1}}},
+		}}}})
+	// --keep 1 keeps the run while its batch record goes.
+	if _, err := captureStdout(t, func() error { return cmdPrune([]string{"--older-than", "30d", "--keep", "1"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(filepath.Join(runlog.Home(), "batches", batchID+".json")) || !pathExists(filepath.Join(runlog.Root(), runID)) {
+		t.Fatal("want the batch record pruned and the run kept")
+	}
+	if err := game.Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := ledgerEvent(t, "routed:"+runID); !ok || e.Kind != "routed_failed" || e.XP != 0 {
+		t.Fatalf("routed:%s = %+v (%v); want the failed verdict kept, so the run never counts once its batch is gone", runID, e, ok)
+	}
+}
+
+func TestPruneDatesFirstUseByTheEarliestRecordOnDisk(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	const keptB, goneB = "20260801-000000-b1b1b1", "20260802-000000-b2b2b2"
+	agedBatch(t, keptB, 40, "", filepath.Join(home, "gone"))
+	agedBatch(t, goneB, 35, "", filepath.Join(home, "gone"))
+	agedEval(t, "e2new", 1, keptB) // keeps the older batch
+	if _, err := captureStdout(t, func() error { return cmdPrune([]string{"--older-than", "30d"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(filepath.Join(runlog.Home(), "batches", goneB+".json")) || !pathExists(filepath.Join(runlog.Home(), "batches", keptB+".json")) {
+		t.Fatal("want the newer old batch pruned and the cited one kept")
+	}
+	kept, err := batch.LoadResult(keptB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := ledgerEvent(t, "first:batch"); !ok || !e.At.Equal(kept.Started) {
+		t.Fatalf("first:batch = %+v (%v); want it dated at the earliest batch on disk, %v", e, ok, kept.Started)
+	}
+}
+
+func TestPruneRefusesWhenARunItWouldRemoveCannotBeRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	id := time.Now().AddDate(0, 0, -40).Format("20060102-150405") + "-aaaaaa"
+	// A directory where result.json belongs: the record exists but cannot be read.
+	if err := os.MkdirAll(filepath.Join(runlog.Root(), id, "result.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := captureStdout(t, func() error { return cmdPrune([]string{"--older-than", "30d"}) })
+	if err == nil || !strings.Contains(err.Error(), "nothing was removed") {
+		t.Fatalf("err = %v, want a refusal that removed nothing", err)
+	}
+	if !pathExists(filepath.Join(runlog.Root(), id)) {
+		t.Error("a run that could not be read was removed without being folded")
+	}
+}
+
+func TestPruneDecidesTheRoutedRunOfABatchThatDiedAsFailed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	started := time.Now().AddDate(0, 0, -40)
+	runID := started.Format("20060102-150405") + "-aaaaaa"
+	writeJSONFile(t, filepath.Join(runlog.Root(), runID, "result.json"), runlog.Record{
+		ID: runID, Backend: "claude", Started: started, RoutedBy: &runlog.RoutedBy{Category: "implement", Set: "2026-10-19"},
+		Task:   agent.Task{Prompt: "implement it", Dir: home},
+		Result: agent.Result{Backend: "claude", Status: agent.StatusOK},
+	})
+	// The batch process died while the attempt's gates ran: the task is still "running" in its record.
+	batchID := started.Format("20060102-150405") + "-b1b1b1"
+	writeJSONFile(t, filepath.Join(runlog.Home(), "batches", batchID+".json"), batch.Result{ID: batchID, Started: started, Dir: home,
+		Tasks: []batch.TaskResult{{ID: "t1", Status: batch.StatusRunning, Worktree: filepath.Join(home, "gone"), Attempts: []batch.Attempt{
+			{Backend: "claude", RunID: runID, Gates: []batch.GateResult{{Command: "go vet ./...", ExitCode: 0}}},
+		}}}})
+	if _, err := captureStdout(t, func() error { return cmdPrune([]string{"--older-than", "30d", "--keep", "1"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(filepath.Join(runlog.Home(), "batches", batchID+".json")) || !pathExists(filepath.Join(runlog.Root(), runID)) {
+		t.Fatal("want the batch record pruned and the run kept")
+	}
+	if err := game.Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := ledgerEvent(t, "routed:"+runID); !ok || e.Kind != "routed_failed" {
+		t.Fatalf("routed:%s = %+v (%v); want routed_failed, decided before the record went", runID, e, ok)
+	}
+}
+
+func TestPruneRemovesRunsWhoseRecordHoldsNothingToFold(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	old := time.Now().AddDate(0, 0, -40)
+	id := func(suffix string) string { return old.Format("20060102-150405") + "-" + suffix }
+	broken, mistyped, empty, good := id("aaaaaa"), id("bbbbbb"), id("cccccc"), id("dddddd")
+	for run, body := range map[string]string{broken: "{half a rec", mistyped: `{"id": 5}`} {
+		if err := os.MkdirAll(filepath.Join(runlog.Root(), run), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runlog.Root(), run, "result.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A run that never wrote task.json or result.json, its transcript long untouched.
+	events := filepath.Join(runlog.Root(), empty, "events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(events), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(events, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(events, old, old); err != nil {
+		t.Fatal(err)
+	}
+	writeJSONFile(t, filepath.Join(runlog.Root(), good, "result.json"), runlog.Record{
+		ID: good, Backend: "claude", Started: old,
+		Task:   agent.Task{Prompt: "review the branch", Purpose: "review", Dir: home},
+		Result: agent.Result{Backend: "claude", Status: agent.StatusOK, Final: "No defects."},
+	})
+	if _, err := captureStdout(t, func() error { return cmdPrune([]string{"--older-than", "30d"}) }); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range []string{broken, mistyped, empty, good} {
+		if pathExists(filepath.Join(runlog.Root(), run)) {
+			t.Errorf("run %s was kept; a record with nothing to fold may go", run)
+		}
+	}
+	if _, ok := ledgerEvent(t, "review:"+good); !ok {
+		t.Error("the readable run was not folded before it went")
 	}
 }
