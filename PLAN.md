@@ -777,6 +777,15 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-26: a run given a GitHub issue leases it, so two runs never work on the same issue
+  (#645; PR #657, `docs/workspaces.md#issue-leases`). `hrn run --issue`, the MCP `run` tool's
+  `issue` and a batch task's `issue` take a slot-style lease under `$HRN_HOME/leases/issues`,
+  shared by every checkout on the computer, and post the same `claimed` label and
+  `Claim:`/`Released:` comments as the claim tool outside hrn, so Claude Code sessions and runs
+  on any backend see each other. An open pull request that closes the issue, or another
+  worker's live claim, refuses the run (exit 2 or a tool error naming the holder) unless
+  `--take-over`. Only comments by the account gh is logged in as count, since anyone can comment
+  on a public issue. Without gh the local lease still holds and the claim is noted as skipped.
 - 2026-10-25: experience is two tracks, delivery and daily practice, with Ada's growth apart
   (#306; PR #642, `docs/experience.md`). The streak counts practice only, never merges, so the
   game never pushes towards merging every day. The ledger is an append-only file keyed by
