@@ -220,7 +220,8 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		if err != nil {
 			return fail(StatusError, err)
 		}
-		cmd.Env = append(cmd.Env, extra...)
+		// The key stays out even when an MCP server's env names it.
+		cmd.Env = withoutEnv(append(cmd.Env, extra...), "ANTHROPIC_API_KEY")
 	}
 	guarded := !task.AllowDangerous
 	if guarded {
@@ -263,7 +264,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		// tools keep on disk and in the system's store are within reach.
 		text := fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the logins kept on disk and in the system's store", c.name)
 		if len(withheld) > 0 {
-			text += "; the sanitized environment still leaves out " + strings.Join(withheld, ", ") + " (--inherit-env passes them)"
+			text += fmt.Sprintf("; %d secret-looking variables still left out; --inherit-env passes them", len(withheld))
 		}
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text})
 	}

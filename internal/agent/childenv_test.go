@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -107,10 +109,10 @@ func TestACLIChildDoesNotSeeThePlantedToken(t *testing.T) {
 	if !strings.Contains(line, "sanitized") || !strings.Contains(line, "variables dropped") || strings.Contains(line, "GH_TOKEN") {
 		t.Errorf("the run must say its environment was sanitized and how many variables were dropped, naming none: %q", info)
 	}
-	// The guard's line names the secret-looking ones, as it always has, so a
-	// CLI that logs in with a key says why it cannot, and how to let it.
-	if !strings.Contains(guard, "GH_TOKEN") || !strings.Contains(guard, "--inherit-env") {
-		t.Errorf("with the guard lifted the run must name the tokens the sanitized environment still leaves out: %q", guard)
+	// With the guard lifted only a count is said, so a CLI that logs in with a
+	// key says why it cannot, and how to let it, without naming anything.
+	if strings.Contains(guard, "GH_TOKEN") || !strings.Contains(guard, "secret-looking variables still left out") || !strings.Contains(guard, "--inherit-env") {
+		t.Errorf("with the guard lifted the run must count, not name, the tokens the sanitized environment leaves out: %q", guard)
 	}
 
 	got, info = run(Options{Mode: ModeYolo, AllowDangerous: true, InheritEnv: true})
@@ -168,6 +170,77 @@ func TestAgyKeepsItsOwnLoginVariables(t *testing.T) {
 	if got := run(helperCLI(parseClaudeStream), Options{Mode: ModeYolo, AllowDangerous: true}); got["AGY_ACCOUNT"] != "" || got["GOOGLE_APPLICATION_CREDENTIALS"] != "" {
 		t.Errorf("another CLI saw agy's variables: %v", got)
 	}
+}
+
+// gemini picks its Cloud project and sign-in route by variables only gemini gets.
+func TestGeminiKeepsItsOwnLoginVariables(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "env")
+	vars := []string{"GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_GCA"}
+	t.Setenv("HRN_CLI_HELPER_VARS", strings.Join(vars, ","))
+	for _, k := range vars {
+		t.Setenv(k, "v-"+k)
+	}
+	for _, b := range []*CLIBackend{NewGeminiBackend(), NewClaudeBackend(), NewCodexBackend()} {
+		h := helperCLI(parseClaudeStream)
+		h.ownEnv, h.loginEnv = b.ownEnv, b.loginEnv
+		got := helperEnv(t, h, Options{Mode: ModeYolo})
+		for _, k := range vars {
+			if want := map[bool]string{true: "v-" + k}[b.name == "gemini"]; got[k] != want {
+				t.Errorf("%s saw %s=%q, want %q", b.name, k, got[k], want)
+			}
+		}
+	}
+}
+
+// The api key stays out of a CLI even when an MCP server's env, added after
+// the allowlist, sets it; the server's other variables do reach the CLI.
+func TestEnvExtrasReachTheCLIButNotTheAPIKey(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "env")
+	t.Setenv("HRN_CLI_HELPER_VARS", "MY_SERVER_SETTING")
+	cfg := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(cfg, []byte(`{"mcpServers":{"s":{"command":"srv","env":{"MY_SERVER_SETTING":"x","ANTHROPIC_API_KEY":"sk-ant-metered"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := helperCLI(parseClaudeStream)
+	h.env = codexMCPEnv
+	for _, opts := range []Options{{Mode: ModeYolo, MCP: []string{cfg}}, {Mode: ModeYolo, MCP: []string{cfg}, AllowDangerous: true}} {
+		got := helperEnv(t, h, opts)
+		if got["MY_SERVER_SETTING"] != "x" || got["ANTHROPIC_API_KEY"] != "" {
+			t.Errorf("allow_dangerous=%v: the CLI saw %v; want MY_SERVER_SETTING=x and no ANTHROPIC_API_KEY", opts.AllowDangerous, got)
+		}
+	}
+}
+
+// A proxy URL passes without its user and password, in every element of a
+// GOPROXY list; a GCM_ name that looks secret stays out, GCM's settings pass.
+func TestAllowedValuesCarryNoCredentials(t *testing.T) {
+	in := []string{
+		"HTTPS_PROXY=http://u:p@proxy:8080", "http_proxy=http://u@proxy/", "ALL_PROXY=socks5://u:p@proxy",
+		"NO_PROXY=localhost", "HTTP_PROXY=u:p@proxy:3128", "GCM_HTTP_PROXY=http://u:p@proxy",
+		"GOPROXY=https://u:p@goproxy.example/a@b,direct|https://proxy.golang.org",
+		"GCM_CREDENTIAL_STORE=dpapi", "GCM_INTERACTIVE=never", "GCM_PASSWORD=p", "GCM_DEPLOY_TOKEN=t",
+	}
+	want := []string{
+		"HTTPS_PROXY=http://proxy:8080", "http_proxy=http://proxy/", "ALL_PROXY=socks5://proxy",
+		"NO_PROXY=localhost", "HTTP_PROXY=proxy:3128", "GCM_HTTP_PROXY=http://proxy",
+		"GOPROXY=https://goproxy.example/a@b,direct|https://proxy.golang.org",
+		"GCM_CREDENTIAL_STORE=dpapi", "GCM_INTERACTIVE=never",
+	}
+	got, n, secrets := sanitizedEnv(in, "linux")
+	if !slices.Equal(got, want) || n != 2 || !slices.Equal(secrets, []string{"GCM_DEPLOY_TOKEN", "GCM_PASSWORD"}) {
+		t.Errorf("got %v, %d dropped, secrets %v\nwant %v, 2 dropped, GCM_DEPLOY_TOKEN and GCM_PASSWORD", got, n, secrets, want)
+	}
+}
+
+func helperEnv(t *testing.T, b *CLIBackend, opts Options) map[string]string {
+	t.Helper()
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: opts}, func(Event) {})
+	got := map[string]string{}
+	for _, kv := range strings.Split(res.Final, ";") {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	return got
 }
 
 func concat(lists ...[]string) []string {

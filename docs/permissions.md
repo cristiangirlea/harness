@@ -105,8 +105,8 @@ An hrn that does see the guard refuses it too: the guarded environment sets `HRN
 (it reaches codex's commands, checked live), the api loop sets it for its own MCP servers,
 and `hrn run --allow-dangerous` from an agent's shell is refused. A refused command tells
 the model only that the operator can lift the guard. `inherit_env` is refused inside a
-guarded run the same way: it would hand the agent's own hrn runs the operator's claude
-settings, plugins and MCP servers that the agent was started without.
+guarded run the same way: it would hand the agent's own hrn runs the operator's whole
+environment, which only the operator may do.
 
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.

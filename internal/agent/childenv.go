@@ -7,10 +7,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// An unattended CLI gets what a shell, its login and the toolchains need, not
-// the operator's whole environment; the guard still applies on top.
-
-// childEnvNames are the variables passed on every system.
+// childEnvNames are what a shell, a login and the toolchains need on every system; see docs/backends.md.
 var childEnvNames = []string{
 	// The shell, the user and the terminal.
 	"HOME", "USER", "USERNAME", "LOGNAME", "PATH", "SHELL", "TERM", "COLORTERM", "LANG", "TZ",
@@ -35,25 +32,19 @@ var childEnvWindows = []string{
 	"USERDOMAIN", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "PSMODULEPATH", "CLAUDE_CODE_GIT_BASH_PATH",
 }
 
-// childEnvPrefixes pass a whole family: the locale's, Git Credential
-// Manager's settings (where its store is, which a private fetch needs) and
-// hrn's own, so an hrn MCP server the CLI starts from --mcp-config finds its
-// home.
+// childEnvPrefixes pass a whole family: the locale's, Git Credential Manager's settings and hrn's own.
 var childEnvPrefixes = []string{"LC_", "GCM_", "HRN_"}
 
-// sanitizedEnv returns the allowlisted part of env for an agent CLI on goos,
-// how many variables it left out, and the set ones among them whose names say
-// secret, by name, for the guard's line to list as it always has (a CLI that
-// logs in with a key fails without it). keep names the CLI's own variables,
-// which pass although they are not on the list or their names say secret.
+// sanitizedEnv returns the allowlisted part of env for an agent CLI, how many variables it dropped and the secret-looking set ones.
+// keep names the CLI's own variables, which pass although unlisted or secret-looking.
 func sanitizedEnv(env []string, goos string, keep ...string) (out []string, dropped int, secrets []string) {
 	out = make([]string, 0, len(childEnvNames))
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
 		key := strings.ToUpper(k) // Windows names are case-insensitive
-		secret := tools.SecretEnv(key)
+		secret := tools.SecretEnv(key) || gcmSecret(key)
 		if slices.Contains(keep, key) || !secret && childEnvAllowed(key, goos) {
-			out = append(out, kv)
+			out = append(out, k+"="+withoutUserinfo(key, v))
 			continue
 		}
 		dropped++
@@ -75,4 +66,50 @@ func childEnvAllowed(key, goos string) bool {
 		return false
 	}
 	return slices.ContainsFunc(childEnvPrefixes, func(p string) bool { return strings.HasPrefix(key, p) })
+}
+
+// gcmSecret undoes the guard's GCM_ exemption for the allowlist, where the whole family passes;
+// CREDENTIAL is ignored because GCM's plain settings use it (GCM_CREDENTIAL_STORE).
+func gcmSecret(key string) bool {
+	rest, ok := strings.CutPrefix(key, "GCM_")
+	return ok && tools.SecretEnv("X_"+strings.ReplaceAll(rest, "CREDENTIAL", ""))
+}
+
+// proxyEnv are the allowed variables whose values are URLs that may carry a user and password.
+var proxyEnv = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "GCM_HTTP_PROXY", "GOPROXY"}
+
+func withoutUserinfo(key, v string) string {
+	if !slices.Contains(proxyEnv, key) {
+		return v
+	}
+	// GOPROXY is a list split by ',' and '|'; the separators are kept.
+	var b strings.Builder
+	for v != "" {
+		i := strings.IndexAny(v, ",|")
+		if i < 0 {
+			i = len(v)
+		}
+		b.WriteString(stripUserinfo(v[:i]))
+		if i < len(v) {
+			b.WriteByte(v[i])
+			i++
+		}
+		v = v[i:]
+	}
+	return b.String()
+}
+
+func stripUserinfo(u string) string {
+	start := 0
+	if i := strings.Index(u, "://"); i >= 0 {
+		start = i + 3
+	}
+	end := len(u)
+	if i := strings.IndexAny(u[start:], "/?#"); i >= 0 {
+		end = start + i
+	}
+	if at := strings.LastIndexByte(u[start:end], '@'); at >= 0 {
+		return u[:start] + u[start+at+1:]
+	}
+	return u
 }

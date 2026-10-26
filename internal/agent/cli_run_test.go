@@ -77,6 +77,12 @@ func TestHelperCLIError(t *testing.T) {
 			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
 			os.Getenv("HRN_GUARDED"), os.Getenv("GIT_DIR"), os.Getenv("GIT_INDEX_FILE"), os.Getenv("GIT_WORK_TREE"), os.Getenv("OPERATOR_SETTING"), os.Getenv("PATH") != "",
 			os.Getenv("AGY_ACCOUNT"), os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+		// A test names any further variables it wants reported.
+		for _, k := range strings.Split(os.Getenv("HRN_CLI_HELPER_VARS"), ",") {
+			if k != "" {
+				report += ";" + k + "=" + os.Getenv(k)
+			}
+		}
 		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": report})
 		fmt.Println(string(out))
 		os.Exit(0)

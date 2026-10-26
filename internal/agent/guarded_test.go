@@ -44,8 +44,7 @@ func TestAGuardedRunCannotLiftTheGuard(t *testing.T) {
 	}
 }
 
-// Nor does it hand an agent the operator's environment, and with it claude's
-// own settings, plugins and MCP servers.
+// Nor does it hand the agent's runs the operator's whole environment: only the operator may.
 func TestAGuardedRunCannotInheritTheEnvironment(t *testing.T) {
 	t.Setenv(tools.GuardedVar, "1")
 	if err := (Options{InheritEnv: true}).Validate(); !errors.Is(err, ErrGuardedInherit) {

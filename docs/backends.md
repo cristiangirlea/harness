@@ -224,6 +224,8 @@ yours as a whole (#411). They get:
 - where each CLI keeps its login and settings (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
   `GEMINI_CLI_HOME`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`), and claude's plan login
   `CLAUDE_CODE_OAUTH_TOKEN`, for claude only;
+- for gemini only, which Cloud project and sign-in route it uses (`GOOGLE_CLOUD_PROJECT`,
+  `GOOGLE_CLOUD_LOCATION`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_GENAI_USE_GCA`);
 - for agy only, which account and Cloud project it signs in with and where it keeps its
   state (`AGY_ACCOUNT`, `AGY_ADC_AUTH`, `ANTIGRAVITY_GEMINI_DIR`, `ANTIGRAVITY_APP_DATA_DIR`,
   `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_QUOTA_PROJECT`, `GOOGLE_CLOUD_LOCATION`,
@@ -246,11 +248,17 @@ Anything else stays out: `GH_*`, `GIT_CONFIG_GLOBAL` and your own `GIT_CONFIG_*`
 entries, `SSH_AUTH_SOCK`, a `DATABASE_URL`, editor and tool settings. A name that says it
 holds a secret ([the guard's patterns](permissions.md#the-guard-for-every-backend))
 stays out even when it matches the list, and so do hrn's own addresses and key files
-(`HRN_*_URL*`, `HRN_*KEY_FILE`). `ANTHROPIC_API_KEY` never reaches a CLI, with
-`--inherit-env` either: the api backend uses that key in-process, and the CLIs log in on
-their own. The guard still applies on top. The run's info events say `environment:
-sanitized, N variables dropped`, never which; the guard's line names the secret-looking
-ones, as it always has, so a CLI that logs in with a key says why it cannot.
+(`HRN_*_URL*`, `HRN_*KEY_FILE`); a `GCM_*` name that says secret stays out too. Proxy
+URLs (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `GCM_HTTP_PROXY` and each entry of
+`GOPROXY`) pass without a user and password. `ANTHROPIC_API_KEY` never reaches a CLI, with
+`--inherit-env` either, nor when an `--mcp` server's env sets it: the api backend uses that
+key in-process, and the CLIs log in on their own. The guard still applies on top. The run's
+info events say `environment: sanitized, N variables dropped`, never which; under the guard
+its line names the secret-looking ones, as it always has, and with `--allow-dangerous` the
+line only counts them, so a CLI that logs in with a key says why it cannot.
+
+MCP servers set up in a CLI's own config that expand `${VAR}` from the environment now see
+only the allowlisted variables, unless the run has `--inherit-env`.
 
 The allowlist changes only the environment: a claude worker still loads your
 `~/.claude` CLAUDE.md, rules, plugins and skills as before, and its MCP servers follow

@@ -201,8 +201,7 @@ const MaxAppendSystemPrompt = 16 << 10
 // ErrGuardedRun reserves lifting the guard for the operator; its text names no variable because the model reads it.
 var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run: only the operator can lift the guard")
 
-// ErrGuardedInherit refuses inherit_env inside a guarded run for the same
-// reason: it would hand the run's agent the operator's whole environment.
+// ErrGuardedInherit refuses inherit_env inside a guarded run: it would hand the agent's runs the operator's whole environment, which only the operator may do.
 var ErrGuardedInherit = errors.New("inherit_env is refused inside a guarded run: only the operator can give an agent their environment")
 
 // Over inherits unset values; non-nil pointers and lists override base.
