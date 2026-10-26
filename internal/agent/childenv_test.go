@@ -172,10 +172,12 @@ func TestAgyKeepsItsOwnLoginVariables(t *testing.T) {
 	}
 }
 
-// gemini picks its Cloud project and sign-in route by variables only gemini gets.
+// gemini picks its Cloud project and sign-in route by variables only gemini gets;
+// the guard still withholds its service-account file.
 func TestGeminiKeepsItsOwnLoginVariables(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "env")
-	vars := []string{"GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_GCA"}
+	vars := []string{"GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_GCA",
+		"GOOGLE_CLOUD_QUOTA_PROJECT", "GOOGLE_APPLICATION_CREDENTIALS"}
 	t.Setenv("HRN_CLI_HELPER_VARS", strings.Join(vars, ","))
 	for _, k := range vars {
 		t.Setenv(k, "v-"+k)
@@ -183,30 +185,56 @@ func TestGeminiKeepsItsOwnLoginVariables(t *testing.T) {
 	for _, b := range []*CLIBackend{NewGeminiBackend(), NewClaudeBackend(), NewCodexBackend()} {
 		h := helperCLI(parseClaudeStream)
 		h.ownEnv, h.loginEnv = b.ownEnv, b.loginEnv
-		got := helperEnv(t, h, Options{Mode: ModeYolo})
-		for _, k := range vars {
-			if want := map[bool]string{true: "v-" + k}[b.name == "gemini"]; got[k] != want {
-				t.Errorf("%s saw %s=%q, want %q", b.name, k, got[k], want)
+		for _, dangerous := range []bool{false, true} {
+			got := helperEnv(t, h, Options{Mode: ModeYolo, AllowDangerous: dangerous})
+			for _, k := range vars {
+				reaches := b.name == "gemini" && (dangerous || k != "GOOGLE_APPLICATION_CREDENTIALS")
+				if want := map[bool]string{true: "v-" + k}[reaches]; got[k] != want {
+					t.Errorf("%s allow_dangerous=%v saw %s=%q, want %q", b.name, dangerous, k, got[k], want)
+				}
 			}
 		}
 	}
 }
 
-// The api key stays out of a CLI even when an MCP server's env, added after
-// the allowlist, sets it; the server's other variables do reach the CLI.
+// An MCP server's env, added after the allowlist, reaches the CLI; the api key
+// stays out even when a backend's extras set it.
 func TestEnvExtrasReachTheCLIButNotTheAPIKey(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "env")
 	t.Setenv("HRN_CLI_HELPER_VARS", "MY_SERVER_SETTING")
+	// codexMCPEnv refuses a value hrn's own environment sets differently.
+	unsetenv(t, "MY_SERVER_SETTING", "ANTHROPIC_API_KEY")
 	cfg := filepath.Join(t.TempDir(), "mcp.json")
-	if err := os.WriteFile(cfg, []byte(`{"mcpServers":{"s":{"command":"srv","env":{"MY_SERVER_SETTING":"x","ANTHROPIC_API_KEY":"sk-ant-metered"}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(cfg, []byte(`{"mcpServers":{"s":{"command":"srv","env":{"MY_SERVER_SETTING":"x"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := helperCLI(parseClaudeStream)
-	h.env = codexMCPEnv
-	for _, opts := range []Options{{Mode: ModeYolo, MCP: []string{cfg}}, {Mode: ModeYolo, MCP: []string{cfg}, AllowDangerous: true}} {
-		got := helperEnv(t, h, opts)
-		if got["MY_SERVER_SETTING"] != "x" || got["ANTHROPIC_API_KEY"] != "" {
-			t.Errorf("allow_dangerous=%v: the CLI saw %v; want MY_SERVER_SETTING=x and no ANTHROPIC_API_KEY", opts.AllowDangerous, got)
+	codex := helperCLI(parseClaudeStream)
+	codex.env = codexMCPEnv
+	keyed := helperCLI(parseClaudeStream)
+	keyed.env = func(Task) ([]string, error) {
+		return []string{"MY_SERVER_SETTING=x", "ANTHROPIC_API_KEY=sk-ant-metered"}, nil
+	}
+	for _, h := range []*CLIBackend{codex, keyed} {
+		for _, opts := range []Options{{Mode: ModeYolo, MCP: []string{cfg}}, {Mode: ModeYolo, MCP: []string{cfg}, AllowDangerous: true}} {
+			got := helperEnv(t, h, opts)
+			if got["MY_SERVER_SETTING"] != "x" || got["ANTHROPIC_API_KEY"] != "" {
+				t.Errorf("allow_dangerous=%v: the CLI saw %v; want MY_SERVER_SETTING=x and no ANTHROPIC_API_KEY", opts.AllowDangerous, got)
+			}
+		}
+	}
+}
+
+// codex refuses a server env that sets the api key instead of starting that
+// server without it, whatever hrn's own environment holds.
+func TestCodexRefusesTheAPIKeyInAServerEnv(t *testing.T) {
+	for _, have := range []string{"", "sk-ant-metered"} {
+		t.Setenv("ANTHROPIC_API_KEY", have)
+		cfg := filepath.Join(t.TempDir(), "mcp.json")
+		if err := os.WriteFile(cfg, []byte(`{"mcpServers":{"s":{"command":"srv","env":{"ANTHROPIC_API_KEY":"sk-ant-metered"}}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := codexMCPEnv(Task{Options: Options{MCP: []string{cfg}}}); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY never reaches") {
+			t.Errorf("hrn's key %q: want a refusal naming ANTHROPIC_API_KEY, got %v", have, err)
 		}
 	}
 }
@@ -216,7 +244,7 @@ func TestEnvExtrasReachTheCLIButNotTheAPIKey(t *testing.T) {
 func TestAllowedValuesCarryNoCredentials(t *testing.T) {
 	in := []string{
 		"HTTPS_PROXY=http://u:p@proxy:8080", "http_proxy=http://u@proxy/", "ALL_PROXY=socks5://u:p@proxy",
-		"NO_PROXY=localhost", "HTTP_PROXY=u:p@proxy:3128", "GCM_HTTP_PROXY=http://u:p@proxy",
+		"NO_PROXY=localhost", "HTTP_PROXY=u:p@proxy:3128", "GCM_HTTP_PROXY=http://u:pa/ss@proxy",
 		"GOPROXY=https://u:p@goproxy.example/a@b,direct|https://proxy.golang.org",
 		"GCM_CREDENTIAL_STORE=dpapi", "GCM_INTERACTIVE=never", "GCM_PASSWORD=p", "GCM_DEPLOY_TOKEN=t",
 	}

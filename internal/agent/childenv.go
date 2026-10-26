@@ -82,6 +82,13 @@ func withoutUserinfo(key, v string) string {
 	if !slices.Contains(proxyEnv, key) {
 		return v
 	}
+	if key != "GOPROXY" {
+		// A password may hold '/', so the user part ends at the last '@'.
+		if at := strings.LastIndexByte(v, '@'); at >= 0 {
+			return v[:schemeEnd(v)] + v[at+1:]
+		}
+		return v
+	}
 	// GOPROXY is a list split by ',' and '|'; the separators are kept.
 	var b strings.Builder
 	for v != "" {
@@ -99,11 +106,15 @@ func withoutUserinfo(key, v string) string {
 	return b.String()
 }
 
-func stripUserinfo(u string) string {
-	start := 0
+func schemeEnd(u string) int {
 	if i := strings.Index(u, "://"); i >= 0 {
-		start = i + 3
+		return i + 3
 	}
+	return 0
+}
+
+func stripUserinfo(u string) string {
+	start := schemeEnd(u)
 	end := len(u)
 	if i := strings.IndexAny(u[start:], "/?#"); i >= 0 {
 		end = start + i

@@ -225,7 +225,9 @@ yours as a whole (#411). They get:
   `GEMINI_CLI_HOME`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`), and claude's plan login
   `CLAUDE_CODE_OAUTH_TOKEN`, for claude only;
 - for gemini only, which Cloud project and sign-in route it uses (`GOOGLE_CLOUD_PROJECT`,
-  `GOOGLE_CLOUD_LOCATION`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_GENAI_USE_GCA`);
+  `GOOGLE_CLOUD_QUOTA_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_GENAI_USE_VERTEXAI`,
+  `GOOGLE_GENAI_USE_GCA`, and the service-account file `GOOGLE_APPLICATION_CREDENTIALS`,
+  which the guard still withholds, so it reaches gemini only with `--allow-dangerous`);
 - for agy only, which account and Cloud project it signs in with and where it keeps its
   state (`AGY_ACCOUNT`, `AGY_ADC_AUTH`, `ANTIGRAVITY_GEMINI_DIR`, `ANTIGRAVITY_APP_DATA_DIR`,
   `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_QUOTA_PROJECT`, `GOOGLE_CLOUD_LOCATION`,
@@ -251,8 +253,9 @@ stays out even when it matches the list, and so do hrn's own addresses and key f
 (`HRN_*_URL*`, `HRN_*KEY_FILE`); a `GCM_*` name that says secret stays out too. Proxy
 URLs (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `GCM_HTTP_PROXY` and each entry of
 `GOPROXY`) pass without a user and password. `ANTHROPIC_API_KEY` never reaches a CLI, with
-`--inherit-env` either, nor when an `--mcp` server's env sets it: the api backend uses that
-key in-process, and the CLIs log in on their own. The guard still applies on top. The run's
+`--inherit-env` either: the api backend uses that key in-process, and the CLIs log in on
+their own. A codex run refuses an `--mcp` server whose env sets it, since the server would
+start without it. The guard still applies on top. The run's
 info events say `environment: sanitized, N variables dropped`, never which; under the guard
 its line names the secret-looking ones, as it always has, and with `--allow-dangerous` the
 line only counts them, so a CLI that logs in with a key says why it cannot.

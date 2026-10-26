@@ -15,7 +15,8 @@ func NewGeminiBackend() *CLIBackend {
 		candidates:  func() []string { return npmShim("gemini") },
 		promptStdin: true,
 		// Which Cloud project and sign-in route the Google login uses.
-		ownEnv: []string{"GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_GCA"},
+		ownEnv: []string{"GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_QUOTA_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI",
+			"GOOGLE_GENAI_USE_GCA", "GOOGLE_APPLICATION_CREDENTIALS"},
 		args: func(t Task, _ string) []string {
 			a := []string{"-o", "json"}
 			if t.Model != "" {

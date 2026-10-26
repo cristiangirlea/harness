@@ -95,6 +95,9 @@ func codexMCPEnv(t Task) ([]string, error) {
 			if len(agentEnv([]string{k + "="})) == 0 {
 				return nil, fmt.Errorf("mcp %s: hrn keeps %s out of an agent's environment, and codex would get it too", s.Name, k)
 			}
+			if strings.EqualFold(k, "ANTHROPIC_API_KEY") {
+				return nil, fmt.Errorf("mcp %s: ANTHROPIC_API_KEY never reaches a CLI, so codex could not pass it to this server", s.Name)
+			}
 			// The value lands in codex's own environment too, so it must not change one codex relies on.
 			if have, ok := os.LookupEnv(k); ok && have != s.Env[k] {
 				return nil, fmt.Errorf("mcp %s: %s is already set in hrn's environment to another value; codex starts its servers with its own environment", s.Name, k)
