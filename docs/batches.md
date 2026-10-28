@@ -222,8 +222,9 @@ Each attempt gives its agent and gates a temporary folder under the ignored `.hr
 folder holding the worktree, on the worktree's volume, and removes it when the attempt
 ends: `TMP`, `TEMP` and `TMPDIR` point there. `CARGO_INCREMENTAL` is `0` unless the
 environment already sets it, or the worktree sets `incremental` under `[profile.dev]`
-or `[profile.test]` in `Cargo.toml`, `.cargo/config.toml`, or `.cargo/config`, or under
-`[build]` in either Cargo config file. A gate command may set its own values.
+or `[profile.test]` (or one of their sub-tables) in `Cargo.toml`, `.cargo/config.toml`,
+or `.cargo/config`, or under `[build]` in either Cargo config file. Inline tables and
+dotted keys are not read. A gate command may set its own values.
 
 Each gate command gets 15 minutes before it is killed with its whole process tree;
 `gate_timeout` (e.g. `"90s"`, `"45m"`, at most `24h`) changes that on the spec or on one

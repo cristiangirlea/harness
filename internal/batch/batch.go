@@ -1457,6 +1457,16 @@ var runGateShell = tools.RunShell
 
 var cargoIncrementalLine = regexp.MustCompile(`(?m)^\s*incremental\s*=`)
 
+// Package overrides under a dev or test profile also beat its incremental default.
+func devOrTestProfile(table string) bool {
+	for _, p := range []string{"[profile.dev", "[profile.test"} {
+		if table == p+"]" || strings.HasPrefix(table, p+".") {
+			return true
+		}
+	}
+	return false
+}
+
 func batchEnv(dir string) ([]string, func() error, error) {
 	parent := filepath.Dir(filepath.Dir(dir))
 	if err := os.MkdirAll(parent, 0o700); err != nil {
@@ -1491,11 +1501,11 @@ func batchEnv(dir string) ([]string, func() error, error) {
 				if strings.HasPrefix(line, "[") {
 					table = ""
 					if end := strings.IndexByte(line, ']'); end >= 0 {
-						table = strings.TrimSpace(line[:end+1])
+						table = strings.Join(strings.Fields(line[:end+1]), "")
 					}
 					continue
 				}
-				if (table == "[profile.dev]" || table == "[profile.test]" || name != "Cargo.toml" && table == "[build]") && cargoIncrementalLine.MatchString(line) {
+				if (devOrTestProfile(table) || name != "Cargo.toml" && table == "[build]") && cargoIncrementalLine.MatchString(line) {
 					configured = true
 					break
 				}

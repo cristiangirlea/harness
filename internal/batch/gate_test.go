@@ -706,6 +706,11 @@ func TestBatchEnvironmentDefaultsCargoUnlessDevOrTestSettingsExist(t *testing.T)
 		{"config-test", ".cargo/config", "[profile.test]\nincremental = true\n", true},
 		{"manifest-build", "Cargo.toml", "[build]\nincremental = true\n", false},
 		{"config-release", ".cargo/config", "[profile.release]\nincremental = true\n", false},
+		{"spaced-header", "Cargo.toml", "[ profile . dev ]\nincremental = true\n", true},
+		{"spaced-build", ".cargo/config.toml", "[\tbuild ]\nincremental = true\n", true},
+		{"array-table-resets", "Cargo.toml", "[profile.dev]\n[[bin]]\nincremental = true\n", false},
+		{"package-override", "Cargo.toml", "[profile.dev.package.\"*\"]\nincremental = true\n", true},
+		{"dev-lookalike", "Cargo.toml", "[profile.devel]\nincremental = true\n", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
