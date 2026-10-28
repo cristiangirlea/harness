@@ -355,12 +355,14 @@ func batchMergeTool() mcp.Tool {
 			fmt.Fprintf(&b, "\n%d branch(es) merged into %s", done, res.Dir)
 			if done > 0 {
 				fmt.Fprintf(&b, "\nundo with: git reset --hard %s", before)
-				ran, gcErr := gc.RunAutomatic(ctx, time.Now().UTC(), res.Dir)
-				if ran {
-					b.WriteString("\nautomatic gc checked this repository; see gc.log before undoing")
-				}
-				if gcErr != nil {
-					fmt.Fprintf(&b, "\nwarning: automatic gc: %s", printableNote(gcErr.Error(), 200))
+				if mergeErr == nil {
+					ran, gcErr := gc.RunAutomatic(ctx, time.Now().UTC(), res.Dir)
+					if ran {
+						b.WriteString("\nautomatic gc checked this repository; see gc.log before undoing")
+					}
+					if gcErr != nil {
+						fmt.Fprintf(&b, "\nwarning: automatic gc: %s", printableNote(gcErr.Error(), 200))
+					}
 				}
 			}
 			if mergeErr != nil {

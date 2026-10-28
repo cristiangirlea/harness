@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -18,22 +19,32 @@ type lockInfo struct {
 	Time  time.Time `json:"time"`
 }
 
+var removeLock = os.Remove
+
 // LockHeldError reports when another cleanup owns the lock.
 type LockHeldError struct{ Since time.Time }
 
 func (e *LockHeldError) Error() string {
+	if e.Since.IsZero() {
+		return "gc.lock held"
+	}
 	return fmt.Sprintf("gc.lock held since %s", e.Since.Format(time.RFC3339))
 }
 
 func lockDetails(path string) (lockInfo, bool, error) {
-	b, err := os.ReadFile(path)
+	f, err := openLockForRead(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return lockInfo{}, false, nil
 	}
 	if err != nil {
 		return lockInfo{}, false, err
 	}
-	info, err := os.Stat(path)
+	defer f.Close()
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return lockInfo{}, false, err
+	}
+	info, err := f.Stat()
 	if err != nil {
 		return lockInfo{}, false, err
 	}
@@ -81,7 +92,9 @@ func Lock(now time.Time) (func(), error) {
 		return nil, err
 	}
 	if exists {
-		stale := now.Sub(l.Time) >= 6*time.Hour || (l.PID > 0 && !ws.ProcessAlive(l.PID, l.Start))
+		start, known := ws.StartID(os.Getpid())
+		ours := l.PID == os.Getpid() && known && l.Start != "" && l.Start == start
+		stale := ours || now.Sub(l.Time) >= 6*time.Hour || (l.PID > 0 && !ws.ProcessAlive(l.PID, l.Start))
 		if !stale {
 			guard()
 			return nil, &LockHeldError{Since: l.Time}
@@ -97,5 +110,18 @@ func Lock(now time.Time) (func(), error) {
 		guard()
 		return nil, err
 	}
-	return func() { os.Remove(path); guard() }, nil
+	return func() {
+		var err error
+		for i := 0; i < 5; i++ {
+			err = removeLock(path)
+			if err == nil || errors.Is(err, os.ErrNotExist) {
+				break
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "gc.lock release: %v\n", err)
+		}
+		guard()
+	}, nil
 }

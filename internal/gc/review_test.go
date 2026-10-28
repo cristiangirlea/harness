@@ -15,6 +15,99 @@ import (
 	"github.com/cristiangirlea/harness/internal/ws"
 )
 
+func TestLockReclaimsItsOwnStaleMetadata(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	start, ok := ws.StartID(os.Getpid())
+	if !ok {
+		t.Skip("process start identity unavailable")
+	}
+	b, _ := json.Marshal(lockInfo{PID: os.Getpid(), Start: start, Time: time.Now()})
+	if err := os.WriteFile(filepath.Join(home, "gc.lock"), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := Lock(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+}
+
+func TestLockReleaseRetriesRemoval(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	unlock, err := Lock(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := removeLock
+	defer func() { removeLock = old }()
+	calls := 0
+	removeLock = func(path string) error {
+		calls++
+		if calls < 3 {
+			return os.ErrPermission
+		}
+		return os.Remove(path)
+	}
+	unlock()
+	if calls != 3 {
+		t.Fatalf("remove called %d times", calls)
+	}
+	if _, err := os.Stat(filepath.Join(home, "gc.lock")); !os.IsNotExist(err) {
+		t.Fatalf("lock remains: %v", err)
+	}
+}
+
+func TestLockReleaseWhileReaderIsOpen(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	unlock, err := Lock(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := openLockForRead(filepath.Join(home, "gc.lock"))
+	if err != nil {
+		unlock()
+		t.Fatal(err)
+	}
+	defer f.Close()
+	unlock()
+	if _, err := os.Stat(filepath.Join(home, "gc.lock")); !os.IsNotExist(err) {
+		t.Fatalf("lock remains: %v", err)
+	}
+}
+
+func TestOldLockIsNotTakenOverWhileGuardIsHeld(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	unlock, err := Lock(time.Now().Add(-7 * time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if _, err := Lock(time.Now()); err == nil {
+		t.Fatal("took over a held guard")
+	}
+}
+
+func TestPostMergePassLogsMainCheckoutFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	root := t.TempDir()
+	b, _ := json.Marshal(map[string]any{"enabled": true, "roots": []string{root}})
+	os.WriteFile(filepath.Join(home, "gc.json"), b, 0600)
+	old := mainCheckoutForPass
+	mainCheckoutForPass = func(context.Context, string) (string, bool) { return "", false }
+	defer func() { mainCheckoutForPass = old }()
+	if ran, err := RunAutomatic(context.Background(), time.Now(), root); !ran || err == nil || !strings.Contains(err.Error(), "main checkout") {
+		t.Fatalf("pass %v: %v", ran, err)
+	}
+	p, err := LastPass()
+	if err != nil || !strings.Contains(p.Error, "main checkout") || len(p.Actions) != 0 {
+		t.Fatalf("log %+v: %v", p, err)
+	}
+}
+
 func TestFailedPlannedLogDoesNotAdvanceTheSchedule(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
@@ -73,6 +166,11 @@ func TestDeadAndOldLocksAreTakenOverAndLiveLocksReported(t *testing.T) {
 	start, _ := ws.StartID(os.Getpid())
 	b, _ := json.Marshal(lockInfo{PID: os.Getpid(), Start: start, Time: now.Add(-time.Hour)})
 	os.WriteFile(filepath.Join(home, "gc.lock"), b, 0600)
+	guard, ok, err := ws.TryLock(filepath.Join(home, "gc.guard"))
+	if err != nil || !ok {
+		t.Fatalf("guard: %v", err)
+	}
+	defer guard()
 	if _, err := Lock(now); err == nil || !strings.Contains(err.Error(), "gc.lock held since") {
 		t.Fatalf("held: %v", err)
 	}

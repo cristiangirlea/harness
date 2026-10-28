@@ -571,6 +571,9 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 		if warning := gc.LockWarning(time.Now()); warning != "" {
 			p.GC = strings.TrimSpace(p.GC + " " + warning)
 		}
+		if err := gc.Status(); err != nil {
+			p.GC = strings.TrimSpace(p.GC + " " + err.Error())
+		}
 	}
 	s.page(w, http.StatusOK, "index", p)
 }

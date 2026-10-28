@@ -17,6 +17,8 @@ const maxLogBytes = 1 << 20
 
 var appendAutomaticPass = appendPass
 
+var mainCheckoutForPass = mainCheckout
+
 // Config holds automatic cleanup settings and explicit scan roots.
 type Config struct {
 	Enabled        bool     `json:"enabled"`
@@ -116,6 +118,40 @@ func LastPass() (Pass, error) {
 		return Pass{}, err
 	}
 	return passes[len(passes)-1], nil
+}
+
+// Status reports configuration or schedule errors that prevent automatic cleanup.
+func Status() error {
+	b, err := os.ReadFile(filepath.Join(runlog.Home(), "gc.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var enabled struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(b, &enabled); err != nil {
+		return fmt.Errorf("gc.json: %w", err)
+	}
+	if !enabled.Enabled {
+		return nil
+	}
+	if _, err := LoadConfig(); err != nil {
+		return err
+	}
+	b, err = os.ReadFile(filepath.Join(runlog.Home(), "gc-last"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("gc-last: %w", err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, string(b)); err != nil {
+		return fmt.Errorf("gc-last: %w", err)
+	}
+	return nil
 }
 
 func appendPass(p Pass) error {
@@ -233,8 +269,11 @@ func RunAutomatic(ctx context.Context, now time.Time, repo string) (bool, error)
 	p := Pass{Time: now, Scheduled: repo == ""}
 	wts, scanErr := Scan(ctx, paths, opt)
 	if scanErr == nil && repo != "" {
+		main, ok := mainCheckoutForPass(ctx, repo)
+		if !ok {
+			scanErr = fmt.Errorf("cannot find main checkout for %s", repo)
+		}
 		for i := range wts {
-			main, _ := mainCheckout(ctx, repo)
 			if wts[i].Batch == "" || samePath(wts[i].Repo) != samePath(main) {
 				wts[i].Verdict = Keep
 			}

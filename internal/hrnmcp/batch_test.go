@@ -151,6 +151,21 @@ func TestBatchMergeToolRunsConfiguredGC(t *testing.T) {
 	}
 }
 
+func TestBatchMergeToolDoesNotRunGCAfterConflict(t *testing.T) {
+	dir := gitRepo(t)
+	s := connect(t, dir)
+	res := s.call(t, "batch", `{"spec":{"backend":"mcp-writer","worktrees":"fresh","tasks":[{"id":"a","prompt":"alpha one"},{"id":"b","prompt":"alpha two"}]}}`)
+	if res.IsError {
+		t.Fatalf("batch: %s", res.Text())
+	}
+	id := res.StructuredContent.(map[string]any)["batch_id"].(string)
+	os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), []byte(`{"enabled":true,"roots":[]}`), 0600)
+	merged := s.call(t, "batch_merge", `{"batch_id":"`+id+`"}`)
+	if !merged.IsError || !strings.Contains(merged.Text(), "conflict") || strings.Contains(merged.Text(), "automatic gc") {
+		t.Fatalf("merge: %s", merged.Text())
+	}
+}
+
 func TestBatchRefusesBadSpecs(t *testing.T) {
 	dir := gitRepo(t)
 	s := connect(t, dir)

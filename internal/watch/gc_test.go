@@ -11,6 +11,24 @@ import (
 	"time"
 )
 
+func TestIndexReportsCorruptGCLastOnlyToLocalViewers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	root := t.TempDir()
+	b, _ := json.Marshal(map[string]any{"enabled": true, "roots": []string{root}})
+	os.WriteFile(filepath.Join(home, "gc.json"), b, 0600)
+	os.WriteFile(filepath.Join(home, "gc-last"), []byte("bad"), 0600)
+	h := New(context.Background(), Options{LAN: []Endpoint{{Addr: "192.168.1.2:8089"}}})
+	local := backendRequest(h, http.MethodGet, "/", "127.0.0.1:1234", "127.0.0.1:8089", "", "", "")
+	if !strings.Contains(local.Body.String(), "gc-last") {
+		t.Fatal("local index omitted gc-last error")
+	}
+	lan := backendRequest(h, http.MethodGet, "/", "192.168.1.3:1234", "192.168.1.2:8089", "", "", "")
+	if strings.Contains(lan.Body.String(), "gc-last") {
+		t.Fatal("LAN index exposed gc-last error")
+	}
+}
+
 func TestIndexShowsAnOverdueGCLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
@@ -62,5 +80,28 @@ func TestPublicIndexDoesNotShowGCLog(t *testing.T) {
 	w := f.request(New(context.Background(), f.opt), "/", "harness.example.com", "", f.validToken())
 	if w.Code != 200 || strings.Contains(w.Body.String(), "Last automatic GC") {
 		t.Fatalf("public index %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestPublicIndexDoesNotShowCorruptGCLast(t *testing.T) {
+	f := newAccessFixture(t)
+	b, _ := json.Marshal(map[string]any{"enabled": true, "roots": []string{t.TempDir()}})
+	os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), b, 0600)
+	os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc-last"), []byte("bad"), 0600)
+	w := f.request(New(context.Background(), f.opt), "/", "harness.example.com", "", f.validToken())
+	if w.Code != 200 || strings.Contains(w.Body.String(), "gc-last") {
+		t.Fatalf("public index %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestIndexReportsEnabledGCConfigurationErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	for _, config := range []string{`{"enabled":true,"roots":[]}`, `{"enabled":true,"interval":"bad"}`} {
+		os.WriteFile(filepath.Join(home, "gc.json"), []byte(config), 0600)
+		w := backendRequest(New(context.Background(), Options{}), http.MethodGet, "/", "127.0.0.1:1234", "127.0.0.1:8089", "", "", "")
+		if !strings.Contains(w.Body.String(), "gc.json") {
+			t.Fatal("missing configuration error")
+		}
 	}
 }
