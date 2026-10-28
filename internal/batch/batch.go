@@ -1269,6 +1269,16 @@ type attemptOutcome struct {
 func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
+	env, cleanup, err := batchEnv(task.Dir)
+	if err != nil {
+		return attemptOutcome{att: att}, err
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			notify(Event{Task: id, Kind: "info", Text: "removing temporary folder: " + err.Error()})
+		}
+	}()
+	task.ChildEnv = env
 	if plan.switchedFrom != "" {
 		task.Model = "" // the model named for the other backend means nothing here
 	}
@@ -1350,7 +1360,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			gateN := len(att.Gates) + 1
 			fw.Emit(flow.Event{Step: GateStep(id, plan.number, gateN), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number, Status: flow.StatusStarted, Name: g})
 			stop := beating(gateBeat, func() { report(att) })
-			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
+			gr := runGate(ctx, task.Dir, g, plan.gateTimeout, env)
 			stop()
 			att.Gates = append(att.Gates, gr)
 			fw.Emit(gateEvent(id, plan.number, gateN, as, gr))
@@ -1445,10 +1455,81 @@ func checkExpect(re *regexp.Regexp, final string) GateResult {
 
 var runGateShell = tools.RunShell
 
-func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
+var cargoIncrementalLine = regexp.MustCompile(`(?m)^\s*incremental\s*=`)
+
+// Package overrides under a dev or test profile also beat its incremental default.
+func devOrTestProfile(table string) bool {
+	for _, p := range []string{"[profile.dev", "[profile.test"} {
+		if table == p+"]" || strings.HasPrefix(table, p+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func batchEnv(dir string) ([]string, func() error, error) {
+	parent := filepath.Dir(filepath.Dir(dir))
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return nil, nil, err
+	}
+	ignore := filepath.Join(parent, ".gitignore")
+	f, err := os.OpenFile(ignore, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err == nil {
+		_, err = f.WriteString("*\n")
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+	} else if errors.Is(err, os.ErrExist) {
+		err = nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var env []string
+	if cargo, ok := os.LookupEnv("CARGO_INCREMENTAL"); ok {
+		env = append(env, "CARGO_INCREMENTAL="+cargo)
+	} else {
+		configured := false
+		for _, name := range []string{".cargo/config.toml", ".cargo/config", "Cargo.toml"} {
+			data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
+			if err != nil {
+				continue
+			}
+			table := ""
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "[") {
+					table = ""
+					if end := strings.IndexByte(line, ']'); end >= 0 {
+						table = strings.Join(strings.Fields(line[:end+1]), "")
+					}
+					continue
+				}
+				if (devOrTestProfile(table) || name != "Cargo.toml" && table == "[build]") && cargoIncrementalLine.MatchString(line) {
+					configured = true
+					break
+				}
+			}
+			if configured {
+				break
+			}
+		}
+		if !configured {
+			env = append(env, "CARGO_INCREMENTAL=0")
+		}
+	}
+	temp, err := os.MkdirTemp(parent, "tmp-")
+	if err != nil {
+		return nil, nil, err
+	}
+	env = append(env, "TMP="+temp, "TEMP="+temp, "TMPDIR="+temp)
+	return env, func() error { return os.RemoveAll(temp) }, nil
+}
+
+func runGate(ctx context.Context, dir, command string, timeout time.Duration, env []string) GateResult {
 	started := time.Now()
 	// Gates are operator commands: preserve their environment except git repository overrides.
-	res, err := runGateShell(ctx, dir, command, timeout, nil)
+	res, err := runGateShell(ctx, dir, command, timeout, append(os.Environ(), env...))
 	output, decodedUTF16 := decodeGateOutput(res.Output)
 	res.Output = output
 	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}

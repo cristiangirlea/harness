@@ -172,6 +172,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	if err != nil {
 		return fail(StatusError, err)
 	}
+	ws.ChildEnv = task.ChildEnv
 	ws.AllowDangerous = task.AllowDangerous
 	ws.ShapeTools, ws.RunDir = task.ShapeTools, task.RunDir
 	maxTurns := task.MaxTurns

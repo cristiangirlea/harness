@@ -16,6 +16,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 // stub backends: "wb-ok" writes out.txt into the workspace, "wb-noop" changes
@@ -2396,7 +2397,7 @@ func TestGateThatCannotStartAfterCancelIsCanceled(t *testing.T) {
 	// which is the same cancellation as a gate killed mid-way, not exited -1.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	g := runGate(ctx, t.TempDir(), "echo never", time.Minute)
+	g := runGate(ctx, t.TempDir(), "echo never", time.Minute, nil)
 	if g.ExitCode != -1 || g.Killed != KilledCanceled || g.Timeout != 0 || g.Outcome() != "canceled" || g.Brief() != "was canceled" {
 		t.Errorf("gate = %+v, want it recorded as canceled", g)
 	}
@@ -2689,5 +2690,122 @@ func TestBatchRoutesByTheTasksDeclaredPurpose(t *testing.T) {
 	rec := firstRun(t, res.Tasks[0])
 	if rec.Backend != "wb-noop" || rec.Task.Model != "routed" || rec.RoutedBy == nil || rec.RoutedBy.Category != "review" || !rec.RoutedBy.Declared {
 		t.Fatalf("declared purpose did not route: %+v %+v", rec, rec.RoutedBy)
+	}
+}
+
+func TestBatchAgentAndGatesShareWorktreeVolumeTemporaryFolder(t *testing.T) {
+	for _, mode := range []string{WorktreesFresh, WorktreesSlots, "linked-slots"} {
+		for _, outcome := range []string{"pass", "gate-fail", "agent-error"} {
+			t.Run(mode+"/"+outcome, func(t *testing.T) {
+				dir := initRepo(t)
+				expectedParent := filepath.Join(dir, ".hrn")
+				worktrees := mode
+				if mode == "linked-slots" {
+					linked := filepath.Join(t.TempDir(), "linked")
+					git(t, dir, "worktree", "add", "-b", "linked", linked)
+					dir, worktrees = linked, WorktreesSlots
+				}
+				t.Setenv("CARGO_INCREMENTAL", "")
+				os.Unsetenv("CARGO_INCREMENTAL")
+				var taskDir, temp string
+				name := "wb-temp-" + mode + "-" + outcome
+				agent.Register(stub{name, func(_ context.Context, task agent.Task) agent.Result {
+					taskDir = task.Dir
+					for _, kv := range task.ChildEnv {
+						if k, v, _ := strings.Cut(kv, "="); k == "TMP" {
+							temp = v
+						}
+					}
+					if _, err := os.Stat(temp); err != nil {
+						t.Errorf("agent temp: %v", err)
+					}
+					status := agent.StatusOK
+					if outcome == "agent-error" {
+						status = agent.StatusError
+					}
+					return agent.Result{Status: status, Final: "done", Turns: 1}
+				}})
+				command := `test -d "$TMP" && printf '%s|%s' "$(cygpath -w "$TMP" 2>/dev/null || printf '%s' "$TMP")" "$CARGO_INCREMENTAL"`
+				if name, _ := tools.Shell(); name == "powershell" {
+					command = `Write-Output "$env:TMP|$env:CARGO_INCREMENTAL"`
+				}
+				if outcome == "gate-fail" {
+					command += "; exit 1"
+				}
+				res, err := Run(context.Background(), Spec{Dir: dir, Backend: name, Worktrees: worktrees, Gate: []string{command}, Tasks: []Task{{ID: "one", Prompt: "work"}}}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if temp == "" || taskDir == "" {
+					t.Fatal("agent did not receive temporary folder")
+				}
+				parent, err := filepath.EvalSymlinks(expectedParent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				actual, err := filepath.EvalSymlinks(filepath.Dir(temp))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if actual != parent {
+					t.Errorf("temp parent %s, want %s", actual, parent)
+				}
+				if _, err := os.Stat(temp); !os.IsNotExist(err) {
+					t.Errorf("temp after attempt: %v", err)
+				}
+				if outcome != "agent-error" {
+					gates := res.Tasks[0].Attempts[0].Gates
+					if len(gates) != 1 {
+						t.Fatalf("gates: %+v", gates)
+					}
+					path, cargo, _ := strings.Cut(strings.TrimSpace(gates[0].Output), "|")
+					if !strings.EqualFold(filepath.Clean(path), filepath.Clean(temp)) || cargo != "0" {
+						t.Fatalf("gate env: %q; agent temp: %q", gates[0].Output, temp)
+					}
+				} else if len(res.Tasks[0].Attempts[0].Gates) != 0 {
+					t.Fatal("gate ran after agent error")
+				}
+			})
+		}
+	}
+}
+
+func TestCleanupFailureReportsOneInfoEventWithoutFailingAttempt(t *testing.T) {
+	dir := initRepo(t)
+	var temp string
+	var unlock func()
+	var lockErr error
+	agent.Register(stub{"wb-temp-locked", func(_ context.Context, task agent.Task) agent.Result {
+		for _, kv := range task.ChildEnv {
+			if k, v, _ := strings.Cut(kv, "="); k == "TMP" {
+				temp = v
+			}
+		}
+		unlock, lockErr = lockTempForCleanup(temp)
+		return agent.Result{Status: agent.StatusOK, Final: "done", Turns: 1}
+	}})
+	var events []Event
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-temp-locked", Worktrees: WorktreesFresh, Gate: []string{"exit 0"}, Tasks: []Task{{ID: "one", Prompt: "work"}}}, func(e Event) { events = append(events, e) })
+	if unlock != nil {
+		unlock()
+		defer os.RemoveAll(temp)
+	}
+	if lockErr != nil {
+		t.Skipf("cannot prevent temp cleanup: %v", lockErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tasks[0].Status != StatusPass {
+		t.Fatalf("attempt failed: %+v", res.Tasks[0])
+	}
+	count := 0
+	for _, event := range events {
+		if event.Kind == "info" && strings.HasPrefix(event.Text, "removing temporary folder:") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("cleanup info events = %d; events = %+v", count, events)
 	}
 }
