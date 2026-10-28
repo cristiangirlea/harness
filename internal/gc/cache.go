@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,18 +27,21 @@ var movedCacheInUse = inUse
 
 // Cache is a CACHEDIR.TAG-tagged build folder and its removal verdict.
 type Cache struct {
-	Path       string
-	Worktree   string    // empty for a standalone cache
-	Size       int64     // bytes
-	LastBuild  time.Time // includes deletions; see lastBuild
-	Verdict    Verdict
-	Reason     string
-	risk       string // why whole-folder deletion is unsafe
-	young      bool   // age is the only reason to keep it
-	driveID    string
-	driveName  string
-	driveBelow bool // before removals
-	driveMore  bool // eligible caches remain after meeting the limit
+	Path        string
+	Worktree    string // empty for a standalone cache
+	Size        int64  // bytes
+	TrimSize    int64
+	LastBuild   time.Time // includes deletions; see lastBuild
+	Verdict     Verdict
+	Reason      string
+	risk        string // why whole-folder deletion is unsafe
+	young       bool   // age is the only reason to keep it
+	driveID     string
+	driveName   string
+	driveBelow  bool // before removals
+	driveMore   bool // eligible caches remain after meeting the limit
+	slot        bool
+	incremental bool
 }
 
 // Drive describes a cache's volume and available space.
@@ -55,7 +59,7 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 	add := func(dir string) {
 		if k := samePath(dir); !seen[k] {
 			seen[k] = true
-			all = append(all, Cache{Path: dir, Worktree: holder(dir, wts)})
+			all = append(all, Cache{Path: dir, Worktree: holder(dir, wts), slot: slotCachePath(dir)})
 		}
 	}
 	for _, w := range wts {
@@ -89,18 +93,21 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 		var newest time.Time
 		c.Size, newest, c.risk = measure(c.Path)
 		c.LastBuild = lastBuild(c.Path, newest)
+		if c.slot {
+			c.TrimSize, c.incremental = incrementalSize(c.Path)
+		}
 		c.Verdict, c.Reason = decideCache(ctx, c, cwd, now, opt)
 	}
 	freeBelow(all, now, opt)
 	return all, nil
 }
 
-// ApplyCaches rechecks and removes caches marked Remove, oldest first so interruptions spare newer caches.
+// ApplyCaches rechecks and applies cache verdicts, oldest first so interruptions spare newer caches.
 // Failed deletions leave renamed, tagged caches for the next scan.
 func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []error) {
 	var todo []Cache
 	for _, c := range caches {
-		if c.Verdict == Remove {
+		if c.Verdict == Remove || c.Verdict == Trim {
 			todo = append(todo, c)
 		}
 	}
@@ -108,6 +115,47 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 	for _, c := range todo {
 		if why := recheckCache(ctx, c); why != "" {
 			errs = append(errs, fmt.Errorf("%s: kept, %s", c.Path, why))
+			continue
+		}
+		if c.Verdict == Trim {
+			failed := false
+			ps := profiles(c.Path)
+			var unlocks []func()
+			for _, p := range ps {
+				unlock, err := holdCargoLock(filepath.Join(p, ".cargo-lock"))
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s: kept, lock could not be acquired: %w", c.Path, err))
+					failed = true
+					break
+				}
+				unlocks = append(unlocks, unlock)
+			}
+			if !failed && strings.Join(profiles(c.Path), "\x00") != strings.Join(ps, "\x00") {
+				errs = append(errs, fmt.Errorf("%s: kept, profiles changed since locking", c.Path))
+				failed = true
+			}
+			if !failed {
+				if why := recheckCacheFiles(ctx, c); why != "" {
+					errs = append(errs, fmt.Errorf("%s: kept, %s", c.Path, why))
+					failed = true
+				}
+			}
+			for _, p := range ps {
+				if failed {
+					break
+				}
+				if err := os.RemoveAll(filepath.Join(p, "incremental")); err != nil {
+					errs = append(errs, fmt.Errorf("%s: trim: %w", c.Path, err))
+					failed = true
+					break
+				}
+			}
+			for _, unlock := range unlocks {
+				unlock()
+			}
+			if !failed {
+				removed = append(removed, c)
+			}
 			continue
 		}
 		moved := movedCachePath(c.Path)
@@ -267,15 +315,48 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if why := inUse(c.Path); why != "" {
 		return Keep, why
 	}
-	if isMovedCache(c.Path) {
+	if isMovedCache(c.Path) && !c.slot {
 		return Remove, "moved cache left by an earlier removal"
 	}
 	idle := ageAt(now, c.LastBuild)
+	if c.slot {
+		if c.incremental && (idle >= opt.Idle || (opt.SlotCap > 0 && c.Size > opt.SlotCap && idle >= opt.MinIdle)) {
+			return Trim, "idle " + short(idle)
+		}
+		c.young = c.incremental
+		return Keep, "slot cache retained"
+	}
 	if idle >= opt.Idle {
 		return Remove, "idle " + short(idle)
 	}
 	c.young = true
 	return Keep, fmt.Sprintf("last written %s ago, inside --idle %s", short(idle), short(opt.Idle))
+}
+
+func slotCachePath(path string) bool {
+	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
+		parent := filepath.Dir(p)
+		if n, err := strconv.Atoi(filepath.Base(p)); err == nil && n > 0 && filepath.Base(parent) == "slots" && filepath.Base(filepath.Dir(parent)) == ".hrn" {
+			return true
+		}
+		if parent == p {
+			return false
+		}
+	}
+}
+
+func incrementalSize(dir string) (int64, bool) {
+	var total int64
+	var found bool
+	for _, p := range profiles(dir) {
+		path := filepath.Join(p, "incremental")
+		if info, err := os.Lstat(path); err == nil && info.IsDir() {
+			found = true
+			size, _, _ := measure(path)
+			total += size
+		}
+	}
+	return total, found
 }
 
 // Accept both on-disk forms: .gc-<pid>-<name> and .gc-<pid>-<time>-<name>.
@@ -293,6 +374,13 @@ func isMovedCache(dir string) bool {
 
 // Recheck before deletion: writes, locks or tracked files may have appeared since scanning.
 func recheckCache(ctx context.Context, c Cache) string {
+	if why := recheckCacheFiles(ctx, c); why != "" {
+		return why
+	}
+	return inUse(c.Path)
+}
+
+func recheckCacheFiles(ctx context.Context, c Cache) string {
 	if !isCacheDir(c.Path) {
 		return "it is no longer a tagged cache"
 	}
@@ -310,7 +398,7 @@ func recheckCache(ctx context.Context, c Cache) string {
 	case tracked:
 		return "git tracks files in it"
 	}
-	return inUse(c.Path)
+	return ""
 }
 
 // Unknown free space must not justify extra removals.
@@ -350,6 +438,8 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 		switch {
 		case c.Verdict == Remove:
 			s.after += c.Size
+		case c.Verdict == Trim:
+			s.after += c.TrimSize
 		case c.young:
 			s.candidates = append(s.candidates, i)
 		}
@@ -375,9 +465,20 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 				s.more = true
 				continue
 			}
-			c.Verdict = Remove
+			if c.slot {
+				if !c.incremental {
+					continue
+				}
+				c.Verdict = Trim
+			} else {
+				c.Verdict = Remove
+			}
 			c.Reason = fmt.Sprintf("idle %s, and %s has only %s free, below %s", short(idle), driveLabel(c.driveID, c.driveName), report.Bytes(s.free), report.Bytes(opt.FreeBelow))
-			s.after += c.Size
+			if c.slot {
+				s.after += c.TrimSize
+			} else {
+				s.after += c.Size
+			}
 		}
 	}
 	for i := range all {

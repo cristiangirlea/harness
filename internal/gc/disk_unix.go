@@ -74,3 +74,15 @@ func lockHeld(path string) (bool, error) {
 	}
 	return false, &fs.PathError{Op: "flock", Path: path, Err: err}
 }
+
+func holdCargoLock(path string) (func(), error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+}

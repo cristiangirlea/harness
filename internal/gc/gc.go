@@ -30,6 +30,7 @@ type Verdict string
 const (
 	Remove Verdict = "remove"
 	Keep   Verdict = "keep"
+	Trim   Verdict = "trim"
 )
 
 // PR is a pull request as `gh pr list --json` prints it.
@@ -69,6 +70,7 @@ type Options struct {
 	Idle      time.Duration                    // minimum cache inactivity
 	MinIdle   time.Duration                    // minimum inactivity even below FreeBelow
 	FreeBelow int64                            // target free bytes; 0 disables extra removals
+	SlotCap   int64                            // 0 disables the size cap
 	Drive     func(path string) (Drive, error) // nil queries the disk
 }
 

@@ -19,7 +19,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/report"
 )
 
-const gcUsage = "usage: hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [PATH ...]"
+const gcUsage = "usage: hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [--slot-cap SIZE] [PATH ...]"
 
 func cmdGC(args []string) (int, error) {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
@@ -28,6 +28,7 @@ func cmdGC(args []string) (int, error) {
 	idle := fs.Duration("idle", 24*time.Hour, "")
 	minIdle := fs.Duration("min-idle", 2*time.Hour, "")
 	freeBelow := fs.String("free-below", "", "")
+	slotCap := fs.String("slot-cap", "", "")
 	if err := fs.Parse(args); err != nil {
 		return 2, fmt.Errorf("%w\n%s", err, gcUsage)
 	}
@@ -43,6 +44,10 @@ func cmdGC(args []string) (int, error) {
 	if err != nil {
 		return 2, fmt.Errorf("--free-below: %w\n%s", err, gcUsage)
 	}
+	capBytes, err := parseSize(*slotCap)
+	if err != nil {
+		return 2, fmt.Errorf("--slot-cap: %w\n%s", err, gcUsage)
+	}
 	paths := fs.Args()
 	if len(paths) == 0 {
 		paths = []string{"."}
@@ -50,7 +55,7 @@ func cmdGC(args []string) (int, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	opt := gc.Options{Grace: *grace, Idle: *idle, MinIdle: *minIdle, FreeBelow: below}
+	opt := gc.Options{Grace: *grace, Idle: *idle, MinIdle: *minIdle, FreeBelow: below, SlotCap: capBytes}
 	wts, err := gc.Scan(ctx, paths, opt)
 	if err != nil {
 		return 1, err
@@ -75,7 +80,20 @@ func cmdGC(args []string) (int, error) {
 	removed, errs := gc.Apply(ctx, wts)
 	removedCaches, cacheErrs := gc.ApplyCaches(ctx, caches)
 	errs = append(errs, cacheErrs...)
-	fmt.Printf("removed %d worktrees and %d caches, freeing %s\n", len(removed), len(removedCaches), report.Bytes(gc.Total(removed, sizes)+gc.TotalCaches(removedCaches)))
+	var removedCount, trimmedCount int
+	var freed int64
+	var fullyRemoved []gc.Cache
+	for _, c := range removedCaches {
+		if c.Verdict == gc.Trim {
+			trimmedCount++
+			freed += c.TrimSize
+		} else {
+			removedCount++
+			fullyRemoved = append(fullyRemoved, c)
+		}
+	}
+	freed += gc.TotalCaches(fullyRemoved)
+	fmt.Printf("removed %d worktrees and %d caches, trimmed %d caches, freeing %s\n", len(removed), removedCount, trimmedCount, report.Bytes(gc.Total(removed, sizes)+freed))
 	for _, line := range gc.FreeBelowReport(caches, opt) {
 		fmt.Println(line)
 	}
@@ -93,15 +111,24 @@ func gcSummary(wts []gc.Worktree, caches []gc.Cache, sizes map[string]int64) str
 		}
 	}
 	var goingCaches []gc.Cache
+	var trims int
+	var trimBytes int64
 	for _, c := range caches {
 		if c.Verdict == gc.Remove {
 			goingCaches = append(goingCaches, c)
 		}
+		if c.Verdict == gc.Trim {
+			trims++
+			trimBytes += c.TrimSize
+		}
 	}
-	if len(going)+len(goingCaches) == 0 {
+	if len(going)+len(goingCaches)+trims == 0 {
 		return fmt.Sprintf("nothing to remove; %d worktrees and %d caches stay", len(wts), len(caches))
 	}
-	freed := gc.Total(going, sizes) + gc.TotalCaches(goingCaches)
+	freed := gc.Total(going, sizes) + gc.TotalCaches(goingCaches) + trimBytes
+	if trims > 0 {
+		return fmt.Sprintf("would remove %d of %d worktrees and %d of %d caches, trim %d caches, freeing %s; hrn gc --apply applies them", len(going), len(wts), len(goingCaches), len(caches), trims, report.Bytes(freed))
+	}
 	return fmt.Sprintf("would remove %d of %d worktrees and %d of %d caches, freeing %s; hrn gc --apply removes them", len(going), len(wts), len(goingCaches), len(caches), report.Bytes(freed))
 }
 
@@ -135,7 +162,7 @@ func printGC(w io.Writer, wts []gc.Worktree, sizes map[string]int64) {
 func printCaches(w io.Writer, caches []gc.Cache) {
 	sorted := append([]gc.Cache(nil), caches...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].Verdict == gc.Remove && sorted[j].Verdict != gc.Remove
+		return sorted[i].Verdict != gc.Keep && sorted[j].Verdict == gc.Keep
 	})
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, c := range sorted {
@@ -143,7 +170,11 @@ func printCaches(w io.Writer, caches []gc.Cache) {
 		if !c.LastBuild.IsZero() {
 			written = "written " + c.LastBuild.Local().Format("2006-01-02 15:04")
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", c.Verdict, c.Path, "cache", report.Bytes(c.Size), written, c.Reason)
+		size := c.Size
+		if c.Verdict == gc.Trim {
+			size = c.TrimSize
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", c.Verdict, c.Path, "cache", report.Bytes(size), written, c.Reason)
 	}
 	tw.Flush()
 }

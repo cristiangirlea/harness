@@ -45,6 +45,13 @@ func TestGCRefusesANegativeGrace(t *testing.T) {
 	}
 }
 
+func TestGCRefusesAnInvalidSlotCap(t *testing.T) {
+	code, err := cmdGC([]string{"--slot-cap", "invalid"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--slot-cap") {
+		t.Errorf("got code %d, error %v", code, err)
+	}
+}
+
 func TestGCListsCachesWithTheirSizeAndLastBuild(t *testing.T) {
 	built := time.Date(2026, 10, 9, 21, 14, 0, 0, time.Local)
 	cs := []gc.Cache{
@@ -64,6 +71,18 @@ func TestGCListsCachesWithTheirSizeAndLastBuild(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[1], "keep") || !strings.Contains(lines[1], "2.0 GB") {
 		t.Errorf("a kept cache shows its size too: %q", lines[1])
+	}
+}
+
+func TestGCListsTrimsWithFreedSizeAndCountsThem(t *testing.T) {
+	cs := []gc.Cache{{Path: "/slot/target", Size: 100, TrimSize: 20, Verdict: gc.Trim}}
+	var out bytes.Buffer
+	printCaches(&out, cs)
+	if !strings.Contains(out.String(), "trim") || !strings.Contains(out.String(), "20 bytes") {
+		t.Fatalf("listing %q", out.String())
+	}
+	if got := gcSummary(nil, cs, nil); !strings.Contains(got, "trim 1") || !strings.Contains(got, "20 bytes") {
+		t.Fatalf("summary %q", got)
 	}
 }
 
@@ -194,7 +213,7 @@ func TestGCFreeBelowApplyPrintsDriveReportAfterRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	removed := strings.Index(text, "removed 0 worktrees and 1 caches, freeing")
+	removed := strings.Index(text, "removed 0 worktrees and 1 caches, trimmed 0 caches, freeing")
 	reported := strings.Index(text, "still has")
 	if removed < 0 || reported <= removed || !strings.Contains(text[reported:], "below") {
 		t.Errorf("report should follow the removal summary:\n%s", text)
