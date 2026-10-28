@@ -106,6 +106,22 @@ func TestAdaAnswersSelectFailuresAndRecordedDurations(t *testing.T) {
 	t.Setenv("HRN_OWNER", "local:test")
 	failed := saveRun(t, "fake", "repair widgets", &agent.Result{Status: agent.StatusError, Error: "widget check failed", Duration: 42 * time.Second})
 	passed := saveRun(t, "fake", "inspect widgets", &agent.Result{Status: agent.StatusOK, Duration: 3 * time.Second})
+	failedRecord, err := runlog.Load(failed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passedRecord, err := runlog.Load(passed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedRecord.Started = passedRecord.Started.Add(-time.Second)
+	data, err := json.Marshal(failedRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runlog.Root(), failed, "result.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(New(t.Context(), Options{Runs: 1}))
 	defer srv.Close()
 	for _, q := range []string{"why did it fail", "why did repair fail", "why did " + failed + " fail"} {
