@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +15,48 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/ws"
 )
+
+func TestHelperHoldGCLockProcess(t *testing.T) {
+	if os.Getenv("HRN_GC_HELPER") != "hold" {
+		return
+	}
+	var b [1]byte
+	_, _ = os.Stdin.Read(b[:])
+}
+
+func TestLiveProcessMetadataKeepsTheLockWhenGuardIsFree(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperHoldGCLockProcess$")
+	cmd.Env = append(os.Environ(), "HRN_GC_HELPER=hold")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { stdin.Close(); cmd.Wait() }()
+	start, ok := ws.StartID(cmd.Process.Pid)
+	if !ok {
+		t.Fatal("cannot read the running helper's start identity")
+	}
+	b, err := json.Marshal(lockInfo{PID: cmd.Process.Pid, Start: start, Time: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "gc.lock"), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := Lock(time.Now())
+	if unlock != nil {
+		unlock()
+	}
+	var held *LockHeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("expected LockHeldError, got %v", err)
+	}
+}
 
 func TestLockReclaimsItsOwnStaleMetadata(t *testing.T) {
 	home := t.TempDir()
@@ -78,6 +121,26 @@ func TestLockReleaseWhileReaderIsOpen(t *testing.T) {
 	}
 }
 
+func TestScheduleFileCanBeReadAndReplaced(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	path := filepath.Join(home, "gc-last")
+	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readSharedFile(path)
+	if err != nil || string(data) != "old" {
+		t.Fatalf("read %q: %v", data, err)
+	}
+	if err := writeAtomic(path, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	data, err = readSharedFile(path)
+	if err != nil || string(data) != "new" {
+		t.Fatalf("read %q: %v", data, err)
+	}
+}
+
 func TestOldLockIsNotTakenOverWhileGuardIsHeld(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	unlock, err := Lock(time.Now().Add(-7 * time.Hour))
@@ -85,8 +148,10 @@ func TestOldLockIsNotTakenOverWhileGuardIsHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	if _, err := Lock(time.Now()); err == nil {
-		t.Fatal("took over a held guard")
+	_, err = Lock(time.Now())
+	var held *LockHeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("expected LockHeldError, got %v", err)
 	}
 }
 

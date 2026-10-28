@@ -24,6 +24,15 @@ var removeLock = os.Remove
 // LockHeldError reports when another cleanup owns the lock.
 type LockHeldError struct{ Since time.Time }
 
+func readSharedFile(path string) ([]byte, error) {
+	f, err := openLockForRead(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
 func (e *LockHeldError) Error() string {
 	if e.Since.IsZero() {
 		return "gc.lock held"

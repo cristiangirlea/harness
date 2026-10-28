@@ -141,7 +141,7 @@ func Status() error {
 	if _, err := LoadConfig(); err != nil {
 		return err
 	}
-	b, err = os.ReadFile(filepath.Join(runlog.Home(), "gc-last"))
+	b, err = readSharedFile(filepath.Join(runlog.Home(), "gc-last"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

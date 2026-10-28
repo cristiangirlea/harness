@@ -45,7 +45,9 @@ func TestBatchMergeSucceedsWhenDisabledGCConfigHasInvalidFields(t *testing.T) {
 
 func TestBatchMergeWarnsWithoutFailingWhenGCIsMisconfigured(t *testing.T) {
 	res := batchMergeFixture(t, false, "alpha")
-	os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), []byte(`{"enabled":true,"roots":[]}`), 0600)
+	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), []byte(`{"enabled":true,"roots":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)

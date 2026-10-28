@@ -16,8 +16,12 @@ func TestIndexReportsCorruptGCLastOnlyToLocalViewers(t *testing.T) {
 	t.Setenv("HRN_HOME", home)
 	root := t.TempDir()
 	b, _ := json.Marshal(map[string]any{"enabled": true, "roots": []string{root}})
-	os.WriteFile(filepath.Join(home, "gc.json"), b, 0600)
-	os.WriteFile(filepath.Join(home, "gc-last"), []byte("bad"), 0600)
+	if err := os.WriteFile(filepath.Join(home, "gc.json"), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "gc-last"), []byte("bad"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	h := New(context.Background(), Options{LAN: []Endpoint{{Addr: "192.168.1.2:8089"}}})
 	local := backendRequest(h, http.MethodGet, "/", "127.0.0.1:1234", "127.0.0.1:8089", "", "", "")
 	if !strings.Contains(local.Body.String(), "gc-last") {
@@ -86,8 +90,12 @@ func TestPublicIndexDoesNotShowGCLog(t *testing.T) {
 func TestPublicIndexDoesNotShowCorruptGCLast(t *testing.T) {
 	f := newAccessFixture(t)
 	b, _ := json.Marshal(map[string]any{"enabled": true, "roots": []string{t.TempDir()}})
-	os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), b, 0600)
-	os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc-last"), []byte("bad"), 0600)
+	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc-last"), []byte("bad"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	w := f.request(New(context.Background(), f.opt), "/", "harness.example.com", "", f.validToken())
 	if w.Code != 200 || strings.Contains(w.Body.String(), "gc-last") {
 		t.Fatalf("public index %d: %s", w.Code, w.Body)
