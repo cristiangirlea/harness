@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -664,7 +665,11 @@ func TestBatchEnvironmentRespectsCargoConfiguration(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(file, []byte("[build]\nincremental = true\n"), 0644); err != nil {
+			table := "[build]"
+			if name == "Cargo.toml" {
+				table = "[profile.dev]"
+			}
+			if err := os.WriteFile(file, []byte(table+"\nincremental = true\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
 			env, cleanup, err := batchEnv(tree)
@@ -680,6 +685,84 @@ func TestBatchEnvironmentRespectsCargoConfiguration(t *testing.T) {
 			ignore, err := os.ReadFile(filepath.Join(root, ".hrn", ".gitignore"))
 			if err != nil || string(ignore) != "*\n" {
 				t.Errorf("ignore = %q, %v", ignore, err)
+			}
+		})
+	}
+}
+
+func TestBatchEnvironmentDefaultsCargoUnlessDevOrTestSettingsExist(t *testing.T) {
+	cases := []struct {
+		name, file, contents string
+		configured           bool
+	}{
+		{"release", "Cargo.toml", "[profile.release]\nincremental = true\n", false},
+		{"empty", "Cargo.toml", "[profile.dev]\nopt-level = 1\n", false},
+		{"comment", "Cargo.toml", "[profile.dev]\n# incremental = true\n", false},
+		{"dev", "Cargo.toml", "[profile.dev]\nincremental = true\n", true},
+		{"test", "Cargo.toml", "[profile.test] # comment\nincremental = false\n", true},
+		{"next-table", "Cargo.toml", "[profile.dev]\n[profile.release]\nincremental = true\n", false},
+		{"config-build", ".cargo/config.toml", "[build]\nincremental = true\n", true},
+		{"config-dev", ".cargo/config", "[profile.dev]\nincremental = true\n", true},
+		{"config-test", ".cargo/config", "[profile.test]\nincremental = true\n", true},
+		{"manifest-build", "Cargo.toml", "[build]\nincremental = true\n", false},
+		{"config-release", ".cargo/config", "[profile.release]\nincremental = true\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CARGO_INCREMENTAL", "")
+			os.Unsetenv("CARGO_INCREMENTAL")
+			tree := filepath.Join(t.TempDir(), ".hrn", "worktrees", "task")
+			file := filepath.Join(tree, filepath.FromSlash(tc.file))
+			if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte(tc.contents), 0644); err != nil {
+				t.Fatal(err)
+			}
+			env, cleanup, err := batchEnv(tree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			value, found := "", false
+			for _, kv := range env {
+				if k, v, _ := strings.Cut(kv, "="); k == "CARGO_INCREMENTAL" {
+					value, found = v, true
+				}
+			}
+			if found == tc.configured || found && value != "0" {
+				t.Errorf("configured=%v: env=%v", tc.configured, env)
+			}
+		})
+	}
+}
+
+func TestBatchEnvironmentIgnoresUnreadableCargoPaths(t *testing.T) {
+	for _, mode := range []string{"not-directory", "directory"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("CARGO_INCREMENTAL", "")
+			os.Unsetenv("CARGO_INCREMENTAL")
+			tree := filepath.Join(t.TempDir(), ".hrn", "worktrees", "task")
+			if err := os.MkdirAll(tree, 0755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(tree, ".cargo")
+			if mode == "not-directory" {
+				if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.MkdirAll(filepath.Join(path, "config"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			env, cleanup, err := batchEnv(tree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			if !slices.Contains(env, "CARGO_INCREMENTAL=0") {
+				t.Errorf("env=%v", env)
 			}
 		})
 	}

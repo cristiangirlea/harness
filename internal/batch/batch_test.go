@@ -2698,6 +2698,7 @@ func TestBatchAgentAndGatesShareWorktreeVolumeTemporaryFolder(t *testing.T) {
 		for _, outcome := range []string{"pass", "gate-fail", "agent-error"} {
 			t.Run(mode+"/"+outcome, func(t *testing.T) {
 				dir := initRepo(t)
+				expectedParent := filepath.Join(dir, ".hrn")
 				worktrees := mode
 				if mode == "linked-slots" {
 					linked := filepath.Join(t.TempDir(), "linked")
@@ -2738,7 +2739,7 @@ func TestBatchAgentAndGatesShareWorktreeVolumeTemporaryFolder(t *testing.T) {
 				if temp == "" || taskDir == "" {
 					t.Fatal("agent did not receive temporary folder")
 				}
-				parent, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(taskDir)))
+				parent, err := filepath.EvalSymlinks(expectedParent)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -2766,5 +2767,45 @@ func TestBatchAgentAndGatesShareWorktreeVolumeTemporaryFolder(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestCleanupFailureReportsOneInfoEventWithoutFailingAttempt(t *testing.T) {
+	dir := initRepo(t)
+	var temp string
+	var unlock func()
+	var lockErr error
+	agent.Register(stub{"wb-temp-locked", func(_ context.Context, task agent.Task) agent.Result {
+		for _, kv := range task.ChildEnv {
+			if k, v, _ := strings.Cut(kv, "="); k == "TMP" {
+				temp = v
+			}
+		}
+		unlock, lockErr = lockTempForCleanup(temp)
+		return agent.Result{Status: agent.StatusOK, Final: "done", Turns: 1}
+	}})
+	var events []Event
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-temp-locked", Worktrees: WorktreesFresh, Gate: []string{"exit 0"}, Tasks: []Task{{ID: "one", Prompt: "work"}}}, func(e Event) { events = append(events, e) })
+	if unlock != nil {
+		unlock()
+		defer os.RemoveAll(temp)
+	}
+	if lockErr != nil {
+		t.Skipf("cannot prevent temp cleanup: %v", lockErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tasks[0].Status != StatusPass {
+		t.Fatalf("attempt failed: %+v", res.Tasks[0])
+	}
+	count := 0
+	for _, event := range events {
+		if event.Kind == "info" && strings.HasPrefix(event.Text, "removing temporary folder:") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("cleanup info events = %d; events = %+v", count, events)
 	}
 }

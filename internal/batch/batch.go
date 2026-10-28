@@ -1482,14 +1482,25 @@ func batchEnv(dir string) ([]string, func() error, error) {
 		configured := false
 		for _, name := range []string{".cargo/config.toml", ".cargo/config", "Cargo.toml"} {
 			data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
-			if errors.Is(err, os.ErrNotExist) {
+			if err != nil {
 				continue
 			}
-			if err != nil {
-				return nil, nil, err
+			table := ""
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "[") {
+					table = ""
+					if end := strings.IndexByte(line, ']'); end >= 0 {
+						table = strings.TrimSpace(line[:end+1])
+					}
+					continue
+				}
+				if (table == "[profile.dev]" || table == "[profile.test]" || name != "Cargo.toml" && table == "[build]") && cargoIncrementalLine.MatchString(line) {
+					configured = true
+					break
+				}
 			}
-			if cargoIncrementalLine.Match(data) {
-				configured = true
+			if configured {
 				break
 			}
 		}
