@@ -35,6 +35,14 @@ func TestBatchMergeRunsAutomaticGCOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestBatchMergeSucceedsWhenDisabledGCConfigHasInvalidFields(t *testing.T) {
+	res := batchMergeFixture(t, false, "alpha")
+	os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), []byte(`{"enabled":false,"interval":-5,"roots":"invalid"}`), 0600)
+	if code, _, err := batchMergeCLI(t, res.ID); code != 0 || err != nil {
+		t.Fatalf("merge %d: %v", code, err)
+	}
+}
+
 func batchMergeGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()

@@ -61,6 +61,13 @@ func cmdGC(args []string) (int, error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if *apply {
+		unlock, err := gc.Lock(time.Now())
+		if err != nil {
+			return 1, err
+		}
+		defer unlock()
+	}
 
 	opt := gc.Options{Grace: *grace, Idle: *idle, MinIdle: *minIdle, FreeBelow: below, SlotCap: capBytes}
 	wts, err := gc.Scan(ctx, paths, opt)

@@ -15,6 +15,9 @@ import (
 
 const maxLogBytes = 1 << 20
 
+var appendAutomaticPass = appendPass
+
+// Config holds automatic cleanup settings and explicit scan roots.
 type Config struct {
 	Enabled        bool     `json:"enabled"`
 	Roots          []string `json:"roots"`
@@ -22,6 +25,7 @@ type Config struct {
 	FreeBelowBytes int64    `json:"free_below_bytes"`
 }
 
+// Action records a cleanup decision and its estimated size.
 type Action struct {
 	Path   string `json:"path"`
 	Bytes  int64  `json:"bytes"`
@@ -29,6 +33,7 @@ type Action struct {
 	Kind   string `json:"kind"`
 }
 
+// Pass records an automatic cleanup attempt and its outcome.
 type Pass struct {
 	Time      time.Time `json:"time"`
 	Scheduled bool      `json:"scheduled"`
@@ -38,6 +43,7 @@ type Pass struct {
 	Error     string    `json:"error,omitempty"`
 }
 
+// LoadConfig reads and validates the configured cleanup roots and settings.
 func LoadConfig() (Config, error) {
 	var c Config
 	b, err := os.ReadFile(filepath.Join(runlog.Home(), "gc.json"))
@@ -65,6 +71,14 @@ func LoadConfig() (Config, error) {
 	for _, root := range c.Roots {
 		if !filepath.IsAbs(root) {
 			return c, fmt.Errorf("gc.json: root %q must be absolute", root)
+		}
+		if filepath.Dir(filepath.Clean(root)) == filepath.Clean(root) {
+			return c, fmt.Errorf("gc.json: root %q is a filesystem root", root)
+		}
+		if info, err := os.Stat(root); err != nil {
+			return c, fmt.Errorf("gc.json: root %q: %w", root, err)
+		} else if !info.IsDir() {
+			return c, fmt.Errorf("gc.json: root %q is not a directory", root)
 		}
 	}
 	if c.Enabled && len(c.Roots) == 0 {
@@ -95,6 +109,7 @@ func readPasses() ([]Pass, error) {
 	return passes, nil
 }
 
+// LastPass returns the most recent logged automatic cleanup attempt.
 func LastPass() (Pass, error) {
 	passes, err := readPasses()
 	if err != nil || len(passes) == 0 {
@@ -143,10 +158,34 @@ func writeAtomic(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	for i := 0; i < 5; i++ {
+		err = os.Rename(f.Name(), path)
+		if err == nil {
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return err
 }
 
+// RunAutomatic runs a due scheduled pass or a repository's post-merge pass.
 func RunAutomatic(ctx context.Context, now time.Time, repo string) (bool, error) {
+	var enabled struct {
+		Enabled bool `json:"enabled"`
+	}
+	b, err := os.ReadFile(filepath.Join(runlog.Home(), "gc.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(b, &enabled); err != nil {
+		return false, fmt.Errorf("gc.json: %w", err)
+	}
+	if !enabled.Enabled {
+		return false, nil
+	}
 	c, err := LoadConfig()
 	if err != nil || !c.Enabled {
 		return false, err
@@ -154,16 +193,16 @@ func RunAutomatic(ctx context.Context, now time.Time, repo string) (bool, error)
 	if err := os.MkdirAll(runlog.Home(), 0700); err != nil {
 		return false, err
 	}
-	lock := filepath.Join(runlog.Home(), "gc.lock")
-	f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if errors.Is(err, os.ErrExist) {
-		return false, nil
-	}
+	unlock, err := Lock(now)
 	if err != nil {
+		var held *LockHeldError
+		interval, _ := time.ParseDuration(c.Interval)
+		if repo == "" && errors.As(err, &held) && !held.Since.IsZero() && now.Sub(held.Since) < interval {
+			return false, nil
+		}
 		return false, err
 	}
-	f.Close()
-	defer os.Remove(lock)
+	defer unlock()
 	if _, err := readPasses(); err != nil {
 		return false, err
 	}
@@ -178,14 +217,11 @@ func RunAutomatic(ctx context.Context, now time.Time, repo string) (bool, error)
 			if err != nil {
 				return false, fmt.Errorf("gc-last: %w", err)
 			}
-			if now.Sub(last) < interval {
+			if !now.Before(last) && now.Sub(last) < interval {
 				return false, nil
 			}
 		}
 		if err := appendPass(Pass{Time: now, Scheduled: true, Started: true}); err != nil {
-			return false, err
-		}
-		if err := writeAtomic(filepath.Join(runlog.Home(), "gc-last"), []byte(now.Format(time.RFC3339Nano))); err != nil {
 			return false, err
 		}
 	}
@@ -198,7 +234,8 @@ func RunAutomatic(ctx context.Context, now time.Time, repo string) (bool, error)
 	wts, scanErr := Scan(ctx, paths, opt)
 	if scanErr == nil && repo != "" {
 		for i := range wts {
-			if wts[i].Batch == "" || samePath(wts[i].Repo) != samePath(repo) {
+			main, _ := mainCheckout(ctx, repo)
+			if wts[i].Batch == "" || samePath(wts[i].Repo) != samePath(main) {
 				wts[i].Verdict = Keep
 			}
 		}
@@ -225,8 +262,13 @@ func RunAutomatic(ctx context.Context, now time.Time, repo string) (bool, error)
 			}
 		}
 		p.Started = true
-		if err := appendPass(p); err != nil {
+		if err := appendAutomaticPass(p); err != nil {
 			return false, err
+		}
+		if repo == "" {
+			if err := writeAtomic(filepath.Join(runlog.Home(), "gc-last"), []byte(now.Format(time.RFC3339Nano))); err != nil {
+				return false, err
+			}
 		}
 		p.Started = false
 		removed, errs := Apply(ctx, wts)
@@ -251,5 +293,8 @@ func RunAutomatic(ctx context.Context, now time.Time, repo string) (bool, error)
 		p.Error = scanErr.Error()
 	}
 	logErr := appendPass(p)
+	if repo == "" && scanErr != nil && logErr == nil {
+		logErr = writeAtomic(filepath.Join(runlog.Home(), "gc-last"), []byte(now.Format(time.RFC3339Nano)))
+	}
 	return true, errors.Join(scanErr, logErr)
 }

@@ -206,7 +206,7 @@ func cmdBatchMerge(args []string) (int, error) {
 			r.Line(r.c(dim, "automatic gc checked this repository; see gc.log before undoing the merge"))
 		}
 		if err != nil {
-			return 1, fmt.Errorf("merge succeeded; automatic gc: %w", err)
+			fmt.Fprintf(os.Stderr, "warning: merge succeeded; automatic gc: %v\n", err)
 		}
 	}
 	return 0, nil

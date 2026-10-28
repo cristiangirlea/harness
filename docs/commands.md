@@ -61,7 +61,7 @@ Automatic cleanup is off by default. To enable it, create `$HRN_HOME/gc.json` (o
 {"enabled": true, "roots": ["E:\\work"], "interval": "24h", "free_below_bytes": 53687091200}
 ```
 
-Roots must be absolute and are never discovered automatically. With no PATH arguments,
+Roots must be existing absolute directories below a filesystem root and are never discovered automatically. With no PATH arguments,
 `hrn gc` uses these roots when present; otherwise it uses the current directory. Explicit
 PATH arguments override them. Set `enabled` to false or remove the file to turn automatic
 cleanup off. `interval` defaults to 24h and accepts a positive Go duration; the free-space
@@ -74,8 +74,10 @@ caches are trimmed under the usual rules. This does not guarantee a target when 
 space is insufficient. A successful `hrn batch merge` also checks that repository's
 batch-owned worktrees against the same proof of landing, without running the cache pass.
 
-Passes share `$HRN_HOME/gc.lock` and never overlap. After an interrupted process, remove
-that file only after confirming no automatic pass is running. `$HRN_HOME/gc.log` holds
+Manual apply and automatic passes share `$HRN_HOME/gc.lock` and never overlap. A dead
+holder or lock older than six hours is taken over only after the OS lock is available;
+takeovers are logged. A lock held beyond the configured interval appears in watch and on
+stderr. `$HRN_HOME/gc.log` holds
 JSON lines with timestamps, paths, estimated bytes, reasons and outcomes; older entries are
 discarded to keep it under 1 MiB. A started entry records planned actions before removal;
 without a completed entry the outcome is uncertain. Errors appear in the log and watch's

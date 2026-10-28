@@ -106,15 +106,48 @@ func TestBatchShowMerge(t *testing.T) {
 		t.Fatalf("git rev-parse HEAD: %v\n%s", err, beforeOut)
 	}
 	before := strings.TrimSpace(string(beforeOut))
+	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), []byte(`{"enabled":true,"roots":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	merged := s.call(t, "batch_merge", `{"batch_id":"`+id+`"}`)
 	if merged.IsError || !strings.Contains(merged.Text(), "2 branch(es) merged") ||
 		!strings.Contains(merged.Text(), "git reset --hard "+before) || strings.Contains(merged.Text(), "ORIG_HEAD") {
 		t.Fatalf("merge = %s", merged.Text())
 	}
+	if !strings.Contains(merged.Text(), "warning: automatic gc") {
+		t.Fatalf("missing cleanup warning: %s", merged.Text())
+	}
 	for _, f := range []string{"alpha.txt", "beta.txt"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("%s not in the repository after the merge: %v", f, err)
 		}
+	}
+}
+
+func TestBatchMergeToolRunsConfiguredGC(t *testing.T) {
+	dir := gitRepo(t)
+	s := connect(t, dir)
+	res := s.call(t, "batch", `{"spec":{"backend":"mcp-writer","worktrees":"fresh","tasks":[{"id":"a","prompt":"alpha first"}]}}`)
+	if res.IsError {
+		t.Fatalf("batch: %s", res.Text())
+	}
+	var id string
+	for _, line := range strings.Split(res.Text(), "\n") {
+		if rest, ok := strings.CutPrefix(line, "batch "); ok {
+			id = strings.Fields(rest)[0]
+		}
+	}
+	if id == "" {
+		t.Fatal("missing batch id")
+	}
+	b, _ := json.Marshal(map[string]any{"enabled": true, "roots": []string{dir}})
+	os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), b, 0600)
+	merged := s.call(t, "batch_merge", `{"batch_id":"`+id+`"}`)
+	if merged.IsError || !strings.Contains(merged.Text(), "automatic gc checked") {
+		t.Fatalf("merge: %s", merged.Text())
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HRN_HOME"), "gc.log")); err != nil {
+		t.Fatal(err)
 	}
 }
 
