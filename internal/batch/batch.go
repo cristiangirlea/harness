@@ -944,7 +944,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 		plan.number = len(tr.Attempts) + 1
 		plan.reason = attemptReason(append(slices.Clone(tr.Attempts), Attempt{Backend: name, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}), len(tr.Attempts))
-		out, err := runAttempt(ctx, b, t.ID, root, at, plan, expect, guard, gates, fw, notify, report)
+		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, fw, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
 		if out.keepWorktree && slot != nil {
 			kept.add(slot.Lease.Holder)
@@ -1266,14 +1266,18 @@ type attemptOutcome struct {
 }
 
 // runAttempt's returned error aborts the whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, id, root string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
-	env, cleanup, err := batchEnv(root)
+	env, cleanup, err := batchEnv(task.Dir)
 	if err != nil {
 		return attemptOutcome{att: att}, err
 	}
-	defer cleanup()
+	defer func() {
+		if err := cleanup(); err != nil {
+			notify(Event{Task: id, Kind: "info", Text: "removing temporary folder: " + err.Error()})
+		}
+	}()
 	task.ChildEnv = env
 	if plan.switchedFrom != "" {
 		task.Model = "" // the model named for the other backend means nothing here
@@ -1451,38 +1455,58 @@ func checkExpect(re *regexp.Regexp, final string) GateResult {
 
 var runGateShell = tools.RunShell
 
-func batchEnv(dir string) ([]string, func(), error) {
-	parent := filepath.Join(dir, ".hrn")
+var cargoIncrementalLine = regexp.MustCompile(`(?m)^\s*incremental\s*=`)
+
+func batchEnv(dir string) ([]string, func() error, error) {
+	parent := filepath.Dir(filepath.Dir(dir))
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return nil, nil, err
+	}
+	ignore := filepath.Join(parent, ".gitignore")
+	f, err := os.OpenFile(ignore, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err == nil {
+		_, err = f.WriteString("*\n")
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+	} else if errors.Is(err, os.ErrExist) {
+		err = nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var env []string
+	if cargo, ok := os.LookupEnv("CARGO_INCREMENTAL"); ok {
+		env = append(env, "CARGO_INCREMENTAL="+cargo)
+	} else {
+		configured := false
+		for _, name := range []string{".cargo/config.toml", ".cargo/config", "Cargo.toml"} {
+			data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, nil, err
+			}
+			if cargoIncrementalLine.Match(data) {
+				configured = true
+				break
+			}
+		}
+		if !configured {
+			env = append(env, "CARGO_INCREMENTAL=0")
+		}
 	}
 	temp, err := os.MkdirTemp(parent, "tmp-")
 	if err != nil {
 		return nil, nil, err
 	}
-	cargo, ok := os.LookupEnv("CARGO_INCREMENTAL")
-	if !ok {
-		cargo = "0"
-	}
-	env := []string{"CARGO_INCREMENTAL=" + cargo}
 	env = append(env, "TMP="+temp, "TEMP="+temp, "TMPDIR="+temp)
-	return env, func() { os.RemoveAll(temp) }, nil
+	return env, func() error { return os.RemoveAll(temp) }, nil
 }
 
-func runGate(ctx context.Context, dir, command string, timeout time.Duration, envs ...[]string) GateResult {
+func runGate(ctx context.Context, dir, command string, timeout time.Duration, env []string) GateResult {
 	started := time.Now()
-	var env []string
-	if len(envs) > 0 {
-		env = envs[0]
-	} else {
-		var cleanup func()
-		var err error
-		env, cleanup, err = batchEnv(dir)
-		if err != nil {
-			return GateResult{Command: command, ExitCode: -1, InfrastructureError: err.Error()}
-		}
-		defer cleanup()
-	}
 	// Gates are operator commands: preserve their environment except git repository overrides.
 	res, err := runGateShell(ctx, dir, command, timeout, append(os.Environ(), env...))
 	output, decodedUTF16 := decodeGateOutput(res.Output)

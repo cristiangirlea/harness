@@ -218,10 +218,12 @@ they apply per attempt rather than per task, so a retry gets its own allowance. 
 may set its own value or change the spec's, but zero means inherit, so it cannot remove
 a limit the spec set.
 
-Each attempt gives its agent and gates a temporary folder under the repository's ignored
-`.hrn/` folder, on the worktree's volume, and removes it when the attempt ends: `TMP`,
-`TEMP` and `TMPDIR` point there. `CARGO_INCREMENTAL` is `0` unless the environment
-already sets it. A gate command may set its own values.
+Each attempt gives its agent and gates a temporary folder under the ignored `.hrn/`
+folder holding the worktree, on the worktree's volume, and removes it when the attempt
+ends: `TMP`, `TEMP` and `TMPDIR` point there. `CARGO_INCREMENTAL` is `0` unless the
+environment already sets it or the worktree configures `incremental` in
+`.cargo/config.toml`, `.cargo/config`, or `Cargo.toml`. A gate command may set its own
+values.
 
 Each gate command gets 15 minutes before it is killed with its whole process tree;
 `gate_timeout` (e.g. `"90s"`, `"45m"`, at most `24h`) changes that on the spec or on one
