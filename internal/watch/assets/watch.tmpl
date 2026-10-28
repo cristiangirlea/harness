@@ -29,6 +29,7 @@
 {{define "index"}}{{template "head" .}}
 <p class="eyebrow">Harness / live view</p>
 <h1>Runs and batches</h1>
+{{with .GC}}<p>Last automatic GC: {{.}}</p>{{end}}
 <p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps. A batch's tasks also appear as runs, linked to their batch. <a href="/bot">Ada</a>, the bot, tells you what hrn is doing, out loud if you like.</p>
 {{if .Phone}}<section class="card reach" aria-labelledby="reach-h">
 <h2 id="reach-h">On your phone</h2>

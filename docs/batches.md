@@ -335,8 +335,14 @@ hrn gc --apply E:\work    # remove them
 Worktrees outlive their pull requests: the session that made one rarely comes back, and with
 a Rust `target/` or a `node_modules` inside, each can hold gigabytes. `hrn gc` looks at every
 linked worktree of the repositories at PATH (a repository, any folder inside one, or a folder
-whose repositories are found two levels down; the current directory by default) and removes a
+whose repositories are found two levels down; configured roots or the current directory by default) and removes a
 worktree only on proof that its work is merged:
+
+When [automatic gc](commands.md#automatic-gc) is enabled, a successful batch merge also
+checks the repository's batch-owned worktrees for the same proof of landing. A local merge
+alone does not prove that the change reached the remote default branch.
+Cleanup errors are warnings and do not change a successful merge's result; inspect the log
+before undoing a merge whose worktrees may have been removed. MCP `batch_merge` behaves likewise.
 
 - **On a branch:** GitHub (`gh pr list`) reports no open pull request for the branch, and one
   merged at the worktree's commit, or at a later commit that contains it, more than `--grace`

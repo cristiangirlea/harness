@@ -50,10 +50,24 @@ func cmdGC(args []string) (int, error) {
 	}
 	paths := fs.Args()
 	if len(paths) == 0 {
-		paths = []string{"."}
+		config, err := gc.LoadConfig()
+		if err != nil {
+			return 1, err
+		}
+		paths = config.Roots
+		if len(paths) == 0 {
+			paths = []string{"."}
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if *apply {
+		unlock, err := gc.Lock(time.Now())
+		if err != nil {
+			return 1, err
+		}
+		defer unlock()
+	}
 
 	opt := gc.Options{Grace: *grace, Idle: *idle, MinIdle: *minIdle, FreeBelow: below, SlotCap: capBytes}
 	wts, err := gc.Scan(ctx, paths, opt)

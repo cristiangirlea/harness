@@ -20,6 +20,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/gc"
 	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -551,6 +552,28 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	if s.fromThisComputer(r) {
 		p.Local = true
 		p.Phone = phoneLinks(s.opt.LAN)
+		last, err := gc.LastPass()
+		if err != nil {
+			p.GC = "Log unreadable: " + err.Error()
+		} else if !last.Time.IsZero() {
+			var bytes int64
+			for _, a := range last.Actions {
+				bytes += a.Bytes
+			}
+			p.GC = fmt.Sprintf("%s: %d actions, %d bytes", last.Time.Local().Format("2006-01-02 15:04"), len(last.Actions), bytes)
+			if last.Started {
+				p.GC = fmt.Sprintf("%s: started; outcome pending (see gc.log)", last.Time.Local().Format("2006-01-02 15:04"))
+			}
+			if last.Error != "" {
+				p.GC += "; error: " + last.Error
+			}
+		}
+		if warning := gc.LockWarning(time.Now()); warning != "" {
+			p.GC = strings.TrimSpace(p.GC + " " + warning)
+		}
+		if err := gc.Status(); err != nil {
+			p.GC = strings.TrimSpace(p.GC + " " + err.Error())
+		}
 	}
 	s.page(w, http.StatusOK, "index", p)
 }

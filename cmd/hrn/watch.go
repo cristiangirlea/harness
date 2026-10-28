@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/gc"
 	"github.com/cristiangirlea/harness/internal/qr"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/watch"
@@ -76,12 +77,33 @@ func cmdWatch(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+	gcCtx, stopGC := context.WithCancel(ctx)
+	gcDone := make(chan struct{})
+	go func() { defer close(gcDone); automaticGC(gcCtx) }()
 	if access != nil {
 		printPublicWatchStart(os.Stdout, access.Origin, ln.Addr().String(), filepath.Join(runlog.Home(), "watch-access.log"))
 	} else {
 		printWatchStart(os.Stdout, ln.Addr().String(), lan.on, opt.LAN, isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "")
 	}
-	return watch.Serve(ctx, opt, lns...)
+	err = watch.Serve(ctx, opt, lns...)
+	stopGC()
+	<-gcDone
+	return err
+}
+
+func automaticGC(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		if _, err := gc.RunAutomatic(ctx, time.Now().UTC(), ""); err != nil {
+			fmt.Fprintln(os.Stderr, "automatic gc:", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 type stringListFlag []string

@@ -389,6 +389,9 @@ func (l Lease) processHolds() bool {
 // StartID returns a process's platform-specific start identity if known.
 func StartID(pid int) (string, bool) { return startID(pid) }
 
+// ProcessAlive reports whether a process with the supplied identity may still run.
+func ProcessAlive(pid int, start string) bool { return (Lease{PID: pid, Start: start}).processHolds() }
+
 func samePlatform(a, b string) bool {
 	pa, _, _ := strings.Cut(a, ":")
 	pb, _, _ := strings.Cut(b, ":")
