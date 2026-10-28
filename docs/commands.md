@@ -50,7 +50,7 @@
 | `hrn ws issues [--json] [--free owner/name#N]` | The issue leases: state (`held`, `held by pull request`, `stale`, `released`), holder, run, backend, branch, pull request and since; `--free` removes one no running process holds (see [Issue leases](workspaces.md#issue-leases)). |
 | `hrn scripts hint` | A Claude Code PreToolUse hook that reads the payload on stdin and names the kept script whose `matches:` header covers the inline script a command is about to run; advice only, silent otherwise (see [The hint hook](scripts.md#the-hint-hook)). |
 
-For slot caches, `gc` removes each Cargo profile's `incremental` directory after `--idle` (24h by default). `--slot-cap SIZE` is off by default; when set, a slot cache larger than the cap is eligible after `--min-idle` (2h by default). `--free-below` also selects slot trims after `--min-idle`, but never removes a whole slot cache. Dry runs show the bytes each trim would free; `--apply` rechecks and locks the profiles before trimming. Dependencies, fingerprints and build outputs stay: Cargo does not touch reused artifacts, so their modification times do not identify the last build's dependencies.
+For slot cache trimming, cap thresholds and lock safety, see [Build caches](batches.md#build-caches).
 
 Run flags: `-b/--backend` (api, claude, codex, gemini, opencode, agy), `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api, codex, claude and agy: low, medium, high, xhigh, max; unset uses the

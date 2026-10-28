@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,8 @@ var renameCache = os.Rename
 
 var movedCacheInUse = inUse
 
+var beforeTrimLock func()
+
 // Cache is a CACHEDIR.TAG-tagged build folder and its removal verdict.
 type Cache struct {
 	Path        string
@@ -42,6 +45,7 @@ type Cache struct {
 	driveMore   bool // eligible caches remain after meeting the limit
 	slot        bool
 	incremental bool
+	leftovers   bool
 }
 
 // Drive describes a cache's volume and available space.
@@ -59,7 +63,7 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 	add := func(dir string) {
 		if k := samePath(dir); !seen[k] {
 			seen[k] = true
-			all = append(all, Cache{Path: dir, Worktree: holder(dir, wts), slot: slotCachePath(dir)})
+			all = append(all, Cache{Path: dir, Worktree: holder(dir, wts), slot: slotCachePath(dir) && len(profiles(dir)) > 0})
 		}
 	}
 	for _, w := range wts {
@@ -94,7 +98,7 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 		c.Size, newest, c.risk = measure(c.Path)
 		c.LastBuild = lastBuild(c.Path, newest)
 		if c.slot {
-			c.TrimSize, c.incremental = incrementalSize(c.Path)
+			c.TrimSize, c.incremental, c.leftovers = incrementalSize(c.Path)
 		}
 		c.Verdict, c.Reason = decideCache(ctx, c, cwd, now, opt)
 	}
@@ -119,6 +123,9 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 		}
 		if c.Verdict == Trim {
 			failed := false
+			if beforeTrimLock != nil {
+				beforeTrimLock()
+			}
 			ps := profiles(c.Path)
 			var unlocks []func()
 			for _, p := range ps {
@@ -140,12 +147,30 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 					failed = true
 				}
 			}
+			var moved []string
 			for _, p := range ps {
 				if failed {
 					break
 				}
-				if err := os.RemoveAll(filepath.Join(p, "incremental")); err != nil {
-					errs = append(errs, fmt.Errorf("%s: trim: %w", c.Path, err))
+				for _, path := range incrementalPaths(p) {
+					if filepath.Base(path) == "incremental" {
+						dest := movedCachePath(path)
+						if err := renameCache(path, dest); err != nil {
+							errs = append(errs, fmt.Errorf("%s: kept, incremental could not be moved aside: %w", c.Path, err))
+							failed = true
+							break
+						}
+						path = dest
+					}
+					moved = append(moved, path)
+				}
+			}
+			for _, path := range moved {
+				if failed {
+					break
+				}
+				if err := removeCacheEntry(path); err != nil {
+					errs = append(errs, fmt.Errorf("%s: trim left %s: %w", c.Path, path, err))
 					failed = true
 					break
 				}
@@ -315,13 +340,16 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	if why := inUse(c.Path); why != "" {
 		return Keep, why
 	}
-	if isMovedCache(c.Path) && !c.slot {
+	if isMovedCache(c.Path) {
 		return Remove, "moved cache left by an earlier removal"
 	}
 	idle := ageAt(now, c.LastBuild)
 	if c.slot {
-		if c.incremental && (idle >= opt.Idle || (opt.SlotCap > 0 && c.Size > opt.SlotCap && idle >= opt.MinIdle)) {
+		if c.leftovers || (c.incremental && idle >= opt.Idle) {
 			return Trim, "idle " + short(idle)
+		}
+		if c.incremental && opt.SlotCap > 0 && c.Size > opt.SlotCap && c.TrimSize >= opt.SlotCap/2+opt.SlotCap%2 && idle >= opt.MinIdle {
+			return Trim, fmt.Sprintf("idle %s, over --slot-cap %s", short(idle), report.Bytes(opt.SlotCap))
 		}
 		c.young = c.incremental
 		return Keep, "slot cache retained"
@@ -336,7 +364,13 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 func slotCachePath(path string) bool {
 	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
 		parent := filepath.Dir(p)
-		if n, err := strconv.Atoi(filepath.Base(p)); err == nil && n > 0 && filepath.Base(parent) == "slots" && filepath.Base(filepath.Dir(parent)) == ".hrn" {
+		name := filepath.Base(p)
+		slots, hrn := filepath.Base(parent), filepath.Base(filepath.Dir(parent))
+		match := slots == "slots" && hrn == ".hrn"
+		if runtime.GOOS == "windows" {
+			match = strings.EqualFold(slots, "slots") && strings.EqualFold(hrn, ".hrn")
+		}
+		if n, err := strconv.Atoi(name); err == nil && n > 0 && strconv.Itoa(n) == name && match {
 			return true
 		}
 		if parent == p {
@@ -345,18 +379,36 @@ func slotCachePath(path string) bool {
 	}
 }
 
-func incrementalSize(dir string) (int64, bool) {
+func incrementalSize(dir string) (int64, bool, bool) {
 	var total int64
-	var found bool
+	var found, leftovers bool
 	for _, p := range profiles(dir) {
-		path := filepath.Join(p, "incremental")
-		if info, err := os.Lstat(path); err == nil && info.IsDir() {
-			found = true
+		for _, path := range incrementalPaths(p) {
+			if filepath.Base(path) == "incremental" {
+				found = true
+			} else {
+				leftovers = true
+			}
 			size, _, _ := measure(path)
 			total += size
 		}
 	}
-	return total, found
+	return total, found, leftovers
+}
+
+func incrementalPaths(profile string) []string {
+	entries, err := os.ReadDir(profile)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() && (name == "incremental" || (strings.HasSuffix(name, "-incremental") && isMovedCache(name))) {
+			paths = append(paths, filepath.Join(profile, name))
+		}
+	}
+	return paths
 }
 
 // Accept both on-disk forms: .gc-<pid>-<name> and .gc-<pid>-<time>-<name>.

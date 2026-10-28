@@ -86,6 +86,43 @@ func TestGCListsTrimsWithFreedSizeAndCountsThem(t *testing.T) {
 	}
 }
 
+func TestGCApplyReportsTrimmedBytes(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	cache := filepath.Join(t.TempDir(), ".hrn", "slots", "1", "target")
+	dir := filepath.Join(cache, "debug", "incremental")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"CACHEDIR.TAG": "Signature: 8a477f597d28d172789f06886806bc55\n", "debug/.cargo-lock": "", "debug/incremental/item": "1234567890"} {
+		if err := os.WriteFile(filepath.Join(cache, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	old := os.Stdout
+	os.Stdout = out
+	defer func() { os.Stdout = old }()
+	code, runErr := cmdGC([]string{"--apply", "--idle", "0", cache})
+	os.Stdout = old
+	if code != 0 || runErr != nil {
+		t.Fatalf("code %d: %v", code, runErr)
+	}
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "trimmed 1 caches, freeing 10 bytes") {
+		t.Fatalf("output %s", data)
+	}
+}
+
 func TestGCSummaryCountsWorktreesAndCaches(t *testing.T) {
 	wts := []gc.Worktree{{Path: "/w/a", Verdict: gc.Remove}, {Path: "/w/b", Verdict: gc.Keep}}
 	cs := []gc.Cache{{Path: "/c/x", Size: 2 << 20, Verdict: gc.Remove}, {Path: "/c/y", Verdict: gc.Keep}, {Path: "/c/z", Verdict: gc.Keep}}

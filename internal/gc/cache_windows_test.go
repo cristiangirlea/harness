@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestGCApplyKeepsAWholeCacheWithAnOpenFileOnWindows(t *testing.T) {
@@ -37,13 +39,38 @@ func TestGCApplyKeepsAWholeCacheWithAnOpenFileOnWindows(t *testing.T) {
 	}
 }
 
-// holdLock holds a profile's .cargo-lock the way Cargo does on Windows: open
-// for the build's duration, so an open that shares nothing fails.
-func holdLock(t *testing.T, path string) (release func()) {
-	t.Helper()
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
+func TestGCTrimLockAllowsCargoOpenButBlocksItsLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".cargo-lock")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := holdCargoLock(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return func() { f.Close() }
+	defer unlock()
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := syscall.CreateFile(p, syscall.GENERIC_READ|syscall.GENERIC_WRITE, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatalf("cargo-style open: %v", err)
+	}
+	defer syscall.CloseHandle(h)
+	var overlapped syscall.Overlapped
+	proc := syscall.NewLazyDLL("kernel32.dll").NewProc("LockFileEx")
+	r, _, _ := proc.Call(uintptr(h), 3, 0, 1, 0, uintptr(unsafe.Pointer(&overlapped)))
+	if r != 0 {
+		t.Fatal("another exclusive lock succeeded")
+	}
+}
+
+func holdLock(t *testing.T, path string) (release func()) {
+	t.Helper()
+	release, err := holdCargoLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return release
 }
