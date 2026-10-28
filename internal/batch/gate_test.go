@@ -711,6 +711,8 @@ func TestBatchEnvironmentDefaultsCargoUnlessDevOrTestSettingsExist(t *testing.T)
 		{"array-table-resets", "Cargo.toml", "[profile.dev]\n[[bin]]\nincremental = true\n", false},
 		{"package-override", "Cargo.toml", "[profile.dev.package.\"*\"]\nincremental = true\n", true},
 		{"dev-lookalike", "Cargo.toml", "[profile.devel]\nincremental = true\n", false},
+		{"test-override", "Cargo.toml", "[profile.test.build-override]\nincremental = true\n", true},
+		{"dev-dash-lookalike", "Cargo.toml", "[profile.dev-x]\nincremental = true\n", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
