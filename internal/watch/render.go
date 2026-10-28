@@ -327,6 +327,7 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 
 type indexPage struct {
 	page
+	GC       string
 	Backends backendCard
 	Lists    lists
 	Local    bool        // seen from this computer, not a phone on the network

@@ -9,9 +9,31 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
+	"fmt"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func TestBatchMergeRunsAutomaticGCOnlyWhenEnabled(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			res := batchMergeFixture(t, false, "alpha")
+			b, _ := json.Marshal(map[string]any{"enabled": enabled, "roots": []string{res.Dir}})
+			if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "gc.json"), b, 0600); err != nil {
+				t.Fatal(err)
+			}
+			code, _, err := batchMergeCLI(t, res.ID)
+			if code != 0 || err != nil {
+				t.Fatalf("merge: %d %v", code, err)
+			}
+			_, err = os.Stat(filepath.Join(os.Getenv("HRN_HOME"), "gc.log"))
+			if enabled && err != nil || !enabled && !os.IsNotExist(err) {
+				t.Fatalf("enabled %v: log error %v", enabled, err)
+			}
+		})
+	}
+}
 
 func batchMergeGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()

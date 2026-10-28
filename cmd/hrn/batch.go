@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/gc"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -198,6 +199,15 @@ func cmdBatchMerge(args []string) (int, error) {
 	}
 	if removeErr != nil {
 		return 1, removeErr
+	}
+	if done > 0 {
+		ran, err := gc.RunAutomatic(ctx, time.Now().UTC(), res.Dir)
+		if ran {
+			r.Line(r.c(dim, "automatic gc checked this repository; see gc.log before undoing the merge"))
+		}
+		if err != nil {
+			return 1, fmt.Errorf("merge succeeded; automatic gc: %w", err)
+		}
 	}
 	return 0, nil
 }

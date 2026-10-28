@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,19 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/gc"
 )
+
+func TestGCUsesConfiguredRootsWithoutPathArguments(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	missing := filepath.Join(t.TempDir(), "missing")
+	b, _ := json.Marshal(map[string]any{"roots": []string{missing}})
+	if err := os.WriteFile(filepath.Join(home, "gc.json"), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := cmdGC(nil); code != 1 || err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("code %d error %v", code, err)
+	}
+}
 
 func TestGCListsRemovalsFirstWithTheirSizeAndPullRequest(t *testing.T) {
 	pr := &gc.PR{Number: 44, URL: "https://github.com/o/r/pull/44"}

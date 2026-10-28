@@ -19,6 +19,8 @@ Run and batch pages link to **Execution flow**, a hierarchical view of recorded 
 A new flow step after a quiet spell appears within a quarter of the configured poll interval (at least 50ms); while a run keeps writing, the page refreshes at most once per poll interval, since each refresh rebuilds the whole flow.
 
 `hrn watch` serves a page that lists the newest runs and batches and keeps itself current.
+When [automatic gc](commands.md#automatic-gc) is enabled, watch runs the periodic pass and
+its local index shows the last pass on page load.
 `hrn update` restarts a running watch on the new binary with the same flags (see
 [hrn update](commands.md#hrn-update)).
 Each row leads with the repository the work is in (its workspace folder's name; for a batch
