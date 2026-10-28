@@ -795,3 +795,20 @@ func TestAPISavesNothingWhenTheRunNeverStarted(t *testing.T) {
 		t.Fatal("a run with no conversation must not leave one behind: continuing it would start from nothing")
 	}
 }
+
+func TestAPICopiesChildEnvironmentToWorkspace(t *testing.T) {
+	fake := &fakeAPI{turns: [][]string{toolTurn("env", "test_env", `{}`), textTurn("done")}}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	b := NewAPIBackend()
+	b.BaseURL, b.APIKey = srv.URL, "test"
+	var seen []string
+	b.Tools = append(b.Tools, tools.Tool{Name: "test_env", Effect: tools.EffectRead, Run: func(_ context.Context, ws *tools.Workspace, _ json.RawMessage) (string, error) {
+		seen = ws.ChildEnv
+		return "ok", nil
+	}})
+	res := b.Run(t.Context(), Task{Prompt: "inspect", Dir: t.TempDir(), ChildEnv: []string{"TMP=child-temp"}, Options: Options{Mode: ModeYolo}}, func(Event) {})
+	if res.Status != StatusOK || !slices.Equal(seen, []string{"TMP=child-temp"}) {
+		t.Fatalf("status=%s env=%v error=%s", res.Status, seen, res.Error)
+	}
+}

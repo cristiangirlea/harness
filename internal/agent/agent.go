@@ -38,6 +38,7 @@ type ApprovalRequest struct {
 }
 
 type Task struct {
+	ChildEnv        []string          `json:"-"`
 	OriginalPrompt  string            `json:"original_prompt,omitempty"`
 	RetrievalState  *retrieval.Record `json:"-"`
 	RetrievalRepair bool              `json:"-"`
