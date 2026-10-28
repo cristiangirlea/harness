@@ -252,6 +252,80 @@ func TestGCRecoversIncrementalMovedAsideAfterFailedDeletion(t *testing.T) {
 	}
 }
 
+func TestGCRecoversLeftoversWithoutTrimmingFreshIncremental(t *testing.T) {
+	cache := slotCache(t, time.Hour)
+	left := filepath.Join(cache, "debug", ".gc-1-1-incremental")
+	if err := os.Mkdir(left, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(left, "old"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := cacheOpt
+	opt.FreeBelow = 100
+	opt.Drive = func(string) (Drive, error) { return Drive{ID: "disk", Free: 1}, nil }
+	cs := caches(t, []string{cache}, nil, opt)
+	if c := findCache(t, cs, cache); c.Verdict != Trim || c.TrimSize != 3 || !strings.Contains(c.Reason, "earlier trim") {
+		t.Fatalf("got %+v", c)
+	}
+	done, errs := ApplyCaches(context.Background(), cs)
+	if len(errs) != 0 || len(done) != 1 || exists(left) || !exists(filepath.Join(cache, "debug", "incremental", "object")) {
+		t.Fatalf("done %v errors %v", done, errs)
+	}
+}
+
+func TestGCAlsoTrimsLiveOutputWhenTheCapOrLowSpaceSelectsIt(t *testing.T) {
+	for _, trigger := range []string{"cap", "low space"} {
+		t.Run(trigger, func(t *testing.T) {
+			cache := slotCache(t, 3*time.Hour)
+			left := filepath.Join(cache, "debug", ".gc-1-1-incremental")
+			if err := os.Mkdir(left, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(left, "old")
+			if err := os.WriteFile(file, []byte("old"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			at := time.Now().Add(-3 * time.Hour)
+			touch(t, at, file, left, filepath.Join(cache, "debug"))
+			opt := cacheOpt
+			if trigger == "cap" {
+				opt.SlotCap = 1
+			} else {
+				opt.FreeBelow = 100
+				opt.Drive = func(string) (Drive, error) { return Drive{ID: "disk", Free: 1}, nil }
+			}
+			cs := caches(t, []string{cache}, nil, opt)
+			if c := findCache(t, cs, cache); c.Verdict != Trim || c.TrimSize != 23 {
+				t.Fatalf("got %+v", c)
+			}
+			done, errs := ApplyCaches(context.Background(), cs)
+			if len(errs) != 0 || len(done) != 1 || exists(left) || exists(filepath.Join(cache, "debug", "incremental")) {
+				t.Fatalf("done %v errors %v", done, errs)
+			}
+		})
+	}
+}
+
+func TestGCCanTrimWithReadOnlyCargoLocks(t *testing.T) {
+	cache := slotCache(t, 30*time.Hour)
+	for _, p := range profiles(cache) {
+		lock := filepath.Join(p, ".cargo-lock")
+		if err := os.Chmod(lock, 0o444); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(lock, 0o666) })
+	}
+	cs := caches(t, []string{cache}, nil, cacheOpt)
+	if c := findCache(t, cs, cache); c.Verdict != Trim {
+		t.Fatalf("got %+v", c)
+	}
+	done, errs := ApplyCaches(context.Background(), cs)
+	if len(errs) != 0 || len(done) != 1 {
+		t.Fatalf("done %v errors %v", done, errs)
+	}
+}
+
 func TestGCKeepsIncrementalWhenMoveFails(t *testing.T) {
 	cache := slotCache(t, 30*time.Hour)
 	cs := caches(t, []string{cache}, nil, cacheOpt)

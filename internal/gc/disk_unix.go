@@ -76,7 +76,7 @@ func lockHeld(path string) (bool, error) {
 }
 
 func holdCargoLock(path string) (func(), error) {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}

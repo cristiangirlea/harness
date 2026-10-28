@@ -426,7 +426,8 @@ artifacts, so their modification times do not identify the latest build's depend
 is off by default; when set, a cache above the cap is trimmed after `--min-idle` if its incremental
 output is at least half the cap. `--free-below` also selects slot trims after `--min-idle` but never
 removes a whole slot cache. Dry runs report the bytes each trim would free. GC holds Cargo locks
-while moving incremental folders aside and deleting them; leftovers are retried on the next run.
+while moving incremental folders aside and deleting them; leftovers are retried on the next run
+without trimming a newer incremental folder unless it meets an idle, cap or free-space rule.
 
 A cache stays when git tracks a file in it (a tagged test fixture is someone's), when it holds a
 repository or a link leading out of it, when the current directory is inside it, or when its lock

@@ -46,6 +46,8 @@ type Cache struct {
 	slot        bool
 	incremental bool
 	leftovers   bool
+	trimLive    bool
+	liveSize    int64
 }
 
 // Drive describes a cache's volume and available space.
@@ -98,7 +100,7 @@ func Caches(ctx context.Context, paths []string, wts []Worktree, opt Options) ([
 		c.Size, newest, c.risk = measure(c.Path)
 		c.LastBuild = lastBuild(c.Path, newest)
 		if c.slot {
-			c.TrimSize, c.incremental, c.leftovers = incrementalSize(c.Path)
+			c.liveSize, c.TrimSize, c.incremental, c.leftovers = incrementalSize(c.Path)
 		}
 		c.Verdict, c.Reason = decideCache(ctx, c, cwd, now, opt)
 	}
@@ -154,6 +156,9 @@ func ApplyCaches(ctx context.Context, caches []Cache) (removed []Cache, errs []e
 				}
 				for _, path := range incrementalPaths(p) {
 					if filepath.Base(path) == "incremental" {
+						if !c.trimLive {
+							continue
+						}
 						dest := movedCachePath(path)
 						if err := renameCache(path, dest); err != nil {
 							errs = append(errs, fmt.Errorf("%s: kept, incremental could not be moved aside: %w", c.Path, err))
@@ -345,13 +350,20 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	}
 	idle := ageAt(now, c.LastBuild)
 	if c.slot {
-		if c.leftovers || (c.incremental && idle >= opt.Idle) {
+		if c.incremental && idle >= opt.Idle {
+			c.trimLive = true
+			c.TrimSize += c.liveSize
 			return Trim, "idle " + short(idle)
 		}
-		if c.incremental && opt.SlotCap > 0 && c.Size > opt.SlotCap && c.TrimSize >= opt.SlotCap/2+opt.SlotCap%2 && idle >= opt.MinIdle {
+		if c.incremental && opt.SlotCap > 0 && c.Size > opt.SlotCap && c.liveSize >= opt.SlotCap/2+opt.SlotCap%2 && idle >= opt.MinIdle {
+			c.trimLive = true
+			c.TrimSize += c.liveSize
 			return Trim, fmt.Sprintf("idle %s, over --slot-cap %s", short(idle), report.Bytes(opt.SlotCap))
 		}
 		c.young = c.incremental
+		if c.leftovers {
+			return Trim, "incremental output left by an earlier trim"
+		}
 		return Keep, "slot cache retained"
 	}
 	if idle >= opt.Idle {
@@ -379,21 +391,22 @@ func slotCachePath(path string) bool {
 	}
 }
 
-func incrementalSize(dir string) (int64, bool, bool) {
-	var total int64
+func incrementalSize(dir string) (int64, int64, bool, bool) {
+	var live, old int64
 	var found, leftovers bool
 	for _, p := range profiles(dir) {
 		for _, path := range incrementalPaths(p) {
+			size, _, _ := measure(path)
 			if filepath.Base(path) == "incremental" {
 				found = true
+				live += size
 			} else {
 				leftovers = true
+				old += size
 			}
-			size, _, _ := measure(path)
-			total += size
 		}
 	}
-	return total, found, leftovers
+	return live, old, found, leftovers
 }
 
 func incrementalPaths(profile string) []string {
@@ -492,6 +505,9 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 			s.after += c.Size
 		case c.Verdict == Trim:
 			s.after += c.TrimSize
+			if c.young {
+				s.candidates = append(s.candidates, i)
+			}
 		case c.young:
 			s.candidates = append(s.candidates, i)
 		}
@@ -510,7 +526,9 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 				continue
 			}
 			if idle < minIdle {
-				c.Reason = fmt.Sprintf("last written %s ago, inside --min-idle %s", short(idle), short(minIdle))
+				if c.Verdict == Keep {
+					c.Reason = fmt.Sprintf("last written %s ago, inside --min-idle %s", short(idle), short(minIdle))
+				}
 				continue
 			}
 			if s.after >= opt.FreeBelow {
@@ -522,12 +540,14 @@ func freeBelow(all []Cache, now time.Time, opt Options) {
 					continue
 				}
 				c.Verdict = Trim
+				c.trimLive = true
+				c.TrimSize += c.liveSize
 			} else {
 				c.Verdict = Remove
 			}
 			c.Reason = fmt.Sprintf("idle %s, and %s has only %s free, below %s", short(idle), driveLabel(c.driveID, c.driveName), report.Bytes(s.free), report.Bytes(opt.FreeBelow))
 			if c.slot {
-				s.after += c.TrimSize
+				s.after += c.liveSize
 			} else {
 				s.after += c.Size
 			}
