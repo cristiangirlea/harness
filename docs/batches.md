@@ -407,7 +407,7 @@ The same run looks for build caches: folders carrying a `CACHEDIR.TAG` with the 
 signature, which Cargo writes into every target folder (pytest and ruff tag their caches the same
 way), at each PATH and up to two levels down (a `.sec-target` beside its repository, each folder of
 a `cargo-target` pool) and inside each worktree that stays, up to two levels down. A cache goes when no build holds it (Cargo keeps
-`<profile>/.cargo-lock` open while it builds: on Windows an open that shares nothing fails, elsewhere
+`<profile>/.cargo-lock` locked while it builds: on Windows `LockFileEx` checks it, elsewhere
 a non-blocking `flock` does) and nothing has written it for `--idle` (default 24h). Its last write is
 the newest time among its profile folders (`debug`, `release`, one under a target triple), their
 `deps`, `.fingerprint`, `build` and `incremental` folders, the files directly in a profile, and
@@ -419,6 +419,15 @@ In scan reasons and the free-space report, drives are named by their mount point
 After `--apply`, each drive that was below SIZE in the scan reports its actual free space,
 whether it reached SIZE or how far it remains below; the listing is still the full set of
 removals for that run.
+
+An idle Cargo cache inside a slot is trimmed instead: each profile's `incremental` directory is
+removed, while deps, fingerprints and build outputs stay because Cargo does not touch reused
+artifacts, so their modification times do not identify the latest build's dependencies. `--slot-cap`
+is off by default; when set, a cache above the cap is trimmed after `--min-idle` if its incremental
+output is at least half the cap. `--free-below` also selects slot trims after `--min-idle` but never
+removes a whole slot cache. Dry runs report the bytes each trim would free. GC holds Cargo locks
+while moving incremental folders aside and deleting them; leftovers are retried on the next run
+without trimming a newer incremental folder unless it meets an idle, cap or free-space rule.
 
 A cache stays when git tracks a file in it (a tagged test fixture is someone's), when it holds a
 repository or a link leading out of it, when the current directory is inside it, or when its lock
