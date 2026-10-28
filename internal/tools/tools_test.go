@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,5 +150,27 @@ func TestRunCommandExitCode(t *testing.T) {
 	out, err := call(t, ws, tl["run_command"], map[string]any{"command": "echo hi && exit 3"})
 	if err == nil || !strings.Contains(out, "hi") || !strings.Contains(out, "[exit code 3]") {
 		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
+func TestRunCommandUsesChildEnvironmentAndGuardsIt(t *testing.T) {
+	for _, dangerous := range []bool{false, true} {
+		t.Run(fmt.Sprint(dangerous), func(t *testing.T) {
+			ws, tl := setup(t)
+			t.Setenv("TMP", t.TempDir())
+			ws.AllowDangerous = dangerous
+			ws.ChildEnv = []string{"TMP=child-temp", "GH_TOKEN=child-secret"}
+			command := `printf '%s|%s' "$TMP" "$GH_TOKEN"`
+			if name, _ := Shell(); name == "powershell" {
+				command = `Write-Output "$env:TMP|$env:GH_TOKEN"`
+			}
+			out, err := call(t, ws, tl["run_command"], map[string]any{"command": command})
+			if err != nil || !strings.Contains(out, "child-temp|") {
+				t.Fatalf("output=%q err=%v", out, err)
+			}
+			if strings.Contains(out, "child-secret") != dangerous {
+				t.Errorf("guard result: %q", out)
+			}
+		})
 	}
 }

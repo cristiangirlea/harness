@@ -552,3 +552,14 @@ func TestACLIDoesNotInheritARepositoryFromHrnsEnvironment(t *testing.T) {
 		}
 	}
 }
+
+func TestACLIPassesBatchChildEnvironmentThroughTheGuard(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "env")
+	t.Setenv("HRN_CLI_HELPER_VARS", "CARGO_INCREMENTAL,TMP,TEMP,TMPDIR")
+	res := helperCLI(parseClaudeStream).Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), ChildEnv: []string{"CARGO_INCREMENTAL=0", "TMP=batch-temp", "TEMP=batch-temp", "TMPDIR=batch-temp"}, Options: Options{Mode: ModeAuto}}, func(Event) {})
+	for _, want := range []string{"CARGO_INCREMENTAL=0", "TMP=batch-temp", "TEMP=batch-temp", "TMPDIR=batch-temp"} {
+		if !strings.Contains(";"+res.Final+";", ";"+want+";") {
+			t.Errorf("missing %s in %s", want, res.Final)
+		}
+	}
+}

@@ -35,7 +35,8 @@ type Tool struct {
 }
 
 type Workspace struct {
-	Root string
+	ChildEnv []string
+	Root     string
 	// RunDir is trusted, outside model control.
 	RunDir     string
 	ShapeTools bool

@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -59,7 +61,7 @@ func TestGateDecodesUTF16BeforeKeepingTheOutputTail(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			fakeGate(t, tools.ShellResult{Output: gateUTF16(text, tc.order, tc.bom), ExitCode: 1}, nil)
-			g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+			g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 			if g.Output != tail(text, 4000) {
 				t.Fatalf("output tail starts with %.80q, want decoded UTF-8", g.Output)
 			}
@@ -181,7 +183,7 @@ func TestGateKeepsUTF8AndSuccessfulLauncherMentionsUnchanged(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	output := "The Windows Subsystem for Linux: HCS_E_CONNECTION_TIMEOUT test passed ✓"
 	fakeGate(t, tools.ShellResult{Output: output}, nil)
-	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 	if g.Output != output || g.Outcome() != "exited 0" {
 		t.Errorf("gate = %+v", g)
 	}
@@ -206,7 +208,7 @@ func TestGateOutputDetectionHandlesShortAndIncompleteText(t *testing.T) {
 		{"\xff\xfe\x00\xd8", "\ufffd"}, // unpaired surrogate
 	} {
 		fakeGate(t, tools.ShellResult{Output: tc.input}, nil)
-		g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+		g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 		if g.Output != tc.want {
 			t.Errorf("output for %q = %q, want %q", tc.input, g.Output, tc.want)
 		}
@@ -220,7 +222,7 @@ func TestGateDecodesLongUTF16AroundTheTruncationMarker(t *testing.T) {
 	// A five-digit count makes the ASCII marker an odd number of bytes.
 	captured := fmt.Sprintf("%s\n\n[... %d bytes truncated ...]\n\n%s", head, 12344, gateUTF16(text, binary.LittleEndian, false))
 	fakeGate(t, tools.ShellResult{Output: captured, ExitCode: 1}, nil)
-	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 	if g.Output != tail(text, 4000) {
 		t.Fatalf("output tail starts with %.80q, want decoded UTF-8", g.Output)
 	}
@@ -232,7 +234,7 @@ func TestGateKeepsTheByteOrderAfterTheTruncationMarker(t *testing.T) {
 	text := "✓ ok\n" + strings.Repeat("Ошибка ✓\n", 600) + "FAIL"
 	captured := fmt.Sprintf("%s\n\n[... %d bytes truncated ...]\n\n%s", head, 1234, gateUTF16(text, binary.LittleEndian, false))
 	fakeGate(t, tools.ShellResult{Output: captured, ExitCode: 1}, nil)
-	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 	if g.Output != tail(text, 4000) {
 		t.Fatalf("output tail starts with %.80q, want decoded UTF-8", g.Output)
 	}
@@ -245,7 +247,7 @@ func TestGateKeepsAUTF8TailThatStartsInsideACharacter(t *testing.T) {
 	// The cut leaves the last two bytes of a UTF-8 ✓.
 	captured := fmt.Sprintf("%s\n\n[... %d bytes truncated ...]\n\n\x9c\x93%s", head, 1234, text)
 	fakeGate(t, tools.ShellResult{Output: captured, ExitCode: 1}, nil)
-	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 	if g.Output != tail(text, 4000) {
 		t.Fatalf("output tail starts with %.80q, want the UTF-8 kept", g.Output)
 	}
@@ -295,7 +297,7 @@ func TestGateDecodesEachEncodingAsIntended(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			fakeGate(t, tools.ShellResult{Output: tc.captured, ExitCode: 1}, nil)
-			g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+			g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 			if g.Output != tc.want {
 				t.Fatalf("output = %.120q, want %.120q", g.Output, tc.want)
 			}
@@ -318,7 +320,7 @@ func TestGateSplitsMixedOutputThatMainReadsAsUTF16(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			fakeGate(t, tools.ShellResult{Output: tc.captured, ExitCode: 1}, nil)
-			g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+			g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 			if g.Output != tc.want {
 				t.Fatalf("output = %.120q, want %.120q", g.Output, tc.want)
 			}
@@ -451,7 +453,7 @@ func mainDecodeGateOutput(s string) string {
 func TestGateWaitErrorIsNotCalledAStartFailure(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	fakeGate(t, tools.ShellResult{Output: "partial"}, fmt.Errorf("%w: pipe broke", tools.ErrWait))
-	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute)
+	g := runGate(context.Background(), t.TempDir(), "fake gate", time.Minute, nil)
 	if g.ExitCode != -1 || strings.Contains(g.InfrastructureError, "could not start") || !strings.Contains(g.InfrastructureError, "pipe broke") {
 		t.Fatalf("gate = %+v, want a wait failure", g)
 	}
@@ -541,5 +543,234 @@ func TestBeatingNeverBeatsAfterStopReturns(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if got := started.Load(); got != n {
 		t.Errorf("beats after stop = %d, want %d", got, n)
+	}
+}
+func TestGateUsesLocalTemporaryDirectoryAndCargoDefault(t *testing.T) {
+	for _, exit := range []int{0, 1} {
+		t.Run(fmt.Sprint(exit), func(t *testing.T) {
+			t.Setenv("CARGO_INCREMENTAL", "")
+			os.Unsetenv("CARGO_INCREMENTAL")
+			dir := t.TempDir()
+			tree := filepath.Join(dir, ".hrn", "worktrees", "task")
+			if err := os.MkdirAll(tree, 0755); err != nil {
+				t.Fatal(err)
+			}
+			env, cleanup, err := batchEnv(tree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var temp string
+			old := runGateShell
+			t.Cleanup(func() { runGateShell = old })
+			runGateShell = func(_ context.Context, _ string, _ string, _ time.Duration, env []string) (tools.ShellResult, error) {
+				vars := map[string]string{}
+				for _, kv := range env {
+					k, v, _ := strings.Cut(kv, "=")
+					vars[strings.ToUpper(k)] = v
+				}
+				temp = vars["TMP"]
+				if vars["CARGO_INCREMENTAL"] != "0" || temp == "" || vars["TEMP"] != temp || vars["TMPDIR"] != temp {
+					t.Errorf("unexpected environment: cargo=%q temp=%q", vars["CARGO_INCREMENTAL"], temp)
+				}
+				if _, err := os.Stat(temp); err != nil {
+					t.Errorf("temp during gate: %v", err)
+				}
+				resolved, err := filepath.EvalSymlinks(temp)
+				if err != nil {
+					t.Fatal(err)
+				}
+				root, err := filepath.EvalSymlinks(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rel, err := filepath.Rel(root, resolved); err != nil || strings.HasPrefix(rel, "..") {
+					t.Errorf("temp outside worktree: %s", resolved)
+				}
+				return tools.ShellResult{ExitCode: exit}, nil
+			}
+			runGate(context.Background(), dir, "gate", time.Minute, env)
+			if err := cleanup(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(temp); !os.IsNotExist(err) {
+				t.Errorf("temp after gate: %v", err)
+			}
+		})
+	}
+}
+
+func TestGatePreservesUserCargoIncremental(t *testing.T) {
+	t.Setenv("CARGO_INCREMENTAL", "1")
+	old := runGateShell
+	t.Cleanup(func() { runGateShell = old })
+	runGateShell = func(_ context.Context, _ string, _ string, _ time.Duration, env []string) (tools.ShellResult, error) {
+		value := ""
+		for _, kv := range env {
+			key, v, _ := strings.Cut(kv, "=")
+			if key == "CARGO_INCREMENTAL" || runtime.GOOS == "windows" && strings.EqualFold(key, "CARGO_INCREMENTAL") {
+				value = v
+			}
+		}
+		if value != "1" {
+			t.Errorf("effective cargo value = %q", value)
+		}
+		return tools.ShellResult{}, nil
+	}
+	tree := filepath.Join(t.TempDir(), ".hrn", "worktrees", "task")
+	if err := os.MkdirAll(tree, 0755); err != nil {
+		t.Fatal(err)
+	}
+	env, cleanup, err := batchEnv(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	runGate(context.Background(), tree, "gate", time.Minute, env)
+}
+
+func TestGateCommandReceivesItsTemporaryDirectoryAndCargoDefault(t *testing.T) {
+	t.Setenv("CARGO_INCREMENTAL", "0")
+	command := `test "$CARGO_INCREMENTAL" = 0 && test -d "$TMP" && test "$TMP" = "$TEMP" && test "$TMP" = "$TMPDIR" && printf '%s' "$TMP"`
+	if name, _ := tools.Shell(); name == "powershell" {
+		command = `if ($env:CARGO_INCREMENTAL -ne '0' -or !(Test-Path $env:TMP) -or $env:TMP -ne $env:TEMP -or $env:TMP -ne $env:TMPDIR) { exit 1 }; Write-Output $env:TMP`
+	}
+	tree := filepath.Join(t.TempDir(), ".hrn", "worktrees", "task")
+	if err := os.MkdirAll(tree, 0755); err != nil {
+		t.Fatal(err)
+	}
+	env, cleanup, err := batchEnv(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := runGate(context.Background(), tree, command, time.Minute, env)
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if g.ExitCode != 0 {
+		t.Fatalf("gate: %+v", g)
+	}
+	if _, err := os.Stat(strings.TrimSpace(g.Output)); !os.IsNotExist(err) {
+		t.Errorf("temp after gate: %v", err)
+	}
+}
+
+func TestBatchEnvironmentRespectsCargoConfiguration(t *testing.T) {
+	for _, name := range []string{".cargo/config.toml", ".cargo/config", "Cargo.toml"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("CARGO_INCREMENTAL", "")
+			os.Unsetenv("CARGO_INCREMENTAL")
+			root := t.TempDir()
+			tree := filepath.Join(root, ".hrn", "worktrees", "task")
+			file := filepath.Join(tree, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+				t.Fatal(err)
+			}
+			table := "[build]"
+			if name == "Cargo.toml" {
+				table = "[profile.dev]"
+			}
+			if err := os.WriteFile(file, []byte(table+"\nincremental = true\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			env, cleanup, err := batchEnv(tree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			for _, kv := range env {
+				if strings.HasPrefix(strings.ToUpper(kv), "CARGO_INCREMENTAL=") {
+					t.Errorf("cargo config overridden: %s", kv)
+				}
+			}
+			ignore, err := os.ReadFile(filepath.Join(root, ".hrn", ".gitignore"))
+			if err != nil || string(ignore) != "*\n" {
+				t.Errorf("ignore = %q, %v", ignore, err)
+			}
+		})
+	}
+}
+
+func TestBatchEnvironmentDefaultsCargoUnlessDevOrTestSettingsExist(t *testing.T) {
+	cases := []struct {
+		name, file, contents string
+		configured           bool
+	}{
+		{"release", "Cargo.toml", "[profile.release]\nincremental = true\n", false},
+		{"empty", "Cargo.toml", "[profile.dev]\nopt-level = 1\n", false},
+		{"comment", "Cargo.toml", "[profile.dev]\n# incremental = true\n", false},
+		{"dev", "Cargo.toml", "[profile.dev]\nincremental = true\n", true},
+		{"test", "Cargo.toml", "[profile.test] # comment\nincremental = false\n", true},
+		{"next-table", "Cargo.toml", "[profile.dev]\n[profile.release]\nincremental = true\n", false},
+		{"config-build", ".cargo/config.toml", "[build]\nincremental = true\n", true},
+		{"config-dev", ".cargo/config", "[profile.dev]\nincremental = true\n", true},
+		{"config-test", ".cargo/config", "[profile.test]\nincremental = true\n", true},
+		{"manifest-build", "Cargo.toml", "[build]\nincremental = true\n", false},
+		{"config-release", ".cargo/config", "[profile.release]\nincremental = true\n", false},
+		{"spaced-header", "Cargo.toml", "[ profile . dev ]\nincremental = true\n", true},
+		{"spaced-build", ".cargo/config.toml", "[\tbuild ]\nincremental = true\n", true},
+		{"array-table-resets", "Cargo.toml", "[profile.dev]\n[[bin]]\nincremental = true\n", false},
+		{"package-override", "Cargo.toml", "[profile.dev.package.\"*\"]\nincremental = true\n", true},
+		{"dev-lookalike", "Cargo.toml", "[profile.devel]\nincremental = true\n", false},
+		{"test-override", "Cargo.toml", "[profile.test.build-override]\nincremental = true\n", true},
+		{"dev-dash-lookalike", "Cargo.toml", "[profile.dev-x]\nincremental = true\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CARGO_INCREMENTAL", "")
+			os.Unsetenv("CARGO_INCREMENTAL")
+			tree := filepath.Join(t.TempDir(), ".hrn", "worktrees", "task")
+			file := filepath.Join(tree, filepath.FromSlash(tc.file))
+			if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte(tc.contents), 0644); err != nil {
+				t.Fatal(err)
+			}
+			env, cleanup, err := batchEnv(tree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			value, found := "", false
+			for _, kv := range env {
+				if k, v, _ := strings.Cut(kv, "="); k == "CARGO_INCREMENTAL" {
+					value, found = v, true
+				}
+			}
+			if found == tc.configured || found && value != "0" {
+				t.Errorf("configured=%v: env=%v", tc.configured, env)
+			}
+		})
+	}
+}
+
+func TestBatchEnvironmentIgnoresUnreadableCargoPaths(t *testing.T) {
+	for _, mode := range []string{"not-directory", "directory"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("CARGO_INCREMENTAL", "")
+			os.Unsetenv("CARGO_INCREMENTAL")
+			tree := filepath.Join(t.TempDir(), ".hrn", "worktrees", "task")
+			if err := os.MkdirAll(tree, 0755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(tree, ".cargo")
+			if mode == "not-directory" {
+				if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.MkdirAll(filepath.Join(path, "config"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			env, cleanup, err := batchEnv(tree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			if !slices.Contains(env, "CARGO_INCREMENTAL=0") {
+				t.Errorf("env=%v", env)
+			}
+		})
 	}
 }

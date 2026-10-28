@@ -79,14 +79,14 @@ func runCommand() Tool {
 				timeout = time.Duration(min(args.TimeoutSec, 600)) * time.Second
 			}
 			// Keys must not reach model output or enable publishing.
-			var env []string
+			env := append(os.Environ(), ws.ChildEnv...)
 			if !ws.AllowDangerous {
 				guardDir, err := os.MkdirTemp("", "hrn-guard-*")
 				if err != nil {
 					return "", err
 				}
 				defer os.RemoveAll(guardDir)
-				env, _ = GuardEnv(os.Environ(), guardDir)
+				env, _ = GuardEnv(env, guardDir)
 			}
 			res, err := runShell(ctx, ws.Root, args.Command, timeout, env, ws.ShapeTools)
 			if err != nil {
