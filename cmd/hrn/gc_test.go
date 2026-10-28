@@ -45,6 +45,13 @@ func TestGCRefusesANegativeGrace(t *testing.T) {
 	}
 }
 
+func TestGCRefusesAnInvalidSlotCap(t *testing.T) {
+	code, err := cmdGC([]string{"--slot-cap", "invalid"})
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "--slot-cap") {
+		t.Errorf("got code %d, error %v", code, err)
+	}
+}
+
 func TestGCListsCachesWithTheirSizeAndLastBuild(t *testing.T) {
 	built := time.Date(2026, 10, 9, 21, 14, 0, 0, time.Local)
 	cs := []gc.Cache{
@@ -64,6 +71,55 @@ func TestGCListsCachesWithTheirSizeAndLastBuild(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[1], "keep") || !strings.Contains(lines[1], "2.0 GB") {
 		t.Errorf("a kept cache shows its size too: %q", lines[1])
+	}
+}
+
+func TestGCListsTrimsWithFreedSizeAndCountsThem(t *testing.T) {
+	cs := []gc.Cache{{Path: "/slot/target", Size: 100, TrimSize: 20, Verdict: gc.Trim}}
+	var out bytes.Buffer
+	printCaches(&out, cs)
+	if !strings.Contains(out.String(), "trim") || !strings.Contains(out.String(), "20 bytes") {
+		t.Fatalf("listing %q", out.String())
+	}
+	if got := gcSummary(nil, cs, nil); !strings.Contains(got, "trim 1") || !strings.Contains(got, "20 bytes") {
+		t.Fatalf("summary %q", got)
+	}
+}
+
+func TestGCApplyReportsTrimmedBytes(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	cache := filepath.Join(t.TempDir(), ".hrn", "slots", "1", "target")
+	dir := filepath.Join(cache, "debug", "incremental")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"CACHEDIR.TAG": "Signature: 8a477f597d28d172789f06886806bc55\n", "debug/.cargo-lock": "", "debug/incremental/item": "1234567890"} {
+		if err := os.WriteFile(filepath.Join(cache, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	old := os.Stdout
+	os.Stdout = out
+	defer func() { os.Stdout = old }()
+	code, runErr := cmdGC([]string{"--apply", "--idle", "0", cache})
+	os.Stdout = old
+	if code != 0 || runErr != nil {
+		t.Fatalf("code %d: %v", code, runErr)
+	}
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "trimmed 1 caches, freeing 10 bytes") {
+		t.Fatalf("output %s", data)
 	}
 }
 
@@ -194,7 +250,7 @@ func TestGCFreeBelowApplyPrintsDriveReportAfterRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	removed := strings.Index(text, "removed 0 worktrees and 1 caches, freeing")
+	removed := strings.Index(text, "removed 0 worktrees and 1 caches, trimmed 0 caches, freeing")
 	reported := strings.Index(text, "still has")
 	if removed < 0 || reported <= removed || !strings.Contains(text[reported:], "below") {
 		t.Errorf("report should follow the removal summary:\n%s", text)

@@ -30,6 +30,7 @@ type Verdict string
 const (
 	Remove Verdict = "remove"
 	Keep   Verdict = "keep"
+	Trim   Verdict = "trim"
 )
 
 // PR is a pull request as `gh pr list --json` prints it.
@@ -69,6 +70,7 @@ type Options struct {
 	Idle      time.Duration                    // minimum cache inactivity
 	MinIdle   time.Duration                    // minimum inactivity even below FreeBelow
 	FreeBelow int64                            // target free bytes; 0 disables extra removals
+	SlotCap   int64                            // 0 disables the size cap
 	Drive     func(path string) (Drive, error) // nil queries the disk
 }
 
@@ -1224,6 +1226,8 @@ func logPatchIDs(ctx context.Context, repo, base, def string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	log := gitCommand(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
+	// A descendant can retain stderr after git exits on Windows.
+	log.WaitDelay = time.Second
 	var logErr bytes.Buffer
 	log.Stderr = &logErr
 	patches, err := log.StdoutPipe()
@@ -1243,7 +1247,7 @@ func logPatchIDs(ctx context.Context, repo, base, def string) (string, error) {
 		_ = log.Wait()
 		return "", fmt.Errorf("git patch-id: %v: %s", err, strings.TrimSpace(idsErr.String()))
 	}
-	if err := log.Wait(); err != nil {
+	if err := log.Wait(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return "", fmt.Errorf("git log: %v: %s", err, strings.TrimSpace(logErr.String()))
 	}
 	return out.String(), nil

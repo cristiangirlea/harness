@@ -94,11 +94,11 @@ Usage:
   hrn route from-eval <id> [--margin 0.05]
                                  print and save rows from measured eval results
   hrn report [flags]              tables over the finished runs and the batches: pass rate, duration, turns, cost
-  hrn gc [--apply] [--grace D] [--idle D] [--min-idle D] [--free-below SIZE] [PATH...]
+  hrn gc [--apply] [--grace D] [--idle D] [--min-idle D] [--free-below SIZE] [--slot-cap SIZE] [PATH...]
                                  list worktrees whose work is merged (pull request merged at their commit, or a
                                  finished batch's commit on origin's default branch) and build caches (CACHEDIR.TAG)
                                  idle past --idle or, on a drive below --free-below, past --min-idle; --apply
-                                 removes them, and the worktrees' branches. PATH is a repository or a folder of
+                                 removes or trims caches and removes the worktrees and their branches. PATH is a repository or a folder of
                                  them (default: the current one)
   hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]
                                  lease a reusable worktree of the repository (<main checkout>/.hrn/slots/<n>, up to

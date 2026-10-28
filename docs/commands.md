@@ -43,12 +43,14 @@
 | `hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]` | Replace one routing row by hand; accepts any nonempty subset of the three choices. Warns when the backend is disabled (runs ignore the row until it is enabled). |
 | `hrn route from-eval <id> [--margin 0.05]` | Print and save the cheapest qualifying rows from saved eval results. |
 | `hrn report [--since 7d] [--by backend\|model\|dir\|purpose\|routed\|day] [--json]` | Tables over the finished runs, their tokens and context per turn, and the batches; `routed` groups by the source routing row (see [Reports](evaluations.md#reports)). |
-| `hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [PATH…]` | Remove worktrees whose work is merged, with their build output, and build caches (`CACHEDIR.TAG`) idle past `--idle`, or past `--min-idle` on a drive below `--free-below` (see [Clearing merged worktrees](batches.md#clearing-merged-worktrees) and [Build caches](batches.md#build-caches)). |
+| `hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [--slot-cap SIZE] [PATH…]` | Remove merged worktrees and idle build caches; trim slot caches instead (see [Clearing merged worktrees](batches.md#clearing-merged-worktrees) and [Build caches](batches.md#build-caches)). |
 | `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch (see [Reusable workspaces](workspaces.md#take)). |
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
 | `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it (see [List](workspaces.md#list)). |
 | `hrn ws issues [--json] [--free owner/name#N]` | The issue leases: state (`held`, `held by pull request`, `stale`, `released`), holder, run, backend, branch, pull request and since; `--free` removes one no running process holds (see [Issue leases](workspaces.md#issue-leases)). |
 | `hrn scripts hint` | A Claude Code PreToolUse hook that reads the payload on stdin and names the kept script whose `matches:` header covers the inline script a command is about to run; advice only, silent otherwise (see [The hint hook](scripts.md#the-hint-hook)). |
+
+For slot cache trimming, cap thresholds and lock safety, see [Build caches](batches.md#build-caches).
 
 Run flags: `-b/--backend` (api, claude, codex, gemini, opencode, agy), `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api, codex, claude and agy: low, medium, high, xhigh, max; unset uses the
