@@ -37,10 +37,8 @@ func TestLiveProcessMetadataKeepsTheLockWhenGuardIsFree(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { stdin.Close(); cmd.Wait() }()
-	start, ok := ws.StartID(cmd.Process.Pid)
-	if !ok {
-		t.Fatal("cannot read the running helper's start identity")
-	}
+	// Without a start identity (macOS) liveness falls back to the PID alone.
+	start, _ := ws.StartID(cmd.Process.Pid)
 	b, err := json.Marshal(lockInfo{PID: cmd.Process.Pid, Start: start, Time: time.Now()})
 	if err != nil {
 		t.Fatal(err)
@@ -121,23 +119,33 @@ func TestLockReleaseWhileReaderIsOpen(t *testing.T) {
 	}
 }
 
-func TestScheduleFileCanBeReadAndReplaced(t *testing.T) {
+func TestStatusAcceptsAValidSchedule(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
-	path := filepath.Join(home, "gc-last")
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "gc.json"), []byte(`{"enabled":true,"roots":[`+strconv.Quote(root)+`]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "gc-last"), []byte(time.Now().Format(time.RFC3339Nano)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Status(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnOpenScheduleReaderDoesNotBlockRemoval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gc-last")
 	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	data, err := readSharedFile(path)
-	if err != nil || string(data) != "old" {
-		t.Fatalf("read %q: %v", data, err)
-	}
-	if err := writeAtomic(path, []byte("new")); err != nil {
+	f, err := openLockForRead(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	data, err = readSharedFile(path)
-	if err != nil || string(data) != "new" {
-		t.Fatalf("read %q: %v", data, err)
+	defer f.Close()
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove with a reader open: %v", err)
 	}
 }
 
