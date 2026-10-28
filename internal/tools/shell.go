@@ -88,6 +88,10 @@ func runCommand() Tool {
 				defer os.RemoveAll(guardDir)
 				env, _ = GuardEnv(os.Environ(), guardDir)
 			}
+			if env == nil {
+				env = os.Environ()
+			}
+			env = append(env, ws.ChildEnv...)
 			res, err := runShell(ctx, ws.Root, args.Command, timeout, env, ws.ShapeTools)
 			if err != nil {
 				return "", err

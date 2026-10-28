@@ -944,7 +944,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 		plan.number = len(tr.Attempts) + 1
 		plan.reason = attemptReason(append(slices.Clone(tr.Attempts), Attempt{Backend: name, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}), len(tr.Attempts))
-		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, fw, notify, report)
+		out, err := runAttempt(ctx, b, t.ID, root, at, plan, expect, guard, gates, fw, notify, report)
 		tr.Attempts = append(tr.Attempts, out.att)
 		if out.keepWorktree && slot != nil {
 			kept.add(slot.Lease.Holder)
@@ -1266,9 +1266,15 @@ type attemptOutcome struct {
 }
 
 // runAttempt's returned error aborts the whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id, root string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
+	env, cleanup, err := batchEnv(root)
+	if err != nil {
+		return attemptOutcome{att: att}, err
+	}
+	defer cleanup()
+	task.ChildEnv = env
 	if plan.switchedFrom != "" {
 		task.Model = "" // the model named for the other backend means nothing here
 	}
@@ -1350,7 +1356,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			gateN := len(att.Gates) + 1
 			fw.Emit(flow.Event{Step: GateStep(id, plan.number, gateN), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number, Status: flow.StatusStarted, Name: g})
 			stop := beating(gateBeat, func() { report(att) })
-			gr := runGate(ctx, task.Dir, g, plan.gateTimeout)
+			gr := runGate(ctx, task.Dir, g, plan.gateTimeout, env)
 			stop()
 			att.Gates = append(att.Gates, gr)
 			fw.Emit(gateEvent(id, plan.number, gateN, as, gr))
@@ -1445,10 +1451,40 @@ func checkExpect(re *regexp.Regexp, final string) GateResult {
 
 var runGateShell = tools.RunShell
 
-func runGate(ctx context.Context, dir, command string, timeout time.Duration) GateResult {
+func batchEnv(dir string) ([]string, func(), error) {
+	parent := filepath.Join(dir, ".hrn")
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return nil, nil, err
+	}
+	temp, err := os.MkdirTemp(parent, "tmp-")
+	if err != nil {
+		return nil, nil, err
+	}
+	cargo, ok := os.LookupEnv("CARGO_INCREMENTAL")
+	if !ok {
+		cargo = "0"
+	}
+	env := []string{"CARGO_INCREMENTAL=" + cargo}
+	env = append(env, "TMP="+temp, "TEMP="+temp, "TMPDIR="+temp)
+	return env, func() { os.RemoveAll(temp) }, nil
+}
+
+func runGate(ctx context.Context, dir, command string, timeout time.Duration, envs ...[]string) GateResult {
 	started := time.Now()
+	var env []string
+	if len(envs) > 0 {
+		env = envs[0]
+	} else {
+		var cleanup func()
+		var err error
+		env, cleanup, err = batchEnv(dir)
+		if err != nil {
+			return GateResult{Command: command, ExitCode: -1, InfrastructureError: err.Error()}
+		}
+		defer cleanup()
+	}
 	// Gates are operator commands: preserve their environment except git repository overrides.
-	res, err := runGateShell(ctx, dir, command, timeout, nil)
+	res, err := runGateShell(ctx, dir, command, timeout, append(os.Environ(), env...))
 	output, decodedUTF16 := decodeGateOutput(res.Output)
 	res.Output = output
 	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}

@@ -543,3 +543,79 @@ func TestBeatingNeverBeatsAfterStopReturns(t *testing.T) {
 		t.Errorf("beats after stop = %d, want %d", got, n)
 	}
 }
+func TestGateUsesLocalTemporaryDirectoryAndCargoDefault(t *testing.T) {
+	for _, exit := range []int{0, 1} {
+		t.Run(fmt.Sprint(exit), func(t *testing.T) {
+			t.Setenv("CARGO_INCREMENTAL", "")
+			os.Unsetenv("CARGO_INCREMENTAL")
+			dir := t.TempDir()
+			var temp string
+			old := runGateShell
+			t.Cleanup(func() { runGateShell = old })
+			runGateShell = func(_ context.Context, _ string, _ string, _ time.Duration, env []string) (tools.ShellResult, error) {
+				vars := map[string]string{}
+				for _, kv := range env {
+					k, v, _ := strings.Cut(kv, "=")
+					vars[strings.ToUpper(k)] = v
+				}
+				temp = vars["TMP"]
+				if vars["CARGO_INCREMENTAL"] != "0" || temp == "" || vars["TEMP"] != temp || vars["TMPDIR"] != temp {
+					t.Errorf("unexpected environment: cargo=%q temp=%q", vars["CARGO_INCREMENTAL"], temp)
+				}
+				if _, err := os.Stat(temp); err != nil {
+					t.Errorf("temp during gate: %v", err)
+				}
+				resolved, err := filepath.EvalSymlinks(temp)
+				if err != nil {
+					t.Fatal(err)
+				}
+				root, err := filepath.EvalSymlinks(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rel, err := filepath.Rel(root, resolved); err != nil || strings.HasPrefix(rel, "..") {
+					t.Errorf("temp outside worktree: %s", resolved)
+				}
+				return tools.ShellResult{ExitCode: exit}, nil
+			}
+			runGate(context.Background(), dir, "gate", time.Minute)
+			if _, err := os.Stat(temp); !os.IsNotExist(err) {
+				t.Errorf("temp after gate: %v", err)
+			}
+		})
+	}
+}
+
+func TestGatePreservesUserCargoIncremental(t *testing.T) {
+	t.Setenv("CARGO_INCREMENTAL", "1")
+	old := runGateShell
+	t.Cleanup(func() { runGateShell = old })
+	runGateShell = func(_ context.Context, _ string, _ string, _ time.Duration, env []string) (tools.ShellResult, error) {
+		found := false
+		for _, kv := range env {
+			if strings.EqualFold(kv, "CARGO_INCREMENTAL=1") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("user cargo setting missing")
+		}
+		return tools.ShellResult{}, nil
+	}
+	runGate(context.Background(), t.TempDir(), "gate", time.Minute)
+}
+
+func TestGateCommandReceivesItsTemporaryDirectoryAndCargoDefault(t *testing.T) {
+	t.Setenv("CARGO_INCREMENTAL", "0")
+	command := `test "$CARGO_INCREMENTAL" = 0 && test -d "$TMP" && test "$TMP" = "$TEMP" && test "$TMP" = "$TMPDIR" && printf '%s' "$TMP"`
+	if name, _ := tools.Shell(); name == "powershell" {
+		command = `if ($env:CARGO_INCREMENTAL -ne '0' -or !(Test-Path $env:TMP) -or $env:TMP -ne $env:TEMP -or $env:TMP -ne $env:TMPDIR) { exit 1 }; Write-Output $env:TMP`
+	}
+	g := runGate(context.Background(), t.TempDir(), command, time.Minute)
+	if g.ExitCode != 0 {
+		t.Fatalf("gate: %+v", g)
+	}
+	if _, err := os.Stat(strings.TrimSpace(g.Output)); !os.IsNotExist(err) {
+		t.Errorf("temp after gate: %v", err)
+	}
+}

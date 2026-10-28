@@ -223,6 +223,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		// The key stays out even when an MCP server's env names it.
 		cmd.Env = withoutEnv(append(cmd.Env, extra...), "ANTHROPIC_API_KEY")
 	}
+	cmd.Env = append(cmd.Env, task.ChildEnv...)
 	guarded := !task.AllowDangerous
 	if guarded {
 		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
