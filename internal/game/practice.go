@@ -846,3 +846,15 @@ func parseDecisions(repo, text string) []Candidate {
 	}
 	return out
 }
+
+// ExistingToday reads today's saved exercise without selecting or changing one.
+func (p *Practice) ExistingToday() (*Exercise, error) {
+	r, err := loadRep(p.date())
+	if err != nil || r.Daily == nil {
+		return nil, err
+	}
+	e := visible(*r.Daily)
+	e.Reveal = ""
+	e.Answer = ""
+	return &e, nil
+}

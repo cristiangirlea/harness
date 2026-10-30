@@ -39,9 +39,18 @@
 </section>
 {{else if .Local}}<p class="muted small">Only this computer can open this page. Run <code>hrn watch --lan</code> to open it from a phone on the same network.</p>{{end}}
 {{template "backends" .Backends}}
+{{template "game" .Game}}
 <div id="live" data-stream="/stream/index" data-replace>{{template "lists" .Lists}}</div>
 {{template "foot" .}}{{end}}
 
+{{define "game"}}{{with .}}<section id="game" class="card" aria-labelledby="game-h">
+<h2 id="game-h">Experience</h2>
+<p>Level {{.Level}} · Practice streak: {{.Streak}} days</p>
+<div class="game-days" aria-label="Last 35 UTC days of practice">{{range .Days}}<span class="game-day{{if .}} done{{end}}" aria-label="{{if .}}Done{{else}}Not done{{end}}"></span>{{end}}</div>
+<p>Badges: {{if .Badges}}{{range $i, $badge := .Badges}}{{if $i}}, {{end}}{{$badge}}{{end}}{{else}}none yet{{end}}</p>
+{{if .Local}}<p>This week: delivery {{.Delivery}} XP · practice {{.Practice}} XP</p>
+<h3>Today's exercise</h3>{{with .Exercise}}<p>{{.Kind}} · {{.Source}}{{if not .AnsweredAt.IsZero}} · Done{{end}}</p>{{if .AnsweredAt.IsZero}}<pre>{{.Material}}</pre>{{end}}{{else}}<p>Run <code>hrn bot practice</code> to get today's exercise.</p>{{end}}{{end}}
+</section>{{end}}{{end}}
 {{define "backends"}}<section id="backends" class="card" aria-labelledby="backends-h"{{if .Editable}} data-key="{{.Key}}"{{end}}>
 <h2 id="backends-h">Backends</h2>
 {{with .Problem}}<p class="notice bad">{{.}}</p>{{end}}
