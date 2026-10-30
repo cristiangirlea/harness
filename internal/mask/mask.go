@@ -10,7 +10,7 @@ import (
 )
 
 const hidden = "••••"
-const names = `(?P<name>(?i:(?:(?:[A-Z0-9]+[_-])*(?:[A-Z0-9]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)|AUTH|CREDENTIALS|COOKIE|SESSION)(?:[_-][A-Z0-9]+)*|(?:[A-Z0-9]+[_-])+PWD)))`
+const names = `(?P<name>(?i:(?:(?:[A-Z0-9]+[_-])*(?:(?:API)?KEY|[A-Z0-9]*(?:TOKEN|SECRET|PASSWORD|PASSWD)|AUTH|CREDENTIALS|COOKIE|SESSION)(?:[_-][A-Z0-9]+)*|(?:[A-Z0-9]+[_-])+(?:PWD|PASS))))`
 
 // Specific forms first prevent partial masking; capture only secrets.
 var rules = []*regexp.Regexp{
@@ -48,9 +48,6 @@ func replace(s string, rule *regexp.Regexp) string {
 	// Reverse replacement preserves earlier offsets.
 	for i := len(matches) - 1; i >= 0; i-- {
 		m := matches[i]
-		if name := rule.SubexpIndex("name"); name >= 0 && strings.EqualFold(s[m[2*name]:m[2*name+1]], "MONKEY") {
-			continue
-		}
 		start, end := m[group], m[group+1]
 		if start < 0 {
 			continue
@@ -102,5 +99,5 @@ func secretName(name string) bool {
 			return true
 		}
 	}
-	return false
+	return strings.HasSuffix(n, "_PWD")
 }

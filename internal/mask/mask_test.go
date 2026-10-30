@@ -41,8 +41,9 @@ func TestTextMasksSecretValuesAndKeepsOrdinaryText(t *testing.T) {
 		{"unquoted escapes", `API_KEY=two\ words cmd --password a\b`, `API_KEY=•••• cmd --password ••••`},
 
 		{"ordinary flags", "--max-tokens=400 --auth-type=basic --cookie-jar=f", "--max-tokens=400 --auth-type=basic --cookie-jar=f"},
-		{"ordinary names", "authors=x monkey=1 keyboard=us", "authors=x monkey=1 keyboard=us"},
-		{"ordinary json names", `{"authors":"x","monkey":"1","keyboard":"us"}`, `{"authors":"x","monkey":"1","keyboard":"us"}`},
+		{"ordinary names", "authors=x monkey=1 keyboard=us TURKEY=1 hotkey=ctrl+k BYPASS=1 COMPASS=1", "authors=x monkey=1 keyboard=us TURKEY=1 hotkey=ctrl+k BYPASS=1 COMPASS=1"},
+		{"ordinary json names", `{"authors":"x","monkey":"1","keyboard":"us","sortKey":"id"}`, `{"authors":"x","monkey":"1","keyboard":"us","sortKey":"id"}`},
+		{"separated pass", "DB_PASS=fake SMTP_PASS=fake X-KEY=fake", "DB_PASS=" + hidden + " SMTP_PASS=" + hidden + " X-KEY=" + hidden},
 		{"name segments", "API_KEY=abc my-token=value SESSION_ID=abc", "API_KEY=•••• my-token=•••• SESSION_ID=••••"},
 		{"auth flag", "--auth basic", "--auth ••••"},
 
@@ -67,5 +68,12 @@ func TestTextMasksLongTextWithoutCuttingIt(t *testing.T) {
 		if got := Text(text); got != text {
 			t.Error("ordinary long text was cut")
 		}
+	}
+}
+
+func TestEnvMasksSeparatedPWD(t *testing.T) {
+	r := Env([]string{"MYSQL_PWD=fake-password-123"})
+	if r == nil || r.Replace("fake-password-123") != "[redacted]" {
+		t.Fatal("MYSQL_PWD value was not masked")
 	}
 }
