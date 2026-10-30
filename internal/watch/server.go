@@ -337,7 +337,11 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 						token = c.Value
 					}
 				}
-				aw.email, aw.reason = s.access.verify(token)
+				var expiry time.Time
+				aw.email, expiry, aw.reason = s.access.verifyToken(token)
+				if aw.reason == "" {
+					aw.deadline = time.Now().Add(expiry.Sub(s.access.now()))
+				}
 			}
 			if aw.reason != "" {
 				http.Error(w, "Cloudflare Access login required", http.StatusForbidden)
@@ -783,11 +787,29 @@ const keepAlive = 15 * time.Second
 func (s *server) loop(r *http.Request, st *stream, every time.Duration, step func() (bool, error), wake ...<-chan struct{}) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
+	var expired <-chan time.Time
+	if aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter); aw != nil && !aw.deadline.IsZero() {
+		timer := time.NewTimer(time.Until(aw.deadline))
+		defer timer.Stop()
+		expired = timer.C
+	}
+	endExpired := func() {
+		if aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter); aw != nil {
+			aw.reason = "session expired"
+		}
+		_ = st.send("end", "", "session expired")
+	}
 	var changed <-chan struct{}
 	if len(wake) > 0 {
 		changed = wake[0]
 	}
 	for {
+		select {
+		case <-expired:
+			endExpired()
+			return
+		default:
+		}
 		if done, err := step(); done || err != nil {
 			return
 		}
@@ -798,6 +820,9 @@ func (s *server) loop(r *http.Request, st *stream, every time.Duration, step fun
 		case <-r.Context().Done():
 			return
 		case <-s.ctx.Done():
+			return
+		case <-expired:
+			endExpired()
 			return
 		case <-tick.C:
 		case <-changed:
