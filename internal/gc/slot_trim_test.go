@@ -196,12 +196,16 @@ func TestGCSlotCeilingSafetyAndTrimProjection(t *testing.T) {
 		idle                     time.Duration
 		cap                      int64
 		locked, largeIncremental bool
+		lease                    string
 		want                     Verdict
 	}{
-		{"locked", 3 * time.Hour, 50, true, false, Keep},
-		{"recent", time.Hour, 50, false, false, Keep},
-		{"under cap", 3 * time.Hour, 10000, false, false, Keep},
-		{"trim still over cap", 3 * time.Hour, 100, false, true, Remove},
+		{"locked", 3 * time.Hour, 50, true, false, "", Keep},
+		{"recent", time.Hour, 50, false, false, "", Keep},
+		{"under cap", 3 * time.Hour, 10000, false, false, "", Keep},
+		{"trim still over cap", 3 * time.Hour, 100, false, true, "", Remove},
+		{"lease held", 3 * time.Hour, 50, false, false, `{"holder":"person"}`, Keep},
+		{"lease unreadable", 3 * time.Hour, 50, false, false, "invalid", Keep},
+		{"lease held falls through to trim", 3 * time.Hour, 100, false, true, `{"holder":"person"}`, Trim},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cache := slotCache(t, tc.idle)
@@ -218,6 +222,11 @@ func TestGCSlotCeilingSafetyAndTrimProjection(t *testing.T) {
 				release := holdLock(t, filepath.Join(cache, "debug", ".cargo-lock"))
 				defer release()
 			}
+			if tc.lease != "" {
+				if err := os.WriteFile(filepath.Join(filepath.Dir(filepath.Dir(cache)), "1.lease"), []byte(tc.lease), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			opt := cacheOpt
 			opt.SlotCap = tc.cap
 			cs := caches(t, []string{cache}, nil, opt)
@@ -225,10 +234,27 @@ func TestGCSlotCeilingSafetyAndTrimProjection(t *testing.T) {
 				t.Fatalf("got %+v", c)
 			}
 			done, errs := ApplyCaches(context.Background(), cs)
-			if len(errs) != 0 || (len(done) == 1) != (tc.want == Remove) || exists(cache) != (tc.want == Keep) {
+			if len(errs) != 0 || (len(done) == 1) != (tc.want != Keep) || exists(cache) != (tc.want != Remove) {
 				t.Fatalf("done %v, errors %v, cache exists %v", done, errs, exists(cache))
 			}
 		})
+	}
+}
+
+func TestGCSlotLeaseRecheckedBeforeRemoval(t *testing.T) {
+	cache := slotCache(t, 3*time.Hour)
+	opt := cacheOpt
+	opt.SlotCap = 50
+	cs := caches(t, []string{cache}, nil, opt)
+	if c := findCache(t, cs, cache); c.Verdict != Remove {
+		t.Fatalf("got %+v", c)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(filepath.Dir(cache)), "1.lease"), []byte(`{"holder":"person"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done, errs := ApplyCaches(context.Background(), cs)
+	if len(done) != 0 || len(errs) != 1 || !exists(filepath.Join(cache, "debug", "deps", "libx.rlib")) {
+		t.Fatalf("done %v, errors %v", done, errs)
 	}
 }
 
