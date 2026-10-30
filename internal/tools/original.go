@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cristiangirlea/harness/internal/runpaths"
 	"github.com/cristiangirlea/harness/internal/shape"
 )
 
@@ -46,6 +47,9 @@ func (w *Workspace) toolOutput(text string) string {
 	}
 	handle, err := w.storeOriginal(text)
 	if err != nil {
+		if w.OriginalInfo != nil && errors.Is(err, errOriginalsFull) {
+			w.OriginalInfo("original not saved: " + err.Error())
+		}
 		return Truncate(text)
 	}
 	summary, ok := shape.Summarize(shape.Classify(text), text)
@@ -92,12 +96,16 @@ func (w *Workspace) storeOriginalWithWriter(text string, write func(io.Writer, s
 	}
 	// An unmeasured store would fail open, so it refuses, which falls back to the cut.
 	if err := w.measureOriginals(); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: machine cap cannot be measured: %v", errOriginalsFull, err)
 	}
 	size := int64(len(text))
-	if w.originalsRun+size > originalsCap("HRN_ORIGINALS_RUN_MAX", defaultOriginalsRunMax) ||
-		w.originalsAll+size > originalsCap("HRN_ORIGINALS_MAX", defaultOriginalsMax) {
-		return "", errOriginalsFull
+	runCap := originalsCap("HRN_ORIGINALS_RUN_MAX", defaultOriginalsRunMax)
+	allCap := originalsCap("HRN_ORIGINALS_MAX", defaultOriginalsMax)
+	if size > runCap || w.originalsRun > runCap-size {
+		return "", fmt.Errorf("%w: run cap", errOriginalsFull)
+	}
+	if size > allCap || w.originalsAll > allCap-size {
+		return "", fmt.Errorf("%w: machine cap", errOriginalsFull)
 	}
 	if err := writeOriginal(root, name, text, write); err != nil {
 		return "", err
@@ -147,26 +155,36 @@ func writeOriginal(root *os.Root, name, text string, write func(io.Writer, strin
 	return root.Rename(temp, name)
 }
 
-// measureOriginals sizes this run's originals and every run's beside it (the
-// record directory's parent is HRN_HOME/runs) once; stores keep both current.
-// Concurrent runs each count from their own measurement, so they may overshoot.
+// A failed measurement refuses saves because the total would be unreliable.
 func (w *Workspace) measureOriginals() error {
 	if w.originalsSeen {
 		return nil
 	}
-	run, err := originalsSize(filepath.Join(w.RunDir, "originals"))
+	run, err := originalsSize(filepath.Join(w.RunDir, "originals"), nil)
 	if err != nil {
 		return err
 	}
-	runs := filepath.Dir(w.RunDir)
+	runs := runpaths.Root()
+	info, err := os.Stat(runs)
+	if errors.Is(err, fs.ErrNotExist) {
+		w.originalsSeen, w.originalsRun = true, run
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("runs is not a directory: %s", runs)
+	}
 	entries, err := os.ReadDir(runs)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err != nil {
 		return err
 	}
 	var all int64
+	seen := make(map[int64][]os.FileInfo)
 	for _, e := range entries {
 		if e.IsDir() {
-			n, err := originalsSize(filepath.Join(runs, e.Name(), "originals"))
+			n, err := originalsSize(filepath.Join(runs, e.Name(), "originals"), seen)
 			if err != nil {
 				return err
 			}
@@ -177,10 +195,29 @@ func (w *Workspace) measureOriginals() error {
 	return nil
 }
 
-// originalsSize totals dir's regular files; a missing dir or a file pruned meanwhile counts as none.
-func originalsSize(dir string) (int64, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+func originalsSize(dir string, seen map[int64][]os.FileInfo) (int64, error) {
+	return originalsSizeWithReadDir(dir, seen, os.ReadDir)
+}
+
+func originalsSizeWithReadDir(dir string, seen map[int64][]os.FileInfo, readDir func(string) ([]os.DirEntry, error)) (int64, error) {
+	info, err := os.Lstat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return 0, nil
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("originals is not a directory: %s", dir)
+	}
+	entries, err := readDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
 		return 0, err
 	}
 	var total int64
@@ -195,7 +232,24 @@ func originalsSize(dir string) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		total += info.Size()
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		duplicate := false
+		if seen != nil {
+			for _, old := range seen[info.Size()] {
+				if os.SameFile(old, info) {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				seen[info.Size()] = append(seen[info.Size()], info)
+			}
+		}
+		if !duplicate {
+			total += info.Size()
+		}
 	}
 	return total, nil
 }
@@ -210,6 +264,10 @@ func originalsCap(name string, def int64) int64 {
 // CopyOriginals copies from's hash-named originals into to past the caps, since the
 // continued conversation already cites them; it counts the files it skips.
 func CopyOriginals(from, to string) (copied, skipped int, err error) {
+	return copyOriginals(from, to, os.Link)
+}
+
+func copyOriginals(from, to string, link func(string, string) error) (copied, skipped int, err error) {
 	src, err := (&Workspace{RunDir: from}).originals(false)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, 0, nil
@@ -238,8 +296,9 @@ func CopyOriginals(from, to string) (copied, skipped int, err error) {
 			continue
 		}
 		text, ok := "", e.Type().IsRegular()
+		var checked os.FileInfo
 		if ok {
-			text, ok = readOwnOriginal(src, e.Name(), handle, limit)
+			text, checked, ok = readOwnOriginal(src, e.Name(), handle, limit)
 		}
 		if !ok {
 			skipped++
@@ -253,8 +312,20 @@ func CopyOriginals(from, to string) (copied, skipped int, err error) {
 		if _, err := dst.Lstat(e.Name()); err == nil {
 			continue // never overwrite what the new run already holds
 		}
-		if err := writeOriginal(dst, e.Name(), text, io.WriteString); err != nil {
-			return copied, skipped, err
+		linkErr := link(filepath.Join(from, "originals", e.Name()), filepath.Join(to, "originals", e.Name()))
+		if linkErr == nil {
+			info, err := dst.Lstat(e.Name())
+			if err != nil || !info.Mode().IsRegular() || !os.SameFile(checked, info) {
+				if err := dst.Remove(e.Name()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return copied, skipped, err
+				}
+				linkErr = errors.New("linked original changed")
+			}
+		}
+		if linkErr != nil {
+			if err := writeOriginal(dst, e.Name(), text, io.WriteString); err != nil {
+				return copied, skipped, err
+			}
 		}
 		copied++
 	}
@@ -263,20 +334,21 @@ func CopyOriginals(from, to string) (copied, skipped int, err error) {
 
 // readOwnOriginal reads name if it is a regular file no larger than limit
 // and its content hashes to handle.
-func readOwnOriginal(root *os.Root, name, handle string, limit int64) (string, bool) {
+func readOwnOriginal(root *os.Root, name, handle string, limit int64) (string, os.FileInfo, bool) {
 	f, err := root.Open(name)
 	if err != nil {
-		return "", false
+		return "", nil, false
 	}
 	defer f.Close()
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() > limit {
-		return "", false
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > limit {
+		return "", nil, false
 	}
 	data, err := io.ReadAll(io.LimitReader(f, min(limit, 1<<62)+1))
 	if err != nil || int64(len(data)) > limit || originalHandleOf(string(data)) != handle {
-		return "", false
+		return "", nil, false
 	}
-	return string(data), true
+	return string(data), info, true
 }
 
 // ReadOriginal supplies saved output for shaping.

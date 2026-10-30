@@ -71,6 +71,26 @@ func TestAPIShapingStoresAndReadsOriginal(t *testing.T) {
 	}
 }
 
+func TestAPIReportsOriginalRefusal(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "0")
+	fake := &fakeAPI{turns: [][]string{toolTurn("output", "mcp__test__output", `{}`), textTurn("done")}}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	b := NewAPIBackend()
+	b.BaseURL, b.APIKey = srv.URL, "test"
+	b.Tools = append(b.Tools, tools.FromMCP("test", shapeMCPOutput(strings.Repeat("x", 40000)))...)
+	var infos []string
+	res := b.Run(t.Context(), Task{Prompt: "inspect", Dir: t.TempDir(), RunDir: t.TempDir(), Options: Options{ShapeTools: true, Mode: ModeYolo}}, func(e Event) {
+		if e.Kind == EventInfo && strings.Contains(e.Text, "original not saved") {
+			infos = append(infos, e.Text)
+		}
+	})
+	if res.Status != StatusOK || len(infos) != 1 || !strings.Contains(infos[0], "run cap") {
+		t.Fatalf("result=%v infos=%v", res.Status, infos)
+	}
+}
+
 func TestAPIShapingToolSchemaIsOptIn(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		for _, mode := range []Mode{ModeYolo, ModeReadOnly} {

@@ -38,8 +38,9 @@ type Workspace struct {
 	ChildEnv []string
 	Root     string
 	// RunDir is trusted, outside model control.
-	RunDir     string
-	ShapeTools bool
+	RunDir       string
+	ShapeTools   bool
+	OriginalInfo func(string)
 	// AllowDangerous is per-run; tools are shared.
 	AllowDangerous bool
 	// Commands use Root; confinement needs its junction target.

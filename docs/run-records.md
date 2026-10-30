@@ -166,22 +166,25 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
   take one run's originals past `HRN_ORIGINALS_RUN_MAX` bytes (default 64 MiB), or
   all of `$HRN_HOME/runs/*/originals/` past `HRN_ORIGINALS_MAX` bytes (default
   1 GiB), is not saved, and that result gets the head-and-tail cut without a
-  handle. An invalid value (not a whole number of bytes, or negative) leaves the
+  handle. An info event names the cap, or reports that the machine total could not
+  be measured. An invalid value (not a whole number of bytes, or negative) leaves the
   default. Saved originals are never removed while their run exists, so a handle
   the model was given always reads; `hrn runs prune` removes them with their run.
   The machine total is measured once per run, at its first save, and then kept
   up to date in memory, so runs going at the same time do not see each other's
-  saves and together may pass the cap a little. When the runs directory cannot be
-  read, nothing new is saved until it can.
-  A continuation that resumes an api conversation first copies that run's
+  saves and together may pass the cap a little. When the runs directory or any run's
+  originals folder cannot be read, nothing new is saved until it can. Linked originals
+  count once toward the machine total; an `originals` directory link is not followed.
+  A continuation that resumes an api conversation first links that run's
   originals into its own `originals/`, so the handles in the conversation still
   read. hrn picks that run from the record, never from a path the model gives;
-  only regular files named for their content's SHA-256 prefix are copied, never
-  links. The run's events say how many were copied and how many were skipped (a
+  only regular files named for their content's SHA-256 prefix are carried, never
+  links. When hard links are unavailable, it copies the files instead. The run's
+  events say how many were carried and, when applicable, skipped (a
   link or other non-regular file, bytes that do not match the name, or a file
   larger than the run cap, or than 64 MiB when the cap is set lower). The resumed
-  run holds its own predecessor's copies, so one hop covers the chain. Copies
-  count toward the new run's cap but are never refused.
+  run holds its own predecessor's originals, so one hop covers the chain. Carried
+  files count toward the new run's cap but are never refused.
   Shell capture keeps the whole output up to 8 MiB, including on nonzero exit
   and timeout. Above that ceiling it uses the existing head-and-tail cut, says
   the original is unavailable, and saves no incomplete original.
@@ -271,6 +274,8 @@ the last hour is taken to be still running and stays; a directory in `runs/` tha
 a run id is never touched. If any batch or eval record cannot be read, prune refuses:
 that record may cite anything. Records go before the runs they cite, so a failure partway
 never leaves a record pointing at nothing.
+
+The freed size counts a linked original in full even when a kept run still holds it.
 
 The one-hour activity rule lives in `internal/runlog/activity.go` and is shared by
 prune and watch. It uses `events.jsonl`'s modification time, falling back to the run
