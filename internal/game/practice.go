@@ -43,6 +43,7 @@ type Exercise struct {
 	Answer     string    `json:"answer,omitempty"`
 	AnsweredAt time.Time `json:"answered_at,omitempty"`
 	Mark       string    `json:"mark,omitempty"`
+	Settled    bool      `json:"settled,omitempty"`
 }
 type repFile struct {
 	Date    string     `json:"date"`
@@ -149,7 +150,7 @@ func (p *Practice) history() (map[string]bool, map[string]string, error) {
 }
 func needsPractice(mark string) bool { return mark == "missed" || mark == "partly" }
 
-func (p *Practice) pick(attempt int, allowRead bool) (Exercise, error) {
+func (p *Practice) pick(attempt int, allowRead bool, exclude string) (Exercise, error) {
 	kinds := []string{"cold read", "find the defect", "read", "recall"}
 	reads, marks, err := p.history()
 	if err != nil {
@@ -158,6 +159,10 @@ func (p *Practice) pick(attempt int, allowRead bool) (Exercise, error) {
 	h := fnv.New64a()
 	fmt.Fprintf(h, "%s:%d", p.date(), attempt)
 	seed := h.Sum64()
+	if s, ok := p.source.(*GitHubSource); ok {
+		s.lists = make(map[string][]prData)
+		s.details = make(map[string]prData)
+	}
 	var preferred, ordinary []Candidate
 	for _, k := range kinds {
 		if k == "read" && !allowRead {
@@ -180,18 +185,45 @@ func (p *Practice) pick(attempt int, allowRead bool) (Exercise, error) {
 			}
 		}
 	}
-	cs := preferred
-	if len(cs) == 0 {
-		cs = ordinary
-	}
-	sort.Slice(cs, func(i, j int) bool {
-		if cs[i].Kind != cs[j].Kind {
-			return cs[i].Kind < cs[j].Kind
+	if exclude != "" {
+		var alternatives bool
+		for _, c := range append(append([]Candidate{}, preferred...), ordinary...) {
+			if !strings.EqualFold(c.Source, exclude) {
+				alternatives = true
+				break
+			}
 		}
-		return cs[i].Source < cs[j].Source
-	})
-	if len(cs) > 0 {
-		return Exercise{Candidate: safe(cs[seed%uint64(len(cs))]), Attempt: attempt}, nil
+		if alternatives {
+			filter := func(in []Candidate) []Candidate {
+				out := in[:0]
+				for _, c := range in {
+					if !strings.EqualFold(c.Source, exclude) {
+						out = append(out, c)
+					}
+				}
+				return out
+			}
+			preferred, ordinary = filter(preferred), filter(ordinary)
+		}
+	}
+	for _, cs := range [][]Candidate{preferred, ordinary} {
+		sort.Slice(cs, func(i, j int) bool {
+			if cs[i].Kind != cs[j].Kind {
+				return cs[i].Kind < cs[j].Kind
+			}
+			return cs[i].Source < cs[j].Source
+		})
+		for i := 0; i < len(cs); i++ {
+			c := cs[(int(seed%uint64(len(cs)))+i)%len(cs)]
+			if source, ok := p.source.(*GitHubSource); ok && c.Kind != "recall" {
+				var err error
+				c, err = source.materialize(c)
+				if err != nil {
+					continue
+				}
+			}
+			return Exercise{Candidate: safe(c), Attempt: attempt}, nil
+		}
 	}
 	return Exercise{}, errors.New("no practice candidates available")
 }
@@ -201,7 +233,7 @@ func (p *Practice) Today() (Exercise, error) {
 		return Exercise{}, err
 	}
 	if r.Daily == nil {
-		e, err := p.pick(0, len(r.Reads) < 3)
+		e, err := p.pick(0, len(r.Reads) < 3, "")
 		if err != nil {
 			return e, err
 		}
@@ -230,7 +262,7 @@ func (p *Practice) Swap() (Exercise, error) {
 	if !r.Daily.AnsweredAt.IsZero() {
 		return Exercise{}, errors.New("cannot swap an answered exercise")
 	}
-	e, err := p.pick(r.Daily.Attempt+1, len(r.Reads) < 3)
+	e, err := p.pick(r.Daily.Attempt+1, len(r.Reads) < 3, r.Daily.Source)
 	if err != nil {
 		return e, err
 	}
@@ -244,10 +276,14 @@ func (p *Practice) Swap() (Exercise, error) {
 
 var prRef = regexp.MustCompile(`^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*/[A-Za-z0-9_.-]+#[1-9][0-9]*$`)
 
-func (p *Practice) Read(ref string) (Exercise, error) {
+func validRef(ref string) bool {
 	owner, rest, _ := strings.Cut(ref, "/")
 	repo, _, _ := strings.Cut(rest, "#")
-	if !prRef.MatchString(ref) || len(owner) > 39 || len(repo) > 100 || repo == "." || repo == ".." || mask.Text(ref) != ref {
+	return prRef.MatchString(ref) && len(owner) <= 39 && len(repo) <= 100 && repo != "." && repo != ".." && mask.Text(ref) == ref
+}
+
+func (p *Practice) Read(ref string) (Exercise, error) {
+	if !validRef(ref) {
 		return Exercise{}, errors.New("expected owner/repo#number")
 	}
 	files, err := filepath.Glob(filepath.Join(Dir(), "reps", "*.json"))
@@ -399,6 +435,14 @@ func (p *Practice) Rebuild() error {
 	if err != nil {
 		return err
 	}
+	ledger, _, err := Load()
+	if err != nil {
+		return err
+	}
+	credited := map[string]bool{}
+	for _, e := range ledger {
+		credited[e.Key] = true
+	}
 	var events []Event
 	counts := map[string]int{}
 	readSeen := map[string]bool{}
@@ -409,13 +453,16 @@ func (p *Practice) Rebuild() error {
 		if err != nil {
 			return err
 		}
-		var all []Exercise
+		var all []*Exercise
 		if r.Daily != nil && !r.Daily.AnsweredAt.IsZero() {
 			e := *r.Daily
 			events = append(events, Event{Key: "rep:" + date, Kind: kindRep, Track: TrackPractice, XP: 30, At: e.AnsweredAt})
-			all = append(all, e)
+			all = append(all, r.Daily)
 		}
-		all = append(all, r.Reads...)
+		for i := range r.Reads {
+			all = append(all, &r.Reads[i])
+		}
+		changed := false
 		for _, e := range all {
 			if e.AnsweredAt.IsZero() {
 				continue
@@ -426,8 +473,21 @@ func (p *Practice) Rebuild() error {
 					continue
 				}
 				readSeen[key] = true
-				ok, err := p.source.Merged(e.Source, e.AnsweredAt)
-				if err == nil && ok {
+				ok := false
+				if !credited["read:"+key] && !e.Settled {
+					var err error
+					if source, supports := p.source.(*GitHubSource); supports {
+						var settled bool
+						ok, settled, err = source.mergeStatus(e.Source, e.AnsweredAt)
+						if err == nil && settled {
+							e.Settled = true
+							changed = true
+						}
+					} else {
+						ok, err = p.source.Merged(e.Source, e.AnsweredAt)
+					}
+				}
+				if ok {
 					events = append(events, Event{Key: "read:" + key, Kind: kindRead, Track: TrackPractice, XP: 20, At: e.AnsweredAt})
 				}
 			}
@@ -439,13 +499,29 @@ func (p *Practice) Rebuild() error {
 				}
 			}
 		}
+		if changed {
+			if err := saveRep(date, r); err != nil {
+				return err
+			}
+		}
 	}
 	_, err = Append(append(events, badges...))
 	return err
 }
 
 // GitHubSource reads repository candidates from records and GitHub.
-type GitHubSource struct{ roots map[string]string }
+type GitHubSource struct {
+	roots   map[string]string
+	lists   map[string][]prData
+	details map[string]prData
+}
+
+var ghBin = "gh"
+var ghArgs []string
+
+func gh(args ...string) ([]byte, error) {
+	return bounded(ghBin, append(append([]string{}, ghArgs...), args...)...)
+}
 
 func NewGitHubSource() (*GitHubSource, error) {
 	runs, err := runlog.List(0)
@@ -518,16 +594,22 @@ type prData struct {
 
 func ghPR(ref string) (prData, error) {
 	var p prData
+	if !validRef(ref) {
+		return p, errors.New("invalid pull request reference")
+	}
 	repo, num, _ := strings.Cut(ref, "#")
-	b, err := bounded("gh", "pr", "view", num, "--repo", repo, "--json", "number,title,body,state,mergedAt,reviews,commits,baseRefOid")
+	b, err := gh("pr", "view", num, "--repo", repo, "--json", "number,title,body,state,mergedAt,reviews,commits,baseRefOid")
 	if err == nil {
 		err = json.Unmarshal(b, &p)
 	}
 	return p, err
 }
 func diff(ref string) (string, error) {
+	if !validRef(ref) {
+		return "", errors.New("invalid pull request reference")
+	}
 	repo, num, _ := strings.Cut(ref, "#")
-	b, err := bounded("gh", "pr", "diff", num, "--repo", repo)
+	b, err := gh("pr", "diff", num, "--repo", repo)
 	return string(b), err
 }
 func reviewText(p prData) string {
@@ -549,11 +631,24 @@ func (s *GitHubSource) Read(ref string) (Candidate, error) {
 	return Candidate{Kind: "read", Source: ref, Material: d, Reveal: reviewText(p)}, err
 }
 func (s *GitHubSource) Merged(ref string, after time.Time) (bool, error) {
+	ok, _, err := s.mergeStatus(ref, after)
+	return ok, err
+}
+func (s *GitHubSource) mergeStatus(ref string, after time.Time) (bool, bool, error) {
 	p, err := ghPR(ref)
-	return err == nil && p.State == "MERGED" && p.MergedAt.After(after), err
+	if err != nil {
+		return false, false, err
+	}
+	return p.State == "MERGED" && p.MergedAt.After(after), p.State == "CLOSED" || p.State == "MERGED" && !p.MergedAt.IsZero() && !p.MergedAt.After(after), nil
 }
 func (s *GitHubSource) Candidates(kind string) ([]Candidate, error) {
 	var out []Candidate
+	if s.lists == nil {
+		s.lists = map[string][]prData{}
+	}
+	if s.details == nil {
+		s.details = map[string]prData{}
+	}
 	for repo, root := range s.roots {
 		if kind == "recall" {
 			b, err := bounded("git", "-C", root, "show", "HEAD:PLAN.md")
@@ -562,86 +657,109 @@ func (s *GitHubSource) Candidates(kind string) ([]Candidate, error) {
 			}
 			continue
 		}
-		if !strings.Contains(repo, "/") {
+		if !validRef(repo + "#1") {
 			continue
 		}
 		state := "merged"
 		if kind == "read" {
 			state = "open"
 		}
-		b, err := bounded("gh", "pr", "list", "--repo", repo, "--state", state, "--limit", "100", "--json", "number")
-		if err != nil {
-			continue
-		}
-		var prs []prData
-		if json.Unmarshal(b, &prs) != nil {
-			continue
+		key := repo + ":" + state
+		prs, found := s.lists[key]
+		if !found {
+			b, err := gh("pr", "list", "--repo", repo, "--state", state, "--limit", "100", "--json", "number,title,body,state,mergedAt,reviews,commits,baseRefOid")
+			if err == nil {
+				_ = json.Unmarshal(b, &prs)
+			}
+			s.lists[key] = prs
 		}
 		for _, pr := range prs {
 			ref := fmt.Sprintf("%s#%d", repo, pr.Number)
-			p, err := ghPR(ref)
-			if err != nil {
-				continue
-			}
-			if kind == "read" {
-				c, err := s.Read(ref)
-				if err == nil {
-					out = append(out, c)
-				}
-				continue
-			}
-			if kind == "cold read" {
-				d, err := diff(ref)
-				if err == nil {
-					reveal := reviewText(p)
-					for _, review := range p.Reviews {
-						for i, commit := range p.Commits {
-							if commit.OID == review.Commit.OID && i+1 < len(p.Commits) {
-								later, err := bounded("gh", "api", "-H", "Accept: application/vnd.github.diff", fmt.Sprintf("repos/%s/compare/%s...%s", repo, commit.OID, p.Commits[len(p.Commits)-1].OID))
-								if err == nil {
-									reveal += "\n\nLater commits:\n" + string(later)
-								}
-								break
-							}
-						}
-					}
-					out = append(out, Candidate{Source: ref, Material: d, Reveal: reveal})
-				}
+			if !validRef(ref) {
 				continue
 			}
 			if kind == "find the defect" {
-				for _, r := range p.Reviews {
-					if !blocking.MatchString(r.Body) || r.Commit.OID == "" {
-						continue
-					}
-					if !reviewHasLaterCommit(p, r.Commit.OID, r.SubmittedAt) {
-						continue
-					}
-					if len(p.Commits) == 0 || p.Commits[0].OID == "" {
-						continue
-					}
-					parent, err := bounded("gh", "api", fmt.Sprintf("repos/%s/commits/%s", repo, p.Commits[0].OID), "--jq", ".parents[0].sha")
-					if err != nil {
-						continue
-					}
-					base := strings.TrimSpace(string(parent))
-					if base == "" {
-						continue
-					}
-					before, err := bounded("gh", "api", "-H", "Accept: application/vnd.github.diff", fmt.Sprintf("repos/%s/compare/%s...%s", repo, base, r.Commit.OID))
-					if err != nil {
-						continue
-					}
-					after, err := bounded("gh", "api", "-H", "Accept: application/vnd.github.diff", fmt.Sprintf("repos/%s/compare/%s...%s", repo, r.Commit.OID, p.Commits[len(p.Commits)-1].OID))
-					if err == nil {
-						out = append(out, Candidate{Source: ref + "@" + r.Commit.OID, Material: string(before), Reveal: r.Body + "\n" + string(after)})
+				for _, review := range pr.Reviews {
+					if blocking.MatchString(review.Body) && reviewHasLaterCommit(pr, review.Commit.OID, review.SubmittedAt) && len(pr.Commits) > 0 && pr.Commits[0].OID != "" {
+						source := ref + "@" + review.Commit.OID
+						s.details[kind+":"+source] = pr
+						out = append(out, Candidate{Kind: kind, Source: source})
 					}
 				}
+			} else if kind == "read" || kind == "cold read" {
+				s.details[kind+":"+ref] = pr
+				out = append(out, Candidate{Kind: kind, Source: ref})
 			}
 		}
 	}
 	return out, nil
 }
+func (s *GitHubSource) materialize(c Candidate) (Candidate, error) {
+	p, ok := s.details[c.Kind+":"+c.Source]
+	if !ok {
+		return Candidate{}, errors.New("candidate missing")
+	}
+	ref, oid, _ := strings.Cut(c.Source, "@")
+	if !validRef(ref) {
+		return Candidate{}, errors.New("invalid pull request reference")
+	}
+	repo, _, _ := strings.Cut(ref, "#")
+	if c.Kind == "find the defect" {
+		// OIDs come from GitHub, but still must not escape the API path.
+		if !safeOID(oid) || len(p.Commits) == 0 || !safeOID(p.Commits[0].OID) || !safeOID(p.Commits[len(p.Commits)-1].OID) {
+			return Candidate{}, errors.New("invalid commit")
+		}
+		parent, err := gh("api", fmt.Sprintf("repos/%s/commits/%s", repo, p.Commits[0].OID), "--jq", ".parents[0].sha")
+		if err != nil {
+			return Candidate{}, err
+		}
+		base := strings.TrimSpace(string(parent))
+		if !safeOID(base) {
+			return Candidate{}, errors.New("invalid parent")
+		}
+		before, err := gh("api", "-H", "Accept: application/vnd.github.diff", fmt.Sprintf("repos/%s/compare/%s...%s", repo, base, oid))
+		if err != nil {
+			return Candidate{}, err
+		}
+		after, err := gh("api", "-H", "Accept: application/vnd.github.diff", fmt.Sprintf("repos/%s/compare/%s...%s", repo, oid, p.Commits[len(p.Commits)-1].OID))
+		if err != nil {
+			return Candidate{}, err
+		}
+		for _, r := range p.Reviews {
+			if r.Commit.OID == oid && blocking.MatchString(r.Body) {
+				c.Reveal = r.Body + "\n" + string(after)
+				break
+			}
+		}
+		c.Material = string(before)
+		return c, nil
+	}
+	d, err := diff(ref)
+	if err != nil {
+		return Candidate{}, err
+	}
+	c.Material = d
+	c.Reveal = reviewText(p)
+	if c.Kind == "cold read" {
+		for _, r := range p.Reviews {
+			for i, commit := range p.Commits {
+				if commit.OID == r.Commit.OID && i+1 < len(p.Commits) && safeOID(commit.OID) && safeOID(p.Commits[len(p.Commits)-1].OID) {
+					later, err := gh("api", "-H", "Accept: application/vnd.github.diff", fmt.Sprintf("repos/%s/compare/%s...%s", repo, commit.OID, p.Commits[len(p.Commits)-1].OID))
+					if err != nil {
+						return Candidate{}, err
+					}
+					c.Reveal += "\n\nLater commits:\n" + string(later)
+					break
+				}
+			}
+		}
+	}
+	return c, nil
+}
+
+var oidPattern = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+
+func safeOID(oid string) bool { return oidPattern.MatchString(oid) }
 
 func reviewHasLaterCommit(p prData, oid string, submitted time.Time) bool {
 	if oid == "" || submitted.IsZero() {

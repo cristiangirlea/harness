@@ -138,7 +138,9 @@ A rule nobody measured earns her nothing.
   `"cancels": "<key>"`.
 - `reps/<date>.json`: the day's exercise, the attempt number, the masked material, the
   masked text shown afterwards, the answer, the self-mark and when it was answered. Named
-  reads are stored in the same daily file.
+  reads are stored in the same daily file. A read records `settled: true` when GitHub
+  reports it closed without merging or merged no later than its answer; settled and already
+  credited reads are not checked again.
 - `settings.json`: `enabled` (the game switch); voice preferences are planned.
 
 The rules that make it rebuildable and safe to prune:

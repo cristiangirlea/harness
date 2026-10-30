@@ -2,6 +2,7 @@ package game
 
 import (
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -258,6 +259,9 @@ func TestPracticeReadReferenceAndHistory(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	f := fakePracticeSource{items: map[string][]Candidate{"read": {{Source: "owner/repo#1"}, {Source: "owner/repo#2"}}}}
 	p := NewPractice(f, now.AddDate(0, 0, -1))
+	if _, err := p.Read("AKIAIOSFODNN7EXAMPLE/repo#1"); err == nil {
+		t.Fatal("accepted secret-shaped reference")
+	}
 	if _, err := p.Read("bad_owner/repo#1"); err == nil {
 		t.Fatal("accepted invalid owner")
 	}
@@ -316,12 +320,25 @@ func TestPracticeMarksSteerSelectionAndGhFallback(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	f := fakePracticeSource{items: map[string][]Candidate{"recall": {{Source: "owner/repo#decision", Material: "decision"}}, "cold read": {{Source: "other/repo#1"}}}}
-	old := repFile{Date: "2026-10-29", Daily: &Exercise{Candidate: Candidate{Kind: "recall", Source: "owner/repo#old"}, AnsweredAt: now.Add(-time.Hour), Mark: "missed"}}
+	for {
+		h := fnv.New64a()
+		fmt.Fprintf(h, "%s:0", now.Format("2006-01-02"))
+		if h.Sum64()%2 == 0 {
+			break
+		}
+		now = now.AddDate(0, 0, 1)
+	}
+	e, err := NewPractice(f, now).Today()
+	if err != nil || e.Kind != "cold read" {
+		t.Fatalf("unmarked: %+v %v", e, err)
+	}
+	t.Setenv("HRN_HOME", t.TempDir())
+	old := repFile{Date: now.AddDate(0, 0, -1).Format("2006-01-02"), Daily: &Exercise{Candidate: Candidate{Kind: "recall", Source: "owner/repo#old"}, AnsweredAt: now.Add(-time.Hour), Mark: "missed"}}
 	if err := saveRep(old.Date, old); err != nil {
 		t.Fatal(err)
 	}
 	p := NewPractice(f, now)
-	e, err := p.Today()
+	e, err = p.Today()
 	if err != nil || e.Kind != "recall" {
 		t.Fatalf("mark ignored: %+v %v", e, err)
 	}
@@ -422,5 +439,214 @@ func TestPracticeFilePermissions(t *testing.T) {
 		if err != nil || info.Mode().Perm() != mode {
 			t.Fatalf("%s: %v %v", path, info, err)
 		}
+	}
+}
+
+func TestPracticeSwapExcludesCurrentSource(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	f := fakePracticeSource{items: map[string][]Candidate{"recall": {{Source: "one"}, {Source: "two"}}}}
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%s:1", now.Format("2006-01-02"))
+	choices := []string{"one", "two"}
+	current := choices[h.Sum64()%2]
+	r := repFile{Date: now.Format("2006-01-02"), Daily: &Exercise{Candidate: Candidate{Kind: "recall", Source: current}}}
+	if err := saveRep(r.Date, r); err != nil {
+		t.Fatal(err)
+	}
+	e, err := NewPractice(f, now).Swap()
+	if err != nil || e.Source == current {
+		t.Fatalf("swap: %+v %v", e, err)
+	}
+}
+
+func TestPracticeRejectsUnsafeGhReferences(t *testing.T) {
+	log := useHelperGh(t)
+	if _, err := ghPR("a/b#--web"); err == nil {
+		t.Fatal("accepted unsafe view")
+	}
+	if _, err := diff("a/b#--web"); err == nil {
+		t.Fatal("accepted unsafe diff")
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatal("unsafe reference reached gh")
+	}
+}
+
+func TestHelperGh(t *testing.T) {
+	if os.Getenv("HRN_TEST_GH") != "1" {
+		return
+	}
+	args := os.Args
+	for i, arg := range args {
+		if arg == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	f, err := os.OpenFile(os.Getenv("HRN_TEST_GH_LOG"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		os.Exit(2)
+	}
+	fmt.Fprintln(f, strings.Join(args, " "))
+	f.Close()
+	joined := strings.Join(args, " ")
+	switch {
+	case strings.HasPrefix(joined, "pr list"):
+		if strings.Contains(joined, "--state open") {
+			fmt.Print(`[]`)
+			break
+		}
+		fmt.Print(`[{"number":1,"title":"title","state":"MERGED","reviews":[{"body":"blocking defect","submittedAt":"2026-01-02T00:00:00Z","commit":{"oid":"reviewed"}}],"commits":[{"oid":"reviewed","committedDate":"2026-01-01T00:00:00Z"},{"oid":"later","committedDate":"2026-01-03T00:00:00Z"}]},{"number":2,"reviews":[{"body":"blocking","submittedAt":"2026-01-02T00:00:00Z","commit":{"oid":"reviewed"}}],"commits":[{"oid":"reviewed","committedDate":"2026-01-01T00:00:00Z"}]}]`)
+	case strings.HasPrefix(joined, "pr view 1 "):
+		fmt.Print(`{"state":"OPEN"}`)
+	case strings.HasPrefix(joined, "pr view 2 "):
+		fmt.Print(`{"state":"CLOSED"}`)
+	case strings.HasPrefix(joined, "pr view 3 "):
+		fmt.Print(`{"state":"MERGED","mergedAt":"2026-01-03T00:00:00Z"}`)
+	case strings.Contains(joined, "/commits/"):
+		fmt.Print("base\n")
+	case strings.Contains(joined, "base...reviewed"):
+		fmt.Print("before diff")
+	case strings.Contains(joined, "reviewed...later"):
+		fmt.Print("later diff")
+	case strings.HasPrefix(joined, "pr diff"):
+		if strings.Contains(joined, "pr diff 1 ") && os.Getenv("HRN_TEST_GH_FAIL") == "1" {
+			os.Exit(1)
+		}
+		fmt.Print("diff")
+	default:
+		os.Exit(2)
+	}
+	os.Exit(0)
+}
+
+func useHelperGh(t *testing.T) string {
+	t.Helper()
+	oldBin, oldArgs := ghBin, ghArgs
+	ghBin, ghArgs = os.Args[0], []string{"-test.run=^TestHelperGh$", "--"}
+	t.Cleanup(func() { ghBin, ghArgs = oldBin, oldArgs })
+	t.Setenv("HRN_TEST_GH", "1")
+	log := filepath.Join(t.TempDir(), "calls")
+	t.Setenv("HRN_TEST_GH_LOG", log)
+	return log
+}
+
+func TestGitHubCandidatesFetchOnlySelectedMaterial(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	log := useHelperGh(t)
+	s := &GitHubSource{roots: map[string]string{"owner/repo": t.TempDir(), "evil/../repo": ""}}
+	cs, err := s.Candidates("find the defect")
+	if err != nil || len(cs) != 1 || cs[0].Source != "owner/repo#1@reviewed" {
+		t.Fatalf("candidates: %+v %v", cs, err)
+	}
+	c, err := s.materialize(cs[0])
+	if err != nil || c.Material != "before diff" || !strings.Contains(c.Reveal, "later diff") {
+		t.Fatalf("material: %+v %v", c, err)
+	}
+	calls, _ := os.ReadFile(log)
+	if strings.Contains(string(calls), "evil/") || strings.Count(string(calls), "pr list") != 1 {
+		t.Fatalf("calls: %s", calls)
+	}
+	if err := os.Remove(log); err != nil {
+		t.Fatal(err)
+	}
+	s.roots["another/repo"] = t.TempDir()
+	_, err = NewPractice(s, time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)).Today()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, _ = os.ReadFile(log)
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if strings.Count(string(calls), "pr list") != 4 {
+		t.Fatalf("expected four lists: %s", calls)
+	}
+	for _, line := range lines {
+		if strings.Contains(line, "pr view") {
+			t.Fatalf("unexpected view: %s", calls)
+		}
+	}
+	if len(lines) > 7 {
+		t.Fatalf("fetched extra candidates: %s", calls)
+	}
+}
+
+func TestGitHubReadAndMergeStatus(t *testing.T) {
+	useHelperGh(t)
+	s := &GitHubSource{}
+	if _, err := s.Read("owner/repo#2"); err == nil {
+		t.Fatal("accepted closed PR")
+	}
+	if _, err := s.Read("owner/repo#1"); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
+	if ok, err := s.Merged("owner/repo#3", at); err != nil || ok {
+		t.Fatalf("equal merge: %v %v", ok, err)
+	}
+	if ok, err := s.Merged("owner/repo#3", at.Add(-time.Second)); err != nil || !ok {
+		t.Fatalf("later merge: %v %v", ok, err)
+	}
+}
+
+func TestPracticeRebuildSkipsCreditedAndSettledReads(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	log := useHelperGh(t)
+	at := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
+	r := repFile{Date: "2026-01-03", Reads: []Exercise{
+		{Candidate: Candidate{Kind: "read", Source: "owner/repo#1"}, AnsweredAt: at},
+		{Candidate: Candidate{Kind: "read", Source: "owner/repo#2"}, AnsweredAt: at},
+		{Candidate: Candidate{Kind: "read", Source: "owner/repo#3"}, AnsweredAt: at},
+	}}
+	if err := saveRep(r.Date, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append([]Event{{Key: "read:owner/repo#1", Kind: kindRead, Track: TrackPractice, XP: 20, At: at}}); err != nil {
+		t.Fatal(err)
+	}
+	p := NewPractice(&GitHubSource{}, at)
+	if err := p.Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := os.ReadFile(log)
+	if strings.Count(string(calls), "pr view") != 2 || strings.Contains(string(calls), "pr view 1 ") {
+		t.Fatalf("calls: %s", calls)
+	}
+	r, _ = loadRep(r.Date)
+	if !r.Reads[1].Settled || !r.Reads[2].Settled {
+		t.Fatalf("unsettled: %+v", r.Reads)
+	}
+	if err := os.Remove(log); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatalf("network invoked: %v", err)
+	}
+}
+
+func TestPracticeFallsThroughWhenSelectedFetchFails(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	log := useHelperGh(t)
+	t.Setenv("HRN_TEST_GH_FAIL", "1")
+	s := &GitHubSource{roots: map[string]string{"owner/repo": t.TempDir()}}
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	for {
+		h := fnv.New64a()
+		fmt.Fprintf(h, "%s:0", now.Format("2006-01-02"))
+		if h.Sum64()%3 == 0 {
+			break
+		}
+		now = now.AddDate(0, 0, 1)
+	}
+	e, err := NewPractice(s, now).Today()
+	if err != nil || e.Source != "owner/repo#2" {
+		t.Fatalf("fallback: %+v %v", e, err)
+	}
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "pr diff 1 ") || !strings.Contains(string(calls), "pr diff 2 ") {
+		t.Fatalf("calls: %s", calls)
 	}
 }
