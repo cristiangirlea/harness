@@ -26,7 +26,7 @@ func TestAddWorktreePreservesIncompleteWorktreeError(t *testing.T) {
 		Branch: "task", Worktree: filepath.Join(t.TempDir(), "task"),
 	}, "HEAD")
 	if err == nil {
-		// Whether worktree add -b reads the other worktrees' metadata depends
+		// Whether worktree add reads the other worktrees' metadata depends
 		// on git's version and code path; some (git 2.55 on Linux, at times)
 		// add the worktree regardless, and then there is no error to keep.
 		t.Skip("this git adds a worktree beside a half-written one, so there is no error to preserve")
@@ -105,7 +105,7 @@ func TestAddWorktreeCleansBranchAfterFailure(t *testing.T) {
 	root := initRepo(t)
 	hooks := filepath.Join(root, ".git", "hooks")
 	hook := filepath.Join(hooks, "post-checkout")
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf leftover > untracked\nexit 1\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	tr := TaskResult{Branch: "failed-task", Worktree: filepath.Join(t.TempDir(), "task")}
@@ -132,5 +132,45 @@ func TestAddWorktreeKeepsExistingBranchOnFailure(t *testing.T) {
 	}
 	if got := git(t, root, "branch", "--list", tr.Branch); got == "" {
 		t.Fatal("existing branch was deleted")
+	}
+}
+
+func TestAddWorktreeKeepsMovedBranchOnFailure(t *testing.T) {
+	root := initRepo(t)
+	base := git(t, root, "rev-parse", "HEAD")
+	git(t, root, "commit", "--allow-empty", "-m", "other")
+	moved := git(t, root, "rev-parse", "HEAD")
+	hook := filepath.Join(root, ".git", "hooks", "post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\ngit update-ref refs/heads/failed-task "+moved+"\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	tr := TaskResult{Branch: "failed-task", Worktree: filepath.Join(t.TempDir(), "task")}
+	if err := addWorktree(context.Background(), root, tr, base); err == nil {
+		t.Fatal("expected add failure")
+	}
+	if got := git(t, root, "rev-parse", "refs/heads/failed-task"); got != moved {
+		t.Fatalf("branch = %s, want %s", got, moved)
+	}
+}
+
+func TestAddWorktreeKeepsExistingEmptyDirectoryOnFailure(t *testing.T) {
+	root := initRepo(t)
+	hook := filepath.Join(root, ".git", "hooks", "post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "task")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	tr := TaskResult{Branch: "failed-task", Worktree: path}
+	if err := addWorktree(context.Background(), root, tr, "HEAD"); err == nil {
+		t.Fatal("expected add failure")
+	}
+	if got := git(t, root, "branch", "--list", tr.Branch); got == "" {
+		t.Fatal("branch was deleted")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("directory not kept: %v", err)
 	}
 }

@@ -2313,32 +2313,34 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 		return err
 	}
 	defer g.close()
-	check := exec.CommandContext(ctx, "git", "-C", root, "show-ref", "--verify", "--quiet", "refs/heads/"+tr.Branch)
-	check.Env = append(gitenv.WithoutRepoVars(check.Environ()), g.env(ctx)...)
-	checkErr := check.Run()
-	var exitErr *exec.ExitError
-	absent := errors.As(checkErr, &exitErr) && exitErr.ExitCode() == 1
+	oid, err := gitOutEnv(ctx, root, g.env(ctx), "", "rev-parse", "--verify", base+"^{commit}")
+	if err != nil {
+		return err
+	}
+	branch := exec.CommandContext(ctx, "git", "-C", root, "branch", tr.Branch, oid)
+	branch.Env = append(gitenv.WithoutRepoVars(branch.Environ()), g.env(ctx)...)
+	if out, err := branch.CombinedOutput(); err != nil {
+		return fmt.Errorf("git branch: %s: %w", strings.TrimSpace(string(out)), err)
+	}
 	_, pathErr := os.Lstat(tr.Worktree)
 	pathAbsent := errors.Is(pathErr, os.ErrNotExist)
-	// Never retry: metadata failure may follow branch creation.
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	// Never retry: a failed add may have registered the worktree.
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", tr.Worktree, tr.Branch)
 	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), g.env(ctx)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		addErr := fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
-		if absent && pathAbsent && !strings.Contains(string(out), "already exists") {
+		if pathAbsent {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			registered, listErr := isWorktree(root, tr.Worktree)
 			if listErr == nil && registered {
-				if _, removeErr := gitOut(cleanupCtx, root, "worktree", "remove", tr.Worktree); removeErr != nil {
+				if _, removeErr := gitOut(cleanupCtx, root, "worktree", "remove", "--force", tr.Worktree); removeErr != nil {
 					return errors.Join(addErr, removeErr)
 				}
 			}
-			if _, branchErr := gitOut(cleanupCtx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); branchErr == nil {
-				if _, deleteErr := gitOut(cleanupCtx, root, "branch", "-D", tr.Branch); deleteErr != nil {
-					return errors.Join(addErr, deleteErr)
-				}
+			if _, deleteErr := gitOut(cleanupCtx, root, "update-ref", "-d", "refs/heads/"+tr.Branch, oid); deleteErr != nil {
+				return errors.Join(addErr, deleteErr)
 			}
 		}
 		return addErr

@@ -144,6 +144,7 @@ var removeGitWorktree = func(ctx context.Context, w Worktree) error {
 	defer cancel()
 	out, err := gitretry.Output(ctx, func() ([]byte, error) {
 		cmd := gitCommand(ctx, w.Repo, "worktree", "remove", w.Path)
+		// gitretry matches Git's English error message.
 		cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=")
 		return cmd.CombinedOutput()
 	})
@@ -468,6 +469,7 @@ func listWorktrees(ctx context.Context, repo string) ([]entry, error) {
 	var stdout []byte
 	out, err := gitretry.Output(ctx, func() ([]byte, error) {
 		cmd := gitCommand(ctx, repo, "worktree", "list", "--porcelain", "-z")
+		// gitretry matches Git's English error message.
 		cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
