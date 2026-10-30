@@ -20,8 +20,9 @@ would show the `python`, `node` and `perl` totals that the top 20 hides behind c
 
 `internal/shape/adversarial_test.go` attacks the rule that `Summarize` returns true only when the
 summary keeps every error, `FAIL` and `panic` line, every failing test and its diagnostics, and
-invents no number, path or negation. An oracle written in the test checks each case; a false
-return (head-and-tail cut) always passes. Attack classes:
+invents no whole number token, path or negation. Numbers in colour escapes or embedded in words do
+not supply number tokens. An oracle written in the test checks each case; a false return
+(head-and-tail cut) always passes. Attack classes:
 
 - one failure buried in thousands of passing tests, and one test name failing in two packages;
 - negations ("not found", "no such file", "only on Windows") on lines the summary drops;
@@ -38,8 +39,11 @@ return (head-and-tail cut) always passes. Attack classes:
   CSV with quoted commas;
 - a summary of one kind's shape presented for the other kind, and NDJSON from `go test -json`.
 
+Test counts include all passing result lines and failed leaf result lines, excluding failed parents.
+Generated test counts and repeat counts are verified against the original.
+
 The oracle recounts a `json:` or `table:` first line itself (with `encoding/json`, and by counting
-delimiters) and exempts only a true one from its digit check. It ends path chunks at `"` as
+delimiters) and exempts only a true one from its digit check, as well as verified test and repeat counts. It ends path chunks at `"` as
 well as at whitespace, so a sample joined without spaces keeps the original's string chunks.
 
 `FuzzSummarize` checks the same oracle on random input in CI and in `/check`. It covers all five
@@ -80,7 +84,8 @@ it is not an original line. Minified JSON is a single line, so if that line hold
 summary cannot be smaller and the cut is used. A table summary keeps the header, the first three
 and last two rows, and every error row, in order. Either summary is used only when it is smaller
 than the original and within 28,000 bytes. `valid` recomputes the first line from the original
-for the kind it was given. Only that exact line may hold numbers the original lacks. A `json:` or
+for the kind it was given. That exact line, verified test counts, and verified repeat counts may
+hold numbers the original lacks. A `json:` or
 `table:` line anywhere else, or with any other count, fails, so an ordinary output line that
 looks like one of these first lines makes the summary fall back to the cut.
 

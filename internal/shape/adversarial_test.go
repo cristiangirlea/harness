@@ -79,6 +79,58 @@ func oracleHead(clean, line string) bool {
 	return false
 }
 
+func oracleGenerated(clean string, lines []string, i int) bool {
+	line := lines[i]
+	if m := counts.FindStringSubmatch(line); m != nil {
+		passed := 0
+		failures := map[string]int{}
+		for _, original := range strings.Split(clean, "\n") {
+			if strings.Contains(original, "--- PASS:") {
+				passed++
+			}
+			if f := oracleFail.FindStringSubmatch(original); f != nil {
+				failures[f[1]]++
+			}
+		}
+		failed := 0
+		for name, n := range failures {
+			parent := false
+			for child := range failures {
+				if strings.HasPrefix(child, name+"/") {
+					parent = true
+					break
+				}
+			}
+			if !parent {
+				failed += n
+			}
+		}
+		return line == fmt.Sprintf("tests: passed=%d failed=%d", passed, failed)
+	}
+	if m := repeats.FindStringSubmatch(line); m != nil {
+		if i == 0 {
+			return false
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil || n < 2 {
+			return false
+		}
+		run := 0
+		for _, original := range strings.Split(clean, "\n") {
+			if original == lines[i-1] {
+				run++
+			} else {
+				if run == n {
+					return true
+				}
+				run = 0
+			}
+		}
+		return run == n
+	}
+	return false
+}
+
 // lostFact checks a summary independently of valid and names the first fact it
 // lost or invented, or returns "". Stripping uses the package's own escape
 // pattern: the oracle judges what is kept, not how escapes are parsed.
@@ -108,14 +160,29 @@ func lostFact(original, summary string) string {
 			return fmt.Sprintf("dropped failing test %q", m[1])
 		}
 	}
+	var numberBody []string
+	sumLines := strings.Split(summary, "\n")
+	for i, line := range sumLines {
+		if counts.MatchString(line) || repeats.MatchString(line) {
+			if !oracleGenerated(clean, sumLines, i) {
+				return fmt.Sprintf("invented %q", line)
+			}
+			continue
+		}
+		numberBody = append(numberBody, line)
+	}
 	for _, re := range []*regexp.Regexp{oracleDigits, oracleNegation, oraclePath} {
 		present := map[string]bool{}
-		for _, text := range []string{original, clean} {
+		for _, text := range []string{clean} {
 			for _, s := range re.FindAllString(text, -1) {
 				present[strings.ToLower(s)] = true
 			}
 		}
-		for _, s := range re.FindAllString(summary, -1) {
+		body := summary
+		if re == oracleDigits {
+			body = strings.Join(numberBody, "\n")
+		}
+		for _, s := range re.FindAllString(body, -1) {
 			if !present[strings.ToLower(s)] {
 				return fmt.Sprintf("invented %q", s)
 			}
@@ -145,6 +212,27 @@ func buriedFailure() string {
 	return b.String()
 }
 
+func manySubtests() string {
+	var b strings.Builder
+	b.WriteString("=== RUN   TestParent\n")
+	for i := 0; i < 1500; i++ {
+		fmt.Fprintf(&b, "=== RUN   TestParent/case%d\n", i)
+		if i == 750 {
+			b.WriteString("    failure message\n")
+		}
+	}
+	b.WriteString("--- FAIL: TestParent (0.00s)\n")
+	for i := 0; i < 1500; i++ {
+		status := "PASS"
+		if i == 750 {
+			status = "FAIL"
+		}
+		fmt.Fprintf(&b, "    --- %s: TestParent/case%d (0.00s)\n", status, i)
+	}
+	b.WriteString("FAIL\n")
+	return b.String()
+}
+
 func repeatedWithTimestamps() string {
 	var b strings.Builder
 	for i := 0; i < 60; i++ {
@@ -164,6 +252,7 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 	}{
 		{"one failure buried in 5000 passing lines", buriedFailure(), Test, true,
 			[]string{"tests: passed=2500 failed=1", "--- FAIL: TestBroken (0.01s)", "    broken_test.go:42: got 3 rows, want 4", "    broken_test.go:43: not found: /var/data/rows.db"}},
+		{"one failed subtest among 1500", manySubtests(), Test, true, []string{"tests: passed=1499 failed=1", "=== RUN   TestParent/case750", "    failure message", "--- FAIL: TestParent (0.00s)", "    --- FAIL: TestParent/case750 (0.00s)"}},
 		{"same failing name in two packages",
 			"=== RUN   TestOpen\n    open_test.go:9: open /tmp/a: no such file\n--- FAIL: TestOpen (0.00s)\nFAIL\nFAIL\texample/a\t0.01s\n=== RUN   TestOpen\n    open_test.go:9: open /tmp/b: no such file\n--- FAIL: TestOpen (0.00s)\nFAIL\nFAIL\texample/b\t0.01s\n",
 			Test, false, nil},
@@ -267,6 +356,19 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 						}
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestNumberSourcesRejectEmbeddedDigits(t *testing.T) {
+	for _, tc := range []struct{ name, original, summary string }{
+		{"colour escape", "\x1b[31mready\x1b[0m", "31"},
+		{"test name", "TestCase2500", "2500"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if valid(Terminal, tc.original, tc.summary) {
+				t.Fatal("accepted a number from inside another token")
 			}
 		})
 	}

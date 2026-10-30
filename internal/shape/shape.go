@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type Kind int
@@ -336,12 +338,25 @@ func errorLine(line string) bool {
 }
 
 func testCounts(lines []string) (passed, failed int) {
+	failedNames := map[string]int{}
+	parents := map[string]bool{}
 	for _, line := range lines {
 		if strings.Contains(line, "--- PASS:") {
 			passed++
 		}
-		if failName.MatchString(line) {
-			failed++
+		if m := failName.FindStringSubmatch(line); m != nil {
+			failedNames[m[1]]++
+			if len(m[1]) > maxTestName {
+				continue
+			}
+			for i := strings.LastIndex(m[1], "/"); i > 0; i = strings.LastIndex(m[1][:i], "/") {
+				parents[m[1][:i]] = true
+			}
+		}
+	}
+	for name, n := range failedNames {
+		if !parents[name] {
+			failed += n
 		}
 	}
 	return
@@ -358,6 +373,7 @@ type testFailure struct {
 func testFailures(lines []string) (map[string]*testFailure, bool) {
 	tests := map[string]*testFailure{}
 	running := map[string]bool{}
+	paused := map[string]bool{}
 	waitsOn := map[string]string{}
 	current := ""
 	markedOwner, sawMarker, unassigned, parallel := false, false, false, false
@@ -376,13 +392,22 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 			}
 			tests[name].indices = append(tests[name].indices, i)
 			parallel = parallel || m[1] == "PAUSE" || m[1] == "CONT"
+			if m[1] == "RUN" {
+				for i := strings.LastIndex(name, "/"); i > 0; i = strings.LastIndex(name[:i], "/") {
+					if paused[name[:i]] {
+						return nil, false
+					}
+				}
+			}
 			if m[1] == "RUN" && !parallel {
 				endSiblings(running, waitsOn, name)
 			}
 			if m[1] == "PAUSE" {
+				paused[name] = true
 				delete(running, name)
 				current = ""
 			} else {
+				delete(paused, name)
 				running[name], current = true, name
 			}
 			continue
@@ -529,6 +554,20 @@ func tokenSet(re *regexp.Regexp, text string) map[string]bool {
 	return out
 }
 
+func numberTokens(text string) []string {
+	var out []string
+	for _, loc := range numbers.FindAllStringIndex(text, -1) {
+		before, _ := utf8.DecodeLastRuneInString(text[:loc[0]])
+		after, _ := utf8.DecodeRuneInString(text[loc[1]:])
+		if (loc[0] > 0 && (unicode.IsLetter(before) || unicode.IsDigit(before) || before == '_')) ||
+			(loc[1] < len(text) && (unicode.IsLetter(after) || unicode.IsDigit(after) || after == '_')) {
+			continue
+		}
+		out = append(out, text[loc[0]:loc[1]])
+	}
+	return out
+}
+
 func valid(kind Kind, original, summary string) bool {
 	// Summaries are built from stripped lines; an escape inside a word must not hide it.
 	cleanLines := strings.Split(ansi.ReplaceAllString(original, ""), "\n")
@@ -544,7 +583,21 @@ func valid(kind Kind, original, summary string) bool {
 	if head != "" && sumLines[0] == head {
 		body = summary[len(head):]
 	}
-	for _, re := range []*regexp.Regexp{numbers, negations, paths} {
+	availableNumbers := map[string]bool{}
+	for _, n := range numberTokens(strings.Join(cleanLines, "\n")) {
+		availableNumbers[n] = true
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if counts.MatchString(line) || repeats.MatchString(line) {
+			continue
+		}
+		for _, n := range numberTokens(line) {
+			if !availableNumbers[n] {
+				return false
+			}
+		}
+	}
+	for _, re := range []*regexp.Regexp{negations, paths} {
 		available := tokenSet(re, original)
 		for _, s := range re.FindAllString(body, -1) {
 			if !available[s] {
@@ -552,6 +605,7 @@ func valid(kind Kind, original, summary string) bool {
 			}
 		}
 	}
+
 	origSet, sumSet := map[string]bool{}, map[string]bool{}
 	for _, line := range cleanLines {
 		origSet[line] = true
