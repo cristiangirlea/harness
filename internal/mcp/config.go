@@ -123,7 +123,7 @@ func LoadConfigsWithEnv(paths []string, lookup func(string) (string, bool)) (ser
 // Remote is a server reached by URL, which hrn's own client skips.
 type Remote struct {
 	Name, URL, Type string
-	Headers         bool
+	Headers         map[string]string
 }
 
 // LoadRemotes lists URL servers by name per file, with later names overriding.
@@ -154,7 +154,7 @@ func LoadRemotesWithEnv(paths []string, lookup func(string) (string, bool)) ([]R
 				continue
 			}
 			e := cfg.Servers[name]
-			r := Remote{Name: name, URL: expandWith(e.URL, lookup), Type: e.Type, Headers: len(e.Headers) > 0}
+			r := Remote{Name: name, URL: expandWith(e.URL, lookup), Type: e.Type, Headers: e.Headers}
 			if i, ok := index[name]; ok {
 				out[i] = r
 				continue

@@ -155,12 +155,13 @@ func TestCodexDisablesEachServerInTheUsersConfigByDefault(t *testing.T) {
 }
 
 func TestCodexTranslatesTheRunsMCPServersInsteadOfDisablingThem(t *testing.T) {
-	codexHome(t, codexConfigFixture)
+	codexHome(t, strings.ReplaceAll(codexConfigFixture, "mcp_servers.github", "mcp_servers.original"))
 	file := mcpFile(t, `"github":{"command":"npx","args":["-y","@x/gh"],"env":{"GH_LEVEL":"value-only-in-env"}},`+
 		`"docs":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer no"}}`)
 	args := NewCodexBackend().args(Task{Dir: "/w", Options: Options{MCP: []string{file}}}, "")
 	got := strings.Join(args, " ")
 	want := "exec --json --skip-git-repo-check -C /w" +
+		" -c mcp_servers.original.enabled=false" +
 		" -c mcp_servers.lit.enabled=false" +
 		" -c mcp_servers.github.enabled=true" +
 		` -c mcp_servers.github.command="npx"` +
@@ -451,17 +452,12 @@ func TestCodexRefusesARunServerWhoseNameIsNotABareKey(t *testing.T) {
 	}
 }
 
-func TestCodexEnablesARunServerTheConfigDisables(t *testing.T) {
+func TestCodexRefusesARunServerTheConfigDisables(t *testing.T) {
 	codexHome(t, "[mcp_servers.github]\ncommand = \"npx\"\nenabled = false\n")
 	file := mcpFile(t, `"github":{"command":"npx"},"docs":{"url":"https://example.test/mcp"}`)
-	got := strings.Join(codexMCPArgs(Task{Options: Options{MCP: []string{file}}}), " ")
-	for _, want := range []string{"mcp_servers.github.enabled=true", "mcp_servers.docs.enabled=true"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("args lack %s: %q", want, got)
-		}
-	}
-	if strings.Contains(got, "enabled=false") {
-		t.Errorf("a run server must not be disabled: %q", got)
+	_, err := codexMCPEnv(Task{Options: Options{MCP: []string{file}}})
+	if err == nil || !strings.Contains(err.Error(), "github") {
+		t.Errorf("want collision refusal, got %v", err)
 	}
 }
 

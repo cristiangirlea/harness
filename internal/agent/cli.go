@@ -204,7 +204,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, bin, c.args(task, promptFile)...)
+	args := c.args(task, promptFile)
+	if c.name == "codex" {
+		if err := codexBatchArgsError(bin, args); err != nil {
+			return fail(StatusError, err)
+		}
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = task.Dir
 	// The api backend's key is for hrn itself; a CLI that found it would bill
 	// per token instead of logging in on its own.
