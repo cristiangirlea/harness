@@ -172,7 +172,9 @@ func editFile() Tool {
 			// Match model LF text against CRLF files.
 			if !strings.Contains(content, old) && strings.Contains(content, "\r\n") {
 				old = strings.ReplaceAll(old, "\n", "\r\n")
-				args.NewString = strings.ReplaceAll(args.NewString, "\n", "\r\n")
+			}
+			if strings.Contains(content, "\r\n") {
+				args.NewString = strings.ReplaceAll(strings.ReplaceAll(args.NewString, "\r\n", "\n"), "\n", "\r\n")
 			}
 			n := strings.Count(content, old)
 			switch {
@@ -258,7 +260,7 @@ func grep() Tool {
 	}
 	return Tool{
 		Name:        "grep",
-		Description: "Search file contents with a regular expression (Go RE2 syntax). Returns path:line:text, at most 200 matches.",
+		Description: "Search file contents with a regular expression (Go RE2 syntax). Returns path:line:text, at most 200 matches. Reports files whose search was cut short by a read error or an overlong line.",
 		Properties: map[string]any{
 			"pattern":          str("Regular expression."),
 			"path":             str("File or directory to search, default the workspace root."),
@@ -307,7 +309,7 @@ func grep() Tool {
 				sc := bufio.NewScanner(f)
 				sc.Buffer(make([]byte, 64*1024), 1024*1024)
 				line := 0
-				for sc.Scan() && count < limit {
+				for count < limit && sc.Scan() {
 					line++
 					text := sc.Text()
 					if line == 1 && strings.ContainsRune(text, 0) {
@@ -320,6 +322,9 @@ func grep() Tool {
 						fmt.Fprintf(&b, "%s:%d:%s\n", ws.Rel(p), line, text)
 						count++
 					}
+				}
+				if err := sc.Err(); err != nil {
+					fmt.Fprintf(&b, "(%s: search cut short: %v)\n", ws.Rel(p), err)
 				}
 			}
 			if info, err := os.Stat(base); err == nil && !info.IsDir() {
@@ -353,7 +358,7 @@ func grep() Tool {
 					return "", err
 				}
 			}
-			if count == 0 {
+			if count == 0 && b.Len() == 0 {
 				return "(no matches)", nil
 			}
 			if count == limit {
@@ -400,8 +405,23 @@ func walk(ctx context.Context, ws *Workspace, base string, visit func(path, rel 
 // GlobRegexp compiles anchored globs supporting **.
 func GlobRegexp(glob string) (*regexp.Regexp, error) {
 	glob = filepath.ToSlash(glob)
+	matched := make(map[int]bool)
+	var stack []int
+	for i := 0; i < len(glob); i++ {
+		switch glob[i] {
+		case '{':
+			stack = append(stack, i)
+		case '}':
+			if len(stack) > 0 {
+				matched[stack[len(stack)-1]] = true
+				matched[i] = true
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
 	var b strings.Builder
 	b.WriteString("^")
+	depth := 0
 	for i := 0; i < len(glob); i++ {
 		c := glob[i]
 		switch c {
@@ -420,11 +440,25 @@ func GlobRegexp(glob string) (*regexp.Regexp, error) {
 		case '?':
 			b.WriteString("[^/]")
 		case '{':
-			b.WriteString("(?:")
+			if matched[i] {
+				b.WriteString("(?:")
+				depth++
+			} else {
+				b.WriteString(`\{`)
+			}
 		case '}':
-			b.WriteString(")")
+			if matched[i] {
+				b.WriteString(")")
+				depth--
+			} else {
+				b.WriteString(`\}`)
+			}
 		case ',':
-			b.WriteString("|")
+			if depth > 0 {
+				b.WriteString("|")
+			} else {
+				b.WriteString(",")
+			}
 		default:
 			b.WriteString(regexp.QuoteMeta(string(c)))
 		}
