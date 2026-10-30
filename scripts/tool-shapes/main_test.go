@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 34cb39fddbf043c11135425564e7275ad019d815e3ee1b815f5521f8c811e293
+// hash: 5b4f52b75ff4c4ed8b0a09ec7479c250df86dd4adbc13fdcd6db2d6e678575fb
 package main
 
 import (
@@ -25,12 +25,12 @@ func TestClassifyNamesTheShapeOfEachToolResult(t *testing.T) {
 		{"go test ./...\nok pkg 1s", "shell", "test"}, {"FAIL pkg", "", "test"}, {"--- PASS: TestX", "", "test"},
 		{"--- a/main.go\n+++ b/main.go", "shell", "terminal"},
 		{"=== RUN TestX", "shell", "test"}, {"--- FAIL: TestX", "shell", "test"},
-		{"--- SKIP: TestX", "shell", "test"}, {"--- BENCH: BenchmarkX", "shell", "test"},
+		{"--- SKIP: TestX", "shell", "terminal"}, {"--- BENCH: BenchmarkX", "shell", "terminal"},
 		{"2026-10-14T12:00:00Z ready", "", "log"}, {"[INFO] ready", "", "log"}, {"ERROR: failed", "", "log"},
-		{`{"a":1}`, "shell", "json"}, {`[1,2]`, "", "json"}, {"a,b\n1,2", "", "table"}, {"a\tb\n1\t2", "", "table"},
+		{`{"a":1}`, "shell", "json"}, {`[1,2]`, "", "json"}, {"a,b\n1,2", "", "terminal"}, {"a\tb\n1\t2", "", "terminal"},
 		{"a,b\n1,2,3", "shell", "terminal"}, {"hello", "Bash", "terminal"}, {"hello", "exec_command", "terminal"},
-		{"hello", "read_file", "other"}, {"", "", "other"},
-		{"{\"Action\":\"run\",\"Test\":\"TestX\"}\n{\"Action\":\"pass\",\"Test\":\"TestX\"}\n", "shell", "test"},
+		{"hello", "read_file", "terminal"}, {"", "", "other"},
+		{"{\"Action\":\"run\",\"Test\":\"TestX\"}\n{\"Action\":\"pass\",\"Test\":\"TestX\"}\n", "shell", "terminal"},
 		{"{\"a\":1}\n{\"b\":2}", "shell", "terminal"},
 	} {
 		t.Run(tt.want+tt.text, func(t *testing.T) {
@@ -38,6 +38,18 @@ func TestClassifyNamesTheShapeOfEachToolResult(t *testing.T) {
 				t.Fatalf("got %s want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClassificationMatchesShaping(t *testing.T) {
+	for _, tc := range []struct{ text, want string }{
+		{`{"message":"FAIL thing"}`, "json"}, {`42`, "terminal"},
+		{"a,b\n1,2", "terminal"}, {"a,b\n" + strings.Repeat("1,\"a,b\"\n2,c\n", 3), "terminal"},
+		{"a,b\n" + strings.Repeat("1,2\n", 5), "table"},
+	} {
+		if got := classify(tc.text, "shell"); got != tc.want {
+			t.Errorf("%q: got %s want %s", tc.text, got, tc.want)
+		}
 	}
 }
 
@@ -370,8 +382,8 @@ func TestAnonymousResults(t *testing.T) {
 	}{
 		{"sequential", []event{{Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_result", Text: "hello"}}, 5},
 		{"shell batch", []event{{Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_call", Tool: "shell"}, {Kind: "tool_result", Text: "hi"}, {Kind: "tool_result", Text: "bye"}}, 5},
-		{"mixed batch", []event{{Kind: "tool_call", Tool: "read_file"}, {Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_result", Text: "hi"}, {Kind: "tool_result", Text: "bye"}}, 0},
-		{"named result", []event{{Kind: "tool_call", Tool: "read_file"}, {Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_result", Tool: "Bash", Text: "hi"}, {Kind: "tool_result", Text: "bye"}}, 2},
+		{"mixed batch", []event{{Kind: "tool_call", Tool: "read_file"}, {Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_result", Text: "hi"}, {Kind: "tool_result", Text: "bye"}}, 5},
+		{"named result", []event{{Kind: "tool_call", Tool: "read_file"}, {Kind: "tool_call", Tool: "Bash"}, {Kind: "tool_result", Tool: "Bash", Text: "hi"}, {Kind: "tool_result", Text: "bye"}}, 5},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newStats()

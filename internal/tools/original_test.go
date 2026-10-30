@@ -59,7 +59,7 @@ func TestOriginalRoundTrip(t *testing.T) {
 }
 
 func TestOriginalFallback(t *testing.T) {
-	text := strings.Repeat("working\n", 10000)
+	text := strings.Repeat("working ", 10000)
 	for _, tc := range []struct {
 		name    string
 		enabled bool

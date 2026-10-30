@@ -3,11 +3,10 @@
 // effects: read, exec
 // parameters: --home:path=HRN_HOME; --days:int=30; --json:bool=true; --definitions:bool=false
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 8b0420177f8a94845a46bc02befbc1df2fb20ba23ab5a3d63554ef7299a46920
+// hash: 801073298a5114547ca53d18b6bdad69301b3d47ea5519b9de379779c8e46b13
 package main
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,11 +18,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	shaping "github.com/cristiangirlea/harness/internal/shape"
 )
 
 var shapeNames = []string{"test", "log", "json", "table", "terminal", "other"}
-var testLine = regexp.MustCompile(`(?m)^(?:go test\b|ok\s|FAIL\b|=== RUN\b|--- (?:PASS|FAIL|SKIP|BENCH)\b)`)
-var logLine = regexp.MustCompile(`(?mi)^(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}|\d{2}:\d{2}:\d{2}|\[?(?:trace|debug|info|warn|warning|error|fatal)\b)`)
 
 func shellTool(tool string) bool {
 	switch strings.ToLower(tool) {
@@ -34,44 +33,19 @@ func shellTool(tool string) bool {
 }
 
 func classify(text, tool string) string {
-	text = strings.TrimSpace(text)
-	if testLine.MatchString(text) || testEvents(text) {
+	switch shaping.Classify(text) {
+	case shaping.Test:
 		return "test"
-	}
-	if logLine.MatchString(text) {
+	case shaping.Log:
 		return "log"
-	}
-	if json.Valid([]byte(text)) {
+	case shaping.JSON:
 		return "json"
-	}
-	for _, delimiter := range []rune{'\t', ','} {
-		r := csv.NewReader(strings.NewReader(text))
-		r.Comma = delimiter
-		rows, err := r.ReadAll()
-		if err == nil && len(rows) >= 2 && len(rows[0]) >= 2 {
-			return "table"
-		}
-	}
-	if shellTool(tool) {
+	case shaping.Table:
+		return "table"
+	case shaping.Terminal:
 		return "terminal"
 	}
 	return "other"
-}
-
-func testEvents(text string) bool {
-	found := false
-	for line := range strings.SplitSeq(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var e struct{ Action *string }
-		if json.Unmarshal([]byte(line), &e) != nil || e.Action == nil {
-			return false
-		}
-		found = true
-	}
-	return found
 }
 
 var inlineLabels = []string{"heredoc", "python", "node", "perl", "go"}
