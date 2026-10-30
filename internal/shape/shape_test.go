@@ -61,7 +61,7 @@ func TestSummarize(t *testing.T) {
 		ok            bool
 	}{
 		{"test", Test, "counts 1 2\n=== RUN   TestGood\n--- PASS: TestGood (0.00s)\n=== RUN   TestBad\n    bad_test.go:7: no match\n--- FAIL: TestBad (0.00s)\n=== RUN   TestWorse\n    bad_test.go:8: never ready\n--- FAIL: TestWorse (0.00s)\nFAIL\n", []string{"passed=1 failed=2", "TestBad", "bad_test.go:7: no match", "TestWorse", "never ready", "FAIL"}, []string{"--- PASS:", "=== RUN   TestGood"}, true},
-		{"log", Log, "INFO counts 2\nINFO idle\nINFO idle\nINFO idle\nINFO before\nWARN retry\nERROR /tmp/x: not ready\nINFO after\nINFO done\nINFO boring\nINFO boring\n", []string{"WARN retry", "ERROR /tmp/x: not ready", "INFO before", "INFO after"}, []string{"INFO boring"}, true},
+		{"log", Log, "INFO counts 2\nINFO idle\nINFO idle\nINFO idle\nINFO before\nWARN retry\nERROR /tmp/x: not ready\nINFO after\nINFO done\nINFO boring\nINFO boring\n", []string{"WARN retry", "ERROR /tmp/x: not ready", "INFO before", "INFO after", "INFO boring"}, nil, true},
 		{"terminal", Terminal, "count 3\n\x1b[32mhello\x1b[0m\nhello\nhello\nend\n", []string{"hello\n[repeated 3 times]", "end"}, []string{"\x1b["}, true},
 		{"osc", Terminal, "\x1b]0;title\ahello\n", []string{"hello"}, []string{"title", "\x1b"}, true},
 		{"recomputed repeat count", Terminal, "hello\nhello\nhello\n", []string{"[repeated 3 times]"}, nil, true},
@@ -369,6 +369,42 @@ func TestLogCollapsesRepeatedErrorLines(t *testing.T) {
 	s, ok := Summarize(Log, text)
 	if !ok || strings.Count(s, "ERROR broken") != 1 || !strings.Contains(s, "[repeated 3 times]") {
 		t.Fatalf("log repetition: %q ok=%v", s, ok)
+	}
+}
+
+func TestLogTraceLimitAndMarker(t *testing.T) {
+	text := "2026-10-16 10:00:00 INFO old\n2026-10-16 10:00:01 INFO before\n2026-10-16 10:00:02 ERROR failed\n"
+	for i := 1; i <= 25; i++ {
+		text += fmt.Sprintf("frame %d\n", i)
+	}
+	text += "2026-10-16 10:00:03 INFO done\n2026-10-16 10:00:04 INFO later"
+	s, ok := Summarize(Log, text)
+	if !ok || !strings.Contains(s, "frame 20\n[... 5 more trace lines]") || strings.Contains(s, "frame 21") || strings.Contains(s, "INFO later") {
+		t.Fatalf("trace: %q ok=%v", s, ok)
+	}
+	if valid(Log, text, strings.Replace(s, "5 more trace lines", "6 more trace lines", 1)) {
+		t.Fatal("accepted an incorrect trace count")
+	}
+	if fact := lostFact(text, s); fact != "" {
+		t.Fatal(fact)
+	}
+	if fact := lostFact(text, strings.Replace(s, "5 more trace lines", "6 more trace lines", 1)); fact == "" {
+		t.Fatal("oracle accepted an incorrect trace count")
+	}
+}
+
+func TestLogTraceBoundaries(t *testing.T) {
+	for _, n := range []int{20, 21} {
+		text := "2026-10-16 10:00:00 ERROR failed\n" + strings.Repeat("frame\n", n) + "2026-10-16 10:00:01 INFO next\n2026-10-16 10:00:02 INFO later"
+		s, ok := Summarize(Log, text)
+		if !ok || strings.Contains(s, "more trace lines") != (n == 21) || strings.Contains(s, "INFO next") || strings.Contains(s, "INFO later") {
+			t.Fatalf("%d trace lines: %q ok=%v", n, s, ok)
+		}
+	}
+	text := "2026-10-16 10:00:00 ERROR first\n" + strings.Repeat("frame\n", 21) + "panic: second\nlast frame"
+	s, ok := Summarize(Log, text)
+	if !ok || !strings.Contains(s, "panic: second\nlast frame") {
+		t.Fatalf("overlapping traces: %q ok=%v", s, ok)
 	}
 }
 

@@ -26,6 +26,7 @@ const (
 var (
 	testLine   = regexp.MustCompile(`^(?:go test\b|\s*--- (?:FAIL|PASS):|ok\s|FAIL(?:\s|$)|=== RUN\s)`)
 	logLine    = regexp.MustCompile(`(?i)^(?:\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d|\[?(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\]?(?:\s|:))`)
+	timestamp  = regexp.MustCompile(`^\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d`)
 	failName   = regexp.MustCompile(`--- FAIL:\s+(\S+)`)
 	testMarker = regexp.MustCompile(`^\s*=== (RUN|CONT|PAUSE|NAME)\s+(\S+)\s*$`)
 	testResult = regexp.MustCompile(`^\s*--- (FAIL|PASS):\s+(\S+)`)
@@ -36,6 +37,7 @@ var (
 	ansi       = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|[@-_])")
 	counts     = regexp.MustCompile(`^tests: passed=(\d+) failed=(\d+)$`)
 	repeats    = regexp.MustCompile(`^\[repeated (\d+) times\]$`)
+	traceMore  = regexp.MustCompile(`^\[\.\.\. (\d+) more trace lines\]$`)
 	heads      = regexp.MustCompile(`^(?:json: (?:array of \d+ items|object with \d+ keys)|table: \d+ rows, \d+ columns)$`)
 )
 
@@ -105,30 +107,7 @@ func Summarize(kind Kind, text string) (string, bool) {
 		}
 		summary = strings.Join(out, "\n")
 	case Log:
-		keep := make([]bool, len(lines))
-		for i, line := range lines {
-			lower := strings.ToLower(line)
-			if errorLine(line) || strings.Contains(lower, "warn") || strings.Contains(lower, "fatal") {
-				for j := max(0, i-2); j <= min(len(lines)-1, i+2); j++ {
-					keep[j] = true
-				}
-			}
-		}
-		// Collapse within each continuous window, never across omitted lines.
-		var out []string
-		for i := 0; i < len(lines); {
-			if !keep[i] {
-				i++
-				continue
-			}
-			j := i + 1
-			for j < len(lines) && keep[j] {
-				j++
-			}
-			out = append(out, collapse(lines[i:j])...)
-			i = j
-		}
-		summary = strings.Join(out, "\n")
+		summary = logSummary(lines)
 		if summary == "" {
 			summary = headTail(collapse(lines))
 		}
@@ -145,6 +124,61 @@ func Summarize(kind Kind, text string) (string, bool) {
 		return "", false
 	}
 	return summary, len(summary) <= 28000 && valid(kind, text, summary)
+}
+
+func logSummary(lines []string) string {
+	keep, omitted := make([]bool, len(lines)), make([]bool, len(lines))
+	trace := -1
+	for i, line := range lines {
+		if timestamp.MatchString(line) {
+			trace = -1
+		}
+		if trace >= 0 && !(i == len(lines)-1 && line == "") {
+			trace++
+			if trace <= 20 {
+				keep[i] = true
+			} else {
+				omitted[i] = true
+			}
+		}
+		lower := strings.ToLower(line)
+		if errorLine(line) || strings.Contains(lower, "warn") || strings.Contains(lower, "fatal") {
+			end := i
+			if !errorLine(line) {
+				end = min(len(lines)-1, i+2)
+			}
+			for j := max(0, i-2); j <= end; j++ {
+				keep[j] = true
+			}
+		}
+		if errorLine(line) {
+			trace = 0
+		}
+	}
+	var out []string
+	for i := 0; i < len(lines); {
+		j := i + 1
+		if keep[i] {
+			for j < len(lines) && keep[j] {
+				j++
+			}
+			end := j
+			if j < len(lines) && omitted[j] && lines[j-1] == lines[j] {
+				for end > i && lines[end-1] == lines[j] {
+					end--
+				}
+			}
+			out = append(out, collapse(lines[i:end])...)
+			out = append(out, lines[end:j]...)
+		} else if omitted[i] {
+			for j < len(lines) && omitted[j] && !keep[j] {
+				j++
+			}
+			out = append(out, fmt.Sprintf("[... %d more trace lines]", j-i))
+		}
+		i = j
+	}
+	return strings.Join(out, "\n")
 }
 
 func isJSON(s string) bool {
@@ -665,7 +699,7 @@ func valid(kind Kind, original, summary string) bool {
 		availableNumbers[n] = true
 	}
 	for _, line := range strings.Split(body, "\n") {
-		if counts.MatchString(line) || repeats.MatchString(line) {
+		if counts.MatchString(line) || repeats.MatchString(line) || traceMore.MatchString(line) {
 			continue
 		}
 		for _, n := range numberTokens(line) {
@@ -725,7 +759,14 @@ func valid(kind Kind, original, summary string) bool {
 			}
 		}
 	}
+	checkedTrace := false
 	for i, line := range sumLines {
+		if traceMore.MatchString(line) && !checkedTrace {
+			checkedTrace = true
+			if kind != Log || summary != logSummary(cleanLines) {
+				return false
+			}
+		}
 		if heads.MatchString(line) && (i != 0 || line != head) {
 			return false
 		}
