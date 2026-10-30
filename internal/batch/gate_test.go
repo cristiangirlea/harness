@@ -583,8 +583,8 @@ func TestGateUsesLocalTemporaryDirectoryAndCargoDefault(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if rel, err := filepath.Rel(root, resolved); err != nil || strings.HasPrefix(rel, "..") {
-					t.Errorf("temp outside worktree: %s", resolved)
+				if filepath.VolumeName(root) != filepath.VolumeName(resolved) {
+					t.Errorf("temp on a different volume: %s", resolved)
 				}
 				return tools.ShellResult{ExitCode: exit}, nil
 			}
@@ -597,6 +597,84 @@ func TestGateUsesLocalTemporaryDirectoryAndCargoDefault(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGateTempOutsideGitAncestors(t *testing.T) {
+	base := t.TempDir()
+	outer := filepath.Join(base, "outer")
+	repo := filepath.Join(outer, "nested", "repo")
+	tree := filepath.Join(repo, ".hrn", "slots", "1")
+	if err := os.MkdirAll(tree, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{outer, repo} {
+		if err := os.WriteFile(filepath.Join(root, ".git"), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env, cleanup, err := batchEnv(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	var temp string
+	for _, kv := range env {
+		if k, v, _ := strings.Cut(kv, "="); k == "TMP" {
+			temp = v
+		}
+	}
+	resolved, err := filepath.EvalSymlinks(temp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(filepath.Dir(resolved)) != root || filepath.VolumeName(resolved) != filepath.VolumeName(root) {
+		t.Errorf("temp = %q, want a folder under %q on the same volume", resolved, filepath.Join(root, ".hrn-gate-tmp"))
+	}
+	for path := resolved; ; path = filepath.Dir(path) {
+		if _, err := os.Lstat(filepath.Join(path, ".git")); !os.IsNotExist(err) {
+			t.Errorf("git entry or inaccessible ancestor at %s: %v", path, err)
+		}
+		if filepath.Dir(path) == path {
+			break
+		}
+	}
+}
+
+func TestGateTempFallsBackWhenParentCannotBeCreated(t *testing.T) {
+	base := t.TempDir()
+	tree := filepath.Join(base, "repo", ".hrn", "slots", "1")
+	if err := os.MkdirAll(tree, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, ".hrn-gate-tmp"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	env, cleanup, err := batchEnv(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	for _, kv := range env {
+		if k, v, _ := strings.Cut(kv, "="); k == "TMP" {
+			got, err := filepath.EvalSymlinks(filepath.Dir(v))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := filepath.EvalSymlinks(os.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Errorf("temp parent = %q, want %q", got, want)
+			}
+			return
+		}
+	}
+	t.Fatal("TMP missing")
 }
 
 func TestGatePreservesUserCargoIncremental(t *testing.T) {
@@ -630,7 +708,7 @@ func TestGatePreservesUserCargoIncremental(t *testing.T) {
 
 func TestGateCommandReceivesItsTemporaryDirectoryAndCargoDefault(t *testing.T) {
 	t.Setenv("CARGO_INCREMENTAL", "0")
-	command := `test "$CARGO_INCREMENTAL" = 0 && test -d "$TMP" && test "$TMP" = "$TEMP" && test "$TMP" = "$TMPDIR" && printf '%s' "$TMP"`
+	command := `test "$CARGO_INCREMENTAL" = 0 && test -d "$TMP" && test "$TMP" = "$TEMP" && test "$TMP" = "$TMPDIR" && (cygpath -w "$TMP" 2>/dev/null || printf '%s' "$TMP")`
 	if name, _ := tools.Shell(); name == "powershell" {
 		command = `if ($env:CARGO_INCREMENTAL -ne '0' -or !(Test-Path $env:TMP) -or $env:TMP -ne $env:TEMP -or $env:TMP -ne $env:TMPDIR) { exit 1 }; Write-Output $env:TMP`
 	}
@@ -681,10 +759,6 @@ func TestBatchEnvironmentRespectsCargoConfiguration(t *testing.T) {
 				if strings.HasPrefix(strings.ToUpper(kv), "CARGO_INCREMENTAL=") {
 					t.Errorf("cargo config overridden: %s", kv)
 				}
-			}
-			ignore, err := os.ReadFile(filepath.Join(root, ".hrn", ".gitignore"))
-			if err != nil || string(ignore) != "*\n" {
-				t.Errorf("ignore = %q, %v", ignore, err)
 			}
 		})
 	}

@@ -2698,7 +2698,7 @@ func TestBatchAgentAndGatesShareWorktreeVolumeTemporaryFolder(t *testing.T) {
 		for _, outcome := range []string{"pass", "gate-fail", "agent-error"} {
 			t.Run(mode+"/"+outcome, func(t *testing.T) {
 				dir := initRepo(t)
-				expectedParent := filepath.Join(dir, ".hrn")
+				expectedParent := filepath.Join(filepath.Dir(dir), ".hrn-gate-tmp")
 				worktrees := mode
 				if mode == "linked-slots" {
 					linked := filepath.Join(t.TempDir(), "linked")
