@@ -398,6 +398,8 @@ the watch Backends card and `hrn backends` read codex's quota from codex's own s
   Fields are `key` (source identity), `kind`, `track` (`delivery`, `practice`, `ada` or
   `badge`), `xp`, `at` and `repo` (GitHub owner/name, a folder name when no remote is
   set, or empty). Optional `cancels` names the key a correction takes back.
+- `reps/<UTC date>.json`: daily exercise and named reads, including masked material,
+  reveal and answer, answer time, attempt and self-mark.
 - `settings.json`: optional `enabled` boolean. The game is on when the file or field
   is missing. `false` hides the scores; the ledger keeps recording.
 
@@ -405,6 +407,8 @@ This version writes these kinds:
 
 | Kind | Key | XP | When |
 |---|---|---|---|
+| `practice_rep` | `rep:<date>` | 30 | The daily exercise was answered. |
+| `practice_read` | `read:<owner>/<repo>#<number>` | 20 | An answered read was merged afterwards. |
 | `review_clean` | `review:<run id>` | 20 | A finished review ends `ok` with a non-empty final answer and no standalone word `blocking`. |
 | `inside_ceiling` | `ceiling:<run id>` | 5 | A run ends `ok` with a timeout, or an api run has a cost ceiling and a known positive cost. |
 | `routed_passed` | `routed:<run id>` | 10 | A routed run ends `ok` and, for a settled batch attempt, all its gates pass. |
@@ -423,7 +427,7 @@ events use their source record's time; badges use the event that earned them.
 Cancelled events are dropped before daily caps are applied, in order of `at`, then
 `key`. Caps per kind and UTC date are four reviews, three bugs,
 ten runs inside their ceiling, three routed passes and five script reuses.
-First uses and routed failures have no daily cap; badges remain once earned.
+Practice has a daily cap of one exercise and three reads. First uses and routed failures have no daily cap; badges remain once earned.
 
 `hrn bot stats` folds every record on disk before it prints. `hrn runs prune` folds
 every record on disk first and removes nothing if that or reading a run it would

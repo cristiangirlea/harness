@@ -22,6 +22,9 @@ import (
 )
 
 func cmdBot(args []string) error {
+	if len(args) > 0 && args[0] == "practice" {
+		return cmdBotPractice(args[1:])
+	}
 	if len(args) > 0 && args[0] == "stats" {
 		return cmdBotStats(args[1:])
 	}
@@ -89,6 +92,23 @@ func cmdBotStats(args []string) error {
 	totals := game.Sum(events)
 	level := game.Level(totals.Person)
 	fmt.Printf("level %d, %d xp (%d more for level %d)\n", level, totals.Person, 50*(level+1)*(level+1)-totals.Person, level+1)
+	source, err := game.NewGitHubSource()
+	if err != nil {
+		return err
+	}
+	streak, days, err := game.NewPractice(source, time.Now()).Streak()
+	if err != nil {
+		return err
+	}
+	var squares strings.Builder
+	for _, day := range days {
+		if day {
+			squares.WriteString("\u25a0")
+		} else {
+			squares.WriteString("\u25a1")
+		}
+	}
+	fmt.Printf("streak: %d days %s\n", streak, squares.String())
 	week := game.WeekStart(time.Now())
 	xp := totals.Since(week)
 	fmt.Printf("this week, from %s UTC: delivery %d xp, practice %d xp\n", week.Format("Monday 2 January 2006"), xp[game.TrackDelivery], xp[game.TrackPractice])
@@ -169,4 +189,77 @@ func windowCommand(goos string, getenv func(string) string, exists func(string) 
 		}
 	}
 	return []string{"xdg-open", url}
+}
+
+func cmdBotPractice(args []string) error {
+	source, err := game.NewGitHubSource()
+	if err != nil {
+		return err
+	}
+	p := game.NewPractice(source, time.Now())
+	show := func(e game.Exercise, err error) error {
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s ? %s\n\n%s\n", e.Kind, e.Source, e.Material)
+		if !e.AnsweredAt.IsZero() {
+			fmt.Println(e.Reveal)
+		}
+
+		return nil
+	}
+	if len(args) == 0 {
+		e, err := p.Today()
+		return show(e, err)
+	}
+	switch args[0] {
+	case "swap":
+		if len(args) != 1 {
+			return errors.New("swap takes no arguments")
+		}
+		e, err := p.Swap()
+		return show(e, err)
+	case "read":
+		if len(args) != 2 {
+			return errors.New("read needs owner/repo#number")
+		}
+		e, err := p.Read(args[1])
+		return show(e, err)
+	case "mark":
+		if len(args) != 2 {
+			return errors.New("mark needs got_it, partly or missed")
+		}
+		return p.Mark(args[1])
+	case "answer":
+		fs := flag.NewFlagSet("practice answer", flag.ContinueOnError)
+		file := fs.String("file", "", "")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return errors.New("answer takes input from stdin or --file")
+		}
+		var b []byte
+		if *file != "" {
+			b, err = os.ReadFile(*file)
+		} else {
+			b, err = io.ReadAll(io.LimitReader(os.Stdin, 4<<20))
+		}
+		if err != nil {
+			return err
+		}
+		p = game.NewPractice(source, time.Now())
+		reveal, err := p.Answer(string(b))
+		var warning *game.RebuildWarning
+		if err != nil && !errors.As(err, &warning) {
+			return err
+		}
+		fmt.Println(reveal)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown practice command %q", args[0])
+	}
 }
