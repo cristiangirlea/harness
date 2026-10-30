@@ -130,7 +130,7 @@ func logSummary(lines []string) string {
 	keep, omitted := make([]bool, len(lines)), make([]bool, len(lines))
 	trace := -1
 	for i, line := range lines {
-		if timestamp.MatchString(line) {
+		if logLine.MatchString(line) {
 			trace = -1
 		}
 		if trace >= 0 && !(i == len(lines)-1 && line == "") {
@@ -143,10 +143,7 @@ func logSummary(lines []string) string {
 		}
 		lower := strings.ToLower(line)
 		if errorLine(line) || strings.Contains(lower, "warn") || strings.Contains(lower, "fatal") {
-			end := i
-			if !errorLine(line) {
-				end = min(len(lines)-1, i+2)
-			}
+			end := min(len(lines)-1, i+2)
 			for j := max(0, i-2); j <= end; j++ {
 				keep[j] = true
 			}

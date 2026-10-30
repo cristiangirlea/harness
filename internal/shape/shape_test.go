@@ -61,7 +61,7 @@ func TestSummarize(t *testing.T) {
 		ok            bool
 	}{
 		{"test", Test, "counts 1 2\n=== RUN   TestGood\n--- PASS: TestGood (0.00s)\n=== RUN   TestBad\n    bad_test.go:7: no match\n--- FAIL: TestBad (0.00s)\n=== RUN   TestWorse\n    bad_test.go:8: never ready\n--- FAIL: TestWorse (0.00s)\nFAIL\n", []string{"passed=1 failed=2", "TestBad", "bad_test.go:7: no match", "TestWorse", "never ready", "FAIL"}, []string{"--- PASS:", "=== RUN   TestGood"}, true},
-		{"log", Log, "INFO counts 2\nINFO idle\nINFO idle\nINFO idle\nINFO before\nWARN retry\nERROR /tmp/x: not ready\nINFO after\nINFO done\nINFO boring\nINFO boring\n", []string{"WARN retry", "ERROR /tmp/x: not ready", "INFO before", "INFO after", "INFO boring"}, nil, true},
+		{"log", Log, "INFO counts 2\nINFO idle\nINFO idle\nINFO idle\nINFO before\nWARN retry\nERROR /tmp/x: not ready\nINFO after\nINFO done\nINFO boring\nINFO boring\n", []string{"WARN retry", "ERROR /tmp/x: not ready", "INFO before", "INFO after"}, []string{"INFO boring"}, true},
 		{"terminal", Terminal, "count 3\n\x1b[32mhello\x1b[0m\nhello\nhello\nend\n", []string{"hello\n[repeated 3 times]", "end"}, []string{"\x1b["}, true},
 		{"osc", Terminal, "\x1b]0;title\ahello\n", []string{"hello"}, []string{"title", "\x1b"}, true},
 		{"recomputed repeat count", Terminal, "hello\nhello\nhello\n", []string{"[repeated 3 times]"}, nil, true},
@@ -401,8 +401,18 @@ func TestLogTraceBoundaries(t *testing.T) {
 			t.Fatalf("%d trace lines: %q ok=%v", n, s, ok)
 		}
 	}
-	text := "2026-10-16 10:00:00 ERROR first\n" + strings.Repeat("frame\n", 21) + "panic: second\nlast frame"
+	text := "ERROR failed\nINFO retrying in 5s\n[ERROR] second\nINFO recovered\nINFO later\nINFO boring"
 	s, ok := Summarize(Log, text)
+	if !ok || !strings.Contains(s, "INFO retrying in 5s") || !strings.Contains(s, "INFO recovered") || !strings.Contains(s, "INFO later") || strings.Contains(s, "INFO boring") || strings.Contains(s, "more trace lines") {
+		t.Fatalf("level entry boundaries and context: %q ok=%v", s, ok)
+	}
+	text = "ERROR failed\n" + strings.Repeat("frame\n", 21) + "INFO next\nINFO later"
+	s, ok = Summarize(Log, text)
+	if !ok || !strings.Contains(s, "[... 1 more trace lines]") || strings.Contains(s, "INFO next") || strings.Contains(s, "INFO later") {
+		t.Fatalf("level entry after trace: %q ok=%v", s, ok)
+	}
+	text = "2026-10-16 10:00:00 ERROR first\n" + strings.Repeat("frame\n", 21) + "panic: second\nlast frame"
+	s, ok = Summarize(Log, text)
 	if !ok || !strings.Contains(s, "panic: second\nlast frame") {
 		t.Fatalf("overlapping traces: %q ok=%v", s, ok)
 	}

@@ -102,11 +102,11 @@ func oracleGenerated(clean string, lines []string, i int) bool {
 			end := j + n + 1
 			clear := true
 			for _, skipped := range original[j+1 : end] {
-				if timestamp.MatchString(skipped) || errorLine(skipped) {
+				if logLine.MatchString(skipped) || errorLine(skipped) {
 					clear = false
 				}
 			}
-			if original[j] == lines[i-1] && clear && (end == len(original) || end == len(original)-1 && original[end] == "" || end < len(original) && (timestamp.MatchString(original[end]) || i+1 < len(lines) && original[end] == lines[i+1])) {
+			if original[j] == lines[i-1] && clear && (end == len(original) || end == len(original)-1 && original[end] == "" || end < len(original) && (logLine.MatchString(original[end]) || i+1 < len(lines) && original[end] == lines[i+1])) {
 				return true
 			}
 		}
