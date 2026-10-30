@@ -751,7 +751,7 @@ func TestStreamSessionExpiry(t *testing.T) {
 	f.clock = time.Now()
 	f.opt.Public.Now = time.Now
 	claims := f.validClaims()
-	claims["exp"] = f.clock.Unix() - 57
+	claims["exp"] = f.clock.Unix() - 59
 	expiry := time.Unix(claims["exp"].(int64), 0).Add(60 * time.Second)
 	token := f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
 
@@ -764,7 +764,11 @@ func TestStreamSessionExpiry(t *testing.T) {
 			opt.Poll = time.Hour
 		}
 		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			wait := 4 * time.Second
+			if !public {
+				wait = 1500 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), wait)
 			defer cancel()
 			r := httptest.NewRequest(http.MethodGet, "/stream/index", nil).WithContext(ctx)
 			if public {
