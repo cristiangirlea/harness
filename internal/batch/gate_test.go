@@ -677,6 +677,24 @@ func TestGateTempFallsBackWhenParentCannotBeCreated(t *testing.T) {
 	t.Fatal("TMP missing")
 }
 
+func TestGateTempParentRemovedAfterCleanup(t *testing.T) {
+	base := t.TempDir()
+	tree := filepath.Join(base, "repo", ".hrn", "slots", "1")
+	if err := os.MkdirAll(tree, 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, cleanup, err := batchEnv(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(base, ".hrn-gate-tmp")); !os.IsNotExist(err) {
+		t.Fatalf("gate parent remains: %v", err)
+	}
+}
+
 func TestGatePreservesUserCargoIncremental(t *testing.T) {
 	t.Setenv("CARGO_INCREMENTAL", "1")
 	old := runGateShell

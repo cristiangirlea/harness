@@ -1510,7 +1510,13 @@ func batchEnv(dir string) ([]string, func() error, error) {
 		return nil, nil, err
 	}
 	env = append(env, "TMP="+temp, "TEMP="+temp, "TMPDIR="+temp)
-	return env, func() error { return os.RemoveAll(temp) }, nil
+	return env, func() error {
+		err := os.RemoveAll(temp)
+		if parent != os.TempDir() && filepath.Dir(temp) == parent && filepath.Base(parent) == ".hrn-gate-tmp" {
+			_ = os.Remove(parent)
+		}
+		return err
+	}, nil
 }
 
 func gateTempParent(dir string) string {
@@ -1538,8 +1544,12 @@ func gateTempParent(dir string) string {
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return os.TempDir()
 	}
+	info, err := os.Lstat(parent)
+	if err != nil || !info.IsDir() || !gateTempPermissionsSafe(info) {
+		return os.TempDir()
+	}
 	resolved, err := filepath.EvalSymlinks(parent)
-	if err != nil || filepath.VolumeName(resolved) != filepath.VolumeName(tree) {
+	if err != nil || !sameVolume(resolved, tree) {
 		return os.TempDir()
 	}
 	for path := resolved; ; path = filepath.Dir(path) {

@@ -2739,14 +2739,16 @@ func TestBatchAgentAndGatesShareWorktreeVolumeTemporaryFolder(t *testing.T) {
 				if temp == "" || taskDir == "" {
 					t.Fatal("agent did not receive temporary folder")
 				}
-				parent, err := filepath.EvalSymlinks(expectedParent)
+				parent, err := filepath.EvalSymlinks(filepath.Dir(expectedParent))
 				if err != nil {
 					t.Fatal(err)
 				}
-				actual, err := filepath.EvalSymlinks(filepath.Dir(temp))
+				actual, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(temp)))
 				if err != nil {
 					t.Fatal(err)
 				}
+				actual = filepath.Join(actual, filepath.Base(filepath.Dir(temp)))
+				parent = filepath.Join(parent, filepath.Base(expectedParent))
 				if actual != parent {
 					t.Errorf("temp parent %s, want %s", actual, parent)
 				}
