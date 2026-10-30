@@ -275,6 +275,20 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-30: maintainer decisions on four open questions (#462, #464, #562, #671; PRs #711, #712,
+  #713). A log summary keeps the two lines after an error and the trace after it up to the next log
+  entry, at most 20 lines, with a count valid recomputes; an error word wrapped across terminal
+  lines is accepted as a limit of line-based shaping. The eval judge's agent runs with a scratch
+  HRN_HOME, leaving worktree names and reading the real home by path as documented limits. Slot
+  caches are never pruned per dependency, since Cargo does not touch artifacts it reuses; with
+  --slot-cap set, an idle, unlocked, unleased slot cache still above the cap after any incremental
+  trim is removed whole.
+- 2026-10-30: a contributor's review, @mattabate (#700, #701, #702 and three points sent privately;
+  PRs #707-#710). edit_file follows a CRLF file without doubling carriage returns, grep names a
+  file a long line cut short, and glob commas outside braces are literal. Display masking covers
+  more secret names and token forms, records under HRN_HOME are created owner-only (folders 0700,
+  files 0600, existing ones unchanged), and a public watch stream ends when its access token
+  expires.
 - 2026-10-30: shaping fixes from the adversarial probes (#461, #463, #465, #482, #483, #484, #619;
   PR #694, `docs/tool-shapes.md`). `valid` reads numbers from the colour-stripped original, as
   whole tokens and as digit runs, and exempts only the lines it recomputes; failures are qualified
