@@ -11,6 +11,7 @@ func TestOutputRetriesOnlyTheIncompleteWorktreeErrorOnce(t *testing.T) {
 	for _, message := range []string{
 		"fatal: failed to read .git/worktrees/4/commondir: No such file or directory",
 		"fatal: failed to read E:/repo/.git/worktrees/4/commondir",
+		"fatal: failed to read E:/commondir/repo/.git/worktrees/4/commondir",
 		`fatal: failed to read E:\repo\.git\worktrees\4\commondir`,
 		"fatal: failed to read .git/commondir",
 		"fatal: failed to read .git/worktrees/4/HEAD",
@@ -32,6 +33,7 @@ func TestOutputRetriesOnlyTheIncompleteWorktreeErrorOnce(t *testing.T) {
 				want := 1
 				if message == "fatal: failed to read .git/worktrees/4/commondir: No such file or directory" ||
 					message == "fatal: failed to read E:/repo/.git/worktrees/4/commondir" ||
+					message == "fatal: failed to read E:/commondir/repo/.git/worktrees/4/commondir" ||
 					message == `fatal: failed to read E:\repo\.git\worktrees\4\commondir` {
 					want = 2
 				}

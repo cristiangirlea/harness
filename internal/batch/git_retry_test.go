@@ -100,3 +100,37 @@ func TestGitCommandsRetryWhileAnotherWorktreeIsBeingCreated(t *testing.T) {
 		})
 	}
 }
+
+func TestAddWorktreeCleansBranchAfterFailure(t *testing.T) {
+	root := initRepo(t)
+	hooks := filepath.Join(root, ".git", "hooks")
+	hook := filepath.Join(hooks, "post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	tr := TaskResult{Branch: "failed-task", Worktree: filepath.Join(t.TempDir(), "task")}
+	if err := addWorktree(context.Background(), root, tr, "HEAD"); err == nil {
+		t.Fatal("expected add failure")
+	}
+	if got := git(t, root, "branch", "--list", tr.Branch); got != "" {
+		t.Fatalf("branch left behind: %s", got)
+	}
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	if err := addWorktree(context.Background(), root, tr, "HEAD"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+}
+
+func TestAddWorktreeKeepsExistingBranchOnFailure(t *testing.T) {
+	root := initRepo(t)
+	git(t, root, "branch", "existing-task")
+	tr := TaskResult{Branch: "existing-task", Worktree: filepath.Join(t.TempDir(), "task")}
+	if err := addWorktree(context.Background(), root, tr, "HEAD"); err == nil {
+		t.Fatal("expected add failure")
+	}
+	if got := git(t, root, "branch", "--list", tr.Branch); got == "" {
+		t.Fatal("existing branch was deleted")
+	}
+}
