@@ -200,6 +200,7 @@ func TestHelperCodexMCPEnv(t *testing.T) {
 		return
 	}
 	fmt.Println("GH_LEVEL=" + os.Getenv("GH_LEVEL"))
+	fmt.Println("ALIAS=" + os.Getenv("ALIAS"))
 	token, set := os.LookupEnv("GITHUB_TOKEN")
 	fmt.Printf("GITHUB_TOKEN set=%v %s\n", set, token)
 	fmt.Println("GIT_CONFIG_COUNT=" + os.Getenv("GIT_CONFIG_COUNT"))
@@ -242,7 +243,7 @@ func TestCodexMCPEnvIsGuardedLikeTheRestOfTheEnvironment(t *testing.T) {
 	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
 	unsetenv(t, "GIT_CONFIG_COUNT", "GITHUB_TOKEN")
 	t.Setenv("HRN_TEST_WITHHELD", "withheld-token-value")
-	file := mcpFile(t, `"github":{"command":"npx","env":{"GITHUB_TOKEN":"${HRN_TEST_WITHHELD}","GIT_CONFIG_COUNT":"0"}}`)
+	file := mcpFile(t, `"github":{"command":"npx","env":{"GITHUB_TOKEN":"${HRN_TEST_WITHHELD}"}}`)
 	b := NewCodexBackend()
 	b.name, b.candidates = os.Args[0], nil
 	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
@@ -480,5 +481,78 @@ func TestCodexEscapesAWindowsCommandPath(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("args lack %s: %q", want, got)
 		}
+	}
+}
+
+func TestCodexMCPExpandedSecretUsesGuardedEnvironment(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	t.Setenv("GITHUB_TOKEN", "fake-secret")
+	unsetenv(t, "ALIAS")
+	file := mcpFile(t, `"github":{"command":"x","env":{"ALIAS":"${GITHUB_TOKEN}"}}`)
+	for _, dangerous := range []bool{false, true} {
+		b := NewCodexBackend()
+		b.name, b.candidates = os.Args[0], nil
+		b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+		b.parse = nil
+		var info string
+		res := b.Run(context.Background(), Task{Dir: t.TempDir(), Options: Options{MCP: []string{file}, AllowDangerous: dangerous}}, func(e Event) {
+			if e.Kind == EventInfo {
+				info += e.Text
+			}
+		})
+		want := "ALIAS="
+		if dangerous {
+			want += "fake-secret"
+		}
+		if res.Status != StatusOK || !strings.Contains(res.Final, want+"\n") {
+			t.Errorf("dangerous=%v result=%+v", dangerous, res)
+		}
+		if !dangerous && (!strings.Contains(info, "server") || !strings.Contains(info, "login")) {
+			t.Errorf("guard line: %s", info)
+		}
+	}
+}
+
+func TestCodexRefusesMCPGitConfigEnv(t *testing.T) {
+	for _, key := range []string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_GLOBAL", "git_config_count"} {
+		file := mcpFile(t, fmt.Sprintf(`"git-server":{"command":"x","env":{%q:"0"}}`, key))
+		_, err := codexMCPEnv(Task{Options: Options{MCP: []string{file}}})
+		if err == nil || !strings.Contains(err.Error(), "git-server") || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s: %v", key, err)
+		}
+	}
+}
+
+func TestCodexSkipsInvalidHomeMCPNames(t *testing.T) {
+	codexHome(t, "")
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	path := filepath.Join(home, "mcp.json")
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"bad name":{"command":"x"},"bad.remote":{"url":"https://example.test"},"good":{"command":"x"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	task := Task{Dir: t.TempDir(), Options: Options{MCP: []string{path}}}
+	args := strings.Join(codexMCPArgs(task), " ")
+	if strings.Contains(args, "bad name") || strings.Contains(args, "bad.remote") || !strings.Contains(args, "mcp_servers.good.command") {
+		t.Errorf("args: %s", args)
+	}
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	b := NewCodexBackend()
+	b.name, b.candidates = os.Args[0], nil
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+	b.parse = nil
+	var info string
+	res := b.Run(context.Background(), task, func(e Event) {
+		if e.Kind == EventInfo {
+			info += e.Text + "\n"
+		}
+	})
+	if res.Status != StatusOK || !strings.Contains(info, "bad name") || !strings.Contains(info, "bad.remote") || !strings.Contains(info, "skipped") {
+		t.Errorf("result=%+v info=%s", res, info)
+	}
+	task.MCP = append(task.MCP, path)
+	if _, err := codexMCPEnv(task); err == nil {
+		t.Error("explicit home path must still be refused")
 	}
 }

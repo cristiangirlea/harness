@@ -59,6 +59,10 @@ func ConfigPaths(extra []string) ([]string, error) {
 
 // LoadConfig sorts server names to stabilize tool lists and prompt caches.
 func LoadConfig(path string) (servers []ServerConfig, skipped []string, err error) {
+	return loadConfig(path, os.LookupEnv)
+}
+
+func loadConfig(path string, lookup func(string) (string, bool)) (servers []ServerConfig, skipped []string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
@@ -83,7 +87,7 @@ func LoadConfig(path string) (servers []ServerConfig, skipped []string, err erro
 			s.Args = append(s.Args, expand(a))
 		}
 		for k, v := range e.Env {
-			s.Env[k] = expand(v)
+			s.Env[k] = expandWith(v, lookup)
 		}
 		servers = append(servers, s)
 	}
@@ -92,9 +96,14 @@ func LoadConfig(path string) (servers []ServerConfig, skipped []string, err erro
 
 // LoadConfigs merges files in order and servers by name, with later names overriding.
 func LoadConfigs(paths []string) (servers []ServerConfig, skipped []string, err error) {
+	return LoadConfigsWithEnv(paths, os.LookupEnv)
+}
+
+// LoadConfigsWithEnv expands server env values with lookup.
+func LoadConfigsWithEnv(paths []string, lookup func(string) (string, bool)) (servers []ServerConfig, skipped []string, err error) {
 	index := map[string]int{}
 	for _, p := range paths {
-		list, skip, err := LoadConfig(p)
+		list, skip, err := loadConfig(p, lookup)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -154,6 +163,10 @@ func LoadRemotes(paths []string) ([]Remote, error) {
 
 // Hide hrn secrets during expansion so configs cannot expose them under other names.
 func expand(s string) string {
+	return expandWith(s, os.LookupEnv)
+}
+
+func expandWith(s string, lookup func(string) (string, bool)) string {
 	var b strings.Builder
 	for {
 		i := strings.Index(s, "${")
@@ -168,7 +181,7 @@ func expand(s string) string {
 		}
 		b.WriteString(s[:i])
 		name, def, hasDef := strings.Cut(s[i+2:i+j], ":-")
-		if v, ok := os.LookupEnv(name); ok && v != "" && len(retrieval.ExecutorEnv([]string{name + "="})) == 1 {
+		if v, ok := lookup(name); ok && v != "" && len(retrieval.ExecutorEnv([]string{name + "="})) == 1 {
 			b.WriteString(v)
 		} else if hasDef {
 			b.WriteString(def)

@@ -12,13 +12,13 @@ import (
 	"strings"
 
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/tools"
 )
 
 // Codex merges empty MCP tables; lean must disable names individually.
 func codexMCPArgs(t Task) []string {
 	// A config that does not load is reported by codexMCPEnv before the start.
-	servers, _, _ := mcp.LoadConfigs(t.MCP)
-	remotes, _ := mcp.LoadRemotes(t.MCP)
+	servers, remotes, _, _ := codexMCPConfigs(t)
 	ours := map[string]bool{}
 	for _, s := range servers {
 		ours[s.Name] = true
@@ -57,25 +57,9 @@ func codexMCPArgs(t Task) []string {
 
 // env_vars keeps MCP secrets off command lines.
 func codexMCPEnv(t Task) ([]string, error) {
-	servers, _, err := mcp.LoadConfigs(t.MCP)
+	servers, remotes, _, err := codexMCPConfigs(t)
 	if err != nil {
-		return nil, fmt.Errorf("mcp config: %w", err)
-	}
-	remotes, err := mcp.LoadRemotes(t.MCP)
-	if err != nil {
-		return nil, fmt.Errorf("mcp config: %w", err)
-	}
-	names := make([]string, 0, len(servers)+len(remotes))
-	for _, s := range servers {
-		names = append(names, s.Name)
-	}
-	for _, r := range remotes {
-		names = append(names, r.Name)
-	}
-	for _, name := range names {
-		if !isBareKey(name) {
-			return nil, fmt.Errorf("mcp server %q: codex takes only names of letters, digits, '_' and '-'", name)
-		}
+		return nil, err
 	}
 	for _, r := range remotes {
 		if r.Headers || r.Type == "sse" {
@@ -88,6 +72,9 @@ func codexMCPEnv(t Task) ([]string, error) {
 		for _, k := range sortedKeys(s.Env) {
 			if k == "" || strings.Contains(k, "=") {
 				return nil, fmt.Errorf("mcp %s: %q is not an environment variable name", s.Name, k)
+			}
+			if strings.HasPrefix(strings.ToUpper(k), "GIT_CONFIG_") {
+				return nil, fmt.Errorf("mcp %s: %s is not allowed in a server's env; it conflicts with the git guard", s.Name, k)
 			}
 			if k == "CODEX_HOME" || runtime.GOOS == "windows" && strings.EqualFold(k, "CODEX_HOME") {
 				return nil, fmt.Errorf("mcp %s: %s is not allowed in a server's env; codex must use the home hrn reads", s.Name, k)
@@ -117,6 +104,82 @@ func codexMCPEnv(t Task) ([]string, error) {
 		env = append(env, k+"="+vars[k].value)
 	}
 	return env, nil
+}
+
+func codexMCPConfigs(t Task) ([]mcp.ServerConfig, []mcp.Remote, []string, error) {
+	lookup := os.LookupEnv
+	if !t.AllowDangerous {
+		env := withoutEnv(agentEnv(os.Environ()), "ANTHROPIC_API_KEY")
+		if !t.InheritEnv {
+			env, _, _ = sanitizedEnv(env, runtime.GOOS)
+		}
+		env = append(env, t.ChildEnv...)
+		env, _ = tools.GuardEnv(env, "")
+		values := map[string]string{}
+		for _, kv := range env {
+			k, v, _ := strings.Cut(kv, "=")
+			if runtime.GOOS == "windows" {
+				k = strings.ToUpper(k)
+			}
+			values[k] = v
+		}
+		lookup = func(k string) (string, bool) {
+			if runtime.GOOS == "windows" {
+				k = strings.ToUpper(k)
+			}
+			v, ok := values[k]
+			return v, ok
+		}
+	}
+	servers, _, err := mcp.LoadConfigsWithEnv(t.MCP, lookup)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("mcp config: %w", err)
+	}
+	remotes, err := mcp.LoadRemotes(t.MCP)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("mcp config: %w", err)
+	}
+	home := len(t.MCP) > 0 && filepath.Clean(t.MCP[0]) == filepath.Clean(mcp.DefaultConfigPath())
+	explicit := t.MCP
+	if home {
+		explicit = explicit[1:]
+	}
+	expServers, _, err := mcp.LoadConfigsWithEnv(explicit, lookup)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("mcp config: %w", err)
+	}
+	expRemotes, err := mcp.LoadRemotes(explicit)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("mcp config: %w", err)
+	}
+	for _, s := range expServers {
+		if !isBareKey(s.Name) {
+			return nil, nil, nil, fmt.Errorf("mcp server %q: codex takes only names of letters, digits, '_' and '-'", s.Name)
+		}
+	}
+	for _, r := range expRemotes {
+		if !isBareKey(r.Name) {
+			return nil, nil, nil, fmt.Errorf("mcp server %q: codex takes only names of letters, digits, '_' and '-'", r.Name)
+		}
+	}
+	var skipped []string
+	servers = slices.DeleteFunc(servers, func(s mcp.ServerConfig) bool {
+		if isBareKey(s.Name) {
+			return false
+		}
+		skipped = append(skipped, s.Name)
+		return true
+	})
+	remotes = slices.DeleteFunc(remotes, func(r mcp.Remote) bool {
+		if isBareKey(r.Name) {
+			return false
+		}
+		if !slices.Contains(skipped, r.Name) {
+			skipped = append(skipped, r.Name)
+		}
+		return true
+	})
+	return servers, remotes, skipped, nil
 }
 
 func codexConfigPath(dir string) string {

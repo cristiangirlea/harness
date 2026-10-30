@@ -29,7 +29,8 @@ type CLIBackend struct {
 	args        func(t Task, promptFile string) []string
 	promptStdin bool
 	// env keeps values off command lines; the guard still filters them.
-	env func(t Task) ([]string, error)
+	env         func(t Task) ([]string, error)
+	mcpWarnings func(Task) []string
 	// Some CLIs require structured stdin even in print mode.
 	encodePrompt func(string) string
 	// A nil parser treats stdout as plain text.
@@ -260,13 +261,18 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
+	if c.mcpWarnings != nil {
+		for _, warning := range c.mcpWarnings(task) {
+			emit(Event{Time: time.Now(), Kind: EventInfo, Text: warning})
+		}
+	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
 	if len(metered) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("environment: %s withheld so %s bills its plan login, not per token", strings.Join(metered, ", "), c.name)})
 	}
 	if guarded {
-		emit(Event{Time: time.Now(), Kind: EventInfo, Text: c.guardLine(withheld, task.InheritEnv)})
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: c.guardLine(withheld, task.InheritEnv, len(task.MCP) > 0)})
 	} else if task.InheritEnv {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("guard: lifted by --allow-dangerous; the %s CLI can push, merge and deploy with the operator's credentials", c.name)})
@@ -491,10 +497,13 @@ func init() {
 // guardLine is what a guarded run says about the guard, with what this CLI
 // leaves open. The environment guard is reversible by a determined agent; do
 // not claim isolation.
-func (c *CLIBackend) guardLine(withheld []string, inherited bool) string {
+func (c *CLIBackend) guardLine(withheld []string, inherited, mcp bool) string {
 	text := "guard: git pushes are pointed at a dead end; gh, npm, cloud and container logins are out of reach; tokens and keys are withheld"
 	if len(withheld) > 0 {
 		text += " (" + strings.Join(withheld, ", ") + ")"
+	}
+	if mcp && c.mcpWarnings != nil {
+		text += "; MCP server secret env such as GITHUB_TOKEN is withheld; servers need --allow-dangerous or a login of their own"
 	}
 	if c.fileRules {
 		text += "; the CLI's own rules refuse publishing commands and secret files"

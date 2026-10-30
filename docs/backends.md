@@ -163,13 +163,18 @@ The run's `--mcp` files (Claude Code's `.mcp.json` format) reach codex as `-c` o
 any run: a stdio server as `mcp_servers.<name>.command` and `.args` (an empty `args` too), a
 server with a `url` as `mcp_servers.<name>.url`, each with
 `.enabled=true`, since the overrides merge into a `config.toml` server of the same name. A
-run server whose name is not a bare key is refused before codex starts, and so is a url
-server with `headers` or `"type": "sse"`, since codex is passed only its url. `${VAR}` expands as
-for the api backend. Environment values never go on the command line, where the process list
+server in a command-line `--mcp` file whose name is not a bare key is refused before codex
+starts; one in the home MCP file is skipped with a warning. A url
+server with `headers` or `"type": "sse"` is also refused, since codex is passed only its url.
+In server `env`, `${VAR}` expands from the guarded CLI environment; a withheld variable expands
+to empty (or its specified default). With `--allow-dangerous`, expansion uses hrn's environment
+as before. Environment values never go on the command line, where the process list
 and the run's start line would show them: hrn sets them in codex's own environment and names
 them in `mcp_servers.<name>.env_vars`, which codex passes on to the server. They pass hrn's
-guard like the rest of that environment: a secret-named variable is withheld and the guard's
-own variables (`GIT_CONFIG_COUNT`, `GH_CONFIG_DIR` and the others) keep the guard's values.
+guard like the rest of that environment: on a guarded codex run, server secret env such as
+`GITHUB_TOKEN` is withheld, so those servers need `--allow-dangerous` or a login of their own.
+A server cannot set `GIT_CONFIG_*` variables because they conflict with the git guard; other
+guard variables keep the guard's values.
 Two servers that set one variable to different values are refused, since codex has one
 environment for all of them, and so is a server variable that hrn's own environment already
 holds with another value, since codex itself would run with it. A server's `env` cannot set
