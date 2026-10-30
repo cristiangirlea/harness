@@ -201,7 +201,7 @@ func workerOf(l Lease) string {
 // TakeIssue leases ref to l's run for this process, and claims it on GitHub when opt.GitHub is set.
 // A failing gh only adds a note: the local lease still guards this machine.
 func TakeIssue(ctx context.Context, home string, ref IssueRef, l Lease, opt IssueOptions) (*IssueLease, error) {
-	if err := os.MkdirAll(IssuesDir(home), 0o755); err != nil {
+	if err := os.MkdirAll(IssuesDir(home), 0o700); err != nil {
 		return nil, err
 	}
 	p := issueLeasePath(home, ref)
@@ -285,7 +285,7 @@ func replaceLease(p string, data []byte) error {
 		return errors.New(why)
 	}
 	defer unlock()
-	return os.WriteFile(p, data, 0o644)
+	return os.WriteFile(p, data, 0o600)
 }
 
 type ghPR struct {
@@ -573,7 +573,7 @@ func (il *IssueLease) swap(data []byte) error {
 	if now, err := os.ReadFile(il.path); err != nil || !bytes.Equal(now, il.raw) {
 		return errLeaseChanged
 	}
-	if err := os.WriteFile(il.path, data, 0o644); err != nil {
+	if err := os.WriteFile(il.path, data, 0o600); err != nil {
 		return err
 	}
 	il.raw = data
