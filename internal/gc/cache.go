@@ -350,6 +350,15 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	}
 	idle := ageAt(now, c.LastBuild)
 	if c.slot {
+		if opt.SlotCap > 0 && c.Size > opt.SlotCap && idle >= opt.MinIdle {
+			after := c.Size - c.TrimSize
+			if c.incremental && (idle >= opt.Idle || c.liveSize >= opt.SlotCap/2+opt.SlotCap%2) {
+				after -= c.liveSize
+			}
+			if after > opt.SlotCap {
+				return Remove, fmt.Sprintf("idle %s, over --slot-cap %s", short(idle), report.Bytes(opt.SlotCap))
+			}
+		}
 		if c.incremental && idle >= opt.Idle {
 			c.trimLive = true
 			c.TrimSize += c.liveSize

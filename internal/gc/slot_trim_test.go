@@ -45,10 +45,15 @@ func slotCache(t *testing.T, idle time.Duration) string {
 func TestGCTrimsIdleSlotOverCapAndKeepsOtherArtifacts(t *testing.T) {
 	cache := slotCache(t, 3*time.Hour)
 	opt := cacheOpt
-	opt.SlotCap = 1
+	opt.SlotCap = 102
+	file := filepath.Join(cache, "debug", "incremental", "object")
+	if err := os.WriteFile(file, make([]byte, 60), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, time.Now().Add(-3*time.Hour), file)
 	cs := caches(t, []string{cache}, nil, opt)
 	c := findCache(t, cs, cache)
-	if c.Verdict != Trim || c.TrimSize != 20 {
+	if c.Verdict != Trim || c.TrimSize != 70 {
 		t.Fatalf("got %+v", c)
 	}
 	done, errs := ApplyCaches(context.Background(), cs)
@@ -171,12 +176,59 @@ func TestGCRemovesMovedAndNonCargoCachesInsideSlots(t *testing.T) {
 	}
 }
 
-func TestGCSlotCapRequiresSubstantialIncrementalOutput(t *testing.T) {
+func TestGCSlotCapRemovesDepsHeavyCache(t *testing.T) {
 	cache := slotCache(t, 3*time.Hour)
 	opt := cacheOpt
 	opt.SlotCap = 50
-	if c := findCache(t, caches(t, []string{cache}, nil, opt), cache); c.Verdict != Keep {
+	cs := caches(t, []string{cache}, nil, opt)
+	if c := findCache(t, cs, cache); c.Verdict != Remove {
 		t.Fatalf("got %+v", c)
+	}
+	done, errs := ApplyCaches(context.Background(), cs)
+	if len(done) != 1 || len(errs) != 0 || exists(cache) {
+		t.Fatalf("done %v, errors %v, cache exists %v", done, errs, exists(cache))
+	}
+}
+
+func TestGCSlotCeilingSafetyAndTrimProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		idle                     time.Duration
+		cap                      int64
+		locked, largeIncremental bool
+		want                     Verdict
+	}{
+		{"locked", 3 * time.Hour, 50, true, false, Keep},
+		{"recent", time.Hour, 50, false, false, Keep},
+		{"under cap", 3 * time.Hour, 10000, false, false, Keep},
+		{"trim still over cap", 3 * time.Hour, 100, false, true, Remove},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := slotCache(t, tc.idle)
+			if tc.largeIncremental {
+				for path, size := range map[string]int{"debug/incremental/object": 60, "debug/deps/libx.rlib": 200} {
+					file := filepath.Join(cache, filepath.FromSlash(path))
+					if err := os.WriteFile(file, make([]byte, size), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					touch(t, time.Now().Add(-tc.idle), file)
+				}
+			}
+			if tc.locked {
+				release := holdLock(t, filepath.Join(cache, "debug", ".cargo-lock"))
+				defer release()
+			}
+			opt := cacheOpt
+			opt.SlotCap = tc.cap
+			cs := caches(t, []string{cache}, nil, opt)
+			if c := findCache(t, cs, cache); c.Verdict != tc.want {
+				t.Fatalf("got %+v", c)
+			}
+			done, errs := ApplyCaches(context.Background(), cs)
+			if len(errs) != 0 || (len(done) == 1) != (tc.want == Remove) || exists(cache) != (tc.want == Keep) {
+				t.Fatalf("done %v, errors %v, cache exists %v", done, errs, exists(cache))
+			}
+		})
 	}
 }
 
@@ -290,13 +342,22 @@ func TestGCAlsoTrimsLiveOutputWhenTheCapOrLowSpaceSelectsIt(t *testing.T) {
 			touch(t, at, file, left, filepath.Join(cache, "debug"))
 			opt := cacheOpt
 			if trigger == "cap" {
-				opt.SlotCap = 1
+				opt.SlotCap = 102
+				object := filepath.Join(cache, "debug", "incremental", "object")
+				if err := os.WriteFile(object, make([]byte, 60), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				touch(t, at, object)
 			} else {
 				opt.FreeBelow = 100
 				opt.Drive = func(string) (Drive, error) { return Drive{ID: "disk", Free: 1}, nil }
 			}
 			cs := caches(t, []string{cache}, nil, opt)
-			if c := findCache(t, cs, cache); c.Verdict != Trim || c.TrimSize != 23 {
+			wantSize := int64(23)
+			if trigger == "cap" {
+				wantSize = 73
+			}
+			if c := findCache(t, cs, cache); c.Verdict != Trim || c.TrimSize != wantSize {
 				t.Fatalf("got %+v", c)
 			}
 			done, errs := ApplyCaches(context.Background(), cs)
