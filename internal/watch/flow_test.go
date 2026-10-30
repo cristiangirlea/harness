@@ -325,7 +325,7 @@ func TestFlowStreamWakesBeforeTheNextPoll(t *testing.T) {
 					w.Emit(flow.Event{Step: "live", Parent: batch.BatchStep, Kind: flow.KindGate, Status: flow.StatusStarted, Name: "new live step"})
 				}
 			}
-			srv := httptest.NewServer(New(context.Background(), Options{Poll: 400 * time.Millisecond}))
+			srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Second}))
 			defer srv.Close()
 			s, stop := openStream(t, srv.URL+"/stream/flow/"+id+"?level=debug", "")
 			defer stop()
@@ -339,8 +339,8 @@ func TestFlowStreamWakesBeforeTheNextPoll(t *testing.T) {
 			if !ok || update.event != "replace" || !strings.Contains(update.data, "new live step") {
 				t.Fatalf("step update = %#v, %v", update, ok)
 			}
-			if elapsed >= 250*time.Millisecond {
-				t.Fatalf("step arrived after %s, want less than 250ms", elapsed)
+			if elapsed >= 2*time.Second {
+				t.Fatalf("step arrived after %s, want less than 2s", elapsed)
 			}
 		})
 	}
