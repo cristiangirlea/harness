@@ -462,7 +462,7 @@ func (p *Practice) Rebuild() error {
 		for i := range r.Reads {
 			all = append(all, &r.Reads[i])
 		}
-		changed := false
+		settledSources := map[string]bool{}
 		for _, e := range all {
 			if e.AnsweredAt.IsZero() {
 				continue
@@ -480,8 +480,7 @@ func (p *Practice) Rebuild() error {
 						var settled bool
 						ok, settled, err = source.mergeStatus(e.Source, e.AnsweredAt)
 						if err == nil && settled {
-							e.Settled = true
-							changed = true
+							settledSources[key] = true
 						}
 					} else {
 						ok, err = p.source.Merged(e.Source, e.AnsweredAt)
@@ -499,8 +498,20 @@ func (p *Practice) Rebuild() error {
 				}
 			}
 		}
-		if changed {
-			if err := saveRep(date, r); err != nil {
+		if len(settledSources) > 0 {
+			fresh, err := loadRep(date)
+			if err != nil {
+				return err
+			}
+			if fresh.Daily != nil && fresh.Daily.Kind == "read" && settledSources[strings.ToLower(fresh.Daily.Source)] {
+				fresh.Daily.Settled = true
+			}
+			for i := range fresh.Reads {
+				if fresh.Reads[i].Kind == "read" && settledSources[strings.ToLower(fresh.Reads[i].Source)] {
+					fresh.Reads[i].Settled = true
+				}
+			}
+			if err := saveRep(date, fresh); err != nil {
 				return err
 			}
 		}
@@ -667,7 +678,7 @@ func (s *GitHubSource) Candidates(kind string) ([]Candidate, error) {
 		key := repo + ":" + state
 		prs, found := s.lists[key]
 		if !found {
-			b, err := gh("pr", "list", "--repo", repo, "--state", state, "--limit", "100", "--json", "number,title,body,state,mergedAt,reviews,commits,baseRefOid")
+			b, err := gh("pr", "list", "--repo", repo, "--state", state, "--limit", "30", "--json", "number,title,body,state,mergedAt,reviews,commits,baseRefOid")
 			if err == nil {
 				_ = json.Unmarshal(b, &prs)
 			}

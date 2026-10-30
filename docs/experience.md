@@ -67,7 +67,10 @@ The rules:
   merging a day, one per pull request; a read before merging done as the day's exercise also
   earns its `read:` event and counts towards the three. The day's material is picked by a seed of the date and
   an attempt number (FNV-1a), so a reload never changes it. The person may swap it before
-  answering; the attempt number goes up.
+  answering; the attempt number goes up, and the swap picks a different source when one is
+  available. Candidates whose material cannot be fetched are skipped in seed order.
+- **A closed pull request settles its read.** If it closes without merging, it is not checked
+  again even if it is reopened later.
 - **The answer is hidden server-side.** The record holds what is shown afterwards, but no
   response carries it until the answer is saved. A user interface cannot show it early.
 - **No grading by a model.** After the reveal the person marks *got it*, *partly* or

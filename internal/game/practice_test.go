@@ -458,6 +458,11 @@ func TestPracticeSwapExcludesCurrentSource(t *testing.T) {
 	if err != nil || e.Source == current {
 		t.Fatalf("swap: %+v %v", e, err)
 	}
+	f.items["recall"] = []Candidate{{Source: e.Source}}
+	again, err := NewPractice(f, now).Swap()
+	if err != nil || again.Source != e.Source {
+		t.Fatalf("single candidate swap: %+v %v", again, err)
+	}
 }
 
 func TestPracticeRejectsUnsafeGhReferences(t *testing.T) {
@@ -501,6 +506,16 @@ func TestHelperGh(t *testing.T) {
 	case strings.HasPrefix(joined, "pr view 1 "):
 		fmt.Print(`{"state":"OPEN"}`)
 	case strings.HasPrefix(joined, "pr view 2 "):
+		if date := os.Getenv("HRN_TEST_GH_MARK_DATE"); date != "" {
+			r, err := loadRep(date)
+			if err != nil || len(r.Reads) == 0 {
+				os.Exit(2)
+			}
+			r.Reads[0].Mark = "got_it"
+			if err := saveRep(date, r); err != nil {
+				os.Exit(2)
+			}
+		}
 		fmt.Print(`{"state":"CLOSED"}`)
 	case strings.HasPrefix(joined, "pr view 3 "):
 		fmt.Print(`{"state":"MERGED","mergedAt":"2026-01-03T00:00:00Z"}`)
@@ -604,6 +619,7 @@ func TestPracticeRebuildSkipsCreditedAndSettledReads(t *testing.T) {
 	if _, err := Append([]Event{{Key: "read:owner/repo#1", Kind: kindRead, Track: TrackPractice, XP: 20, At: at}}); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("HRN_TEST_GH_MARK_DATE", r.Date)
 	p := NewPractice(&GitHubSource{}, at)
 	if err := p.Rebuild(); err != nil {
 		t.Fatal(err)
@@ -613,6 +629,9 @@ func TestPracticeRebuildSkipsCreditedAndSettledReads(t *testing.T) {
 		t.Fatalf("calls: %s", calls)
 	}
 	r, _ = loadRep(r.Date)
+	if r.Reads[0].Mark != "got_it" {
+		t.Fatalf("mark lost: %+v", r.Reads[0])
+	}
 	if !r.Reads[1].Settled || !r.Reads[2].Settled {
 		t.Fatalf("unsettled: %+v", r.Reads)
 	}
