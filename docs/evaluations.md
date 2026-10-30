@@ -420,7 +420,11 @@ names it, and the copy is a fresh repository in a temporary directory named
 started) and `candidate` (the cell's files), so `git diff HEAD~1` shows the whole change
 past the 60 KB the prompt holds. Neither its path, its branch nor its history says which
 variant made the change (the cell's own worktree and branch do). A cell's copy is
-removed once its last verdict is in.
+removed once its last verdict is in. Each verdict's agent gets a fresh temporary
+`HRN_HOME`, removed after the run, so it does not see the real home's run records through
+that environment variable. Hrn still saves the judge's own run record in the real home.
+This is not complete isolation: worktree directory names under the repository's `.hrn`
+can still be read through the repository and may reveal variants.
 Verdicts are asked for in a shuffled order seeded by the batch id, not variant by
 variant. `backend` defaults to the default backend, `timeout` to 5
 minutes per verdict. Cells that failed are not judged: they already scored where it
