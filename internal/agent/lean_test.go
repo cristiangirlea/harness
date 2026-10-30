@@ -200,9 +200,11 @@ func TestHelperCodexMCPEnv(t *testing.T) {
 		return
 	}
 	fmt.Println("GH_LEVEL=" + os.Getenv("GH_LEVEL"))
+	fmt.Println("ALIAS=" + os.Getenv("ALIAS"))
 	token, set := os.LookupEnv("GITHUB_TOKEN")
 	fmt.Printf("GITHUB_TOKEN set=%v %s\n", set, token)
 	fmt.Println("GIT_CONFIG_COUNT=" + os.Getenv("GIT_CONFIG_COUNT"))
+	fmt.Printf("guard values=%v\n", strings.HasSuffix(filepath.ToSlash(os.Getenv("KUBECONFIG")), "/kube/config") && os.Getenv("GH_TOKEN") == "hrn-guard-no-token" && os.Getenv("HRN_GUARDED") == "1")
 	os.Exit(0)
 }
 
@@ -242,7 +244,7 @@ func TestCodexMCPEnvIsGuardedLikeTheRestOfTheEnvironment(t *testing.T) {
 	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
 	unsetenv(t, "GIT_CONFIG_COUNT", "GITHUB_TOKEN")
 	t.Setenv("HRN_TEST_WITHHELD", "withheld-token-value")
-	file := mcpFile(t, `"github":{"command":"npx","env":{"GITHUB_TOKEN":"${HRN_TEST_WITHHELD}","GIT_CONFIG_COUNT":"0"}}`)
+	file := mcpFile(t, `"github":{"command":"npx","env":{"GITHUB_TOKEN":"${HRN_TEST_WITHHELD}"}}`)
 	b := NewCodexBackend()
 	b.name, b.candidates = os.Args[0], nil
 	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
@@ -479,6 +481,150 @@ func TestCodexEscapesAWindowsCommandPath(t *testing.T) {
 	for _, want := range []string{`mcp_servers.gh.command="C:\\Tools\\gh.exe"`, `mcp_servers.gh.args=["D:\\x"]`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("args lack %s: %q", want, got)
+		}
+	}
+}
+
+func TestCodexMCPExpandedSecretUsesGuardedEnvironment(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	t.Setenv("GITHUB_TOKEN", "fake-secret")
+	unsetenv(t, "ALIAS")
+	file := mcpFile(t, `"github":{"command":"x","env":{"ALIAS":"${GITHUB_TOKEN}"}}`)
+	for _, dangerous := range []bool{false, true} {
+		b := NewCodexBackend()
+		b.name, b.candidates = os.Args[0], nil
+		b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+		b.parse = nil
+		var info string
+		res := b.Run(context.Background(), Task{Dir: t.TempDir(), Options: Options{MCP: []string{file}, AllowDangerous: dangerous}}, func(e Event) {
+			if e.Kind == EventInfo {
+				info += e.Text
+			}
+		})
+		want := "ALIAS="
+		if dangerous {
+			want += "fake-secret"
+		}
+		if res.Status != StatusOK || !strings.Contains(res.Final, want+"\n") {
+			t.Errorf("dangerous=%v result=%+v", dangerous, res)
+		}
+		if !dangerous && (!strings.Contains(info, "server") || !strings.Contains(info, "login")) {
+			t.Errorf("guard line: %s", info)
+		}
+	}
+}
+
+func TestCodexMCPGuardedFieldsAndSameNameEnv(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	t.Setenv("GITHUB_TOKEN", "fake-secret")
+	file := mcpFile(t, `"tool":{"command":"run-${GITHUB_TOKEN}","args":["arg-${GITHUB_TOKEN}"],"env":{"GITHUB_TOKEN":"${GITHUB_TOKEN}"}},"web":{"url":"https://example.test/${GITHUB_TOKEN}"}`)
+	for _, tc := range []struct{ dangerous, inherit bool }{{false, false}, {false, true}, {true, false}} {
+		dangerous := tc.dangerous
+		task := Task{Dir: t.TempDir(), Options: Options{MCP: []string{file}, AllowDangerous: dangerous, InheritEnv: tc.inherit}}
+		args := strings.Join(codexMCPArgs(task), " ")
+		value := ""
+		if dangerous {
+			value = "fake-secret"
+		}
+		for _, want := range []string{`mcp_servers.tool.command="run-` + value + `"`, `mcp_servers.tool.args=["arg-` + value + `"]`, `mcp_servers.web.url="https://example.test/` + value + `"`} {
+			if !strings.Contains(args, want) {
+				t.Errorf("dangerous=%v: missing %s", dangerous, want)
+			}
+		}
+		b := NewCodexBackend()
+		b.name, b.candidates = os.Args[0], nil
+		b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+		b.parse = nil
+		res := b.Run(context.Background(), task, func(Event) {})
+		want := "GITHUB_TOKEN set=false"
+		if dangerous {
+			want = "GITHUB_TOKEN set=true fake-secret"
+		}
+		if res.Status != StatusOK || !strings.Contains(res.Final, want) {
+			t.Errorf("dangerous=%v result=%+v", dangerous, res)
+		}
+	}
+}
+
+func TestCodexMCPGuardValuesDoNotConflictOrExpand(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	t.Setenv("KUBECONFIG", "/fake-original")
+	t.Setenv("GH_TOKEN", "fake-original")
+	file := mcpFile(t, `"tool":{"command":"x","args":["${KUBECONFIG}"],"env":{"KUBECONFIG":"/x","GH_TOKEN":"lit"}}`)
+	task := Task{Dir: t.TempDir(), Options: Options{MCP: []string{file}}}
+	if args := strings.Join(codexMCPArgs(task), " "); !strings.Contains(args, `mcp_servers.tool.args=[""]`) {
+		t.Errorf("guard variable did not expand to empty: %s", args)
+	}
+	b := NewCodexBackend()
+	b.name, b.candidates = os.Args[0], nil
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+	b.parse = nil
+	res := b.Run(context.Background(), task, func(Event) {})
+	if res.Status != StatusOK || !strings.Contains(res.Final, "guard values=true") {
+		t.Errorf("guard values did not win: %+v", res)
+	}
+}
+
+func TestCodexRefusesMCPGitConfigEnv(t *testing.T) {
+	for _, key := range []string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_GLOBAL", "git_config_count"} {
+		file := mcpFile(t, fmt.Sprintf(`"git-server":{"command":"x","env":{%q:"0"}}`, key))
+		_, err := codexMCPEnv(Task{Options: Options{MCP: []string{file}}})
+		if err == nil || !strings.Contains(err.Error(), "git-server") || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s: %v", key, err)
+		}
+	}
+}
+
+func TestCodexSkipsInvalidHomeMCPNames(t *testing.T) {
+	codexHome(t, "")
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	path := filepath.Join(home, "mcp.json")
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"bad name":{"command":"x"},"bad.remote":{"url":"https://example.test"},"good":{"command":"x"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	task := Task{Dir: t.TempDir(), Options: Options{MCP: []string{path}}}
+	args := strings.Join(codexMCPArgs(task), " ")
+	if strings.Contains(args, "bad name") || strings.Contains(args, "bad.remote") || !strings.Contains(args, "mcp_servers.good.command") {
+		t.Errorf("args: %s", args)
+	}
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	b := NewCodexBackend()
+	b.name, b.candidates = os.Args[0], nil
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+	b.parse = nil
+	var info string
+	res := b.Run(context.Background(), task, func(e Event) {
+		if e.Kind == EventInfo {
+			info += e.Text + "\n"
+		}
+	})
+	if res.Status != StatusOK || !strings.Contains(info, "bad name") || !strings.Contains(info, "bad.remote") || !strings.Contains(info, "skipped") {
+		t.Errorf("result=%+v info=%s", res, info)
+	}
+	task.MCP = append(task.MCP, path)
+	if _, err := codexMCPEnv(task); err == nil {
+		t.Error("explicit home path must still be refused")
+	}
+}
+
+func TestCodexMCPLookupHidesEveryGitConfigEntry(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.fake")
+	t.Setenv("GIT_CONFIG_VALUE_0", "fake")
+	for _, inherit := range []bool{false, true} {
+		lookup := codexMCPLookup(Task{Options: Options{InheritEnv: inherit}})
+		names := []string{"GIT_CONFIG_COUNT"}
+		for i := 0; i < 32; i++ {
+			names = append(names, fmt.Sprintf("GIT_CONFIG_KEY_%d", i), fmt.Sprintf("GIT_CONFIG_VALUE_%d", i))
+		}
+		for _, name := range names {
+			if _, ok := lookup(name); ok {
+				t.Errorf("inherit=%v: %s expands", inherit, name)
+			}
 		}
 	}
 }

@@ -322,7 +322,13 @@ func TestCLISaysWhetherTheGuardApplies(t *testing.T) {
 func TestEachCLIsGuardLineSaysWhatItLeavesOpen(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "error")
 	for _, b := range []*CLIBackend{NewCodexBackend(), NewGeminiBackend(), NewOpencodeBackend(), NewClaudeBackend()} {
-		line := b.guardLine(nil, false)
+		line := b.guardLine(nil, false, false)
+		if strings.Contains(line, "MCP") {
+			t.Errorf("%s: %q; want no MCP note on a run without MCP servers", b.name, line)
+		}
+		if withMCP := b.guardLine(nil, false, true); (b.name == "codex") != strings.Contains(withMCP, "MCP server secret env") {
+			t.Errorf("%s: %q; want the withheld MCP secret env named on codex runs with servers", b.name, withMCP)
+		}
 		open := strings.Contains(line, "unguarded on the "+b.name+" backend: reading and writing secret files")
 		if b.fileRules == open {
 			t.Errorf("%s: %q; want the secret files named as unguarded exactly when the CLI takes no file rules", b.name, line)

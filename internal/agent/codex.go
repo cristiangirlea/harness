@@ -49,7 +49,15 @@ func NewCodexBackend() *CLIBackend {
 			}
 			return append(a, "-")
 		},
-		env:        codexMCPEnv,
+		env: codexMCPEnv,
+		mcpWarnings: func(t Task) []string {
+			_, _, skipped, _ := codexMCPConfigs(t)
+			var warnings []string
+			for _, name := range skipped {
+				warnings = append(warnings, "mcp "+name+": skipped; codex requires a bare server name")
+			}
+			return warnings
+		},
 		parse:      parseCodexStream,
 		end:        codexStreamEnded,
 		exited:     codexReportModel,
