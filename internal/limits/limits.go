@@ -29,7 +29,7 @@ func Partner(backend string, now time.Time, spent Spent) string {
 		first := ""
 		for _, name := range p.Filter(agent.Names()) {
 			// Automatic replacements must not bill per token.
-			if name == backend || name == "api" {
+			if name == backend || !planPartner(name) {
 				continue
 			}
 			b, _ := agent.Get(name)
@@ -52,6 +52,10 @@ func Partner(backend string, now time.Time, spent Spent) string {
 		return "claude"
 	}
 	return ""
+}
+
+func planPartner(backend string) bool {
+	return backend == "claude" || backend == "codex" || backend == "agy"
 }
 
 // Atomic writes prevent partial reads; lost updates cost a limited start.
@@ -196,6 +200,9 @@ func meteredBy(backend string) string {
 func Ready(backend string, now time.Time, spent Spent) (bool, string) {
 	if backend == "api" {
 		return false, "api would bill per token, not to a plan"
+	}
+	if !planPartner(backend) {
+		return false, backend + " can bill per token; automatic carry-on uses claude, codex or agy only"
 	}
 	b, err := agent.Get(backend)
 	if err != nil {

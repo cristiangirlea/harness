@@ -71,6 +71,7 @@ At a usage limit the carry-on partner is the first other installed enabled backe
 in preference order that passes the readiness and billing checks: one that is limited
 too, or would bill per token, is passed over for the next. With no preference, the
 claude/codex pairing is unchanged. With no ready enabled partner, the run stays limited.
+Automatic carry-on partners are limited to claude, codex and agy; gemini and opencode can still be run by name.
 `--no-switch` still disables carry-on. A limited run with
 retrieval on is not carried on when its chain's latest retrieval pin was recorded on
 another backend than the partner (usually the limited one): the partner would resolve

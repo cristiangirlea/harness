@@ -20,7 +20,7 @@ func TestChooseAndAfterUseOnlyAnEnabledInstalledPartner(t *testing.T) {
 		installed bool
 		want      string
 	}{
-		{"preference order", []string{"gemini", "claude", "codex"}, true, "gemini"},
+		{"preference order", []string{"gemini", "claude", "codex"}, true, "claude"},
 		{"skip uninstalled", []string{"gemini", "claude", "codex"}, false, "claude"},
 		{"disabled partner", []string{"codex"}, true, ""},
 		{"uninstalled partner", []string{"gemini", "codex"}, false, ""},
@@ -137,9 +137,9 @@ func TestTheChoiceContinuesPastALimitedOrMeteredPartner(t *testing.T) {
 		metered string
 		want    string
 	}{
-		{"claude and codex limited", []string{"claude", "codex"}, "", "gemini"},
-		{"codex metered", []string{"claude"}, "CODEX_API_KEY", "gemini"},
-		{"all limited", []string{"claude", "codex", "gemini"}, "", ""},
+		{"claude and codex limited", []string{"claude", "codex"}, "", "agy"},
+		{"codex metered", []string{"claude"}, "CODEX_API_KEY", "agy"},
+		{"all limited", []string{"claude", "codex", "agy"}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
@@ -147,10 +147,10 @@ func TestTheChoiceContinuesPastALimitedOrMeteredPartner(t *testing.T) {
 			if tc.metered != "" {
 				t.Setenv(tc.metered, "set")
 			}
-			orig, _ := agent.Get("gemini")
-			agent.Register(stub{"gemini", true})
+			orig, _ := agent.Get("agy")
+			agent.Register(stub{"agy", true})
 			t.Cleanup(func() { agent.Register(orig) })
-			if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude", "codex", "gemini"}}); err != nil {
+			if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude", "codex", "agy"}}); err != nil {
 				t.Fatal(err)
 			}
 			now := time.Now()
@@ -170,7 +170,7 @@ func TestTheChoiceContinuesPastALimitedOrMeteredPartner(t *testing.T) {
 			if got, _ := Choose("claude", ""); got != tc.want && !(stay && got == "claude") {
 				t.Errorf("Choose = %q, want %q", got, tc.want)
 			}
-			if got := Partner("claude", now, Spent{"gemini": true}); got == "gemini" {
+			if got := Partner("claude", now, Spent{"agy": true}); got == "agy" {
 				t.Error("a backend spent in the caller's work was chosen")
 			}
 			prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
@@ -184,6 +184,31 @@ func TestTheChoiceContinuesPastALimitedOrMeteredPartner(t *testing.T) {
 			}
 			if !stay && (next == nil || next.To != tc.want) {
 				t.Errorf("carry-on %+v, %q; want %s", next, why, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutomaticPartnersExcludeMeteredBackends(t *testing.T) {
+	for _, name := range []string{"gemini", "opencode"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, true, true)
+			orig, err := agent.Get(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent.Register(stub{name, true})
+			t.Cleanup(func() { agent.Register(orig) })
+			if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", name}}); err != nil {
+				t.Fatal(err)
+			}
+			want := name + " can bill per token; automatic carry-on uses claude, codex or agy only"
+			if ok, reason := Ready(name, time.Now(), nil); ok || reason != want {
+				t.Errorf("Ready(%q) = %v, %q; want false, %q", name, ok, reason, want)
+			}
+			if got := Partner("codex", time.Now(), nil); got != "" {
+				t.Errorf("Partner = %q, want no partner", got)
 			}
 		})
 	}
