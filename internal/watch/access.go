@@ -87,49 +87,56 @@ func (v *accessVerifier) now() time.Time {
 	return time.Now()
 }
 
+const accessLeeway = 60 * time.Second
+
 func (v *accessVerifier) verify(token string) (string, string) {
+	email, _, reason := v.verifyToken(token)
+	return email, reason
+}
+
+func (v *accessVerifier) verifyToken(token string) (string, time.Time, string) {
 	if token == "" {
-		return "", "no token"
+		return "", time.Time{}, "no token"
 	}
 	if len(token) > 16384 {
-		return "", "bad token"
+		return "", time.Time{}, "bad token"
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return "", "bad token"
+		return "", time.Time{}, "bad token"
 	}
 	hb, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", "bad token"
+		return "", time.Time{}, "bad token"
 	}
 	var header struct {
 		Alg string `json:"alg"`
 		Kid string `json:"kid"`
 	}
 	if json.Unmarshal(hb, &header) != nil || header.Alg != "RS256" {
-		return "", "bad alg"
+		return "", time.Time{}, "bad alg"
 	}
 	if header.Kid == "" {
-		return "", "unknown kid"
+		return "", time.Time{}, "unknown kid"
 	}
 	key, err := v.key(header.Kid)
 	if err != nil {
-		return "", "key fetch failed"
+		return "", time.Time{}, "key fetch failed"
 	}
 	if key == nil {
-		return "", "unknown kid"
+		return "", time.Time{}, "unknown kid"
 	}
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return "", "bad signature"
+		return "", time.Time{}, "bad signature"
 	}
 	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
 	if rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], sig) != nil {
-		return "", "bad signature"
+		return "", time.Time{}, "bad signature"
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return "", "bad claims"
+		return "", time.Time{}, "bad claims"
 	}
 	var claims struct {
 		Audience  json.RawMessage `json:"aud"`
@@ -140,20 +147,20 @@ func (v *accessVerifier) verify(token string) (string, string) {
 		Email     string          `json:"email"`
 	}
 	if json.Unmarshal(payload, &claims) != nil {
-		return "", "bad claims"
+		return "", time.Time{}, "bad claims"
 	}
 	if claims.Issuer != "https://"+v.opt.Team {
-		return "", "wrong iss"
+		return "", time.Time{}, "wrong iss"
 	}
 	var aud string
 	if json.Unmarshal(claims.Audience, &aud) == nil {
 		if aud != v.opt.Audience {
-			return "", "wrong aud"
+			return "", time.Time{}, "wrong aud"
 		}
 	} else {
 		var audiences []string
 		if json.Unmarshal(claims.Audience, &audiences) != nil {
-			return "", "wrong aud"
+			return "", time.Time{}, "wrong aud"
 		}
 		found := false
 		for _, a := range audiences {
@@ -162,13 +169,13 @@ func (v *accessVerifier) verify(token string) (string, string) {
 			}
 		}
 		if !found {
-			return "", "wrong aud"
+			return "", time.Time{}, "wrong aud"
 		}
 	}
 	now := v.now().Unix()
 	exp, err := strconv.ParseInt(string(claims.Expiry), 10, 64)
-	if err != nil || exp <= now-60 {
-		return "", "expired"
+	if err != nil || exp <= now-int64(accessLeeway/time.Second) {
+		return "", time.Time{}, "expired"
 	}
 	for _, claim := range []json.Number{claims.NotBefore, claims.IssuedAt} {
 		if claim == "" {
@@ -176,13 +183,13 @@ func (v *accessVerifier) verify(token string) (string, string) {
 		}
 		n, err := strconv.ParseInt(string(claim), 10, 64)
 		if err != nil {
-			return "", "bad claims"
+			return "", time.Time{}, "bad claims"
 		}
-		if n > now+60 {
-			return "", "not yet valid"
+		if n > now+int64(accessLeeway/time.Second) {
+			return "", time.Time{}, "not yet valid"
 		}
 	}
-	return claims.Email, ""
+	return claims.Email, time.Unix(exp, 0).Add(accessLeeway), ""
 }
 
 func (v *accessVerifier) key(kid string) (*rsa.PublicKey, error) {
@@ -312,6 +319,7 @@ type accessWriter struct {
 	http.ResponseWriter
 	status   int
 	email    string
+	deadline time.Time
 	reason   string
 	record   string
 	decision string
