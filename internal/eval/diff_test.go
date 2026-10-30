@@ -48,6 +48,18 @@ func TestCompareNotesTaskRunOptions(t *testing.T) {
 	}
 }
 
+func TestCompareNotesInheritedTaskRunOptions(t *testing.T) {
+	a := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+	b := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+	b.Spec.Model = "other"
+	if got := Compare(a, b).TaskOptionsChanged; len(got) != 1 || got[0] != "task" {
+		t.Fatalf("changed = %v, want [task]", got)
+	}
+	if got := Compare(a, a).TaskOptionsChanged; len(got) != 0 {
+		t.Fatalf("unchanged = %v, want no note", got)
+	}
+}
+
 // twoEvals builds a before and an after of the same task set: sonnet improved,
 // haiku was dropped, opus was added, and the greet prompt was reworded.
 func twoEvals() (Record, Record) {

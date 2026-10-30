@@ -479,7 +479,8 @@ and nothing is marked. A different number of judge repeats does not count as a c
 judge; a variant that changes its backend, model, effort, `prompt_prefix`,
 `append_system_prompt`, `no_skills`, `lean`, `shape_tools`, `retrieval` or
 `retrieval_version` under the same name gets a note.
-The diff also notes changes to a shared task's `backend` and all its run options,
+The diff also notes changes to a shared task's effective `backend` and run options,
+including values inherited from the spec,
 except `shape_tools`, which the variant always overrides. These options are `model`,
 `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`,
 `skills`, `append_system_prompt`, `no_skills`, `compact_window`, `allow_dangerous`,
