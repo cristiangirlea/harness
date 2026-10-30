@@ -42,10 +42,7 @@ func (c *callContexts) add(backend string, withMCP bool, events []event, total *
 	if fromUsage {
 		cacheWrite = usageCacheWrite
 	}
-	if backend == "api" && cacheWrite > 0 {
-		c.apiCacheWriteRuns++
-		c.apiCacheWriteTokens += cacheWrite
-	}
+	apiCacheWrite := cacheWrite
 	if backend == "codex" {
 		cacheWrite = 0
 	}
@@ -67,6 +64,10 @@ func (c *callContexts) add(backend string, withMCP bool, events []event, total *
 		c.allUsage++
 	}
 	if backend == "api" {
+		if apiCacheWrite > 0 {
+			c.apiCacheWriteRuns++
+			c.apiCacheWriteTokens += apiCacheWrite
+		}
 		c.api = append(c.api, calls...)
 		c.apiRuns++
 		if fromUsage {

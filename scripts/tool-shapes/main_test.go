@@ -448,6 +448,8 @@ func TestDefinitionsCompareTheToolsWithTheMedianCallPerBackend(t *testing.T) {
 		"task.json": `{"backend":"codex"}`, "result.json": `{"status":"ok","input_tokens":60000,"cache_read_tokens":80000,"cache_write_tokens":90000,"turns":2}`, "events.jsonl": ""})
 	writeFiles(t, filepath.Join(home, "runs", "20261014-100003-api-no-figures"), map[string]string{
 		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","turns":4}`, "events.jsonl": ""})
+	writeFiles(t, filepath.Join(home, "runs", "20261014-100005-api-no-turns"), map[string]string{
+		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","cache_write_tokens":7000}`, "events.jsonl": ""})
 	r, err := measure(home, 30, now)
 	if err != nil {
 		t.Fatal(err)
