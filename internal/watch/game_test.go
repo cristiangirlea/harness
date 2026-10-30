@@ -278,3 +278,34 @@ func TestFamiliarityCacheCancelsLoader(t *testing.T) {
 		t.Fatal("loader did not stop")
 	}
 }
+
+func TestFamiliarityCacheDropsALoadThatFinishesAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := familiarityCache{loader: func(context.Context, time.Time) (game.Familiarity, error) {
+		close(started)
+		<-release
+		return game.Familiarity{}, nil
+	}}
+	c.get(ctx, time.Now())
+	<-started
+	cancel()
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c.mu.Lock()
+		loading, value := c.loading, c.value
+		c.mu.Unlock()
+		if !loading {
+			if value != nil {
+				t.Fatal("a load that finished after cancel was stored")
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("load did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
