@@ -103,6 +103,26 @@ func TestGameCardNoExerciseAndAnswered(t *testing.T) {
 	}
 }
 
+func TestGameCardKeepsLevelWhenAPracticeRecordIsUnreadable(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(game.Dir(), "reps")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	if err := os.WriteFile(filepath.Join(dir, day+".json"), []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "http://127.0.0.1/", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+	(&server{}).index(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "Level 0") || !strings.Contains(body, "practice records unreadable") {
+		t.Fatal("an unreadable practice record hid the experience card")
+	}
+}
+
 type cardSource struct{}
 
 func (cardSource) Candidates(kind string) ([]game.Candidate, error) {

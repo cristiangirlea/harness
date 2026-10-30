@@ -45,8 +45,9 @@
 
 {{define "game"}}{{with .}}<section id="game" class="card" aria-labelledby="game-h">
 <h2 id="game-h">Experience</h2>
-<p>Level {{.Level}} · Practice streak: {{.Streak}} days</p>
-<div class="game-days" aria-label="Last 35 UTC days of practice">{{range .Days}}<span class="game-day{{if .}} done{{end}}" aria-label="{{if .}}Done{{else}}Not done{{end}}"></span>{{end}}</div>
+{{if .Problem}}<p>Level {{.Level}}</p>
+<p class="notice bad">{{.Problem}}</p>{{else}}<p>Level {{.Level}} · Practice streak: {{.Streak}} days</p>
+<div class="game-days" aria-label="Last 35 UTC days of practice">{{range .Days}}<span class="game-day{{if .}} done{{end}}" aria-label="{{if .}}Done{{else}}Not done{{end}}"></span>{{end}}</div>{{end}}
 <p>Badges: {{if .Badges}}{{range $i, $badge := .Badges}}{{if $i}}, {{end}}{{$badge}}{{end}}{{else}}none yet{{end}}</p>
 {{if .Local}}<p>This week: delivery {{.Delivery}} XP · practice {{.Practice}} XP</p>
 <h3>Today's exercise</h3>{{with .Exercise}}<p>{{.Kind}} · {{.Source}}{{if not .AnsweredAt.IsZero}} · Done{{end}}</p>{{if .AnsweredAt.IsZero}}<pre>{{.Material}}</pre>{{end}}{{else}}<p>Run <code>hrn bot practice</code> to get today's exercise.</p>{{end}}{{end}}
