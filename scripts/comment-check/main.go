@@ -3,7 +3,7 @@
 // effects: read, write-workspace, exec
 // parameters: --root:path=.; --baseline:path=scripts/comment-baseline.txt; --prune:bool=false; --init:bool=false
 // example: go test -count=1 ./scripts/comment-check
-// hash: bfbeb19fed4282c7eaddc632365a30da21cdb040d6466d5d908de0c7a3ec86ca
+// hash: 05f1c1c251249354d678bf8d1047285b4db29cb900608360a8db6c661333a05f
 package main
 
 import (
@@ -203,11 +203,7 @@ func isKeptHeader(trimmed string) bool {
 
 func hasCitation(s string) bool {
 	for _, loc := range citeIssueRe.FindAllStringIndex(s, -1) {
-		end := loc[1]
-		for end < len(s) && ((s[end] >= '0' && s[end] <= '9') || (s[end] >= 'a' && s[end] <= 'f') || (s[end] >= 'A' && s[end] <= 'F')) {
-			end++
-		}
-		if !colorRe.MatchString(s[loc[0]:end]) {
+		if !colorRe.MatchString(s[loc[0]:loc[1]]) {
 			return true
 		}
 	}
@@ -282,7 +278,8 @@ func scanFile(relPath string, src []byte) (int64, int, []violation, error) {
 		if tok == token.COMMENT {
 			endOffset := tf.Offset(pos) + len(lit)
 			if strings.HasPrefix(lit, "/*") {
-				endOffset = tf.Offset(pos) + strings.Index(string(src[tf.Offset(pos):]), "*/") + 2
+				off := tf.Offset(pos)
+				endOffset = off + 2 + strings.Index(string(src[off+2:]), "*/") + 2
 				endLine = tf.PositionFor(tf.Pos(endOffset-1), false).Line
 			}
 			suffix := rawLines[endLine-1]
@@ -293,7 +290,7 @@ func scanFile(relPath string, src []byte) (int64, int, []violation, error) {
 			if endColumn <= len(suffix) {
 				suffix = suffix[endColumn:]
 			}
-			if !seenOnLine[startLine] && strings.TrimSpace(suffix) == "" {
+			if !seenOnLine[startLine] && (endLine > startLine || strings.TrimSpace(suffix) == "") {
 				if len(wholeSpans) > 0 && wholeSpans[len(wholeSpans)-1].endLine+1 >= startLine {
 					if endLine > wholeSpans[len(wholeSpans)-1].endLine {
 						wholeSpans[len(wholeSpans)-1].endLine = endLine

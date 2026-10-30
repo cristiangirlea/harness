@@ -3,7 +3,7 @@
 // effects: read, write-workspace, exec
 // parameters: none
 // example: go test -count=1 ./scripts/comment-check
-// hash: adb0bb341c9f3b21afe44164f551ae3258d71133af391754df9213a6a1e1eea1
+// hash: 9c602bb57a904a80d7794e202ee597403ecee93b1a28d58457425947dd114261
 package main
 
 import (
@@ -355,9 +355,9 @@ func TestCitationPrecision(t *testing.T) {
 	}{
 		{"after review", true}, {"per review", true}, {"from review", true},
 		{"review feedback", true}, {"PR review", true},
-		{"in a review task", false}, {"during a code review", false},
+		{"in a review task", false}, {"in a review task, after review we changed", true}, {"during a code review", false},
 		{"files reviewed by", false}, {"post review comments", false},
-		{"#000000", false}, {"#fff", false}, {"#a1b2c3", false}, {"#123", true},
+		{"#000000", false}, {"#000000 border", false}, {"#000000 border, see #12", true}, {"#fff", false}, {"#a1b2c3", false}, {"#123", true},
 	} {
 		t.Run(tc.text, func(t *testing.T) {
 			if got := hasCitation(tc.text); got != tc.want {
@@ -375,6 +375,30 @@ func TestBlockCommentBeforeCodeIsNotWholeLine(t *testing.T) {
 	}
 	if bytes != 0 || blocks != 1 || len(violations) != 1 || violations[0].reasons != "cite" {
 		t.Fatalf("unexpected result: bytes=%d blocks=%d violations=%+v", bytes, blocks, violations)
+	}
+}
+
+func TestBlockCommentBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		src        string
+		wantBytes  int64
+		wantReason string
+	}{
+		{"long before code", "package p\n/* one\ntwo\nthree\nfour\nfive\n*/ var x = 1\n", 40, "long"},
+		{"opener star", "package p\n/*/ #12 */\n", 11, "cite"},
+		{"tab before comment", "package p\n\t/* #12 */ var x = 1\n", 0, "cite"},
+		{"end of file", "package p\n/* #12 */", 9, "cite"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bytes, blocks, violations, err := scanFile("x.go", []byte(tc.src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes != tc.wantBytes || blocks != 1 || len(violations) != 1 || violations[0].reasons != tc.wantReason {
+				t.Fatalf("bytes=%d blocks=%d violations=%+v", bytes, blocks, violations)
+			}
+		})
 	}
 }
 
