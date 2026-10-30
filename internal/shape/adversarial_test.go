@@ -89,6 +89,29 @@ func oracleHead(clean, line string) bool {
 
 func oracleGenerated(clean string, lines []string, i int) bool {
 	line := lines[i]
+	if m := traceMore.FindStringSubmatch(line); m != nil {
+		if i == 0 {
+			return false
+		}
+		n, err := strconv.Atoi(m[1])
+		original := strings.Split(clean, "\n")
+		if err != nil || n < 1 {
+			return false
+		}
+		for j := 0; j+n < len(original); j++ {
+			end := j + n + 1
+			clear := true
+			for _, skipped := range original[j+1 : end] {
+				if logLine.MatchString(skipped) || errorLine(skipped) {
+					clear = false
+				}
+			}
+			if original[j] == lines[i-1] && clear && (end == len(original) || end == len(original)-1 && original[end] == "" || end < len(original) && (logLine.MatchString(original[end]) || i+1 < len(lines) && original[end] == lines[i+1])) {
+				return true
+			}
+		}
+		return false
+	}
 	if m := counts.FindStringSubmatch(line); m != nil {
 		passed := 0
 		failed := 0
@@ -231,7 +254,7 @@ func lostFact(original, summary string) string {
 	var numberBody []string
 	sumLines := strings.Split(summary, "\n")
 	for i, line := range sumLines {
-		if counts.MatchString(line) || repeats.MatchString(line) {
+		if counts.MatchString(line) || repeats.MatchString(line) || traceMore.MatchString(line) {
 			if !oracleGenerated(clean, sumLines, i) {
 				return fmt.Sprintf("invented %q", line)
 			}
@@ -371,11 +394,9 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 		{"panic with a goroutine dump in a terminal",
 			"panic: runtime error: index out of range [5] with length 3\n\ngoroutine 1 [running]:\nmain.main()\n\t/app/main.go:12 +0x1d\nexit status 2\n",
 			Terminal, true, []string{"panic: runtime error: index out of range [5] with length 3", "\t/app/main.go:12 +0x1d"}},
-		// Frames past the two-line context window are dropped: the invariant
-		// protects error lines and test diagnostics, not every following frame.
-		{"stack trace whose first frame is the useful line",
-			"2026-10-16 10:00:00 INFO serving\n2026-10-16 10:00:01 ERROR request failed\npanic: assignment to entry in nil map\n\ngoroutine 12 [running]:\nmain.(*Server).handle(...)\n\t/app/server.go:88 +0x1d\nnet/http.HandlerFunc.ServeHTTP(...)\n\t/usr/local/go/src/net/http/server.go:2220\n",
-			Log, true, []string{"2026-10-16 10:00:01 ERROR request failed", "panic: assignment to entry in nil map"}},
+		{"stack trace with a useful later frame",
+			"2026-10-16 10:00:00 INFO serving\n2026-10-16 10:00:01 ERROR request failed\ngoroutine 12 [running]:\nruntime.call()\n\t/runtime.go:1\nnet/http.serve()\n\t/http.go:2\nmain.(*Server).handle(...)\n\t/app/server.go:88\n2026-10-16 10:00:02 INFO recovered",
+			Log, true, []string{"main.(*Server).handle(...)", "\t/app/server.go:88"}},
 		{"log line repeated with a changing timestamp", repeatedWithTimestamps(), Log, true,
 			[]string{"2026-10-16T10:00:00Z WARN retrying /var/run/app.sock", "2026-10-16T10:00:59Z WARN retrying /var/run/app.sock", "2026-10-16T10:01:00Z ERROR gave up on /var/run/app.sock"}},
 		{"output of exactly the limit", filler("head", 14000) + middleError + filler("tail", summaryLimit-14000-len(middleError)), Terminal, true, []string{middleError}},

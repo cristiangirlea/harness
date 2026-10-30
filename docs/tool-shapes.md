@@ -24,6 +24,8 @@ invents no whole number token, path or negation. Numbers in colour escapes or em
 not supply number tokens. An oracle written in the test checks each case; a false return
 (head-and-tail cut) always passes. Attack classes:
 
+An error word wrapped across two lines in the middle of terminal output is a known limit of line-based shaping.
+
 Every digit run in a summary body must also occur in the colour-stripped original.
 
 - one failure buried in thousands of passing tests, and one test name failing in two packages;
