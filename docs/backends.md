@@ -166,9 +166,9 @@ server with a `url` as `mcp_servers.<name>.url`, each with
 server in a command-line `--mcp` file whose name is not a bare key is refused before codex
 starts; one in the home MCP file is skipped with a warning. A url
 server with `headers` or `"type": "sse"` is also refused, since codex is passed only its url.
-In server `env`, `${VAR}` expands from the guarded CLI environment; a withheld variable expands
-to empty (or its specified default). With `--allow-dangerous`, expansion uses hrn's environment
-as before. Environment values never go on the command line, where the process list
+In server `command`, `args`, `url` and `env`, `${VAR}` expands from the guarded CLI environment;
+a withheld or guard-added variable expands to empty (or its specified default). With
+`--allow-dangerous`, expansion uses hrn's environment as before. Environment values never go on the command line, where the process list
 and the run's start line would show them: hrn sets them in codex's own environment and names
 them in `mcp_servers.<name>.env_vars`, which codex passes on to the server. They pass hrn's
 guard like the rest of that environment: on a guarded codex run, server secret env such as
@@ -176,7 +176,7 @@ guard like the rest of that environment: on a guarded codex run, server secret e
 A server cannot set `GIT_CONFIG_*` variables because they conflict with the git guard; other
 guard variables keep the guard's values.
 Two servers that set one variable to different values are refused, since codex has one
-environment for all of them, and so is a server variable that hrn's own environment already
+environment for all of them, and so is a server variable that codex's own environment already
 holds with another value, since codex itself would run with it. A server's `env` cannot set
 `CODEX_HOME`, even to hrn's current value, so codex uses the same home hrn reads.
 Values in `env` are kept off

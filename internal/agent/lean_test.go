@@ -204,6 +204,7 @@ func TestHelperCodexMCPEnv(t *testing.T) {
 	token, set := os.LookupEnv("GITHUB_TOKEN")
 	fmt.Printf("GITHUB_TOKEN set=%v %s\n", set, token)
 	fmt.Println("GIT_CONFIG_COUNT=" + os.Getenv("GIT_CONFIG_COUNT"))
+	fmt.Printf("guard values=%v\n", strings.HasSuffix(filepath.ToSlash(os.Getenv("KUBECONFIG")), "/kube/config") && os.Getenv("GH_TOKEN") == "hrn-guard-no-token" && os.Getenv("HRN_GUARDED") == "1")
 	os.Exit(0)
 }
 
@@ -519,8 +520,9 @@ func TestCodexMCPGuardedFieldsAndSameNameEnv(t *testing.T) {
 	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
 	t.Setenv("GITHUB_TOKEN", "fake-secret")
 	file := mcpFile(t, `"tool":{"command":"run-${GITHUB_TOKEN}","args":["arg-${GITHUB_TOKEN}"],"env":{"GITHUB_TOKEN":"${GITHUB_TOKEN}"}},"web":{"url":"https://example.test/${GITHUB_TOKEN}"}`)
-	for _, dangerous := range []bool{false, true} {
-		task := Task{Dir: t.TempDir(), Options: Options{MCP: []string{file}, AllowDangerous: dangerous}}
+	for _, tc := range []struct{ dangerous, inherit bool }{{false, false}, {false, true}, {true, false}} {
+		dangerous := tc.dangerous
+		task := Task{Dir: t.TempDir(), Options: Options{MCP: []string{file}, AllowDangerous: dangerous, InheritEnv: tc.inherit}}
 		args := strings.Join(codexMCPArgs(task), " ")
 		value := ""
 		if dangerous {
@@ -543,6 +545,26 @@ func TestCodexMCPGuardedFieldsAndSameNameEnv(t *testing.T) {
 		if res.Status != StatusOK || !strings.Contains(res.Final, want) {
 			t.Errorf("dangerous=%v result=%+v", dangerous, res)
 		}
+	}
+}
+
+func TestCodexMCPGuardValuesDoNotConflictOrExpand(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	t.Setenv("KUBECONFIG", "/fake-original")
+	t.Setenv("GH_TOKEN", "fake-original")
+	file := mcpFile(t, `"tool":{"command":"x","args":["${KUBECONFIG}"],"env":{"KUBECONFIG":"/x","GH_TOKEN":"lit"}}`)
+	task := Task{Dir: t.TempDir(), Options: Options{MCP: []string{file}}}
+	if args := strings.Join(codexMCPArgs(task), " "); !strings.Contains(args, `mcp_servers.tool.args=[""]`) {
+		t.Errorf("guard variable did not expand to empty: %s", args)
+	}
+	b := NewCodexBackend()
+	b.name, b.candidates = os.Args[0], nil
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+	b.parse = nil
+	res := b.Run(context.Background(), task, func(Event) {})
+	if res.Status != StatusOK || !strings.Contains(res.Final, "guard values=true") {
+		t.Errorf("guard values did not win: %+v", res)
 	}
 }
 

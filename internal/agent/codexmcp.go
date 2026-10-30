@@ -124,6 +124,14 @@ func codexMCPLookup(t Task) func(string) (string, bool) {
 			}
 			values[k] = v
 		}
+		guarded, _ := tools.GuardEnv(nil, "")
+		for _, kv := range guarded {
+			k, _, _ := strings.Cut(kv, "=")
+			if runtime.GOOS == "windows" {
+				k = strings.ToUpper(k)
+			}
+			delete(values, k)
+		}
 		lookup = func(k string) (string, bool) {
 			if runtime.GOOS == "windows" {
 				k = strings.ToUpper(k)
