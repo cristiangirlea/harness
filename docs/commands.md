@@ -27,7 +27,8 @@
 | `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](watch.md#watching-runs-live)). |
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
 | `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). `--owner-email` (repeatable) names the verified emails that see this install's runs and batches; other verified visitors see only records they own. |
-| `hrn bot stats` | Show your level, this week's experience and your badges from hrn's records (see [Experience](experience.md)). |
+| `hrn bot stats` | Show your level, this week's experience, practice streak and badges (see [Experience](experience.md)). |
+| `hrn bot practice [swap\|answer [--file PATH]\|mark got_it\|partly\|missed\|read owner/repo#n]` | Show or swap today's exercise, answer from stdin or a file, mark it, or start a read of an open pull request. |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
 | `hrn batch show [--json] <id>` | Reprint a batch's table and attempt notes, while it runs or long afterwards. |
@@ -329,3 +330,16 @@ first-party list prices per model, including the newer models' own cache-read pr
 with cache writes at 1.25x input. A dated snapshot id such as
 `claude-haiku-4-5-20251001` is priced as its model. A model missing from the table has
 no estimate, and the run says so at the start rather than showing a cost of zero.
+
+### Practice
+
+`hrn bot practice` shows today's UTC exercise. `swap` selects another before it is
+answered; `answer` reads stdin, or `answer --file PATH` reads a file, saves it and
+shows the reveal. `mark got_it`, `mark partly`, or `mark missed` records a self-mark.
+`read owner/repo#n` starts a read of an open pull request; answer and mark it the
+same way. Return to the daily exercise with `hrn bot practice`. Up to three reads
+may be started per UTC day, including a daily exercise of that kind. The read earns
+experience only if the pull request merges after the answer. GitHub exercises need
+`gh`; recall reads the committed `PLAN.md` from repositories in run and batch records.
+Material and reveals are masked before storage. Practice remains available when the
+game is disabled.

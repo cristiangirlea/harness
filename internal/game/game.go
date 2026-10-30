@@ -46,6 +46,8 @@ var rules = map[string]struct{ xp, cap int }{
 	kindRoutedFailed: {0, 0},
 	kindScript:       {5, 5},
 	kindFirst:        {25, 0},
+	kindRep:          {30, 1},
+	kindRead:         {20, 3},
 }
 
 // Event is one line of events.jsonl, written once and never edited.

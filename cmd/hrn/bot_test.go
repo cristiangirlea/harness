@@ -192,3 +192,65 @@ func TestBotRefusesArgumentsOtherThanStats(t *testing.T) {
 		}
 	}
 }
+func TestBotPracticeNeverPrintsRevealBeforeAnswer(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(game.Dir(), "reps")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	date := time.Now().UTC().Format("2006-01-02")
+	record := `{"date":"` + date + `","daily":{"kind":"recall","source":"decision","material":"heading","reveal":"private reveal","attempt":0},"pending":"daily"}`
+	if err := os.WriteFile(filepath.Join(dir, date+".json"), []byte(record), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"practice"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "private reveal") || !strings.Contains(string(out), "heading") {
+		t.Fatalf("output %s", out)
+	}
+}
+
+func TestBotPracticeAnsweredRevealAndDisabledGame(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(game.Dir(), "reps")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	date := time.Now().UTC().Format("2006-01-02")
+	record := `{"date":"` + date + `","daily":{"kind":"recall","source":"decision","material":"heading","reveal":"saved reveal","answered_at":"2026-01-01T00:00:00Z"},"pending":"daily"}`
+	if err := os.WriteFile(filepath.Join(dir, date+".json"), []byte(record), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(game.Dir(), "settings.json"), []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"practice"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(out); !strings.Contains(s, "saved reveal") || strings.Contains(s, "level") || strings.Contains(s, "streak") || strings.Contains(s, "xp") {
+		t.Fatalf("output %q", s)
+	}
+}
+
+func TestBotStatsStreakSquares(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(game.Dir(), "reps")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	date := time.Now().UTC().Format("2006-01-02")
+	record := `{"date":"` + date + `","daily":{"answered_at":"2026-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(filepath.Join(dir, date+".json"), []byte(record), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "streak: 1 days "+strings.Repeat("\u25a1", 34)+"\u25a0") {
+		t.Fatalf("output %s", out)
+	}
+}
