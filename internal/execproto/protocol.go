@@ -95,6 +95,10 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if t.Fresh && t.ContinueRunID == "" {
 		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
 	}
+	preferences, err := agent.BackendPreferences(runlog.Home())
+	if err != nil {
+		return w.reject(req.AttemptID, "storage", "cannot load worker backend preferences")
+	}
 	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP}
 	var routed *runlog.RoutedBy
 	var routeNote string
@@ -127,6 +131,9 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	b, err := agent.Get(t.Backend)
 	if err != nil {
 		return w.reject(req.AttemptID, "unsupported", err.Error())
+	}
+	if !preferences.Enabled(t.Backend) {
+		return w.reject(req.AttemptID, "unsupported", "backend disabled by worker preference")
 	}
 	caps := agent.BackendCapabilities(b)
 	if t.Mode == agent.ModeAsk || !slices.Contains(caps.Modes, t.Mode) {
@@ -531,18 +538,29 @@ type protocolError struct {
 
 func hello() map[string]any {
 	backends := make([]any, 0)
+	preferences, prefErr := agent.BackendPreferences(runlog.Home())
 	for _, name := range agent.Names() {
 		b, _ := agent.Get(name)
-		detail, err := b.Detect()
-		if err != nil {
-			detail = err.Error()
+		var detail string
+		available := false
+		if prefErr != nil {
+			detail = "cannot load worker backend preferences"
+		} else if !preferences.Enabled(name) {
+			detail = "backend disabled by worker preference"
+		} else {
+			var err error
+			detail, err = b.Detect()
+			available = err == nil
+			if err != nil {
+				detail = err.Error()
+			}
 		}
 		backends = append(backends, struct {
 			Name      string `json:"name"`
 			Available bool   `json:"available"`
 			Detail    string `json:"detail"`
 			agent.Capabilities
-		}{name, err == nil, detail, agent.BackendCapabilities(b)})
+		}{name, available, detail, agent.BackendCapabilities(b)})
 	}
 	revision := "unknown"
 	if info, ok := debug.ReadBuildInfo(); ok {
