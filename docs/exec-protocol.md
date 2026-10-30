@@ -55,6 +55,8 @@ hrn       -> result                (always the last line after accepted; then ex
 
 - `revision` comes from the binary's build information; it is `unknown` when Go did not stamp
   one. A supervisor identifies the binary by its hash, not by this field alone.
+- The worker's backend preference marks disabled backends unavailable, with a reason in `detail`.
+  If the preference cannot be loaded, all backends are unavailable.
 - `modes` lists the modes the backend accepts in exec. `ask` is never listed in v1: nothing can
   answer an approval yet.
 - `efforts` is empty for a backend that cannot apply a reasoning effort.
@@ -116,8 +118,10 @@ hrn       -> result                (always the last line after accepted; then ex
 
 A rejected start creates no run record. Codes: `bad_request` (malformed line, missing or unknown
 field, bad attempt id or bad model id), `unsupported` (a mode, effort or option the backend cannot
-honour), `unavailable` (the backend's CLI or credentials are not
-found), `storage` (the run record could not be created). hrn exits 2 after `rejected`.
+honour, or a backend disabled by the worker's preference), `unavailable` (the backend's CLI or
+credentials are not found), `storage` (the run record could not be created or the worker's backend
+preference could not be loaded). Preference failure messages do not disclose local paths. The
+preference is checked again for the resolved backend at start. hrn exits 2 after `rejected`.
 
 A second `start` after `accepted` receives a non-fatal `error` with code `bad_request`.
 It creates no additional record, and the accepted run continues to its final `result`.
