@@ -51,7 +51,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 	if had, err := prefs.Load(runlog.Home()); err == nil && len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {
 		var kept []string
 		for _, name := range had.EnabledNames {
-			if p.Enabled(name) {
+			if p.Enabled(name) && !slices.Contains(kept, name) {
 				kept = append(kept, name)
 			}
 		}
@@ -62,6 +62,13 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		}
 		p.EnabledNames = kept
 	}
+	var unique []string
+	for _, name := range p.EnabledNames {
+		if !slices.Contains(unique, name) {
+			unique = append(unique, name)
+		}
+	}
+	p.EnabledNames = unique
 	if err := prefs.Save(runlog.Home(), *p); err != nil {
 		// Only default-validation errors are safe to show; filesystem errors may expose paths.
 		if p.Default() != "" && (len(p.EnabledNames) == 0 || !p.Enabled(p.Default())) {
@@ -77,6 +84,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 type backendRow struct {
 	Name                        string
 	Installed, Enabled, Default bool
+	EnabledKnown                bool
 	Limit                       quota.Part   // a run ended at the plan's limit; when it lifts
 	Quota                       []quota.Part // what is left of the plan, as last reported
 }
@@ -111,7 +119,7 @@ func (s *server) backendsCard(w http.ResponseWriter, r *http.Request) backendCar
 	for _, name := range agent.Names() {
 		b, _ := agent.Get(name)
 		_, err := b.Detect()
-		row := backendRow{Name: name, Installed: err == nil, Enabled: p.Enabled(name), Default: p.Default() == name}
+		row := backendRow{Name: name, Installed: err == nil, EnabledKnown: c.Problem == "", Enabled: c.Problem == "" && p.Enabled(name), Default: p.Default() == name}
 		row.Limit = quota.Limit(limits.Until(name, now), now)
 		row.Quota = quota.For(name, now).Parts(now)
 		c.Rows = append(c.Rows, row)

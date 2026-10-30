@@ -109,6 +109,9 @@ an ordinary follow-up, and old records without it still load.
 
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 
+`HRN_HOME` may be relative to the current directory. If it is unset and the user
+home cannot be resolved, record operations fail; set `HRN_HOME` to a usable directory.
+
 - `task.json` — prompt, dir, backend, and the run options by their flag names; when retrieval
   rewrote the prompt the run started with, `original_prompt` holds the task as typed, read back
   by a continuation and by `hrn retrieval compare`

@@ -20,9 +20,18 @@ func Output(ctx context.Context, run func() ([]byte, error)) ([]byte, error) {
 	matching := false
 	for _, line := range strings.Split(text, "\n") {
 		if path, ok := strings.CutPrefix(line, "fatal: failed to read "); ok {
-			path, tail, found := strings.Cut(path, "/commondir")
-			_, name, worktree := strings.Cut(path, ".git/worktrees/")
-			matching = found && worktree && name != "" && !strings.Contains(name, "/") &&
+			end := strings.LastIndex(path, "/commondir")
+			if end < 0 {
+				continue
+			}
+			tail := path[end+len("/commondir"):]
+			path = path[:end]
+			start := strings.LastIndex(path, ".git/worktrees/")
+			if start < 0 {
+				continue
+			}
+			name := path[start+len(".git/worktrees/"):]
+			matching = name != "" && !strings.Contains(name, "/") &&
 				(tail == "" || strings.HasPrefix(tail, ":"))
 			if matching {
 				break

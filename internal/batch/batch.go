@@ -1468,23 +1468,7 @@ func devOrTestProfile(table string) bool {
 }
 
 func batchEnv(dir string) ([]string, func() error, error) {
-	parent := filepath.Dir(filepath.Dir(dir))
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return nil, nil, err
-	}
-	ignore := filepath.Join(parent, ".gitignore")
-	f, err := os.OpenFile(ignore, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err == nil {
-		_, err = f.WriteString("*\n")
-		if closeErr := f.Close(); err == nil {
-			err = closeErr
-		}
-	} else if errors.Is(err, os.ErrExist) {
-		err = nil
-	}
-	if err != nil {
-		return nil, nil, err
-	}
+	parent := gateTempParent(dir)
 	var env []string
 	if cargo, ok := os.LookupEnv("CARGO_INCREMENTAL"); ok {
 		env = append(env, "CARGO_INCREMENTAL="+cargo)
@@ -1519,11 +1503,63 @@ func batchEnv(dir string) ([]string, func() error, error) {
 		}
 	}
 	temp, err := os.MkdirTemp(parent, "tmp-")
+	if err != nil && parent != os.TempDir() {
+		temp, err = os.MkdirTemp(os.TempDir(), "tmp-")
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	env = append(env, "TMP="+temp, "TEMP="+temp, "TMPDIR="+temp)
-	return env, func() error { return os.RemoveAll(temp) }, nil
+	return env, func() error {
+		err := os.RemoveAll(temp)
+		if parent != os.TempDir() && filepath.Dir(temp) == parent && filepath.Base(parent) == ".hrn-gate-tmp" {
+			_ = os.Remove(parent)
+		}
+		return err
+	}, nil
+}
+
+func gateTempParent(dir string) string {
+	tree, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return os.TempDir()
+	}
+	parent := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(tree))))
+	for path := parent; ; path = filepath.Dir(path) {
+		_, err := os.Lstat(filepath.Join(path, ".git"))
+		if err == nil {
+			next := filepath.Dir(path)
+			if next == path {
+				return os.TempDir()
+			}
+			parent = next
+		} else if !os.IsNotExist(err) {
+			return os.TempDir()
+		}
+		if filepath.Dir(path) == path {
+			break
+		}
+	}
+	parent = filepath.Join(parent, ".hrn-gate-tmp")
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return os.TempDir()
+	}
+	info, err := os.Lstat(parent)
+	if err != nil || !info.IsDir() || !gateTempPermissionsSafe(info) {
+		return os.TempDir()
+	}
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil || !sameVolume(resolved, tree) {
+		return os.TempDir()
+	}
+	for path := resolved; ; path = filepath.Dir(path) {
+		if _, err := os.Lstat(filepath.Join(path, ".git")); !os.IsNotExist(err) {
+			return os.TempDir()
+		}
+		if filepath.Dir(path) == path {
+			return resolved
+		}
+	}
 }
 
 func runGate(ctx context.Context, dir, command string, timeout time.Duration, env []string) GateResult {
@@ -2313,12 +2349,39 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 		return err
 	}
 	defer g.close()
-	// Never retry: metadata failure may follow branch creation.
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	oid, err := gitOutEnv(ctx, root, g.env(ctx), "", "rev-parse", "--verify", base+"^{commit}")
+	if err != nil {
+		return err
+	}
+	branch := exec.CommandContext(ctx, "git", "-C", root, "branch", tr.Branch, oid)
+	branch.Env = append(gitenv.WithoutRepoVars(branch.Environ()), g.env(ctx)...)
+	if out, err := branch.CombinedOutput(); err != nil {
+		return fmt.Errorf("git branch: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	_, pathErr := os.Lstat(tr.Worktree)
+	pathAbsent := errors.Is(pathErr, os.ErrNotExist)
+	// Never retry: a failed add may have registered the worktree.
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", tr.Worktree, tr.Branch)
 	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), g.env(ctx)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+		addErr := fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		registered, listErr := isWorktree(root, tr.Worktree)
+		if pathAbsent {
+			if listErr == nil && registered {
+				if _, removeErr := gitOut(cleanupCtx, root, "worktree", "remove", "--force", tr.Worktree); removeErr != nil {
+					return errors.Join(addErr, removeErr)
+				}
+			}
+		}
+		if pathAbsent || (listErr == nil && !registered) {
+			if _, deleteErr := gitOut(cleanupCtx, root, "update-ref", "-d", "refs/heads/"+tr.Branch, oid); deleteErr != nil {
+				return errors.Join(addErr, deleteErr)
+			}
+		}
+		return addErr
 	}
 	return nil
 }

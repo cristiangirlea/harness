@@ -51,7 +51,7 @@
 <tbody>{{range .Rows}}<tr data-backend="{{.Name}}">
 <th scope="row">{{.Name}}</th>
 <td>{{if .Installed}}installed{{else}}not installed{{end}}</td>
-<td>{{if .Enabled}}enabled{{else}}disabled{{end}}</td>
+<td>{{if not .EnabledKnown}}unknown{{else if .Enabled}}enabled{{else}}disabled{{end}}</td>
 <td>{{if .Default}}default{{end}}</td>
 <td>{{with .Limit.Text}}<span class="quota-low">{{.}}</span>{{end}}</td>
 <td>{{range $i, $q := .Quota}}{{if $i}} / {{end}}<span{{if $q.Stale}} class="quota-stale"{{else if $q.Low}} class="quota-low"{{end}}>{{$q.Text}}</span>{{end}}</td>

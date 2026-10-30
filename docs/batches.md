@@ -218,9 +218,12 @@ they apply per attempt rather than per task, so a retry gets its own allowance. 
 may set its own value or change the spec's, but zero means inherit, so it cannot remove
 a limit the spec set.
 
-Each attempt gives its agent and gates a temporary folder under the ignored `.hrn/`
-folder holding the worktree, on the worktree's volume, and removes it when the attempt
-ends: `TMP`, `TEMP` and `TMPDIR` point there. `CARGO_INCREMENTAL` is `0` unless the
+Each attempt gives its agent and gates a temporary folder under `.hrn-gate-tmp` outside
+the main checkout and any enclosing Git worktree. This keeps fixture discovery out of
+the checkout and avoids cross-volume renames. If that folder cannot be created on the
+worktree's volume, it uses the system temporary directory instead. It also falls back
+if the parent is a symlink or, on Unix, permits access by other users. The attempt
+removes its folder when it ends: `TMP`, `TEMP` and `TMPDIR` point there. `CARGO_INCREMENTAL` is `0` unless the
 environment already sets it, or the worktree sets `incremental` under `[profile.dev]`
 or `[profile.test]` (or one of their sub-tables) in `Cargo.toml`, `.cargo/config.toml`,
 or `.cargo/config`, or under `[build]` in either Cargo config file. Inline tables, dotted
