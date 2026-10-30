@@ -271,15 +271,18 @@ func TestBotStatsWarnsForUnreadableOldFamiliarityRecord(t *testing.T) {
 	old := os.Stderr
 	os.Stderr = stderr
 	defer func() { os.Stderr = old; stderr.Close() }()
-	_, err = captureStdout(t, func() error { return cmdBot([]string{"stats"}) })
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats"}) })
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "level ") || !strings.Contains(string(out), "badges:") || !strings.Contains(string(out), "areas you know:") {
+		t.Fatalf("output: %s", out)
 	}
 	if _, err := stderr.Seek(0, 0); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(stderr.Name())
-	if err != nil || !strings.Contains(string(data), "familiarity") {
+	if err != nil || !strings.Contains(string(data), "practice records:") {
 		t.Fatalf("warning: %q, %v", data, err)
 	}
 }

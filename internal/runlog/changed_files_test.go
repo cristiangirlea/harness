@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -115,5 +116,38 @@ func TestRunChangedFilesNonRepoAndOldRecord(t *testing.T) {
 	r, err = Load(w.ID())
 	if err != nil || r.Result.Status != agent.StatusOK || len(r.Result.ChangedFiles) != 0 {
 		t.Fatalf("old record: %+v, %v", r, err)
+	}
+}
+
+func TestChangedFilesExcludesMergedSideCommits(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		b, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	git("init")
+	git("config", "user.email", "test@example.test")
+	git("config", "user.name", "Test")
+	git("commit", "--allow-empty", "-m", "base")
+	base := git("rev-parse", "HEAD")
+	git("checkout", "-b", "side")
+	git("commit", "--allow-empty", "-m", "side")
+	side := git("rev-parse", "HEAD")
+	git("checkout", "-b", "task", base)
+	git("commit", "--allow-empty", "-m", "task")
+	git("merge", "--no-ff", "side", "-m", "merge")
+	_, _, _, commits := changedFiles(dir, base)
+	for _, commit := range commits {
+		if commit == side {
+			t.Fatal("side commit included")
+		}
+	}
+	if len(commits) != 2 {
+		t.Fatalf("commits: %v", commits)
 	}
 }

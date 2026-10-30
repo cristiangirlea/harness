@@ -125,7 +125,7 @@ func cmdBotStats(args []string) error {
 		badges = append(badges, "none yet")
 	}
 	fmt.Printf("badges: %s\n", strings.Join(badges, ", "))
-	familiarity, err := game.ReadFamiliarity(time.Now())
+	familiarity, err := game.ReadFamiliarity(context.Background(), time.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
 		return nil

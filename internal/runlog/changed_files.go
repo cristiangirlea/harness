@@ -68,6 +68,6 @@ func changedFiles(root, head string) ([]string, bool, string, []string) {
 		files = files[:maxChangedFiles]
 	}
 	end = strings.TrimSpace(end)
-	commits, _ := gitOutput(root, "rev-list", "--max-count=500", head+".."+end, "--")
+	commits, _ := gitOutput(root, "rev-list", "--first-parent", "--max-count=500", head+".."+end, "--")
 	return files, truncated, end, strings.Fields(commits)
 }

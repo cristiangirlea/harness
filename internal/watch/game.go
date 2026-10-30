@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -45,7 +46,10 @@ func (s *server) gameCard(w http.ResponseWriter, r *http.Request) *gameCard {
 	}
 	if card.Local {
 		if len(s.opt.LAN) == 0 {
-			card.Familiarity = s.familiarity.get(now)
+			card.Familiarity = s.familiarity.get(s.ctx, now)
+			if card.Familiarity != nil && card.Familiarity.UnreadablePractice && card.Problem == "" {
+				card.Problem = "practice records unreadable; familiarity may be incomplete"
+			}
 		}
 		weekly := totals.Since(game.WeekStart(now))
 		card.Delivery, card.Practice = weekly[game.TrackDelivery], weekly[game.TrackPractice]
@@ -62,18 +66,23 @@ type familiarityCache struct {
 	value   *game.Familiarity
 	checked time.Time
 	loading bool
+	loader  func(context.Context, time.Time) (game.Familiarity, error)
 }
 
-func (c *familiarityCache) get(now time.Time) *game.Familiarity {
+func (c *familiarityCache) get(ctx context.Context, now time.Time) *game.Familiarity {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.loading && (c.checked.IsZero() || now.Sub(c.checked) >= time.Minute) {
+	if ctx != nil && ctx.Err() == nil && !c.loading && (c.checked.IsZero() || now.Sub(c.checked) >= time.Minute) {
 		c.loading = true
 		go func() {
-			value, err := game.ReadFamiliarity(time.Now().UTC())
+			loader := c.loader
+			if loader == nil {
+				loader = game.ReadFamiliarity
+			}
+			value, err := loader(ctx, time.Now().UTC())
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			if err == nil {
+			if err == nil && ctx.Err() == nil {
 				c.value = &value
 			}
 			c.checked = time.Now().UTC()

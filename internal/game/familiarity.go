@@ -22,10 +22,13 @@ type AreaExposure struct {
 }
 
 // Familiarity holds the most exposed and unseen agent-touched areas.
-type Familiarity struct{ Known, Unseen []AreaExposure }
+type Familiarity struct {
+	Known, Unseen      []AreaExposure
+	UnreadablePractice bool
+}
 
 // ReadFamiliarity derives the view from local records and repositories.
-func ReadFamiliarity(now time.Time) (Familiarity, error) {
+func ReadFamiliarity(ctx context.Context, now time.Time) (Familiarity, error) {
 	runs, err := runlog.List(0)
 	if err != nil {
 		return Familiarity{}, err
@@ -34,11 +37,11 @@ func ReadFamiliarity(now time.Time) (Familiarity, error) {
 	if err != nil {
 		return Familiarity{}, err
 	}
-	return deriveFamiliarity(Records{Runs: runs, Batches: batches}, now)
+	return deriveFamiliarity(ctx, Records{Runs: runs, Batches: batches}, now)
 }
 
-func gitEvidence(dir string, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func gitEvidence(ctx context.Context, dir string, args ...string) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1")
@@ -63,7 +66,7 @@ func fileArea(file string) string {
 	return parts[0]
 }
 
-func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
+func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Familiarity, error) {
 	roots := map[string]string{}
 	touched := map[string]map[string]bool{}
 	excluded := map[string]map[string]bool{}
@@ -119,13 +122,13 @@ func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
 			}
 		}
 		if len(oids) > 0 {
-			args := append([]string{"rev-list"}, oids...)
+			args := append([]string{"rev-list", "--first-parent"}, oids...)
 			if safeOID(b.Base) {
 				args = append(args, "^"+b.Base)
 			}
 			args = append(args, "--")
 			if safeOID(b.Base) {
-				for _, h := range strings.Fields(gitEvidence(b.Dir, args...)) {
+				for _, h := range strings.Fields(gitEvidence(ctx, b.Dir, args...)) {
 					excluded[name][h] = true
 				}
 			}
@@ -136,7 +139,7 @@ func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
 				logArgs = append(logArgs, "--no-walk")
 			}
 			logArgs = append(logArgs, "--")
-			for _, f := range strings.Split(gitEvidence(b.Dir, logArgs...), "\n") {
+			for _, f := range strings.Split(gitEvidence(ctx, b.Dir, logArgs...), "\n") {
 				if a := fileArea(strings.TrimSpace(f)); a != "" {
 					touched[name][a] = true
 				}
@@ -153,10 +156,12 @@ func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
 	if err != nil {
 		return Familiarity{}, err
 	}
+	unreadablePractice := false
 	for _, f := range files {
 		r, err := loadRep(strings.TrimSuffix(filepath.Base(f), ".json"))
 		if err != nil {
-			return Familiarity{}, err
+			unreadablePractice = true
+			continue
 		}
 		all := append([]Exercise(nil), r.Reads...)
 		if r.Daily != nil {
@@ -196,11 +201,11 @@ func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
 		}
 	}
 	for repo, root := range roots {
-		email := strings.TrimSpace(gitEvidence(root, "config", "--get", "user.email"))
+		email := strings.TrimSpace(gitEvidence(ctx, root, "config", "--get", "user.email"))
 		if email == "" {
 			continue
 		}
-		output := gitEvidence(root, "log", "--all", "--since="+now.AddDate(0, 0, -90).Format(time.RFC3339), "--until="+now.Format(time.RFC3339), "--format=%x1e%H%x00%ae", "--name-only", "--no-renames", "--")
+		output := gitEvidence(ctx, root, "log", "--all", "--since="+now.AddDate(0, 0, -90).Format(time.RFC3339), "--until="+now.Format(time.RFC3339), "--format=%x1e%H%x00%ae", "--name-only", "--no-renames", "--")
 		for _, entry := range strings.Split(output, "\x1e") {
 			lines := strings.Split(strings.TrimSpace(entry), "\n")
 			if len(lines) == 0 {
@@ -219,7 +224,7 @@ func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
 			}
 		}
 	}
-	var out Familiarity
+	out := Familiarity{UnreadablePractice: unreadablePractice}
 	for key, count := range counts {
 		repo, area, _ := strings.Cut(key, "\x00")
 		out.Known = append(out.Known, AreaExposure{repo, area, count})

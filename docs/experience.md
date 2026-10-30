@@ -108,7 +108,9 @@ areas come from those batch commits and recorded run changed paths. Older standa
 records lack these fields. Reviews read cannot be determined from records; answered
 read exercises are counted.
 Missing repositories are skipped. The two lists show at most five areas each; they are
-exposure counts, not proof of authorship or knowledge.
+exposure counts, not proof of authorship or knowledge. On the watch card, familiarity is
+absent on the first page load and can be about a minute old. Unreadable practice records
+are skipped and reported, so familiarity may be incomplete.
 
 ## Levels and badges
 
