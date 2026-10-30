@@ -275,6 +275,11 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-30: the experience card on the hrn watch index, slice 3 of `docs/experience.md` (#306,
+  #715; PR #716). Loopback viewers see level, this week's experience, the streak, badges and
+  today's exercise (masked material only, never an answer or reveal); `--lan` viewers see level,
+  streak and badges; `--public` serves nothing of the game; the switch hides the card. Rendering
+  only reads files, never `gh` or the network, and who counts as local is the Backends card's rule.
 - 2026-10-30: maintainer decisions on four open questions (#462, #464, #562, #671; PRs #711, #712,
   #713). A log summary keeps the two lines after an error and the trace after it up to the next log
   entry, at most 20 lines, with a count valid recomputes; an error word wrapped across terminal
