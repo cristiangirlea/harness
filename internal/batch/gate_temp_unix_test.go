@@ -5,8 +5,29 @@ package batch
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
+
+type gateTempFileInfo struct{ uid uint32 }
+
+func (gateTempFileInfo) Name() string       { return "temp" }
+func (gateTempFileInfo) Size() int64        { return 0 }
+func (gateTempFileInfo) Mode() os.FileMode  { return os.ModeDir | 0700 }
+func (gateTempFileInfo) ModTime() time.Time { return time.Time{} }
+func (gateTempFileInfo) IsDir() bool        { return true }
+func (f gateTempFileInfo) Sys() any         { return &syscall.Stat_t{Uid: f.uid} }
+
+func TestGateTempPermissionsOwner(t *testing.T) {
+	uid := uint32(os.Geteuid())
+	if gateTempPermissionsSafe(gateTempFileInfo{uid: uid + 1}) {
+		t.Error("accepted a directory owned by another user")
+	}
+	if !gateTempPermissionsSafe(gateTempFileInfo{uid: uid}) {
+		t.Error("rejected a directory owned by the current user")
+	}
+}
 
 func TestGateTempRejectsUnsafeParent(t *testing.T) {
 	for _, kind := range []string{"symlink", "world-writable"} {

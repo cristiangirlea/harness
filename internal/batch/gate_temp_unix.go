@@ -8,7 +8,8 @@ import (
 )
 
 func gateTempPermissionsSafe(info os.FileInfo) bool {
-	return info.Mode().Perm()&0o077 == 0
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return info.Mode().Perm()&0o077 == 0 && ok && st.Uid == uint32(os.Geteuid())
 }
 
 func sameVolume(a, b string) bool {
