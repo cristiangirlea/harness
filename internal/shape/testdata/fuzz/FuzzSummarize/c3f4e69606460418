@@ -1,0 +1,2 @@
+go test fuzz v1
+string("=== RUN   Tes0Open\n--- FAIL: TestOpen (0.00s)\nFAIL\texample/a\t0.01s\n=== RUN   TestOpen\n--- \n\n")

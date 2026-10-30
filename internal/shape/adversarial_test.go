@@ -39,11 +39,14 @@ func oracleHead(clean, line string) bool {
 			return false
 		}
 		n := 0
+		keys := map[string]bool{}
 		for ; d.More(); n++ {
 			if open == '{' {
-				if _, err := d.Token(); err != nil {
+				key, err := d.Token()
+				if err != nil {
 					return false
 				}
+				keys[key.(string)] = true
 			}
 			var raw json.RawMessage
 			if d.Decode(&raw) != nil {
@@ -55,6 +58,9 @@ func oracleHead(clean, line string) bool {
 		}
 		if _, err := d.Token(); err != io.EOF {
 			return false
+		}
+		if open == '{' {
+			n = len(keys)
 		}
 		return strconv.Itoa(n) == m[2]
 	}
@@ -309,7 +315,7 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 		{"one failed subtest among 1500", manySubtests(), Test, true, []string{"tests: passed=1499 failed=1", "=== RUN   TestParent/case750", "    failure message", "--- FAIL: TestParent (0.00s)", "    --- FAIL: TestParent/case750 (0.00s)"}},
 		{"same failing name in two packages",
 			"=== RUN   TestOpen\n    open_test.go:9: open /tmp/a: no such file\n--- FAIL: TestOpen (0.00s)\nFAIL\nFAIL\texample/a\t0.01s\n=== RUN   TestOpen\n    open_test.go:9: open /tmp/b: no such file\n--- FAIL: TestOpen (0.00s)\nFAIL\nFAIL\texample/b\t0.01s\n",
-			Test, false, nil},
+			Test, true, []string{"open /tmp/a: no such file", "open /tmp/b: no such file"}},
 		{"negation on a dropped log line",
 			"2026-10-16 10:00:00 INFO start\n" + "2026-10-16 10:00:01 INFO tick a\n2026-10-16 10:00:01 INFO tick b\n" + "2026-10-16 10:00:02 INFO cache entry not found, rebuilding\n2026-10-16 10:00:03 INFO no such file /var/cache/app/index\n2026-10-16 10:00:04 INFO watcher runs only on Windows\n" + "2026-10-16 10:00:05 INFO tock a\n2026-10-16 10:00:05 INFO tock b\n" + "2026-10-16 10:00:06 ERROR rebuild failed\n",
 			Log, true, []string{"ERROR rebuild failed"}},
@@ -377,7 +383,7 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 		{"JSON numbers in exponent form and negative", "[" + strings.Repeat(`{"v": -1.5e-3, "w": 2E+10, "n": -0}, `, 200) + `{"v": 1}]`, JSON, true,
 			[]string{`sample: {"v":-1.5e-3,"w":2E+10,"n":-0}`}},
 		{"single huge JSON string", `"` + strings.Repeat("x", 40000) + `"`, Terminal, false, nil},
-		{"JSON object holding one huge string", `{"blob": "` + strings.Repeat("x", 40000) + `"}`, JSON, false, nil},
+		{"JSON object holding one huge string", `{"blob": "` + strings.Repeat("x", 40000) + `"}`, JSON, true, []string{"json: object with 1 keys", `keys: "blob"`}},
 		{"go test -json output", goTestJSON, Terminal, true, nil},
 		{"table whose omitted middle row holds an error", csvRows(1000, 500), Table, true,
 			[]string{"[... omitted ...]\n500,job-500,error: timeout,5000\n[... omitted ...]"}},

@@ -64,7 +64,7 @@ func Classify(text string) Kind {
 		}
 	}
 	// Comma timestamps make every log line one column wider; the log summary keeps warnings.
-	if _, _, _, ok := tableShape(lines); ok && 2*logged <= filled {
+	if _, _, indices, ok := tableShape(lines); ok && (2*logged <= filled || !logLine.MatchString(lines[indices[0]])) {
 		return Table
 	}
 	if logged > 0 {
@@ -208,11 +208,17 @@ func jsonHead(text string) (string, []string) {
 	if !isJSON(s) {
 		return "", nil
 	}
-	_, values := jsonMembers(s)
+	keys, values := jsonMembers(s)
 	if s[0] == '[' {
 		return fmt.Sprintf("json: array of %d items", len(values)), values
 	}
-	return fmt.Sprintf("json: object with %d keys", len(values)), values
+	distinct := map[string]bool{}
+	for _, key := range keys {
+		var decoded string
+		_ = json.Unmarshal([]byte(key), &decoded)
+		distinct[decoded] = true
+	}
+	return fmt.Sprintf("json: object with %d keys", len(distinct)), values
 }
 
 func jsonSample(v string, depth int) string {
@@ -264,15 +270,20 @@ func jsonSummary(text string, lines []string) string {
 				out = append(out, line)
 			}
 		}
-		if line := "sample: " + jsonSample(sample, 2); !errorLine(line) {
-			out = append(out, line)
-		}
 	}
+	var errors []string
 	for _, line := range lines {
 		if errorLine(line) {
+			errors = append(errors, line)
+		}
+	}
+	if sample != "" {
+		line := "sample: " + jsonSample(sample, 2)
+		if !errorLine(line) && len(strings.Join(out, "\n"))+1+len(line)+len(strings.Join(errors, "\n"))+len(errors) <= 28000 {
 			out = append(out, line)
 		}
 	}
+	out = append(out, errors...)
 	return strings.Join(out, "\n")
 }
 
@@ -371,6 +382,52 @@ type testFailure struct {
 // Preserve paused diagnostics; reject ambiguous ownership when tests overlap.
 // Non-verbose Go output can place diagnostics immediately after FAIL.
 func testFailures(lines []string) (map[string]*testFailure, bool) {
+	all := map[string]*testFailure{}
+	start := 0
+	for i, line := range lines {
+		if (strings.HasPrefix(line, "FAIL\t") || strings.HasPrefix(line, "ok\t")) && failName.MatchString(line) {
+			return nil, false
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 2 {
+			fields[1] = strings.TrimSuffix(fields[1], "\r")
+		}
+		if len(fields) < 2 || (fields[0] != "FAIL" && fields[0] != "ok") || fields[1] == "" || strings.ContainsAny(fields[1], " \r\n") {
+			continue
+		}
+		part, ok := testFailuresPart(lines[start:i])
+		if !ok {
+			return nil, false
+		}
+		for name, failure := range part {
+			key := fields[1] + "." + name
+			if all[key] != nil {
+				return nil, false
+			}
+			for j := range failure.indices {
+				failure.indices[j] += start
+			}
+			all[key] = failure
+		}
+		start = i + 1
+	}
+	part, ok := testFailuresPart(lines[start:])
+	if !ok {
+		return nil, false
+	}
+	for name, failure := range part {
+		if all[name] != nil {
+			return nil, false
+		}
+		for j := range failure.indices {
+			failure.indices[j] += start
+		}
+		all[name] = failure
+	}
+	return all, true
+}
+
+func testFailuresPart(lines []string) (map[string]*testFailure, bool) {
 	tests := map[string]*testFailure{}
 	running := map[string]bool{}
 	paused := map[string]bool{}
@@ -473,6 +530,9 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 	}
 	for name, test := range tests {
 		if !test.failed {
+			if running[name] || paused[name] {
+				return nil, false
+			}
 			delete(tests, name)
 		}
 	}

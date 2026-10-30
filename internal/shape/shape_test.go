@@ -7,6 +7,33 @@ import (
 	"time"
 )
 
+func TestTimestampTablesAndLogs(t *testing.T) {
+	rows := "2026-10-14 10:00:00,ready\n2026-10-14 10:00:01,ready\n2026-10-14 10:00:02,ready\n2026-10-14 10:00:03,ready\n"
+	if got := Classify("time,status\n" + rows); got != Table {
+		t.Errorf("CSV = %v", got)
+	}
+	if got := Classify(strings.Repeat("2026-10-14 10:00:00,123 INFO ready\n", 5)); got != Log {
+		t.Errorf("log = %v", got)
+	}
+}
+
+func TestJSONLargeSamplesAndDistinctKeys(t *testing.T) {
+	for _, text := range []string{
+		`[{"body":"` + strings.Repeat("x", 30000) + `"},{"body":"small"}]`,
+		`{"body":"` + strings.Repeat("x", 30000) + `","a":1}`,
+	} {
+		s, ok := Summarize(JSON, text)
+		if !ok || strings.Contains(s, "sample:") || !strings.Contains(s, "keys:") {
+			t.Errorf("large JSON: ok=%v length=%d summary=%q", ok, len(s), s)
+		}
+	}
+	text := `{"a":1,"\u0061":2,"b":3}` + strings.Repeat(" ", 100)
+	s, ok := Summarize(JSON, text)
+	if !ok || !strings.HasPrefix(s, "json: object with 2 keys\n") || !oracleHead(strings.TrimSpace(text), "json: object with 2 keys") {
+		t.Errorf("distinct keys: %q %v", s, ok)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	for _, tc := range []struct {
 		text string
