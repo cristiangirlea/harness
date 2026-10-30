@@ -4,7 +4,7 @@
 # effects: read, exec
 # parameters: none
 # example: bash scripts/verify_test.sh
-# hash: 35e79942e2f3505a2bc63800489ac3741916fffa26c9b0167dc1ab8f24299201
+# hash: 91157acf8d9b8fe4ade6e207ea7602a7dfafdf83e0ed97a1ee1bda56a482dfea
 set -euo pipefail
 runner=$(cd "$(dirname "$0")" && pwd)/verify.sh
 tmp=$(mktemp -d)
@@ -208,4 +208,8 @@ TRACE="$tmp/skill-trace" "$real_bash" "$skill/scripts/check.sh" > "$tmp/out"
 [[ $(cat "$tmp/skill-trace") == two ]] || fail check-stdin
 grep -A3 'name: kept scripts verify$' .github/workflows/ci.yml | grep -q 'timeout-minutes: 5$' || fail ci-timeout
 if git ls-files -s 'scripts/*.sh' | grep -v '^100755 '; then fail script-mode; fi
+fixture invalidhint true "$clean"
+sed -i 's/# parameters: none/# parameters: words without grammar\n# matches: x/' "$clean/scripts/invalidhint.sh"
+check_fails 'invalid header: scripts/invalidhint.sh' "$clean"
+rm "$clean/scripts/invalidhint.sh"
 printf '{"passed":true}\n'

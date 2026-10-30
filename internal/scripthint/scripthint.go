@@ -54,7 +54,7 @@ func Find(data []byte) (Hint, bool) {
 	}
 	command := strings.ReplaceAll(p.ToolInput.Command, `\`, "/")
 	for _, file := range keptFiles(root) {
-		if strings.Contains(command, "scripts/"+filepath.Base(file)) {
+		if runsKept(command, filepath.Base(file)) {
 			return Hint{}, false
 		}
 	}
@@ -100,8 +100,15 @@ func Load(root string) []Script {
 
 var (
 	safeFile       = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	safeParameters = regexp.MustCompile(`^[A-Za-z0-9_:=;.,\[\]|/ -]*$`)
+	safeParameters = regexp.MustCompile(`^(?:none|[A-Za-z0-9_-]+:[A-Za-z0-9_-]+=[A-Za-z0-9_.,\[\]|/-]+(?:; [A-Za-z0-9_-]+:[A-Za-z0-9_-]+=[A-Za-z0-9_.,\[\]|/-]+)*)$`)
 )
+
+func runsKept(command, file string) bool {
+	path := `(?:\./)?scripts/` + regexp.QuoteMeta(file) + `(?:[\s;|&'"()]|$)`
+	prefix := `(?:^|[;|&\n({])\s*`
+	run := regexp.MustCompile(prefix + `(?:bash|sh)\s+` + path + `|` + prefix + `go\s+run\s+` + path + `|` + prefix + `&\s*` + path + `|` + prefix + `(?:pwsh|powershell)(?:\.exe)?\s+-[Ff]ile\s+` + path)
+	return run.MatchString(command)
+}
 
 // Untrusted headers require plain filenames and bounded parameter syntax.
 func hintSafe(file, parameters string) bool {
@@ -157,14 +164,18 @@ func Normalize(s string) string {
 }
 
 var (
+	psHere      = regexp.MustCompile(`(?ms)@'\r?\n(.*?)\r?\n'@[ \t]*\|[ \t]*(?:python3?|py|node|perl|bash|sh)(?:\.exe)?[ \t]+-(?:[ \t\r\n;|&]|$)|@"\r?\n(.*?)\r?\n"@[ \t]*\|[ \t]*(?:python3?|py|node|perl|bash|sh)(?:\.exe)?[ \t]+-(?:[ \t\r\n;|&]|$)`)
 	heredoc     = regexp.MustCompile(`<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)(['"]?)`)
-	interpreter = regexp.MustCompile(`(?:^|[;|&\n({]\s*|\b(?:sudo|env|exec)\s+)(?:\S*[/\\])?(python3?|py|node|bash|sh)(?:\.exe)?\s+(-c|-e)\s+`)
+	interpreter = regexp.MustCompile(`(?:^|[;|&\n({]\s*|\s)(?:\S*[/\\])?(python3?|py|node|perl|bash|sh)(?:\.exe)?\s+(-c|-e)\s+`)
 	powershell  = regexp.MustCompile(`(?i)(?:^|[;|&\n({]\s*|\s)(?:\S*[/\\])?(?:pwsh|powershell)(?:\.exe)?\s(?:[^;|&\n]*?\s)?-(?:command|c)\s+`)
 )
 
 // Inline joins heredocs and interpreter scripts with newlines, or returns "".
 func Inline(command string) string {
 	var parts []string
+	for _, m := range psHere.FindAllStringSubmatch(command, -1) {
+		parts = append(parts, m[1]+m[2])
+	}
 	for _, m := range heredoc.FindAllStringSubmatchIndex(command, -1) {
 		start := m[0]
 		if (start > 0 && command[start-1] == '<') || (m[1] < len(command) && command[m[1]] == '<') {
@@ -180,7 +191,7 @@ func Inline(command string) string {
 	}
 	for _, m := range interpreter.FindAllStringSubmatchIndex(command, -1) {
 		name, flag := command[m[2]:m[3]], command[m[4]:m[5]]
-		if (name == "node") != (flag == "-e") {
+		if (name == "node" || name == "perl") != (flag == "-e") {
 			continue
 		}
 		if word := shellWord(command[m[1]:]); word != "" {
