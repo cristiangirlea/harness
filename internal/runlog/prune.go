@@ -1,6 +1,9 @@
 package runlog
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -15,6 +18,7 @@ import (
 type PruneResult struct {
 	Removed     []string `json:"removed"` // run ids, newest first
 	Bytes       int64    `json:"bytes"`
+	ScriptHints int      `json:"script_hints,omitempty"`
 	OrphanFlows int      `json:"orphan_flows,omitempty"`
 }
 
@@ -76,7 +80,61 @@ func PruneOnly(cutoff time.Time, keep int, protect, only map[string]bool, dryRun
 		res.Bytes += size
 	}
 	err = pruneOrphanFlows(&res, dryRun)
+	if err == nil {
+		res.ScriptHints, err = pruneHints(cutoff, dryRun)
+	}
 	return res, err
+}
+
+func pruneHints(cutoff time.Time, dryRun bool) (int, error) {
+	path := filepath.Join(Home(), "script-hints.jsonl")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var kept bytes.Buffer
+	count := 0
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 4096), len(data)+1)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var record struct {
+			Time time.Time `json:"time"`
+		}
+		if json.Unmarshal(line, &record) != nil || record.Time.IsZero() || record.Time.Before(cutoff) {
+			count++
+			continue
+		}
+		kept.Write(line)
+		kept.WriteByte('\n')
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	if dryRun || count == 0 {
+		return count, nil
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".script-hints-*")
+	if err != nil {
+		return 0, err
+	}
+	defer os.Remove(tmp.Name())
+	if err = tmp.Chmod(0600); err == nil {
+		_, err = tmp.Write(kept.Bytes())
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if err = os.Rename(tmp.Name(), path); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func pruneOrphanFlows(res *PruneResult, dryRun bool) error {

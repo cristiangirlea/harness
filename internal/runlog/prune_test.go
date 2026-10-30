@@ -204,3 +204,32 @@ func TestPruneOnlyRemovesNoRunOutsideTheGivenList(t *testing.T) {
 		t.Fatal("PruneOnly must remove the listed run and keep the one it was not given")
 	}
 }
+
+func TestPruneScriptHints(t *testing.T) {
+	for _, dry := range []bool{true, false} {
+		t.Run(fmt.Sprint(dry), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			path := filepath.Join(Home(), "script-hints.jsonl")
+			input := "{\"time\":\"2020-01-01T00:00:00Z\"}\ninvalid\n{\"time\":\"2030-01-01T00:00:00Z\"}\n"
+			if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+				t.Fatal(err)
+			}
+			res, err := Prune(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), 0, nil, dry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, _ := json.Marshal(res)
+			if !strings.Contains(string(data), `"script_hints":2`) {
+				t.Fatalf("result %s", data)
+			}
+			got, _ := os.ReadFile(path)
+			want := "{\"time\":\"2030-01-01T00:00:00Z\"}\n"
+			if dry {
+				want = input
+			}
+			if string(got) != want {
+				t.Fatalf("got %q", got)
+			}
+		})
+	}
+}

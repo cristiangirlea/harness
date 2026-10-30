@@ -164,6 +164,9 @@ func cmdPrune(args []string) error {
 	}
 	fmt.Printf("%s %d runs, %d batch records and %d eval records older than %s (%s)\n",
 		verb, len(runs.Removed), len(oldBatches), len(oldEvals), *olderThan, report.Bytes(bytes))
+	if runs.ScriptHints > 0 {
+		fmt.Printf("%s %d script hint records\n", verb, runs.ScriptHints)
+	}
 	if runs.OrphanFlows > 0 {
 		fmt.Printf("%s %d orphan batch flow files\n", verb, runs.OrphanFlows)
 	}
