@@ -156,6 +156,7 @@ const (
 type Result struct {
 	ChangedFiles          []string          `json:"changed_files,omitempty"`
 	ChangedFilesTruncated bool              `json:"changed_files_truncated,omitempty"`
+	Commits               []string          `json:"commits,omitempty"`
 	EndHead               string            `json:"end_head,omitempty"`
 	Retrieval             *retrieval.Record `json:"retrieval,omitempty"`
 	// Usage describes the run-level token and cost totals.

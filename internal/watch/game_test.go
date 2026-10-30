@@ -165,10 +165,19 @@ func TestGameFamiliarityVisibility(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://127.0.0.1/", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
 	w := httptest.NewRecorder()
-	if card := (&server{}).gameCard(w, req); card == nil || card.Familiarity == nil {
-		t.Fatal("loopback omitted familiarity")
+	s := &server{}
+	s.familiarity.value = &game.Familiarity{Known: []game.AreaExposure{{Repo: "example/repo", Area: "known", Count: 2}}, Unseen: []game.AreaExposure{{Repo: "example/repo", Area: "unseen"}}}
+	s.familiarity.checked = time.Now()
+	s.index(w, req)
+	for _, want := range []string{"example/repo/known", "example/repo/unseen"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("loopback omitted %q", want)
+		}
 	}
-	if card := (&server{opt: Options{LAN: []Endpoint{{Addr: "192.168.1.1:8089"}}}}).gameCard(w, req); card == nil || card.Familiarity != nil {
+	s.opt.LAN = []Endpoint{{Addr: "192.168.1.1:8089"}}
+	w = httptest.NewRecorder()
+	s.index(w, req)
+	if strings.Contains(w.Body.String(), "example/repo/") {
 		t.Fatal("LAN exposed familiarity")
 	}
 	if card := (&server{opt: Options{Public: &PublicAccess{}}}).gameCard(w, req); card != nil {

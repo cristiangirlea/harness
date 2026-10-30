@@ -254,3 +254,32 @@ func TestBotStatsStreakSquares(t *testing.T) {
 		t.Fatalf("output %s", out)
 	}
 }
+
+func TestBotStatsWarnsForUnreadableOldFamiliarityRecord(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(game.Dir(), "reps")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "2000-01-01.json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = stderr
+	defer func() { os.Stderr = old; stderr.Close() }()
+	_, err = captureStdout(t, func() error { return cmdBot([]string{"stats"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stderr.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(stderr.Name())
+	if err != nil || !strings.Contains(string(data), "familiarity") {
+		t.Fatalf("warning: %q, %v", data, err)
+	}
+}

@@ -211,7 +211,8 @@ When a run starts in a Git work tree with a HEAD, its record includes `start_hea
 At close, `result.changed_files` lists up to 500 repository-relative paths that differ
 from that HEAD, including committed, staged, unstaged and untracked non-ignored files.
 `changed_files_truncated` is true if more paths exist, and `end_head` records the
-closing HEAD. Git failures and non-repositories leave these fields absent; older records
+closing HEAD. `result.commits` records up to 500 commits reachable from the closing
+HEAD but not the starting HEAD. Git failures and non-repositories leave these fields absent; older records
 without them still load. The comparison includes changes already present at the start.
 
 For opted-in retrieval, `result.json` includes `retrieval` with its packet or

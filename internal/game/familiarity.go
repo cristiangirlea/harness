@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -40,7 +41,8 @@ func gitEvidence(dir string, args ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1")
+	cmd.WaitDelay = time.Second
 	b, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -50,8 +52,6 @@ func gitEvidence(dir string, args ...string) string {
 
 func fileArea(file string) string {
 	file = filepath.ToSlash(file)
-	file = strings.TrimPrefix(file, "a/")
-	file = strings.TrimPrefix(file, "b/")
 	file = path.Clean(file)
 	if file == "." || file == ".." || strings.HasPrefix(file, "../") || strings.HasPrefix(file, "/") {
 		return ""
@@ -88,12 +88,12 @@ func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
 			excluded[name] = map[string]bool{}
 		}
 		for _, f := range r.Result.ChangedFiles {
-			if area := fileArea("./" + f); area != "" {
+			if area := fileArea(f); area != "" {
 				touched[name][area] = true
 			}
 		}
-		if safeOID(r.StartHead) && safeOID(r.Result.EndHead) {
-			for _, h := range strings.Fields(gitEvidence(r.Task.Dir, "rev-list", r.StartHead+".."+r.Result.EndHead, "--")) {
+		for _, h := range r.Result.Commits {
+			if safeOID(h) {
 				excluded[name][h] = true
 			}
 		}
@@ -107,25 +107,36 @@ func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
 			touched[name] = map[string]bool{}
 			excluded[name] = map[string]bool{}
 		}
+		var oids []string
 		for _, task := range b.Tasks {
 			oid := strings.TrimSpace(task.Commit)
 			if !safeOID(oid) {
 				continue
 			}
 			excluded[name][oid] = true
-			if !strings.HasPrefix(task.Branch, "hrn/") {
-				continue
+			if strings.HasPrefix(task.Branch, "hrn/") {
+				oids = append(oids, oid)
 			}
+		}
+		if len(oids) > 0 {
+			args := append([]string{"rev-list"}, oids...)
 			if safeOID(b.Base) {
-				for _, h := range strings.Fields(gitEvidence(b.Dir, "rev-list", b.Base+".."+oid, "--")) {
+				args = append(args, "^"+b.Base)
+			}
+			args = append(args, "--")
+			if safeOID(b.Base) {
+				for _, h := range strings.Fields(gitEvidence(b.Dir, args...)) {
 					excluded[name][h] = true
 				}
 			}
-			diff := gitEvidence(b.Dir, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", oid, "--")
+			logArgs := append([]string{"log", "--format=", "--name-only", "--no-renames"}, oids...)
 			if safeOID(b.Base) {
-				diff = gitEvidence(b.Dir, "log", "--format=", "--name-only", "--no-renames", b.Base+".."+oid, "--")
+				logArgs = append(logArgs, "^"+b.Base)
+			} else {
+				logArgs = append(logArgs, "--no-walk")
 			}
-			for _, f := range strings.Split(diff, "\n") {
+			logArgs = append(logArgs, "--")
+			for _, f := range strings.Split(gitEvidence(b.Dir, logArgs...), "\n") {
 				if a := fileArea(strings.TrimSpace(f)); a != "" {
 					touched[name][a] = true
 				}
@@ -162,12 +173,18 @@ func deriveFamiliarity(records Records, now time.Time) (Familiarity, error) {
 					if strings.HasPrefix(line, "+++ ") {
 						f := strings.TrimSpace(strings.TrimPrefix(line, "+++ "))
 						if f != "/dev/null" {
+							if strings.HasPrefix(f, "a/") || strings.HasPrefix(f, "b/") {
+								f = f[2:]
+							}
 							areas[fileArea(f)] = true
 						}
 					}
 					if strings.HasPrefix(line, "--- ") {
 						f := strings.TrimSpace(strings.TrimPrefix(line, "--- "))
 						if f != "/dev/null" {
+							if strings.HasPrefix(f, "a/") || strings.HasPrefix(f, "b/") {
+								f = f[2:]
+							}
 							areas[fileArea(f)] = true
 						}
 					}

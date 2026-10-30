@@ -47,10 +47,14 @@ func TestFamiliarityEvidence(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	commit("old/file", "2026-01-01T12:00:00Z")
 	commit("known/file", "2026-10-29T12:00:00Z")
+	runHash := commit("a/person", "2026-10-29T12:30:00Z")
+	runEnd := commit("runonly/file", "2026-10-29T12:31:00Z")
+	base := runEnd
 	git("checkout", "-b", "hrn/task")
+	commit("batchmiddle/file", "2026-10-29T12:40:00Z")
 	hash := commit("internal/new/file.go", "2026-10-29T13:00:00Z")
-	b := batch.Result{Dir: dir, Tasks: []batch.TaskResult{{Branch: "hrn/task", Commit: hash[:40]}}}
-	r := runlog.Record{Task: agent.Task{Dir: dir}, Result: agent.Result{ChangedFiles: []string{"standalone/file", "a/file"}}}
+	b := batch.Result{Dir: dir, Base: base[:40], Tasks: []batch.TaskResult{{Branch: "hrn/task", Commit: hash[:40]}}}
+	r := runlog.Record{Task: agent.Task{Dir: dir}, Result: agent.Result{ChangedFiles: []string{"standalone/file", "a/file"}, Commits: []string{runHash[:40], runEnd[:40]}}}
 	got, err := deriveFamiliarity(Records{Batches: []batch.Result{b}, Runs: []runlog.Record{r}}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +62,7 @@ func TestFamiliarityEvidence(t *testing.T) {
 	if len(got.Known) != 1 || got.Known[0].Area != "known" {
 		t.Fatalf("known: %+v", got.Known)
 	}
-	if len(got.Unseen) != 3 || got.Unseen[0].Area != "a" || got.Unseen[1].Area != "internal/new" || got.Unseen[2].Area != "standalone" {
+	if len(got.Unseen) != 4 || got.Unseen[0].Area != "a" || got.Unseen[1].Area != "batchmiddle" || got.Unseen[2].Area != "internal/new" || got.Unseen[3].Area != "standalone" {
 		t.Fatalf("unseen: %+v", got.Unseen)
 	}
 }
@@ -78,5 +82,25 @@ func TestFamiliarityPracticeAndMissingRepo(t *testing.T) {
 	}
 	if len(got.Known) != 2 || got.Known[0].Repo != "owner/repo" || got.Known[0].Area != "internal/alpha" || got.Known[0].Count != 2 || got.Known[1].Area != "cmd/tool" {
 		t.Fatalf("known: %+v", got.Known)
+	}
+}
+
+func TestFileAreaPreservesGitPaths(t *testing.T) {
+	for _, name := range []string{"a/file", "b/file"} {
+		if got := fileArea(name); got != name[:1] {
+			t.Errorf("fileArea(%q) = %q", name, got)
+		}
+	}
+}
+
+func TestGitEvidenceIgnoresRepositoryOverrides(t *testing.T) {
+	dir := t.TempDir()
+	cmd := exec.Command("git", "-C", dir, "init")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("init: %v: %s", err, out)
+	}
+	t.Setenv("GIT_DIR", filepath.Join(dir, "missing"))
+	if got := gitEvidence(dir, "rev-parse", "--is-inside-work-tree"); got != "true\n" {
+		t.Fatalf("got %q", got)
 	}
 }

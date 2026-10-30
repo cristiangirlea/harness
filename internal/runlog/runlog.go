@@ -221,7 +221,7 @@ func (w *Writer) Close(res agent.Result) error {
 	defer w.mu.Unlock()
 	w.closeError = w.events.Close()
 	if w.gitRoot != "" && w.rec.StartHead != "" {
-		res.ChangedFiles, res.ChangedFilesTruncated, res.EndHead = changedFiles(w.gitRoot, w.rec.StartHead)
+		res.ChangedFiles, res.ChangedFilesTruncated, res.EndHead, res.Commits = changedFiles(w.gitRoot, w.rec.StartHead)
 	}
 	w.rec.Result = res
 	recordErr := w.errLocked()

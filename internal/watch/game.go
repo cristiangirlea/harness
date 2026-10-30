@@ -2,6 +2,7 @@ package watch
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/game"
@@ -44,9 +45,7 @@ func (s *server) gameCard(w http.ResponseWriter, r *http.Request) *gameCard {
 	}
 	if card.Local {
 		if len(s.opt.LAN) == 0 {
-			if familiarity, err := game.ReadFamiliarity(now); err == nil {
-				card.Familiarity = &familiarity
-			}
+			card.Familiarity = s.familiarity.get(now)
 		}
 		weekly := totals.Since(game.WeekStart(now))
 		card.Delivery, card.Practice = weekly[game.TrackDelivery], weekly[game.TrackPractice]
@@ -56,4 +55,30 @@ func (s *server) gameCard(w http.ResponseWriter, r *http.Request) *gameCard {
 		}
 	}
 	return card
+}
+
+type familiarityCache struct {
+	mu      sync.Mutex
+	value   *game.Familiarity
+	checked time.Time
+	loading bool
+}
+
+func (c *familiarityCache) get(now time.Time) *game.Familiarity {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.loading && (c.checked.IsZero() || now.Sub(c.checked) >= time.Minute) {
+		c.loading = true
+		go func() {
+			value, err := game.ReadFamiliarity(time.Now().UTC())
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if err == nil {
+				c.value = &value
+			}
+			c.checked = time.Now().UTC()
+			c.loading = false
+		}()
+	}
+	return c.value
 }

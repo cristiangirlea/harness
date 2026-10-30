@@ -17,7 +17,8 @@ func gitOutput(dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
-	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1")
+	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	return string(out), err
 }
@@ -38,18 +39,18 @@ func startGit(dir string) (string, string) {
 	return root, strings.TrimSpace(head)
 }
 
-func changedFiles(root, head string) ([]string, bool, string) {
+func changedFiles(root, head string) ([]string, bool, string, []string) {
 	diff, err := gitOutput(root, "diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", head, "--")
 	if err != nil {
-		return nil, false, ""
+		return nil, false, "", nil
 	}
 	untracked, err := gitOutput(root, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
-		return nil, false, ""
+		return nil, false, "", nil
 	}
 	end, err := gitOutput(root, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
-		return nil, false, ""
+		return nil, false, "", nil
 	}
 	set := map[string]bool{}
 	for _, file := range strings.Split(diff+untracked, "\x00") {
@@ -66,5 +67,7 @@ func changedFiles(root, head string) ([]string, bool, string) {
 	if truncated {
 		files = files[:maxChangedFiles]
 	}
-	return files, truncated, strings.TrimSpace(end)
+	end = strings.TrimSpace(end)
+	commits, _ := gitOutput(root, "rev-list", "--max-count=500", head+".."+end, "--")
+	return files, truncated, end, strings.Fields(commits)
 }

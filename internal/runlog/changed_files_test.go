@@ -33,7 +33,10 @@ func TestRunChangedFiles(t *testing.T) {
 	write("edit", "before")
 	git("add", "edit")
 	git("commit", "-m", "initial")
-	w, err := Create("test", agent.Task{Dir: dir})
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	w, err := Create("test", agent.Task{Dir: filepath.Join(dir, "sub")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +56,7 @@ func TestRunChangedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(r.Result.ChangedFiles, []string{".gitignore", "committed", "edit", "staged", "untracked"}) || r.StartHead == "" || r.Result.EndHead == r.StartHead {
+	if !reflect.DeepEqual(r.Result.ChangedFiles, []string{".gitignore", "committed", "edit", "staged", "untracked"}) || r.StartHead == "" || r.Result.EndHead == r.StartHead || !reflect.DeepEqual(r.Result.Commits, []string{r.Result.EndHead}) {
 		t.Fatalf("record: %+v", r)
 	}
 }
