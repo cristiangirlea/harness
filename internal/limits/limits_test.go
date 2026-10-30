@@ -542,3 +542,24 @@ func TestARememberedLimitFurtherAheadThanACLICouldSayIsIgnored(t *testing.T) {
 		t.Error("claude's ordinary limit was dropped with it")
 	}
 }
+
+func TestAgyMeteredEnvironmentPreventsReplacement(t *testing.T) {
+	orig, err := agent.Get("agy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(stub{"agy", true})
+	t.Cleanup(func() { agent.Register(orig) })
+	for _, name := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"} {
+		t.Setenv(name, "")
+	}
+	for _, name := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "fake-secret-value")
+			ok, why := Ready("agy", time.Now(), nil)
+			if ok || !strings.Contains(why, name) || strings.Contains(why, "fake-secret-value") {
+				t.Errorf("Ready = %v, %q", ok, why)
+			}
+		})
+	}
+}

@@ -173,6 +173,7 @@ func (s Spent) out(backend string, now time.Time) string {
 
 // Credentials override plan billing; older codex uses OPENAI_API_KEY too.
 var metered = map[string][]string{
+	"agy":    agent.AgyMeteredEnv(),
 	"claude": {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"},
 	"codex":  {"CODEX_API_KEY", "OPENAI_API_KEY"},
 }

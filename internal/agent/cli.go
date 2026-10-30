@@ -53,6 +53,8 @@ type CLIBackend struct {
 	// ownEnv passes the allowlist for this CLI only: where it keeps its state
 	// and which account it signs in with. The guard still applies.
 	ownEnv []string
+	// meteredEnv never reaches the CLI, not even with --allow-dangerous and --inherit-env: it would bill per token.
+	meteredEnv []string
 	// fileRules requires native CLI secret-file protection.
 	fileRules bool
 	// Advertise effort only when the adapter enforces it.
@@ -206,6 +208,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	// The api backend's key is for hrn itself; a CLI that found it would bill
 	// per token instead of logging in on its own.
 	cmd.Env = withoutEnv(agentEnv(os.Environ()), "ANTHROPIC_API_KEY")
+	// Named from the operator's environment, before the allowlist would hide them.
+	var metered []string
+	cmd.Env, metered = withoutEnvNames(cmd.Env, c.meteredEnv)
 	envLine := "environment: inherited (--inherit-env)"
 	var withheld []string
 	if !task.InheritEnv {
@@ -224,6 +229,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		cmd.Env = withoutEnv(append(cmd.Env, extra...), "ANTHROPIC_API_KEY")
 	}
 	cmd.Env = append(cmd.Env, task.ChildEnv...)
+	cmd.Env, _ = withoutEnvNames(cmd.Env, c.meteredEnv)
 	guarded := !task.AllowDangerous
 	if guarded {
 		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
@@ -255,6 +261,10 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 			Text: fmt.Sprintf("%s: not enforced by the %s backend", strings.Join(limits, ", "), c.name)})
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
+	if len(metered) > 0 {
+		emit(Event{Time: time.Now(), Kind: EventInfo,
+			Text: fmt.Sprintf("environment: %s withheld so %s bills its plan login, not per token", strings.Join(metered, ", "), c.name)})
+	}
 	if guarded {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: c.guardLine(withheld, task.InheritEnv)})
 	} else if task.InheritEnv {
@@ -428,6 +438,18 @@ func withoutEnv(env []string, key string) []string {
 		}
 	}
 	return out
+}
+
+// withoutEnvNames drops each of keys from env and returns the ones that were set.
+func withoutEnvNames(env, keys []string) (out, removed []string) {
+	out = env
+	for _, key := range keys {
+		if kept := withoutEnv(out, key); len(kept) < len(out) {
+			removed = append(removed, key)
+			out = kept
+		}
+	}
+	return out, removed
 }
 
 func lastLines(s string, n int) string {

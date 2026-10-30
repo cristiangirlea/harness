@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// AgyMeteredEnv names environment overrides that can bill per token.
+func AgyMeteredEnv() []string {
+	return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"}
+}
+
 // NewAgyBackend drives Antigravity's agy CLI, not its IDE launcher.
 func NewAgyBackend() *CLIBackend {
 	return &CLIBackend{
@@ -57,9 +62,10 @@ func NewAgyBackend() *CLIBackend {
 		// sign-in and its Cloud project, and where agy keeps its state.
 		ownEnv: []string{"AGY_ACCOUNT", "AGY_ADC_AUTH", "ANTIGRAVITY_GEMINI_DIR", "ANTIGRAVITY_APP_DATA_DIR",
 			"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_QUOTA_PROJECT", "GOOGLE_CLOUD_LOCATION",
-			"GOOGLE_CLOUD_REGION", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_ENTERPRISE"},
-		newParse: newAgyParse,
-		end:      agyStreamEnded,
+			"GOOGLE_CLOUD_REGION", "GOOGLE_GENAI_USE_ENTERPRISE"},
+		meteredEnv: AgyMeteredEnv(),
+		newParse:   newAgyParse,
+		end:        agyStreamEnded,
 		// Agy uses the fork hook but resumes its session in place.
 		forks:          true,
 		resumesInPlace: true,
