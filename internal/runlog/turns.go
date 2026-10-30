@@ -64,6 +64,9 @@ func TurnsOf(id string) ([]Turn, error) {
 	if err := validID(id); err != nil {
 		return nil, err
 	}
+	if _, err := ResolveHome(); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(filepath.Join(Root(), id, "events.jsonl"))
 	if err != nil {
 		return nil, err
