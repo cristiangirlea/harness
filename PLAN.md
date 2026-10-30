@@ -275,6 +275,39 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-30: batch gate temp folders sit outside every git work tree (#683; PR #687,
+  `docs/batches.md`). Since PR #673 they were made under `<repo>/.hrn`, so tests walking up from
+  `t.TempDir()` found the real checkout (a gc test listed its real worktrees). `.hrn-gate-tmp`
+  now sits above the outermost repository on the same volume, used only if it is a real folder we
+  own with no group or other permissions, else the system temp folder.
+- 2026-10-30: review leftovers closed (#372, #425, #476, #496, #497, #499; PRs #685, #686, #688,
+  #689, #690). runlog refuses records when no home can be resolved and `.`/`..` as run ids; the
+  Backends card dedupes and shows unknown for a malformed file; worktree list/remove retry the
+  commondir race in gc too, and a batch creates its task branch first so a failed add deletes only
+  what it made; codex MCP servers expand every field from the guarded environment and may not set
+  `GIT_CONFIG_*`; `skills` is reported as not enforced where it is not, and a continuation that
+  keeps a non-lean session says it turned lean (a record without `lean` counts as lean only from
+  2026-10-19 10:03 UTC, when PR #595 made lean the default).
+- 2026-10-30: practice, slice 2 of the experience game (#306; PR #681, `docs/experience.md`).
+  One exercise a day in `$HRN_HOME/game/reps/<date>.json`, picked by an FNV-1a seed of the UTC
+  date and the attempt; the reveal is returned only once an answer is saved, and material and
+  reveal are masked before they are written. The pick lists pull requests once per repository
+  and state and fetches material for the chosen candidate only; every reference and repository
+  name is validated before it reaches `gh`. Recall reads this file's dated entries as well as
+  `###` headings. A closed, unmerged pull request settles its read, so a reopened one is not
+  checked again; `hrn bot stats` needs no network once reads are credited or settled.
+- 2026-10-30: plan-billed runs only, at both ends (#358, #364; PRs #679, #680). agy never
+  receives `GEMINI_API_KEY`, `GOOGLE_API_KEY` or `GOOGLE_GENAI_USE_VERTEXAI`, whatever the
+  switches, since its stream does not say which credential it used; it stays an automatic
+  carry-on partner because those keys cannot reach it. Automatic carry-on picks only claude,
+  codex or agy: gemini and opencode can bill per token on provider keys and run only when named.
+  Open: whether agy's ADC sign-in (`GOOGLE_APPLICATION_CREDENTIALS`) can bill a Cloud project.
+- 2026-10-30: `hrn exec` honours the worker's backend preference (#367; PR #678,
+  `docs/exec-protocol.md`): disabled backends are unavailable in `hello`, a start for one is
+  `unsupported`, an unreadable preference file is `storage`, and no message carries a local path.
+  Server projects may name agy (#359; PR #677); job submission still accepts only `api`.
+- 2026-10-30: PLAN.md keeps only open work and the log from 2026-10-16 on (PR #682); the rest
+  moved to `docs/plan-history.md`, cutting the file every agent reads from 224 KB to 53 KB.
 - 2026-10-26: a run given a GitHub issue leases it, so two runs never work on the same issue
   (#645; PR #657, `docs/workspaces.md#issue-leases`). `hrn run --issue`, the MCP `run` tool's
   `issue` and a batch task's `issue` take a slot-style lease under `$HRN_HOME/leases/issues`,
