@@ -70,7 +70,7 @@ func TestApplyReportsLeanChange(t *testing.T) {
 		{"true to default", agent.Bool(true), nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := Plan{Backend: "claude", Prev: runlog.Record{ID: "previous", Task: agent.Task{Options: agent.Options{Lean: tc.prev}}}}
+			p := Plan{Backend: "claude", ForkSession: "s1", Prev: runlog.Record{ID: "previous", Task: agent.Task{Options: agent.Options{Lean: tc.prev}}}}
 			task := agent.Task{Options: agent.Options{Lean: tc.next}}
 			var notes []string
 			p.Apply(&task, t.TempDir(), func(e agent.Event) {
@@ -92,7 +92,7 @@ func TestApplyLeanNoticeMatchesBackend(t *testing.T) {
 		{"gemini", ""},
 	} {
 		t.Run(tc.backend, func(t *testing.T) {
-			p := Plan{Backend: tc.backend, Prev: runlog.Record{ID: "previous", Backend: "other"}}
+			p := Plan{Backend: tc.backend, ForkSession: "s1", Prev: runlog.Record{ID: "previous", Backend: "other"}}
 			var task agent.Task
 			var notes []string
 			p.Apply(&task, t.TempDir(), func(e agent.Event) {
@@ -109,6 +109,16 @@ func TestApplyLeanNoticeMatchesBackend(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyGivesAFreshContinuationNoLeanNotice(t *testing.T) {
+	p := Plan{Backend: "claude", Prev: runlog.Record{ID: "previous"}}
+	var task agent.Task
+	p.Apply(&task, t.TempDir(), func(e agent.Event) {
+		if strings.Contains(e.Text, "--lean=false") {
+			t.Errorf("unexpected lean notice: %q", e.Text)
+		}
+	})
 }
 
 func TestAgyContinuesItsConversationWithoutPromisingAFork(t *testing.T) {

@@ -287,7 +287,7 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	for _, n := range p.Notes {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: n})
 	}
-	if p.Prev.ID != "" && (p.Prev.Task.Lean == nil || !*p.Prev.Task.Lean) && task.IsLean() {
+	if p.Prev.ID != "" && (p.Resume != nil || p.ForkSession != "") && (p.Prev.Task.Lean == nil || !*p.Prev.Task.Lean) && task.IsLean() {
 		var loads string
 		switch p.Backend {
 		case "claude":
