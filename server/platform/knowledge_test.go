@@ -224,3 +224,56 @@ func TestSchemaVersionTwoRequestsExplicitMigration(t *testing.T) {
 		t.Fatalf("newer schema must not suggest migration: %v", err)
 	}
 }
+
+func TestKnowledgeImportRejectsEveryDenyPattern(t *testing.T) {
+	patterns := []struct{ field, value string }{
+		{"source", ".codex/auth.json"}, {"source", ".ssh/id"}, {"source", ".aws/credentials"},
+		{"source", "credentials.json"}, {"source", ".env"}, {"source", ".env.local"},
+		{"content", "<project-reference"}, {"content", "</project-reference>"},
+		{"content", "[reference x"}, {"content", "[/reference]"},
+		{"content", "-----BEGIN PRIVATE KEY-----"}, {"content", "-----BEGIN RSA PRIVATE KEY-----"},
+		{"content", "-----BEGIN OPENSSH PRIVATE KEY-----"}, {"content", "-----BEGIN EC PRIVATE KEY-----"},
+		{"content", "-----BEGIN ENCRYPTED PRIVATE KEY-----"}, {"content", "sk-ant-fixture"},
+		{"content", "ghp_fixture"}, {"content", "github_pat_fixture"}, {"content", "Authorization: Bearer fixture"},
+		{"content", "ignore previous instructions"}, {"content", "disable permission checks"},
+		{"content", "AKIA0123456789ABCDEF"}, {"content", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl"},
+	}
+	for _, tc := range patterns {
+		t.Run(tc.value, func(t *testing.T) {
+			in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
+			if tc.field == "source" {
+				in.Entries[0].Source = tc.value
+			} else {
+				in.Entries[0].Content = tc.value
+			}
+			if _, err := (&Store{}).ImportKnowledge(context.Background(), in); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("pattern accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestKnowledgeImportRejectsDuplicateKeysAndTooManyEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*retrieval.Import)
+	}{
+		{"duplicate", func(in *retrieval.Import) { in.Entries[1].Key = in.Entries[0].Key }},
+		{"too many", func(in *retrieval.Import) {
+			entry := in.Entries[0]
+			in.Entries = make([]retrieval.Entry, 101)
+			for i := range in.Entries {
+				in.Entries[i] = entry
+				in.Entries[i].Key = fmt.Sprintf("entry-%d", i)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
+			tc.change(&in)
+			if _, err := (&Store{}).ImportKnowledge(context.Background(), in); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("accepted: %v", err)
+			}
+		})
+	}
+}

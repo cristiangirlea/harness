@@ -410,3 +410,52 @@ func TestKnowledgeSearchMatchesMultiWordAndPunctuatedIdentifiersThroughSQL(t *te
 		}
 	}
 }
+
+func TestKnowledgeHTTPRetrievalBusy(t *testing.T) {
+	operator := strings.Repeat("o", 64)
+	h := (&HTTPServer{Store: &Store{}, OperatorToken: operator}).Handler()
+	in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
+	body, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/knowledge/import", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+operator)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable || !bytes.Contains(w.Body.Bytes(), []byte(`"retrieval_busy"`)) {
+		t.Fatalf("status %d, body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestKnowledgeHTTPRollbackAndStaleGeneration(t *testing.T) {
+	s := testStore(t)
+	p, _ := testProject(t, s)
+	in := knowledgeFixture(p)
+	operator := strings.Repeat("o", 64)
+	h := (&HTTPServer{Store: s, OperatorToken: operator}).Handler()
+	request := func(change retrieval.Change) int {
+		body, err := json.Marshal(change)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/v1/knowledge/change", bytes.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+operator)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	if code := request(retrieval.Change{Scope: in.Scope, Operation: "rollback"}); code != http.StatusNotFound {
+		t.Fatalf("rollback: %d", code)
+	}
+	id, err := s.ImportKnowledge(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := request(retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: id}); code != http.StatusOK {
+		t.Fatalf("activate: %d", code)
+	}
+	if code := request(retrieval.Change{Scope: in.Scope, Operation: "disable", ExpectedGeneration: 0}); code != http.StatusConflict {
+		t.Fatalf("stale generation: %d", code)
+	}
+}
