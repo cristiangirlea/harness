@@ -91,8 +91,32 @@ func oracleGenerated(clean string, lines []string, i int) bool {
 	line := lines[i]
 	if m := counts.FindStringSubmatch(line); m != nil {
 		passed := 0
+		failed := 0
 		failures := map[string]int{}
+		flush := func() {
+			for name, n := range failures {
+				parent := false
+				for child := range failures {
+					if strings.HasPrefix(child, name+"/") {
+						parent = true
+						break
+					}
+				}
+				if !parent {
+					failed += n
+				}
+			}
+			clear(failures)
+		}
 		for _, original := range strings.Split(clean, "\n") {
+			fields := strings.Split(original, "\t")
+			if len(fields) >= 2 {
+				pkg := strings.TrimSuffix(fields[1], "\r")
+				if (fields[0] == "FAIL" || fields[0] == "ok") && pkg != "" && !strings.ContainsAny(pkg, " \r\n") {
+					flush()
+					continue
+				}
+			}
 			if strings.Contains(original, "--- PASS:") {
 				passed++
 			}
@@ -100,19 +124,7 @@ func oracleGenerated(clean string, lines []string, i int) bool {
 				failures[f[1]]++
 			}
 		}
-		failed := 0
-		for name, n := range failures {
-			parent := false
-			for child := range failures {
-				if strings.HasPrefix(child, name+"/") {
-					parent = true
-					break
-				}
-			}
-			if !parent {
-				failed += n
-			}
-		}
+		flush()
 		return line == fmt.Sprintf("tests: passed=%d failed=%d", passed, failed)
 	}
 	if m := repeats.FindStringSubmatch(line); m != nil {

@@ -30,6 +30,7 @@ var (
 	testMarker = regexp.MustCompile(`^\s*=== (RUN|CONT|PAUSE|NAME)\s+(\S+)\s*$`)
 	testResult = regexp.MustCompile(`^\s*--- (FAIL|PASS):\s+(\S+)`)
 	numbers    = regexp.MustCompile(`[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?`)
+	digits     = regexp.MustCompile(`\d+`)
 	negations  = regexp.MustCompile(`(?i)\b(?:not|never|no|only)\b`)
 	paths      = regexp.MustCompile(`(?:[A-Za-z]:[\\/]|\.{0,2}/|[A-Za-z0-9_.-]+[\\/])[^\s<>"'()]+|\b[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]*`)
 	ansi       = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|[@-_])")
@@ -351,7 +352,20 @@ func errorLine(line string) bool {
 func testCounts(lines []string) (passed, failed int) {
 	failedNames := map[string]int{}
 	parents := map[string]bool{}
+	flush := func() {
+		for name, n := range failedNames {
+			if !parents[name] {
+				failed += n
+			}
+		}
+		clear(failedNames)
+		clear(parents)
+	}
 	for _, line := range lines {
+		if testPackageLine(line) {
+			flush()
+			continue
+		}
 		if strings.Contains(line, "--- PASS:") {
 			passed++
 		}
@@ -365,12 +379,17 @@ func testCounts(lines []string) (passed, failed int) {
 			}
 		}
 	}
-	for name, n := range failedNames {
-		if !parents[name] {
-			failed += n
-		}
-	}
+	flush()
 	return
+}
+
+func testPackageLine(line string) bool {
+	fields := strings.Split(line, "\t")
+	if len(fields) < 2 {
+		return false
+	}
+	name := strings.TrimSuffix(fields[1], "\r")
+	return (fields[0] == "FAIL" || fields[0] == "ok") && name != "" && !strings.ContainsAny(name, " \r\n")
 }
 
 type testFailure struct {
@@ -388,19 +407,16 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 		if (strings.HasPrefix(line, "FAIL\t") || strings.HasPrefix(line, "ok\t")) && failName.MatchString(line) {
 			return nil, false
 		}
-		fields := strings.Split(line, "\t")
-		if len(fields) >= 2 {
-			fields[1] = strings.TrimSuffix(fields[1], "\r")
-		}
-		if len(fields) < 2 || (fields[0] != "FAIL" && fields[0] != "ok") || fields[1] == "" || strings.ContainsAny(fields[1], " \r\n") {
+		if !testPackageLine(line) {
 			continue
 		}
+		pkg := strings.TrimSuffix(strings.Split(line, "\t")[1], "\r")
 		part, ok := testFailuresPart(lines[start:i])
 		if !ok {
 			return nil, false
 		}
 		for name, failure := range part {
-			key := fields[1] + "." + name
+			key := pkg + "." + name
 			if all[key] != nil {
 				return nil, false
 			}
@@ -644,6 +660,7 @@ func valid(kind Kind, original, summary string) bool {
 		body = summary[len(head):]
 	}
 	availableNumbers := map[string]bool{}
+	availableDigits := tokenSet(digits, strings.Join(cleanLines, "\n"))
 	for _, n := range numberTokens(strings.Join(cleanLines, "\n")) {
 		availableNumbers[n] = true
 	}
@@ -653,6 +670,11 @@ func valid(kind Kind, original, summary string) bool {
 		}
 		for _, n := range numberTokens(line) {
 			if !availableNumbers[n] {
+				return false
+			}
+		}
+		for _, n := range digits.FindAllString(line, -1) {
+			if !availableDigits[n] {
 				return false
 			}
 		}

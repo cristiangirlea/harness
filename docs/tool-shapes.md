@@ -24,6 +24,8 @@ invents no whole number token, path or negation. Numbers in colour escapes or em
 not supply number tokens. An oracle written in the test checks each case; a false return
 (head-and-tail cut) always passes. Attack classes:
 
+Every digit run in a summary body must also occur in the colour-stripped original.
+
 - one failure buried in thousands of passing tests, and one test name failing in two packages;
 - negations ("not found", "no such file", "only on Windows") on lines the summary drops;
 - repeated lines whose numbers differ in one digit (`exit 1`/`exit 11`, ports `8081`/`8082`);

@@ -100,6 +100,7 @@ func TestInvariantsRejectAdversarialSummaries(t *testing.T) {
 		{"changed count with all errors", Test, "counts 0 1 2\n--- FAIL: TestA (0.00s)\nerror broken", "tests: passed=0 failed=2\n--- FAIL: TestA (0.00s)\nerror broken"},
 		{"negation", Terminal, "ready", "not ready"}, {"never", Terminal, "ready", "never ready"}, {"no", Terminal, "ready", "no ready"}, {"only", Terminal, "ready", "only ready"},
 		{"escape number", Terminal, "\x1b[31mready\x1b[0m", "31"}, {"embedded number", Terminal, "TestCase2500", "2500"},
+		{"embedded number shortened", Terminal, "id x2500", "id x25"},
 		{"number substring", Terminal, "123", "23"}, {"number", Terminal, "1", "2"},
 		{"bare file path", Terminal, "old.go:7", "new.go:7"},
 		{"number sign", Terminal, "count 2", "count -2"},
@@ -117,6 +118,17 @@ func TestInvariantsRejectAdversarialSummaries(t *testing.T) {
 				t.Fatal("accepted an invalid summary")
 			}
 		})
+	}
+}
+
+func TestCountsLeavesInEachPackage(t *testing.T) {
+	original := "--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/sub (0.00s)\nFAIL\tpkg1\n--- FAIL: TestA (0.00s)\nFAIL\tpkg2\n"
+	_, failed := testCounts(strings.Split(original, "\n"))
+	if failed != 2 {
+		t.Fatalf("failed = %d, want 2", failed)
+	}
+	if !oracleGenerated(original, []string{"tests: passed=0 failed=2"}, 0) {
+		t.Fatal("oracle rejected the correct package counts")
 	}
 }
 
