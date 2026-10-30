@@ -103,9 +103,9 @@ func cmdBotStats(args []string) error {
 	var squares strings.Builder
 	for _, day := range days {
 		if day {
-			squares.WriteString("?")
+			squares.WriteString("\u25a0")
 		} else {
-			squares.WriteString("?")
+			squares.WriteString("\u25a1")
 		}
 	}
 	fmt.Printf("streak: %d days %s\n", streak, squares.String())
@@ -202,6 +202,9 @@ func cmdBotPractice(args []string) error {
 			return err
 		}
 		fmt.Printf("%s ? %s\n\n%s\n", e.Kind, e.Source, e.Material)
+		if !e.AnsweredAt.IsZero() {
+			fmt.Println(e.Reveal)
+		}
 
 		return nil
 	}
@@ -247,10 +250,14 @@ func cmdBotPractice(args []string) error {
 		}
 		p = game.NewPractice(source, time.Now())
 		reveal, err := p.Answer(string(b))
-		if err != nil {
+		var warning *game.RebuildWarning
+		if err != nil && !errors.As(err, &warning) {
 			return err
 		}
 		fmt.Println(reveal)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		return nil
 	default:
 		return fmt.Errorf("unknown practice command %q", args[0])

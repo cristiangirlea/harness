@@ -61,6 +61,9 @@ func NewPractice(source Source, now time.Time) *Practice {
 func (p *Practice) date() string { return p.now.Format("2006-01-02") }
 func repPath(date string) string { return filepath.Join(Dir(), "reps", date+".json") }
 func loadRep(date string) (repFile, error) {
+	if d, err := time.Parse("2006-01-02", date); err != nil || d.Format("2006-01-02") != date {
+		return repFile{}, errors.New("invalid practice date")
+	}
 	r := repFile{Date: date}
 	b, err := os.ReadFile(repPath(date))
 	if errors.Is(err, os.ErrNotExist) {
@@ -69,10 +72,17 @@ func loadRep(date string) (repFile, error) {
 	if err != nil {
 		return r, err
 	}
+	r = repFile{}
 	err = json.Unmarshal(b, &r)
+	if err == nil && r.Date != date {
+		return repFile{}, errors.New("practice record date does not match filename")
+	}
 	return r, err
 }
-func saveRep(r repFile) error {
+func saveRep(date string, r repFile) error {
+	if d, err := time.Parse("2006-01-02", date); err != nil || d.Format("2006-01-02") != date || r.Date != date {
+		return errors.New("invalid practice record date")
+	}
 	dir := filepath.Join(Dir(), "reps")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -93,7 +103,7 @@ func saveRep(r repFile) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), repPath(r.Date))
+	return os.Rename(f.Name(), repPath(date))
 }
 func safe(c Candidate) Candidate {
 	c.Source = mask.Text(c.Source)
@@ -107,24 +117,81 @@ func visible(e Exercise) Exercise {
 	}
 	return e
 }
+func (p *Practice) history() (map[string]bool, map[string]string, error) {
+	files, err := filepath.Glob(filepath.Join(Dir(), "reps", "*.json"))
+	if err != nil {
+		return nil, nil, err
+	}
+	reads, marks := map[string]bool{}, map[string]string{}
+	for _, file := range files {
+		date := strings.TrimSuffix(filepath.Base(file), ".json")
+		r, err := loadRep(date)
+		if err != nil {
+			return nil, nil, err
+		}
+		var all []Exercise
+		if r.Daily != nil {
+			all = append(all, *r.Daily)
+		}
+		all = append(all, r.Reads...)
+		for _, e := range all {
+			if e.Kind == "read" {
+				reads[strings.ToLower(e.Source)] = true
+			}
+			if e.Mark != "" {
+				marks["kind:"+e.Kind] = e.Mark
+				repo, _, _ := strings.Cut(e.Source, "#")
+				marks["repo:"+strings.ToLower(repo)] = e.Mark
+			}
+		}
+	}
+	return reads, marks, nil
+}
+func needsPractice(mark string) bool { return mark == "missed" || mark == "partly" }
+
 func (p *Practice) pick(attempt int, allowRead bool) (Exercise, error) {
 	kinds := []string{"cold read", "find the defect", "read", "recall"}
+	reads, marks, err := p.history()
+	if err != nil {
+		return Exercise{}, err
+	}
 	h := fnv.New64a()
 	fmt.Fprintf(h, "%s:%d", p.date(), attempt)
 	seed := h.Sum64()
-	for i := range kinds {
-		k := kinds[(int(seed%uint64(len(kinds)))+i)%len(kinds)]
+	var preferred, ordinary []Candidate
+	for _, k := range kinds {
 		if k == "read" && !allowRead {
 			continue
 		}
 		cs, err := p.source.Candidates(k)
-		if err != nil || len(cs) == 0 {
+		if err != nil {
 			continue
 		}
-		sort.Slice(cs, func(i, j int) bool { return cs[i].Source < cs[j].Source })
-		c := safe(cs[(seed/uint64(len(kinds)))%uint64(len(cs))])
-		c.Kind = k
-		return Exercise{Candidate: c, Attempt: attempt}, nil
+		for _, c := range cs {
+			if k == "read" && reads[strings.ToLower(c.Source)] {
+				continue
+			}
+			c.Kind = k
+			repo, _, _ := strings.Cut(c.Source, "#")
+			if needsPractice(marks["kind:"+k]) || needsPractice(marks["repo:"+strings.ToLower(repo)]) {
+				preferred = append(preferred, c)
+			} else {
+				ordinary = append(ordinary, c)
+			}
+		}
+	}
+	cs := preferred
+	if len(cs) == 0 {
+		cs = ordinary
+	}
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].Kind != cs[j].Kind {
+			return cs[i].Kind < cs[j].Kind
+		}
+		return cs[i].Source < cs[j].Source
+	})
+	if len(cs) > 0 {
+		return Exercise{Candidate: safe(cs[seed%uint64(len(cs))]), Attempt: attempt}, nil
 	}
 	return Exercise{}, errors.New("no practice candidates available")
 }
@@ -140,13 +207,13 @@ func (p *Practice) Today() (Exercise, error) {
 		}
 		r.Daily = &e
 		r.Pending = "daily"
-		if err = saveRep(r); err != nil {
+		if err = saveRep(p.date(), r); err != nil {
 			return Exercise{}, err
 		}
 	}
 	if r.Pending != "daily" {
 		r.Pending = "daily"
-		if err := saveRep(r); err != nil {
+		if err := saveRep(p.date(), r); err != nil {
 			return Exercise{}, err
 		}
 	}
@@ -169,16 +236,18 @@ func (p *Practice) Swap() (Exercise, error) {
 	}
 	r.Daily = &e
 	r.Pending = "daily"
-	if err = saveRep(r); err != nil {
+	if err = saveRep(p.date(), r); err != nil {
 		return Exercise{}, err
 	}
 	return visible(e), nil
 }
 
-var prRef = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$`)
+var prRef = regexp.MustCompile(`^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*/[A-Za-z0-9_.-]+#[1-9][0-9]*$`)
 
 func (p *Practice) Read(ref string) (Exercise, error) {
-	if !prRef.MatchString(ref) {
+	owner, rest, _ := strings.Cut(ref, "/")
+	repo, _, _ := strings.Cut(rest, "#")
+	if !prRef.MatchString(ref) || len(owner) > 39 || len(repo) > 100 || repo == "." || repo == ".." || mask.Text(ref) != ref {
 		return Exercise{}, errors.New("expected owner/repo#number")
 	}
 	files, err := filepath.Glob(filepath.Join(Dir(), "reps", "*.json"))
@@ -223,10 +292,11 @@ func (p *Practice) Read(ref string) (Exercise, error) {
 		return Exercise{}, err
 	}
 	c.Kind = "read"
+	c.Source = ref
 	e := Exercise{Candidate: safe(c)}
 	r.Reads = append(r.Reads, e)
-	r.Pending = ref
-	if err = saveRep(r); err != nil {
+	r.Pending = e.Source
+	if err = saveRep(p.date(), r); err != nil {
 		return Exercise{}, err
 	}
 	return visible(e), nil
@@ -242,6 +312,12 @@ func (p *Practice) pending(r *repFile) *Exercise {
 	}
 	return nil
 }
+
+type RebuildWarning struct{ Err error }
+
+func (w *RebuildWarning) Error() string { return "practice saved; rebuild warning: " + w.Err.Error() }
+func (w *RebuildWarning) Unwrap() error { return w.Err }
+
 func (p *Practice) Answer(answer string) (string, error) {
 	if strings.TrimSpace(answer) == "" {
 		return "", errors.New("answer is empty")
@@ -262,11 +338,11 @@ func (p *Practice) Answer(answer string) (string, error) {
 	}
 	e.Answer = mask.Text(answer)
 	e.AnsweredAt = p.now
-	if err = saveRep(r); err != nil {
+	if err = saveRep(p.date(), r); err != nil {
 		return "", err
 	}
 	if err = p.Rebuild(); err != nil {
-		return "", err
+		return e.Reveal, &RebuildWarning{Err: err}
 	}
 	return e.Reveal, nil
 }
@@ -283,7 +359,7 @@ func (p *Practice) Mark(mark string) error {
 		return errors.New("answer the exercise first")
 	}
 	e.Mark = mark
-	return saveRep(r)
+	return saveRep(p.date(), r)
 }
 func (p *Practice) Streak() (int, []bool, error) {
 	days := make([]bool, 35)
@@ -538,17 +614,17 @@ func (s *GitHubSource) Candidates(kind string) ([]Candidate, error) {
 					if !blocking.MatchString(r.Body) || r.Commit.OID == "" {
 						continue
 					}
-					idx := -1
-					for i, c := range p.Commits {
-						if c.OID == r.Commit.OID {
-							idx = i
-							break
-						}
-					}
-					if idx < 0 || idx+1 >= len(p.Commits) {
+					if !reviewHasLaterCommit(p, r.Commit.OID, r.SubmittedAt) {
 						continue
 					}
-					base := p.BaseRefOID
+					if len(p.Commits) == 0 || p.Commits[0].OID == "" {
+						continue
+					}
+					parent, err := bounded("gh", "api", fmt.Sprintf("repos/%s/commits/%s", repo, p.Commits[0].OID), "--jq", ".parents[0].sha")
+					if err != nil {
+						continue
+					}
+					base := strings.TrimSpace(string(parent))
 					if base == "" {
 						continue
 					}
@@ -566,11 +642,32 @@ func (s *GitHubSource) Candidates(kind string) ([]Candidate, error) {
 	}
 	return out, nil
 }
+
+func reviewHasLaterCommit(p prData, oid string, submitted time.Time) bool {
+	if oid == "" || submitted.IsZero() {
+		return false
+	}
+	for i, c := range p.Commits {
+		if c.OID == oid {
+			for _, later := range p.Commits[i+1:] {
+				if !later.CommittedDate.IsZero() && later.CommittedDate.After(submitted) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return false
+}
+
+var decisionList = regexp.MustCompile(`^- [0-9]{4}-[0-9]{2}-[0-9]{2}: `)
+
 func parseDecisions(repo, text string) []Candidate {
 	var out []Candidate
 	in := false
 	var heading string
 	var body []string
+	listEntry := false
 	flush := func() {
 		if heading != "" {
 			out = append(out, Candidate{Kind: "recall", Source: repo + "#" + heading, Material: heading, Reveal: strings.TrimSpace(strings.Join(body, "\n"))})
@@ -589,10 +686,28 @@ func parseDecisions(repo, text string) []Candidate {
 		if !in {
 			continue
 		}
-		if strings.HasPrefix(line, "### ") {
+		if decisionList.MatchString(line) {
+			flush()
+			headline := line[len("- 2006-01-02: "):]
+			end := len(headline)
+			for _, sep := range []string{" (", ". "} {
+				if i := strings.Index(headline, sep); i >= 0 && i < end {
+					end = i
+				}
+			}
+			heading = strings.TrimSpace(headline[:end])
+			body = []string{line}
+			listEntry = true
+		} else if strings.HasPrefix(line, "### ") {
 			flush()
 			heading = strings.TrimSpace(strings.TrimPrefix(line, "### "))
 			body = nil
+			listEntry = false
+		} else if listEntry && line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			flush()
+			heading = ""
+			body = nil
+			listEntry = false
 		} else if heading != "" {
 			body = append(body, line)
 		}
