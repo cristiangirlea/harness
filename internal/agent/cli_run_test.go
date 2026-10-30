@@ -231,6 +231,8 @@ func TestCLIReportsEffortOnlyWhenTheAdapterCannotApplyIt(t *testing.T) {
 				{AppendSystemPrompt: "rule"},
 				{NoSkills: true, Effort: "high"},
 				{Skills: Bool(true)},
+				{Skills: Bool(false)},
+				{Lean: Bool(true), Skills: Bool(true)},
 			} {
 				var infos []string
 				res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: options}, func(e Event) {

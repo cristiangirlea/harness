@@ -57,6 +57,34 @@ func TestSameBackendForksItsSession(t *testing.T) {
 	}
 }
 
+func TestApplyReportsLeanChange(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		prev, next *bool
+		want       bool
+	}{
+		{"absent to default", nil, nil, true},
+		{"false to true", agent.Bool(false), agent.Bool(true), true},
+		{"false to false", agent.Bool(false), agent.Bool(false), false},
+		{"absent to false", nil, agent.Bool(false), false},
+		{"true to default", agent.Bool(true), nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Plan{Prev: runlog.Record{ID: "previous", Task: agent.Task{Options: agent.Options{Lean: tc.prev}}}}
+			task := agent.Task{Options: agent.Options{Lean: tc.next}}
+			var notes []string
+			p.Apply(&task, t.TempDir(), func(e agent.Event) {
+				if e.Kind == agent.EventInfo && strings.Contains(e.Text, "--lean=false") {
+					notes = append(notes, e.Text)
+				}
+			})
+			if (len(notes) == 1) != tc.want || len(notes) > 1 {
+				t.Errorf("lean notices = %q, want notice: %t", notes, tc.want)
+			}
+		})
+	}
+}
+
 func TestAgyContinuesItsConversationWithoutPromisingAFork(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)

@@ -92,7 +92,8 @@ backend default; gemini and opencode report it as not enforced),
 `--mcp FILE` (repeatable; codex gets them as `-c mcp_servers` overrides), `--no-instructions`,
 `--lean=false` (claude and codex are lean by default: only the run's `--mcp` servers, and on
 claude no skills; false loads everything), `--skills` (claude: keep skills and slash commands in
-a lean run; see [What a run loads](backends.md#what-a-run-loads)),
+a lean run; see [What a run loads](backends.md#what-a-run-loads);
+codex, gemini, opencode and agy report `skills: not enforced`),
 `--compact-window N` (claude: compact at N tokens, 100000 to 1000000, or `auto`; see
 [Compaction window](backends.md#compaction-window)),
 `--append-system-prompt TEXT` (api and claude: added after the backend's own system prompt,
