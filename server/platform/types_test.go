@@ -9,6 +9,22 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
+func TestValidateProjectBackend(t *testing.T) {
+	p := Project{Name: "project", RepositoryURL: "https://example.com/repo", BaseRef: strings.Repeat("a", 40)}
+	t.Run("agy", func(t *testing.T) {
+		p.Backend = "agy"
+		if err := validateProject(p); err != nil {
+			t.Fatalf("agy project: %v", err)
+		}
+	})
+	t.Run("unknown", func(t *testing.T) {
+		p.Backend = "unknown"
+		if err := validateProject(p); err == nil || err.Error() != `unknown backend "unknown"` {
+			t.Fatalf("unknown backend: %v", err)
+		}
+	})
+}
+
 func TestValidateSubmissionRefusesUnsupportedDurableOptions(t *testing.T) {
 	tests := []struct {
 		name       string
