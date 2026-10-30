@@ -2,8 +2,8 @@
 
 [← README](../README.md)
 
-Status: slice 1 is built: the ledger, its rebuild, fold-before-prune, the switch and
-`hrn bot stats`. The rest is design; the slices are listed at the end.
+Status: slices 1 and 2 are built: the ledger, switch, stats and practice. The remaining
+slices are design; they are listed at the end.
 
 The person earns experience by working with agents through hrn, from real outcomes only,
 never from keystrokes, turns or chatter. Ada has her own growth, from what she has learned,
@@ -137,8 +137,9 @@ A rule nobody measured earns her nothing.
   `track` is `delivery`, `practice`, `ada` or `badge`. A correction carries
   `"cancels": "<key>"`.
 - `reps/<date>.json`: the day's exercise, the attempt number, the masked material, the
-  masked text shown afterwards, the answer, the self-mark and when it was answered.
-- `settings.json`: `enabled` (the game switch) and the voice preferences for game lines.
+  masked text shown afterwards, the answer, the self-mark and when it was answered. Named
+  reads are stored in the same daily file.
+- `settings.json`: `enabled` (the game switch); voice preferences are planned.
 
 The rules that make it rebuildable and safe to prune:
 
@@ -158,7 +159,7 @@ The rules that make it rebuildable and safe to prune:
 ## Where it shows
 
 - `hrn bot stats`, in the terminal: level, experience by track this week and badges.
-  The streak and Ada's line come with the practice and Ada slices.
+  The streak shows the last 35 UTC days. Ada's line comes with the Ada slice.
 - hrn watch: a card on the index page. On loopback it may show the day's exercise; over
   `--lan` it shows the level, streak and badges only, since anyone on those networks can
   read the page. Material, answers and reveals are never served over `--lan`, and nothing of

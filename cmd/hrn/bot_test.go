@@ -192,3 +192,22 @@ func TestBotRefusesArgumentsOtherThanStats(t *testing.T) {
 		}
 	}
 }
+func TestBotPracticeNeverPrintsRevealBeforeAnswer(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(game.Dir(), "reps")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	date := time.Now().UTC().Format("2006-01-02")
+	record := `{"date":"` + date + `","daily":{"kind":"recall","source":"decision","material":"heading","reveal":"private reveal","attempt":0},"pending":"daily"}`
+	if err := os.WriteFile(filepath.Join(dir, date+".json"), []byte(record), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"practice"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "private reveal") || !strings.Contains(string(out), "heading") {
+		t.Fatalf("output %s", out)
+	}
+}
