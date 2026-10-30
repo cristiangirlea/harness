@@ -181,10 +181,10 @@ func (w *Workspace) measureOriginals() error {
 		return err
 	}
 	var all int64
-	var seen []os.FileInfo
+	seen := make(map[int64][]os.FileInfo)
 	for _, e := range entries {
 		if e.IsDir() {
-			n, err := originalsSize(filepath.Join(runs, e.Name(), "originals"), &seen)
+			n, err := originalsSize(filepath.Join(runs, e.Name(), "originals"), seen)
 			if err != nil {
 				return err
 			}
@@ -195,7 +195,11 @@ func (w *Workspace) measureOriginals() error {
 	return nil
 }
 
-func originalsSize(dir string, seen *[]os.FileInfo) (int64, error) {
+func originalsSize(dir string, seen map[int64][]os.FileInfo) (int64, error) {
+	return originalsSizeWithReadDir(dir, seen, os.ReadDir)
+}
+
+func originalsSizeWithReadDir(dir string, seen map[int64][]os.FileInfo, readDir func(string) ([]os.DirEntry, error)) (int64, error) {
 	info, err := os.Lstat(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
@@ -209,7 +213,10 @@ func originalsSize(dir string, seen *[]os.FileInfo) (int64, error) {
 	if !info.IsDir() {
 		return 0, fmt.Errorf("originals is not a directory: %s", dir)
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := readDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -230,14 +237,14 @@ func originalsSize(dir string, seen *[]os.FileInfo) (int64, error) {
 		}
 		duplicate := false
 		if seen != nil {
-			for _, old := range *seen {
+			for _, old := range seen[info.Size()] {
 				if os.SameFile(old, info) {
 					duplicate = true
 					break
 				}
 			}
 			if !duplicate {
-				*seen = append(*seen, info)
+				seen[info.Size()] = append(seen[info.Size()], info)
 			}
 		}
 		if !duplicate {
@@ -289,8 +296,9 @@ func copyOriginals(from, to string, link func(string, string) error) (copied, sk
 			continue
 		}
 		text, ok := "", e.Type().IsRegular()
+		var checked os.FileInfo
 		if ok {
-			text, ok = readOwnOriginal(src, e.Name(), handle, limit)
+			text, checked, ok = readOwnOriginal(src, e.Name(), handle, limit)
 		}
 		if !ok {
 			skipped++
@@ -304,7 +312,17 @@ func copyOriginals(from, to string, link func(string, string) error) (copied, sk
 		if _, err := dst.Lstat(e.Name()); err == nil {
 			continue // never overwrite what the new run already holds
 		}
-		if err := link(filepath.Join(from, "originals", e.Name()), filepath.Join(to, "originals", e.Name())); err != nil {
+		linkErr := link(filepath.Join(from, "originals", e.Name()), filepath.Join(to, "originals", e.Name()))
+		if linkErr == nil {
+			info, err := dst.Lstat(e.Name())
+			if err != nil || !info.Mode().IsRegular() || !os.SameFile(checked, info) {
+				if err := dst.Remove(e.Name()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return copied, skipped, err
+				}
+				linkErr = errors.New("linked original changed")
+			}
+		}
+		if linkErr != nil {
 			if err := writeOriginal(dst, e.Name(), text, io.WriteString); err != nil {
 				return copied, skipped, err
 			}
@@ -316,20 +334,21 @@ func copyOriginals(from, to string, link func(string, string) error) (copied, sk
 
 // readOwnOriginal reads name if it is a regular file no larger than limit
 // and its content hashes to handle.
-func readOwnOriginal(root *os.Root, name, handle string, limit int64) (string, bool) {
+func readOwnOriginal(root *os.Root, name, handle string, limit int64) (string, os.FileInfo, bool) {
 	f, err := root.Open(name)
 	if err != nil {
-		return "", false
+		return "", nil, false
 	}
 	defer f.Close()
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() > limit {
-		return "", false
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > limit {
+		return "", nil, false
 	}
 	data, err := io.ReadAll(io.LimitReader(f, min(limit, 1<<62)+1))
 	if err != nil || int64(len(data)) > limit || originalHandleOf(string(data)) != handle {
-		return "", false
+		return "", nil, false
 	}
-	return string(data), true
+	return string(data), info, true
 }
 
 // ReadOriginal supplies saved output for shaping.

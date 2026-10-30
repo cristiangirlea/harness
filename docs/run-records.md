@@ -172,9 +172,9 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
   the model was given always reads; `hrn runs prune` removes them with their run.
   The machine total is measured once per run, at its first save, and then kept
   up to date in memory, so runs going at the same time do not see each other's
-  saves and together may pass the cap a little. When the runs directory cannot be
-  read, nothing new is saved until it can. Linked originals count once toward the
-  machine total; an `originals` directory link is not followed.
+  saves and together may pass the cap a little. When the runs directory or any run's
+  originals folder cannot be read, nothing new is saved until it can. Linked originals
+  count once toward the machine total; an `originals` directory link is not followed.
   A continuation that resumes an api conversation first links that run's
   originals into its own `originals/`, so the handles in the conversation still
   read. hrn picks that run from the record, never from a path the model gives;
@@ -274,6 +274,8 @@ the last hour is taken to be still running and stays; a directory in `runs/` tha
 a run id is never touched. If any batch or eval record cannot be read, prune refuses:
 that record may cite anything. Records go before the runs they cite, so a failure partway
 never leaves a record pointing at nothing.
+
+The freed size counts a linked original in full even when a kept run still holds it.
 
 The one-hour activity rule lives in `internal/runlog/activity.go` and is shared by
 prune and watch. It uses `events.jsonl`'s modification time, falling back to the run

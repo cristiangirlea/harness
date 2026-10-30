@@ -781,6 +781,53 @@ func TestContinuationOriginalsShareIdentityAndMachineUsage(t *testing.T) {
 	if ws.originalsAll != int64(len(text)) {
 		t.Fatalf("machine total %d", ws.originalsAll)
 	}
+	must(t, os.RemoveAll(from))
+	out, err := call(t, &Workspace{RunDir: to}, ReadOriginal(), map[string]any{"handle": originalHandleOf(text)})
+	must(t, err)
+	if out != text {
+		t.Fatal("original changed after removing the first run")
+	}
+}
+
+func TestMachineMeasurementCountsDistinctOriginalsOfSameSize(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	for i, text := range []string{"first", "other"} {
+		writeOriginalFile(t, filepath.Join(home, "runs", fmt.Sprint(i)), originalHandleOf(text), text)
+	}
+	ws := &Workspace{RunDir: filepath.Join(home, "runs", "mine")}
+	must(t, ws.measureOriginals())
+	if ws.originalsAll != 10 {
+		t.Fatalf("machine total %d, want 10", ws.originalsAll)
+	}
+}
+
+func TestOriginalsSizeAllowsRemovalBeforeReadDir(t *testing.T) {
+	dir := t.TempDir()
+	n, err := originalsSizeWithReadDir(dir, nil, func(path string) ([]os.DirEntry, error) {
+		must(t, os.RemoveAll(path))
+		return os.ReadDir(path)
+	})
+	if err != nil || n != 0 {
+		t.Fatalf("size %d, error %v", n, err)
+	}
+}
+
+func TestCopyOriginalsRejectsLinkToDifferentFile(t *testing.T) {
+	from, to := t.TempDir(), t.TempDir()
+	text := "checked original"
+	writeOriginalFile(t, from, originalHandleOf(text), text)
+	other := filepath.Join(t.TempDir(), "other")
+	must(t, os.WriteFile(other, []byte("unchecked bytes"), 0644))
+	n, skipped, err := copyOriginals(from, to, func(_, dst string) error { return os.Link(other, dst) })
+	if err != nil || n != 1 || skipped != 0 {
+		t.Fatalf("copied %d, skipped %d: %v", n, skipped, err)
+	}
+	data, err := os.ReadFile(filepath.Join(to, "originals", originalHandleOf(text)+".txt"))
+	must(t, err)
+	if string(data) != text {
+		t.Fatalf("copied unchecked bytes: %q", data)
+	}
 }
 
 func TestMachineMeasurementDoesNotFollowOriginalsDirectoryLink(t *testing.T) {
