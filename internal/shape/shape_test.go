@@ -7,6 +7,33 @@ import (
 	"time"
 )
 
+func TestTimestampTablesAndLogs(t *testing.T) {
+	rows := "2026-10-14 10:00:00,ready\n2026-10-14 10:00:01,ready\n2026-10-14 10:00:02,ready\n2026-10-14 10:00:03,ready\n"
+	if got := Classify("time,status\n" + rows); got != Table {
+		t.Errorf("CSV = %v", got)
+	}
+	if got := Classify(strings.Repeat("2026-10-14 10:00:00,123 INFO ready\n", 5)); got != Log {
+		t.Errorf("log = %v", got)
+	}
+}
+
+func TestJSONLargeSamplesAndDistinctKeys(t *testing.T) {
+	for _, text := range []string{
+		`[{"body":"` + strings.Repeat("x", 30000) + `"},{"body":"small"}]`,
+		`{"body":"` + strings.Repeat("x", 30000) + `","a":1}`,
+	} {
+		s, ok := Summarize(JSON, text)
+		if !ok || strings.Contains(s, "sample:") || !strings.Contains(s, "keys:") {
+			t.Errorf("large JSON: ok=%v length=%d summary=%q", ok, len(s), s)
+		}
+	}
+	text := `{"a":1,"\u0061":2,"b":3}` + strings.Repeat(" ", 100)
+	s, ok := Summarize(JSON, text)
+	if !ok || !strings.HasPrefix(s, "json: object with 2 keys\n") || !oracleHead(strings.TrimSpace(text), "json: object with 2 keys") {
+		t.Errorf("distinct keys: %q %v", s, ok)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	for _, tc := range []struct {
 		text string
@@ -37,8 +64,8 @@ func TestSummarize(t *testing.T) {
 		{"log", Log, "INFO counts 2\nINFO idle\nINFO idle\nINFO idle\nINFO before\nWARN retry\nERROR /tmp/x: not ready\nINFO after\nINFO done\nINFO boring\nINFO boring\n", []string{"WARN retry", "ERROR /tmp/x: not ready", "INFO before", "INFO after"}, []string{"INFO boring"}, true},
 		{"terminal", Terminal, "count 3\n\x1b[32mhello\x1b[0m\nhello\nhello\nend\n", []string{"hello\n[repeated 3 times]", "end"}, []string{"\x1b["}, true},
 		{"osc", Terminal, "\x1b]0;title\ahello\n", []string{"hello"}, []string{"title", "\x1b"}, true},
-		{"invented repeat count", Terminal, "hello\nhello\nhello\n", nil, nil, false},
-		{"invented test count", Test, "--- PASS: TestGood (0.00s)\n", nil, nil, false},
+		{"recomputed repeat count", Terminal, "hello\nhello\nhello\n", []string{"[repeated 3 times]"}, nil, true},
+		{"recomputed test count", Test, "--- PASS: TestGood (0.00s)\n", []string{"tests: passed=1 failed=0"}, nil, true},
 		{"other", Other, "", nil, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,6 +99,8 @@ func TestInvariantsRejectAdversarialSummaries(t *testing.T) {
 		{"missing failing test with same numbers", Test, "--- FAIL: TestA (0.00s)\n--- FAIL: TestB (0.00s)", "--- FAIL: TestA (0.00s)"},
 		{"changed count with all errors", Test, "counts 0 1 2\n--- FAIL: TestA (0.00s)\nerror broken", "tests: passed=0 failed=2\n--- FAIL: TestA (0.00s)\nerror broken"},
 		{"negation", Terminal, "ready", "not ready"}, {"never", Terminal, "ready", "never ready"}, {"no", Terminal, "ready", "no ready"}, {"only", Terminal, "ready", "only ready"},
+		{"escape number", Terminal, "\x1b[31mready\x1b[0m", "31"}, {"embedded number", Terminal, "TestCase2500", "2500"},
+		{"embedded number shortened", Terminal, "id x2500", "id x25"},
 		{"number substring", Terminal, "123", "23"}, {"number", Terminal, "1", "2"},
 		{"bare file path", Terminal, "old.go:7", "new.go:7"},
 		{"number sign", Terminal, "count 2", "count -2"},
@@ -89,6 +118,17 @@ func TestInvariantsRejectAdversarialSummaries(t *testing.T) {
 				t.Fatal("accepted an invalid summary")
 			}
 		})
+	}
+}
+
+func TestCountsLeavesInEachPackage(t *testing.T) {
+	original := "--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/sub (0.00s)\nFAIL\tpkg1\n--- FAIL: TestA (0.00s)\nFAIL\tpkg2\n"
+	_, failed := testCounts(strings.Split(original, "\n"))
+	if failed != 2 {
+		t.Fatalf("failed = %d, want 2", failed)
+	}
+	if !oracleGenerated(original, []string{"tests: passed=0 failed=2"}, 0) {
+		t.Fatal("oracle rejected the correct package counts")
 	}
 }
 
@@ -132,7 +172,7 @@ func TestAmbiguousParallelDiagnosticsFallBack(t *testing.T) {
 
 func TestSequentialSubtestDiagnosticsStayWithTheirSubtest(t *testing.T) {
 	text := "=== RUN   TestA\n    a_test.go:3: setup\n=== RUN   TestA/one\n    a_test.go:5: one got 1\n=== RUN   TestA/two\n    a_test.go:9: two logged\n=== RUN   TestA/three\n    a_test.go:12: three got 3\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/one (0.00s)\n    --- PASS: TestA/two (0.00s)\n    --- FAIL: TestA/three (0.00s)\nFAIL\n"
-	want := "tests: passed=1 failed=3\n=== RUN   TestA\n    a_test.go:3: setup\n=== RUN   TestA/one\n    a_test.go:5: one got 1\n=== RUN   TestA/three\n    a_test.go:12: three got 3\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/one (0.00s)\n    --- FAIL: TestA/three (0.00s)\nFAIL"
+	want := "tests: passed=1 failed=2\n=== RUN   TestA\n    a_test.go:3: setup\n=== RUN   TestA/one\n    a_test.go:5: one got 1\n=== RUN   TestA/three\n    a_test.go:12: three got 3\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/one (0.00s)\n    --- FAIL: TestA/three (0.00s)\nFAIL"
 	if s, ok := Summarize(Test, text); !ok || s != want {
 		t.Fatalf("sequential subtest output fell back: %q ok=%v", s, ok)
 	}
@@ -145,10 +185,10 @@ func TestSubtestNamesWithSlashesEndTheirSiblings(t *testing.T) {
 	for _, tc := range []struct{ name, text, want string }{
 		{"slashed last",
 			"counts 1 2\n=== RUN   TestA\n=== RUN   TestA/c\n=== RUN   TestA/a/b\n    a_test.go:5: b got 1\n--- FAIL: TestA (0.00s)\n    --- PASS: TestA/c (0.00s)\n    --- FAIL: TestA/a/b (0.00s)\nFAIL\n",
-			"tests: passed=1 failed=2\n=== RUN   TestA\n=== RUN   TestA/a/b\n    a_test.go:5: b got 1\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/a/b (0.00s)\nFAIL"},
+			"tests: passed=1 failed=1\n=== RUN   TestA\n=== RUN   TestA/a/b\n    a_test.go:5: b got 1\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/a/b (0.00s)\nFAIL"},
 		{"slashed first",
 			"counts 1 2\n=== RUN   TestA\n=== RUN   TestA/a/b\n=== RUN   TestA/c\n    a_test.go:5: c got 1\n--- FAIL: TestA (0.00s)\n    --- PASS: TestA/a/b (0.00s)\n    --- FAIL: TestA/c (0.00s)\nFAIL\n",
-			"tests: passed=1 failed=2\n=== RUN   TestA\n=== RUN   TestA/c\n    a_test.go:5: c got 1\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/c (0.00s)\nFAIL"},
+			"tests: passed=1 failed=1\n=== RUN   TestA\n=== RUN   TestA/c\n    a_test.go:5: c got 1\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/c (0.00s)\nFAIL"},
 	} {
 		if s, ok := Summarize(Test, tc.text); !ok || s != tc.want {
 			t.Errorf("%s: %q ok=%v", tc.name, s, ok)

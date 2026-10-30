@@ -10,6 +10,8 @@ func FuzzSummarize(f *testing.F) {
 		// The adversarial table's attacks, shortened.
 		"=== RUN   TestCase1\n--- PASS: TestCase1 (0.00s)\n=== RUN   TestBroken\n    broken_test.go:42: got 3 rows, want 4\n--- FAIL: TestBroken (0.01s)\nFAIL\nFAIL\texample/pkg\t0.512s\n",
 		"=== RUN   TestOpen\n--- FAIL: TestOpen (0.00s)\nFAIL\texample/a\t0.01s\n=== RUN   TestOpen\n--- FAIL: TestOpen (0.00s)\nFAIL\texample/b\t0.01s\n",
+		"=== RUN   TestOpen\n--- \nFAIL\ta--- FAIL: TestOpen \n",
+		"=== RUN   Tes0Open\n--- FAIL: TestOpen (0.00s)\nFAIL\texample/a\t0.01s\n=== RUN   TestOpen\n--- \n\n",
 		"2026-10-16 10:00:02 INFO cache entry not found\n2026-10-16 10:00:04 INFO only on Windows\n2026-10-16 10:00:06 ERROR rebuild failed\n",
 		"count 2\nexit 1\nexit 1\nexit 11\n127.0.0.1:8081\n127.0.0.1:8081\n127.0.0.1:8082\n",
 		"INFO step 1\nERROR open /very/long/fi\nle.yaml: no such file\nINFO step 3\n",

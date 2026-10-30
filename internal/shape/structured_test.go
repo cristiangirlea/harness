@@ -199,7 +199,6 @@ func TestStructuredSummariesFallBackWhenNotSmaller(t *testing.T) {
 		text string
 	}{
 		{JSON, `[{"a": 1}]`}, {Table, csvRows(5, 0)},
-		{JSON, `{"blob": "` + strings.Repeat("x", 40000) + `"}`},
 		{JSON, csvRows(10, 0)}, {Table, jsonItems(10)},
 	} {
 		if s, ok := Summarize(tc.kind, tc.text); ok {

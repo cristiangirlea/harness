@@ -16,11 +16,13 @@ const (
 )
 
 var (
-	oracleFail     = regexp.MustCompile(`--- FAIL:[^\S\n]+(\S+)`)
-	oracleDigits   = regexp.MustCompile(`\d+`)
-	oracleNegation = regexp.MustCompile(`(?i)\b(?:not|no|never|only|none|cannot|without)\b`)
-	// Quotes end a path chunk, so a JSON sample joined without spaces keeps its strings' chunks.
-	oraclePath      = regexp.MustCompile(`[^\s"]*[/\\][^\s"]*`)
+	oracleFail      = regexp.MustCompile(`--- FAIL:[^\S\n]+(\S+)`)
+	oracleDigits    = regexp.MustCompile(`\d+`)
+	oracleNegation  = regexp.MustCompile(`(?i)\b(?:not|no|never|only|none|cannot|without)\b`)
+	oraclePath      = regexp.MustCompile(`[^\s]*[/\\][^\s]*`)
+	oracleJSONPath  = regexp.MustCompile(`[^\s"]*[/\\][^\s"]*`)
+	oracleMarker    = regexp.MustCompile(`^\s*=== (?:RUN|PAUSE|CONT|NAME)\s+(\S+)`)
+	oracleResult    = regexp.MustCompile(`^\s*--- (?:PASS|FAIL|SKIP):\s+(\S+)`)
 	oracleJSONHead  = regexp.MustCompile(`^json: (array of|object with) (\d+) (items|keys)$`)
 	oracleTableHead = regexp.MustCompile(`^table: (\d+) rows, (\d+) columns$`)
 )
@@ -37,11 +39,14 @@ func oracleHead(clean, line string) bool {
 			return false
 		}
 		n := 0
+		keys := map[string]bool{}
 		for ; d.More(); n++ {
 			if open == '{' {
-				if _, err := d.Token(); err != nil {
+				key, err := d.Token()
+				if err != nil {
 					return false
 				}
+				keys[key.(string)] = true
 			}
 			var raw json.RawMessage
 			if d.Decode(&raw) != nil {
@@ -53,6 +58,9 @@ func oracleHead(clean, line string) bool {
 		}
 		if _, err := d.Token(); err != io.EOF {
 			return false
+		}
+		if open == '{' {
+			n = len(keys)
 		}
 		return strconv.Itoa(n) == m[2]
 	}
@@ -79,20 +87,93 @@ func oracleHead(clean, line string) bool {
 	return false
 }
 
+func oracleGenerated(clean string, lines []string, i int) bool {
+	line := lines[i]
+	if m := counts.FindStringSubmatch(line); m != nil {
+		passed := 0
+		failed := 0
+		failures := map[string]int{}
+		flush := func() {
+			for name, n := range failures {
+				parent := false
+				for child := range failures {
+					if strings.HasPrefix(child, name+"/") {
+						parent = true
+						break
+					}
+				}
+				if !parent {
+					failed += n
+				}
+			}
+			clear(failures)
+		}
+		for _, original := range strings.Split(clean, "\n") {
+			fields := strings.Split(original, "\t")
+			if len(fields) >= 2 {
+				pkg := strings.TrimSuffix(fields[1], "\r")
+				if (fields[0] == "FAIL" || fields[0] == "ok") && pkg != "" && !strings.ContainsAny(pkg, " \r\n") {
+					flush()
+					continue
+				}
+			}
+			if strings.Contains(original, "--- PASS:") {
+				passed++
+			}
+			if f := oracleFail.FindStringSubmatch(original); f != nil {
+				failures[f[1]]++
+			}
+		}
+		flush()
+		return line == fmt.Sprintf("tests: passed=%d failed=%d", passed, failed)
+	}
+	if m := repeats.FindStringSubmatch(line); m != nil {
+		if i == 0 {
+			return false
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil || n < 2 {
+			return false
+		}
+		run := 0
+		for _, original := range strings.Split(clean, "\n") {
+			if original == lines[i-1] {
+				run++
+			} else {
+				if run == n {
+					return true
+				}
+				run = 0
+			}
+		}
+		return run == n
+	}
+	return false
+}
+
 // lostFact checks a summary independently of valid and names the first fact it
 // lost or invented, or returns "". Stripping uses the package's own escape
 // pattern: the oracle judges what is kept, not how escapes are parsed.
 func lostFact(original, summary string) string {
 	clean := ansi.ReplaceAllString(original, "")
+	jsonSummary := false
 	if first, rest, _ := strings.Cut(summary, "\n"); oracleJSONHead.MatchString(first) || oracleTableHead.MatchString(first) {
 		if !oracleHead(clean, first) {
 			return fmt.Sprintf("invented %q", first)
 		}
+		jsonSummary = oracleJSONHead.MatchString(first)
 		summary = rest // a recounted first line is the one generated number allowed
 	}
 	kept := map[string]bool{}
+	originalLines := map[string]bool{}
+	for _, line := range strings.Split(clean, "\n") {
+		originalLines[line] = true
+	}
 	for _, line := range strings.Split(summary, "\n") {
 		kept[line] = true
+		if (strings.Contains(strings.ToLower(line), "error") || strings.Contains(line, "FAIL") || strings.Contains(line, "panic")) && !originalLines[line] {
+			return fmt.Sprintf("invented %q", line)
+		}
 	}
 	for _, line := range strings.Split(clean, "\n") {
 		if (strings.Contains(strings.ToLower(line), "error") || strings.Contains(line, "FAIL") || strings.Contains(line, "panic")) && !kept[line] {
@@ -108,14 +189,72 @@ func lostFact(original, summary string) string {
 			return fmt.Sprintf("dropped failing test %q", m[1])
 		}
 	}
-	for _, re := range []*regexp.Regexp{oracleDigits, oracleNegation, oraclePath} {
+	if len(failed) > 0 {
+		diagnostics := map[string][]string{}
+		current := ""
+		var pending []string
+		for _, line := range strings.Split(clean, "\n") {
+			if m := oracleMarker.FindStringSubmatch(line); m != nil {
+				current, pending = m[1], nil
+				continue
+			}
+			if m := oracleResult.FindStringSubmatch(line); m != nil {
+				current = m[1]
+				if failed[current] {
+					diagnostics[current] = append(diagnostics[current], pending...)
+				} else {
+					current = ""
+				}
+				pending = nil
+				continue
+			}
+			if strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "ok ") || strings.HasPrefix(line, "ok\t") {
+				current, pending = "", nil
+			} else if strings.TrimSpace(line) != "" {
+				if current == "" && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+					pending = append(pending, line)
+				} else if current != "" {
+					diagnostics[current] = append(diagnostics[current], line)
+				}
+			}
+		}
+		for name, lines := range diagnostics {
+			if failed[name] {
+				for _, line := range lines {
+					if !kept[line] {
+						return fmt.Sprintf("dropped diagnostic %q", line)
+					}
+				}
+			}
+		}
+	}
+	var numberBody []string
+	sumLines := strings.Split(summary, "\n")
+	for i, line := range sumLines {
+		if counts.MatchString(line) || repeats.MatchString(line) {
+			if !oracleGenerated(clean, sumLines, i) {
+				return fmt.Sprintf("invented %q", line)
+			}
+			continue
+		}
+		numberBody = append(numberBody, line)
+	}
+	path := oraclePath
+	if jsonSummary {
+		path = oracleJSONPath
+	}
+	for _, re := range []*regexp.Regexp{oracleDigits, oracleNegation, path} {
 		present := map[string]bool{}
-		for _, text := range []string{original, clean} {
+		for _, text := range []string{clean} {
 			for _, s := range re.FindAllString(text, -1) {
 				present[strings.ToLower(s)] = true
 			}
 		}
-		for _, s := range re.FindAllString(summary, -1) {
+		body := summary
+		if re == oracleDigits {
+			body = strings.Join(numberBody, "\n")
+		}
+		for _, s := range re.FindAllString(body, -1) {
 			if !present[strings.ToLower(s)] {
 				return fmt.Sprintf("invented %q", s)
 			}
@@ -145,6 +284,27 @@ func buriedFailure() string {
 	return b.String()
 }
 
+func manySubtests() string {
+	var b strings.Builder
+	b.WriteString("=== RUN   TestParent\n")
+	for i := 0; i < 1500; i++ {
+		fmt.Fprintf(&b, "=== RUN   TestParent/case%d\n", i)
+		if i == 750 {
+			b.WriteString("    failure message\n")
+		}
+	}
+	b.WriteString("--- FAIL: TestParent (0.00s)\n")
+	for i := 0; i < 1500; i++ {
+		status := "PASS"
+		if i == 750 {
+			status = "FAIL"
+		}
+		fmt.Fprintf(&b, "    --- %s: TestParent/case%d (0.00s)\n", status, i)
+	}
+	b.WriteString("FAIL\n")
+	return b.String()
+}
+
 func repeatedWithTimestamps() string {
 	var b strings.Builder
 	for i := 0; i < 60; i++ {
@@ -164,9 +324,10 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 	}{
 		{"one failure buried in 5000 passing lines", buriedFailure(), Test, true,
 			[]string{"tests: passed=2500 failed=1", "--- FAIL: TestBroken (0.01s)", "    broken_test.go:42: got 3 rows, want 4", "    broken_test.go:43: not found: /var/data/rows.db"}},
+		{"one failed subtest among 1500", manySubtests(), Test, true, []string{"tests: passed=1499 failed=1", "=== RUN   TestParent/case750", "    failure message", "--- FAIL: TestParent (0.00s)", "    --- FAIL: TestParent/case750 (0.00s)"}},
 		{"same failing name in two packages",
 			"=== RUN   TestOpen\n    open_test.go:9: open /tmp/a: no such file\n--- FAIL: TestOpen (0.00s)\nFAIL\nFAIL\texample/a\t0.01s\n=== RUN   TestOpen\n    open_test.go:9: open /tmp/b: no such file\n--- FAIL: TestOpen (0.00s)\nFAIL\nFAIL\texample/b\t0.01s\n",
-			Test, false, nil},
+			Test, true, []string{"open /tmp/a: no such file", "open /tmp/b: no such file"}},
 		{"negation on a dropped log line",
 			"2026-10-16 10:00:00 INFO start\n" + "2026-10-16 10:00:01 INFO tick a\n2026-10-16 10:00:01 INFO tick b\n" + "2026-10-16 10:00:02 INFO cache entry not found, rebuilding\n2026-10-16 10:00:03 INFO no such file /var/cache/app/index\n2026-10-16 10:00:04 INFO watcher runs only on Windows\n" + "2026-10-16 10:00:05 INFO tock a\n2026-10-16 10:00:05 INFO tock b\n" + "2026-10-16 10:00:06 ERROR rebuild failed\n",
 			Log, true, []string{"ERROR rebuild failed"}},
@@ -234,7 +395,7 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 		{"JSON numbers in exponent form and negative", "[" + strings.Repeat(`{"v": -1.5e-3, "w": 2E+10, "n": -0}, `, 200) + `{"v": 1}]`, JSON, true,
 			[]string{`sample: {"v":-1.5e-3,"w":2E+10,"n":-0}`}},
 		{"single huge JSON string", `"` + strings.Repeat("x", 40000) + `"`, Terminal, false, nil},
-		{"JSON object holding one huge string", `{"blob": "` + strings.Repeat("x", 40000) + `"}`, JSON, false, nil},
+		{"JSON object holding one huge string", `{"blob": "` + strings.Repeat("x", 40000) + `"}`, JSON, true, []string{"json: object with 1 keys", `keys: "blob"`}},
 		{"go test -json output", goTestJSON, Terminal, true, nil},
 		{"table whose omitted middle row holds an error", csvRows(1000, 500), Table, true,
 			[]string{"[... omitted ...]\n500,job-500,error: timeout,5000\n[... omitted ...]"}},
@@ -267,6 +428,39 @@ func TestSummariesKeepEveryFactOrFallBack(t *testing.T) {
 						}
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestNumberSourcesRejectEmbeddedDigits(t *testing.T) {
+	for _, tc := range []struct{ name, original, summary string }{
+		{"colour escape", "\x1b[31mready\x1b[0m", "31"},
+		{"test name", "TestCase2500", "2500"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if valid(Terminal, tc.original, tc.summary) {
+				t.Fatal("accepted a number from inside another token")
+			}
+		})
+	}
+}
+
+func TestLostFact(t *testing.T) {
+	for _, tc := range []struct {
+		name, original, summary string
+		wantLost                bool
+	}{
+		{"invented error line", "ready\nerror one\nerror two", "ready\nerror one\nerror two\nerror ready", true},
+		{"dropped failing diagnostic", "=== RUN   TestA\n    detail\n--- FAIL: TestA\n", "=== RUN   TestA\n--- FAIL: TestA\n", true},
+		{"diagnostic after failure", "--- FAIL: TestA\n    detail\nFAIL\n", "--- FAIL: TestA\nFAIL\n", true},
+		{"passing diagnostic may be omitted", "=== RUN   TestA\n    detail\n--- PASS: TestA\n", "--- PASS: TestA\n", false},
+		{"quoted path outside JSON", `path /tmp/a"suffix`, `path /tmp/a"other`, true},
+		{"quoted path in JSON", `[{"path": "/tmp/a", "next": "x"}]`, "json: array of 1 items\nsample: {\"path\":\"/tmp/a\",\"next\":\"x\"}", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lostFact(tc.original, tc.summary); (got != "") != tc.wantLost {
+				t.Errorf("lostFact = %q, want lost = %v", got, tc.wantLost)
 			}
 		})
 	}
