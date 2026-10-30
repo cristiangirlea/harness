@@ -94,6 +94,7 @@ func TestEditFileNewlines(t *testing.T) {
 		{"single line match", "one\r\ntwo\r\n", "one", "1\n1b", "1\r\n1b\r\ntwo\r\n"},
 		{"CRLF replacement fallback", "one\r\ntwo\r\n", "one\ntwo", "1\r\n2", "1\r\n2\r\n"},
 		{"LF file", "one\ntwo\n", "one", "1\n1b", "1\n1b\ntwo\n"},
+		{"mixed file LF edit", "one\r\ntwo\nthree\n", "two\nthree", "2\n3", "one\r\n2\n3\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, tl := setup(t)

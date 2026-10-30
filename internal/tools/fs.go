@@ -173,7 +173,7 @@ func editFile() Tool {
 			if !strings.Contains(content, old) && strings.Contains(content, "\r\n") {
 				old = strings.ReplaceAll(old, "\n", "\r\n")
 			}
-			if strings.Contains(content, "\r\n") {
+			if strings.Contains(content, "\r\n") && (old != args.OldString || !strings.Contains(strings.ReplaceAll(content, "\r\n", ""), "\n")) {
 				args.NewString = strings.ReplaceAll(strings.ReplaceAll(args.NewString, "\r\n", "\n"), "\n", "\r\n")
 			}
 			n := strings.Count(content, old)
