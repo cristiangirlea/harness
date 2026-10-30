@@ -68,6 +68,7 @@ func codexMCPEnv(t Task) ([]string, error) {
 	}
 	type setBy struct{ value, server string }
 	vars := map[string]setBy{}
+	lookup := codexMCPLookup(t)
 	for _, s := range servers {
 		for _, k := range sortedKeys(s.Env) {
 			if k == "" || strings.Contains(k, "=") {
@@ -86,8 +87,8 @@ func codexMCPEnv(t Task) ([]string, error) {
 				return nil, fmt.Errorf("mcp %s: ANTHROPIC_API_KEY never reaches a CLI, so codex could not pass it to this server", s.Name)
 			}
 			// The value lands in codex's own environment too, so it must not change one codex relies on.
-			if have, ok := os.LookupEnv(k); ok && have != s.Env[k] {
-				return nil, fmt.Errorf("mcp %s: %s is already set in hrn's environment to another value; codex starts its servers with its own environment", s.Name, k)
+			if have, ok := lookup(k); ok && have != s.Env[k] {
+				return nil, fmt.Errorf("mcp %s: %s is already set in codex's environment to another value; codex starts its servers with its own environment", s.Name, k)
 			}
 			key := k
 			if runtime.GOOS == "windows" {
@@ -106,7 +107,7 @@ func codexMCPEnv(t Task) ([]string, error) {
 	return env, nil
 }
 
-func codexMCPConfigs(t Task) ([]mcp.ServerConfig, []mcp.Remote, []string, error) {
+func codexMCPLookup(t Task) func(string) (string, bool) {
 	lookup := os.LookupEnv
 	if !t.AllowDangerous {
 		env := withoutEnv(agentEnv(os.Environ()), "ANTHROPIC_API_KEY")
@@ -131,11 +132,16 @@ func codexMCPConfigs(t Task) ([]mcp.ServerConfig, []mcp.Remote, []string, error)
 			return v, ok
 		}
 	}
+	return lookup
+}
+
+func codexMCPConfigs(t Task) ([]mcp.ServerConfig, []mcp.Remote, []string, error) {
+	lookup := codexMCPLookup(t)
 	servers, _, err := mcp.LoadConfigsWithEnv(t.MCP, lookup)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("mcp config: %w", err)
 	}
-	remotes, err := mcp.LoadRemotes(t.MCP)
+	remotes, err := mcp.LoadRemotesWithEnv(t.MCP, lookup)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("mcp config: %w", err)
 	}
@@ -148,7 +154,7 @@ func codexMCPConfigs(t Task) ([]mcp.ServerConfig, []mcp.Remote, []string, error)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("mcp config: %w", err)
 	}
-	expRemotes, err := mcp.LoadRemotes(explicit)
+	expRemotes, err := mcp.LoadRemotesWithEnv(explicit, lookup)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("mcp config: %w", err)
 	}

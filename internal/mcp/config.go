@@ -82,9 +82,9 @@ func loadConfig(path string, lookup func(string) (string, bool)) (servers []Serv
 			skipped = append(skipped, name)
 			continue
 		}
-		s := ServerConfig{Name: name, Command: expand(e.Command), Env: map[string]string{}}
+		s := ServerConfig{Name: name, Command: expandWith(e.Command, lookup), Env: map[string]string{}}
 		for _, a := range e.Args {
-			s.Args = append(s.Args, expand(a))
+			s.Args = append(s.Args, expandWith(a, lookup))
 		}
 		for k, v := range e.Env {
 			s.Env[k] = expandWith(v, lookup)
@@ -99,7 +99,7 @@ func LoadConfigs(paths []string) (servers []ServerConfig, skipped []string, err 
 	return LoadConfigsWithEnv(paths, os.LookupEnv)
 }
 
-// LoadConfigsWithEnv expands server env values with lookup.
+// LoadConfigsWithEnv expands server fields with lookup.
 func LoadConfigsWithEnv(paths []string, lookup func(string) (string, bool)) (servers []ServerConfig, skipped []string, err error) {
 	index := map[string]int{}
 	for _, p := range paths {
@@ -128,6 +128,11 @@ type Remote struct {
 
 // LoadRemotes lists URL servers by name per file, with later names overriding.
 func LoadRemotes(paths []string) ([]Remote, error) {
+	return LoadRemotesWithEnv(paths, os.LookupEnv)
+}
+
+// LoadRemotesWithEnv expands remote URLs with lookup.
+func LoadRemotesWithEnv(paths []string, lookup func(string) (string, bool)) ([]Remote, error) {
 	index := map[string]int{}
 	var out []Remote
 	for _, p := range paths {
@@ -149,7 +154,7 @@ func LoadRemotes(paths []string) ([]Remote, error) {
 				continue
 			}
 			e := cfg.Servers[name]
-			r := Remote{Name: name, URL: expand(e.URL), Type: e.Type, Headers: len(e.Headers) > 0}
+			r := Remote{Name: name, URL: expandWith(e.URL, lookup), Type: e.Type, Headers: len(e.Headers) > 0}
 			if i, ok := index[name]; ok {
 				out[i] = r
 				continue

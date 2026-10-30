@@ -514,6 +514,38 @@ func TestCodexMCPExpandedSecretUsesGuardedEnvironment(t *testing.T) {
 	}
 }
 
+func TestCodexMCPGuardedFieldsAndSameNameEnv(t *testing.T) {
+	codexHome(t, "")
+	t.Setenv("HRN_CODEX_ENV_HELPER", "1")
+	t.Setenv("GITHUB_TOKEN", "fake-secret")
+	file := mcpFile(t, `"tool":{"command":"run-${GITHUB_TOKEN}","args":["arg-${GITHUB_TOKEN}"],"env":{"GITHUB_TOKEN":"${GITHUB_TOKEN}"}},"web":{"url":"https://example.test/${GITHUB_TOKEN}"}`)
+	for _, dangerous := range []bool{false, true} {
+		task := Task{Dir: t.TempDir(), Options: Options{MCP: []string{file}, AllowDangerous: dangerous}}
+		args := strings.Join(codexMCPArgs(task), " ")
+		value := ""
+		if dangerous {
+			value = "fake-secret"
+		}
+		for _, want := range []string{`mcp_servers.tool.command="run-` + value + `"`, `mcp_servers.tool.args=["arg-` + value + `"]`, `mcp_servers.web.url="https://example.test/` + value + `"`} {
+			if !strings.Contains(args, want) {
+				t.Errorf("dangerous=%v: missing %s", dangerous, want)
+			}
+		}
+		b := NewCodexBackend()
+		b.name, b.candidates = os.Args[0], nil
+		b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperCodexMCPEnv$", "--"} }
+		b.parse = nil
+		res := b.Run(context.Background(), task, func(Event) {})
+		want := "GITHUB_TOKEN set=false"
+		if dangerous {
+			want = "GITHUB_TOKEN set=true fake-secret"
+		}
+		if res.Status != StatusOK || !strings.Contains(res.Final, want) {
+			t.Errorf("dangerous=%v result=%+v", dangerous, res)
+		}
+	}
+}
+
 func TestCodexRefusesMCPGitConfigEnv(t *testing.T) {
 	for _, key := range []string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_GLOBAL", "git_config_count"} {
 		file := mcpFile(t, fmt.Sprintf(`"git-server":{"command":"x","env":{%q:"0"}}`, key))
