@@ -58,19 +58,24 @@ func TestSameBackendForksItsSession(t *testing.T) {
 }
 
 func TestApplyReportsLeanChange(t *testing.T) {
+	old := leanDefaultSince.Add(-time.Hour)
+	recent := leanDefaultSince.Add(time.Hour)
 	for _, tc := range []struct {
 		name       string
 		prev, next *bool
+		started    time.Time
 		want       bool
 	}{
-		{"absent to default", nil, nil, true},
-		{"false to true", agent.Bool(false), agent.Bool(true), true},
-		{"false to false", agent.Bool(false), agent.Bool(false), false},
-		{"absent to false", nil, agent.Bool(false), false},
-		{"true to default", agent.Bool(true), nil, false},
+		{"absent before lean was the default", nil, nil, old, true},
+		{"absent since lean is the default", nil, nil, recent, false},
+		{"false to true", agent.Bool(false), agent.Bool(true), recent, true},
+		{"false to false", agent.Bool(false), agent.Bool(false), recent, false},
+		{"absent to false", nil, agent.Bool(false), old, false},
+		{"true to default", agent.Bool(true), nil, old, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := Plan{Backend: "claude", ForkSession: "s1", Prev: runlog.Record{ID: "previous", Task: agent.Task{Options: agent.Options{Lean: tc.prev}}}}
+			prev := runlog.Record{ID: "previous", Started: tc.started, Task: agent.Task{Options: agent.Options{Lean: tc.prev}}}
+			p := Plan{Backend: "claude", ForkSession: "s1", Prev: prev, carried: &prev}
 			task := agent.Task{Options: agent.Options{Lean: tc.next}}
 			var notes []string
 			p.Apply(&task, t.TempDir(), func(e agent.Event) {
@@ -92,7 +97,8 @@ func TestApplyLeanNoticeMatchesBackend(t *testing.T) {
 		{"gemini", ""},
 	} {
 		t.Run(tc.backend, func(t *testing.T) {
-			p := Plan{Backend: tc.backend, ForkSession: "s1", Prev: runlog.Record{ID: "previous", Backend: "other"}}
+			prev := runlog.Record{ID: "previous", Backend: tc.backend, Task: agent.Task{Options: agent.Options{Lean: agent.Bool(false)}}}
+			p := Plan{Backend: tc.backend, ForkSession: "s1", Prev: prev, carried: &prev}
 			var task agent.Task
 			var notes []string
 			p.Apply(&task, t.TempDir(), func(e agent.Event) {
@@ -113,6 +119,18 @@ func TestApplyLeanNoticeMatchesBackend(t *testing.T) {
 
 func TestApplyGivesAFreshContinuationNoLeanNotice(t *testing.T) {
 	p := Plan{Backend: "claude", Prev: runlog.Record{ID: "previous"}}
+	var task agent.Task
+	p.Apply(&task, t.TempDir(), func(e agent.Event) {
+		if strings.Contains(e.Text, "--lean=false") {
+			t.Errorf("unexpected lean notice: %q", e.Text)
+		}
+	})
+}
+
+func TestApplyJudgesLeanByTheRunWhoseSessionIsCarried(t *testing.T) {
+	carried := runlog.Record{ID: "claude-run", Backend: "claude", Started: leanDefaultSince.Add(time.Hour)}
+	prev := runlog.Record{ID: "codex-run", Backend: "codex", Task: agent.Task{Options: agent.Options{Lean: agent.Bool(false)}}}
+	p := Plan{Backend: "claude", ForkSession: "s1", Prev: prev, carried: &carried}
 	var task agent.Task
 	p.Apply(&task, t.TempDir(), func(e agent.Event) {
 		if strings.Contains(e.Text, "--lean=false") {

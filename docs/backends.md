@@ -337,7 +337,8 @@ claude model name means nothing to codex. The MCP `run` tool takes the same thin
 `continue_run_id`.
 Lean is not inherited: a follow-up is lean by default whatever the earlier run was, so pass
 `--lean=false` (or `"lean": false` on the MCP tool) again to load everything.
-If the earlier record has no `lean` field or has `lean: false`, a lean follow-up reports this choice.
+If the run whose session is continued had `lean: false`, or no `lean` field and started before lean
+became the default (2026-10-19), a lean follow-up says so; a fresh hand-over does not.
 
 If the run whose conversation or session is carried on recorded more than 150,000
 tokens of context at its last turn, hrn warns with its run id and context size and

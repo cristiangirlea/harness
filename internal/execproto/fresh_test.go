@@ -28,7 +28,7 @@ func TestFreshStartsANewSessionWithAHandover(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prev, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Model: "m1"}})
+			prev, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Model: "m1", Lean: agent.Bool(false)}})
 			if err != nil {
 				t.Fatal(err)
 			}
