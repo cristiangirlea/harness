@@ -240,12 +240,20 @@ func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResu
 		return jd
 	}
 
+	home, err := os.MkdirTemp("", "hrn-eval-home-")
+	if err != nil {
+		jd.Error = "preparing the judge's home: " + err.Error()
+		return jd
+	}
+	defer os.RemoveAll(home)
+
 	timeout := time.Duration(j.Timeout)
 	if timeout == 0 {
 		timeout = defaultJudgeTimeout
 	}
 	task := agent.Task{
-		Prompt: ev.prompt,
+		Prompt:   ev.prompt,
+		ChildEnv: []string{"HRN_HOME=" + home},
 		// Neutral read-only copies expose context without revealing the variant.
 		Dir: ev.dir,
 		Options: agent.Options{Mode: agent.ModeReadOnly, Model: j.Model, Effort: j.Effort,

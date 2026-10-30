@@ -3,6 +3,8 @@ package eval
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // judgeStub scores 8 unless the rubric asks it to ramble, and keeps every
@@ -363,5 +366,59 @@ func TestSummarizeLeavesMissingUsageOutOfTheContextMedian(t *testing.T) {
 	}
 	if row := Summarize(spec, res, nil).Variants[0]; row.MedianContext != 100 {
 		t.Errorf("gemini median context = %v, want 100 counting cached tokens once", row.MedianContext)
+	}
+}
+
+type judgeHomeProbe struct {
+	t     *testing.T
+	real  string
+	homes []string
+}
+
+func (p *judgeHomeProbe) Name() string            { return "judge-home-probe" }
+func (p *judgeHomeProbe) Detect() (string, error) { return "stub", nil }
+func (p *judgeHomeProbe) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+	p.t.Helper()
+	var home string
+	for _, v := range task.ChildEnv {
+		if strings.HasPrefix(v, "HRN_HOME=") {
+			home = strings.TrimPrefix(v, "HRN_HOME=")
+		}
+	}
+	if home == "" || filepath.Clean(home) == filepath.Clean(p.real) {
+		p.t.Errorf("judge HRN_HOME = %q, real home = %q", home, p.real)
+	} else {
+		if info, err := os.Stat(home); err != nil || !info.IsDir() {
+			p.t.Errorf("scratch home %q is not a directory: %v", home, err)
+		}
+		if _, err := os.Stat(filepath.Join(home, "runs")); !os.IsNotExist(err) {
+			p.t.Errorf("scratch home contains runs or cannot be checked: %v", err)
+		}
+	}
+	p.homes = append(p.homes, home)
+	return agent.Result{Status: agent.StatusOK, Final: `{"score": 8, "reason": "ok"}`}
+}
+
+func TestJudgeUsesScratchHomeAndKeepsRealRunRecord(t *testing.T) {
+	real := t.TempDir()
+	t.Setenv("HRN_HOME", real)
+	probe := &judgeHomeProbe{t: t, real: real}
+	for i := 0; i < 2; i++ {
+		got := judgeCell(context.Background(), probe, &Judge{}, batch.TaskResult{ID: "cell"}, evidence{dir: t.TempDir(), prompt: "judge"})
+		if !got.Scored() || got.RunID == "" {
+			t.Fatalf("judgement = %+v", got)
+		}
+		rec, err := runlog.Load(got.RunID)
+		if err != nil || rec.Result.Status != agent.StatusOK {
+			t.Errorf("real run record = %+v, %v", rec, err)
+		}
+		if home := probe.homes[i]; home != "" {
+			if _, err := os.Stat(home); !os.IsNotExist(err) {
+				t.Errorf("scratch home remains: %s: %v", home, err)
+			}
+		}
+	}
+	if probe.homes[0] == probe.homes[1] {
+		t.Error("judgements shared a scratch home")
 	}
 }

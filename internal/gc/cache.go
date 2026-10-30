@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/report"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 var removeCacheEntry = os.RemoveAll
@@ -350,6 +351,15 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	}
 	idle := ageAt(now, c.LastBuild)
 	if c.slot {
+		if opt.SlotCap > 0 && c.Size > opt.SlotCap && idle >= opt.MinIdle {
+			after := c.Size - c.TrimSize
+			if c.incremental && (idle >= opt.Idle || c.liveSize >= opt.SlotCap/2+opt.SlotCap%2) {
+				after -= c.liveSize
+			}
+			if after > opt.SlotCap && !ws.SlotLeaseHeld(slotPath(c.Path)) {
+				return Remove, fmt.Sprintf("idle %s, over --slot-cap %s", short(idle), report.Bytes(opt.SlotCap))
+			}
+		}
 		if c.incremental && idle >= opt.Idle {
 			c.trimLive = true
 			c.TrimSize += c.liveSize
@@ -373,7 +383,9 @@ func decideCache(ctx context.Context, c *Cache, cwd string, now time.Time, opt O
 	return Keep, fmt.Sprintf("last written %s ago, inside --idle %s", short(idle), short(opt.Idle))
 }
 
-func slotCachePath(path string) bool {
+func slotCachePath(path string) bool { return slotPath(path) != "" }
+
+func slotPath(path string) string {
 	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
 		parent := filepath.Dir(p)
 		name := filepath.Base(p)
@@ -383,10 +395,10 @@ func slotCachePath(path string) bool {
 			match = strings.EqualFold(slots, "slots") && strings.EqualFold(hrn, ".hrn")
 		}
 		if n, err := strconv.Atoi(name); err == nil && n > 0 && strconv.Itoa(n) == name && match {
-			return true
+			return p
 		}
 		if parent == p {
-			return false
+			return ""
 		}
 	}
 }
@@ -439,6 +451,9 @@ func isMovedCache(dir string) bool {
 
 // Recheck before deletion: writes, locks or tracked files may have appeared since scanning.
 func recheckCache(ctx context.Context, c Cache) string {
+	if c.slot && c.Verdict == Remove && ws.SlotLeaseHeld(slotPath(c.Path)) {
+		return "slot lease is held or unreadable"
+	}
 	if why := recheckCacheFiles(ctx, c); why != "" {
 		return why
 	}

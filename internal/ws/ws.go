@@ -843,6 +843,15 @@ func unpushed(ctx context.Context, dir string) (int, error) {
 	return strconv.Atoi(out)
 }
 
+// SlotLeaseHeld reports whether a slot lease is held or cannot be read.
+func SlotLeaseHeld(slot string) bool {
+	l, _, err := readLease(slot + ".lease")
+	if errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	return err != nil || !l.stale()
+}
+
 // CountLeases counts matching readable leases, excluding incomplete files.
 func CountLeases(ctx context.Context, repo string, match func(Lease) bool) (int, error) {
 	main, err := MainCheckout(ctx, repo)

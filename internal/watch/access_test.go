@@ -746,6 +746,56 @@ func TestPublicAccessKeepsSSEFlushingThroughTheLogWriter(t *testing.T) {
 	}
 }
 
+func TestStreamSessionExpiry(t *testing.T) {
+	f := newAccessFixture(t)
+	f.clock = time.Now()
+	f.opt.Public.Now = time.Now
+	claims := f.validClaims()
+	claims["exp"] = f.clock.Unix() - 58
+	expiry := time.Unix(claims["exp"].(int64), 0).Add(60 * time.Second)
+	token := f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
+
+	for _, public := range []bool{true, false} {
+		name := "local"
+		opt := Options{Poll: time.Hour}
+		if public {
+			name = "public"
+			opt = f.opt
+			opt.Poll = time.Hour
+		}
+		t.Run(name, func(t *testing.T) {
+			wait := 4 * time.Second
+			if !public {
+				wait = 1500 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), wait)
+			defer cancel()
+			r := httptest.NewRequest(http.MethodGet, "/stream/index", nil).WithContext(ctx)
+			if public {
+				r.Host = "harness.example.com"
+				r.Header.Set("Cf-Access-Jwt-Assertion", token)
+			} else {
+				r.Host = "localhost"
+			}
+			w := httptest.NewRecorder()
+			started := time.Now()
+			New(context.Background(), opt).ServeHTTP(w, r)
+			body := w.Body.String()
+			if public {
+				if !strings.Contains(body, "event: end\ndata: session expired\n") || time.Now().Before(expiry) || time.Since(started) >= 4*time.Second {
+					t.Fatalf("public stream did not expire: %s", body)
+				}
+				row := lastAccessRow(t)
+				if row["stream"] != "end" || row["reason"] != "session expired" {
+					t.Fatalf("stream end row = %v", row)
+				}
+			} else if strings.Contains(body, "session expired") || ctx.Err() == nil {
+				t.Fatalf("local stream ended early: %s", body)
+			}
+		})
+	}
+}
+
 func lastAccessRow(t *testing.T) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-access.log"))

@@ -89,6 +89,38 @@ func TestEditFileCRLF(t *testing.T) {
 	}
 }
 
+func TestEditFileNewlines(t *testing.T) {
+	for _, tc := range []struct{ name, content, old, replacement, want string }{
+		{"single line match", "one\r\ntwo\r\n", "one", "1\n1b", "1\r\n1b\r\ntwo\r\n"},
+		{"CRLF replacement fallback", "one\r\ntwo\r\n", "one\ntwo", "1\r\n2", "1\r\n2\r\n"},
+		{"LF file", "one\ntwo\n", "one", "1\n1b", "1\n1b\ntwo\n"},
+		{"mixed file LF edit", "one\r\ntwo\nthree\n", "two\nthree", "2\n3", "one\r\n2\n3\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, tl := setup(t)
+			p := filepath.Join(ws.Root, "edit.txt")
+			must(t, os.WriteFile(p, []byte(tc.content), 0o644))
+			_, err := call(t, ws, tl["edit_file"], map[string]any{"path": "edit.txt", "old_string": tc.old, "new_string": tc.replacement})
+			must(t, err)
+			data, err := os.ReadFile(p)
+			must(t, err)
+			if string(data) != tc.want {
+				t.Errorf("got %q, want %q", data, tc.want)
+			}
+		})
+	}
+}
+
+func TestGrepReportsOverlongLine(t *testing.T) {
+	ws, tl := setup(t)
+	must(t, os.WriteFile(filepath.Join(ws.Root, "long.txt"), []byte(strings.Repeat("x", 2*1024*1024)+"\nneedle\n"), 0o644))
+	out, err := call(t, ws, tl["grep"], map[string]any{"path": "long.txt", "pattern": "needle"})
+	must(t, err)
+	if !strings.Contains(out, "long.txt") || (!strings.Contains(out, "needle") && !strings.Contains(out, "cut short")) {
+		t.Fatalf("grep did not find the match or report the cut short file: %q", out)
+	}
+}
+
 func TestListFilesAndGrepSkipVendorDirs(t *testing.T) {
 	ws, tl := setup(t)
 	out, err := call(t, ws, tl["list_files"], map[string]any{"pattern": "**/*.go"})
@@ -135,6 +167,11 @@ func TestGlobRegexp(t *testing.T) {
 		{"*.go", "x/a.go", false},
 		{"src/**", "src/a/b", true},
 		{"*.{ts,tsx}", "a.tsx", true},
+		{"a,b.txt", "a,b.txt", true},
+		{"a,b.txt", "abc", false},
+		{"{a,b}.txt", "b.txt", true},
+		{"{a.txt", "{a.txt", true},
+		{"a}.txt", "a}.txt", true},
 	}
 	for _, c := range cases {
 		re, err := GlobRegexp(c.glob)

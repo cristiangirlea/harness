@@ -103,6 +103,11 @@
   });
   es.addEventListener('end', (m) => {
     es.close();
+    if (m.data === 'session expired') {
+      setState('session expired', 'lost');
+      location.reload();
+      return;
+    }
     setState(m.data === 'stopped' ? 'stopped' : 'finished');
   });
 })();
