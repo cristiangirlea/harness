@@ -630,7 +630,7 @@ func valid(kind Kind, original, summary string) bool {
 			}
 		}
 	}
-	if kind == Test {
+	if kind == Test || failName.MatchString(strings.Join(cleanLines, "\n")) {
 		origFailures, origOK := testFailures(cleanLines)
 		sumFailures, sumOK := testFailures(sumLines)
 		if !origOK || !sumOK || len(origFailures) != len(sumFailures) {
