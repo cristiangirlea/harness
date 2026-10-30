@@ -53,8 +53,8 @@ kinds. Inputs holding an escape byte are also placed in the dropped middle of a 
 
 `Classify` checks JSON first, then test, table, log and terminal. Text is JSON when, trimmed, it
 is one valid object or array. It is a table when at least five non-blank lines all have the same
-count (at least one) of tabs, or else of commas, unless most of them start like log lines
-(log4j and Python timestamps hold a comma): those stay logs, whose summary keeps warnings. Its
+count (at least one) of tabs, or else of commas, unless the first line starts like a log line
+and most lines do too (log4j and Python timestamps hold a comma): those stay logs, whose summary keeps warnings. Its
 summaries:
 
 ```
@@ -79,7 +79,7 @@ id,name,status,ms
 The JSON sample is the first item (or the object itself), re-joined from the original's raw
 bytes, never re-encoded. So every key, string and number keeps its spelling (`1e5`, `-0`,
 escapes). Containers below the second level become `{...}` or `[...]`. Every original line
-containing an error follows verbatim. A keys or sample line that would contain one is left out:
+containing an error follows verbatim. A sample that would exceed the size limit is omitted. A keys or sample line that would contain one is left out:
 it is not an original line. Minified JSON is a single line, so if that line holds an error the
 summary cannot be smaller and the cut is used. A table summary keeps the header, the first three
 and last two rows, and every error row, in order. Either summary is used only when it is smaller
@@ -95,10 +95,10 @@ to the line-based kinds, usually terminal, because its test lines start with `{`
 into test text would be a converter with its own invariants, not a summary, so it waits for a
 measured need.
 
-The measurement in `scripts/tool-shapes` is broader: it checks test and log first, counts any
-valid JSON value, and counts a table when `encoding/csv` parses at least two rows of two or more
-fields (quoted commas allowed). Its `json` and `table` bytes are an upper bound on what these
-summaries can take.
+The measurement in `scripts/tool-shapes` now uses the same classification as `Classify`.
+The historical figures above were measured with an older, broader classifier and need a rerun
+to reflect the current classification. Classification alone does not guarantee a summary fits
+or passes its invariants.
 
 ## Reading part of an original
 
