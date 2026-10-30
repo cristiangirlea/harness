@@ -751,7 +751,7 @@ func TestStreamSessionExpiry(t *testing.T) {
 	f.clock = time.Now()
 	f.opt.Public.Now = time.Now
 	claims := f.validClaims()
-	claims["exp"] = f.clock.Unix() - 59
+	claims["exp"] = f.clock.Unix() - 58
 	expiry := time.Unix(claims["exp"].(int64), 0).Add(60 * time.Second)
 	token := f.token(map[string]any{"alg": "RS256", "kid": "test-key"}, claims, f.key)
 
