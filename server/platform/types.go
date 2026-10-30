@@ -124,7 +124,7 @@ func validateProject(p Project) error {
 		return errors.New("base ref must be a full Git commit hash")
 	}
 	switch p.Backend {
-	case "api", "claude", "codex", "gemini", "opencode":
+	case "api", "claude", "codex", "gemini", "opencode", "agy":
 	default:
 		return fmt.Errorf("unknown backend %q", p.Backend)
 	}
