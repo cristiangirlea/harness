@@ -156,6 +156,13 @@ func TestSubtestNamesWithSlashesEndTheirSiblings(t *testing.T) {
 	}
 }
 
+func TestSlashedSiblingWithResumedSiblingFallsBack(t *testing.T) {
+	text := "counts 1 2\n=== RUN   TestA\n=== RUN   TestA/a\n=== PAUSE TestA/a\n=== RUN   TestA/a/b\n    a_test.go:5: slashed failure\n=== CONT  TestA/a\n    a_test.go:8: resumed failure\n--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/a/b (0.00s)\n    --- FAIL: TestA/a (0.00s)\nFAIL\n"
+	if _, ok := Summarize(Test, text); ok {
+		t.Fatal("accepted ambiguous sibling ownership")
+	}
+}
+
 func TestALongSlashHeavyTestNameFallsBackQuickly(t *testing.T) {
 	run := func(name string) time.Duration {
 		var b strings.Builder

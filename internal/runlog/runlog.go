@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -24,13 +25,37 @@ import (
 	"github.com/cristiangirlea/harness/internal/route/table"
 )
 
-// Home is $HRN_HOME, or ~/.hrn.
+// Home is $HRN_HOME, or ~/.hrn; an unavailable home yields an unusable path.
 func Home() string {
-	if h := os.Getenv("HRN_HOME"); h != "" {
+	h, err := ResolveHome()
+	if err == nil {
 		return h
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".hrn")
+	// Invalid path characters prevent legacy consumers from writing relative files.
+	invalid := "\x00"
+	if runtime.GOOS == "windows" {
+		invalid = "|"
+	}
+	h, err = filepath.Abs(invalid)
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			return `C:\|`
+		}
+		return "/\x00"
+	}
+	return h
+}
+
+// ResolveHome returns the absolute record home or an error.
+func ResolveHome() (string, error) {
+	if h := os.Getenv("HRN_HOME"); h != "" {
+		return filepath.Abs(h)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("cannot resolve home directory: set HRN_HOME")
+	}
+	return filepath.Abs(filepath.Join(home, ".hrn"))
 }
 
 // Root is the runs directory under Home.
@@ -104,6 +129,9 @@ var createEventsFile = func(path string) (io.WriteCloser, error) { return os.Cre
 
 // Failed starts must leave no partial record.
 func create(backend string, task agent.Task, continues, route string, routed *RoutedBy, note string) (w *Writer, err error) {
+	if _, err := ResolveHome(); err != nil {
+		return nil, err
+	}
 	id := NewID()
 	dir := filepath.Join(Root(), id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -274,6 +302,9 @@ func ListSince(since time.Time) ([]Record, int, error) {
 const idTimeLayout = "20060102-150405"
 
 func list(since time.Time, limit int, keep func(Record) bool) (recs []Record, unreadable int, err error) {
+	if _, err := ResolveHome(); err != nil {
+		return nil, 0, err
+	}
 	entries, err := os.ReadDir(Root())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, nil
@@ -316,7 +347,7 @@ func idBefore(id string, t time.Time) bool {
 
 // Reject run-directory traversal.
 func validID(id string) error {
-	if id == "" || strings.ContainsAny(id, `/\`) || id == ".." {
+	if id == "" || strings.ContainsAny(id, `/\`) || id == "." || id == ".." {
 		return fmt.Errorf("invalid run id %q", id)
 	}
 	return nil
@@ -324,6 +355,9 @@ func validID(id string) error {
 
 func Load(id string) (Record, error) {
 	if err := validID(id); err != nil {
+		return Record{}, err
+	}
+	if _, err := ResolveHome(); err != nil {
 		return Record{}, err
 	}
 	dir := filepath.Join(Root(), id)
@@ -351,6 +385,9 @@ func Load(id string) (Record, error) {
 
 func Events(id string) ([]agent.Event, error) {
 	if err := validID(id); err != nil {
+		return nil, err
+	}
+	if _, err := ResolveHome(); err != nil {
 		return nil, err
 	}
 	f, err := os.Open(filepath.Join(Root(), id, "events.jsonl"))
