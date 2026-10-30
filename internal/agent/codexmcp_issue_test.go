@@ -3,10 +3,72 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestCodexTrustProjectRoots(t *testing.T) {
+	base := t.TempDir()
+	main := filepath.Join(base, "main")
+	work := filepath.Join(base, "work")
+	run := filepath.Join(work, "nested")
+	gitdir := filepath.Join(main, ".git", "worktrees", "work")
+	for _, dir := range []string{gitdir, filepath.Join(work, ".codex"), filepath.Join(run, ".codex")} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, content := range map[string]string{
+		filepath.Join(work, ".git"):                  "gitdir: " + gitdir + "\n",
+		filepath.Join(gitdir, "commondir"):           "../..\n",
+		filepath.Join(work, ".codex", "config.toml"): "[mcp_servers.root]\n",
+		filepath.Join(run, ".codex", "config.toml"):  "[mcp_servers.run]\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	codexHome(t, "")
+	for _, trusted := range []string{main, run} {
+		key := trusted + string(filepath.Separator)
+		if runtime.GOOS == "windows" {
+			key = strings.ToLower(key[:1]) + key[1:]
+		}
+		if err := os.WriteFile(codexConfigPath(run), []byte("[projects.'"+key+"']\ntrust_level='trusted'\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		got := codexLoadedConfigServers(run)
+		if !slices.Contains(got, "root") || !slices.Contains(got, "run") {
+			t.Errorf("trusted %s: %v", trusted, got)
+		}
+	}
+}
+
+func TestCodexTrustNoGitOnlyRunConfig(t *testing.T) {
+	base := t.TempDir()
+	run := filepath.Join(base, "nested")
+	for _, dir := range []string{base, run} {
+		if err := os.MkdirAll(filepath.Join(dir, ".codex"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(base, ".codex", "config.toml"), []byte("[mcp_servers.parent]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(run, ".codex", "config.toml"), []byte("[mcp_servers.run]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	codexHome(t, "[projects.'"+run+"']\ntrust_level='trusted'\n")
+	got := codexLoadedConfigServers(run)
+	if !slices.Contains(got, "run") || slices.Contains(got, "parent") {
+		t.Errorf("loaded: %v", got)
+	}
+	if !slices.Contains(codexAllConfigServers(run), "parent") {
+		t.Error("parent collision missing")
+	}
+}
 
 func TestCodexTOMLServerForms(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.toml")
@@ -104,6 +166,11 @@ func TestCodexMCPBearerAndSSE(t *testing.T) {
 	task := Task{Options: Options{AllowDangerous: true, MCP: []string{mcpFile(t, `"remote":{"url":"https://example.test","headers":{"authorization":"Bearer ${TEST_TOKEN}"}}`)}}}
 	if _, err := codexMCPEnv(task); err != nil {
 		t.Fatal(err)
+	}
+	t.Setenv("CLAUDECODE", "example")
+	stripped := Task{Options: Options{AllowDangerous: true, MCP: []string{mcpFile(t, `"remote":{"url":"https://example.test","headers":{"Authorization":"Bearer ${CLAUDECODE}"}}`)}}}
+	if _, err := codexMCPEnv(stripped); err == nil || !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("stripped bearer: %v", err)
 	}
 	if got := strings.Join(codexMCPArgs(task), " "); !strings.Contains(got, `bearer_token_env_var="TEST_TOKEN"`) {
 		t.Errorf("missing bearer mapping: %s", got)

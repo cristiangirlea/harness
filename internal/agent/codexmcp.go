@@ -76,6 +76,9 @@ func codexMCPEnv(t Task) ([]string, error) {
 			return nil, fmt.Errorf("mcp %s: ANTHROPIC_API_KEY never reaches a CLI", r.Name)
 		}
 		if token != "" {
+			if len(agentEnv([]string{token + "="})) == 0 {
+				return nil, fmt.Errorf("mcp %s: hrn keeps %s out of an agent's environment", r.Name, token)
+			}
 			if _, ok := lookup(token); !ok {
 				return nil, fmt.Errorf("mcp %s: bearer variable %s is unavailable; use --inherit-env if appropriate", r.Name, token)
 			}
@@ -317,7 +320,18 @@ func codexLoadedConfigServers(dir string) []string {
 		return names
 	}
 	root := filepath.Dir(filepath.Dir(paths[len(paths)-1]))
-	if !codexProjectTrusted(codexConfigPath(dir), root) {
+	run, err := filepath.Abs(dir)
+	if err != nil {
+		return names
+	}
+	git := filepath.Join(root, ".git")
+	if _, err := os.Stat(git); err != nil {
+		root = run
+		paths = paths[:1]
+	}
+	main := codexWorktreeMainRoot(git)
+	config := codexConfigPath(dir)
+	if !codexProjectTrusted(config, run) && !codexProjectTrusted(config, root) && (main == "" || !codexProjectTrusted(config, main)) {
 		return names
 	}
 	for _, path := range paths {
@@ -328,6 +342,31 @@ func codexLoadedConfigServers(dir string) []string {
 		}
 	}
 	return names
+}
+
+func codexWorktreeMainRoot(git string) string {
+	data, err := os.ReadFile(git)
+	if err != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	value, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
+	if !ok || strings.TrimSpace(value) == "" {
+		return ""
+	}
+	gitdir := strings.TrimSpace(value)
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(filepath.Dir(git), gitdir)
+	}
+	data, err = os.ReadFile(filepath.Join(gitdir, "commondir"))
+	if err != nil || strings.TrimSpace(string(data)) == "" {
+		return ""
+	}
+	common := strings.TrimSpace(string(data))
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(gitdir, common)
+	}
+	return filepath.Dir(filepath.Clean(common))
 }
 
 func codexProjectTrusted(path, root string) bool {
