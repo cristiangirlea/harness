@@ -161,6 +161,16 @@ second or more, and ends with the summary line once the run's result is saved. C
 stops following and leaves the run alone. The terminal waits for a saved result even
 when watch's one-hour quiet rule displays the run as stopped.
 
+### Experience
+
+When the game is enabled, the index shows level, practice streak, the last 35 UTC days
+and badges. On loopback it also shows this week's delivery and practice XP and today's
+saved exercise, with its masked material until answered; an answered exercise is marked
+done without showing the answer or reveal. If no daily exercise has been saved, run
+`hrn bot practice` to select one. Loading the page never selects an exercise or calls GitHub.
+LAN and forwarded viewers see only level, streak and badges. Public watch serves no game
+card or game data. Reload the index to refresh the card.
+
 ### Backends
 
 The index's Backends card, above "What the runs were for", shows every registered

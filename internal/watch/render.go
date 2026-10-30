@@ -329,6 +329,7 @@ type indexPage struct {
 	page
 	GC       string
 	Backends backendCard
+	Game     *gameCard
 	Lists    lists
 	Local    bool        // seen from this computer, not a phone on the network
 	Phone    []phoneLink // where a phone opens it, with hrn watch --lan

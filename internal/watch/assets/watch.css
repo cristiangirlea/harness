@@ -204,3 +204,6 @@ button[aria-pressed="true"] { border-color: var(--link); box-shadow: inset 0 0 0
 .key-mark::before { content: ""; display: inline-block; width: 0; height: .9em; margin-right: 6px; vertical-align: -1px; border-left: 2px solid var(--warn-fg); }
 .key-mark.probable::before { border-left-style: dashed; }
 .ev-compaction::before { background: var(--warn-fg); }
+.game-days { display: flex; flex-wrap: wrap; gap: 4px; }
+.game-day { width: 12px; height: 12px; border: 1px solid var(--muted); border-radius: 2px; }
+.game-day.done { background: var(--link); border-color: var(--link); }

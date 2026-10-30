@@ -2,7 +2,7 @@
 
 [← README](../README.md)
 
-Status: slices 1 and 2 are built: the ledger, switch, stats and practice. The remaining
+Status: slices 1 to 3 are built: the ledger, switch, stats, practice and watch card. The remaining
 slices are design; they are listed at the end.
 
 The person earns experience by working with agents through hrn, from real outcomes only,
@@ -185,7 +185,7 @@ the answer to a plan backend (a CLI backend, never the api backend).
 
 1. The ledger, its rebuild and fold-before-prune, the switch, and `hrn bot stats`.
 2. Practice: the record, the seed, the four kinds, server-side reveal, masking.
-3. The hrn watch card.
+3. The hrn watch card (built).
 4. The Ada desktop app's cards (in its own repository).
 5. The Claude Code side pane.
 6. Agent-touched versus person-touched files, then familiarity per area.

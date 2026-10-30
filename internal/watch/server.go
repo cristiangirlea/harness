@@ -552,6 +552,7 @@ func batchOf(batches []batch.Result) map[string]string {
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists(r)}
 	p.Backends = s.backendsCard(w, r)
+	p.Game = s.gameCard(w, r)
 	// Keep network discovery links and LAN hints local.
 	if s.fromThisComputer(r) {
 		p.Local = true
