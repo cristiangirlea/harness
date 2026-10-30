@@ -2349,12 +2349,39 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 		return err
 	}
 	defer g.close()
-	// Never retry: metadata failure may follow branch creation.
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "-b", tr.Branch, tr.Worktree, base)
+	oid, err := gitOutEnv(ctx, root, g.env(ctx), "", "rev-parse", "--verify", base+"^{commit}")
+	if err != nil {
+		return err
+	}
+	branch := exec.CommandContext(ctx, "git", "-C", root, "branch", tr.Branch, oid)
+	branch.Env = append(gitenv.WithoutRepoVars(branch.Environ()), g.env(ctx)...)
+	if out, err := branch.CombinedOutput(); err != nil {
+		return fmt.Errorf("git branch: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	_, pathErr := os.Lstat(tr.Worktree)
+	pathAbsent := errors.Is(pathErr, os.ErrNotExist)
+	// Never retry: a failed add may have registered the worktree.
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", tr.Worktree, tr.Branch)
 	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), g.env(ctx)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+		addErr := fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		registered, listErr := isWorktree(root, tr.Worktree)
+		if pathAbsent {
+			if listErr == nil && registered {
+				if _, removeErr := gitOut(cleanupCtx, root, "worktree", "remove", "--force", tr.Worktree); removeErr != nil {
+					return errors.Join(addErr, removeErr)
+				}
+			}
+		}
+		if pathAbsent || (listErr == nil && !registered) {
+			if _, deleteErr := gitOut(cleanupCtx, root, "update-ref", "-d", "refs/heads/"+tr.Branch, oid); deleteErr != nil {
+				return errors.Join(addErr, deleteErr)
+			}
+		}
+		return addErr
 	}
 	return nil
 }
