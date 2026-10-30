@@ -37,6 +37,7 @@ func Root() string { return runpaths.Root() }
 type RoutedBy = table.RoutedBy
 
 type Record struct {
+	StartHead string    `json:"start_head,omitempty"`
 	RoutedBy  *RoutedBy `json:"routed_by,omitempty"`
 	RouteNote string    `json:"route_note,omitempty"`
 	ID        string    `json:"id"`
@@ -57,6 +58,7 @@ type Record struct {
 }
 
 type Writer struct {
+	gitRoot    string
 	dir        string
 	mu         sync.Mutex
 	events     io.WriteCloser
@@ -119,6 +121,7 @@ func create(backend string, task agent.Task, continues, route string, routed *Ro
 	}()
 	w = &Writer{dir: dir, rec: Record{ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
 		Setup: agent.ResolveSetup(backend, task), RouteNote: note}}
+	w.gitRoot, w.rec.StartHead = startGit(task.Dir)
 	if routed != nil {
 		by := *routed
 		w.rec.RoutedBy = &by
@@ -217,6 +220,9 @@ func (w *Writer) Close(res agent.Result) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.closeError = w.events.Close()
+	if w.gitRoot != "" && w.rec.StartHead != "" {
+		res.ChangedFiles, res.ChangedFilesTruncated, res.EndHead = changedFiles(w.gitRoot, w.rec.StartHead)
+	}
 	w.rec.Result = res
 	recordErr := w.errLocked()
 	if recordErr != nil {

@@ -15,6 +15,7 @@ type gameCard struct {
 	Delivery, Practice int
 	Exercise           *game.Exercise
 	Problem            string
+	Familiarity        *game.Familiarity
 }
 
 func (s *server) gameCard(w http.ResponseWriter, r *http.Request) *gameCard {
@@ -42,6 +43,11 @@ func (s *server) gameCard(w http.ResponseWriter, r *http.Request) *gameCard {
 		card.Badges = append(card.Badges, game.BadgeName(badge.Key))
 	}
 	if card.Local {
+		if len(s.opt.LAN) == 0 {
+			if familiarity, err := game.ReadFamiliarity(now); err == nil {
+				card.Familiarity = &familiarity
+			}
+		}
 		weekly := totals.Since(game.WeekStart(now))
 		card.Delivery, card.Practice = weekly[game.TrackDelivery], weekly[game.TrackPractice]
 		exercise, err := practice.ExistingToday()

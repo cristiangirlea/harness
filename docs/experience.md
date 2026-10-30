@@ -2,8 +2,8 @@
 
 [← README](../README.md)
 
-Status: slices 1 to 3 are built: the ledger, switch, stats, practice and watch card. The remaining
-slices are design; they are listed at the end.
+Status: slices 1 to 3 are built: the ledger, switch, stats, practice and watch card. Slice 6
+has a partial familiarity view; the remaining slices are design.
 
 The person earns experience by working with agents through hrn, from real outcomes only,
 never from keystrokes, turns or chatter. Ada has her own growth, from what she has learned,
@@ -82,8 +82,9 @@ The rules:
 - **Exposure is not authorship.** Agents can commit as the person, with no attribution
   lines, so git alone cannot tell the person's own work from an agent's. A
   file counts as agent-touched when an hrn run or batch changed it; the person's exposure
-  is the exercises done, the reviews read and the commits made outside hrn runs. Until that
-  cross-check exists, practice does not show per-area familiarity.
+  is the exercises done and the commits made outside hrn runs. Reviews read cannot be
+  determined from the records. Where
+  records permit it, familiarity is derived from this evidence without claiming authorship.
 
 | Event | Counted when | Source key | XP | Cap |
 | --- | --- | --- | --- | --- |
@@ -96,6 +97,18 @@ Consecutive days with the day's exercise answered, ending today or yesterday, so
 is not lost before the day is over. The display shows the last 35 days as filled or empty
 squares. Merges never count towards a streak: that would push towards merging something
 every day, against testing before merging. Delivery shows as weekly numbers instead.
+
+An area is the first path segment, except files under `internal/` or `cmd/` use their
+package directory. Answered exercises and reads count once per area named by their stored
+diff; material without paths gives no area-level exposure. Recent commits count once per
+area when their author email matches the repository Git identity, within the last 90 days,
+excluding recorded batch commits, commits between a recorded batch base and its hrn
+branch commit, and commits between a recorded run's start and end HEAD. Agent-touched
+areas come from those batch commits and recorded run changed paths. Older standalone
+records lack these fields. Reviews read cannot be determined from records; answered
+read exercises are counted.
+Missing repositories are skipped. The two lists show at most five areas each; they are
+exposure counts, not proof of authorship or knowledge.
 
 ## Levels and badges
 
@@ -163,11 +176,11 @@ The rules that make it rebuildable and safe to prune:
 
 ## Where it shows
 
-- `hrn bot stats`, in the terminal: level, experience by track this week and badges.
+- `hrn bot stats`, in the terminal: level, experience by track this week, badges and familiarity.
   The streak shows the last 35 UTC days. Ada's line comes with the Ada slice.
 - hrn watch: a card on the index page. On loopback it may show the day's exercise; over
   `--lan` it shows the level, streak and badges only, since anyone on those networks can
-  read the page. Material, answers and reveals are never served over `--lan`, and nothing of
+  read the page. Familiarity, material, answers and reveals are never served over `--lan`, and nothing of
   the game is served under `--public`.
 - The Claude Code side pane: the streak and the day's exercise.
 - The Ada desktop app: a practice card, the level, this week's numbers and Ada's card.
@@ -188,4 +201,5 @@ the answer to a plan backend (a CLI backend, never the api backend).
 3. The hrn watch card (built).
 4. The Ada desktop app's cards (in its own repository).
 5. The Claude Code side pane.
-6. Agent-touched versus person-touched files, then familiarity per area.
+6. Agent-touched versus person-touched files, then familiarity per area (partial: older
+   standalone run changes and independent review reads are not recorded).

@@ -120,6 +120,26 @@ func cmdBotStats(args []string) error {
 		badges = append(badges, "none yet")
 	}
 	fmt.Printf("badges: %s\n", strings.Join(badges, ", "))
+	familiarity, err := game.ReadFamiliarity(time.Now())
+	if err != nil {
+		return err
+	}
+	showAreas := func(label string, areas []game.AreaExposure) {
+		var names []string
+		for _, area := range areas {
+			name := area.Repo + "/" + area.Area
+			if area.Count > 0 {
+				name += fmt.Sprintf(" (%d)", area.Count)
+			}
+			names = append(names, name)
+		}
+		if len(names) == 0 {
+			names = append(names, "none yet")
+		}
+		fmt.Printf("%s: %s\n", label, strings.Join(names, ", "))
+	}
+	showAreas("areas you know", familiarity.Known)
+	showAreas("areas agents changed you have not looked at", familiarity.Unseen)
 	return nil
 }
 

@@ -154,7 +154,10 @@ const (
 )
 
 type Result struct {
-	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
+	ChangedFiles          []string          `json:"changed_files,omitempty"`
+	ChangedFilesTruncated bool              `json:"changed_files_truncated,omitempty"`
+	EndHead               string            `json:"end_head,omitempty"`
+	Retrieval             *retrieval.Record `json:"retrieval,omitempty"`
 	// Usage describes the run-level token and cost totals.
 	Usage *UsageMetadata `json:"usage_metadata,omitempty"`
 	// RecoveryRequired requires reconciliation before replay.

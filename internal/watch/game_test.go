@@ -159,3 +159,19 @@ func TestGameCardUsesStoredMaskedExerciseWithoutChangingIt(t *testing.T) {
 		t.Fatal("render changed the exercise record")
 	}
 }
+
+func TestGameFamiliarityVisibility(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	req := httptest.NewRequest("GET", "http://127.0.0.1/", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+	if card := (&server{}).gameCard(w, req); card == nil || card.Familiarity == nil {
+		t.Fatal("loopback omitted familiarity")
+	}
+	if card := (&server{opt: Options{LAN: []Endpoint{{Addr: "192.168.1.1:8089"}}}}).gameCard(w, req); card == nil || card.Familiarity != nil {
+		t.Fatal("LAN exposed familiarity")
+	}
+	if card := (&server{opt: Options{Public: &PublicAccess{}}}).gameCard(w, req); card != nil {
+		t.Fatal("public exposed game")
+	}
+}

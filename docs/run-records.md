@@ -207,6 +207,13 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
 `result.json` includes `recovery_required: true` when a durable api operation needs
 reconciliation before it can resume; the field is omitted otherwise.
 
+When a run starts in a Git work tree with a HEAD, its record includes `start_head`.
+At close, `result.changed_files` lists up to 500 repository-relative paths that differ
+from that HEAD, including committed, staged, unstaged and untracked non-ignored files.
+`changed_files_truncated` is true if more paths exist, and `end_head` records the
+closing HEAD. Git failures and non-repositories leave these fields absent; older records
+without them still load. The comparison includes changes already present at the start.
+
 For opted-in retrieval, `result.json` includes `retrieval` with its packet or
 failure, and `messages.json` includes the conversation's retrieval pin. Older
 records without these fields still load.
