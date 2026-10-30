@@ -318,7 +318,11 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 		if err != nil {
 			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "originals not carried over: " + err.Error()})
 		} else if n+skipped > 0 {
-			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: fmt.Sprintf("copied %d tool-result originals from run %s, skipped %d that were not regular files matching their hash within the size cap", n, p.carried.ID, skipped)})
+			note := fmt.Sprintf("copied %d tool-result originals from run %s", n, p.carried.ID)
+			if skipped > 0 {
+				note += fmt.Sprintf(", skipped %d invalid or oversized files", skipped)
+			}
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: note})
 		}
 	}
 	var h string

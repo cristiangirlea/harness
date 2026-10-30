@@ -507,7 +507,9 @@ func TestConcurrentStoresOnOneRunStayUnderItsCap(t *testing.T) {
 }
 
 func TestTheMachineCapCountsOtherRunsOriginals(t *testing.T) {
-	runs := filepath.Join(t.TempDir(), "runs")
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	runs := filepath.Join(home, "runs")
 	writeOriginalFile(t, filepath.Join(runs, "other"), "0123456789abcdef", strings.Repeat("o", 60000))
 	text := "count 6000\n" + strings.Repeat("working\n", 6000)
 	for _, tc := range []struct {
@@ -711,6 +713,7 @@ func TestAMeasurementThatCannotReadTheRunsFailsClosed(t *testing.T) {
 	if err := ws.measureOriginals(); err == nil || ws.originalsSeen {
 		t.Fatalf("err = %v, seen = %v: an unreadable runs directory must not count as empty", err, ws.originalsSeen)
 	}
+	t.Setenv("HRN_HOME", t.TempDir())
 	ws = &Workspace{RunDir: filepath.Join(t.TempDir(), "runs", "mine")}
 	if err := ws.measureOriginals(); err != nil || !ws.originalsSeen || ws.originalsAll != 0 {
 		t.Fatalf("a runs directory not made yet is empty: err = %v, seen = %v, all = %d", err, ws.originalsSeen, ws.originalsAll)
@@ -718,10 +721,9 @@ func TestAMeasurementThatCannotReadTheRunsFailsClosed(t *testing.T) {
 }
 
 func TestASiblingRunThatCannotBeReadFailsTheMeasurementClosed(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows reports a file read as a directory as not found")
-	}
-	runs := filepath.Join(t.TempDir(), "runs")
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	runs := filepath.Join(home, "runs")
 	must(t, os.MkdirAll(filepath.Join(runs, "other"), 0o755))
 	must(t, os.WriteFile(filepath.Join(runs, "other", "originals"), []byte("not a directory"), 0o644))
 	ws := &Workspace{RunDir: filepath.Join(runs, "mine")}
@@ -751,5 +753,121 @@ func TestTheLargestRunCapStillCopiesOriginals(t *testing.T) {
 	writeOriginalFile(t, from, originalHandleOf(text), text)
 	if n, skipped, err := CopyOriginals(from, to); err != nil || n != 1 || skipped != 0 {
 		t.Fatalf("copied %d, skipped %d: %v", n, skipped, err)
+	}
+}
+
+func TestContinuationOriginalsShareIdentityAndMachineUsage(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	runs := filepath.Join(home, "runs")
+	from, to := filepath.Join(runs, "first"), filepath.Join(runs, "second")
+	text := strings.Repeat("a", 40000)
+	writeOriginalFile(t, from, originalHandleOf(text), text)
+	must(t, os.MkdirAll(to, 0755))
+	n, _, err := CopyOriginals(from, to)
+	must(t, err)
+	if n != 1 {
+		t.Fatalf("carried %d", n)
+	}
+	a, err := os.Stat(filepath.Join(from, "originals", originalHandleOf(text)+".txt"))
+	must(t, err)
+	b, err := os.Stat(filepath.Join(to, "originals", originalHandleOf(text)+".txt"))
+	must(t, err)
+	if !os.SameFile(a, b) {
+		t.Fatal("continuation duplicated the original")
+	}
+	ws := &Workspace{RunDir: filepath.Join(t.TempDir(), "elsewhere")}
+	must(t, ws.measureOriginals())
+	if ws.originalsAll != int64(len(text)) {
+		t.Fatalf("machine total %d", ws.originalsAll)
+	}
+}
+
+func TestMachineMeasurementDoesNotFollowOriginalsDirectoryLink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	external := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(external, "x"), []byte("outside"), 0644))
+	run := filepath.Join(home, "runs", "other")
+	must(t, os.MkdirAll(run, 0755))
+	if err := os.Symlink(external, filepath.Join(run, "originals")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	ws := &Workspace{RunDir: filepath.Join(home, "runs", "mine")}
+	must(t, ws.measureOriginals())
+	if ws.originalsAll != 0 {
+		t.Fatalf("followed link: %d", ws.originalsAll)
+	}
+}
+
+func TestCopyOriginalsFallsBackWhenLinkFails(t *testing.T) {
+	from, to := t.TempDir(), t.TempDir()
+	text := "original content"
+	writeOriginalFile(t, from, originalHandleOf(text), text)
+	n, skipped, err := copyOriginals(from, to, func(string, string) error { return errors.New("link unavailable") })
+	if err != nil || n != 1 || skipped != 0 {
+		t.Fatalf("copied %d, skipped %d: %v", n, skipped, err)
+	}
+	a, err := os.Stat(filepath.Join(from, "originals", originalHandleOf(text)+".txt"))
+	must(t, err)
+	b, err := os.Stat(filepath.Join(to, "originals", originalHandleOf(text)+".txt"))
+	must(t, err)
+	if os.SameFile(a, b) {
+		t.Fatal("fallback did not make a copy")
+	}
+	data, err := os.ReadFile(filepath.Join(to, "originals", originalHandleOf(text)+".txt"))
+	must(t, err)
+	if string(data) != text {
+		t.Fatal("fallback changed content")
+	}
+}
+
+func TestOriginalRefusalReportsCause(t *testing.T) {
+	for _, tc := range []struct{ name, runCap, machineCap, want string }{
+		{"run", "0", "100000", "run cap"}, {"machine", "100000", "0", "machine cap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			t.Setenv("HRN_ORIGINALS_RUN_MAX", tc.runCap)
+			t.Setenv("HRN_ORIGINALS_MAX", tc.machineCap)
+			ws, _ := setup(t)
+			ws.RunDir = t.TempDir()
+			ws.ShapeTools = true
+			var events []string
+			ws.OriginalInfo = func(s string) { events = append(events, s) }
+			ws.toolOutput(strings.Repeat("x", 40000))
+			if len(events) != 1 || !strings.Contains(events[0], tc.want) {
+				t.Fatalf("events = %v", events)
+			}
+		})
+	}
+}
+
+func TestOriginalRefusalReportsUnmeasurableMachineStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	must(t, os.WriteFile(filepath.Join(home, "runs"), []byte("not a directory"), 0644))
+	ws, _ := setup(t)
+	ws.RunDir = t.TempDir()
+	ws.ShapeTools = true
+	var events []string
+	ws.OriginalInfo = func(s string) { events = append(events, s) }
+	text := strings.Repeat("x", 40000)
+	if ws.toolOutput(text) != Truncate(text) || len(events) != 1 || !strings.Contains(events[0], "cannot be measured") {
+		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestDefaultRunCapRefusesOversizedOriginal(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "")
+	ws, _ := setup(t)
+	ws.RunDir = t.TempDir()
+	ws.ShapeTools = true
+	var events []string
+	ws.OriginalInfo = func(s string) { events = append(events, s) }
+	text := strings.Repeat("x", defaultOriginalsRunMax+1)
+	if ws.toolOutput(text) != Truncate(text) || len(events) != 1 || !strings.Contains(events[0], "run cap") {
+		t.Fatalf("events = %v", events)
 	}
 }

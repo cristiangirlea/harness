@@ -175,6 +175,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	ws.ChildEnv = task.ChildEnv
 	ws.AllowDangerous = task.AllowDangerous
 	ws.ShapeTools, ws.RunDir = task.ShapeTools, task.RunDir
+	ws.OriginalInfo = func(text string) { emit(Event{Time: time.Now(), Kind: EventInfo, Text: text}) }
 	maxTurns := task.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 50

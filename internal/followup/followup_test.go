@@ -626,6 +626,16 @@ func TestAResumedConversationCarriesOriginalsPastALoweredCapAndReportsSkippedFil
 	if want := fmt.Sprintf("copied 1 tool-result originals from run %s, skipped 1", w.ID()); !strings.Contains(strings.Join(notes, "\n"), want) {
 		t.Errorf("notes = %q, want %q", notes, want)
 	}
+	if err := os.Remove(filepath.Join(w.Dir(), "originals", "0123456789abcdef.txt")); err != nil {
+		t.Fatal(err)
+	}
+	notes = nil
+	p.Apply(&agent.Task{Prompt: "go on"}, t.TempDir(), func(e agent.Event) { notes = append(notes, e.Text) })
+	for _, note := range notes {
+		if strings.Contains(note, "skipped") {
+			t.Fatalf("nothing skipped: %q", notes)
+		}
+	}
 }
 
 func TestOriginalsThatCannotBeCarriedOverAreReportedAndTheRunGoesOn(t *testing.T) {
