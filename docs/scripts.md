@@ -110,7 +110,8 @@ and environment variables (`%USERPROFILE%`, `$HOME`, `HRN_HOME`) instead.
 payload on stdin and, for a Bash or PowerShell command that runs an inline
 script, looks for a kept script that covers it: a heredoc body (`<<EOF`,
 `<<'EOF'`, `<<"EOF"`, `<<-EOF`), the argument of `python`/`python3`/`py -c`,
-`node -e`, `bash -c`/`sh -c`, or a PowerShell `-Command`/`-c` script block or
+`node -e`, `perl -e`, `bash -c`/`sh -c`, a PowerShell here-string piped to an
+interpreter, or a PowerShell `-Command`/`-c` script block or
 multi-statement string. It finds the repository root by walking up from the
 payload's `cwd` to the first `.git`, then tests each `matches:` line of
 `scripts/*.sh` and `scripts/*.go` in file-name order. On the first match it
@@ -124,7 +125,9 @@ repository or `scripts/` directory), skips a header whose pattern does not
 compile, and gives no hint when the command already runs a kept script.
 Since any repository you open can commit scripts, hint text is limited to a
 file name of `[A-Za-z0-9._-]` and a `parameters:` value of at most 200 bytes
-of `[A-Za-z0-9_:=;.,[]|/ -]`; a script outside either is never hinted.
+matching `none` or `name:type=default` items separated by `; `; names and types
+use `[A-Za-z0-9_-]`, and defaults use `[A-Za-z0-9_.,\[\]|/-]`. A script outside
+either limit is never hinted.
 
 To opt in, add it to your `~/.claude/settings.json` or a repository's
 `.claude/settings.json` (this repository does not turn it on for itself):
@@ -138,4 +141,5 @@ it, which Claude Code treats as a block of the tool call.
 
 Each hint shown appends one line, `{"time":"<RFC 3339>","script":"scripts/<file>","repo":"<root>"}`,
 to `$HRN_HOME/script-hints.jsonl` (`~/.hrn` by default); a failed write is
-ignored so the hook never fails.
+ignored so the hook never fails. `hrn runs prune` removes entries older than its
+run cutoff and malformed lines; a dry run reports their count without writing.
