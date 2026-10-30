@@ -31,13 +31,12 @@ func codexMCPArgs(t Task) []string {
 		a = append(a, "-c", "mcp_servers."+name+"."+field+"="+value)
 	}
 	if t.IsLean() {
-		for _, name := range codexConfigServers(codexConfigPath(t.Dir)) {
+		for _, name := range codexAllConfigServers(t.Dir) {
 			if !ours[name] && isBareKey(name) {
 				set(name, "enabled", "false")
 			}
 		}
 	}
-	// Overrides merge into a config.toml entry of the same name, which may be disabled.
 	for _, s := range servers {
 		set(s.Name, "enabled", "true")
 		set(s.Name, "command", tomlString(s.Command))
@@ -50,6 +49,9 @@ func codexMCPArgs(t Task) []string {
 		if !slices.ContainsFunc(servers, func(s mcp.ServerConfig) bool { return s.Name == r.Name }) {
 			set(r.Name, "enabled", "true")
 			set(r.Name, "url", tomlString(r.URL))
+			if token, ok := codexBearerToken(r.Headers); ok && token != "" {
+				set(r.Name, "bearer_token_env_var", tomlString(token))
+			}
 		}
 	}
 	return a
@@ -61,9 +63,17 @@ func codexMCPEnv(t Task) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, name := range codexAllConfigServers(t.Dir) {
+		if slices.ContainsFunc(servers, func(s mcp.ServerConfig) bool { return s.Name == name }) || slices.ContainsFunc(remotes, func(r mcp.Remote) bool { return r.Name == name }) {
+			return nil, fmt.Errorf("mcp server %q: run server collides with codex config server", name)
+		}
+	}
 	for _, r := range remotes {
-		if r.Headers || r.Type == "sse" {
-			return nil, fmt.Errorf("mcp server %s: codex is passed only a url, so its headers or sse transport would be dropped", r.Name)
+		if r.Type == "sse" {
+			return nil, fmt.Errorf("mcp server %s: codex speaks streamable HTTP; sse transport would be dropped", r.Name)
+		}
+		if _, ok := codexBearerToken(r.Headers); !ok {
+			return nil, fmt.Errorf("mcp server %s: unsupported headers would be dropped by codex", r.Name)
 		}
 	}
 	type setBy struct{ value, server string }
@@ -105,6 +115,24 @@ func codexMCPEnv(t Task) ([]string, error) {
 		env = append(env, k+"="+vars[k].value)
 	}
 	return env, nil
+}
+
+var codexBearer = regexp.MustCompile(`^Bearer \$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
+
+func codexBearerToken(headers map[string]string) (string, bool) {
+	if len(headers) == 0 {
+		return "", true
+	}
+	if len(headers) != 1 {
+		return "", false
+	}
+	for name, value := range headers {
+		match := codexBearer.FindStringSubmatch(value)
+		if strings.EqualFold(name, "Authorization") && len(match) == 2 {
+			return match[1], true
+		}
+	}
+	return "", false
 }
 
 func codexMCPLookup(t Task) func(string) (string, bool) {
@@ -225,24 +253,95 @@ func codexHomeDir(dir string) string {
 	return filepath.Join(home, ".codex")
 }
 
-// codexConfigServers reads table headers only: values may hold secrets and are never read.
+func codexAllConfigServers(dir string) []string {
+	names := codexConfigServers(codexConfigPath(dir))
+	for _, name := range codexConfigServers(filepath.Join(dir, ".codex", "config.toml")) {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// Values can contain fake headers, so track multiline strings across lines.
 func codexConfigServers(path string) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	var names []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "[") || strings.HasPrefix(line, "[[") {
-			continue
+	var names, table []string
+	multi := ""
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if multi == "" {
+			if strings.HasPrefix(line, "[") && !strings.HasPrefix(line, "[[") {
+				if keys, ok := tomlHeader(line[1:]); ok {
+					table = keys
+					if len(keys) >= 2 && keys[0] == "mcp_servers" && !slices.Contains(names, keys[1]) {
+						names = append(names, keys[1])
+					}
+				}
+			} else if i := strings.IndexByte(line, '='); i >= 0 {
+				if keys, ok := tomlHeader(line[:i] + "]"); ok {
+					full := append(slices.Clone(table), keys...)
+					if len(full) >= 2 && full[0] == "mcp_servers" && !slices.Contains(names, full[1]) {
+						names = append(names, full[1])
+					}
+				}
+			}
 		}
-		keys, ok := tomlHeader(line[1:])
-		if ok && len(keys) == 2 && keys[0] == "mcp_servers" && !slices.Contains(names, keys[1]) {
-			names = append(names, keys[1])
+		for i := 0; i < len(raw); {
+			if multi != "" {
+				if strings.HasPrefix(raw[i:], multi) {
+					i += 3
+					multi = ""
+				} else if multi == `"""` && raw[i] == '\\' && i+1 < len(raw) {
+					i += 2
+				} else {
+					i++
+				}
+				continue
+			}
+			if raw[i] == '#' {
+				break
+			}
+			if strings.HasPrefix(raw[i:], `"""`) || strings.HasPrefix(raw[i:], "'''") {
+				multi = raw[i : i+3]
+				i += 3
+				continue
+			}
+			if raw[i] == '"' || raw[i] == '\'' {
+				quote := raw[i]
+				i++
+				for i < len(raw) {
+					if quote == '"' && raw[i] == '\\' && i+1 < len(raw) {
+						i += 2
+						continue
+					}
+					if raw[i] == quote {
+						i++
+						break
+					}
+					i++
+				}
+				continue
+			}
+			i++
 		}
 	}
 	return names
+}
+
+func codexBatchArgsError(bin string, args []string) error {
+	if !isBatchFile(bin) {
+		return nil
+	}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-c" && strings.ContainsAny(args[i+1], "\" &|<>^%\t\r\n") {
+			return fmt.Errorf("codex -c value cannot safely pass through a cmd.exe shim; install codex as an exe")
+		}
+	}
+	return nil
 }
 
 func tomlHeader(s string) ([]string, bool) {

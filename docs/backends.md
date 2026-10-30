@@ -148,25 +148,23 @@ is the same either way: its `--disallowedTools` rules are command-line flags, no
 Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or an
 `apiKeyHelper`, never the subscription.
 
-**codex.** codex cannot be told to start without its servers (`-c mcp_servers={}` merges
-rather than replaces), so hrn reads the table headers of your `config.toml`
-(`$CODEX_HOME/config.toml`, else `~/.codex/config.toml`; only `[mcp_servers.<name>]` headers,
-never values) and passes `-c mcp_servers.<name>.enabled=false` for each server the run does
-not name. A server that a codex plugin provides (not in `config.toml`) still starts: codex
-refuses to start when such a server is disabled by name. So does a `config.toml` server whose
-name is not a bare key (letters, digits, `_` and `-`, as in `[mcp_servers."my server"]`):
-codex reads a quoted `-c` key as a name with its quotes in it, so it cannot be disabled by
-name and stays loaded. Servers written as inline tables under `[mcp_servers]` are not seen
-either. `--lean=false` passes no overrides, and
-`--ignore-user-config` is never used, so your settings and login stay.
+**codex.** In a lean run, hrn reads server names from `$CODEX_HOME/config.toml`
+(or `~/.codex/config.toml`) and the run directory's `.codex/config.toml`, then disables
+them by name. It recognizes table headers, inline server tables and dotted keys;
+header-like text inside multiline strings is ignored. Codex only loads a project config when
+it trusts the project. A server provided by a codex plugin can still start. A config server
+whose name is not a bare key (letters, digits, `_` and `-`) cannot be disabled by name and
+stays loaded. `--lean=false` leaves config servers enabled; settings and login still load.
 
-The run's `--mcp` files (Claude Code's `.mcp.json` format) reach codex as `-c` overrides on
-any run: a stdio server as `mcp_servers.<name>.command` and `.args` (an empty `args` too), a
-server with a `url` as `mcp_servers.<name>.url`, each with
-`.enabled=true`, since the overrides merge into a `config.toml` server of the same name. A
-server in a command-line `--mcp` file whose name is not a bare key is refused before codex
-starts; one in the home MCP file is skipped with a warning. A url
-server with `headers` or `"type": "sse"` is also refused, since codex is passed only its url.
+The run's `--mcp` files (Claude Code's `.mcp.json` format) reach codex as `-c` overrides
+on any run. A run server whose name matches a server in either config file is refused because
+codex would merge their settings. A server in a command-line `--mcp` file whose name is not
+a bare key is refused; one in the home MCP file is skipped with a warning. For a URL server,
+`Authorization: Bearer ${VAR}` maps to `bearer_token_env_var` without putting the token on
+the command line; the variable must reach codex's environment. Other headers are refused,
+as is `"type": "sse"`: codex speaks streamable HTTP. On Windows, a `.cmd` or `.bat` codex
+shim is refused if a `-c` value contains cmd.exe-sensitive characters; install codex as an
+exe to use those values safely.
 In server `command`, `args`, `url` and `env`, `${VAR}` expands from the guarded CLI environment;
 a withheld or guard-added variable expands to empty (or its specified default). With
 `--allow-dangerous`, expansion uses hrn's environment as before. Environment values never go on the command line, where the process list

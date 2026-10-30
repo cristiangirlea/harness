@@ -451,17 +451,12 @@ func TestCodexRefusesARunServerWhoseNameIsNotABareKey(t *testing.T) {
 	}
 }
 
-func TestCodexEnablesARunServerTheConfigDisables(t *testing.T) {
+func TestCodexRefusesARunServerTheConfigDisables(t *testing.T) {
 	codexHome(t, "[mcp_servers.github]\ncommand = \"npx\"\nenabled = false\n")
 	file := mcpFile(t, `"github":{"command":"npx"},"docs":{"url":"https://example.test/mcp"}`)
-	got := strings.Join(codexMCPArgs(Task{Options: Options{MCP: []string{file}}}), " ")
-	for _, want := range []string{"mcp_servers.github.enabled=true", "mcp_servers.docs.enabled=true"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("args lack %s: %q", want, got)
-		}
-	}
-	if strings.Contains(got, "enabled=false") {
-		t.Errorf("a run server must not be disabled: %q", got)
+	_, err := codexMCPEnv(Task{Options: Options{MCP: []string{file}}})
+	if err == nil || !strings.Contains(err.Error(), "github") {
+		t.Errorf("want collision refusal, got %v", err)
 	}
 }
 
