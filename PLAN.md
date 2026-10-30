@@ -275,6 +275,26 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-30: shaping fixes from the adversarial probes (#461, #463, #465, #482, #483, #484, #619;
+  PR #694, `docs/tool-shapes.md`). `valid` reads numbers from the colour-stripped original, as
+  whole tokens and as digit runs, and exempts only the lines it recomputes; failures are qualified
+  by package and parents reset per package; the oracle catches invented error lines; a large JSON
+  sample is dropped rather than failing the summary. Terminal summaries keeping more middle lines
+  (#619, part 2) need a new selection rule, not a fix, and were left; #462 and #464 wait for a
+  maintainer's decision.
+- 2026-10-30: codex reads every form of its config's MCP servers and follows codex's own trust
+  (#495; PR #693, `docs/backends.md`): project configs from the run directory up to the root count
+  only when the run directory, the root or a worktree's main root is trusted; a `--mcp` name that
+  collides with a config server is refused, one from `~/.hrn/mcp.json` skipped; `Authorization:
+  Bearer ${VAR}` becomes `bearer_token_env_var`; a `.cmd` shim refuses cmd.exe's special
+  characters.
+- 2026-10-30: smaller leftovers closed (#180, #455, #474, #475, #480, #489, #498, #542, #564, #684,
+  #704; PRs #692, #695-#699, #703, #705). Originals are hard-linked across a continuation and a
+  refused save is reported; eval route and diff compare lean, shaping, retrieval and a task's
+  effective run options; the scripts hint catches more inline forms and `hrn runs prune` trims its
+  log; comment-check precision; tool-shapes reports api cache writes; the knowledge tests the
+  review named (the PostgreSQL ones run in CI); three Windows timing tests given room without
+  losing what they test.
 - 2026-10-30: batch gate temp folders sit outside every git work tree (#683; PR #687,
   `docs/batches.md`). Since PR #673 they were made under `<repo>/.hrn`, so tests walking up from
   `t.TempDir()` found the real checkout (a gc test listed its real worktrees). `.hrn-gate-tmp`
