@@ -4,7 +4,7 @@
 # effects: read, exec
 # parameters: none
 # example: bash scripts/verify_test.sh
-# hash: 91157acf8d9b8fe4ade6e207ea7602a7dfafdf83e0ed97a1ee1bda56a482dfea
+# hash: 8b6e458257761791e4e66587f93a7d097201ab154abedba1776b1ed12846ed92
 set -euo pipefail
 runner=$(cd "$(dirname "$0")" && pwd)/verify.sh
 tmp=$(mktemp -d)
@@ -212,4 +212,8 @@ fixture invalidhint true "$clean"
 sed -i 's/# parameters: none/# parameters: words without grammar\n# matches: x/' "$clean/scripts/invalidhint.sh"
 check_fails 'invalid header: scripts/invalidhint.sh' "$clean"
 rm "$clean/scripts/invalidhint.sh"
+fixture 'unsafe name' true "$clean"
+sed -i '/# parameters: none/a # matches: x' "$clean/scripts/unsafe name.sh"
+check_fails 'invalid header: scripts/unsafe name.sh' "$clean"
+rm "$clean/scripts/unsafe name.sh"
 printf '{"passed":true}\n'

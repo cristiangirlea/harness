@@ -39,6 +39,9 @@ func TestInlineTakesInterpreterArguments(t *testing.T) {
 		{"node", `node -e 'console.log(1)'`, "console.log(1)"},
 		{"bash", `bash -c 'for i in 1 2; do echo $i; done'`, "for i in 1 2; do echo $i; done"},
 		{"sh", `sudo sh -c "echo hi"`, "echo hi"},
+		{"prefixes", `env X=1 time bash -c 'echo hi'`, "echo hi"},
+		{"here strings", "@'\nignored\n'@\n@'\nprint(1)\n'@ | python\n", "print(1)"},
+		{"double here string", "@\"\nignored\n\"@\n@\"\nprint(2)\n\"@ | python -\n", "print(2)"},
 		{"pwsh block", `pwsh -NoProfile -Command { $a = 1; $a }`, "$a = 1; $a"},
 		{"powershell string", `powershell -c "Get-Date; Get-Location"`, "Get-Date; Get-Location"},
 		{"powershell quote", `powershell.exe -Command 'it''s; ok'`, "it's; ok"},
@@ -55,12 +58,31 @@ func TestInlineFindsNothingInPlainCommands(t *testing.T) {
 	for _, command := range []string{
 		"go test ./...",
 		"git commit -m 'x -c y'",
+		`git commit -m "mention python -c 'echo hi'"`,
 		`powershell -Command "Get-Date"`,
 		"echo $((1 << 4))",
 		"pythonic -c 'x'",
 	} {
 		if got := Inline(command); got != "" {
 			t.Errorf("Inline(%q) = %q, want none", command, got)
+		}
+	}
+}
+
+func TestRunsKeptCommandForms(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{`./scripts/w.sh h 1; python -c 'echo'`, true},
+		{`bash -x scripts/w.sh`, true},
+		{`env X=1 bash scripts/w.sh`, true},
+		{`time bash scripts/w.sh`, true},
+		{`bash /tmp/x/scripts/w.sh`, false},
+		{`bash scripts/w.sh.bak`, false},
+	} {
+		if got := runsKept(tc.command, "w.sh"); got != tc.want {
+			t.Errorf("runsKept(%q) = %v", tc.command, got)
 		}
 	}
 }

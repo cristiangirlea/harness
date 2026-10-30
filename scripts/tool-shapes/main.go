@@ -1,9 +1,9 @@
 // name: tool-shapes-main
 // summary: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
 // effects: read, exec
-// parameters: --home:path=HRN_HOME or ~/.hrn; --days:int=30; --json:bool=true; --definitions:bool=false
+// parameters: --home:path=HRN_HOME; --days:int=30; --json:bool=true; --definitions:bool=false
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: ae5e1e499dbda05cd78417b7e6ee75c60eb846bd4093c3b275418bcfed7f994f
+// hash: 8b0420177f8a94845a46bc02befbc1df2fb20ba23ab5a3d63554ef7299a46920
 package main
 
 import (

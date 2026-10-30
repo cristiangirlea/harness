@@ -70,7 +70,7 @@ for file in scripts/*.go scripts/*/*.go scripts/*.sh; do
   if [[ ${metadata[matches]+set} ]]; then
     parameters=${metadata[parameters]:-}
     parameter_re='^(none|[A-Za-z0-9_-]+:[A-Za-z0-9_-]+=[][A-Za-z0-9_.,|/-]+(; [A-Za-z0-9_-]+:[A-Za-z0-9_-]+=[][A-Za-z0-9_.,|/-]+)*)$'
-    LC_ALL=C; [[ ${#parameters} -le 200 && $parameters =~ $parameter_re && ${name##*/} =~ ^[A-Za-z0-9._-]+$ ]] || valid=false
+    (LC_ALL=C; [[ ${#parameters} -le 200 && $parameters =~ $parameter_re && ${file##*/} =~ ^[A-Za-z0-9._-]+$ ]]) || valid=false
   fi
   if ! $valid; then error "invalid header: $file"; status=1; continue; fi
   summary=${metadata[summary]}

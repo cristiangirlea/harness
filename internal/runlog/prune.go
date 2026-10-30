@@ -1,7 +1,6 @@
 package runlog
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -86,6 +85,9 @@ func PruneOnly(cutoff time.Time, keep int, protect, only map[string]bool, dryRun
 	return res, err
 }
 
+var beforeHintsRename = func() {}
+var renameHints = os.Rename
+
 func pruneHints(cutoff time.Time, dryRun bool) (int, error) {
 	path := filepath.Join(Home(), "script-hints.jsonl")
 	data, err := os.ReadFile(path)
@@ -97,10 +99,8 @@ func pruneHints(cutoff time.Time, dryRun bool) (int, error) {
 	}
 	var kept bytes.Buffer
 	count := 0
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 4096), len(data)+1)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	complete := bytes.LastIndexByte(data, '\n') + 1
+	for _, line := range bytes.Split(data[:complete], []byte{'\n'})[:bytes.Count(data[:complete], []byte{'\n'})] {
 		var record struct {
 			Time time.Time `json:"time"`
 		}
@@ -111,9 +111,7 @@ func pruneHints(cutoff time.Time, dryRun bool) (int, error) {
 		kept.Write(line)
 		kept.WriteByte('\n')
 	}
-	if err := scanner.Err(); err != nil {
-		return 0, err
-	}
+	kept.Write(data[complete:])
 	if dryRun || count == 0 {
 		return count, nil
 	}
@@ -125,14 +123,27 @@ func pruneHints(cutoff time.Time, dryRun bool) (int, error) {
 	if err = tmp.Chmod(0600); err == nil {
 		_, err = tmp.Write(kept.Bytes())
 	}
+	beforeHintsRename()
+	current, readErr := os.ReadFile(path)
+	if err == nil && readErr != nil {
+		err = readErr
+	}
+	if err == nil && !bytes.HasPrefix(current, data) {
+		err = errors.New("hints file changed during pruning")
+	}
+	if err == nil {
+		_, err = tmp.Write(current[len(data):])
+	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}
 	if err != nil {
-		return 0, err
+		fmt.Fprintf(os.Stderr, "warning: pruning script hints: %v\n", err)
+		return 0, nil
 	}
-	if err = os.Rename(tmp.Name(), path); err != nil {
-		return 0, err
+	if err = renameHints(tmp.Name(), path); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: pruning script hints: %v\n", err)
+		return 0, nil
 	}
 	return count, nil
 }
