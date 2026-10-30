@@ -3,7 +3,7 @@
 // effects: read, write-workspace, exec
 // parameters: --root:path=.; --baseline:path=scripts/comment-baseline.txt; --prune:bool=false; --init:bool=false
 // example: go test -count=1 ./scripts/comment-check
-// hash: f6057d91ea3eee945dea379f7e6ca5c93e9d9408ebd64fe066fcdfb484b47862
+// hash: bfbeb19fed4282c7eaddc632365a30da21cdb040d6466d5d908de0c7a3ec86ca
 package main
 
 import (
@@ -35,9 +35,11 @@ const (
 )
 
 var (
-	citeIssueRe  = regexp.MustCompile(`#[0-9]+\b`)
-	citeDateRe   = regexp.MustCompile(`\b(?:19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}\b`)
-	citeReviewRe = regexp.MustCompile(`(?i)\b(?:review\s+(?:rounds?|findings?|comments?)|(?:after|per|from|during|in)\s+(?:the|a|this|that)\s+(?:code\s+)?review|(?:the\s+)?review(?:er)?\s+(?:said|asked|found|noted|flagged|suggested)|as\s+reviewed|reviewed\s+(?:in|on|by))\b`)
+	citeIssueRe     = regexp.MustCompile(`#[0-9]+\b`)
+	citeDateRe      = regexp.MustCompile(`\b(?:19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}\b`)
+	citeReviewRe    = regexp.MustCompile(`(?i)\b(?:review\s+(?:rounds?|findings?|comments?|feedback)|(?:after|per|from)\s+(?:(?:the|a|this|that)\s+)?(?:code\s+)?review|(?:during|in)\s+(?:the|a|this|that)\s+(?:code\s+)?review|pr\s+review|(?:the\s+)?review(?:er)?\s+(?:said|asked|found|noted|flagged|suggested)|as\s+reviewed|reviewed\s+(?:in|on|by))\b`)
+	productReviewRe = regexp.MustCompile(`(?i)\b(?:in\s+a\s+review\s+task|during\s+a\s+code\s+review|files\s+reviewed\s+by|post\s+review\s+comments)\b`)
+	colorRe         = regexp.MustCompile(`(?i)^#[0-9a-f]{6}$`)
 )
 
 type newEntry struct {
@@ -200,7 +202,16 @@ func isKeptHeader(trimmed string) bool {
 }
 
 func hasCitation(s string) bool {
-	return citeIssueRe.MatchString(s) || citeDateRe.MatchString(s) || citeReviewRe.MatchString(s)
+	for _, loc := range citeIssueRe.FindAllStringIndex(s, -1) {
+		end := loc[1]
+		for end < len(s) && ((s[end] >= '0' && s[end] <= '9') || (s[end] >= 'a' && s[end] <= 'f') || (s[end] >= 'A' && s[end] <= 'F')) {
+			end++
+		}
+		if !colorRe.MatchString(s[loc[0]:end]) {
+			return true
+		}
+	}
+	return citeDateRe.MatchString(s) || citeReviewRe.MatchString(productReviewRe.ReplaceAllString(s, ""))
 }
 
 func fingerprintLines(lines []string) string {
@@ -269,7 +280,20 @@ func scanFile(relPath string, src []byte) (int64, int, []violation, error) {
 			endLine = tf.PositionFor(pos+token.Pos(len(lit)-1), false).Line
 		}
 		if tok == token.COMMENT {
-			if !seenOnLine[startLine] {
+			endOffset := tf.Offset(pos) + len(lit)
+			if strings.HasPrefix(lit, "/*") {
+				endOffset = tf.Offset(pos) + strings.Index(string(src[tf.Offset(pos):]), "*/") + 2
+				endLine = tf.PositionFor(tf.Pos(endOffset-1), false).Line
+			}
+			suffix := rawLines[endLine-1]
+			if i := strings.Index(suffix, "\n"); i >= 0 {
+				suffix = suffix[:i]
+			}
+			endColumn := tf.PositionFor(tf.Pos(endOffset), false).Column - 1
+			if endColumn <= len(suffix) {
+				suffix = suffix[endColumn:]
+			}
+			if !seenOnLine[startLine] && strings.TrimSpace(suffix) == "" {
 				if len(wholeSpans) > 0 && wholeSpans[len(wholeSpans)-1].endLine+1 >= startLine {
 					if endLine > wholeSpans[len(wholeSpans)-1].endLine {
 						wholeSpans[len(wholeSpans)-1].endLine = endLine
