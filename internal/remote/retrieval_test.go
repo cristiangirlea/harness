@@ -149,3 +149,46 @@ func TestRetrievalTLSFailureIsNotOptionalAvailability(t *testing.T) {
 		t.Fatal("TLS verification bypassed optional policy")
 	}
 }
+
+func TestRetrievalClientRejectsCredentialEchoAndQueryDigestMismatch(t *testing.T) {
+	token := strings.Repeat("t", 64)
+	query := "fixture query"
+	packet := retrieval.Packet{Entries: []retrieval.Entry{}, QueryDigest: retrieval.TextDigest(query), Digest: retrieval.TextDigest("")}
+	var response string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(response)) }))
+	defer srv.Close()
+	t.Setenv("HRN_SERVER_URL", srv.URL)
+	t.Setenv("HRN_TENANT_TOKEN", token)
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	c, err := NewFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		packet retrieval.Packet
+		echo   bool
+	}{
+		{"credential echo", packet, true},
+		{"query digest", func() retrieval.Packet { p := packet; p.QueryDigest = retrieval.TextDigest("different"); return p }(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.packet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response = string(b)
+			if tc.echo {
+				response = strings.TrimSuffix(response, "}") + `,"echo":"` + token + `"}`
+			}
+			_, err = c.SearchKnowledge(context.Background(), retrieval.Search{Query: query})
+			want := "query digest"
+			if tc.echo {
+				want = "reflected a credential"
+			}
+			if err == nil || !strings.Contains(err.Error(), want) || RetrievalUnavailable(err) {
+				t.Fatalf("response not refused for %s: %v", want, err)
+			}
+		})
+	}
+}

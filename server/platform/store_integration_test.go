@@ -197,6 +197,22 @@ func TestRepositoryOpenRejectsVersionOneDatabase(t *testing.T) {
 	}
 }
 
+func TestRepositoryOpenRejectsVersionTwoDatabase(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(ctx, "DELETE FROM schema_migrations WHERE version>=3"); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(ctx, s.db.Config().ConnString())
+	if opened != nil {
+		opened.Close()
+		t.Fatal("Open accepted a version 2 database")
+	}
+	if err == nil || !strings.Contains(err.Error(), "unsupported schema version 2") {
+		t.Fatalf("Open error for version 2: %v", err)
+	}
+}
+
 func TestPostgresMigrationAndScopedSubmission(t *testing.T) {
 	s := testStore(t)
 	p, token := testProject(t, s)
