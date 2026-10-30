@@ -5,8 +5,60 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 )
+
+func TestCompareNotesTaskRunOptions(t *testing.T) {
+	for name, change := range map[string]func(*batch.Task){
+		"backend":              func(t *batch.Task) { t.Backend = "codex" },
+		"lean":                 func(t *batch.Task) { t.Lean = agent.Bool(false) },
+		"skills":               func(t *batch.Task) { t.Skills = agent.Bool(true) },
+		"model":                func(t *batch.Task) { t.Model = "other" },
+		"effort":               func(t *batch.Task) { t.Effort = "high" },
+		"append_system_prompt": func(t *batch.Task) { t.AppendSystemPrompt = "extra" },
+		"no_skills":            func(t *batch.Task) { t.NoSkills = true },
+		"retrieval":            func(t *batch.Task) { t.Retrieval = "required" },
+		"retrieval_version":    func(t *batch.Task) { t.RetrievalVersion = "v2" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+			b := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+			change(&b.Spec.Tasks[0])
+			data, err := json.Marshal(Compare(a, b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(data, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if string(fields["task_options_changed"]) != `["task"]` {
+				t.Fatalf("diff: %s", data)
+			}
+			data, _ = json.Marshal(Compare(a, a))
+			fields = nil
+			if err := json.Unmarshal(data, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := fields["task_options_changed"]; ok {
+				t.Fatalf("unchanged: %s", data)
+			}
+		})
+	}
+}
+
+func TestCompareNotesInheritedTaskRunOptions(t *testing.T) {
+	a := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+	b := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+	b.Spec.Model = "other"
+	if got := Compare(a, b).TaskOptionsChanged; len(got) != 1 || got[0] != "task" {
+		t.Fatalf("changed = %v, want [task]", got)
+	}
+	if got := Compare(a, a).TaskOptionsChanged; len(got) != 0 {
+		t.Fatalf("unchanged = %v, want no note", got)
+	}
+}
 
 // twoEvals builds a before and an after of the same task set: sonnet improved,
 // haiku was dropped, opus was added, and the greet prompt was reworded.
@@ -222,5 +274,14 @@ func TestAReloadedRecordDiffsATaskWithoutAGateAsTheSpecs(t *testing.T) {
 	explicit.Spec.Tasks[0].Gate = []string{"true"}
 	if d := Compare(saved, explicit); join(d.GateChanged) != "vet" {
 		t.Errorf("gate changed = %v, want vet", d.GateChanged)
+	}
+}
+
+func TestCompareIgnoresTaskShapeTools(t *testing.T) {
+	a := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+	b := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+	b.Spec.Tasks[0].ShapeTools = true
+	if got := Compare(a, b).TaskOptionsChanged; len(got) != 0 {
+		t.Fatalf("shape_tools: %v", got)
 	}
 }

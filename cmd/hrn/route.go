@@ -95,13 +95,17 @@ func cmdRoute(args []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		rows := route.FromEval(rec, *margin)
+		rows, skipped := route.FromEval(rec, *margin)
 		t, err := route.Load()
 		if err != nil {
 			return 1, err
 		}
 		if err := printRoutes(os.Stdout, rows); err != nil {
 			return 1, err
+		}
+		r := newRenderer(false)
+		for _, cell := range skipped {
+			r.Line(r.c(dim, fmt.Sprintf("  skipped variant %s, task %s: %s", cell.Variant, cell.Task, cell.Reason)))
 		}
 		for category, row := range rows {
 			t[category] = row

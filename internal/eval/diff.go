@@ -3,6 +3,7 @@ package eval
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"slices"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -22,6 +23,8 @@ type Diff struct {
 	VariantChanged []string `json:"variant_changed,omitempty"`
 	// GateChanged flags gates or expect patterns that change passing's meaning.
 	GateChanged []string `json:"gate_changed,omitempty"`
+	// TaskOptionsChanged flags changes to a task's effective run options.
+	TaskOptionsChanged []string `json:"task_options_changed,omitempty"`
 	// JudgeChanged ignores repeats, which leave the scoring scale unchanged.
 	JudgeChanged bool `json:"judge_changed,omitempty"`
 	Judged       bool `json:"judged,omitempty"`
@@ -107,13 +110,17 @@ func Compare(a, b Record) Diff {
 
 	// Expose confounders to avoid misattributing score changes.
 	type check struct {
-		prompt string
-		gates  []string
-		expect string
+		prompt  string
+		gates   []string
+		expect  string
+		backend string
+		options agent.Options
 	}
 	before := map[string]check{}
 	for _, t := range a.Spec.Tasks {
-		before[t.ID] = check{t.Prompt, firstOfList(t.Gate, a.Spec.Gate), t.Expect}
+		options := t.Options.Over(a.Spec.Options)
+		options.ShapeTools = false
+		before[t.ID] = check{t.Prompt, firstOfList(t.Gate, a.Spec.Gate), t.Expect, firstOf(t.Backend, a.Spec.Backend), options}
 	}
 	for _, t := range b.Spec.Tasks {
 		was, ok := before[t.ID]
@@ -125,6 +132,11 @@ func Compare(a, b Record) Diff {
 		}
 		if !slices.Equal(was.gates, firstOfList(t.Gate, b.Spec.Gate)) || was.expect != t.Expect {
 			d.GateChanged = append(d.GateChanged, t.ID)
+		}
+		options := t.Options.Over(b.Spec.Options)
+		options.ShapeTools = false
+		if was.backend != firstOf(t.Backend, b.Spec.Backend) || !reflect.DeepEqual(was.options, options) {
+			d.TaskOptionsChanged = append(d.TaskOptionsChanged, t.ID)
 		}
 	}
 	defs := map[string]Variant{}

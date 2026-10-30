@@ -56,6 +56,9 @@ func (m RetrievalManifest) Validate() error {
 	if a.Key() == b.Key() || a.Backend == "" || a.Backend != b.Backend || a.Model == "" || a.Model != b.Model || a.Effort != b.Effort {
 		return fmt.Errorf("variants must use identical explicit backend/model/effort")
 	}
+	if !sameOptional(a.Lean, b.Lean) || a.ShapeTools != b.ShapeTools {
+		return fmt.Errorf("variants must use identical lean and shape_tools settings")
+	}
 	if a.ChangesHarness() || b.ChangesHarness() {
 		return fmt.Errorf("variants must not change the harness: prompt_prefix, append_system_prompt or no_skills would be counted as retrieval")
 	}

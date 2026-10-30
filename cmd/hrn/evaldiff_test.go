@@ -71,6 +71,18 @@ func TestEvalDiffPrintsBothSidesAndWhatChanged(t *testing.T) {
 	}
 }
 
+func TestEvalDiffPrintsTaskOptionChanges(t *testing.T) {
+	a, b := diffPair()
+	b.Spec.Tasks[0].Model = "other"
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEvalDiff(r, eval.Compare(a, b))
+	if !strings.Contains(buf.String(), "run options differ for task greet") {
+		t.Fatalf("missing task options note: %s", buf.String())
+	}
+}
+
 func TestEvalListShowsTheNewestFirst(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	a, b := diffPair()

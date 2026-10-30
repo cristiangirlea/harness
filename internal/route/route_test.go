@@ -55,17 +55,17 @@ func evidence() eval.Record {
 
 func TestFromEvalPurposeMarginAndEffort(t *testing.T) {
 	r := evidence()
-	tab := FromEval(r, .05)
+	tab := routesFromEval(r, .05)
 	if len(tab) != 2 || tab["implement"].Effort != "low" || tab["implement"].Model != "sol" || tab["review"].Effort != "high" {
 		t.Fatalf("routes: %+v", tab)
 	}
 	if tab["implement"].Eval != "e1" || tab["implement"].Set != "2026-10-12" {
 		t.Fatalf("provenance: %+v", tab)
 	}
-	if got := FromEval(r, .1)["implement"]; got.Model != "small" {
+	if got := routesFromEval(r, .1)["implement"]; got.Model != "small" {
 		t.Fatalf("margin: %+v", got)
 	}
-	if got := FromEval(eval.Record{}, .05); len(got) != 0 {
+	if got := routesFromEval(eval.Record{}, .05); len(got) != 0 {
 		t.Fatalf("empty: %v", got)
 	}
 }
@@ -75,7 +75,7 @@ func TestFromEvalPrefersPlanAtEqualCostAndRate(t *testing.T) {
 	r.Spec.Matrix[2].Model = "sol"
 	r.Table.Variants[2].MedianCostUSD = 2
 	r.Table.Tasks[2].Passed = 10
-	if got := FromEval(r, 0)["implement"]; got.Backend != "codex" {
+	if got := routesFromEval(r, 0)["implement"]; got.Backend != "codex" {
 		t.Fatalf("tie: %+v", got)
 	}
 }
@@ -94,7 +94,7 @@ func TestFromEvalSkipsMissingAndNonFiniteCosts(t *testing.T) {
 			} else {
 				r.Table.Variants[2].MedianCostUSD = tc.cost
 			}
-			if got := FromEval(r, .1)["implement"]; got.Backend != "codex" || got.Model != "sol" || got.Effort != "low" {
+			if got := routesFromEval(r, .1)["implement"]; got.Backend != "codex" || got.Model != "sol" || got.Effort != "low" {
 				t.Fatalf("invalid cost selected: %+v", got)
 			}
 		})
@@ -108,14 +108,14 @@ func TestFromEvalPlanPreferencePrecedesEffortAcrossFamilies(t *testing.T) {
 	r.Table.Variants[0].MedianCostUSD = 2
 	r.Table.Variants[2].MedianCostUSD = 2
 	r.Table.Tasks[2].Passed = 10
-	if got := FromEval(r, 0)["implement"]; got.Backend != "codex" || got.Model != "sol" || got.Effort != "high" {
+	if got := routesFromEval(r, 0)["implement"]; got.Backend != "codex" || got.Model != "sol" || got.Effort != "high" {
 		t.Fatalf("lower effort beat plan CLI: %+v", got)
 	}
 }
 
 func TestFromEvalInvalidMarginReturnsEmptyTable(t *testing.T) {
 	for _, margin := range []float64{-.01, 1.01, math.NaN(), math.Inf(1), math.Inf(-1)} {
-		if got := FromEval(evidence(), margin); got == nil || len(got) != 0 {
+		if got := routesFromEval(evidence(), margin); got == nil || len(got) != 0 {
 			t.Errorf("margin %v: got %+v, want empty table", margin, got)
 		}
 	}
@@ -130,17 +130,17 @@ func TestFromEvalInheritsMeasuredTaskChoices(t *testing.T) {
 	r.Spec.Tasks[0].Backend = "codex"
 	r.Spec.Tasks[0].Model = "task-model"
 	r.Spec.Tasks[0].Effort = "medium"
-	if got := FromEval(r, 0)["implement"]; got.Backend != "codex" || got.Model != "task-model" || got.Effort != "medium" {
+	if got := routesFromEval(r, 0)["implement"]; got.Backend != "codex" || got.Model != "task-model" || got.Effort != "medium" {
 		t.Fatalf("task choices lost: %+v", got)
 	}
-	if got := FromEval(r, 0)["review"]; got.Backend != "api" || got.Model != "spec-model" || got.Effort != "max" {
+	if got := routesFromEval(r, 0)["review"]; got.Backend != "api" || got.Model != "spec-model" || got.Effort != "max" {
 		t.Fatalf("spec choices lost: %+v", got)
 	}
 	// A single row cannot reproduce variants whose tasks in one purpose used
 	// different models. Do not misattribute their combined pass rate.
 	r.Spec.Tasks = append(r.Spec.Tasks, batch.Task{ID: "other", Prompt: "Implement another widget", Options: agent.Options{Model: "different"}})
 	r.Table.Tasks = append(r.Table.Tasks, eval.TaskRow{Task: "other", Variant: "high", Passed: 10, Total: 10})
-	if _, ok := FromEval(r, 0)["implement"]; ok {
+	if _, ok := routesFromEval(r, 0)["implement"]; ok {
 		t.Fatal("mixed model evidence became one route")
 	}
 }
@@ -254,7 +254,7 @@ func TestFromEvalFindsAnUnnamedVariantByEvalsOwnName(t *testing.T) {
 	name := r.Spec.Matrix[0].Key()
 	r.Table.Variants = []eval.VariantRow{{Name: name, MedianCostUSD: 1}}
 	r.Table.Tasks = []eval.TaskRow{{Task: "build", Variant: name, Passed: 1, Total: 1}}
-	if row := FromEval(r, 0)["implement"]; row.Backend != "codex" || row.Effort != "low" {
+	if row := routesFromEval(r, 0)["implement"]; row.Backend != "codex" || row.Effort != "low" {
 		t.Fatalf("unnamed variant: %+v", row)
 	}
 }
@@ -267,38 +267,84 @@ func TestFromEvalDoesNotCreditAHarnessChangeToTheModel(t *testing.T) {
 	} {
 		r := evidence()
 		edit(&r.Spec.Matrix[1]) // "low" wins implement without the change
-		if got := FromEval(r, .05)["implement"]; got.Effort != "high" {
+		if got := routesFromEval(r, .05)["implement"]; got.Effort != "high" {
 			t.Errorf("%+v: implement = %+v, want the plain variant", r.Spec.Matrix[1], got)
 		}
 	}
 	// A harness variant that beats every plain one does not set the bar either.
 	r := evidence()
 	r.Spec.Matrix[0].NoSkills = true // "high", the only one at 10/10 on check
-	if got := FromEval(r, .05)["review"]; got.Effort != "low" || got.Model != "sol" {
+	if got := routesFromEval(r, .05)["review"]; got.Effort != "low" || got.Model != "sol" {
 		t.Errorf("review = %+v, want the best plain variant", got)
 	}
 	r = evidence()
 	r.Spec.AppendSystemPrompt = "Run the tests."
-	if got := FromEval(r, .05); len(got) != 0 {
+	if got := routesFromEval(r, .05); len(got) != 0 {
 		t.Errorf("a spec-wide harness change routes nothing: %+v", got)
 	}
 	r = evidence()
 	r.Spec.Tasks[0].NoSkills = true
-	if got := FromEval(r, .05); len(got) != 1 || got["implement"].Backend != "" {
+	if got := routesFromEval(r, .05); len(got) != 1 || got["implement"].Backend != "" {
 		t.Errorf("the task with a harness change is left out: %+v", got)
+	}
+}
+
+func TestFromEvalSkipsNonDefaultVariantOptions(t *testing.T) {
+	for name, edit := range map[string]func(*eval.Variant){
+		"lean":        func(v *eval.Variant) { v.Lean = agent.Bool(false) },
+		"shape_tools": func(v *eval.Variant) { v.ShapeTools = true },
+		"retrieval":   func(v *eval.Variant) { v.Retrieval = "required" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := evidence()
+			edit(&r.Spec.Matrix[1])
+			if got := routesFromEval(r, .05)["implement"]; got.Effort != "high" {
+				t.Fatalf("selected non-default variant: %+v", got)
+			}
+		})
+	}
+	r := evidence()
+	r.Spec.Matrix[0].Lean = agent.Bool(false)
+	if got := routesFromEval(r, .05)["review"]; got.Effort != "low" {
+		t.Fatalf("non-default variant set the pass-rate bar: %+v", got)
+	}
+	r = evidence()
+	r.Spec.Matrix[1].Lean = agent.Bool(true)
+	r.Spec.Matrix[1].Retrieval = "off"
+	if got := routesFromEval(r, .05)["implement"]; got.Effort != "low" {
+		t.Fatalf("explicit defaults skipped: %+v", got)
+	}
+	for name, edit := range map[string]func(*agent.Options){
+		"lean":      func(o *agent.Options) { o.Lean = agent.Bool(false) },
+		"retrieval": func(o *agent.Options) { o.Retrieval = "required" },
+	} {
+		t.Run("task "+name, func(t *testing.T) {
+			r := evidence()
+			edit(&r.Spec.Tasks[0].Options)
+			if _, ok := routesFromEval(r, .05)["implement"]; ok && name == "retrieval" {
+				t.Fatal("non-default task options routed")
+			}
+		})
+		t.Run("spec "+name, func(t *testing.T) {
+			r := evidence()
+			edit(&r.Spec.Options)
+			if got := routesFromEval(r, .05); name == "retrieval" && len(got) != 0 {
+				t.Fatalf("non-default spec options routed: %+v", got)
+			}
+		})
 	}
 }
 
 func TestFromEvalLeavesCellsThatNeverActedOutOfThePassRate(t *testing.T) {
 	r := evidence()
 	r.Table.Tasks[2].DidNotAct = 1 // small's one miss on build never acted: 9 of 9
-	if got := FromEval(r, .05)["implement"]; got.Model != "small" {
+	if got := routesFromEval(r, .05)["implement"]; got.Model != "small" {
 		t.Fatalf("implement = %+v; the cheapest variant passed every cell that acted", got)
 	}
 	r.Table.Tasks[5] = eval.TaskRow{Task: "check", Variant: "small", Total: 10, DidNotAct: 10}
 	r.Table.Tasks[4].Passed = 0
 	r.Table.Tasks[3].Passed = 0
-	if got, ok := FromEval(r, .05)["review"]; ok && got.Model == "small" {
+	if got, ok := routesFromEval(r, .05)["review"]; ok && got.Model == "small" {
 		t.Fatalf("review = %+v; a variant with no cell that acted is no evidence", got)
 	}
 }
@@ -316,8 +362,66 @@ func TestFromEvalLeavesOutCellsThatDidNotStart(t *testing.T) {
 			r.Table.Variants[i].DidNotStart = r.Table.Variants[i].Attempts
 		}
 	}
-	tab := FromEval(r, .1)
+	tab := routesFromEval(r, .1)
 	if got := tab["implement"]; got.Model == "small" {
 		t.Fatalf("a variant whose cells never started was still chosen: %+v", got)
+	}
+}
+
+func TestFromEvalLeanOnlyAffectsSupportedBackends(t *testing.T) {
+	for _, scope := range []string{"task", "spec"} {
+		t.Run(scope, func(t *testing.T) {
+			r := evidence()
+			if scope == "task" {
+				r.Spec.Tasks[0].Lean = agent.Bool(false)
+			} else {
+				r.Spec.Lean = agent.Bool(false)
+			}
+			if got := routesFromEval(r, .1)["implement"]; got.Backend != "api" {
+				t.Fatalf("api excluded: %+v", got)
+			}
+		})
+	}
+}
+
+func routesFromEval(r eval.Record, margin float64) Table {
+	table, _ := FromEval(r, margin)
+	return table
+}
+
+func TestFromEvalReportsSkippedCells(t *testing.T) {
+	r := evidence()
+	r.Spec.Lean = agent.Bool(false)
+	_, skipped := FromEval(r, .05)
+	if len(skipped) != 4 {
+		t.Fatalf("skipped: %+v", skipped)
+	}
+	for _, cell := range skipped {
+		if cell.Variant == "small" || cell.Task == "" || cell.Reason != "lean is false" {
+			t.Errorf("skipped: %+v", cell)
+		}
+	}
+}
+
+func TestFromEvalLeanUsesEffectiveBackendPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		variant, task, spec string
+		skipped             bool
+	}{
+		{"", "", "claude", true},
+		{"", "gemini", "claude", false},
+		{"codex", "gemini", "api", true},
+		{"api", "codex", "claude", false},
+	} {
+		r := evidence()
+		r.Spec.Matrix = []eval.Variant{{Name: "high", Backend: tc.variant}}
+		r.Spec.Tasks[0].Backend = tc.task
+		r.Spec.Backend = tc.spec
+		r.Spec.Lean = agent.Bool(false)
+		r.Table.Tasks = r.Table.Tasks[:1]
+		_, skipped := FromEval(r, 0)
+		if (len(skipped) != 0) != tc.skipped {
+			t.Errorf("variant=%s task=%s spec=%s: %+v", tc.variant, tc.task, tc.spec, skipped)
+		}
 	}
 }

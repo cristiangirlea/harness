@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/route"
@@ -105,5 +106,25 @@ func TestRouteFromEvalPrintsAndMerges(t *testing.T) {
 		if err != nil || tab["implement"].Effort != tc.effort || tab["implement"].Eval != "fixture" || tab["review"].Backend != "claude" {
 			t.Fatalf("table: %+v %v", tab, err)
 		}
+	}
+}
+
+func TestRouteFromEvalPrintsSkippedCells(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	rec := eval.Record{ID: "skip", Spec: eval.Spec{Spec: batch.Spec{Options: agent.Options{Lean: agent.Bool(false)}, Tasks: []batch.Task{{ID: "work", Prompt: "Implement a widget"}}}, Matrix: []eval.Variant{{Name: "full", Backend: "codex"}}}, Table: eval.Table{Tasks: []eval.TaskRow{{Task: "work", Variant: "full", Total: 1, Passed: 1}}}}
+	dir := filepath.Join(runlog.Home(), "evals")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "skip.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, code, err := routeOutput(t, "from-eval", "skip")
+	if code != 0 || err != nil || !strings.Contains(out, "(empty)") || !strings.Contains(out, "skipped variant full, task work: lean is false") {
+		t.Fatalf("output: %s %d %v", out, code, err)
 	}
 }

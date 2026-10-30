@@ -391,6 +391,10 @@ A route row holds only a backend, model and effort, so `hrn route from-eval` ski
 variants (and tasks or specs that set the two run options): their score would be credited to
 the model and routed without the change. A retrieval comparison refuses them for the same
 reason.
+Routing also skips cells with non-default `lean`, `shape_tools` or `retrieval` settings;
+lean affects only claude and codex cells. Each skipped cell is printed with its task,
+variant and reason; retrieval comparisons require matching variant `lean` and
+`shape_tools` settings.
 
 ### The judge
 
@@ -475,6 +479,15 @@ and nothing is marked. A different number of judge repeats does not count as a c
 judge; a variant that changes its backend, model, effort, `prompt_prefix`,
 `append_system_prompt`, `no_skills`, `lean`, `shape_tools`, `retrieval` or
 `retrieval_version` under the same name gets a note.
+The diff also notes changes to a shared task's effective `backend` and run options,
+including values inherited from the spec,
+except `shape_tools`, which the variant always overrides. These options are `model`,
+`mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`,
+`skills`, `append_system_prompt`, `no_skills`, `compact_window`, `allow_dangerous`,
+`inherit_env`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch`, `issue`,
+`take_over`, `retrieval`, `retrieval_tenant`, `retrieval_project`,
+`retrieval_revision` and `retrieval_version`. They appear as `task_options_changed`
+in JSON, even when a variant overrides the task setting.
 
 Every run records the agent setup it started with ([run records](run-records.md)): the
 instruction files its backend loads, its MCP servers, plugins and skills, and its harness
