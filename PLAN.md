@@ -17,9 +17,9 @@ These are not preferences; a PR that breaks one is not mergeable.
    codex, gemini, opencode) are optional external programs, not dependencies.
 2. **One PR per increment.** Branch from `main` (or from the feature branch the increment
    is a piece of), short branch name (as in `fix-batch-rm-deregistered`).
-   Open the PR with `gh pr create`. Self-review with `/code-review`; fix every blocking
-   finding as its own small commit on the same PR (do not squash the fixes into the
-   original commit) and file the rest as issues (AGENTS.md, Working rules). CI must be
+   Open the PR with `gh pr create`. Self-review with `/code-review`; fix every defect it
+   finds in the branch before the push, one commit per review round, and drop nits
+   (AGENTS.md, Working rules). CI must be
    green on both `ubuntu-latest` and `windows-latest`. Merge with a merge commit, delete
    the branch.
 3. **No AI attribution anywhere.** No `Co-Authored-By`, no `Assisted-by`, no
