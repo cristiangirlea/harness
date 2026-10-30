@@ -321,7 +321,7 @@ func acquire(p string, l Lease) (busy string, holder *Lease, changed bool, err e
 		return "", nil, false, err
 	}
 	for range 2 {
-		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err == nil {
 			_, werr := f.Write(append(data, '\n'))
 			if cerr := f.Close(); werr == nil {

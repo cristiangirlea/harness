@@ -122,7 +122,7 @@ func Note(backend string, res agent.Result) error {
 }
 
 func writeFile(name string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(filepath.Dir(name), fileName+".*")

@@ -2473,7 +2473,7 @@ func save(res Result) error {
 			return err
 		}
 	}
-	if err := os.MkdirAll(batchesDir(), 0o755); err != nil {
+	if err := os.MkdirAll(batchesDir(), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(res, "", "  ")
@@ -2488,7 +2488,7 @@ func save(res Result) error {
 	}
 	defer root.Close()
 	name := res.ID + ".json"
-	if err := root.WriteFile(name+".tmp", data, 0o644); err != nil {
+	if err := root.WriteFile(name+".tmp", data, 0o600); err != nil {
 		return err
 	}
 	const budget = 2 * time.Second

@@ -95,7 +95,7 @@ func Save(home string, p Prefs) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(home, 0755); err != nil {
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(home, ".backends-*.json")

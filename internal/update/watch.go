@@ -88,20 +88,20 @@ func (r Restarter) Restart(ctx context.Context, w Watch, exe string) (int, strin
 
 // StartDetached launches exe independently, appending output to named files.
 func StartDetached(exe string, args []string, stdout, stderr string) (int, error) {
-	if err := os.MkdirAll(filepath.Dir(stdout), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(stdout), 0o700); err != nil {
 		return 0, err
 	}
-	out, err := os.OpenFile(stdout, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	out, err := os.OpenFile(stdout, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return 0, err
 	}
 	defer out.Close()
 	errf := out
 	if stderr != stdout {
-		if err := os.MkdirAll(filepath.Dir(stderr), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(stderr), 0o700); err != nil {
 			return 0, err
 		}
-		if errf, err = os.OpenFile(stderr, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err != nil {
+		if errf, err = os.OpenFile(stderr, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err != nil {
 			return 0, err
 		}
 		defer errf.Close()

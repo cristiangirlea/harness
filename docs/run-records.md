@@ -5,6 +5,7 @@
 ## Run records
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
+On Unix, newly created record directories use mode 0700 and record files use mode 0600; existing permissions are not changed.
 
 Batch record saves retry permission errors during rename with growing pauses for up to
 two seconds. On Windows, sharing and byte-range lock violations are retried too.
