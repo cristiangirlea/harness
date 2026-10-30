@@ -5,6 +5,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/route/table"
@@ -31,22 +32,40 @@ func FromEval(rec eval.Record, margin float64) Table {
 	}
 	categories := map[string]string{}
 	tasks := map[string]struct{ backend, model, effort string }{}
+	options := map[string]agent.Options{}
 	for _, t := range rec.Spec.Tasks {
 		if t.AppendSystemPrompt != "" || t.NoSkills {
 			continue
 		}
 		categories[t.ID] = purpose.Classify(t.Prompt).Category
 		tasks[t.ID] = struct{ backend, model, effort string }{t.Backend, t.Model, t.Effort}
+		options[t.ID] = t.Options.Over(rec.Spec.Options)
 	}
 	// Left out of the bar too, so a better harness does not disqualify every plain variant.
 	harnessed := map[string]bool{}
+	variants := map[string]eval.Variant{}
 	for _, v := range rec.Spec.Matrix {
 		harnessed[v.Key()] = v.ChangesHarness()
+		variants[v.Key()] = v
+	}
+	eligible := func(name, task string) bool {
+		v, exists := variants[name]
+		if !exists || harnessed[name] {
+			return false
+		}
+		o := options[task]
+		if v.Lean != nil {
+			o.Lean = v.Lean
+		}
+		if v.Retrieval != "" {
+			o.Retrieval = v.Retrieval
+		}
+		return o.IsLean() && !v.ShapeTools && (o.Retrieval == "" || o.Retrieval == "off")
 	}
 	groups := map[string]map[string]eval.VariantRow{}
 	for _, t := range rec.Table.Tasks {
 		cat, ok := categories[t.Task]
-		if !ok || t.Total-t.DidNotAct-t.DidNotStart <= 0 || harnessed[t.Variant] {
+		if !ok || t.Total-t.DidNotAct-t.DidNotStart <= 0 || !eligible(t.Variant, t.Task) {
 			continue
 		}
 		if groups[cat] == nil {
@@ -111,7 +130,7 @@ func FromEval(rec eval.Record, margin float64) Table {
 			var effective eval.Variant
 			found, mixed := false, false
 			for _, tr := range rec.Table.Tasks {
-				if tr.Variant != name || tr.Total-tr.DidNotAct-tr.DidNotStart <= 0 || categories[tr.Task] != cat {
+				if tr.Variant != name || tr.Total-tr.DidNotAct-tr.DidNotStart <= 0 || categories[tr.Task] != cat || !eligible(name, tr.Task) {
 					continue
 				}
 				t := tasks[tr.Task]

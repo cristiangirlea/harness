@@ -289,6 +289,52 @@ func TestFromEvalDoesNotCreditAHarnessChangeToTheModel(t *testing.T) {
 	}
 }
 
+func TestFromEvalSkipsNonDefaultVariantOptions(t *testing.T) {
+	for name, edit := range map[string]func(*eval.Variant){
+		"lean":        func(v *eval.Variant) { v.Lean = agent.Bool(false) },
+		"shape_tools": func(v *eval.Variant) { v.ShapeTools = true },
+		"retrieval":   func(v *eval.Variant) { v.Retrieval = "required" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := evidence()
+			edit(&r.Spec.Matrix[1])
+			if got := FromEval(r, .05)["implement"]; got.Effort != "high" {
+				t.Fatalf("selected non-default variant: %+v", got)
+			}
+		})
+	}
+	r := evidence()
+	r.Spec.Matrix[0].Lean = agent.Bool(false)
+	if got := FromEval(r, .05)["review"]; got.Effort != "low" {
+		t.Fatalf("non-default variant set the pass-rate bar: %+v", got)
+	}
+	r = evidence()
+	r.Spec.Matrix[1].Lean = agent.Bool(true)
+	r.Spec.Matrix[1].Retrieval = "off"
+	if got := FromEval(r, .05)["implement"]; got.Effort != "low" {
+		t.Fatalf("explicit defaults skipped: %+v", got)
+	}
+	for name, edit := range map[string]func(*agent.Options){
+		"lean":      func(o *agent.Options) { o.Lean = agent.Bool(false) },
+		"retrieval": func(o *agent.Options) { o.Retrieval = "required" },
+	} {
+		t.Run("task "+name, func(t *testing.T) {
+			r := evidence()
+			edit(&r.Spec.Tasks[0].Options)
+			if _, ok := FromEval(r, .05)["implement"]; ok {
+				t.Fatal("non-default task options routed")
+			}
+		})
+		t.Run("spec "+name, func(t *testing.T) {
+			r := evidence()
+			edit(&r.Spec.Options)
+			if got := FromEval(r, .05); len(got) != 0 {
+				t.Fatalf("non-default spec options routed: %+v", got)
+			}
+		})
+	}
+}
+
 func TestFromEvalLeavesCellsThatNeverActedOutOfThePassRate(t *testing.T) {
 	r := evidence()
 	r.Table.Tasks[2].DidNotAct = 1 // small's one miss on build never acted: 9 of 9

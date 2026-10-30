@@ -22,6 +22,8 @@ type Diff struct {
 	VariantChanged []string `json:"variant_changed,omitempty"`
 	// GateChanged flags gates or expect patterns that change passing's meaning.
 	GateChanged []string `json:"gate_changed,omitempty"`
+	// TaskOptionsChanged flags changes to a task's own run options.
+	TaskOptionsChanged []string `json:"task_options_changed,omitempty"`
 	// JudgeChanged ignores repeats, which leave the scoring scale unchanged.
 	JudgeChanged bool `json:"judge_changed,omitempty"`
 	Judged       bool `json:"judged,omitempty"`
@@ -107,13 +109,15 @@ func Compare(a, b Record) Diff {
 
 	// Expose confounders to avoid misattributing score changes.
 	type check struct {
-		prompt string
-		gates  []string
-		expect string
+		prompt                                                   string
+		gates                                                    []string
+		expect                                                   string
+		model, effort, systemPrompt, retrieval, retrievalVersion string
+		noSkills                                                 bool
 	}
 	before := map[string]check{}
 	for _, t := range a.Spec.Tasks {
-		before[t.ID] = check{t.Prompt, firstOfList(t.Gate, a.Spec.Gate), t.Expect}
+		before[t.ID] = check{t.Prompt, firstOfList(t.Gate, a.Spec.Gate), t.Expect, t.Model, t.Effort, t.AppendSystemPrompt, t.Retrieval, t.RetrievalVersion, t.NoSkills}
 	}
 	for _, t := range b.Spec.Tasks {
 		was, ok := before[t.ID]
@@ -125,6 +129,9 @@ func Compare(a, b Record) Diff {
 		}
 		if !slices.Equal(was.gates, firstOfList(t.Gate, b.Spec.Gate)) || was.expect != t.Expect {
 			d.GateChanged = append(d.GateChanged, t.ID)
+		}
+		if was.model != t.Model || was.effort != t.Effort || was.systemPrompt != t.AppendSystemPrompt || was.noSkills != t.NoSkills || was.retrieval != t.Retrieval || was.retrievalVersion != t.RetrievalVersion {
+			d.TaskOptionsChanged = append(d.TaskOptionsChanged, t.ID)
 		}
 	}
 	defs := map[string]Variant{}

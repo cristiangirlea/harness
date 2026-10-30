@@ -8,6 +8,25 @@ import (
 	"testing"
 )
 
+func TestRetrievalRequiresMatchingLeanAndShaping(t *testing.T) {
+	for name, edit := range map[string]func(*Variant){
+		"lean true":   func(v *Variant) { v.Lean = new(bool); *v.Lean = true },
+		"lean false":  func(v *Variant) { v.Lean = new(bool) },
+		"shape_tools": func(v *Variant) { v.ShapeTools = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, _, err := RetrievalFixture()
+			if err != nil {
+				t.Fatal(err)
+			}
+			edit(&m.Spec.Matrix[1])
+			if err := m.Validate(); err == nil {
+				t.Fatal("different settings accepted")
+			}
+		})
+	}
+}
+
 func TestSyntheticComparisonCannotClaimRealModelSavings(t *testing.T) {
 	var m RetrievalManifest
 	var samples []RetrievalSample

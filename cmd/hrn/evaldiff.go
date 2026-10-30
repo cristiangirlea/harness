@@ -83,6 +83,9 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 	for _, id := range d.GateChanged {
 		r.Line(r.c(dim, fmt.Sprintf("  note: the gates or expect differ for task %s, so passing means something else on each side", id)))
 	}
+	for _, id := range d.TaskOptionsChanged {
+		r.Line(r.c(dim, fmt.Sprintf("  note: run options differ for task %s, so its rows may use different settings", id)))
+	}
 	for _, name := range d.VariantChanged {
 		r.Line(r.c(dim, fmt.Sprintf("  note: variant %s runs a different backend, model, effort or harness in %s", name, d.B)))
 	}
