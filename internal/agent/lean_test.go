@@ -155,12 +155,13 @@ func TestCodexDisablesEachServerInTheUsersConfigByDefault(t *testing.T) {
 }
 
 func TestCodexTranslatesTheRunsMCPServersInsteadOfDisablingThem(t *testing.T) {
-	codexHome(t, codexConfigFixture)
+	codexHome(t, strings.ReplaceAll(codexConfigFixture, "mcp_servers.github", "mcp_servers.original"))
 	file := mcpFile(t, `"github":{"command":"npx","args":["-y","@x/gh"],"env":{"GH_LEVEL":"value-only-in-env"}},`+
 		`"docs":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer no"}}`)
 	args := NewCodexBackend().args(Task{Dir: "/w", Options: Options{MCP: []string{file}}}, "")
 	got := strings.Join(args, " ")
 	want := "exec --json --skip-git-repo-check -C /w" +
+		" -c mcp_servers.original.enabled=false" +
 		" -c mcp_servers.lit.enabled=false" +
 		" -c mcp_servers.github.enabled=true" +
 		` -c mcp_servers.github.command="npx"` +

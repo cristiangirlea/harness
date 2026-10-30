@@ -149,17 +149,21 @@ Claude Code's `--bare` is not used: it logs in only with `ANTHROPIC_API_KEY` or 
 `apiKeyHelper`, never the subscription.
 
 **codex.** In a lean run, hrn reads server names from `$CODEX_HOME/config.toml`
-(or `~/.codex/config.toml`) and the run directory's `.codex/config.toml`, then disables
-them by name. It recognizes table headers, inline server tables and dotted keys;
+(or `~/.codex/config.toml`) and `.codex/config.toml` files from the project root to the
+run directory. It disables project servers by name only when the home config marks the
+project root trusted. It recognizes table headers, inline server tables and dotted keys;
+the top-level inline `mcp_servers = { ... }` form is not supported;
 header-like text inside multiline strings is ignored. Codex only loads a project config when
 it trusts the project. A server provided by a codex plugin can still start. A config server
 whose name is not a bare key (letters, digits, `_` and `-`) cannot be disabled by name and
 stays loaded. `--lean=false` leaves config servers enabled; settings and login still load.
 
 The run's `--mcp` files (Claude Code's `.mcp.json` format) reach codex as `-c` overrides
-on any run. A run server whose name matches a server in either config file is refused because
-codex would merge their settings. A server in a command-line `--mcp` file whose name is not
-a bare key is refused; one in the home MCP file is skipped with a warning. For a URL server,
+on any run. Project server names are checked for collisions even when untrusted. A server
+from a `--mcp` file that matches a codex config server is refused, naming the file, because
+codex would merge their settings; a colliding server in the home MCP file is skipped with a
+warning. A server in a command-line `--mcp` file whose name is not a bare key is refused;
+one in the home MCP file is skipped with a warning. For a URL server,
 `Authorization: Bearer ${VAR}` maps to `bearer_token_env_var` without putting the token on
 the command line; the variable must reach codex's environment. Other headers are refused,
 as is `"type": "sse"`: codex speaks streamable HTTP. On Windows, a `.cmd` or `.bat` codex
