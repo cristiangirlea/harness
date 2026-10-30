@@ -3,6 +3,7 @@ package eval
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"slices"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -109,15 +110,17 @@ func Compare(a, b Record) Diff {
 
 	// Expose confounders to avoid misattributing score changes.
 	type check struct {
-		prompt                                                   string
-		gates                                                    []string
-		expect                                                   string
-		model, effort, systemPrompt, retrieval, retrievalVersion string
-		noSkills                                                 bool
+		prompt  string
+		gates   []string
+		expect  string
+		backend string
+		options agent.Options
 	}
 	before := map[string]check{}
 	for _, t := range a.Spec.Tasks {
-		before[t.ID] = check{t.Prompt, firstOfList(t.Gate, a.Spec.Gate), t.Expect, t.Model, t.Effort, t.AppendSystemPrompt, t.Retrieval, t.RetrievalVersion, t.NoSkills}
+		options := t.Options
+		options.ShapeTools = false
+		before[t.ID] = check{t.Prompt, firstOfList(t.Gate, a.Spec.Gate), t.Expect, t.Backend, options}
 	}
 	for _, t := range b.Spec.Tasks {
 		was, ok := before[t.ID]
@@ -130,7 +133,9 @@ func Compare(a, b Record) Diff {
 		if !slices.Equal(was.gates, firstOfList(t.Gate, b.Spec.Gate)) || was.expect != t.Expect {
 			d.GateChanged = append(d.GateChanged, t.ID)
 		}
-		if was.model != t.Model || was.effort != t.Effort || was.systemPrompt != t.AppendSystemPrompt || was.noSkills != t.NoSkills || was.retrieval != t.Retrieval || was.retrievalVersion != t.RetrievalVersion {
+		options := t.Options
+		options.ShapeTools = false
+		if was.backend != t.Backend || !reflect.DeepEqual(was.options, options) {
 			d.TaskOptionsChanged = append(d.TaskOptionsChanged, t.ID)
 		}
 	}

@@ -5,11 +5,15 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 )
 
 func TestCompareNotesTaskRunOptions(t *testing.T) {
 	for name, change := range map[string]func(*batch.Task){
+		"backend":              func(t *batch.Task) { t.Backend = "codex" },
+		"lean":                 func(t *batch.Task) { t.Lean = agent.Bool(false) },
+		"skills":               func(t *batch.Task) { t.Skills = agent.Bool(true) },
 		"model":                func(t *batch.Task) { t.Model = "other" },
 		"effort":               func(t *batch.Task) { t.Effort = "high" },
 		"append_system_prompt": func(t *batch.Task) { t.AppendSystemPrompt = "extra" },
@@ -258,5 +262,14 @@ func TestAReloadedRecordDiffsATaskWithoutAGateAsTheSpecs(t *testing.T) {
 	explicit.Spec.Tasks[0].Gate = []string{"true"}
 	if d := Compare(saved, explicit); join(d.GateChanged) != "vet" {
 		t.Errorf("gate changed = %v, want vet", d.GateChanged)
+	}
+}
+
+func TestCompareIgnoresTaskShapeTools(t *testing.T) {
+	a := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+	b := Record{Spec: Spec{Spec: batch.Spec{Tasks: []batch.Task{{ID: "task"}}}}}
+	b.Spec.Tasks[0].ShapeTools = true
+	if got := Compare(a, b).TaskOptionsChanged; len(got) != 0 {
+		t.Fatalf("shape_tools: %v", got)
 	}
 }
