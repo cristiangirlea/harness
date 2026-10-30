@@ -828,14 +828,14 @@ func splitID(id string) (task, variant string, ok bool) {
 func dir() string { return filepath.Join(runlog.Home(), "evals") }
 
 func save(rec Record) error {
-	if err := os.MkdirAll(dir(), 0o755); err != nil {
+	if err := os.MkdirAll(dir(), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir(), rec.ID+".json"), data, 0o644)
+	return os.WriteFile(filepath.Join(dir(), rec.ID+".json"), data, 0o600)
 }
 
 // LoadRecord reads a saved eval.

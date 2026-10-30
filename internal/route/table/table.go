@@ -55,7 +55,7 @@ func Save(home string, t Table) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(home, 0755); err != nil {
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(home, ".route-*.json")

@@ -70,7 +70,7 @@ func (w *Workspace) originals(create bool) (*os.Root, error) {
 	}
 	defer root.Close()
 	if create {
-		if err := root.Mkdir("originals", 0o755); err != nil && !os.IsExist(err) {
+		if err := root.Mkdir("originals", 0o700); err != nil && !os.IsExist(err) {
 			return nil, err
 		}
 	}
@@ -136,7 +136,7 @@ func holdsOriginal(root *os.Root, name, text string) (bool, error) {
 
 func writeOriginal(root *os.Root, name, text string, write func(io.Writer, string) (int, error)) error {
 	temp := ".original-" + rand.Text() + ".tmp"
-	f, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

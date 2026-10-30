@@ -98,7 +98,9 @@ func CreateRouted(backend string, task agent.Task, continues, route string, rout
 	return create(backend, task, continues, route, routed, note)
 }
 
-var createEventsFile = func(path string) (io.WriteCloser, error) { return os.Create(path) }
+var createEventsFile = func(path string) (io.WriteCloser, error) {
+	return os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+}
 
 // Failed starts must leave no partial record.
 func create(backend string, task agent.Task, continues, route string, routed *RoutedBy, note string) (w *Writer, err error) {
@@ -107,7 +109,7 @@ func create(backend string, task agent.Task, continues, route string, routed *Ro
 	}
 	id := NewID()
 	dir := filepath.Join(Root(), id)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	defer func() {
@@ -239,7 +241,7 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // List returns newest runs, capped by positive limit; no result means Done=false.

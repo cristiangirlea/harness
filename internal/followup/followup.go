@@ -218,7 +218,7 @@ func lockConversation(backend, id string) (func(), error) {
 		return func() {}, nil
 	}
 	dir := filepath.Join(runlog.Home(), "locks")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	unlock, ok, err := ws.TryLock(filepath.Join(dir, backend+"-"+id+".lock"))
@@ -334,7 +334,7 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	default:
 		return
 	}
-	if err := os.WriteFile(filepath.Join(runDir, "handoff.md"), []byte(h), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(runDir, "handoff.md"), []byte(h), 0o600); err != nil {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "handoff.md not saved: " + err.Error()})
 	}
 	task.Prompt = h + task.Prompt

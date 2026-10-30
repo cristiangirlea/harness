@@ -128,7 +128,7 @@ func Append(events []Event) (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+	if err := os.MkdirAll(Dir(), 0o700); err != nil {
 		return 0, err
 	}
 	if f, err := os.Open(ledgerPath()); err == nil {
@@ -148,7 +148,7 @@ func Append(events []Event) (int, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
-	f, err := os.OpenFile(ledgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(ledgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 0, err
 	}

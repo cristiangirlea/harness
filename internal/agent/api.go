@@ -147,7 +147,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		conv := Conversation{Model: res.Model, Messages: msgs, Retrieval: task.RetrievalState}
 		if data, err := json.Marshal(conv); err == nil {
-			_ = os.WriteFile(filepath.Join(task.RunDir, "messages.json"), data, 0o644)
+			_ = os.WriteFile(filepath.Join(task.RunDir, "messages.json"), data, 0o600)
 		}
 	}
 	fail := func(status Status, err error) Result {
