@@ -99,6 +99,10 @@ func TestRecordWritersPrivate(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		// The test framework creates the home itself; only what hrn creates inside it counts.
+		if path == home {
+			return nil
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
