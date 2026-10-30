@@ -20,6 +20,14 @@ func TestHelperAgy(t *testing.T) {
 	if os.Getenv("HRN_AGY_HELPER") == "" {
 		return
 	}
+	if os.Getenv("HRN_AGY_CHECK_ENV") != "" {
+		for _, name := range AgyMeteredEnv() {
+			if _, ok := os.LookupEnv(name); ok {
+				fmt.Fprintln(os.Stderr, "unexpected environment variable: "+name)
+				os.Exit(2)
+			}
+		}
+	}
 	input, err := io.ReadAll(os.Stdin)
 	var message struct {
 		Event   string `json:"event"`
@@ -384,5 +392,39 @@ func TestAgyFixtureContainsOnlyTheAnonymisedConversation(t *testing.T) {
 	}
 	if res.Session != "example-conversation" {
 		t.Fatalf("session %q", res.Session)
+	}
+}
+
+func TestAgyWithholdsMeteredEnvironment(t *testing.T) {
+	for _, name := range AgyMeteredEnv() {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "fake-value")
+			t.Setenv("HRN_AGY_HELPER", "1")
+			t.Setenv("HRN_AGY_CHECK_ENV", "1")
+			t.Setenv("HRN_AGY_PROMPT", "work")
+			fixture, err := filepath.Abs("testdata/agy.jsonl")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HRN_AGY_FIXTURE", fixture)
+			for _, inherit := range []bool{false, true} {
+				b := NewAgyBackend()
+				args := b.args
+				b.name, b.candidates = os.Args[0], nil
+				b.args = func(task Task, file string) []string {
+					return append([]string{"-test.run=^TestHelperAgy$", "--"}, args(task, file)...)
+				}
+				var said strings.Builder
+				res := b.Run(context.Background(), Task{Prompt: "work", Dir: t.TempDir(), ForkSession: "previous-session", Options: Options{Mode: ModeReadOnly, Model: "requested-model", Effort: "high", AllowDangerous: true, InheritEnv: inherit}}, func(e Event) {
+					said.WriteString(e.Text + "\n")
+				})
+				if res.Status != StatusOK {
+					t.Errorf("inherit=%v: status=%s error=%s", inherit, res.Status, res.Error)
+				}
+				if !strings.Contains(said.String(), name+" withheld") || strings.Contains(said.String(), "fake-value") {
+					t.Errorf("inherit=%v: events do not name the withheld variable by name alone:\n%s", inherit, said.String())
+				}
+			}
+		})
 	}
 }

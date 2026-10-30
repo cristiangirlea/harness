@@ -270,6 +270,7 @@ What the guard does not stop, said plainly. It is a guard rail, not a sandbox:
   Vertex) needs `--allow-dangerous --inherit-env`: the allowlisted environment leaves the
   key out before the guard does, and `--allow-dangerous` lifts the push guard as well.
   `ANTHROPIC_API_KEY` never reaches a CLI, whatever the switches: it is the api backend's;
+  agy never receives `GEMINI_API_KEY`, `GOOGLE_API_KEY` or `GOOGLE_GENAI_USE_VERTEXAI` either, whatever the switches, so it always runs on its plan login (see [backends](backends.md)).
 - handing work over is hrn's (batch keeps a branch per task) or the operator's; the
   guard is intended to prevent backend pushes and pull requests, subject to the gaps above.
 
