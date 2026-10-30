@@ -99,5 +99,5 @@ func secretName(name string) bool {
 			return true
 		}
 	}
-	return strings.HasSuffix(n, "_PWD")
+	return strings.HasSuffix(n, "_PWD") || strings.HasSuffix(n, "_PASS")
 }

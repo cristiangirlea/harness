@@ -76,4 +76,8 @@ func TestEnvMasksSeparatedPWD(t *testing.T) {
 	if r == nil || r.Replace("fake-password-123") != "[redacted]" {
 		t.Fatal("MYSQL_PWD value was not masked")
 	}
+	r = Env([]string{"SMTP_PASS=fake-password-456"})
+	if r == nil || r.Replace("fake-password-456") != "[redacted]" {
+		t.Fatal("SMTP_PASS value was not masked")
+	}
 }
