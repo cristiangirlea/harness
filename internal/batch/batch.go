@@ -1468,23 +1468,7 @@ func devOrTestProfile(table string) bool {
 }
 
 func batchEnv(dir string) ([]string, func() error, error) {
-	parent := filepath.Dir(filepath.Dir(dir))
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return nil, nil, err
-	}
-	ignore := filepath.Join(parent, ".gitignore")
-	f, err := os.OpenFile(ignore, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err == nil {
-		_, err = f.WriteString("*\n")
-		if closeErr := f.Close(); err == nil {
-			err = closeErr
-		}
-	} else if errors.Is(err, os.ErrExist) {
-		err = nil
-	}
-	if err != nil {
-		return nil, nil, err
-	}
+	parent := gateTempParent(dir)
 	var env []string
 	if cargo, ok := os.LookupEnv("CARGO_INCREMENTAL"); ok {
 		env = append(env, "CARGO_INCREMENTAL="+cargo)
@@ -1519,11 +1503,63 @@ func batchEnv(dir string) ([]string, func() error, error) {
 		}
 	}
 	temp, err := os.MkdirTemp(parent, "tmp-")
+	if err != nil && parent != os.TempDir() {
+		temp, err = os.MkdirTemp(os.TempDir(), "tmp-")
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	env = append(env, "TMP="+temp, "TEMP="+temp, "TMPDIR="+temp)
-	return env, func() error { return os.RemoveAll(temp) }, nil
+	return env, func() error {
+		err := os.RemoveAll(temp)
+		if parent != os.TempDir() && filepath.Dir(temp) == parent && filepath.Base(parent) == ".hrn-gate-tmp" {
+			_ = os.Remove(parent)
+		}
+		return err
+	}, nil
+}
+
+func gateTempParent(dir string) string {
+	tree, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return os.TempDir()
+	}
+	parent := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(tree))))
+	for path := parent; ; path = filepath.Dir(path) {
+		_, err := os.Lstat(filepath.Join(path, ".git"))
+		if err == nil {
+			next := filepath.Dir(path)
+			if next == path {
+				return os.TempDir()
+			}
+			parent = next
+		} else if !os.IsNotExist(err) {
+			return os.TempDir()
+		}
+		if filepath.Dir(path) == path {
+			break
+		}
+	}
+	parent = filepath.Join(parent, ".hrn-gate-tmp")
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return os.TempDir()
+	}
+	info, err := os.Lstat(parent)
+	if err != nil || !info.IsDir() || !gateTempPermissionsSafe(info) {
+		return os.TempDir()
+	}
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil || !sameVolume(resolved, tree) {
+		return os.TempDir()
+	}
+	for path := resolved; ; path = filepath.Dir(path) {
+		if _, err := os.Lstat(filepath.Join(path, ".git")); !os.IsNotExist(err) {
+			return os.TempDir()
+		}
+		if filepath.Dir(path) == path {
+			return resolved
+		}
+	}
 }
 
 func runGate(ctx context.Context, dir, command string, timeout time.Duration, env []string) GateResult {
