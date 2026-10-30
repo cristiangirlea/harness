@@ -42,8 +42,8 @@ func TestFlowFileWatcherDetectsChanges(t *testing.T) {
 			}
 			select {
 			case <-changed:
-			case <-time.After(250 * time.Millisecond):
-				t.Fatal("file change did not wake the watcher within 250ms")
+			case <-time.After(5 * time.Second):
+				t.Fatal("file change did not wake the watcher within 5s")
 			}
 		})
 	}

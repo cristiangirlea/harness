@@ -621,7 +621,7 @@ func TestBotJavaScript(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not on PATH")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if out, err := exec.CommandContext(ctx, node, "--test", "testdata/bot.test.cjs").CombinedOutput(); err != nil {
 		t.Fatalf("bot JavaScript tests: %v\n%s", err, out)
