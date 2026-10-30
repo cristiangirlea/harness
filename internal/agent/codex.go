@@ -54,7 +54,7 @@ func NewCodexBackend() *CLIBackend {
 			_, _, skipped, _ := codexMCPConfigs(t)
 			var warnings []string
 			for _, name := range skipped {
-				warnings = append(warnings, "mcp "+name+": skipped; codex requires a bare server name")
+				warnings = append(warnings, "mcp "+name+": skipped; name is not a bare key or collides with codex config")
 			}
 			return warnings
 		},
