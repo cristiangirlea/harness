@@ -270,6 +270,16 @@ func checkRetrievalPin(chain []runlog.Record, backend, mode string) error {
 	return nil
 }
 
+// leanDefaultSince is when every run became lean by default; older records without the field were not.
+var leanDefaultSince = time.Date(2026, 10, 19, 10, 3, 57, 0, time.UTC)
+
+func ranLean(r runlog.Record) bool {
+	if r.Task.Lean != nil {
+		return *r.Task.Lean
+	}
+	return !r.Started.Before(leanDefaultSince)
+}
+
 // Inherit model names only within their backend.
 func latestModel(chain []runlog.Record, backend string) string {
 	for i := len(chain) - 1; i >= 0; i-- {
@@ -286,6 +296,18 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.FixRound = p.Prev.ID != ""
 	for _, n := range p.Notes {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: n})
+	}
+	if p.carried != nil && (p.Resume != nil || p.ForkSession != "") && !ranLean(*p.carried) && task.IsLean() {
+		var loads string
+		switch p.Backend {
+		case "claude":
+			loads = "its MCP servers and skills"
+		case "codex":
+			loads = "its MCP servers"
+		}
+		if loads != "" {
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "this follow-up is set to lean; pass --lean=false to load " + loads})
+		}
 	}
 	if warning := p.ContextWarning(); warning != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: warning})

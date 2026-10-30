@@ -140,7 +140,8 @@ is continued.
 **claude.** A lean worker gets `--strict-mcp-config`, so none of your user-scope servers, the
 project's `.mcp.json`, plugin servers or claude.ai connectors start, and
 `--disable-slash-commands`, so no skills or slash commands load. `--skills` (`"skills": true`)
-keeps the skills in a lean run; `--lean=false` drops both flags and loads everything. Every
+keeps the skills in a lean run (codex, gemini, opencode and agy report `skills` as not
+enforced); `--lean=false` drops both flags and loads everything. Every
 setting source still loads: your `~/.claude/CLAUDE.md` and rules, the repository's `CLAUDE.md`
 and `.claude/rules`, your hooks and permission rules, and your subscription login. hrn's guard
 is the same either way: its `--disallowedTools` rules are command-line flags, not settings.
@@ -336,6 +337,8 @@ claude model name means nothing to codex. The MCP `run` tool takes the same thin
 `continue_run_id`.
 Lean is not inherited: a follow-up is lean by default whatever the earlier run was, so pass
 `--lean=false` (or `"lean": false` on the MCP tool) again to load everything.
+If the run whose session is continued had `lean: false`, or no `lean` field and started before lean
+became the default (2026-10-19), a lean follow-up says so; a fresh hand-over does not.
 
 If the run whose conversation or session is carried on recorded more than 150,000
 tokens of context at its last turn, hrn warns with its run id and context size and

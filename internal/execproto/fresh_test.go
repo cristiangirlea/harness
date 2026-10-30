@@ -28,7 +28,7 @@ func TestFreshStartsANewSessionWithAHandover(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prev, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Model: "m1"}})
+			prev, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Model: "m1", Lean: agent.Bool(false)}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,6 +49,12 @@ func TestFreshStartsANewSessionWithAHandover(t *testing.T) {
 					t.Fatalf("bad continuation: %+v", msg)
 				}
 				h.next(t, "event")
+				if !fresh && (backend == "claude" || backend == "codex") {
+					notice := h.next(t, "event")
+					if text, _ := notice["event"].(map[string]any)["text"].(string); !strings.Contains(text, "--lean=false") {
+						t.Fatalf("want the lean notice on a forked continuation, got %+v", notice)
+					}
+				}
 				h.next(t, "result")
 				h.exit(t, 0)
 				task := <-got

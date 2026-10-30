@@ -57,6 +57,88 @@ func TestSameBackendForksItsSession(t *testing.T) {
 	}
 }
 
+func TestApplyReportsLeanChange(t *testing.T) {
+	old := leanDefaultSince.Add(-time.Hour)
+	recent := leanDefaultSince.Add(time.Hour)
+	for _, tc := range []struct {
+		name       string
+		prev, next *bool
+		started    time.Time
+		want       bool
+	}{
+		{"absent before lean was the default", nil, nil, old, true},
+		{"absent since lean is the default", nil, nil, recent, false},
+		{"false to true", agent.Bool(false), agent.Bool(true), recent, true},
+		{"false to false", agent.Bool(false), agent.Bool(false), recent, false},
+		{"absent to false", nil, agent.Bool(false), old, false},
+		{"true to default", agent.Bool(true), nil, old, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := runlog.Record{ID: "previous", Started: tc.started, Task: agent.Task{Options: agent.Options{Lean: tc.prev}}}
+			p := Plan{Backend: "claude", ForkSession: "s1", Prev: prev, carried: &prev}
+			task := agent.Task{Options: agent.Options{Lean: tc.next}}
+			var notes []string
+			p.Apply(&task, t.TempDir(), func(e agent.Event) {
+				if e.Kind == agent.EventInfo && strings.Contains(e.Text, "--lean=false") {
+					notes = append(notes, e.Text)
+				}
+			})
+			if (len(notes) == 1) != tc.want || len(notes) > 1 {
+				t.Errorf("lean notices = %q, want notice: %t", notes, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyLeanNoticeMatchesBackend(t *testing.T) {
+	for _, tc := range []struct{ backend, want string }{
+		{"claude", "this follow-up is set to lean; pass --lean=false to load its MCP servers and skills"},
+		{"codex", "this follow-up is set to lean; pass --lean=false to load its MCP servers"},
+		{"gemini", ""},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			prev := runlog.Record{ID: "previous", Backend: tc.backend, Task: agent.Task{Options: agent.Options{Lean: agent.Bool(false)}}}
+			p := Plan{Backend: tc.backend, ForkSession: "s1", Prev: prev, carried: &prev}
+			var task agent.Task
+			var notes []string
+			p.Apply(&task, t.TempDir(), func(e agent.Event) {
+				if strings.Contains(e.Text, "--lean=false") {
+					notes = append(notes, e.Text)
+				}
+			})
+			if tc.want == "" {
+				if len(notes) != 0 {
+					t.Errorf("unexpected lean notices: %q", notes)
+				}
+			} else if len(notes) != 1 || notes[0] != tc.want {
+				t.Errorf("lean notices = %q, want %q", notes, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyGivesAFreshContinuationNoLeanNotice(t *testing.T) {
+	p := Plan{Backend: "claude", Prev: runlog.Record{ID: "previous"}}
+	var task agent.Task
+	p.Apply(&task, t.TempDir(), func(e agent.Event) {
+		if strings.Contains(e.Text, "--lean=false") {
+			t.Errorf("unexpected lean notice: %q", e.Text)
+		}
+	})
+}
+
+func TestApplyJudgesLeanByTheRunWhoseSessionIsCarried(t *testing.T) {
+	carried := runlog.Record{ID: "claude-run", Backend: "claude", Started: leanDefaultSince.Add(time.Hour)}
+	prev := runlog.Record{ID: "codex-run", Backend: "codex", Task: agent.Task{Options: agent.Options{Lean: agent.Bool(false)}}}
+	p := Plan{Backend: "claude", ForkSession: "s1", Prev: prev, carried: &carried}
+	var task agent.Task
+	p.Apply(&task, t.TempDir(), func(e agent.Event) {
+		if strings.Contains(e.Text, "--lean=false") {
+			t.Errorf("unexpected lean notice: %q", e.Text)
+		}
+	})
+}
+
 func TestAgyContinuesItsConversationWithoutPromisingAFork(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)
