@@ -340,7 +340,17 @@ func Rebuild() error {
 	if err != nil {
 		return err
 	}
-	return Fold(Records{Runs: runs, Batches: batches, Evals: evals, AllBatches: batches})
+	if err := Fold(Records{Runs: runs, Batches: batches, Evals: evals, AllBatches: batches}); err != nil {
+		return err
+	}
+	source, err := NewGitHubSource()
+	if err != nil {
+		return err
+	}
+	if err := NewPractice(source, time.Now()).Rebuild(); err != nil {
+		return err
+	}
+	return Fold(Records{})
 }
 
 // repoName names a repository owner/name as GitHub does, so local and pull request events agree.
