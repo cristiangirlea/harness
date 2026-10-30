@@ -610,3 +610,21 @@ func TestCodexSkipsInvalidHomeMCPNames(t *testing.T) {
 		t.Error("explicit home path must still be refused")
 	}
 }
+
+func TestCodexMCPLookupHidesEveryGitConfigEntry(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.fake")
+	t.Setenv("GIT_CONFIG_VALUE_0", "fake")
+	for _, inherit := range []bool{false, true} {
+		lookup := codexMCPLookup(Task{Options: Options{InheritEnv: inherit}})
+		names := []string{"GIT_CONFIG_COUNT"}
+		for i := 0; i < 32; i++ {
+			names = append(names, fmt.Sprintf("GIT_CONFIG_KEY_%d", i), fmt.Sprintf("GIT_CONFIG_VALUE_%d", i))
+		}
+		for _, name := range names {
+			if _, ok := lookup(name); ok {
+				t.Errorf("inherit=%v: %s expands", inherit, name)
+			}
+		}
+	}
+}

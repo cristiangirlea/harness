@@ -132,6 +132,12 @@ func codexMCPLookup(t Task) func(string) (string, bool) {
 			}
 			delete(values, k)
 		}
+		// The guard numbers its git config entries after the user's, so none of them are stable to expand.
+		for k := range values {
+			if strings.HasPrefix(strings.ToUpper(k), "GIT_CONFIG_") {
+				delete(values, k)
+			}
+		}
 		lookup = func(k string) (string, bool) {
 			if runtime.GOOS == "windows" {
 				k = strings.ToUpper(k)
