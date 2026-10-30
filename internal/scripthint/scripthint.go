@@ -105,7 +105,7 @@ var (
 
 func runsKept(command, file string) bool {
 	path := `(?:\./)?scripts/` + regexp.QuoteMeta(file) + `(?:[\s;|&'"()]|$)`
-	prefix := `(?:^|[;|&\n({])\s*(?:(?:sudo|env|exec|time|nohup|\w+=\S*)\s+)*`
+	prefix := `(?:^|[;|&\n({])\s*(?:(?:sudo|env|exec|time|nohup|then|do|else|\w+=\S*)\s+)*`
 	run := regexp.MustCompile(prefix + `(?:bash|sh)(?:\s+-\S+)*\s+` + path + `|` + prefix + `go\s+run\s+` + path + `|` + prefix + `&\s*` + path + `|` + prefix + `(?:pwsh|powershell)(?:\.exe)?\s+-[Ff]ile\s+` + path + `|` + prefix + `\./scripts/` + regexp.QuoteMeta(file) + `(?:[\s;|&'"()]|$)`)
 	return run.MatchString(command)
 }
@@ -167,7 +167,7 @@ var (
 	psHere      = regexp.MustCompile(`(?s)@'\r?\n(.*?)\r?\n'@|@"\r?\n(.*?)\r?\n"@`)
 	psHerePipe  = regexp.MustCompile(`^[ \t]*\|[ \t]*(?:python3?|py|node|perl|bash|sh)(?:\.exe)?(?:[ \t]+-)?[ \t]*(?:[\r\n;|&]|$)`)
 	heredoc     = regexp.MustCompile(`<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)(['"]?)`)
-	interpreter = regexp.MustCompile(`(?:^|[;|&\n({])\s*(?:(?:sudo|env|exec|time|nohup|\w+=\S*)\s+)*(?:\S*[/\\])?(python3?|py|node|perl|bash|sh)(?:\.exe)?\s+(-c|-e)\s+`)
+	interpreter = regexp.MustCompile(`(?:^|[;|&\n({])\s*(?:(?:sudo|env|exec|time|nohup|then|do|else|\w+=\S*)\s+)*(?:\S*[/\\])?(python3?|py|node|perl|bash|sh)(?:\.exe)?\s+(-c|-e)\s+`)
 	powershell  = regexp.MustCompile(`(?i)(?:^|[;|&\n({]\s*|\s)(?:\S*[/\\])?(?:pwsh|powershell)(?:\.exe)?\s(?:[^;|&\n]*?\s)?-(?:command|c)\s+`)
 )
 
