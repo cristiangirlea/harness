@@ -288,7 +288,16 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: n})
 	}
 	if p.Prev.ID != "" && (p.Prev.Task.Lean == nil || !*p.Prev.Task.Lean) && task.IsLean() {
-		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "this follow-up is set to lean; pass --lean=false to load configured MCP servers and skills on claude or codex"})
+		var loads string
+		switch p.Backend {
+		case "claude":
+			loads = "its MCP servers and skills"
+		case "codex":
+			loads = "its MCP servers"
+		}
+		if loads != "" {
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "this follow-up is set to lean; pass --lean=false to load " + loads})
+		}
 	}
 	if warning := p.ContextWarning(); warning != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: warning})

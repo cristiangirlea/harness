@@ -70,7 +70,7 @@ func TestApplyReportsLeanChange(t *testing.T) {
 		{"true to default", agent.Bool(true), nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := Plan{Prev: runlog.Record{ID: "previous", Task: agent.Task{Options: agent.Options{Lean: tc.prev}}}}
+			p := Plan{Backend: "claude", Prev: runlog.Record{ID: "previous", Task: agent.Task{Options: agent.Options{Lean: tc.prev}}}}
 			task := agent.Task{Options: agent.Options{Lean: tc.next}}
 			var notes []string
 			p.Apply(&task, t.TempDir(), func(e agent.Event) {
@@ -80,6 +80,32 @@ func TestApplyReportsLeanChange(t *testing.T) {
 			})
 			if (len(notes) == 1) != tc.want || len(notes) > 1 {
 				t.Errorf("lean notices = %q, want notice: %t", notes, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyLeanNoticeMatchesBackend(t *testing.T) {
+	for _, tc := range []struct{ backend, want string }{
+		{"claude", "this follow-up is set to lean; pass --lean=false to load its MCP servers and skills"},
+		{"codex", "this follow-up is set to lean; pass --lean=false to load its MCP servers"},
+		{"gemini", ""},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			p := Plan{Backend: tc.backend, Prev: runlog.Record{ID: "previous", Backend: "other"}}
+			var task agent.Task
+			var notes []string
+			p.Apply(&task, t.TempDir(), func(e agent.Event) {
+				if strings.Contains(e.Text, "--lean=false") {
+					notes = append(notes, e.Text)
+				}
+			})
+			if tc.want == "" {
+				if len(notes) != 0 {
+					t.Errorf("unexpected lean notices: %q", notes)
+				}
+			} else if len(notes) != 1 || notes[0] != tc.want {
+				t.Errorf("lean notices = %q, want %q", notes, tc.want)
 			}
 		})
 	}
