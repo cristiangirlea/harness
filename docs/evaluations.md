@@ -424,7 +424,9 @@ removed once its last verdict is in. Each verdict's agent gets a fresh temporary
 `HRN_HOME`, removed after the run, so it does not see the real home's run records through
 that environment variable. Hrn still saves the judge's own run record in the real home.
 This is not complete isolation: worktree directory names under the repository's `.hrn`
-can still be read through the repository and may reveal variants.
+can still be read through the repository and may reveal variants, and read-only mode does not
+limit reads, so a judge that opens the real home by its path (`~/.hrn` or the `HRN_HOME` value)
+can still read run records.
 Verdicts are asked for in a shuffled order seeded by the batch id, not variant by
 variant. `backend` defaults to the default backend, `timeout` to 5
 minutes per verdict. Cells that failed are not judged: they already scored where it
