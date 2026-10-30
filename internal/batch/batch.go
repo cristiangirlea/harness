@@ -2330,15 +2330,17 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		addErr := fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		registered, listErr := isWorktree(root, tr.Worktree)
 		if pathAbsent {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			registered, listErr := isWorktree(root, tr.Worktree)
 			if listErr == nil && registered {
 				if _, removeErr := gitOut(cleanupCtx, root, "worktree", "remove", "--force", tr.Worktree); removeErr != nil {
 					return errors.Join(addErr, removeErr)
 				}
 			}
+		}
+		if pathAbsent || (listErr == nil && !registered) {
 			if _, deleteErr := gitOut(cleanupCtx, root, "update-ref", "-d", "refs/heads/"+tr.Branch, oid); deleteErr != nil {
 				return errors.Join(addErr, deleteErr)
 			}

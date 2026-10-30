@@ -174,3 +174,25 @@ func TestAddWorktreeKeepsExistingEmptyDirectoryOnFailure(t *testing.T) {
 		t.Fatalf("directory not kept: %v", err)
 	}
 }
+
+func TestAddWorktreeCleansBranchForExistingNonemptyDirectory(t *testing.T) {
+	root := initRepo(t)
+	path := filepath.Join(t.TempDir(), "task")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(path, "existing")
+	if err := os.WriteFile(file, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tr := TaskResult{Branch: "failed-task", Worktree: path}
+	if err := addWorktree(context.Background(), root, tr, "HEAD"); err == nil {
+		t.Fatal("expected add failure")
+	}
+	if got := git(t, root, "branch", "--list", tr.Branch); got != "" {
+		t.Fatalf("branch left behind: %s", got)
+	}
+	if got, err := os.ReadFile(file); err != nil || string(got) != "keep" {
+		t.Fatalf("existing file = %q, error = %v", got, err)
+	}
+}
