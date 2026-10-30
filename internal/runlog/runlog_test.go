@@ -15,6 +15,56 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 )
 
+func TestResolveHomeRelative(t *testing.T) {
+	t.Setenv("HRN_HOME", "rel")
+	want, err := filepath.Abs("rel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveHome()
+	if err != nil || got != want {
+		t.Fatalf("ResolveHome() = %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestMissingHomeRefusesRecords(t *testing.T) {
+	for _, key := range []string{"HRN_HOME", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"} {
+		t.Setenv(key, "")
+	}
+	if h := Home(); h != "" && !filepath.IsAbs(h) {
+		t.Fatalf("relative home: %q", h)
+	}
+	if err := os.MkdirAll(filepath.Join(Home(), "other-records"), 0o755); err == nil {
+		t.Fatal("legacy home consumer created a directory")
+	}
+	if _, err := Create("stub", agent.Task{}); err == nil {
+		t.Fatal("created a record without a home")
+	}
+	if _, err := List(0); err == nil {
+		t.Fatal("listed records without a home")
+	}
+	for name, read := range map[string]func() error{
+		"Load":    func() error { _, err := Load("valid"); return err },
+		"Events":  func() error { _, err := Events("valid"); return err },
+		"TurnsOf": func() error { _, err := TurnsOf("valid"); return err },
+	} {
+		if err := read(); err == nil || !strings.Contains(err.Error(), "set HRN_HOME") {
+			t.Errorf("%s error = %v, want set HRN_HOME", name, err)
+		}
+	}
+}
+
+func TestDotIDsAreInvalid(t *testing.T) {
+	for _, id := range []string{".", ".."} {
+		if err := validID(id); err == nil {
+			t.Errorf("accepted %q", id)
+		}
+		if _, err := Load(id); err == nil {
+			t.Errorf("loaded %q", id)
+		}
+	}
+}
+
 func TestLoadUsesDirectoryID(t *testing.T) {
 	for _, file := range []string{"result.json", "task.json"} {
 		for _, storedID := range []string{"../outside", "20261014-120000-abcdef"} {
