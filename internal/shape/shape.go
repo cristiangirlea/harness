@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type Kind int
@@ -28,6 +30,7 @@ var (
 	testMarker = regexp.MustCompile(`^\s*=== (RUN|CONT|PAUSE|NAME)\s+(\S+)\s*$`)
 	testResult = regexp.MustCompile(`^\s*--- (FAIL|PASS):\s+(\S+)`)
 	numbers    = regexp.MustCompile(`[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?`)
+	digits     = regexp.MustCompile(`\d+`)
 	negations  = regexp.MustCompile(`(?i)\b(?:not|never|no|only)\b`)
 	paths      = regexp.MustCompile(`(?:[A-Za-z]:[\\/]|\.{0,2}/|[A-Za-z0-9_.-]+[\\/])[^\s<>"'()]+|\b[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]*`)
 	ansi       = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|[@-_])")
@@ -62,7 +65,7 @@ func Classify(text string) Kind {
 		}
 	}
 	// Comma timestamps make every log line one column wider; the log summary keeps warnings.
-	if _, _, _, ok := tableShape(lines); ok && 2*logged <= filled {
+	if _, _, indices, ok := tableShape(lines); ok && (2*logged <= filled || !logLine.MatchString(lines[indices[0]])) {
 		return Table
 	}
 	if logged > 0 {
@@ -206,11 +209,17 @@ func jsonHead(text string) (string, []string) {
 	if !isJSON(s) {
 		return "", nil
 	}
-	_, values := jsonMembers(s)
+	keys, values := jsonMembers(s)
 	if s[0] == '[' {
 		return fmt.Sprintf("json: array of %d items", len(values)), values
 	}
-	return fmt.Sprintf("json: object with %d keys", len(values)), values
+	distinct := map[string]bool{}
+	for _, key := range keys {
+		var decoded string
+		_ = json.Unmarshal([]byte(key), &decoded)
+		distinct[decoded] = true
+	}
+	return fmt.Sprintf("json: object with %d keys", len(distinct)), values
 }
 
 func jsonSample(v string, depth int) string {
@@ -262,15 +271,20 @@ func jsonSummary(text string, lines []string) string {
 				out = append(out, line)
 			}
 		}
-		if line := "sample: " + jsonSample(sample, 2); !errorLine(line) {
-			out = append(out, line)
-		}
 	}
+	var errors []string
 	for _, line := range lines {
 		if errorLine(line) {
+			errors = append(errors, line)
+		}
+	}
+	if sample != "" {
+		line := "sample: " + jsonSample(sample, 2)
+		if !errorLine(line) && len(strings.Join(out, "\n"))+1+len(line)+len(strings.Join(errors, "\n"))+len(errors) <= 28000 {
 			out = append(out, line)
 		}
 	}
+	out = append(out, errors...)
 	return strings.Join(out, "\n")
 }
 
@@ -336,15 +350,46 @@ func errorLine(line string) bool {
 }
 
 func testCounts(lines []string) (passed, failed int) {
+	failedNames := map[string]int{}
+	parents := map[string]bool{}
+	flush := func() {
+		for name, n := range failedNames {
+			if !parents[name] {
+				failed += n
+			}
+		}
+		clear(failedNames)
+		clear(parents)
+	}
 	for _, line := range lines {
+		if testPackageLine(line) {
+			flush()
+			continue
+		}
 		if strings.Contains(line, "--- PASS:") {
 			passed++
 		}
-		if failName.MatchString(line) {
-			failed++
+		if m := failName.FindStringSubmatch(line); m != nil {
+			failedNames[m[1]]++
+			if len(m[1]) > maxTestName {
+				continue
+			}
+			for i := strings.LastIndex(m[1], "/"); i > 0; i = strings.LastIndex(m[1][:i], "/") {
+				parents[m[1][:i]] = true
+			}
 		}
 	}
+	flush()
 	return
+}
+
+func testPackageLine(line string) bool {
+	fields := strings.Split(line, "\t")
+	if len(fields) < 2 {
+		return false
+	}
+	name := strings.TrimSuffix(fields[1], "\r")
+	return (fields[0] == "FAIL" || fields[0] == "ok") && name != "" && !strings.ContainsAny(name, " \r\n")
 }
 
 type testFailure struct {
@@ -356,8 +401,52 @@ type testFailure struct {
 // Preserve paused diagnostics; reject ambiguous ownership when tests overlap.
 // Non-verbose Go output can place diagnostics immediately after FAIL.
 func testFailures(lines []string) (map[string]*testFailure, bool) {
+	all := map[string]*testFailure{}
+	start := 0
+	for i, line := range lines {
+		if (strings.HasPrefix(line, "FAIL\t") || strings.HasPrefix(line, "ok\t")) && failName.MatchString(line) {
+			return nil, false
+		}
+		if !testPackageLine(line) {
+			continue
+		}
+		pkg := strings.TrimSuffix(strings.Split(line, "\t")[1], "\r")
+		part, ok := testFailuresPart(lines[start:i])
+		if !ok {
+			return nil, false
+		}
+		for name, failure := range part {
+			key := pkg + "." + name
+			if all[key] != nil {
+				return nil, false
+			}
+			for j := range failure.indices {
+				failure.indices[j] += start
+			}
+			all[key] = failure
+		}
+		start = i + 1
+	}
+	part, ok := testFailuresPart(lines[start:])
+	if !ok {
+		return nil, false
+	}
+	for name, failure := range part {
+		if all[name] != nil {
+			return nil, false
+		}
+		for j := range failure.indices {
+			failure.indices[j] += start
+		}
+		all[name] = failure
+	}
+	return all, true
+}
+
+func testFailuresPart(lines []string) (map[string]*testFailure, bool) {
 	tests := map[string]*testFailure{}
 	running := map[string]bool{}
+	paused := map[string]bool{}
 	waitsOn := map[string]string{}
 	current := ""
 	markedOwner, sawMarker, unassigned, parallel := false, false, false, false
@@ -376,13 +465,22 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 			}
 			tests[name].indices = append(tests[name].indices, i)
 			parallel = parallel || m[1] == "PAUSE" || m[1] == "CONT"
+			if m[1] == "RUN" {
+				for i := strings.LastIndex(name, "/"); i > 0; i = strings.LastIndex(name[:i], "/") {
+					if paused[name[:i]] {
+						return nil, false
+					}
+				}
+			}
 			if m[1] == "RUN" && !parallel {
 				endSiblings(running, waitsOn, name)
 			}
 			if m[1] == "PAUSE" {
+				paused[name] = true
 				delete(running, name)
 				current = ""
 			} else {
+				delete(paused, name)
 				running[name], current = true, name
 			}
 			continue
@@ -448,6 +546,9 @@ func testFailures(lines []string) (map[string]*testFailure, bool) {
 	}
 	for name, test := range tests {
 		if !test.failed {
+			if running[name] || paused[name] {
+				return nil, false
+			}
 			delete(tests, name)
 		}
 	}
@@ -529,6 +630,20 @@ func tokenSet(re *regexp.Regexp, text string) map[string]bool {
 	return out
 }
 
+func numberTokens(text string) []string {
+	var out []string
+	for _, loc := range numbers.FindAllStringIndex(text, -1) {
+		before, _ := utf8.DecodeLastRuneInString(text[:loc[0]])
+		after, _ := utf8.DecodeRuneInString(text[loc[1]:])
+		if (loc[0] > 0 && (unicode.IsLetter(before) || unicode.IsDigit(before) || before == '_')) ||
+			(loc[1] < len(text) && (unicode.IsLetter(after) || unicode.IsDigit(after) || after == '_')) {
+			continue
+		}
+		out = append(out, text[loc[0]:loc[1]])
+	}
+	return out
+}
+
 func valid(kind Kind, original, summary string) bool {
 	// Summaries are built from stripped lines; an escape inside a word must not hide it.
 	cleanLines := strings.Split(ansi.ReplaceAllString(original, ""), "\n")
@@ -544,7 +659,27 @@ func valid(kind Kind, original, summary string) bool {
 	if head != "" && sumLines[0] == head {
 		body = summary[len(head):]
 	}
-	for _, re := range []*regexp.Regexp{numbers, negations, paths} {
+	availableNumbers := map[string]bool{}
+	availableDigits := tokenSet(digits, strings.Join(cleanLines, "\n"))
+	for _, n := range numberTokens(strings.Join(cleanLines, "\n")) {
+		availableNumbers[n] = true
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if counts.MatchString(line) || repeats.MatchString(line) {
+			continue
+		}
+		for _, n := range numberTokens(line) {
+			if !availableNumbers[n] {
+				return false
+			}
+		}
+		for _, n := range digits.FindAllString(line, -1) {
+			if !availableDigits[n] {
+				return false
+			}
+		}
+	}
+	for _, re := range []*regexp.Regexp{negations, paths} {
 		available := tokenSet(re, original)
 		for _, s := range re.FindAllString(body, -1) {
 			if !available[s] {
@@ -552,6 +687,7 @@ func valid(kind Kind, original, summary string) bool {
 			}
 		}
 	}
+
 	origSet, sumSet := map[string]bool{}, map[string]bool{}
 	for _, line := range cleanLines {
 		origSet[line] = true
@@ -576,7 +712,7 @@ func valid(kind Kind, original, summary string) bool {
 			}
 		}
 	}
-	if kind == Test {
+	if kind == Test || failName.MatchString(strings.Join(cleanLines, "\n")) {
 		origFailures, origOK := testFailures(cleanLines)
 		sumFailures, sumOK := testFailures(sumLines)
 		if !origOK || !sumOK || len(origFailures) != len(sumFailures) {
