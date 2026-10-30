@@ -3,7 +3,7 @@
 // effects: read, write-workspace, exec
 // parameters: none
 // example: go test -count=1 ./scripts/comment-check
-// hash: 29fb0659d9a1eb65c0cb8fe73529a2bcd9db610b8359ab319859c83d26a8009f
+// hash: 9c602bb57a904a80d7794e202ee597403ecee93b1a28d58457425947dd114261
 package main
 
 import (
@@ -345,6 +345,60 @@ func TestCitationsAndReviewNarrationFailWhileProductReviewTermsAndRawStringsPass
 		if r.New[i].File != "cite.go" || r.New[i].Line != wantLine || r.New[i].Lines != 1 || r.New[i].Reasons != "cite" {
 			t.Fatalf("entry %d: got %+v", i, r.New[i])
 		}
+	}
+}
+
+func TestCitationPrecision(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want bool
+	}{
+		{"after review", true}, {"per review", true}, {"from review", true},
+		{"review feedback", true}, {"PR review", true},
+		{"in a review task", false}, {"in a review task, after review we changed", true}, {"during a code review", false},
+		{"files reviewed by", false}, {"post review comments", false},
+		{"#000000", false}, {"#000000 border", false}, {"#000000 border, see #12", true}, {"#fff", false}, {"#a1b2c3", false}, {"#123", true},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			if got := hasCitation(tc.text); got != tc.want {
+				t.Fatalf("hasCitation(%q) = %v, want %v", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBlockCommentBeforeCodeIsNotWholeLine(t *testing.T) {
+	src := "package p\n/* #123 */ var x = 1\n"
+	bytes, blocks, violations, err := scanFile("x.go", []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes != 0 || blocks != 1 || len(violations) != 1 || violations[0].reasons != "cite" {
+		t.Fatalf("unexpected result: bytes=%d blocks=%d violations=%+v", bytes, blocks, violations)
+	}
+}
+
+func TestBlockCommentBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		src        string
+		wantBytes  int64
+		wantReason string
+	}{
+		{"long before code", "package p\n/* one\ntwo\nthree\nfour\nfive\n*/ var x = 1\n", 40, "long"},
+		{"opener star", "package p\n/*/ #12 */\n", 11, "cite"},
+		{"tab before comment", "package p\n\t/* #12 */ var x = 1\n", 0, "cite"},
+		{"end of file", "package p\n/* #12 */", 9, "cite"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bytes, blocks, violations, err := scanFile("x.go", []byte(tc.src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes != tc.wantBytes || blocks != 1 || len(violations) != 1 || violations[0].reasons != tc.wantReason {
+				t.Fatalf("bytes=%d blocks=%d violations=%+v", bytes, blocks, violations)
+			}
+		})
 	}
 }
 
