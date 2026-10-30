@@ -78,7 +78,7 @@ a new knowledge version, so the run stays limited and hrn prints the refusal, na
 the pinned run and version (see
 [Continuing a run](#continuing-a-run)).
 
-Agy runs with `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `GOOGLE_GENAI_USE_VERTEXAI` withheld, including with `--allow-dangerous` and `--inherit-env`, so it uses its plan login. The run names any it withheld (never the value), and if any is set, agy is also excluded as an automatic replacement.
+Agy runs with `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `GOOGLE_GENAI_USE_VERTEXAI` withheld, including with `--allow-dangerous` and `--inherit-env`, so it uses its plan login. The run names any it withheld (never the value).
 
 The `agy` adapter sends one `{"event":"user","message":{"content":"..."}}` line on
 stdin with `--input-format stream-json --output-format stream-json`, which selects
