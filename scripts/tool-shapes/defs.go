@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 -run Definitions ./scripts/tool-shapes
-// hash: 61b7db83bee55e944d8e0fb311944289c40fd85bf8f349a9419b390076128896
+// hash: 358b8fcd959977e9b6e3e5954fd790663956480b4ff4131be2124dbf4e5355ad
 package main
 
 import (
@@ -15,18 +15,22 @@ import (
 )
 
 type callContexts struct {
-	api, all           []float64
-	apiRuns, allRuns   int
-	apiUsage, allUsage int
-	apiRunsWithMCP     int
+	api, all            []float64
+	apiRuns, allRuns    int
+	apiUsage, allUsage  int
+	apiRunsWithMCP      int
+	apiCacheWriteRuns   int
+	apiCacheWriteTokens int64
 }
 
 // Prefer per-call usage, falling back to run averages; Codex input already includes cache tokens.
 func (c *callContexts) add(backend string, withMCP bool, events []event, total *int64, cacheWrite int64, turns int) {
 	var calls []float64
 	fromUsage := false
+	var usageCacheWrite int64
 	for _, e := range events {
 		if e.Kind == "usage" && e.Usage != nil {
+			usageCacheWrite += e.Usage.CacheWrite
 			v := e.Usage.Input
 			if backend != "codex" {
 				v += e.Usage.Cache + e.Usage.CacheWrite
@@ -35,6 +39,10 @@ func (c *callContexts) add(backend string, withMCP bool, events []event, total *
 			fromUsage = true
 		}
 	}
+	if fromUsage {
+		cacheWrite = usageCacheWrite
+	}
+	apiCacheWrite := cacheWrite
 	if backend == "codex" {
 		cacheWrite = 0
 	}
@@ -56,6 +64,10 @@ func (c *callContexts) add(backend string, withMCP bool, events []event, total *
 		c.allUsage++
 	}
 	if backend == "api" {
+		if apiCacheWrite > 0 {
+			c.apiCacheWriteRuns++
+			c.apiCacheWriteTokens += apiCacheWrite
+		}
 		c.api = append(c.api, calls...)
 		c.apiRuns++
 		if fromUsage {
@@ -86,6 +98,11 @@ type callMedian struct {
 	Calls     int      `json:"calls"`
 	Tokens    *float64 `json:"median_tokens"`
 }
+type apiCallMedian struct {
+	callMedian
+	CacheWriteRuns   int   `json:"runs_with_cache_write"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+}
 type definitionSize struct {
 	Tools     int      `json:"tools"`
 	Bytes     int      `json:"bytes"`
@@ -103,7 +120,7 @@ type definitionsReport struct {
 	Largest        []toolSize                `json:"largest_with_shaping"`
 	MCPDefinitions string                    `json:"mcp_definitions"`
 	APIRunsWithMCP int                       `json:"api_runs_with_mcp"`
-	API            callMedian                `json:"api"`
+	API            apiCallMedian             `json:"api"`
 	All            callMedian                `json:"all"`
 }
 
@@ -121,7 +138,7 @@ func definitions(r *report, days int) (*definitionsReport, error) {
 	c := r.calls
 	d := &definitionsReport{Days: days, Definitions: map[string]definitionSize{}, Largest: []toolSize{},
 		MCPDefinitions: "not recorded", APIRunsWithMCP: c.apiRunsWithMCP,
-		API: callMedian{Runs: c.apiRuns, UsageRuns: c.apiUsage, Calls: len(c.api), Tokens: median(c.api)},
+		API: apiCallMedian{callMedian: callMedian{Runs: c.apiRuns, UsageRuns: c.apiUsage, Calls: len(c.api), Tokens: median(c.api)}, CacheWriteRuns: c.apiCacheWriteRuns, CacheWriteTokens: c.apiCacheWriteTokens},
 		All: callMedian{Runs: c.allRuns, UsageRuns: c.allUsage, Calls: len(c.all), Tokens: median(c.all)}}
 	b := agent.NewAPIBackend()
 	var widest []byte

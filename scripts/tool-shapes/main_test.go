@@ -3,7 +3,7 @@
 // effects: read, exec
 // parameters: none
 // example: go test -count=1 ./scripts/tool-shapes
-// hash: 5b4f52b75ff4c4ed8b0a09ec7479c250df86dd4adbc13fdcd6db2d6e678575fb
+// hash: 14eed7c5af8a978b863ed71ed2f521f68aa78d1289312f525ff2038cbd11fad0
 package main
 
 import (
@@ -444,8 +444,12 @@ func TestDefinitionsCompareTheToolsWithTheMedianCallPerBackend(t *testing.T) {
 		"events.jsonl": ""})
 	writeFiles(t, filepath.Join(home, "runs", "20261014-100002-codex"), map[string]string{
 		"task.json": `{"backend":"codex"}`, "result.json": `{"status":"ok"}`, "events.jsonl": usage(50000, 99999, 99999)})
+	writeFiles(t, filepath.Join(home, "runs", "20261014-100004-codex-totals"), map[string]string{
+		"task.json": `{"backend":"codex"}`, "result.json": `{"status":"ok","input_tokens":60000,"cache_read_tokens":80000,"cache_write_tokens":90000,"turns":2}`, "events.jsonl": ""})
 	writeFiles(t, filepath.Join(home, "runs", "20261014-100003-api-no-figures"), map[string]string{
 		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","turns":4}`, "events.jsonl": ""})
+	writeFiles(t, filepath.Join(home, "runs", "20261014-100005-api-no-turns"), map[string]string{
+		"task.json": `{"backend":"api"}`, "result.json": `{"status":"ok","cache_write_tokens":7000}`, "events.jsonl": ""})
 	r, err := measure(home, 30, now)
 	if err != nil {
 		t.Fatal(err)
@@ -458,7 +462,7 @@ func TestDefinitionsCompareTheToolsWithTheMedianCallPerBackend(t *testing.T) {
 	if d.API.Runs != 2 || d.API.UsageRuns != 1 || d.API.Calls != 6 || *d.API.Tokens != 3000 {
 		t.Fatalf("api %+v", d.API)
 	}
-	if d.All.Runs != 3 || d.All.Calls != 7 || *d.All.Tokens != 3000 || slices.Max(r.calls.all) != 50000 {
+	if d.All.Runs != 4 || d.All.Calls != 9 || *d.All.Tokens != 3000 || slices.Max(r.calls.all) != 50000 {
 		t.Fatalf("all %+v", d.All)
 	}
 	if d.MCPDefinitions != "not recorded" || d.APIRunsWithMCP != 1 {
@@ -479,6 +483,15 @@ func TestDefinitionsCompareTheToolsWithTheMedianCallPerBackend(t *testing.T) {
 		t.Fatalf("largest %+v", d.Largest)
 	}
 	data, _ := json.Marshal(d)
+	var fields struct {
+		API struct {
+			Runs   int   `json:"runs_with_cache_write"`
+			Tokens int64 `json:"cache_write_tokens"`
+		} `json:"api"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil || fields.API.Runs != 2 || fields.API.Tokens != 5900 {
+		t.Fatalf("cache writes %s: %v", data, err)
+	}
 	if strings.Contains(string(data), "secret") || strings.Contains(string(data), "private") || strings.Contains(string(data), home) {
 		t.Fatal("record text leaked")
 	}

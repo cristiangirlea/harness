@@ -131,7 +131,8 @@ is not counted. With those caveats, hrn's own definitions (709 tokens in auto an
 the same six tools, 352 read-only, 824 with shaping) are 32%, 16% and 37% of the median api call
 of 2,211 tokens. That median comes from 1,110 calls in 176 api runs, none with usage events, so
 every figure is a run average. All 176 ran local GGUF models through an Anthropic-compatible
-local server, not Anthropic's API, and none recorded a cache write, so counting cache writes
+local server, not Anthropic's API, and none recorded a cache write (`api.runs_with_cache_write` and
+`api.cache_write_tokens` are both zero), so counting cache writes
 leaves the median where it was; a run against Anthropic's API, which writes the system prompt
 and definitions to the cache on its first call, would have a larger median and a smaller share.
 `largest_with_shaping` lists the shaping set's tools: `edit_file`, `grep`, `run_command`,
