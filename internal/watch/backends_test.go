@@ -121,6 +121,13 @@ func TestBackendsCardShowsChosenDefaultAndMalformedNotice(t *testing.T) {
 	if strings.Count(card, "Backend preferences could not be read.") != 1 || strings.Contains(card, runlog.Home()) || strings.Contains(card, "backends.json") {
 		t.Fatalf("malformed notice must appear once and name no path: %s", card)
 	}
+	for _, name := range agent.Names() {
+		_, row, _ := strings.Cut(card, `data-backend="`+name+`"`)
+		row, _, _ = strings.Cut(row, "</tr>")
+		if !strings.Contains(row, ">unknown<") || strings.Contains(row, ` checked`) {
+			t.Errorf("malformed preferences row for %s: %s", name, row)
+		}
+	}
 }
 
 func TestBackendsWritesRequireAnAllowedViewerAndValidPreferences(t *testing.T) {
@@ -137,6 +144,9 @@ func TestBackendsWritesRequireAnAllowedViewerAndValidPreferences(t *testing.T) {
 		{"disabled default", "127.0.0.1:1234", "test-key", `{"enabled":["codex"],"default":"claude"}`, "not in enabled", 400},
 		{"empty enabled with default", "127.0.0.1:1234", "test-key", `{"enabled":[],"default":"codex"}`, "not in enabled", 400},
 		{"malformed", "127.0.0.1:1234", "test-key", `{broken`, "", 400},
+		{"wrong enabled type", "127.0.0.1:1234", "test-key", `{"enabled":[1]}`, "", 400},
+		{"wrong default type", "127.0.0.1:1234", "test-key", `{"default":5}`, "", 400},
+		{"unknown field", "127.0.0.1:1234", "test-key", `{"extra":true}`, "", 400},
 		{"null", "127.0.0.1:1234", "test-key", `null`, "", 400},
 		{"trailing JSON", "127.0.0.1:1234", "test-key", `{} {}`, "", 400},
 		{"oversized", "127.0.0.1:1234", "test-key", `{"enabled":["` + strings.Repeat("x", 17000) + `"]}`, "", 400},
@@ -227,6 +237,88 @@ func TestBackendsWriteKeepsThePreferenceOrderAndAppendsNewOnes(t *testing.T) {
 	p, err := prefs.Load(runlog.Home())
 	if err != nil || !reflect.DeepEqual(p.EnabledNames, []string{"claude", "agy", "codex"}) {
 		t.Fatalf("order after the card = %v, %v; want claude, agy, codex", p.EnabledNames, err)
+	}
+}
+
+func TestBackendsWriteDeduplicates(t *testing.T) {
+	for _, existing := range []string{"", `{"enabled":["claude","claude","codex"]}`, `{broken`} {
+		t.Run(existing, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			if existing != "" {
+				if err := os.WriteFile(filepath.Join(runlog.Home(), "backends.json"), []byte(existing), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h := New(context.Background(), Options{Key: "test-key"})
+			w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", `{"enabled":["codex","claude","codex","claude"]}`)
+			p, err := prefs.Load(runlog.Home())
+			want := []string{"codex", "claude"}
+			if strings.Contains(existing, `"claude"`) {
+				want = []string{"claude", "codex"}
+			}
+			if w.Code != 204 || err != nil || !reflect.DeepEqual(p.EnabledNames, want) {
+				t.Fatalf("POST = %d, preferences = %v, %v; want %v", w.Code, p.EnabledNames, err, want)
+			}
+		})
+	}
+}
+
+func TestBackendsIPv6LoopbackViewersCanEdit(t *testing.T) {
+	for _, remote := range []string{"[::1]:1234", "[::ffff:127.0.0.1]:1234"} {
+		t.Run(remote, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			h := New(context.Background(), Options{Key: "test-key"})
+			card := backendCardHTML(t, backendRequest(h, "GET", "/", remote, "127.0.0.1:8089", "", "", ""))
+			if !strings.Contains(card, `type="checkbox"`) {
+				t.Fatal("missing edit controls")
+			}
+			w := backendRequest(h, "POST", "/backends", remote, "127.0.0.1:8089", "test-key", "", `{"enabled":["codex"]}`)
+			if w.Code != 204 {
+				t.Fatalf("POST = %d %s", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+func TestBackendsWriteRejectsCrossSiteAndUnauthenticatedPublicRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name, token, origin, site string
+		public                    bool
+	}{
+		{"public missing JWT", "", "", "", true},
+		{"public invalid JWT", "invalid", "", "", true},
+		{"public foreign origin", "valid", "https://other.example", "", true},
+		{"local cross-site", "", "", "cross-site", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			opt := Options{Key: "test-key"}
+			host, token := "127.0.0.1:8089", tc.token
+			if tc.public {
+				f := newAccessFixture(t)
+				opt.Public, host = f.opt.Public, "harness.example.com"
+				if token == "valid" {
+					token = f.validToken()
+				}
+			}
+			r := httptest.NewRequest("POST", "http://"+host+"/backends", strings.NewReader(`{"enabled":["codex"]}`))
+			r.RemoteAddr = "127.0.0.1:1234"
+			r.Header.Set("X-Hrn-Watch-Key", opt.Key)
+			r.Header.Set("Cf-Access-Jwt-Assertion", token)
+			r.Header.Set("Origin", tc.origin)
+			r.Header.Set("Sec-Fetch-Site", tc.site)
+			w := httptest.NewRecorder()
+			New(context.Background(), opt).ServeHTTP(w, r)
+			if w.Code != 403 {
+				t.Fatalf("POST = %d %s", w.Code, w.Body)
+			}
+			if tc.public {
+				log, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-access.log"))
+				if err != nil || !strings.Contains(string(log), `"method":"POST"`) || !strings.Contains(string(log), `"status":403`) || !strings.Contains(string(log), `"email":""`) {
+					t.Fatalf("access log = %s, %v", log, err)
+				}
+			}
+		})
 	}
 }
 
