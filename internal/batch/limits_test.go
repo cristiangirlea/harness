@@ -310,25 +310,22 @@ func TestABatchDoesNotCreateACarryOnAfterCancellation(t *testing.T) {
 	}
 }
 
-// preferThird enables codex, claude and gemini (plus extra) with a gemini stub
+// preferThird enables codex, claude and agy (plus extra) with an agy stub
 // that finishes, and claude limited as well as codex.
 func preferThird(t *testing.T, extra ...string) {
 	t.Helper()
 	t.Setenv("HRN_HOME", t.TempDir())
-	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: append([]string{"codex", "claude", "gemini"}, extra...)}); err != nil {
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: append([]string{"codex", "claude", "agy"}, extra...)}); err != nil {
 		t.Fatal(err)
 	}
 	standIn(t)
-	for _, name := range limits.MeteredEnv("gemini") {
-		t.Setenv(name, "")
-	}
 	for _, s := range []stub{
 		{"claude", func(context.Context, agent.Task) agent.Result {
 			return agent.Result{Backend: "claude", Status: agent.StatusLimited, Error: "You've reached your Fable limit."}
 		}},
-		{"gemini", func(_ context.Context, task agent.Task) agent.Result {
+		{"agy", func(_ context.Context, task agent.Task) agent.Result {
 			_ = os.WriteFile(filepath.Join(task.Dir, "done.txt"), []byte("second half\n"), 0o644)
-			return agent.Result{Backend: "gemini", Status: agent.StatusOK, Final: "finished", Turns: 1}
+			return agent.Result{Backend: "agy", Status: agent.StatusOK, Final: "finished", Turns: 1}
 		}},
 	} {
 		orig, err := agent.Get(s.name)
@@ -350,7 +347,7 @@ func TestWithAPreferenceACarryOnGoesPastTwoSpentBackends(t *testing.T) {
 	for _, a := range tr.Attempts {
 		got = append(got, a.Backend)
 	}
-	if tr.Status != StatusPass || strings.Join(got, ",") != "codex,claude,gemini" {
+	if tr.Status != StatusPass || strings.Join(got, ",") != "codex,claude,agy" {
 		t.Fatalf("status %s, attempts %v", tr.Status, got)
 	}
 	if a := tr.Attempts[2]; !a.Continued || a.SwitchedFrom != "claude" {
@@ -373,7 +370,7 @@ func TestWithAPreferenceARetryMeantForASpentBackendStartsOnTheThird(t *testing.T
 	if tr.Status != StatusPass || len(tr.Attempts) != 2 {
 		t.Fatalf("task = %+v", tr)
 	}
-	if a := tr.Attempts[1]; a.Backend != "gemini" || a.SwitchedFrom != "codex" {
+	if a := tr.Attempts[1]; a.Backend != "agy" || a.SwitchedFrom != "codex" {
 		t.Errorf("the retry ran on %s, switched from %q", a.Backend, a.SwitchedFrom)
 	}
 }

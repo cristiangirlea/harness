@@ -21,16 +21,16 @@ func TestChooseAndAfterUseOnlyAnEnabledInstalledPartner(t *testing.T) {
 		want      string
 	}{
 		{"preference order", []string{"gemini", "claude", "codex"}, true, "claude"},
-		{"skip uninstalled", []string{"gemini", "claude", "codex"}, false, "claude"},
+		{"skip uninstalled", []string{"agy", "claude", "codex"}, false, "claude"},
 		{"disabled partner", []string{"codex"}, true, ""},
-		{"uninstalled partner", []string{"gemini", "codex"}, false, ""},
+		{"uninstalled partner", []string{"agy", "codex"}, false, ""},
 		{"no preference", nil, true, "claude"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			standIn(t, true, true)
-			orig, _ := agent.Get("gemini")
-			agent.Register(stub{"gemini", tc.installed})
+			orig, _ := agent.Get("agy")
+			agent.Register(stub{"agy", tc.installed})
 			t.Cleanup(func() { agent.Register(orig) })
 			// Remember the limit before a preference can remove its partner.
 			res := agent.Result{Backend: "codex", Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}
