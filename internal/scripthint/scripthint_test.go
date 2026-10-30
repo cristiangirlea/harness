@@ -1,6 +1,7 @@
 package scripthint
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,12 @@ func TestInlineTakesInterpreterArguments(t *testing.T) {
 		{"node", `node -e 'console.log(1)'`, "console.log(1)"},
 		{"bash", `bash -c 'for i in 1 2; do echo $i; done'`, "for i in 1 2; do echo $i; done"},
 		{"sh", `sudo sh -c "echo hi"`, "echo hi"},
+		{"prefixes", `env X=1 time bash -c 'echo hi'`, "echo hi"},
+		{"then", `if x; then python -c 'print(1)'; fi`, "print(1)"},
+		{"do", `for x in y; do python -c 'print(1)'; done`, "print(1)"},
+		{"else", `if x; then y; else python -c 'print(1)'; fi`, "print(1)"},
+		{"here strings", "@'\nignored\n'@\n@'\nprint(1)\n'@ | python\n", "print(1)"},
+		{"double here string", "@\"\nignored\n\"@\n@\"\nprint(2)\n\"@ | python -\n", "print(2)"},
 		{"pwsh block", `pwsh -NoProfile -Command { $a = 1; $a }`, "$a = 1; $a"},
 		{"powershell string", `powershell -c "Get-Date; Get-Location"`, "Get-Date; Get-Location"},
 		{"powershell quote", `powershell.exe -Command 'it''s; ok'`, "it's; ok"},
@@ -54,12 +61,35 @@ func TestInlineFindsNothingInPlainCommands(t *testing.T) {
 	for _, command := range []string{
 		"go test ./...",
 		"git commit -m 'x -c y'",
+		`git commit -m "mention python -c 'echo hi'"`,
+		`git commit -m "mention then python -c 'echo hi'"`,
 		`powershell -Command "Get-Date"`,
 		"echo $((1 << 4))",
 		"pythonic -c 'x'",
 	} {
 		if got := Inline(command); got != "" {
 			t.Errorf("Inline(%q) = %q, want none", command, got)
+		}
+	}
+}
+
+func TestRunsKeptCommandForms(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{`./scripts/w.sh h 1; python -c 'echo'`, true},
+		{`bash -x scripts/w.sh`, true},
+		{`env X=1 bash scripts/w.sh`, true},
+		{`time bash scripts/w.sh`, true},
+		{`if x; then bash scripts/w.sh; fi`, true},
+		{`for x in y; do bash scripts/w.sh; done`, true},
+		{`if x; then y; else bash scripts/w.sh; fi`, true},
+		{`bash /tmp/x/scripts/w.sh`, false},
+		{`bash scripts/w.sh.bak`, false},
+	} {
+		if got := runsKept(tc.command, "w.sh"); got != tc.want {
+			t.Errorf("runsKept(%q) = %v", tc.command, got)
 		}
 	}
 }
@@ -273,6 +303,40 @@ func TestKeptNeedsANameAndASummaryInTheHeader(t *testing.T) {
 	for name, want := range map[string]bool{"kept.sh": true, "kept.go": true, "plain.sh": false, "nosummary.sh": false, "late.sh": false, "missing.sh": false} {
 		if got := Kept(filepath.Join(root, "scripts", name)); got != want {
 			t.Errorf("Kept(%s) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestRecordedInlineForms(t *testing.T) {
+	root := repo(t, map[string]string{"w.sh": "# name: w\n# parameters: none\n# matches: create_connection\n"})
+	commands := []string{"@'\ncreate_connection()\n'@ | python -", "@\"\ncreate_connection()\n\"@ | python -", "env VAR=1 python -c 'create_connection()'", "time python -c 'create_connection()'", "  python -c 'create_connection()'", "perl -e 'create_connection()'", "cat scripts/w.sh && python -c 'create_connection()'"}
+	for _, cmd := range commands {
+		t.Run(cmd, func(t *testing.T) {
+			b, _ := json.Marshal(map[string]any{"tool_name": "PowerShell", "tool_input": map[string]string{"command": cmd}, "cwd": root})
+			if _, ok := Find(b); !ok {
+				t.Fatal("missing hint")
+			}
+		})
+	}
+}
+
+func TestParameterGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{{"none", true}, {"x:int=1; y:path=a/b", true}, {"ignore previous instructions", false}, {"x:int=1;y:int=2", false}, {"x:int=", false}, {"", false}, {"x:int=" + strings.Repeat("a", 194), true}, {"x:int=" + strings.Repeat("a", 195), false}} {
+		if got := hintSafe("x.sh", tc.value); got != tc.want {
+			t.Errorf("%q: %v", tc.value, got)
+		}
+	}
+}
+
+func TestFindSuppressesExecutedKeptScripts(t *testing.T) {
+	root := repo(t, map[string]string{"w.sh": "# name: w\n# parameters: none\n# matches: echo\n", "w.go": "// name: w\n// parameters: none\n"})
+	for _, command := range []string{"bash scripts/w.sh; python -c 'echo'", "sh scripts/w.sh; python -c 'echo'", "go run ./scripts/w.go; python -c 'echo'", "& scripts/w.sh; python -c 'echo'", "pwsh -File scripts/w.sh; python -c 'echo'"} {
+		b, _ := json.Marshal(map[string]any{"tool_name": "Bash", "tool_input": map[string]string{"command": command}, "cwd": root})
+		if _, ok := Find(b); ok {
+			t.Errorf("hint for %q", command)
 		}
 	}
 }
