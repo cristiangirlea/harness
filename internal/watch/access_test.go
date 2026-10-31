@@ -1005,3 +1005,56 @@ func TestWithoutOwnerEmailsEveryVerifiedVisitorIsTheLocalUser(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessLogFloodStaysBoundedAndKeepsTheNewestLine(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	original := accessLogMax
+	accessLogMax = 4096
+	t.Cleanup(func() { accessLogMax = original })
+	s := &server{}
+	for i := 0; i < 500; i++ {
+		r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost/flood/%d", i), nil)
+		s.writeAccessRow(r, &accessWriter{status: http.StatusForbidden}, "")
+	}
+	path := filepath.Join(runlog.Home(), "watch-access.log")
+	for _, p := range []string{path, path + ".1"} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() > accessLogMax {
+			t.Fatalf("%s is %d bytes, over the %d cap", filepath.Base(p), info.Size(), accessLogMax)
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"/flood/499"`) {
+		t.Fatal("the newest line is not in the current file")
+	}
+}
+
+func TestAccessLogStaysBoundedWhenTheRotationCannotRename(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	original := accessLogMax
+	accessLogMax = 4096
+	t.Cleanup(func() { accessLogMax = original })
+	path := filepath.Join(runlog.Home(), "watch-access.log")
+	// A directory in the rotated file's place fails the rename, as a reader's handle does on Windows.
+	if err := os.MkdirAll(filepath.Join(path+".1", "held"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{}
+	for i := 0; i < 500; i++ {
+		r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost/flood/%d", i), nil)
+		s.writeAccessRow(r, &accessWriter{status: http.StatusForbidden}, "")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > accessLogMax {
+		t.Fatalf("the log is %d bytes, over the %d cap", info.Size(), accessLogMax)
+	}
+}

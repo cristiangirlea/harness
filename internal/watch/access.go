@@ -420,10 +420,23 @@ func (s *server) writeAccessRow(r *http.Request, aw *accessWriter, stream string
 	if err := os.MkdirAll(runlog.Home(), 0700); err != nil {
 		return
 	}
-	f, err := os.OpenFile(filepath.Join(runlog.Home(), "watch-access.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	path := filepath.Join(runlog.Home(), "watch-access.log")
+	line := append(b, '\n')
+	// A flood of refused requests must not fill the disk: keep one previous file.
+	flags := os.O_CREATE | os.O_APPEND | os.O_WRONLY
+	if info, err := os.Stat(path); err == nil && info.Size()+int64(len(line)) > accessLogMax {
+		// A reader's handle can refuse the rename on Windows; start over rather than grow.
+		if os.Rename(path, path+".1") != nil {
+			flags |= os.O_TRUNC
+		}
+	}
+	f, err := os.OpenFile(path, flags, 0600)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	_, _ = f.Write(append(b, '\n'))
+	_, _ = f.Write(line)
 }
+
+// accessLogMax caps watch-access.log; the rotated copy holds as much again.
+var accessLogMax int64 = 8 << 20
