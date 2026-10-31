@@ -27,7 +27,10 @@ func TestBuildReadsLocalPlanAndBranches(t *testing.T) {
 	}
 	git("add", "PLAN.md")
 	git("commit", "-m", "initial")
-	git("branch", "feature")
+	git("checkout", "-b", "feature")
+	git("commit", "--allow-empty", "-m", "feature")
+	git("checkout", "main")
+	git("merge", "--no-ff", "feature", "-m", "merge")
 	if err := os.WriteFile(filepath.Join(repo, "change"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +72,10 @@ func TestBuildCombinesRecordsAndReportsInvalidRepositories(t *testing.T) {
 	}
 	git("add", ".")
 	git("commit", "-m", "initial")
-	git("branch", "merged")
+	git("checkout", "-b", "merged")
+	git("commit", "--allow-empty", "-m", "merged work")
+	git("checkout", "main")
+	git("merge", "--no-ff", "merged", "-m", "merge")
 	git("branch", "feature")
 	git("branch", "untouched")
 	worktree := filepath.Join(t.TempDir(), "worktree")
@@ -89,7 +95,7 @@ func TestBuildCombinesRecordsAndReportsInvalidRepositories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "batches"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	batch := `{"id":"b1","dir":` + strconv.Quote(repo) + `,"tasks":[{"id":"t1","prompt":"task","branch":"feature","worktree":` + strconv.Quote(worktree) + `,"attempts":[{"run_id":"r1","gates":[{"command":"test","exit_code":1}]}]}]}`
+	batch := `{"id":"b1","started":"2030-01-01T00:00:00Z","dir":` + strconv.Quote(repo) + `,"tasks":[{"id":"t1","prompt":"task","branch":"feature","worktree":` + strconv.Quote(worktree) + `,"attempts":[{"run_id":"r1","gates":[{"command":"test","exit_code":1}]}]}]}`
 	if err := os.WriteFile(filepath.Join(home, "batches", "b1.json"), []byte(batch), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +110,7 @@ func TestBuildCombinesRecordsAndReportsInvalidRepositories(t *testing.T) {
 	if len(pieces) != 4 {
 		t.Fatalf("pieces: %+v", pieces)
 	}
-	if pieces[0].Stage != Idea || pieces[1].Stage != Gates {
+	if pieces[0].Stage != Idea || pieces[1].Stage != Branch {
 		t.Fatalf("order: %+v", pieces)
 	}
 	var feature *Piece

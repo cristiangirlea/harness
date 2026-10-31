@@ -103,3 +103,14 @@ func TestLoadsDuringSavesDoNotFail(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestOldPreferencesLoadWithoutWorkMapRepos(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "backends.json"), []byte(`{"enabled":["codex"],"default":"codex"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Load(home)
+	if err != nil || p.Default() != "codex" || p.WorkMapRepos != nil {
+		t.Fatalf("%+v %v", p, err)
+	}
+}

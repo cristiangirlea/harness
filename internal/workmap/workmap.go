@@ -140,6 +140,7 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 	pieces := map[string]*Piece{}
 	roots := map[string]string{}
 	worktrees := map[string]map[string]string{}
+	defaults := map[string]string{}
 	add := func(p Piece) {
 		key := p.Repo + "\x00" + p.Key
 		if p.Links.Branch != "" {
@@ -154,10 +155,8 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		if rank(p.Stage) > rank(old.Stage) {
 			old.Stage = p.Stage
 		}
-		if p.Stuck != "" {
-			old.Stuck = p.Stuck
-		}
 		if p.Updated.After(old.Updated) {
+			old.Stuck = p.Stuck
 			old.Updated = p.Updated
 		}
 		old.Links.Runs = append(old.Links.Runs, p.Links.Runs...)
@@ -200,7 +199,9 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			}
 		}
 		def, err := git(ctx, root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+		mergeRef := ""
 		if err == nil {
+			mergeRef = "refs/remotes/" + def
 			def = strings.TrimPrefix(def, "origin/")
 		} else {
 			for _, name := range []string{"main", "master"} {
@@ -216,6 +217,11 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 				errs = append(errs, fmt.Errorf("default branch %s: %w", root, err))
 			}
 		}
+		defaults[root] = def
+		if mergeRef == "" && def != "" {
+			mergeRef = "refs/heads/" + def
+		}
+		defaultTip, _ := git(ctx, root, "rev-parse", "--verify", mergeRef)
 		out, err = git(ctx, root, "for-each-ref", "--format=%(refname:short)%09%(committerdate:iso-strict)", "refs/heads/")
 		if err != nil {
 			errs = append(errs, fmt.Errorf("branches %s: %w", root, err))
@@ -226,12 +232,15 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 					continue
 				}
 				stage := Branch
-				if def != "" {
-					_, e := git(ctx, root, "merge-base", "--is-ancestor", "refs/heads/"+name, "refs/heads/"+def)
-					if e == nil {
-						stage = Merged
-					} else if ex, ok := e.(*exec.ExitError); !ok || ex.ExitCode() != 1 {
-						errs = append(errs, fmt.Errorf("merge status %s: %w", name, e))
+				if mergeRef != "" {
+					branchTip, tipErr := git(ctx, root, "rev-parse", "--verify", "refs/heads/"+name)
+					if tipErr != nil || defaultTip == "" || branchTip != defaultTip {
+						_, e := git(ctx, root, "merge-base", "--is-ancestor", "refs/heads/"+name, mergeRef)
+						if e == nil {
+							stage = Merged
+						} else if ex, ok := e.(*exec.ExitError); !ok || ex.ExitCode() != 1 {
+							errs = append(errs, fmt.Errorf("merge status %s: %w", name, e))
+						}
 					}
 				}
 				updated, _ := time.Parse(time.RFC3339, date)
@@ -350,6 +359,9 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		if root == "" {
 			continue
 		}
+		if branch == defaults[root] {
+			branch = ""
+		}
 		p := Piece{Repo: root, Key: "run:" + r.ID, Title: r.Task.Prompt, Stage: Agent, Updated: r.Started, Links: Links{Branch: branch, Runs: []string{r.ID}}}
 		if branch != "" {
 			p.Key = "branch:" + branch
@@ -358,6 +370,9 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 	}
 	result := make([]Piece, 0, len(pieces))
 	for _, p := range pieces {
+		if rank(p.Stage) >= rank(Merged) {
+			p.Stuck = ""
+		}
 		sort.Strings(p.Links.Runs)
 		p.Links.Runs = compact(p.Links.Runs)
 		sort.Strings(p.Links.Batches)

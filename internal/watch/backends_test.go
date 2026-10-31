@@ -431,3 +431,19 @@ func TestBackendsCardShowsEachPlanBackendsQuotaMarkingLowAndStaleWindows(t *test
 		t.Fatalf("gemini has no plan quota to show: %s", r)
 	}
 }
+
+func TestBackendsSavePreservesWorkMapRepos(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := prefs.Save(home, prefs.Prefs{WorkMapRepos: []string{"original"}}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(context.Background(), Options{Key: "test-key"})
+	for _, body := range []string{`{"enabled":["codex"]}`, `{"enabled":["claude"],"work_map_repos":["injected"]}`} {
+		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", body)
+		p, err := prefs.Load(home)
+		if w.Code != 204 || err != nil || !reflect.DeepEqual(p.WorkMapRepos, []string{"original"}) {
+			t.Fatalf("save: %d %+v %v", w.Code, p, err)
+		}
+	}
+}

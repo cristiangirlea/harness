@@ -198,3 +198,26 @@ func TestRouteSetWarnsAboutADisabledBackend(t *testing.T) {
 		})
 	}
 }
+
+func TestBackendsRecoversBrokenPreferences(t *testing.T) {
+	for _, action := range []string{"reset", "set"} {
+		t.Run(action, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HRN_HOME", home)
+			if err := os.WriteFile(filepath.Join(home, "backends.json"), []byte("{"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{action}
+			if action == "set" {
+				args = append(args, "--only", "codex")
+			}
+			if _, err := captureStdout(t, func() error { return cmdBackends(args) }); err != nil {
+				t.Fatal(err)
+			}
+			p, err := prefs.Load(home)
+			if err != nil || (action == "set" && (len(p.EnabledNames) != 1 || p.EnabledNames[0] != "codex")) {
+				t.Fatalf("%+v %v", p, err)
+			}
+		})
+	}
+}

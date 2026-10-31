@@ -537,10 +537,7 @@ func cmdBackends(args []string) error {
 			if *only == "" || fs.NArg() != 0 {
 				return errors.New("usage: hrn backends set --only claude,codex [--default claude]")
 			}
-			p, err := prefs.Load(runlog.Home())
-			if err != nil {
-				return err
-			}
+			p, _ := prefs.Load(runlog.Home())
 			p.EnabledNames = nil
 			p.DefaultName = *def
 			for _, name := range strings.Split(*only, ",") {
@@ -563,10 +560,7 @@ func cmdBackends(args []string) error {
 				return errors.New("usage: hrn backends reset")
 			}
 			p, err := prefs.Load(runlog.Home())
-			if err != nil {
-				return err
-			}
-			if len(p.WorkMapRepos) == 0 {
+			if err != nil || len(p.WorkMapRepos) == 0 {
 				if err := os.Remove(filepath.Join(runlog.Home(), "backends.json")); err != nil && !os.IsNotExist(err) {
 					return err
 				}
