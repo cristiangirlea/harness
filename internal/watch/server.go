@@ -239,8 +239,10 @@ type server struct {
 	logMu    sync.Mutex
 	actionMu sync.Mutex
 	rateMu   sync.Mutex
-	rates    map[string][]time.Time
-	noted    map[string]time.Time
+	rates    map[string][]admitted
+	noted    map[string]uint64
+	rateSeq  uint64
+	clock    func() time.Time
 	grants   []owner.Grant
 
 	batches     batchCache

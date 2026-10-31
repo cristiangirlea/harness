@@ -370,7 +370,7 @@ func TestAuditRateLimitExpiryAndSteadyTraffic(t *testing.T) {
 		refuse()
 	}
 	for i := range s.rates["client"] {
-		s.rates["client"][i] = s.rates["client"][i].Add(-61 * time.Second)
+		s.rates["client"][i].at = s.rates["client"][i].at.Add(-61 * time.Second)
 	}
 	if ok, _ := s.allowAction("client"); !ok {
 		t.Fatal("request refused after expiry")
@@ -390,10 +390,13 @@ func TestAuditRateLimitExpiryAndSteadyTraffic(t *testing.T) {
 	if got := strings.Count(string(data), `"reason":"rate limit"`); got != 2 {
 		t.Fatalf("rate limit lines: %d", got)
 	}
-	// A client that always keeps a request in the window still gets a line once the window turns over.
+	// A client that always keeps a request in the window still gets a line once the window turns over,
+	// even when the clock is too coarse to tell the requests and the refusals apart.
+	frozen := time.Now()
+	s.clock = func() time.Time { return frozen }
 	for minute := 0; minute < 2; minute++ {
 		for i := 0; i < 10; i++ {
-			s.rates["client"][0] = time.Now().Add(-61 * time.Second)
+			s.rates["client"][0].at = frozen.Add(-61 * time.Second)
 			if ok, _ := s.allowAction("client"); !ok {
 				t.Fatalf("minute %d request %d refused", minute, i)
 			}
@@ -404,8 +407,8 @@ func TestAuditRateLimitExpiryAndSteadyTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(string(data), `"reason":"rate limit"`) - 2; got < 1 || got > 2 {
-		t.Fatalf("steady over-limit traffic wrote %d rate limit lines in two windows, want 1 or 2", got)
+	if got := strings.Count(string(data), `"reason":"rate limit"`) - 2; got != 2 {
+		t.Fatalf("steady over-limit traffic wrote %d rate limit lines in two windows, want 2", got)
 	}
 }
 

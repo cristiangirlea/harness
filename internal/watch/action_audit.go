@@ -68,19 +68,28 @@ func (s *server) actionClient(w http.ResponseWriter, r *http.Request) string {
 	return "unverified"
 }
 
+// admitted orders requests by sequence, since a coarse clock gives equal times.
+type admitted struct {
+	at  time.Time
+	seq uint64
+}
+
 func (s *server) allowAction(client string) (ok, first bool) {
 	s.rateMu.Lock()
 	defer s.rateMu.Unlock()
 	if s.rates == nil {
-		s.rates = make(map[string][]time.Time)
-		s.noted = make(map[string]time.Time)
+		s.rates = make(map[string][]admitted)
+		s.noted = make(map[string]uint64)
 	}
 	now := time.Now()
-	for k, times := range s.rates {
+	if s.clock != nil {
+		now = s.clock()
+	}
+	for k, reqs := range s.rates {
 		j := 0
-		for _, t := range times {
-			if now.Sub(t) < time.Minute {
-				times[j] = t
+		for _, r := range reqs {
+			if now.Sub(r.at) < time.Minute {
+				reqs[j] = r
 				j++
 			}
 		}
@@ -88,17 +97,20 @@ func (s *server) allowAction(client string) (ok, first bool) {
 			delete(s.rates, k)
 			delete(s.noted, k)
 		} else {
-			s.rates[k] = times[:j]
+			s.rates[k] = reqs[:j]
 		}
 	}
-	if len(s.rates[client]) >= 10 {
-		first := s.noted[client].Before(s.rates[client][0])
+	reqs := s.rates[client]
+	if len(reqs) >= 10 {
+		// A new window starts once every request seen at the last note has expired.
+		first := reqs[0].seq > s.noted[client]
 		if first {
-			s.noted[client] = now
+			s.noted[client] = reqs[len(reqs)-1].seq
 		}
 		return false, first
 	}
-	s.rates[client] = append(s.rates[client], now)
+	s.rateSeq++
+	s.rates[client] = append(reqs, admitted{at: now, seq: s.rateSeq})
 	return true, false
 }
 
