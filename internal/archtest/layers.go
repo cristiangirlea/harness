@@ -8,7 +8,7 @@ var layers = map[string]int{
 	"internal/kernel": 1, "internal/runlog": 1, "internal/flow": 1, "internal/quota": 1, "internal/limits": 1,
 	"internal/mcp": 2, "internal/tools": 2, "internal/remote": 2, "internal/ws": 2,
 	"internal/agent": 3, "internal/resolve": 4,
-	"internal/batch": 5, "internal/followup": 5, "internal/gc": 5, "internal/report": 5, "internal/flowview": 5,
+	"internal/workmap": 5, "internal/batch": 5, "internal/followup": 5, "internal/gc": 5, "internal/report": 5, "internal/flowview": 5,
 	"internal/eval": 6, "internal/route": 6, "internal/game": 7,
 	"internal/execproto": 8, "internal/hrnmcp": 8, "internal/watch": 8, "internal/update": 8, "internal/archtest": 8, "cmd/hrn": 8,
 }

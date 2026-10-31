@@ -537,7 +537,9 @@ func cmdBackends(args []string) error {
 			if *only == "" || fs.NArg() != 0 {
 				return errors.New("usage: hrn backends set --only claude,codex [--default claude]")
 			}
-			p := prefs.Prefs{DefaultName: *def}
+			p, _ := prefs.Load(runlog.Home())
+			p.EnabledNames = nil
+			p.DefaultName = *def
 			for _, name := range strings.Split(*only, ",") {
 				name = strings.TrimSpace(name)
 				if _, err := agent.Get(name); err != nil {
@@ -557,8 +559,17 @@ func cmdBackends(args []string) error {
 			if len(args) != 1 {
 				return errors.New("usage: hrn backends reset")
 			}
-			if err := os.Remove(filepath.Join(runlog.Home(), "backends.json")); err != nil && !os.IsNotExist(err) {
-				return err
+			p, err := prefs.Load(runlog.Home())
+			if err != nil || len(p.WorkMapRepos) == 0 {
+				if err := os.Remove(filepath.Join(runlog.Home(), "backends.json")); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			} else {
+				p.EnabledNames = nil
+				p.DefaultName = ""
+				if err := prefs.Save(runlog.Home(), p); err != nil {
+					return err
+				}
 			}
 		default:
 			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] | reset]")

@@ -14,6 +14,7 @@ import (
 )
 
 type Prefs struct {
+	WorkMapRepos []string `json:"work_map_repos,omitempty"`
 	EnabledNames []string `json:"enabled,omitempty"`
 	DefaultName  string   `json:"default,omitempty"`
 }
