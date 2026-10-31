@@ -326,6 +326,33 @@ func TestRunFlagsReachTheTask(t *testing.T) {
 	}
 }
 
+func TestClaudeReviewTurnCapRecorded(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	original, err := agent.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(recorder{"claude", recorded})
+	t.Cleanup(func() { agent.Register(original) })
+	code, err := cmdRun([]string{"-b", "claude", "--no-switch", "-C", t.TempDir(), "--purpose", "review", "check this"})
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	select {
+	case task := <-recorded:
+		if task.MaxTurns != 30 {
+			t.Fatalf("backend max turns = %d", task.MaxTurns)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("backend did not run")
+	}
+	recs, err := runlog.List(1)
+	if err != nil || len(recs) != 1 || recs[0].Task.MaxTurns != 30 {
+		t.Fatalf("record = %+v, %v", recs, err)
+	}
+}
+
 func TestRunLeanFalseAndSkillsFlagsReachTheTask(t *testing.T) {
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())

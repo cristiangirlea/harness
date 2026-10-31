@@ -1286,6 +1286,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		task.Model, task.Effort, plan.routedBy = "", "", nil
 	}
 
+	turnDefault := task.ApplyTurnDefault(b.Name())
 	rec, err := runlog.CreateContinuing(b.Name(), task, plan.continues, plan.routedBy)
 	if err != nil {
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
@@ -1295,6 +1296,10 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number,
 		Status: flow.StatusStarted, Name: b.Name(), Reason: plan.reason, Run: att.RunID})
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
+	if turnDefault {
+		rec.Event(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+		notify(Event{Task: id, Kind: "info", Text: agent.TurnDefaultInfo})
+	}
 	report(att)
 	before, beforeErr := gitTips(task.Dir, plan.branch)
 	att.Result = agent.Run(ctx, b, task, func(e agent.Event) {
