@@ -273,6 +273,8 @@ func TestExpandRejectsBadSpecs(t *testing.T) {
 		{"spaced variant", func(s *Spec) { s.Matrix[0].Name = "opus high" }, "variant"},
 		{"spec retry", func(s *Spec) { s.Retry = []string{"ev-ok"} }, "retry does not belong"},
 		{"task retry", func(s *Spec) { s.Tasks[0].Retry = []string{"ev-ok"} }, "retry does not belong"},
+		{"spec retry_k", func(s *Spec) { s.RetryK = 3 }, "retry_k does not belong"},
+		{"task retry_k", func(s *Spec) { s.Tasks[0].RetryK = 3 }, "retry_k does not belong"},
 		{"slots with a judge", func(s *Spec) { s.Worktrees = batch.WorktreesSlots; s.Judge = &Judge{Rubric: "r"} }, "fresh"},
 	} {
 		spec := testSpec("somewhere")
