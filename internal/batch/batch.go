@@ -2780,11 +2780,16 @@ func undoMerge(root string, cause error) error {
 
 // LoadResult reads a saved batch record.
 func LoadResult(id string) (Result, error) {
+	return LoadResultFrom(runlog.Home(), id)
+}
+
+// LoadResultFrom reads a batch from the given record home.
+func LoadResultFrom(home, id string) (Result, error) {
 	var res Result
 	if id == "" || strings.ContainsAny(id, `/\`) {
 		return res, fmt.Errorf("invalid batch id %q", id)
 	}
-	data, err := readRecord(filepath.Join(batchesDir(), id+".json"))
+	data, err := readRecord(filepath.Join(home, "batches", id+".json"))
 	if err != nil {
 		return res, err
 	}

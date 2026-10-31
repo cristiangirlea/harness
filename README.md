@@ -110,6 +110,7 @@ today; the rest are planned, and each README says so.
 | See the dashboard and Ada in pictures | [hrn watch and Ada, in pictures](docs/presentation.md) |
 | Score tasks or compare models | [Evaluations and reports](docs/evaluations.md) |
 | Inspect or prune saved data | [Run records](docs/run-records.md) |
+| Understand the local work model | [Work map](docs/work-map.md) |
 | Integrate hrn with a supervising program | [Exec protocol](docs/exec-protocol.md) |
 | Find, write or verify a kept script | [Kept scripts](docs/scripts.md) |
 
