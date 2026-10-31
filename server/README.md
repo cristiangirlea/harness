@@ -174,6 +174,7 @@ rollback need scope and expected_generation. `search.json` adds query and
 optionally version_id; `inspect.json` adds version_id. Inputs reject unknown
 fields, including credential fields. Search matches exact scope and ranks
 identifiers, paths, and errors before `simple` text matches, with stable ties.
+Search materializes the version's members before matching their entries.
 Identifiers may include spaces for multi-word errors. Exact query candidates
 also omit trailing sentence periods and colons, preserving internal path punctuation.
 Joined candidates contain at most 8 words; each search sends at most 256 exact

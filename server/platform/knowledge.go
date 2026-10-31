@@ -357,6 +357,16 @@ func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retri
 	return out, tx.Commit(ctx)
 }
 
+const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
+ SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers,e.search_vector
+ FROM knowledge_members m JOIN knowledge_entries e ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id)
+ WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3
+)
+ SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
+ FROM members e
+ WHERE (e.identifiers && $5::text[] OR e.search_vector @@ to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')))
+ ORDER BY (e.identifiers && $5::text[]) DESC, ts_rank_cd(e.search_vector,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),''))) DESC,e.entry_key COLLATE "C",e.id LIMIT 100`
+
 func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retrieval.Packet, error) {
 	started := time.Now()
 	out := retrieval.Packet{Entries: []retrieval.Entry{}, Ranking: retrieval.RankingVersion, QueryDigest: retrieval.TextDigest(in.Query)}
@@ -390,11 +400,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 			return out, err
 		}
 		words := knowledgeQueryIdentifiers(in.Query)
-		rows, err := tx.Query(ctx, `SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
- FROM knowledge_members m JOIN knowledge_entries e ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id)
- WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3
- AND (e.identifiers && $5::text[] OR e.search_vector @@ to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')))
- ORDER BY (e.identifiers && $5::text[]) DESC, ts_rank_cd(e.search_vector,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),''))) DESC,e.entry_key COLLATE "C",e.id LIMIT 100`, in.TenantID, in.ProjectID, out.VersionID, in.Query, words)
+		rows, err := tx.Query(ctx, knowledgeSearchSQL, in.TenantID, in.ProjectID, out.VersionID, in.Query, words)
 		if err != nil {
 			return out, err
 		}
