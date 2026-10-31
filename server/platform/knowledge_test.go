@@ -217,10 +217,10 @@ func TestSchemaVersionTwoRequestsExplicitMigration(t *testing.T) {
 	if err := checkSchemaVersion(2); err == nil || !strings.Contains(err.Error(), "run the explicit migrate command") {
 		t.Fatalf("missing migration guidance: %v", err)
 	}
-	if err := checkSchemaVersion(3); err != nil {
+	if err := checkSchemaVersion(4); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkSchemaVersion(4); err == nil || strings.Contains(err.Error(), "run the explicit migrate command") {
+	if err := checkSchemaVersion(5); err == nil || strings.Contains(err.Error(), "run the explicit migrate command") {
 		t.Fatalf("newer schema must not suggest migration: %v", err)
 	}
 }

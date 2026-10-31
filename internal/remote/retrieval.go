@@ -63,3 +63,8 @@ func (c *Client) SearchKnowledge(ctx context.Context, in retrieval.Search) (retr
 	}
 	return out, nil
 }
+
+func (c *Client) RecordAdmission(ctx context.Context, in retrieval.Admission) error {
+	_, err := c.Request(ctx, http.MethodPost, "/v1/knowledge/admission", in)
+	return err
+}
