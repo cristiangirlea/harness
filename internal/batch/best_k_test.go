@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -169,6 +170,7 @@ func TestBestOfKClaimsAndCancellation(t *testing.T) {
 	var mu sync.Mutex
 	claimed := map[string]bool{}
 	var canceledDecision bool
+	var nonRunningClaim bool
 	agent.Register(stub{"wb-k-cancel", func(ctx context.Context, task agent.Task) agent.Result {
 		if task.Purpose == "plan" {
 			return agent.Result{Status: agent.StatusOK, Final: `["one","two"]`}
@@ -185,6 +187,9 @@ func TestBestOfKClaimsAndCancellation(t *testing.T) {
 		for _, tr := range res.Tasks {
 			for _, c := range tr.Candidates {
 				if c.BranchMade {
+					if !claimed[c.Branch] && tr.Status != StatusRunning {
+						nonRunningClaim = true
+					}
 					claimed[c.Branch] = true
 				}
 			}
@@ -207,10 +212,80 @@ func TestBestOfKClaimsAndCancellation(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
+	if nonRunningClaim {
+		t.Error("candidate claim saved without running status")
+	}
 	if len(claimed) != 2 || !claimed["hrn/cancel-k1"] || !claimed["hrn/cancel-k2"] {
 		t.Errorf("claims: %v", claimed)
 	}
 	if res.Tasks[0].Status != StatusCanceled || !canceledDecision {
 		t.Errorf("result=%+v decision=%v", res.Tasks[0], canceledDecision)
+	}
+}
+
+func TestBestOfKProposalCancellation(t *testing.T) {
+	dir := initRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent.Register(stub{"wb-k-proposal-cancel", func(ctx context.Context, task agent.Task) agent.Result {
+		if task.Purpose == "plan" {
+			cancel()
+			<-ctx.Done()
+			return agent.Result{Status: agent.StatusCanceled, Error: ctx.Err().Error()}
+		}
+		return agent.Result{Status: agent.StatusOK}
+	}})
+	var decision bool
+	res, err := Run(ctx, Spec{Dir: dir, Backend: "wb-k-proposal-cancel", Worktrees: WorktreesFresh, RetryK: 2, Gate: []string{"false"}, Tasks: []Task{{ID: "cancel-proposal", Prompt: "work"}}}, func(e Event) {
+		if e.Kind == "decision" && e.Text == "best-of-k: canceled" {
+			decision = true
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tasks[0].Status != StatusCanceled || !decision {
+		t.Fatalf("result=%+v decision=%v", res.Tasks[0], decision)
+	}
+}
+
+func TestBestOfKRetainsOriginalClaimOnCleanupFailure(t *testing.T) {
+	dir := initRepo(t)
+	original := filepath.Join(dir, ".hrn", "worktrees", "original")
+	agent.Register(stub{"wb-k-locked", func(ctx context.Context, task agent.Task) agent.Result {
+		if task.Purpose == "plan" {
+			if out, err := exec.Command("git", "-C", dir, "worktree", "lock", original).CombinedOutput(); err != nil {
+				t.Errorf("lock: %v: %s", err, out)
+			}
+			return agent.Result{Status: agent.StatusOK, Final: `["PASS", "lose"]`}
+		}
+		if strings.Contains(task.Prompt, "PASS") {
+			_ = os.WriteFile(filepath.Join(task.Dir, "pass.txt"), []byte("pass"), 0644)
+		}
+		return agent.Result{Status: agent.StatusOK}
+	}})
+	res, err := Run(context.Background(), Spec{Dir: dir, Backend: "wb-k-locked", Worktrees: WorktreesFresh, RetryK: 2, Gate: []string{"test -f pass.txt"}, Tasks: []Task{{ID: "original", Prompt: "work"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass {
+		t.Fatalf("result: %+v", tr)
+	}
+	found := false
+	for _, c := range tr.Candidates {
+		if c.Branch == "hrn/original" && c.Worktree == original && c.BranchMade {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("original claim lost: %+v", tr)
+	}
+	git(t, dir, "worktree", "unlock", original)
+	if err := Remove(res); err != nil {
+		t.Fatal(err)
+	}
+	if git(t, dir, "for-each-ref", "--format=%(refname)", "refs/heads/hrn/original") != "" {
+		t.Error("original branch remains")
 	}
 }

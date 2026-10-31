@@ -1152,7 +1152,12 @@ func runBestOfK(ctx context.Context, spec *Spec, batchID string, kept *keptSlots
 	additions, err := proposeAdditions(ctx, backend, t, tr, k, root, t.Options.Over(spec.Options))
 	if err != nil {
 		tr.Error = strings.TrimSpace(tr.Error + "\n" + err.Error())
-		decision("result", err.Error(), flow.StatusFailed)
+		if ctx.Err() != nil {
+			tr.Status = StatusCanceled
+			decision("result", "best-of-k: canceled", flow.StatusCanceled)
+		} else {
+			decision("result", err.Error(), flow.StatusFailed)
+		}
 		return tr
 	}
 	results := make([]TaskResult, len(additions))
@@ -1182,6 +1187,7 @@ func runBestOfK(ctx context.Context, spec *Spec, batchID string, kept *keptSlots
 				c := &tr.Candidates[i]
 				c.Branch, c.Worktree, c.Slot, c.BranchMade = cur.Branch, cur.Worktree, cur.Slot, cur.BranchMade
 				snapshot := tr
+				snapshot.Status = StatusRunning
 				snapshot.Candidates = slices.Clone(tr.Candidates)
 				return progress(snapshot)
 			})
@@ -1225,7 +1231,9 @@ func runBestOfK(ctx context.Context, spec *Spec, batchID string, kept *keptSlots
 		}
 	}
 	if winner >= 0 {
-		cleanup(tr)
+		if !cleanup(tr) {
+			tr.Candidates = append(tr.Candidates, RetryCandidate{Branch: tr.Branch, Worktree: tr.Worktree, Slot: tr.Slot, BranchMade: tr.BranchMade})
+		}
 		w := results[winner]
 		tr.Candidates[winner].Winner = true
 		tr.Status, tr.Commit, tr.Branch, tr.Worktree, tr.Slot, tr.BranchMade = w.Status, w.Commit, w.Branch, w.Worktree, w.Slot, w.BranchMade
