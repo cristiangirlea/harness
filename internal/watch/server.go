@@ -239,7 +239,8 @@ type server struct {
 	logMu  sync.Mutex
 	grants []owner.Grant
 
-	batches batchCache
+	batches     batchCache
+	familiarity familiarityCache
 }
 
 // New returns a watch handler whose streams end with ctx so shutdown need not wait for browsers.

@@ -430,6 +430,12 @@ func (p *Practice) Streak() (int, []bool, error) {
 	}
 	return n, days, nil
 }
+
+type PracticeRecordError struct{ Err error }
+
+func (e *PracticeRecordError) Error() string { return e.Err.Error() }
+func (e *PracticeRecordError) Unwrap() error { return e.Err }
+
 func (p *Practice) Rebuild() error {
 	files, err := filepath.Glob(filepath.Join(Dir(), "reps", "*.json"))
 	if err != nil {
@@ -451,7 +457,7 @@ func (p *Practice) Rebuild() error {
 		date := strings.TrimSuffix(filepath.Base(file), ".json")
 		r, err := loadRep(date)
 		if err != nil {
-			return err
+			return &PracticeRecordError{Err: err}
 		}
 		var all []*Exercise
 		if r.Daily != nil && !r.Daily.AnsweredAt.IsZero() {

@@ -72,7 +72,11 @@ func cmdBotStats(args []string) error {
 		return fmt.Errorf("unexpected argument %q: hrn bot stats takes none", args[0])
 	}
 	if err := game.Rebuild(); err != nil {
-		return err
+		var recordErr *game.PracticeRecordError
+		if !errors.As(err, &recordErr) {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "hrn bot stats: practice records: %v\n", err)
 	}
 	settings, err := game.LoadSettings()
 	if err != nil {
@@ -98,17 +102,18 @@ func cmdBotStats(args []string) error {
 	}
 	streak, days, err := game.NewPractice(source, time.Now()).Streak()
 	if err != nil {
-		return err
-	}
-	var squares strings.Builder
-	for _, day := range days {
-		if day {
-			squares.WriteString("\u25a0")
-		} else {
-			squares.WriteString("\u25a1")
+		fmt.Fprintf(os.Stderr, "hrn bot stats: streak: %v\n", err)
+	} else {
+		var squares strings.Builder
+		for _, day := range days {
+			if day {
+				squares.WriteString("\u25a0")
+			} else {
+				squares.WriteString("\u25a1")
+			}
 		}
+		fmt.Printf("streak: %d days %s\n", streak, squares.String())
 	}
-	fmt.Printf("streak: %d days %s\n", streak, squares.String())
 	week := game.WeekStart(time.Now())
 	xp := totals.Since(week)
 	fmt.Printf("this week, from %s UTC: delivery %d xp, practice %d xp\n", week.Format("Monday 2 January 2006"), xp[game.TrackDelivery], xp[game.TrackPractice])
@@ -120,6 +125,27 @@ func cmdBotStats(args []string) error {
 		badges = append(badges, "none yet")
 	}
 	fmt.Printf("badges: %s\n", strings.Join(badges, ", "))
+	familiarity, err := game.ReadFamiliarity(context.Background(), time.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
+		return nil
+	}
+	showAreas := func(label string, areas []game.AreaExposure) {
+		var names []string
+		for _, area := range areas {
+			name := area.Repo + "/" + area.Area
+			if area.Count > 0 {
+				name += fmt.Sprintf(" (%d)", area.Count)
+			}
+			names = append(names, name)
+		}
+		if len(names) == 0 {
+			names = append(names, "none yet")
+		}
+		fmt.Printf("%s: %s\n", label, strings.Join(names, ", "))
+	}
+	showAreas("areas you know", familiarity.Known)
+	showAreas("areas agents changed you have not looked at", familiarity.Unseen)
 	return nil
 }
 

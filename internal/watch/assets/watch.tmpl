@@ -50,6 +50,8 @@
 <div class="game-days" aria-label="Last 35 UTC days of practice">{{range .Days}}<span class="game-day{{if .}} done{{end}}" aria-label="{{if .}}Done{{else}}Not done{{end}}"></span>{{end}}</div>{{end}}
 <p>Badges: {{if .Badges}}{{range $i, $badge := .Badges}}{{if $i}}, {{end}}{{$badge}}{{end}}{{else}}none yet{{end}}</p>
 {{if .Local}}<p>This week: delivery {{.Delivery}} XP · practice {{.Practice}} XP</p>
+{{with .Familiarity}}<p>Areas you know: {{if .Known}}{{range $i, $area := .Known}}{{if $i}}, {{end}}{{$area.Repo}}/{{$area.Area}} ({{$area.Count}}){{end}}{{else}}none yet{{end}}</p>
+<p>Areas agents changed you have not looked at: {{if .Unseen}}{{range $i, $area := .Unseen}}{{if $i}}, {{end}}{{$area.Repo}}/{{$area.Area}}{{end}}{{else}}none yet{{end}}</p>{{end}}
 <h3>Today's exercise</h3>{{with .Exercise}}<p>{{.Kind}} · {{.Source}}{{if not .AnsweredAt.IsZero}} · Done{{end}}</p>{{if .AnsweredAt.IsZero}}<pre>{{.Material}}</pre>{{end}}{{else}}<p>Run <code>hrn bot practice</code> to get today's exercise.</p>{{end}}{{end}}
 </section>{{end}}{{end}}
 {{define "backends"}}<section id="backends" class="card" aria-labelledby="backends-h"{{if .Editable}} data-key="{{.Key}}"{{end}}>

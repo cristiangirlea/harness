@@ -1,11 +1,14 @@
 package watch
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,5 +160,152 @@ func TestGameCardUsesStoredMaskedExerciseWithoutChangingIt(t *testing.T) {
 	}
 	if string(before) != string(after) {
 		t.Fatal("render changed the exercise record")
+	}
+}
+
+func TestGameFamiliarityVisibility(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	req := httptest.NewRequest("GET", "http://127.0.0.1/", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+	s := &server{}
+	s.familiarity.value = &game.Familiarity{UnreadablePractice: true, Known: []game.AreaExposure{{Repo: "example/repo", Area: "known", Count: 2}}, Unseen: []game.AreaExposure{{Repo: "example/repo", Area: "unseen"}}}
+	s.familiarity.checked = time.Now()
+	s.index(w, req)
+	for _, want := range []string{"example/repo/known", "example/repo/unseen", "practice records unreadable; familiarity may be incomplete"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("loopback omitted %q", want)
+		}
+	}
+	s.opt.LAN = []Endpoint{{Addr: "192.168.1.1:8089"}}
+	w = httptest.NewRecorder()
+	s.index(w, req)
+	if strings.Contains(w.Body.String(), "example/repo/") {
+		t.Fatal("LAN exposed familiarity")
+	}
+	if card := (&server{opt: Options{Public: &PublicAccess{}}}).gameCard(w, req); card != nil {
+		t.Fatal("public exposed game")
+	}
+}
+
+func TestFamiliarityCache(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan int, 4)
+	release := make(chan struct{}, 4)
+	var calls atomic.Int32
+	c := familiarityCache{loader: func(ctx context.Context, now time.Time) (game.Familiarity, error) {
+		n := int(calls.Add(1))
+		started <- n
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return game.Familiarity{}, ctx.Err()
+		}
+		if n == 2 {
+			return game.Familiarity{}, errors.New("load failed")
+		}
+		return game.Familiarity{Known: []game.AreaExposure{{Area: "loaded"}}}, nil
+	}}
+	now := time.Now().UTC()
+	if c.get(ctx, now) != nil {
+		t.Fatal("first get returned a value")
+	}
+	<-started
+	done := make(chan struct{}, 20)
+	for i := 0; i < cap(done); i++ {
+		go func() { c.get(ctx, now); done <- struct{}{} }()
+	}
+	for i := 0; i < cap(done); i++ {
+		<-done
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("loads: %d", calls.Load())
+	}
+	release <- struct{}{}
+	wait := func() {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			c.mu.Lock()
+			loading := c.loading
+			c.mu.Unlock()
+			if !loading {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("load did not finish")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	wait()
+	old := c.get(ctx, now)
+	if old == nil || len(old.Known) != 1 {
+		t.Fatal("loaded value missing")
+	}
+	if c.get(ctx, time.Now().Add(2*time.Minute)) != old {
+		t.Fatal("refresh did not retain value")
+	}
+	<-started
+	release <- struct{}{}
+	wait()
+	if c.get(ctx, time.Now()) != old {
+		t.Fatal("error discarded value")
+	}
+	cancel()
+	if c.get(ctx, time.Now().Add(2*time.Minute)) != old || calls.Load() != 2 {
+		t.Fatal("cancelled context started a load or discarded value")
+	}
+}
+
+func TestFamiliarityCacheCancelsLoader(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	c := familiarityCache{loader: func(ctx context.Context, _ time.Time) (game.Familiarity, error) {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return game.Familiarity{}, ctx.Err()
+	}}
+	c.get(ctx, time.Now())
+	<-started
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loader did not stop")
+	}
+}
+
+func TestFamiliarityCacheDropsALoadThatFinishesAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := familiarityCache{loader: func(context.Context, time.Time) (game.Familiarity, error) {
+		close(started)
+		<-release
+		return game.Familiarity{}, nil
+	}}
+	c.get(ctx, time.Now())
+	<-started
+	cancel()
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c.mu.Lock()
+		loading, value := c.loading, c.value
+		c.mu.Unlock()
+		if !loading {
+			if value != nil {
+				t.Fatal("a load that finished after cancel was stored")
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("load did not finish")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
