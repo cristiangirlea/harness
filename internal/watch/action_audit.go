@@ -118,6 +118,8 @@ func (s *server) writeRefusal(client, path, reason string) {
 	action := "unknown"
 	if path == "/backends" {
 		action = "backends"
+	} else if strings.HasPrefix(path, "/batch/") && strings.Contains(path, "/merge/") {
+		action = "merge"
 	}
 	_ = auditAppender(actionRow{Time: time.Now().UTC().Format(time.RFC3339Nano), Client: client, Action: action, Result: "refused", Reason: reason})
 }

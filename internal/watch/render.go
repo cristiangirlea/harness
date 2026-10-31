@@ -490,9 +490,11 @@ func contains(xs []string, s string) bool {
 
 type batchPage struct {
 	page
-	ID     string
-	Stream string
-	Body   batchBody
+	ID         string
+	Stream     string
+	Body       batchBody
+	MergeKey   string
+	MergeTasks []string
 }
 
 type batchBody struct {

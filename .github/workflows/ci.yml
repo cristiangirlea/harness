@@ -84,6 +84,20 @@ jobs:
         run: echo "This change touches only Markdown; the build and tests are skipped."
       - uses: actions/checkout@v4
         if: needs.changes.outputs.code == 'true'
+        with:
+          fetch-depth: 0
+      - name: architecture baseline
+        if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            base="origin/$BASE_REF"
+          else
+            base=HEAD^
+          fi
+          bash scripts/archtest-baseline.sh "$base"
       - uses: actions/setup-go@v5
         if: needs.changes.outputs.code == 'true'
         with:
