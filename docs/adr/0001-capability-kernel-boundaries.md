@@ -65,7 +65,7 @@ approved project knowledge: `retrieval` (wire contract), `remote` (client),
 
 1. **`agent` resolves what to run, not only how.** It fetches knowledge over the network
    (`agent/retrieval.go:120,144`: `remote.NewFromEnv`, `remote.RetrievalUnavailable`), reads the
-   owner's preference file (`agent/preferences.go`), routes from the table and `purpose`
+   backend preference file (`agent/preferences.go`), routes from the table and `purpose`
    (`Options.RouteWithNote`, `options.go:90`) and picks a turn default by purpose
    (`Task.ApplyTurnDefault`, `options.go:162`).
 2. **A security policy lives in the knowledge contract.** `retrieval.ExecutorEnv`
@@ -202,7 +202,8 @@ Steps marked **neutral** leave the baseline as it is; the others delete the line
    O_EXCL, and the outcomes: optional mode plus unavailable records
    `optional retrieval unavailable` and runs on; cancellation records `retrieval canceled`; any
    other error fails as today, and a retrieval-scoped task with no `Knowledge` fails naming it.
-   `agent/retrieval_test.go` passes untouched, plus a fake-searcher test per outcome and adapter
+   `agent/retrieval_test.go` keeps its coverage with its scoped tasks given a fake `Knowledge`
+   searcher in place of `remote.NewFromEnv`, plus a fake-searcher test per outcome and adapter
    tests for each class `RetrievalUnavailable` separates. The seven execution entry points of
    step 15 set `Knowledge` (`remote.NewFromEnv` plus the adapter), each tested against a loopback
    fake; the server worker sets no retrieval scope. Fixtures building scoped tasks set it too:
@@ -266,8 +267,9 @@ Steps marked **neutral** leave the baseline as it is; the others delete the line
     packets, read by eval and game.
 19. **Worker subprocess contract**, **neutral**, before the worker stops embedding
     `*agent.APIBackend`. Written in `docs/`, versioned, built on `execproto`'s JSONL: start (the task
-    and, on resume, its checkpoint), events, the final result, cancellation (a `cancel` frame, then
-    a kill after a grace period, result `canceled`), and durable checkpoints. Credentials reach
+    and, on resume, its checkpoint), events, the final result, cancellation (a `cancel` frame; the worker answers `canceled` only when nothing is in flight,
+    otherwise `RecoveryRequired`; a kill after the grace period yields no result at all, and the
+    service reaches recovery through the job lease expiring, as for a dead worker), and durable checkpoints. Credentials reach
     the child only through its environment, filtered by `envpolicy`; checkpoints carry none.
     - **Restrictions as today**: the worker starts `hrn exec --worker`, a mode that only narrows:
       backend `api`, an `http` loopback or `localhost` base URL with no user info (`RunOnce`'s
@@ -275,8 +277,9 @@ Steps marked **neutral** leave the baseline as it is; the others delete the line
       Plain `hrn exec` keeps its rules; neither path gains a backend, endpoint or tool.
     - **Checkpoints**: hrn sends a numbered `checkpoint` frame and waits. The worker rechecks the
       workspace (`prepareWorkspace`), posts with the job's generation and answers `ack` only once
-      the service accepts; otherwise `nack`. A `nack`, a timeout, a closed pipe or a dead worker
-      ends the run with `ErrRecoveryRequired` and `RecoveryRequired`, as a failed `Save` does
+      the service accepts; otherwise `nack`. A `nack`, a timeout or a closed pipe ends the run with
+      `ErrRecoveryRequired` and `RecoveryRequired`; a dead worker reports nothing, and the service
+      reaches recovery when its lease expires, as a failed `Save` does
       today: never continued, never resent. A resumed checkpoint with `Pending` fails the same way.
     - **Fencing**: workspace validation before the start (and `finishWorkspaceRecovery`) stays
       in the worker; only the worker calls the control service, always with the generation; a
@@ -359,7 +362,7 @@ tests exercise task execution without a provider.
 - Twenty-two pull requests (plus any 2a, 2b fixes) touch busy files (`batch.go`, `api.go`,
   `options.go`); they should land between feature work, not under it.
 
-## Open questions for the owner
+## Open questions
 
 1. **adanext-map**: which repository and contract does #574 mean? Nothing here references it.
 2. `purpose` labels prompts with coding-flavoured kinds; it is a leaf here. Should it become
