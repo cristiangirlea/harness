@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -88,6 +87,8 @@ func (p Plan) freshHandoff() string {
 	return header + body + footer
 }
 
+var supportsNoLazyFetch = gitenv.SupportsNoLazyFetch
+
 func changes(dir, base string) string {
 	ref, against := "HEAD", "the current commit; the run's start is not recorded, so only uncommitted changes show"
 	if base != "" {
@@ -97,14 +98,17 @@ func changes(dir, base string) string {
 	if dir == "" {
 		return "--- workspace changes\n(the record names no workspace: no diff)\n"
 	}
+	if !supportsNoLazyFetch() {
+		return "--- workspace changes\n(git version does not support the required safeguards: no diff)\n"
+	}
 	if _, err := git(dir, nil, "rev-parse", "--is-inside-work-tree"); err != nil {
 		return "--- workspace changes\n(not a git repository, or git could not read it: no diff)\n"
 	}
-	off, err := filtersOff(dir)
+	off, err := gitenv.FiltersOff(dir)
 	if err != nil {
 		return fmt.Sprintf("%s(git config could not be read, so no diff was taken: %s)\n", title, clipTo(err.Error(), 200))
 	}
-	stat, err := git(dir, off, "diff", "--no-ext-diff", "--no-textconv", "--stat", ref, "--")
+	stat, err := git(dir, off, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--stat", ref, "--")
 	if err != nil {
 		return fmt.Sprintf("%s(git diff failed: %s)\n", title, clipTo(err.Error(), 200))
 	}
@@ -124,9 +128,10 @@ func changes(dir, base string) string {
 func git(dir string, off []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	full := append([]string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir}, off...)
+	full := []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=all", "-c", "core.hooksPath=" + os.DevNull, "-C", dir}
 	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
-	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_NO_LAZY_FETCH=1")
+	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(cmd.Env, off...)
 	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -135,33 +140,6 @@ func git(dir string, off []string, args ...string) (string, error) {
 		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimRight(string(out), "\n"), nil
-}
-
-// Disable clean/process commands from agent-writable config; filtered files may then appear changed.
-func filtersOff(dir string) ([]string, error) {
-	keys, err := git(dir, nil, "config", "--name-only", "--get-regexp", `^filter\.`)
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
-		return nil, nil // no filter configured
-	}
-	if err != nil {
-		return nil, err
-	}
-	var off []string
-	seen := map[string]bool{}
-	for _, key := range strings.Split(keys, "\n") {
-		name := strings.TrimPrefix(key, "filter.")
-		i := strings.LastIndex(name, ".")
-		if i <= 0 || seen[name[:i]] {
-			continue
-		}
-		name = name[:i]
-		seen[name] = true
-		for _, setting := range []string{"clean=", "smudge=", "process=", "required=false"} {
-			off = append(off, "-c", "filter."+name+"."+setting)
-		}
-	}
-	return off, nil
 }
 
 type batchAttempt struct {
