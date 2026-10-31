@@ -20,7 +20,7 @@ func gitOutput(dir string, args ...string) (string, error) {
 func gitOutputWithEnv(dir string, extra []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=all", "-c", "core.hooksPath=" + os.DevNull}, args...)...)
 	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1")
 	cmd.Env = append(cmd.Env, extra...)
 	cmd.WaitDelay = time.Second
@@ -52,7 +52,7 @@ func changedFiles(root, head string) ([]string, bool, string, []string) {
 	if err != nil {
 		return nil, false, "", nil
 	}
-	diff, err := gitOutputWithEnv(root, off, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", head, "--")
+	diff, err := gitOutputWithEnv(root, off, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--no-renames", "--name-only", "-z", head, "--")
 	if err != nil {
 		return nil, false, "", nil
 	}

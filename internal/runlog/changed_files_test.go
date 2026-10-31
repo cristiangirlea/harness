@@ -250,3 +250,44 @@ func TestChangedFilesExcludesMergedSideCommits(t *testing.T) {
 		t.Fatalf("commits: %v", commits)
 	}
 }
+
+func TestChangedFilesIgnoresSubmoduleFilters(t *testing.T) {
+	parent := t.TempDir()
+	origin := t.TempDir()
+	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "marker"))
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.test", "-c", "protocol.file.allow=always"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(origin, "init")
+	if err := os.WriteFile(filepath.Join(origin, "file"), []byte("before\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git(origin, "add", ".")
+	git(origin, "commit", "-m", "base")
+	git(parent, "init")
+	git(parent, "submodule", "add", origin, "sub")
+	git(parent, "commit", "-m", "base")
+	head := git(parent, "rev-parse", "HEAD")
+	_ = head
+	sub := filepath.Join(parent, "sub")
+	git(sub, "config", "filter.evil.clean", "echo ran > '"+marker+"'; cat")
+	if err := os.WriteFile(filepath.Join(sub, ".gitattributes"), []byte("file filter=evil\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "file"), []byte("changed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	files, _, end, _ := changedFiles(parent, head)
+	if end == "" || len(files) != 0 {
+		t.Fatalf("files %v, end %q", files, end)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("submodule filter marker: %v", err)
+	}
+}
