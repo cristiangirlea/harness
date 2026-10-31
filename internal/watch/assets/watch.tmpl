@@ -184,6 +184,7 @@
 <p><a href="/flow/{{.ID}}">Execution flow</a></p>
 <h1>{{.Title}}</h1>
 <div id="live"{{with .Stream}} data-stream="{{.}}" data-replace{{end}}>{{template "batchbody" .Body}}</div>
+{{if .MergeTasks}}<section class="card" id="merges" data-key="{{.MergeKey}}" data-batch="{{.ID}}"><h2>Merge a passing task</h2>{{range .MergeTasks}}<button type="button" data-merge-task="{{.}}">Merge {{.}}</button> {{end}}<p id="merge-status" role="status" aria-live="polite"></p><button type="button" id="merge-confirm" hidden>Confirm merge</button> <button type="button" id="merge-cancel" hidden>Cancel</button></section>{{end}}
 {{template "foot" .}}{{end}}
 
 {{define "batchbody"}}

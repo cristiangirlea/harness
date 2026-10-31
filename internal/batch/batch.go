@@ -2881,3 +2881,50 @@ func tail(s string, n int) string {
 	}
 	return "…" + s[len(s)-n:]
 }
+
+// MergeAt merges one task's confirmed commit after checking that its branch still points there.
+func MergeAt(ctx context.Context, res Result, task, commit string) ([]MergeResult, error) {
+	tr, err := res.Find(task)
+	if err != nil {
+		return nil, err
+	}
+	head, err := BranchHead(ctx, res, task)
+	if err != nil {
+		return nil, err
+	}
+	if head != commit {
+		return nil, fmt.Errorf("the branch moved")
+	}
+	copyRes := res
+	copyRes.Tasks = append([]TaskResult(nil), res.Tasks...)
+	for i := range copyRes.Tasks {
+		if copyRes.Tasks[i].ID == task {
+			copyRes.Tasks[i].Branch = head
+		}
+	}
+	out, err := Merge(ctx, copyRes, []string{task}, false)
+	for i := range out {
+		out[i].Branch = tr.Branch
+	}
+	return out, err
+}
+
+// BranchHead resolves a task branch to its current commit.
+func BranchHead(ctx context.Context, res Result, task string) (string, error) {
+	tr, err := res.Find(task)
+	if err != nil {
+		return "", err
+	}
+	if res.Dir == "" || tr.Branch == "" {
+		return "", fmt.Errorf("task has no repository or branch")
+	}
+	return gitOut(ctx, res.Dir, "rev-parse", "--verify", "refs/heads/"+tr.Branch+"^{commit}")
+}
+
+// TargetBranch returns the currently checked-out branch in the batch repository.
+func TargetBranch(ctx context.Context, res Result) (string, error) {
+	if res.Dir == "" {
+		return "", fmt.Errorf("batch has no repository")
+	}
+	return gitOut(ctx, res.Dir, "symbolic-ref", "--short", "HEAD")
+}

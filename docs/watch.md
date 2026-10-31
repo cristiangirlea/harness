@@ -422,3 +422,5 @@ assembled text from the record.
 The existing environment-value redaction also runs. Records remain unchanged,
 and JSON record output retains the original text. These rules recognise common
 secret shapes; they cannot identify every possible secret.
+
+A passing batch task with a branch and changes can be merged from its batch page. Select Merge to see the task, branch, current head and target branch, then confirm within two minutes. Each confirmation is single-use; a moved branch is refused. Only this computer (without forwarding headers), or a verified Cloudflare Access user in public mode, can act. LAN viewers are read-only. Merge intents, outcomes and refusals are recorded in `watch-audit.jsonl` in `HRN_HOME`.
