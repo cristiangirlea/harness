@@ -67,6 +67,10 @@ hrn       -> result                (always the last line after accepted; then ex
   as set when it is present, even with a zero or empty value (`"max_turns":0`, `"mcp":[]`), so a
   caller leaves out what it does not mean to set.
 
+Claude review and test tasks default to 30 max turns when `max_turns` is omitted or zero.
+A negative `max_turns` disables that default and leaves the Claude CLI unlimited; a positive
+value sets the limit. When the default is applied, an `info` event announces it.
+
 ### `start` (caller, exactly one, the first line)
 
 ```json

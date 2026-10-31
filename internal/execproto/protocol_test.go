@@ -231,6 +231,44 @@ func TestAcceptedRunStreamsCompleteEventsAndRecordsTheAttempt(t *testing.T) {
 	}
 }
 
+func TestClaudeReviewTurnDefaultAndUnlimited(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			orig, _ := agent.Get("claude")
+			got := 999
+			agent.Register(fakeBackend{name: "claude", caps: agent.BackendCapabilities(orig), run: func(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+				got = task.MaxTurns
+				return agent.Result{Backend: "claude", Status: agent.StatusOK}
+			}})
+			t.Cleanup(func() { agent.Register(orig) })
+			h := openHarness(t, nil)
+			h.next(t, "hello")
+			req := start(t.TempDir(), "claude")
+			req["task"].(map[string]any)["purpose"] = "review"
+			if limit != 0 {
+				req["task"].(map[string]any)["max_turns"] = limit
+			}
+			h.send(t, req)
+			accepted := h.next(t, "accepted")
+			want := limit
+			if limit == 0 {
+				want = 30
+				e := h.next(t, "event")
+				if e["event"].(map[string]any)["text"] != agent.TurnDefaultInfo {
+					t.Fatalf("event=%v", e)
+				}
+			}
+			h.next(t, "result")
+			h.exit(t, 0)
+			rec, err := runlog.Load(accepted["run_id"].(string))
+			if err != nil || got != want || rec.Task.MaxTurns != want {
+				t.Fatalf("got=%d record=%+v err=%v", got, rec, err)
+			}
+		})
+	}
+}
+
 func TestStartRecordsADeclaredPurposeOrTheHeader(t *testing.T) {
 	name := registerFake(t, func(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
