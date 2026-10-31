@@ -17,6 +17,7 @@ func (h *HTTPServer) knowledgeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/knowledge/inspect", h.knowledgeInspect)
 	mux.HandleFunc("POST /v1/knowledge/import", h.knowledgeImport)
 	mux.HandleFunc("POST /v1/knowledge/change", h.knowledgeChange)
+	mux.HandleFunc("POST /v1/knowledge/admission", h.knowledgeAdmission)
 	mux.HandleFunc("POST /v1/knowledge/active", h.knowledgeActive)
 }
 func knowledgeFailure(w http.ResponseWriter, err error) {
@@ -138,4 +139,19 @@ func (h *HTTPServer) knowledgeActive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, out)
+}
+
+func (h *HTTPServer) knowledgeAdmission(w http.ResponseWriter, r *http.Request) {
+	if !h.operator(w, r) {
+		return
+	}
+	var in retrieval.Admission
+	if !decode(w, r, &in) {
+		return
+	}
+	if err := h.Store.RecordAdmission(r.Context(), in); err != nil {
+		knowledgeFailure(w, err)
+		return
+	}
+	respond(w, 200, map[string]string{"status": "recorded"})
 }

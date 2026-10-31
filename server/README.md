@@ -137,6 +137,7 @@ The API uses these scoped JSON operations:
 |---|---|---|
 | `POST /v1/knowledge/import` | Import a reviewed, immutable version | Operator |
 | `POST /v1/knowledge/change` | Activate, disable, or roll back a version | Operator |
+| `POST /v1/knowledge/admission` | Record a verdict; activate an admitted candidate while its baseline stays active | Operator |
 | `POST /v1/knowledge/search` | Return an audited, bounded packet | Tenant, project worker, or operator |
 | `POST /v1/knowledge/inspect` | Inspect a version | Tenant, project worker, or operator |
 | `POST /v1/knowledge/active` | Read active and previous pointers | Tenant, project worker, or operator |

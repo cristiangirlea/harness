@@ -16,6 +16,7 @@
 | `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream until the job ends and resume from the last durable event ID after a disconnect. |
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
+| `hrn knowledge admit --version ID --spec FILE -b BACKEND [--held-out SHARE --seed N --source-run ID]` | Compare a candidate with active knowledge and record the gated verdict. |
 | `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
 | `hrn retrieval compare --manifest FILE --samples FILE [--baseline-preparation FILE] [--candidate-preparation FILE] [--reuse N] [--runs] [--json]` | Compare saved retrieval evidence and verify measured run references locally, without a model call. Match each run on the requested model in `task.json`; a run without a requested model matches only when its reported result model exactly equals the variant model. Text output shows a differing provider-reported model. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
@@ -281,6 +282,19 @@ accepts one JSON request file and prints a JSON response. `import`, `activate`,
 `HRN_TENANT_TOKEN` or the exact project's worker credential. Set
 `HRN_SERVER_URL` and optionally `HRN_SERVER_CA_FILE` for the control service.
 Credentials are never placed in request files.
+
+`hrn knowledge admit --version ID --spec FILE -b claude|codex` compares the
+active version and candidate on the same held-out tasks, using the spec's repeats
+(at least two). `--held-out` defaults to 0.3; `--seed` defaults to zero. The spec
+must select required retrieval and one tenant, project, revision and model for
+all tasks. Both `HRN_OPERATOR_TOKEN` and `HRN_TENANT_TOKEN` are needed: the
+operator records the verdict and the tenant credential retrieves context during
+the eval. Source run IDs are extracted from entry evidence or supplied with
+repeatable `--source-run`; at least one is required. The command prints one JSON
+admission record. Higher pass rate beyond repeat movement, or equal pass rate
+with at least 10% fewer passing median tokens and settled variance, admits the
+candidate. Inconclusive comparisons stay pending; failed-attempt tokens are
+reported separately. The previous active version remains available for rollback.
 
 An operator imports only reviewed sources with `origin: "reviewed_source"`,
 `reviewed_by`, and `review_evidence`; model-generated candidates are rejected.
