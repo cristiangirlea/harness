@@ -283,7 +283,9 @@ writes two lines: one after its first bytes reach the browser, marked
 own time; a stream that ends before sending anything writes one plain line. Cloudflare's
 own Access logs record logins; this file records requests that reached watch. At 8 MiB
 the file moves to `watch-access.log.1` (replacing the previous one) and a new file
-starts, so a flood of refused requests holds at most twice that on disk.
+starts, so a flood of refused requests holds at most twice that on disk. When the move
+fails, as on Windows while another program has the file open, the file is emptied and
+starts over instead.
 
 Requests for a run, batch or flow also include `record` (the requested id),
 `decision` (`allowed` or `denied`), and `basis` (`owner`, `admin`, `grant:<project>`
