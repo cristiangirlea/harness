@@ -34,23 +34,23 @@ and line counts of non-test `.go` files. Test code adds roughly the same again.
 | | `remote` 553 | retrieval |
 | | `ws` 2,104 | gitretry |
 | 2 tools | `tools` 2,594 | gitenv, mcp, **retrieval**, runpaths, shape |
-| 3 backends | `agent` 5,694 | gitenv, mcp, tools, **prefs, purpose, remote, retrieval, route/table** |
-| 4 records | `runlog` 934 | **agent**, gitenv, owner, **retrieval, route/table**, runpaths |
+| 3 backends | `agent` 5,694 | gitenv, mcp, tools, retrieval, **prefs, purpose, remote, route/table** |
+| 4 records | `runlog` 934 | **agent**, gitenv, owner, retrieval, route/table, runpaths |
 | 5 events, budgets | `flow` 490, `quota` 442 | **agent**, runlog (+ mask) |
-| | `followup` 663 | agent, gitenv, runlog, tools, **ws** |
-| | `limits` 298 | agent, **followup**, runlog |
+| | `followup` 663 | agent, gitenv, runlog, tools, ws |
+| | `limits` 298 | **agent, followup**, runlog |
 | 6 coding pack | `batch` 3,570 | agent, flow, gitenv, gitretry, limits, mcp, owner, purpose, runlog, tools, ws |
-| 7 views, packs | `report` 644, `flowview` 298 | agent/flow, **batch**, purpose, runlog, owner, ws |
+| 7 views, packs | `report` 644, `flowview` 298 | agent/flow, batch, purpose, runlog, owner, ws |
 | | `eval` 2,264 | agent, batch, report, purpose, runlog, tools, gitenv |
 | | `gc` 2,877 | batch, gitretry, report, runlog, ws |
-| | `route` 198 | agent, **eval**, purpose, route/table, runlog |
+| | `route` 198 | agent, eval, purpose, route/table, runlog |
 | | `game` 1,872 | agent, batch, eval, mask, runlog, scripthint, gitenv |
 | 8 surfaces | `execproto` 582 | agent, followup, mcp, purpose, runlog, tools |
 | | `hrnmcp` 1,577 | almost everything, including remote and gc |
 | | `watch` 5,071 (+ assets) | almost everything, including game, quota, prefs |
 | | `update` 1,669 | **watch** |
-| | `cmd/hrn` 4,259 | everything |
-| separate module | `server/` 2,928 | root `internal/agent`, `internal/retrieval` via `replace => ..` |
+| | `cmd/hrn` 4,259; `scripts/tool-shapes` | everything; agent, shape |
+| separate module | `server/` 2,928 | root `internal/agent`, `internal/retrieval` (tests also `remote`) via `replace => ..` |
 
 Where #574's names sit today: **Ada** is the bot of hrn watch (`watch/bot.go`, `watch/voice.go`,
 `cmd/hrn/bot.go`) and a track in `game`; **adanext-exec** is an external repository, the command
@@ -63,29 +63,26 @@ approved project knowledge: `retrieval` (wire contract), `remote` (client),
 
 ### Violations
 
-The bold edges above point the wrong way for a kernel:
-
-1. **`agent` imports `remote`, `retrieval`, `prefs`, `purpose`, `route/table`.** The backend layer
-   fetches knowledge over the network (`agent/retrieval.go`), reads the owner's preference file
-   (`agent/preferences.go`) and the routing table (`agent/options.go`). Resolution of what to run
-   is mixed into how to run it.
-2. **`mcp` imports `retrieval`** (`mcp/config.go`, `mcp/client.go`), and `tools/exec.go` does too: a
-   wire protocol and the tool layer know the knowledge contract.
-3. **`runlog`, `flow`, `quota`, `limits` import `agent`.** `Task`, `Event` and `Result` live in the
-   backend package, so records and events depend on every backend adapter. `runlog` also imports
-   `retrieval` and `route/table`.
-4. **`limits` imports `followup`, which imports `ws`**: a budget package reaches worktree slots.
-5. **`route` imports `eval`**: routing policy depends on a domain pack's scores.
-6. **`update` imports `watch`** only for `watch.DefaultAddr` (`update/watch.go:48`); the log name
-   `watch-<port>.log` is a literal copied from watch's convention.
-7. **`server/` is not independent**: it imports the root's `internal/agent` and
-   `internal/retrieval` through a `replace` directive.
-8. **Size, not direction:** `batch/batch.go` is 2,883 lines holding spec checks, slots, attempts,
-   gate output decoding, git plumbing, removal, persistence and merge, with a 312-line `runTask`
+1. **`agent` resolves what to run, not only how.** It fetches knowledge over the network
+   (`agent/retrieval.go:120,144`: `remote.NewFromEnv`, `remote.RetrievalUnavailable`), reads the
+   owner's preference file (`agent/preferences.go`), routes from the table and `purpose`
+   (`Options.RouteWithNote`, `options.go:90`) and picks a turn default by purpose
+   (`Task.ApplyTurnDefault`, `options.go:162`).
+2. **A security policy lives in the knowledge contract.** `retrieval.ExecutorEnv`
+   (`retrieval/contracts.go:166`) drops `HRN_DATABASE_URL` and every `HRN_*_TOKEN` (any case) from
+   an environment. It guards every child process hrn starts: MCP servers (`mcp/client.go:79`),
+   `${VAR}` expansion in MCP configs (`mcp/config.go:189`), `run_command` (`tools/exec.go:52`) and
+   agent CLIs (`agent/cli.go:442`). `mcp` and `tools` import `retrieval` only for it.
+3. **`runlog`, `flow`, `quota`, `limits` import `agent`.** `Task`, `Event` and `Result` live in
+   the backend package, so records and events link every backend adapter. `runlog` also calls
+   `agent.ResolveSetup` (`runlog.go:123`) and `agent.ValidateContinuationPin` (`runlog.go:441,466`).
+4. **`limits` reaches the registry and `followup`**: `Partner` reads preferences and probes
+   backends (`limits.go:24–35`), and `After` plans a carry-on with `followup.Make` (`limits.go:286`).
+5. **`update` imports `watch`** only for `watch.DefaultAddr` (`update/watch.go:48`).
+6. **`server/` is not independent**: it imports root internals through a `replace` directive, and
+   its worker embeds `*agent.APIBackend` with in-process durable checkpoints (`worker.go:26,140`).
+7. **Size, not direction:** `batch/batch.go` is 2,883 lines with a 312-line `runTask`
    (lines 704–1015); `APIBackend.Run` is 363 lines (`agent/api.go:117–479`).
-
-Accepted as they are: `watch`, `hrnmcp` and `cmd/hrn` import nearly everything. They are the top
-layer; their fan-in is the point of a delivery surface.
 
 ## Decision
 
@@ -94,98 +91,166 @@ outside. This is a direction for moves of existing code, not new architecture to
 
 ### The kernel
 
-Domain-independent, standard library only, no knowledge of git, worktrees, code review or any
-model vendor:
+Domain-independent, standard library only, no knowledge of git, worktrees or code review:
 
 | Concern | Contract | Where it comes from |
 |---|---|---|
-| Task lifecycle | `Task`, `Event`, `Result`, `Usage`, and the `Backend` interface `Run(ctx, Task, emit) Result` | moved from `agent` into a new leaf `internal/kernel`; `agent` keeps type aliases so callers and JSON stay identical |
-| State | run records (`runlog`), the event stream and step tree (`flow`), paths (`runpaths`) | as now, importing `kernel` instead of `agent` |
-| Scheduling | O_EXCL slot leases and the queue | the lease primitive of `ws`; `server/platform/queue.go` for remote work |
-| Policy | the guard, guarded environment, secret files, commit policy | `tools/guard.go`, `guardenv.go`, `secretfiles.go`, `agent/commitpolicy.go`, later one `internal/policy` |
-| Budgets | turn, token and cost limits, quota windows | `limits`, `quota` |
-| Evidence | one `Evidence` record (kind, source, hash, bounded excerpt) carried on `Result` and events | today spread over `retrieval.Entry.Evidence`, batch gate results and eval judging |
+| Task lifecycle | `Task`, `Options`, `Event`, `Result`, `Usage`, `Conversation`, the `Backend` interface | moved from `agent` into a new `internal/kernel` (steps 10–14); `agent` keeps aliases |
+| State | run records (`runlog`), events and step tree (`flow`), paths (`runpaths`) | as now, importing `kernel` |
+| Scheduling | O_EXCL slot leases and the queue | the lease primitive of `ws`; `server/platform/queue.go` remotely |
+| Policy | guard, guarded environment, secret files, child-environment filter | `tools/guard.go`, `guardenv.go`, `secretfiles.go`, `internal/envpolicy` (step 4) |
+| Budgets | turn, token and cost limits, limit windows, quota | `limits` (window store only, step 8), `quota` |
+| Evidence | one `Evidence` record (kind, source, hash, bounded excerpt) on `Result` and events | today spread over `retrieval.Entry.Evidence`, batch gates and eval judging |
 
-Common task contracts carry no code-specific fields: a branch, a worktree, a gate command or an
-issue number is pack data in an opaque, namespaced extension (`Task.Pack`, `omitempty`), never a
-kernel field. Existing fields stay where they are on disk; new ones follow this rule.
+`retrieval` stays a leaf: after step 4 it is a pure wire contract (types, digests,
+`ValidatePacket`), so `kernel`, `agent` and `runlog` may import it like any leaf. New code-specific
+data (a branch, a gate, an issue) goes in an opaque, namespaced `Task.Pack` (`omitempty`), never a
+kernel field; existing fields stay where they are on disk.
 
 ### Behind interfaces
 
-The kernel defines small interfaces and the surfaces wire the implementations in:
-
-- **Knowledge** (`retrieval`, `remote`): `Knowledge.Packet(ctx, Scope) (Packet, error)`. `agent`,
-  `mcp` and `tools` take the interface; only surfaces import `remote`.
-- **Routing**: `Router.Pick(Task) (backend, model string)`, fed by `route/table`; `route` (which
-  needs `eval`) becomes part of the eval pack and writes the table.
-- **Preferences**: resolved by the surface before a task is built; `agent` sees resolved options.
-- **Providers**: the backend adapters (api, claude, codex, gemini, opencode, agy) stay in `agent`
-  as implementations of `kernel.Backend`.
-
-### Domain packs
-
-| Pack | Packages | Depends on |
-|---|---|---|
-| coding | `batch` (worktrees, gates, merge), `ws` issue leases and git, `followup` handover, `gc` | kernel |
-| eval | `eval`, `route`, `report` | kernel, coding (runs variants as batches) |
-| game | `game` | kernel, reads eval and batch records |
-
-A pack may import the kernel and the packs listed for it, nothing above it.
-
-### Delivery surfaces
-
-`cmd/hrn` (CLI), `hrnmcp` (MCP host), `watch` (dashboard, Ada), `execproto` (`hrn exec`),
-`update`, and `server/` (control service, worker). Surfaces may import anything; nothing imports a
-surface. External gates and services (adanext-exec, the control service seen from the CLI) are
-reached as **subprocesses or over HTTP**, never as Go libraries: the root module takes no
-`require`.
+- **Knowledge fetching** (step 5): `retrieval.Searcher` with one method,
+  `Search(ctx, retrieval.Search) (retrieval.Packet, error)`; an error wrapping
+  `retrieval.ErrUnavailable` means the service could not be reached (what
+  `remote.RetrievalUnavailable` decides today). `remote`'s client implements it. `agent` gets it
+  through `Task.Knowledge func() (retrieval.Searcher, error)` (`json:"-"`), called exactly where
+  `remote.NewFromEnv` is called today, so a replayed pin still constructs no client.
+- **Child-environment policy** (step 4): `envpolicy.Filter(env []string) []string`, a leaf with
+  today's deny rules byte for byte. Not an interface: a security rule is not swappable.
+- **Resolution** (step 9): preferences, the routing table and purpose-based defaults move to a
+  new `internal/resolve`; surfaces and packs call it before building a task, `agent` sees
+  resolved options.
+- **Providers**: the adapters (api, claude, codex, gemini, opencode, agy) and their registry stay
+  in `agent` as implementations of `kernel.Backend`.
 
 ## Rules
 
-1. Dependencies point inward: surface → pack → kernel → leaf. A leaf imports no module package.
-2. The kernel imports no pack and no surface; a pack imports no surface; no package imports
-   `cmd/hrn`, `watch`, `hrnmcp`, `execproto` or `update`.
-3. Cross-pack edges are only the ones in the pack table.
-4. Enforced by a test, `internal/archtest`, standard library only (`go/build`): it assigns every
-   package to a layer, walks the imports and fails on any forbidden edge. Today's violations sit
-   in a baseline in the test that may only shrink, like `scripts/comment-check.sh`. A new package
-   without a layer fails the test, so placing it is a reviewed decision.
+1. Every package has one layer; it may import only the layers listed for it, plus the named edges.
+
+| Layer | Packages | May import |
+|---|---|---|
+| leaf | `gitenv`, `gitretry`, `mask`, `owner`, `prefs`, `purpose`, `qr`, `retrieval`, `route/table`, `runpaths`, `scripthint`, `shape`; new `envpolicy`, `watchaddr` | no module package |
+| kernel | new `kernel`, `runlog`, `flow`, `quota`, `limits` | leaf |
+| infrastructure | `mcp`, `tools`, `remote`, `ws` | leaf, kernel; `tools → mcp` |
+| providers | `agent` | leaf, kernel, infrastructure |
+| resolution | new `resolve` | the layers above |
+| coding pack | `batch`, `followup`, `gc`, `report`, `flowview` | the layers above |
+| eval pack | `eval`, `route` | the layers above, coding |
+| game pack | `game` | the layers above, coding, eval (reads records and scores) |
+| surfaces | `cmd/hrn`, `hrnmcp`, `watch`, `execproto`, `update`, `scripts/...` | everything above; only `cmd/hrn` imports another surface |
+| server module | `server/...` | nothing from the root module |
+
+2. Named denials on top of the layers: `agent` imports no `remote`, `prefs`, `purpose` or
+   `route/table`; `mcp` and `tools` import no `retrieval`.
+3. Enforced by `internal/archtest`, standard library only. It parses the import block of every
+   `.go` file in the repository with `go/parser` (`ImportsOnly`), test files included and
+   `testdata/` excluded, so no `GOOS`/`GOARCH` suffix or build tag can hide an edge (today's
+   variants: `batch`, `gc`, `remote`, `tools`, `update`, `ws`). A file's package is its directory
+   under the nearest `go.mod`, so the nested `server` module, which the root `go test ./...` never
+   builds, is checked from the root test. An unclassified package fails.
+4. Existing violations sit in `internal/archtest/baseline.txt`, one `from -> to` per line. The
+   test fails on a forbidden edge missing from it and on a line whose edge no longer exists, so the
+   PR that removes an edge deletes its line. "Only shrinks" is checked against the base branch,
+   not the file alone: `scripts/archtest-baseline.sh <base-ref>`, in CI and `/check`, fails when
+   the head's baseline holds a line the base's (`git show <base-ref>:...`) does not, and prints any
+   change to the layer map so a reclassification is a visible, reviewed decision.
+
+Baseline at step 1, and the PR that removes each line:
+
+| Edge | Why it exists | Removed by |
+|---|---|---|
+| `update → watch` | `DefaultAddr` | 3 |
+| `mcp → retrieval`, `tools → retrieval` | `ExecutorEnv` | 4 |
+| `agent → remote` | packet fetch | 5 |
+| `limits → followup` | carry-on planning | 8 |
+| `agent → prefs`, `agent → route/table`, `agent → purpose` | preferences, routing, `ApplyTurnDefault` | 9 |
+| `flow → agent`, `quota → agent` | `Event`, `Status` | 11 |
+| `runlog → agent` | `Task`, `Result`, `Setup`, pin check | 15 |
+| `limits → agent` | registry (gone in 8), `Result`, `StatusLimited`, `MaxLimitWindow` | 16 |
+| `server/... → internal/agent`, `→ internal/retrieval`, tests `→ internal/remote` | worker, knowledge types | 21 |
+
+Not in the baseline: `agent → retrieval` (a contract leaf once step 4 takes the policy out),
+`route → eval` (both in the eval pack; this reclassification is all that is left of old edge 5),
+`gc → report` (both coding), `game → batch`, `game → eval` (permitted).
 
 ## Migration
 
-Small, independently mergeable steps, in this order. Each one is behaviour-neutral unless it says
-so, keeps every CI check green, and shrinks the archtest baseline.
+Each step is one pull request, behaviour-neutral unless it says so, with every CI check green.
+Steps marked **neutral** leave the baseline as it is; the others delete the lines named above.
 
-1. **archtest with the full baseline.** Adds the test and the layer map; it fails only on a new
-   violation. No code moves.
-2. **update ↔ watch constants.** `DefaultAddr` and the log file name move to a leaf
-   (`internal/watchaddr`); both `watch` and `update` use it. Removes edge 6.
-3. **Knowledge behind an interface for `mcp` and `tools`.** The two packages take a small interface
-   for what they read from `retrieval`; surfaces pass the implementation. Removes edge 2.
-4. **Knowledge behind an interface for `agent`.** `agent/retrieval.go` stops importing `remote`;
-   `cmd/hrn`, `hrnmcp` and `server` wire the client. Covered by `agent/retrieval_test.go`.
-5. **Split `batch/batch.go` by concern**, moves only: `spec.go` (load, normalize, checks), `slots.go`
-   (take and give back), `attempt.go` (`runAttempt`), `gate.go` (run and decode gate output),
-   `git.go` (agent git and commit), `remove.go`, `store.go` (save, list, load), `merge.go` (diff,
-   merge). Same package, same functions; the diff is reviewed as moves. `runTask` is split into
-   named phases in a second pull request.
-6. **`internal/kernel` with `Task`, `Event`, `Result`, `Usage`.** Moved from `agent`, aliases left
-   behind; `runlog`, `flow`, `quota`, `limits` import `kernel`. Old records load unchanged
-   (`runlog` tests on stored fixtures). Removes most of edge 3.
-7. **Preferences and routing resolved at the surface.** `agent/options.go` gets resolved values;
-   `prefs` and `route/table` leave `agent`'s imports. Removes edge 1.
-8. **`limits` without `followup`.** Whatever `limits` needs from continuation becomes a kernel
-   type or a parameter. Removes edge 4.
-9. **`route` into the eval pack** writing `route/table`; the kernel reads only the table. Edge 5.
-10. **Split `APIBackend.Run` into phases** (request, stream, tools, stop) with the append-only
-    history unchanged; the fake-SSE tests in `agent/api_test.go` must pass untouched.
-11. **`kernel.Evidence`** added (additive, `omitempty`) and filled by batch gates and knowledge
-    packets; eval and game read it.
-12. **`server/` stops importing root internals**: the worker runs `hrn` as a subprocess or speaks
-    the record and knowledge wire formats from its own copies, with golden-file tests in both
-    modules. Edge 7; the precondition for extraction.
+1. **archtest, layer map, baseline and the base-branch script.** No code moves.
+2. **Zero-provider test** (below), test only, **neutral**. A path that fails it today is left out
+   and gets its own fix PR (2a, 2b, ...) that adds it to the test.
+3. **`internal/watchaddr`**: `DefaultAddr` and the `watch-<port>.log` name; `watch` and `update`
+   use it.
+4. **`internal/envpolicy`**: `Filter` moves from `retrieval.ExecutorEnv` unchanged; the four call
+   sites and any in `server/` switch, `ExecutorEnv` is deleted. Its test moves with it and gains
+   cases for mixed case, `HRN_TOKEN_X` (kept), a name without `=`, and `${VAR}` expansion of a
+   denied name in an MCP config; the `mcp`, `tools` and `agent` tests that assert filtering stay.
+5. **Knowledge searcher for `agent`** (interface above). Unchanged: the scope
+   (tenant, project, revision, backend, model), the version pin (`RetrievalVersion`, or the pinned
+   packet's version on repair), the bounded query and `RunRef`, `retrieval.json` written with
+   O_EXCL, and the outcomes: optional mode plus unavailable records
+   `optional retrieval unavailable` and runs on; cancellation records `retrieval canceled`; any
+   other error or a missing searcher fails as today. `agent/retrieval_test.go` passes untouched,
+   plus a fake-searcher test per outcome. Surfaces that build tasks wire `remote`.
+6. **Split `batch/batch.go` by concern**, moves only, **neutral**: `spec.go`, `slots.go`,
+   `attempt.go`, `gate.go`, `git.go`, `remove.go`, `store.go`, `merge.go`.
+7. **Split `runTask` into named phases**, **neutral**, a separate PR after 6.
+8. **`limits` keeps the window store** (`Note`, `Until`, `Status`, the state file). Whatever
+   consults the registry, preferences, billing variables or `followup` (`Ready`, `Spent`,
+   `MeteredEnv`, `Partner`, `Pick`, `After`, `CarryOn`, the default-backend lookup) moves to
+   `followup`, which already imports `agent` and nothing of `limits`. `Note`'s preference check
+   moves to its callers with the same error. Before step 9, so `limits` never imports `resolve`.
+9. **`internal/resolve`**: `BackendPreferences`, `DefaultBackendNameIn`, `Options.Route` and
+   `RouteWithNote` (as functions taking `*agent.Options`), `Task.ApplyTurnDefault` (as
+   `ApplyTurnDefault(*agent.Task, backend)`) and `TurnDefaultInfo` move with their tests; callers
+   in `cmd/hrn`, `execproto`, `hrnmcp`, `batch`, `eval`, `followup`, `watch` switch.
+10. **Golden JSON**, test only, **neutral**: encodings of `Task` (with embedded `Options`),
+    `Result`, `Event`, `Conversation`, `APICheckpoint` and `runlog.Record`, and decoding of stored
+    fixtures (legacy `timeout_ns`, records with and without `retrieval`). Steps 11–16 keep them
+    byte-identical, and the `runlog`, `followup` and continuation-pin tests pass untouched.
+11. **`kernel` value types** with their methods: `Mode` (`ParseMode`, `String`, `Set`), `Duration`,
+    `CompactWindow` (JSON, `Set`; `check` exported), `EffortLevels`, `ApprovalRequest`, `EventKind`,
+    `Event`, `Quota`, `Usage`, `Status`, `UsageMetadata`. `agent` keeps `type X = kernel.X` and its
+    constants. `flow` and `quota` import `kernel`.
+12. **`kernel.Options`**, **neutral**, with `IsLean` and `Over`. `Validate` calls `tools.Guarded`,
+    which the kernel may not import: the pure checks become `kernel.Options.ValidateShape`, and
+    `agent.ValidateOptions` adds the guard. The rename makes every old `.Validate()` call fail to
+    compile until it is switched, so none can silently lose the guard.
+13. **`kernel.Result`**, **neutral**, with `ModelTokens`, `KnownCost`, `ValidateUsage`,
+    `UsageMissing`; the unexported `addUsage` becomes an `agent` function. A method cannot be
+    defined on an alias of another package's type, which is why every method above moves or
+    becomes a function before its type does.
+14. **`kernel.Task`, `Conversation`, `Message`, durable types, `Backend`**, **neutral**.
+    `Message` (`apiMessage` today: role and raw blocks) moves and `agent` aliases it, so the
+    append-only history code is untouched. `DurableExecution`, `APICheckpoint`, `PendingOperation`
+    and `ErrRecoveryRequired` are data and move; `prepareDurable` stays. `Task.UnmarshalJSON` moves.
+    The registry (`Register`, `Get`, `Names`) and `Capabilities` stay in `agent`.
+15. **`runlog` off `agent`**: `ValidateContinuationPin` (retrieval types and `Conversation` only)
+    moves to `kernel`; `Setup` moves to `kernel`, and `ResolveSetup` stays in `agent`, which
+    registers it with `runlog.SetSetupResolver` in `init` as backends register today. A `cmd/hrn`
+    test asserts a new record still carries its setup fingerprint.
+16. **`limits` off `agent`**: `MaxLimitWindow` moves to `kernel`; `Result` and `StatusLimited`
+    already come from it. Records and events no longer link the adapters.
+17. **Split `APIBackend.Run` into phases** (request, stream, tools, stop), **neutral**; the
+    fake-SSE tests in `agent/api_test.go` pass untouched.
+18. **`kernel.Evidence`**, **neutral**, additive and `omitempty`; filled by gates and knowledge
+    packets, read by eval and game.
+19. **Worker subprocess contract**, **neutral**, before the worker stops embedding
+    `*agent.APIBackend`. Written in `docs/`, versioned, built on `execproto`'s JSONL: start (the task
+    and, on resume, its checkpoint), events, the final result, cancellation (a `cancel` frame, then
+    a kill after a grace period, result `canceled`), and durable checkpoints (a frame the worker
+    saves and acknowledges before hrn continues). Credentials reach the child only through its
+    environment, filtered by `envpolicy`; checkpoints carry none. Golden transcripts run in both
+    modules: `execproto` tests produce them, server tests replay them against a `TestHelper` fake.
+20. **Worker runs `hrn exec`** over that contract; the PostgreSQL integration tests cover
+    cancellation, retry and recovery as today. Behaviour change: the worker needs an `hrn` binary.
+21. **`server/` off root internals**: the knowledge wire types are copied into `server` with golden
+    tests on both sides; the `replace` directive goes. The precondition for extraction.
 
-Steps 1–5 are cheap and independent of each other after step 1; 6 is the hinge for 7–11.
+Dependencies: 3–8 are independent after 1; 5 after 4; 7 after 6; 9 after 8; 10–16 in order, after 9;
+19–21 in order, after 4.
 
 ## Repository extraction
 
@@ -196,8 +261,8 @@ through **files on disk** (run records), never as an imported Go library.
 
 | Candidate | Why it could leave | Preconditions | When |
 |---|---|---|---|
-| `server/` (control service, worker) | already its own module and deploy | step 12; knowledge and run APIs versioned; its CI on its own runner | first |
-| `watch` (dashboard, Ada) | 5,071 lines plus assets, its own release rhythm | reads only records, flow events and a stable `hrn` JSON output; archtest shows no internal reach | after step 11 |
+| `server/` (control service, worker) | already its own module and deploy | steps 19–21; knowledge and run APIs versioned; its CI on its own runner | first |
+| `watch` (dashboard, Ada) | 5,071 lines plus assets, its own release rhythm | reads only records, flow events and stable `hrn` JSON; archtest shows no internal reach | after step 18 |
 | `game` | a pack reading records | `Evidence` and record formats stable | after watch |
 | `eval` | large, depends on batch | batch's result format stable, a batch run reachable as `hrn batch` JSON | last, if ever |
 
@@ -211,31 +276,45 @@ other side's golden files; harness CI never depends on an extracted repository b
 
 ## Zero-provider operation
 
-hrn must start and be useful with no API key and no agent CLI on `PATH`: listing and showing
-runs, reports, `flow`, `watch`, `gc`, `prune`, batch `rm`/`diff`/`merge`, the read-only MCP
-tools, and knowledge commands against a reachable service. Only a
-command that executes a task needs a provider, and it fails with one clear error naming the
-missing provider. A test runs the CLI's read paths with an empty `PATH` and no key; whether any of
-them probes a backend today is checked in step 1 and fixed where found. The fixture model
-(`server/cmd/hrn-fixture-model`) and `TestHelper*` processes remain the way tests exercise task
-execution without a provider.
+hrn must start and be useful with no provider: listing and showing runs, reports, `flow`,
+`watch`, `gc`, `prune`, batch `rm`/`diff`/`merge`, the read-only MCP tools, and knowledge commands
+against a reachable service. Only a command that executes a task needs a provider.
+
+The test (step 2) builds `hrn` once and runs it with:
+
+- **`PATH`** set to a temporary directory holding links (copies on Windows) to `git` and the
+  system tools hrn shells out to, found with `exec.LookPath` before the environment is cleared.
+  The test first asserts that `claude`, `codex`, `gemini`, `opencode` and `agy` do not resolve.
+- **No credentials**: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CONFIG_DIR` and
+  `CODEX_HOME` unset; `HOME`, `USERPROFILE`, `APPDATA` and `HRN_HOME` on a fixture home with fake
+  runs, a batch, an eval and a git repository; the knowledge service a loopback fake.
+- **Read paths** exit 0 with the expected output. A second pass puts a shim named for each
+  provider on `PATH` that records any call: read paths must leave no record.
+- **Execution paths** (`hrn run` with each `-b` and with none, `hrn batch`, `hrn eval`, an
+  `hrn exec` start frame, the MCP run tool) fail within a timeout, exit non-zero or return an error
+  result, name the missing provider (executable or key), and leave no child process behind.
+
+The fixture model (`server/cmd/hrn-fixture-model`) and `TestHelper*` processes remain the way
+tests exercise task execution without a provider.
 
 ## Consequences
 
 - New code has an obvious home, and the archtest says when it does not.
-- Records, events and policy stop depending on every backend adapter, so they can be tested and,
-  later, read by other repositories without pulling in the providers.
-- Interfaces add a little wiring in each surface; that is the cost of moving knowledge, routing
-  and preferences out of `agent`.
+- Records, events and policy stop linking the backend adapters, so they can be tested and, later,
+  read by other repositories without pulling in the providers.
+- The child-environment filter becomes a named security rule instead of a side effect of the
+  knowledge contract.
+- Interfaces and `resolve` add a little wiring in each surface; that is the cost of moving
+  knowledge, routing and preferences out of `agent`.
 - Aliases in `agent` stay until no caller uses the old names; removing them is a later cleanup.
-- Twelve pull requests of moves will touch busy files (`batch.go`, `api.go`, `options.go`); they
-  should land between feature work, not under it.
+- Twenty-one pull requests (plus any 2a, 2b fixes) touch busy files (`batch.go`, `api.go`,
+  `options.go`); they should land between feature work, not under it.
 
 ## Open questions for the owner
 
 1. **adanext-map**: which repository and contract does #574 mean? Nothing here references it.
-2. Should `server/` keep a `replace` to the root during step 12, or copy the wire contracts now?
-3. `purpose` labels prompts with coding-flavoured kinds: kernel leaf, or coding-pack data?
-4. Is `game` reading batch and eval records allowed as a permanent cross-pack edge?
-5. `ws` mixes the generic slot lease with issue leases and git: split it in this plan, or later?
-6. Does extraction of `watch` (with Ada) matter enough to plan, or should it stay in harness?
+2. `purpose` labels prompts with coding-flavoured kinds; it is a leaf here. Should it become
+   coding-pack data once `resolve` is its only kernel-side reader?
+3. `ws` mixes the generic slot lease with issue leases and git: split it in this plan, or later?
+4. `APICheckpoint` names one provider inside the kernel; rename it to a generic checkpoint later?
+5. Does extraction of `watch` (with Ada) matter enough to plan, or should it stay in harness?
