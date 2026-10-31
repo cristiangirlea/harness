@@ -82,7 +82,7 @@ func runProperties(backends []any, defaultDir string) map[string]any {
 		"The model is inherited only from runs on the same backend.")
 	props["fresh"] = map[string]any{"type": "boolean", "description": "With continue_run_id: start a new session on the backend instead of resuming or forking any, " +
 		"handed the earlier run over from its record (its task, status, final answer, changed files and gate results) ahead of prompt. " +
-		"For a phase boundary (implementation, review, fixes) where the next step needs a short brief rather than the whole long context."}
+		"Defaults to true for codex continuing codex; false resumes or forks the saved session."}
 	return props
 }
 
@@ -140,7 +140,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				Backend       string `json:"backend"`
 				Dir           string `json:"dir"`
 				ContinueRunID string `json:"continue_run_id"`
-				Fresh         bool   `json:"fresh"`
+				Fresh         *bool  `json:"fresh,omitempty"`
 				agent.Options
 			}](call.Arguments)
 			if err != nil {
@@ -155,7 +155,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if args.Purpose == "" {
 				args.Purpose = purpose.Declared(args.Prompt)
 			}
-			if args.Fresh && args.ContinueRunID == "" {
+			if args.Fresh != nil && *args.Fresh && args.ContinueRunID == "" {
 				return mcp.CallResult{}, errors.New("fresh needs continue_run_id: it starts a new session handed an earlier run over")
 			}
 			if args.AllowDangerous && !allowDangerous {
@@ -185,7 +185,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			var plan followup.Plan
 			if args.ContinueRunID != "" {
-				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, Fresh: args.Fresh})
+				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, Fresh: args.Fresh != nil && *args.Fresh, Resume: args.Fresh != nil && !*args.Fresh})
 				if err != nil {
 					return mcp.CallResult{}, err
 				}

@@ -100,8 +100,9 @@ hrn       -> result                (always the last line after accepted; then ex
   `continue_run_id`, it is accepted for every backend and is not listed in `options`.
 - `fresh: true` with `continue_run_id` starts a new session handed the earlier run over
   from its record instead of resuming or forking anything, as `hrn run --continue --fresh`
-  does (see [A fresh hand-over](backends.md#a-fresh-hand-over)). Without `continue_run_id`
-  it is rejected with `bad_request`.
+  does (see [A fresh hand-over](backends.md#a-fresh-hand-over)). When codex continues codex,
+  omitting `fresh` defaults to a fresh start; `fresh: false` resumes the session. Without
+  `continue_run_id`, `fresh` is rejected with `bad_request`.
 
 ### `accepted` or `rejected` (hrn)
 

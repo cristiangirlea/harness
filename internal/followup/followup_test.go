@@ -475,8 +475,8 @@ func TestSwitchingBackForksAndCatchesUp(t *testing.T) {
 	if strings.Contains(h, "--- request\n> one") || !strings.Contains(h, "--- request\n> two") {
 		t.Errorf("only the turn claude has not seen belongs in the transcript:\n%s", h)
 	}
-	// Codex, continued in turn, forks its own thread and needs no transcript.
-	if p, err := Make(Request{RunID: second}); err != nil || p.ForkSession != "t2" || len(p.Handoff) != 0 {
+	// An explicit opt-out forks the codex thread and needs no transcript.
+	if p, err := Make(Request{RunID: second, Resume: true}); err != nil || p.ForkSession != "t2" || len(p.Handoff) != 0 {
 		t.Errorf("codex continuing itself: %+v err=%v", p, err)
 	}
 }
@@ -1257,6 +1257,30 @@ func TestTheHandoverReadsTheWorkspacesOwnRepository(t *testing.T) {
 	w, _ := filepath.EvalSymlinks(dir)
 	if !strings.EqualFold(filepath.Clean(g), filepath.Clean(w)) {
 		t.Errorf("the handover's git read %q, want %s", got, w)
+	}
+}
+
+func TestFreshContinuationNotes(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: workspace(t)}, agent.Result{Backend: "codex", Session: "s1"})
+	base := fmt.Sprintf("starting a new codex session, handed run %s over from its record; no session or conversation is resumed or forked", id)
+	for _, tc := range []struct {
+		name  string
+		fresh bool
+		want  string
+	}{
+		{"requested", true, base},
+		{"default", false, base + " (the codex default; --resume or fresh: false resumes the session)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := Make(Request{RunID: id, Fresh: tc.fresh})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Notes) != 1 || p.Notes[0] != tc.want {
+				t.Errorf("notes = %q, want %q", p.Notes, tc.want)
+			}
+		})
 	}
 }
 

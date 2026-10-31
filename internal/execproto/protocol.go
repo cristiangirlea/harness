@@ -92,7 +92,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if strings.TrimSpace(t.Prompt) == "" || strings.TrimSpace(t.Dir) == "" || t.Mode == "" {
 		return w.reject(req.AttemptID, "bad_request", "prompt, dir and mode are required")
 	}
-	if t.Fresh && t.ContinueRunID == "" {
+	if t.Fresh != nil && *t.Fresh && t.ContinueRunID == "" {
 		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
 	}
 	preferences, err := agent.BackendPreferences(runlog.Home())
@@ -175,7 +175,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	}
 	var plan followup.Plan
 	if t.ContinueRunID != "" {
-		plan, err = followup.Make(followup.Request{RunID: t.ContinueRunID, Backend: t.Backend, Dir: task.Dir, Model: t.Model, Fresh: t.Fresh})
+		plan, err = followup.Make(followup.Request{RunID: t.ContinueRunID, Backend: t.Backend, Dir: task.Dir, Model: t.Model, Fresh: t.Fresh != nil && *t.Fresh, Resume: t.Fresh != nil && !*t.Fresh})
 		if err != nil {
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
@@ -321,7 +321,7 @@ type taskRequest struct {
 	MCP           []string       `json:"mcp"`
 	ContinueRunID string         `json:"continue_run_id"`
 	Purpose       string         `json:"purpose"`
-	Fresh         bool           `json:"fresh"`
+	Fresh         *bool          `json:"fresh,omitempty"`
 }
 
 type cancelRequest struct {

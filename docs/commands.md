@@ -85,6 +85,8 @@ without a completed entry the outcome is uncertain. Errors appear in the log and
 local index (and on watch's stderr); refresh the page to see the latest pass.
 `$HRN_HOME/gc-last` retains the last scheduled start independently of log rotation.
 
+For `--continue ID`, `--fresh` starts a bounded hand-over and `--resume` uses the saved session. A codex run continued on codex defaults to fresh; MCP and exec callers use explicit `fresh: false` to resume. See [Continuing a run](backends.md#continuing-a-run).
+
 Run flags: `-b/--backend` (api, claude, codex, gemini, opencode, agy), `-m/--model`, `-C/--dir`, `--mode`, `--max-turns`,
 `--effort` (api, codex, claude and agy: low, medium, high, xhigh, max; unset uses the
 backend default; gemini and opencode report it as not enforced),
