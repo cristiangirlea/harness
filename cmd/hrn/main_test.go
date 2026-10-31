@@ -623,7 +623,10 @@ func TestContinueWithRetrievalOnAnotherBackendThanThePinIsRefusedBeforeItRuns(t 
 	if recs, err := runlog.List(10); err != nil || len(recs) != 1 {
 		t.Fatalf("a refused continuation must record nothing: %d runs, %v", len(recs), err)
 	}
-	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "x"}); code != 0 || err != nil {
+	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "x"}); code != 2 || err == nil || !strings.Contains(err.Error(), "cannot carry over") {
+		t.Fatalf("omitted retrieval: code=%d err=%v", code, err)
+	}
+	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "--retrieval", "off", "x"}); code != 0 || err != nil {
 		t.Fatalf("retrieval off should hand the transcript over: code=%d err=%v", code, err)
 	}
 	if task := <-recorded; !strings.Contains(task.Prompt, "--- request\n> p") {
