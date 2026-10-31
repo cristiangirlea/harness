@@ -281,7 +281,9 @@ status, Cloudflare connecting IP, and a short reason when refused. An event stre
 writes two lines: one after its first bytes reach the browser, marked
 `"stream":"start"`, and one when it ends, marked `"stream":"end"`, each with its
 own time; a stream that ends before sending anything writes one plain line. Cloudflare's
-own Access logs record logins; this file records requests that reached watch.
+own Access logs record logins; this file records requests that reached watch. At 8 MiB
+the file moves to `watch-access.log.1` (replacing the previous one) and a new file
+starts, so a flood of refused requests holds at most twice that on disk.
 
 Requests for a run, batch or flow also include `record` (the requested id),
 `decision` (`allowed` or `denied`), and `basis` (`owner`, `admin`, `grant:<project>`
