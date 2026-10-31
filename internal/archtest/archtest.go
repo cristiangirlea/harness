@@ -27,7 +27,7 @@ func check(root string, baseline io.Reader) error {
 			return err
 		}
 		if d.IsDir() {
-			if path != root && (d.Name() == "testdata" || d.Name() == ".git") {
+			if path != root && (strings.HasPrefix(d.Name(), ".") || strings.HasPrefix(d.Name(), "_") || d.Name() == "testdata" || d.Name() == "vendor") {
 				return filepath.SkipDir
 			}
 			return nil

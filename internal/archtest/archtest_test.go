@@ -14,6 +14,11 @@ func TestFixtures(t *testing.T) {
 		baseline string
 		want     string
 	}{
+		{"ignored directories", map[string]string{".hrn/x/go.mod": "module example.com/root\n", ".hrn/x/internal/unknown/a.go": `package unknown`, "_scratch/internal/unknown/a.go": `package unknown`, "vendor/internal/unknown/a.go": `package unknown`, "testdata/internal/unknown/a.go": `package unknown`}, "", ""},
+		{"unclassified import", map[string]string{"internal/mcp/a.go": `package mcp; import _ "example.com/root/internal/unknown"`}, "", "unclassified import: internal/unknown"},
+		{"duplicate baseline", map[string]string{"internal/mcp/a.go": `package mcp; import _ "example.com/root/internal/retrieval"`}, "mcp -> retrieval\nmcp -> retrieval\n", "duplicate baseline: mcp -> retrieval"},
+		{"allowed and exact baseline", map[string]string{"internal/tools/a.go": `package tools; import _ "example.com/root/internal/mcp"`, "internal/flow/a.go": `package flow; import _ "example.com/root/internal/runlog"`, "internal/runlog/a.go": `package runlog; import (_ "example.com/root/internal/kernel"; _ "example.com/root/internal/agent")`}, "runlog -> agent\n", ""},
+		{"kernel denied runlog", map[string]string{"internal/kernel/a.go": `package kernel; import _ "example.com/root/internal/runlog"`}, "", "kernel -> runlog"},
 		{"forbidden", map[string]string{"internal/mcp/a.go": `package mcp; import _ "example.com/root/internal/retrieval"`}, "", "mcp -> retrieval"},
 		{"stale", map[string]string{"internal/mcp/a.go": `package mcp`}, "mcp -> retrieval\n", "stale"},
 		{"unclassified", map[string]string{"internal/unknown/a.go": `package unknown`}, "", "unclassified"},
@@ -38,7 +43,7 @@ func TestFixtures(t *testing.T) {
 				}
 			}
 			err := check(root, strings.NewReader(tc.baseline))
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
 				t.Fatalf("got %v, want %q", err, tc.want)
 			}
 		})

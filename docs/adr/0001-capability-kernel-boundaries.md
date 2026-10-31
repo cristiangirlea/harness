@@ -139,7 +139,7 @@ kernel field; existing fields stay where they are on disk.
 | coding pack | `batch`, `followup`, `gc`, `report`, `flowview` | the layers above |
 | eval pack | `eval`, `route` | the layers above, coding |
 | game pack | `game` | the layers above, coding, eval (reads records and scores) |
-| surfaces | `cmd/hrn`, `hrnmcp`, `watch`, `execproto`, `update`, `scripts/...` | everything above; only `cmd/hrn` imports another surface |
+| surfaces | `archtest`, `cmd/hrn`, `hrnmcp`, `watch`, `execproto`, `update`, `scripts/...` | everything above; only `cmd/hrn` imports another surface |
 | server module | `server/...` | nothing from the root module |
 
 2. Named denials on top of the layers: `agent` imports no `remote`, `prefs`, `purpose` or
