@@ -279,14 +279,16 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   reads (adanext-os #128, its own pull request). Read-only: no exercise picked, no ledger rebuild,
   no gh, no network. `version` changes only for a change that breaks a reader; fields may be added
   within a version, so readers ignore fields they do not know (docs/experience.md).
-- 2026-10-31: watch action audit, the first slice of #38 (PR #729). Every watch action writes an
-  intent and an outcome line to $HRN_HOME/watch-audit.jsonl with the client (loopback, a verified
-  email, or unverified); refusals are capped at 10 per client per minute with one rate-limit line
+- 2026-10-31: watch action audit, the first slice of #38 (PR #729). Changing backend preferences
+  writes an intent and an outcome line to $HRN_HOME/watch-audit.jsonl with the client (loopback, a
+  verified email, or unverified), so a change cut short shows as interrupted; a refused request
+  writes one refused line. Refusals are capped at 10 per client per minute with one rate-limit line
   per window, ordered by a sequence number, since Windows CI showed equal clock readings hid the
   window's turn. The loopback page shows recent changes from the file's last 256 KiB.
 - 2026-10-31: the capability kernel ADR (docs/adr/0001-capability-kernel-boundaries.md, PR #727)
   sets the boundaries #574 and #555 ask for and a 21-step migration under an architecture test
-  whose baseline only shrinks; #38's control slice goes first.
+  whose baseline only shrinks. Order of work, decided the same day: #38's control slice before the
+  migration steps.
 - 2026-10-31: token defaults from a 30-day look at the run records, aggregates only (#720, #721,
   #722; PRs #723, #724, hrn-evals #74). Codex continuing codex now starts a fresh session with a
   bounded hand-over unless the caller asks to resume (--resume, fresh: false): 52 resumed codex
