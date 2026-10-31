@@ -41,9 +41,12 @@ func ReadFamiliarity(ctx context.Context, now time.Time) (Familiarity, error) {
 }
 
 func gitEvidence(ctx context.Context, dir string, args ...string) string {
+	if !gitenv.SupportsNoLazyFetch() {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)...)
 	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1")
 	cmd.WaitDelay = time.Second
 	b, err := cmd.Output()
@@ -132,7 +135,7 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 					excluded[name][h] = true
 				}
 			}
-			logArgs := append([]string{"log", "--format=", "--name-only", "--no-renames"}, oids...)
+			logArgs := append([]string{"log", "--no-show-signature", "--format=", "--name-only", "--no-renames"}, oids...)
 			if safeOID(b.Base) {
 				logArgs = append(logArgs, "^"+b.Base)
 			} else {
@@ -205,7 +208,7 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 		if email == "" {
 			continue
 		}
-		output := gitEvidence(ctx, root, "log", "--all", "--since="+now.AddDate(0, 0, -90).Format(time.RFC3339), "--until="+now.Format(time.RFC3339), "--format=%x1e%H%x00%ae", "--name-only", "--no-renames", "--")
+		output := gitEvidence(ctx, root, "log", "--no-show-signature", "--all", "--since="+now.AddDate(0, 0, -90).Format(time.RFC3339), "--until="+now.Format(time.RFC3339), "--format=%x1e%H%x00%ae", "--name-only", "--no-renames", "--")
 		for _, entry := range strings.Split(output, "\x1e") {
 			lines := strings.Split(strings.TrimSpace(entry), "\n")
 			if len(lines) == 0 {

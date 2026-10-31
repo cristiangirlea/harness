@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,6 +29,17 @@ func FiltersOff(dir string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
+	env := WithoutRepoVars(os.Environ())
+	count := 0
+	for _, kv := range env {
+		key, value, _ := strings.Cut(kv, "=")
+		if strings.EqualFold(key, "GIT_CONFIG_COUNT") {
+			count, _ = strconv.Atoi(value)
+			if count < 0 {
+				count = 0
+			}
+		}
+	}
 	var off []string
 	seen := map[string]bool{}
 	for _, key := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
@@ -38,9 +50,14 @@ func FiltersOff(dir string) ([]string, error) {
 		}
 		name = name[:i]
 		seen[name] = true
-		for _, setting := range []string{"clean=", "smudge=", "process=", "required=false"} {
-			off = append(off, "-c", "filter."+name+"."+setting)
+		for _, setting := range []string{"clean", "smudge", "process", "required"} {
+			value := ""
+			if setting == "required" {
+				value = "false"
+			}
+			off = append(off, fmt.Sprintf("GIT_CONFIG_KEY_%d=filter.%s.%s", count, name, setting), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", count, value))
+			count++
 		}
 	}
-	return off, nil
+	return append(off, fmt.Sprintf("GIT_CONFIG_COUNT=%d", count)), nil
 }

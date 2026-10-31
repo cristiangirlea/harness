@@ -14,17 +14,22 @@ import (
 const maxChangedFiles = 500
 
 func gitOutput(dir string, args ...string) (string, error) {
+	return gitOutputWithEnv(dir, nil, args...)
+}
+
+func gitOutputWithEnv(dir string, extra []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)...)
 	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1")
+	cmd.Env = append(cmd.Env, extra...)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	return string(out), err
 }
 
 func startGit(dir string) (string, string) {
-	if dir == "" {
+	if dir == "" || !gitenv.SupportsNoLazyFetch() {
 		return "", ""
 	}
 	root, err := gitOutput(dir, "rev-parse", "--show-toplevel")
@@ -40,15 +45,18 @@ func startGit(dir string) (string, string) {
 }
 
 func changedFiles(root, head string) ([]string, bool, string, []string) {
+	if !gitenv.SupportsNoLazyFetch() {
+		return nil, false, "", nil
+	}
 	off, err := gitenv.FiltersOff(root)
 	if err != nil {
 		return nil, false, "", nil
 	}
-	diff, err := gitOutput(root, append(off, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", head, "--")...)
+	diff, err := gitOutputWithEnv(root, off, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", head, "--")
 	if err != nil {
 		return nil, false, "", nil
 	}
-	untracked, err := gitOutput(root, append(off, "ls-files", "--others", "--exclude-standard", "-z")...)
+	untracked, err := gitOutputWithEnv(root, off, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return nil, false, "", nil
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +70,48 @@ func TestFamiliarityEvidence(t *testing.T) {
 	}
 	if len(got.Unseen) != 4 || got.Unseen[0].Area != "a" || got.Unseen[1].Area != "batchmiddle" || got.Unseen[2].Area != "internal/new" || got.Unseen[3].Area != "standalone" {
 		t.Fatalf("unseen: %+v", got.Unseen)
+	}
+}
+
+func TestFamiliarityDoesNotVerifySignatures(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init")
+	git("config", "user.name", "Test")
+	git("config", "user.email", "test@example.test")
+	git("commit", "--allow-empty", "-m", "base")
+	base := git("rev-parse", "HEAD")
+	tree := git("rev-parse", "HEAD^{tree}")
+	commit := "tree " + tree + "\nparent " + base + "\nauthor Test <test@example.test> 1793354400 +0000\ncommitter Test <test@example.test> 1793354400 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n fake\n -----END PGP SIGNATURE-----\n\nsigned\n"
+	cmd := exec.Command("git", "-C", dir, "hash-object", "-t", "commit", "-w", "--stdin")
+	cmd.Stdin = strings.NewReader(commit)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hash-object: %v: %s", err, out)
+	}
+	head := strings.TrimSpace(string(out))
+	git("update-ref", "HEAD", head)
+	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "gpg-ran"))
+	script := filepath.Join(t.TempDir(), "gpg.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ran > '"+marker+"'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	git("config", "log.showSignature", "true")
+	git("config", "gpg.program", filepath.ToSlash(script))
+	records := Records{Runs: []runlog.Record{{Task: agent.Task{Dir: dir}}}, Batches: []batch.Result{{Dir: dir, Base: base, Tasks: []batch.TaskResult{{Branch: "hrn/task", Commit: head}}}}}
+	if _, err := deriveFamiliarity(context.Background(), records, time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("gpg marker: %v", err)
 	}
 }
 func TestFamiliarityPracticeAndMissingRepo(t *testing.T) {

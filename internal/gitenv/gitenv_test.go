@@ -12,3 +12,17 @@ func TestWithoutRepoVarsDropsOnlyWhatPointsGitElsewhere(t *testing.T) {
 		t.Errorf("kept %s", got)
 	}
 }
+
+func TestSupportsNoLazyFetchVersion(t *testing.T) {
+	for _, tt := range []struct {
+		version string
+		want    bool
+	}{
+		{"git version 2.43.9", false}, {"git version 2.44.0", true},
+		{"git version 2.49.0.windows.1", true}, {"git version 3.0", true}, {"bad", false},
+	} {
+		if got := supportsNoLazyFetch(tt.version); got != tt.want {
+			t.Errorf("%q: got %v", tt.version, got)
+		}
+	}
+}

@@ -123,9 +123,10 @@ func changes(dir, base string) string {
 func git(dir string, off []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	full := append([]string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir}, off...)
+	full := []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull, "-C", dir}
 	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
-	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_NO_LAZY_FETCH=1")
+	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(cmd.Env, off...)
 	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

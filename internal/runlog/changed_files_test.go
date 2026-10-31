@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 )
@@ -62,8 +63,56 @@ func TestRunChangedFiles(t *testing.T) {
 	}
 }
 
+func TestRunChangedFilesDoesNotRunIndexHook(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init")
+	git("config", "user.email", "test@example.test")
+	git("config", "user.name", "Test")
+	file := filepath.Join(dir, "tracked")
+	if err := os.WriteFile(file, []byte("content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "tracked")
+	git("commit", "-m", "initial")
+	w, err := Create("test", agent.Task{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "hook-ran"))
+	if err := os.WriteFile(filepath.Join(dir, ".git", "hooks", "post-index-change"), []byte("#!/bin/sh\necho ran > '"+marker+"'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(file, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new"), []byte("new"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("hook marker: %v", err)
+	}
+	r, err := Load(w.ID())
+	if err != nil || !reflect.DeepEqual(r.Result.ChangedFiles, []string{"new"}) {
+		t.Fatalf("record: %+v, %v", r, err)
+	}
+}
+
 func TestRunChangedFilesDoesNotRunWorkspaceFilters(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "test.existing")
+	t.Setenv("GIT_CONFIG_VALUE_0", "preserved")
 	dir := t.TempDir()
 	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "filter-ran"))
 	git := func(args ...string) {
@@ -89,10 +138,10 @@ func TestRunChangedFilesDoesNotRunWorkspaceFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	git("config", "filter.evil.clean", "echo clean >> '"+marker+"'; cat")
-	git("config", "filter.evil.required", "true")
+	git("config", "filter.a=b.clean", "echo clean >> '"+marker+"'; cat")
+	git("config", "filter.a=b.required", "true")
 	git("config", "filter.loud.process", "echo process >> '"+marker+"'")
-	write(".gitattributes", "*.go filter=evil\n*.txt filter=loud\n")
+	write(".gitattributes", "*.go filter=a=b\n*.txt filter=loud\n")
 	write("a.go", "after\n")
 	write("b.txt", "after\n")
 	if err := w.Close(agent.Result{}); err != nil {
