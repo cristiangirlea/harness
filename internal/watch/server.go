@@ -240,6 +240,7 @@ type server struct {
 	actionMu sync.Mutex
 	rateMu   sync.Mutex
 	rates    map[string][]time.Time
+	noted    map[string]time.Time
 	grants   []owner.Grant
 
 	batches     batchCache

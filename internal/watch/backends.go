@@ -97,13 +97,13 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 	}
 	p.EnabledNames = unique
 	row, err := newIntent(client, old, *p)
-	if err != nil || appendAction(row) != nil {
+	if err != nil || auditAppender(row) != nil {
 		http.Error(w, "Action audit could not be written", http.StatusInternalServerError)
 		return
 	}
 	if err := prefs.Save(runlog.Home(), *p); err != nil {
 		row.Result = "error: backend preferences could not be saved"
-		_ = appendAction(row)
+		_ = auditAppender(row)
 		// Only default-validation errors are safe to show; filesystem errors may expose paths.
 		if p.Default() != "" && (len(p.EnabledNames) == 0 || !p.Enabled(p.Default())) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -113,7 +113,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row.Result = "saved"
-	if err := appendAction(row); err != nil {
+	if err := auditAppender(row); err != nil {
 		fmt.Fprintln(os.Stderr, "saved; outcome not audited")
 	}
 	w.WriteHeader(http.StatusNoContent)

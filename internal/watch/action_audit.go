@@ -34,6 +34,8 @@ func newIntent(client string, old any, next prefs.Prefs) (actionRow, error) {
 	return actionRow{Time: time.Now().UTC().Format(time.RFC3339Nano), ID: hex.EncodeToString(id[:]), Client: client, Action: "backends", Target: "backends.json", Old: old, New: &next, Result: "intent"}, err
 }
 
+var auditAppender = appendAction
+
 func appendAction(row actionRow) error {
 	b, err := json.Marshal(row)
 	if err != nil {
@@ -71,6 +73,7 @@ func (s *server) allowAction(client string) (ok, first bool) {
 	defer s.rateMu.Unlock()
 	if s.rates == nil {
 		s.rates = make(map[string][]time.Time)
+		s.noted = make(map[string]time.Time)
 	}
 	now := time.Now()
 	for k, times := range s.rates {
@@ -83,17 +86,19 @@ func (s *server) allowAction(client string) (ok, first bool) {
 		}
 		if j == 0 {
 			delete(s.rates, k)
+			delete(s.noted, k)
 		} else {
 			s.rates[k] = times[:j]
 		}
 	}
-	if len(s.rates[client]) >= 11 {
-		return false, false
+	if len(s.rates[client]) >= 10 {
+		first := s.noted[client].Before(s.rates[client][0])
+		if first {
+			s.noted[client] = now
+		}
+		return false, first
 	}
 	s.rates[client] = append(s.rates[client], now)
-	if len(s.rates[client]) == 11 {
-		return false, true
-	}
 	return true, false
 }
 
@@ -102,7 +107,7 @@ func (s *server) writeRefusal(client, path, reason string) {
 	if path == "/backends" {
 		action = "backends"
 	}
-	_ = appendAction(actionRow{Time: time.Now().UTC().Format(time.RFC3339Nano), Client: client, Action: action, Result: "refused", Reason: reason})
+	_ = auditAppender(actionRow{Time: time.Now().UTC().Format(time.RFC3339Nano), Client: client, Action: action, Result: "refused", Reason: reason})
 }
 
 func (s *server) refuseAction(w http.ResponseWriter, r *http.Request, client, reason, message string, status int) {

@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"sync"
 
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBackendActionAudit(t *testing.T) {
@@ -350,5 +352,83 @@ func TestAuditSaveFailureOutcome(t *testing.T) {
 	rows := recentActions()
 	if len(rows) != 1 || rows[0].Result != "error: backend preferences could not be saved" {
 		t.Fatalf("rows: %+v", rows)
+	}
+}
+
+func TestAuditRateLimitExpiryAndSteadyTraffic(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	s := &server{}
+	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", nil)
+	refuse := func() { s.refuseAction(httptest.NewRecorder(), r, "client", "test", "test", http.StatusForbidden) }
+	for i := 0; i < 10; i++ {
+		if ok, _ := s.allowAction("client"); !ok {
+			t.Fatal("initial request refused")
+		}
+	}
+	for i := 0; i < 20; i++ {
+		refuse()
+	}
+	for i := range s.rates["client"] {
+		s.rates["client"][i] = s.rates["client"][i].Add(-61 * time.Second)
+	}
+	if ok, _ := s.allowAction("client"); !ok {
+		t.Fatal("request refused after expiry")
+	}
+	for i := 0; i < 9; i++ {
+		if ok, _ := s.allowAction("client"); !ok {
+			t.Fatal("new bucket not filled")
+		}
+	}
+	for i := 0; i < 20; i++ {
+		refuse()
+	}
+	data, err := os.ReadFile(filepath.Join(home, "watch-audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), `"reason":"rate limit"`); got != 2 {
+		t.Fatalf("rate limit lines: %d", got)
+	}
+	for minute := 0; minute < 2; minute++ {
+		for i := 0; i < 10; i++ {
+			s.rates["client"][0] = time.Now().Add(-61 * time.Second)
+			if ok, _ := s.allowAction("client"); !ok {
+				t.Fatalf("minute %d request %d refused", minute, i)
+			}
+			if ok, _ := s.allowAction("client"); ok {
+				t.Fatal("over-limit request allowed")
+			}
+		}
+	}
+}
+
+func TestBackendActionOutcomeAuditFailureStillSaves(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	original := auditAppender
+	calls := 0
+	auditAppender = func(row actionRow) error {
+		calls++
+		if calls == 2 {
+			return errors.New("outcome append failed")
+		}
+		return original(row)
+	}
+	t.Cleanup(func() { auditAppender = original })
+	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(`{"enabled":["claude"],"default":"claude"}`))
+	r.RemoteAddr = "127.0.0.1:1"
+	w := httptest.NewRecorder()
+	(&server{}).saveBackends(w, r)
+	if w.Code != http.StatusNoContent || calls != 2 {
+		t.Fatalf("status: %d, append calls: %d", w.Code, calls)
+	}
+	got, err := prefs.Load(home)
+	if err != nil || got.Default() != "claude" || !got.Enabled("claude") {
+		t.Fatalf("preferences: %+v, %v", got, err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "watch-audit.jsonl"))
+	if err != nil || strings.Count(strings.TrimSpace(string(data)), "\n") != 0 || !strings.Contains(string(data), `"result":"intent"`) {
+		t.Fatalf("audit: %q, %v", data, err)
 	}
 }
