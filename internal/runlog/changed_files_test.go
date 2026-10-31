@@ -62,6 +62,56 @@ func TestRunChangedFiles(t *testing.T) {
 	}
 }
 
+func TestRunChangedFilesDoesNotRunWorkspaceFilters(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := t.TempDir()
+	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "filter-ran"))
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	write := func(name, data string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init")
+	git("config", "user.email", "test@example.test")
+	git("config", "user.name", "Test")
+	write("a.go", "before\n")
+	write("b.txt", "before\n")
+	git("add", ".")
+	git("commit", "-m", "initial")
+	w, err := Create("test", agent.Task{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	git("config", "filter.evil.clean", "echo clean >> '"+marker+"'; cat")
+	git("config", "filter.evil.required", "true")
+	git("config", "filter.loud.process", "echo process >> '"+marker+"'")
+	write(".gitattributes", "*.go filter=evil\n*.txt filter=loud\n")
+	write("a.go", "after\n")
+	write("b.txt", "after\n")
+	if err := w.Close(agent.Result{}); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("workspace filter ran: %q", data)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	r, err := Load(w.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(r.Result.ChangedFiles, []string{".gitattributes", "a.go", "b.txt"}) {
+		t.Fatalf("changed files: %v", r.Result.ChangedFiles)
+	}
+}
+
 func TestRunChangedFilesTruncated(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := t.TempDir()

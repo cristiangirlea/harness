@@ -40,11 +40,15 @@ func startGit(dir string) (string, string) {
 }
 
 func changedFiles(root, head string) ([]string, bool, string, []string) {
-	diff, err := gitOutput(root, "diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", head, "--")
+	off, err := gitenv.FiltersOff(root)
 	if err != nil {
 		return nil, false, "", nil
 	}
-	untracked, err := gitOutput(root, "ls-files", "--others", "--exclude-standard", "-z")
+	diff, err := gitOutput(root, append(off, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", head, "--")...)
+	if err != nil {
+		return nil, false, "", nil
+	}
+	untracked, err := gitOutput(root, append(off, "ls-files", "--others", "--exclude-standard", "-z")...)
 	if err != nil {
 		return nil, false, "", nil
 	}

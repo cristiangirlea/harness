@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,7 +99,7 @@ func changes(dir, base string) string {
 	if _, err := git(dir, nil, "rev-parse", "--is-inside-work-tree"); err != nil {
 		return "--- workspace changes\n(not a git repository, or git could not read it: no diff)\n"
 	}
-	off, err := filtersOff(dir)
+	off, err := gitenv.FiltersOff(dir)
 	if err != nil {
 		return fmt.Sprintf("%s(git config could not be read, so no diff was taken: %s)\n", title, clipTo(err.Error(), 200))
 	}
@@ -135,33 +134,6 @@ func git(dir string, off []string, args ...string) (string, error) {
 		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimRight(string(out), "\n"), nil
-}
-
-// Disable clean/process commands from agent-writable config; filtered files may then appear changed.
-func filtersOff(dir string) ([]string, error) {
-	keys, err := git(dir, nil, "config", "--name-only", "--get-regexp", `^filter\.`)
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
-		return nil, nil // no filter configured
-	}
-	if err != nil {
-		return nil, err
-	}
-	var off []string
-	seen := map[string]bool{}
-	for _, key := range strings.Split(keys, "\n") {
-		name := strings.TrimPrefix(key, "filter.")
-		i := strings.LastIndex(name, ".")
-		if i <= 0 || seen[name[:i]] {
-			continue
-		}
-		name = name[:i]
-		seen[name] = true
-		for _, setting := range []string{"clean=", "smudge=", "process=", "required=false"} {
-			off = append(off, "-c", "filter."+name+"."+setting)
-		}
-	}
-	return off, nil
 }
 
 type batchAttempt struct {
