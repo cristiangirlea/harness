@@ -113,3 +113,13 @@ func TestBatchPageShowsATaskDeclaredPurpose(t *testing.T) {
 		t.Errorf("a task with no declared purpose shows %q", got)
 	}
 }
+
+func TestRunPageDisplaysContinuationRoute(t *testing.T) {
+	p := runPageOf(runlog.Record{ContinueRoute: "fresh_handover"}, nil, time.Time{}, viewer{})
+	for _, f := range p.Facts {
+		if f.Value == "fresh_handover" {
+			return
+		}
+	}
+	t.Fatalf("missing route: %+v", p.Facts)
+}

@@ -106,7 +106,8 @@ value sets the limit. When the default is applied, an `info` event announces it.
   from its record instead of resuming or forking anything, as `hrn run --continue --fresh`
   does (see [A fresh hand-over](backends.md#a-fresh-hand-over)). When codex continues codex,
   omitting `fresh` defaults to a fresh start; `fresh: false` resumes the session. Without
-  `continue_run_id`, `fresh` is rejected with `bad_request`.
+  `continue_run_id`, `fresh` is rejected with `bad_request`. A fresh hand-over also
+  rejects a chain with retrieval metadata because its pin cannot yet be revalidated.
 
 ### `accepted` or `rejected` (hrn)
 

@@ -118,3 +118,11 @@ func TestSummaryLineSaysWhenUsageIsMissing(t *testing.T) {
 		}
 	}
 }
+
+func TestShowHeaderDisplaysContinuationRoute(t *testing.T) {
+	var b strings.Builder
+	showHeader(&renderer{out: &b}, runlog.Record{ContinueRoute: "transcript_transfer"})
+	if !strings.Contains(b.String(), "transcript_transfer") {
+		t.Fatalf("missing route: %s", b.String())
+	}
+}

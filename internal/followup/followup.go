@@ -72,6 +72,12 @@ func (p Plan) Route() string {
 	if p.Fresh {
 		return runlog.RouteFreshHandover
 	}
+	if len(p.Handoff) > 0 {
+		return "transcript_transfer"
+	}
+	if p.Resume != nil || p.ForkSession != "" {
+		return "continued_session"
+	}
 	return ""
 }
 
@@ -116,6 +122,13 @@ func Make(req Request) (Plan, error) {
 	}
 	if err := checkRetrievalPin(chain, p.Backend, req.Retrieval); err != nil {
 		return Plan{}, err
+	}
+	if req.Fresh || (!req.Resume && prev.Backend == "codex" && p.Backend == "codex") {
+		for i := len(chain) - 1; i >= 0; i-- {
+			if chain[i].Result.Retrieval != nil {
+				return Plan{}, fmt.Errorf("run %s has a retrieval pin; fresh hand-over cannot revalidate it yet", chain[i].ID)
+			}
+		}
 	}
 	if missing != "" {
 		p.Notes = append(p.Notes, fmt.Sprintf("run %s continues %s, which is gone, so the chain starts at %[1]s", chain[0].ID, missing))

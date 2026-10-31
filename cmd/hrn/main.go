@@ -747,6 +747,9 @@ func showHeader(r *renderer, rec runlog.Record) {
 	if rec.Continues != "" {
 		head += " · continues " + rec.Continues
 	}
+	if rec.ContinueRoute != "" {
+		head += " | " + rec.ContinueRoute
+	}
 	if rec.Result.Session != "" {
 		head += " · session " + rec.Result.Session
 	}

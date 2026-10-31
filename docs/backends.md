@@ -361,6 +361,9 @@ context sizes and sizes at or below the threshold produce no warning.
 
 A codex run continued on codex uses a fresh hand-over by default. Pass `--resume` (or explicit `fresh: false` over MCP or exec) to pick up the saved session. Claude and agy keep their existing defaults.
 
+Fresh hand-over refuses a chain with recorded retrieval metadata because its pin cannot yet
+be revalidated at this boundary. This also applies to the codex fresh default.
+
 `--fresh` with `--continue` (MCP `fresh: true` beside `continue_run_id`, `hrn exec`'s
 `fresh` in `start`) starts a new session instead: nothing any run saved is picked up,
 not a claude or codex fork, not agy's `--conversation`, not an api `messages.json`,

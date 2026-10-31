@@ -943,7 +943,7 @@ func TestOrdinaryContinueStillForksWhenFreshIsNotAsked(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	id := finished(t, "", agent.Task{Prompt: "p", Dir: workspace(t)}, agent.Result{Backend: "claude", Session: "s1"})
 	p, err := Make(Request{RunID: id})
-	if err != nil || p.Fresh || p.ForkSession != "s1" || p.Route() != "" {
+	if err != nil || p.Fresh || p.ForkSession != "s1" || p.Route() != "continued_session" {
 		t.Fatalf("ordinary continue changed: %+v err=%v", p, err)
 	}
 }
@@ -1338,5 +1338,32 @@ func TestChangesIgnoresSubmoduleFilters(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("submodule filter marker: %v", err)
+	}
+}
+
+func TestRouteDistinguishesContinuationAndTranscriptTransfer(t *testing.T) {
+	for _, tc := range []struct {
+		plan Plan
+		want string
+	}{
+		{Plan{Fresh: true}, "fresh_handover"},
+		{Plan{ForkSession: "session"}, "continued_session"},
+		{Plan{Handoff: []runlog.Record{{}}}, "transcript_transfer"},
+	} {
+		if got := tc.plan.Route(); got != tc.want {
+			t.Errorf("route = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestFreshHandoverRefusesToDiscardAnExistingRetrievalPin(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	id := finished(t, "", agent.Task{Dir: dir}, agent.Result{Backend: "claude", Retrieval: &retrieval.Record{Packet: &retrieval.Packet{VersionID: "v1"}}})
+	for _, backend := range []string{"claude", "codex"} {
+		_, err := Make(Request{RunID: id, Backend: backend, Fresh: true})
+		if err == nil || !strings.Contains(err.Error(), "retrieval pin") {
+			t.Errorf("backend %s: %v", backend, err)
+		}
 	}
 }
