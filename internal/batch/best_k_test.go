@@ -274,7 +274,7 @@ func TestBestOfKRetainsOriginalClaimOnCleanupFailure(t *testing.T) {
 	}
 	found := false
 	for _, c := range tr.Candidates {
-		if c.Branch == "hrn/original" && c.Worktree == original && c.BranchMade {
+		if c.Branch == "hrn/original" && canon(t, c.Worktree) == canon(t, original) && c.BranchMade {
 			found = true
 		}
 	}
