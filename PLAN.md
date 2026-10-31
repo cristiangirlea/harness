@@ -275,6 +275,20 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-10-31: token defaults from a 30-day look at the run records, aggregates only (#720, #721,
+  #722; PRs #723, #724, hrn-evals #74). Codex continuing codex now starts a fresh session with a
+  bounded hand-over unless the caller asks to resume (--resume, fresh: false): 52 resumed codex
+  continuations had used 17% of all tokens. Claude review and test runs get a 30-turn default
+  unless the run sets its own (negative means none), on every path except eval cells, which stay
+  uncapped so comparisons stay fair. A small effort eval (6778d, below the publication gate) found
+  medium effort lost no planted defect, so the review route keeps medium effort and no effort
+  change is claimed.
+- 2026-10-31: game slice 6, familiarity per area (#718; PR #719, docs/experience.md). Runs record
+  the files and first-parent commits they changed; exposure counts exercises and the person's own
+  commits outside hrn runs, never authorship guesses; shown in hrn bot stats and the loopback card
+  from a cache refreshed in the background. Git reads of agent-written workspaces run with filters,
+  hooks, signature programs, submodules, lazy fetches and inherited -c parameters off, and only on
+  git 2.44 or later.
 - 2026-10-30: the experience card on the hrn watch index, slice 3 of `docs/experience.md` (#306,
   #715; PR #716). Loopback viewers see level, this week's experience, the streak, badges and
   today's exercise (masked material only, never an answer or reveal); `--lan` viewers see level,
