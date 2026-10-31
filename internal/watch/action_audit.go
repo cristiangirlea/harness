@@ -66,7 +66,7 @@ func (s *server) actionClient(w http.ResponseWriter, r *http.Request) string {
 	return "unverified"
 }
 
-func (s *server) allowAction(client string) bool {
+func (s *server) allowAction(client string) (ok, first bool) {
 	s.rateMu.Lock()
 	defer s.rateMu.Unlock()
 	if s.rates == nil {
@@ -87,11 +87,14 @@ func (s *server) allowAction(client string) bool {
 			s.rates[k] = times[:j]
 		}
 	}
-	if len(s.rates[client]) >= 10 {
-		return false
+	if len(s.rates[client]) >= 11 {
+		return false, false
 	}
 	s.rates[client] = append(s.rates[client], now)
-	return true
+	if len(s.rates[client]) == 11 {
+		return false, true
+	}
+	return true, false
 }
 
 func (s *server) writeRefusal(client, path, reason string) {
@@ -104,10 +107,13 @@ func (s *server) writeRefusal(client, path, reason string) {
 
 func (s *server) refuseAction(w http.ResponseWriter, r *http.Request, client, reason, message string, status int) {
 	if r.Method == http.MethodPost {
-		if !s.allowAction(client) {
+		ok, first := s.allowAction(client)
+		if !ok {
 			reason, message, status = "rate limit", "Too many requests", http.StatusTooManyRequests
 		}
-		s.writeRefusal(client, r.URL.Path, reason)
+		if ok || first {
+			s.writeRefusal(client, r.URL.Path, reason)
+		}
 	}
 	http.Error(w, message, status)
 }
@@ -118,9 +124,33 @@ func recentActions() []actionRow {
 		return nil
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	if info.Size() > 256<<10 {
+		if _, err := f.Seek(info.Size()-(256<<10)-1, io.SeekStart); err != nil {
+			return nil
+		}
+		var previous [1]byte
+		if _, err := io.ReadFull(f, previous[:]); err != nil {
+			return nil
+		}
+		if previous[0] != '\n' {
+			reader := bufio.NewReader(f)
+			if _, err := reader.ReadString('\n'); err != nil {
+				return nil
+			}
+			return scanRecentActions(reader)
+		}
+	}
+	return scanRecentActions(f)
+}
+
+func scanRecentActions(r io.Reader) []actionRow {
 	var rows []actionRow
 	positions := make(map[string]int)
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	for scanner.Scan() {
 		var row actionRow
@@ -133,8 +163,6 @@ func recentActions() []actionRow {
 			rows = append(rows, row)
 		} else if i, ok := positions[row.ID]; row.ID != "" && ok {
 			rows[i].Result = row.Result
-		} else if row.Result == "refused" {
-			rows = append(rows, row)
 		}
 	}
 	var recent []actionRow

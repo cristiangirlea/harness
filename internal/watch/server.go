@@ -366,10 +366,15 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 				return
 			}
 		}
-		if r.Method == http.MethodPost && !s.allowAction(s.actionClient(w, r)) {
-			s.writeRefusal(s.actionClient(w, r), r.URL.Path, "rate limit")
-			http.Error(w, "Too many requests", http.StatusTooManyRequests)
-			return
+		if r.Method == http.MethodPost {
+			client := s.actionClient(w, r)
+			if ok, first := s.allowAction(client); !ok {
+				if first {
+					s.writeRefusal(client, r.URL.Path, "rate limit")
+				}
+				http.Error(w, "Too many requests", http.StatusTooManyRequests)
+				return
+			}
 		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
 		next.ServeHTTP(w, r)

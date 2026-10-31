@@ -25,8 +25,6 @@ type backendCard struct {
 }
 
 func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
-	s.actionMu.Lock()
-	defer s.actionMu.Unlock()
 	client := s.actionClient(w, r)
 	if !s.mayChangeBackends(w, r) {
 		s.writeRefusal(client, "/backends", "local requests only")
@@ -57,6 +55,13 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if p.Default() != "" && !slices.Contains(p.EnabledNames, p.Default()) {
+		s.writeRefusal(client, "/backends", "default backend is not enabled")
+		http.Error(w, fmt.Sprintf("default backend %s is not in enabled", p.Default()), http.StatusBadRequest)
+		return
+	}
+	s.actionMu.Lock()
+	defer s.actionMu.Unlock()
 	had, loadErr := prefs.Load(runlog.Home())
 	var old any = had
 	if loadErr != nil {
@@ -91,11 +96,6 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p.EnabledNames = unique
-	if p.Default() != "" && !slices.Contains(p.EnabledNames, p.Default()) {
-		s.writeRefusal(client, "/backends", "default backend is not enabled")
-		http.Error(w, fmt.Sprintf("default backend %s is not in enabled", p.Default()), http.StatusBadRequest)
-		return
-	}
 	row, err := newIntent(client, old, *p)
 	if err != nil || appendAction(row) != nil {
 		http.Error(w, "Action audit could not be written", http.StatusInternalServerError)
@@ -114,8 +114,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 	}
 	row.Result = "saved"
 	if err := appendAction(row); err != nil {
-		http.Error(w, "Action outcome could not be written", http.StatusInternalServerError)
-		return
+		fmt.Fprintln(os.Stderr, "saved; outcome not audited")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
