@@ -48,10 +48,10 @@ func runCommand() Tool {
 	shell, _ := Shell()
 	return Tool{
 		Name:        "run_command",
-		Description: fmt.Sprintf("Run a shell command (%s) in the workspace root and return combined stdout/stderr and the exit code. Non-interactive only. Default timeout 120s, max 600s. A few destructive or publishing command lines are refused by the harness.", shell),
+		Description: fmt.Sprintf("Run a non-interactive %s command in the workspace root; returns combined stdout/stderr and exit code. Destructive or publishing commands may be refused.", shell),
 		Properties: map[string]any{
-			"command":     str("The command line to run."),
-			"timeout_sec": num("Timeout in seconds."),
+			"command":     str(""),
+			"timeout_sec": num("Seconds (default 120, max 600)."),
 		},
 		Required: []string{"command"},
 		Effect:   EffectExec,

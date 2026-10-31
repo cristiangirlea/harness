@@ -361,12 +361,12 @@ func ReadOriginal() Tool {
 	}
 	return Tool{
 		Name:        "read_original",
-		Description: "Read a saved original tool result by its 16-character hex handle: the whole original, or one part given by range, lines or pointer.",
+		Description: "Read a saved original tool result, whole or using at most one selector.",
 		Properties: map[string]any{
-			"handle":  str("The 16-character hex handle."),
-			"range":   str("Optional byte range a-b, zero-based, end exclusive."),
-			"lines":   str("Optional line range a-b, 1-based, inclusive."),
-			"pointer": str("Optional RFC 6901 JSON pointer such as /items/3/name, for an original that is one JSON value; ~1 is / and ~0 is ~ in a key."),
+			"handle":  str("16 lowercase hex characters."),
+			"range":   str("Byte range a-b, zero-based, end exclusive."),
+			"lines":   str("Line range a-b, 1-based, inclusive."),
+			"pointer": str("RFC 6901 pointer into one JSON value; ~1 means /, ~0 means ~."),
 		},
 		Required: []string{"handle"}, Effect: EffectRead, Summary: summaryOf("handle"),
 		Run: func(ctx context.Context, w *Workspace, raw json.RawMessage) (string, error) {

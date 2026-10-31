@@ -147,8 +147,37 @@ Trimming would pay by share on these local runs: cutting a third of the text wou
 240 tokens per call, about 11% of a median api call there, and less on Anthropic's API where the
 prompt is larger. The definitions sit in the cached prefix, so most of those tokens are billed at
 the cache-read rate, and the money saved is smaller than the share.
-`TestToolDefinitionsStayUnderTheirByteBudget` (`internal/agent/tooldefs_test.go`) holds each
+`TestToolDefinitionsStayUnderTheirByteBudget` (`internal/agent/tooldefs_test.go`) held each
 mode under its size rounded up to 512 bytes: 1,536 read-only, 3,072 auto and yolo, 3,584 with shaping.
+
+### Trimmed
+
+2026-10-31, dry build using `APIBackend.ToolDefinitions` and the same JSON byte accounting as
+`scripts/tool-shapes.sh --definitions`. The before column is the current checkout immediately
+before trimming; it differs from the 2026-10-16 snapshot because definitions changed since then.
+The shell selected for `run_command` was bash. No MCP definitions are included.
+
+| Mode | Before bytes | After bytes |
+|---|---:|---:|
+| readonly | 1,487 | 1,169 |
+| auto | 2,914 | 2,268 |
+| yolo | 2,914 | 2,268 |
+| yolo with shaping | 3,578 | 2,792 |
+
+| Tool | Before bytes | After bytes |
+|---|---:|---:|
+| read_file | 472 | 372 |
+| list_files | 415 | 335 |
+| grep | 596 | 458 |
+| write_file | 393 | 290 |
+| edit_file | 554 | 433 |
+| run_command | 477 | 373 |
+| read_original | 663 | 523 |
+
+Per-tool sizes exclude array brackets and commas. Auto shrank by 646 bytes (22.2%); retaining
+limits, refusal rules and result details took precedence over the 30% target. The byte budgets now
+allow about 5% headroom. Readonly offers only `read_file`, `list_files` and `grep`; shaping adds
+only `read_original` to each mode. These are byte counts, not measured model tokens or an eval.
 
 ## What a run loads
 
