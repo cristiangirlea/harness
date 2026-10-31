@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -68,6 +69,9 @@ func cmdBot(args []string) error {
 }
 
 func cmdBotStats(args []string) error {
+	if len(args) == 1 && args[0] == "--json" {
+		return cmdBotStatsJSON()
+	}
 	if len(args) > 0 {
 		return fmt.Errorf("unexpected argument %q: hrn bot stats takes none", args[0])
 	}
@@ -147,6 +151,107 @@ func cmdBotStats(args []string) error {
 	showAreas("areas you know", familiarity.Known)
 	showAreas("areas agents changed you have not looked at", familiarity.Unseen)
 	return nil
+}
+
+type statsExercise struct {
+	Kind     string  `json:"kind"`
+	Source   string  `json:"source"`
+	Material *string `json:"material,omitempty"`
+	Answered bool    `json:"answered"`
+}
+
+type statsArea struct {
+	Repo  string `json:"repo"`
+	Area  string `json:"area"`
+	Count int    `json:"count"`
+}
+
+type statsFamiliarity struct {
+	Known  []statsArea `json:"known"`
+	Unseen []statsArea `json:"unseen"`
+}
+
+func cmdBotStatsJSON() error {
+	settings, err := game.LoadSettings()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hrn bot stats: settings: %v\n", err)
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Version int  `json:"version"`
+			Enabled bool `json:"enabled"`
+		}{1, false})
+	}
+	if !settings.On() {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Version int  `json:"version"`
+			Enabled bool `json:"enabled"`
+		}{1, false})
+	}
+	events, unreadable, err := game.Load()
+	if err != nil {
+		return err
+	}
+	if unreadable > 0 {
+		fmt.Fprintf(os.Stderr, "hrn bot stats: %d ledger lines could not be read and were left out\n", unreadable)
+	}
+	now := time.Now().UTC()
+	totals := game.Sum(events)
+	week := game.WeekStart(now)
+	weekly := totals.Since(week)
+	practice := game.NewPractice(nil, now)
+	streak, days, err := practice.Streak()
+	var streakValue *int
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hrn bot stats: streak: %v\n", err)
+	} else {
+		streakValue = &streak
+	}
+	var exercise *statsExercise
+	e, err := practice.ExistingToday()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hrn bot stats: exercise: %v\n", err)
+	} else if e != nil {
+		exercise = &statsExercise{Kind: e.Kind, Source: e.Source, Answered: !e.AnsweredAt.IsZero()}
+		if !exercise.Answered {
+			exercise.Material = &e.Material
+		}
+	}
+	badges := []string{}
+	for _, badge := range totals.Badges {
+		badges = append(badges, game.BadgeName(badge.Key))
+	}
+	var familiarity *statsFamiliarity
+	f, err := game.ReadFamiliarity(context.Background(), now)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
+	} else if f.UnreadablePractice {
+		fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: practice records unreadable")
+	} else {
+		familiarity = &statsFamiliarity{Known: []statsArea{}, Unseen: []statsArea{}}
+		for _, a := range f.Known {
+			familiarity.Known = append(familiarity.Known, statsArea{a.Repo, a.Area, a.Count})
+		}
+		for _, a := range f.Unseen {
+			familiarity.Unseen = append(familiarity.Unseen, statsArea{a.Repo, a.Area, a.Count})
+		}
+	}
+	result := struct {
+		Version   int    `json:"version"`
+		Enabled   bool   `json:"enabled"`
+		Level     int    `json:"level"`
+		XP        int    `json:"xp"`
+		WeekStart string `json:"week_start"`
+		Week      struct {
+			Delivery int `json:"delivery"`
+			Practice int `json:"practice"`
+		} `json:"week"`
+		Streak      *int              `json:"streak"`
+		Days        []bool            `json:"days"`
+		Badges      []string          `json:"badges"`
+		Exercise    *statsExercise    `json:"exercise"`
+		Familiarity *statsFamiliarity `json:"familiarity"`
+	}{Version: 1, Enabled: true, Level: game.Level(totals.Person), XP: totals.Person, WeekStart: week.Format("2006-01-02"), Streak: streakValue, Days: days, Badges: badges, Exercise: exercise, Familiarity: familiarity}
+	result.Week.Delivery, result.Week.Practice = weekly[game.TrackDelivery], weekly[game.TrackPractice]
+	return json.NewEncoder(os.Stdout).Encode(result)
 }
 
 // Verify bot support because another service or an older watch may own the port.

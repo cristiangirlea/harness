@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -284,5 +287,100 @@ func TestBotStatsWarnsForUnreadableOldFamiliarityRecord(t *testing.T) {
 	data, err := os.ReadFile(stderr.Name())
 	if err != nil || !strings.Contains(string(data), "practice records:") {
 		t.Fatalf("warning: %q, %v", data, err)
+	}
+}
+
+func TestBotStatsJSON(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	now := time.Now().UTC()
+	if _, err := game.Append([]game.Event{
+		{Key: "review:r1", Kind: "review_clean", Track: game.TrackDelivery, XP: 20, At: now},
+		{Key: "rep:today", Kind: "daily_practice", Track: game.TrackPractice, XP: 30, At: now},
+		{Key: "badge:budget-keeper", Kind: "badge", Track: game.TrackBadge, At: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(game.Dir(), "reps")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	date := now.Format("2006-01-02")
+	path := filepath.Join(dir, date+".json")
+	write := func(answered string) {
+		t.Helper()
+		record := `{"date":"` + date + `","daily":{"kind":"recall","source":"decision","material":"masked heading","reveal":"secret reveal","answer":"secret answer"` + answered + `}}`
+		if err := os.WriteFile(path, []byte(record), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func() map[string]any {
+		t.Helper()
+		out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec := json.NewDecoder(bytes.NewReader(out))
+		var obj map[string]any
+		if err := dec.Decode(&obj); err != nil {
+			t.Fatal(err)
+		}
+		var extra any
+		if err := dec.Decode(&extra); err != io.EOF {
+			t.Fatalf("extra output: %s", out)
+		}
+		if bytes.Contains(out, []byte("secret")) {
+			t.Fatalf("secret in output: %s", out)
+		}
+		return obj
+	}
+	write("")
+	obj := read()
+	if obj["version"] != float64(1) || obj["enabled"] != true || obj["level"] != float64(1) || obj["xp"] != float64(50) || obj["week_start"] != game.WeekStart(now).Format("2006-01-02") {
+		t.Fatalf("stats: %#v", obj)
+	}
+	week := obj["week"].(map[string]any)
+	if week["delivery"] != float64(20) || week["practice"] != float64(30) {
+		t.Fatal(week)
+	}
+	if obj["streak"] != float64(0) || len(obj["days"].([]any)) != 35 || obj["badges"].([]any)[0] != "Budget keeper" {
+		t.Fatal(obj)
+	}
+	ex := obj["exercise"].(map[string]any)
+	if ex["kind"] != "recall" || ex["source"] != "decision" || ex["material"] != "masked heading" || ex["answered"] != false {
+		t.Fatal(ex)
+	}
+	fam := obj["familiarity"].(map[string]any)
+	if len(fam["known"].([]any)) != 0 || len(fam["unseen"].([]any)) != 0 {
+		t.Fatal(fam)
+	}
+	write(`,"answered_at":"2026-01-01T00:00:00Z"`)
+	obj = read()
+	ex = obj["exercise"].(map[string]any)
+	if ex["answered"] != true || ex["material"] != nil || obj["streak"] != float64(1) || obj["days"].([]any)[34] != true {
+		t.Fatal(obj)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	obj = read()
+	if obj["exercise"] != nil {
+		t.Fatal(obj)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("exercise created: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	obj = read()
+	if obj["exercise"] != nil || obj["streak"] != nil || obj["days"] != nil || obj["familiarity"] != nil {
+		t.Fatal(obj)
+	}
+	if err := os.WriteFile(filepath.Join(game.Dir(), "settings.json"), []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	obj = read()
+	if len(obj) != 2 || obj["version"] != float64(1) || obj["enabled"] != false {
+		t.Fatal(obj)
 	}
 }
