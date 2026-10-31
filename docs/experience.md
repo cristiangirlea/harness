@@ -208,9 +208,10 @@ there is no existing exercise, or has `kind`, `source`, `answered`, and masked
 `material` until answered. Answers and reveals are never included. `familiarity`
 is null when unavailable, or has `known` and `unseen` arrays of objects with
 `repo`, `area`, and `count`. Empty lists are arrays. Unreadable practice records
-make the affected `streak`, `days`, `exercise`, or `familiarity` null and produce
-warnings on stderr. Unreadable settings produce a warning and the disabled shape.
-The command fails if the ledger cannot be read.
+make the affected `streak`, `days`, or `exercise` null and produce warnings on
+stderr. Familiarity skips unreadable practice records, warns on stderr, and may
+be incomplete; it is null only when it cannot be read. The command fails with an
+error on stderr and no JSON output if settings or the ledger cannot be read.
 
 ## Slices
 

@@ -313,9 +313,30 @@ func TestBotStatsJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	var stderr string
+	run := func() ([]byte, error) {
+		t.Helper()
+		f, err := os.CreateTemp(t.TempDir(), "stderr")
+		if err != nil {
+			t.Fatal(err)
+		}
+		old := os.Stderr
+		os.Stderr = f
+		defer func() { os.Stderr = old; f.Close() }()
+		out, runErr := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stderr = string(b)
+		return out, runErr
+	}
 	read := func() map[string]any {
 		t.Helper()
-		out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
+		out, err := run()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -373,8 +394,28 @@ func TestBotStatsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	obj = read()
-	if obj["exercise"] != nil || obj["streak"] != nil || obj["days"] != nil || obj["familiarity"] != nil {
+	if obj["exercise"] != nil || obj["streak"] != nil || obj["days"] != nil || obj["familiarity"] == nil {
 		t.Fatal(obj)
+	}
+	for _, warning := range []string{"streak:", "exercise:", "familiarity:"} {
+		if !strings.Contains(stderr, warning) {
+			t.Fatalf("missing %s warning: %s", warning, stderr)
+		}
+	}
+	if err := os.Rename(path, filepath.Join(dir, "2000-01-01.json")); err != nil {
+		t.Fatal(err)
+	}
+	write("")
+	obj = read()
+	if obj["streak"] == nil || obj["exercise"] == nil || obj["familiarity"] == nil {
+		t.Fatal(obj)
+	}
+	if err := os.WriteFile(filepath.Join(game.Dir(), "settings.json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run()
+	if err == nil || len(out) != 0 {
+		t.Fatalf("unreadable settings: stdout %q, error %v", out, err)
 	}
 	if err := os.WriteFile(filepath.Join(game.Dir(), "settings.json"), []byte(`{"enabled":false}`), 0600); err != nil {
 		t.Fatal(err)

@@ -174,11 +174,7 @@ type statsFamiliarity struct {
 func cmdBotStatsJSON() error {
 	settings, err := game.LoadSettings()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hrn bot stats: settings: %v\n", err)
-		return json.NewEncoder(os.Stdout).Encode(struct {
-			Version int  `json:"version"`
-			Enabled bool `json:"enabled"`
-		}{1, false})
+		return err
 	}
 	if !settings.On() {
 		return json.NewEncoder(os.Stdout).Encode(struct {
@@ -223,9 +219,10 @@ func cmdBotStatsJSON() error {
 	f, err := game.ReadFamiliarity(context.Background(), now)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
-	} else if f.UnreadablePractice {
-		fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: practice records unreadable")
 	} else {
+		if f.UnreadablePractice {
+			fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: practice records unreadable")
+		}
 		familiarity = &statsFamiliarity{Known: []statsArea{}, Unseen: []statsArea{}}
 		for _, a := range f.Known {
 			familiarity.Known = append(familiarity.Known, statsArea{a.Repo, a.Area, a.Count})
