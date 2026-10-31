@@ -41,6 +41,15 @@ func RemoveRecord(id string, dryRun bool) (int64, error) {
 // WorktreesRemain reports owned worktrees or slot/waiting branches that still need the record for cleanup.
 func WorktreesRemain(res Result) bool {
 	for _, t := range res.Tasks {
+		for _, c := range t.Candidates {
+			if !c.BranchMade || c.Branch == "" || c.Branch == t.Branch {
+				continue
+			}
+			claim := TaskResult{Status: StatusRunning, Branch: c.Branch, Worktree: c.Worktree, Slot: c.Slot, BranchMade: c.BranchMade}
+			if WorktreesRemain(Result{Dir: res.Dir, Ownership: res.Ownership, Tasks: []TaskResult{claim}}) {
+				return true
+			}
+		}
 		if branchOnly(t) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			_, err := gitOut(ctx, res.Dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+t.Branch)

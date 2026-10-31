@@ -451,3 +451,10 @@ be removed. When prune removes a batch whose task is still marked running, its
 unfinished attempts are decided as failed first, even if all recorded gates passed.
 `--dry-run` writes no ledger. Events whose records were pruned live
 only in the ledger. See [Experience](experience.md) for the remaining design.
+
+Batch task records can include `candidates` for best-of-k retries. Each entry
+keeps the `brief_addition`, `run_id`, `gates`, total `tokens`, and `winner` flag
+when present. The `branch`, `worktree`, `slot`, and `branch_made` fields record candidate ownership for cleanup. Entries are in proposal order. When a
+winner is chosen but removing the original task's branch or worktree fails, a
+last entry with no `brief_addition` or `run_id` keeps the original's claim so
+`hrn batch rm` and `hrn gc` can still remove it.

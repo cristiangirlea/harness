@@ -49,6 +49,7 @@ type Spec struct {
 	// GateTimeout bounds each gate; a task override wins.
 	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
 	Retry       []string       `json:"retry,omitempty"` // backends to try, in order, after a failed attempt
+	RetryK      int            `json:"retry_k,omitempty"`
 	// Protect uses slash globs relative to the repository.
 	Protect     []string `json:"protect,omitempty"`
 	ProtectMode string   `json:"protect_mode,omitempty"`
@@ -81,6 +82,7 @@ type Task struct {
 	Gate        []string       `json:"gate,omitempty"`
 	GateTimeout agent.Duration `json:"gate_timeout,omitempty"`
 	Retry       []string       `json:"retry,omitempty"`
+	RetryK      int            `json:"retry_k,omitempty"`
 	Protect     []string       `json:"protect,omitempty"`
 	ProtectMode string         `json:"protect_mode,omitempty"`
 	// Expect is a regexp the agent's final answer must match, checked as a gate before the others.
@@ -124,11 +126,41 @@ type TaskResult struct {
 	Worktree string `json:"worktree"`
 	Slot     int    `json:"slot,omitempty"` // the ws slot Worktree is; 0 for a fresh worktree
 	// BranchMade proves ownership; save it before waiting for a slot.
-	BranchMade bool          `json:"branch_made,omitempty"`
-	Commit     string        `json:"commit,omitempty"` // the agent's changes; empty when it changed nothing
-	Attempts   []Attempt     `json:"attempts"`
-	Error      string        `json:"error,omitempty"`
-	Duration   time.Duration `json:"duration_ns"`
+	BranchMade bool             `json:"branch_made,omitempty"`
+	Commit     string           `json:"commit,omitempty"` // the agent's changes; empty when it changed nothing
+	Attempts   []Attempt        `json:"attempts"`
+	Candidates []RetryCandidate `json:"candidates,omitempty"`
+	Error      string           `json:"error,omitempty"`
+	Duration   time.Duration    `json:"duration_ns"`
+}
+
+type RetryCandidate struct {
+	Branch        string       `json:"branch,omitempty"`
+	Worktree      string       `json:"worktree,omitempty"`
+	Slot          int          `json:"slot,omitempty"`
+	BranchMade    bool         `json:"branch_made,omitempty"`
+	BriefAddition string       `json:"brief_addition,omitempty"`
+	RunID         string       `json:"run_id,omitempty"`
+	Gates         []GateResult `json:"gates,omitempty"`
+	Tokens        int          `json:"tokens,omitempty"`
+	Winner        bool         `json:"winner,omitempty"`
+}
+
+func pickRetryWinner(candidates []RetryCandidate) int {
+	winner := -1
+	for i, c := range candidates {
+		passes := true
+		for _, gate := range c.Gates {
+			if gate.ExitCode != 0 || gate.Killed != "" || gate.InfrastructureError != "" {
+				passes = false
+				break
+			}
+		}
+		if passes && (winner < 0 || c.Tokens < candidates[winner].Tokens) {
+			winner = i
+		}
+	}
+	return winner
 }
 
 type Attempt struct {
@@ -269,6 +301,9 @@ func (s *Spec) normalize() error {
 	if err := s.Options.Validate(); err != nil {
 		return err
 	}
+	if err := checkRetryK(s.RetryK); err != nil {
+		return err
+	}
 	if err := checkBackends(s.Backend, &s.Retry); err != nil {
 		return err
 	}
@@ -309,6 +344,9 @@ func (s *Spec) normalize() error {
 		if err := t.Options.Over(s.Options).Validate(); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
+		if err := checkRetryK(t.RetryK); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
 		if err := checkBackends(t.Backend, &t.Retry); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
@@ -331,6 +369,27 @@ func (s *Spec) normalize() error {
 		if _, err := compileExpect(t.Expect); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
+	}
+	anyRetryK := s.RetryK >= 2
+	for _, t := range s.Tasks {
+		anyRetryK = anyRetryK || t.RetryK >= 2
+	}
+	if anyRetryK {
+		for _, t := range s.Tasks {
+			for _, other := range s.Tasks {
+				suffix, ok := strings.CutPrefix(t.ID, other.ID+"-k")
+				if ok && suffix != "" && strings.Trim(suffix, "0123456789") == "" {
+					return fmt.Errorf("task id %q collides with retry candidates of %q", t.ID, other.ID)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func checkRetryK(k int) error {
+	if k != 0 && (k < 2 || k > 5) {
+		return fmt.Errorf("retry_k %d: use 2 through 5, or omit to disable", k)
 	}
 	return nil
 }
@@ -527,6 +586,13 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 			for i := range idx {
 				tr := runTask(ctx, &spec, res.ID, kept, spec.Tasks[i], res.Tasks[i], root, base, flowWriter, notify,
 					func(tr TaskResult) error { return update(i, tr) })
+				k := spec.Tasks[i].RetryK
+				if k == 0 {
+					k = spec.RetryK
+				}
+				if k >= 2 && tr.Status == StatusFail && len(tr.Attempts) > 0 && failedGate(tr.Attempts[len(tr.Attempts)-1]) != nil && ctx.Err() == nil {
+					tr = runBestOfK(ctx, &spec, res.ID, kept, spec.Tasks[i], tr, root, base, flowWriter, notify, func(cur TaskResult) error { return update(i, cur) })
+				}
 				update(i, tr)
 				releaseIssue(ctx, issues[i], "batch "+res.ID+" task "+spec.Tasks[i].ID+" ended", notify, spec.Tasks[i].ID)
 			}
@@ -1012,6 +1078,174 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		left = "branch " + tr.Branch + " kept"
 	}
 	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · %s", len(tr.Attempts), left))
+}
+
+func proposeAdditions(ctx context.Context, backendName string, t Task, tr TaskResult, k int, root string, opts agent.Options) ([]string, error) {
+	b, err := agent.Get(backendName)
+	if err != nil {
+		return nil, err
+	}
+	var gate string
+	if len(tr.Attempts) > 0 {
+		if g := failedGate(tr.Attempts[len(tr.Attempts)-1]); g != nil {
+			gate = g.Command + "\n" + tail(g.Output, 4096)
+		}
+	}
+	record, err := json.Marshal(tr)
+	if err != nil {
+		return nil, err
+	}
+	prompt := fmt.Sprintf("Task: %s\nFailing gate: %s\nRun record: %s\nPropose exactly %d distinct short brief additions as a JSON array of strings.", t.Prompt, gate, tail(string(record), 8192), k)
+	opts.Mode = agent.ModeReadOnly
+	r := agent.Run(ctx, b, agent.Task{Prompt: prompt, Dir: root, Purpose: "plan", Options: opts}, func(agent.Event) {})
+	if r.Status != agent.StatusOK {
+		return nil, fmt.Errorf("proposal failed: %s", r.Error)
+	}
+	var additions []string
+	found := false
+	for i := 0; i < len(r.Final); i++ {
+		if r.Final[i] != '[' {
+			continue
+		}
+		var parsed []string
+		if json.NewDecoder(strings.NewReader(r.Final[i:])).Decode(&parsed) == nil {
+			additions, found = parsed, true
+			break
+		}
+	}
+	if !found {
+		return nil, errors.New("proposal has no JSON string array")
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(additions))
+	for _, a := range additions {
+		a = strings.TrimSpace(a)
+		if a != "" && !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+		if len(out) == k {
+			break
+		}
+	}
+	if len(out) < 2 {
+		return nil, errors.New("proposal has fewer than two distinct additions")
+	}
+	return out, nil
+}
+
+func runBestOfK(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t Task, tr TaskResult, root, base string, fw *flow.Writer, notify func(Event), progress func(TaskResult) error) TaskResult {
+	k := t.RetryK
+	if k == 0 {
+		k = spec.RetryK
+	}
+	decision := func(id, message string, status flow.Status) {
+		fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/best-k-" + id, Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Status: status, Reason: message})
+		notify(Event{Task: t.ID, Kind: "decision", Text: message})
+	}
+	decision("proposal", fmt.Sprintf("best-of-k: proposing %d additions", k), flow.StatusOK)
+	backend := firstOf(t.Backend, spec.Backend)
+	if len(tr.Attempts) > 0 {
+		backend = tr.Attempts[len(tr.Attempts)-1].Backend
+	}
+	backend = firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	additions, err := proposeAdditions(ctx, backend, t, tr, k, root, t.Options.Over(spec.Options))
+	if err != nil {
+		tr.Error = strings.TrimSpace(tr.Error + "\n" + err.Error())
+		if ctx.Err() != nil {
+			tr.Status = StatusCanceled
+			decision("result", "best-of-k: canceled", flow.StatusCanceled)
+		} else {
+			decision("result", err.Error(), flow.StatusFailed)
+		}
+		return tr
+	}
+	results := make([]TaskResult, len(additions))
+	candidateSpec := *spec
+	candidateSpec.Retry = nil
+	var wg sync.WaitGroup
+	var candidateMu sync.Mutex
+	tr.Candidates = make([]RetryCandidate, len(additions))
+	for i, addition := range additions {
+		tr.Candidates[i].BriefAddition = addition
+	}
+	for i, addition := range additions {
+		wg.Add(1)
+		go func(i int, addition string) {
+			defer wg.Done()
+			ct := t
+			ct.ID = fmt.Sprintf("%s-k%d", t.ID, i+1)
+			ct.Prompt = t.Prompt + "\n\n" + addition
+			ct.RetryK, ct.Retry = 0, nil
+			ctr := TaskResult{ID: ct.ID, Prompt: ct.Prompt, Purpose: t.Purpose, Status: StatusRunning, Branch: "hrn/" + ct.ID, Attempts: []Attempt{}}
+			if spec.Worktrees == WorktreesFresh {
+				ctr.Worktree = filepath.Join(root, ".hrn", "worktrees", ct.ID)
+			}
+			results[i] = runTask(ctx, &candidateSpec, batchID, kept, ct, ctr, root, base, fw, notify, func(cur TaskResult) error {
+				candidateMu.Lock()
+				defer candidateMu.Unlock()
+				c := &tr.Candidates[i]
+				c.Branch, c.Worktree, c.Slot, c.BranchMade = cur.Branch, cur.Worktree, cur.Slot, cur.BranchMade
+				snapshot := tr
+				snapshot.Status = StatusRunning
+				snapshot.Candidates = slices.Clone(tr.Candidates)
+				return progress(snapshot)
+			})
+		}(i, addition)
+	}
+	wg.Wait()
+	eligible := make([]RetryCandidate, len(additions))
+	for i, ctr := range results {
+		c := tr.Candidates[i]
+		for _, a := range ctr.Attempts {
+			c.Tokens += int(a.Result.InputTokens + a.Result.OutputTokens)
+		}
+		if len(ctr.Attempts) > 0 {
+			last := ctr.Attempts[len(ctr.Attempts)-1]
+			c.RunID, c.Gates = last.RunID, last.Gates
+		}
+		tr.Candidates[i], eligible[i] = c, c
+		if ctr.Status != StatusPass {
+			eligible[i].Gates = append(slices.Clone(c.Gates), GateResult{ExitCode: -1})
+		}
+	}
+	winner := pickRetryWinner(eligible)
+	cleanup := func(r TaskResult) bool {
+		if !r.BranchMade {
+			return true
+		}
+		if spec.Worktrees == WorktreesSlots {
+			if err := removeSlotBranch(root, r); err != nil {
+				tr.Error = strings.TrimSpace(tr.Error + "\ncleanup: " + err.Error())
+				return false
+			}
+		} else if err := removeWorktree(root, r); err != nil {
+			tr.Error = strings.TrimSpace(tr.Error + "\ncleanup: " + err.Error())
+			return false
+		}
+		return true
+	}
+	for i, r := range results {
+		if i != winner && cleanup(r) {
+			tr.Candidates[i].BranchMade = false
+		}
+	}
+	if winner >= 0 {
+		if !cleanup(tr) {
+			tr.Candidates = append(tr.Candidates, RetryCandidate{Branch: tr.Branch, Worktree: tr.Worktree, Slot: tr.Slot, BranchMade: tr.BranchMade})
+		}
+		w := results[winner]
+		tr.Candidates[winner].Winner = true
+		tr.Status, tr.Commit, tr.Branch, tr.Worktree, tr.Slot, tr.BranchMade = w.Status, w.Commit, w.Branch, w.Worktree, w.Slot, w.BranchMade
+		decision("result", "best-of-k: winner "+w.ID, flow.StatusOK)
+	} else if ctx.Err() != nil {
+		tr.Status = StatusCanceled
+		decision("result", "best-of-k: canceled", flow.StatusCanceled)
+	} else {
+		decision("result", "best-of-k: no candidate passed", flow.StatusFailed)
+	}
+	_ = progress(tr)
+	return tr
 }
 
 // Retrieval pins cannot follow a usage-limit switch to another backend.
@@ -2219,6 +2453,26 @@ var branchProbe = func(ctx context.Context, dir, ref string) (string, error) {
 }
 
 func removeTask(res Result, tr TaskResult) (bool, error) {
+	var errs []error
+	removed := false
+	for _, c := range tr.Candidates {
+		if !c.BranchMade || c.Branch == "" || c.Branch == tr.Branch {
+			continue
+		}
+		did, err := removeTask(res, TaskResult{ID: c.Branch, Status: StatusRunning, Branch: c.Branch, Worktree: c.Worktree, Slot: c.Slot, BranchMade: c.BranchMade})
+		removed = removed || did
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	did, err := removeTaskClaim(res, tr)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	return removed || did, errors.Join(errs...)
+}
+
+func removeTaskClaim(res Result, tr TaskResult) (bool, error) {
 	// Bound probes; claim removal only after both probes succeed.
 	branchState := func() (exists, ok bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

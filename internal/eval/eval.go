@@ -127,10 +127,16 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	if len(spec.Tasks) == 0 {
 		return batch.Spec{}, fmt.Errorf("no tasks")
 	}
+	if spec.RetryK != 0 {
+		return batch.Spec{}, fmt.Errorf("retry_k does not belong in an eval: a cell measures one attempt")
+	}
 	if len(spec.Retry) > 0 {
 		return batch.Spec{}, fmt.Errorf("retry does not belong in an eval: a cell measures one attempt, so a retried one would score the harness instead of the backend")
 	}
 	for _, t := range spec.Tasks {
+		if t.RetryK != 0 {
+			return batch.Spec{}, fmt.Errorf("task %s: retry_k does not belong in an eval", t.ID)
+		}
 		if len(t.Retry) > 0 {
 			return batch.Spec{}, fmt.Errorf("task %s: retry does not belong in an eval", t.ID)
 		}
