@@ -200,7 +200,8 @@ the answer to a plan backend (a CLI backend, never the api backend).
 
 `hrn bot stats --json` reads existing records without rebuilding the ledger or
 selecting an exercise. It prints one JSON object, versioned by `version`
-(currently `1`). When the game is off the object contains only `version` and
+(currently `1`). The version changes only when a reader would break; fields may
+be added within a version, so a reader ignores fields it does not know. When the game is off the object contains only `version` and
 `enabled: false`. Otherwise it contains `enabled: true`, `level`, total `xp`,
 `week_start` (UTC date), `week` (integer `delivery` and `practice` XP), `streak`,
 `days` (35 booleans, oldest first), and `badges` (names). `exercise` is null when
