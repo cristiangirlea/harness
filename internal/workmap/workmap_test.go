@@ -95,7 +95,7 @@ func TestBuildCombinesRecordsAndReportsInvalidRepositories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "batches"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	batch := `{"id":"b1","started":"2030-01-01T00:00:00Z","dir":` + strconv.Quote(repo) + `,"tasks":[{"id":"t1","prompt":"task","branch":"feature","worktree":` + strconv.Quote(worktree) + `,"attempts":[{"run_id":"r1","gates":[{"command":"test","exit_code":1}]}]}]}`
+	batch := `{"id":"b1","started":"2020-01-01T00:00:00Z","dir":` + strconv.Quote(repo) + `,"tasks":[{"id":"t1","prompt":"task","branch":"feature","worktree":` + strconv.Quote(worktree) + `,"attempts":[{"run_id":"r1","gates":[{"command":"test","exit_code":1}]}]}]}`
 	if err := os.WriteFile(filepath.Join(home, "batches", "b1.json"), []byte(batch), 0600); err != nil {
 		t.Fatal(err)
 	}

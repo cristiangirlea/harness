@@ -135,6 +135,22 @@ func TestStuckFollowsNewestSourceAndClearsWhenMerged(t *testing.T) {
 	}
 }
 
+func TestFailedBatchBeforeBranchCommitRemainsStuck(t *testing.T) {
+	repo, git := reviewRepo(t)
+	git("checkout", "-b", "feature")
+	git("commit", "--allow-empty", "-m", "feature")
+	home := t.TempDir()
+	raw := fmt.Sprintf(`{"id":"b1","started":"2020-01-01T00:00:00Z","dir":%s,"tasks":[{"id":"t","branch":"feature","attempts":[{"gates":[{"command":"test","exit_code":1}]}]}]}`, strconv.Quote(repo))
+	reviewWrite(t, filepath.Join(home, "batches", "b1.json"), raw)
+	pieces, err := Build(context.Background(), home, []string{repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := reviewFind(t, pieces, "branch:feature"); p.Stuck != "gate test failed" {
+		t.Fatalf("%+v", p)
+	}
+}
+
 func TestConfiguredRepositoriesTakePrecedenceOverRecords(t *testing.T) {
 	configured, git := reviewRepo(t)
 	git("branch", "configured")

@@ -46,6 +46,8 @@ type Piece struct {
 	Stuck            string
 	Links            Links
 	Updated          time.Time
+	fromBatch        bool
+	stuckAt          time.Time
 }
 
 func rank(s Stage) int {
@@ -149,14 +151,19 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		old := pieces[key]
 		if old == nil {
 			q := p
+			if p.fromBatch {
+				q.stuckAt = p.Updated
+			}
 			pieces[key] = &q
 			return
 		}
 		if rank(p.Stage) > rank(old.Stage) {
 			old.Stage = p.Stage
 		}
+		if p.fromBatch && (old.stuckAt.IsZero() || p.Updated.After(old.stuckAt)) {
+			old.Stuck, old.stuckAt = p.Stuck, p.Updated
+		}
 		if p.Updated.After(old.Updated) {
-			old.Stuck = p.Stuck
 			old.Updated = p.Updated
 		}
 		old.Links.Runs = append(old.Links.Runs, p.Links.Runs...)
@@ -294,7 +301,7 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			continue
 		}
 		for _, t := range b.Tasks {
-			p := Piece{Repo: root, Key: "batch:" + b.ID + "/" + t.ID, Title: t.Prompt, Stage: Agent, Updated: b.Started, Links: Links{Branch: t.Branch, Worktree: t.Worktree, Batches: []string{b.ID}}}
+			p := Piece{Repo: root, Key: "batch:" + b.ID + "/" + t.ID, Title: t.Prompt, Stage: Agent, Updated: b.Started, Links: Links{Branch: t.Branch, Worktree: t.Worktree, Batches: []string{b.ID}}, fromBatch: true}
 			if t.Branch != "" {
 				p.Key = "branch:" + t.Branch
 			}
