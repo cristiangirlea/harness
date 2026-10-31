@@ -1,6 +1,7 @@
 package retrieval
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -147,5 +148,15 @@ func TestPacketRejectsFrameMarkersInEntryFields(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAnAdmissionWithoutATimeOmitsCreatedAt(t *testing.T) {
+	data, err := json.Marshal(Admission{VersionID: "v"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "created_at") {
+		t.Fatalf("a zero time was written: %s", data)
 	}
 }
