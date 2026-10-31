@@ -390,16 +390,22 @@ func TestAuditRateLimitExpiryAndSteadyTraffic(t *testing.T) {
 	if got := strings.Count(string(data), `"reason":"rate limit"`); got != 2 {
 		t.Fatalf("rate limit lines: %d", got)
 	}
+	// A client that always keeps a request in the window still gets a line once the window turns over.
 	for minute := 0; minute < 2; minute++ {
 		for i := 0; i < 10; i++ {
 			s.rates["client"][0] = time.Now().Add(-61 * time.Second)
 			if ok, _ := s.allowAction("client"); !ok {
 				t.Fatalf("minute %d request %d refused", minute, i)
 			}
-			if ok, _ := s.allowAction("client"); ok {
-				t.Fatal("over-limit request allowed")
-			}
+			refuse()
 		}
+	}
+	data, err = os.ReadFile(filepath.Join(home, "watch-audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), `"reason":"rate limit"`) - 2; got < 1 || got > 2 {
+		t.Fatalf("steady over-limit traffic wrote %d rate limit lines in two windows, want 1 or 2", got)
 	}
 }
 
