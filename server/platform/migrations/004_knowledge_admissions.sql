@@ -1,4 +1,4 @@
-﻿CREATE TABLE knowledge_admissions (
+CREATE TABLE knowledge_admissions (
  tenant_id text NOT NULL, project_id text NOT NULL, version_id text NOT NULL,
  verdict text NOT NULL CHECK (verdict IN ('admitted','rejected','pending')),
  baseline_version_id text NOT NULL, eval_ids text[] NOT NULL,
