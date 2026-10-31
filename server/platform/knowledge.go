@@ -279,6 +279,15 @@ func (s *Store) InspectKnowledge(ctx context.Context, sc retrieval.Scope, id str
 	if err != nil {
 		return out, err
 	}
+	var admission retrieval.Admission
+	admission.Scope, admission.VersionID = sc, id
+	err = tx.QueryRow(ctx, `SELECT verdict,baseline_version_id,eval_ids,pass_rate_baseline,pass_rate_candidate,median_tokens_baseline,median_tokens_candidate,failed_attempt_tokens_baseline,failed_attempt_tokens_candidate,source_runs,created_at FROM knowledge_admissions WHERE tenant_id=$1 AND project_id=$2 AND version_id=$3`, sc.TenantID, sc.ProjectID, id).Scan(&admission.Verdict, &admission.BaselineVersionID, &admission.EvalIDs, &admission.PassRateBaseline, &admission.PassRateCandidate, &admission.MedianTokensBaseline, &admission.MedianTokensCandidate, &admission.FailedAttemptTokensBaseline, &admission.FailedAttemptTokensCandidate, &admission.SourceRuns, &admission.CreatedAt)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return out, err
+	}
+	if err == nil {
+		out.Admission = &admission
+	}
 	rows, err := tx.Query(ctx, `SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers FROM knowledge_entries e JOIN knowledge_members m ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id) WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3 ORDER BY e.entry_key COLLATE "C", e.id`, sc.TenantID, sc.ProjectID, id)
 	if err != nil {
 		return out, err
@@ -312,6 +321,16 @@ func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retri
 	if err = knowledgeProject(ctx, tx, in.Scope); err != nil {
 		return out, err
 	}
+	out, err = changeKnowledgeTx(ctx, tx, in)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+func changeKnowledgeTx(ctx context.Context, tx pgx.Tx, in retrieval.Change) (retrieval.Active, error) {
+	var out retrieval.Active
+	var err error
 	_, err = tx.Exec(ctx, `INSERT INTO knowledge_active_versions(tenant_id,project_id,backend,model,revision) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, in.TenantID, in.ProjectID, in.Backend, in.Model, in.Revision)
 	if err != nil {
 		return out, err
@@ -341,7 +360,7 @@ func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retri
 		return out, ErrNotFound
 	}
 	if target == out.VersionID {
-		return out, tx.Commit(ctx)
+		return out, nil
 	}
 	out.PreviousID, out.VersionID, out.Generation = out.VersionID, target, out.Generation+1
 	_, err = tx.Exec(ctx, `UPDATE knowledge_active_versions SET version_id=NULLIF($6,''),previous_id=NULLIF($7,''),generation=$8 WHERE tenant_id=$1 AND project_id=$2 AND backend=$3 AND model=$4 AND revision=$5`, in.TenantID, in.ProjectID, in.Backend, in.Model, in.Revision, out.VersionID, out.PreviousID, out.Generation)
@@ -354,7 +373,7 @@ func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retri
 	if err != nil {
 		return out, err
 	}
-	return out, tx.Commit(ctx)
+	return out, nil
 }
 
 const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
@@ -470,4 +489,72 @@ func (s *Store) ActiveKnowledge(ctx context.Context, sc retrieval.Scope) (retrie
 		err = nil
 	}
 	return out, err
+}
+
+func (s *Store) RecordAdmission(ctx context.Context, in retrieval.Admission) error {
+	if in.Verdict != "admitted" && in.Verdict != "rejected" && in.Verdict != "pending" {
+		return ErrUnsupported
+	}
+	for _, n := range []float64{in.PassRateBaseline, in.PassRateCandidate, in.MedianTokensBaseline, in.MedianTokensCandidate, in.FailedAttemptTokensBaseline, in.FailedAttemptTokensCandidate} {
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
+			return ErrUnsupported
+		}
+	}
+	if in.PassRateBaseline > 1 || in.PassRateCandidate > 1 {
+		return ErrUnsupported
+	}
+	for _, v := range append(append([]string{}, in.EvalIDs...), in.SourceRuns...) {
+		if len(v) == 0 || len(v) > 256 || unsafeKnowledgePattern(v, true) != "" {
+			return ErrUnsupported
+		}
+	}
+	ctx, done, err := s.knowledgeContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	tx, err := s.knowledge.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = knowledgeProject(ctx, tx, in.Scope); err != nil {
+		return err
+	}
+	if err = checkKnowledgeVersion(ctx, tx, in.Scope, in.VersionID); err != nil {
+		return err
+	}
+	if err = checkKnowledgeVersion(ctx, tx, in.Scope, in.BaselineVersionID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO knowledge_active_versions(tenant_id,project_id,backend,model,revision) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, in.TenantID, in.ProjectID, in.Backend, in.Model, in.Revision)
+	if err != nil {
+		return err
+	}
+	var active string
+	var generation int64
+	err = tx.QueryRow(ctx, `SELECT COALESCE(version_id,''),generation FROM knowledge_active_versions WHERE tenant_id=$1 AND project_id=$2 AND backend=$3 AND model=$4 AND revision=$5 FOR UPDATE`, in.TenantID, in.ProjectID, in.Backend, in.Model, in.Revision).Scan(&active, &generation)
+	if err != nil {
+		return err
+	}
+	if active == in.VersionID || active != in.BaselineVersionID {
+		return ErrConflict
+	}
+	if in.EvalIDs == nil {
+		in.EvalIDs = []string{}
+	}
+	if in.SourceRuns == nil {
+		in.SourceRuns = []string{}
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO knowledge_admissions(tenant_id,project_id,version_id,verdict,baseline_version_id,eval_ids,pass_rate_baseline,pass_rate_candidate,median_tokens_baseline,median_tokens_candidate,failed_attempt_tokens_baseline,failed_attempt_tokens_candidate,source_runs) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (tenant_id,project_id,version_id) DO UPDATE SET verdict=EXCLUDED.verdict,baseline_version_id=EXCLUDED.baseline_version_id,eval_ids=EXCLUDED.eval_ids,pass_rate_baseline=EXCLUDED.pass_rate_baseline,pass_rate_candidate=EXCLUDED.pass_rate_candidate,median_tokens_baseline=EXCLUDED.median_tokens_baseline,median_tokens_candidate=EXCLUDED.median_tokens_candidate,failed_attempt_tokens_baseline=EXCLUDED.failed_attempt_tokens_baseline,failed_attempt_tokens_candidate=EXCLUDED.failed_attempt_tokens_candidate,source_runs=EXCLUDED.source_runs,created_at=now()`, in.TenantID, in.ProjectID, in.VersionID, in.Verdict, in.BaselineVersionID, in.EvalIDs, in.PassRateBaseline, in.PassRateCandidate, in.MedianTokensBaseline, in.MedianTokensCandidate, in.FailedAttemptTokensBaseline, in.FailedAttemptTokensCandidate, in.SourceRuns)
+	if err != nil {
+		return err
+	}
+	if in.Verdict == "admitted" {
+		_, err = changeKnowledgeTx(ctx, tx, retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: in.VersionID, ExpectedGeneration: generation})
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
