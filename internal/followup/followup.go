@@ -125,7 +125,11 @@ func Make(req Request) (Plan, error) {
 		if p.Model == "" {
 			p.Model = latestModel(chain, p.Backend)
 		}
-		p.Notes = append(p.Notes, fmt.Sprintf("starting a new %s session, handed run %s over from its record; no session or conversation is resumed or forked", p.Backend, prev.ID))
+		note := fmt.Sprintf("starting a new %s session, handed run %s over from its record; no session or conversation is resumed or forked", p.Backend, prev.ID)
+		if !req.Fresh {
+			note += " (the codex default; --resume or fresh: false resumes the session)"
+		}
+		p.Notes = append(p.Notes, note)
 		return p, nil
 	}
 

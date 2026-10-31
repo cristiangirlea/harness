@@ -104,7 +104,8 @@ with a `prompt_prefix`, its `digest` covers the prefix too. `setup_mixed: true` 
 (tasks may set their own MCP configs, so different tasks may differ).
 
 A follow-up names the run it continues in `continues`. One started with `--fresh` (MCP
-`fresh`, exec `fresh`) also has `continue_route: "fresh_handover"`: it started a new
+`fresh`, exec `fresh`), or by the codex fresh default, also has
+`continue_route: "fresh_handover"`: it started a new
 session with a hand-over instead of resuming or forking one. The field is omitted for
 an ordinary follow-up, and old records without it still load.
 
