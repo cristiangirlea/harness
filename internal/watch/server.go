@@ -230,14 +230,17 @@ func checkListener(a net.Addr, lan []Endpoint) error {
 var idRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`)
 
 type server struct {
-	ctx    context.Context // ends every stream when the server stops
-	opt    Options
-	redact *strings.Replacer
-	home   string
-	system []string
-	access *accessVerifier
-	logMu  sync.Mutex
-	grants []owner.Grant
+	ctx      context.Context // ends every stream when the server stops
+	opt      Options
+	redact   *strings.Replacer
+	home     string
+	system   []string
+	access   *accessVerifier
+	logMu    sync.Mutex
+	actionMu sync.Mutex
+	rateMu   sync.Mutex
+	rates    map[string][]time.Time
+	grants   []owner.Grant
 
 	batches     batchCache
 	familiarity familiarityCache
@@ -345,22 +348,28 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 				}
 			}
 			if aw.reason != "" {
-				http.Error(w, "Cloudflare Access login required", http.StatusForbidden)
+				s.refuseAction(w, r, "unverified", aw.reason, "Cloudflare Access login required", http.StatusForbidden)
 				return
 			}
 		} else if !(isLoopbackHost(r.Host) || lan[withPort(r.Host)]) || strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || !isSameOrigin(r) {
-			http.Error(w, "Local requests only", http.StatusForbidden)
+			s.refuseAction(w, r, "unverified", "bad host or origin", "Local requests only", http.StatusForbidden)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			sent := r.Header.Get("X-Hrn-Watch-Key")
 			if key == "" || subtle.ConstantTimeCompare([]byte(sent), []byte(key)) != 1 {
+				client := s.actionClient(w, r)
 				if aw, ok := w.(*accessWriter); ok {
-					aw.email, aw.reason = "", "missing action key"
+					aw.reason = "missing action key"
 				}
-				http.Error(w, "Acting on hrn needs hrn watch's key", http.StatusForbidden)
+				s.refuseAction(w, r, client, "missing action key", "Acting on hrn needs hrn watch's key", http.StatusForbidden)
 				return
 			}
+		}
+		if r.Method == http.MethodPost && !s.allowAction(s.actionClient(w, r)) {
+			s.writeRefusal(s.actionClient(w, r), r.URL.Path, "rate limit")
+			http.Error(w, "Too many requests", http.StatusTooManyRequests)
+			return
 		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
 		next.ServeHTTP(w, r)
@@ -557,6 +566,10 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	// Keep network discovery links and LAN hints local.
 	if s.fromThisComputer(r) {
 		p.Local = true
+		if s.mayChangeBackends(w, r) {
+			p.ShowChanges = true
+			p.Changes = recentActions()
+		}
 		p.Phone = phoneLinks(s.opt.LAN)
 		last, err := gc.LastPass()
 		if err != nil {

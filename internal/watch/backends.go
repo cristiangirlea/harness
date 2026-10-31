@@ -2,8 +2,11 @@ package watch
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -22,7 +25,11 @@ type backendCard struct {
 }
 
 func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
+	s.actionMu.Lock()
+	defer s.actionMu.Unlock()
+	client := s.actionClient(w, r)
 	if !s.mayChangeBackends(w, r) {
+		s.writeRefusal(client, "/backends", "local requests only")
 		http.Error(w, "Local requests only", http.StatusForbidden)
 		return
 	}
@@ -30,10 +37,12 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&p); err != nil || p == nil {
+		s.writeRefusal(client, "/backends", "invalid preferences object")
 		http.Error(w, "Expected a backend preferences object", http.StatusBadRequest)
 		return
 	}
 	if err := d.Decode(new(any)); err != io.EOF {
+		s.writeRefusal(client, "/backends", "multiple preferences objects")
 		http.Error(w, "Expected one backend preferences object", http.StatusBadRequest)
 		return
 	}
@@ -43,12 +52,25 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, name := range names {
 		if _, err := agent.Get(name); err != nil {
+			s.writeRefusal(client, "/backends", "unknown backend")
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
+	had, loadErr := prefs.Load(runlog.Home())
+	var old any = had
+	if loadErr != nil {
+		data, err := os.ReadFile(filepath.Join(runlog.Home(), "backends.json"))
+		if err != nil || len(data) > 16<<10 {
+			s.writeRefusal(client, "/backends", "preferences could not be read")
+			http.Error(w, "Backend preferences could not be read", http.StatusInternalServerError)
+			return
+		}
+		old = string(data)
+	}
+
 	// Preserve fallback preference order despite the card's alphabetical display.
-	if had, err := prefs.Load(runlog.Home()); err == nil && len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {
+	if len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {
 		var kept []string
 		for _, name := range had.EnabledNames {
 			if p.Enabled(name) && !slices.Contains(kept, name) {
@@ -69,13 +91,30 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p.EnabledNames = unique
+	if p.Default() != "" && !slices.Contains(p.EnabledNames, p.Default()) {
+		s.writeRefusal(client, "/backends", "default backend is not enabled")
+		http.Error(w, fmt.Sprintf("default backend %s is not in enabled", p.Default()), http.StatusBadRequest)
+		return
+	}
+	row, err := newIntent(client, old, *p)
+	if err != nil || appendAction(row) != nil {
+		http.Error(w, "Action audit could not be written", http.StatusInternalServerError)
+		return
+	}
 	if err := prefs.Save(runlog.Home(), *p); err != nil {
+		row.Result = "error: backend preferences could not be saved"
+		_ = appendAction(row)
 		// Only default-validation errors are safe to show; filesystem errors may expose paths.
 		if p.Default() != "" && (len(p.EnabledNames) == 0 || !p.Enabled(p.Default())) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
 			http.Error(w, "Backend preferences could not be saved", http.StatusInternalServerError)
 		}
+		return
+	}
+	row.Result = "saved"
+	if err := appendAction(row); err != nil {
+		http.Error(w, "Action outcome could not be written", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
