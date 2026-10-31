@@ -52,6 +52,43 @@
     }
   });
 
+  const merges = document.getElementById('merges');
+  if (merges) {
+    const status = document.getElementById('merge-status');
+    const confirm = document.getElementById('merge-confirm');
+    const cancel = document.getElementById('merge-cancel');
+    let grant = null;
+    const reset = () => { grant = null; confirm.hidden = cancel.hidden = true; };
+    merges.addEventListener('click', async (event) => {
+      const task = event.target.dataset.mergeTask;
+      if (!task) return;
+      reset();
+      status.textContent = 'Preparing confirmation...';
+      try {
+        const path = '/batch/' + encodeURIComponent(merges.dataset.batch) + '/merge/' + encodeURIComponent(task);
+        const response = await fetch(path, { method: 'POST', headers: { 'X-Hrn-Watch-Key': merges.dataset.key } });
+        if (!response.ok) throw new Error((await response.text()).trim());
+        grant = await response.json();
+        grant.path = path;
+        status.textContent = 'Merge task ' + grant.task + ', branch ' + grant.branch + ' at ' + grant.head.slice(0, 12) + ' into ' + grant.target + '?';
+        confirm.hidden = cancel.hidden = false;
+      } catch (error) { status.textContent = error.message; }
+    });
+    cancel.addEventListener('click', () => { reset(); status.textContent = 'Cancelled'; });
+    confirm.addEventListener('click', async () => {
+      if (!grant) return;
+      const current = grant;
+      reset();
+      status.textContent = 'Merging...';
+      try {
+        const response = await fetch(current.path + '/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hrn-Watch-Key': merges.dataset.key }, body: JSON.stringify({ token: current.token }) });
+        if (!response.ok) throw new Error((await response.text()).trim());
+        const result = await response.json();
+        status.textContent = 'Merged: ' + result.commit;
+      } catch (error) { status.textContent = error.message; }
+    });
+  }
+
   const box = document.querySelector('[data-stream]');
   if (!box || !window.EventSource) return;
 

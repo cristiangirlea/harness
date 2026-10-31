@@ -230,20 +230,24 @@ func checkListener(a net.Addr, lan []Endpoint) error {
 var idRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`)
 
 type server struct {
-	ctx      context.Context // ends every stream when the server stops
-	opt      Options
-	redact   *strings.Replacer
-	home     string
-	system   []string
-	access   *accessVerifier
-	logMu    sync.Mutex
-	actionMu sync.Mutex
-	rateMu   sync.Mutex
-	rates    map[string][]admitted
-	noted    map[string]uint64
-	rateSeq  uint64
-	clock    func() time.Time
-	grants   []owner.Grant
+	ctx         context.Context // ends every stream when the server stops
+	opt         Options
+	redact      *strings.Replacer
+	home        string
+	system      []string
+	access      *accessVerifier
+	logMu       sync.Mutex
+	actionMu    sync.Mutex
+	mergeMu     sync.Mutex
+	mergeGrants []mergeGrant
+	mergeBusy   map[string]bool
+	mergeRun    func(context.Context, batch.Result, string, string) ([]batch.MergeResult, error)
+	rateMu      sync.Mutex
+	rates       map[string][]admitted
+	noted       map[string]uint64
+	rateSeq     uint64
+	clock       func() time.Time
+	grants      []owner.Grant
 
 	batches     batchCache
 	familiarity familiarityCache
@@ -283,6 +287,8 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 	mux.HandleFunc("POST /backends", s.saveBackends)
 	mux.HandleFunc("GET /run/{id}", s.recordRoute(s.run))
 	mux.HandleFunc("GET /batch/{id}", s.recordRoute(s.batch))
+	mux.HandleFunc("POST /batch/{id}/merge/{task}", s.askMerge)
+	mux.HandleFunc("POST /batch/{id}/merge/{task}/confirm", s.confirmMerge)
 	mux.HandleFunc("GET /flow/{id}/json", s.recordRoute(s.flowJSON))
 	mux.HandleFunc("GET /flow/{id}", s.recordRoute(s.flowPage))
 	mux.HandleFunc("GET /stream/index", s.streamIndex)
@@ -613,6 +619,8 @@ type accessContextKey struct{}
 
 func (s *server) who(r *http.Request) owner.Viewer {
 	v := s.identity(r)
+	// Owner action rights do not grant access to other owners' records.
+	v.Admin = false
 	if s.opt.Public != nil {
 		v.Grants = s.grants
 		if aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter); aw != nil {
@@ -631,18 +639,18 @@ func (s *server) who(r *http.Request) owner.Viewer {
 
 func (s *server) identity(r *http.Request) owner.Viewer {
 	if s.opt.Public == nil || s.fromThisComputer(r) {
-		return owner.LocalViewer()
+		return owner.Viewer{ID: owner.Local(), Admin: true}
 	}
 	aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter)
 	if aw == nil || aw.email == "" {
 		return owner.Viewer{}
 	}
 	if len(s.opt.OwnerEmails) == 0 {
-		return owner.LocalViewer()
+		return owner.Viewer{ID: owner.Local(), Admin: true}
 	}
 	for _, email := range s.opt.OwnerEmails {
 		if strings.EqualFold(strings.TrimSpace(email), aw.email) {
-			return owner.LocalViewer()
+			return owner.Viewer{ID: owner.Local(), Admin: true}
 		}
 	}
 	return owner.Viewer{ID: owner.Email(aw.email)}
@@ -722,6 +730,14 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 	vw := s.viewerOf(r)
 	p := batchPageOf(vw.batch(s.cleanBatch(res)), vw)
 	p.Home = s.homeFor(r)
+	if s.mayChangeBackends(w, r) && s.identity(r).Admin {
+		p.MergeKey = s.opt.Key
+		for _, task := range res.Tasks {
+			if task.Status == batch.StatusPass && task.Commit != "" && task.Branch != "" {
+				p.MergeTasks = append(p.MergeTasks, task.ID)
+			}
+		}
+	}
 	s.page(w, http.StatusOK, "batch", p)
 }
 

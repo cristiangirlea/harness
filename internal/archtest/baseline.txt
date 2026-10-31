@@ -1,0 +1,26 @@
+agent -> prefs
+agent -> prefs (test)
+agent -> purpose
+agent -> remote
+agent -> route/table
+agent -> route/table (test)
+eval -> game (test)
+eval -> update (test)
+flow -> agent
+flow -> agent (test)
+limits -> agent
+limits -> agent (test)
+limits -> followup
+mcp -> retrieval
+quota -> agent
+quota -> agent (test)
+runlog -> agent
+runlog -> agent (test)
+server/cmd/hrn-worker -> internal/agent
+server/platform -> internal/agent
+server/platform -> internal/agent (test)
+server/platform -> internal/remote (test)
+server/platform -> internal/retrieval
+server/platform -> internal/retrieval (test)
+tools -> retrieval
+update -> watch

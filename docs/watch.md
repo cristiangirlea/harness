@@ -131,8 +131,8 @@ font beyond the page's own. Usage events themselves are not listed in the timeli
 Everything from a record is escaped as text, since tool results hold whatever the agent
 read. The page loads nothing from anywhere else (one stylesheet and a script or two, all
 served by hrn, no fonts), follows the system's light or dark theme, and on a phone shows
-each run and batch as a small card instead of a table. It cannot start, stop or merge
-anything: a request other than GET or HEAD must carry hrn watch's key in
+each run and batch as a small card instead of a table. It cannot start or stop runs.
+A request other than GET or HEAD must carry hrn watch's key in
 `X-Hrn-Watch-Key`, from this computer or the network alike (a custom header is also the
 CSRF check). Each start issues a fresh key, shared only with viewers allowed to change
 backend preferences, as described below.
@@ -422,3 +422,5 @@ assembled text from the record.
 The existing environment-value redaction also runs. Records remain unchanged,
 and JSON record output retains the original text. These rules recognise common
 secret shapes; they cannot identify every possible secret.
+
+A passing batch task with a branch and changes can be merged from its batch page. Select Merge to see the task, branch, current head and target branch, then confirm within two minutes. Each confirmation is single-use; a moved branch is refused. Only this computer (without forwarding headers), or a verified Cloudflare Access user acting as the local owner in public mode, can act. With `--owner-email`, project grant viewers cannot merge; without it, all verified Access emails use the local owner identity. LAN viewers are read-only. Only one merge can run at a time in the same repository. Merge intents, outcomes and refusals are recorded in `watch-audit.jsonl` in `HRN_HOME`.
