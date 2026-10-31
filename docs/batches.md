@@ -161,6 +161,17 @@ gates run, as a gate named `protect ...` whose output lists the files, so a retr
 which ones to restore. A task's `protect` and `protect_mode` replace the spec's. Evals
 default to `fail`.
 
+Set `"retry_k": 3` on the spec or a task to try different brief additions after a
+failed task. Values from 2 to 5 are accepted; a task value overrides the spec.
+After the ordinary attempts fail, the task backend proposes additions, and each
+candidate runs from the same base with the same gates and per-attempt budgets.
+Candidates run concurrently and wait for available slots in slot mode. Passing
+gates choose the winner: among passing candidates the fewest total input and
+output tokens wins, with proposal order breaking equal-token ties. The batch
+record keeps each addition, run ID, gate results, token total and winner flag.
+If none passes the task stays failed; losing candidate branches and worktrees
+are removed. Evals refuse `retry_k`.
+
 A failed attempt is retried on each backend named in `retry`, in order. The same name
 may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common case: a
 second try with the same model, told what went wrong. A retry on a backend other than

@@ -568,6 +568,13 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 			for i := range idx {
 				tr := runTask(ctx, &spec, res.ID, kept, spec.Tasks[i], res.Tasks[i], root, base, flowWriter, notify,
 					func(tr TaskResult) error { return update(i, tr) })
+				k := spec.Tasks[i].RetryK
+				if k == 0 {
+					k = spec.RetryK
+				}
+				if k >= 2 && tr.Status == StatusFail && ctx.Err() == nil {
+					tr = runBestOfK(ctx, &spec, res.ID, kept, spec.Tasks[i], tr, root, base, flowWriter, notify, func(cur TaskResult) error { return update(i, cur) })
+				}
 				update(i, tr)
 				releaseIssue(ctx, issues[i], "batch "+res.ID+" task "+spec.Tasks[i].ID+" ended", notify, spec.Tasks[i].ID)
 			}
@@ -1053,6 +1060,139 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		left = "branch " + tr.Branch + " kept"
 	}
 	return finish(StatusFail, fmt.Sprintf("fail after %d attempt(s) · %s", len(tr.Attempts), left))
+}
+
+func proposeAdditions(ctx context.Context, backendName string, t Task, tr TaskResult, k int, root string, opts agent.Options) ([]string, error) {
+	b, err := agent.Get(backendName)
+	if err != nil {
+		return nil, err
+	}
+	var gate string
+	if len(tr.Attempts) > 0 {
+		if g := failedGate(tr.Attempts[len(tr.Attempts)-1]); g != nil {
+			gate = g.Command + "\n" + tail(g.Output, 4096)
+		}
+	}
+	record, err := json.Marshal(tr)
+	if err != nil {
+		return nil, err
+	}
+	prompt := fmt.Sprintf("Task: %s\nFailing gate: %s\nRun record: %s\nPropose exactly %d distinct short brief additions as a JSON array of strings.", t.Prompt, gate, tail(string(record), 8192), k)
+	opts.Mode = agent.ModeReadOnly
+	r := agent.Run(ctx, b, agent.Task{Prompt: prompt, Dir: root, Purpose: "plan", Options: opts}, func(agent.Event) {})
+	if r.Status != agent.StatusOK {
+		return nil, fmt.Errorf("proposal failed: %s", r.Error)
+	}
+	start := strings.IndexByte(r.Final, '[')
+	if start < 0 {
+		return nil, errors.New("proposal has no JSON array")
+	}
+	var additions []string
+	if err := json.NewDecoder(strings.NewReader(r.Final[start:])).Decode(&additions); err != nil {
+		return nil, fmt.Errorf("proposal JSON: %w", err)
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(additions))
+	for _, a := range additions {
+		a = strings.TrimSpace(a)
+		if a != "" && !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+		if len(out) == k {
+			break
+		}
+	}
+	if len(out) < 2 {
+		return nil, errors.New("proposal has fewer than two distinct additions")
+	}
+	return out, nil
+}
+
+func runBestOfK(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t Task, tr TaskResult, root, base string, fw *flow.Writer, notify func(Event), progress func(TaskResult) error) TaskResult {
+	k := t.RetryK
+	if k == 0 {
+		k = spec.RetryK
+	}
+	decision := func(id, message string, status flow.Status) {
+		fw.Emit(flow.Event{Step: TaskStep(t.ID) + "/best-k-" + id, Parent: TaskStep(t.ID), Kind: flow.KindDecision, Task: t.ID, Status: status, Reason: message})
+		notify(Event{Task: t.ID, Kind: "decision", Text: message})
+	}
+	decision("proposal", fmt.Sprintf("best-of-k: proposing %d additions", k), flow.StatusOK)
+	backend := firstOf(t.Backend, spec.Backend)
+	if len(tr.Attempts) > 0 {
+		backend = tr.Attempts[len(tr.Attempts)-1].Backend
+	}
+	backend = firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	additions, err := proposeAdditions(ctx, backend, t, tr, k, root, t.Options.Over(spec.Options))
+	if err != nil {
+		tr.Error = strings.TrimSpace(tr.Error + "\n" + err.Error())
+		decision("result", err.Error(), flow.StatusFailed)
+		return tr
+	}
+	results := make([]TaskResult, len(additions))
+	candidateSpec := *spec
+	candidateSpec.Retry = nil
+	var wg sync.WaitGroup
+	for i, addition := range additions {
+		wg.Add(1)
+		go func(i int, addition string) {
+			defer wg.Done()
+			ct := t
+			ct.ID = fmt.Sprintf("%s-k%d", t.ID, i+1)
+			ct.Prompt = t.Prompt + "\n\n" + addition
+			ct.RetryK, ct.Retry = 0, nil
+			ctr := TaskResult{ID: ct.ID, Prompt: ct.Prompt, Purpose: t.Purpose, Status: StatusRunning, Branch: "hrn/" + ct.ID, Attempts: []Attempt{}}
+			if spec.Worktrees == WorktreesFresh {
+				ctr.Worktree = filepath.Join(root, ".hrn", "worktrees", ct.ID)
+			}
+			results[i] = runTask(ctx, &candidateSpec, batchID, kept, ct, ctr, root, base, fw, notify, func(TaskResult) error { return nil })
+		}(i, addition)
+	}
+	wg.Wait()
+	tr.Candidates = make([]RetryCandidate, len(additions))
+	eligible := make([]RetryCandidate, len(additions))
+	for i, ctr := range results {
+		c := RetryCandidate{BriefAddition: additions[i]}
+		for _, a := range ctr.Attempts {
+			c.Tokens += int(a.Result.InputTokens + a.Result.OutputTokens)
+		}
+		if len(ctr.Attempts) > 0 {
+			last := ctr.Attempts[len(ctr.Attempts)-1]
+			c.RunID, c.Gates = last.RunID, last.Gates
+		}
+		tr.Candidates[i], eligible[i] = c, c
+		if ctr.Status != StatusPass {
+			eligible[i].Gates = append(slices.Clone(c.Gates), GateResult{ExitCode: -1})
+		}
+	}
+	winner := pickRetryWinner(eligible)
+	cleanup := func(r TaskResult) {
+		if !r.BranchMade {
+			return
+		}
+		if spec.Worktrees == WorktreesSlots {
+			dropBranch(root, r.Branch)
+		} else if err := removeWorktree(root, r); err != nil {
+			tr.Error = strings.TrimSpace(tr.Error + "\ncleanup: " + err.Error())
+		}
+	}
+	for i, r := range results {
+		if i != winner {
+			cleanup(r)
+		}
+	}
+	if winner >= 0 {
+		cleanup(tr)
+		w := results[winner]
+		tr.Candidates[winner].Winner = true
+		tr.Status, tr.Commit, tr.Branch, tr.Worktree, tr.Slot, tr.BranchMade = w.Status, w.Commit, w.Branch, w.Worktree, w.Slot, w.BranchMade
+		decision("result", "best-of-k: winner "+w.ID, flow.StatusOK)
+	} else {
+		decision("result", "best-of-k: no candidate passed", flow.StatusFailed)
+	}
+	_ = progress(tr)
+	return tr
 }
 
 // Retrieval pins cannot follow a usage-limit switch to another backend.

@@ -6,3 +6,7 @@
 # Personal AI notes and settings
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Local Go build and test files
+/.gocache/
+/.tmp/
