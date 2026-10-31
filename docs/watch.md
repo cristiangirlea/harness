@@ -206,6 +206,14 @@ follow those preferences. Choose "No configured default" to let hrn choose;
 leaving all backends unchecked with no default restores all backends. A configured
 default must be enabled, and unknown backend names are refused.
 
+Actions are limited to 10 POST requests per minute per loopback client, verified Access email,
+or unverified client. The first request over the limit records one rate-limit refusal; further requests in the window write no audit lines. Refusals and backend changes are appended to `$HRN_HOME/watch-audit.jsonl`
+without IP addresses or forwarding headers. A change writes an intent before saving and an outcome
+afterwards; a missing outcome appears as interrupted. If the intent cannot be written, the change
+is refused. The index shows up to ten recent changes from the last 256 KiB of the audit file only on this computer; refusals are excluded. The audit file is created
+with mode 0600 in a home created with mode 0700. A one-time-token confirmation for irreversible
+actions comes with the first such action.
+
 Running MCP servers keep their backend enum until their host restarts them;
 the handler still refuses a disabled backend.
 

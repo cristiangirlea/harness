@@ -38,6 +38,7 @@
 <p class="notice warn">Viewing needs no login: while hrn watch --lan runs, anyone on each of these networks can read your runs. Nothing here can start, stop or merge anything; acting on hrn will need hrn watch's key.</p>
 </section>
 {{else if .Local}}<p class="muted small">Only this computer can open this page. Run <code>hrn watch --lan</code> to open it from a phone on the same network.</p>{{end}}
+{{if .ShowChanges}}<section class="card"><h2>Recent changes</h2><ul>{{range .Changes}}<li>{{.Time}} | {{.Client}} | {{.Action}} | {{.Target}} | {{.Old}} to {{.New}} | {{.Result}}{{with .Reason}}: {{.}}{{end}}</li>{{else}}<li>No recent changes.</li>{{end}}</ul></section>{{end}}
 {{template "backends" .Backends}}
 {{template "game" .Game}}
 <div id="live" data-stream="/stream/index" data-replace>{{template "lists" .Lists}}</div>

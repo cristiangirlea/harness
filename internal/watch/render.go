@@ -327,12 +327,14 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 
 type indexPage struct {
 	page
-	GC       string
-	Backends backendCard
-	Game     *gameCard
-	Lists    lists
-	Local    bool        // seen from this computer, not a phone on the network
-	Phone    []phoneLink // where a phone opens it, with hrn watch --lan
+	GC          string
+	ShowChanges bool
+	Changes     []actionRow
+	Backends    backendCard
+	Game        *gameCard
+	Lists       lists
+	Local       bool        // seen from this computer, not a phone on the network
+	Phone       []phoneLink // where a phone opens it, with hrn watch --lan
 }
 
 type phoneLink struct {
