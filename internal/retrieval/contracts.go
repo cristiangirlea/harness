@@ -65,7 +65,7 @@ type Admission struct {
 	FailedAttemptTokensBaseline  float64   `json:"failed_attempt_tokens_baseline"`
 	FailedAttemptTokensCandidate float64   `json:"failed_attempt_tokens_candidate"`
 	SourceRuns                   []string  `json:"source_runs"`
-	CreatedAt                    time.Time `json:"created_at,omitempty"`
+	CreatedAt                    time.Time `json:"created_at,omitzero"`
 }
 
 type Search struct {

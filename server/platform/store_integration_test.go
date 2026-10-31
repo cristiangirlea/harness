@@ -162,7 +162,7 @@ func TestRepositoryMigrationLeavesVersionFourDatabaseUnchanged(t *testing.T) {
 		return versions
 	}
 	before := readVersions()
-	if len(before) != 3 || before[0].version != 1 || before[1].version != 2 || before[2].version != 4 {
+	if len(before) != 4 || before[0].version != 1 || before[1].version != 2 || before[2].version != 3 || before[3].version != 4 {
 		t.Fatalf("unexpected starting schema versions: %+v", before)
 	}
 	for i := 0; i < 2; i++ {
