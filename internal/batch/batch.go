@@ -2633,6 +2633,10 @@ type MergeResult struct {
 // Merge merges passing tasks in spec order, restoring the tree on failure.
 // It returns completed results with the error.
 func Merge(ctx context.Context, res Result, only []string, squash bool) ([]MergeResult, error) {
+	return merge(ctx, res, only, squash, "")
+}
+
+func merge(ctx context.Context, res Result, only []string, squash bool, message string) ([]MergeResult, error) {
 	if res.Dir == "" {
 		return nil, fmt.Errorf("batch %s has no repository recorded", res.ID)
 	}
@@ -2664,7 +2668,7 @@ func Merge(ctx context.Context, res Result, only []string, squash bool) ([]Merge
 			out = append(out, mr)
 			continue
 		}
-		commit, conflicted, err := mergeBranch(ctx, res.Dir, tr, squash)
+		commit, conflicted, err := mergeBranch(ctx, res.Dir, tr, squash, message)
 		switch {
 		case errors.Is(err, errNothingStaged):
 			mr.Skipped = "already merged"
@@ -2712,10 +2716,12 @@ func mergeTasks(res Result, only []string) ([]TaskResult, error) {
 var errNothingStaged = errors.New("nothing to commit")
 
 // Hook, identity and cancellation failures are not conflicts.
-func mergeBranch(ctx context.Context, root string, tr TaskResult, squash bool) (commit string, conflicted bool, err error) {
+func mergeBranch(ctx context.Context, root string, tr TaskResult, squash bool, message string) (commit string, conflicted bool, err error) {
 	args := []string{"merge", "--no-ff", "--no-edit", tr.Branch}
 	if squash {
 		args = []string{"merge", "--squash", tr.Branch}
+	} else if message != "" {
+		args = []string{"merge", "--no-ff", "-m", message, tr.Branch}
 	}
 	g, err := newRepoGit(ctx, root)
 	if err != nil {
@@ -2902,7 +2908,7 @@ func MergeAt(ctx context.Context, res Result, task, commit string) ([]MergeResul
 			copyRes.Tasks[i].Branch = head
 		}
 	}
-	out, err := Merge(ctx, copyRes, []string{task}, false)
+	out, err := merge(ctx, copyRes, []string{task}, false, "Merge branch '"+tr.Branch+"'")
 	for i := range out {
 		out[i].Branch = tr.Branch
 	}

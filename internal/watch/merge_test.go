@@ -92,7 +92,7 @@ func TestMergeRefusals(t *testing.T) {
 				return backendRequest(h, "POST", p, "127.0.0.1:1", "localhost", "key", "", body)
 			}
 			var token string
-			if scenario != "without ask" && scenario != "failed" && scenario != "forwarded" && scenario != "lan" {
+			if scenario != "without ask" && scenario != "forwarded" && scenario != "lan" {
 				w := post(path, "")
 				var v struct{ Token string }
 				if json.Unmarshal(w.Body.Bytes(), &v) != nil || v.Token == "" {
@@ -118,8 +118,6 @@ func TestMergeRefusals(t *testing.T) {
 			body, _ := json.Marshal(map[string]string{"token": token})
 			var w *httptest.ResponseRecorder
 			switch scenario {
-			case "failed":
-				w = post(path, "")
 			case "forwarded":
 				r := httptest.NewRequest("POST", "http://localhost"+path, nil)
 				r.RemoteAddr = "127.0.0.1:1"
@@ -144,8 +142,11 @@ func TestMergeRefusals(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if !strings.Contains(string(audit), "refused") && scenario != "moved" && scenario != "target changed" {
+			if !strings.Contains(string(audit), "refused") && scenario != "moved" && scenario != "target changed" && scenario != "failed" {
 				t.Fatalf("no refusal: %s", audit)
+			}
+			if scenario == "failed" && !strings.Contains(string(audit), "task is no longer eligible") {
+				t.Fatalf("missing failed outcome: %s", audit)
 			}
 			if token != "" && strings.Contains(string(audit), token) {
 				t.Fatal("token in audit")
@@ -182,7 +183,7 @@ func TestMergeExpiredAndBusy(t *testing.T) {
 		t.Fatal("expired token accepted")
 	}
 	body = ask()
-	s.mergeBusy = map[string]bool{res.ID: true}
+	s.mergeBusy = map[string]bool{filepath.Clean(res.Dir): true}
 	if w := call(s.confirmMerge, "one", body); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "busy") {
 		t.Fatalf("busy: %d %s", w.Code, w.Body)
 	}
@@ -218,12 +219,20 @@ func TestConcurrentConfirmationsAndForeignClient(t *testing.T) {
 		b, _ := json.Marshal(map[string]string{"token": v.Token})
 		return string(b)
 	}
-	first, second := ask(), ask()
+	first := ask()
+	secondRes := res
+	secondRes.ID = "20261010-120001-abcdef"
+	saveBatch(t, secondRes)
+	res = secondRes
+	second := ask()
+	res.ID = "20261010-120000-abcdef"
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() { w := httptest.NewRecorder(); s.confirmMerge(w, request(first)); done <- w }()
 	<-entered
 	w := httptest.NewRecorder()
+	res.ID = secondRes.ID
 	s.confirmMerge(w, request(second))
+	res.ID = "20261010-120000-abcdef"
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "busy") {
 		t.Errorf("second: %d %s", w.Code, w.Body)
 	}
@@ -231,17 +240,20 @@ func TestConcurrentConfirmationsAndForeignClient(t *testing.T) {
 	if w = <-done; w.Code != 200 {
 		t.Fatalf("first: %d %s", w.Code, w.Body)
 	}
+	s.mergeRun = nil
 	third := ask()
 	s.opt.Public = &PublicAccess{}
 	foreign := &accessWriter{ResponseWriter: httptest.NewRecorder(), email: "other@example.com"}
-	s.confirmMerge(foreign, request(third))
+	foreignRequest := request(third)
+	foreignRequest = foreignRequest.WithContext(context.WithValue(foreignRequest.Context(), accessContextKey{}, foreign))
+	s.confirmMerge(foreign, foreignRequest)
 	if foreign.ResponseWriter.(*httptest.ResponseRecorder).Code < 400 {
 		t.Fatal("foreign client accepted")
 	}
 	s.opt.Public = nil
 	w = httptest.NewRecorder()
 	s.confirmMerge(w, request(third))
-	if w.Code < 400 {
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "invalid confirmation") {
 		t.Fatal("foreign attempt did not consume token")
 	}
 }
@@ -290,5 +302,70 @@ func TestMergePageAndAccessLog(t *testing.T) {
 		if strings.Contains(string(data), v.Token) {
 			t.Fatalf("token in %s", name)
 		}
+	}
+}
+
+func TestMergeRouteGuards(t *testing.T) {
+	h, res, _ := mergeFixture(t)
+	path := "/batch/" + res.ID + "/merge/one"
+	for _, suffix := range []string{"", "/confirm"} {
+		for _, headers := range []map[string]string{{}, {"X-Hrn-Watch-Key": "key", "Origin": "http://evil.example"}, {"X-Hrn-Watch-Key": "key", "Sec-Fetch-Site": "cross-site"}} {
+			r := httptest.NewRequest("POST", "http://localhost"+path+suffix, strings.NewReader(`{}`))
+			r.RemoteAddr = "127.0.0.1:1"
+			for k, v := range headers {
+				r.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("%s %v: %d %s", suffix, headers, w.Code, w.Body)
+			}
+		}
+	}
+}
+
+func TestPublicMergeOwnerOnly(t *testing.T) {
+	f := newAccessFixture(t)
+	_, res, _ := mergeFixture(t)
+	t.Setenv("HRN_OWNER", "local:me")
+	data, _ := json.Marshal([]map[string]string{{"viewer": "email:reader@example.com", "project": res.Dir}})
+	if err := os.WriteFile(filepath.Join(os.Getenv("HRN_HOME"), "grants.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.opt.OwnerEmails = []string{"owner@example.com"}
+	f.opt.Key = "key"
+	h := New(context.Background(), f.opt)
+	path := "/batch/" + res.ID
+	reader := f.tokenFor("reader@example.com")
+	owner := f.tokenFor("owner@example.com")
+	page := f.request(h, path, "harness.example.com", "", reader)
+	if page.Code != 200 || strings.Contains(page.Body.String(), "Merge one") {
+		t.Fatalf("reader page: %d %s", page.Code, page.Body)
+	}
+	post := func(token, suffix, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "https://harness.example.com"+path+"/merge/one"+suffix, strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:1234"
+		r.Header.Set("Cf-Connecting-Ip", "198.51.100.8")
+		r.Header.Set("Cf-Access-Jwt-Assertion", token)
+		r.Header.Set("X-Hrn-Watch-Key", "key")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := post(reader, "", ""); w.Code != 403 {
+		t.Fatalf("reader ask: %d %s", w.Code, w.Body)
+	}
+	w := post(owner, "", "")
+	var grant struct{ Token string }
+	json.Unmarshal(w.Body.Bytes(), &grant)
+	if w.Code != 200 || grant.Token == "" {
+		t.Fatalf("owner ask: %d %s", w.Code, w.Body)
+	}
+	body, _ := json.Marshal(map[string]string{"token": grant.Token})
+	if w = post(reader, "/confirm", string(body)); w.Code != 403 {
+		t.Fatalf("reader confirm: %d %s", w.Code, w.Body)
+	}
+	if w = post(owner, "/confirm", string(body)); w.Code != 200 {
+		t.Fatalf("owner confirm: %d %s", w.Code, w.Body)
 	}
 }

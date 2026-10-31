@@ -619,6 +619,8 @@ type accessContextKey struct{}
 
 func (s *server) who(r *http.Request) owner.Viewer {
 	v := s.identity(r)
+	// Owner action rights do not grant access to other owners' records.
+	v.Admin = false
 	if s.opt.Public != nil {
 		v.Grants = s.grants
 		if aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter); aw != nil {
@@ -637,18 +639,18 @@ func (s *server) who(r *http.Request) owner.Viewer {
 
 func (s *server) identity(r *http.Request) owner.Viewer {
 	if s.opt.Public == nil || s.fromThisComputer(r) {
-		return owner.LocalViewer()
+		return owner.Viewer{ID: owner.Local(), Admin: true}
 	}
 	aw, _ := r.Context().Value(accessContextKey{}).(*accessWriter)
 	if aw == nil || aw.email == "" {
 		return owner.Viewer{}
 	}
 	if len(s.opt.OwnerEmails) == 0 {
-		return owner.LocalViewer()
+		return owner.Viewer{ID: owner.Local(), Admin: true}
 	}
 	for _, email := range s.opt.OwnerEmails {
 		if strings.EqualFold(strings.TrimSpace(email), aw.email) {
-			return owner.LocalViewer()
+			return owner.Viewer{ID: owner.Local(), Admin: true}
 		}
 	}
 	return owner.Viewer{ID: owner.Email(aw.email)}
@@ -728,7 +730,7 @@ func (s *server) batch(w http.ResponseWriter, r *http.Request) {
 	vw := s.viewerOf(r)
 	p := batchPageOf(vw.batch(s.cleanBatch(res)), vw)
 	p.Home = s.homeFor(r)
-	if s.mayChangeBackends(w, r) {
+	if s.mayChangeBackends(w, r) && s.identity(r).Admin {
 		p.MergeKey = s.opt.Key
 		for _, task := range res.Tasks {
 			if task.Status == batch.StatusPass && task.Commit != "" && task.Branch != "" {

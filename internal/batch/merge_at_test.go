@@ -20,6 +20,9 @@ func TestMergeAtUsesConfirmedHead(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].Commit == "" {
 		t.Fatalf("merge: %+v %v", got, err)
 	}
+	if msg := git(t, dir, "log", "-1", "--format=%s"); msg != "Merge branch '"+tr.Branch+"'" {
+		t.Fatalf("merge message: %s", msg)
+	}
 	if git(t, dir, "rev-parse", "HEAD^2") != head {
 		t.Fatal("merged wrong head")
 	}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ func (s *server) mergeRefuse(w http.ResponseWriter, r *http.Request, client, rea
 func (s *server) askMerge(w http.ResponseWriter, r *http.Request) {
 	client := s.actionClient(w, r)
 	refuse := func(reason string, status int) { s.mergeRefuse(w, r, client, reason, status) }
-	if !s.mayChangeBackends(w, r) {
+	if !s.mayChangeBackends(w, r) || !s.identity(r).Admin {
 		refuse("local requests only", http.StatusForbidden)
 		return
 	}
@@ -82,7 +83,7 @@ func (s *server) askMerge(w http.ResponseWriter, r *http.Request) {
 	g.row = actionRow{Time: time.Now().UTC().Format(time.RFC3339Nano), ID: hex.EncodeToString(idBytes[:]), Client: client, Action: "merge", Target: id + "/" + task, Old: map[string]string{"branch": tr.Branch, "head": head, "target": target}, Result: "intent"}
 	s.mergeMu.Lock()
 	defer s.mergeMu.Unlock()
-	if s.mergeBusy[id] {
+	if s.mergeBusy[filepath.Clean(res.Dir)] {
 		refuse("batch is busy", http.StatusConflict)
 		return
 	}
@@ -112,7 +113,7 @@ func (s *server) mergeNow() time.Time {
 func (s *server) confirmMerge(w http.ResponseWriter, r *http.Request) {
 	client := s.actionClient(w, r)
 	refuse := func(reason string, status int) { s.mergeRefuse(w, r, client, reason, status) }
-	if !s.mayChangeBackends(w, r) {
+	if !s.mayChangeBackends(w, r) || !s.identity(r).Admin {
 		refuse("local requests only", http.StatusForbidden)
 		return
 	}
@@ -151,7 +152,14 @@ func (s *server) confirmMerge(w http.ResponseWriter, r *http.Request) {
 		refuse("invalid or expired confirmation", http.StatusForbidden)
 		return
 	}
-	if s.mergeBusy[g.batchID] {
+	res, err := batch.LoadResultFor(s.who(r), g.batchID)
+	if err != nil {
+		s.mergeMu.Unlock()
+		refuse("batch not found", http.StatusNotFound)
+		return
+	}
+	repo := filepath.Clean(res.Dir)
+	if s.mergeBusy[repo] {
 		s.mergeMu.Unlock()
 		refuse("batch is busy", http.StatusConflict)
 		return
@@ -159,10 +167,9 @@ func (s *server) confirmMerge(w http.ResponseWriter, r *http.Request) {
 	if s.mergeBusy == nil {
 		s.mergeBusy = make(map[string]bool)
 	}
-	s.mergeBusy[g.batchID] = true
+	s.mergeBusy[repo] = true
 	s.mergeMu.Unlock()
-	defer func() { s.mergeMu.Lock(); delete(s.mergeBusy, g.batchID); s.mergeMu.Unlock() }()
-	res, err := batch.LoadResultFor(s.who(r), g.batchID)
+	defer func() { s.mergeMu.Lock(); delete(s.mergeBusy, repo); s.mergeMu.Unlock() }()
 	if err == nil {
 		var tr batch.TaskResult
 		tr, err = res.Find(g.task)
