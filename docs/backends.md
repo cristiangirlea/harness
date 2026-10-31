@@ -361,8 +361,14 @@ context sizes and sizes at or below the threshold produce no warning.
 
 A codex run continued on codex uses a fresh hand-over by default. Pass `--resume` (or explicit `fresh: false` over MCP or exec) to pick up the saved session. Claude and agy keep their existing defaults.
 
-Fresh hand-over refuses a chain with recorded retrieval metadata because its pin cannot yet
-be revalidated at this boundary. This also applies to the codex fresh default.
+A fresh hand-over inherits the latest retrieval pin's mode, tenant, project, model,
+revision and version when retrieval options are omitted. The retrieval server checks
+that exact version when the run starts; a disabled or missing version fails retrieval.
+A caller-supplied retrieval revision must match the pin. To use the active version,
+pass `--retrieval-refresh` (MCP or exec `retrieval_refresh: true`): it keeps the scope,
+uses the caller's revision if supplied or the pinned revision otherwise, and records
+the refresh. Refresh requires a fresh continuation and an existing pin. The retrieval
+revision is the caller's retrieval scope, not the workspace's Git HEAD.
 
 `--fresh` with `--continue` (MCP `fresh: true` beside `continue_run_id`, `hrn exec`'s
 `fresh` in `start`) starts a new session instead: nothing any run saved is picked up,
@@ -438,13 +444,11 @@ api history that ended on a tool call the model never got an answer for, which t
 refuses to resume from. Batch attempts save their conversations too, so a failed attempt
 can be picked up by hand.
 
-A retrieval pin stays with the backend that recorded it. Continuing a chain whose
-latest pin (`--retrieval`) was recorded on another backend refuses an opt-in on the new
-one before anything runs, since that would resolve a new knowledge version: the message
-names the pinned run and version. Continue on the pin's backend to keep it, or start a
-fresh run to retrieve again. With retrieval off (`--retrieval off` or not set, and
-always over `hrn exec`, which takes no retrieval option) the follow-up on another backend
-gets the transcript hand-over as usual. The MCP `run` tool follows the same rule.
+A retrieval pin stays with the backend that recorded it. A continuation on another
+backend is refused when retrieval is omitted or enabled. Pass `--retrieval off` (MCP
+`retrieval: "off"`) explicitly to hand the transcript over without retrieval. Exec
+does not accept retrieval options, so it cannot switch backends while a pin exists.
+A refresh does not override this refusal.
 
 Thinking blocks belong to the model that produced them. Continuing an api conversation
 on a different model is allowed and warned about: the API serves it without the earlier

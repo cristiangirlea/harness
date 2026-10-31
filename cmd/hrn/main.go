@@ -141,6 +141,7 @@ Run flags:
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --fresh          with --continue: start a new session, handed the earlier run over from its record
                        (task, outcome, changed files, gate results) instead of resuming or forking its session
+      --retrieval-refresh  with --continue: refresh a moved retrieval pin on a fresh hand-over
       --resume         with --continue: resume or fork the saved session rather than the codex fresh default
       --purpose CATEGORY
                        review | debug | implement | refactor | test | research | plan | ops
@@ -272,6 +273,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	fs.BoolVar(&thinking, "thinking", false, "")
 	continueID := fs.String("continue", "", "")
 	fresh := fs.Bool("fresh", false, "")
+	retrievalRefresh := fs.Bool("retrieval-refresh", false, "")
 	resume := fs.Bool("resume", false, "")
 	declared := fs.String("purpose", "", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -295,6 +297,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("run: --fresh needs --continue: it starts a new session handed an earlier run over")
 	}
 
+	if *retrievalRefresh && *continueID == "" {
+		return 2, errors.New("run: --retrieval-refresh needs --continue")
+	}
 	if *resume && *continueID == "" {
 		return 2, errors.New("run: --resume needs --continue")
 	}
@@ -313,7 +318,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 
 	var plan followup.Plan
 	if *continueID != "" {
-		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
+		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, RetrievalRevision: opts.RetrievalRevision, RetrievalTenant: opts.RetrievalTenant, RetrievalProject: opts.RetrievalProject, RetrievalVersion: opts.RetrievalVersion, RetrievalRefresh: *retrievalRefresh, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}
@@ -326,6 +331,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 		defer plan.Release()
 		backend, dir, opts.Model = plan.Backend, plan.Dir, plan.Model
+		plan.ApplyRetrieval(&opts)
 		// The inherited backend is refused here, before a prompt is read from stdin.
 		if err := preference.Check(backend); err != nil {
 			return 2, fmt.Errorf("run: %w", err)
@@ -412,6 +418,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 
+	routeNote = plan.RetrievalNote(routeNote)
 	rec, err := runlog.CreateRouted(backend, task, *continueID, plan.Route(), routedBy, routeNote)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
@@ -756,6 +763,9 @@ func showHeader(r *renderer, rec runlog.Record) {
 	head = printable(head)
 	r.Line(r.c(bold, printable(tools.OneLine(mask.Text(rec.Task.Prompt), 200))))
 	r.Line(head)
+	if rec.RouteNote != "" {
+		r.Line(printable(mask.Text(rec.RouteNote)))
+	}
 	if rec.RecordError != "" {
 		r.Line("run record incomplete: " + printable(strings.Join(strings.Fields(rec.RecordError), " ")))
 	}

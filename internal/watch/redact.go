@@ -33,6 +33,7 @@ func (s *server) cleanEvent(e agent.Event) agent.Event {
 
 func (s *server) cleanRecord(rec runlog.Record) runlog.Record {
 	rec.Task.Prompt = s.clean(rec.Task.Prompt)
+	rec.RouteNote = s.clean(rec.RouteNote)
 	rec.Result.Final = s.clean(rec.Result.Final)
 	rec.Result.Error = s.clean(rec.Result.Error)
 	return rec

@@ -95,6 +95,9 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if t.Fresh != nil && *t.Fresh && t.ContinueRunID == "" {
 		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
 	}
+	if t.RetrievalRefresh && t.ContinueRunID == "" {
+		return w.reject(req.AttemptID, "bad_request", "retrieval_refresh needs continue_run_id")
+	}
 	preferences, err := agent.BackendPreferences(runlog.Home())
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", "cannot load worker backend preferences")
@@ -176,12 +179,13 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	}
 	var plan followup.Plan
 	if t.ContinueRunID != "" {
-		plan, err = followup.Make(followup.Request{RunID: t.ContinueRunID, Backend: t.Backend, Dir: task.Dir, Model: t.Model, Fresh: t.Fresh != nil && *t.Fresh, Resume: t.Fresh != nil && !*t.Fresh})
+		plan, err = followup.Make(followup.Request{Exec: true, RunID: t.ContinueRunID, Backend: t.Backend, Dir: task.Dir, Model: t.Model, RetrievalRefresh: t.RetrievalRefresh, Fresh: t.Fresh != nil && *t.Fresh, Resume: t.Fresh != nil && !*t.Fresh})
 		if err != nil {
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
 		defer plan.Release()
 		task.Dir, task.Model = plan.Dir, plan.Model
+		plan.ApplyRetrieval(&task.Options)
 		if task.Model != "" && !agent.ValidModel(task.Model) {
 			return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("model %q from run %s is not a model id", task.Model, t.ContinueRunID))
 		}
@@ -189,6 +193,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if _, err := b.Detect(); err != nil {
 		return w.reject(req.AttemptID, "unavailable", err.Error())
 	}
+	routeNote = plan.RetrievalNote(routeNote)
 	rec, err := create(t.Backend, task, t.ContinueRunID, plan.Route(), routed, routeNote)
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", err.Error())
@@ -314,18 +319,19 @@ type startRequest struct {
 }
 
 type taskRequest struct {
-	Prompt        string         `json:"prompt"`
-	Dir           string         `json:"dir"`
-	Backend       string         `json:"backend"`
-	Mode          agent.Mode     `json:"mode"`
-	Model         string         `json:"model"`
-	Effort        string         `json:"effort"`
-	Timeout       agent.Duration `json:"timeout"`
-	MaxTurns      int            `json:"max_turns"`
-	MCP           []string       `json:"mcp"`
-	ContinueRunID string         `json:"continue_run_id"`
-	Purpose       string         `json:"purpose"`
-	Fresh         *bool          `json:"fresh,omitempty"`
+	Prompt           string         `json:"prompt"`
+	Dir              string         `json:"dir"`
+	Backend          string         `json:"backend"`
+	Mode             agent.Mode     `json:"mode"`
+	Model            string         `json:"model"`
+	Effort           string         `json:"effort"`
+	Timeout          agent.Duration `json:"timeout"`
+	MaxTurns         int            `json:"max_turns"`
+	MCP              []string       `json:"mcp"`
+	ContinueRunID    string         `json:"continue_run_id"`
+	Purpose          string         `json:"purpose"`
+	Fresh            *bool          `json:"fresh,omitempty"`
+	RetrievalRefresh bool           `json:"retrieval_refresh,omitempty"`
 }
 
 type cancelRequest struct {
@@ -376,7 +382,7 @@ func checkTaskKeys(data json.RawMessage) error {
 	if len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil
 	}
-	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh")
+	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh", "retrieval_refresh")
 	return err
 }
 

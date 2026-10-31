@@ -126,3 +126,11 @@ func TestShowHeaderDisplaysContinuationRoute(t *testing.T) {
 		t.Fatalf("missing route: %s", b.String())
 	}
 }
+
+func TestShowHeaderDisplaysRouteNote(t *testing.T) {
+	var b strings.Builder
+	showHeader(&renderer{out: &b}, runlog.Record{ContinueRoute: "fresh_handover", RouteNote: "retrieval carried: pin v1"})
+	if !strings.Contains(b.String(), "fresh_handover\nretrieval carried: pin v1") {
+		t.Fatalf("missing note beneath route: %q", b.String())
+	}
+}

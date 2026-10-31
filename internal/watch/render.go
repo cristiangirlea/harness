@@ -314,6 +314,9 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 	if rec.ContinueRoute != "" {
 		p.Facts = append(p.Facts, fact{Label: "Continuation", Value: rec.ContinueRoute})
 	}
+	if rec.RouteNote != "" {
+		p.Facts = append(p.Facts, fact{Label: "Route note", Value: rec.RouteNote})
+	}
 	if rec.Done {
 		r := resultOf(rec.Result)
 		p.Result = &r

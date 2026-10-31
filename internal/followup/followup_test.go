@@ -827,7 +827,7 @@ func TestAPinWithoutAKnowledgeVersionIsNamedPlainlyInTheRefusal(t *testing.T) {
 func TestRetrievalOffOnAnotherBackendStillHandsThePinnedRunOver(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	id := pinnedAPIRun(t, workspace(t))
-	for _, mode := range []string{"", "off"} {
+	for _, mode := range []string{"off"} {
 		p, err := Make(Request{RunID: id, Backend: "codex", Retrieval: mode})
 		if err != nil || len(p.Handoff) != 1 {
 			t.Fatalf("retrieval %q: %+v %v", mode, p, err)
@@ -1356,14 +1356,52 @@ func TestRouteDistinguishesContinuationAndTranscriptTransfer(t *testing.T) {
 	}
 }
 
-func TestFreshHandoverRefusesToDiscardAnExistingRetrievalPin(t *testing.T) {
+func TestFreshHandoverCarriesRetrievalPin(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)
-	id := finished(t, "", agent.Task{Dir: dir}, agent.Result{Backend: "claude", Retrieval: &retrieval.Record{Packet: &retrieval.Packet{VersionID: "v1"}}})
-	for _, backend := range []string{"claude", "codex"} {
-		_, err := Make(Request{RunID: id, Backend: backend, Fresh: true})
-		if err == nil || !strings.Contains(err.Error(), "retrieval pin") {
-			t.Errorf("backend %s: %v", backend, err)
+	for _, args := range [][]string{{"init"}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "--allow-empty", "-m", "first"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
 		}
+	}
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := strings.TrimSpace(string(out))
+	id := finished(t, "", agent.Task{Dir: dir}, agent.Result{Backend: "codex", Retrieval: &retrieval.Record{Mode: "required", Scope: retrieval.Scope{Backend: "codex", Revision: revision}, Packet: &retrieval.Packet{VersionID: "v1"}}})
+	id = finished(t, id, agent.Task{Dir: dir}, agent.Result{Backend: "codex", Retrieval: &retrieval.Record{Mode: "required", Scope: retrieval.Scope{Backend: "codex", Revision: revision}, Packet: &retrieval.Packet{VersionID: "v2"}}})
+	id = finished(t, id, agent.Task{Dir: dir}, agent.Result{Backend: "codex"})
+	p, err := Make(Request{RunID: id, Retrieval: "required"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Fresh || p.RetrievalVersion != "v2" {
+		t.Fatalf("plan = %+v, want fresh hand-over pinned to v2", p)
+	}
+	task := agent.Task{Options: agent.Options{Retrieval: "required"}}
+	p.Apply(&task, t.TempDir(), func(agent.Event) {})
+	if task.Options.RetrievalVersion != "v2" {
+		t.Fatalf("task retrieval version = %q, want v2", task.Options.RetrievalVersion)
+	}
+	if _, err := Make(Request{RunID: id, Backend: "claude", Fresh: true, Retrieval: "required"}); err == nil {
+		t.Fatal("backend switch should be refused")
+	}
+}
+
+func TestFreshHandoverWithRetrievalOffAllowsAnEarlierPin(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	id := finished(t, "", agent.Task{Dir: dir}, agent.Result{Backend: "codex", Retrieval: &retrieval.Record{Packet: &retrieval.Packet{VersionID: "v1"}}})
+	p, err := Make(Request{RunID: id, Retrieval: "off"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.RetrievalVersion != "" {
+		t.Fatalf("retrieval off carried version %q", p.RetrievalVersion)
 	}
 }

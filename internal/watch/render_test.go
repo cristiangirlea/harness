@@ -123,3 +123,14 @@ func TestRunPageDisplaysContinuationRoute(t *testing.T) {
 	}
 	t.Fatalf("missing route: %+v", p.Facts)
 }
+
+func TestRunPageDisplaysEscapedRouteNote(t *testing.T) {
+	p := runPageOf(runlog.Record{RouteNote: "retrieval refreshed: <script>"}, nil, time.Time{}, viewer{})
+	html, err := render("run", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, "retrieval refreshed: &lt;script&gt;") || strings.Contains(html, "retrieval refreshed: <script>") {
+		t.Fatalf("missing or unescaped note: %s", html)
+	}
+}
