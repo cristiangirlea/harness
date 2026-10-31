@@ -2,9 +2,8 @@
 
 [← README](../../README.md)
 
-Status: proposed, 2026-10-31, for issues #574 (audit packages and boundaries) and #555 (hrn as a
-domain-independent capability kernel). Nothing here is built; each migration step below is its
-own pull request once this record is approved.
+Status: accepted, 2026-10-31, for issues #574 (audit packages and boundaries) and #555 (hrn as a
+domain-independent capability kernel). Each migration step below is its own pull request.
 
 ## Context
 
@@ -140,7 +139,7 @@ kernel field; existing fields stay where they are on disk.
 | coding pack | `batch`, `followup`, `gc`, `report`, `flowview` | the layers above |
 | eval pack | `eval`, `route` | the layers above, coding |
 | game pack | `game` | the layers above, coding, eval (reads records and scores) |
-| surfaces | `cmd/hrn`, `hrnmcp`, `watch`, `execproto`, `update`, `scripts/...` | everything above; only `cmd/hrn` imports another surface |
+| surfaces | `archtest`, `cmd/hrn`, `hrnmcp`, `watch`, `execproto`, `update`, `scripts/...` | everything above; only `cmd/hrn` imports another surface |
 | server module | `server/...` | nothing from the root module |
 
 2. Named denials on top of the layers: `agent` imports no `remote`, `prefs`, `purpose` or
@@ -170,6 +169,8 @@ Baseline at step 1, and the PR that removes each line:
 | `agent → remote` | packet fetch | 5 |
 | `limits → followup` | carry-on planning | 8 |
 | `agent → prefs`, `agent → route/table`, `agent → purpose` | preferences, routing, `ApplyTurnDefault` | 9 |
+| `agent → prefs (test)`, `agent → route/table (test)` | preferences and routing tests | 9 |
+| `eval → game (test)`, `eval → update (test)` | `permissions_test.go` | a test-only fix of its own, any time |
 | `flow → agent`, `quota → agent`, `quota → agent (test)` | `Event`, `EventKind`, `Status`, `Quota` | 11 |
 | `flow → agent (test)` | one `Task`, one `Result` | 14 |
 | `runlog → agent`, `runlog → agent (test)` | `Task`, `Result`, `Setup`, pin check; tests also `Conversation`, `ResolveSetup` | 15 |

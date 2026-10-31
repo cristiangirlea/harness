@@ -124,6 +124,8 @@ or route public contributions to private machines. See `CONTRIBUTING.md` for CI 
 - `scripts/answers.go`: Provide JSON test summaries and bounded TCP probes for Bash entry points.
 - `scripts/answers_test.go`: Check that TCP probes stay within the wait deadline.
 - `scripts/api-check.sh`: Exercise real API runs, continuation and context editing; spends real money. (not verified: spends money)
+- `scripts/archtest-baseline.sh`: Compare the architecture baseline and layer map with a base ref.
+- `scripts/archtest-baseline_test.sh`: Test baseline comparison and layer map reporting in fixture repositories.
 - `scripts/check.sh`: Run the check skill commands in order, stopping on failure.
 - `scripts/comment-check.sh`: Check Go comments against the repository rule and baseline.
 - `scripts/comment-check/main.go`: Check Go comments against the repository rule and baseline.

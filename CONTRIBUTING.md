@@ -91,3 +91,7 @@ in the order it is worth taking:
 `PLAN.md` is the work queue and the decisions log: every increment so far, what was
 deferred and why. It still calls the binary by its old name, `hx`, in entries written
 before the rename.
+
+The architecture test checks all Go imports, including tests and the server module.
+Run `bash scripts/archtest-baseline.sh origin/main` to compare the baseline and
+review layer map changes against the base branch; pass a different base ref when needed.
