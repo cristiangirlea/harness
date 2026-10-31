@@ -1134,6 +1134,47 @@ func TestAFreshHandoverRunsNoFilterTheWorkspaceConfigures(t *testing.T) {
 	}
 }
 
+func TestAFreshHandoverDoesNotRunIndexHook(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := workspace(t)
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git: %v: %s", err, out)
+		}
+	}
+	git("init")
+	file := filepath.Join(dir, "tracked")
+	if err := os.WriteFile(file, []byte("content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "tracked")
+	git("commit", "-m", "base")
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: dir}, agent.Result{Backend: "codex"})
+	p, err := Make(Request{RunID: id, Fresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "hook-ran"))
+	if err := os.WriteFile(filepath.Join(dir, ".git", "hooks", "post-index-change"), []byte("#!/bin/sh\necho ran > '"+marker+"'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(file, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new"), []byte("new"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := p.freshHandoff()
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("hook marker: %v", err)
+	}
+	if !strings.Contains(h, "new") {
+		t.Fatalf("missing changes: %s", h)
+	}
+}
+
 func TestAFreshHandoverFetchesNoMissingObjectsInAPartialClone(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	origin, dir := workspace(t), filepath.Join(workspace(t), "clone")
@@ -1240,5 +1281,62 @@ func TestFreshContinuationNotes(t *testing.T) {
 				t.Errorf("notes = %q, want %q", p.Notes, tc.want)
 			}
 		})
+	}
+}
+
+func TestChangesSkipsUnsupportedGit(t *testing.T) {
+	old := supportsNoLazyFetch
+	supportsNoLazyFetch = func() bool { return false }
+	t.Cleanup(func() { supportsNoLazyFetch = old })
+	got := changes(t.TempDir(), "")
+	if !strings.Contains(got, "no diff") || !strings.Contains(got, "git version") {
+		t.Fatalf("handover: %s", got)
+	}
+}
+
+func TestChangesIgnoresSubmoduleFilters(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	parent := t.TempDir()
+	origin := t.TempDir()
+	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "marker"))
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.test", "-c", "protocol.file.allow=always"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(origin, "init")
+	if err := os.WriteFile(filepath.Join(origin, "file"), []byte("before\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git(origin, "add", ".")
+	git(origin, "commit", "-m", "base")
+	git(parent, "init")
+	git(parent, "submodule", "add", origin, "sub")
+	git(parent, "commit", "-m", "base")
+	head := git(parent, "rev-parse", "HEAD")
+	_ = head
+	sub := filepath.Join(parent, "sub")
+	git(sub, "config", "filter.evil.clean", "echo ran > '"+marker+"'; cat")
+	if err := os.WriteFile(filepath.Join(sub, ".gitattributes"), []byte("file filter=evil\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "file"), []byte("changed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: parent}, agent.Result{Backend: "codex"})
+	plan, err := Make(Request{RunID: id, Fresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := plan.freshHandoff()
+	if strings.Contains(result, "git diff failed") || !strings.Contains(result, "no tracked changes") {
+		t.Fatal(result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("submodule filter marker: %v", err)
 	}
 }
