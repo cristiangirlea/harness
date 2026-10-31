@@ -196,6 +196,23 @@ model. Nothing is sent off the machine apart from the `gh` reads above, with one
 exception: the person may talk an answer over with Ada, which sends the masked material and
 the answer to a plan backend (a CLI backend, never the api backend).
 
+## JSON stats
+
+`hrn bot stats --json` reads existing records without rebuilding the ledger or
+selecting an exercise. It prints one JSON object, versioned by `version`
+(currently `1`). When the game is off the object contains only `version` and
+`enabled: false`. Otherwise it contains `enabled: true`, `level`, total `xp`,
+`week_start` (UTC date), `week` (integer `delivery` and `practice` XP), `streak`,
+`days` (35 booleans, oldest first), and `badges` (names). `exercise` is null when
+there is no existing exercise, or has `kind`, `source`, `answered`, and masked
+`material` until answered. Answers and reveals are never included. `familiarity`
+is null when unavailable, or has `known` and `unseen` arrays of objects with
+`repo`, `area`, and `count`. Empty lists are arrays. Unreadable practice records
+make the affected `streak`, `days`, or `exercise` null and produce warnings on
+stderr. Familiarity skips unreadable practice records, warns on stderr, and may
+be incomplete; it is null only when it cannot be read. The command fails with an
+error on stderr and no JSON output if settings or the ledger cannot be read.
+
 ## Slices
 
 1. The ledger, its rebuild and fold-before-prune, the switch, and `hrn bot stats`.

@@ -27,7 +27,7 @@
 | `hrn show -f <id>` | Follow a run as it happens, until it ends (see [Watching runs live](watch.md#watching-runs-live)). |
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
 | `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). `--owner-email` (repeatable) names the verified emails that see this install's runs and batches; other verified visitors see only records they own. |
-| `hrn bot stats` | Show your level, this week's experience, practice streak and badges (see [Experience](experience.md)). |
+| `hrn bot stats [--json]` | Show your level, this week's experience, practice streak and badges; `--json` prints a read-only, versioned JSON object (see [Experience](experience.md)). |
 | `hrn bot practice [swap\|answer [--file PATH]\|mark got_it\|partly\|missed\|read owner/repo#n]` | Show or swap today's exercise, answer from stdin or a file, mark it, or start a read of an open pull request. |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
