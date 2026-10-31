@@ -86,6 +86,36 @@ func TestRunToolCarriesALimitedRunOn(t *testing.T) {
 	}
 }
 
+func TestRunToolCarryOnTurnCapAndNote(t *testing.T) {
+	for _, from := range []string{"claude", "codex"} {
+		t.Run(from, func(t *testing.T) {
+			s := connect(t, t.TempDir())
+			standIn(t)
+			to, want := "claude", 30
+			if from == "claude" {
+				to, want = "codex", 0
+			}
+			got := -99
+			agent.Register(scripted{from, func(agent.Task) agent.Result {
+				return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
+			}})
+			agent.Register(scripted{to, func(task agent.Task) agent.Result {
+				got = task.MaxTurns
+				return agent.Result{Status: agent.StatusOK, Final: "done"}
+			}})
+			res := s.call(t, "run", fmt.Sprintf(`{"prompt":"work","purpose":"review","backend":%q,"mode":"auto"}`, from))
+			if res.IsError || got != want || !strings.Contains(res.Text(), agent.TurnDefaultInfo) {
+				t.Fatalf("result=%s cap=%d want=%d", res.Text(), got, want)
+			}
+			id, _ := res.StructuredContent.(map[string]any)["run_id"].(string)
+			rec, err := runlog.Load(id)
+			if err != nil || rec.Backend != to || rec.Task.MaxTurns != want {
+				t.Fatalf("record=%+v err=%v", rec, err)
+			}
+		})
+	}
+}
+
 func TestRunToolStartsOnTheOtherBackendWhileALimitIsRemembered(t *testing.T) {
 	s := connect(t, t.TempDir())
 	standIn(t)

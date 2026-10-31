@@ -399,6 +399,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		*declared = purpose.Inherited(plan.Prev.Task.Purpose, plan.Prev.Task.Prompt)
 	}
 	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts}
+	turnDefault := task.ApplyTurnDefault(backend)
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
 	}
@@ -450,6 +451,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if routed != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
 	}
+	if turnDefault {
+		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+	}
 	if warning := plan.ContextWarning(); jsonOut && warning != "" {
 		fmt.Fprintln(os.Stderr, warning)
 	}
@@ -482,6 +486,13 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		fmt.Fprintln(os.Stderr, "hrn:", why)
 	case next != nil:
 		defer next.Plan.Release()
+		if turnDefault {
+			next.Task.MaxTurns = 0
+		}
+		if next.Task.Purpose == "" {
+			next.Task.Purpose = purpose.Inherited(task.Purpose, prompt)
+		}
+		nextDefault := next.Task.ApplyTurnDefault(next.To)
 		nb, err := agent.Get(next.To)
 		if err != nil {
 			return 1, err
@@ -493,6 +504,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		next.Task.RunDir = nrec.Dir()
 		rec = nrec // the renderer and the encoder write to the new record now
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Why})
+		if nextDefault {
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+		}
 		next.Plan.Apply(&next.Task, nrec.Dir(), emit)
 		res = agent.Run(ctx, nb, next.Task, emit)
 		if err := nrec.Close(res); err != nil {

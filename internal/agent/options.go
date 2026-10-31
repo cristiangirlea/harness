@@ -158,6 +158,23 @@ func ContinuationNote(continues, switched string) string {
 // IsLean reports whether lean is on: unset or true.
 func (o Options) IsLean() bool { return o.Lean == nil || *o.Lean }
 
+// ApplyTurnDefault sets the Claude review and test limit when no limit was supplied.
+func (t *Task) ApplyTurnDefault(backend string) bool {
+	prompt := t.Prompt
+	if t.OriginalPrompt != "" {
+		prompt = t.OriginalPrompt
+	}
+	category := purpose.Resolve(t.Purpose, prompt).Category
+	if backend != "claude" || t.MaxTurns != 0 || (category != "review" && category != "test") {
+		return false
+	}
+	t.MaxTurns = 30
+	return true
+}
+
+// TurnDefaultInfo explains the default applied to a run.
+const TurnDefaultInfo = "claude review and test runs default to 30 max turns"
+
 // Bool returns a pointer to v, for an option that is set or left unset.
 func Bool(v bool) *bool { return &v }
 

@@ -86,6 +86,32 @@ func TestALimitedAttemptIsCarriedOnInTheSameWorktree(t *testing.T) {
 	}
 }
 
+func TestAttemptTurnDefaultRecordedAndAnnounced(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	got := -1
+	agent.Register(stub{"claude", func(_ context.Context, task agent.Task) agent.Result {
+		got = task.MaxTurns
+		return agent.Result{Backend: "claude", Status: agent.StatusOK}
+	}})
+	res, events := run(t, Spec{Dir: dir, Backend: "claude", Tasks: []Task{{Prompt: "work", Purpose: "review"}}})
+	rec := firstRun(t, res.Tasks[0])
+	if got != 30 || rec.Task.MaxTurns != 30 || !strings.Contains(eventTexts(events, "info"), agent.TurnDefaultInfo) {
+		t.Fatalf("backend=%d record=%d events=%v", got, rec.Task.MaxTurns, events)
+	}
+	logged, err := runlog.Events(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range logged {
+		found = found || e.Kind == agent.EventInfo && e.Text == agent.TurnDefaultInfo
+	}
+	if !found {
+		t.Fatal("default event not recorded")
+	}
+}
+
 func TestALeanClaudeAttemptCarriesOnToCodexWithoutLean(t *testing.T) {
 	dir := initRepo(t)
 	standIn(t)

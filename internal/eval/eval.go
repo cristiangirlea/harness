@@ -166,6 +166,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	}
 
 	bs := spec.Spec
+	bs.NoTurnDefault = true
 	// Each variant must control shaping, including false.
 	bs.ShapeTools = false
 	if bs.Worktrees == "" {

@@ -102,6 +102,36 @@ func TestExpandShapeToolsVariants(t *testing.T) {
 	}
 }
 
+func TestEvalReviewClaudeHasNoTurnCap(t *testing.T) {
+	dir := initRepo(t)
+	orig, _ := agent.Get("claude")
+	got := make(chan int, 1)
+	agent.Register(turnRecorder{got: got})
+	t.Cleanup(func() { agent.Register(orig) })
+	spec := testSpec(dir)
+	spec.Gate = nil
+	spec.Tasks = []batch.Task{{ID: "review", Prompt: "work", Purpose: "review"}}
+	spec.Matrix = []Variant{{Backend: "claude"}}
+	spec.Repeats = 1
+	_, res, err := Run(context.Background(), spec, nil)
+	if err != nil || len(res.Tasks) != 1 || len(res.Tasks[0].Attempts) != 1 {
+		t.Fatalf("result=%+v err=%v", res, err)
+	}
+	rec, err := runlog.Load(res.Tasks[0].Attempts[0].RunID)
+	if err != nil || rec.Task.MaxTurns != 0 || <-got != 0 {
+		t.Fatalf("record=%+v err=%v", rec, err)
+	}
+}
+
+type turnRecorder struct{ got chan int }
+
+func (turnRecorder) Name() string            { return "claude" }
+func (turnRecorder) Detect() (string, error) { return "stub", nil }
+func (s turnRecorder) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
+	s.got <- task.MaxTurns
+	return agent.Result{Backend: "claude", Status: agent.StatusOK}
+}
+
 // Two stubs: one does the work the gate checks for, the other does nothing.
 type stub struct {
 	name  string

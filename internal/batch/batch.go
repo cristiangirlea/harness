@@ -57,6 +57,8 @@ type Spec struct {
 	Tasks     []Task `json:"tasks"`
 	// Base is the commit tasks branch from instead of HEAD; set by callers, never by a spec file.
 	Base string `json:"-"`
+	// NoTurnDefault keeps eval cells comparable across backends.
+	NoTurnDefault bool `json:"-"`
 }
 
 const (
@@ -944,7 +946,7 @@ func runTask(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, t
 		}
 		plan.number = len(tr.Attempts) + 1
 		plan.reason = attemptReason(append(slices.Clone(tr.Attempts), Attempt{Backend: name, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}), len(tr.Attempts))
-		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, fw, notify, report)
+		out, err := runAttempt(ctx, b, t.ID, at, plan, expect, guard, gates, fw, notify, report, spec.NoTurnDefault)
 		tr.Attempts = append(tr.Attempts, out.att)
 		if out.keepWorktree && slot != nil {
 			kept.add(slot.Lease.Holder)
@@ -1266,7 +1268,7 @@ type attemptOutcome struct {
 }
 
 // runAttempt's returned error aborts the whole task; a failed run or gate is reported in the outcome instead.
-func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt)) (attemptOutcome, error) {
+func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt), noTurnDefault bool) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
 	env, cleanup, err := batchEnv(task.Dir)
@@ -1286,6 +1288,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		task.Model, task.Effort, plan.routedBy = "", "", nil
 	}
 
+	turnDefault := !noTurnDefault && task.ApplyTurnDefault(b.Name())
 	rec, err := runlog.CreateContinuing(b.Name(), task, plan.continues, plan.routedBy)
 	if err != nil {
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
@@ -1295,6 +1298,10 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number,
 		Status: flow.StatusStarted, Name: b.Name(), Reason: plan.reason, Run: att.RunID})
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
+	if turnDefault {
+		rec.Event(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+		notify(Event{Task: id, Kind: "info", Text: agent.TurnDefaultInfo})
+	}
 	report(att)
 	before, beforeErr := gitTips(task.Dir, plan.branch)
 	att.Result = agent.Run(ctx, b, task, func(e agent.Event) {

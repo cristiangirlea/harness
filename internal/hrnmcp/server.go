@@ -238,6 +238,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			task := agent.Task{Prompt: args.Prompt, Purpose: args.Purpose, Dir: dir, Options: args.Options}
+			turnDefault := task.ApplyTurnDefault(args.Backend)
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
@@ -267,6 +268,11 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				}
 			}
 			var notes []string
+			if turnDefault {
+				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+				call.Progress(agent.TurnDefaultInfo)
+				notes = append(notes, agent.TurnDefaultInfo)
+			}
 			if issue != nil {
 				notes = append(notes, issue.Notes...)
 			}
@@ -303,6 +309,13 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				notes = append(notes, why)
 			case next != nil:
 				defer next.Plan.Release()
+				if turnDefault {
+					next.Task.MaxTurns = 0
+				}
+				if next.Task.Purpose == "" {
+					next.Task.Purpose = purpose.Inherited(task.Purpose, args.Prompt)
+				}
+				nextDefault := next.Task.ApplyTurnDefault(next.To)
 				nb, err := agent.Get(next.To)
 				if err != nil {
 					return mcp.CallResult{}, err
@@ -319,6 +332,11 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				rec = nrec // emit writes to the new record now
 				call.Progress(next.Why)
 				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Why})
+				if nextDefault {
+					emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+					call.Progress(agent.TurnDefaultInfo)
+					notes = append(notes, agent.TurnDefaultInfo)
+				}
 				next.Plan.Apply(&next.Task, nrec.Dir(), emit)
 				res = agent.Run(ctx, nb, next.Task, emit)
 				if recordErr != nil {

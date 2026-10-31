@@ -153,8 +153,8 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 			return w.reject(req.AttemptID, "unsupported", "backend cannot honour option "+option)
 		}
 	}
-	if t.Timeout < 0 || t.MaxTurns < 0 {
-		return w.reject(req.AttemptID, "bad_request", "timeout and max_turns must not be negative")
+	if t.Timeout < 0 {
+		return w.reject(req.AttemptID, "bad_request", "timeout must not be negative")
 	}
 	if t.Purpose != "" && !purpose.Valid(t.Purpose) {
 		return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("purpose %q: one of %s", t.Purpose, strings.Join(purpose.Declarable(), ", ")))
@@ -167,6 +167,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
 	task := agent.Task{Prompt: t.Prompt, Purpose: t.Purpose, Dir: ws.Root, AttemptID: req.AttemptID, Options: opts}
+	turnDefault := task.ApplyTurnDefault(t.Backend)
 	// A backend without MCP support must not inherit the default config.
 	if slices.Contains(caps.Options, "mcp") {
 		if task.MCP, err = mcp.ConfigPaths(t.MCP); err != nil {
@@ -242,6 +243,9 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	}
 	result := make(chan agent.Result, 1)
 	go func() {
+		if turnDefault {
+			emit(agent.Event{Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+		}
 		plan.Apply(&task, rec.Dir(), emit)
 		result <- agent.Run(ctx, b, task, emit)
 	}()

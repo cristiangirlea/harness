@@ -87,6 +87,44 @@ func TestRunCarriesALimitedRunOnOnTheOtherBackend(t *testing.T) {
 	}
 }
 
+func TestCarryOnTurnCapFollowsBackend(t *testing.T) {
+	for _, from := range []string{"claude", "codex"} {
+		t.Run(from, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t)
+			to, want := "claude", 30
+			if from == "claude" {
+				to, want = "codex", 0
+			}
+			got := -99
+			agent.Register(scripted{from, func(agent.Task) agent.Result {
+				return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
+			}})
+			agent.Register(scripted{to, func(task agent.Task) agent.Result { got = task.MaxTurns; return agent.Result{Status: agent.StatusOK} }})
+			code, err := cmdRun([]string{"-b", from, "-C", t.TempDir(), "--mode", "auto", "--purpose", "review", "work"})
+			if code != 0 || err != nil || got != want {
+				t.Fatalf("code=%d err=%v cap=%d want=%d", code, err, got, want)
+			}
+			recs, err := runlog.List(5)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, rec := range recs {
+				if rec.Backend == to {
+					found = true
+					if rec.Task.MaxTurns != want {
+						t.Errorf("record cap=%d want=%d", rec.Task.MaxTurns, want)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing carry-on record")
+			}
+		})
+	}
+}
+
 func TestRunStartsOnTheOtherBackendWhileALimitIsRemembered(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	standIn(t)

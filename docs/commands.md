@@ -109,6 +109,10 @@ at most 16 KiB), `--no-skills` (claude: skills off; see
 workspace's origin; leased before the agent starts, so a second run for it exits 2 naming the
 holder) and `--take-over` (take that lease from its holder; see
 [Issue leases](workspaces.md#issue-leases)), and the budgets below.
+For claude runs whose resolved purpose is `review` or `test`, an unset `--max-turns`
+defaults to 30 and is saved in the run record. An explicit positive value overrides it;
+a negative value leaves claude without a turn limit. Zero is treated as unset. The
+api default remains 50 turns.
 `--shape-tools` opts the api backend into summaries of large terminal, log and
 test-runner results from shell and MCP tools, with the full original saved behind
 a handle (see [Run records](run-records.md#run-records)). It is off by default
