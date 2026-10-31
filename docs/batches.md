@@ -170,7 +170,9 @@ gates choose the winner: among passing candidates the fewest total input and
 output tokens wins, with proposal order breaking equal-token ties. The batch
 record keeps each addition, run ID, gate results, token total and winner flag.
 If none passes the task stays failed; losing candidate branches and worktrees
-are removed. Evals refuse `retry_k`.
+are removed. Anything that cannot be removed stays claimed in the record (see
+[run records](run-records.md)), so `hrn batch rm` and `hrn gc` can finish the
+job. Evals refuse `retry_k`.
 
 A failed attempt is retried on each backend named in `retry`, in order. The same name
 may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common case: a
