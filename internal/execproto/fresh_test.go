@@ -35,13 +35,14 @@ func TestFreshStartsANewSessionWithAHandover(t *testing.T) {
 			if err := prev.Close(agent.Result{Backend: backend, Status: agent.StatusOK, Session: "session-01", Final: "Parser done."}); err != nil {
 				t.Fatal(err)
 			}
-			for _, fresh := range []bool{true, false} {
+			for _, choice := range []string{"true", "false", "absent"} {
+				fresh := choice == "true" || (choice == "absent" && backend == "codex")
 				h := openHarness(t, nil)
 				h.next(t, "hello")
 				req := start(rawDir, backend)
 				req["task"].(map[string]any)["continue_run_id"] = prev.ID()
-				if fresh {
-					req["task"].(map[string]any)["fresh"] = true
+				if choice != "absent" {
+					req["task"].(map[string]any)["fresh"] = choice == "true"
 				}
 				h.send(t, req)
 				msg := h.next(t, "accepted")

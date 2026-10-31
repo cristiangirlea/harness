@@ -31,6 +31,8 @@ type Request struct {
 	Retrieval string
 	// Fresh briefs a new session from the record, without resuming or forking.
 	Fresh bool
+	// Resume opts out of the codex fresh default.
+	Resume bool
 }
 
 // Plan is how a follow-up run starts.
@@ -118,7 +120,7 @@ func Make(req Request) (Plan, error) {
 	if missing != "" {
 		p.Notes = append(p.Notes, fmt.Sprintf("run %s continues %s, which is gone, so the chain starts at %[1]s", chain[0].ID, missing))
 	}
-	if req.Fresh {
+	if req.Fresh || (!req.Resume && prev.Backend == "codex" && p.Backend == "codex") {
 		p.Fresh = true
 		if p.Model == "" {
 			p.Model = latestModel(chain, p.Backend)

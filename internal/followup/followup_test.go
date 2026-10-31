@@ -475,8 +475,8 @@ func TestSwitchingBackForksAndCatchesUp(t *testing.T) {
 	if strings.Contains(h, "--- request\n> one") || !strings.Contains(h, "--- request\n> two") {
 		t.Errorf("only the turn claude has not seen belongs in the transcript:\n%s", h)
 	}
-	// Codex, continued in turn, forks its own thread and needs no transcript.
-	if p, err := Make(Request{RunID: second}); err != nil || p.ForkSession != "t2" || len(p.Handoff) != 0 {
+	// An explicit opt-out forks the codex thread and needs no transcript.
+	if p, err := Make(Request{RunID: second, Resume: true}); err != nil || p.ForkSession != "t2" || len(p.Handoff) != 0 {
 		t.Errorf("codex continuing itself: %+v err=%v", p, err)
 	}
 }

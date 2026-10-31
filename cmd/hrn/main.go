@@ -141,6 +141,7 @@ Run flags:
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --fresh          with --continue: start a new session, handed the earlier run over from its record
                        (task, outcome, changed files, gate results) instead of resuming or forking its session
+      --resume         with --continue: resume or fork the saved session rather than the codex fresh default
       --purpose CATEGORY
                        review | debug | implement | refactor | test | research | plan | ops
       --timeout D      stop the run after D (e.g. 20m)
@@ -271,6 +272,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	fs.BoolVar(&thinking, "thinking", false, "")
 	continueID := fs.String("continue", "", "")
 	fresh := fs.Bool("fresh", false, "")
+	resume := fs.Bool("resume", false, "")
 	declared := fs.String("purpose", "", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
@@ -293,6 +295,13 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("run: --fresh needs --continue: it starts a new session handed an earlier run over")
 	}
 
+	if *resume && *continueID == "" {
+		return 2, errors.New("run: --resume needs --continue")
+	}
+	if *resume && *fresh {
+		return 2, errors.New("run: --resume and --fresh cannot be combined")
+	}
+
 	// Resolve replacement before continuation planning; the requested model belongs to the original backend.
 	var routed string
 	if !opts.NoSwitch && *continueID != "" {
@@ -304,7 +313,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 
 	var plan followup.Plan
 	if *continueID != "" {
-		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, Fresh: *fresh}
+		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}

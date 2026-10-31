@@ -66,8 +66,14 @@ func TestRunFreshStartsANewSessionWithAHandover(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(runlog.Root(), next, "handoff.md")); err != nil {
 				t.Errorf("handoff.md: %v", err)
 			}
-			// Without fresh the same call forks the session, as before.
-			r = s.call(t, "run", `{"prompt":"again","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)
+			if backend == "codex" {
+				defaultRun := s.call(t, "run", `{"prompt":"again","no_switch":true,"continue_run_id":"`+w.ID()+`"}`)
+				if defaultRun.IsError || !strings.Contains(defaultRun.Text(), `fork=""`) || !strings.Contains(defaultRun.Text(), "=== now") {
+					t.Fatalf("codex default should hand over: %s", defaultRun.Text())
+				}
+			}
+			// An explicit false keeps the session.
+			r = s.call(t, "run", `{"prompt":"again","no_switch":true,"fresh":false,"continue_run_id":"`+w.ID()+`"}`)
 			if r.IsError {
 				t.Fatal(r.Text())
 			}

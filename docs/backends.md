@@ -359,6 +359,8 @@ context sizes and sizes at or below the threshold produce no warning.
 
 #### A fresh hand-over
 
+A codex run continued on codex uses a fresh hand-over by default. Pass `--resume` (or explicit `fresh: false` over MCP or exec) to pick up the saved session. Claude and agy keep their existing defaults.
+
 `--fresh` with `--continue` (MCP `fresh: true` beside `continue_run_id`, `hrn exec`'s
 `fresh` in `start`) starts a new session instead: nothing any run saved is picked up,
 not a claude or codex fork, not agy's `--conversation`, not an api `messages.json`,
@@ -387,7 +389,7 @@ the full record (`hrn show <id>`). As with a transcript, it is saved as `handoff
 and quoted line by line. The record keeps `continues` and adds `continue_route:
 "fresh_handover"`, and a later follow-up, on any backend, never looks back past that run:
 no session or conversation before it is picked up, handed over or measured for the
-warning. Without `--fresh`, `--continue` behaves as above: prefer it when
+warning. For other continuations, or with `--resume`, `--continue` picks up the saved session when possible: prefer it when
 the next step needs the earlier session's reasoning or tool results.
 
 What the backend carries on from:
@@ -427,7 +429,7 @@ Continuing a run that is not the newest on its conversation is allowed, with a n
 naming the later run: the conversation already holds that run's turns, so the agent
 sees them too. `--fresh` starts a new conversation instead.
 
-Continuing on the same backend refuses rather than quietly starting over when that
+Except for the codex fresh default, continuing on the same backend refuses rather than quietly starting over when that
 backend saved nothing: a run from before session ids were recorded, a gemini run, or an
 api history that ended on a tool call the model never got an answer for, which the API
 refuses to resume from. Batch attempts save their conversations too, so a failed attempt

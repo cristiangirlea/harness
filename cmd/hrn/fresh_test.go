@@ -125,3 +125,55 @@ func TestRunFreshNeedsARunToContinue(t *testing.T) {
 		t.Fatalf("a refused run left records: %v %v", recs, err)
 	}
 }
+
+func TestContinueCodexDefaultAndResume(t *testing.T) {
+	drain(t)
+	t.Setenv("HRN_HOME", t.TempDir())
+	old, _ := agent.Get("codex")
+	agent.Register(recorder{"codex", recorded})
+	defer agent.Register(old)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), []byte(`{"model":"stub"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Backend: "codex", Status: agent.StatusOK, Session: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args  []string
+		fresh bool
+	}{{nil, true}, {[]string{"--resume"}, false}} {
+		args := append([]string{"--continue", w.ID(), "--no-switch"}, tc.args...)
+		args = append(args, "again")
+		if code, err := cmdRun(args); code != 0 || err != nil {
+			t.Fatalf("code=%d err=%v", code, err)
+		}
+		task := <-recorded
+		if strings.Contains(task.Prompt, "=== now") != tc.fresh {
+			t.Errorf("fresh=%v prompt=%q", tc.fresh, task.Prompt)
+		}
+	}
+}
+
+func TestResumeFlagValidation(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--resume", "x"}, "--resume needs --continue"},
+		{[]string{"--continue", "run", "--resume", "--fresh", "x"}, "--resume and --fresh cannot be combined"},
+	} {
+		code, err := cmdRun(tc.args)
+		if code != 2 || err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("args=%v code=%d err=%v", tc.args, code, err)
+		}
+	}
+}
