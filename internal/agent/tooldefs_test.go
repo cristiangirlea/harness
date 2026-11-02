@@ -41,7 +41,7 @@ var toolDefinitionBudget = map[string]int{
 	"readonly":          1228,
 	"auto":              2382,
 	"yolo":              2382,
-	"yolo with shaping": 2932,
+	"yolo with shaping": 3079,
 }
 
 func TestToolDefinitionsStayUnderTheirByteBudget(t *testing.T) {

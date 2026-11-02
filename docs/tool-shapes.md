@@ -162,7 +162,7 @@ The shell selected for `run_command` was bash. No MCP definitions are included.
 | readonly | 1,487 | 1,169 |
 | auto | 2,914 | 2,268 |
 | yolo | 2,914 | 2,268 |
-| yolo with shaping | 3,578 | 2,792 |
+| yolo with shaping | 3,578 | 2,932 |
 
 | Tool | Before bytes | After bytes |
 |---|---:|---:|
@@ -172,12 +172,20 @@ The shell selected for `run_command` was bash. No MCP definitions are included.
 | write_file | 393 | 290 |
 | edit_file | 554 | 433 |
 | run_command | 477 | 373 |
-| read_original | 663 | 523 |
+| read_original | 663 | 663 |
 
 Per-tool sizes exclude array brackets and commas. Auto shrank by 646 bytes (22.2%); retaining
 limits, refusal rules and result details took precedence over the 30% target. The byte budgets now
 allow about 5% headroom. Readonly offers only `read_file`, `list_files` and `grep`; shaping adds
-only `read_original` to each mode. These are byte counts, not measured model tokens or an eval.
+only `read_original` to each mode. `read_original` keeps its full text: shortened, it cost the
+handle line its meaning, and a local-model eval (the hrn-evals shaping suite, shaped variant,
+2026-11-01) fell from 3/3 to 0/3 on the terminal task and from 2/3 to 1/3 on JSON.
+
+With `read_original` restored, the trimmed set passed 15 of 18 cells. Against a build of the same
+base, the terminal task (the shape that dominates real tool output) scored 3/6 in both; a run with
+`run_command` restored as well scored 1/6, so differences of two cells in six are this model's own
+variance. Those numbers say the remaining trims cost nothing measurable on this suite; they do
+not show a gain in quality.
 
 ## What a run loads
 
