@@ -10,7 +10,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/cristiangirlea/harness/internal/watch"
+	"github.com/cristiangirlea/harness/internal/watchaddr"
 )
 
 // Watch describes a running watch's executable, arguments and address.
@@ -45,7 +45,7 @@ func watchAddr(args []string) string {
 			return v
 		}
 	}
-	return watch.DefaultAddr
+	return watchaddr.DefaultAddr
 }
 
 func watchLog(home, addr string) string {
@@ -53,7 +53,7 @@ func watchLog(home, addr string) string {
 	if err != nil || port == "" {
 		return filepath.Join(home, "watch.log")
 	}
-	return filepath.Join(home, "watch-"+port+".log")
+	return filepath.Join(home, watchaddr.LogName(port))
 }
 
 // Restarter replaces watches using caller-supplied hooks.
