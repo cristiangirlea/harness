@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 func TestShapeToolsOption(t *testing.T) {
@@ -53,7 +55,7 @@ func TestEveryOptionHasAFlagAndASchemaEntry(t *testing.T) {
 		} else if fl.Usage != f.Tag.Get("desc") {
 			t.Errorf("--%s help differs from the desc tag", flagName(f))
 		}
-		name := jsonName(f)
+		name := kernel.JSONName(f)
 		p, ok := schema[name].(map[string]any)
 		if !ok {
 			t.Errorf("%s has no schema entry %q", f.Name, name)
@@ -202,7 +204,7 @@ func TestCompactWindow(t *testing.T) {
 		if string(o.CompactWindow) != tc.want {
 			t.Errorf("%s: CompactWindow = %q, want %q", tc.json, o.CompactWindow, tc.want)
 		}
-		if err := o.Validate(); err != nil {
+		if err := ValidateOptions(o); err != nil {
 			t.Errorf("%s: %v", tc.json, err)
 		}
 		b, _ := json.Marshal(o)
@@ -223,12 +225,12 @@ func TestCompactWindow(t *testing.T) {
 		}
 	}
 	for _, v := range []string{"100000", "1000000"} {
-		if err := (Options{CompactWindow: CompactWindow(v)}).Validate(); err != nil {
+		if err := ValidateOptions(Options{CompactWindow: CompactWindow(v)}); err != nil {
 			t.Errorf("%s is in range: %v", v, err)
 		}
 	}
 	for _, v := range []string{"99999", "1000001", "0", "-5", "200k", "AUTO", "0200000", "+200000"} {
-		if err := (Options{CompactWindow: CompactWindow(v)}).Validate(); err == nil || !strings.Contains(err.Error(), "compact_window") {
+		if err := ValidateOptions(Options{CompactWindow: CompactWindow(v)}); err == nil || !strings.Contains(err.Error(), "compact_window") {
 			t.Errorf("%s must be refused naming compact_window, got %v", v, err)
 		}
 		fs := flag.NewFlagSet("t", flag.ContinueOnError)
@@ -242,10 +244,10 @@ func TestCompactWindow(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	if err := (Options{}).Validate(); err != nil {
+	if err := ValidateOptions(Options{}); err != nil {
 		t.Errorf("empty options are valid: %v", err)
 	}
-	if err := (Options{Mode: ModeYolo, Timeout: Duration(time.Minute), MaxCostUSD: 2.5, TaskBudget: 20000}).Validate(); err != nil {
+	if err := ValidateOptions(Options{Mode: ModeYolo, Timeout: Duration(time.Minute), MaxCostUSD: 2.5, TaskBudget: 20000}); err != nil {
 		t.Errorf("valid options refused: %v", err)
 	}
 	for _, tc := range []struct {
@@ -264,7 +266,7 @@ func TestValidate(t *testing.T) {
 		{Options{AppendSystemPrompt: strings.Repeat(`\`, MaxAppendSystemPrompt/2+1)}, "at most 16384 fit"},
 		{Options{AppendSystemPrompt: "a\x00b"}, "NUL"},
 	} {
-		if err := tc.o.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+		if err := ValidateOptions(tc.o); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%+v: err = %v, want %q", tc.o, err, tc.want)
 		}
 	}
@@ -272,12 +274,12 @@ func TestValidate(t *testing.T) {
 
 func TestValidateAcceptsOnlyKnownEffortLevels(t *testing.T) {
 	for _, effort := range []string{"", "low", "medium", "high", "xhigh", "max"} {
-		if err := (Options{Effort: effort}).Validate(); err != nil {
+		if err := ValidateOptions(Options{Effort: effort}); err != nil {
 			t.Errorf("effort %q should be accepted: %v", effort, err)
 		}
 	}
 	for _, effort := range []string{"turbo", "HIGH"} {
-		err := (Options{Effort: effort}).Validate()
+		err := ValidateOptions(Options{Effort: effort})
 		if err == nil {
 			t.Errorf("effort %q should be refused", effort)
 			continue

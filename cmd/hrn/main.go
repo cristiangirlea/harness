@@ -343,7 +343,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 
-	if err := opts.Validate(); err != nil {
+	if err := agent.ValidateOptions(opts); err != nil {
 		return 2, err
 	}
 	ws, err := tools.NewWorkspace(dir)

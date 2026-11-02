@@ -82,7 +82,7 @@ func (j *Judge) check(tasks []batch.Task) error {
 		return fmt.Errorf("judge: repeats %d is negative", j.Repeats)
 	}
 	// Validate effort before spending on cells the judge cannot grade.
-	if err := (agent.Options{Effort: j.Effort}).Validate(); err != nil {
+	if err := agent.ValidateOptions(agent.Options{Effort: j.Effort}); err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
 	ids := map[string]bool{}

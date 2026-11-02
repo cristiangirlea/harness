@@ -66,7 +66,7 @@ func cmdRoute(args []string) (int, error) {
 				fmt.Fprintf(os.Stderr, "hrn: warning: backend %s is disabled; runs ignore this row until it is enabled (hrn backends set)\n", row.Backend)
 			}
 		}
-		if err := (agent.Options{Effort: row.Effort}).Validate(); err != nil {
+		if err := agent.ValidateOptions(agent.Options{Effort: row.Effort}); err != nil {
 			return 2, err
 		}
 		t, err := route.Load()

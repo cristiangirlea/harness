@@ -55,7 +55,7 @@ func RouteWithNote(o *agent.Options, declared, prompt string, backend *string, h
 			return nil, note, nil
 		}
 	}
-	if err := (agent.Options{Effort: r.Effort}).Validate(); err != nil {
+	if err := agent.ValidateOptions(agent.Options{Effort: r.Effort}); err != nil {
 		note := fmt.Sprintf("ignoring route for %s: %v", category, err)
 		fmt.Fprintln(os.Stderr, "hrn: warning: "+note)
 		return nil, note, nil

@@ -109,7 +109,7 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 			}
 		}
 	} else {
-		if err := task.Options.Validate(); err != nil {
+		if err := ValidateOptions(task.Options); err != nil {
 			return fail(err)
 		}
 		state.Scope = retrieval.Scope{TenantID: task.RetrievalTenant, ProjectID: task.RetrievalProject, Revision: task.RetrievalRevision, Backend: backend, Model: task.Model}
