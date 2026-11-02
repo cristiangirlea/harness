@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cristiangirlea/harness/internal/retrieval"
+	"github.com/cristiangirlea/harness/internal/envpolicy"
 )
 
 // Config uses Claude's mcpServers format with ${VAR} and ${VAR:-default} expansion.
@@ -186,7 +186,7 @@ func expandWith(s string, lookup func(string) (string, bool)) string {
 		}
 		b.WriteString(s[:i])
 		name, def, hasDef := strings.Cut(s[i+2:i+j], ":-")
-		if v, ok := lookup(name); ok && v != "" && len(retrieval.ExecutorEnv([]string{name + "="})) == 1 {
+		if v, ok := lookup(name); ok && v != "" && len(envpolicy.Filter([]string{name + "="})) == 1 {
 			b.WriteString(v)
 		} else if hasDef {
 			b.WriteString(def)
