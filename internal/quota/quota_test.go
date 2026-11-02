@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -121,7 +121,7 @@ func TestCodexStopsAfterTheNewestFiles(t *testing.T) {
 	}
 }
 
-func writeRun(t *testing.T, id, backend string, events ...agent.Event) {
+func writeRun(t *testing.T, id, backend string, events ...kernel.Event) {
 	t.Helper()
 	dir := filepath.Join(runlog.Root(), id)
 	writeFile(t, filepath.Join(dir, "task.json"), fmt.Sprintf(`{"id":%q,"backend":%q,"task":{"prompt":"secret prompt"}}`, id, backend))
@@ -133,8 +133,8 @@ func writeRun(t *testing.T, id, backend string, events ...agent.Event) {
 	writeFile(t, filepath.Join(dir, "events.jsonl"), b.String())
 }
 
-func quotaJSON(q *agent.Quota) string {
-	w := func(x *agent.QuotaWindow) string {
+func quotaJSON(q *kernel.Quota) string {
+	w := func(x *kernel.QuotaWindow) string {
 		if x == nil {
 			return "null"
 		}
@@ -147,23 +147,23 @@ func TestClaudeTakesEachWindowFromTheNewestRunThatRecordedIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Date(2026, 10, 15, 18, 0, 0, 0, time.UTC)
 	five, week := now.Add(time.Hour), now.Add(80*time.Hour)
-	q := func(fiveUsed, weekUsed float64) *agent.Quota {
-		out := &agent.Quota{}
+	q := func(fiveUsed, weekUsed float64) *kernel.Quota {
+		out := &kernel.Quota{}
 		if fiveUsed >= 0 {
-			out.FiveHour = &agent.QuotaWindow{UsedPercent: fiveUsed, ResetsAt: five.Unix()}
+			out.FiveHour = &kernel.QuotaWindow{UsedPercent: fiveUsed, ResetsAt: five.Unix()}
 		}
 		if weekUsed >= 0 {
-			out.Week = &agent.QuotaWindow{UsedPercent: weekUsed, ResetsAt: week.Unix()}
+			out.Week = &kernel.QuotaWindow{UsedPercent: weekUsed, ResetsAt: week.Unix()}
 		}
 		return out
 	}
-	writeRun(t, "20261015-090000-aaaaaa", "claude", agent.Event{Time: now.Add(-9 * time.Hour), Kind: agent.EventQuota, Quota: q(1, 1)})
-	writeRun(t, "20261015-100000-bbbbbb", "claude", agent.Event{Time: now.Add(-8 * time.Hour), Kind: agent.EventQuota, Quota: q(-1, 20)})
+	writeRun(t, "20261015-090000-aaaaaa", "claude", kernel.Event{Time: now.Add(-9 * time.Hour), Kind: kernel.EventQuota, Quota: q(1, 1)})
+	writeRun(t, "20261015-100000-bbbbbb", "claude", kernel.Event{Time: now.Add(-8 * time.Hour), Kind: kernel.EventQuota, Quota: q(-1, 20)})
 	writeRun(t, "20261015-110000-cccccc", "claude",
-		agent.Event{Time: now.Add(-3 * time.Hour), Kind: agent.EventQuota, Quota: q(10, -1)},
-		agent.Event{Time: now.Add(-2 * time.Hour), Kind: agent.EventQuota, Quota: q(38, -1)})
+		kernel.Event{Time: now.Add(-3 * time.Hour), Kind: kernel.EventQuota, Quota: q(10, -1)},
+		kernel.Event{Time: now.Add(-2 * time.Hour), Kind: kernel.EventQuota, Quota: q(38, -1)})
 	// A codex run's quota is not claude's, and a run with nothing is passed over.
-	writeRun(t, "20261015-120000-dddddd", "codex", agent.Event{Time: now.Add(-time.Hour), Kind: agent.EventQuota, Quota: q(99, 99)})
+	writeRun(t, "20261015-120000-dddddd", "codex", kernel.Event{Time: now.Add(-time.Hour), Kind: kernel.EventQuota, Quota: q(99, 99)})
 	writeRun(t, "20261015-130000-eeeeee", "claude")
 	writeFile(t, filepath.Join(runlog.Root(), "20261015-140000-ffffff", "events.jsonl"), "{broken\n")
 
@@ -249,12 +249,12 @@ func TestClaudeKeepsTheLatestReportWhateverRunStartedLast(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	five, week := now.Add(time.Hour), now.Add(80*time.Hour)
-	used := func(p float64) *agent.Quota {
-		return &agent.Quota{FiveHour: &agent.QuotaWindow{UsedPercent: p, ResetsAt: five.Unix()}, Week: &agent.QuotaWindow{UsedPercent: p, ResetsAt: week.Unix()}}
+	used := func(p float64) *kernel.Quota {
+		return &kernel.Quota{FiveHour: &kernel.QuotaWindow{UsedPercent: p, ResetsAt: five.Unix()}, Week: &kernel.QuotaWindow{UsedPercent: p, ResetsAt: week.Unix()}}
 	}
 	// A started first but reported last; B started later and reported early.
-	writeRun(t, "20261015-100000-aaaaaa", "claude", agent.Event{Time: now, Kind: agent.EventQuota, Quota: used(80)})
-	writeRun(t, "20261015-110000-bbbbbb", "claude", agent.Event{Time: now.Add(-55 * time.Minute), Kind: agent.EventQuota, Quota: used(30)})
+	writeRun(t, "20261015-100000-aaaaaa", "claude", kernel.Event{Time: now, Kind: kernel.EventQuota, Quota: used(80)})
+	writeRun(t, "20261015-110000-bbbbbb", "claude", kernel.Event{Time: now.Add(-55 * time.Minute), Kind: kernel.EventQuota, Quota: used(30)})
 	got := claudeFrom(runlog.Root())
 	sameWindow(t, "five hour", got.FiveHour, 20, five, now)
 	sameWindow(t, "week", got.Week, 20, week, now)
@@ -263,8 +263,8 @@ func TestClaudeKeepsTheLatestReportWhateverRunStartedLast(t *testing.T) {
 func TestClaudeReadsOnlyTheNewestRuns(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
-	week := &agent.Quota{Week: &agent.QuotaWindow{UsedPercent: 5, ResetsAt: now.Add(time.Hour).Unix()}}
-	writeRun(t, "20261014-000000-aaaaaa", "claude", agent.Event{Time: now, Kind: agent.EventQuota, Quota: week})
+	week := &kernel.Quota{Week: &kernel.QuotaWindow{UsedPercent: 5, ResetsAt: now.Add(time.Hour).Unix()}}
+	writeRun(t, "20261014-000000-aaaaaa", "claude", kernel.Event{Time: now, Kind: kernel.EventQuota, Quota: week})
 	for i := range maxClaudeRuns {
 		writeRun(t, fmt.Sprintf("20261015-%06d-codexx", i), "codex")
 	}
