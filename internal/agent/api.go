@@ -298,33 +298,29 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		res.RecoveryRequired = true
 		return fail(StatusError, fmt.Errorf("durable execution: %w", err))
 	}
-	for turn := firstTurn; ; turn++ {
-		if turn > maxTurns {
-			return fail(StatusMaxTurns, fmt.Errorf("stopped after %d turns", maxTurns))
-		}
-		if task.MaxCostUSD > 0 && res.CostUSD >= task.MaxCostUSD && (durable == nil || len(durable.checkpoint.Response) == 0) {
-			return fail(StatusBudget, fmt.Errorf("cost estimate $%.4f reached the $%.4f limit after turn %d", res.CostUSD, task.MaxCostUSD, res.Turns))
-		}
-		res.Turns = turn
-
-		var msg *apiResponse
-		var err error
-		restoredResponse := durable != nil && len(durable.checkpoint.Response) != 0
-		if restoredResponse {
-			msg, err = durable.response()
+	resultPtr := func(result Result) *Result { return &result }
+	requestPhase := func(turn int) (*apiResponse, bool, *Result) {
+		if durable != nil && len(durable.checkpoint.Response) != 0 {
+			msg, err := durable.response()
 			if err != nil {
-				return durableFailure(err)
+				return nil, false, resultPtr(durableFailure(err))
 			}
-		} else {
-			if durable != nil {
-				if err := ctx.Err(); err != nil {
-					return fail(stopStatus(ctx), err)
-				}
-				durable.checkpoint.Pending = &PendingOperation{Kind: "model", ID: fmt.Sprintf("turn-%d", turn)}
-				if err := durable.persist(ctx, "model_intent", req, res); err != nil {
-					return durableFailure(err)
-				}
+			return msg, true, nil
+		}
+		if durable != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, false, resultPtr(fail(stopStatus(ctx), err))
 			}
+			durable.checkpoint.Pending = &PendingOperation{Kind: "model", ID: fmt.Sprintf("turn-%d", turn)}
+			if err := durable.persist(ctx, "model_intent", req, res); err != nil {
+				return nil, false, resultPtr(durableFailure(err))
+			}
+		}
+		return nil, false, nil
+	}
+	streamPhase := func(turn int, msg *apiResponse, restoredResponse bool) ([]block, string, *apiResponse, *Result) {
+		var err error
+		if !restoredResponse {
 			for {
 				msg, err = client.stream(ctx, req, onDelta, onBlock)
 				retry := err != nil && dropContextEdits(&req, err)
@@ -339,7 +335,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 							rejected.Status, rejected.Error = StatusError, err.Error()
 						}
 						if saveErr := durable.persist(ctx, "model_rejected", req, rejected); saveErr != nil {
-							return durableFailure(saveErr)
+							return nil, "", nil, resultPtr(durableFailure(saveErr))
 						}
 					}
 				}
@@ -349,15 +345,16 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 				emit(Event{Time: time.Now(), Kind: EventInfo, Text: "context management refused by the API; retrying without it"})
 				if durable != nil {
 					if err := ctx.Err(); err != nil {
-						return fail(stopStatus(ctx), err)
+						return nil, "", nil, resultPtr(fail(stopStatus(ctx), err))
 					}
 					durable.checkpoint.Pending = &PendingOperation{Kind: "model", ID: fmt.Sprintf("turn-%d", turn)}
 					if err := durable.persist(ctx, "model_intent", req, res); err != nil {
-						return durableFailure(err)
+						return nil, "", nil, resultPtr(durableFailure(err))
 					}
 				}
 			}
 		}
+
 		if msg != nil && !restoredResponse {
 			turn := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens,
 				CacheRead: msg.Usage.CacheReadInputTokens, CacheWrite: msg.Usage.CacheCreationInputTokens}
@@ -373,13 +370,13 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			}
 		}
 		if err != nil && durable != nil && durable.checkpoint.Pending != nil {
-			return durableFailure(err)
+			return nil, "", nil, resultPtr(durableFailure(err))
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return fail(stopStatus(ctx), ctx.Err())
+				return nil, "", nil, resultPtr(fail(stopStatus(ctx), ctx.Err()))
 			}
-			return fail(StatusError, err)
+			return nil, "", nil, resultPtr(fail(StatusError, err))
 		}
 		if msg.Model != "" {
 			res.Model = msg.Model
@@ -400,13 +397,13 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			if durable != nil {
 				data, err := json.Marshal(msg)
 				if err != nil {
-					return durableFailure(err)
+					return nil, "", nil, resultPtr(durableFailure(err))
 				}
 				durable.checkpoint.Response = data
 				durable.checkpoint.InvalidInput = msg.invalidInput
 				durable.checkpoint.Pending = nil
 				if err := durable.persist(ctx, "model_response", req, res); err != nil {
-					return durableFailure(err)
+					return nil, "", nil, resultPtr(durableFailure(err))
 				}
 			}
 		}
@@ -422,15 +419,32 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			}
 		}
 
+		return calls, text.String(), msg, nil
+	}
+	toolsPhase := func(msg *apiResponse, calls []block) *Result {
+		var results []block
+		if durable == nil {
+			results = b.runTools(ctx, ws, task, calls, msg.invalidInput, byName, emit)
+		} else {
+			var err error
+			results, err = durable.runTools(ctx, ws, task, calls, msg.invalidInput, byName, emit, req, &res)
+			if err != nil {
+				return resultPtr(durableFailure(err))
+			}
+		}
+		req.Messages = append(req.Messages, apiMessage{Role: "user", Content: results})
+		return nil
+	}
+	stopPhase := func(turn int, msg *apiResponse, text string) *Result {
 		switch msg.StopReason {
 		case "refusal":
 			category, explanation := "", ""
 			if msg.StopDetails != nil {
 				category, explanation = msg.StopDetails.Category, msg.StopDetails.Explanation
 			}
-			return fail(StatusRefused, fmt.Errorf("model declined (%s): %s", category, explanation))
+			return resultPtr(fail(StatusRefused, fmt.Errorf("model declined (%s): %s", category, explanation)))
 		case "max_tokens":
-			return fail(StatusError, errors.New("response hit max_tokens"))
+			return resultPtr(fail(StatusError, errors.New("response hit max_tokens")))
 		case "pause_turn":
 			if durable != nil {
 				durable.checkpoint.Response = nil
@@ -438,33 +452,23 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 				durable.checkpoint.ToolResults = nil
 				durable.checkpoint.NextTurn = turn + 1
 				if err := durable.persist(ctx, "turn_complete", req, res); err != nil {
-					return durableFailure(err)
+					return resultPtr(durableFailure(err))
 				}
 			}
-			continue
+			return nil
 		case "tool_use":
-			var results []block
-			if durable == nil {
-				results = b.runTools(ctx, ws, task, calls, msg.invalidInput, byName, emit)
-			} else {
-				results, err = durable.runTools(ctx, ws, task, calls, msg.invalidInput, byName, emit, req, &res)
-				if err != nil {
-					return durableFailure(err)
-				}
-			}
-			req.Messages = append(req.Messages, apiMessage{Role: "user", Content: results})
 		default:
 			res.Status = StatusOK
-			res.Final = strings.TrimSpace(text.String())
+			res.Final = strings.TrimSpace(text)
 			if durable != nil {
 				durable.checkpoint.Finished = true
 				if err := durable.persist(ctx, "finished", req, res); err != nil {
-					return durableFailure(err)
+					return resultPtr(durableFailure(err))
 				}
-				return durable.checkpoint.Result
+				return resultPtr(durable.checkpoint.Result)
 			}
 			saveConversation()
-			return finish(&res, started)
+			return resultPtr(finish(&res, started))
 		}
 		if durable != nil {
 			durable.checkpoint.Response = nil
@@ -472,8 +476,34 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			durable.checkpoint.ToolResults = nil
 			durable.checkpoint.NextTurn = turn + 1
 			if err := durable.persist(ctx, "turn_complete", req, res); err != nil {
-				return durableFailure(err)
+				return resultPtr(durableFailure(err))
 			}
+		}
+		return nil
+	}
+	for turn := firstTurn; ; turn++ {
+		if turn > maxTurns {
+			return fail(StatusMaxTurns, fmt.Errorf("stopped after %d turns", maxTurns))
+		}
+		if task.MaxCostUSD > 0 && res.CostUSD >= task.MaxCostUSD && (durable == nil || len(durable.checkpoint.Response) == 0) {
+			return fail(StatusBudget, fmt.Errorf("cost estimate $%.4f reached the $%.4f limit after turn %d", res.CostUSD, task.MaxCostUSD, res.Turns))
+		}
+		res.Turns = turn
+		msg, restoredResponse, result := requestPhase(turn)
+		if result != nil {
+			return *result
+		}
+		calls, text, msg, result := streamPhase(turn, msg, restoredResponse)
+		if result != nil {
+			return *result
+		}
+		if msg.StopReason == "tool_use" {
+			if result := toolsPhase(msg, calls); result != nil {
+				return *result
+			}
+		}
+		if result := stopPhase(turn, msg, text); result != nil {
+			return *result
 		}
 	}
 }
