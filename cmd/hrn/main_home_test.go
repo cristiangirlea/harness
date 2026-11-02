@@ -12,6 +12,20 @@ import (
 // (#379); a test may still set its own with t.Setenv. A helper process, the
 // test binary standing in for another program, keeps what it was started with.
 func TestMain(m *testing.M) {
+	name := strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe")
+	if slices.Contains([]string{"claude", "codex", "gemini", "opencode", "agy"}, name) {
+		log := os.Getenv("HRN_ZERO_PROVIDER_SHIM_LOG")
+		if log == "" {
+			os.Exit(1)
+		}
+		f, err := os.OpenFile(log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			os.Exit(2)
+		}
+		_, _ = f.WriteString(filepath.Base(os.Args[0]) + "\n")
+		_ = f.Close()
+		os.Exit(1)
+	}
 	helper := slices.ContainsFunc(os.Args, func(a string) bool { return strings.HasPrefix(a, "-test.run=^TestHelper") })
 	if helper {
 		os.Exit(m.Run())
