@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"io"
 	"os"
 	"os/signal"
@@ -281,7 +282,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
-	preference, err := agent.BackendPreferences(runlog.Home())
+	preference, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return 2, fmt.Errorf("run: %w", err)
 	}
@@ -369,7 +370,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("empty prompt")
 	}
 
-	routedBy, routeNote, err := opts.RouteWithNote(*declared, prompt, &backend, runlog.Home())
+	routedBy, routeNote, err := resolve.RouteWithNote(&opts, *declared, prompt, &backend, runlog.Home())
 	if err != nil {
 		return 2, err
 	}
@@ -386,7 +387,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 	if backend == "" {
-		backend = agent.DefaultBackendNameIn(runlog.Home())
+		backend = resolve.DefaultBackendNameIn(runlog.Home())
 		if routedBy == nil {
 			routeNote = agent.WithDefault(routeNote, backend)
 		}
@@ -406,7 +407,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		*declared = purpose.Inherited(plan.Prev.Task.Purpose, plan.Prev.Task.Prompt)
 	}
 	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts, Knowledge: remote.SearcherFromEnv}
-	turnDefault := task.ApplyTurnDefault(backend)
+	turnDefault := resolve.ApplyTurnDefault(&task, backend)
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
 	}
@@ -460,7 +461,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
 	}
 	if turnDefault {
-		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
 	}
 	if warning := plan.ContextWarning(); jsonOut && warning != "" {
 		fmt.Fprintln(os.Stderr, warning)
@@ -500,7 +501,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		if next.Task.Purpose == "" {
 			next.Task.Purpose = purpose.Inherited(task.Purpose, prompt)
 		}
-		nextDefault := next.Task.ApplyTurnDefault(next.To)
+		nextDefault := resolve.ApplyTurnDefault(&next.Task, next.To)
 		nb, err := agent.Get(next.To)
 		if err != nil {
 			return 1, err
@@ -513,7 +514,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		rec = nrec // the renderer and the encoder write to the new record now
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Why})
 		if nextDefault {
-			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
 		}
 		next.Task.Knowledge = remote.SearcherFromEnv
 		next.Plan.Apply(&next.Task, nrec.Dir(), emit)
@@ -573,13 +574,13 @@ func cmdBackends(args []string) error {
 			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] | reset]")
 		}
 	}
-	p, err := agent.BackendPreferences(runlog.Home())
+	p, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return err
 	}
 	def := p.Default()
 	if def == "" {
-		def = agent.DefaultBackendNameIn(runlog.Home())
+		def = resolve.DefaultBackendNameIn(runlog.Home())
 	}
 	now := time.Now()
 	for _, name := range agent.Names() {

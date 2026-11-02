@@ -14,6 +14,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -69,7 +70,7 @@ func TestVariantLeanRequiresAResolvedBackendThatAppliesIt(t *testing.T) {
 				case "spec":
 					spec.Backend = backend
 				case "default":
-					backend = agent.DefaultBackendNameIn(runlog.Home())
+					backend = resolve.DefaultBackendNameIn(runlog.Home())
 				}
 				_, err := Expand(spec, "abc12")
 				if backend == "claude" || backend == "codex" {

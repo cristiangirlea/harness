@@ -1,6 +1,9 @@
-package agent
+package resolve
 
-import "github.com/cristiangirlea/harness/internal/prefs"
+import (
+	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/prefs"
+)
 
 // BackendPreferences loads and validates names against this binary's registry.
 func BackendPreferences(home string) (prefs.Prefs, error) {
@@ -9,7 +12,7 @@ func BackendPreferences(home string) (prefs.Prefs, error) {
 		return prefs.Prefs{}, err
 	}
 	for _, name := range p.EnabledNames {
-		if _, err := Get(name); err != nil {
+		if _, err := agent.Get(name); err != nil {
 			return prefs.Prefs{}, err
 		}
 	}
@@ -20,10 +23,10 @@ func BackendPreferences(home string) (prefs.Prefs, error) {
 func DefaultBackendNameIn(home string) string {
 	p, err := BackendPreferences(home)
 	if err != nil || len(p.EnabledNames) == 0 {
-		return DefaultBackendName()
+		return agent.DefaultBackendName()
 	}
 	installed := func(name string) bool {
-		b, err := Get(name)
+		b, err := agent.Get(name)
 		if err != nil {
 			return false
 		}
@@ -36,7 +39,7 @@ func DefaultBackendNameIn(home string) string {
 	if p.Enabled("api") && installed("api") {
 		return "api"
 	}
-	enabled := p.Filter(Names())
+	enabled := p.Filter(agent.Names())
 	for _, name := range enabled {
 		if installed(name) {
 			return name

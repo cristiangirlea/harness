@@ -6,15 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"math"
-	"os"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/purpose"
-	"github.com/cristiangirlea/harness/internal/route/table"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -80,64 +77,6 @@ type Options struct {
 	TakeOver bool   `json:"take_over,omitempty" flag:"take-over" desc:"Take the issue lease from its current holder."`
 }
 
-// Route fills an unspecified backend/model/effort from evidence.
-func (o *Options) Route(declared, prompt string, backend *string, home string) (*table.RoutedBy, error) {
-	routed, _, err := o.RouteWithNote(declared, prompt, backend, home)
-	return routed, err
-}
-
-// RouteWithNote preserves why an explicit or invalid choice bypassed routing.
-func (o *Options) RouteWithNote(declared, prompt string, backend *string, home string) (*table.RoutedBy, string, error) {
-	if *backend != "" || o.Model != "" || o.Effort != "" {
-		if *backend != "" {
-			return nil, "backend " + *backend + " was named for this run", nil
-		}
-		if o.Model != "" && o.Effort != "" {
-			return nil, "model and effort were named for this run", nil
-		}
-		if o.Model != "" {
-			return nil, "model " + o.Model + " was named for this run", nil
-		}
-		return nil, "effort " + o.Effort + " was named for this run", nil
-	}
-	t, err := table.Load(home)
-	if err != nil {
-		return nil, "", err
-	}
-	resolved := purpose.Resolve(declared, prompt)
-	category := resolved.Category
-	r, ok := t.Pick(category)
-	if !ok {
-		return nil, "no route row for purpose " + category, nil
-	}
-	if r.Backend != "" {
-		p, err := BackendPreferences(home)
-		if err != nil {
-			return nil, "", err
-		}
-		if !p.Enabled(r.Backend) {
-			note := fmt.Sprintf("ignoring route for %s: backend %s is disabled", category, r.Backend)
-			fmt.Fprintln(os.Stderr, "hrn: warning: "+note)
-			return nil, note, nil
-		}
-		if _, err := Get(r.Backend); err != nil {
-			note := fmt.Sprintf("ignoring route for %s: %v", category, err)
-			fmt.Fprintln(os.Stderr, "hrn: warning: "+note)
-			return nil, note, nil
-		}
-	}
-	if err := (Options{Effort: r.Effort}).Validate(); err != nil {
-		note := fmt.Sprintf("ignoring route for %s: %v", category, err)
-		fmt.Fprintln(os.Stderr, "hrn: warning: "+note)
-		return nil, note, nil
-	}
-	if r.Backend == "" && r.Model == "" && r.Effort == "" {
-		return nil, "no route row for purpose " + category, nil
-	}
-	*backend, o.Model, o.Effort = r.Backend, r.Model, r.Effort
-	return &table.RoutedBy{Category: category, Declared: resolved.Rule == "declared", Eval: r.Eval, Set: r.Set}, "", nil
-}
-
 // WithDefault adds the default backend to a route note, for a run that named none and had no route.
 func WithDefault(note, backend string) string {
 	d := "default backend " + backend + " was used"
@@ -157,23 +96,6 @@ func ContinuationNote(continues, switched string) string {
 
 // IsLean reports whether lean is on: unset or true.
 func (o Options) IsLean() bool { return o.Lean == nil || *o.Lean }
-
-// ApplyTurnDefault sets the Claude review and test limit when no limit was supplied.
-func (t *Task) ApplyTurnDefault(backend string) bool {
-	prompt := t.Prompt
-	if t.OriginalPrompt != "" {
-		prompt = t.OriginalPrompt
-	}
-	category := purpose.Resolve(t.Purpose, prompt).Category
-	if backend != "claude" || t.MaxTurns != 0 || (category != "review" && category != "test") {
-		return false
-	}
-	t.MaxTurns = 30
-	return true
-}
-
-// TurnDefaultInfo explains the default applied to a run.
-const TurnDefaultInfo = "claude review and test runs default to 30 max turns"
 
 // Bool returns a pointer to v, for an option that is set or left unset.
 func Bool(v bool) *bool { return &v }

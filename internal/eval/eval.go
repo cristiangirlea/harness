@@ -20,6 +20,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -199,7 +200,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 				cell.ShapeTools = v.ShapeTools
 				cell.ID = fmt.Sprintf("%s.%s.%s.r%d", evalID, t.ID, v.Key(), r)
 				// Routing must not change the measured backend.
-				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
+				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, resolve.DefaultBackendNameIn(runlog.Home()))
 				if v.Lean != nil {
 					if cell.Backend != "claude" && cell.Backend != "codex" {
 						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude and codex backends (task %s uses %s)", v.Key(), t.ID, cell.Backend)

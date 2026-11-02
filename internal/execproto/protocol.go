@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"io"
 	"os"
 	"regexp"
@@ -99,7 +100,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if t.RetrievalRefresh && t.ContinueRunID == "" {
 		return w.reject(req.AttemptID, "bad_request", "retrieval_refresh needs continue_run_id")
 	}
-	preferences, err := agent.BackendPreferences(runlog.Home())
+	preferences, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", "cannot load worker backend preferences")
 	}
@@ -118,11 +119,11 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		routeNote = agent.ContinuationNote(t.ContinueRunID, "")
 	} else {
 		var err error
-		if routed, routeNote, err = opts.RouteWithNote(t.Purpose, t.Prompt, &t.Backend, runlog.Home()); err != nil {
+		if routed, routeNote, err = resolve.RouteWithNote(&opts, t.Purpose, t.Prompt, &t.Backend, runlog.Home()); err != nil {
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
 		if t.Backend == "" {
-			t.Backend = agent.DefaultBackendNameIn(runlog.Home())
+			t.Backend = resolve.DefaultBackendNameIn(runlog.Home())
 			if routed == nil {
 				routeNote = agent.WithDefault(routeNote, t.Backend)
 			}
@@ -171,7 +172,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
 	task := agent.Task{Prompt: t.Prompt, Purpose: t.Purpose, Dir: ws.Root, AttemptID: req.AttemptID, Options: opts}
-	turnDefault := task.ApplyTurnDefault(t.Backend)
+	turnDefault := resolve.ApplyTurnDefault(&task, t.Backend)
 	// A backend without MCP support must not inherit the default config.
 	if slices.Contains(caps.Options, "mcp") {
 		if task.MCP, err = mcp.ConfigPaths(t.MCP); err != nil {
@@ -250,7 +251,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	result := make(chan agent.Result, 1)
 	go func() {
 		if turnDefault {
-			emit(agent.Event{Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+			emit(agent.Event{Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
 		}
 		plan.Apply(&task, rec.Dir(), emit)
 		task.Knowledge = remote.SearcherFromEnv
@@ -550,7 +551,7 @@ type protocolError struct {
 
 func hello() map[string]any {
 	backends := make([]any, 0)
-	preferences, prefErr := agent.BackendPreferences(runlog.Home())
+	preferences, prefErr := resolve.BackendPreferences(runlog.Home())
 	for _, name := range agent.Names() {
 		b, _ := agent.Get(name)
 		var detail string
