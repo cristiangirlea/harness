@@ -20,7 +20,7 @@ func setupRun(t *testing.T, files map[string]string, task agent.Task) string {
 			t.Fatal(err)
 		}
 	}
-	w, err := runlog.Create("api", task)
+	w, err := runlog.Create("api", task, agent.ResolveSetup("api", task))
 	if err != nil {
 		t.Fatal(err)
 	}

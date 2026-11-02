@@ -51,7 +51,7 @@ func TestRunFreshStartsANewSessionWithAHandover(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Mode: agent.ModeAuto, Model: "m1"}})
+			w, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Mode: agent.ModeAuto, Model: "m1"}}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +87,7 @@ func TestRunFreshStartsANewSessionWithAHandover(t *testing.T) {
 func TestRunWithoutFreshStillResumes(t *testing.T) {
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("stub-cmd", agent.Task{Prompt: "first", Dir: t.TempDir()})
+	w, err := runlog.Create("stub-cmd", agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestContinueCodexDefaultAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

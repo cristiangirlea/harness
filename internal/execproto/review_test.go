@@ -261,7 +261,7 @@ func TestACloseOnlyStorageFailureReportsOneFatalErrorAndTheRecordError(t *testin
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
 	})
 	h := openHarness(t, func(backend string, task agent.Task, continues, route string, routed *runlog.RoutedBy, note string) (record, error) {
-		w, err := runlog.CreateRouted(backend, task, continues, route, routed, note)
+		w, err := runlog.CreateRouted(backend, task, nil, continues, route, routed, note)
 		return closeOnlyFailure{w}, err
 	})
 	h.next(t, "hello")
@@ -323,7 +323,7 @@ func TestAContinuationReportsItsInheritedRequestedModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prev, err := runlog.Create("fake-exec", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "inherited-model"}})
+	prev, err := runlog.Create("fake-exec", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "inherited-model"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

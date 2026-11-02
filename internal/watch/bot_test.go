@@ -456,7 +456,7 @@ func TestTheBotStreamSaysWhatHappensAndBlanksSecrets(t *testing.T) {
 		t.Fatalf("first message %+v", first)
 	}
 
-	w, err := runlog.Create("claude", agent.Task{Prompt: "Rotate tok-0123456789abcdef " + hostile, Dir: "/repo/harness"})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "Rotate tok-0123456789abcdef " + hostile, Dir: "/repo/harness"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,7 +709,7 @@ func TestALANViewerOfTheBotSeesNoFullWorkspaceOrHomePath(t *testing.T) {
 	s, closeStream := openStream(t, srv.URL+"/stream/bot", "")
 	defer closeStream()
 	nextSay(t, s)
-	w, err := runlog.Create("claude", agent.Task{Prompt: "Fix " + filepath.Join(ws, "main.go") + " from " + filepath.Join(home, "notes.txt"), Dir: ws})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "Fix " + filepath.Join(ws, "main.go") + " from " + filepath.Join(home, "notes.txt"), Dir: ws}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

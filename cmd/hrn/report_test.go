@@ -37,7 +37,7 @@ func TestReportCostCellsKeepAKnownZeroAndCountMissingCosts(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			b := batch.Result{ID: "costs", Dir: "repo"}
 			for _, res := range tc.results {
-				w, err := runlog.Create("codex", agent.Task{Prompt: "p"})
+				w, err := runlog.Create("codex", agent.Task{Prompt: "p"}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -94,7 +94,7 @@ func TestReportCostCellsKeepAKnownZeroAndCountMissingCosts(t *testing.T) {
 
 func TestReportRoutedTextAndJSON(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.CreateContinuing("codex", agent.Task{Prompt: "Implement widget"}, "", &runlog.RoutedBy{Category: "implement", Eval: "e1"})
+	w, err := runlog.CreateContinuing("codex", agent.Task{Prompt: "Implement widget"}, nil, "", &runlog.RoutedBy{Category: "implement", Eval: "e1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestReportCostCellsAcrossBackends(t *testing.T) {
 		{"claude", agent.Result{Status: agent.StatusOK, CostUSD: 1.23, Usage: &agent.UsageMetadata{CostStatus: "reported"}}},
 		{"codex", agent.Result{Status: agent.StatusOK, Usage: &agent.UsageMetadata{CostStatus: "missing"}}},
 	} {
-		w, err := runlog.Create(run.backend, agent.Task{Prompt: "p"})
+		w, err := runlog.Create(run.backend, agent.Task{Prompt: "p"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -245,7 +245,7 @@ func TestReportGroupsRunsByPurpose(t *testing.T) {
 		"Write unit tests for the parser.\n\nThen fix whatever they find.",
 		"Write unit tests for the codec.",
 	} {
-		w, err := runlog.Create("claude", agent.Task{Prompt: prompt, Dir: t.TempDir()})
+		w, err := runlog.Create("claude", agent.Task{Prompt: prompt, Dir: t.TempDir()}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +309,7 @@ func captureStdout(t *testing.T, f func() error) ([]byte, error) {
 
 func TestReportByDayPrintsTokensAndContextPerTurn(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: t.TempDir()})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestReportTokensMarkRunsWithMissingUsage(t *testing.T) {
 		if res.Usage == nil {
 			backend = "api"
 		}
-		w, err := runlog.Create(backend, agent.Task{Prompt: "p", Dir: t.TempDir()})
+		w, err := runlog.Create(backend, agent.Task{Prompt: "p", Dir: t.TempDir()}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

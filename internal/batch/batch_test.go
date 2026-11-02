@@ -716,6 +716,10 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 		if tr.ID != want || tr.Status != StatusPass || tr.Branch != "hrn/"+want || len(tr.Attempts) != 1 {
 			t.Fatalf("task %d = %+v", i, tr)
 		}
+		rec := firstRun(t, tr)
+		if want := agent.ResolveSetup(rec.Backend, rec.Task); !reflect.DeepEqual(rec.Setup, want) {
+			t.Errorf("setup = %+v, want %+v", rec.Setup, want)
+		}
 		a := tr.Attempts[0]
 		if a.Backend != "wb-ok" || a.RunID == "" || a.Result.Status != agent.StatusOK || len(a.Gates) != 1 || a.Gates[0].ExitCode != 0 {
 			t.Errorf("attempt = %+v", a)

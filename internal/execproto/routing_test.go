@@ -145,7 +145,7 @@ func TestAContinuationWithoutABackendStaysOnTheEarlierRunsBackend(t *testing.T) 
 	if err := table.Save(runlog.Home(), table.Table{"review": {Backend: "codex", Model: "routed-model", Set: "manual"}}); err != nil {
 		t.Fatal(err)
 	}
-	first, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: t.TempDir()})
+	first, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

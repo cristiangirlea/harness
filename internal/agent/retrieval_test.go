@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
@@ -216,7 +217,7 @@ func TestRetrievalAPIContinuationAppendOnly(t *testing.T) {
 	if !strings.Contains(string(last), "followup") || strings.Contains(string(last), "project-reference") {
 		t.Fatal("packet duplicated on resume", string(last))
 	}
-	if err := ValidateContinuationPin(first.Retrieval, &Conversation{}); err == nil {
+	if err := kernel.ValidateContinuationPin(first.Retrieval, &Conversation{}); err == nil {
 		t.Fatal("missing pin accepted")
 	}
 }

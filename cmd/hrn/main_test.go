@@ -35,7 +35,7 @@ func TestContinueWarnsOnceBeforeStartingOnlyAboveTheContextThreshold(t *testing.
 			n := tc.tokens
 			t.Run(fmt.Sprintf("json=%v/context=%d/handoff=%v", jsonOut, n, tc.handoff), func(t *testing.T) {
 				t.Setenv("HRN_HOME", t.TempDir())
-				w, err := runlog.Create("stub-context", agent.Task{Prompt: "first", Dir: t.TempDir()})
+				w, err := runlog.Create("stub-context", agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -468,7 +468,7 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 
 func TestRunsMasksPromptExcerpts(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("fake", agent.Task{Prompt: "API_KEY=fake-runs-secret task"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "API_KEY=fake-runs-secret task"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,7 +563,7 @@ func TestShowMasksHumanOutputOnly(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const prompt = "API_KEY=fake-show-secret task"
 	const command = "Authorization: Bearer sk-test-show-secret"
-	w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+	w, err := runlog.Create("fake", agent.Task{Prompt: prompt}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +607,7 @@ func TestContinueWithRetrievalOnAnotherBackendThanThePinIsRefusedBeforeItRuns(t 
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := t.TempDir()
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

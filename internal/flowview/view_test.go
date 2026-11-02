@@ -36,7 +36,7 @@ func TestFilterAndWriter(t *testing.T) {
 func TestLoadRunAndBatchSummaries(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:one")
-	w, err := runlog.Create("stub", agent.Task{Prompt: "run prompt"})
+	w, err := runlog.Create("stub", agent.Task{Prompt: "run prompt"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestWriteTextKeepsItsMarksAndDashes(t *testing.T) {
 func TestLoadShowsTheIssuesItsRunOrBatchHolds(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:one")
-	w, err := runlog.Create("stub", agent.Task{Prompt: "run prompt"})
+	w, err := runlog.Create("stub", agent.Task{Prompt: "run prompt"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestACarriedOnRunShowsTheIssueItsFirstRunTookRedacted(t *testing.T) {
 	prev := ""
 	var ids []string
 	for _, backend := range []string{"claude", "codex", "claude"} {
-		w, err := runlog.CreateContinuing(backend, agent.Task{Prompt: "p"}, prev)
+		w, err := runlog.CreateContinuing(backend, agent.Task{Prompt: "p"}, nil, prev)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,7 +184,7 @@ func TestACarriedOnRunShowsTheIssueItsFirstRunTookRedacted(t *testing.T) {
 
 func closedRun(t *testing.T, continues string) string {
 	t.Helper()
-	w, err := runlog.CreateContinuing("claude", agent.Task{Prompt: "p"}, continues)
+	w, err := runlog.CreateContinuing("claude", agent.Task{Prompt: "p"}, nil, continues)
 	if err != nil {
 		t.Fatal(err)
 	}

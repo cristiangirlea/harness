@@ -38,7 +38,7 @@ func TestRunFreshStartsANewSessionWithAHandover(t *testing.T) {
 			old, _ := agent.Get(backend)
 			agent.Register(sessionStub{backend})
 			defer agent.Register(old)
-			w, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Mode: agent.ModeAuto, Model: "m1"}})
+			w, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Mode: agent.ModeAuto, Model: "m1"}}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +123,7 @@ func TestRunHoldsAnAgyConversationUntilItEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := connect(t, dir)
-	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir})
+	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestRunReleasesAnAgyConversationAfterCarryingALimitedRunOn(t *testing.T) {
 	for _, name := range followup.MeteredEnv("codex") {
 		t.Setenv(name, "")
 	}
-	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir})
+	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

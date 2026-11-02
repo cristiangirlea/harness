@@ -251,7 +251,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			routeNote = plan.RetrievalNote(routeNote)
-			rec, err := runlog.CreateRouted(args.Backend, task, args.ContinueRunID, plan.Route(), routedBy, routeNote)
+			rec, err := runlog.CreateRouted(args.Backend, task, agent.ResolveSetup(args.Backend, task), args.ContinueRunID, plan.Route(), routedBy, routeNote)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 			}
@@ -329,7 +329,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if err != nil {
 					return mcp.CallResult{}, err
 				}
-				nrec, err := runlog.CreateContinuing(next.To, next.Task, rec.ID())
+				nrec, err := runlog.CreateContinuing(next.To, next.Task, agent.ResolveSetup(next.To, next.Task), rec.ID())
 				if err != nil {
 					return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 				}

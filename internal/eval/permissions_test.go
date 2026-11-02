@@ -32,7 +32,7 @@ func TestRecordWritersPrivate(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
-	w, err := runlog.Create("stub", agent.Task{})
+	w, err := runlog.Create("stub", agent.Task{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

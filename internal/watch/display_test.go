@@ -122,7 +122,7 @@ func TestWatchHidesOnlyBackendStartEvents(t *testing.T) {
 	for i, tc := range cases {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
-			w, err := runlog.Create("fake", agent.Task{Prompt: "test"})
+			w, err := runlog.Create("fake", agent.Task{Prompt: "test"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

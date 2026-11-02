@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -411,6 +412,11 @@ func TestJudgeUsesScratchHomeAndKeepsRealRunRecord(t *testing.T) {
 		rec, err := runlog.Load(got.RunID)
 		if err != nil || rec.Result.Status != agent.StatusOK {
 			t.Errorf("real run record = %+v, %v", rec, err)
+		}
+		if err == nil {
+			if want := agent.ResolveSetup(rec.Backend, rec.Task); !reflect.DeepEqual(rec.Setup, want) {
+				t.Errorf("setup = %+v, want %+v", rec.Setup, want)
+			}
 		}
 		if home := probe.homes[i]; home != "" {
 			if _, err := os.Stat(home); !os.IsNotExist(err) {

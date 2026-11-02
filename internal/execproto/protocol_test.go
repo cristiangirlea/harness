@@ -230,6 +230,10 @@ func TestAcceptedRunStreamsCompleteEventsAndRecordsTheAttempt(t *testing.T) {
 	if err != nil || rec.Task.AttemptID != "att-01" || !rec.Done || rec.Result.Status != agent.StatusOK || !rec.Result.ModelReported {
 		t.Fatalf("record: %+v %v", rec, err)
 	}
+	if want := agent.ResolveSetup(rec.Backend, rec.Task); !reflect.DeepEqual(rec.Setup, want) {
+		t.Errorf("setup = %+v, want %+v", rec.Setup, want)
+	}
+
 }
 
 func TestClaudeReviewTurnDefaultAndUnlimited(t *testing.T) {
@@ -431,7 +435,7 @@ func TestStorageFailureCancelsAndStillReportsTheRecordError(t *testing.T) {
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusCanceled}
 	})
 	h := openHarness(t, func(backend string, task agent.Task, continues, route string, routed *runlog.RoutedBy, note string) (record, error) {
-		w, err := runlog.CreateRouted(backend, task, continues, route, routed, note)
+		w, err := runlog.CreateRouted(backend, task, nil, continues, route, routed, note)
 		return &closedEvents{Writer: w}, err
 	})
 	h.next(t, "hello")
@@ -492,7 +496,7 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prev, err := runlog.Create("fake-exec", agent.Task{Prompt: "earlier", Dir: dir})
+	prev, err := runlog.Create("fake-exec", agent.Task{Prompt: "earlier", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +524,7 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 func TestAContinuationOfARecordWithABadModelIsRejectedWithoutARecord(t *testing.T) {
 	name := registerFake(t, nil)
 	dir := t.TempDir()
-	prev, err := runlog.Create(name, agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "x&calc"}})
+	prev, err := runlog.Create(name, agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "x&calc"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +560,7 @@ func TestContinuationWarnsInAcceptedNotesAndRecordsOneInfoEventOnlyAboveTheThres
 			if err != nil {
 				t.Fatal(err)
 			}
-			prev, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: dir})
+			prev, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: dir}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -836,7 +840,7 @@ func TestExecRefusesToDropAPinOnBackendSwitch(t *testing.T) {
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
 	})
 	dir := t.TempDir()
-	prev, err := runlog.Create("api", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	prev, err := runlog.Create("api", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

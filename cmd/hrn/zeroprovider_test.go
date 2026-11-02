@@ -28,7 +28,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
-	w, err := runlog.Create("codex", agent.Task{Prompt: "fixture prompt"})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "fixture prompt"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

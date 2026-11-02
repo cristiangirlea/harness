@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,15 @@ func TestRunToolCarriesALimitedRunOn(t *testing.T) {
 	if rec.Backend != "claude" || rec.Continues == "" {
 		t.Fatalf("run_id names %s continuing %q, want the claude run that carried it on", rec.Backend, rec.Continues)
 	}
+	prev, err := runlog.Load(rec.Continues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []runlog.Record{rec, prev} {
+		if want := agent.ResolveSetup(r.Backend, r.Task); !reflect.DeepEqual(r.Setup, want) {
+			t.Errorf("setup for %s = %+v, want %+v", r.Backend, r.Setup, want)
+		}
+	}
 	if rec.Task.Purpose != "review" {
 		t.Errorf("carried-on purpose = %q, want review", rec.Task.Purpose)
 	}
@@ -145,7 +155,7 @@ func TestRunToolExplainsAMeteredPartnerBeforeStartingAndKeepsItsModel(t *testing
 			dir := t.TempDir()
 			args := map[string]any{"prompt": "fix it", "backend": "codex", "model": "requested-model"}
 			if continuing {
-				rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+				rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -303,7 +313,7 @@ func TestLimitCarryOnRecordsContextWarning(t *testing.T) {
 			dir := t.TempDir()
 			s := connect(t, dir)
 			standIn(t)
-			w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: dir})
+			w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: dir}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -380,7 +390,7 @@ func TestRunToolDropsRoutedByWhenALimitMovesTheRoutedRun(t *testing.T) {
 func TestAContinuationMovedByALimitRecordsWhy(t *testing.T) {
 	s := connect(t, t.TempDir())
 	standIn(t)
-	first, err := runlog.Create("codex", agent.Task{Prompt: "first"})
+	first, err := runlog.Create("codex", agent.Task{Prompt: "first"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

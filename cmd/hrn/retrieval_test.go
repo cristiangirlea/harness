@@ -56,7 +56,7 @@ func TestRetrievalCompareRunModelIdentity(t *testing.T) {
 			v.Retrieval = "off"
 			task := m.Spec.Tasks[0]
 			cell := eval.RetrievalSample{TaskID: task.ID, Variant: v.Name, RunRefs: nil}
-			w, err := runlog.Create(v.Backend, agent.Task{Prompt: task.Prompt, Options: agent.Options{Model: tc.requested, Effort: v.Effort, RetrievalRevision: m.Revision}})
+			w, err := runlog.Create(v.Backend, agent.Task{Prompt: task.Prompt, Options: agent.Options{Model: tc.requested, Effort: v.Effort, RetrievalRevision: m.Revision}}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,7 +109,7 @@ func TestRetrievalCompareResolvedAliasCommand(t *testing.T) {
 	m.Spec.Matrix[1].RetrievalVersion = "version"
 	v := m.Spec.Matrix[0]
 	task := m.Spec.Tasks[0]
-	w, err := runlog.Create(v.Backend, agent.Task{Prompt: task.Prompt, Options: agent.Options{Model: v.Model, Effort: v.Effort, RetrievalRevision: m.Revision}})
+	w, err := runlog.Create(v.Backend, agent.Task{Prompt: task.Prompt, Options: agent.Options{Model: v.Model, Effort: v.Effort, RetrievalRevision: m.Revision}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

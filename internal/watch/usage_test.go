@@ -28,7 +28,7 @@ func chartOf(t *testing.T, body string) string {
 
 func TestTheRunPageChartsContextPerTurnAndMarksCompactions(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p"})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestTheRunPageChartsContextPerTurnAndMarksCompactions(t *testing.T) {
 
 func TestTheRunPageHasNoChartWithoutUsage(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("codex", agent.Task{Prompt: "p"})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestTheRunPageHasNoChartWithoutUsage(t *testing.T) {
 // so far, those before the page was opened included.
 func TestTheRunStreamRedrawsTheChartAsTurnsArrive(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p"})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestTheRunStreamRedrawsTheChartAsTurnsArrive(t *testing.T) {
 // came with, not once a turn.
 func TestTheRunStreamRedrawsTheChartOncePerPoll(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p"})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestTheChartThinsItsPointsAndRowsPastFiveHundredTurns(t *testing.T) {
 func TestTheChartMasksAKeyShapedModelName(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const secret = "sk-ant-Abcdefghijklmnop"
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p"})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestTheChartBlanksASecretInAModelName(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const secret = "Abcdefghijklmnop"
 	t.Setenv("SERVICE_TOKEN", secret)
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p"})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

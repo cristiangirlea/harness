@@ -210,7 +210,7 @@ func TestMCPFlowBatchReasonsErrorsAndRedaction(t *testing.T) {
 			t.Errorf("flow %q = %+v", id, bad)
 		}
 	}
-	w, err := runlog.Create("stub", agent.Task{Prompt: "hello"})
+	w, err := runlog.Create("stub", agent.Task{Prompt: "hello"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -699,7 +699,7 @@ func TestRunContinueInheritsAClassifiedPurposeWhenNoneWasDeclared(t *testing.T) 
 func TestRunContinueIgnoresAnInvalidStoredPurpose(t *testing.T) {
 	dir := t.TempDir()
 	s := connect(t, dir)
-	w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir, Purpose: "Bogus"})
+	w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir, Purpose: "Bogus"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -728,7 +728,7 @@ func TestContinueIncludesAContextWarningInItsAnswerWithoutRefusing(t *testing.T)
 		t.Run(fmt.Sprintf("context=%d/handoff=%v", n, tc.handoff), func(t *testing.T) {
 			dir := t.TempDir()
 			s := connect(t, dir)
-			w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir})
+			w, err := runlog.Create("stub", agent.Task{Prompt: "first", Dir: dir}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -835,7 +835,7 @@ func TestMCPContinuationKeepsItsContinuesReasonInsteadOfANote(t *testing.T) {
 
 func TestMCPFlowCapsALargeTreeAndFiltersControls(t *testing.T) {
 	s := connect(t, t.TempDir())
-	w, err := runlog.Create("stub", agent.Task{Prompt: "big"})
+	w, err := runlog.Create("stub", agent.Task{Prompt: "big"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

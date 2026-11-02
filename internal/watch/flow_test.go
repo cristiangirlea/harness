@@ -256,7 +256,7 @@ func TestFlowBatchPageAndJSON(t *testing.T) {
 func TestFlowRunStreamsChangesUntilClosed(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:test")
-	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestFlowStreamWakesBeforeTheNextPoll(t *testing.T) {
 			var id string
 			var appendStep func()
 			if kind == "run" {
-				w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"})
+				w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -349,7 +349,7 @@ func TestFlowStreamWakesBeforeTheNextPoll(t *testing.T) {
 func TestFlowStreamMasksToolSecrets(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:test")
-	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestFlowSummaryOfARunSaysHowItEnded(t *testing.T) {
 func TestFlowStreamRidesOutAResultCaughtMidWrite(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:test")
-	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "prompt"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -39,7 +39,7 @@ func refreshFixture(t *testing.T, dir string) string {
 			t.Fatalf("git: %s: %v", out, err)
 		}
 	}
-	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestRetrievalRefreshInputs(t *testing.T) {
 	defer agent.Register(old)
 	dir := t.TempDir()
 	id := refreshFixture(t, dir)
-	legacy, err := runlog.Create("codex", agent.Task{Prompt: "legacy", Dir: dir})
+	legacy, err := runlog.Create("codex", agent.Task{Prompt: "legacy", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

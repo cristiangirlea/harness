@@ -21,7 +21,7 @@ import (
 // finished records a run that ended with res, following continues when set.
 func finished(t *testing.T, continues string, task agent.Task, res agent.Result) string {
 	t.Helper()
-	w, err := runlog.CreateContinuing(res.Backend, task, continues)
+	w, err := runlog.CreateContinuing(res.Backend, task, nil, continues)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestSwitchingBackForksAndCatchesUp(t *testing.T) {
 func TestTheAPIConversationIsResumed(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +551,7 @@ func TestCarriedRecordUsesItsOwnOriginalsDespiteStoredID(t *testing.T) {
 func TestAResumedConversationCarriesItsOriginals(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +592,7 @@ func TestAResumedConversationCarriesItsOriginals(t *testing.T) {
 func TestAResumedConversationCarriesOriginalsPastALoweredCapAndReportsSkippedFiles(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_ORIGINALS_RUN_MAX", "1")
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: workspace(t)})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: workspace(t)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +641,7 @@ func TestAResumedConversationCarriesOriginalsPastALoweredCapAndReportsSkippedFil
 func TestOriginalsThatCannotBeCarriedOverAreReportedAndTheRunGoesOn(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -687,7 +687,7 @@ func TestOriginalsThatCannotBeCarriedOverAreReportedAndTheRunGoesOn(t *testing.T
 func TestARejectedRetrievalPinRefusesContinuation(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := workspace(t)
-	w, err := runlog.Create("api", agent.Task{Prompt: "task", Dir: dir, Options: agent.Options{Retrieval: "required"}})
+	w, err := runlog.Create("api", agent.Task{Prompt: "task", Dir: dir, Options: agent.Options{Retrieval: "required"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,7 +709,7 @@ func TestARejectedRetrievalPinRefusesContinuation(t *testing.T) {
 
 func TestAnUnfinishedRunIsRefused(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: workspace(t)})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: workspace(t)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -901,7 +901,7 @@ func TestAFreshHandoverStartsANewSessionOnTheSameBackend(t *testing.T) {
 
 func TestAFreshHandoverNeverReusesTheAPIConversation(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: workspace(t)})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: workspace(t)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,7 +951,7 @@ func TestOrdinaryContinueStillForksWhenFreshIsNotAsked(t *testing.T) {
 // freshRun records a finished run that took continues over by a fresh hand-over.
 func freshRun(t *testing.T, continues string, task agent.Task, res agent.Result) string {
 	t.Helper()
-	w, err := runlog.CreateContinuingRoute(res.Backend, task, continues, runlog.RouteFreshHandover)
+	w, err := runlog.CreateContinuingRoute(res.Backend, task, nil, continues, runlog.RouteFreshHandover)
 	if err != nil {
 		t.Fatal(err)
 	}
