@@ -126,7 +126,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 		}
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/knowledge/active" {
+		if r.URL.Path != "/v1/knowledge/active" && !strings.HasPrefix(r.URL.Path, "/v1/jobs/j_"+strings.Repeat("1", 32)) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		_, _ = w.Write([]byte(`{"generation":1}`))
@@ -156,14 +156,14 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"gc", repo}, "worktree"},
+		{[]string{"gc", repo}, "nothing to remove; 0 worktrees and 0 caches stay"},
 		{[]string{"runs"}, "fixture prompt"},
 		{[]string{"show", "--json", w.ID()}, "fixture prompt"},
-		{[]string{"flow", w.ID()}, w.ID()},
+		{[]string{"flow", w.ID()}, "run codex"},
 		{[]string{"report"}, "codex"},
 		{[]string{"batch", "show", "--json", "fixture-batch"}, "fixture-batch"},
 		{[]string{"eval", "list"}, "fixture-eval"},
-		{[]string{"runs", "prune", "--older-than", "9999d", "--dry-run"}, "run"},
+		{[]string{"runs", "prune", "--older-than", "9999d", "--dry-run"}, "would remove 0 runs, 0 batch records and 1 eval records"},
 		{[]string{"knowledge", "active", request}, `"generation": 1`},
 	}
 	checkReads := func(t *testing.T, env []string) {
@@ -172,6 +172,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 				cmd := exec.CommandContext(ctx, bin, tc.args...)
+				prepareZeroProviderCommand(cmd)
 				cmd.Env = env
 				out, err := cmd.CombinedOutput()
 				if err != nil || !strings.Contains(string(out), tc.want) {
@@ -227,6 +228,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			} {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				cmd := exec.CommandContext(ctx, bin, tc.args...)
+				prepareZeroProviderCommand(cmd)
 				cmd.Env = env
 				out, err := cmd.CombinedOutput()
 				cancel()
@@ -246,6 +248,8 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, bin, "mcp")
+			prepareZeroProviderCommand(cmd)
+			started := time.Now()
 			cmd.Env = env
 			cmd.Dir = repo
 			in, err := cmd.StdinPipe()
@@ -259,40 +263,49 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = in.Close(); _ = cmd.Wait(); assertNoZeroProviderChildren(t, cmd.Process.Pid) }()
+			defer func() { _ = in.Close(); _ = cmd.Wait(); assertNoZeroProviderChildren(t, cmd.Process.Pid, started) }()
 			var client mcp.Client
 			if err := client.Connect(ctx, out, in); err != nil {
 				t.Fatal(err)
 			}
-			found := map[string]bool{}
-			for _, tool := range client.Tools() {
-				found[tool.Name] = true
-			}
-			for _, name := range []string{"runs", "show"} {
-				if !found[name] {
-					t.Fatalf("tools/list lacks %s", name)
-				}
-			}
-			for _, tc := range []struct {
-				name string
+			remoteArgs := json.RawMessage(`{"tenant_id":"t_` + strings.Repeat("1", 32) + `","project_id":"p_` + strings.Repeat("1", 32) + `","job_id":"j_` + strings.Repeat("1", 32) + `"}`)
+			cases := map[string]struct {
 				args json.RawMessage
 				want string
 			}{
-				{"runs", json.RawMessage(`{}`), "fixture prompt"},
-				{"show", json.RawMessage(`{"run_id":"` + w.ID() + `"}`), "fixture prompt"},
-			} {
-				result, err := client.CallTool(ctx, tc.name, tc.args)
-				if err != nil || result.IsError || !strings.Contains(result.Text(), tc.want) {
-					t.Fatalf("%s: %v %+v", tc.name, err, result)
-				}
+				"runs":          {json.RawMessage(`{}`), "fixture prompt"},
+				"show":          {json.RawMessage(`{"run_id":"` + w.ID() + `"}`), "fixture prompt"},
+				"flow":          {json.RawMessage(`{"id":"` + w.ID() + `"}`), "run codex"},
+				"batch_show":    {json.RawMessage(`{"batch_id":"fixture-batch"}`), "fixture-batch"},
+				"backends":      {json.RawMessage(`{}`), "claude"},
+				"remote_status": {remoteArgs, "generation"},
+				"remote_events": {remoteArgs, "generation"},
 			}
+			for _, tool := range client.Tools() {
+				if !tool.Annotations.ReadOnly() {
+					continue
+				}
+				tc, ok := cases[tool.Name]
+				if !ok {
+					t.Fatalf("no fixture for read-only tool %s", tool.Name)
+				}
+				result, err := client.CallTool(ctx, tool.Name, tc.args)
+				if err != nil || result.IsError || !strings.Contains(result.Text(), tc.want) {
+					t.Fatalf("%s: %v %+v", tool.Name, err, result)
+				}
+				delete(cases, tool.Name)
+			}
+			if len(cases) != 0 {
+				t.Fatalf("tools/list lacks read-only tools: %v", cases)
+			}
+
 			if env[0] == "PATH="+path {
 				args, err := json.Marshal(map[string]string{"prompt": "fixture prompt", "backend": "claude", "dir": repo})
 				if err != nil {
 					t.Fatal(err)
 				}
 				result, err := client.CallTool(ctx, "run", args)
-				if err != nil || !result.IsError || !strings.Contains(result.Text(), "claude") {
+				if err != nil || !result.IsError || !strings.Contains(result.Text(), "claude not found on PATH") {
 					t.Fatalf("run: %v %+v", err, result)
 				}
 			}
@@ -309,6 +322,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, bin, "watch", "--addr", addr)
+			prepareZeroProviderCommand(cmd)
 			cmd.Env = env
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
@@ -370,6 +384,11 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 		probe += ".exe"
 	}
 	cmd := exec.Command(probe)
+	cmd.Env = env
+	if err := cmd.Run(); err == nil {
+		t.Fatal("shim without a log unexpectedly succeeded")
+	}
+	cmd = exec.Command(probe)
 	cmd.Env = shimEnv
 	if err := cmd.Run(); err == nil {
 		t.Fatal("recording shim unexpectedly succeeded")
@@ -392,18 +411,21 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 	if err := os.WriteFile(spec, specData, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"batch"} {
+	for _, name := range []string{"batch", "eval"} {
 		t.Run("execute_"+name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, bin, name, spec)
+			prepareZeroProviderCommand(cmd)
+			started := time.Now()
 			cmd.Env = env
 			out, err := cmd.CombinedOutput()
 			if cmd.Process == nil {
 				t.Fatalf("start: %v", err)
 			}
-			assertNoZeroProviderChildren(t, cmd.Process.Pid)
-			if ctx.Err() != nil || err == nil || !strings.Contains(string(out), "claude") {
+			assertNoZeroProviderChildren(t, cmd.Process.Pid, started)
+			// Eval currently reports a failed task but exits successfully.
+			if ctx.Err() != nil || (name == "batch" && err == nil) || (name == "eval" && err != nil) || !strings.Contains(string(out), "claude not found on PATH") {
 				t.Fatalf("%s: %v (%v)\n%s", name, err, ctx.Err(), out)
 			}
 		})
@@ -416,13 +438,15 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			t.Fatal(err)
 		}
 		cmd := exec.CommandContext(ctx, bin, "exec", "--protocol", "v1")
+		prepareZeroProviderCommand(cmd)
+		started := time.Now()
 		cmd.Env = env
 		cmd.Stdin = strings.NewReader(string(frame) + "\n")
 		out, err := cmd.CombinedOutput()
 		if cmd.Process == nil {
 			t.Fatalf("start: %v", err)
 		}
-		assertNoZeroProviderChildren(t, cmd.Process.Pid)
+		assertNoZeroProviderChildren(t, cmd.Process.Pid, started)
 		var rejected bool
 		for _, line := range strings.Split(string(out), "\n") {
 			var frame struct {
@@ -432,7 +456,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 					Message string `json:"message"`
 				} `json:"error"`
 			}
-			if json.Unmarshal([]byte(line), &frame) == nil && frame.Type == "rejected" && frame.Error.Code == "unavailable" && strings.Contains(frame.Error.Message, "claude") {
+			if json.Unmarshal([]byte(line), &frame) == nil && frame.Type == "rejected" && frame.Error.Code == "unavailable" && strings.Contains(frame.Error.Message, "claude not found on PATH") {
 				rejected = true
 			}
 		}
@@ -450,15 +474,17 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			}
 			args = append(args, "fixture prompt")
 			cmd := exec.CommandContext(ctx, bin, args...)
+			prepareZeroProviderCommand(cmd)
+			started := time.Now()
 			cmd.Env = env
 			out, err := cmd.CombinedOutput()
 			if cmd.Process == nil {
 				t.Fatalf("start: %v", err)
 			}
-			assertNoZeroProviderChildren(t, cmd.Process.Pid)
-			want := name
+			assertNoZeroProviderChildren(t, cmd.Process.Pid, started)
+			want := name + " not found on PATH"
 			if name == "" {
-				want = "claude"
+				want = "claude not found on PATH"
 			}
 			if name == "api" {
 				want = "ANTHROPIC_API_KEY"

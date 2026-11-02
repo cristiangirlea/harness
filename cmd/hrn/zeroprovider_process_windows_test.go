@@ -3,8 +3,10 @@
 package main
 
 import (
+	"os/exec"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -17,12 +19,16 @@ type zeroProviderProcessEntry struct {
 	Exe                          [260]uint16
 }
 
-func assertNoZeroProviderChildren(t *testing.T, pid int) {
+func prepareZeroProviderCommand(cmd *exec.Cmd) { cmd.WaitDelay = 5 * time.Second }
+
+func assertNoZeroProviderChildren(t *testing.T, pid int, started time.Time) {
 	t.Helper()
 	kernel := syscall.NewLazyDLL("kernel32.dll")
 	snapshot := kernel.NewProc("CreateToolhelp32Snapshot")
 	first := kernel.NewProc("Process32FirstW")
 	next := kernel.NewProc("Process32NextW")
+	open := kernel.NewProc("OpenProcess")
+	times := kernel.NewProc("GetProcessTimes")
 	h, _, err := snapshot.Call(2, 0)
 	if h == ^uintptr(0) {
 		t.Fatalf("process snapshot: %v", err)
@@ -46,6 +52,21 @@ func assertNoZeroProviderChildren(t *testing.T, pid int) {
 		changed = false
 		for _, e := range entries {
 			if parents[e.ParentPID] && !parents[e.PID] {
+				hproc, _, openErr := open.Call(0x1000, 0, uintptr(e.PID))
+				if hproc == 0 {
+					t.Errorf("open process %d: %v", e.PID, openErr)
+					continue
+				}
+				var created, exited, kernelTime, userTime syscall.Filetime
+				ok, _, timeErr := times.Call(hproc, uintptr(unsafe.Pointer(&created)), uintptr(unsafe.Pointer(&exited)), uintptr(unsafe.Pointer(&kernelTime)), uintptr(unsafe.Pointer(&userTime)))
+				syscall.CloseHandle(syscall.Handle(hproc))
+				if ok == 0 {
+					t.Errorf("process %d times: %v", e.PID, timeErr)
+					continue
+				}
+				if time.Unix(0, created.Nanoseconds()).Before(started) {
+					continue
+				}
 				parents[e.PID] = true
 				changed = true
 				t.Errorf("child process %d of %d remains", e.PID, e.ParentPID)
