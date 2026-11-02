@@ -147,8 +147,45 @@ Trimming would pay by share on these local runs: cutting a third of the text wou
 240 tokens per call, about 11% of a median api call there, and less on Anthropic's API where the
 prompt is larger. The definitions sit in the cached prefix, so most of those tokens are billed at
 the cache-read rate, and the money saved is smaller than the share.
-`TestToolDefinitionsStayUnderTheirByteBudget` (`internal/agent/tooldefs_test.go`) holds each
+`TestToolDefinitionsStayUnderTheirByteBudget` (`internal/agent/tooldefs_test.go`) held each
 mode under its size rounded up to 512 bytes: 1,536 read-only, 3,072 auto and yolo, 3,584 with shaping.
+
+### Trimmed
+
+2026-10-31, dry build using `APIBackend.ToolDefinitions` and the same JSON byte accounting as
+`scripts/tool-shapes.sh --definitions`. The before column is the current checkout immediately
+before trimming; it differs from the 2026-10-16 snapshot because definitions changed since then.
+The shell selected for `run_command` was bash. No MCP definitions are included.
+
+| Mode | Before bytes | After bytes |
+|---|---:|---:|
+| readonly | 1,487 | 1,169 |
+| auto | 2,914 | 2,268 |
+| yolo | 2,914 | 2,268 |
+| yolo with shaping | 3,578 | 2,932 |
+
+| Tool | Before bytes | After bytes |
+|---|---:|---:|
+| read_file | 472 | 372 |
+| list_files | 415 | 335 |
+| grep | 596 | 458 |
+| write_file | 393 | 290 |
+| edit_file | 554 | 433 |
+| run_command | 477 | 373 |
+| read_original | 663 | 663 |
+
+Per-tool sizes exclude array brackets and commas. Auto shrank by 646 bytes (22.2%); retaining
+limits, refusal rules and result details took precedence over the 30% target. The byte budgets now
+allow about 5% headroom. Readonly offers only `read_file`, `list_files` and `grep`; shaping adds
+only `read_original` to each mode. `read_original` keeps its full text: shortened, it cost the
+handle line its meaning, and a local-model eval (the hrn-evals shaping suite, shaped variant,
+2026-11-01) fell from 3/3 to 0/3 on the terminal task and from 2/3 to 1/3 on JSON.
+
+With `read_original` restored, the trimmed set passed 15 of 18 cells. Against a build of the same
+base, the terminal task (the shape that dominates real tool output) scored 3/6 in both; a run with
+`run_command` restored as well scored 1/6, so differences of two cells in six are this model's own
+variance. Those numbers say the remaining trims cost nothing measurable on this suite; they do
+not show a gain in quality.
 
 ## What a run loads
 
