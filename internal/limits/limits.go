@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -53,8 +53,8 @@ func load() map[string]entry {
 }
 
 // Note persists a known limit reset.
-func Note(backend string, res agent.Result) error {
-	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() {
+func Note(backend string, res kernel.Result) error {
+	if res.Status != kernel.StatusLimited || res.LimitResets.IsZero() {
 		return nil
 	}
 	mu.Lock()
@@ -100,7 +100,7 @@ func Until(backend string, now time.Time) time.Time {
 	mu.RLock()
 	m := load()
 	mu.RUnlock()
-	if e, ok := m[backend]; ok && e.Until.After(now) && !e.Until.After(now.Add(agent.MaxLimitWindow)) {
+	if e, ok := m[backend]; ok && e.Until.After(now) && !e.Until.After(now.Add(kernel.MaxLimitWindow)) {
 		return e.Until
 	}
 	return time.Time{}

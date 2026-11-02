@@ -1,7 +1,5 @@
 eval -> game (test)
 eval -> update (test)
-limits -> agent
-limits -> agent (test)
 server/cmd/hrn-worker -> internal/agent
 server/platform -> internal/agent
 server/platform -> internal/agent (test)
