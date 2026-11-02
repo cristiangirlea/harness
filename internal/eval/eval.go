@@ -471,8 +471,9 @@ func (r TaskRow) Score() string {
 }
 
 type Table struct {
-	Variants []VariantRow `json:"variants"`
-	Tasks    []TaskRow    `json:"tasks"`
+	Variants       []VariantRow   `json:"variants"`
+	Tasks          []TaskRow      `json:"tasks"`
+	EvidenceCounts map[string]int `json:"evidence_counts,omitempty"`
 }
 
 // Totals returns cell counts, costs including judging, and cost availability/estimate flags.
@@ -656,6 +657,20 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	}
 
 	var table Table
+	for _, c := range cells {
+		count := 0
+		for _, tr := range c.results {
+			for _, a := range tr.Attempts {
+				count += len(a.Result.Evidence)
+			}
+		}
+		if count > 0 {
+			if table.EvidenceCounts == nil {
+				table.EvidenceCounts = make(map[string]int)
+			}
+			table.EvidenceCounts[c.results[0].ID] = count
+		}
+	}
 	for _, v := range spec.Matrix {
 		name := v.Key()
 		row := VariantRow{Name: name, Statuses: map[string]int{}}

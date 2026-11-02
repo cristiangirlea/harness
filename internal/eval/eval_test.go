@@ -14,9 +14,27 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func TestEvidenceCountsByCell(t *testing.T) {
+	e := kernel.NewEvidence("gate", "test", []byte("ok"))
+	spec := Spec{}
+	res := batch.Result{Tasks: []batch.TaskResult{
+		{ID: "task.v.backend.r1", Attempts: []batch.Attempt{{Result: agent.Result{Evidence: []kernel.Evidence{e}}}}},
+		{ID: "task.v.backend.r1.u1", Attempts: []batch.Attempt{{Result: agent.Result{Evidence: []kernel.Evidence{e, e}}}}},
+	}}
+	table := Summarize(spec, res, nil)
+	if len(table.EvidenceCounts) != 1 || table.EvidenceCounts["task.v.backend.r1"] != 3 {
+		t.Fatalf("counts: %+v", table.EvidenceCounts)
+	}
+	data, err := json.Marshal(table)
+	if err != nil || !strings.Contains(string(data), `"evidence_counts":{"task.v.backend.r1":3}`) {
+		t.Fatalf("JSON %s: %v", data, err)
+	}
+}
 
 func TestVariantsOverrideLeanAndPreserveUnsetValues(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())

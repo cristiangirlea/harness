@@ -12,6 +12,7 @@ import (
 const MaxLimitWindow = 8 * 24 * time.Hour
 
 type Result struct {
+	Evidence              []Evidence        `json:"evidence,omitempty"`
 	ChangedFiles          []string          `json:"changed_files,omitempty"`
 	ChangedFilesTruncated bool              `json:"changed_files_truncated,omitempty"`
 	Commits               []string          `json:"commits,omitempty"`

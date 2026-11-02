@@ -16,6 +16,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/followup"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -735,6 +736,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			Status: flow.StatusStarted, Name: expectCommand(expect.String())})
 		gr := checkExpect(expect, att.Result.Final)
 		att.Gates = append(att.Gates, gr)
+		att.Result.Evidence = append(att.Result.Evidence, kernel.NewEvidence("gate", gr.Command, []byte(gr.Output)))
 		fw.Emit(gateEvent(id, plan.number, len(att.Gates), as, gr))
 		report(att)
 		if gr.ExitCode != 0 {
@@ -756,6 +758,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		if guard.fail && pass && (err != nil || len(changed) > 0) {
 			gr := protectGate(guard, changed, err)
 			att.Gates = append(att.Gates, gr)
+			att.Result.Evidence = append(att.Result.Evidence, kernel.NewEvidence("gate", gr.Command, []byte(gr.Output)))
 			fw.Emit(gateEvent(id, plan.number, len(att.Gates), as, gr))
 			pass = false
 			notify(Event{Task: id, Kind: "gate", Text: "✗ " + gr.Command})
@@ -771,6 +774,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 			stop := beating(gateBeat, func() { report(att) })
 			gr := runGate(ctx, task.Dir, g, plan.gateTimeout, env)
 			stop()
+			att.Result.Evidence = append(att.Result.Evidence, kernel.NewEvidence("gate", gr.Command, []byte(gr.Output)))
 			att.Gates = append(att.Gates, gr)
 			fw.Emit(gateEvent(id, plan.number, gateN, as, gr))
 			report(att)

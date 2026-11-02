@@ -75,12 +75,13 @@ type Usage struct {
 }
 
 type Event struct {
-	Time    time.Time       `json:"t"`
-	Kind    EventKind       `json:"kind"`
-	Text    string          `json:"text,omitempty"`
-	Tool    string          `json:"tool,omitempty"`
-	Input   json.RawMessage `json:"input,omitempty"`
-	IsError bool            `json:"is_error,omitempty"`
+	Evidence *Evidence       `json:"evidence,omitempty"`
+	Time     time.Time       `json:"t"`
+	Kind     EventKind       `json:"kind"`
+	Text     string          `json:"text,omitempty"`
+	Tool     string          `json:"tool,omitempty"`
+	Input    json.RawMessage `json:"input,omitempty"`
+	IsError  bool            `json:"is_error,omitempty"`
 	// Usage holds per-call counters, unlike Result.Usage.
 	Usage *Usage `json:"usage,omitempty"`
 	Quota *Quota `json:"quota,omitempty"`

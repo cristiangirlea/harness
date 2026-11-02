@@ -100,6 +100,21 @@ func TestLoadOfNoLedgerIsEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadLedgerWithEvidence(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := os.MkdirAll(Dir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"key":"fixture","evidence":{"kind":"gate","source":"test","hash":"abc","excerpt":"ok"}}` + "\n"
+	if err := os.WriteFile(ledgerPath(), []byte(line), 0600); err != nil {
+		t.Fatal(err)
+	}
+	events, unreadable, err := Load()
+	if err != nil || unreadable != 0 || len(events) != 1 {
+		t.Fatalf("events=%+v unreadable=%d err=%v", events, unreadable, err)
+	}
+}
+
 func TestAppendStartsOnANewLineAfterATornWrite(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {

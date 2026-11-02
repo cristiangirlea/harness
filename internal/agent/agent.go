@@ -148,6 +148,11 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		emit(e)
 	})
 	res.Retrieval = state
+	if state != nil && state.Packet != nil {
+		for _, entry := range state.Packet.Entries {
+			res.Evidence = append(res.Evidence, kernel.NewEvidence("knowledge", entry.ID, []byte(entry.Content)))
+		}
+	}
 	if task.Durable == nil {
 		res.ToolCalls = calls
 	}
