@@ -103,7 +103,7 @@ func TestRunWithoutFreshStillResumes(t *testing.T) {
 	if task := <-recorded; task.Resume == nil || task.Prompt != withCommitBlock("again", true) {
 		t.Errorf("ordinary continue should resume the conversation as before: resume=%v prompt=%q", task.Resume, task.Prompt)
 	}
-	if rec := continued(t, w.ID()); rec.ContinueRoute != "" {
+	if rec := continued(t, w.ID()); rec.ContinueRoute != "continued_session" {
 		t.Errorf("ordinary continue recorded route %q", rec.ContinueRoute)
 	}
 	if code, err := cmdRun([]string{"--continue", w.ID(), "--fresh", "--no-switch", "again"}); code != 0 || err != nil {

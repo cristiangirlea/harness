@@ -49,7 +49,7 @@ type Record struct {
 	Result  agent.Result `json:"result"`
 
 	Continues string `json:"continues,omitempty"`
-	// ContinueRoute is empty (default) or fresh_handover (record-briefed session).
+	// ContinueRoute records how a follow-up received prior context.
 	ContinueRoute string `json:"continue_route,omitempty"`
 	RecordError   string `json:"record_error,omitempty"`
 	Done          bool   `json:"-"`

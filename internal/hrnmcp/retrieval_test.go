@@ -41,6 +41,10 @@ func TestMCPContinueWithRetrievalOnAnotherBackendThanThePinIsRefused(t *testing.
 		t.Fatalf("a refused continuation must record nothing: %d runs, %v", len(recs), err)
 	}
 	got = s.call(t, "run", `{"prompt":"x","backend":"stub","continue_run_id":"`+w.ID()+`"}`)
+	if !got.IsError || !strings.Contains(got.Text(), "cannot carry over") {
+		t.Fatal(got)
+	}
+	got = s.call(t, "run", `{"prompt":"x","backend":"stub","retrieval":"off","continue_run_id":"`+w.ID()+`"}`)
 	if got.IsError || !strings.Contains(got.Text(), "--- request\n> p") {
 		t.Fatal(got)
 	}

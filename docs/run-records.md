@@ -106,8 +106,14 @@ with a `prompt_prefix`, its `digest` covers the prefix too. `setup_mixed: true` 
 A follow-up names the run it continues in `continues`. One started with `--fresh` (MCP
 `fresh`, exec `fresh`), or by the codex fresh default, also has
 `continue_route: "fresh_handover"`: it started a new
-session with a hand-over instead of resuming or forking one. The field is omitted for
-an ordinary follow-up, and old records without it still load.
+session with a hand-over instead of resuming or forking one. Other new follow-ups record
+`continued_session` when reusing a session, or `transcript_transfer` when carrying a
+transcript. Old records without the field still load; their route is unknown.
+The route note appears beneath the continuation route in `hrn show` and as a fact on the run page.
+The route note records a carried retrieval pin or an explicit refresh, including the
+old version and retrieval revision and, for refresh, the revision used for the active
+version. Refresh is also emitted as an info event. Older records without such a note
+still load.
 
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 

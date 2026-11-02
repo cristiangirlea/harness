@@ -830,10 +830,8 @@ func TestWrongCancelAndSecondStartLeaveTheRunRunning(t *testing.T) {
 	}
 }
 
-func TestExecTakesNoRetrievalOptInAndHandsAPinnedRunToAnotherBackend(t *testing.T) {
-	var got agent.Task
+func TestExecRefusesToDropAPinOnBackendSwitch(t *testing.T) {
 	registerFake(t, func(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
-		got = task
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
 	})
 	dir := t.TempDir()
@@ -861,17 +859,13 @@ func TestExecTakesNoRetrievalOptInAndHandsAPinnedRunToAnotherBackend(t *testing.
 		t.Fatalf("rejected start created records: %+v %v", recs, err)
 	}
 
-	// With retrieval off the transcript is handed over as before.
+	// An omitted retrieval field cannot discard a pin.
 	h = openHarness(t, nil)
 	h.next(t, "hello")
 	delete(req["task"].(map[string]any), "retrieval")
 	h.send(t, req)
-	h.next(t, "accepted")
-	h.next(t, "event") // the plan's notes: a new session, and the turn handed over
-	h.next(t, "event")
-	h.next(t, "result")
-	h.exit(t, 0)
-	if !strings.Contains(got.Prompt, "--- request\n> earlier") || got.RetrievalState != nil {
-		t.Fatalf("the hand-over should carry the transcript and no pin: %+v", got)
+	if e := h.next(t, "rejected")["error"].(map[string]any); !strings.Contains(fmt.Sprint(e["message"]), "cannot carry over") {
+		t.Fatalf("rejection: %+v", e)
 	}
+	h.exit(t, 2)
 }

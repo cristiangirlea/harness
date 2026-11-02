@@ -83,6 +83,7 @@ func runProperties(backends []any, defaultDir string) map[string]any {
 	props["fresh"] = map[string]any{"type": "boolean", "description": "With continue_run_id: start a new session on the backend instead of resuming or forking any, " +
 		"handed the earlier run over from its record (its task, status, final answer, changed files and gate results) ahead of prompt. " +
 		"Defaults to true for codex continuing codex; false resumes or forks the saved session."}
+	props["retrieval_refresh"] = map[string]any{"type": "boolean", "description": "With continue_run_id: refresh a moved retrieval pin on a fresh hand-over."}
 	return props
 }
 
@@ -135,12 +136,13 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(false), OpenWorldHint: mcp.Bool(true)},
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			args, err := decode[struct {
-				Prompt        string `json:"prompt"`
-				Purpose       string `json:"purpose,omitempty"`
-				Backend       string `json:"backend"`
-				Dir           string `json:"dir"`
-				ContinueRunID string `json:"continue_run_id"`
-				Fresh         *bool  `json:"fresh,omitempty"`
+				Prompt           string `json:"prompt"`
+				Purpose          string `json:"purpose,omitempty"`
+				Backend          string `json:"backend"`
+				Dir              string `json:"dir"`
+				ContinueRunID    string `json:"continue_run_id"`
+				Fresh            *bool  `json:"fresh,omitempty"`
+				RetrievalRefresh bool   `json:"retrieval_refresh,omitempty"`
 				agent.Options
 			}](call.Arguments)
 			if err != nil {
@@ -158,15 +160,15 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if args.Fresh != nil && *args.Fresh && args.ContinueRunID == "" {
 				return mcp.CallResult{}, errors.New("fresh needs continue_run_id: it starts a new session handed an earlier run over")
 			}
+			if args.RetrievalRefresh && args.ContinueRunID == "" {
+				return mcp.CallResult{}, errors.New("retrieval_refresh needs continue_run_id")
+			}
 			if args.AllowDangerous && !allowDangerous {
 				return mcp.CallResult{}, errDangerousRefused
 			}
 			modeGiven := args.Mode != ""
 			if !modeGiven {
 				args.Mode = agent.ModeReadOnly
-			}
-			if err := args.Options.Validate(); err != nil {
-				return mcp.CallResult{}, err
 			}
 			preference, err := agent.BackendPreferences(runlog.Home())
 			if err != nil {
@@ -185,18 +187,22 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			var plan followup.Plan
 			if args.ContinueRunID != "" {
-				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, Fresh: args.Fresh != nil && *args.Fresh, Resume: args.Fresh != nil && !*args.Fresh})
+				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, RetrievalRevision: args.RetrievalRevision, RetrievalTenant: args.RetrievalTenant, RetrievalProject: args.RetrievalProject, RetrievalVersion: args.RetrievalVersion, RetrievalRefresh: args.RetrievalRefresh, Fresh: args.Fresh != nil && *args.Fresh, Resume: args.Fresh != nil && !*args.Fresh})
 				if err != nil {
 					return mcp.CallResult{}, err
 				}
 				defer plan.Release()
 				args.Backend, args.Dir, args.Model = plan.Backend, plan.Dir, plan.Model
+				plan.ApplyRetrieval(&args.Options)
 				if !modeGiven && plan.Prev.Task.Mode != "" {
 					args.Mode = plan.Prev.Task.Mode
 				}
 				if args.Purpose == "" {
 					args.Purpose = purpose.Inherited(plan.Prev.Task.Purpose, plan.Prev.Task.Prompt)
 				}
+			}
+			if err := args.Options.Validate(); err != nil {
+				return mcp.CallResult{}, err
 			}
 			// Inherited workspaces require the same validation as explicit ones.
 			dir := args.Dir
@@ -242,6 +248,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
+			routeNote = plan.RetrievalNote(routeNote)
 			rec, err := runlog.CreateRouted(args.Backend, task, args.ContinueRunID, plan.Route(), routedBy, routeNote)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)

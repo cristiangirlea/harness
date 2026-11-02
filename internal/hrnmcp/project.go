@@ -74,7 +74,7 @@ func (p ProjectProfile) arguments(ctx context.Context, dir string, raw json.RawM
 	if args == nil {
 		args = map[string]json.RawMessage{}
 	}
-	for _, key := range []string{"continue_run_id", "fresh"} {
+	for _, key := range []string{"continue_run_id", "fresh", "retrieval_refresh"} {
 		if _, ok := args[key]; ok {
 			return nil, fmt.Errorf("project retrieval profile requires a fresh run")
 		}
@@ -151,6 +151,7 @@ func NewProjectServer(dir, profilePath string) (*mcp.Server, error) {
 	properties := tool.InputSchema["properties"].(map[string]any)
 	delete(properties, "continue_run_id")
 	delete(properties, "fresh")
+	delete(properties, "retrieval_refresh")
 	properties["backend"] = map[string]any{"type": "string", "enum": []string{profile.Backend}, "default": profile.Backend, "description": "Backend fixed by the project retrieval profile."}
 	properties["model"].(map[string]any)["default"] = profile.Options.Model
 	properties["retrieval"].(map[string]any)["default"] = "required"
