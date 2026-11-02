@@ -3,14 +3,12 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/kernel"
-	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -27,49 +25,9 @@ const (
 
 func ParseMode(s string) (Mode, error) { return kernel.ParseMode(s) }
 
-type Task struct {
-	Knowledge func() (retrieval.Searcher, error) `json:"-"`
-
-	ChildEnv        []string          `json:"-"`
-	OriginalPrompt  string            `json:"original_prompt,omitempty"`
-	RetrievalState  *retrieval.Record `json:"-"`
-	RetrievalRepair bool              `json:"-"`
-
-	// Durable accepts trusted coordinator state only.
-	Durable   *DurableExecution `json:"-"`
-	Prompt    string            `json:"prompt"`
-	Purpose   string            `json:"purpose,omitempty"`
-	Dir       string            `json:"dir"`
-	AttemptID string            `json:"attempt_id,omitempty"`
-
-	// Options shares configuration across entry points.
-	Options
-
-	// RunDir stores API history for continuation.
-	RunDir string `json:"-"`
-
-	// Resume seeds API history before Prompt.
-	Resume *Conversation `json:"-"`
-
-	// ForkSession preserves the original CLI session.
-	ForkSession string `json:"fork_session,omitempty"`
-
-	// FixRound requests one commit for continuation fixes.
-	FixRound bool `json:"-"`
-
-	// Approve defaults to denial when nil.
-	Approve func(ApprovalRequest) bool `json:"-"`
-}
-
-// Conversation is a run's saved history; Model is kept because thinking blocks are bound to it.
-type Conversation struct {
-	Retrieval *retrieval.Record `json:"retrieval,omitempty"`
-	Model     string            `json:"model"`
-	Messages  []Message         `json:"messages"`
-}
-
-// Message aliases an API turn without changing its blocks.
-type Message = apiMessage
+type Task = kernel.Task
+type Conversation = kernel.Conversation
+type Message = kernel.Message
 
 type EventKind = kernel.EventKind
 type Quota = kernel.Quota
@@ -101,29 +59,7 @@ const (
 
 type Result = kernel.Result
 
-// UnmarshalJSON also accepts legacy timeout_ns records.
-func (t *Task) UnmarshalJSON(data []byte) error {
-	type plain Task // no methods, so this does not recurse
-	aux := struct {
-		*plain
-		TimeoutNS int64 `json:"timeout_ns"`
-	}{plain: (*plain)(t)}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-	if t.Timeout == 0 && aux.TimeoutNS != 0 {
-		t.Timeout = Duration(aux.TimeoutNS)
-	}
-	return nil
-}
-
-// Backend reports failures in Result.Status rather than Go errors.
-type Backend interface {
-	Name() string
-	// Detect reports the backend source or unavailability.
-	Detect() (string, error)
-	Run(ctx context.Context, task Task, emit func(Event)) Result
-}
+type Backend = kernel.Backend
 
 // Capabilities describes options enforceable by a supervisor.
 type Capabilities struct {
