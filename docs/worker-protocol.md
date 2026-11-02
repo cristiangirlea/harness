@@ -8,7 +8,9 @@ one job attempt.
 After `hello`, the worker sends `start` with the attempt ID and task and, on recovery, the last
 accepted checkpoint. The child accepts only the `api` backend and an HTTP base URL whose host is
 `localhost` or a loopback IP, with no user information, using the same test as `RunOnce`. It
-offers no tools regardless of the start frame. Plain exec retains its existing rules. Credentials
+offers no tools; a start frame containing `mcp` or an unknown `tools` field is rejected. The API
+endpoint comes from `ANTHROPIC_BASE_URL`, which must be set. Redirects and proxy use are disabled.
+Plain exec retains its existing rules. Credentials
 enter the child only through its environment, filtered by `envpolicy`; checkpoints carry none.
 The worker validates the endpoint before spawning as well.
 

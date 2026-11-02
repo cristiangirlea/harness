@@ -11,6 +11,9 @@ import (
 	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime"
@@ -46,12 +49,23 @@ type recordFactory func(string, agent.Task, string, string, *runlog.RoutedBy, st
 // Run writes hello before reading input, runs at most one task, and returns the
 // protocol exit code. ctx carries interrupts; nil now uses the real clock.
 func Run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
-	return run(ctx, in, out, now, func(b string, t agent.Task, id, route string, routed *runlog.RoutedBy, note string) (record, error) {
-		return runlog.CreateRouted(b, t, agent.ResolveSetup(b, t), id, route, routed, note)
-	})
+	return runMode(ctx, in, out, now, false, createRecord)
+}
+
+// RunWorker applies the worker's restricted execution policy.
+func RunWorker(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
+	return runMode(ctx, in, out, now, true, createRecord)
+}
+
+func createRecord(b string, t agent.Task, id, route string, routed *runlog.RoutedBy, note string) (record, error) {
+	return runlog.CreateRouted(b, t, agent.ResolveSetup(b, t), id, route, routed, note)
 }
 
 func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, create recordFactory) int {
+	return runMode(ctx, in, out, now, false, create)
+}
+
+func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, worker bool, create recordFactory) int {
 	if now == nil {
 		now = time.Now
 	}
@@ -91,6 +105,25 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		return w.reject(req.AttemptID, "bad_request", "task is required")
 	}
 	t := req.Task
+	var workerURL string
+	if worker {
+		if t.Backend != "api" {
+			return w.reject(req.AttemptID, "unsupported", "worker requires the api backend")
+		}
+		workerURL = os.Getenv("ANTHROPIC_BASE_URL")
+		endpoint, err := url.Parse(workerURL)
+		if err != nil || endpoint == nil || endpoint.Scheme != "http" || endpoint.User != nil ||
+			!(endpoint.Hostname() == "localhost" || (net.ParseIP(endpoint.Hostname()) != nil && net.ParseIP(endpoint.Hostname()).IsLoopback())) {
+			return w.reject(req.AttemptID, "unsupported", "worker requires a local HTTP API endpoint")
+		}
+		var fields struct {
+			Task map[string]json.RawMessage `json:"task"`
+		}
+		_ = json.Unmarshal(first.data, &fields)
+		if _, set := fields.Task["mcp"]; set {
+			return w.reject(req.AttemptID, "unsupported", "worker does not allow MCP tools")
+		}
+	}
 	if strings.TrimSpace(t.Prompt) == "" || strings.TrimSpace(t.Dir) == "" || t.Mode == "" {
 		return w.reject(req.AttemptID, "bad_request", "prompt, dir and mode are required")
 	}
@@ -137,6 +170,13 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if err != nil {
 		return w.reject(req.AttemptID, "unsupported", err.Error())
 	}
+	if worker {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		b = &agent.APIBackend{BaseURL: workerURL, MaxRetries: 3, HTTPClient: &http.Client{
+			Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}}
+	}
 	if !preferences.Enabled(t.Backend) {
 		return w.reject(req.AttemptID, "unsupported", "backend disabled by worker preference")
 	}
@@ -174,7 +214,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	task := agent.Task{Prompt: t.Prompt, Purpose: t.Purpose, Dir: ws.Root, AttemptID: req.AttemptID, Options: opts}
 	turnDefault := resolve.ApplyTurnDefault(&task, t.Backend)
 	// A backend without MCP support must not inherit the default config.
-	if slices.Contains(caps.Options, "mcp") {
+	if !worker && slices.Contains(caps.Options, "mcp") {
 		if task.MCP, err = mcp.ConfigPaths(t.MCP); err != nil {
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
