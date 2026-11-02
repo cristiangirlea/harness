@@ -99,42 +99,7 @@ const (
 	StatusLimited   = kernel.StatusLimited
 )
 
-type Result struct {
-	ChangedFiles          []string          `json:"changed_files,omitempty"`
-	ChangedFilesTruncated bool              `json:"changed_files_truncated,omitempty"`
-	Commits               []string          `json:"commits,omitempty"`
-	EndHead               string            `json:"end_head,omitempty"`
-	Retrieval             *retrieval.Record `json:"retrieval,omitempty"`
-	// Usage describes the run-level token and cost totals.
-	Usage *UsageMetadata `json:"usage_metadata,omitempty"`
-	// RecoveryRequired requires reconciliation before replay.
-	RecoveryRequired bool   `json:"recovery_required,omitempty"`
-	Backend          string `json:"backend"`
-	Model            string `json:"model,omitempty"`
-	// ModelReported distinguishes actual and requested model names.
-	ModelReported bool   `json:"model_reported,omitempty"`
-	Status        Status `json:"status"`
-	Final         string `json:"final,omitempty"`
-	Error         string `json:"error,omitempty"`
-	Turns         int    `json:"turns"`
-	InputTokens   int64  `json:"input_tokens,omitempty"`
-	OutputTokens  int64  `json:"output_tokens,omitempty"`
-	CacheRead     int64  `json:"cache_read_tokens,omitempty"`
-	CacheWrite    int64  `json:"cache_write_tokens,omitempty"`
-	// ContextTokens includes caches for the last call; totals-only reports omit it.
-	ContextTokens int64 `json:"context_tokens,omitempty"`
-	// ToolCalls counts emitted calls or durable committed outcomes.
-	ToolCalls    int           `json:"tool_calls,omitempty"`
-	CostUSD      float64       `json:"cost_usd,omitempty"`
-	CostEstimate bool          `json:"cost_is_estimate,omitempty"`
-	Duration     time.Duration `json:"duration_ns"`
-	// Session permits CLI access and continuation.
-	Session string `json:"session,omitempty"`
-	// LimitResets is absent when the CLI gives no time.
-	LimitResets time.Time `json:"limit_resets,omitzero"`
-	// CLIVersion is the version the CLI recorded for this run.
-	CLIVersion string `json:"cli_version,omitempty"`
-}
+type Result = kernel.Result
 
 // UnmarshalJSON also accepts legacy timeout_ns records.
 func (t *Task) UnmarshalJSON(data []byte) error {
