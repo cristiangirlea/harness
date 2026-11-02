@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"os"
 	"path/filepath"
@@ -117,7 +117,10 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 	// Resumes already contain the pinned packet; retrieving again would duplicate it.
 	search := previous == nil || (task.Resume == nil && task.RetrievalRepair && state.Packet != nil && state.Packet.VersionID != "")
 	if search {
-		client, err := remote.NewFromEnv()
+		if task.Knowledge == nil {
+			return fail(fmt.Errorf("retrieval requires Knowledge"))
+		}
+		client, err := task.Knowledge()
 		if err != nil {
 			return fail(fmt.Errorf("retrieval transport configuration invalid"))
 		}
@@ -141,7 +144,7 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 			if ctx.Err() != nil {
 				return fail(fmt.Errorf("retrieval canceled"))
 			}
-			if state.Mode != "optional" || !remote.RetrievalUnavailable(err) {
+			if state.Mode != "optional" || !errors.Is(err, retrieval.ErrUnavailable) {
 				return fail(fmt.Errorf("retrieval request rejected or unavailable: %w", err))
 			}
 			if previous == nil {

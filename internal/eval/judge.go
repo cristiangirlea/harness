@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"os"
 	"strings"
 	"sync"
@@ -252,8 +253,9 @@ func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResu
 		timeout = defaultJudgeTimeout
 	}
 	task := agent.Task{
-		Prompt:   ev.prompt,
-		ChildEnv: []string{"HRN_HOME=" + home},
+		Knowledge: remote.SearcherFromEnv,
+		Prompt:    ev.prompt,
+		ChildEnv:  []string{"HRN_HOME=" + home},
 		// Neutral read-only copies expose context without revealing the variant.
 		Dir: ev.dir,
 		Options: agent.Options{Mode: agent.ModeReadOnly, Model: j.Model, Effort: j.Effort,

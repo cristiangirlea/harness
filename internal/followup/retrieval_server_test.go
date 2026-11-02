@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
@@ -57,7 +58,7 @@ func TestFreshPinIsRevalidatedByRetrievalServer(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer p.Release()
-		task := agent.Task{Prompt: "work", Dir: p.Dir, RunDir: t.TempDir()}
+		task := agent.Task{Prompt: "work", Dir: p.Dir, RunDir: t.TempDir(), Knowledge: remote.SearcherFromEnv}
 		p.ApplyRetrieval(&task.Options)
 		p.Apply(&task, task.RunDir, func(agent.Event) {})
 		called := false

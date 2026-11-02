@@ -1,6 +1,7 @@
 package runlog
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,14 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
+
+type recordSearcher struct{}
+
+func (recordSearcher) SearchKnowledge(context.Context, retrieval.Search) (retrieval.Packet, error) {
+	return retrieval.Packet{}, fmt.Errorf("unexpected search")
+}
+
+func fixtureKnowledge() (retrieval.Searcher, error) { return recordSearcher{}, nil }
 
 func testRetrievalText(content, source, revision string) string {
 	return fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "entry", source, revision, "", content)
@@ -72,7 +81,7 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 				json.Unmarshal(b, &p)
 				return &p
 			}
-			rec := Record{ID: "fixture", Backend: "api", Task: agent.Task{Prompt: "task", Options: agent.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalRevision: "revision", RetrievalVersion: "v_fixture"}}, Result: agent.Result{Retrieval: clone()}}
+			rec := Record{ID: "fixture", Backend: "api", Task: agent.Task{Knowledge: fixtureKnowledge, Prompt: "task", Options: agent.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalRevision: "revision", RetrievalVersion: "v_fixture"}}, Result: agent.Result{Retrieval: clone()}}
 			if tc.unavailable {
 				rec.Task.Retrieval, rec.Task.RetrievalVersion = "optional", ""
 			}

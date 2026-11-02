@@ -121,6 +121,9 @@ func TestRetrievalRefreshInputs(t *testing.T) {
 					found = true
 				}
 				if m["type"] == "result" {
+					if result := m["result"].(map[string]any); result["status"] != "ok" {
+						t.Fatalf("execution failed: %+v", result)
+					}
 					break
 				}
 			}

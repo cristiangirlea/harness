@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"maps"
 	"slices"
 	"strings"
@@ -243,7 +244,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
-			task := agent.Task{Prompt: args.Prompt, Purpose: args.Purpose, Dir: dir, Options: args.Options}
+			task := agent.Task{Prompt: args.Prompt, Purpose: args.Purpose, Dir: dir, Options: args.Options, Knowledge: remote.SearcherFromEnv}
 			turnDefault := task.ApplyTurnDefault(args.Backend)
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
@@ -344,6 +345,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 					call.Progress(agent.TurnDefaultInfo)
 					notes = append(notes, agent.TurnDefaultInfo)
 				}
+				next.Task.Knowledge = remote.SearcherFromEnv
 				next.Plan.Apply(&next.Task, nrec.Dir(), emit)
 				res = agent.Run(ctx, nb, next.Task, emit)
 				if recordErr != nil {

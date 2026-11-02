@@ -37,30 +37,41 @@ func (b retrievalBackend) Run(_ context.Context, task Task, _ func(Event)) Resul
 func retrievalOptions() Options {
 	return Options{Retrieval: "required", RetrievalTenant: "t_" + strings.Repeat("a", 32), RetrievalProject: "p_" + strings.Repeat("b", 32), RetrievalRevision: strings.Repeat("c", 40), Model: "fixture-model", Mode: ModeReadOnly}
 }
+
+type fixtureSearcher func(context.Context, retrieval.Search) (retrieval.Packet, error)
+
+func (f fixtureSearcher) SearchKnowledge(ctx context.Context, search retrieval.Search) (retrieval.Packet, error) {
+	return f(ctx, search)
+}
+
+var knowledgeFactory func() (retrieval.Searcher, error)
+
 func retrievalServer(t *testing.T, status int, text string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	calls := &atomic.Int32{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		if status != 200 {
-			w.WriteHeader(status)
-			return
-		}
-		var q retrieval.Search
-		json.NewDecoder(r.Body).Decode(&q)
-		id := q.VersionID
-		if id == "" {
-			id = "v_" + strings.Repeat("d", 64)
-		}
-		packetText := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "e_fixture", "fixture.md", q.Revision, "synthetic", text)
-		p := retrieval.Packet{VersionID: id, AuditID: "r_fixture", Text: packetText, Bytes: len(packetText), Digest: retrieval.TextDigest(packetText), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture", Source: "fixture.md", Content: text, Evidence: "synthetic"}}}
-		json.NewEncoder(w).Encode(p)
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("HRN_SERVER_URL", srv.URL)
+	knowledgeFactory = func() (retrieval.Searcher, error) {
+		return fixtureSearcher(func(_ context.Context, q retrieval.Search) (retrieval.Packet, error) {
+			calls.Add(1)
+			if status != 200 {
+				if status == 503 {
+					return retrieval.Packet{}, retrieval.ErrUnavailable
+				}
+				return retrieval.Packet{}, fmt.Errorf("rejected")
+			}
+			if strings.Contains(text, strings.Repeat("secret", 12)) {
+				return retrieval.Packet{}, fmt.Errorf("credential reflected")
+			}
+			id := q.VersionID
+			if id == "" {
+				id = "v_" + strings.Repeat("d", 64)
+			}
+			packetText := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "e_fixture", "fixture.md", q.Revision, "synthetic", text)
+			p := retrieval.Packet{VersionID: id, AuditID: "r_fixture", Text: packetText, Bytes: len(packetText), Digest: retrieval.TextDigest(packetText), QueryDigest: retrieval.TextDigest(q.Query), Entries: []retrieval.Entry{{ID: "e_fixture", Source: "fixture.md", Content: text, Evidence: "synthetic"}}}
+			return p, retrieval.ValidatePacket(p, q.VersionID, q.Query)
+		}), nil
+	}
 	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("secret", 12))
-	t.Setenv("HRN_SERVER_CA_FILE", "")
-	return srv, calls
+	return nil, calls
 }
 func TestRetrievalOffSkipsSearchAndFailuresRespectTheRequestedMode(t *testing.T) {
 	for _, tc := range []struct {
@@ -74,7 +85,7 @@ func TestRetrievalOffSkipsSearchAndFailuresRespectTheRequestedMode(t *testing.T)
 			calls := 0
 			opts := retrievalOptions()
 			opts.Retrieval = tc.mode
-			task := Task{Prompt: "original task", Options: opts, Dir: t.TempDir(), RunDir: t.TempDir()}
+			task := Task{Prompt: "original task", Options: opts, Knowledge: knowledgeFactory, Dir: t.TempDir(), RunDir: t.TempDir()}
 			var events []Event
 			result := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, task, func(e Event) { events = append(events, e) })
 			if tc.mode != "off" {
@@ -115,7 +126,7 @@ func TestRetrievalRejectsUnsafePacketsAndKeepsTheVersionPinOnRepair(t *testing.T
 			retrievalServer(t, 200, text)
 			var seen Task
 			calls := 0
-			result := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, Task{Prompt: "task", Options: retrievalOptions(), RunDir: t.TempDir()}, func(Event) {})
+			result := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, Task{Prompt: "task", Options: retrievalOptions(), Knowledge: knowledgeFactory, RunDir: t.TempDir()}, func(Event) {})
 			if calls != 0 || result.Status != StatusError {
 				t.Fatal("unsafe packet accepted")
 			}
@@ -125,7 +136,7 @@ func TestRetrievalRejectsUnsafePacketsAndKeepsTheVersionPinOnRepair(t *testing.T
 	var seen Task
 	calls := 0
 	b := retrievalBackend{"codex", &seen, &calls}
-	task := Task{Prompt: "task", Options: retrievalOptions(), RunDir: t.TempDir()}
+	task := Task{Prompt: "task", Options: retrievalOptions(), Knowledge: knowledgeFactory, RunDir: t.TempDir()}
 	first := Run(context.Background(), b, task, func(Event) {})
 	if first.Status != StatusOK {
 		t.Fatal(first)
@@ -159,7 +170,7 @@ func TestRetrievalRefusesDurableExecutionBeforeAnyRequest(t *testing.T) {
 	t.Setenv("HRN_SERVER_CA_FILE", "")
 	var seen Task
 	calls := 0
-	task := Task{Prompt: "durable", Options: retrievalOptions(), Durable: &DurableExecution{}, RunDir: t.TempDir()}
+	task := Task{Prompt: "durable", Options: retrievalOptions(), Knowledge: knowledgeFactory, Durable: &DurableExecution{}, RunDir: t.TempDir()}
 	result := Run(context.Background(), retrievalBackend{"api", &seen, &calls}, task, func(Event) {})
 	if result.Status != StatusError || !strings.Contains(result.Error, "retrieval is unsupported for durable execution") || calls != 0 {
 		t.Fatalf("durable retrieval was not refused: result=%+v backend calls=%d", result, calls)
@@ -175,7 +186,7 @@ func TestRetrievalAPIContinuationAppendOnly(t *testing.T) {
 	b.BaseURL, b.APIKey = srv.URL, "fixture"
 	opts := retrievalOptions()
 	opts.Model = "claude-opus-5"
-	task := Task{Prompt: "original", Options: opts, Dir: t.TempDir(), RunDir: t.TempDir()}
+	task := Task{Prompt: "original", Options: opts, Knowledge: knowledgeFactory, Dir: t.TempDir(), RunDir: t.TempDir()}
 	first := Run(context.Background(), b, task, func(Event) {})
 	if first.Status != StatusOK {
 		t.Fatal(first.Error)
@@ -226,7 +237,7 @@ func TestRetrievalNativeStdin(t *testing.T) {
 	t.Setenv("HRN_RETRIEVAL_HELPER", "1")
 	t.Setenv("HRN_OPERATOR_TOKEN", "operator-secret")
 	b := &CLIBackend{name: os.Args[0], promptStdin: true, args: func(Task, string) []string { return []string{"-test.run=^TestHelperRetrievalStdin$"} }, parse: parseCodexStream}
-	task := Task{Prompt: "native task", Options: retrievalOptions(), Dir: t.TempDir(), RunDir: t.TempDir()}
+	task := Task{Prompt: "native task", Options: retrievalOptions(), Knowledge: knowledgeFactory, Dir: t.TempDir(), RunDir: t.TempDir()}
 	result := Run(context.Background(), b, task, func(Event) {})
 	if result.Status != StatusOK || !strings.Contains(result.Final, "native task") || strings.Count(result.Final, "<project-reference>") != 1 {
 		t.Fatalf("native stdin: %+v", result)
@@ -237,7 +248,7 @@ func TestRetrievalFirstOptInAtContinuationBoundary(t *testing.T) {
 	_, network := retrievalServer(t, 200, "new pin")
 	conv := Conversation{Model: "fixture-model", Messages: []Message{{Role: "user", Content: []block{{"type": "text", "text": "prior"}}}}}
 	before, _ := json.Marshal(conv.Messages)
-	task := Task{Prompt: "new question", Options: retrievalOptions(), RunDir: t.TempDir(), Resume: &conv}
+	task := Task{Prompt: "new question", Options: retrievalOptions(), Knowledge: knowledgeFactory, RunDir: t.TempDir(), Resume: &conv}
 	prepared, state, e := prepareRetrieval(context.Background(), "api", task)
 	if e != nil {
 		t.Fatal(e)
@@ -253,7 +264,7 @@ func TestRetrievalRefusesNativeSessionContinuationBeforeSearch(t *testing.T) {
 	_, network := retrievalServer(t, 200, "fixture")
 	var seen Task
 	calls := 0
-	task := Task{Prompt: "follow up", Options: retrievalOptions(), ForkSession: "prior-session", RunDir: t.TempDir()}
+	task := Task{Prompt: "follow up", Options: retrievalOptions(), Knowledge: knowledgeFactory, ForkSession: "prior-session", RunDir: t.TempDir()}
 	result := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, task, func(Event) {})
 	if result.Status != StatusError || calls != 0 || network.Load() != 0 || !strings.Contains(result.Error, "native session") {
 		t.Fatalf("native continuation: result=%+v calls=%d network=%d", result, calls, network.Load())
@@ -265,12 +276,13 @@ func TestRetrievalKeepsThePinThroughAFailedReplay(t *testing.T) {
 	var seen Task
 	calls := 0
 	b := retrievalBackend{"codex", &seen, &calls}
-	task := Task{Prompt: "task", Options: retrievalOptions(), RunDir: t.TempDir()}
+	task := Task{Prompt: "task", Options: retrievalOptions(), Knowledge: knowledgeFactory, RunDir: t.TempDir()}
 	first := Run(context.Background(), b, task, func(Event) {})
 	if first.Status != StatusOK {
 		t.Fatal(first)
 	}
 	_, network = retrievalServer(t, 503, "")
+	task.Knowledge = knowledgeFactory
 	task.RetrievalState, task.RunDir, task.RetrievalRepair = first.Retrieval, t.TempDir(), true
 	task.Prompt = "task\nGate failed: ERR_REAL_FAILURE"
 	second := Run(context.Background(), b, task, func(Event) {})
@@ -278,6 +290,7 @@ func TestRetrievalKeepsThePinThroughAFailedReplay(t *testing.T) {
 		t.Fatal("repair search did not fail", second)
 	}
 	_, network = retrievalServer(t, 200, "verified fixture")
+	task.Knowledge = knowledgeFactory
 	pin := first.Retrieval.Packet.VersionID
 	for i, prev := 3, second.Retrieval; i <= 4; i++ {
 		task.RetrievalState, task.RunDir = prev, t.TempDir()
@@ -305,7 +318,7 @@ func TestRetrievalRetryEdgesOfTheFreshSearch(t *testing.T) {
 		var seen Task
 		calls := 0
 		prev := &retrieval.Record{Mode: "required", Scope: scope, Packet: packet, Failure: "retrieval failed: retrieval request rejected or unavailable"}
-		res := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, Task{Prompt: "task", Options: opts, RunDir: t.TempDir(), RetrievalState: prev}, func(Event) {})
+		res := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, Task{Prompt: "task", Options: opts, Knowledge: knowledgeFactory, RunDir: t.TempDir(), RetrievalState: prev}, func(Event) {})
 		if res.Status != StatusError || !strings.Contains(res.Error, "pin cannot be resumed") || calls != 0 || network.Load() != 0 {
 			t.Fatalf("result=%+v calls=%d searches=%d", res, calls, network.Load())
 		}
@@ -317,7 +330,7 @@ func TestRetrievalRetryEdgesOfTheFreshSearch(t *testing.T) {
 		o := opts
 		o.Retrieval = "optional"
 		prev := &retrieval.Record{Mode: "optional", Scope: scope, Failure: "optional retrieval unavailable"}
-		res := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, Task{Prompt: "task", Options: o, RunDir: t.TempDir(), RetrievalState: prev}, func(Event) {})
+		res := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, Task{Prompt: "task", Options: o, Knowledge: knowledgeFactory, RunDir: t.TempDir(), RetrievalState: prev}, func(Event) {})
 		if res.Status != StatusOK || calls != 1 || network.Load() != 0 || res.Retrieval == nil || !res.Retrieval.Replayed || res.Retrieval.Packet != nil {
 			t.Fatalf("result=%+v calls=%d searches=%d", res, calls, network.Load())
 		}

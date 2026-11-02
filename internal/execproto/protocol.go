@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"io"
 	"os"
 	"regexp"
@@ -252,6 +253,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 			emit(agent.Event{Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
 		}
 		plan.Apply(&task, rec.Dir(), emit)
+		task.Knowledge = remote.SearcherFromEnv
 		result <- agent.Run(ctx, b, task, emit)
 	}()
 	interrupt := ctx.Done()

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"io"
 	"os"
 	"os/signal"
@@ -404,7 +405,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if *declared == "" {
 		*declared = purpose.Inherited(plan.Prev.Task.Purpose, plan.Prev.Task.Prompt)
 	}
-	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts}
+	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts, Knowledge: remote.SearcherFromEnv}
 	turnDefault := task.ApplyTurnDefault(backend)
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
@@ -514,6 +515,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		if nextDefault {
 			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
 		}
+		next.Task.Knowledge = remote.SearcherFromEnv
 		next.Plan.Apply(&next.Task, nrec.Dir(), emit)
 		res = agent.Run(ctx, nb, next.Task, emit)
 		if err := nrec.Close(res); err != nil {
