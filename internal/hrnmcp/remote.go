@@ -136,7 +136,7 @@ func remoteSubmitTool() mcp.Tool {
 				args.MaxTurns = 3
 			}
 			options := agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: args.MaxCostUSD, MaxTurns: args.MaxTurns}
-			if err := options.Validate(); err != nil {
+			if err := agent.ValidateOptions(options); err != nil {
 				return mcp.CallResult{}, err
 			}
 			if err := remote.CheckCostCap(args.MaxCostUSD); err != nil {

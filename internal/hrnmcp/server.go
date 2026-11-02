@@ -203,7 +203,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 					args.Purpose = purpose.Inherited(plan.Prev.Task.Purpose, plan.Prev.Task.Prompt)
 				}
 			}
-			if err := args.Options.Validate(); err != nil {
+			if err := agent.ValidateOptions(args.Options); err != nil {
 				return mcp.CallResult{}, err
 			}
 			// Inherited workspaces require the same validation as explicit ones.

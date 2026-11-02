@@ -260,7 +260,7 @@ func (s *Spec) normalize() error {
 	default:
 		return fmt.Errorf("worktrees %q: use %q (the default) or %q", s.Worktrees, WorktreesSlots, WorktreesFresh)
 	}
-	if err := s.Options.Validate(); err != nil {
+	if err := agent.ValidateOptions(s.Options); err != nil {
 		return err
 	}
 	if err := checkRetryK(s.RetryK); err != nil {
@@ -303,7 +303,7 @@ func (s *Spec) normalize() error {
 		if t.Purpose == "" {
 			t.Purpose = purpose.Declared(t.Prompt)
 		}
-		if err := t.Options.Over(s.Options).Validate(); err != nil {
+		if err := agent.ValidateOptions(t.Options.Over(s.Options)); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkRetryK(t.RetryK); err != nil {

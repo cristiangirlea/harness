@@ -22,10 +22,10 @@ func (c counting) Run(context.Context, Task, func(Event)) Result {
 // server its CLI started, does not lift the guard, whoever asks it to.
 func TestAGuardedRunCannotLiftTheGuard(t *testing.T) {
 	t.Setenv(tools.GuardedVar, "1")
-	if err := (Options{AllowDangerous: true}).Validate(); !errors.Is(err, ErrGuardedRun) {
+	if err := ValidateOptions(Options{AllowDangerous: true}); !errors.Is(err, ErrGuardedRun) {
 		t.Errorf("Validate = %v, want ErrGuardedRun", err)
 	}
-	if err := (Options{Mode: ModeYolo}).Validate(); err != nil {
+	if err := ValidateOptions(Options{Mode: ModeYolo}); err != nil {
 		t.Errorf("a guarded hrn's own guarded run: %v", err)
 	}
 	// Run holds it for an entry point that does not validate.
@@ -39,7 +39,7 @@ func TestAGuardedRunCannotLiftTheGuard(t *testing.T) {
 	}
 
 	t.Setenv(tools.GuardedVar, "")
-	if err := (Options{AllowDangerous: true}).Validate(); err != nil {
+	if err := ValidateOptions(Options{AllowDangerous: true}); err != nil {
 		t.Errorf("the operator's hrn: %v", err)
 	}
 }
@@ -47,7 +47,7 @@ func TestAGuardedRunCannotLiftTheGuard(t *testing.T) {
 // Nor does it hand the agent's runs the operator's whole environment: only the operator may.
 func TestAGuardedRunCannotInheritTheEnvironment(t *testing.T) {
 	t.Setenv(tools.GuardedVar, "1")
-	if err := (Options{InheritEnv: true}).Validate(); !errors.Is(err, ErrGuardedInherit) {
+	if err := ValidateOptions(Options{InheritEnv: true}); !errors.Is(err, ErrGuardedInherit) {
 		t.Errorf("Validate = %v, want ErrGuardedInherit", err)
 	}
 	runs := 0
@@ -56,7 +56,23 @@ func TestAGuardedRunCannotInheritTheEnvironment(t *testing.T) {
 		t.Errorf("runs = %d, status %s; want refused before the backend runs", runs, res.Status)
 	}
 	t.Setenv(tools.GuardedVar, "")
-	if err := (Options{InheritEnv: true}).Validate(); err != nil {
+	if err := ValidateOptions(Options{InheritEnv: true}); err != nil {
 		t.Errorf("the operator's hrn: %v", err)
+	}
+}
+
+func TestValidateOptionsGuardOrder(t *testing.T) {
+	t.Setenv(tools.GuardedVar, "1")
+	for _, tc := range []struct {
+		o    Options
+		want string
+	}{
+		{Options{Retrieval: "bad", AllowDangerous: true}, "invalid retrieval mode"},
+		{Options{AllowDangerous: true, MaxCostUSD: -1}, ErrGuardedRun.Error()},
+		{Options{InheritEnv: true, Timeout: -1}, ErrGuardedInherit.Error()},
+	} {
+		if err := ValidateOptions(tc.o); err == nil || err.Error() != tc.want {
+			t.Errorf("ValidateOptions(%+v) = %v, want %s", tc.o, err, tc.want)
+		}
 	}
 }

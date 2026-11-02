@@ -41,7 +41,7 @@ func (p ProjectProfile) validate(ctx context.Context, dir string) error {
 	if p.Backend == "" || p.Options.Retrieval != "required" || p.Options.RetrievalVersion == "" || len(p.SourceHashes) == 0 {
 		return fmt.Errorf("project profile requires a backend, required retrieval, a version pin and reviewed source hashes")
 	}
-	if err := p.Options.Validate(); err != nil {
+	if err := agent.ValidateOptions(p.Options); err != nil {
 		return err
 	}
 	command := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD")

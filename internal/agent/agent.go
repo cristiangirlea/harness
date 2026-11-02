@@ -272,20 +272,11 @@ func DefaultBackendName() string {
 }
 
 // MinTaskBudget is the smallest task budget the API accepts.
-const MinTaskBudget = 20000
+const MinTaskBudget = kernel.MinTaskBudget
 
 // ValidateLimits rejects unsupported execution limits.
 func ValidateLimits(timeout time.Duration, maxCostUSD float64, taskBudget int) error {
-	if timeout < 0 {
-		return fmt.Errorf("timeout %s is negative", timeout)
-	}
-	if maxCostUSD < 0 {
-		return fmt.Errorf("max cost %.2f is negative", maxCostUSD)
-	}
-	if taskBudget != 0 && taskBudget < MinTaskBudget {
-		return fmt.Errorf("task budget %d is below the API minimum of %d tokens", taskBudget, MinTaskBudget)
-	}
-	return nil
+	return kernel.ValidateLimits(timeout, maxCostUSD, taskBudget)
 }
 
 // Enforce deadlines in each backend so every caller gets the same limit.
