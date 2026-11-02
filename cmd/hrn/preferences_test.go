@@ -122,7 +122,7 @@ func TestContinuingOnADisabledBackendIsRefusedBeforeReadingStdin(t *testing.T) {
 	orig, _ := agent.Get("codex")
 	agent.Register(recorder{name: "codex"})
 	t.Cleanup(func() { agent.Register(orig) })
-	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: t.TempDir()})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

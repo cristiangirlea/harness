@@ -71,7 +71,7 @@ func TestRetrievalMeasuredRunValidation(t *testing.T) {
 				if i == 0 && name == "wrong_revision" {
 					task.RetrievalRevision = "other"
 				}
-				w, e := runlog.Create(v.Backend, task)
+				w, e := runlog.Create(v.Backend, task, nil)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -85,7 +85,7 @@ func TestRetrievalMeasuredRunValidation(t *testing.T) {
 				if i == 0 && (name == "lost_failed_attempt" || name == "valid_failed_attempt") {
 					failed := res
 					failed.Status = agent.StatusError
-					fw, e := runlog.Create(v.Backend, task)
+					fw, e := runlog.Create(v.Backend, task, nil)
 					if e != nil {
 						t.Fatal(e)
 					}

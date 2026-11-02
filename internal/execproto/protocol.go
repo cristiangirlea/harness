@@ -47,7 +47,7 @@ type recordFactory func(string, agent.Task, string, string, *runlog.RoutedBy, st
 // protocol exit code. ctx carries interrupts; nil now uses the real clock.
 func Run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
 	return run(ctx, in, out, now, func(b string, t agent.Task, id, route string, routed *runlog.RoutedBy, note string) (record, error) {
-		return runlog.CreateRouted(b, t, id, route, routed, note)
+		return runlog.CreateRouted(b, t, agent.ResolveSetup(b, t), id, route, routed, note)
 	})
 }
 

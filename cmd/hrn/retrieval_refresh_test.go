@@ -37,7 +37,7 @@ func refreshFixture(t *testing.T, dir string) string {
 			t.Fatalf("git: %s: %v", out, err)
 		}
 	}
-	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

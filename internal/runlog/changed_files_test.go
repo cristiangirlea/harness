@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 func TestRunChangedFiles(t *testing.T) {
@@ -38,7 +38,7 @@ func TestRunChangedFiles(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "sub"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	w, err := Create("test", agent.Task{Dir: filepath.Join(dir, "sub")})
+	w, err := Create("test", kernel.Task{Dir: filepath.Join(dir, "sub")}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestRunChangedFiles(t *testing.T) {
 	git("add", "staged")
 	write(".gitignore", "ignored\n")
 	write("ignored", "ignored")
-	if err := w.Close(agent.Result{}); err != nil {
+	if err := w.Close(kernel.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := Load(w.ID())
@@ -81,7 +81,7 @@ func TestRunChangedFilesDoesNotRunIndexHook(t *testing.T) {
 	}
 	git("add", "tracked")
 	git("commit", "-m", "initial")
-	w, err := Create("test", agent.Task{Dir: dir})
+	w, err := Create("test", kernel.Task{Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestRunChangedFilesDoesNotRunIndexHook(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "new"), []byte("new"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{}); err != nil {
+	if err := w.Close(kernel.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
@@ -134,7 +134,7 @@ func TestRunChangedFilesDoesNotRunWorkspaceFilters(t *testing.T) {
 	write("b.txt", "before\n")
 	git("add", ".")
 	git("commit", "-m", "initial")
-	w, err := Create("test", agent.Task{Dir: dir})
+	w, err := Create("test", kernel.Task{Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestRunChangedFilesDoesNotRunWorkspaceFilters(t *testing.T) {
 	write(".gitattributes", "*.go filter=a=b\n*.txt filter=loud\n")
 	write("a.go", "after\n")
 	write("b.txt", "after\n")
-	if err := w.Close(agent.Result{}); err != nil {
+	if err := w.Close(kernel.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(marker); err == nil {
@@ -175,7 +175,7 @@ func TestRunChangedFilesTruncated(t *testing.T) {
 	git("config", "user.email", "test@example.test")
 	git("config", "user.name", "Test")
 	git("commit", "--allow-empty", "-m", "initial")
-	w, err := Create("test", agent.Task{Dir: dir})
+	w, err := Create("test", kernel.Task{Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestRunChangedFilesTruncated(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := w.Close(agent.Result{}); err != nil {
+	if err := w.Close(kernel.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := Load(w.ID())
@@ -198,11 +198,11 @@ func TestRunChangedFilesTruncated(t *testing.T) {
 
 func TestRunChangedFilesNonRepoAndOldRecord(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("test", agent.Task{Dir: t.TempDir()})
+	w, err := Create("test", kernel.Task{Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{}); err != nil {
+	if err := w.Close(kernel.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := Load(w.ID())
@@ -213,7 +213,7 @@ func TestRunChangedFilesNonRepoAndOldRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err = Load(w.ID())
-	if err != nil || r.Result.Status != agent.StatusOK || len(r.Result.ChangedFiles) != 0 {
+	if err != nil || r.Result.Status != kernel.StatusOK || len(r.Result.ChangedFiles) != 0 {
 		t.Fatalf("old record: %+v, %v", r, err)
 	}
 }

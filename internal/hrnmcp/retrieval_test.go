@@ -25,7 +25,7 @@ func TestMCPRunUsesTheRequestedRetrievalModeAndRejectsInvalidTransport(t *testin
 func TestMCPContinueWithRetrievalOnAnotherBackendThanThePinIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	s := connect(t, dir)
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

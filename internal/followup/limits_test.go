@@ -117,7 +117,7 @@ func TestPickCountsALimitReachedInTheCallersOwnWork(t *testing.T) {
 // limitedRun records a finished codex run that reached its limit.
 func limitedRun(t *testing.T, task agent.Task) string {
 	t.Helper()
-	rec, err := runlog.Create("codex", task)
+	rec, err := runlog.Create("codex", task, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestAfterRefusesToRepinRetrievalOnThePartner(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			standIn(t, true, true)
 			prev := agent.Task{Prompt: "fix the bug", Dir: t.TempDir(), Options: agent.Options{Retrieval: mode}}
-			rec, err := runlog.Create("codex", prev)
+			rec, err := runlog.Create("codex", prev, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -213,7 +213,7 @@ func TestACarryOnAfterAFreshHandoverDoesNotReachPastIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, err := runlog.Create("claude", agent.Task{Prompt: "one", Dir: dir})
+	old, err := runlog.Create("claude", agent.Task{Prompt: "one", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestACarryOnAfterAFreshHandoverDoesNotReachPastIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	prev := agent.Task{Prompt: "two", Dir: dir}
-	rec, err := runlog.CreateContinuingRoute("codex", prev, old.ID(), runlog.RouteFreshHandover)
+	rec, err := runlog.CreateContinuingRoute("codex", prev, nil, old.ID(), runlog.RouteFreshHandover)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestAPartnerThatWouldBillPerTokenDoesNotStandIn(t *testing.T) {
 			}
 
 			prev := agent.Task{Prompt: "p", Dir: t.TempDir()}
-			rec, err := runlog.Create(c.limited, prev)
+			rec, err := runlog.Create(c.limited, prev, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

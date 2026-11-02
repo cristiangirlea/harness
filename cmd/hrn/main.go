@@ -421,7 +421,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 
 	routeNote = plan.RetrievalNote(routeNote)
-	rec, err := runlog.CreateRouted(backend, task, *continueID, plan.Route(), routedBy, routeNote)
+	rec, err := runlog.CreateRouted(backend, task, agent.ResolveSetup(backend, task), *continueID, plan.Route(), routedBy, routeNote)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}
@@ -506,7 +506,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		nrec, err := runlog.CreateContinuing(next.To, next.Task, rec.ID())
+		nrec, err := runlog.CreateContinuing(next.To, next.Task, agent.ResolveSetup(next.To, next.Task), rec.ID())
 		if err != nil {
 			return 1, fmt.Errorf("creating run record: %w", err)
 		}

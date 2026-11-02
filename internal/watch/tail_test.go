@@ -145,7 +145,7 @@ func (c *collect) waitFor(t *testing.T, n int) {
 
 func TestFollowReturnsTheResultOnceTheRunFinishes(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("fake", agent.Task{Prompt: "do it"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "do it"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestFollowReturnsTheResultOnceTheRunFinishes(t *testing.T) {
 
 func TestFollowStopsWhenItsContextEnds(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("fake", agent.Task{Prompt: "forever"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "forever"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestFollowRefusesARunThatDoesNotExist(t *testing.T) {
 		t.Fatal("want an error for a run that is not there")
 	}
 	// A finished run planted where ../escape leads: only the id check stops it.
-	w, err := runlog.Create("fake", agent.Task{Prompt: "planted"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "planted"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestFollowRefusesARunThatDoesNotExist(t *testing.T) {
 // that is a run not finished yet, with its record from task.json.
 func TestAResultStillBeingWrittenIsNotTheEnd(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("fake", agent.Task{Prompt: "half"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "half"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

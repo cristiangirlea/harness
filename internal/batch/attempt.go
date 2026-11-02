@@ -691,7 +691,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 
 	turnDefault := !noTurnDefault && resolve.ApplyTurnDefault(&task, b.Name())
-	rec, err := runlog.CreateContinuing(b.Name(), task, plan.continues, plan.routedBy)
+	rec, err := runlog.CreateContinuing(b.Name(), task, agent.ResolveSetup(b.Name(), task), plan.continues, plan.routedBy)
 	if err != nil {
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
 	}

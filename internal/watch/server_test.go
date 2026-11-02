@@ -286,7 +286,7 @@ const hostile = `</pre><script>alert(1)</script><img src=x onerror=alert(2)>"'&`
 
 func hostileRun(t *testing.T) *runlog.Writer {
 	t.Helper()
-	w, err := runlog.Create("fake", agent.Task{Prompt: "fix it " + hostile, Dir: "/repo"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "fix it " + hostile, Dir: "/repo"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestTheRunPageShowsContextOnlyWhenTheBackendReportedIt(t *testing.T) {
 	srv := httptest.NewServer(New(context.Background(), Options{}))
 	defer srv.Close()
 	for _, n := range []int64{285000, 0} {
-		w, err := runlog.Create("fake", agent.Task{Prompt: "p"})
+		w, err := runlog.Create("fake", agent.Task{Prompt: "p"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -521,7 +521,7 @@ func TestTheRunStreamRefusesABadCursorAndAMissingRun(t *testing.T) {
 func TestIdsThatAreNotHrnsOwnAreRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
-	w, err := runlog.Create("fake", agent.Task{Prompt: "planted"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "planted"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,13 +635,13 @@ func TestTheBatchPageShowsEachTasksRunAndGates(t *testing.T) {
 
 func TestTheIndexListsRunsAndBatchesNewestFirst(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	old, err := runlog.Create("claude", agent.Task{Prompt: "older task\nwith more lines"})
+	old, err := runlog.Create("claude", agent.Task{Prompt: "older task\nwith more lines"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = old.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, Duration: 90 * time.Second, CostUSD: 0.0123})
 	time.Sleep(1100 * time.Millisecond) // run ids are ordered by the second they start
-	running, err := runlog.Create("codex", agent.Task{Prompt: "\n  newer task " + hostile})
+	running, err := runlog.Create("codex", agent.Task{Prompt: "\n  newer task " + hostile}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +688,7 @@ func TestTheIndexStreamSendsANewRunAfterItsFirstReplace(t *testing.T) {
 	// Create the run only after the first fragment has arrived, so only a
 	// later poll on this same connection can show it.
 	const prompt = "a run created after the index stream opened"
-	w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+	w, err := runlog.Create("fake", agent.Task{Prompt: prompt}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,7 +726,7 @@ func TestARunABatchStartedLinksToItsBatch(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	newRun := func(prompt string) string {
 		t.Helper()
-		w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+		w, err := runlog.Create("fake", agent.Task{Prompt: prompt}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -976,7 +976,7 @@ func TestSecretValuesFromTheEnvironmentAreRedacted(t *testing.T) {
 	const key = "sk-ant-api03-test-0123456789abcdefXYZ"
 	t.Setenv("ANTHROPIC_API_KEY", key)
 	t.Setenv("SHORT_TOKEN", "abc") // too short to be worth hiding, and would blank common text
-	w, err := runlog.Create("fake", agent.Task{Prompt: "show env"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "show env"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1036,7 +1036,7 @@ func TestASecretCutByACapDoesNotShowEitherHalf(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const key = "sk-ant-api03-Q9w8E7r6T5y4U3i2O1p0-abcdefghijklmnop"
 	t.Setenv("ANTHROPIC_API_KEY", key)
-	w, err := runlog.Create("fake", agent.Task{Prompt: "p"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1061,7 +1061,7 @@ func TestASecretCutByACapDoesNotShowEitherHalf(t *testing.T) {
 func TestAStreamErrorDoesNotTellThePhoneThePath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
-	w, err := runlog.Create("fake", agent.Task{Prompt: "p"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1084,7 +1084,7 @@ func TestAStreamErrorDoesNotTellThePhoneThePath(t *testing.T) {
 
 func TestALimitedRunIsAWarningWithItsResetTime(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("codex", agent.Task{Prompt: "fix it", Dir: "/repo"})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "fix it", Dir: "/repo"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1162,7 +1162,7 @@ func TestTheIndexLeadsEachRunWithItsRepositoryAndTask(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	newRun := func(dir, prompt string) string {
 		t.Helper()
-		w, err := runlog.Create("fake", agent.Task{Dir: dir, Prompt: prompt})
+		w, err := runlog.Create("fake", agent.Task{Dir: dir, Prompt: prompt}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1288,7 +1288,7 @@ func TestARunsTaskNameIsBlankedOfSecrets(t *testing.T) {
 	const secret = "Abcdefghijklmnop"
 	t.Setenv("SERVICE_TOKEN", secret)
 	prompt := secret + " starts this prompt"
-	w, err := runlog.Create("fake", agent.Task{Dir: "/home/me/myrepo/.hrn/worktrees/t1", Prompt: prompt})
+	w, err := runlog.Create("fake", agent.Task{Dir: "/home/me/myrepo/.hrn/worktrees/t1", Prompt: prompt}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1333,7 +1333,7 @@ func TestARunsTaskNameIsBlankedOfSecrets(t *testing.T) {
 // keeps the run's id under the label.
 func TestARowKeepsItsIDWhenTheRepositoryIsNamedLikeIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("fake", agent.Task{Prompt: "a run in a folder named like it"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "a run in a folder named like it"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1366,7 +1366,7 @@ func TestARowKeepsItsIDWhenTheRepositoryIsNamedLikeIt(t *testing.T) {
 func TestAGeneratedTaskNameIsEscaped(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	prompt := "<b>x</b> in the task's first words"
-	w, err := runlog.Create("fake", agent.Task{Dir: "/home/me/myrepo/.hrn/worktrees/t1", Prompt: prompt})
+	w, err := runlog.Create("fake", agent.Task{Dir: "/home/me/myrepo/.hrn/worktrees/t1", Prompt: prompt}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1461,7 +1461,7 @@ func TestTheRunPageNamesItsWorkspaceAndShortensItsPaths(t *testing.T) {
 	ws := filepath.Join(t.TempDir(), "demo-app")
 	readme := filepath.Join(ws, "README.md")
 	short := "." + string(filepath.Separator) + "README.md"
-	w, err := runlog.Create("fake", agent.Task{Prompt: "fix " + readme, Dir: ws})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "fix " + readme, Dir: ws}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1499,7 +1499,7 @@ func TestTheUsageChartShowsShortenedPathsOnTheRunPageAndInItsStream(t *testing.T
 		t.Fatal(err)
 	}
 	homeNote := filepath.Join(home, "notes.txt")
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: ws})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: ws}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1559,7 +1559,7 @@ func TestTheUsageChartShowsShortenedPathsOnTheRunPageAndInItsStream(t *testing.T
 func TestTheRunStreamShortensItsPaths(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	ws := filepath.Join(t.TempDir(), "demo-app")
-	w, err := runlog.Create("fake", agent.Task{Prompt: "p", Dir: ws})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "p", Dir: ws}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1624,7 +1624,7 @@ func TestTheIndexShortensThePathsInItsRowsForEveryViewer(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", key)
 	sep := string(filepath.Separator)
 	ws := filepath.Join(t.TempDir(), "demo-app")
-	w, err := runlog.Create("fake", agent.Task{Prompt: "fix " + filepath.Join(ws, "README.md") + " with " + filepath.Join(ws, key), Dir: ws})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "fix " + filepath.Join(ws, "README.md") + " with " + filepath.Join(ws, key), Dir: ws}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1663,7 +1663,7 @@ func TestTheIndexShortensThePathsInItsRowsForEveryViewer(t *testing.T) {
 func TestTheIndexClassifiesThePromptAsRecordedNotAsShortened(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	ws := filepath.Join(t.TempDir(), "project", "refactor")
-	w, err := runlog.Create("fake", agent.Task{Prompt: "Inspect " + filepath.Join(ws, "workflow.yml"), Dir: ws})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "Inspect " + filepath.Join(ws, "workflow.yml"), Dir: ws}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1725,7 +1725,7 @@ func TestMaskDisplayKeepsRecordedSecrets(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const token = "sk-test-display-only-0123456789"
 	const prompt = "API_KEY=fake-prompt-0123456789 do the task"
-	w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+	w, err := runlog.Create("fake", agent.Task{Prompt: prompt}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1776,7 +1776,7 @@ func TestBotMasksBeforeMakingWords(t *testing.T) {
 
 func TestQuotaEventsStayOffTheRunTimeline(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: t.TempDir()})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "p", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

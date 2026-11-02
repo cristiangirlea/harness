@@ -11,7 +11,7 @@ import (
 
 func recordRun(t *testing.T, events ...agent.Event) string {
 	t.Helper()
-	w, err := runlog.Create("claude", agent.Task{Prompt: "go", Dir: t.TempDir()})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "go", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

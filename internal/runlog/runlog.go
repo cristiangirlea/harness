@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/route/table"
@@ -42,11 +42,11 @@ type Record struct {
 	RouteNote string    `json:"route_note,omitempty"`
 	ID        string    `json:"id"`
 	// Owner is empty on records written before ownership; owner.Of reads that as the local user.
-	Owner   string       `json:"owner,omitempty"`
-	Backend string       `json:"backend"`
-	Started time.Time    `json:"started"`
-	Task    agent.Task   `json:"task"`
-	Result  agent.Result `json:"result"`
+	Owner   string        `json:"owner,omitempty"`
+	Backend string        `json:"backend"`
+	Started time.Time     `json:"started"`
+	Task    kernel.Task   `json:"task"`
+	Result  kernel.Result `json:"result"`
 
 	Continues string `json:"continues,omitempty"`
 	// ContinueRoute records how a follow-up received prior context.
@@ -54,7 +54,7 @@ type Record struct {
 	RecordError   string `json:"record_error,omitempty"`
 	Done          bool   `json:"-"`
 
-	Setup *agent.Setup `json:"setup,omitempty"`
+	Setup *kernel.Setup `json:"setup,omitempty"`
 }
 
 type Writer struct {
@@ -70,34 +70,34 @@ type Writer struct {
 }
 
 // Create starts a run record.
-func Create(backend string, task agent.Task) (*Writer, error) {
-	return create(backend, task, "", "", nil, "")
+func Create(backend string, task kernel.Task, setup *kernel.Setup) (*Writer, error) {
+	return create(backend, task, setup, "", "", nil, "")
 }
 
 // CreateContinuing records a continuation.
-func CreateContinuing(backend string, task agent.Task, continues string, routed ...*RoutedBy) (*Writer, error) {
+func CreateContinuing(backend string, task kernel.Task, setup *kernel.Setup, continues string, routed ...*RoutedBy) (*Writer, error) {
 	var by *RoutedBy
 	if len(routed) > 0 {
 		by = routed[0]
 	}
-	return create(backend, task, continues, "", by, "")
+	return create(backend, task, setup, continues, "", by, "")
 }
 
 // RouteFreshHandover means a new session briefed from the record.
 const RouteFreshHandover = "fresh_handover"
 
 // CreateContinuingRoute records a route, empty for default.
-func CreateContinuingRoute(backend string, task agent.Task, continues, route string, routed ...*RoutedBy) (*Writer, error) {
+func CreateContinuingRoute(backend string, task kernel.Task, setup *kernel.Setup, continues, route string, routed ...*RoutedBy) (*Writer, error) {
 	var by *RoutedBy
 	if len(routed) > 0 {
 		by = routed[0]
 	}
-	return CreateRouted(backend, task, continues, route, by, "")
+	return CreateRouted(backend, task, setup, continues, route, by, "")
 }
 
 // CreateRouted records route selection evidence alongside the task.
-func CreateRouted(backend string, task agent.Task, continues, route string, routed *RoutedBy, note string) (*Writer, error) {
-	return create(backend, task, continues, route, routed, note)
+func CreateRouted(backend string, task kernel.Task, setup *kernel.Setup, continues, route string, routed *RoutedBy, note string) (*Writer, error) {
+	return create(backend, task, setup, continues, route, routed, note)
 }
 
 var createEventsFile = func(path string) (io.WriteCloser, error) {
@@ -105,7 +105,7 @@ var createEventsFile = func(path string) (io.WriteCloser, error) {
 }
 
 // Failed starts must leave no partial record.
-func create(backend string, task agent.Task, continues, route string, routed *RoutedBy, note string) (w *Writer, err error) {
+func create(backend string, task kernel.Task, setup *kernel.Setup, continues, route string, routed *RoutedBy, note string) (w *Writer, err error) {
 	if _, err := ResolveHome(); err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func create(backend string, task agent.Task, continues, route string, routed *Ro
 		}
 	}()
 	w = &Writer{dir: dir, rec: Record{ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
-		Setup: agent.ResolveSetup(backend, task), RouteNote: note}}
+		Setup: setup, RouteNote: note}}
 	w.gitRoot, w.rec.StartHead = startGit(task.Dir)
 	if routed != nil {
 		by := *routed
@@ -141,7 +141,7 @@ func (w *Writer) ID() string  { return w.rec.ID }
 func (w *Writer) Dir() string { return w.dir }
 
 // Event records whole events, skipping fragments.
-func (w *Writer) Event(e agent.Event) {
+func (w *Writer) Event(e kernel.Event) {
 	if e.Partial {
 		return
 	}
@@ -216,7 +216,7 @@ func CloseMessage(err error) string {
 	return "run record incomplete: " + err.Error()
 }
 
-func (w *Writer) Close(res agent.Result) error {
+func (w *Writer) Close(res kernel.Result) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.closeError = w.events.Close()
@@ -364,7 +364,7 @@ func Load(id string) (Record, error) {
 	return rec, nil
 }
 
-func Events(id string) ([]agent.Event, error) {
+func Events(id string) ([]kernel.Event, error) {
 	if err := validID(id); err != nil {
 		return nil, err
 	}
@@ -376,7 +376,7 @@ func Events(id string) ([]agent.Event, error) {
 		return nil, err
 	}
 	defer f.Close()
-	var out []agent.Event
+	var out []kernel.Event
 	r := bufio.NewReader(f)
 	checked, recoverBroken := false, false
 	for {
@@ -385,7 +385,7 @@ func Events(id string) ([]agent.Event, error) {
 			return out, readErr
 		}
 		if line = bytes.TrimSpace(line); len(line) != 0 {
-			var e agent.Event
+			var e kernel.Event
 			if err := json.Unmarshal(line, &e); err != nil {
 				if !checked {
 					// Skip broken lines only after a saved recording failure.
@@ -409,8 +409,8 @@ func Events(id string) ([]agent.Event, error) {
 var ErrNoConversation = errors.New("no saved conversation")
 
 // LoadConversation returns a record and saved API history.
-func LoadConversation(id string) (Record, agent.Conversation, error) {
-	var conv agent.Conversation
+func LoadConversation(id string) (Record, kernel.Conversation, error) {
+	var conv kernel.Conversation
 	rec, err := Load(id)
 	if err != nil {
 		return rec, conv, err
@@ -438,7 +438,7 @@ func LoadConversation(id string) (Record, agent.Conversation, error) {
 		if saved == nil {
 			return rec, conv, fmt.Errorf("empty persisted retrieval")
 		}
-		if err := agent.ValidateContinuationPin(saved, &conv); err != nil {
+		if err := kernel.ValidateContinuationPin(saved, &conv); err != nil {
 			return rec, conv, err
 		}
 		if !rec.Done {
@@ -463,7 +463,7 @@ func LoadConversation(id string) (Record, agent.Conversation, error) {
 			return rec, conv, fmt.Errorf("saved task differs from retrieval scope or mode")
 		}
 	}
-	return rec, conv, agent.ValidateContinuationPin(rec.Result.Retrieval, &conv)
+	return rec, conv, kernel.ValidateContinuationPin(rec.Result.Retrieval, &conv)
 }
 
 // Chain returns runs oldest first and names any missing predecessor.

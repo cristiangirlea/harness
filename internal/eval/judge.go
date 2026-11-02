@@ -262,7 +262,7 @@ func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResu
 		Options: agent.Options{Mode: agent.ModeReadOnly, Model: j.Model, Effort: j.Effort,
 			Timeout: agent.Duration(timeout), NoInstructions: true},
 	}
-	rec, err := runlog.Create(b.Name(), task)
+	rec, err := runlog.Create(b.Name(), task, agent.ResolveSetup(b.Name(), task))
 	if err != nil {
 		jd.Error = "creating run record: " + err.Error()
 		return jd
