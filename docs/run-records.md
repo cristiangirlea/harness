@@ -5,7 +5,7 @@
 ## Run records
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
-Results may include `evidence` records for gate output and retrieved knowledge entries; events may carry one `evidence` record. Each contains `kind`, `source`, a SHA-256 `hash` of the recorded content, and a masked UTF-8 `excerpt` of at most 2 KiB. Gate output is the stored, capped output. Batch gate evidence is stored on the attempt result. Eval tables optionally include `evidence_counts`, mapping cell IDs to counts across attempts and reruns. Older records without these fields still load.
+Results may include `evidence` records for gate output and retrieved knowledge entries; events may carry one `evidence` record. Each contains `kind`, a masked `source`, a SHA-256 `hash` of the recorded content, and a masked UTF-8 `excerpt` of at most 2 KiB. Gate output is the stored, capped output. Batch gate evidence is stored on the attempt result. Eval tables optionally include `evidence_counts`, mapping cell IDs to counts across attempts and reruns. Older records without these fields still load.
 On Unix, newly created record directories use mode 0700 and record files use mode 0600; existing permissions are not changed.
 
 Batch record saves retry permission errors during rename with growing pauses for up to

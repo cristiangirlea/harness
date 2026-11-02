@@ -18,3 +18,10 @@ func TestNewEvidence(t *testing.T) {
 		t.Fatalf("unsafe excerpt: %q", e.Excerpt)
 	}
 }
+
+func TestNewEvidenceMasksASecretInTheSource(t *testing.T) {
+	e := NewEvidence("gate", "API_TOKEN=secretvalue make test", []byte("ok"))
+	if strings.Contains(e.Source, "secretvalue") || !strings.Contains(e.Source, "make test") {
+		t.Fatalf("source not masked: %q", e.Source)
+	}
+}

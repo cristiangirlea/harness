@@ -16,7 +16,7 @@ type Evidence struct {
 	Excerpt string `json:"excerpt,omitempty"`
 }
 
-// NewEvidence hashes the original content and masks the bounded excerpt.
+// NewEvidence hashes the original content and masks the source and the bounded excerpt.
 func NewEvidence(kind, source string, content []byte) Evidence {
 	hash := sha256.Sum256(content)
 	excerpt := strings.ToValidUTF8(mask.Text(string(content)), "�")
@@ -26,5 +26,5 @@ func NewEvidence(kind, source string, content []byte) Evidence {
 			excerpt = excerpt[:len(excerpt)-1]
 		}
 	}
-	return Evidence{Kind: kind, Source: source, Hash: fmt.Sprintf("%x", hash), Excerpt: excerpt}
+	return Evidence{Kind: kind, Source: mask.Text(source), Hash: fmt.Sprintf("%x", hash), Excerpt: excerpt}
 }
