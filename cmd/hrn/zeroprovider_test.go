@@ -17,6 +17,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -424,12 +425,68 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 				t.Fatalf("start: %v", err)
 			}
 			assertNoZeroProviderChildren(t, cmd.Process.Pid, started)
-			// Eval currently reports a failed task but exits successfully.
-			if ctx.Err() != nil || (name == "batch" && err == nil) || (name == "eval" && err != nil) || !strings.Contains(string(out), "claude not found on PATH") {
+			if ctx.Err() != nil || err == nil || !strings.Contains(string(out), "claude not found on PATH") {
 				t.Fatalf("%s: %v (%v)\n%s", name, err, ctx.Err(), out)
 			}
 		})
 	}
+	t.Run("execute_eval_missing_key", func(t *testing.T) {
+		data, err := json.Marshal(map[string]any{"dir": repo, "tasks": []any{map[string]string{"id": "task", "prompt": "fixture"}}, "matrix": []any{map[string]string{"backend": "api"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(home, "api-eval.json")
+		if err := os.WriteFile(file, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, "eval", file)
+		prepareZeroProviderCommand(cmd)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if ctx.Err() != nil || err == nil || !strings.Contains(string(out), "ANTHROPIC_API_KEY") || !strings.Contains(string(out), "api:") {
+			t.Fatalf("eval: %v (%v)\n%s", err, ctx.Err(), out)
+		}
+	})
+	t.Run("eval_failed_gate", func(t *testing.T) {
+		original, _ := agent.Get("claude")
+		calls := 0
+		agent.Register(scripted{"claude", func(agent.Task) agent.Result {
+			calls++
+			return agent.Result{Status: agent.StatusOK, Final: "done", Turns: 2}
+		}})
+		defer agent.Register(original)
+		data, err := json.Marshal(map[string]any{"dir": repo, "allow_dirty": true, "gate": []string{"false"}, "tasks": []any{map[string]string{"id": "task", "prompt": "fixture"}}, "matrix": []any{map[string]string{"backend": "claude"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(home, "gate-eval.json")
+		if err := os.WriteFile(file, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		code, err := cmdEval([]string{file})
+		if err != nil || code != 0 || calls != 1 {
+			t.Fatalf("code=%d err=%v calls=%d", code, err, calls)
+		}
+		records, _, err := eval.ListAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, rec := range records {
+			if len(rec.Spec.Gate) == 1 && rec.Spec.Gate[0] == "false" && len(rec.Results) == 1 && rec.Results[0].Status == batch.StatusFail && len(rec.Results[0].Attempts) == 1 {
+				for _, gate := range rec.Results[0].Attempts[0].Gates {
+					if gate.Command == "false" && gate.ExitCode != 0 {
+						found = true
+					}
+				}
+			}
+		}
+		if !found {
+			t.Fatal("failed gate was not recorded")
+		}
+	})
 	t.Run("exec_start", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

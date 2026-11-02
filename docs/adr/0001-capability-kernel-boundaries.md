@@ -347,8 +347,6 @@ The test (step 2) builds `hrn` once and runs it with:
   `hrn exec` start frame, the MCP run tool) fail within a timeout, exit non-zero or return an error
   result, name the missing provider (executable or key), and leave no child process behind.
 
-Known gaps: `hrn eval` reports a missing provider and zero started cells but exits 0.
-
 The fixture model (`server/cmd/hrn-fixture-model`) and `TestHelper*` processes remain the way
 tests exercise task execution without a provider.
 

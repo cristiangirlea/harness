@@ -935,11 +935,45 @@ func cmdEval(args []string) (int, error) {
 			}
 		}
 	}
+	if unavailable := evalUnavailableProviders(res); unavailable != "" {
+		return 1, errors.New("no eval cell started: " + unavailable)
+	}
 	// A failing variant is data; a failing eval is not.
 	if failed {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+func evalUnavailableProviders(res batch.Result) string {
+	if len(res.Tasks) == 0 {
+		return ""
+	}
+	var reasons []string
+	seen := map[string]bool{}
+	for _, task := range res.Tasks {
+		if len(task.Attempts) == 0 {
+			return ""
+		}
+		for _, attempt := range task.Attempts {
+			if attempt.DidNotStart == "" {
+				return ""
+			}
+			backend, err := agent.Get(attempt.Backend)
+			if err != nil {
+				return ""
+			}
+			_, err = backend.Detect()
+			if err == nil || !strings.Contains(attempt.DidNotStart, err.Error()) {
+				return ""
+			}
+			if !seen[attempt.Backend] {
+				seen[attempt.Backend] = true
+				reasons = append(reasons, attempt.Backend+": "+err.Error())
+			}
+		}
+	}
+	return strings.Join(reasons, "; ")
 }
 
 func printEval(r *renderer, rec eval.Record) {
