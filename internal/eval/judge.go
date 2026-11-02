@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"os"
 	"strings"
 	"sync"
@@ -62,11 +63,11 @@ func (j *Judge) rubricFor(task string) string {
 }
 
 func (j *Judge) check(tasks []batch.Task) error {
-	p, err := agent.BackendPreferences(runlog.Home())
+	p, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
-	if err := p.Check(firstOf(j.Backend, agent.DefaultBackendNameIn(runlog.Home()))); err != nil {
+	if err := p.Check(firstOf(j.Backend, resolve.DefaultBackendNameIn(runlog.Home()))); err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
 	if j.Backend != "" {
@@ -113,7 +114,7 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 		defer notifyMu.Unlock()
 		report(e)
 	}
-	b, err := agent.Get(firstOf(j.Backend, agent.DefaultBackendNameIn(runlog.Home())))
+	b, err := agent.Get(firstOf(j.Backend, resolve.DefaultBackendNameIn(runlog.Home())))
 	if err != nil {
 		notify(batch.Event{Kind: "judge", Text: "judge: " + err.Error()})
 		return nil

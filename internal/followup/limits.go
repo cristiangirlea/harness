@@ -9,13 +9,14 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 // Partner prefers ready replacements, then installed ones for diagnostics, or "".
 // Without a preference, claude and codex stand in for each other.
 func Partner(backend string, now time.Time, spent Spent) string {
-	p, err := agent.BackendPreferences(runlog.Home())
+	p, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return ""
 	}
@@ -57,7 +58,7 @@ func Note(backend string, res agent.Result) error {
 	if res.Status != agent.StatusLimited || res.LimitResets.IsZero() {
 		return nil
 	}
-	if _, err := agent.BackendPreferences(runlog.Home()); err != nil {
+	if _, err := resolve.BackendPreferences(runlog.Home()); err != nil {
 		return err
 	}
 	return limits.Note(backend, res)
@@ -145,7 +146,7 @@ func Choose(backend, continueID string) (string, string) {
 		}
 	}
 	if meant == "" {
-		meant = agent.DefaultBackendNameIn(runlog.Home())
+		meant = resolve.DefaultBackendNameIn(runlog.Home())
 	}
 	pick, why, _ := Pick(meant, time.Now(), nil)
 	if pick != meant {

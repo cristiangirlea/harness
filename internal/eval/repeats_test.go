@@ -11,6 +11,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -308,7 +309,7 @@ func TestHarnessVariantsReachTheirCellsOnlyOnBackendsThatApplyThem(t *testing.T)
 	spec := testSpec("somewhere")
 	spec.Matrix = []Variant{{Name: "default"}}
 	if _, err := Expand(spec, "abc12"); err != nil && strings.Contains(err.Error(), "only supported") {
-		t.Errorf("default backend %s: %v", agent.DefaultBackendNameIn(runlog.Home()), err)
+		t.Errorf("default backend %s: %v", resolve.DefaultBackendNameIn(runlog.Home()), err)
 	}
 }
 

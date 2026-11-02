@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"maps"
 	"slices"
 	"strings"
@@ -108,7 +109,7 @@ func text(s string, structured any, isError bool) mcp.CallResult {
 
 func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	names := agent.Names()
-	if p, err := agent.BackendPreferences(runlog.Home()); err == nil {
+	if p, err := resolve.BackendPreferences(runlog.Home()); err == nil {
 		names = p.Filter(names)
 	} else {
 		names = nil // Invalid preferences offer no backends; the handler reports the error.
@@ -171,7 +172,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if !modeGiven {
 				args.Mode = agent.ModeReadOnly
 			}
-			preference, err := agent.BackendPreferences(runlog.Home())
+			preference, err := resolve.BackendPreferences(runlog.Home())
 			if err != nil {
 				return text("run: "+err.Error(), nil, true), nil
 			}
@@ -215,7 +216,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, fmt.Errorf("dir %s: %w", dir, err)
 			}
 			dir = ws.Root
-			routedBy, routeNote, err := args.Options.RouteWithNote(args.Purpose, args.Prompt, &args.Backend, runlog.Home())
+			routedBy, routeNote, err := resolve.RouteWithNote(&args.Options, args.Purpose, args.Prompt, &args.Backend, runlog.Home())
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
@@ -232,7 +233,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				}
 			}
 			if args.Backend == "" {
-				args.Backend = agent.DefaultBackendNameIn(runlog.Home())
+				args.Backend = resolve.DefaultBackendNameIn(runlog.Home())
 				if routedBy == nil {
 					routeNote = agent.WithDefault(routeNote, args.Backend)
 				}
@@ -245,7 +246,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			task := agent.Task{Prompt: args.Prompt, Purpose: args.Purpose, Dir: dir, Options: args.Options, Knowledge: remote.SearcherFromEnv}
-			turnDefault := task.ApplyTurnDefault(args.Backend)
+			turnDefault := resolve.ApplyTurnDefault(&task, args.Backend)
 			if task.MCP, err = mcp.ConfigPaths(args.MCP); err != nil {
 				return mcp.CallResult{}, err
 			}
@@ -277,9 +278,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			var notes []string
 			if turnDefault {
-				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
-				call.Progress(agent.TurnDefaultInfo)
-				notes = append(notes, agent.TurnDefaultInfo)
+				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
+				call.Progress(resolve.TurnDefaultInfo)
+				notes = append(notes, resolve.TurnDefaultInfo)
 			}
 			if issue != nil {
 				notes = append(notes, issue.Notes...)
@@ -323,7 +324,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if next.Task.Purpose == "" {
 					next.Task.Purpose = purpose.Inherited(task.Purpose, args.Prompt)
 				}
-				nextDefault := next.Task.ApplyTurnDefault(next.To)
+				nextDefault := resolve.ApplyTurnDefault(&next.Task, next.To)
 				nb, err := agent.Get(next.To)
 				if err != nil {
 					return mcp.CallResult{}, err
@@ -341,9 +342,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				call.Progress(next.Why)
 				emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Why})
 				if nextDefault {
-					emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
-					call.Progress(agent.TurnDefaultInfo)
-					notes = append(notes, agent.TurnDefaultInfo)
+					emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
+					call.Progress(resolve.TurnDefaultInfo)
+					notes = append(notes, resolve.TurnDefaultInfo)
 				}
 				next.Task.Knowledge = remote.SearcherFromEnv
 				next.Plan.Apply(&next.Task, nrec.Dir(), emit)
@@ -678,11 +679,11 @@ func backendsTool() mcp.Tool {
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			var b strings.Builder
 			var list []map[string]any
-			p, err := agent.BackendPreferences(runlog.Home())
+			p, err := resolve.BackendPreferences(runlog.Home())
 			if err != nil {
 				return text(err.Error(), nil, true), nil
 			}
-			def := agent.DefaultBackendNameIn(runlog.Home())
+			def := resolve.DefaultBackendNameIn(runlog.Home())
 			now := time.Now()
 			for _, name := range agent.Names() {
 				state := "disabled"

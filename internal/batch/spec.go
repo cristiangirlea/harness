@@ -13,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/purpose"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -373,7 +374,7 @@ func checkRetrievalRetry(opts agent.Options, backend string, retry []string) err
 	if !retrievalOn(opts) {
 		return nil
 	}
-	backend = firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	backend = firstOf(backend, resolve.DefaultBackendNameIn(runlog.Home()))
 	for _, name := range retry {
 		if name != backend {
 			return fmt.Errorf("retry names %s, but retrieval pins the task to its backend %s: retry on %s only, or turn retrieval off", name, backend, backend)
@@ -385,7 +386,7 @@ func checkRetrievalRetry(opts agent.Options, backend string, retry []string) err
 func retrievalOn(opts agent.Options) bool { return opts.Retrieval != "" && opts.Retrieval != "off" }
 
 func checkBackends(backend string, retry *[]string) error {
-	p, err := agent.BackendPreferences(runlog.Home())
+	p, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return err
 	}

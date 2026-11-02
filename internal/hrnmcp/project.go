@@ -16,6 +16,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -138,7 +139,7 @@ func NewProjectServer(dir, profilePath string) (*mcp.Server, error) {
 	if err = profile.validate(context.Background(), dir); err != nil {
 		return nil, err
 	}
-	preference, err := agent.BackendPreferences(runlog.Home())
+	preference, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return nil, err
 	}

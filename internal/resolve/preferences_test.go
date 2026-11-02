@@ -1,4 +1,4 @@
-package agent
+package resolve
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/prefs"
 )
 
@@ -22,12 +23,18 @@ func (b preferenceBackend) Detect() (string, error) {
 	}
 	return "stub", nil
 }
-func (b preferenceBackend) Run(context.Context, Task, func(Event)) Result { panic("must not run") }
+func (b preferenceBackend) Run(context.Context, agent.Task, func(agent.Event)) agent.Result {
+	panic("must not run")
+}
 
 func TestDefaultBackendFollowsPreferencesAndAvailability(t *testing.T) {
-	original := registry
-	registry = map[string]Backend{}
-	t.Cleanup(func() { registry = original })
+	for _, name := range []string{"api", "codex", "claude"} {
+		original, err := agent.Get(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { agent.Register(original) })
+	}
 	for _, tc := range []struct {
 		name       string
 		p          prefs.Prefs
@@ -46,9 +53,9 @@ func TestDefaultBackendFollowsPreferencesAndAvailability(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			Register(preferenceBackend{"api", tc.api})
-			Register(preferenceBackend{"codex", tc.codex})
-			Register(preferenceBackend{"claude", true})
+			agent.Register(preferenceBackend{"api", tc.api})
+			agent.Register(preferenceBackend{"codex", tc.codex})
+			agent.Register(preferenceBackend{"claude", true})
 			if len(tc.p.EnabledNames) > 0 {
 				if err := prefs.Save(home, tc.p); err != nil {
 					t.Fatal(err)

@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -255,7 +256,7 @@ func TestClaudeReviewTurnDefaultAndUnlimited(t *testing.T) {
 			if limit == 0 {
 				want = 30
 				e := h.next(t, "event")
-				if e["event"].(map[string]any)["text"] != agent.TurnDefaultInfo {
+				if e["event"].(map[string]any)["text"] != resolve.TurnDefaultInfo {
 					t.Fatalf("event=%v", e)
 				}
 			}

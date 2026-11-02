@@ -17,6 +17,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 	"github.com/cristiangirlea/harness/internal/ws"
@@ -187,13 +188,13 @@ func (s *taskRun) decide(st flow.Status, reason string) {
 func (s *taskRun) resolveRoute() (taskRoute, error) {
 	opts := s.t.Options.Over(s.spec.Options)
 	backend := firstOf(s.t.Backend, s.spec.Backend)
-	routedBy, routeNote, err := opts.RouteWithNote(s.t.Purpose, s.t.Prompt, &backend, runlog.Home())
+	routedBy, routeNote, err := resolve.RouteWithNote(&opts, s.t.Purpose, s.t.Prompt, &backend, runlog.Home())
 	if err != nil {
 		return taskRoute{}, err
 	}
 	routeReason := routeNote
 	if backend == "" {
-		routeReason = agent.WithDefault(routeNote, agent.DefaultBackendNameIn(runlog.Home()))
+		routeReason = agent.WithDefault(routeNote, resolve.DefaultBackendNameIn(runlog.Home()))
 	}
 	if routedBy != nil {
 		mode := "classified"
@@ -206,9 +207,9 @@ func (s *taskRun) resolveRoute() (taskRoute, error) {
 		}
 	}
 	s.fw.Emit(flow.Event{Step: TaskStep(s.t.ID) + "/route", Parent: TaskStep(s.t.ID), Kind: flow.KindRoute, Task: s.t.ID,
-		Status: flow.StatusOK, Name: firstOf(backend, agent.DefaultBackendNameIn(runlog.Home())), Reason: routeReason})
-	backends := []string{firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))}
-	p, err := agent.BackendPreferences(runlog.Home())
+		Status: flow.StatusOK, Name: firstOf(backend, resolve.DefaultBackendNameIn(runlog.Home())), Reason: routeReason})
+	backends := []string{firstOf(backend, resolve.DefaultBackendNameIn(runlog.Home()))}
+	p, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return taskRoute{}, err
 	}
@@ -555,7 +556,7 @@ func runBestOfK(ctx context.Context, spec *Spec, batchID string, kept *keptSlots
 	if len(tr.Attempts) > 0 {
 		backend = tr.Attempts[len(tr.Attempts)-1].Backend
 	}
-	backend = firstOf(backend, agent.DefaultBackendNameIn(runlog.Home()))
+	backend = firstOf(backend, resolve.DefaultBackendNameIn(runlog.Home()))
 	additions, err := proposeAdditions(ctx, backend, t, tr, k, root, t.Options.Over(spec.Options))
 	if err != nil {
 		tr.Error = strings.TrimSpace(tr.Error + "\n" + err.Error())
@@ -689,7 +690,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		task.Model, task.Effort, plan.routedBy = "", "", nil
 	}
 
-	turnDefault := !noTurnDefault && task.ApplyTurnDefault(b.Name())
+	turnDefault := !noTurnDefault && resolve.ApplyTurnDefault(&task, b.Name())
 	rec, err := runlog.CreateContinuing(b.Name(), task, plan.continues, plan.routedBy)
 	if err != nil {
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
@@ -700,8 +701,8 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		Status: flow.StatusStarted, Name: b.Name(), Reason: plan.reason, Run: att.RunID})
 	task.RunDir = rec.Dir() // so a finished attempt can be continued
 	if turnDefault {
-		rec.Event(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
-		notify(Event{Task: id, Kind: "info", Text: agent.TurnDefaultInfo})
+		rec.Event(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
+		notify(Event{Task: id, Kind: "info", Text: resolve.TurnDefaultInfo})
 	}
 	report(att)
 	before, beforeErr := gitTips(task.Dir, plan.branch)

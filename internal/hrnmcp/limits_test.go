@@ -14,6 +14,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -105,7 +106,7 @@ func TestRunToolCarryOnTurnCapAndNote(t *testing.T) {
 				return agent.Result{Status: agent.StatusOK, Final: "done"}
 			}})
 			res := s.call(t, "run", fmt.Sprintf(`{"prompt":"work","purpose":"review","backend":%q,"mode":"auto"}`, from))
-			if res.IsError || got != want || !strings.Contains(res.Text(), agent.TurnDefaultInfo) {
+			if res.IsError || got != want || !strings.Contains(res.Text(), resolve.TurnDefaultInfo) {
 				t.Fatalf("result=%s cap=%d want=%d", res.Text(), got, want)
 			}
 			id, _ := res.StructuredContent.(map[string]any)["run_id"].(string)
