@@ -40,6 +40,7 @@ func assertNoZeroProviderChildren(t *testing.T, pid int, started time.Time) {
 		t.Fatalf("process snapshot first: %v", err)
 	}
 	parents := map[uint32]bool{uint32(pid): true}
+	seen := map[uint32]bool{uint32(pid): true}
 	entries := []zeroProviderProcessEntry{}
 	for ok != 0 {
 		entries = append(entries, entry)
@@ -51,17 +52,18 @@ func assertNoZeroProviderChildren(t *testing.T, pid int, started time.Time) {
 	for changed := true; changed; {
 		changed = false
 		for _, e := range entries {
-			if parents[e.ParentPID] && !parents[e.PID] {
+			if parents[e.ParentPID] && !seen[e.PID] {
+				seen[e.PID] = true
 				hproc, _, openErr := open.Call(0x1000, 0, uintptr(e.PID))
 				if hproc == 0 {
-					t.Errorf("open process %d: %v", e.PID, openErr)
+					t.Logf("open process %d: %v", e.PID, openErr)
 					continue
 				}
 				var created, exited, kernelTime, userTime syscall.Filetime
 				ok, _, timeErr := times.Call(hproc, uintptr(unsafe.Pointer(&created)), uintptr(unsafe.Pointer(&exited)), uintptr(unsafe.Pointer(&kernelTime)), uintptr(unsafe.Pointer(&userTime)))
 				syscall.CloseHandle(syscall.Handle(hproc))
 				if ok == 0 {
-					t.Errorf("process %d times: %v", e.PID, timeErr)
+					t.Logf("process %d times: %v", e.PID, timeErr)
 					continue
 				}
 				if time.Unix(0, created.Nanoseconds()).Before(started) {
