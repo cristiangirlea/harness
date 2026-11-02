@@ -1,7 +1,6 @@
 agent -> prefs
 agent -> prefs (test)
 agent -> purpose
-agent -> remote
 agent -> route/table
 agent -> route/table (test)
 eval -> game (test)

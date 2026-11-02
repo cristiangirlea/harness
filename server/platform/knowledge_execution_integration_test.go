@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"net/http/httptest"
 	"os"
@@ -54,7 +55,7 @@ func TestKnowledgePostgresRootExecutionBoundary(t *testing.T) {
 	t.Setenv("HRN_TENANT_TOKEN", token)
 	t.Setenv("HRN_SERVER_CA_FILE", "")
 	b := &knowledgeExecutionFixture{t: t}
-	result := agent.Run(ctx, b, agent.Task{Prompt: "Explain ERR_BUILD safely", RunDir: t.TempDir(), Options: agent.Options{Model: seed.Model, Mode: agent.ModeReadOnly, Retrieval: "required", RetrievalTenant: p.TenantID, RetrievalProject: p.ID, RetrievalRevision: fixtureRef}}, func(agent.Event) {})
+	result := agent.Run(ctx, b, agent.Task{Knowledge: remote.SearcherFromEnv, Prompt: "Explain ERR_BUILD safely", RunDir: t.TempDir(), Options: agent.Options{Model: seed.Model, Mode: agent.ModeReadOnly, Retrieval: "required", RetrievalTenant: p.TenantID, RetrievalProject: p.ID, RetrievalRevision: fixtureRef}}, func(agent.Event) {})
 	if result.Status != agent.StatusOK || b.calls != 1 || result.Retrieval.Packet.VersionID != id {
 		t.Fatalf("execution: %+v", result)
 	}

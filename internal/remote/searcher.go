@@ -19,3 +19,12 @@ func (s searcher) SearchKnowledge(ctx context.Context, in retrieval.Search) (ret
 	}
 	return packet, err
 }
+
+// SearcherFromEnv constructs a searcher only when retrieval is needed.
+func SearcherFromEnv() (retrieval.Searcher, error) {
+	client, err := NewFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return Searcher(client), nil
+}

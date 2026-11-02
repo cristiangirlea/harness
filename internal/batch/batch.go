@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -1097,7 +1098,7 @@ func proposeAdditions(ctx context.Context, backendName string, t Task, tr TaskRe
 	}
 	prompt := fmt.Sprintf("Task: %s\nFailing gate: %s\nRun record: %s\nPropose exactly %d distinct short brief additions as a JSON array of strings.", t.Prompt, gate, tail(string(record), 8192), k)
 	opts.Mode = agent.ModeReadOnly
-	r := agent.Run(ctx, b, agent.Task{Prompt: prompt, Dir: root, Purpose: "plan", Options: opts}, func(agent.Event) {})
+	r := agent.Run(ctx, b, agent.Task{Prompt: prompt, Dir: root, Purpose: "plan", Options: opts, Knowledge: remote.SearcherFromEnv}, func(agent.Event) {})
 	if r.Status != agent.StatusOK {
 		return nil, fmt.Errorf("proposal failed: %s", r.Error)
 	}
@@ -1504,6 +1505,7 @@ type attemptOutcome struct {
 // runAttempt's returned error aborts the whole task; a failed run or gate is reported in the outcome instead.
 func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task, plan attemptPlan, expect *regexp.Regexp, guard protection, gates []string, fw *flow.Writer, notify func(Event), report func(Attempt), noTurnDefault bool) (attemptOutcome, error) {
 	task.Prompt = plan.prompt
+	task.Knowledge = remote.SearcherFromEnv
 	att := Attempt{Backend: b.Name(), Prompt: plan.prompt, Continued: plan.continued, SwitchedFrom: plan.switchedFrom}
 	env, cleanup, err := batchEnv(task.Dir)
 	if err != nil {
