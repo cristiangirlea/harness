@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,6 +50,60 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	path := t.TempDir()
+	for _, name := range []string{"git", "sh", "bash"} {
+		source, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatalf("find system tool %s: %v", name, err)
+		}
+		if runtime.GOOS == "windows" && name == "git" {
+			core, err := exec.Command(source, "--exec-path").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			source = filepath.Join(strings.TrimSpace(string(core)), "git.exe")
+		}
+		if runtime.GOOS == "windows" && name == "bash" {
+			sh, err := exec.LookPath("sh")
+			if err != nil {
+				t.Fatal(err)
+			}
+			source = filepath.Join(filepath.Dir(sh), "bash.exe")
+		}
+		target := filepath.Join(path, name)
+		if runtime.GOOS == "windows" {
+			target += ".exe"
+		}
+		data, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, data, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		sh, _ := exec.LookPath("sh")
+		dll, err := os.ReadFile(filepath.Join(filepath.Dir(sh), "msys-2.0.dll"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "msys-2.0.dll"), dll, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := filepath.Join(home, "repo")
+	if err := os.Mkdir(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := exec.Command(filepath.Join(path, "git"+func() string {
+		if runtime.GOOS == "windows" {
+			return ".exe"
+		}
+		return ""
+	}()), "init", "-q", repo)
+	if out, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("init fixture repository: %v\n%s", err, out)
+	}
 	for _, name := range []string{"claude", "codex", "gemini", "opencode", "agy"} {
 		if _, err := exec.LookPath(filepath.Join(path, name)); err == nil {
 			t.Fatalf("provider %s resolves", name)
@@ -73,6 +128,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 		args []string
 		want string
 	}{
+		{[]string{"gc", repo}, "worktree"},
 		{[]string{"runs"}, "fixture prompt"},
 		{[]string{"show", "--json", w.ID()}, "fixture prompt"},
 		{[]string{"flow", w.ID()}, w.ID()},
@@ -95,6 +151,40 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 				}
 			})
 		}
+		t.Run("watch", func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := ln.Addr().String()
+			if err := ln.Close(); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, bin, "watch", "--addr", addr)
+			cmd.Env = env
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+			client := &http.Client{Timeout: time.Second}
+			for {
+				resp, err := client.Get("http://" + addr + "/")
+				if err == nil {
+					resp.Body.Close()
+					if resp.StatusCode != http.StatusOK {
+						t.Fatalf("watch: HTTP %d", resp.StatusCode)
+					}
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatalf("watch did not start: %v", err)
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+		})
 	}
 	t.Run("without providers", func(t *testing.T) { checkReads(t, env) })
 	shimPath := t.TempDir()
@@ -127,7 +217,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 	}
 	log := filepath.Join(home, "provider-calls")
 	shimEnv := append([]string(nil), env...)
-	shimEnv[0] = "PATH=" + shimPath
+	shimEnv[0] = "PATH=" + shimPath + string(os.PathListSeparator) + path
 	shimEnv = append(shimEnv, "HRN_ZERO_PROVIDER_SHIM_LOG="+log)
 	probe := filepath.Join(shimPath, "claude")
 	if runtime.GOOS == "windows" {
