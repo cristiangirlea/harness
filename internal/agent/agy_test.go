@@ -428,3 +428,21 @@ func TestAgyWithholdsMeteredEnvironment(t *testing.T) {
 		})
 	}
 }
+
+// A real agy result with cache hits: total_tokens is input plus output, so input excludes cache reads.
+func TestAgyInputExcludesCacheReadsSoModelTokensCountsThemOnce(t *testing.T) {
+	parse := NewAgyBackend().newParse()
+	res := Result{Backend: "agy"}
+	line := `{"event":"result","result":{"status":"SUCCESS","usage":{"input_tokens":14228,"output_tokens":624,"thinking_tokens":540,"cache_read_tokens":10723,"total_tokens":14852}}}`
+	parse([]byte(line), func(Event) {}, &res)
+	if res.InputTokens != 14228 || res.OutputTokens != 624 || res.CacheRead != 10723 {
+		t.Fatalf("tokens %d/%d cache %d", res.InputTokens, res.OutputTokens, res.CacheRead)
+	}
+	if res.InputTokens+res.OutputTokens != 14852 {
+		t.Fatal("the sample's total_tokens should equal input plus output")
+	}
+	total, known, _ := res.ModelTokens()
+	if !known || total != 14228+624+10723 {
+		t.Fatalf("model tokens %d (known %v), want each token once: %d", total, known, 14228+624+10723)
+	}
+}
