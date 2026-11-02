@@ -945,6 +945,7 @@ func cmdEval(args []string) (int, error) {
 	return 0, nil
 }
 
+// Re-check availability at the end so a provider installed during the eval reads as available.
 func evalUnavailableProviders(res batch.Result) string {
 	if len(res.Tasks) == 0 {
 		return ""

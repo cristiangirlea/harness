@@ -344,8 +344,8 @@ cost and `total_cost_usd` cover the known costs, `cells_without_cost` counts the
 The record goes to `~/.hrn/evals/<id>.json`; `--json` prints it, `hrn eval show <id>`
 reprints it, `hrn eval list` finds it, `-v` streams every agent's tool calls. The worktrees are removed once the
 record is safely written, unless `--keep`. A failing variant is data, not an error, so
-the exit status is 0 when cells ran, even if they failed their gates. If every cell
-could not start because its provider was unavailable, it exits non-zero and names the provider.
+the exit status is 0 when cells ran, even if they failed their gates. If no cell
+could start because its provider was unavailable, it exits non-zero and names the provider.
 
 Task ids and variant names take letters, digits, `_` and `-`: dots separate the parts of
 a cell id. `retry` is refused in an eval spec, because a retried cell would score the
