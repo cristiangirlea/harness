@@ -1,0 +1,1 @@
+{"id":"legacy","backend":"api","task":{"prompt":"old prompt","dir":"old-dir","mode":"ask","timeout_ns":90000000000}}
