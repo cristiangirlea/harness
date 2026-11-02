@@ -247,6 +247,18 @@ order they are worth taking:
     - [#488](https://github.com/cristiangirlea/harness/issues/488): a run loads only the MCP
       servers, plugins and skills its task needs, on claude and codex. Done: PR #595, 2026-10-19.
 
+19. **Carry on when a provider fails, not only at a usage limit.** Item 14 moves a run to a
+    partner when a CLI says its plan's limit was reached, and the api loop retries overloaded and
+    server errors after the server's backoff. A claude, codex or agy run that ends because its
+    provider was overloaded, unavailable or unreachable still ends as `error`, and a batch
+    attempt spends its retry on the same backend. One PR:
+    - Recognise those endings in the CLI adapters (their own error text, never a guess from the
+      exit code) and record them as a status of their own, additive in the run record.
+    - Retry once on the same backend after a bounded backoff, then carry on with the item 14
+      partner rules (enabled, ready, plan-billed only, never api; `no_switch` still stops it).
+    - Tests with `TestHelper*` CLIs printing each provider's real outage text; docs in
+      `docs/backends.md` beside the usage-limit section.
+
 Left out on purpose: real sandboxing for yolo (a project, not a PR; the guard says it is a guard
 rail), a daemon or queue (batch plus cron or the MCP tool covers it), and MCP over HTTP (every host
 met so far speaks stdio). A web dashboard was on this list ("report and batch show answer the
