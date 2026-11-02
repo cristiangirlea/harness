@@ -1,11 +1,8 @@
 eval -> game (test)
 eval -> update (test)
-flow -> agent
 flow -> agent (test)
 limits -> agent
 limits -> agent (test)
-quota -> agent
-quota -> agent (test)
 runlog -> agent
 runlog -> agent (test)
 server/cmd/hrn-worker -> internal/agent

@@ -3,15 +3,11 @@ package agent
 import (
 	"fmt"
 	"math"
+
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
-// UsageMetadata describes run totals, inferred only for known adapters.
-type UsageMetadata struct {
-	InputSemantics string `json:"input_semantics"`       // inclusive_cache or exclusive_cache
-	Status         string `json:"status"`                // reported, estimated, missing
-	CostStatus     string `json:"cost_status,omitempty"` // reported, estimated, missing
-	Calls          *int   `json:"calls,omitempty"`
-}
+type UsageMetadata = kernel.UsageMetadata
 
 // ModelTokens counts each model token once. Missing/unknown semantics are not zero.
 func (r Result) ModelTokens() (int64, bool, bool) {

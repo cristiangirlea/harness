@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -123,7 +123,7 @@ func (o Options) Validate() error {
 	if strings.ContainsRune(o.AppendSystemPrompt, 0) {
 		return fmt.Errorf("append_system_prompt holds a NUL byte, which no command line can carry")
 	}
-	if err := o.CompactWindow.check(); err != nil {
+	if err := o.CompactWindow.Check(); err != nil {
 		return err
 	}
 	if o.AllowDangerous && tools.Guarded() {
@@ -243,54 +243,11 @@ func jsonName(f reflect.StructField) string {
 	return strings.Split(f.Tag.Get("json"), ",")[0]
 }
 
-// EffortLevels contains case-sensitive effort names.
-var EffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
+var EffortLevels = kernel.EffortLevels
+var Modes = kernel.Modes
 
-// Modes lists the permission modes, for the MCP schema and the flag help.
-var Modes = []Mode{ModeReadOnly, ModeAsk, ModeAuto, ModeYolo}
-
-func (m Mode) String() string { return string(m) }
-
-// Set validates Mode as a flag.Value.
-func (m *Mode) Set(s string) error {
-	v, err := ParseMode(s)
-	if err != nil {
-		return err
-	}
-	*m = v
-	return nil
-}
-
-// Duration stores durations as text to prevent nanosecond mistakes.
-type Duration time.Duration
-
-func (d Duration) String() string { return time.Duration(d).String() }
-
-func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(time.Duration(d).String())
-}
-
-func (d *Duration) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" {
-		*d = 0 // absent, as a generated spec or call may spell it
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("duration %s: want a string like \"20m\"", data)
-	}
-	return d.Set(s)
-}
-
-// Set parses Duration as a flag.Value.
-func (d *Duration) Set(s string) error {
-	v, err := time.ParseDuration(s)
-	if err != nil {
-		return fmt.Errorf("%q is not a duration like 20m", s)
-	}
-	*d = Duration(v)
-	return nil
-}
+type Duration = kernel.Duration
+type CompactWindow = kernel.CompactWindow
 
 // Nil distinguishes an absent boolean flag from an explicit false.
 type setBool struct{ p **bool }
@@ -312,56 +269,6 @@ func (b setBool) Set(s string) error {
 }
 
 func (setBool) IsBoolFlag() bool { return true }
-
-// CompactWindow is auto or 100000-1000000; records store the count as a number.
-type CompactWindow string
-
-const minCompactWindow, maxCompactWindow = 100000, 1000000
-
-func (w CompactWindow) check() error {
-	if w == "" || w == "auto" {
-		return nil
-	}
-	if n, err := strconv.Atoi(string(w)); err == nil && strconv.Itoa(n) == string(w) && n >= minCompactWindow && n <= maxCompactWindow {
-		return nil
-	}
-	return fmt.Errorf("compact_window %q: want a plain decimal integer from %d to %d (no sign or leading zeros), or \"auto\"", string(w), minCompactWindow, maxCompactWindow)
-}
-
-func (w CompactWindow) String() string { return string(w) }
-
-// Set validates CompactWindow as a flag.Value.
-func (w *CompactWindow) Set(s string) error {
-	if err := CompactWindow(s).check(); err != nil {
-		return err
-	}
-	*w = CompactWindow(s)
-	return nil
-}
-
-func (w CompactWindow) MarshalJSON() ([]byte, error) {
-	if w == "auto" {
-		return json.Marshal("auto")
-	}
-	return []byte(w), nil
-}
-
-func (w *CompactWindow) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" {
-		*w = ""
-		return nil
-	}
-	var n int
-	if err := json.Unmarshal(data, &n); err == nil {
-		*w = CompactWindow(strconv.Itoa(n))
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil || s == "" {
-		return fmt.Errorf("compact_window %s: want an integer from %d to %d, or \"auto\"", data, minCompactWindow, maxCompactWindow)
-	}
-	return w.Set(s)
-}
 
 type stringList []string
 
