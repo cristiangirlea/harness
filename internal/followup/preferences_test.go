@@ -1,4 +1,4 @@
-package limits
+package followup
 
 import (
 	"fmt"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -96,7 +97,7 @@ func TestALimitIsRememberedWhenThePreferenceHasNoPartner(t *testing.T) {
 	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: until}); err != nil {
 		t.Fatal(err)
 	}
-	if got := Until("codex", time.Now()); !got.Equal(until) {
+	if got := limits.Until("codex", time.Now()); !got.Equal(until) {
 		t.Fatalf("remembered %v, want %v", got, until)
 	}
 }
@@ -242,7 +243,7 @@ func TestAnAgyLimitWithNoPartnerEndsLimitedAndIsRemembered(t *testing.T) {
 			if err != nil || next != nil {
 				t.Fatalf("carry-on %+v, %q, %v; want none without a partner", next, why, err)
 			}
-			if got := Until("agy", time.Now()); !got.Equal(until) {
+			if got := limits.Until("agy", time.Now()); !got.Equal(until) {
 				t.Fatalf("remembered %v, want %v", got, until)
 			}
 		})

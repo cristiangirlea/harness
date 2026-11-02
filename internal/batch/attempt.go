@@ -13,11 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/remote"
-
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/flow"
-	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/followup"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 	"github.com/cristiangirlea/harness/internal/ws"
@@ -244,7 +243,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 	}
 
 	// Skip exhausted backends even without a reset time.
-	spent := limits.Spent{}
+	spent := followup.Spent{}
 	var outOfPlans string // why an attempt was skipped: claude and codex both limited
 	var carry *Attempt    // the limited attempt the next one carries on
 	for i := 0; i < len(backends); i++ {
@@ -258,7 +257,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			carry = nil
 		}
 		if !opts.NoSwitch {
-			pick, why, bothOut := limits.Pick(name, time.Now(), spent)
+			pick, why, bothOut := followup.Pick(name, time.Now(), spent)
 			if bothOut {
 				outOfPlans = why
 				text := "skipping an attempt on " + name + ": " + why
@@ -425,14 +424,14 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 		}
 		if att := out.att; att.Result.Status == agent.StatusLimited {
 			spent[att.Backend] = true
-			if err := limits.Note(att.Backend, att.Result); err != nil {
+			if err := followup.Note(att.Backend, att.Result); err != nil {
 				text := "the limit was not remembered: " + err.Error()
 				s.decide(flow.StatusOK, text)
 				s.notify(Event{Task: s.t.ID, Kind: "switch", Text: text})
 			}
 			// A usage-limit carry-on preserves work without consuming a retry.
-			if other := limits.Partner(att.Backend, time.Now(), spent); other != "" && !opts.NoSwitch {
-				if ok, why := limits.Ready(other, time.Now(), spent); ok && retrievalOn(opts) {
+			if other := followup.Partner(att.Backend, time.Now(), spent); other != "" && !opts.NoSwitch {
+				if ok, why := followup.Ready(other, time.Now(), spent); ok && retrievalOn(opts) {
 					s.tr.Error = pinnedSwitch(att.Backend, other, att.Backend)
 					return taskEnd{StatusFail, "limited: " + s.tr.Error}
 				} else if ok {

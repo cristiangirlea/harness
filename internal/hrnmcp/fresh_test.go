@@ -11,7 +11,6 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/followup"
-	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -156,7 +155,7 @@ func TestRunReleasesAnAgyConversationAfterCarryingALimitedRunOn(t *testing.T) {
 	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"agy", "codex"}}); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range limits.MeteredEnv("codex") {
+	for _, name := range followup.MeteredEnv("codex") {
 		t.Setenv(name, "")
 	}
 	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir})

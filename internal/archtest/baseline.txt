@@ -9,7 +9,6 @@ flow -> agent
 flow -> agent (test)
 limits -> agent
 limits -> agent (test)
-limits -> followup
 quota -> agent
 quota -> agent (test)
 runlog -> agent

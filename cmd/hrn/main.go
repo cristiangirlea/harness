@@ -312,7 +312,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	var routed string
 	if !opts.NoSwitch && *continueID != "" {
 		meant := backend
-		if backend, routed = limits.Choose(backend, *continueID); backend != meant {
+		if backend, routed = followup.Choose(backend, *continueID); backend != meant {
 			opts.Model = ""
 		}
 	}
@@ -378,7 +378,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	if !opts.NoSwitch && *continueID == "" {
 		meant := backend
-		if backend, routed = limits.Choose(backend, ""); backend != meant {
+		if backend, routed = followup.Choose(backend, ""); backend != meant {
 			if routedBy != nil {
 				opts.Effort = "" // the row measured the limited backend, not its partner
 			}
@@ -480,11 +480,11 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	finished(rec.ID(), res)
 
 	// Switch only once to prevent two limited backends from handing work back indefinitely.
-	var next *limits.CarryOn
+	var next *followup.CarryOn
 	var why string
 	if ctx.Err() == nil {
-		next, why, err = limits.After(rec.ID(), backend, task, res)
-	} else if err := limits.Note(backend, res); err != nil {
+		next, why, err = followup.After(rec.ID(), backend, task, res)
+	} else if err := followup.Note(backend, res); err != nil {
 		fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
 	}
 	switch {
@@ -522,7 +522,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 			fmt.Fprintln(os.Stderr, "hrn: "+runlog.CloseMessage(err))
 		}
 		// Limited too: remembered, so the next run does not try it first.
-		if err := limits.Note(next.To, res); err != nil {
+		if err := followup.Note(next.To, res); err != nil {
 			fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
 		}
 		finished(nrec.ID(), res)

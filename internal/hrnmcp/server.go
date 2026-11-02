@@ -182,7 +182,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			var routed string
 			if !args.NoSwitch && args.ContinueRunID != "" {
 				meant := args.Backend
-				if args.Backend, routed = limits.Choose(args.Backend, args.ContinueRunID); args.Backend != meant {
+				if args.Backend, routed = followup.Choose(args.Backend, args.ContinueRunID); args.Backend != meant {
 					args.Model = ""
 				}
 			}
@@ -224,7 +224,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			if !args.NoSwitch && args.ContinueRunID == "" {
 				meant := args.Backend
-				if args.Backend, routed = limits.Choose(args.Backend, ""); args.Backend != meant {
+				if args.Backend, routed = followup.Choose(args.Backend, ""); args.Backend != meant {
 					if routedBy != nil {
 						args.Options.Effort = "" // the row measured the limited backend, not its partner
 					}
@@ -303,11 +303,11 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			structured := map[string]any{"run_id": rec.ID(), "result": res}
 
 			// Switch only once to prevent limited partners from handing work back indefinitely.
-			var next *limits.CarryOn
+			var next *followup.CarryOn
 			var why string
 			if ctx.Err() == nil {
-				next, why, err = limits.After(rec.ID(), args.Backend, task, res)
-			} else if err := limits.Note(args.Backend, res); err != nil {
+				next, why, err = followup.After(rec.ID(), args.Backend, task, res)
+			} else if err := followup.Note(args.Backend, res); err != nil {
 				notes = append(notes, "the limit was not remembered: "+err.Error())
 			}
 			switch {
@@ -358,7 +358,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				}
 				notes = append(notes, next.Why)
 				// Limited too: remembered, so the next run does not try it first.
-				if err := limits.Note(next.To, res); err != nil {
+				if err := followup.Note(next.To, res); err != nil {
 					notes = append(notes, "the limit was not remembered: "+err.Error())
 				}
 				structured = map[string]any{"run_id": nrec.ID(), "result": res, "limited_run_id": limitedID}
