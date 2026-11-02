@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 func TestALimitIsRememberedUntilItLifts(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Now()
 	resets := now.Add(time.Hour).Truncate(time.Second)
-	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: resets}); err != nil {
+	if err := Note("codex", kernel.Result{Status: kernel.StatusLimited, LimitResets: resets}); err != nil {
 		t.Fatal(err)
 	}
 	if got := Until("codex", now); !got.Equal(resets) {
@@ -33,9 +33,9 @@ func TestALimitIsRememberedUntilItLifts(t *testing.T) {
 func TestOnlyALimitWithATimeIsRemembered(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Now()
-	for _, res := range []agent.Result{
-		{Status: agent.StatusLimited},
-		{Status: agent.StatusError, LimitResets: now.Add(time.Hour)},
+	for _, res := range []kernel.Result{
+		{Status: kernel.StatusLimited},
+		{Status: kernel.StatusError, LimitResets: now.Add(time.Hour)},
 	} {
 		if err := Note("codex", res); err != nil {
 			t.Fatal(err)
@@ -50,9 +50,9 @@ func TestALaterNoteReplacesAnEarlierOne(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Now()
 	first, second := now.Add(5*time.Hour).Truncate(time.Second), now.Add(time.Hour).Truncate(time.Second)
-	_ = Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: first})
-	_ = Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: first})
-	_ = Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: second})
+	_ = Note("codex", kernel.Result{Status: kernel.StatusLimited, LimitResets: first})
+	_ = Note("claude", kernel.Result{Status: kernel.StatusLimited, LimitResets: first})
+	_ = Note("codex", kernel.Result{Status: kernel.StatusLimited, LimitResets: second})
 	if got := Until("codex", now); !got.Equal(second) {
 		t.Errorf("codex Until = %v, want the latest note %v", got, second)
 	}
@@ -71,7 +71,7 @@ func TestAnUnreadableFileIsNoLimit(t *testing.T) {
 		t.Errorf("Until = %v from a broken file", got)
 	}
 	// Noting starts the file over rather than failing every run.
-	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+	if err := Note("codex", kernel.Result{Status: kernel.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if Until("codex", time.Now()).IsZero() {
@@ -86,7 +86,7 @@ func TestStatusSaysWhatIsRememberedAndHowToForgetIt(t *testing.T) {
 	if s := Status("codex", now); s != "" {
 		t.Errorf("nothing remembered, Status = %q", s)
 	}
-	_ = Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)})
+	_ = Note("codex", kernel.Result{Status: kernel.StatusLimited, LimitResets: now.Add(time.Hour)})
 	s := Status("codex", now)
 	if !strings.Contains(s, "usage limit until") || !strings.Contains(s, "limits.json") {
 		t.Errorf("Status = %q, want the time and the file to delete", s)
@@ -104,7 +104,7 @@ func TestNotesFromParallelWorkersAreAllKept(t *testing.T) {
 		name := []string{"codex", "claude"}[i%2]
 		go func() {
 			defer wg.Done()
-			if err := Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}); err != nil {
+			if err := Note(name, kernel.Result{Status: kernel.StatusLimited, LimitResets: now.Add(time.Hour)}); err != nil {
 				t.Errorf("note: %v", err)
 			}
 		}()
@@ -124,7 +124,7 @@ func TestANullFileIsNoLimit(t *testing.T) {
 	if err := writeFile(home+"/limits.json", []byte("null")); err != nil {
 		t.Fatal(err)
 	}
-	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+	if err := Note("codex", kernel.Result{Status: kernel.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if Until("codex", time.Now()).IsZero() {
@@ -140,7 +140,7 @@ func TestHelperNote(t *testing.T) {
 		return
 	}
 	for i := 0; i < 30; i++ {
-		if err := Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		if err := Note(name, kernel.Result{Status: kernel.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(3)
 		}
@@ -176,12 +176,12 @@ func TestARememberedLimitFurtherAheadThanACLICouldSayIsIgnored(t *testing.T) {
 	t.Setenv("HRN_HOME", home)
 	now := time.Now()
 	data := fmt.Sprintf(`{"codex":{"until":%q},"claude":{"until":%q}}`,
-		now.Add(agent.MaxLimitWindow+time.Hour).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339))
+		now.Add(kernel.MaxLimitWindow+time.Hour).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339))
 	if err := writeFile(home+"/limits.json", []byte(data)); err != nil {
 		t.Fatal(err)
 	}
 	if got := Until("codex", now); !got.IsZero() {
-		t.Errorf("codex Until = %v, from a time beyond %v ahead", got, agent.MaxLimitWindow)
+		t.Errorf("codex Until = %v, from a time beyond %v ahead", got, kernel.MaxLimitWindow)
 	}
 	if Until("claude", now).IsZero() {
 		t.Error("claude's ordinary limit was dropped with it")

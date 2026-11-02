@@ -8,6 +8,9 @@ import (
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
+// MaxLimitWindow bounds plausible subscription reset times.
+const MaxLimitWindow = 8 * 24 * time.Hour
+
 type Result struct {
 	ChangedFiles          []string          `json:"changed_files,omitempty"`
 	ChangedFilesTruncated bool              `json:"changed_files_truncated,omitempty"`
