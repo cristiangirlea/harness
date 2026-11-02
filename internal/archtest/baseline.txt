@@ -10,7 +10,6 @@ flow -> agent (test)
 limits -> agent
 limits -> agent (test)
 limits -> followup
-mcp -> retrieval
 quota -> agent
 quota -> agent (test)
 runlog -> agent
@@ -21,4 +20,3 @@ server/platform -> internal/agent (test)
 server/platform -> internal/remote (test)
 server/platform -> internal/retrieval
 server/platform -> internal/retrieval (test)
-tools -> retrieval
