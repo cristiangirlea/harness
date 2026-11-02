@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -35,7 +36,7 @@ func (s scripted) Run(_ context.Context, task agent.Task, _ func(agent.Event)) a
 func standIn(t *testing.T) {
 	t.Helper()
 	// A key in the environment would keep the partner from standing in.
-	for _, name := range append(limits.MeteredEnv("claude"), limits.MeteredEnv("codex")...) {
+	for _, name := range append(followup.MeteredEnv("claude"), followup.MeteredEnv("codex")...) {
 		t.Setenv(name, "")
 	}
 	for _, s := range []scripted{
