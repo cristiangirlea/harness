@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -141,16 +141,16 @@ func TestFromRunPairsToolCallsWithResultsAndRecordsTheRoute(t *testing.T) {
 	t0 := time.Unix(2000, 0)
 	rec := runlog.Record{ID: "r1", Owner: "local:me", Backend: "codex", Started: t0, Done: true,
 		RoutedBy: &runlog.RoutedBy{Category: "implement", Declared: true, Set: "hrn route set"},
-		Task:     agent.Task{Prompt: "fix the bug\nmore detail"},
-		Result:   agent.Result{Status: agent.StatusError, Error: "gave up", Turns: 3, ToolCalls: 3, Duration: time.Minute}}
-	events := []agent.Event{
-		{Time: t0, Kind: agent.EventThinking, Text: "private musing"},
-		{Time: t0, Kind: agent.EventToolCall, Tool: "shell", Text: "go test ./..."},
-		{Time: t0, Kind: agent.EventToolCall, Tool: "read", Text: "a.go"},
-		{Time: t0, Kind: agent.EventToolResult, Tool: "shell", Text: "FAIL", IsError: true},
-		{Time: t0, Kind: agent.EventToolResult, Tool: "read", Text: "package a"},
-		{Time: t0, Kind: agent.EventToolCall, Tool: "edit", Text: "a.go"},
-		{Time: t0, Kind: agent.EventError, Text: "stream broke"},
+		Task:     kernel.Task{Prompt: "fix the bug\nmore detail"},
+		Result:   kernel.Result{Status: kernel.StatusError, Error: "gave up", Turns: 3, ToolCalls: 3, Duration: time.Minute}}
+	events := []kernel.Event{
+		{Time: t0, Kind: kernel.EventThinking, Text: "private musing"},
+		{Time: t0, Kind: kernel.EventToolCall, Tool: "shell", Text: "go test ./..."},
+		{Time: t0, Kind: kernel.EventToolCall, Tool: "read", Text: "a.go"},
+		{Time: t0, Kind: kernel.EventToolResult, Tool: "shell", Text: "FAIL", IsError: true},
+		{Time: t0, Kind: kernel.EventToolResult, Tool: "read", Text: "package a"},
+		{Time: t0, Kind: kernel.EventToolCall, Tool: "edit", Text: "a.go"},
+		{Time: t0, Kind: kernel.EventError, Text: "stream broke"},
 	}
 	nodes := Build(FromRun(rec, events, "task:t/a1"))
 	if len(nodes) != 1 || !nodes[0].Orphan || nodes[0].Step != "task:t/a1/run" {
@@ -186,7 +186,7 @@ func TestFromRunPairsToolCallsWithResultsAndRecordsTheRoute(t *testing.T) {
 
 func TestFromRunOfALegacyUnfinishedRunStaysRunning(t *testing.T) {
 	rec := runlog.Record{ID: "old", Backend: "claude", Started: time.Unix(3000, 0)}
-	events := []agent.Event{{Kind: agent.EventToolCall, Tool: "Bash"}, {Kind: agent.EventToolResult, Text: "ok"}}
+	events := []kernel.Event{{Kind: kernel.EventToolCall, Tool: "Bash"}, {Kind: kernel.EventToolResult, Text: "ok"}}
 	nodes := Build(FromRun(rec, events, ""))
 	if nodes[0].Step != "run:old" || nodes[0].Status != StatusStarted || nodes[0].Children[0].Status != StatusOK {
 		t.Fatalf("got %+v: a run without result is still going, and an unnamed result closes the oldest call", nodes[0])
@@ -212,8 +212,8 @@ func TestFromRunUsesRouteNoteWhenNoRouteWasApplied(t *testing.T) {
 func TestFromRunMasksSecretsInToolText(t *testing.T) {
 	rec := runlog.Record{ID: "r", Started: time.Unix(1, 0)}
 	cut := strings.Repeat("x", 170) + " git clone https://bob:hunter2secret@example.com/repo"
-	events := []agent.Event{{Kind: agent.EventToolCall, Tool: "shell", Text: "export API_TOKEN=supersecretvalue123"},
-		{Kind: agent.EventToolCall, Tool: "shell", Text: cut}}
+	events := []kernel.Event{{Kind: kernel.EventToolCall, Tool: "shell", Text: "export API_TOKEN=supersecretvalue123"},
+		{Kind: kernel.EventToolCall, Tool: "shell", Text: cut}}
 	for _, e := range FromRun(rec, events, "") {
 		if strings.Contains(e.Text, "supersecretvalue123") || strings.Contains(e.Text, "hunter2") {
 			t.Fatalf("a derived step kept a secret: %q", e.Text)
@@ -239,7 +239,7 @@ func TestAnEnvironmentSecretIsRedactedBeforeACutCanSplitIt(t *testing.T) {
 	envSecrets = func() *strings.Replacer { return mask.Env([]string{"SERVICE_TOKEN=" + secret}) }
 	t.Cleanup(func() { envSecrets = old })
 	text := strings.Repeat("z", 190) + " " + secret
-	for _, e := range FromRun(runlog.Record{ID: "r"}, []agent.Event{{Kind: agent.EventToolCall, Tool: "shell", Text: text}}, "") {
+	for _, e := range FromRun(runlog.Record{ID: "r"}, []kernel.Event{{Kind: kernel.EventToolCall, Tool: "shell", Text: text}}, "") {
 		if strings.Contains(e.Text, secret[:6]) {
 			t.Fatalf("part of an environment secret survived the cut: %q", e.Text)
 		}

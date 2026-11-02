@@ -9,44 +9,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
-// DurableExecution's credentials must never reach execution tools; Resume recovers the same task without a new turn.
-type DurableExecution struct {
-	Resume *APICheckpoint
-	Save   func(context.Context, APICheckpoint) error
-}
+type DurableExecution = kernel.DurableExecution
+type APICheckpoint = kernel.APICheckpoint
+type PendingOperation = kernel.PendingOperation
 
-// APICheckpoint preserves signed requests and confirmed outcomes to prevent replay.
-// Its untrusted content must stay project-scoped.
-type APICheckpoint struct {
-	Version      int               `json:"version"`
-	Sequence     uint64            `json:"sequence"`
-	Boundary     string            `json:"boundary"`
-	TaskDigest   string            `json:"task_digest"`
-	Started      time.Time         `json:"started"`
-	Deadline     time.Time         `json:"deadline,omitempty"`
-	NextTurn     int               `json:"next_turn"`
-	Request      json.RawMessage   `json:"request"`
-	Betas        []string          `json:"betas,omitempty"`
-	Response     json.RawMessage   `json:"response,omitempty"`
-	InvalidInput map[string]string `json:"invalid_input,omitempty"`
-	ToolResults  []map[string]any  `json:"tool_results,omitempty"`
-	Pending      *PendingOperation `json:"pending,omitempty"`
-	Result       Result            `json:"result"`
-	Finished     bool              `json:"finished,omitempty"`
-}
-
-type PendingOperation struct {
-	Kind  string          `json:"kind"`
-	ID    string          `json:"id"`
-	Tool  string          `json:"tool,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
-}
-
-// ErrRecoveryRequired requires executor termination and effect reconciliation before resubmission.
-var ErrRecoveryRequired = errors.New("execution requires recovery")
+var ErrRecoveryRequired = kernel.ErrRecoveryRequired
 
 type durableAPI struct {
 	checkpoint APICheckpoint

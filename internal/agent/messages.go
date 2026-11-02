@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 // Generic blocks preserve signatures and unknown types on replay.
@@ -27,10 +29,7 @@ const (
 
 type block = map[string]any
 
-type apiMessage struct {
-	Role    string  `json:"role"`
-	Content []block `json:"content"`
-}
+type apiMessage = kernel.Message
 
 type apiTool struct {
 	Name        string         `json:"name"`
