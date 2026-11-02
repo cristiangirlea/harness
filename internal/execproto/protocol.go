@@ -49,12 +49,16 @@ type recordFactory func(string, agent.Task, string, string, *runlog.RoutedBy, st
 // Run writes hello before reading input, runs at most one task, and returns the
 // protocol exit code. ctx carries interrupts; nil now uses the real clock.
 func Run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
-	return runMode(ctx, in, out, now, false, createRecord)
+	return runMode(ctx, in, out, now, false, createRecord, 0)
 }
 
 // RunWorker applies the worker's restricted execution policy.
 func RunWorker(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
-	return runMode(ctx, in, out, now, true, createRecord)
+	return runWorkerWithTimeout(ctx, in, out, now, 15*time.Second)
+}
+
+func runWorkerWithTimeout(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, timeout time.Duration) int {
+	return runMode(ctx, in, out, now, true, createRecord, timeout)
 }
 
 func createRecord(b string, t agent.Task, id, route string, routed *runlog.RoutedBy, note string) (record, error) {
@@ -62,10 +66,10 @@ func createRecord(b string, t agent.Task, id, route string, routed *runlog.Route
 }
 
 func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, create recordFactory) int {
-	return runMode(ctx, in, out, now, false, create)
+	return runMode(ctx, in, out, now, false, create, 0)
 }
 
-func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, worker bool, create recordFactory) int {
+func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, worker bool, create recordFactory, checkpointTimeout time.Duration) int {
 	if now == nil {
 		now = time.Now
 	}
@@ -100,6 +104,11 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 	}
 	if !attemptID.MatchString(req.AttemptID) {
 		return w.reject(req.AttemptID, "bad_request", "attempt_id must be 1 to 128 letters, digits, dots, underscores or dashes")
+	}
+	var startFields map[string]json.RawMessage
+	_ = json.Unmarshal(first.data, &startFields)
+	if _, present := startFields["checkpoint"]; !worker && present {
+		return w.reject(req.AttemptID, "bad_request", "checkpoint requires worker mode")
 	}
 	if req.Task == nil {
 		return w.reject(req.AttemptID, "bad_request", "task is required")
@@ -288,6 +297,27 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 			Truncated bool `json:"truncated"`
 		}{e, truncated}})
 	}
+	type checkpointSave struct {
+		snapshot agent.APICheckpoint
+		answer   chan error
+	}
+	saves := make(chan checkpointSave)
+	if worker {
+		task.Durable = &agent.DurableExecution{Resume: req.Checkpoint, Save: func(ctx context.Context, cp agent.APICheckpoint) error {
+			save := checkpointSave{snapshot: cp, answer: make(chan error, 1)}
+			select {
+			case saves <- save:
+			case <-ctx.Done():
+				return fmt.Errorf("%w: checkpoint interrupted", agent.ErrRecoveryRequired)
+			}
+			select {
+			case err := <-save.answer:
+				return err
+			case <-ctx.Done():
+				return fmt.Errorf("%w: checkpoint interrupted", agent.ErrRecoveryRequired)
+			}
+		}}
+	}
 	result := make(chan agent.Result, 1)
 	go func() {
 		if turnDefault {
@@ -295,9 +325,26 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 		}
 		plan.Apply(&task, rec.Dir(), emit)
 		task.Knowledge = remote.SearcherFromEnv
+		if worker && req.Checkpoint != nil && req.Checkpoint.Pending != nil {
+			result <- agent.Result{Backend: t.Backend, Status: agent.StatusError, RecoveryRequired: true, Error: agent.ErrRecoveryRequired.Error()}
+			return
+		}
 		result <- agent.Run(ctx, b, task, emit)
 	}()
 	interrupt := ctx.Done()
+	var pending *checkpointSave
+	var timer *time.Timer
+	var timeout <-chan time.Time
+	failCheckpoint := func(reason string) {
+		if pending != nil {
+			pending.answer <- fmt.Errorf("%w: %s", agent.ErrRecoveryRequired, reason)
+			pending = nil
+			if timer != nil {
+				timer.Stop()
+			}
+			timeout = nil
+		}
+	}
 	for {
 		select {
 		case res := <-result:
@@ -319,7 +366,34 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 				return 1
 			}
 			return 0
+		case save := <-saves:
+			pending = &save
+			if !w.write("checkpoint", map[string]any{"checkpoint": save.snapshot}) {
+				failCheckpoint("checkpoint output failed")
+				continue
+			}
+			timer = time.NewTimer(checkpointTimeout)
+			timeout = timer.C
+		case <-timeout:
+			failCheckpoint("checkpoint answer timed out")
 		case line := <-input:
+			if pending != nil {
+				if line.err != nil {
+					failCheckpoint("checkpoint input closed")
+					input = nil
+					continue
+				}
+				var answer checkpointAnswer
+				if err := decodeAnswer(line.data, &answer); err != nil || answer.Type != "ack" || answer.AttemptID != req.AttemptID || answer.Sequence != pending.snapshot.Sequence {
+					failCheckpoint("checkpoint was not acknowledged")
+				} else {
+					pending.answer <- nil
+					pending = nil
+					timer.Stop()
+					timeout = nil
+				}
+				continue
+			}
 			if line.err != nil {
 				if errors.Is(line.err, errInputTooLong) {
 					w.failure("bad_request", line.err.Error(), false)
@@ -356,9 +430,10 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 var attemptID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 type startRequest struct {
-	Type      string       `json:"type"`
-	AttemptID string       `json:"attempt_id"`
-	Task      *taskRequest `json:"task"`
+	Type       string               `json:"type"`
+	AttemptID  string               `json:"attempt_id"`
+	Task       *taskRequest         `json:"task"`
+	Checkpoint *agent.APICheckpoint `json:"checkpoint,omitempty"`
 }
 
 type taskRequest struct {
@@ -389,7 +464,7 @@ func decode(data []byte, value any) error {
 	// encoding/json matches struct fields without regard to case and merges
 	// repeated objects. Validate names and uniqueness before decoding so the
 	// presence-based option gate sees exactly the fields that reach the task.
-	fields, err := objectFields(data, "type", "attempt_id", "task")
+	fields, err := objectFields(data, "type", "attempt_id", "task", "checkpoint")
 	if err != nil {
 		return err
 	}
@@ -399,6 +474,9 @@ func decode(data []byte, value any) error {
 	_ = json.Unmarshal(fields["type"], &kind)
 	_, isCancel := value.(*cancelRequest)
 	if kind == "cancel" || (isCancel && kind != "start") {
+		if _, set := fields["checkpoint"]; set {
+			return fmt.Errorf("unknown field %q", "checkpoint")
+		}
 		if _, set := fields["task"]; set {
 			return fmt.Errorf("unknown field %q", "task")
 		}
@@ -419,6 +497,22 @@ func decode(data []byte, value any) error {
 		return errors.New("each line must contain one JSON object")
 	}
 	return nil
+}
+
+type checkpointAnswer struct {
+	Type      string `json:"type"`
+	AttemptID string `json:"attempt_id"`
+	Sequence  uint64 `json:"sequence"`
+}
+
+func decodeAnswer(data []byte, answer *checkpointAnswer) error {
+	if !utf8.Valid(data) {
+		return errors.New("input must be UTF-8")
+	}
+	if _, err := objectFields(data, "type", "attempt_id", "sequence"); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, answer)
 }
 
 func checkTaskKeys(data json.RawMessage) error {

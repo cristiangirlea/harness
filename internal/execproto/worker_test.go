@@ -1,6 +1,7 @@
 package execproto
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -52,14 +53,35 @@ func TestWorkerAcceptsLoopbackWithoutTools(t *testing.T) {
 	t.Setenv("ANTHROPIC_BASE_URL", server.URL)
 	t.Setenv("ANTHROPIC_API_KEY", "fixture")
 	input, _ := json.Marshal(start(t.TempDir(), "api"))
-	var out bytes.Buffer
-	// Keep stdin open until the backend finishes.
 	reader, writer := io.Pipe()
-	go func() { fmt.Fprintln(writer, string(input)) }()
+	output, outputWriter := io.Pipe()
+	defer reader.Close()
 	defer writer.Close()
-	if code := RunWorker(context.Background(), reader, &out, nil); code != 0 || !strings.Contains(out.String(), `"type":"accepted"`) {
-		t.Fatalf("code=%d output=%s", code, out.String())
+	defer output.Close()
+	done := make(chan int, 1)
+	go func() { defer outputWriter.Close(); done <- RunWorker(context.Background(), reader, outputWriter, nil) }()
+	go func() { fmt.Fprintln(writer, string(input)) }()
+	scanner := bufio.NewScanner(output)
+	accepted := false
+	for scanner.Scan() {
+		var frame map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
+			t.Fatal(err)
+		}
+		if frame["type"] == "accepted" {
+			accepted = true
+		}
+		if frame["type"] == "checkpoint" {
+			cp := frame["checkpoint"].(map[string]any)
+			if err := json.NewEncoder(writer).Encode(map[string]any{"type": "ack", "attempt_id": "att-01", "sequence": cp["sequence"]}); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
+	if code := <-done; code != 0 || !accepted || scanner.Err() != nil {
+		t.Fatalf("code=%d accepted=%v err=%v", code, accepted, scanner.Err())
+	}
+
 	request := <-requests
 	if tools, ok := request["tools"]; ok && string(tools) != "null" && string(tools) != "[]" {
 		t.Fatalf("offered tools: %s", tools)

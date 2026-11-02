@@ -23,11 +23,12 @@ continues or resends it. A resumed checkpoint with `Pending` also requires recov
 
 The start frame places the optional checkpoint in a top-level `checkpoint` object. A checkpoint
 output uses the usual output envelope, plus `checkpoint` containing the complete durable snapshot.
-Its `sequence` identifies the save within the attempt; it is distinct from the output envelope's
-`seq`. The response is `{"type":"ack","attempt_id":"...","sequence":1}` or the same object
-with `type` set to `nack`. The attempt and sequence must match the outstanding checkpoint. Only
-one checkpoint can be outstanding. The response timeout is 15 seconds from sending the frame;
-an invalid or unmatched response does not acknowledge it.
+Its `sequence` identifies the durable save and continues from the saved value on resume; it is
+distinct from the output envelope's `seq`, which starts over with each attempt. The response is
+`{"type":"ack","attempt_id":"...","sequence":1}` or the same object with `type` set to `nack`.
+The attempt and sequence must match the outstanding checkpoint. Only one checkpoint can be
+outstanding. The response timeout is 15 seconds from sending the frame; an invalid or unmatched
+response ends the run as a failed acknowledgement.
 
 A `cancel` frame requests cancellation. The worker reports `canceled` only when no operation is
 in flight; otherwise the result requires recovery. If the worker kills the child after its grace
