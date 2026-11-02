@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -60,7 +62,21 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			source = filepath.Join(strings.TrimSpace(string(core)), "git.exe")
+			coreDir := strings.TrimSpace(string(core))
+			dlls, err := filepath.Glob(filepath.Join(coreDir, "..", "..", "bin", "*.dll"))
+			if err != nil || len(dlls) == 0 {
+				t.Fatalf("find git DLLs: %v", err)
+			}
+			for _, dll := range dlls {
+				data, err := os.ReadFile(dll)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(path, filepath.Base(dll)), data, 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			source = filepath.Join(coreDir, "git.exe")
 		}
 		if runtime.GOOS == "windows" && name == "bash" {
 			sh, err := exec.LookPath("sh")
@@ -124,6 +140,18 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		env = append(env, "SYSTEMROOT="+os.Getenv("SYSTEMROOT"), "WINDIR="+os.Getenv("WINDIR"))
 	}
+	for _, args := range [][]string{{"config", "user.name", "Fixture"}, {"config", "user.email", "fixture@example.invalid"}, {"commit", "--allow-empty", "-qm", "base"}} {
+		cmd := exec.Command(filepath.Join(path, "git"+func() string {
+			if runtime.GOOS == "windows" {
+				return ".exe"
+			}
+			return ""
+		}()), args...)
+		cmd.Dir, cmd.Env = repo, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
 	reads := []struct {
 		args []string
 		want string
@@ -151,6 +179,124 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 				}
 			})
 		}
+		t.Run("batch fixture", func(t *testing.T) {
+			fixture := t.TempDir()
+			git := func(dir string, args ...string) string {
+				t.Helper()
+				cmd := exec.Command(filepath.Join(path, "git"+func() string {
+					if runtime.GOOS == "windows" {
+						return ".exe"
+					}
+					return ""
+				}()), args...)
+				cmd.Dir, cmd.Env = dir, env
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+				return strings.TrimSpace(string(out))
+			}
+			git(fixture, "init", "-q")
+			git(fixture, "config", "user.name", "Fixture")
+			git(fixture, "config", "user.email", "fixture@example.invalid")
+			if err := os.WriteFile(filepath.Join(fixture, "file"), []byte("base\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			git(fixture, "add", "file")
+			git(fixture, "commit", "-qm", "base")
+			base := git(fixture, "rev-parse", "HEAD")
+			git(fixture, "checkout", "-qb", "scratch")
+			worktree := filepath.Join(t.TempDir(), "worktree")
+			git(fixture, "worktree", "add", "-qb", "hrn/fixture", worktree)
+			if err := os.WriteFile(filepath.Join(worktree, "file"), []byte("changed\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			git(worktree, "commit", "-qam", "change")
+			commit := git(worktree, "rev-parse", "HEAD")
+			res := batch.Result{ID: "fixture-ops", Dir: fixture, Base: base, Started: time.Now(), Tasks: []batch.TaskResult{{ID: "task", Status: batch.StatusPass, Branch: "hrn/fixture", Worktree: worktree, Commit: commit}}}
+			if err := batch.SaveResult(res); err != nil {
+				t.Fatal(err)
+			}
+			for _, tc := range []struct {
+				args []string
+				want string
+			}{
+				{[]string{"batch", "diff", res.ID, "task"}, "+changed"},
+				{[]string{"batch", "merge", res.ID, "task"}, "merged"},
+				{[]string{"batch", "rm", res.ID}, "removed"},
+			} {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				cmd := exec.CommandContext(ctx, bin, tc.args...)
+				cmd.Env = env
+				out, err := cmd.CombinedOutput()
+				cancel()
+				if err != nil || !strings.Contains(string(out), tc.want) {
+					t.Fatalf("%v: %v\n%s", tc.args, err, out)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(fixture, "file"))
+			if err != nil || string(data) != "changed\n" {
+				t.Fatalf("merge: %q %v", data, err)
+			}
+			if _, err := os.Stat(worktree); !os.IsNotExist(err) {
+				t.Fatalf("worktree remains: %v", err)
+			}
+		})
+		t.Run("mcp", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, bin, "mcp")
+			cmd.Env = env
+			cmd.Dir = repo
+			in, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = in.Close(); _ = cmd.Wait(); assertNoZeroProviderChildren(t, cmd.Process.Pid) }()
+			var client mcp.Client
+			if err := client.Connect(ctx, out, in); err != nil {
+				t.Fatal(err)
+			}
+			found := map[string]bool{}
+			for _, tool := range client.Tools() {
+				found[tool.Name] = true
+			}
+			for _, name := range []string{"runs", "show"} {
+				if !found[name] {
+					t.Fatalf("tools/list lacks %s", name)
+				}
+			}
+			for _, tc := range []struct {
+				name string
+				args json.RawMessage
+				want string
+			}{
+				{"runs", json.RawMessage(`{}`), "fixture prompt"},
+				{"show", json.RawMessage(`{"run_id":"` + w.ID() + `"}`), "fixture prompt"},
+			} {
+				result, err := client.CallTool(ctx, tc.name, tc.args)
+				if err != nil || result.IsError || !strings.Contains(result.Text(), tc.want) {
+					t.Fatalf("%s: %v %+v", tc.name, err, result)
+				}
+			}
+			if env[0] == "PATH="+path {
+				args, err := json.Marshal(map[string]string{"prompt": "fixture prompt", "backend": "claude", "dir": repo})
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := client.CallTool(ctx, "run", args)
+				if err != nil || !result.IsError || !strings.Contains(result.Text(), "claude") {
+					t.Fatalf("run: %v %+v", err, result)
+				}
+			}
+		})
 		t.Run("watch", func(t *testing.T) {
 			ln, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
@@ -238,6 +384,62 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 	if _, err := os.Stat(log); !os.IsNotExist(err) {
 		t.Fatalf("provider call log exists or cannot be checked: %v", err)
 	}
+	spec := filepath.Join(home, "tasks.json")
+	specData, err := json.Marshal(map[string]any{"dir": repo, "backend": "claude", "tasks": []any{map[string]string{"id": "task", "prompt": "fixture prompt"}}, "matrix": []any{map[string]string{"backend": "claude"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(spec, specData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"batch"} {
+		t.Run("execute_"+name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, bin, name, spec)
+			cmd.Env = env
+			out, err := cmd.CombinedOutput()
+			if cmd.Process == nil {
+				t.Fatalf("start: %v", err)
+			}
+			assertNoZeroProviderChildren(t, cmd.Process.Pid)
+			if ctx.Err() != nil || err == nil || !strings.Contains(string(out), "claude") {
+				t.Fatalf("%s: %v (%v)\n%s", name, err, ctx.Err(), out)
+			}
+		})
+	}
+	t.Run("exec_start", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		frame, err := json.Marshal(map[string]any{"type": "start", "attempt_id": "fixture", "task": map[string]string{"prompt": "fixture prompt", "dir": repo, "backend": "claude", "mode": "auto"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.CommandContext(ctx, bin, "exec", "--protocol", "v1")
+		cmd.Env = env
+		cmd.Stdin = strings.NewReader(string(frame) + "\n")
+		out, err := cmd.CombinedOutput()
+		if cmd.Process == nil {
+			t.Fatalf("start: %v", err)
+		}
+		assertNoZeroProviderChildren(t, cmd.Process.Pid)
+		var rejected bool
+		for _, line := range strings.Split(string(out), "\n") {
+			var frame struct {
+				Type  string `json:"type"`
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(line), &frame) == nil && frame.Type == "rejected" && frame.Error.Code == "unavailable" && strings.Contains(frame.Error.Message, "claude") {
+				rejected = true
+			}
+		}
+		if ctx.Err() != nil || err == nil || !rejected {
+			t.Fatalf("exec: %v (%v)\n%s", err, ctx.Err(), out)
+		}
+	})
 	for _, name := range []string{"", "api", "claude", "codex", "gemini", "opencode", "agy"} {
 		t.Run("run_"+name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -250,6 +452,10 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			cmd := exec.CommandContext(ctx, bin, args...)
 			cmd.Env = env
 			out, err := cmd.CombinedOutput()
+			if cmd.Process == nil {
+				t.Fatalf("start: %v", err)
+			}
+			assertNoZeroProviderChildren(t, cmd.Process.Pid)
 			want := name
 			if name == "" {
 				want = "claude"
