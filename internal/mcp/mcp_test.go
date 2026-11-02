@@ -344,9 +344,10 @@ func TestExpandReadsHrnsSecretsAsUnset(t *testing.T) {
 func TestLoadConfig(t *testing.T) {
 	t.Setenv("HRN_TEST_VALUE", "tok")
 	t.Setenv("HRN_TEST_EMPTY", "")
+	t.Setenv("HRN_TENANT_TOKEN", "secret")
 	p := filepath.Join(t.TempDir(), "mcp.json")
 	if err := os.WriteFile(p, []byte(`{"mcpServers":{
-		"zeta":{"command":"z","args":["--token","${HRN_TEST_VALUE}","${HRN_TEST_EMPTY:-dflt}","${HRN_NOPE_UNSET}","literal $x"],"env":{"K":"${HRN_TEST_VALUE}"}},
+		"zeta":{"command":"z","args":["--token","${HRN_TEST_VALUE}","${HRN_TEST_EMPTY:-dflt}","${HRN_NOPE_UNSET}","literal $x"],"env":{"K":"${HRN_TEST_VALUE}","DENIED":"${HRN_TENANT_TOKEN}"}},
 		"alpha":{"command":"a"},
 		"remote":{"type":"http","url":"https://x"},
 		"sse":{"url":"https://y"}}}`), 0o644); err != nil {
@@ -364,6 +365,9 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if servers[1].Env["K"] != "tok" {
 		t.Errorf("env = %v", servers[1].Env)
+	}
+	if got := servers[1].Env["DENIED"]; got != "" {
+		t.Errorf("denied expansion = %q", got)
 	}
 	if strings.Join(skipped, ",") != "remote,sse" {
 		t.Errorf("skipped = %v", skipped)
