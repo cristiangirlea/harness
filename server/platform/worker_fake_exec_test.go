@@ -27,7 +27,17 @@ func fakeHRN(scenario string) {
 	if strings.Join(os.Args[1:], " ") != "exec --protocol v1 --worker" || os.Getenv("ANTHROPIC_BASE_URL") != "http://localhost:1234" || os.Getenv("ANTHROPIC_API_KEY") != "fixture-key" || os.Getenv("HRN_WORKER_TOKEN") != "" || os.Getenv("OTHER_SECRET") != "" {
 		os.Exit(2)
 	}
+	if os.Getenv("HRN_HOME") != filepath.Join(filepath.Dir(os.Getenv("HOME")), ".hrn-home") {
+		os.Exit(6)
+	}
 	in := bufio.NewReader(os.Stdin)
+	if scenario == "handshake" {
+		line, _ := in.ReadBytes('\n')
+		if len(line) != 0 {
+			os.Exit(7)
+		}
+		return
+	}
 	fmt.Println(`{"v":1,"seq":1,"type":"hello","protocol":"v1"}`)
 	var start struct {
 		Attempt string `json:"attempt_id"`
@@ -37,10 +47,19 @@ func fakeHRN(scenario string) {
 		os.Exit(3)
 	}
 	if scenario == "refused" {
-		fmt.Printf("{\"v\":1,\"seq\":2,\"type\":\"rejected\",\"attempt_id\":%q}\n", start.Attempt)
+		fmt.Fprintln(os.Stderr, "fixture stderr tail")
+		fmt.Printf("{\"v\":1,\"seq\":2,\"type\":\"rejected\",\"attempt_id\":%q,\"error\":{\"code\":\"storage\",\"message\":\"cannot write\"}}\n", start.Attempt)
 		return
 	}
 	fmt.Printf("{\"v\":1,\"seq\":2,\"type\":\"accepted\",\"attempt_id\":%q}\n", start.Attempt)
+	if scenario == "exit" {
+		return
+	}
+	if scenario == "ignore" {
+		for {
+			time.Sleep(time.Second)
+		}
+	}
 	if scenario == "cancel" {
 		line, _ = in.ReadBytes('\n')
 		if !strings.Contains(string(line), `"cancel"`) {
@@ -61,7 +80,7 @@ func fakeHRN(scenario string) {
 	fmt.Printf("{\"v\":1,\"seq\":4,\"type\":\"result\",\"attempt_id\":%q,\"result\":{\"status\":\"ok\",\"backend\":\"api\"}}\n", start.Attempt)
 }
 func TestWorkerExecProtocol(t *testing.T) {
-	for _, scenario := range []string{"saved", "nack", "refused", "cancel"} {
+	for _, scenario := range []string{"saved", "nack", "refused", "cancel", "ignore", "exit", "handshake"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("OTHER_SECRET", "secret")
 			t.Setenv("HRN_WORKER_TOKEN", "secret")
@@ -111,10 +130,18 @@ func TestWorkerExecProtocol(t *testing.T) {
 				return &http.Response{StatusCode: code, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})}
 			w := Worker{ControlURL: "http://control", ProjectID: job.ProjectID, Token: strings.Repeat("a", 64), WorkerID: "worker", WorkspaceRoot: t.TempDir(), HRNPath: path, ModelURL: "http://localhost:1234", ModelKey: "fixture-key", HTTPClient: client}
+
+			t.Setenv("HOME", filepath.Join(w.WorkspaceRoot, "unwritable"))
+			t.Setenv("HRN_HOME", "")
+			if err := os.Unsetenv("HRN_HOME"); err != nil {
+				t.Fatal(err)
+			}
+			w.cancelGrace = 100 * time.Millisecond
+
 			ctx := context.Background()
-			if scenario == "cancel" {
+			if scenario == "cancel" || scenario == "ignore" || scenario == "handshake" {
 				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, time.Second)
+				ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
 				defer cancel()
 			}
 			ran, err := w.RunOnce(ctx)
@@ -131,11 +158,15 @@ func TestWorkerExecProtocol(t *testing.T) {
 					t.Fatalf("result %+v", result)
 				}
 			case "refused":
-				if result.Status != agent.StatusError || result.RecoveryRequired {
+				if result.Status != agent.StatusError || result.RecoveryRequired || !strings.Contains(result.Error, "refused: storage: cannot write") || !strings.Contains(result.Error, "fixture stderr tail") {
 					t.Fatalf("result %+v", result)
 				}
-			case "cancel":
-				if result.Status != "canceled" && !result.RecoveryRequired {
+			case "cancel", "handshake":
+				if result.Status != "canceled" || result.RecoveryRequired {
+					t.Fatalf("result %+v", result)
+				}
+			case "ignore", "exit":
+				if !result.RecoveryRequired {
 					t.Fatalf("result %+v", result)
 				}
 			}

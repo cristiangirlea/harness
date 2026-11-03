@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cristiangirlea/harness/server/platform"
 )
 
 func TestCheckHRN(t *testing.T) {
@@ -33,4 +35,24 @@ func TestHelperFakeHRN(t *testing.T) {
 	}
 	fmt.Println("hrn fake version")
 	os.Exit(0)
+}
+
+func TestHRNHomeCheck(t *testing.T) {
+	root := t.TempDir()
+	w := platform.Worker{WorkspaceRoot: root}
+	if err := w.PrepareHRNHome(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".hrn-home")
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Fatalf("home %s: %v", path, err)
+	}
+	bad := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(bad, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	w.WorkspaceRoot = bad
+	if err := w.PrepareHRNHome(); err == nil || !strings.Contains(err.Error(), filepath.Join(bad, ".hrn-home")) {
+		t.Fatalf("home error: %v", err)
+	}
 }

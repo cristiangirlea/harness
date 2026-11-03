@@ -90,7 +90,7 @@ func TestWorkerTranscriptReplay(t *testing.T) {
 func TestWorkerClientCancelAndFailures(t *testing.T) {
 	t.Run("cancel", func(t *testing.T) {
 		var out bytes.Buffer
-		c := workerClient{output: &out, attemptID: "a"}
+		c := workerClient{output: &out, attemptID: "a", started: true}
 		if err := c.cancel(); err != nil {
 			t.Fatal(err)
 		}

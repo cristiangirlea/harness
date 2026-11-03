@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,6 +30,47 @@ type Worker struct {
 	ModelURL      string
 	ModelKey      string
 	HTTPClient    *http.Client
+	cancelGrace   time.Duration
+}
+
+func (w *Worker) PrepareHRNHome() error {
+	path := filepath.Join(w.WorkspaceRoot, ".hrn-home")
+	root, err := openWorkspaceRoot(w.WorkspaceRoot)
+	if err != nil {
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	defer root.Close()
+	if err := ensureWorkspaceDirectory(root, ".hrn-home"); err != nil {
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	f, err := os.CreateTemp(path, ".write-check-")
+	if err != nil {
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	name := f.Name()
+	if err = f.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	if err = os.Remove(name); err != nil {
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	return nil
+}
+
+type tailBuffer struct{ data []byte }
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) >= 4096 {
+		b.data = append(b.data[:0], p[len(p)-4096:]...)
+		return n, nil
+	}
+	if len(b.data)+len(p) > 4096 {
+		b.data = append(b.data[:0], b.data[len(b.data)+len(p)-4096:]...)
+	}
+	b.data = append(b.data, p...)
+	return n, nil
 }
 
 func (w *Worker) client() *http.Client {
@@ -82,6 +124,9 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	if endpointErr != nil || endpoint == nil || endpoint.Scheme != "http" || endpoint.User != nil ||
 		!(endpoint.Hostname() == "localhost" || (net.ParseIP(endpoint.Hostname()) != nil && net.ParseIP(endpoint.Hostname()).IsLoopback())) {
 		return false, fmt.Errorf("%w: initial worker requires a local fake API endpoint", ErrUnsupported)
+	}
+	if err := w.PrepareHRNHome(); err != nil {
+		return false, err
 	}
 	root, err := openWorkspaceRoot(w.WorkspaceRoot)
 	if err != nil {
@@ -149,12 +194,14 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		result.Error = startErr.Error()
 	} else {
 		cmd := exec.CommandContext(runCtx, w.HRNPath, "exec", "--protocol", "v1", "--worker")
-		for _, key := range []string{"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "HRN_HOME"} {
+		for _, key := range []string{"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE"} {
 			if value, ok := os.LookupEnv(key); ok {
 				cmd.Env = append(cmd.Env, key+"="+value)
 			}
 		}
-		cmd.Env = append(cmd.Env, "ANTHROPIC_BASE_URL="+w.ModelURL, "ANTHROPIC_API_KEY="+w.ModelKey)
+		cmd.Env = append(cmd.Env, "HRN_HOME="+filepath.Join(w.WorkspaceRoot, ".hrn-home"), "ANTHROPIC_BASE_URL="+w.ModelURL, "ANTHROPIC_API_KEY="+w.ModelKey)
+		var stderr tailBuffer
+		cmd.Stderr = &stderr
 		input, pipeErr := cmd.StdinPipe()
 		if pipeErr == nil {
 			var output io.ReadCloser
@@ -175,20 +222,28 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 					return checkpointSaved
 				}}
 				cmd.Cancel = func() error { return nil }
-				cmd.WaitDelay = 5 * time.Second
+				grace := w.cancelGrace
+				if grace <= 0 {
+					grace = 5 * time.Second
+				}
+				cmd.WaitDelay = grace
 				if pipeErr = cmd.Start(); pipeErr == nil {
 					done := make(chan struct{})
+					cancelDone := make(chan struct{})
 					go func() {
+						defer close(cancelDone)
 						select {
 						case <-runCtx.Done():
-							go func() { _ = client.cancel() }()
-							timer := time.NewTimer(5 * time.Second)
+							cancelWriteDone := make(chan struct{})
+							go func() { defer close(cancelWriteDone); _ = client.cancel() }()
+							timer := time.NewTimer(grace)
 							defer timer.Stop()
 							select {
 							case <-done:
 							case <-timer.C:
 								_ = cmd.Process.Kill()
 							}
+							<-cancelWriteDone
 						case <-done:
 						}
 					}()
@@ -196,17 +251,28 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 					close(done)
 					_ = input.Close()
 					waitErr := cmd.Wait()
+					<-cancelDone
 					result = client.result
-					if outcome == outcomeRecovery || runErr != nil || waitErr != nil {
+					client.mu.Lock()
+					canceledBeforeStart := client.canceledBeforeStart
+					client.mu.Unlock()
+					if canceledBeforeStart {
+						result = agent.Result{Backend: "api", Status: "canceled"}
+					} else if outcome == outcomeRecovery || runErr != nil || (waitErr != nil && !(outcome == outcomeCanceled && runCtx.Err() != nil)) {
 						if result.Status == "" {
 							result = agent.Result{Backend: "api", Status: agent.StatusError, Error: "worker execution requires recovery"}
 						}
 						result.RecoveryRequired = true
 					} else if outcome == outcomeRefused {
-						result = agent.Result{Backend: "api", Status: agent.StatusError, Error: "worker refused start"}
+						if result.Status == "" {
+							result = agent.Result{Backend: "api", Status: agent.StatusError, Error: "worker refused start"}
+						}
 					}
 				}
 			}
+		}
+		if (result.Status == agent.StatusError || result.RecoveryRequired) && len(stderr.data) > 0 {
+			result.Error += "; stderr: " + string(stderr.data)
 		}
 		if pipeErr != nil {
 			result.Error = "start worker: " + pipeErr.Error()

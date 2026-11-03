@@ -64,6 +64,9 @@ func run(hrnPath string) error {
 	if err := checkHRN(worker.HRNPath, exec.CommandContext); err != nil {
 		return err
 	}
+	if err := worker.PrepareHRNHome(); err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := waitForFixture(ctx, modelURL); err != nil {
