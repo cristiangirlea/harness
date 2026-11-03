@@ -75,7 +75,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		old = string(data)
 	}
 
-	p.WorkMapRepos = had.WorkMapRepos
+	p.WorkMapRepos, p.WorkMapGitHub = had.WorkMapRepos, had.WorkMapGitHub
 
 	// Preserve fallback preference order despite the card's alphabetical display.
 	if len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {

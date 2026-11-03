@@ -35,6 +35,9 @@ const (
 var stages = []Stage{Idea, Branch, Agent, Gates, Review, PR, CI, Merged, Released}
 
 type Links struct {
+	PR       string
+	Issue    string
+	Checks   string
 	Runs     []string
 	Batches  []string
 	Branch   string
@@ -120,11 +123,11 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		}
 		batches = append(batches, b)
 	}
+	p, err := prefs.Load(home)
+	if err != nil {
+		errs = append(errs, err)
+	}
 	if repos == nil {
-		p, err := prefs.Load(home)
-		if err != nil {
-			errs = append(errs, err)
-		}
 		repos = p.WorkMapRepos
 		if repos == nil {
 			for _, r := range runs {
@@ -374,6 +377,11 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			p.Key = "branch:" + branch
 		}
 		add(p)
+	}
+	if p.WorkMapGitHub == nil || *p.WorkMapGitHub {
+		if err := githubSources(ctx, home, roots, pieces); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	result := make([]Piece, 0, len(pieces))
 	for _, p := range pieces {

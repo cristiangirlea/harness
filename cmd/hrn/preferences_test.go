@@ -221,3 +221,18 @@ func TestBackendsRecoversBrokenPreferences(t *testing.T) {
 		})
 	}
 }
+
+func TestBackendsResetKeepsTheWorkMapGitHubSetting(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	off := false
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{WorkMapGitHub: &off, EnabledNames: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureStdout(t, func() error { return cmdBackends([]string{"reset"}) }); err != nil {
+		t.Fatal(err)
+	}
+	p, err := prefs.Load(runlog.Home())
+	if err != nil || p.WorkMapGitHub == nil || *p.WorkMapGitHub || len(p.EnabledNames) != 0 {
+		t.Fatalf("reset: %+v %v", p, err)
+	}
+}

@@ -570,7 +570,7 @@ func cmdBackends(args []string) error {
 				return errors.New("usage: hrn backends reset")
 			}
 			p, err := prefs.Load(runlog.Home())
-			if err != nil || len(p.WorkMapRepos) == 0 {
+			if err != nil || (len(p.WorkMapRepos) == 0 && p.WorkMapGitHub == nil) {
 				if err := os.Remove(filepath.Join(runlog.Home(), "backends.json")); err != nil && !os.IsNotExist(err) {
 					return err
 				}

@@ -14,9 +14,10 @@ import (
 )
 
 type Prefs struct {
-	WorkMapRepos []string `json:"work_map_repos,omitempty"`
-	EnabledNames []string `json:"enabled,omitempty"`
-	DefaultName  string   `json:"default,omitempty"`
+	WorkMapGitHub *bool    `json:"work_map_github,omitempty"`
+	WorkMapRepos  []string `json:"work_map_repos,omitempty"`
+	EnabledNames  []string `json:"enabled,omitempty"`
+	DefaultName   string   `json:"default,omitempty"`
 }
 
 func (p Prefs) Enabled(name string) bool {
