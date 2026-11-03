@@ -195,7 +195,10 @@ func TestGitHubThrottlesFailedRefresh(t *testing.T) {
 	ws.GH = func(context.Context, ...string) ([]byte, error) { calls++; return nil, fmt.Errorf("unavailable") }
 	home := t.TempDir()
 	for i := 0; i < 2; i++ {
-		_ = githubRepo(context.Background(), home, "r", "o/r", map[string]*Piece{})
+		err := githubRepo(context.Background(), home, "r", "o/r", map[string]*Piece{})
+		if err == nil || !strings.Contains(err.Error(), "unavailable") {
+			t.Fatalf("call %d: %v", i, err)
+		}
 	}
 	if calls != 1 {
 		t.Fatalf("calls: %d", calls)
@@ -351,7 +354,7 @@ func TestBuildCallsGitHubByDefaultAndDeduplicatesErrors(t *testing.T) {
 		t.Fatalf("calls %d pieces %+v error %v", calls.Load(), pieces, err)
 	}
 	pieces, err = Build(context.Background(), home, repos)
-	if calls.Load() != 2 || err == nil || len(pieces) != 2 {
+	if calls.Load() != 2 || err == nil || strings.Count(err.Error(), "not logged in") != 1 || len(pieces) != 2 {
 		t.Fatalf("retry calls %d pieces %+v error %v", calls.Load(), pieces, err)
 	}
 }

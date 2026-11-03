@@ -41,6 +41,7 @@ type githubItem struct {
 type githubCache struct {
 	Fetched time.Time    `json:"fetched"`
 	Tried   time.Time    `json:"tried,omitzero"`
+	Failed  string       `json:"failed,omitempty"`
 	Issues  []githubItem `json:"issues"`
 	Open    []githubItem `json:"open"`
 	Merged  []githubItem `json:"merged"`
@@ -124,6 +125,7 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 			}
 			if err != nil {
 				result = fmt.Errorf("GitHub %s: %w", repo, err)
+				fresh.Failed = err.Error()
 				break
 			}
 		}
@@ -138,7 +140,7 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 			if !valid {
 				answer = githubCache{}
 			}
-			answer.Tried = time.Now()
+			answer.Tried, answer.Failed = time.Now(), fresh.Failed
 		}
 		if err := writeGitHubCache(path, answer); err != nil {
 			result = errors.Join(result, fmt.Errorf("GitHub cache %s: %w", repo, err))
@@ -147,7 +149,11 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 			return result
 		}
 	} else if !githubRecent(cached.Fetched) {
-		result = fmt.Errorf("GitHub %s: refresh recently failed", repo)
+		cause := cached.Failed
+		if cause == "" {
+			cause = "refresh recently failed"
+		}
+		result = fmt.Errorf("GitHub %s: %s", repo, cause)
 		if !valid {
 			return result
 		}
