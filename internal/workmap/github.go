@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +18,7 @@ import (
 )
 
 var githubTTL = 5 * time.Minute
-var githubOrigin = regexp.MustCompile(`^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$`)
+var githubOrigin = regexp.MustCompile(`^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._][A-Za-z0-9._-]*?)(?:\.git)?/?$`)
 
 type githubCheck struct {
 	Name       string `json:"name,omitempty"`
@@ -26,39 +28,94 @@ type githubCheck struct {
 	Conclusion string `json:"conclusion,omitempty"`
 }
 type githubItem struct {
-	Number  int           `json:"number"`
-	Title   string        `json:"title"`
-	URL     string        `json:"url"`
-	Head    string        `json:"headRefName,omitempty"`
-	Draft   bool          `json:"isDraft,omitempty"`
-	Review  string        `json:"reviewDecision,omitempty"`
-	Checks  []githubCheck `json:"statusCheckRollup,omitempty"`
-	Updated time.Time     `json:"updatedAt,omitzero"`
-	Merged  time.Time     `json:"mergedAt,omitzero"`
+	Number          int           `json:"number"`
+	Title           string        `json:"title"`
+	URL             string        `json:"url"`
+	Head            string        `json:"headRefName,omitempty"`
+	CrossRepository bool          `json:"isCrossRepository,omitempty"`
+	Review          string        `json:"reviewDecision,omitempty"`
+	Checks          []githubCheck `json:"statusCheckRollup,omitempty"`
+	Updated         time.Time     `json:"updatedAt,omitzero"`
+	Merged          time.Time     `json:"mergedAt,omitzero"`
 }
 type githubCache struct {
 	Fetched time.Time    `json:"fetched"`
+	Tried   time.Time    `json:"tried,omitzero"`
 	Issues  []githubItem `json:"issues"`
 	Open    []githubItem `json:"open"`
 	Merged  []githubItem `json:"merged"`
 }
 
+func parseGitHubRepo(url string) string {
+	m := githubOrigin.FindStringSubmatch(url)
+	if m == nil || m[2] == "." || m[2] == ".." {
+		return ""
+	}
+	return strings.ToLower(m[1] + "/" + m[2])
+}
+
+func githubRecent(t time.Time) bool {
+	age := time.Since(t)
+	return !t.IsZero() && age >= 0 && age < githubTTL
+}
+
+func githubRetry(f func() error) error {
+	var err error
+	for i := 0; i < 20; i++ {
+		err = f()
+		if err == nil || errors.Is(err, fs.ErrNotExist) || runtime.GOOS != "windows" {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return err
+}
+
+func writeGitHubCache(path string, cache githubCache) error {
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".github-*.json")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	_, err = f.Write(data)
+	if e := f.Close(); err == nil {
+		err = e
+	}
+	if err != nil {
+		return err
+	}
+	return githubRetry(func() error { return os.Rename(name, path) })
+}
+
 func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]*Piece) error {
 	path := filepath.Join(home, "workmap", "github", strings.ReplaceAll(repo, "/", "__")+".json")
 	var cached githubCache
-	data, readErr := os.ReadFile(path)
-	valid := readErr == nil && json.Unmarshal(data, &cached) == nil && !cached.Fetched.IsZero()
+	var data []byte
+	readErr := githubRetry(func() (err error) { data, err = os.ReadFile(path); return err })
+	decoded := readErr == nil && json.Unmarshal(data, &cached) == nil
+	if !decoded {
+		cached = githubCache{}
+	}
+	valid := decoded && !cached.Fetched.IsZero()
 	answer := cached
 	var result error
-	if !valid || time.Since(cached.Fetched) >= githubTTL {
+	if !githubRecent(cached.Fetched) && !githubRecent(cached.Tried) {
 		var fresh githubCache
 		calls := []struct {
 			args []string
 			dest *[]githubItem
 		}{
-			{[]string{"issue", "list", "-R", repo, "--state", "open", "--limit", "100", "--json", "number,title,url,updatedAt"}, &fresh.Issues},
-			{[]string{"pr", "list", "-R", repo, "--state", "open", "--limit", "100", "--json", "number,title,url,headRefName,isDraft,reviewDecision,statusCheckRollup,updatedAt"}, &fresh.Open},
-			{[]string{"pr", "list", "-R", repo, "--state", "merged", "--limit", "30", "--json", "number,title,url,headRefName,mergedAt"}, &fresh.Merged},
+			{[]string{"issue", "list", "--repo=" + repo, "--state", "open", "--limit", "100", "--json", "number,title,url,updatedAt"}, &fresh.Issues},
+			{[]string{"pr", "list", "--repo=" + repo, "--state", "open", "--limit", "100", "--json", "number,title,url,headRefName,isCrossRepository,reviewDecision,statusCheckRollup,updatedAt"}, &fresh.Open},
+			{[]string{"pr", "list", "--repo=" + repo, "--state", "merged", "--limit", "30", "--json", "number,title,url,headRefName,isCrossRepository,mergedAt"}, &fresh.Merged},
 		}
 		for _, call := range calls {
 			raw, err := ws.GH(ctx, call.args...)
@@ -70,32 +127,28 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 				break
 			}
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if result == nil {
 			fresh.Fetched = time.Now()
+			fresh.Tried = fresh.Fetched
 			answer = fresh
-			data, err := json.Marshal(fresh)
-			if err == nil {
-				err = os.MkdirAll(filepath.Dir(path), 0700)
+		} else {
+			if !valid {
+				answer = githubCache{}
 			}
-			if err == nil {
-				var f *os.File
-				f, err = os.CreateTemp(filepath.Dir(path), ".github-*.json")
-				if err == nil {
-					name := f.Name()
-					defer os.Remove(name)
-					_, err = f.Write(data)
-					if e := f.Close(); err == nil {
-						err = e
-					}
-					if err == nil {
-						err = os.Rename(name, path)
-					}
-				}
-			}
-			if err != nil {
-				result = fmt.Errorf("GitHub cache %s: %w", repo, err)
-			}
-		} else if !valid {
+			answer.Tried = time.Now()
+		}
+		if err := writeGitHubCache(path, answer); err != nil {
+			result = errors.Join(result, fmt.Errorf("GitHub cache %s: %w", repo, err))
+		}
+		if result != nil && !valid && answer.Fetched.IsZero() {
+			return result
+		}
+	} else if !githubRecent(cached.Fetched) {
+		result = fmt.Errorf("GitHub %s: refresh recently failed", repo)
+		if !valid {
 			return result
 		}
 	}
@@ -103,10 +156,14 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 		p := &Piece{Repo: root, Key: fmt.Sprintf("issue#%d", issue.Number), Title: issue.Title, Stage: Idea, Updated: issue.Updated, Links: Links{Issue: issue.URL}}
 		pieces[root+"\x00"+p.Key] = p
 	}
+	openHeads := map[string]bool{}
 	for _, pr := range answer.Open {
+		if !pr.CrossRepository && pr.Head != "" {
+			openHeads[pr.Head] = true
+		}
 		key := root + "\x00branch:" + pr.Head
 		p := pieces[key]
-		if p == nil || pr.Head == "" {
+		if p == nil || pr.Head == "" || pr.CrossRepository {
 			p = &Piece{Repo: root, Key: fmt.Sprintf("pr#%d", pr.Number), Title: pr.Title, Links: Links{Branch: pr.Head}}
 			pieces[root+"\x00"+p.Key] = p
 		}
@@ -123,7 +180,7 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 				state = strings.ToUpper(c.State)
 			}
 			switch state {
-			case "FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT":
+			case "FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE":
 				checks = "failing"
 				if stuck == "" {
 					name := c.Name
@@ -155,6 +212,14 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 		}
 	}
 	for _, pr := range answer.Merged {
+		if pr.CrossRepository {
+			p := &Piece{Repo: root, Key: fmt.Sprintf("pr#%d", pr.Number), Title: pr.Title, Stage: Merged, Updated: pr.Merged, Links: Links{PR: pr.URL, Branch: pr.Head}}
+			pieces[root+"\x00"+p.Key] = p
+			continue
+		}
+		if openHeads[pr.Head] {
+			continue
+		}
 		if p := pieces[root+"\x00branch:"+pr.Head]; p != nil && pr.Head != "" {
 			if rank(p.Stage) < rank(Merged) {
 				p.Stage = Merged
@@ -177,9 +242,8 @@ func githubSources(ctx context.Context, home string, roots map[string]string, pi
 		if err != nil {
 			continue
 		}
-		m := githubOrigin.FindStringSubmatch(url)
-		if m != nil && m[2] != "." && m[2] != ".." {
-			targets = append(targets, target{root, strings.ToLower(m[1] + "/" + m[2])})
+		if repo := parseGitHubRepo(url); repo != "" {
+			targets = append(targets, target{root, repo})
 		}
 	}
 	// Each worker builds its own map so joins remain deterministic and race-free.
@@ -195,8 +259,13 @@ func githubSources(ctx context.Context, home string, roots map[string]string, pi
 		wg.Add(1)
 		go func(t target) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				results <- response{target: t, err: ctx.Err()}
+				return
+			}
 			local := map[string]*Piece{}
 			for k, p := range pieces {
 				if p.Repo == t.root {

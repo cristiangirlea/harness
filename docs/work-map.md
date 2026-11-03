@@ -13,9 +13,9 @@ sources are returned as errors alongside any results that could be collected.
 ## GitHub
 
 For GitHub origin remotes, the map reads open issues and pull requests and recently
-merged pull requests using the logged-in `gh` CLI. It joins pull requests to local
+merged pull requests using the logged-in `gh` CLI. It joins same-repository pull requests to local
 branches, reports failing checks and requested changes, and caches each repository
 under `workmap/github` in HRN_HOME for five minutes. A failed refresh returns the
-cached data and an error. Set `work_map_github` to `false` in `backends.json` to
-disable this source. Only titles, states, numbers, links and check names are kept;
+cached data and an error, and retries after five minutes. Set `work_map_github` to `false` in `backends.json` to
+disable this source. Only titles, states, numbers, links, check names, branch names and dates are kept;
 the watch page is readable on the network without a login.
