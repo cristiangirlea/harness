@@ -136,7 +136,7 @@ func TestHTTPClientDisconnectControlRestartAndWorkerCompletion(t *testing.T) {
 	}
 	model := httptest.NewServer(http.HandlerFunc(fakeModel))
 	defer model.Close()
-	worker := &Worker{ControlURL: restarted.URL, ProjectID: created.Project.ID, Token: created.Token,
+	worker := &Worker{HRNPath: realHRN(t), ControlURL: restarted.URL, ProjectID: created.Project.ID, Token: created.Token,
 		WorkerID: "worker-fixture", WorkspaceRoot: t.TempDir(), ModelURL: model.URL, ModelKey: "fixture", HTTPClient: client}
 	ran, err := worker.RunOnce(context.Background())
 	if err != nil || !ran {

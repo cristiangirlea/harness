@@ -81,7 +81,7 @@ func TestWorkerStopsOrphanWorkspaceBeforeModelCall(t *testing.T) {
 		fakeModel(w, r)
 	}))
 	defer model.Close()
-	worker := &Worker{
+	worker := &Worker{HRNPath: realHRN(t),
 		ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
 		WorkerID: "workspace-fixture", WorkspaceRoot: root, ModelURL: model.URL, ModelKey: "fixture",
 	}
@@ -123,7 +123,7 @@ func TestWorkspaceLossDuringModelCallRequiresRecovery(t *testing.T) {
 		fakeTurn(w, "pause", "pause_turn")
 	}))
 	defer model.Close()
-	worker := &Worker{
+	worker := &Worker{HRNPath: realHRN(t),
 		ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
 		WorkerID: "workspace-loss-fixture", WorkspaceRoot: root, ModelURL: model.URL, ModelKey: "fixture",
 	}

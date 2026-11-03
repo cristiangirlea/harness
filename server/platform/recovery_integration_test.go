@@ -106,7 +106,7 @@ func TestHTTPManualRecoveryAfterSafeCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	lost := &lostCheckpointAck{base: http.DefaultTransport}
-	first := &Worker{ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
+	first := &Worker{HRNPath: realHRN(t), ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
 		WorkerID: "worker-first", WorkspaceRoot: t.TempDir(), ModelURL: model.URL, ModelKey: "fixture",
 		HTTPClient: &http.Client{Transport: lost}}
 	// Both attempts must use the same persistent workspace root.
@@ -145,7 +145,7 @@ func TestHTTPManualRecoveryAfterSafeCheckpoint(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("retained"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	second := &Worker{ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
+	second := &Worker{HRNPath: realHRN(t), ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
 		WorkerID: "worker-second", WorkspaceRoot: root, ModelURL: model.URL, ModelKey: "fixture"}
 	ran, err = second.RunOnce(ctx)
 	if err != nil || !ran {

@@ -4,14 +4,14 @@
 standard library only. This module uses pgx to keep tenants, projects, jobs,
 ownership, events, and durable API checkpoints in PostgreSQL. The control
 service accepts jobs over HTTP; a project worker claims and heartbeats them,
-runs the API backend, and saves checkpoints. An accepted job survives the
-submitting client's disconnect and a control service restart. Recovery after
+runs jobs through the hrn binary, and saves checkpoints. An accepted job
+survives the submitting client's disconnect and a control service restart. Recovery after
 worker loss requires operator confirmation that the old executor stopped.
 
 The worker is a development fixture: it accepts only read-only API jobs with
 a positive cost ceiling, uses a loopback fake model, and has no tools, shell,
-or native CLI execution. It does not fetch the registered repository or provide
-an isolation boundary. Its workspace manifests detect identity drift; they do
+or external agent CLI execution. It does not fetch the registered repository
+or provide an isolation boundary. Its workspace manifests detect identity drift; they do
 not make filesystem changes and database checkpoints atomic.
 
 Both submission and the durable API run path refuse MCP servers and
@@ -52,9 +52,11 @@ and `HRN_TLS_KEY_FILE`; otherwise startup is refused before listening. Run
 with `HRN_CONTROL_URL`, `HRN_FIXTURE_API_URL`, `HRN_PROJECT_ID`,
 `HRN_WORKER_TOKEN`, and an existing absolute `HRN_WORKSPACE_ROOT`. The worker
 command is `go run ./cmd/hrn-worker`.
-The worker checks `hrn version` at startup, with a 10-second timeout. Set
+The worker requires the `hrn` binary to run jobs and checks `hrn version` at
+startup, with a 10-second timeout. Set
 `HRN_WORKER_HRN` or pass `-hrn` to select the binary; the flag takes precedence.
-The default is `hrn` on PATH. The binary is not yet used to run jobs.
+The default is `hrn` on PATH. The container image supplies the binary and sets
+`HRN_WORKER_HRN` to its absolute path.
 
 Tenant budgets and spending reservation are not enforced yet (still open in
 the durable workers spec): any tenant can queue any number of jobs, each up to
