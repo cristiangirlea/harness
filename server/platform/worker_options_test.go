@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +18,14 @@ import (
 )
 
 func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "hrn")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-o", binary, "../../cmd/hrn")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build hrn: %v %s", err, output)
+	}
 	for _, allow := range []bool{true, false} {
 		t.Run(fmt.Sprintf("allow_dangerous=%t", allow), func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
@@ -64,7 +75,7 @@ func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
 			backend.BaseURL, backend.APIKey = model.URL, "fixture"
 			worker := &Worker{ControlURL: "https://control.invalid", ProjectID: job.ProjectID,
 				Token: strings.Repeat("a", 64), WorkerID: "fixture-worker", WorkspaceRoot: t.TempDir(),
-				Backend: backend, HTTPClient: client}
+				Backend: backend, HRNPath: binary, HTTPClient: client}
 			if ran, err := worker.RunOnce(context.Background()); !ran || err != nil {
 				t.Fatalf("worker failed instead of finishing the job: ran=%v err=%v", ran, err)
 			}
