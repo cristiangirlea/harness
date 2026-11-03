@@ -77,6 +77,7 @@ func TestAdaCreditsScriptsAddedByMerges(t *testing.T) {
 	gitIn(t, repo, "init", "-q", "-b", "main")
 	gitIn(t, repo, "config", "user.email", "fixture@example.org")
 	gitIn(t, repo, "config", "user.name", "Fixture")
+	gitIn(t, repo, "config", "log.diffMerges", "combined")
 	gitIn(t, repo, "remote", "add", "origin", "https://github.com/example/app.git")
 	writeFile(t, filepath.Join(repo, "base"), "base")
 	gitIn(t, repo, "add", ".")

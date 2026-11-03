@@ -234,7 +234,7 @@ func mergedScripts(root string) []Event {
 	if !strings.Contains(name, "/") {
 		return nil
 	}
-	log := gitEvidence(ctx, root, "log", "--first-parent", "--merges", "-m", "--reverse", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=A", "--name-only", "-z", "--format=%x00hrn-merge %H %cI%x00", "refs/remotes/origin/HEAD", "--", "scripts/")
+	log := gitEvidence(ctx, root, "log", "--first-parent", "--merges", "--diff-merges=first-parent", "--reverse", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=A", "--name-only", "-z", "--format=%x00hrn-merge %H %cI%x00", "refs/remotes/origin/HEAD", "--", "scripts/")
 	var events []Event
 	var oid string
 	var at time.Time
