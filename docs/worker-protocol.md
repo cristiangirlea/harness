@@ -1,9 +1,13 @@
 # Worker subprocess protocol, version 1
 
-This contract specifies the future worker subprocess boundary; the worker still embeds the API
-backend. Framing, output sequence numbers, events, errors and exit codes follow
-[exec protocol v1](exec-protocol.md). The worker starts `hrn exec --protocol v1 --worker` for
-one job attempt.
+The worker runs each job attempt through this contract. Framing, output sequence numbers,
+events, errors and exit codes follow [exec protocol v1](exec-protocol.md). The worker starts
+`hrn exec --protocol v1 --worker` for one job attempt.
+
+The worker image builds hrn and the server from the same revision, so their versions match. A
+newer hrn, for example one adding result fields (results also appear inside checkpoints), needs
+a matching server release; the worker reads the result frame leniently as a convenience, not as
+a compatibility guarantee.
 
 After `hello`, the worker sends `start` with the attempt ID and task and, on recovery, the last
 accepted checkpoint. The task carries the job options `timeout`, `max_turns`,

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/remote"
 )
 
@@ -59,7 +58,7 @@ func TestRemoteClientAgainstPostgresControl(t *testing.T) {
 	if err := json.Unmarshal(raw, &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.ID == "" || created.State != Queued || created.Options.Mode != agent.ModeReadOnly {
+	if created.ID == "" || created.State != Queued || created.Options.Mode != ModeReadOnly {
 		t.Fatalf("submitted job: %+v", created)
 	}
 	raw, err = client.Request(ctx, http.MethodPost, postPath, submission)

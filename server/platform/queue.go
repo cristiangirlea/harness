@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -135,16 +134,13 @@ func (s *Store) Heartbeat(ctx context.Context, projectID, jobID, workerID string
 	return true, cancel, nil
 }
 
-func (s *Store) SaveCheckpoint(ctx context.Context, projectID, jobID, workerID string, generation int64, cp agent.APICheckpoint) error {
-	if cp.Version != 1 || cp.Sequence == 0 || cp.Boundary == "" || cp.TaskDigest == "" {
-		return errors.New("invalid API checkpoint")
+func (s *Store) SaveCheckpoint(ctx context.Context, projectID, jobID, workerID string, generation int64, cp Checkpoint) error {
+	payload := cp.Bytes()
+	if len(payload) == 0 {
+		return errors.New("checkpoint has no original payload")
 	}
-	payload, err := json.Marshal(cp)
-	if err != nil {
+	if err := json.Unmarshal(payload, &cp); err != nil {
 		return err
-	}
-	if len(payload) > 16*1024*1024 {
-		return errors.New("checkpoint exceeds 16 MiB")
 	}
 	digest := sha256.Sum256(payload)
 	tx, err := s.db.Begin(ctx)
@@ -176,7 +172,7 @@ func (s *Store) SaveCheckpoint(ctx context.Context, projectID, jobID, workerID s
 	return tx.Commit(ctx)
 }
 
-func (s *Store) LatestCheckpoint(ctx context.Context, tenantID, projectID, jobID string) (*agent.APICheckpoint, error) {
+func (s *Store) LatestCheckpoint(ctx context.Context, tenantID, projectID, jobID string) (*Checkpoint, error) {
 	var seq int64
 	var expected, raw []byte
 	err := s.db.QueryRow(ctx, "SELECT c.sequence,c.digest,c.payload FROM checkpoints c JOIN jobs j ON j.id=c.job_id WHERE c.job_id=$1 AND j.tenant_id=$2 AND j.project_id=$3 ORDER BY c.sequence DESC LIMIT 1", jobID, tenantID, projectID).Scan(&seq, &expected, &raw)
@@ -190,8 +186,8 @@ func (s *Store) LatestCheckpoint(ctx context.Context, tenantID, projectID, jobID
 	if len(expected) != len(actual) || !equalDigest(expected, actual[:]) {
 		return nil, errors.New("checkpoint checksum mismatch")
 	}
-	var cp agent.APICheckpoint
-	if err = json.Unmarshal(raw, &cp); err != nil {
+	var cp Checkpoint
+	if err = cp.decodeStored(raw); err != nil {
 		return nil, err
 	}
 	if cp.Sequence != uint64(seq) {
@@ -211,7 +207,7 @@ func equalDigest(a, b []byte) bool {
 	return diff == 0
 }
 
-func (s *Store) Finish(ctx context.Context, projectID, jobID, workerID string, generation int64, result agent.Result) error {
+func (s *Store) Finish(ctx context.Context, projectID, jobID, workerID string, generation int64, result JobResult) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -231,7 +227,7 @@ func (s *Store) Finish(ctx context.Context, projectID, jobID, workerID string, g
 	switch {
 	case result.RecoveryRequired:
 		next = RecoveryRequired
-	case result.Status == agent.StatusOK:
+	case result.Status == StatusOK:
 		var finished bool
 		err = tx.QueryRow(ctx, "SELECT true FROM checkpoints WHERE job_id=$1 AND sequence=$2 AND boundary='finished'", jobID, checkpointSeq).Scan(&finished)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -241,7 +237,7 @@ func (s *Store) Finish(ctx context.Context, projectID, jobID, workerID string, g
 			return err
 		}
 		next = Succeeded
-	case result.Status == agent.StatusCanceled:
+	case result.Status == StatusCanceled:
 		if cancelRequested {
 			next = Canceled
 		} else {

@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 type lostCheckpointAck struct {
@@ -192,13 +190,12 @@ func TestPostgresUnresolvedEffectCannotResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cp := agent.APICheckpoint{Version: 1, Sequence: 1, Boundary: "tool_intent", TaskDigest: "digest",
-		Pending: &agent.PendingOperation{Kind: "tool", ID: "tool-1"}, NextTurn: 1}
+	cp := testCheckpoint(t, `{"version":1,"sequence":1,"boundary":"tool_intent","task_digest":"digest","pending":{"kind":"tool","id":"tool-1"},"next_turn":1}`)
 	if err = store.SaveCheckpoint(ctx, project.ID, job.ID, "worker-a", claim.Generation, cp); err != nil {
 		t.Fatal(err)
 	}
 	if err = store.Finish(ctx, project.ID, job.ID, "worker-a", claim.Generation,
-		agent.Result{Backend: "api", Status: agent.StatusError, RecoveryRequired: true}); err != nil {
+		JobResult{Backend: "api", Status: StatusError, RecoveryRequired: true}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = store.ResolveRecovery(ctx, project.TenantID, project.ID, job.ID, "resume", "old worker stopped")

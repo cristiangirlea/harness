@@ -15,8 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 // Worker talks only to the control service: no database connection and, for now, no tools.
@@ -83,7 +81,20 @@ func (w *Worker) client() *http.Client {
 func (w *Worker) call(ctx context.Context, method, path string, input, output any) (int, error) {
 	var body io.Reader
 	if input != nil {
-		payload, err := json.Marshal(input)
+		var payload []byte
+		var err error
+		if request, ok := input.(checkpointRequest); ok {
+			var prefix []byte
+			prefix, err = json.Marshal(request.workerRequest)
+			if err == nil && len(request.Checkpoint.Bytes()) == 0 {
+				err = errors.New("checkpoint has no original payload")
+			}
+			if err == nil {
+				payload = append(append(append(prefix[:len(prefix)-1], []byte(`,"checkpoint":`)...), request.Checkpoint.Bytes()...), '}')
+			}
+		} else {
+			payload, err = json.Marshal(input)
+		}
 		if err != nil {
 			return 0, err
 		}
@@ -169,7 +180,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			}
 		}
 	}()
-	var checkpoint *agent.APICheckpoint
+	var checkpoint *Checkpoint
 	status, loadErr := w.call(runCtx, http.MethodGet, "/internal/projects/"+w.ProjectID+"/jobs/"+job.ID+"/checkpoint", nil, &checkpoint)
 	if loadErr != nil && status != http.StatusNotFound {
 		cancel()
@@ -187,7 +198,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	}
 	attemptID := fmt.Sprintf("%s-%d", job.ID, job.Generation)
 	start, startErr := workerStart(job, attemptID, dir, checkpoint)
-	result := agent.Result{Backend: "api", Status: agent.StatusError}
+	result := JobResult{Backend: "api", Status: StatusError}
 	if job.Options.AllowDangerous {
 		result.Error = "allow_dangerous is not supported for durable jobs"
 	} else if startErr != nil {
@@ -208,7 +219,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			output, pipeErr = cmd.StdoutPipe()
 			if pipeErr == nil {
 				client := workerClient{input: output, output: input, attemptID: attemptID, start: start, checkpoint: func(raw json.RawMessage) checkpointDecision {
-					var cp agent.APICheckpoint
+					var cp Checkpoint
 					if json.Unmarshal(raw, &cp) != nil {
 						return checkpointRejected
 					}
@@ -257,21 +268,21 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 					canceledBeforeStart := client.canceledBeforeStart
 					client.mu.Unlock()
 					if canceledBeforeStart {
-						result = agent.Result{Backend: "api", Status: "canceled"}
+						result = JobResult{Backend: "api", Status: "canceled"}
 					} else if outcome == outcomeRecovery || runErr != nil || (waitErr != nil && !(outcome == outcomeCanceled && runCtx.Err() != nil)) {
 						if result.Status == "" {
-							result = agent.Result{Backend: "api", Status: agent.StatusError, Error: "worker execution requires recovery"}
+							result = JobResult{Backend: "api", Status: StatusError, Error: "worker execution requires recovery"}
 						}
 						result.RecoveryRequired = true
 					} else if outcome == outcomeRefused {
 						if result.Status == "" {
-							result = agent.Result{Backend: "api", Status: agent.StatusError, Error: "worker refused start"}
+							result = JobResult{Backend: "api", Status: StatusError, Error: "worker refused start"}
 						}
 					}
 				}
 			}
 		}
-		if (result.Status == agent.StatusError || result.RecoveryRequired) && len(stderr.data) > 0 {
+		if (result.Status == StatusError || result.RecoveryRequired) && len(stderr.data) > 0 {
 			result.Error += "; stderr: " + string(stderr.data)
 		}
 		if pipeErr != nil {
@@ -296,7 +307,7 @@ func (w *Worker) finishWorkspaceRecovery(job Job) error {
 	defer cancel()
 	_, err := w.call(ctx, http.MethodPost, "/internal/jobs/"+job.ID+"/finish",
 		finishRequest{workerRequest: workerRequest{ProjectID: w.ProjectID, WorkerID: w.WorkerID, Generation: job.Generation},
-			Result: agent.Result{Backend: "api", Status: agent.StatusError, RecoveryRequired: true,
+			Result: JobResult{Backend: "api", Status: StatusError, RecoveryRequired: true,
 				Error: "workspace identity could not be verified"}}, nil)
 	return err
 }
