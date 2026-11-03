@@ -192,7 +192,7 @@ func ValidateLimits(timeout time.Duration, maxCostUSD float64, taskBudget int) e
 
 func (o *JobOptions) UnmarshalJSON(data []byte) error {
 	type plain JobOptions
-	var v plain
+	v := plain(*o)
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&v); err != nil {

@@ -1,7 +1,5 @@
 eval -> game (test)
 eval -> update (test)
-server/platform -> internal/agent
-server/platform -> internal/agent (test)
 server/platform -> internal/remote (test)
 server/platform -> internal/retrieval
 server/platform -> internal/retrieval (test)

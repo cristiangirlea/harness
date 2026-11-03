@@ -62,30 +62,88 @@ func TestCheckpointDecode(t *testing.T) {
 }
 
 func TestExecutionWireGolden(t *testing.T) {
-	for _, name := range []string{"result.json", "result_evidence.json"} {
+	for _, name := range []string{"result.json", "result_evidence.json", "result_zero.json"} {
 		raw, err := os.ReadFile("../../internal/agent/testdata/golden/" + name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := decodeResult(raw, name == "result_evidence.json")
+		result, err := decodeResult(raw, name != "result.json")
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", name, err)
 		}
 		encoded, err := json.Marshal(result)
 		if err != nil || !bytes.Equal(encoded, bytes.TrimSpace(raw)) {
 			t.Fatalf("%s changed: %s, %v", name, encoded, err)
 		}
 	}
-	raw, err := os.ReadFile("../../internal/agent/testdata/golden/checkpoint.json")
-	if err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"checkpoint.json", "checkpoint_zero.json"} {
+		raw, err := os.ReadFile("../../internal/agent/testdata/golden/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cp Checkpoint
+		if err := cp.decode(raw, name == "checkpoint_zero.json"); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !bytes.Equal(cp.Bytes(), raw) {
+			t.Fatalf("%s changed", name)
+		}
 	}
-	raw = bytes.TrimSpace(raw)
+	for _, name := range []string{"legacy_timeout.json", "record.json", "record_zero.json", "without_retrieval.json", "with_retrieval.json"} {
+		raw, err := os.ReadFile("../../internal/runlog/testdata/golden/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var record struct {
+			Task   json.RawMessage `json:"task"`
+			Result json.RawMessage `json:"result"`
+		}
+		if err := json.Unmarshal(raw, &record); err != nil {
+			t.Fatal(err)
+		}
+		var task map[string]json.RawMessage
+		if err := json.Unmarshal(record.Task, &task); err != nil {
+			t.Fatal(err)
+		}
+		delete(task, "prompt")
+		delete(task, "dir")
+		delete(task, "timeout_ns")
+		options, err := json.Marshal(task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var o JobOptions
+		if err := json.Unmarshal(options, &o); err != nil {
+			t.Fatalf("%s options: %v", name, err)
+		}
+		if len(record.Result) != 0 {
+			if _, err := decodeResult(record.Result, name == "record_zero.json"); err != nil {
+				t.Fatalf("%s result: %v", name, err)
+			}
+		}
+	}
+}
+
+func testCheckpoint(t *testing.T, raw string) Checkpoint {
+	t.Helper()
 	var cp Checkpoint
-	if err := json.Unmarshal(raw, &cp); err != nil {
+	if err := json.Unmarshal([]byte(raw), &cp); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(cp.Bytes(), raw) {
-		t.Fatal("checkpoint changed")
+	return cp
+}
+
+func TestCheckpointStartFramePreservesBytes(t *testing.T) {
+	raw := `{ "version": 1, "sequence": 1, "boundary": "model_intent", "task_digest": "d", "request": { "html": "<x>" } }`
+	cp := testCheckpoint(t, raw)
+	frame, err := workerStart(Job{}, "a", "dir", &cp)
+	if err != nil || !bytes.Contains(frame, []byte(raw)) {
+		t.Fatalf("frame %s: %v", frame, err)
+	}
+	var output bytes.Buffer
+	client := workerClient{input: strings.NewReader(`{"v":1,"seq":1,"type":"hello"}` + "\n"), output: &output, start: frame}
+	_, _ = client.run()
+	if !bytes.Contains(output.Bytes(), []byte(raw)) {
+		t.Fatalf("start changed checkpoint: %s", output.Bytes())
 	}
 }

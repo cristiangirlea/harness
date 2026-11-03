@@ -11,8 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 type State string
@@ -60,30 +58,30 @@ type Project struct {
 }
 
 type Job struct {
-	ID                 string        `json:"id"`
-	TenantID           string        `json:"tenant_id"`
-	ProjectID          string        `json:"project_id"`
-	Prompt             string        `json:"prompt"`
-	Options            agent.Options `json:"options"`
-	Backend            string        `json:"backend"`
-	BaseRef            string        `json:"base_ref"`
-	RepositoryURL      string        `json:"repository_url"`
-	State              State         `json:"state"`
-	Generation         int64         `json:"generation"`
-	OwnerID            string        `json:"owner_id,omitempty"`
-	LeaseUntil         *time.Time    `json:"lease_until,omitempty"`
-	CheckpointSequence int64         `json:"checkpoint_sequence"`
-	Result             *agent.Result `json:"result,omitempty"`
+	ID                 string     `json:"id"`
+	TenantID           string     `json:"tenant_id"`
+	ProjectID          string     `json:"project_id"`
+	Prompt             string     `json:"prompt"`
+	Options            JobOptions `json:"options"`
+	Backend            string     `json:"backend"`
+	BaseRef            string     `json:"base_ref"`
+	RepositoryURL      string     `json:"repository_url"`
+	State              State      `json:"state"`
+	Generation         int64      `json:"generation"`
+	OwnerID            string     `json:"owner_id,omitempty"`
+	LeaseUntil         *time.Time `json:"lease_until,omitempty"`
+	CheckpointSequence int64      `json:"checkpoint_sequence"`
+	Result             *JobResult `json:"result,omitempty"`
 }
 
 type Submission struct {
-	TenantID       string        `json:"tenant_id"`
-	ProjectID      string        `json:"project_id"`
-	Prompt         string        `json:"prompt"`
-	Options        agent.Options `json:"options"`
-	Backend        string        `json:"backend"`
-	BaseRef        string        `json:"base_ref"`
-	IdempotencyKey string        `json:"idempotency_key,omitempty"`
+	TenantID       string     `json:"tenant_id"`
+	ProjectID      string     `json:"project_id"`
+	Prompt         string     `json:"prompt"`
+	Options        JobOptions `json:"options"`
+	Backend        string     `json:"backend"`
+	BaseRef        string     `json:"base_ref"`
+	IdempotencyKey string     `json:"idempotency_key,omitempty"`
 }
 
 type Event struct {
@@ -147,13 +145,13 @@ func validateSubmission(s Submission) error {
 	if len(s.IdempotencyKey) > 128 {
 		return errors.New("idempotency key exceeds 128 bytes")
 	}
-	if err := agent.ValidateOptions(s.Options); err != nil {
+	if err := s.Options.ValidateShape(); err != nil {
 		return err
 	}
 	if s.Backend != "api" {
 		return fmt.Errorf("%w: only the API backend is supported by this initial worker", ErrUnsupported)
 	}
-	if s.Options.Mode != agent.ModeReadOnly {
+	if s.Options.Mode != ModeReadOnly {
 		return fmt.Errorf("%w: remote approval and isolated tools are not available yet; use readonly", ErrUnsupported)
 	}
 	if s.Options.MaxCostUSD <= 0 {
@@ -177,7 +175,7 @@ func checkCostLimit(s Submission, limit float64) error {
 func requestHash(s Submission) ([]byte, error) {
 	payload, err := json.Marshal(struct {
 		Prompt  string
-		Options agent.Options
+		Options JobOptions
 		Backend string
 		BaseRef string
 	}{s.Prompt, s.Options, s.Backend, s.BaseRef})

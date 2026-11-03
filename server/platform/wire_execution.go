@@ -98,6 +98,7 @@ func (r *JobResult) UnmarshalJSON(data []byte) error {
 type Checkpoint struct {
 	Version    int
 	Sequence   uint64
+	NextTurn   int
 	Boundary   string
 	TaskDigest string
 	Pending    *CheckpointPending
@@ -114,6 +115,10 @@ type CheckpointPending struct {
 }
 
 func (c *Checkpoint) UnmarshalJSON(data []byte) error {
+	return c.decode(data, false)
+}
+
+func (c *Checkpoint) decode(data []byte, allowZero bool) error {
 	if len(data) > 16*1024*1024 {
 		return errors.New("checkpoint exceeds 16 MiB")
 	}
@@ -139,7 +144,7 @@ func (c *Checkpoint) UnmarshalJSON(data []byte) error {
 	if err := d.Decode(&v); err != nil {
 		return err
 	}
-	if v.Version != 1 || v.Sequence == 0 || v.Boundary == "" || v.TaskDigest == "" {
+	if !(allowZero && v.Version == 0 && v.Sequence == 0 && v.Boundary == "" && v.TaskDigest == "") && (v.Version != 1 || v.Sequence == 0 || v.Boundary == "" || v.TaskDigest == "") {
 		return errors.New("invalid API checkpoint")
 	}
 	var result JobResult
@@ -152,7 +157,7 @@ func (c *Checkpoint) UnmarshalJSON(data []byte) error {
 	} else if v.Finished {
 		return errors.New("finished checkpoint missing result")
 	}
-	*c = Checkpoint{Version: v.Version, Sequence: v.Sequence, Boundary: v.Boundary, TaskDigest: v.TaskDigest, Pending: v.Pending, Finished: v.Finished, Result: result, raw: bytes.Clone(data)}
+	*c = Checkpoint{Version: v.Version, Sequence: v.Sequence, NextTurn: v.NextTurn, Boundary: v.Boundary, TaskDigest: v.TaskDigest, Pending: v.Pending, Finished: v.Finished, Result: result, raw: bytes.Clone(data)}
 	return nil
 }
 

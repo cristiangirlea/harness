@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -89,7 +88,7 @@ func testProject(t *testing.T, s *Store) (Project, string) {
 
 func testSubmission(p Project, key, prompt string) Submission {
 	return Submission{TenantID: p.TenantID, ProjectID: p.ID, Prompt: prompt,
-		Options: agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: 1, MaxTurns: 3},
+		Options: JobOptions{Mode: ModeReadOnly, MaxCostUSD: 1, MaxTurns: 3},
 		Backend: "api", BaseRef: p.BaseRef, IdempotencyKey: key}
 }
 
@@ -308,8 +307,7 @@ func TestPostgresAdmissionClaimFencingAndRecovery(t *testing.T) {
 	if err != nil || !good || cancel {
 		t.Fatalf("heartbeat: %v %v %v", good, cancel, err)
 	}
-	cp := agent.APICheckpoint{Version: 1, Sequence: 1, Boundary: "model_intent", TaskDigest: "digest",
-		Pending: &agent.PendingOperation{Kind: "model", ID: "turn-1"}, NextTurn: 1}
+	cp := testCheckpoint(t, `{ "version":1, "sequence":1, "boundary":"model_intent", "task_digest":"digest", "pending":{"kind":"model","id":"turn-1"}, "next_turn":1 }`)
 	if err = s.SaveCheckpoint(ctx, p.ID, claimed.ID, "worker-b", claimed.Generation, cp); !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("stale worker write: %v", err)
 	}
@@ -323,7 +321,7 @@ func TestPostgresAdmissionClaimFencingAndRecovery(t *testing.T) {
 		t.Fatalf("duplicate checkpoint accepted: %v", err)
 	}
 	restored, err := s.LatestCheckpoint(ctx, p.TenantID, p.ID, claimed.ID)
-	if err != nil || restored.Sequence != 1 || restored.Pending.ID != "turn-1" {
+	if err != nil || restored.Sequence != 1 || restored.Pending.ID != "turn-1" || string(restored.Bytes()) != string(cp.Bytes()) {
 		t.Fatalf("checkpoint: %+v %v", restored, err)
 	}
 	_, err = s.LatestCheckpoint(ctx, "another-tenant", p.ID, claimed.ID)
@@ -437,11 +435,11 @@ func TestPostgresSuccessfulFinishRequiresCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok := agent.Result{Backend: "api", Status: agent.StatusOK}
+	ok := JobResult{Backend: "api", Status: StatusOK}
 	if err = s.Finish(ctx, p.ID, job.ID, "owner", claim.Generation, ok); err == nil {
 		t.Fatal("success without durable finished boundary")
 	}
-	cp := agent.APICheckpoint{Version: 1, Sequence: 1, Boundary: "finished", TaskDigest: "digest", Finished: true, NextTurn: 1, Result: ok}
+	cp := testCheckpoint(t, `{"version":1,"sequence":1,"boundary":"finished","task_digest":"digest","finished":true,"result":{"backend":"api","status":"ok"},"next_turn":1}`)
 	if err = s.SaveCheckpoint(ctx, p.ID, job.ID, "owner", claim.Generation, cp); err != nil {
 		t.Fatal(err)
 	}

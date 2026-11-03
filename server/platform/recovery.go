@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -36,7 +35,7 @@ func (s *Store) ResolveRecovery(ctx context.Context, tenantID, projectID, jobID,
 	if state != RecoveryRequired {
 		return "", ErrConflict
 	}
-	var cp agent.APICheckpoint
+	var cp Checkpoint
 	var raw, digest []byte
 	var sequence int64
 	err = tx.QueryRow(ctx, "SELECT sequence,digest,payload FROM checkpoints WHERE job_id=$1 ORDER BY sequence DESC LIMIT 1", jobID).Scan(&sequence, &digest, &raw)
@@ -69,9 +68,9 @@ func (s *Store) ResolveRecovery(ctx context.Context, tenantID, projectID, jobID,
 			return "", ErrConflict
 		}
 		switch cp.Result.Status {
-		case agent.StatusOK:
+		case StatusOK:
 			next = Succeeded
-		case agent.StatusCanceled:
+		case StatusCanceled:
 			next = Canceled
 		default:
 			next = Failed

@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func init() {
@@ -68,7 +66,7 @@ func fakeHRN(scenario string) {
 		fmt.Printf("{\"v\":1,\"seq\":3,\"type\":\"result\",\"attempt_id\":%q,\"result\":{\"status\":\"canceled\",\"backend\":\"api\"}}\n", start.Attempt)
 		return
 	}
-	fmt.Printf("{\"v\":1,\"seq\":3,\"type\":\"checkpoint\",\"attempt_id\":%q,\"checkpoint\":{\"version\":1,\"sequence\":1}}\n", start.Attempt)
+	fmt.Printf("{\"v\":1,\"seq\":3,\"type\":\"checkpoint\",\"attempt_id\":%q,\"checkpoint\":{\"version\":1,\"sequence\":1,\"boundary\":\"model_intent\",\"task_digest\":\"digest\"}}\n", start.Attempt)
 	line, _ = in.ReadBytes('\n')
 	kind := "ack"
 	if scenario == "nack" {
@@ -101,8 +99,8 @@ func TestWorkerExecProtocol(t *testing.T) {
 			}
 			job := workspaceJob(strings.Repeat("e", 32))
 			job.State, job.Generation = Running, 7
-			job.Options.Mode = agent.ModeReadOnly
-			var result agent.Result
+			job.Options.Mode = ModeReadOnly
+			var result JobResult
 			checkpoints := 0
 			finishes := 0
 			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -155,11 +153,11 @@ func TestWorkerExecProtocol(t *testing.T) {
 			}
 			switch scenario {
 			case "missing":
-				if finishes != 1 || result.Status != agent.StatusError || result.RecoveryRequired || !strings.HasPrefix(result.Error, "start worker:") || strings.Contains(result.Error, "; stderr:") {
+				if finishes != 1 || result.Status != StatusError || result.RecoveryRequired || !strings.HasPrefix(result.Error, "start worker:") || strings.Contains(result.Error, "; stderr:") {
 					t.Fatalf("finishes %d result %+v", finishes, result)
 				}
 			case "saved":
-				if result.Status != agent.StatusOK || checkpoints != 1 {
+				if result.Status != StatusOK || checkpoints != 1 {
 					t.Fatalf("result %+v checkpoints %d", result, checkpoints)
 				}
 			case "nack":
@@ -167,7 +165,7 @@ func TestWorkerExecProtocol(t *testing.T) {
 					t.Fatalf("result %+v", result)
 				}
 			case "refused":
-				if result.Status != agent.StatusError || result.RecoveryRequired || !strings.Contains(result.Error, "refused: storage: cannot write") || !strings.Contains(result.Error, "fixture stderr tail") {
+				if result.Status != StatusError || result.RecoveryRequired || !strings.Contains(result.Error, "refused: storage: cannot write") || !strings.Contains(result.Error, "fixture stderr tail") {
 					t.Fatalf("result %+v", result)
 				}
 			case "cancel", "handshake":

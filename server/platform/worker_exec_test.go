@@ -3,7 +3,6 @@ package platform
 import (
 	"context"
 	"encoding/json"
-	"github.com/cristiangirlea/harness/internal/agent"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -14,7 +13,7 @@ import (
 func TestWorkerExecMissingBinaryFinishesFailed(t *testing.T) {
 	job := workspaceJob(strings.Repeat("d", 32))
 	job.State, job.Generation = Running, 7
-	var result agent.Result
+	var result JobResult
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		code, body := 204, ""
 		switch r.Method + " " + r.URL.Path {
@@ -36,7 +35,7 @@ func TestWorkerExecMissingBinaryFinishesFailed(t *testing.T) {
 	})}
 	w := Worker{ControlURL: "http://control", ProjectID: job.ProjectID, Token: strings.Repeat("a", 64), WorkerID: "worker", WorkspaceRoot: t.TempDir(), HRNPath: filepath.Join(t.TempDir(), "missing"), ModelURL: "http://localhost:1234", ModelKey: "fixture-key", HTTPClient: client}
 	ran, err := w.RunOnce(context.Background())
-	if !ran || err != nil || result.Status != agent.StatusError {
+	if !ran || err != nil || result.Status != StatusError {
 		t.Fatalf("run: %v %v result=%+v", ran, err, result)
 	}
 }

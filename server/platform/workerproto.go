@@ -2,12 +2,11 @@ package platform
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"sync"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 type workerOutcome string
@@ -29,7 +28,7 @@ const (
 )
 
 type workerClient struct {
-	result              agent.Result
+	result              JobResult
 	input               io.Reader
 	output              io.Writer
 	attemptID           string
@@ -76,7 +75,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 			Protocol   string          `json:"protocol"`
 			Checkpoint json.RawMessage `json:"checkpoint"`
 			Event      json.RawMessage `json:"event"`
-			Result     agent.Result    `json:"result"`
+			Result     JobResult       `json:"result"`
 			Error      struct {
 				Code    string `json:"code"`
 				Message string `json:"message"`
@@ -98,9 +97,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 				c.mu.Unlock()
 				return outcomeCanceled, nil
 			}
-			enc := json.NewEncoder(c.output)
-			enc.SetEscapeHTML(false)
-			err := enc.Encode(c.start)
+			_, err := c.output.Write(append(bytes.Clone(c.start), '\n'))
 			if err == nil {
 				c.started = true
 			}
@@ -116,7 +113,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 		}
 		if state == "start" {
 			if f.Type == "rejected" {
-				c.result = agent.Result{Backend: "api", Status: agent.StatusError, Error: fmt.Sprintf("refused: %s: %s", f.Error.Code, f.Error.Message)}
+				c.result = JobResult{Backend: "api", Status: StatusError, Error: fmt.Sprintf("refused: %s: %s", f.Error.Code, f.Error.Message)}
 				return outcomeRefused, nil
 			}
 			if f.Type != "accepted" {
@@ -164,7 +161,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 				return outcomeCanceled, nil
 			case "refused":
 				return outcomeRefused, nil
-			case agent.StatusError, agent.StatusBudget, agent.StatusMaxTurns, agent.StatusTimeout, agent.StatusLimited:
+			case StatusError, StatusBudget, StatusMaxTurns, StatusTimeout, StatusLimited:
 				return outcomeFailed, nil
 			default:
 				return outcomeRecovery, fmt.Errorf("worker result status %q", f.Result.Status)
@@ -179,7 +176,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 	return outcomeRecovery, io.ErrUnexpectedEOF
 }
 
-func workerStart(job Job, attemptID, dir string, checkpoint *agent.APICheckpoint) (json.RawMessage, error) {
+func workerStart(job Job, attemptID, dir string, checkpoint *Checkpoint) (json.RawMessage, error) {
 	task := map[string]any{"prompt": job.Prompt, "dir": dir, "backend": job.Backend, "mode": job.Options.Mode}
 	if job.Options.Model != "" {
 		task["model"] = job.Options.Model
@@ -201,7 +198,14 @@ func workerStart(job Job, attemptID, dir string, checkpoint *agent.APICheckpoint
 	}
 	frame := map[string]any{"type": "start", "attempt_id": attemptID, "task": task}
 	if checkpoint != nil {
-		frame["checkpoint"] = checkpoint
+		frame["checkpoint"] = nil
 	}
-	return json.Marshal(frame)
+	encoded, err := json.Marshal(frame)
+	if err != nil || checkpoint == nil {
+		return encoded, err
+	}
+	if len(checkpoint.Bytes()) == 0 {
+		return nil, fmt.Errorf("checkpoint has no original payload")
+	}
+	return bytes.Replace(encoded, []byte(`"checkpoint":null`), append([]byte(`"checkpoint":`), checkpoint.Bytes()...), 1), nil
 }
