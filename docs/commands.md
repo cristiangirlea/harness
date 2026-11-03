@@ -7,7 +7,7 @@
 | Command | What it does |
 |---|---|
 | `hrn run [flags] [--purpose CATEGORY] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`; optionally declare its purpose (see [Declared purpose](#declared-purpose)). |
-| `hrn exec --protocol v1` | Run one recorded task over the supervisor JSONL protocol (see [hrn exec](#hrn-exec)). |
+| `hrn exec --protocol v1 [--worker]` | Run one recorded task over the supervisor JSONL protocol; `--worker` applies the [worker restrictions](worker-protocol.md). |
 | `hrn backends` | Show enabled/disabled, default, availability, remembered limits and, under claude and codex when known, the plan's quota left per window (see [Backend preferences](backends.md#choosing-which-backends-hrn-may-use)). |
 | `hrn backends set --only NAMES [--default NAME]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. |
 | `hrn backends reset` | Remove the preference file and restore unrestricted backend selection. |

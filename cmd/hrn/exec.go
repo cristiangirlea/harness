@@ -13,7 +13,8 @@ import (
 func cmdExec(args []string) (int, error) {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	protocol := fs.String("protocol", "", "Supervisor protocol version (required: v1).")
-	fs.Usage = func() { fmt.Fprint(os.Stderr, "usage: hrn exec --protocol v1\n") }
+	worker := fs.Bool("worker", false, "Restrict execution to a local API without tools.")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, "usage: hrn exec --protocol v1 [--worker]\n") }
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
@@ -22,5 +23,8 @@ func cmdExec(args []string) (int, error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if *worker {
+		return execproto.RunWorker(ctx, os.Stdin, os.Stdout, nil), nil
+	}
 	return execproto.Run(ctx, os.Stdin, os.Stdout, nil), nil
 }
