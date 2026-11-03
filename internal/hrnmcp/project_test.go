@@ -47,7 +47,7 @@ func TestProjectProfileScopeAndFreshness(t *testing.T) {
 	if got["retrieval"] != "required" || got["model"] != "test-model" || got["backend"] != "codex" || got["mode"] != nil {
 		t.Fatalf("bad defaults: %s", raw)
 	}
-	for _, args := range []string{`{"backend":"claude"}`, `{"model":"other"}`, `{"dir":"elsewhere"}`, `{"retrieval_project":"other"}`, `{"retrieval_version":"other"}`, `{"continue_run_id":"prior"}`, `{"fresh":true}`} {
+	for _, args := range []string{`{"backend":"claude"}`, `{"model":"other"}`, `{"dir":"elsewhere"}`, `{"retrieval_project":"other"}`, `{"retrieval_version":"other"}`, `{"continue_run_id":"prior"}`, `{"fresh":true}`, `{"retrieval_refresh":true}`} {
 		if _, err := p.arguments(context.Background(), dir, json.RawMessage(args)); err == nil {
 			t.Fatalf("accepted mismatched scope: %s", args)
 		}
@@ -129,6 +129,17 @@ func TestProjectServerExposesOnlyScopedRunAndInspectionTools(t *testing.T) {
 	names := map[string]bool{}
 	for _, tool := range s.cl.Tools() {
 		names[tool.Name] = true
+		if tool.Name == "run" {
+			var schema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := schema.Properties["retrieval_refresh"]; ok {
+				t.Fatal("project run advertises retrieval_refresh")
+			}
+		}
 	}
 	if len(names) != 4 || !names["run"] || !names["runs"] || !names["show"] || !names["backends"] {
 		t.Fatalf("project tools: %v", names)

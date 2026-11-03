@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -460,11 +459,11 @@ type workerRequest struct {
 }
 type checkpointRequest struct {
 	workerRequest
-	Checkpoint agent.APICheckpoint `json:"checkpoint"`
+	Checkpoint Checkpoint `json:"checkpoint"`
 }
 type finishRequest struct {
 	workerRequest
-	Result agent.Result `json:"result"`
+	Result JobResult `json:"result"`
 }
 
 func workerProjectID(body []byte) string {
@@ -612,7 +611,9 @@ func (h *HTTPServer) latestCheckpoint(w http.ResponseWriter, r *http.Request) {
 		invalid(w, err)
 		return
 	}
-	respond(w, 200, cp)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(cp.Bytes())
 }
 
 func (h *HTTPServer) scaling(w http.ResponseWriter, r *http.Request) {

@@ -593,7 +593,7 @@ func TestCollectReadsHome(t *testing.T) {
 		{Backend: "api", Status: agent.StatusOK, Turns: 2, CostUSD: 0.5, CostEstimate: true},
 		{Backend: "claude", Status: agent.StatusError, Turns: 1},
 	} {
-		w, err := runlog.Create(res.Backend, task)
+		w, err := runlog.Create(res.Backend, task, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

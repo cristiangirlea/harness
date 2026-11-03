@@ -1,6 +1,7 @@
 package runlog
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,9 +9,17 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
+
+type recordSearcher struct{}
+
+func (recordSearcher) SearchKnowledge(context.Context, retrieval.Search) (retrieval.Packet, error) {
+	return retrieval.Packet{}, fmt.Errorf("unexpected search")
+}
+
+func fixtureKnowledge() (retrieval.Searcher, error) { return recordSearcher{}, nil }
 
 func testRetrievalText(content, source, revision string) string {
 	return fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", "entry", source, revision, "", content)
@@ -21,39 +30,39 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 		name        string
 		unfinished  bool
 		unavailable bool
-		mutate      func(*Record, *agent.Conversation, **retrieval.Record)
+		mutate      func(*Record, *kernel.Conversation, **retrieval.Record)
 		reject      bool
 	}{
 		{name: "complete"}, {name: "unfinished", unfinished: true},
 		{name: "optional_unavailable", unavailable: true},
 		{name: "optional_unavailable_unfinished", unavailable: true, unfinished: true},
-		{name: "missing_result_pin", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { r.Result.Retrieval = nil }, reject: true},
-		{name: "missing_conversation_pin", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval = nil }, reject: true},
-		{name: "missing_persisted_pin", unfinished: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { *p = nil }, reject: true},
-		{name: "corrupt_digest", unfinished: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { (*p).Packet.Digest = "corrupt" }, reject: true},
-		{name: "replaced_packet", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) {
+		{name: "missing_result_pin", mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { r.Result.Retrieval = nil }, reject: true},
+		{name: "missing_conversation_pin", mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { c.Retrieval = nil }, reject: true},
+		{name: "missing_persisted_pin", unfinished: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { *p = nil }, reject: true},
+		{name: "corrupt_digest", unfinished: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { (*p).Packet.Digest = "corrupt" }, reject: true},
+		{name: "replaced_packet", mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) {
 			c.Retrieval.Packet.Text = "replaced"
 			c.Retrieval.Packet.Bytes = 8
 			c.Retrieval.Packet.Digest = retrieval.TextDigest("replaced")
 		}, reject: true},
-		{name: "replaced_source", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) {
+		{name: "replaced_source", mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) {
 			c.Retrieval.Packet.Entries[0].Source = "other"
 		}, reject: true},
-		{name: "replaced_scope", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Scope.ProjectID = "other" }, reject: true},
-		{name: "replaced_mode", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Mode = "optional" }, reject: true},
-		{name: "optional_unavailable_replaced_scope", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Scope.ProjectID = "other" }, reject: true},
-		{name: "optional_unavailable_replaced_mode", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Mode = "required" }, reject: true},
-		{name: "optional_unavailable_replaced_failure", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval.Failure = "other" }, reject: true},
-		{name: "optional_unavailable_one_sided_packet", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) {
+		{name: "replaced_scope", mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { c.Retrieval.Scope.ProjectID = "other" }, reject: true},
+		{name: "replaced_mode", mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { c.Retrieval.Mode = "optional" }, reject: true},
+		{name: "optional_unavailable_replaced_scope", unavailable: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { c.Retrieval.Scope.ProjectID = "other" }, reject: true},
+		{name: "optional_unavailable_replaced_mode", unavailable: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { c.Retrieval.Mode = "required" }, reject: true},
+		{name: "optional_unavailable_replaced_failure", unavailable: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { c.Retrieval.Failure = "other" }, reject: true},
+		{name: "optional_unavailable_one_sided_packet", unavailable: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) {
 			// Passes the single-pin checks, so only the packet comparison can reject it.
 			text := testRetrievalText("ref", "fixture", "revision")
 			c.Retrieval.Packet = &retrieval.Packet{VersionID: "v_fixture", Text: text, Bytes: len(text), Digest: retrieval.TextDigest(text), Entries: []retrieval.Entry{{ID: "entry", Source: "fixture", Content: "ref"}}}
 		}, reject: true},
-		{name: "optional_unavailable_missing_conversation_pin", unavailable: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { c.Retrieval = nil }, reject: true},
-		{name: "optional_unavailable_persisted_scope", unavailable: true, unfinished: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { (*p).Scope.Revision = "other" }, reject: true},
-		{name: "optional_unavailable_missing_persisted_pin", unavailable: true, unfinished: true, mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { *p = nil }, reject: true},
-		{name: "task_scope", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) { r.Task.RetrievalProject = "other" }, reject: true},
-		{name: "both_pins_corrupt", mutate: func(r *Record, c *agent.Conversation, p **retrieval.Record) {
+		{name: "optional_unavailable_missing_conversation_pin", unavailable: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { c.Retrieval = nil }, reject: true},
+		{name: "optional_unavailable_persisted_scope", unavailable: true, unfinished: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { (*p).Scope.Revision = "other" }, reject: true},
+		{name: "optional_unavailable_missing_persisted_pin", unavailable: true, unfinished: true, mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { *p = nil }, reject: true},
+		{name: "task_scope", mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) { r.Task.RetrievalProject = "other" }, reject: true},
+		{name: "both_pins_corrupt", mutate: func(r *Record, c *kernel.Conversation, p **retrieval.Record) {
 			r.Result.Retrieval.Packet.Digest = "bad"
 			c.Retrieval.Packet.Digest = "bad"
 			(*p).Packet.Digest = "bad"
@@ -72,11 +81,11 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 				json.Unmarshal(b, &p)
 				return &p
 			}
-			rec := Record{ID: "fixture", Backend: "api", Task: agent.Task{Prompt: "task", Options: agent.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalRevision: "revision", RetrievalVersion: "v_fixture"}}, Result: agent.Result{Retrieval: clone()}}
+			rec := Record{ID: "fixture", Backend: "api", Task: kernel.Task{Knowledge: fixtureKnowledge, Prompt: "task", Options: kernel.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalRevision: "revision", RetrievalVersion: "v_fixture"}}, Result: kernel.Result{Retrieval: clone()}}
 			if tc.unavailable {
 				rec.Task.Retrieval, rec.Task.RetrievalVersion = "optional", ""
 			}
-			conv := agent.Conversation{Model: "fixture", Retrieval: clone()}
+			conv := kernel.Conversation{Model: "fixture", Retrieval: clone()}
 			persisted := clone()
 			if tc.mutate != nil {
 				tc.mutate(&rec, &conv, &persisted)
@@ -92,7 +101,7 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 				}
 			}
 			taskRecord := rec
-			taskRecord.Result = agent.Result{}
+			taskRecord.Result = kernel.Result{}
 			put("task.json", taskRecord)
 			put("messages.json", conv)
 			if !tc.unfinished {
@@ -116,13 +125,13 @@ func TestRetrievalConversationRecoveryAndConsistency(t *testing.T) {
 }
 
 func TestRetrievalContinuationSymmetricPresence(t *testing.T) {
-	if agent.ValidateContinuationPin(nil, &agent.Conversation{}) != nil {
+	if kernel.ValidateContinuationPin(nil, &kernel.Conversation{}) != nil {
 		t.Fatal("legacy conversation rejected")
 	}
-	if agent.ValidateContinuationPin(nil, &agent.Conversation{Retrieval: &retrieval.Record{}}) == nil {
+	if kernel.ValidateContinuationPin(nil, &kernel.Conversation{Retrieval: &retrieval.Record{}}) == nil {
 		t.Fatal("one-sided pin accepted")
 	}
-	if agent.ValidateContinuationPin(&retrieval.Record{}, &agent.Conversation{}) == nil {
+	if kernel.ValidateContinuationPin(&retrieval.Record{}, &kernel.Conversation{}) == nil {
 		t.Fatal("one-sided pin accepted")
 	}
 }

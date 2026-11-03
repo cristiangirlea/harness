@@ -16,6 +16,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -111,7 +112,7 @@ func TestBackendsCardShowsChosenDefaultAndMalformedNotice(t *testing.T) {
 	get := func() string {
 		return backendCardHTML(t, backendRequest(h, "GET", "/", "127.0.0.1:1234", "127.0.0.1:8089", "", "", ""))
 	}
-	if card := get(); !strings.Contains(card, "chosen: "+agent.DefaultBackendNameIn(runlog.Home())) {
+	if card := get(); !strings.Contains(card, "chosen: "+resolve.DefaultBackendNameIn(runlog.Home())) {
 		t.Fatal("missing chosen default")
 	}
 	if err := os.WriteFile(filepath.Join(runlog.Home(), "backends.json"), []byte("{broken"), 0600); err != nil {
@@ -198,7 +199,7 @@ func TestBackendsWriteUpdatesPreferencesAndRepairsMalformedFiles(t *testing.T) {
 			if w.Code != 204 || w.Body.Len() != 0 {
 				t.Fatalf("POST = %d %s", w.Code, w.Body)
 			}
-			p, err := agent.BackendPreferences(runlog.Home())
+			p, err := resolve.BackendPreferences(runlog.Home())
 			if err != nil || !reflect.DeepEqual(p.EnabledNames, []string{"codex"}) || p.Default() != "codex" {
 				t.Fatalf("new runs see %+v, %v", p, err)
 			}
@@ -215,7 +216,7 @@ func TestBackendsWriteUpdatesPreferencesAndRepairsMalformedFiles(t *testing.T) {
 				}
 			}
 			w = backendRequest(h, "POST", "/backends", "127.0.0.1:1234", host, opt.Key, token, `{"enabled":[],"default":""}`)
-			p, err = agent.BackendPreferences(runlog.Home())
+			p, err = resolve.BackendPreferences(runlog.Home())
 			if w.Code != 204 || err != nil || p.Default() != "" || len(p.EnabledNames) != 0 || !p.Enabled("claude") {
 				t.Fatalf("reset = %d, %+v, %v", w.Code, p, err)
 			}
@@ -443,6 +444,23 @@ func TestBackendsSavePreservesWorkMapRepos(t *testing.T) {
 		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", body)
 		p, err := prefs.Load(home)
 		if w.Code != 204 || err != nil || !reflect.DeepEqual(p.WorkMapRepos, []string{"original"}) {
+			t.Fatalf("save: %d %+v %v", w.Code, p, err)
+		}
+	}
+}
+
+func TestBackendsSaveKeepsTheWorkMapGitHubSetting(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	off := false
+	if err := prefs.Save(home, prefs.Prefs{WorkMapGitHub: &off}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(context.Background(), Options{Key: "test-key"})
+	for _, body := range []string{`{"enabled":["codex"]}`, `{"enabled":["claude"],"work_map_github":true}`} {
+		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", body)
+		p, err := prefs.Load(home)
+		if w.Code != 204 || err != nil || p.WorkMapGitHub == nil || *p.WorkMapGitHub {
 			t.Fatalf("save: %d %+v %v", w.Code, p, err)
 		}
 	}

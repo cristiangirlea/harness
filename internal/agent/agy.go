@@ -140,7 +140,7 @@ func newAgyParse() func([]byte, func(Event), *Result) bool {
 			}
 			if l.Step.State == "DONE" && l.Step.Usage != nil {
 				u := l.Step.Usage
-				res.addUsage("exclusive_cache", u.InputTokens, u.OutputTokens, u.CacheRead, 0)
+				addUsage(res, "exclusive_cache", u.InputTokens, u.OutputTokens, u.CacheRead, 0)
 			}
 		case "result":
 			r := l.Result

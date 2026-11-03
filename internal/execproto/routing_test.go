@@ -10,6 +10,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/flow"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/route/table"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -35,7 +36,7 @@ func TestStartRecordsBackendRouting(t *testing.T) {
 			if !tc.named {
 				backend = "codex"
 				if !tc.row {
-					backend = agent.DefaultBackendNameIn(runlog.Home())
+					backend = resolve.DefaultBackendNameIn(runlog.Home())
 				}
 				original, err := agent.Get(backend)
 				if err != nil {
@@ -144,7 +145,7 @@ func TestAContinuationWithoutABackendStaysOnTheEarlierRunsBackend(t *testing.T) 
 	if err := table.Save(runlog.Home(), table.Table{"review": {Backend: "codex", Model: "routed-model", Set: "manual"}}); err != nil {
 		t.Fatal(err)
 	}
-	first, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: t.TempDir()})
+	first, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

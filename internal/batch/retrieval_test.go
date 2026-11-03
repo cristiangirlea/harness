@@ -160,10 +160,13 @@ func TestRetrievalBatchSkipsTheSwitchAtAUsageLimit(t *testing.T) {
 	standIn(t)
 	retrievalServer(t, nil)
 	opts := agent.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "t_fixture", RetrievalProject: "p_fixture", RetrievalRevision: strings.Repeat("a", 40)}
-	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Options: opts, Retry: []string{"codex"}, Tasks: []Task{{ID: "pinned", Prompt: "write both halves"}}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Options: opts, RetryK: 2, Retry: []string{"codex"}, Tasks: []Task{{ID: "pinned", Prompt: "write both halves"}}})
 	tr := res.Tasks[0]
 	if tr.Status != StatusFail || len(tr.Attempts) != 1 || tr.Attempts[0].Result.Status != agent.StatusLimited {
 		t.Fatalf("task = %+v", tr)
+	}
+	if len(tr.Candidates) != 0 {
+		t.Fatalf("unexpected candidates: %+v", tr.Candidates)
 	}
 	if !strings.Contains(tr.Error, "switch to claude skipped") || !strings.Contains(tr.Error, "retrieval pin is bound to codex") {
 		t.Fatalf("reason = %q", tr.Error)

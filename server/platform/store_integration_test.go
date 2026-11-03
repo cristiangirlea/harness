@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/url"
@@ -11,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -89,7 +89,7 @@ func testProject(t *testing.T, s *Store) (Project, string) {
 
 func testSubmission(p Project, key, prompt string) Submission {
 	return Submission{TenantID: p.TenantID, ProjectID: p.ID, Prompt: prompt,
-		Options: agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: 1, MaxTurns: 3},
+		Options: JobOptions{Mode: ModeReadOnly, MaxCostUSD: 1, MaxTurns: 3},
 		Backend: "api", BaseRef: p.BaseRef, IdempotencyKey: key}
 }
 
@@ -103,7 +103,7 @@ func TestRepositoryMigrationRejectsLegacyJobs(t *testing.T) {
 	if _, err := s.db.Exec(ctx, "ALTER TABLE jobs DROP COLUMN repository_url"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_changes,retrieval_records,knowledge_active_versions,knowledge_members,knowledge_versions,knowledge_entries; DROP FUNCTION knowledge_membership_creation_only(); DELETE FROM schema_migrations WHERE version>=2"); err != nil {
+	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_admissions,knowledge_changes,retrieval_records,knowledge_active_versions,knowledge_members,knowledge_versions,knowledge_entries; DROP FUNCTION knowledge_membership_creation_only(); DELETE FROM schema_migrations WHERE version>=2"); err != nil {
 		t.Fatal(err)
 	}
 	err := Migrate(ctx, s.db.Config().ConnString())
@@ -122,19 +122,19 @@ func TestRepositoryMigrationUpgradesEmptyLegacyStore(t *testing.T) {
 	if _, err := s.db.Exec(ctx, "ALTER TABLE jobs DROP COLUMN repository_url"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_changes,retrieval_records,knowledge_active_versions,knowledge_members,knowledge_versions,knowledge_entries; DROP FUNCTION knowledge_membership_creation_only(); DELETE FROM schema_migrations WHERE version>=2"); err != nil {
+	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_admissions,knowledge_changes,retrieval_records,knowledge_active_versions,knowledge_members,knowledge_versions,knowledge_entries; DROP FUNCTION knowledge_membership_creation_only(); DELETE FROM schema_migrations WHERE version>=2"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
 		t.Fatalf("empty legacy schema upgrade: %v", err)
 	}
 	var version int
-	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 3 {
+	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 4 {
 		t.Fatalf("migration version: %d %v", version, err)
 	}
 }
 
-func TestRepositoryMigrationLeavesVersionThreeDatabaseUnchanged(t *testing.T) {
+func TestRepositoryMigrationLeavesVersionFourDatabaseUnchanged(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	type migration struct {
@@ -162,12 +162,12 @@ func TestRepositoryMigrationLeavesVersionThreeDatabaseUnchanged(t *testing.T) {
 		return versions
 	}
 	before := readVersions()
-	if len(before) != 3 || before[0].version != 1 || before[1].version != 2 || before[2].version != 3 {
+	if len(before) != 4 || before[0].version != 1 || before[1].version != 2 || before[2].version != 3 || before[3].version != 4 {
 		t.Fatalf("unexpected starting schema versions: %+v", before)
 	}
 	for i := 0; i < 2; i++ {
 		if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
-			t.Fatalf("migration on version 3, pass %d: %v", i+1, err)
+			t.Fatalf("migration on version 4, pass %d: %v", i+1, err)
 		}
 	}
 	after := readVersions()
@@ -308,8 +308,7 @@ func TestPostgresAdmissionClaimFencingAndRecovery(t *testing.T) {
 	if err != nil || !good || cancel {
 		t.Fatalf("heartbeat: %v %v %v", good, cancel, err)
 	}
-	cp := agent.APICheckpoint{Version: 1, Sequence: 1, Boundary: "model_intent", TaskDigest: "digest",
-		Pending: &agent.PendingOperation{Kind: "model", ID: "turn-1"}, NextTurn: 1}
+	cp := testCheckpoint(t, `{ "version":1, "sequence":1, "boundary":"model_intent", "task_digest":"digest", "pending":{"kind":"model","id":"turn-1"}, "next_turn":1 }`)
 	if err = s.SaveCheckpoint(ctx, p.ID, claimed.ID, "worker-b", claimed.Generation, cp); !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("stale worker write: %v", err)
 	}
@@ -323,7 +322,7 @@ func TestPostgresAdmissionClaimFencingAndRecovery(t *testing.T) {
 		t.Fatalf("duplicate checkpoint accepted: %v", err)
 	}
 	restored, err := s.LatestCheckpoint(ctx, p.TenantID, p.ID, claimed.ID)
-	if err != nil || restored.Sequence != 1 || restored.Pending.ID != "turn-1" {
+	if err != nil || restored.Sequence != 1 || restored.Pending.ID != "turn-1" || string(restored.Bytes()) != string(cp.Bytes()) {
 		t.Fatalf("checkpoint: %+v %v", restored, err)
 	}
 	_, err = s.LatestCheckpoint(ctx, "another-tenant", p.ID, claimed.ID)
@@ -437,11 +436,11 @@ func TestPostgresSuccessfulFinishRequiresCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok := agent.Result{Backend: "api", Status: agent.StatusOK}
+	ok := JobResult{Backend: "api", Status: StatusOK}
 	if err = s.Finish(ctx, p.ID, job.ID, "owner", claim.Generation, ok); err == nil {
 		t.Fatal("success without durable finished boundary")
 	}
-	cp := agent.APICheckpoint{Version: 1, Sequence: 1, Boundary: "finished", TaskDigest: "digest", Finished: true, NextTurn: 1, Result: ok}
+	cp := testCheckpoint(t, `{"version":1,"sequence":1,"boundary":"finished","task_digest":"digest","finished":true,"result":{"backend":"api","status":"ok"},"next_turn":1}`)
 	if err = s.SaveCheckpoint(ctx, p.ID, job.ID, "owner", claim.Generation, cp); err != nil {
 		t.Fatal(err)
 	}
@@ -454,5 +453,52 @@ func TestPostgresSuccessfulFinishRequiresCheckpoint(t *testing.T) {
 	}
 	if err = s.Finish(ctx, p.ID, job.ID, "owner", claim.Generation, ok); !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("stale finalization: %v", err)
+	}
+}
+
+func TestAdmissionMigrationUpgradesVersionThree(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_admissions; DELETE FROM schema_migrations WHERE version=4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 4 {
+		t.Fatalf("version %d: %v", version, err)
+	}
+}
+
+func TestStoredUnknownFields(t *testing.T) {
+	s := testStore(t)
+	p, _ := testProject(t, s)
+	ctx := context.Background()
+	job, _, err := s.Submit(ctx, testSubmission(p, "old-fields", "inspect"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.db.Exec(ctx, `UPDATE jobs SET options='{"mode":"readonly","old_key":1}', result='{"status":"ok","old_key":1}', state='recovery_required' WHERE id=$1`, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"version":1,"sequence":1,"boundary":"finished","task_digest":"d","finished":true,"old_key":1,"result":{"status":"ok","old_key":1}}`)
+	digest := sha256.Sum256(raw)
+	_, err = s.db.Exec(ctx, `INSERT INTO checkpoints(job_id,sequence,generation,boundary,digest,payload) VALUES($1,1,1,'finished',$2,$3)`, job.ID, digest[:], raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetJob(ctx, p.TenantID, p.ID, job.ID)
+	if err != nil || got.Result == nil || got.Result.Status != StatusOK {
+		t.Fatalf("job %+v: %v", got, err)
+	}
+	cp, err := s.LatestCheckpoint(ctx, p.TenantID, p.ID, job.ID)
+	if err != nil || !cp.Finished {
+		t.Fatalf("checkpoint %+v: %v", cp, err)
+	}
+	state, err := s.ResolveRecovery(ctx, p.TenantID, p.ID, job.ID, "complete", "verified")
+	if err != nil || state != Succeeded {
+		t.Fatalf("state %s: %v", state, err)
 	}
 }

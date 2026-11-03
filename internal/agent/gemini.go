@@ -55,7 +55,7 @@ func NewGeminiBackend() *CLIBackend {
 				res.Model = name
 				res.ModelReported = true
 				// The prompt count includes the cached tokens.
-				res.addUsage("inclusive_cache", m.Tokens.Prompt, m.Tokens.Candidates, m.Tokens.Cached, 0)
+				addUsage(res, "inclusive_cache", m.Tokens.Prompt, m.Tokens.Candidates, m.Tokens.Cached, 0)
 			}
 			res.Final = doc.Response
 			emit(Event{Time: time.Now(), Kind: EventText, Text: doc.Response})

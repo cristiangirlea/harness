@@ -14,6 +14,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/quota"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -74,7 +75,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		old = string(data)
 	}
 
-	p.WorkMapRepos = had.WorkMapRepos
+	p.WorkMapRepos, p.WorkMapGitHub = had.WorkMapRepos, had.WorkMapGitHub
 
 	// Preserve fallback preference order despite the card's alphabetical display.
 	if len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {
@@ -145,12 +146,12 @@ func (s *server) mayChangeBackends(w http.ResponseWriter, r *http.Request) bool 
 }
 
 func (s *server) backendsCard(w http.ResponseWriter, r *http.Request) backendCard {
-	p, err := agent.BackendPreferences(runlog.Home())
+	p, err := resolve.BackendPreferences(runlog.Home())
 	c := backendCard{Default: p.Default(), Editable: s.mayChangeBackends(w, r)}
 	if err != nil {
 		c.Problem = "Backend preferences could not be read."
 	} else if p.Default() == "" {
-		c.Chosen = agent.DefaultBackendNameIn(runlog.Home())
+		c.Chosen = resolve.DefaultBackendNameIn(runlog.Home())
 	}
 	if c.Editable {
 		c.Key = s.opt.Key

@@ -1808,3 +1808,11 @@ func TestSizeAddsUpTheFilesUnderAFolder(t *testing.T) {
 		t.Errorf("Size = %d, want 123", got)
 	}
 }
+
+func TestGCKeepsRunningCandidateWorktree(t *testing.T) {
+	f := newFixture(t)
+	candidate, _ := f.worktree(filepath.Join(f.repo, ".hrn", "worktrees", "candidate"), "hrn/candidate")
+	f.land("hrn/candidate")
+	saveBatch(t, "candidate-owner", f.repo, batch.TaskResult{ID: "parent", Status: batch.StatusRunning, Candidates: []batch.RetryCandidate{{Worktree: candidate, BranchMade: true}}})
+	wantVerdict(t, find(t, f.scan(), candidate), Keep, "still running")
+}

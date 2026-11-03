@@ -7,14 +7,24 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "hrn")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-o", binary, "./cmd/hrn")
+	cmd.Dir = filepath.Join("..", "..")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build hrn: %v %s", err, output)
+	}
 	for _, allow := range []bool{true, false} {
 		t.Run(fmt.Sprintf("allow_dangerous=%t", allow), func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
@@ -22,8 +32,8 @@ func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
 			// A claim represents an already stored job; submission validation is bypassed.
 			job := workspaceJob(strings.Repeat("d", 32))
 			job.State, job.Generation = Running, 1
-			job.Options = agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: 1, AllowDangerous: allow}
-			var result *agent.Result
+			job.Options = JobOptions{Mode: ModeReadOnly, MaxCostUSD: 1, AllowDangerous: allow}
+			var result *JobResult
 			claims, finishes, checkpoints := 0, 0, 0
 			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				code, body := http.StatusNoContent, ""
@@ -60,11 +70,9 @@ func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
 				fakeModel(w, r)
 			}))
 			defer model.Close()
-			backend := agent.NewAPIBackend()
-			backend.BaseURL, backend.APIKey = model.URL, "fixture"
 			worker := &Worker{ControlURL: "https://control.invalid", ProjectID: job.ProjectID,
 				Token: strings.Repeat("a", 64), WorkerID: "fixture-worker", WorkspaceRoot: t.TempDir(),
-				Backend: backend, HTTPClient: client}
+				ModelURL: model.URL, ModelKey: "fixture", HRNPath: binary, HTTPClient: client}
 			if ran, err := worker.RunOnce(context.Background()); !ran || err != nil {
 				t.Fatalf("worker failed instead of finishing the job: ran=%v err=%v", ran, err)
 			}
@@ -72,10 +80,10 @@ func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
 				t.Fatalf("job did not receive one terminal result: finishes=%d result=%+v", finishes, result)
 			}
 			if allow {
-				if result.Status != agent.StatusError || !strings.Contains(result.Error, "allow_dangerous is not supported for durable jobs") || modelCalls.Load() != 0 || checkpoints != 0 {
+				if result.Status != StatusError || !strings.Contains(result.Error, "allow_dangerous is not supported for durable jobs") || modelCalls.Load() != 0 || checkpoints != 0 {
 					t.Fatalf("stored dangerous job ran: result=%+v model_calls=%d checkpoints=%d", result, modelCalls.Load(), checkpoints)
 				}
-			} else if result.Status != agent.StatusOK || result.Final != "fixture completed" || modelCalls.Load() != 1 || checkpoints != 3 {
+			} else if result.Status != StatusOK || result.Final != "fixture completed" || modelCalls.Load() != 1 || checkpoints != 3 {
 				t.Fatalf("safe job did not run: result=%+v model_calls=%d checkpoints=%d", result, modelCalls.Load(), checkpoints)
 			}
 			if ran, err := worker.RunOnce(context.Background()); ran || err != nil || finishes != 1 {

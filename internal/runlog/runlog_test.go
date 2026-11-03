@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 func TestResolveHomeRelative(t *testing.T) {
@@ -37,7 +37,7 @@ func TestMissingHomeRefusesRecords(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(Home(), "other-records"), 0o755); err == nil {
 		t.Fatal("legacy home consumer created a directory")
 	}
-	if _, err := Create("stub", agent.Task{}); err == nil {
+	if _, err := Create("stub", kernel.Task{}, nil); err == nil {
 		t.Fatal("created a record without a home")
 	}
 	if _, err := List(0); err == nil {
@@ -75,7 +75,7 @@ func TestLoadUsesDirectoryID(t *testing.T) {
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				want := Record{ID: storedID, Backend: "stub", Task: agent.Task{Prompt: "keep me"}}
+				want := Record{ID: storedID, Backend: "stub", Task: kernel.Task{Prompt: "keep me"}}
 				if err := writeJSON(filepath.Join(dir, file), want); err != nil {
 					t.Fatal(err)
 				}
@@ -119,11 +119,11 @@ func TestOldTaskRecordsLoadWithoutAPurpose(t *testing.T) {
 func TestARoutedRunKeepsItsRowAndAnOldRecordLoadsWithoutOne(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	by := &RoutedBy{Category: "implement", Declared: true, Eval: "e1", Set: "2026-10-12"}
-	w, err := CreateContinuing("codex", agent.Task{Prompt: "Implement widget"}, "", by)
+	w, err := CreateContinuing("codex", kernel.Task{Prompt: "Implement widget"}, nil, "", by)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := Load(w.ID())
@@ -134,11 +134,11 @@ func TestARoutedRunKeepsItsRowAndAnOldRecordLoadsWithoutOne(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), "routed_by") {
 		t.Fatalf("task: %s %v", data, err)
 	}
-	w, err = Create("codex", agent.Task{Prompt: "old"})
+	w, err = Create("codex", kernel.Task{Prompt: "old"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	r, err = Load(w.ID())
@@ -153,7 +153,7 @@ func TestARoutedRunKeepsItsRowAndAnOldRecordLoadsWithoutOne(t *testing.T) {
 
 func TestRouteNoteIsSavedForTaskAndResultAndOldRecordsLoad(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := CreateRouted("stub", agent.Task{Prompt: "p"}, "", "", nil, "backend stub was named for this run")
+	w, err := CreateRouted("stub", kernel.Task{Prompt: "p"}, nil, "", "", nil, "backend stub was named for this run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestRouteNoteIsSavedForTaskAndResultAndOldRecordsLoad(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), `"route_note": "backend stub was named for this run"`) {
 		t.Fatalf("task: %s %v", data, err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(filepath.Join(w.Dir(), "result.json"))
@@ -187,11 +187,11 @@ func TestRouteNoteIsSavedForTaskAndResultAndOldRecordsLoad(t *testing.T) {
 func TestRecordsKeepContextAndStillLoadResultsWithoutIt(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, n := range []int{285000, 0} {
-		w, err := Create("stub", agent.Task{Prompt: "p"})
+		w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var res agent.Result
+		var res kernel.Result
 		data := `{"status":"ok","turns":1}`
 		if n > 0 {
 			data = fmt.Sprintf(`{"status":"ok","turns":1,"context_tokens":%d}`, n)
@@ -203,7 +203,7 @@ func TestRecordsKeepContextAndStillLoadResultsWithoutIt(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec, err := Load(w.ID())
-		if err != nil || !rec.Done || rec.Result.Status != agent.StatusOK {
+		if err != nil || !rec.Done || rec.Result.Status != kernel.StatusOK {
 			t.Fatalf("record = %+v, error = %v", rec, err)
 		}
 		encoded, err := json.Marshal(rec.Result)
@@ -221,45 +221,45 @@ func TestRecordsKeepContextAndStillLoadResultsWithoutIt(t *testing.T) {
 
 func TestWriterCountsFailedEventsAndSavesRecordError(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := w.events.Close(); err != nil {
 		t.Fatal(err)
 	}
-	w.Event(agent.Event{Kind: agent.EventText, Text: "first"})
-	w.Event(agent.Event{Kind: agent.EventText, Text: "second"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "first"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "second"})
 	recordErr := w.Err()
 	if recordErr == nil || !strings.Contains(recordErr.Error(), "2 events were not recorded") || !errors.Is(recordErr, os.ErrClosed) {
 		t.Fatalf("Err = %v, want two lost events wrapping os.ErrClosed", recordErr)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil || !strings.Contains(err.Error(), recordErr.Error()) || !errors.Is(err, os.ErrClosed) {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err == nil || !strings.Contains(err.Error(), recordErr.Error()) || !errors.Is(err, os.ErrClosed) {
 		t.Errorf("Close = %v, want the event write error", err)
 	}
 	if _, err := os.Stat(filepath.Join(w.Dir(), "result.json")); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := Load(w.ID())
-	if err != nil || !rec.Done || !strings.Contains(rec.RecordError, recordErr.Error()) || !strings.Contains(rec.RecordError, "close ") || rec.Result.Status != agent.StatusOK {
+	if err != nil || !rec.Done || !strings.Contains(rec.RecordError, recordErr.Error()) || !strings.Contains(rec.RecordError, "close ") || rec.Result.Status != kernel.StatusOK {
 		t.Fatalf("saved record = %+v, err = %v", rec, err)
 	}
 }
 
 func TestWriterWithSuccessfulEventsHasNoRecordError(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Err(); err != nil {
 		t.Fatal(err)
 	}
-	w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "saved"})
 	if err := w.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := Load(w.ID())
@@ -278,53 +278,53 @@ func TestWriterWithSuccessfulEventsHasNoRecordError(t *testing.T) {
 
 func TestWriterDoesNotCountPartialEventsAsLost(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := w.events.Close(); err != nil {
 		t.Fatal(err)
 	}
-	w.Event(agent.Event{Kind: agent.EventText, Text: "fragment", Partial: true})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "fragment", Partial: true})
 	if err := w.Err(); err != nil {
 		t.Fatalf("partial event counted as lost: %v", err)
 	}
-	w.Event(agent.Event{Kind: agent.EventText, Text: "complete"})
-	w.Event(agent.Event{Kind: agent.EventText, Text: "fragment", Partial: true})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "complete"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "fragment", Partial: true})
 	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") {
 		t.Fatalf("Err = %v, want only the complete event counted", err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err == nil {
 		t.Fatal("Close must report the lost complete event")
 	}
 }
 
 func TestWriterRetriesWritesAndKeepsTheFirstError(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := w.events.Close(); err != nil {
 		t.Fatal(err)
 	}
-	w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "lost"})
 	// Replace the closed file to simulate storage becoming writable again.
 	w.events, err = os.OpenFile(filepath.Join(w.Dir(), "events.jsonl"), os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = w.events.Close() })
-	w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "saved"})
 	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") {
 		t.Fatalf("successful retry must not count as lost: %v", err)
 	}
 	// A later, different encoding error must not replace the first write error.
-	w.Event(agent.Event{Kind: agent.EventToolCall, Input: json.RawMessage(`{`)})
+	w.Event(kernel.Event{Kind: kernel.EventToolCall, Input: json.RawMessage(`{`)})
 	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "2 events were not recorded") || !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("Err = %v, want two failures wrapping the first error", err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err == nil {
 		t.Fatal("Close must report the earlier failures")
 	}
 	events, err := Events(w.ID())
@@ -335,19 +335,19 @@ func TestWriterRetriesWritesAndKeepsTheFirstError(t *testing.T) {
 
 func TestWriterCloseJoinsEventFileAndResultErrors(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := w.events.Close(); err != nil {
 		t.Fatal(err)
 	}
-	w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "lost"})
 	resultPath := filepath.Join(w.Dir(), "result.json")
 	if err := os.Mkdir(resultPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err = w.Close(agent.Result{Status: agent.StatusOK})
+	err = w.Close(kernel.Result{Status: kernel.StatusOK})
 	if err == nil || !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("Close = %v, want joined errors wrapping os.ErrClosed", err)
 	}
@@ -381,14 +381,14 @@ func TestWriterKeepsTheNextEventReadableAfterAShortWrite(t *testing.T) {
 	for _, cause := range []error{errors.New("disk full"), nil} {
 		t.Run(fmt.Sprint(cause), func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
-			w, err := Create("stub", agent.Task{Prompt: "p"})
+			w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			w.events = &shortWriter{WriteCloser: w.events, err: cause}
 			t.Cleanup(func() { _ = w.events.Close() })
-			w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
-			w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+			w.Event(kernel.Event{Kind: kernel.EventText, Text: "lost"})
+			w.Event(kernel.Event{Kind: kernel.EventText, Text: "saved"})
 			wantCause := cause
 			if wantCause == nil {
 				wantCause = io.ErrShortWrite
@@ -396,7 +396,7 @@ func TestWriterKeepsTheNextEventReadableAfterAShortWrite(t *testing.T) {
 			if err := w.Err(); err == nil || !strings.Contains(err.Error(), "1 event was not recorded") || !errors.Is(err, wantCause) {
 				t.Errorf("Err = %v, want exactly one loss wrapping %v", err, wantCause)
 			}
-			if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+			if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err == nil {
 				t.Error("Close must report the lost event")
 			}
 			events, err := Events(w.ID())
@@ -409,12 +409,12 @@ func TestWriterKeepsTheNextEventReadableAfterAShortWrite(t *testing.T) {
 
 func TestWriterCountsEventsAfterCloseWithoutChangingTheSavedRecord(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "saved"})
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(w.Dir(), "result.json")
@@ -422,8 +422,8 @@ func TestWriterCountsEventsAfterCloseWithoutChangingTheSavedRecord(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Event(agent.Event{Kind: agent.EventText, Text: "late"})
-	w.Event(agent.Event{Kind: agent.EventText, Text: "later"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "late"})
+	w.Event(kernel.Event{Kind: kernel.EventText, Text: "later"})
 	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "2 events were not recorded") || !errors.Is(err, os.ErrClosed) {
 		t.Errorf("late events must count as lost: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestWriterCountsEventsAfterCloseWithoutChangingTheSavedRecord(t *testing.T)
 
 func TestWriterErrCanRaceCloseAndReportsTheCloseError(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestWriterErrCanRaceCloseAndReportsTheCloseError(t *testing.T) {
 		})
 	}
 	close(start)
-	closeErr := w.Close(agent.Result{Status: agent.StatusOK})
+	closeErr := w.Close(kernel.Result{Status: kernel.StatusOK})
 	wg.Wait()
 	if !errors.Is(closeErr, os.ErrClosed) || !errors.Is(w.Err(), os.ErrClosed) {
 		t.Errorf("Close = %v, Err = %v, want the close error in both", closeErr, w.Err())
@@ -468,11 +468,11 @@ func TestWriterErrCanRaceCloseAndReportsTheCloseError(t *testing.T) {
 
 func TestEventsStillRejectsMalformedUnmarkedRecords(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	write(t, w.Dir(), "events.jsonl", "{broken\n{\"kind\":\"text\",\"text\":\"saved\"}\n")
@@ -483,7 +483,7 @@ func TestEventsStillRejectsMalformedUnmarkedRecords(t *testing.T) {
 
 func TestWriterErrCanBeReadWhileEventsFailConcurrently(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{Prompt: "p"})
+	w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestWriterErrCanBeReadWhileEventsFailConcurrently(t *testing.T) {
 	for range 4 {
 		wg.Go(func() {
 			for range 25 {
-				w.Event(agent.Event{Kind: agent.EventText, Text: "lost"})
+				w.Event(kernel.Event{Kind: kernel.EventText, Text: "lost"})
 				if err := w.Err(); err == nil || !errors.Is(err, os.ErrClosed) {
 					t.Errorf("Err = %v, want the first write error", err)
 				}
@@ -505,7 +505,7 @@ func TestWriterErrCanBeReadWhileEventsFailConcurrently(t *testing.T) {
 	if err := w.Err(); err == nil || !strings.Contains(err.Error(), "100 events were not recorded") {
 		t.Fatalf("Err = %v, want all concurrent failures counted", err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err == nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err == nil {
 		t.Fatal("Close must report the failures")
 	}
 }
@@ -533,13 +533,13 @@ func write(t *testing.T, dir, name, content string) {
 
 func TestListSinceSkipsOldRunsAndCountsUnreadable(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	task := agent.Task{Prompt: "p", Dir: t.TempDir(), Options: agent.Options{Mode: agent.ModeAsk}}
+	task := kernel.Task{Prompt: "p", Dir: t.TempDir(), Options: kernel.Options{Mode: kernel.ModeAsk}}
 	for _, backend := range []string{"api", "claude"} {
-		w, err := Create(backend, task)
+		w, err := Create(backend, task, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(agent.Result{Backend: backend, Status: agent.StatusOK}); err != nil {
+		if err := w.Close(kernel.Result{Backend: backend, Status: kernel.StatusOK}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -592,22 +592,22 @@ func TestIDBefore(t *testing.T) {
 
 func TestContinuingRecordsWhatItFollows(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	first, err := Create("api", agent.Task{Prompt: "first", Dir: "."})
+	first, err := Create("api", kernel.Task{Prompt: "first", Dir: "."}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := first.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := first.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	if rec, err := Load(first.ID()); err != nil || rec.Continues != "" {
 		t.Fatalf("a plain run follows nothing: %+v err=%v", rec, err)
 	}
 
-	second, err := CreateContinuing("api", agent.Task{Prompt: "and now?", Dir: "."}, first.ID())
+	second, err := CreateContinuing("api", kernel.Task{Prompt: "and now?", Dir: "."}, nil, first.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := second.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := second.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := Load(second.ID())
@@ -618,19 +618,19 @@ func TestContinuingRecordsWhatItFollows(t *testing.T) {
 
 func TestLoadConversation(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("api", agent.Task{Prompt: "first", Dir: "."})
+	w, err := Create("api", kernel.Task{Prompt: "first", Dir: "."}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Close releases the transcript file; Windows will not remove an open one.
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := LoadConversation(w.ID()); err == nil || !strings.Contains(err.Error(), "no saved conversation") {
 		t.Fatalf("err = %v, want a clear message about the missing conversation", err)
 	}
 
-	data, _ := json.Marshal(agent.Conversation{Model: "claude-opus-5"})
+	data, _ := json.Marshal(kernel.Conversation{Model: "claude-opus-5"})
 	if err := os.WriteFile(filepath.Join(w.Dir(), "messages.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -648,15 +648,15 @@ func TestLoadConversation(t *testing.T) {
 
 func TestChainFollowsContinuesOldestFirst(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	task := agent.Task{Prompt: "p", Dir: t.TempDir()}
+	task := kernel.Task{Prompt: "p", Dir: t.TempDir()}
 	var ids []string
 	prev := ""
 	for _, backend := range []string{"claude", "codex", "claude"} {
-		w, err := CreateContinuing(backend, task, prev)
+		w, err := CreateContinuing(backend, task, nil, prev)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(agent.Result{Backend: backend, Status: agent.StatusOK}); err != nil {
+		if err := w.Close(kernel.Result{Backend: backend, Status: kernel.StatusOK}); err != nil {
 			t.Fatal(err)
 		}
 		prev = w.ID()
@@ -678,11 +678,11 @@ func TestChainFollowsContinuesOldestFirst(t *testing.T) {
 
 func TestChainStopsAtAMissingRunAndRefusesALoop(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := CreateContinuing("codex", agent.Task{Prompt: "p"}, "20200101-000000-gone")
+	w, err := CreateContinuing("codex", kernel.Task{Prompt: "p"}, nil, "20200101-000000-gone")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	chain, missing, err := Chain(w.ID())
@@ -704,18 +704,18 @@ func TestChainStopsAtAMissingRunAndRefusesALoop(t *testing.T) {
 
 func TestChainRefusesAnUnreadableAncestor(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	first, err := Create("codex", agent.Task{Prompt: "p"})
+	first, err := Create("codex", kernel.Task{Prompt: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := first.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := first.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
-	second, err := CreateContinuing("claude", agent.Task{Prompt: "q"}, first.ID())
+	second, err := CreateContinuing("claude", kernel.Task{Prompt: "q"}, nil, first.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := second.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := second.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	// The first run is there, but its record is half-written.
@@ -770,18 +770,18 @@ func TestWriterKeepsEventsApartAcrossConsecutiveFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
-			w, err := Create("stub", agent.Task{Prompt: "p"})
+			w, err := Create("stub", kernel.Task{Prompt: "p"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			w.events = &scriptedWriter{WriteCloser: w.events, steps: tc.steps}
-			w.Event(agent.Event{Kind: agent.EventText, Text: "lost one"})
-			w.Event(agent.Event{Kind: agent.EventText, Text: "lost two"})
-			w.Event(agent.Event{Kind: agent.EventText, Text: "saved"})
+			w.Event(kernel.Event{Kind: kernel.EventText, Text: "lost one"})
+			w.Event(kernel.Event{Kind: kernel.EventText, Text: "lost two"})
+			w.Event(kernel.Event{Kind: kernel.EventText, Text: "saved"})
 			if err := w.Err(); err == nil || !strings.Contains(err.Error(), "2 events were not recorded") {
 				t.Errorf("Err = %v, want two losses", err)
 			}
-			_ = w.Close(agent.Result{Status: agent.StatusOK})
+			_ = w.Close(kernel.Result{Status: kernel.StatusOK})
 			events, err := Events(w.ID())
 			if err != nil || len(events) != 1 || events[0].Text != "saved" {
 				t.Fatalf("only the third event must read back, intact: events=%+v err=%v", events, err)
@@ -810,7 +810,7 @@ func TestCreateLeavesNoRecordWhenItFailsHalfway(t *testing.T) {
 	createEventsFile = func(string) (io.WriteCloser, error) { return nil, errors.New("disk full") }
 	t.Cleanup(func() { createEventsFile = old })
 
-	if _, err := Create("stub", agent.Task{Prompt: "p"}); err == nil {
+	if _, err := Create("stub", kernel.Task{Prompt: "p"}, nil); err == nil {
 		t.Fatal("Create succeeded although the events file could not be created")
 	}
 	entries, err := os.ReadDir(Root())

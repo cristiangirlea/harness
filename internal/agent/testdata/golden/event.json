@@ -1,0 +1,1 @@
+{"t":"2024-02-03T04:05:06.007Z","kind":"tool_call","text":"event text","tool":"tool","input":{"arg":"value"},"is_error":true,"usage":{"model":"usage-model","input_tokens":18,"output_tokens":19,"cache_read_tokens":20,"cache_write_tokens":21,"context_tokens":22},"quota":{"five_hour":{"used_percent":23.5,"resets_at":24},"week":{"used_percent":25.5,"resets_at":26}}}

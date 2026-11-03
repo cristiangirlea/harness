@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -18,7 +18,7 @@ func RunStep(parent, runID string) string {
 
 // FromRun rebuilds a run's steps from its record and events, which every run since the first has.
 // Thinking and text are left out: they are the model's words, shown on the run page, not steps.
-func FromRun(rec runlog.Record, events []agent.Event, parent string) []Event {
+func FromRun(rec runlog.Record, events []kernel.Event, parent string) []Event {
 	root := RunStep(parent, rec.ID)
 	base := Event{Owner: rec.Owner, Run: rec.ID, Derived: true}
 	at := func(e Event) Event {
@@ -35,13 +35,13 @@ func FromRun(rec runlog.Record, events []agent.Event, parent string) []Event {
 	n := 0
 	for _, e := range events {
 		switch e.Kind {
-		case agent.EventToolCall:
+		case kernel.EventToolCall:
 			n++
 			step := fmt.Sprintf("%s/tool%d", root, n)
 			calls = append(calls, openCall{step, e.Tool})
 			out = append(out, at(Event{Time: e.Time, Step: step, Parent: root, Kind: KindTool, Status: StatusStarted,
 				Name: e.Tool, Text: oneLine(e.Text, 200)}))
-		case agent.EventToolResult:
+		case kernel.EventToolResult:
 			i := matchCall(calls, e.Tool)
 			if i < 0 {
 				out = append(out, at(Event{Time: e.Time, Step: fmt.Sprintf("%s/result%d", root, len(out)), Parent: root,
@@ -56,12 +56,12 @@ func FromRun(rec runlog.Record, events []agent.Event, parent string) []Event {
 				done.Reason = oneLine(e.Text, 200)
 			}
 			out = append(out, at(done))
-		case agent.EventError:
+		case kernel.EventError:
 			out = append(out, at(Event{Time: e.Time, Step: fmt.Sprintf("%s/error%d", root, len(out)), Parent: root,
 				Kind: KindError, Status: StatusFailed, Text: oneLine(e.Text, 400)}))
-		case agent.EventInfo, agent.EventCompaction:
+		case kernel.EventInfo, kernel.EventCompaction:
 			name := "info"
-			if e.Kind == agent.EventCompaction {
+			if e.Kind == kernel.EventCompaction {
 				name = "compaction"
 			}
 			out = append(out, at(Event{Time: e.Time, Step: fmt.Sprintf("%s/info%d", root, len(out)), Parent: root,
@@ -98,7 +98,7 @@ func matchCall(calls []openCall, tool string) int {
 	return -1
 }
 
-func resultStatus(e agent.Event) Status {
+func resultStatus(e kernel.Event) Status {
 	if e.IsError {
 		return StatusFailed
 	}
@@ -106,11 +106,11 @@ func resultStatus(e agent.Event) Status {
 }
 
 // runStatus maps a run's result onto a step status.
-func runStatus(s agent.Status) Status {
+func runStatus(s kernel.Status) Status {
 	switch s {
-	case agent.StatusOK:
+	case kernel.StatusOK:
 		return StatusOK
-	case agent.StatusCanceled:
+	case kernel.StatusCanceled:
 		return StatusCanceled
 	case "":
 		return StatusStarted

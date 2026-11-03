@@ -3,12 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"os"
 	"path/filepath"
-	"reflect"
 	"time"
 	"unicode/utf8"
 )
@@ -84,7 +84,7 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		state.Mode = previous.Mode
 		state.Packet = previous.Packet
 		if task.Resume != nil {
-			if err := ValidateContinuationPin(previous, task.Resume); err != nil {
+			if err := kernel.ValidateContinuationPin(previous, task.Resume); err != nil {
 				return fail(err)
 			}
 		}
@@ -109,7 +109,7 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 			}
 		}
 	} else {
-		if err := task.Options.Validate(); err != nil {
+		if err := ValidateOptions(task.Options); err != nil {
 			return fail(err)
 		}
 		state.Scope = retrieval.Scope{TenantID: task.RetrievalTenant, ProjectID: task.RetrievalProject, Revision: task.RetrievalRevision, Backend: backend, Model: task.Model}
@@ -117,7 +117,10 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 	// Resumes already contain the pinned packet; retrieving again would duplicate it.
 	search := previous == nil || (task.Resume == nil && task.RetrievalRepair && state.Packet != nil && state.Packet.VersionID != "")
 	if search {
-		client, err := remote.NewFromEnv()
+		if task.Knowledge == nil {
+			return fail(fmt.Errorf("retrieval requires Knowledge"))
+		}
+		client, err := task.Knowledge()
 		if err != nil {
 			return fail(fmt.Errorf("retrieval transport configuration invalid"))
 		}
@@ -141,7 +144,7 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 			if ctx.Err() != nil {
 				return fail(fmt.Errorf("retrieval canceled"))
 			}
-			if state.Mode != "optional" || !remote.RetrievalUnavailable(err) {
+			if state.Mode != "optional" || !errors.Is(err, retrieval.ErrUnavailable) {
 				return fail(fmt.Errorf("retrieval request rejected or unavailable: %w", err))
 			}
 			if previous == nil {
@@ -163,43 +166,4 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 	task.OriginalPrompt = original
 	task.RetrievalState = state
 	return task, state, nil
-}
-
-// ValidateContinuationPin checks saved pins without altering history.
-func ValidateContinuationPin(record *retrieval.Record, conv *Conversation) error {
-	if conv == nil {
-		return fmt.Errorf("missing saved conversation")
-	}
-	if record == nil && conv.Retrieval == nil {
-		return nil
-	}
-	if record == nil || conv.Retrieval == nil {
-		return fmt.Errorf("saved retrieval pin missing from conversation")
-	}
-	a, b := record, conv.Retrieval
-	for _, r := range []*retrieval.Record{a, b} {
-		s := r.Scope
-		// Providers may report a resolved model; the run log checks it against the requested scope.
-		if (r.Mode != "optional" && r.Mode != "required") || s.TenantID == "" || s.ProjectID == "" || s.Revision == "" || s.Backend != "api" || s.Model == "" || conv.Model == "" {
-			return fmt.Errorf("invalid saved retrieval scope or mode")
-		}
-		if r.Failure != "" && (r.Mode != "optional" || r.Failure != "optional retrieval unavailable") {
-			return fmt.Errorf("failed retrieval cannot be continued")
-		}
-		if r.Packet == nil && (r.Mode != "optional" || r.Failure != "optional retrieval unavailable") {
-			return fmt.Errorf("saved retrieval packet missing")
-		}
-		if r.Packet != nil {
-			if err := retrieval.ValidatePacket(*r.Packet, "", ""); err != nil {
-				return err
-			}
-		}
-	}
-	if a.Scope != b.Scope || a.Mode != b.Mode || a.OriginalPrompt != b.OriginalPrompt || a.Failure != b.Failure {
-		return fmt.Errorf("saved retrieval pin mismatch")
-	}
-	if !reflect.DeepEqual(a.Packet, b.Packet) {
-		return fmt.Errorf("saved retrieval packet mismatch")
-	}
-	return nil
 }

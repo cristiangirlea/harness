@@ -120,7 +120,7 @@ func runRemote(args []string, out io.Writer) error {
 			return errors.New("prompt must be 1..100000 bytes")
 		}
 		options := agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: cost, MaxTurns: turns}
-		if err := options.Validate(); err != nil {
+		if err := agent.ValidateOptions(options); err != nil {
 			return err
 		}
 		if err := remote.CheckCostCap(cost); err != nil {

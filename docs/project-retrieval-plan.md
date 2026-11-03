@@ -26,7 +26,7 @@ Remote execution currently uses a fake model. Retrieval storage and protocol tes
 4. Filter eligible records by authorization, pinned version and applicability before returning any content. Rank exact identifiers and full-text matches, deduplicate, and select a small packet.
 5. Attach source-labelled context to the new task or repair prompt. Preserve the original task, acceptance checks and current workspace evidence.
 6. Run the configured assistant and existing checks. Record exactly which context was supplied, its size, retrieval latency and the resulting usage.
-7. Completed-run evidence may later produce a candidate lesson. Candidates become retrievable only through the explicit approval or evaluated-promotion process below.
+7. Completed-run evidence may produce a candidate lesson. `hrn knowledge admit` compares the candidate with the active version on held-out tasks, records the verdict and activates only an admitted candidate. Explicit operator approval remains available.
 
 Only the trusted control service accesses PostgreSQL. Workers and opted-in local clients obtain authorized context through the service. A model-supplied project ID is never sufficient authorization.
 

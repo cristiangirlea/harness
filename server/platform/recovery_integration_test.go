@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 type lostCheckpointAck struct {
@@ -102,19 +100,12 @@ func TestHTTPManualRecoveryAfterSafeCheckpoint(t *testing.T) {
 		fakeTurn(w, "completed", "end_turn")
 	}))
 	defer model.Close()
-	api := func() *agent.APIBackend {
-		b := agent.NewAPIBackend()
-		b.BaseURL = model.URL
-		b.APIKey = "fixture"
-		b.Tools = nil
-		return b
-	}
 	if _, err := store.AdmitOne(ctx); err != nil {
 		t.Fatal(err)
 	}
 	lost := &lostCheckpointAck{base: http.DefaultTransport}
-	first := &Worker{ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
-		WorkerID: "worker-first", WorkspaceRoot: t.TempDir(), Backend: api(),
+	first := &Worker{HRNPath: realHRN(t), ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
+		WorkerID: "worker-first", WorkspaceRoot: t.TempDir(), ModelURL: model.URL, ModelKey: "fixture",
 		HTTPClient: &http.Client{Transport: lost}}
 	// Both attempts must use the same persistent workspace root.
 	root := first.WorkspaceRoot
@@ -152,8 +143,8 @@ func TestHTTPManualRecoveryAfterSafeCheckpoint(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("retained"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	second := &Worker{ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
-		WorkerID: "worker-second", WorkspaceRoot: root, Backend: api()}
+	second := &Worker{HRNPath: realHRN(t), ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
+		WorkerID: "worker-second", WorkspaceRoot: root, ModelURL: model.URL, ModelKey: "fixture"}
 	ran, err = second.RunOnce(ctx)
 	if err != nil || !ran {
 		t.Fatalf("second attempt: %v %v", ran, err)
@@ -199,13 +190,12 @@ func TestPostgresUnresolvedEffectCannotResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cp := agent.APICheckpoint{Version: 1, Sequence: 1, Boundary: "tool_intent", TaskDigest: "digest",
-		Pending: &agent.PendingOperation{Kind: "tool", ID: "tool-1"}, NextTurn: 1}
+	cp := testCheckpoint(t, `{"version":1,"sequence":1,"boundary":"tool_intent","task_digest":"digest","pending":{"kind":"tool","id":"tool-1"},"next_turn":1}`)
 	if err = store.SaveCheckpoint(ctx, project.ID, job.ID, "worker-a", claim.Generation, cp); err != nil {
 		t.Fatal(err)
 	}
 	if err = store.Finish(ctx, project.ID, job.ID, "worker-a", claim.Generation,
-		agent.Result{Backend: "api", Status: agent.StatusError, RecoveryRequired: true}); err != nil {
+		JobResult{Backend: "api", Status: StatusError, RecoveryRequired: true}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = store.ResolveRecovery(ctx, project.TenantID, project.ID, job.ID, "resume", "old worker stopped")

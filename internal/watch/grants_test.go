@@ -19,7 +19,7 @@ func TestPublicProjectGrantsAndAudit(t *testing.T) {
 	f := newAccessFixture(t)
 	t.Setenv("HRN_OWNER", "local:me")
 	project := t.TempDir()
-	w, err := runlog.Create("fake", agent.Task{Dir: filepath.Join(project, ".hrn", "worktrees", "task"), Prompt: "shared project"})
+	w, err := runlog.Create("fake", agent.Task{Dir: filepath.Join(project, ".hrn", "worktrees", "task"), Prompt: "shared project"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"os"
 	"strings"
 	"sync"
@@ -61,11 +63,11 @@ func (j *Judge) rubricFor(task string) string {
 }
 
 func (j *Judge) check(tasks []batch.Task) error {
-	p, err := agent.BackendPreferences(runlog.Home())
+	p, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
-	if err := p.Check(firstOf(j.Backend, agent.DefaultBackendNameIn(runlog.Home()))); err != nil {
+	if err := p.Check(firstOf(j.Backend, resolve.DefaultBackendNameIn(runlog.Home()))); err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
 	if j.Backend != "" {
@@ -80,7 +82,7 @@ func (j *Judge) check(tasks []batch.Task) error {
 		return fmt.Errorf("judge: repeats %d is negative", j.Repeats)
 	}
 	// Validate effort before spending on cells the judge cannot grade.
-	if err := (agent.Options{Effort: j.Effort}).Validate(); err != nil {
+	if err := agent.ValidateOptions(agent.Options{Effort: j.Effort}); err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
 	ids := map[string]bool{}
@@ -112,7 +114,7 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 		defer notifyMu.Unlock()
 		report(e)
 	}
-	b, err := agent.Get(firstOf(j.Backend, agent.DefaultBackendNameIn(runlog.Home())))
+	b, err := agent.Get(firstOf(j.Backend, resolve.DefaultBackendNameIn(runlog.Home())))
 	if err != nil {
 		notify(batch.Event{Kind: "judge", Text: "judge: " + err.Error()})
 		return nil
@@ -252,14 +254,15 @@ func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResu
 		timeout = defaultJudgeTimeout
 	}
 	task := agent.Task{
-		Prompt:   ev.prompt,
-		ChildEnv: []string{"HRN_HOME=" + home},
+		Knowledge: remote.SearcherFromEnv,
+		Prompt:    ev.prompt,
+		ChildEnv:  []string{"HRN_HOME=" + home},
 		// Neutral read-only copies expose context without revealing the variant.
 		Dir: ev.dir,
 		Options: agent.Options{Mode: agent.ModeReadOnly, Model: j.Model, Effort: j.Effort,
 			Timeout: agent.Duration(timeout), NoInstructions: true},
 	}
-	rec, err := runlog.Create(b.Name(), task)
+	rec, err := runlog.Create(b.Name(), task, agent.ResolveSetup(b.Name(), task))
 	if err != nil {
 		jd.Error = "creating run record: " + err.Error()
 		return jd

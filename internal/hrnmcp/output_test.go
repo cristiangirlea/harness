@@ -105,7 +105,7 @@ func TestShowEventsCannotSendTerminalControls(t *testing.T) {
 	for _, kind := range []agent.EventKind{agent.EventText, agent.EventThinking, agent.EventToolCall, agent.EventToolResult, agent.EventInfo, agent.EventError} {
 		t.Run(string(kind), func(t *testing.T) {
 			s := connect(t, t.TempDir())
-			w, err := runlog.Create("stub", agent.Task{Prompt: "hello"})
+			w, err := runlog.Create("stub", agent.Task{Prompt: "hello"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -146,7 +146,7 @@ func TestShowToolArgumentsCannotSendTerminalControls(t *testing.T) {
 	const bad = "x\x1b[31m\x07\u009b\n\tsecond line"
 	const want = "x\ufffd[31m\ufffd\ufffd\n\tsecond line"
 	s := connect(t, t.TempDir())
-	w, err := runlog.Create("stub", agent.Task{Prompt: "hello"})
+	w, err := runlog.Create("stub", agent.Task{Prompt: "hello"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

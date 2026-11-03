@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 const oldKnowledgeSearchSQL = `SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
@@ -22,8 +20,8 @@ func TestKnowledgeSearchMembersFirst(t *testing.T) {
 	other, _ := testProject(t, s)
 	in := knowledgeFixture(p)
 	in.Entries = append(in.Entries,
-		retrieval.Entry{Key: "tie-a", Content: "build", Source: "docs/a", Evidence: "checked", Identifiers: []string{}},
-		retrieval.Entry{Key: "tie-b", Content: "build", Source: "docs/b", Evidence: "checked", Identifiers: []string{"ERR_BUILD"}},
+		KnowledgeEntry{Key: "tie-a", Content: "build", Source: "docs/a", Evidence: "checked", Identifiers: []string{}},
+		KnowledgeEntry{Key: "tie-b", Content: "build", Source: "docs/b", Evidence: "checked", Identifiers: []string{"ERR_BUILD"}},
 	)
 	version, err := s.ImportKnowledge(ctx, in)
 	if err != nil {
@@ -88,15 +86,15 @@ func TestKnowledgeSearchMembersFirst(t *testing.T) {
 	}
 	for _, query := range []string{"ERR_BUILD build", "build", "src/build.go", "missing", ""} {
 		args[3], args[4] = query, knowledgeQueryIdentifiers(query)
-		read := func(sql string) []retrieval.Entry {
+		read := func(sql string) []KnowledgeEntry {
 			rows, err := s.db.Query(ctx, sql, args...)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer rows.Close()
-			result := []retrieval.Entry{}
+			result := []KnowledgeEntry{}
 			for rows.Next() {
-				var e retrieval.Entry
+				var e KnowledgeEntry
 				if err := rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers); err != nil {
 					t.Fatal(err)
 				}

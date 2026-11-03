@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/owner"
 )
 
@@ -21,11 +21,11 @@ func TestViewerProjectGrantLoadsAndListsRuns(t *testing.T) {
 	if err := os.Mkdir(sub, 0700); err != nil {
 		t.Fatal(err)
 	}
-	w, err := Create("fake", agent.Task{Dir: sub})
+	w, err := Create("fake", kernel.Task{Dir: sub}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{}); err != nil {
+	if err := w.Close(kernel.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	v := owner.Viewer{ID: "user:reader", Grants: []owner.Grant{{Viewer: "user:reader", Project: project}}}

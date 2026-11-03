@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -20,7 +22,7 @@ import (
 func standIn(t *testing.T) {
 	t.Helper()
 	// A key in the environment would keep the partner from standing in.
-	for _, name := range append(limits.MeteredEnv("claude"), limits.MeteredEnv("codex")...) {
+	for _, name := range append(followup.MeteredEnv("claude"), followup.MeteredEnv("codex")...) {
 		t.Setenv(name, "")
 	}
 	for _, s := range []stub{
@@ -96,7 +98,7 @@ func TestAttemptTurnDefaultRecordedAndAnnounced(t *testing.T) {
 	}})
 	res, events := run(t, Spec{Dir: dir, Backend: "claude", Tasks: []Task{{Prompt: "work", Purpose: "review"}}})
 	rec := firstRun(t, res.Tasks[0])
-	if got != 30 || rec.Task.MaxTurns != 30 || !strings.Contains(eventTexts(events, "info"), agent.TurnDefaultInfo) {
+	if got != 30 || rec.Task.MaxTurns != 30 || !strings.Contains(eventTexts(events, "info"), resolve.TurnDefaultInfo) {
 		t.Fatalf("backend=%d record=%d events=%v", got, rec.Task.MaxTurns, events)
 	}
 	logged, err := runlog.Events(rec.ID)
@@ -105,7 +107,7 @@ func TestAttemptTurnDefaultRecordedAndAnnounced(t *testing.T) {
 	}
 	found := false
 	for _, e := range logged {
-		found = found || e.Kind == agent.EventInfo && e.Text == agent.TurnDefaultInfo
+		found = found || e.Kind == agent.EventInfo && e.Text == resolve.TurnDefaultInfo
 	}
 	if !found {
 		t.Fatal("default event not recorded")

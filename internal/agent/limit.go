@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 var (
@@ -28,7 +30,7 @@ var (
 )
 
 // MaxLimitWindow bounds plausible subscription reset times.
-const MaxLimitWindow = 8 * 24 * time.Hour
+const MaxLimitWindow = kernel.MaxLimitWindow
 
 func usageLimit(msg string, now time.Time) (limited bool, resets time.Time) {
 	t, agy := agyLimit(msg, now)

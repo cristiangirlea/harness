@@ -122,7 +122,7 @@ func TestContinuingOnADisabledBackendIsRefusedBeforeReadingStdin(t *testing.T) {
 	orig, _ := agent.Get("codex")
 	agent.Register(recorder{name: "codex"})
 	t.Cleanup(func() { agent.Register(orig) })
-	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: t.TempDir()})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,5 +219,20 @@ func TestBackendsRecoversBrokenPreferences(t *testing.T) {
 				t.Fatalf("%+v %v", p, err)
 			}
 		})
+	}
+}
+
+func TestBackendsResetKeepsTheWorkMapGitHubSetting(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	off := false
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{WorkMapGitHub: &off, EnabledNames: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureStdout(t, func() error { return cmdBackends([]string{"reset"}) }); err != nil {
+		t.Fatal(err)
+	}
+	p, err := prefs.Load(runlog.Home())
+	if err != nil || p.WorkMapGitHub == nil || *p.WorkMapGitHub || len(p.EnabledNames) != 0 {
+		t.Fatalf("reset: %+v %v", p, err)
 	}
 }

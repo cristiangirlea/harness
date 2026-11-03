@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -229,6 +230,10 @@ func TestAcceptedRunStreamsCompleteEventsAndRecordsTheAttempt(t *testing.T) {
 	if err != nil || rec.Task.AttemptID != "att-01" || !rec.Done || rec.Result.Status != agent.StatusOK || !rec.Result.ModelReported {
 		t.Fatalf("record: %+v %v", rec, err)
 	}
+	if want := agent.ResolveSetup(rec.Backend, rec.Task); !reflect.DeepEqual(rec.Setup, want) {
+		t.Errorf("setup = %+v, want %+v", rec.Setup, want)
+	}
+
 }
 
 func TestClaudeReviewTurnDefaultAndUnlimited(t *testing.T) {
@@ -255,7 +260,7 @@ func TestClaudeReviewTurnDefaultAndUnlimited(t *testing.T) {
 			if limit == 0 {
 				want = 30
 				e := h.next(t, "event")
-				if e["event"].(map[string]any)["text"] != agent.TurnDefaultInfo {
+				if e["event"].(map[string]any)["text"] != resolve.TurnDefaultInfo {
 					t.Fatalf("event=%v", e)
 				}
 			}
@@ -430,7 +435,7 @@ func TestStorageFailureCancelsAndStillReportsTheRecordError(t *testing.T) {
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusCanceled}
 	})
 	h := openHarness(t, func(backend string, task agent.Task, continues, route string, routed *runlog.RoutedBy, note string) (record, error) {
-		w, err := runlog.CreateRouted(backend, task, continues, route, routed, note)
+		w, err := runlog.CreateRouted(backend, task, nil, continues, route, routed, note)
 		return &closedEvents{Writer: w}, err
 	})
 	h.next(t, "hello")
@@ -491,7 +496,7 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prev, err := runlog.Create("fake-exec", agent.Task{Prompt: "earlier", Dir: dir})
+	prev, err := runlog.Create("fake-exec", agent.Task{Prompt: "earlier", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +524,7 @@ func TestContinuationAppliesThePlanAndReturnsItsNotes(t *testing.T) {
 func TestAContinuationOfARecordWithABadModelIsRejectedWithoutARecord(t *testing.T) {
 	name := registerFake(t, nil)
 	dir := t.TempDir()
-	prev, err := runlog.Create(name, agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "x&calc"}})
+	prev, err := runlog.Create(name, agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "x&calc"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +560,7 @@ func TestContinuationWarnsInAcceptedNotesAndRecordsOneInfoEventOnlyAboveTheThres
 			if err != nil {
 				t.Fatal(err)
 			}
-			prev, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: dir})
+			prev, err := runlog.Create(name, agent.Task{Prompt: "first", Dir: dir}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -830,14 +835,12 @@ func TestWrongCancelAndSecondStartLeaveTheRunRunning(t *testing.T) {
 	}
 }
 
-func TestExecTakesNoRetrievalOptInAndHandsAPinnedRunToAnotherBackend(t *testing.T) {
-	var got agent.Task
+func TestExecRefusesToDropAPinOnBackendSwitch(t *testing.T) {
 	registerFake(t, func(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
-		got = task
 		return agent.Result{Backend: "fake-exec", Status: agent.StatusOK}
 	})
 	dir := t.TempDir()
-	prev, err := runlog.Create("api", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	prev, err := runlog.Create("api", agent.Task{Prompt: "earlier", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -861,17 +864,13 @@ func TestExecTakesNoRetrievalOptInAndHandsAPinnedRunToAnotherBackend(t *testing.
 		t.Fatalf("rejected start created records: %+v %v", recs, err)
 	}
 
-	// With retrieval off the transcript is handed over as before.
+	// An omitted retrieval field cannot discard a pin.
 	h = openHarness(t, nil)
 	h.next(t, "hello")
 	delete(req["task"].(map[string]any), "retrieval")
 	h.send(t, req)
-	h.next(t, "accepted")
-	h.next(t, "event") // the plan's notes: a new session, and the turn handed over
-	h.next(t, "event")
-	h.next(t, "result")
-	h.exit(t, 0)
-	if !strings.Contains(got.Prompt, "--- request\n> earlier") || got.RetrievalState != nil {
-		t.Fatalf("the hand-over should carry the transcript and no pin: %+v", got)
+	if e := h.next(t, "rejected")["error"].(map[string]any); !strings.Contains(fmt.Sprint(e["message"]), "cannot carry over") {
+		t.Fatalf("rejection: %+v", e)
 	}
+	h.exit(t, 2)
 }

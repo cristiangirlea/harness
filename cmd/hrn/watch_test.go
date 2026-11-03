@@ -59,7 +59,7 @@ func (l *lockedBuffer) waitFor(t *testing.T, s string) {
 func TestShowFollowPrintsARunUntilItFinishes(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	start := time.Now()
-	w, err := runlog.Create("stub-cmd", agent.Task{Prompt: "fix the build", Dir: "/repo", Options: agent.Options{Mode: agent.ModeAuto}})
+	w, err := runlog.Create("stub-cmd", agent.Task{Prompt: "fix the build", Dir: "/repo", Options: agent.Options{Mode: agent.ModeAuto}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestShowFollowPrintsARunUntilItFinishes(t *testing.T) {
 
 func TestShowFollowStopsQuietlyWhenInterrupted(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("stub-cmd", agent.Task{Prompt: "long job"})
+	w, err := runlog.Create("stub-cmd", agent.Task{Prompt: "long job"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

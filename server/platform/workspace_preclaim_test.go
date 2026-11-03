@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func TestWorkerDoesNotClaimWithoutMountedWorkspace(t *testing.T) {
@@ -18,15 +16,13 @@ func TestWorkerDoesNotClaimWithoutMountedWorkspace(t *testing.T) {
 		calls.Add(1)
 		return nil, errors.New("unexpected claim")
 	})}
-	backend := agent.NewAPIBackend()
-	backend.BaseURL = "http://127.0.0.1:9090"
 	worker := &Worker{
 		ControlURL:    "https://control.invalid",
 		ProjectID:     "p_" + strings.Repeat("a", 32),
 		Token:         strings.Repeat("b", 64),
 		WorkerID:      "fixture-worker",
 		WorkspaceRoot: filepath.Join(t.TempDir(), "missing-volume"),
-		Backend:       backend, HTTPClient: client,
+		ModelURL:      "http://127.0.0.1:9090", ModelKey: "", HTTPClient: client,
 	}
 	didWork, err := worker.RunOnce(context.Background())
 	if didWork || err == nil || calls.Load() != 0 {

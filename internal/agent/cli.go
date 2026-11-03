@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
-	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -439,7 +439,7 @@ func stopCLITree(tree *tools.Tree, err error) error {
 
 // Strip harness secrets, git repository overrides, and the nested-session marker.
 func agentEnv(env []string) []string {
-	return retrieval.ExecutorEnv(gitenv.WithoutRepoVars(withoutEnv(env, "CLAUDECODE")))
+	return envpolicy.Filter(gitenv.WithoutRepoVars(withoutEnv(env, "CLAUDECODE")))
 }
 
 func withoutEnv(env []string, key string) []string {
