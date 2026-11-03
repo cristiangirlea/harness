@@ -140,7 +140,8 @@ type JobOptions struct {
 	TakeOver           bool          `json:"take_over,omitempty"`
 }
 
-func (o JobOptions) ValidateShape() error {
+// Validate checks the options' shape; durable jobs refuse allow_dangerous before this runs.
+func (o JobOptions) Validate() error {
 	if o.Retrieval != "" && o.Retrieval != "off" && o.Retrieval != "optional" && o.Retrieval != "required" {
 		return fmt.Errorf("invalid retrieval mode")
 	}

@@ -145,7 +145,7 @@ func validateSubmission(s Submission) error {
 	if len(s.IdempotencyKey) > 128 {
 		return errors.New("idempotency key exceeds 128 bytes")
 	}
-	if err := s.Options.ValidateShape(); err != nil {
+	if err := s.Options.Validate(); err != nil {
 		return err
 	}
 	if s.Backend != "api" {

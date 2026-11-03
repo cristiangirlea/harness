@@ -28,12 +28,12 @@ func TestJobOptionsValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.value.ValidateShape() == nil {
+			if tc.value.Validate() == nil {
 				t.Fatal("expected error")
 			}
 		})
 	}
-	if err := (JobOptions{Mode: "readonly", TaskBudget: 20000}).ValidateShape(); err != nil {
+	if err := (JobOptions{Mode: "readonly", TaskBudget: 20000}).Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -51,7 +51,7 @@ func TestJobOptionsWireValues(t *testing.T) {
 		if err := json.Unmarshal([]byte(input), &o); err != nil {
 			t.Fatal(err)
 		}
-		if err := o.ValidateShape(); err != nil {
+		if err := o.Validate(); err != nil {
 			t.Fatal(err)
 		}
 		encoded, err := json.Marshal(o)
