@@ -163,7 +163,7 @@ func TestWorkerExecProtocol(t *testing.T) {
 				defer cancel()
 				go func() {
 					ready := filepath.Join(w.WorkspaceRoot, "fake-ready")
-					for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+					for deadline := time.Now().Add(time.Minute); ctx.Err() == nil && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 						if _, err := os.Stat(ready); err == nil {
 							break
 						}
