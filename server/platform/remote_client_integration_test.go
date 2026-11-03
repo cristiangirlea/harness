@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,14 +24,6 @@ func TestRemoteClientAgainstPostgresControl(t *testing.T) {
 		Store: store, OperatorToken: operatorToken, ScalerToken: scalerToken,
 	}).Handler())
 	defer control.Close()
-	caPath := filepath.Join(t.TempDir(), "control-ca.pem")
-	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{
-		Type: "CERTIFICATE", Bytes: control.Certificate().Raw,
-	}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HRN_SERVER_URL", control.URL)
-	t.Setenv("HRN_SERVER_CA_FILE", caPath)
 	tenant, tenantToken, err := store.CreateTenant(ctx, "remote-a")
 	if err != nil {
 		t.Fatal(err)
@@ -45,12 +36,8 @@ func TestRemoteClientAgainstPostgresControl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HRN_TENANT_TOKEN", tenantToken)
 	record := &remoteRecording{}
-	client, err := fixtureClient(control.URL, tenantToken, control.Client(), record)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := fixtureClient(control.URL, tenantToken, control.Client(), record)
 	submission := testSubmission(project, "client-integration", "inspect")
 	postPath := "/v1/projects/" + project.ID + "/jobs"
 	raw, err := client.Request(ctx, http.MethodPost, postPath, submission)
@@ -99,11 +86,7 @@ func TestRemoteClientAgainstPostgresControl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HRN_TENANT_TOKEN", otherToken)
-	otherClient, err := fixtureClient(control.URL, otherToken, control.Client(), record)
-	if err != nil {
-		t.Fatal(err)
-	}
+	otherClient := fixtureClient(control.URL, otherToken, control.Client(), record)
 	if _, err := otherClient.Request(ctx, http.MethodGet, "/v1/jobs/"+created.ID+scope, nil); err == nil || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("other tenant read: %v", err)
 	}
@@ -177,8 +160,8 @@ type testRemoteClient struct {
 	record     *remoteRecording
 }
 
-func fixtureClient(url, token string, client *http.Client, record *remoteRecording) (*testRemoteClient, error) {
-	return &testRemoteClient{url, token, client, record}, nil
+func fixtureClient(url, token string, client *http.Client, record *remoteRecording) *testRemoteClient {
+	return &testRemoteClient{url, token, client, record}
 }
 func (c *testRemoteClient) Request(ctx context.Context, method, path string, value any) ([]byte, error) {
 	var body *bytes.Reader

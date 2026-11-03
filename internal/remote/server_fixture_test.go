@@ -23,13 +23,13 @@ type serverExchange struct {
 	Response json.RawMessage `json:"response"`
 }
 
-func TestServerFixtures(t *testing.T) {
+func TestRemoteClientReplaysTheServerRecording(t *testing.T) {
 	files, err := filepath.Glob("testdata/server/*.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(files) == 0 {
-		t.Skip("server fixtures have not been generated")
+		t.Fatal("no server fixtures found")
 	}
 	for _, file := range files {
 		t.Run(filepath.Base(file), func(t *testing.T) { replayServerFixture(t, file) })
@@ -109,6 +109,9 @@ func replayServerFixture(t *testing.T, file string) {
 	paths := []string{post, post, post, "/v1/jobs/" + job + scope, "/v1/jobs/" + job + "/events" + scope + "&after=0", "/v1/jobs/" + job + scope, "/v1/jobs/" + job + "?tenant_id=t_22222222222222222222222222222222&project_id=" + project, "/v1/jobs/" + job + "/cancel" + scope}
 	methods := []string{http.MethodPost, http.MethodPost, http.MethodPost, http.MethodGet, http.MethodGet, http.MethodGet, http.MethodGet, http.MethodPost}
 	for i, exchange := range exchanges {
+		if exchange.Method != methods[i] || exchange.Path != paths[i] {
+			t.Fatalf("exchange %d: recorded %s %s, want %s %s", i, exchange.Method, exchange.Path, methods[i], paths[i])
+		}
 		if i == 5 {
 			t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("b", 64))
 			client, err = NewFromEnv()

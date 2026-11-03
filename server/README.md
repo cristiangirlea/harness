@@ -40,6 +40,12 @@ Then set `HRN_TEST_DATABASE_URL` to
 and run `go test -count=1 ./...` in `server/`. Tests create and remove their own
 schemas. Stop the fixture with `docker compose -f server/compose.dev.yaml down`.
 
+Regenerate the knowledge goldens with `HRN_UPDATE_WIRE_FIXTURES=1`, and the
+client recording with `HRN_UPDATE_FIXTURES=1` and `HRN_TEST_DATABASE_URL` set.
+Copy `server/platform/testdata/knowledge` to `internal/retrieval/testdata/wire`
+and `server/platform/testdata/remote` to `internal/remote/testdata/server`; the
+fixture identity test fails until the copies match.
+
 For a private local control service, set `HRN_DATABASE_URL` and distinct random
 `HRN_OPERATOR_TOKEN` and `HRN_SCALER_TOKEN` values of at least 32 characters.
 Run `go run ./cmd/hrn-server migrate`, then `go run ./cmd/hrn-server serve`

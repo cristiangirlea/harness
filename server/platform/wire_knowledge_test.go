@@ -38,43 +38,51 @@ func filledWire(v reflect.Value) {
 	}
 }
 
-func TestKnowledgeWireGolden(t *testing.T) {
+func TestKnowledgeWireMatchesTheGoldenJSON(t *testing.T) {
 	values := map[string]any{"scope": &KnowledgeScope{}, "entry": &KnowledgeEntry{}, "import": &KnowledgeImport{}, "version": &KnowledgeVersion{}, "admission": &KnowledgeAdmission{}, "search": &KnowledgeSearch{}, "packet": &KnowledgePacket{}, "change": &KnowledgeChange{}, "active": &KnowledgeActive{}, "record": &KnowledgeRecord{}}
-	for name, ptr := range values {
-		t.Run(name, func(t *testing.T) {
-			filledWire(reflect.ValueOf(ptr).Elem())
-			got, err := json.Marshal(ptr)
-			if err != nil {
-				t.Fatal(err)
+	for name, value := range values {
+		for _, zero := range []bool{false, true} {
+			ptr := reflect.New(reflect.TypeOf(value).Elem()).Interface()
+			fixtureName := name
+			if zero {
+				fixtureName += ".zero"
+			} else {
+				filledWire(reflect.ValueOf(ptr).Elem())
 			}
-			path := filepath.Join("testdata", "knowledge", name+".json")
-			if os.Getenv("HRN_UPDATE_WIRE_FIXTURES") == "1" {
-				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Run(fixtureName, func(t *testing.T) {
+				got, err := json.Marshal(ptr)
+				if err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(path, got, 0644); err != nil {
+				path := filepath.Join("testdata", "knowledge", fixtureName+".json")
+				if os.Getenv("HRN_UPDATE_WIRE_FIXTURES") == "1" {
+					if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, got, 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				want, err := os.ReadFile(path)
+				if err != nil {
 					t.Fatal(err)
 				}
-			}
-			want, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Fatalf("wire mismatch: got %s, want %s", got, want)
-			}
-			out := reflect.New(reflect.TypeOf(ptr).Elem()).Interface()
-			dec := json.NewDecoder(bytes.NewReader(want))
-			dec.DisallowUnknownFields()
-			if err := dec.Decode(out); err != nil {
-				t.Fatal(err)
-			}
-			if err := dec.Decode(new(any)); err != io.EOF {
-				t.Fatalf("trailing data: %v", err)
-			}
-			if !reflect.DeepEqual(ptr, out) {
-				t.Fatalf("round trip differs: %#v %#v", ptr, out)
-			}
-		})
+				if !bytes.Equal(got, want) {
+					t.Fatalf("wire mismatch: got %s, want %s", got, want)
+				}
+				out := reflect.New(reflect.TypeOf(ptr).Elem()).Interface()
+				dec := json.NewDecoder(bytes.NewReader(want))
+				dec.DisallowUnknownFields()
+				if err := dec.Decode(out); err != nil {
+					t.Fatal(err)
+				}
+				if err := dec.Decode(new(any)); err != io.EOF {
+					t.Fatalf("trailing data: %v", err)
+				}
+				if !reflect.DeepEqual(ptr, out) {
+					t.Fatalf("round trip differs: %#v %#v", ptr, out)
+				}
+			})
+		}
 	}
 }

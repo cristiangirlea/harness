@@ -7,19 +7,15 @@ import (
 	"testing"
 )
 
-func TestWireFixtureCopies(t *testing.T) {
+func TestWireFixturesAreByteIdenticalOnBothSides(t *testing.T) {
 	pairs := [][2]string{{"testdata/wire", "../../server/platform/testdata/knowledge"}, {"../remote/testdata/server", "../../server/platform/testdata/remote"}}
-	for i, pair := range pairs {
+	for _, pair := range pairs {
 		left, err := os.ReadDir(pair[0])
-		if i == 1 && os.IsNotExist(err) {
-			left = nil
-		} else if err != nil {
+		if err != nil {
 			t.Fatal(err)
 		}
 		right, err := os.ReadDir(pair[1])
-		if i == 1 && os.IsNotExist(err) {
-			right = nil
-		} else if err != nil {
+		if err != nil {
 			t.Fatal(err)
 		}
 		if len(left) != len(right) {
