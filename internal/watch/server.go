@@ -292,6 +292,8 @@ func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.H
 	mux.HandleFunc("POST /batch/{id}/merge/{task}/confirm", s.confirmMerge)
 	mux.HandleFunc("GET /flow/{id}/json", s.recordRoute(s.flowJSON))
 	mux.HandleFunc("GET /flow/{id}", s.recordRoute(s.flowPage))
+	mux.HandleFunc("GET /map", s.workMap)
+	mux.HandleFunc("GET /stream/map", s.streamMap)
 	mux.HandleFunc("GET /stream/index", s.streamIndex)
 	mux.HandleFunc("GET /stream/run/{id}", s.recordRoute(s.streamRun))
 	mux.HandleFunc("GET /stream/batch/{id}", s.recordRoute(s.streamBatch))
@@ -576,6 +578,7 @@ func batchOf(batches []batch.Result) map[string]string {
 
 func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	p := indexPage{page: page{Title: "Runs and batches", Home: s.homeFor(r)}, Lists: s.lists(r)}
+	p.MapOwner = s.mapOwner(r)
 	p.Backends = s.backendsCard(w, r)
 	p.Game = s.gameCard(w, r)
 	// Keep network discovery links and LAN hints local.

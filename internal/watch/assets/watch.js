@@ -126,7 +126,17 @@
   });
   es.addEventListener('replace', (m) => {
     const keys = openKeys();
-    box.innerHTML = m.data;
+    if (box.dataset.stream === '/stream/map') {
+      const map = JSON.parse(m.data);
+      box.replaceChildren();
+      if (map.error) { const p = document.createElement('p'); p.className = 'notice warn'; p.textContent = map.error; box.append(p); }
+      const svg = document.createElement('div'); svg.className = 'map-svg'; svg.innerHTML = map.svg; box.append(svg);
+      const heading = document.createElement('h2'); heading.textContent = 'Waits for you'; box.append(heading);
+      const list = document.createElement('ul'); list.className = 'map-waits';
+      for (const item of map.stuck) { const li = document.createElement('li'); if (item.url) { const a = document.createElement('a'); a.href = item.url; a.textContent = item.title; li.append(a); } else li.append(document.createTextNode(item.title)); li.append(document.createTextNode(': ' + item.stuck)); list.append(li); }
+      if (!map.stuck.length) { const li = document.createElement('li'); li.textContent = 'Nothing is waiting.'; list.append(li); }
+      box.append(list);
+    } else box.innerHTML = m.data;
     reopen(keys);
     tick();
     document.dispatchEvent(new Event('hrn:replaced'));
