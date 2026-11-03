@@ -23,15 +23,37 @@ func TestWorkerRestrictions(t *testing.T) {
 		{"missing endpoint", "api", "", ""},
 		{"mcp requested", "api", "http://localhost", `,"mcp":["tools.json"]`},
 		{"tools requested", "api", "http://localhost", `,"tools":["shell"]`},
+		{"continuation", "api", "http://localhost", `,"continue_run_id":"previous"`},
+		{"fresh true", "api", "http://localhost", `,"fresh":true`},
+		{"fresh false", "api", "http://localhost", `,"fresh":false`},
+		{"retrieval refresh", "api", "http://localhost", `,"retrieval_refresh":true`},
+		{"retrieval refresh false", "api", "http://localhost", `,"retrieval_refresh":false`},
+		{"retrieval mode", "api", "http://localhost", `,"retrieval":"required"`},
+		{"retrieval tenant", "api", "http://localhost", `,"retrieval_tenant":"tenant"`},
+		{"empty retrieval tenant", "api", "http://localhost", `,"retrieval_tenant":""`},
+		{"retrieval project", "api", "http://localhost", `,"retrieval_project":"project"`},
+		{"retrieval revision", "api", "http://localhost", `,"retrieval_revision":"revision"`},
+		{"retrieval version", "api", "http://localhost", `,"retrieval_version":"version"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
 			t.Setenv("ANTHROPIC_BASE_URL", tc.endpoint)
-			task, _ := json.Marshal(start(t.TempDir(), tc.backend))
-			input := strings.TrimSuffix(string(task), "}}") + tc.extra + "}}\n"
+			request := start(t.TempDir(), tc.backend)
+			var extra map[string]any
+			if err := json.Unmarshal([]byte("{"+strings.TrimPrefix(tc.extra, ",")+"}"), &extra); err != nil {
+				t.Fatal(err)
+			}
+			for key, value := range extra {
+				request["task"].(map[string]any)[key] = value
+			}
+			task, _ := json.Marshal(request)
+			input := string(task) + "\n"
 			var out bytes.Buffer
 			if code := RunWorker(context.Background(), strings.NewReader(input), &out, nil); code != 2 || !strings.Contains(out.String(), `"type":"rejected"`) {
 				t.Fatalf("code=%d output=%s", code, out.String())
+			}
+			if tc.name != "tools requested" && !strings.Contains(out.String(), `"code":"unsupported"`) {
+				t.Fatalf("expected unsupported: %s", out.String())
 			}
 		})
 	}

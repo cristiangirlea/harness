@@ -96,7 +96,7 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 		return w.reject("", "bad_request", first.err.Error())
 	}
 	var req startRequest
-	if err := decode(first.data, &req); err != nil {
+	if err := decode(first.data, &req, worker); err != nil {
 		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
 	if req.Type != "start" {
@@ -116,6 +116,18 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 	t := req.Task
 	var workerURL string
 	if worker {
+		var workerFields struct {
+			Task map[string]json.RawMessage `json:"task"`
+		}
+		_ = json.Unmarshal(first.data, &workerFields)
+		restricted := t.ContinueRunID != "" || (t.Retrieval != "" && t.Retrieval != "off")
+		for _, name := range []string{"fresh", "retrieval_refresh", "retrieval_tenant", "retrieval_project", "retrieval_revision", "retrieval_version"} {
+			_, set := workerFields.Task[name]
+			restricted = restricted || set
+		}
+		if restricted {
+			return w.reject(req.AttemptID, "unsupported", "worker does not allow continuation or retrieval")
+		}
 		if t.Backend != "api" {
 			return w.reject(req.AttemptID, "unsupported", "worker requires the api backend")
 		}
@@ -437,19 +449,24 @@ type startRequest struct {
 }
 
 type taskRequest struct {
-	Prompt           string         `json:"prompt"`
-	Dir              string         `json:"dir"`
-	Backend          string         `json:"backend"`
-	Mode             agent.Mode     `json:"mode"`
-	Model            string         `json:"model"`
-	Effort           string         `json:"effort"`
-	Timeout          agent.Duration `json:"timeout"`
-	MaxTurns         int            `json:"max_turns"`
-	MCP              []string       `json:"mcp"`
-	ContinueRunID    string         `json:"continue_run_id"`
-	Purpose          string         `json:"purpose"`
-	Fresh            *bool          `json:"fresh,omitempty"`
-	RetrievalRefresh bool           `json:"retrieval_refresh,omitempty"`
+	Prompt            string         `json:"prompt"`
+	Dir               string         `json:"dir"`
+	Backend           string         `json:"backend"`
+	Mode              agent.Mode     `json:"mode"`
+	Model             string         `json:"model"`
+	Effort            string         `json:"effort"`
+	Timeout           agent.Duration `json:"timeout"`
+	MaxTurns          int            `json:"max_turns"`
+	MCP               []string       `json:"mcp"`
+	ContinueRunID     string         `json:"continue_run_id"`
+	Purpose           string         `json:"purpose"`
+	Fresh             *bool          `json:"fresh,omitempty"`
+	RetrievalRefresh  bool           `json:"retrieval_refresh,omitempty"`
+	Retrieval         string         `json:"retrieval,omitempty"`
+	RetrievalTenant   string         `json:"retrieval_tenant,omitempty"`
+	RetrievalProject  string         `json:"retrieval_project,omitempty"`
+	RetrievalRevision string         `json:"retrieval_revision,omitempty"`
+	RetrievalVersion  string         `json:"retrieval_version,omitempty"`
 }
 
 type cancelRequest struct {
@@ -457,7 +474,7 @@ type cancelRequest struct {
 	AttemptID string `json:"attempt_id"`
 }
 
-func decode(data []byte, value any) error {
+func decode(data []byte, value any, workerMode ...bool) error {
 	if !utf8.Valid(data) {
 		return errors.New("input must be UTF-8")
 	}
@@ -481,7 +498,7 @@ func decode(data []byte, value any) error {
 			return fmt.Errorf("unknown field %q", "task")
 		}
 	} else {
-		if err := checkTaskKeys(fields["task"]); err != nil {
+		if err := checkTaskKeys(fields["task"], len(workerMode) > 0 && workerMode[0]); err != nil {
 			return err
 		}
 	}
@@ -515,11 +532,15 @@ func decodeAnswer(data []byte, answer *checkpointAnswer) error {
 	return json.Unmarshal(data, answer)
 }
 
-func checkTaskKeys(data json.RawMessage) error {
+func checkTaskKeys(data json.RawMessage, worker bool) error {
 	if len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil
 	}
-	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh", "retrieval_refresh")
+	names := []string{"prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh", "retrieval_refresh"}
+	if worker {
+		names = append(names, "retrieval", "retrieval_tenant", "retrieval_project", "retrieval_revision", "retrieval_version")
+	}
+	_, err := objectFields(data, names...)
 	return err
 }
 

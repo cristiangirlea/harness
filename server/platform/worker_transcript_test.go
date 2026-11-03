@@ -16,7 +16,7 @@ type transcriptLine struct {
 }
 
 func TestWorkerTranscriptReplay(t *testing.T) {
-	cases := map[string]workerOutcome{"saved": outcomeSaved, "nack": outcomeRecovery, "timeout": outcomeRecovery, "pipe_closed": outcomeRecovery, "pending": outcomeRecovery, "workspace_changed": outcomeRecovery, "fenced": outcomeRecovery, "non_loopback": outcomeRefused, "tools": outcomeRefused}
+	cases := map[string]workerOutcome{"saved": outcomeSaved, "nack": outcomeRecovery, "timeout": outcomeRecovery, "pipe_closed": outcomeRecovery, "pending": outcomeRecovery, "workspace_changed": outcomeRecovery, "fenced": outcomeRecovery, "non_loopback": outcomeRefused, "tools": outcomeRefused, "continuation": outcomeRefused}
 	for name, want := range cases {
 		t.Run(name, func(t *testing.T) {
 			f, err := os.Open(filepath.Join("..", "..", "internal", "execproto", "testdata", "worker", name+".jsonl"))

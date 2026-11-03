@@ -44,7 +44,7 @@ func TestWorkerGoldenTranscripts(t *testing.T) {
 		}
 		return
 	}
-	for _, name := range []string{"saved", "nack", "timeout", "pipe_closed", "pending", "workspace_changed", "fenced", "non_loopback", "tools"} {
+	for _, name := range []string{"saved", "nack", "timeout", "pipe_closed", "pending", "workspace_changed", "fenced", "non_loopback", "tools", "continuation"} {
 		t.Run(name, func(t *testing.T) {
 			model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -100,6 +100,9 @@ func TestWorkerGoldenTranscripts(t *testing.T) {
 			if name == "pending" {
 				req["checkpoint"] = map[string]any{"pending": map[string]any{"kind": "model", "id": "turn-1"}}
 			}
+			if name == "continuation" {
+				req["task"].(map[string]any)["continue_run_id"] = "previous"
+			}
 			if name == "tools" {
 				req["task"].(map[string]any)["tools"] = []string{"shell"}
 			}
@@ -138,7 +141,7 @@ func TestWorkerGoldenTranscripts(t *testing.T) {
 			}
 			code := <-done
 			wantCode := 0
-			if name == "non_loopback" || name == "tools" {
+			if name == "non_loopback" || name == "tools" || name == "continuation" {
 				wantCode = 2
 			}
 			if code != wantCode {
@@ -167,6 +170,7 @@ func TestWorkerGoldenTranscripts(t *testing.T) {
 
 // normalizeTranscript replaces machine-dependent paths, platform details, and execution values.
 func normalizeTranscript(actual []byte, dir string) []byte {
+	actual = regexp.MustCompile(`("hrn":\{[^}]*"version":")[^"]*"`).ReplaceAll(actual, []byte(`${1}<variable>"`))
 	actual = bytes.ReplaceAll(actual, []byte(strings.ReplaceAll(dir, `\`, `\\`)), []byte("<workspace>"))
 	actual = regexp.MustCompile(`OS: [^\\]*\\nShell for run_command: [^\\]*`).ReplaceAll(actual, []byte(`OS: <platform>\nShell for run_command: <shell>`))
 	for _, pattern := range []string{`"pid":[0-9]+`, `"duration_ns":[0-9]+`, `"started":"[^"]+"`, `"t":"[^"]+"`, `"task_digest":"[^"]+"`, `"go":"[^"]+"`} {
