@@ -347,3 +347,50 @@ func TestBotPageSummaryCounts(t *testing.T) {
 		}
 	}
 }
+
+func TestBotStreamKeepsOneMapLookInFlight(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	maps := defaultMapSettings()
+	maps.poll = 5 * time.Millisecond
+	started := make(chan struct{}, 10)
+	release := make(chan struct{})
+	var active, max atomic.Int32
+	maps.look = func(*botWatcher) []say {
+		n := active.Add(1)
+		for {
+			old := max.Load()
+			if n <= old || max.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		active.Add(-1)
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest("GET", "http://localhost/stream/bot", nil).WithContext(ctx)
+	r.RemoteAddr = "127.0.0.1:1234"
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		newHandlerWithMap(ctx, Options{Poll: time.Millisecond}, nil, maps).ServeHTTP(httptest.NewRecorder(), r)
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("map look did not start")
+	}
+	timer := time.NewTimer(100 * time.Millisecond)
+	select {
+	case <-started:
+		t.Error("second map look started while first was blocked")
+	case <-timer.C:
+	}
+	cancel()
+	close(release)
+	<-done
+	if max.Load() != 1 {
+		t.Fatalf("concurrent looks: %d", max.Load())
+	}
+}

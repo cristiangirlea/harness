@@ -92,3 +92,11 @@ func TestMapSettingsAreIndependentPerServer(t *testing.T) {
 		t.Fatalf("first server: %v %v", pieces, err)
 	}
 }
+
+func TestBareServerMapSettings(t *testing.T) {
+	s := &server{}
+	settings := s.effectiveMapSettings()
+	if settings.build == nil || settings.poll <= 0 || settings.timeout <= 0 {
+		t.Fatalf("invalid defaults: %+v", settings)
+	}
+}

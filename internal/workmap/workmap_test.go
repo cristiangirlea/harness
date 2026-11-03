@@ -223,8 +223,11 @@ func TestFinishedReviewRunRaisesBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range pieces {
-		if p.Key == "branch:other" && p.Stage == Review {
-			t.Fatal("unreviewed branch raised")
+		if p.Key == "branch:other" && (p.Stage == Review || len(p.Links.Runs) != 0) {
+			t.Fatalf("unreviewed branch linked or raised: %+v", p)
+		}
+		if p.Key == "branch:feature" && (len(p.Links.Runs) != 1 || p.Links.Runs[0] != "r1") {
+			t.Fatalf("review link missing: %+v", p)
 		}
 	}
 	check(Review)

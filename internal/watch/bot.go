@@ -772,7 +772,13 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 	nextMap := time.Now()
 	mapResults := make(chan []say, 1)
 	mapInFlight := false
-	mapTick := time.NewTicker(s.mapConfig.poll)
+	settings := s.effectiveMapSettings()
+	mapPoll := settings.poll
+	lookMap := b.lookMap
+	if settings.look != nil {
+		lookMap = func() []say { return settings.look(b) }
+	}
+	mapTick := time.NewTicker(mapPoll)
 	defer mapTick.Stop()
 	wake := make(chan struct{}, 1)
 	done := make(chan struct{})
@@ -814,7 +820,7 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 		if now := time.Now(); !now.Before(nextMap) && !mapInFlight {
 			mapInFlight = true
 			go func() {
-				result := b.lookMap()
+				result := lookMap()
 				select {
 				case mapResults <- result:
 				case <-r.Context().Done():
@@ -826,7 +832,7 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 				}
 			}()
 			for !nextMap.After(now) {
-				nextMap = nextMap.Add(s.mapConfig.poll)
+				nextMap = nextMap.Add(mapPoll)
 			}
 		}
 		for _, m := range messages {

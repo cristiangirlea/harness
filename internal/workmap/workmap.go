@@ -349,14 +349,23 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		}
 	}
 	resolvedRuns := map[string]struct{ root, branch string }{}
+	reviewBranches := map[string][]string{}
+	reviewSeen := map[string]bool{}
 	for _, r := range runs {
 		linked := false
 		for _, p := range pieces {
+			if r.Done && r.Task.Purpose == "review" && validOID(r.StartHead) {
+				kept := p.Links.Runs[:0]
+				for _, id := range p.Links.Runs {
+					if id != r.ID {
+						kept = append(kept, id)
+					}
+				}
+				p.Links.Runs = kept
+				continue
+			}
 			for _, id := range p.Links.Runs {
 				if id == r.ID {
-					if p.Links.Branch != "" && r.Done && r.Task.Purpose == "review" && rank(p.Stage) < rank(Review) {
-						p.Stage = Review
-					}
 					if r.Started.After(p.Updated) {
 						p.Updated = r.Started
 					}
@@ -400,21 +409,36 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		if root == "" {
 			continue
 		}
+		if r.Done && r.Task.Purpose == "review" && validOID(r.StartHead) {
+			key := root + "\x00" + r.StartHead
+			if !reviewSeen[key] {
+				reviewSeen[key] = true
+				if _, err := gitCall(ctx, root, "merge-base", "--is-ancestor", r.StartHead, "refs/heads/"+defaults[root]); err != nil {
+					if refs, err := gitCall(ctx, root, "for-each-ref", "--contains", r.StartHead, "--format=%(refname:short)", "refs/heads/"); err == nil && refs != "" {
+						reviewBranches[key] = strings.Split(refs, "\n")
+					}
+				}
+			}
+			for _, name := range reviewBranches[key] {
+				if name == defaults[root] {
+					continue
+				}
+				if candidate := pieces[root+"\x00branch:"+name]; candidate != nil {
+					if rank(candidate.Stage) < rank(Review) {
+						candidate.Stage = Review
+					}
+					candidate.Links.Runs = append(candidate.Links.Runs, r.ID)
+					if r.Started.After(candidate.Updated) {
+						candidate.Updated = r.Started
+					}
+				}
+			}
+			continue
+		}
 		if branch == defaults[root] {
 			branch = ""
 		}
 		p := Piece{Repo: root, Key: "run:" + r.ID, Title: r.Task.Prompt, Stage: Agent, Updated: r.Started, Links: Links{Branch: branch, Runs: []string{r.ID}}}
-		if r.Done && r.Task.Purpose == "review" && validOID(r.StartHead) {
-			for _, candidate := range pieces {
-				if candidate.Repo != root || candidate.Links.Branch == "" {
-					continue
-				}
-				_, err := git(ctx, root, "merge-base", "--is-ancestor", r.StartHead, "refs/heads/"+candidate.Links.Branch)
-				if err == nil && rank(candidate.Stage) < rank(Review) {
-					candidate.Stage = Review
-				}
-			}
-		}
 		if branch != "" {
 			p.Key = "branch:" + branch
 		}

@@ -19,6 +19,7 @@ import (
 )
 
 type mapSettings struct {
+	look    func(*botWatcher) []say
 	build   func(context.Context, string, []string) ([]workmap.Piece, error)
 	poll    time.Duration
 	timeout time.Duration
@@ -40,11 +41,23 @@ func (s *server) sharedMap(ctx context.Context) ([]workmap.Piece, error) {
 	return s.mapResult(ctx, true)
 }
 
-func (s *server) mapResult(ctx context.Context, wait bool) ([]workmap.Piece, error) {
+func (s *server) effectiveMapSettings() mapSettings {
 	settings := s.mapConfig
+	defaults := defaultMapSettings()
 	if settings.build == nil {
-		settings = defaultMapSettings()
+		settings.build = defaults.build
 	}
+	if settings.poll <= 0 {
+		settings.poll = defaults.poll
+	}
+	if settings.timeout <= 0 {
+		settings.timeout = defaults.timeout
+	}
+	return settings
+}
+
+func (s *server) mapResult(ctx context.Context, wait bool) ([]workmap.Piece, error) {
+	settings := s.effectiveMapSettings()
 	c := &s.mapCache
 	c.mu.Lock()
 	if c.done == nil && (c.at.IsZero() || time.Since(c.at) >= settings.poll) {
@@ -261,7 +274,7 @@ func (s *server) streamMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.startStream(w)
-	s.streamChanges(r, st, s.mapConfig.poll, func() (any, string, error) {
+	s.streamChanges(r, st, s.effectiveMapSettings().poll, func() (any, string, error) {
 		v := s.mapData(r.Context(), s.viewerOf(r))
 		b, e := json.Marshal(v)
 		return template.HTML(b), "", e

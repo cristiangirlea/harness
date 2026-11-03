@@ -581,3 +581,21 @@ func TestMergedPullRequestWithoutBranchOrTag(t *testing.T) {
 		t.Fatalf("piece: %+v", p)
 	}
 }
+
+func TestReadyPullRequestClearsOlderGateFailure(t *testing.T) {
+	old := ws.GH
+	t.Cleanup(func() { ws.GH = old })
+	ws.GH = func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--state open") {
+			return []byte(`[{"number":1,"headRefName":"feature","updatedAt":"2026-01-02T00:00:00Z","statusCheckRollup":[{"conclusion":"SUCCESS"}]}]`), nil
+		}
+		return []byte(`[]`), nil
+	}
+	pieces := map[string]*Piece{"r\x00branch:feature": {Repo: "r", Key: "branch:feature", Stage: Gates, Stuck: "gate failed", stuckAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Links: Links{Branch: "feature"}}}
+	if err := githubRepo(context.Background(), t.TempDir(), "r", "o/r", pieces); err != nil {
+		t.Fatal(err)
+	}
+	if p := pieces["r\x00branch:feature"]; p.Stuck != "ready for you to merge" {
+		t.Fatalf("piece: %+v", p)
+	}
+}

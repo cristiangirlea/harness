@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -168,5 +169,53 @@ func TestConfiguredRepositoriesTakePrecedenceOverRecords(t *testing.T) {
 		if p.Repo == canonical(recorded) {
 			t.Fatalf("record repository included: %+v", p)
 		}
+	}
+}
+
+func TestReviewCommitAssociationAndCaching(t *testing.T) {
+	repo, runGit := reviewRepo(t)
+	home := t.TempDir()
+	head := func() string {
+		b, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	mainHead := head()
+	runGit("checkout", "-b", "feature")
+	runGit("commit", "--allow-empty", "-m", "feature")
+	featureHead := head()
+	runGit("checkout", "main")
+	runGit("checkout", "-b", "other")
+	for i, oid := range []string{mainHead, featureHead, featureHead, "", "invalid"} {
+		id := fmt.Sprintf("r%d", i)
+		raw := fmt.Sprintf(`{"id":%q,"start_head":%q,"task":{"dir":%s,"purpose":"review"}}`, id, oid, strconv.Quote(repo))
+		reviewWrite(t, filepath.Join(home, "runs", id, "task.json"), raw)
+		reviewWrite(t, filepath.Join(home, "runs", id, "result.json"), raw)
+	}
+	old := gitCall
+	t.Cleanup(func() { gitCall = old })
+	calls := 0
+	gitCall = func(ctx context.Context, dir string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "for-each-ref" && len(args) > 1 && args[1] == "--contains" {
+			calls++
+		}
+		return git(ctx, dir, args...)
+	}
+	pieces, err := Build(context.Background(), home, []string{repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature := reviewFind(t, pieces, "branch:feature")
+	if feature.Stage != Review || strings.Join(feature.Links.Runs, ",") != "r1,r2" {
+		t.Fatalf("feature: %+v", feature)
+	}
+	other := reviewFind(t, pieces, "branch:other")
+	if other.Stage == Review || strings.Contains(strings.Join(other.Links.Runs, ","), "r0") {
+		t.Fatalf("other: %+v", other)
+	}
+	if calls != 1 {
+		t.Fatalf("contains calls: %d", calls)
 	}
 }

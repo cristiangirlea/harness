@@ -28,7 +28,7 @@ only the local owner can open the work map page.
 
 ## Watch page
 
-An owner can open `/map` in hrn watch for repository swimlanes and a list of work that waits for attention. The page updates from `/stream/map` every 30 seconds when the map changes. The page, its stream and Ada share one build per 30 seconds. Ada?s page links to the map and shows how many pieces wait. Both routes are owner-only; other viewers receive 404. Source errors appear alongside any partial results.
+An owner can open `/map` in hrn watch for repository swimlanes and a list of work that waits for attention. The page updates from `/stream/map` every 30 seconds when the map changes. The page, its stream and Ada share one build per 30 seconds. Ada's page links to the map and shows how many pieces wait. Both routes are owner-only; other viewers receive 404. Source errors appear alongside any partial results.
 
 The bot also checks the work map every 30 seconds for an owner and announces newly stuck work and new pieces or advances at gates or later after the first look, using its usual message settings. On the first look Ada gives one `waits` summary of existing stuck pieces, naming up to three; when none wait she says nothing. `waits` is enabled for speech and notifications by default, while `map` is disabled for both.
 
