@@ -97,6 +97,10 @@ func TestWorkerGoldenTranscripts(t *testing.T) {
 			req := start(dir, "api")
 			req["task"].(map[string]any)["prompt"] = "fixture task"
 			req["task"].(map[string]any)["mode"] = "readonly"
+			if name == "saved" {
+				req["task"].(map[string]any)["max_cost_usd"] = 1.25
+				req["task"].(map[string]any)["task_budget"] = 20000
+			}
 			if name == "pending" {
 				req["checkpoint"] = map[string]any{"pending": map[string]any{"kind": "model", "id": "turn-1"}}
 			}

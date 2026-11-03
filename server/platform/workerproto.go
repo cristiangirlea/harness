@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 type workerOutcome string
 
 const (
+	outcomeFailed   workerOutcome = "failed"
 	outcomeSaved    workerOutcome = "saved"
 	outcomeRecovery workerOutcome = "recovery-required"
 	outcomeRefused  workerOutcome = "refused"
@@ -26,6 +29,7 @@ const (
 )
 
 type workerClient struct {
+	result     agent.Result
 	input      io.Reader
 	output     io.Writer
 	attemptID  string
@@ -61,10 +65,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 			Protocol   string          `json:"protocol"`
 			Checkpoint json.RawMessage `json:"checkpoint"`
 			Event      json.RawMessage `json:"event"`
-			Result     struct {
-				Status   string `json:"status"`
-				Recovery bool   `json:"recovery_required"`
-			} `json:"result"`
+			Result     agent.Result    `json:"result"`
 		}
 		if err := json.Unmarshal(s.Bytes(), &f); err != nil {
 			return outcomeRecovery, err
@@ -124,7 +125,8 @@ func (c *workerClient) run() (workerOutcome, error) {
 				return outcomeRecovery, err
 			}
 		case "result":
-			if f.Result.Recovery || failedSave {
+			c.result = f.Result
+			if f.Result.RecoveryRequired || failedSave {
 				return outcomeRecovery, nil
 			}
 			switch f.Result.Status {
@@ -134,6 +136,8 @@ func (c *workerClient) run() (workerOutcome, error) {
 				return outcomeCanceled, nil
 			case "refused":
 				return outcomeRefused, nil
+			case agent.StatusError, agent.StatusBudget, agent.StatusMaxTurns, agent.StatusTimeout, agent.StatusLimited:
+				return outcomeFailed, nil
 			default:
 				return outcomeRecovery, fmt.Errorf("worker result status %q", f.Result.Status)
 			}
@@ -145,4 +149,31 @@ func (c *workerClient) run() (workerOutcome, error) {
 		return outcomeRecovery, err
 	}
 	return outcomeRecovery, io.ErrUnexpectedEOF
+}
+
+func workerStart(job Job, attemptID, dir string, checkpoint *agent.APICheckpoint) (json.RawMessage, error) {
+	task := map[string]any{"prompt": job.Prompt, "dir": dir, "backend": job.Backend, "mode": job.Options.Mode}
+	if job.Options.Model != "" {
+		task["model"] = job.Options.Model
+	}
+	if job.Options.Effort != "" {
+		task["effort"] = job.Options.Effort
+	}
+	if job.Options.Timeout != 0 {
+		task["timeout"] = job.Options.Timeout
+	}
+	if job.Options.MaxTurns != 0 {
+		task["max_turns"] = job.Options.MaxTurns
+	}
+	if job.Options.MaxCostUSD != 0 {
+		task["max_cost_usd"] = job.Options.MaxCostUSD
+	}
+	if job.Options.TaskBudget != 0 {
+		task["task_budget"] = job.Options.TaskBudget
+	}
+	frame := map[string]any{"type": "start", "attempt_id": attemptID, "task": task}
+	if checkpoint != nil {
+		frame["checkpoint"] = checkpoint
+	}
+	return json.Marshal(frame)
 }

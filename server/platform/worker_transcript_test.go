@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 type transcriptLine struct {
@@ -36,7 +39,7 @@ func TestWorkerTranscriptReplay(t *testing.T) {
 					t.Fatal(err)
 				}
 				if line.Direction == "hrn" {
-					input.Write(line.Frame)
+					input.Write(bytes.ReplaceAll(line.Frame, []byte(`"duration_ns":"<variable>"`), []byte(`"duration_ns":0`)))
 					input.WriteByte('\n')
 				} else if len(line.Frame) > 0 {
 					if start == nil {
@@ -102,4 +105,35 @@ func TestWorkerClientCancelAndFailures(t *testing.T) {
 			t.Fatalf("%q %v", got, err)
 		}
 	})
+}
+
+func TestWorkerClientFailedResult(t *testing.T) {
+	input := "{\"v\":1,\"seq\":1,\"type\":\"hello\"}\n{\"v\":1,\"seq\":2,\"type\":\"accepted\",\"attempt_id\":\"a\"}\n{\"v\":1,\"seq\":3,\"type\":\"result\",\"attempt_id\":\"a\",\"result\":{\"status\":\"error\",\"error\":\"model failed\",\"input_tokens\":123,\"output_tokens\":45}}\n"
+	c := workerClient{input: bytes.NewBufferString(input), output: &bytes.Buffer{}, attemptID: "a", start: json.RawMessage(`{"type":"start"}`)}
+	outcome, err := c.run()
+	if err != nil || outcome != outcomeFailed || c.result.Status != "error" || c.result.Error != "model failed" || c.result.InputTokens != 123 || c.result.OutputTokens != 45 {
+		t.Fatalf("outcome=%s err=%v result=%+v", outcome, err, c.result)
+	}
+}
+
+func TestWorkerStartCarriesJobLimits(t *testing.T) {
+	job := Job{Prompt: "task", Backend: "api", Options: agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: 1.25, TaskBudget: 20000, MaxTurns: 7, Timeout: agent.Duration(time.Minute)}}
+	frame, err := workerStart(job, "a", "workspace", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Task struct {
+			MaxCostUSD float64        `json:"max_cost_usd"`
+			TaskBudget int            `json:"task_budget"`
+			MaxTurns   int            `json:"max_turns"`
+			Timeout    agent.Duration `json:"timeout"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(frame, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Task.MaxCostUSD != job.Options.MaxCostUSD || decoded.Task.TaskBudget != job.Options.TaskBudget || decoded.Task.MaxTurns != job.Options.MaxTurns || decoded.Task.Timeout != job.Options.Timeout {
+		t.Fatalf("frame=%s", frame)
+	}
 }

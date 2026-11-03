@@ -158,7 +158,7 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", "cannot load worker backend preferences")
 	}
-	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP}
+	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP, MaxCostUSD: t.MaxCostUSD, TaskBudget: t.TaskBudget}
 	var routed *runlog.RoutedBy
 	var routeNote string
 	if t.ContinueRunID != "" {
@@ -457,6 +457,8 @@ type taskRequest struct {
 	Effort            string         `json:"effort"`
 	Timeout           agent.Duration `json:"timeout"`
 	MaxTurns          int            `json:"max_turns"`
+	MaxCostUSD        float64        `json:"max_cost_usd"`
+	TaskBudget        int            `json:"task_budget"`
 	MCP               []string       `json:"mcp"`
 	ContinueRunID     string         `json:"continue_run_id"`
 	Purpose           string         `json:"purpose"`
@@ -538,7 +540,7 @@ func checkTaskKeys(data json.RawMessage, worker bool) error {
 	}
 	names := []string{"prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh", "retrieval_refresh"}
 	if worker {
-		names = append(names, "retrieval", "retrieval_tenant", "retrieval_project", "retrieval_revision", "retrieval_version")
+		names = append(names, "max_cost_usd", "task_budget", "retrieval", "retrieval_tenant", "retrieval_project", "retrieval_revision", "retrieval_version")
 	}
 	_, err := objectFields(data, names...)
 	return err

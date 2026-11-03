@@ -6,7 +6,11 @@ backend. Framing, output sequence numbers, events, errors and exit codes follow
 one job attempt.
 
 After `hello`, the worker sends `start` with the attempt ID and task and, on recovery, the last
-accepted checkpoint. The child accepts only the `api` backend and an HTTP base URL whose host is
+accepted checkpoint. The task carries the job options `timeout`, `max_turns`,
+`max_cost_usd` and `task_budget` when set; omitted limits retain the backend defaults.
+The cost ceiling is enforced using the same usage estimates as the in-process worker.
+The client preserves the complete terminal result, including failed status, error and usage.
+The child accepts only the `api` backend and an HTTP base URL whose host is
 `localhost` or a loopback IP, with no user information, using the same test as `RunOnce`. It
 offers no tools; a start frame containing `mcp` or an unknown `tools` field is rejected. The API
 endpoint comes from `ANTHROPIC_BASE_URL`, which must be set. Redirects and proxy use are disabled.
