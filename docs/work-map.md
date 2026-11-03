@@ -24,8 +24,8 @@ only the local owner can open the work map page.
 
 An owner can open `/map` in hrn watch for repository swimlanes and a list of work that waits for attention. The page updates from `/stream/map` every 30 seconds when the map changes. Both routes are owner-only; other viewers receive 404. Source errors appear alongside any partial results.
 
-The bot also checks the work map every 30 seconds for an owner and announces newly stuck work and advances after a silent first look, using its usual message settings.
+The bot also checks the work map every 30 seconds for an owner and announces newly stuck work and new pieces or advances at gates or later after a silent first look, using its usual message settings.
 
 ## Claude Code sessions
 
-Recent local Claude Code transcripts contribute branch sessions. Only `cwd`, `gitBranch`, `sessionId`, and `timestamp` are read from the last 64 KiB of each transcript. Up to 200 files modified in the last 24 hours are considered; sessions modified in the last 15 minutes are active. Set `work_map_sessions` to `false` in `backends.json` to disable this source. Session IDs stay local and are not shown on the page.
+Recent local Claude Code transcripts under `$CLAUDE_CONFIG_DIR/projects` (or `~/.claude/projects` when unset) contribute branch sessions. Only `cwd` and `gitBranch` are read from the last 64 KiB of each transcript; the session ID comes from its UUID-shaped filename. Links inside the projects folder are skipped. Up to 200 files modified in the last 24 hours are considered; sessions modified in the last 15 minutes are active and raise the piece to agent if it is earlier. A cwd inside a linked Git worktree joins its repository. Set `work_map_sessions` to `false` in `backends.json` to disable this source. Session IDs stay local and are not shown on the page.

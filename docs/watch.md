@@ -319,6 +319,8 @@ and as desktop notifications:
 | map | Release in harness is now at pr. | no | no |
 | status | Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in demo-api. | no | no |
 
+Map messages cover new pieces and advances at gates or later.
+
 Those are the defaults; the settings change each one, pick the voice and the speed, and
 are kept in that browser. A done or failed notification stays until it is dismissed;
 clicking one opens its run or batch. Skip (or Esc) stops talking; Snooze keeps it quiet for

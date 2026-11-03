@@ -12,20 +12,21 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 var sessionActiveAge = 15 * time.Minute
 var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type sessionLine struct {
-	Cwd       string `json:"cwd"`
-	Branch    string `json:"gitBranch"`
-	ID        string `json:"sessionId"`
-	Timestamp string `json:"timestamp"`
+	Cwd    string `json:"cwd"`
+	Branch string `json:"gitBranch"`
 }
 type sessionFile struct {
 	path, id string
 	modified time.Time
+	info     os.FileInfo
 }
 
 func sessionInside(dir, root string) bool {
@@ -76,7 +77,7 @@ func sessionSources(roots map[string]string, worktrees map[string]map[string]str
 				continue
 			}
 			if now.Sub(info.ModTime()) <= 24*time.Hour {
-				files = append(files, sessionFile{filepath.Join(path, entry.Name()), id, info.ModTime()})
+				files = append(files, sessionFile{filepath.Join(path, entry.Name()), id, info.ModTime(), info})
 			}
 		}
 	}
@@ -93,6 +94,11 @@ func sessionSources(roots map[string]string, worktrees map[string]map[string]str
 		f, e := os.Open(file.path)
 		if e != nil {
 			errs = append(errs, e)
+			continue
+		}
+		opened, e := f.Stat()
+		if e != nil || !opened.Mode().IsRegular() || !os.SameFile(file.info, opened) {
+			f.Close()
 			continue
 		}
 		size, e := f.Seek(0, io.SeekEnd)
@@ -121,7 +127,7 @@ func sessionSources(roots map[string]string, worktrees map[string]map[string]str
 		var record sessionLine
 		for i := len(lines) - 1; i >= 0; i-- {
 			var line sessionLine
-			if json.Unmarshal(lines[i], &line) == nil && line.Cwd != "" && line.Branch != "" {
+			if utf8.Valid(lines[i]) && json.Unmarshal(lines[i], &line) == nil && line.Cwd != "" && line.Branch != "" {
 				record = line
 				break
 			}
@@ -142,7 +148,7 @@ func sessionSources(roots map[string]string, worktrees map[string]map[string]str
 				}
 			}
 		}
-		if root == "" || record.Branch == defaults[root] {
+		if root == "" || record.Branch == defaults[root] || !validSessionBranch(record.Branch) {
 			continue
 		}
 		key := root + "\x00branch:" + record.Branch
@@ -160,4 +166,8 @@ func sessionSources(roots map[string]string, worktrees map[string]map[string]str
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func validSessionBranch(branch string) bool {
+	return branch != "" && branch != "HEAD" && !strings.HasPrefix(branch, "-") && !strings.Contains(branch, "..") && strings.IndexFunc(branch, unicode.IsControl) < 0
 }

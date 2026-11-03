@@ -51,7 +51,7 @@ selection. A missing file or an empty enabled list with no default leaves all
 backends enabled. A nonempty default without an enabled list is refused.
 
 The same file accepts `work_map_repos`, `work_map_github` and `work_map_sessions` for the
-[work map](work-map.md); GitHub collection defaults to enabled.
+[work map](work-map.md); GitHub collection and session collection default to enabled.
 
 The configured default wins when installed; otherwise hrn chooses enabled `api`
 when credentials exist, then the first installed enabled backend in preference

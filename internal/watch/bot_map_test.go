@@ -193,3 +193,32 @@ func TestBotStreamPollsMapIndependentlyAndOnlyForOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestBotAnnouncesOnlyGatesOrLater(t *testing.T) {
+	old := buildWorkMap
+	t.Cleanup(func() { buildWorkMap = old })
+	pieces := []workmap.Piece{{Repo: "repo", Key: "feature", Title: "feature", Stage: workmap.Agent}}
+	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) { return pieces, nil }
+	r := httptest.NewRequest("GET", "http://localhost/", nil)
+	r.RemoteAddr = "127.0.0.1:1234"
+	b := (&server{}).newBotWatcher(r)
+	b.lookMap()
+	for _, stage := range []workmap.Stage{workmap.Branch, workmap.Agent} {
+		pieces[0].Stage = stage
+		if got := b.lookMap(); len(got) != 0 {
+			t.Fatalf("%s: %+v", stage, got)
+		}
+	}
+	pieces = nil
+	b.lookMap()
+	pieces = []workmap.Piece{{Repo: "repo", Key: "feature", Stage: workmap.Agent}}
+	if got := b.lookMap(); len(got) != 0 {
+		t.Fatalf("return: %+v", got)
+	}
+	for _, stage := range []workmap.Stage{workmap.Gates, workmap.PR} {
+		pieces[0].Stage = stage
+		if got := b.lookMap(); len(got) != 1 || got[0].Kind != "map" {
+			t.Fatalf("%s: %+v", stage, got)
+		}
+	}
+}
