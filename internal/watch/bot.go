@@ -540,9 +540,6 @@ func (b *botWatcher) lookMap() []say {
 		return nil
 	}
 	pieces, err := b.s.mapPieces(b.request.Context(), b.s.viewerOf(b.request))
-	if err != nil {
-		return nil
-	}
 	cur := make(map[string]workmap.Piece, len(pieces))
 	var out []say
 	for _, p := range pieces {
@@ -563,6 +560,13 @@ func (b *botWatcher) lookMap() []say {
 		stage, before := slices.Index(mapStages, p.Stage), slices.Index(mapStages, was.Stage)
 		if stage > 0 && (!seen || stage > before) {
 			out = append(out, say{"map", sentence(head + " is now at " + string(p.Stage)), p.Key, url})
+		}
+	}
+	if err != nil {
+		for key, p := range b.mapPrev {
+			if _, ok := cur[key]; !ok {
+				cur[key] = p
+			}
 		}
 	}
 	b.mapPrev = cur
