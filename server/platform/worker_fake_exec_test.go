@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -90,7 +91,12 @@ func TestWorkerExecProtocol(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(t.TempDir(), "fakehrn-"+scenario+filepath.Ext(exe))
+			// The scenario is the file name, so only Windows gets an extension: on Linux the test binary ends in .test.
+			name := "fakehrn-" + scenario
+			if runtime.GOOS == "windows" {
+				name += ".exe"
+			}
+			path := filepath.Join(t.TempDir(), name)
 			if err = os.WriteFile(path, data, 0700); err != nil {
 				t.Fatal(err)
 			}
