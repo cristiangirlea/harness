@@ -201,3 +201,17 @@ func (o *JobOptions) UnmarshalJSON(data []byte) error {
 	*o = JobOptions(v)
 	return nil
 }
+
+func decodeStoredOptions(data []byte) (JobOptions, error) {
+	type plain JobOptions
+	var v plain
+	if err := json.Unmarshal(data, &v); err != nil {
+		return JobOptions{}, err
+	}
+	if v.Mode != "" {
+		if _, err := ParseMode(string(v.Mode)); err != nil {
+			return JobOptions{}, err
+		}
+	}
+	return JobOptions(v), nil
+}

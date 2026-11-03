@@ -48,7 +48,7 @@ func (s *Store) ResolveRecovery(ctx context.Context, tenantID, projectID, jobID,
 		if !equalDigest(digest, actual[:]) {
 			return "", errors.New("checkpoint checksum mismatch")
 		}
-		if err = json.Unmarshal(raw, &cp); err != nil {
+		if err = cp.decodeStored(raw); err != nil {
 			return "", err
 		}
 		if cp.Sequence != uint64(sequence) {

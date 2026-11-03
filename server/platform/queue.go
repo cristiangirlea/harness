@@ -187,7 +187,7 @@ func (s *Store) LatestCheckpoint(ctx context.Context, tenantID, projectID, jobID
 		return nil, errors.New("checkpoint checksum mismatch")
 	}
 	var cp Checkpoint
-	if err = json.Unmarshal(raw, &cp); err != nil {
+	if err = cp.decodeStored(raw); err != nil {
 		return nil, err
 	}
 	if cp.Sequence != uint64(seq) {

@@ -75,7 +75,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 			Protocol   string          `json:"protocol"`
 			Checkpoint json.RawMessage `json:"checkpoint"`
 			Event      json.RawMessage `json:"event"`
-			Result     JobResult       `json:"result"`
+			Result     json.RawMessage `json:"result"`
 			Error      struct {
 				Code    string `json:"code"`
 				Message string `json:"message"`
@@ -150,11 +150,15 @@ func (c *workerClient) run() (workerOutcome, error) {
 				return outcomeRecovery, err
 			}
 		case "result":
-			c.result = f.Result
-			if f.Result.RecoveryRequired || failedSave {
+			result, err := decodeResult(f.Result, false, true)
+			if err != nil {
+				return outcomeRecovery, err
+			}
+			c.result = result
+			if result.RecoveryRequired || failedSave {
 				return outcomeRecovery, nil
 			}
-			switch f.Result.Status {
+			switch result.Status {
 			case "ok":
 				return outcomeSaved, nil
 			case "canceled":
@@ -164,7 +168,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 			case StatusError, StatusBudget, StatusMaxTurns, StatusTimeout, StatusLimited:
 				return outcomeFailed, nil
 			default:
-				return outcomeRecovery, fmt.Errorf("worker result status %q", f.Result.Status)
+				return outcomeRecovery, fmt.Errorf("worker result status %q", result.Status)
 			}
 		default:
 			return outcomeRecovery, fmt.Errorf("unexpected worker frame %q", f.Type)

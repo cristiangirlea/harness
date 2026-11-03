@@ -67,11 +67,13 @@ type JobResult struct {
 	CLIVersion            string            `json:"cli_version,omitempty"`
 }
 
-func decodeResult(data []byte, allowEmpty bool) (JobResult, error) {
+func decodeResult(data []byte, allowEmpty, lenient bool) (JobResult, error) {
 	type plain JobResult
 	var v plain
 	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
+	if !lenient {
+		d.DisallowUnknownFields()
+	}
 	if err := d.Decode(&v); err != nil {
 		return JobResult{}, err
 	}
@@ -88,7 +90,7 @@ func decodeResult(data []byte, allowEmpty bool) (JobResult, error) {
 }
 
 func (r *JobResult) UnmarshalJSON(data []byte) error {
-	v, err := decodeResult(data, false)
+	v, err := decodeResult(data, false, false)
 	if err == nil {
 		*r = v
 	}
@@ -119,6 +121,13 @@ func (c *Checkpoint) UnmarshalJSON(data []byte) error {
 }
 
 func (c *Checkpoint) decode(data []byte, allowZero bool) error {
+	return c.decodeWithPolicy(data, allowZero, false)
+}
+
+func (c *Checkpoint) decodeWithPolicy(data []byte, allowZero, lenient bool) error {
+	if bytes.ContainsAny(data, "\r\n") {
+		return errors.New("checkpoint must be on one line")
+	}
 	if len(data) > 16*1024*1024 {
 		return errors.New("checkpoint exceeds 16 MiB")
 	}
@@ -140,7 +149,9 @@ func (c *Checkpoint) decode(data []byte, allowZero bool) error {
 		Finished     bool               `json:"finished"`
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
+	if !lenient {
+		d.DisallowUnknownFields()
+	}
 	if err := d.Decode(&v); err != nil {
 		return err
 	}
@@ -150,7 +161,7 @@ func (c *Checkpoint) decode(data []byte, allowZero bool) error {
 	var result JobResult
 	if len(v.Result) > 0 && string(v.Result) != "null" {
 		var err error
-		result, err = decodeResult(v.Result, !v.Finished)
+		result, err = decodeResult(v.Result, !v.Finished, lenient)
 		if err != nil {
 			return err
 		}
@@ -170,3 +181,5 @@ func (c Checkpoint) MarshalJSON() ([]byte, error) {
 	}
 	return c.Bytes(), nil
 }
+
+func (c *Checkpoint) decodeStored(data []byte) error { return c.decodeWithPolicy(data, false, true) }

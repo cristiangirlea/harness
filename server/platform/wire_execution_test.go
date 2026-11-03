@@ -2,7 +2,10 @@ package platform
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -67,7 +70,7 @@ func TestExecutionWireGolden(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := decodeResult(raw, name != "result.json")
+		result, err := decodeResult(raw, name != "result.json", false)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -117,7 +120,7 @@ func TestExecutionWireGolden(t *testing.T) {
 			t.Fatalf("%s options: %v", name, err)
 		}
 		if len(record.Result) != 0 {
-			if _, err := decodeResult(record.Result, name == "record_zero.json"); err != nil {
+			if _, err := decodeResult(record.Result, name == "record_zero.json", false); err != nil {
 				t.Fatalf("%s result: %v", name, err)
 			}
 		}
@@ -145,5 +148,39 @@ func TestCheckpointStartFramePreservesBytes(t *testing.T) {
 	_, _ = client.run()
 	if !bytes.Contains(output.Bytes(), []byte(raw)) {
 		t.Fatalf("start changed checkpoint: %s", output.Bytes())
+	}
+}
+
+func TestCheckpointPostRejectsMultiline(t *testing.T) {
+	server := &HTTPServer{workerAuthorized: func(_ context.Context, projectID, candidate string) (bool, error) { return true, nil }}
+	for _, sep := range []string{"\n", "\r"} {
+		body := `{"project_id":"project","checkpoint":{"version":1,` + sep + `"sequence":1,"boundary":"x","task_digest":"d"}}`
+		r := httptest.NewRequest(http.MethodPost, "/internal/jobs/job/checkpoint", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		server.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "one line") {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestStoredWireDecode(t *testing.T) {
+	options, err := decodeStoredOptions([]byte(`{"mode":"readonly","old_key":1}`))
+	if err != nil || options.Mode != ModeReadOnly {
+		t.Fatalf("options: %+v %v", options, err)
+	}
+	if _, err := decodeStoredOptions([]byte(`{"mode":"future","old_key":1}`)); err == nil {
+		t.Fatal("accepted unknown mode")
+	}
+	result, err := decodeResult([]byte(`{"status":"ok","old_key":1}`), false, true)
+	if err != nil || result.Status != StatusOK {
+		t.Fatalf("result: %+v %v", result, err)
+	}
+	if _, err := decodeResult([]byte(`{"status":"future","old_key":1}`), false, true); err == nil {
+		t.Fatal("accepted unknown status")
+	}
+	var cp Checkpoint
+	if err := cp.decodeStored([]byte(`{"version":1,"sequence":1,"boundary":"x","task_digest":"d","old_key":1,"pending":{"kind":"x","old_key":1},"result":{"status":"ok","old_key":1}}`)); err != nil {
+		t.Fatal(err)
 	}
 }

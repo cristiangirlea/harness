@@ -315,12 +315,13 @@ func (s *Store) GetJob(ctx context.Context, tenantID, projectID, jobID string) (
 	if err != nil {
 		return Job{}, err
 	}
-	if err := json.Unmarshal(options, &job.Options); err != nil {
+	job.Options, err = decodeStoredOptions(options)
+	if err != nil {
 		return Job{}, err
 	}
 	if len(result) != 0 {
-		var value JobResult
-		if err := json.Unmarshal(result, &value); err != nil {
+		value, err := decodeResult(result, false, true)
+		if err != nil {
 			return Job{}, err
 		}
 		job.Result = &value
