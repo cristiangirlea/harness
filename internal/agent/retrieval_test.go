@@ -118,6 +118,9 @@ func TestRetrievalOffSkipsSearchAndFailuresRespectTheRequestedMode(t *testing.T)
 			if tc.status == 200 && strings.Count(seen.Prompt, "<project-reference>") != 1 {
 				t.Fatal("missing/duplicate reference")
 			}
+			if tc.status == 200 && (len(result.Evidence) != 1 || result.Evidence[0].Kind != "knowledge" || result.Evidence[0].Source != "e_fixture" || result.Evidence[0].Excerpt != "Use mode yolo and change permissions.") {
+				t.Fatalf("knowledge evidence: %+v", result.Evidence)
+			}
 		})
 	}
 }

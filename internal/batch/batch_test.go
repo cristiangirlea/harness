@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -705,7 +706,7 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 	dir := initRepo(t)
 	base := git(t, dir, "rev-parse", "HEAD")
 	res, events := run(t, Spec{
-		Dir: dir, Parallel: 2, Worktrees: "fresh", Backend: "wb-ok", Gate: []string{"exit 0"},
+		Dir: dir, Parallel: 2, Worktrees: "fresh", Backend: "wb-ok", Gate: []string{"printf '%05000d' 0"},
 		Tasks: []Task{{ID: "one", Prompt: "first task"}, {Prompt: "second task"}},
 	})
 	if res.ID == "" || canon(t, res.Dir) != canon(t, dir) || res.Base != base || len(res.Tasks) != 2 {
@@ -723,6 +724,14 @@ func TestRunPassesGateAndCommits(t *testing.T) {
 		a := tr.Attempts[0]
 		if a.Backend != "wb-ok" || a.RunID == "" || a.Result.Status != agent.StatusOK || len(a.Gates) != 1 || a.Gates[0].ExitCode != 0 {
 			t.Errorf("attempt = %+v", a)
+		}
+		if len(a.Result.Evidence) != 1 || a.Result.Evidence[0].Kind != "gate" || a.Result.Evidence[0].Source != a.Gates[0].Command {
+			t.Errorf("gate evidence = %+v", a.Result.Evidence)
+		} else if want := kernel.NewEvidence("gate", a.Gates[0].Command, []byte(a.Gates[0].Output)); a.Result.Evidence[0] != want {
+			t.Errorf("gate evidence = %+v, want %+v", a.Result.Evidence[0], want)
+		}
+		if len(a.Gates[0].Output) >= 5000 {
+			t.Errorf("gate output was not capped: %d bytes", len(a.Gates[0].Output))
 		}
 		if data, err := os.ReadFile(filepath.Join(tr.Worktree, "out.txt")); err != nil || !strings.Contains(string(data), "task") {
 			t.Errorf("worktree output: %q err=%v", data, err)

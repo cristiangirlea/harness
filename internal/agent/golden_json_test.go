@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
@@ -20,8 +21,9 @@ func TestGoldenJSON(t *testing.T) {
 	conv := Conversation{Retrieval: pin, Model: "conversation-model", Messages: []Message{{Role: "assistant", Content: []block{{"type": "text", "text": "hello"}}}}}
 	task := Task{Knowledge: func() (retrieval.Searcher, error) { return nil, nil }, ChildEnv: []string{"CHILD=value"}, OriginalPrompt: "original prompt", RetrievalState: pin, RetrievalRepair: true, Durable: &DurableExecution{}, Prompt: "prompt", Purpose: "purpose", Dir: "project-dir", AttemptID: "attempt", Options: Options{ShapeTools: true, Retrieval: "required", RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalRevision: "revision", RetrievalVersion: "version", Model: "task-model", Mode: ModeAsk, MaxTurns: 16, Effort: "high", MCP: []string{"mcp.json"}, NoInstructions: true, NoContextEdits: true, Lean: Bool(true), Skills: Bool(true), AppendSystemPrompt: "system", NoSkills: true, CompactWindow: "200000", AllowDangerous: true, InheritEnv: true, Timeout: Duration(17 * time.Second), MaxCostUSD: 2.5, TaskBudget: 21000, NoSwitch: true, Issue: "issue", TakeOver: true}, RunDir: "run-dir", Resume: &conv, ForkSession: "fork", FixRound: true, Approve: func(ApprovalRequest) bool { return true }}
 	event := Event{Time: now, Kind: EventToolCall, Text: "event text", Tool: "tool", Input: json.RawMessage(`{"arg":"value"}`), IsError: true, Usage: &Usage{Model: "usage-model", InputTokens: 18, OutputTokens: 19, CacheRead: 20, CacheWrite: 21, ContextTokens: 22}, Quota: &Quota{FiveHour: &QuotaWindow{UsedPercent: 23.5, ResetsAt: 24}, Week: &QuotaWindow{UsedPercent: 25.5, ResetsAt: 26}}, Partial: true, Streamed: true}
+	evidence := kernel.NewEvidence("gate", "test", []byte("output"))
 	checkpoint := APICheckpoint{Version: 1, Sequence: 27, Boundary: "boundary", TaskDigest: "task-digest", Started: now, Deadline: now.Add(time.Hour), NextTurn: 28, Request: json.RawMessage(`{"request":true}`), Betas: []string{"beta"}, Response: json.RawMessage(`{"response":true}`), InvalidInput: map[string]string{"invalid": "input"}, ToolResults: []map[string]any{{"result": "tool-result"}}, Pending: &PendingOperation{Kind: "kind", ID: "pending-id", Tool: "pending-tool", Input: json.RawMessage(`{"pending":true}`)}, Result: result, Finished: true}
-	for name, value := range map[string]any{"task": task, "task_auto_window": Task{Options: Options{CompactWindow: "auto"}}, "task_zero": Task{}, "result": result, "result_zero": Result{}, "event": event, "event_zero": Event{}, "conversation": conv, "conversation_zero": Conversation{}, "checkpoint": checkpoint, "checkpoint_zero": APICheckpoint{}} {
+	for name, value := range map[string]any{"result_evidence": Result{Evidence: []kernel.Evidence{evidence}}, "event_evidence": Event{Evidence: &evidence}, "task": task, "task_auto_window": Task{Options: Options{CompactWindow: "auto"}}, "task_zero": Task{}, "result": result, "result_zero": Result{}, "event": event, "event_zero": Event{}, "conversation": conv, "conversation_zero": Conversation{}, "checkpoint": checkpoint, "checkpoint_zero": APICheckpoint{}} {
 		t.Run(name, func(t *testing.T) { goldenJSON(t, name, value) })
 	}
 }
