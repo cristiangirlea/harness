@@ -175,7 +175,14 @@ func TestWorkerGoldenTranscripts(t *testing.T) {
 // normalizeTranscript replaces machine-dependent paths, platform details, and execution values.
 func normalizeTranscript(actual []byte, dir string) []byte {
 	actual = regexp.MustCompile(`("hrn":\{[^}]*"version":")[^"]*"`).ReplaceAll(actual, []byte(`${1}<variable>"`))
-	actual = bytes.ReplaceAll(actual, []byte(strings.ReplaceAll(dir, `\`, `\\`)), []byte("<workspace>"))
+	// The runner's temp dir may be an 8.3 short name that hrn writes back in its long form.
+	dirs := []string{dir}
+	if long, err := filepath.EvalSymlinks(dir); err == nil && long != dir {
+		dirs = append(dirs, long)
+	}
+	for _, d := range dirs {
+		actual = bytes.ReplaceAll(actual, []byte(strings.ReplaceAll(d, `\`, `\\`)), []byte("<workspace>"))
+	}
 	actual = regexp.MustCompile(`OS: [^\\]*\\nShell for run_command: [^\\]*`).ReplaceAll(actual, []byte(`OS: <platform>\nShell for run_command: <shell>`))
 	for _, pattern := range []string{`"pid":[0-9]+`, `"duration_ns":[0-9]+`, `"started":"[^"]+"`, `"t":"[^"]+"`, `"task_digest":"[^"]+"`, `"go":"[^"]+"`} {
 		actual = regexp.MustCompile(pattern).ReplaceAll(actual, []byte(strings.Split(pattern, ":")[0]+`:"<variable>"`))
