@@ -453,14 +453,14 @@ func TestBackendsSaveKeepsTheWorkMapGitHubSetting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
 	off := false
-	if err := prefs.Save(home, prefs.Prefs{WorkMapGitHub: &off}); err != nil {
+	if err := prefs.Save(home, prefs.Prefs{WorkMapGitHub: &off, WorkMapSessions: &off}); err != nil {
 		t.Fatal(err)
 	}
 	h := New(context.Background(), Options{Key: "test-key"})
-	for _, body := range []string{`{"enabled":["codex"]}`, `{"enabled":["claude"],"work_map_github":true}`} {
+	for _, body := range []string{`{"enabled":["codex"]}`, `{"enabled":["claude"],"work_map_github":true,"work_map_sessions":true}`} {
 		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", body)
 		p, err := prefs.Load(home)
-		if w.Code != 204 || err != nil || p.WorkMapGitHub == nil || *p.WorkMapGitHub {
+		if w.Code != 204 || err != nil || p.WorkMapGitHub == nil || *p.WorkMapGitHub || p.WorkMapSessions == nil || *p.WorkMapSessions {
 			t.Fatalf("save: %d %+v %v", w.Code, p, err)
 		}
 	}

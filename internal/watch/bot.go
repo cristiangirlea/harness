@@ -558,7 +558,7 @@ func (b *botWatcher) lookMap() []say {
 			out = append(out, say{"waits", sentence(head + " waits for you: " + p.Stuck), p.Key, url})
 		}
 		stage, before := slices.Index(mapStages, p.Stage), slices.Index(mapStages, was.Stage)
-		if stage > 0 && (!seen || stage > before) {
+		if stage >= slices.Index(mapStages, workmap.Gates) && (!seen || stage > before) {
 			out = append(out, say{"map", sentence(head + " is now at " + string(p.Stage)), p.Key, url})
 		}
 	}

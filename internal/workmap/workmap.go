@@ -38,6 +38,7 @@ type Links struct {
 	PR       string
 	Issue    string
 	Checks   string
+	Sessions []string
 	Runs     []string
 	Batches  []string
 	Branch   string
@@ -49,6 +50,7 @@ type Piece struct {
 	Stuck            string
 	Links            Links
 	Updated          time.Time
+	ActiveSession    bool
 	fromBatch        bool
 	stuckAt          time.Time
 }
@@ -378,6 +380,11 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		}
 		add(p)
 	}
+	if p.WorkMapSessions == nil || *p.WorkMapSessions {
+		if err := sessionSources(roots, worktrees, defaults, pieces); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if p.WorkMapGitHub == nil || *p.WorkMapGitHub {
 		if err := githubSources(ctx, home, roots, pieces); err != nil {
 			errs = append(errs, err)
@@ -388,6 +395,8 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		if rank(p.Stage) >= rank(Merged) {
 			p.Stuck = ""
 		}
+		sort.Strings(p.Links.Sessions)
+		p.Links.Sessions = compact(p.Links.Sessions)
 		sort.Strings(p.Links.Runs)
 		p.Links.Runs = compact(p.Links.Runs)
 		sort.Strings(p.Links.Batches)
