@@ -29,14 +29,16 @@ const (
 )
 
 type workerClient struct {
-	result     agent.Result
-	input      io.Reader
-	output     io.Writer
-	attemptID  string
-	start      json.RawMessage
-	checkpoint func(json.RawMessage) checkpointDecision
-	event      func(json.RawMessage)
-	mu         sync.Mutex
+	result              agent.Result
+	input               io.Reader
+	output              io.Writer
+	attemptID           string
+	start               json.RawMessage
+	checkpoint          func(json.RawMessage) checkpointDecision
+	event               func(json.RawMessage)
+	mu                  sync.Mutex
+	started             bool
+	canceledBeforeStart bool
 }
 
 func (c *workerClient) write(v any) error {
@@ -47,7 +49,16 @@ func (c *workerClient) write(v any) error {
 	return enc.Encode(v)
 }
 func (c *workerClient) cancel() error {
-	return c.write(map[string]any{"type": "cancel", "attempt_id": c.attemptID})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.started {
+		c.canceledBeforeStart = true
+		if closer, ok := c.output.(io.Closer); ok {
+			return closer.Close()
+		}
+		return nil
+	}
+	return json.NewEncoder(c.output).Encode(map[string]any{"type": "cancel", "attempt_id": c.attemptID})
 }
 
 func (c *workerClient) run() (workerOutcome, error) {
@@ -66,6 +77,10 @@ func (c *workerClient) run() (workerOutcome, error) {
 			Checkpoint json.RawMessage `json:"checkpoint"`
 			Event      json.RawMessage `json:"event"`
 			Result     agent.Result    `json:"result"`
+			Error      struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if err := json.Unmarshal(s.Bytes(), &f); err != nil {
 			return outcomeRecovery, err
@@ -78,7 +93,19 @@ func (c *workerClient) run() (workerOutcome, error) {
 			if f.Type != "hello" || (f.Protocol != "" && f.Protocol != "v1") {
 				return outcomeRecovery, fmt.Errorf("expected worker hello")
 			}
-			if err := c.write(c.start); err != nil {
+			c.mu.Lock()
+			if c.canceledBeforeStart {
+				c.mu.Unlock()
+				return outcomeCanceled, nil
+			}
+			enc := json.NewEncoder(c.output)
+			enc.SetEscapeHTML(false)
+			err := enc.Encode(c.start)
+			if err == nil {
+				c.started = true
+			}
+			c.mu.Unlock()
+			if err != nil {
 				return outcomeRecovery, err
 			}
 			state = "start"
@@ -89,6 +116,7 @@ func (c *workerClient) run() (workerOutcome, error) {
 		}
 		if state == "start" {
 			if f.Type == "rejected" {
+				c.result = agent.Result{Backend: "api", Status: agent.StatusError, Error: fmt.Sprintf("refused: %s: %s", f.Error.Code, f.Error.Message)}
 				return outcomeRefused, nil
 			}
 			if f.Type != "accepted" {

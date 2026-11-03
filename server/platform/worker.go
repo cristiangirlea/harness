@@ -10,6 +10,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,8 +26,51 @@ type Worker struct {
 	Token         string
 	WorkerID      string
 	WorkspaceRoot string
-	Backend       *agent.APIBackend
+	HRNPath       string
+	ModelURL      string
+	ModelKey      string
 	HTTPClient    *http.Client
+	cancelGrace   time.Duration
+}
+
+func (w *Worker) PrepareHRNHome() error {
+	path := filepath.Join(w.WorkspaceRoot, ".hrn-home")
+	root, err := openWorkspaceRoot(w.WorkspaceRoot)
+	if err != nil {
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	defer root.Close()
+	if err := ensureWorkspaceDirectory(root, ".hrn-home"); err != nil {
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	f, err := os.CreateTemp(path, ".write-check-")
+	if err != nil {
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	name := f.Name()
+	if err = f.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	if err = os.Remove(name); err != nil {
+		return fmt.Errorf("hrn home %s: %w", path, err)
+	}
+	return nil
+}
+
+type tailBuffer struct{ data []byte }
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) >= 4096 {
+		b.data = append(b.data[:0], p[len(p)-4096:]...)
+		return n, nil
+	}
+	if len(b.data)+len(p) > 4096 {
+		b.data = append(b.data[:0], b.data[len(b.data)+len(p)-4096:]...)
+	}
+	b.data = append(b.data, p...)
+	return n, nil
 }
 
 func (w *Worker) client() *http.Client {
@@ -71,13 +117,16 @@ func (w *Worker) call(ctx context.Context, method, path string, input, output an
 }
 
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
-	if w.ProjectID == "" || w.WorkerID == "" || len(w.Token) != 64 || w.Backend == nil || w.WorkspaceRoot == "" {
+	if w.ProjectID == "" || w.WorkerID == "" || len(w.Token) != 64 || w.ModelURL == "" || w.WorkspaceRoot == "" {
 		return false, errors.New("incomplete worker configuration")
 	}
-	endpoint, endpointErr := url.Parse(w.Backend.BaseURL)
+	endpoint, endpointErr := url.Parse(w.ModelURL)
 	if endpointErr != nil || endpoint == nil || endpoint.Scheme != "http" || endpoint.User != nil ||
 		!(endpoint.Hostname() == "localhost" || (net.ParseIP(endpoint.Hostname()) != nil && net.ParseIP(endpoint.Hostname()).IsLoopback())) {
 		return false, fmt.Errorf("%w: initial worker requires a local fake API endpoint", ErrUnsupported)
+	}
+	if err := w.PrepareHRNHome(); err != nil {
+		return false, err
 	}
 	root, err := openWorkspaceRoot(w.WorkspaceRoot)
 	if err != nil {
@@ -136,19 +185,100 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		}
 		return true, fmt.Errorf("workspace validation: %w", workspaceErr)
 	}
-	task := agent.Task{Prompt: job.Prompt, Dir: dir, Options: job.Options}
-	task.Durable = &agent.DurableExecution{Resume: checkpoint, Save: func(saveCtx context.Context, cp agent.APICheckpoint) error {
-		if _, err := prepareWorkspace(w.WorkspaceRoot, job, true); err != nil {
-			return fmt.Errorf("workspace changed before checkpoint: %w", err)
+	attemptID := fmt.Sprintf("%s-%d", job.ID, job.Generation)
+	start, startErr := workerStart(job, attemptID, dir, checkpoint)
+	result := agent.Result{Backend: "api", Status: agent.StatusError}
+	if job.Options.AllowDangerous {
+		result.Error = "allow_dangerous is not supported for durable jobs"
+	} else if startErr != nil {
+		result.Error = startErr.Error()
+	} else {
+		cmd := exec.CommandContext(runCtx, w.HRNPath, "exec", "--protocol", "v1", "--worker")
+		for _, key := range []string{"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE"} {
+			if value, ok := os.LookupEnv(key); ok {
+				cmd.Env = append(cmd.Env, key+"="+value)
+			}
 		}
-		_, err := w.call(saveCtx, http.MethodPost, "/internal/jobs/"+job.ID+"/checkpoint",
-			checkpointRequest{workerRequest: workerRequest{ProjectID: w.ProjectID, WorkerID: w.WorkerID, Generation: job.Generation}, Checkpoint: cp}, nil)
-		return err
-	}}
-	// There is no trusted tool-execution sidecar yet. Keep the model in a
-	// reasoning-only mode even if an operator accidentally supplied tools.
-	w.Backend.Tools = nil
-	result := agent.Run(runCtx, w.Backend, task, func(agent.Event) {})
+		cmd.Env = append(cmd.Env, "HRN_HOME="+filepath.Join(w.WorkspaceRoot, ".hrn-home"), "ANTHROPIC_BASE_URL="+w.ModelURL, "ANTHROPIC_API_KEY="+w.ModelKey)
+		var stderr tailBuffer
+		cmd.Stderr = &stderr
+		input, pipeErr := cmd.StdinPipe()
+		if pipeErr == nil {
+			var output io.ReadCloser
+			output, pipeErr = cmd.StdoutPipe()
+			if pipeErr == nil {
+				client := workerClient{input: output, output: input, attemptID: attemptID, start: start, checkpoint: func(raw json.RawMessage) checkpointDecision {
+					var cp agent.APICheckpoint
+					if json.Unmarshal(raw, &cp) != nil {
+						return checkpointRejected
+					}
+					if _, err := prepareWorkspace(w.WorkspaceRoot, job, true); err != nil {
+						return checkpointRejected
+					}
+					_, err := w.call(runCtx, http.MethodPost, "/internal/jobs/"+job.ID+"/checkpoint", checkpointRequest{workerRequest: workerRequest{ProjectID: w.ProjectID, WorkerID: w.WorkerID, Generation: job.Generation}, Checkpoint: cp}, nil)
+					if err != nil {
+						return checkpointRejected
+					}
+					return checkpointSaved
+				}}
+				cmd.Cancel = func() error { return nil }
+				grace := w.cancelGrace
+				if grace <= 0 {
+					grace = 5 * time.Second
+				}
+				cmd.WaitDelay = grace
+				if pipeErr = cmd.Start(); pipeErr == nil {
+					done := make(chan struct{})
+					cancelDone := make(chan struct{})
+					go func() {
+						defer close(cancelDone)
+						select {
+						case <-runCtx.Done():
+							cancelWriteDone := make(chan struct{})
+							go func() { defer close(cancelWriteDone); _ = client.cancel() }()
+							timer := time.NewTimer(grace)
+							defer timer.Stop()
+							select {
+							case <-done:
+							case <-timer.C:
+								_ = cmd.Process.Kill()
+							}
+							<-cancelWriteDone
+						case <-done:
+						}
+					}()
+					outcome, runErr := client.run()
+					close(done)
+					_ = input.Close()
+					waitErr := cmd.Wait()
+					<-cancelDone
+					result = client.result
+					client.mu.Lock()
+					canceledBeforeStart := client.canceledBeforeStart
+					client.mu.Unlock()
+					if canceledBeforeStart {
+						result = agent.Result{Backend: "api", Status: "canceled"}
+					} else if outcome == outcomeRecovery || runErr != nil || (waitErr != nil && !(outcome == outcomeCanceled && runCtx.Err() != nil)) {
+						if result.Status == "" {
+							result = agent.Result{Backend: "api", Status: agent.StatusError, Error: "worker execution requires recovery"}
+						}
+						result.RecoveryRequired = true
+					} else if outcome == outcomeRefused {
+						if result.Status == "" {
+							result = agent.Result{Backend: "api", Status: agent.StatusError, Error: "worker refused start"}
+						}
+					}
+				}
+			}
+		}
+		if (result.Status == agent.StatusError || result.RecoveryRequired) && len(stderr.data) > 0 {
+			result.Error += "; stderr: " + string(stderr.data)
+		}
+		if pipeErr != nil {
+			result.Error = "start worker: " + pipeErr.Error()
+		}
+	}
+
 	cancel()
 	<-heartbeatDone
 	finishCtx, finishCancel := context.WithTimeout(context.Background(), 15*time.Second)
