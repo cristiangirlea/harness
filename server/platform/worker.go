@@ -23,6 +23,7 @@ type Worker struct {
 	Token         string
 	WorkerID      string
 	WorkspaceRoot string
+	HRNPath       string
 	Backend       *agent.APIBackend
 	HTTPClient    *http.Client
 }

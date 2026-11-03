@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -20,12 +22,18 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
+	defaultHRN := os.Getenv("HRN_WORKER_HRN")
+	if defaultHRN == "" {
+		defaultHRN = "hrn"
+	}
+	hrnPath := flag.String("hrn", defaultHRN, "path to the hrn binary")
+	flag.Parse()
+	if err := run(*hrnPath); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
 	}
 }
 
-func run() error {
+func run(hrnPath string) error {
 	control := os.Getenv("HRN_CONTROL_URL")
 	modelURL := os.Getenv("HRN_FIXTURE_API_URL")
 	projectID := os.Getenv("HRN_PROJECT_ID")
@@ -57,13 +65,25 @@ func run() error {
 	backend.APIKey = "fixture-only"
 	backend.Tools = nil
 	worker := &platform.Worker{ControlURL: control, ProjectID: projectID, Token: workerToken,
-		WorkerID: id, WorkspaceRoot: workspace, Backend: backend}
+		WorkerID: id, WorkspaceRoot: workspace, Backend: backend, HRNPath: hrnPath}
+	if err := checkHRN(worker.HRNPath, exec.CommandContext); err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := waitForFixture(ctx, modelURL); err != nil {
 		return err
 	}
 	return worker.Run(ctx)
+}
+
+func checkHRN(path string, command func(context.Context, string, ...string) *exec.Cmd) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := command(ctx, path, "version").Run(); err != nil {
+		return fmt.Errorf("check hrn binary %s: %w", path, err)
+	}
+	return nil
 }
 
 func isLoopback(host string) bool {

@@ -52,6 +52,9 @@ and `HRN_TLS_KEY_FILE`; otherwise startup is refused before listening. Run
 with `HRN_CONTROL_URL`, `HRN_FIXTURE_API_URL`, `HRN_PROJECT_ID`,
 `HRN_WORKER_TOKEN`, and an existing absolute `HRN_WORKSPACE_ROOT`. The worker
 command is `go run ./cmd/hrn-worker`.
+The worker checks `hrn version` at startup, with a 10-second timeout. Set
+`HRN_WORKER_HRN` or pass `-hrn` to select the binary; the flag takes precedence.
+The default is `hrn` on PATH. The binary is not yet used to run jobs.
 
 Tenant budgets and spending reservation are not enforced yet (still open in
 the durable workers spec): any tenant can queue any number of jobs, each up to
