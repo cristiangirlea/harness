@@ -39,6 +39,9 @@ func readRetrievalJSON(path string, v any) error {
 }
 
 func runKnowledge(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "admit" {
+		return runKnowledgeAdmit(args[1:], out)
+	}
 	if len(args) != 2 {
 		return fmt.Errorf("usage: hrn knowledge import|search|inspect|active|activate|disable|rollback request.json")
 	}

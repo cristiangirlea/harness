@@ -14,7 +14,7 @@ import (
 // saveRun writes a run record; a nil result leaves it running until the test ends.
 func saveRun(t *testing.T, backend, prompt string, res *agent.Result) string {
 	t.Helper()
-	w, err := runlog.Create(backend, agent.Task{Prompt: prompt})
+	w, err := runlog.Create(backend, agent.Task{Prompt: prompt}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestWatchPrefersDeclaredPurposesAndKeepsClassifierTitles(t *testing.T) {
 		{"", "Purpose: review\nFix it.", "review", "declared"},
 		{"", "Fix it.", "debug", "debug.fix"},
 	} {
-		w, err := runlog.Create("stub", agent.Task{Purpose: tc.declared, Prompt: tc.prompt})
+		w, err := runlog.Create("stub", agent.Task{Purpose: tc.declared, Prompt: tc.prompt}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

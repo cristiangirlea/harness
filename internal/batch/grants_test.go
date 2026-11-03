@@ -17,7 +17,7 @@ func TestTimelineViewerProjectGrant(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:me")
 	project := t.TempDir()
-	w, err := runlog.Create("fake", agent.Task{Dir: filepath.Join(project, ".hrn", "worktrees", "task")})
+	w, err := runlog.Create("fake", agent.Task{Dir: filepath.Join(project, ".hrn", "worktrees", "task")}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestTimelineViewerGrantDoesNotExposeAnotherProjectsRun(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:me")
 	project := t.TempDir()
-	w, err := runlog.Create("fake", agent.Task{Dir: t.TempDir(), Prompt: "private child"})
+	w, err := runlog.Create("fake", agent.Task{Dir: t.TempDir(), Prompt: "private child"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

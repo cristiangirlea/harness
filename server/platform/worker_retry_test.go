@@ -10,8 +10,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -37,16 +35,14 @@ func TestWorkerRetriesTemporaryControlConnectionBeforeClaim(t *testing.T) {
 			Request:    request,
 		}, nil
 	})}
-	backend := agent.NewAPIBackend()
-	backend.BaseURL = "http://127.0.0.1:9090"
 	worker := &Worker{
 		ControlURL:    "https://control.invalid",
 		ProjectID:     "p_0123456789abcdef0123456789abcdef",
 		Token:         strings.Repeat("a", 64),
 		WorkerID:      "fixture-worker",
 		WorkspaceRoot: t.TempDir(),
-		Backend:       backend,
-		HTTPClient:    client,
+		ModelURL:      "http://127.0.0.1:9090", ModelKey: "",
+		HTTPClient: client,
 	}
 	go func() {
 		<-responded

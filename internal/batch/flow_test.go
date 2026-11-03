@@ -16,7 +16,7 @@ import (
 
 func runFor(t *testing.T, backend string, res agent.Result, events ...agent.Event) string {
 	t.Helper()
-	w, err := runlog.Create(backend, agent.Task{Prompt: "do it"})
+	w, err := runlog.Create(backend, agent.Task{Prompt: "do it"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 func TestNewRunPermissions(t *testing.T) {
@@ -14,11 +14,11 @@ func TestNewRunPermissions(t *testing.T) {
 		t.Skip("Unix file modes are not enforced on Windows")
 	}
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("stub", agent.Task{})
+	w, err := Create("stub", kernel.Task{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(agent.Result{}); err != nil {
+	if err := w.Close(kernel.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	for name, mode := range map[string]os.FileMode{

@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 func TestKnowledgeSourceRejectsEachObviousSecretPattern(t *testing.T) {
@@ -24,7 +22,7 @@ func TestKnowledgeSourceRejectsEachObviousSecretPattern(t *testing.T) {
 		"<project-reference", "</project-reference>", "[Reference fixture", "[/Reference]",
 	} {
 		t.Run(text, func(t *testing.T) {
-			if !unsafeKnowledgeSource(retrieval.Entry{Content: text}) {
+			if !unsafeKnowledgeSource(KnowledgeEntry{Content: text}) {
 				t.Fatal("unsafe text accepted")
 			}
 		})
@@ -44,7 +42,7 @@ func TestKnowledgeSourceMatchesPrivatePathsWithoutEnvSubstringFalsePositives(t *
 		{"path=.env", true}, {".env,", true}, {"a.md;.env.local", true}, {"key=.envrc", false},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			if got := unsafeKnowledgeSource(retrieval.Entry{Source: tc.path}); got != tc.unsafe {
+			if got := unsafeKnowledgeSource(KnowledgeEntry{Source: tc.path}); got != tc.unsafe {
 				t.Fatalf("unsafe = %v, want %v", got, tc.unsafe)
 			}
 		})
@@ -54,7 +52,7 @@ func TestKnowledgeSourceMatchesPrivatePathsWithoutEnvSubstringFalsePositives(t *
 func TestKnowledgeSourceAcceptsOrdinaryTextAndIncompleteTokenShapes(t *testing.T) {
 	for _, text := range []string{"PRIVATE KEY documentation", "AKIA", "AKIA123", "header.payload.signature", "eyJheader.payload", "github actions", "sketch-ant-fixture"} {
 		t.Run(text, func(t *testing.T) {
-			if unsafeKnowledgeSource(retrieval.Entry{Content: text}) {
+			if unsafeKnowledgeSource(KnowledgeEntry{Content: text}) {
 				t.Fatal("ordinary text refused")
 			}
 		})
@@ -62,21 +60,21 @@ func TestKnowledgeSourceAcceptsOrdinaryTextAndIncompleteTokenShapes(t *testing.T
 }
 
 func TestKnowledgeImportScreensEveryTextFieldBeforeStorage(t *testing.T) {
-	fields := map[string]func(*retrieval.Import, string){
-		"tenant":          func(in *retrieval.Import, v string) { in.TenantID = v },
-		"project":         func(in *retrieval.Import, v string) { in.ProjectID = v },
-		"backend":         func(in *retrieval.Import, v string) { in.Backend = v },
-		"model":           func(in *retrieval.Import, v string) { in.Model = v },
-		"revision":        func(in *retrieval.Import, v string) { in.Revision = v },
-		"origin":          func(in *retrieval.Import, v string) { in.Origin = v },
-		"reviewed_by":     func(in *retrieval.Import, v string) { in.ReviewedBy = v },
-		"review_evidence": func(in *retrieval.Import, v string) { in.ReviewEvidence = v },
-		"id":              func(in *retrieval.Import, v string) { in.Entries[0].ID = v },
-		"key":             func(in *retrieval.Import, v string) { in.Entries[0].Key = v },
-		"content":         func(in *retrieval.Import, v string) { in.Entries[0].Content = v },
-		"source":          func(in *retrieval.Import, v string) { in.Entries[0].Source = v },
-		"evidence":        func(in *retrieval.Import, v string) { in.Entries[0].Evidence = v },
-		"identifier":      func(in *retrieval.Import, v string) { in.Entries[0].Identifiers = []string{v} },
+	fields := map[string]func(*KnowledgeImport, string){
+		"tenant":          func(in *KnowledgeImport, v string) { in.TenantID = v },
+		"project":         func(in *KnowledgeImport, v string) { in.ProjectID = v },
+		"backend":         func(in *KnowledgeImport, v string) { in.Backend = v },
+		"model":           func(in *KnowledgeImport, v string) { in.Model = v },
+		"revision":        func(in *KnowledgeImport, v string) { in.Revision = v },
+		"origin":          func(in *KnowledgeImport, v string) { in.Origin = v },
+		"reviewed_by":     func(in *KnowledgeImport, v string) { in.ReviewedBy = v },
+		"review_evidence": func(in *KnowledgeImport, v string) { in.ReviewEvidence = v },
+		"id":              func(in *KnowledgeImport, v string) { in.Entries[0].ID = v },
+		"key":             func(in *KnowledgeImport, v string) { in.Entries[0].Key = v },
+		"content":         func(in *KnowledgeImport, v string) { in.Entries[0].Content = v },
+		"source":          func(in *KnowledgeImport, v string) { in.Entries[0].Source = v },
+		"evidence":        func(in *KnowledgeImport, v string) { in.Entries[0].Evidence = v },
+		"identifier":      func(in *KnowledgeImport, v string) { in.Entries[0].Identifiers = []string{v} },
 	}
 	for field, set := range fields {
 		for _, marker := range []string{"sk-ant-fixture", "config/.env.local", "[/Reference]"} {
@@ -107,10 +105,10 @@ func TestKnowledgeImportScreensEveryTextFieldBeforeStorage(t *testing.T) {
 }
 
 func TestKnowledgeImportAllowsPathNotesInProseButRefusesSecretsThere(t *testing.T) {
-	fields := map[string]func(*retrieval.Import, string){
-		"content":         func(in *retrieval.Import, v string) { in.Entries[0].Content = v },
-		"evidence":        func(in *retrieval.Import, v string) { in.Entries[0].Evidence = v },
-		"review_evidence": func(in *retrieval.Import, v string) { in.ReviewEvidence = v },
+	fields := map[string]func(*KnowledgeImport, string){
+		"content":         func(in *KnowledgeImport, v string) { in.Entries[0].Content = v },
+		"evidence":        func(in *KnowledgeImport, v string) { in.Entries[0].Evidence = v },
+		"review_evidence": func(in *KnowledgeImport, v string) { in.ReviewEvidence = v },
 	}
 	for field, set := range fields {
 		for _, note := range []string{"copy .env.example to .env", "never commit .ssh/", "keep credentials.json and .aws/credentials out of git", `ignore .codex\auth.json`} {
@@ -163,7 +161,7 @@ func TestKnowledgeQueryBoundsWorstCaseCandidatesAndJoinedWords(t *testing.T) {
 				if len(strings.Fields(candidate)) > 8 {
 					t.Fatalf("candidate exceeds 8 words: %q", candidate)
 				}
-				if len(candidate) > retrieval.MaxIdentifierBytes {
+				if len(candidate) > KnowledgeMaxIdentifierBytes {
 					t.Fatalf("candidate exceeds byte limit: %d", len(candidate))
 				}
 			}
@@ -176,7 +174,7 @@ func TestKnowledgeSearchValidatesAttemptBeforeStorage(t *testing.T) {
 		if strconv.IntSize == 32 && attempt > math.MaxInt32 {
 			continue // This value cannot be represented by Search.Attempt on 32-bit.
 		}
-		_, err := (&Store{}).SearchKnowledge(context.Background(), retrieval.Search{Attempt: int(attempt)})
+		_, err := (&Store{}).SearchKnowledge(context.Background(), KnowledgeSearch{Attempt: int(attempt)})
 		want := ErrRetrievalBusy
 		if attempt < 0 || attempt > math.MaxInt32 {
 			want = ErrUnsupported
@@ -217,10 +215,10 @@ func TestSchemaVersionTwoRequestsExplicitMigration(t *testing.T) {
 	if err := checkSchemaVersion(2); err == nil || !strings.Contains(err.Error(), "run the explicit migrate command") {
 		t.Fatalf("missing migration guidance: %v", err)
 	}
-	if err := checkSchemaVersion(3); err != nil {
+	if err := checkSchemaVersion(4); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkSchemaVersion(4); err == nil || strings.Contains(err.Error(), "run the explicit migrate command") {
+	if err := checkSchemaVersion(5); err == nil || strings.Contains(err.Error(), "run the explicit migrate command") {
 		t.Fatalf("newer schema must not suggest migration: %v", err)
 	}
 }
@@ -256,12 +254,12 @@ func TestKnowledgeImportRejectsEveryDenyPattern(t *testing.T) {
 func TestKnowledgeImportRejectsDuplicateKeysAndTooManyEntries(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		change func(*retrieval.Import)
+		change func(*KnowledgeImport)
 	}{
-		{"duplicate", func(in *retrieval.Import) { in.Entries[1].Key = in.Entries[0].Key }},
-		{"too many", func(in *retrieval.Import) {
+		{"duplicate", func(in *KnowledgeImport) { in.Entries[1].Key = in.Entries[0].Key }},
+		{"too many", func(in *KnowledgeImport) {
 			entry := in.Entries[0]
-			in.Entries = make([]retrieval.Entry, 101)
+			in.Entries = make([]KnowledgeEntry, 101)
 			for i := range in.Entries {
 				in.Entries[i] = entry
 				in.Entries[i].Key = fmt.Sprintf("entry-%d", i)

@@ -27,8 +27,14 @@ type Request struct {
 	Backend string
 	Dir     string
 	Model   string
-	// Retrieval is the follow-up's retrieval mode; a pin from another backend refuses an opt-in.
-	Retrieval string
+	// Retrieval is the follow-up's mode; only off can discard a pin on a backend switch.
+	Retrieval         string
+	RetrievalRevision string
+	RetrievalTenant   string
+	RetrievalProject  string
+	RetrievalVersion  string
+	RetrievalRefresh  bool
+	Exec              bool
 	// Fresh briefs a new session from the record, without resuming or forking.
 	Fresh bool
 	// Resume opts out of the codex fresh default.
@@ -38,10 +44,15 @@ type Request struct {
 // Plan is how a follow-up run starts.
 type Plan struct {
 	// Prev is the predecessor; Backend, absolute Dir and Model describe the follow-up.
-	Prev    runlog.Record
-	Backend string
-	Dir     string
-	Model   string
+	Prev               runlog.Record
+	Backend            string
+	Dir                string
+	Model              string
+	RetrievalVersion   string
+	RetrievalRevision  string
+	retrievalRefreshed bool
+	retrievalOptions   agent.Options
+	retrievalNote      string
 
 	// Resume and ForkSession identify reusable state from earlier in the chain.
 	Resume      *agent.Conversation
@@ -71,6 +82,12 @@ func (p Plan) Release() {
 func (p Plan) Route() string {
 	if p.Fresh {
 		return runlog.RouteFreshHandover
+	}
+	if len(p.Handoff) > 0 {
+		return "transcript_transfer"
+	}
+	if p.Resume != nil || p.ForkSession != "" {
+		return "continued_session"
 	}
 	return ""
 }
@@ -114,16 +131,67 @@ func Make(req Request) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	if err := checkRetrievalPin(chain, p.Backend, req.Retrieval); err != nil {
+	if err := checkRetrievalPin(chain, p.Backend, req.Retrieval, req.Exec); err != nil {
 		return Plan{}, err
+	}
+	fresh := req.Fresh || (!req.Resume && prev.Backend == "codex" && p.Backend == "codex")
+	if req.RetrievalRefresh {
+		if !fresh {
+			return Plan{}, errors.New("retrieval refresh requires a fresh continuation")
+		}
+		pinned := false
+		for i := len(chain) - 1; i >= 0; i-- {
+			if pin := chain[i].Result.Retrieval; pin != nil {
+				pinned = pin.Packet != nil && pin.Packet.VersionID != ""
+				break
+			}
+		}
+		if !pinned || req.Retrieval == "off" {
+			return Plan{}, errors.New("nothing to refresh")
+		}
 	}
 	if missing != "" {
 		p.Notes = append(p.Notes, fmt.Sprintf("run %s continues %s, which is gone, so the chain starts at %[1]s", chain[0].ID, missing))
 	}
-	if req.Fresh || (!req.Resume && prev.Backend == "codex" && p.Backend == "codex") {
+	if fresh {
 		p.Fresh = true
+		if req.Retrieval != "off" {
+			for i := len(chain) - 1; i >= 0; i-- {
+				r := chain[i]
+				pin := r.Result.Retrieval
+				if pin == nil {
+					continue
+				}
+				if r.Backend == p.Backend && pin.Packet != nil && pin.Packet.VersionID != "" {
+					if pin.Mode != "required" && pin.Mode != "optional" {
+						return Plan{}, errors.New("retrieval pin has no usable retrieval mode")
+					}
+					if pin.Scope.Backend != p.Backend {
+						return Plan{}, errors.New("retrieval pin backend differs from its run")
+					}
+					if (req.RetrievalTenant != "" && req.RetrievalTenant != pin.Scope.TenantID) || (req.RetrievalProject != "" && req.RetrievalProject != pin.Scope.ProjectID) || (req.Model != "" && req.Model != pin.Scope.Model) || (req.RetrievalVersion != "" && req.RetrievalVersion != pin.Packet.VersionID) {
+						return Plan{}, errors.New("retrieval pin scope or version differs from the continuation request")
+					}
+					revision := cmp.Or(req.RetrievalRevision, pin.Scope.Revision)
+					if revision != pin.Scope.Revision && !req.RetrievalRefresh {
+						return Plan{}, fmt.Errorf("retrieval pinned at revision %s, this continuation asks for %s; pass --retrieval-refresh to use the active version at %s", pin.Scope.Revision, revision, revision)
+					}
+					p.retrievalOptions = agent.Options{Retrieval: pin.Mode, RetrievalTenant: pin.Scope.TenantID, RetrievalProject: pin.Scope.ProjectID, RetrievalRevision: revision, Model: pin.Scope.Model}
+					p.RetrievalRevision = revision
+					if req.RetrievalRefresh {
+						p.retrievalRefreshed = true
+						p.retrievalNote = fmt.Sprintf("retrieval refreshed: pin %s at %s replaced by the active version at %s", pin.Packet.VersionID, pin.Scope.Revision, revision)
+						p.Notes = append(p.Notes, p.retrievalNote)
+					} else {
+						p.RetrievalVersion = pin.Packet.VersionID
+						p.retrievalNote = fmt.Sprintf("retrieval carried: pin %s at %s", pin.Packet.VersionID, revision)
+					}
+				}
+				break
+			}
+		}
 		if p.Model == "" {
-			p.Model = latestModel(chain, p.Backend)
+			p.Model = cmp.Or(p.retrievalOptions.Model, latestModel(chain, p.Backend))
 		}
 		note := fmt.Sprintf("starting a new %s session, handed run %s over from its record; no session or conversation is resumed or forked", p.Backend, prev.ID)
 		if !req.Fresh {
@@ -252,9 +320,9 @@ func laterOn(backend, id string, carried runlog.Record, chain []runlog.Record) s
 	return ""
 }
 
-// Refuse cross-backend opt-in rather than silently replacing a pin the new backend cannot carry.
-func checkRetrievalPin(chain []runlog.Record, backend, mode string) error {
-	if mode == "" || mode == "off" {
+// Refuse a backend switch unless retrieval is explicitly off.
+func checkRetrievalPin(chain []runlog.Record, backend, mode string, exec bool) error {
+	if mode == "off" {
 		return nil
 	}
 	for i := len(chain) - 1; i >= 0; i-- {
@@ -270,8 +338,14 @@ func checkRetrievalPin(chain []runlog.Record, backend, mode string) error {
 		if pin.Packet != nil && pin.Packet.VersionID != "" {
 			pinned = "pinned retrieval to knowledge version " + pin.Packet.VersionID
 		}
-		return fmt.Errorf("run %s %s on %s, which %s cannot carry over; continue on %[3]s to keep that pin, start a fresh run to retrieve again, or continue on %[4]s with retrieval off",
-			r.ID, pinned, r.Backend, backend)
+		message := fmt.Sprintf("run %s %s on %s, which %s cannot carry over; continue on %[3]s to keep", r.ID, pinned, r.Backend, backend)
+		if exec {
+			message += " the pin"
+		} else {
+			message += " that pin"
+			message += fmt.Sprintf(", start a fresh run to retrieve again, or continue on %s with retrieval off", backend)
+		}
+		return errors.New(message)
 	}
 	return nil
 }
@@ -296,9 +370,39 @@ func latestModel(chain []runlog.Record, backend string) string {
 	return ""
 }
 
+// RetrievalNote appends the retrieval decision to a route note.
+func (p Plan) RetrievalNote(note string) string {
+	if p.retrievalNote == "" {
+		return note
+	}
+	if note == "" {
+		return p.retrievalNote
+	}
+	return note + "; " + p.retrievalNote
+}
+
+// ApplyRetrieval fills omitted retrieval settings before validation and recording.
+func (p Plan) ApplyRetrieval(o *agent.Options) {
+	if p.retrievalOptions.Retrieval == "" {
+		return
+	}
+	o.Retrieval = cmp.Or(o.Retrieval, p.retrievalOptions.Retrieval)
+	o.RetrievalTenant = cmp.Or(o.RetrievalTenant, p.retrievalOptions.RetrievalTenant)
+	o.RetrievalProject = cmp.Or(o.RetrievalProject, p.retrievalOptions.RetrievalProject)
+	o.RetrievalRevision = cmp.Or(o.RetrievalRevision, p.retrievalOptions.RetrievalRevision)
+	o.Model = cmp.Or(o.Model, p.retrievalOptions.Model)
+	o.RetrievalVersion = p.RetrievalVersion
+}
+
 // Apply adds handoff context after recording, so the record retains the original prompt.
 func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	task.Resume, task.ForkSession = p.Resume, p.ForkSession
+	if p.retrievalRefreshed {
+		task.Options.RetrievalVersion = ""
+		task.Options.RetrievalRevision = p.RetrievalRevision
+	} else if p.RetrievalVersion != "" {
+		task.Options.RetrievalVersion = p.RetrievalVersion
+	}
 	task.FixRound = p.Prev.ID != ""
 	for _, n := range p.Notes {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: n})

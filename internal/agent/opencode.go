@@ -80,7 +80,7 @@ func parseOpencodeStream(line []byte, emit func(Event), res *Result) bool {
 			emit(Event{Time: now, Kind: EventUsage, Usage: &u})
 		}
 		res.Turns++
-		res.addUsage("exclusive_cache", l.Part.Tokens.Input, l.Part.Tokens.Output, l.Part.Tokens.Cache.Read, l.Part.Tokens.Cache.Write)
+		addUsage(res, "exclusive_cache", l.Part.Tokens.Input, l.Part.Tokens.Output, l.Part.Tokens.Cache.Read, l.Part.Tokens.Cache.Write)
 		res.CostUSD += l.Part.Cost
 	case "error":
 		msg := string(l.Error)

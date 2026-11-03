@@ -51,7 +51,7 @@ func TestRunFreshStartsANewSessionWithAHandover(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Mode: agent.ModeAuto, Model: "m1"}})
+			w, err := runlog.Create(backend, agent.Task{Prompt: "implement the parser", Dir: dir, Options: agent.Options{Mode: agent.ModeAuto, Model: "m1"}}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +87,7 @@ func TestRunFreshStartsANewSessionWithAHandover(t *testing.T) {
 func TestRunWithoutFreshStillResumes(t *testing.T) {
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("stub-cmd", agent.Task{Prompt: "first", Dir: t.TempDir()})
+	w, err := runlog.Create("stub-cmd", agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestRunWithoutFreshStillResumes(t *testing.T) {
 	if task := <-recorded; task.Resume == nil || task.Prompt != withCommitBlock("again", true) {
 		t.Errorf("ordinary continue should resume the conversation as before: resume=%v prompt=%q", task.Resume, task.Prompt)
 	}
-	if rec := continued(t, w.ID()); rec.ContinueRoute != "" {
+	if rec := continued(t, w.ID()); rec.ContinueRoute != "continued_session" {
 		t.Errorf("ordinary continue recorded route %q", rec.ContinueRoute)
 	}
 	if code, err := cmdRun([]string{"--continue", w.ID(), "--fresh", "--no-switch", "again"}); code != 0 || err != nil {
@@ -136,7 +136,7 @@ func TestContinueCodexDefaultAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

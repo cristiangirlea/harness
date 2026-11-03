@@ -9,37 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-)
 
-func TestDefaultClaudeTurnCap(t *testing.T) {
-	for _, tc := range []struct {
-		name, backend, purpose, prompt string
-		given, want                    int
-		applied                        bool
-	}{
-		{"review", "claude", "review", "work", 0, 30, true},
-		{"test", "claude", "test", "work", 0, 30, true},
-		{"classified", "claude", "", "Review the diff", 0, 30, true},
-		{"implement", "claude", "implement", "Review the diff", 0, 0, false},
-		{"explicit", "claude", "review", "work", 12, 12, false},
-		{"unlimited", "claude", "review", "work", -1, -1, false},
-		{"codex", "codex", "review", "work", 0, 0, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			task := Task{Purpose: tc.purpose, Prompt: tc.prompt, Options: Options{MaxTurns: tc.given}}
-			if got := task.ApplyTurnDefault(tc.backend); got != tc.applied || task.MaxTurns != tc.want {
-				t.Fatalf("applied=%v max_turns=%d, want %v %d", got, task.MaxTurns, tc.applied, tc.want)
-			}
-			data, err := json.Marshal(task)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.applied && !strings.Contains(string(data), `"max_turns":30`) {
-				t.Fatalf("record: %s", data)
-			}
-		})
-	}
-}
+	"github.com/cristiangirlea/harness/internal/kernel"
+)
 
 func TestShapeToolsOption(t *testing.T) {
 	var o Options
@@ -83,7 +55,7 @@ func TestEveryOptionHasAFlagAndASchemaEntry(t *testing.T) {
 		} else if fl.Usage != f.Tag.Get("desc") {
 			t.Errorf("--%s help differs from the desc tag", flagName(f))
 		}
-		name := jsonName(f)
+		name := kernel.JSONName(f)
 		p, ok := schema[name].(map[string]any)
 		if !ok {
 			t.Errorf("%s has no schema entry %q", f.Name, name)
@@ -232,7 +204,7 @@ func TestCompactWindow(t *testing.T) {
 		if string(o.CompactWindow) != tc.want {
 			t.Errorf("%s: CompactWindow = %q, want %q", tc.json, o.CompactWindow, tc.want)
 		}
-		if err := o.Validate(); err != nil {
+		if err := ValidateOptions(o); err != nil {
 			t.Errorf("%s: %v", tc.json, err)
 		}
 		b, _ := json.Marshal(o)
@@ -253,12 +225,12 @@ func TestCompactWindow(t *testing.T) {
 		}
 	}
 	for _, v := range []string{"100000", "1000000"} {
-		if err := (Options{CompactWindow: CompactWindow(v)}).Validate(); err != nil {
+		if err := ValidateOptions(Options{CompactWindow: CompactWindow(v)}); err != nil {
 			t.Errorf("%s is in range: %v", v, err)
 		}
 	}
 	for _, v := range []string{"99999", "1000001", "0", "-5", "200k", "AUTO", "0200000", "+200000"} {
-		if err := (Options{CompactWindow: CompactWindow(v)}).Validate(); err == nil || !strings.Contains(err.Error(), "compact_window") {
+		if err := ValidateOptions(Options{CompactWindow: CompactWindow(v)}); err == nil || !strings.Contains(err.Error(), "compact_window") {
 			t.Errorf("%s must be refused naming compact_window, got %v", v, err)
 		}
 		fs := flag.NewFlagSet("t", flag.ContinueOnError)
@@ -272,10 +244,10 @@ func TestCompactWindow(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	if err := (Options{}).Validate(); err != nil {
+	if err := ValidateOptions(Options{}); err != nil {
 		t.Errorf("empty options are valid: %v", err)
 	}
-	if err := (Options{Mode: ModeYolo, Timeout: Duration(time.Minute), MaxCostUSD: 2.5, TaskBudget: 20000}).Validate(); err != nil {
+	if err := ValidateOptions(Options{Mode: ModeYolo, Timeout: Duration(time.Minute), MaxCostUSD: 2.5, TaskBudget: 20000}); err != nil {
 		t.Errorf("valid options refused: %v", err)
 	}
 	for _, tc := range []struct {
@@ -294,7 +266,7 @@ func TestValidate(t *testing.T) {
 		{Options{AppendSystemPrompt: strings.Repeat(`\`, MaxAppendSystemPrompt/2+1)}, "at most 16384 fit"},
 		{Options{AppendSystemPrompt: "a\x00b"}, "NUL"},
 	} {
-		if err := tc.o.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+		if err := ValidateOptions(tc.o); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%+v: err = %v, want %q", tc.o, err, tc.want)
 		}
 	}
@@ -302,12 +274,12 @@ func TestValidate(t *testing.T) {
 
 func TestValidateAcceptsOnlyKnownEffortLevels(t *testing.T) {
 	for _, effort := range []string{"", "low", "medium", "high", "xhigh", "max"} {
-		if err := (Options{Effort: effort}).Validate(); err != nil {
+		if err := ValidateOptions(Options{Effort: effort}); err != nil {
 			t.Errorf("effort %q should be accepted: %v", effort, err)
 		}
 	}
 	for _, effort := range []string{"turbo", "HIGH"} {
-		err := (Options{Effort: effort}).Validate()
+		err := ValidateOptions(Options{Effort: effort})
 		if err == nil {
 			t.Errorf("effort %q should be refused", effort)
 			continue
@@ -315,41 +287,6 @@ func TestValidateAcceptsOnlyKnownEffortLevels(t *testing.T) {
 		if !strings.Contains(err.Error(), `"`+effort+`"`) || !strings.Contains(err.Error(), "low, medium, high, xhigh, max") {
 			t.Errorf("error must name the rejected effort and allowed levels: %v", err)
 		}
-	}
-}
-
-func TestDurationJSON(t *testing.T) {
-	type doc struct {
-		Timeout Duration `json:"timeout,omitempty"`
-	}
-	for _, tc := range []struct {
-		in   string
-		want Duration
-	}{
-		{`{"timeout":"20m"}`, Duration(20 * time.Minute)},
-		{`{"timeout":"1h30m"}`, Duration(90 * time.Minute)},
-		{`{"timeout":null}`, 0}, // absent, as a generated document spells it
-		{`{}`, 0},
-	} {
-		var d doc
-		if err := json.Unmarshal([]byte(tc.in), &d); err != nil || d.Timeout != tc.want {
-			t.Errorf("%s: got %s err=%v, want %s", tc.in, d.Timeout, err, tc.want)
-		}
-	}
-	var d doc
-	if err := json.Unmarshal([]byte(`{"timeout":"soon"}`), &d); err == nil || !strings.Contains(err.Error(), "20m") {
-		t.Errorf("a bad duration should say what it wants: %v", err)
-	}
-	// A bare number is refused: 300 meaning seconds would have run as 300ns.
-	if err := json.Unmarshal([]byte(`{"timeout":300}`), &d); err == nil || !strings.Contains(err.Error(), "20m") {
-		t.Errorf("a number must be refused, not read as nanoseconds: %v", err)
-	}
-	out, _ := json.Marshal(doc{Timeout: Duration(20 * time.Minute)})
-	if string(out) != `{"timeout":"20m0s"}` {
-		t.Errorf("marshal = %s", out)
-	}
-	if out, _ := json.Marshal(doc{}); string(out) != `{}` {
-		t.Errorf("zero must be omitted: %s", out)
 	}
 }
 

@@ -113,3 +113,24 @@ func TestBatchPageShowsATaskDeclaredPurpose(t *testing.T) {
 		t.Errorf("a task with no declared purpose shows %q", got)
 	}
 }
+
+func TestRunPageDisplaysContinuationRoute(t *testing.T) {
+	p := runPageOf(runlog.Record{ContinueRoute: "fresh_handover"}, nil, time.Time{}, viewer{})
+	for _, f := range p.Facts {
+		if f.Value == "fresh_handover" {
+			return
+		}
+	}
+	t.Fatalf("missing route: %+v", p.Facts)
+}
+
+func TestRunPageDisplaysEscapedRouteNote(t *testing.T) {
+	p := runPageOf(runlog.Record{RouteNote: "retrieval refreshed: <script>"}, nil, time.Time{}, viewer{})
+	html, err := render("run", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, "retrieval refreshed: &lt;script&gt;") || strings.Contains(html, "retrieval refreshed: <script>") {
+		t.Fatalf("missing or unescaped note: %s", html)
+	}
+}

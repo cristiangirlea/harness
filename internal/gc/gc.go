@@ -452,6 +452,11 @@ func batchOwners() (map[string]owner, error) {
 			if k := samePath(t.Worktree); t.Worktree != "" && owners[k].id == "" {
 				owners[k] = owner{id: res.ID, running: running}
 			}
+			for _, c := range t.Candidates {
+				if k := samePath(c.Worktree); c.BranchMade && c.Worktree != "" && owners[k].id == "" {
+					owners[k] = owner{id: res.ID, running: running}
+				}
+			}
 		}
 	}
 	return owners, nil

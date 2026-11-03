@@ -1,61 +1,63 @@
 package platform
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"github.com/cristiangirlea/harness/internal/agent"
-	"github.com/cristiangirlea/harness/internal/retrieval"
+	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestSubmissionRefusesRetrievalBeforeRemoteExecution(t *testing.T) {
-	err := validateSubmission(Submission{Options: agent.Options{Retrieval: "required"}})
+	err := validateSubmission(Submission{Options: JobOptions{Retrieval: "required"}})
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("retrieval submission: %v, want unsupported", err)
 	}
 }
 
-type knowledgeExecutionFixture struct {
-	t     *testing.T
-	calls int
-}
-
-func (b *knowledgeExecutionFixture) Name() string            { return "codex" }
-func (b *knowledgeExecutionFixture) Detect() (string, error) { return "fixture", nil }
-func (b *knowledgeExecutionFixture) Run(_ context.Context, task agent.Task, _ func(agent.Event)) agent.Result {
-	b.calls++
-	if !strings.Contains(task.Prompt, "checked project build") || task.Mode != agent.ModeReadOnly || task.OriginalPrompt != "Explain ERR_BUILD safely" {
-		b.t.Error("retrieval did not cross execution boundary correctly")
-	}
-	if _, e := os.Stat(filepath.Join(task.RunDir, "retrieval.json")); e != nil {
-		b.t.Error(e)
-	}
-	return agent.Result{Backend: "codex", Model: task.Model, Status: agent.StatusOK}
-}
-func TestKnowledgePostgresRootExecutionBoundary(t *testing.T) {
+func TestKnowledgePostgresRemoteExecutionBoundary(t *testing.T) {
 	s := testStore(t)
 	p, token := testProject(t, s)
 	seed := knowledgeFixture(p)
 	ctx := context.Background()
-	id, e := s.ImportKnowledge(ctx, seed)
-	if e != nil {
-		t.Fatal(e)
+	id, err := s.ImportKnowledge(ctx, seed)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, e = s.ChangeKnowledge(ctx, retrieval.Change{Scope: seed.Scope, Operation: "activate", VersionID: id}); e != nil {
-		t.Fatal(e)
+	if _, err = s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: seed.KnowledgeScope, Operation: "activate", VersionID: id}); err != nil {
+		t.Fatal(err)
 	}
 	srv := httptest.NewServer((&HTTPServer{Store: s}).Handler())
 	defer srv.Close()
-	t.Setenv("HRN_SERVER_URL", srv.URL)
-	t.Setenv("HRN_TENANT_TOKEN", token)
-	t.Setenv("HRN_SERVER_CA_FILE", "")
-	b := &knowledgeExecutionFixture{t: t}
-	result := agent.Run(ctx, b, agent.Task{Prompt: "Explain ERR_BUILD safely", RunDir: t.TempDir(), Options: agent.Options{Model: seed.Model, Mode: agent.ModeReadOnly, Retrieval: "required", RetrievalTenant: p.TenantID, RetrievalProject: p.ID, RetrievalRevision: fixtureRef}}, func(agent.Event) {})
-	if result.Status != agent.StatusOK || b.calls != 1 || result.Retrieval.Packet.VersionID != id {
-		t.Fatalf("execution: %+v", result)
+	query := KnowledgeSearch{KnowledgeScope: seed.KnowledgeScope, Query: "Explain ERR_BUILD safely"}
+	payload, err := json.Marshal(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v1/knowledge/search", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var packet KnowledgePacket
+	err = json.NewDecoder(resp.Body).Decode(&packet)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("search status: %s", resp.Status)
+	}
+	if err == nil {
+		err = KnowledgeValidatePacket(packet, id, query.Query)
+	}
+
+	if err != nil || packet.VersionID != id || !strings.Contains(packet.Text, "checked project build") {
+		t.Fatalf("search: %+v, %v", packet, err)
 	}
 }

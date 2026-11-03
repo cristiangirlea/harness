@@ -5,19 +5,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
-func usageEvent(ctx, cacheRead int64) agent.Event {
-	return agent.Event{Kind: agent.EventUsage, Usage: &agent.Usage{InputTokens: ctx - cacheRead, CacheRead: cacheRead, ContextTokens: ctx}}
+func usageEvent(ctx, cacheRead int64) kernel.Event {
+	return kernel.Event{Kind: kernel.EventUsage, Usage: &kernel.Usage{InputTokens: ctx - cacheRead, CacheRead: cacheRead, ContextTokens: ctx}}
 }
 
 func TestTurnsNumberEachUsageAndMarkCompactions(t *testing.T) {
-	events := []agent.Event{
-		{Kind: agent.EventText, Text: "hi"},
+	events := []kernel.Event{
+		{Kind: kernel.EventText, Text: "hi"},
 		usageEvent(10000, 0),
 		usageEvent(50000, 10000),
-		{Kind: agent.EventCompaction, Text: "auto", Usage: &agent.Usage{ContextTokens: 52000}},
+		{Kind: kernel.EventCompaction, Text: "auto", Usage: &kernel.Usage{ContextTokens: 52000}},
 		usageEvent(9000, 0),
 		usageEvent(80000, 9000),
 		usageEvent(30000, 30000), // fell by more than half, with nothing recorded
@@ -50,7 +50,7 @@ func TestTurnsNumberEachUsageAndMarkCompactions(t *testing.T) {
 }
 
 func TestTurnsOfARunWithoutUsageAreNone(t *testing.T) {
-	if turns := Turns([]agent.Event{{Kind: agent.EventText, Text: "old record"}}); len(turns) != 0 {
+	if turns := Turns([]kernel.Event{{Kind: kernel.EventText, Text: "old record"}}); len(turns) != 0 {
 		t.Errorf("turns = %+v", turns)
 	}
 }
@@ -58,16 +58,16 @@ func TestTurnsOfARunWithoutUsageAreNone(t *testing.T) {
 // TurnsOf reads only a run's usage and compaction lines from disk.
 func TestTurnsOfReadsARecordedRun(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := Create("claude", agent.Task{Prompt: "go", Dir: t.TempDir()})
+	w, err := Create("claude", kernel.Task{Prompt: "go", Dir: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
-	w.Event(agent.Event{Time: at, Kind: agent.EventText, Text: `a text that quotes "kind":"usage"`})
+	w.Event(kernel.Event{Time: at, Kind: kernel.EventText, Text: `a text that quotes "kind":"usage"`})
 	e := usageEvent(1000, 0)
 	e.Time = at
 	w.Event(e)
-	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+	if err := w.Close(kernel.Result{Status: kernel.StatusOK}); err != nil {
 		t.Fatal(err)
 	}
 	turns, err := TurnsOf(w.ID())
@@ -90,7 +90,7 @@ func TestUsageEventsKeepsOnlyUsageAndCompactionEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0].Kind != agent.EventUsage || events[1].Kind != agent.EventCompaction {
+	if len(events) != 2 || events[0].Kind != kernel.EventUsage || events[1].Kind != kernel.EventCompaction {
 		t.Errorf("events = %+v", events)
 	}
 }

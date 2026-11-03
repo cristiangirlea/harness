@@ -8,6 +8,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"io"
 	"os"
 	"os/signal"
@@ -141,6 +143,7 @@ Run flags:
       --continue ID    continue a finished run, on its backend or, with -b, on another one
       --fresh          with --continue: start a new session, handed the earlier run over from its record
                        (task, outcome, changed files, gate results) instead of resuming or forking its session
+      --retrieval-refresh  with --continue: refresh a moved retrieval pin on a fresh hand-over
       --resume         with --continue: resume or fork the saved session rather than the codex fresh default
       --purpose CATEGORY
                        review | debug | implement | refactor | test | research | plan | ops
@@ -272,13 +275,14 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	fs.BoolVar(&thinking, "thinking", false, "")
 	continueID := fs.String("continue", "", "")
 	fresh := fs.Bool("fresh", false, "")
+	retrievalRefresh := fs.Bool("retrieval-refresh", false, "")
 	resume := fs.Bool("resume", false, "")
 	declared := fs.String("purpose", "", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
-	preference, err := agent.BackendPreferences(runlog.Home())
+	preference, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return 2, fmt.Errorf("run: %w", err)
 	}
@@ -295,6 +299,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("run: --fresh needs --continue: it starts a new session handed an earlier run over")
 	}
 
+	if *retrievalRefresh && *continueID == "" {
+		return 2, errors.New("run: --retrieval-refresh needs --continue")
+	}
 	if *resume && *continueID == "" {
 		return 2, errors.New("run: --resume needs --continue")
 	}
@@ -306,14 +313,14 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	var routed string
 	if !opts.NoSwitch && *continueID != "" {
 		meant := backend
-		if backend, routed = limits.Choose(backend, *continueID); backend != meant {
+		if backend, routed = followup.Choose(backend, *continueID); backend != meant {
 			opts.Model = ""
 		}
 	}
 
 	var plan followup.Plan
 	if *continueID != "" {
-		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
+		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, RetrievalRevision: opts.RetrievalRevision, RetrievalTenant: opts.RetrievalTenant, RetrievalProject: opts.RetrievalProject, RetrievalVersion: opts.RetrievalVersion, RetrievalRefresh: *retrievalRefresh, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}
@@ -326,6 +333,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 		defer plan.Release()
 		backend, dir, opts.Model = plan.Backend, plan.Dir, plan.Model
+		plan.ApplyRetrieval(&opts)
 		// The inherited backend is refused here, before a prompt is read from stdin.
 		if err := preference.Check(backend); err != nil {
 			return 2, fmt.Errorf("run: %w", err)
@@ -335,7 +343,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 
-	if err := opts.Validate(); err != nil {
+	if err := agent.ValidateOptions(opts); err != nil {
 		return 2, err
 	}
 	ws, err := tools.NewWorkspace(dir)
@@ -362,7 +370,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 2, errors.New("empty prompt")
 	}
 
-	routedBy, routeNote, err := opts.RouteWithNote(*declared, prompt, &backend, runlog.Home())
+	routedBy, routeNote, err := resolve.RouteWithNote(&opts, *declared, prompt, &backend, runlog.Home())
 	if err != nil {
 		return 2, err
 	}
@@ -371,7 +379,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	if !opts.NoSwitch && *continueID == "" {
 		meant := backend
-		if backend, routed = limits.Choose(backend, ""); backend != meant {
+		if backend, routed = followup.Choose(backend, ""); backend != meant {
 			if routedBy != nil {
 				opts.Effort = "" // the row measured the limited backend, not its partner
 			}
@@ -379,7 +387,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 	if backend == "" {
-		backend = agent.DefaultBackendNameIn(runlog.Home())
+		backend = resolve.DefaultBackendNameIn(runlog.Home())
 		if routedBy == nil {
 			routeNote = agent.WithDefault(routeNote, backend)
 		}
@@ -398,8 +406,8 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if *declared == "" {
 		*declared = purpose.Inherited(plan.Prev.Task.Purpose, plan.Prev.Task.Prompt)
 	}
-	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts}
-	turnDefault := task.ApplyTurnDefault(backend)
+	task := agent.Task{Prompt: prompt, Purpose: *declared, Dir: absDir, Options: opts, Knowledge: remote.SearcherFromEnv}
+	turnDefault := resolve.ApplyTurnDefault(&task, backend)
 	if task.MCP, err = mcp.ConfigPaths(opts.MCP); err != nil {
 		return 2, err
 	}
@@ -412,7 +420,8 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	}
 
-	rec, err := runlog.CreateRouted(backend, task, *continueID, plan.Route(), routedBy, routeNote)
+	routeNote = plan.RetrievalNote(routeNote)
+	rec, err := runlog.CreateRouted(backend, task, agent.ResolveSetup(backend, task), *continueID, plan.Route(), routedBy, routeNote)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}
@@ -452,7 +461,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
 	}
 	if turnDefault {
-		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
 	}
 	if warning := plan.ContextWarning(); jsonOut && warning != "" {
 		fmt.Fprintln(os.Stderr, warning)
@@ -472,11 +481,11 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	finished(rec.ID(), res)
 
 	// Switch only once to prevent two limited backends from handing work back indefinitely.
-	var next *limits.CarryOn
+	var next *followup.CarryOn
 	var why string
 	if ctx.Err() == nil {
-		next, why, err = limits.After(rec.ID(), backend, task, res)
-	} else if err := limits.Note(backend, res); err != nil {
+		next, why, err = followup.After(rec.ID(), backend, task, res)
+	} else if err := followup.Note(backend, res); err != nil {
 		fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
 	}
 	switch {
@@ -492,12 +501,12 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		if next.Task.Purpose == "" {
 			next.Task.Purpose = purpose.Inherited(task.Purpose, prompt)
 		}
-		nextDefault := next.Task.ApplyTurnDefault(next.To)
+		nextDefault := resolve.ApplyTurnDefault(&next.Task, next.To)
 		nb, err := agent.Get(next.To)
 		if err != nil {
 			return 1, err
 		}
-		nrec, err := runlog.CreateContinuing(next.To, next.Task, rec.ID())
+		nrec, err := runlog.CreateContinuing(next.To, next.Task, agent.ResolveSetup(next.To, next.Task), rec.ID())
 		if err != nil {
 			return 1, fmt.Errorf("creating run record: %w", err)
 		}
@@ -505,15 +514,16 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		rec = nrec // the renderer and the encoder write to the new record now
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Why})
 		if nextDefault {
-			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
 		}
+		next.Task.Knowledge = remote.SearcherFromEnv
 		next.Plan.Apply(&next.Task, nrec.Dir(), emit)
 		res = agent.Run(ctx, nb, next.Task, emit)
 		if err := nrec.Close(res); err != nil {
 			fmt.Fprintln(os.Stderr, "hrn: "+runlog.CloseMessage(err))
 		}
 		// Limited too: remembered, so the next run does not try it first.
-		if err := limits.Note(next.To, res); err != nil {
+		if err := followup.Note(next.To, res); err != nil {
 			fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
 		}
 		finished(nrec.ID(), res)
@@ -575,13 +585,13 @@ func cmdBackends(args []string) error {
 			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] | reset]")
 		}
 	}
-	p, err := agent.BackendPreferences(runlog.Home())
+	p, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return err
 	}
 	def := p.Default()
 	if def == "" {
-		def = agent.DefaultBackendNameIn(runlog.Home())
+		def = resolve.DefaultBackendNameIn(runlog.Home())
 	}
 	now := time.Now()
 	for _, name := range agent.Names() {
@@ -758,12 +768,18 @@ func showHeader(r *renderer, rec runlog.Record) {
 	if rec.Continues != "" {
 		head += " · continues " + rec.Continues
 	}
+	if rec.ContinueRoute != "" {
+		head += " | " + rec.ContinueRoute
+	}
 	if rec.Result.Session != "" {
 		head += " · session " + rec.Result.Session
 	}
 	head = printable(head)
 	r.Line(r.c(bold, printable(tools.OneLine(mask.Text(rec.Task.Prompt), 200))))
 	r.Line(head)
+	if rec.RouteNote != "" {
+		r.Line(printable(mask.Text(rec.RouteNote)))
+	}
 	if rec.RecordError != "" {
 		r.Line("run record incomplete: " + printable(strings.Join(strings.Fields(rec.RecordError), " ")))
 	}
@@ -933,11 +949,46 @@ func cmdEval(args []string) (int, error) {
 			}
 		}
 	}
+	if unavailable := evalUnavailableProviders(res); unavailable != "" {
+		return 1, errors.New("no eval cell started: " + unavailable)
+	}
 	// A failing variant is data; a failing eval is not.
 	if failed {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+// Re-check availability at the end so a provider installed during the eval reads as available.
+func evalUnavailableProviders(res batch.Result) string {
+	if len(res.Tasks) == 0 {
+		return ""
+	}
+	var reasons []string
+	seen := map[string]bool{}
+	for _, task := range res.Tasks {
+		if len(task.Attempts) == 0 {
+			return ""
+		}
+		for _, attempt := range task.Attempts {
+			if attempt.DidNotStart == "" {
+				return ""
+			}
+			backend, err := agent.Get(attempt.Backend)
+			if err != nil {
+				return ""
+			}
+			_, err = backend.Detect()
+			if err == nil || !strings.Contains(attempt.DidNotStart, err.Error()) {
+				return ""
+			}
+			if !seen[attempt.Backend] {
+				seen[attempt.Backend] = true
+				reasons = append(reasons, attempt.Backend+": "+err.Error())
+			}
+		}
+	}
+	return strings.Join(reasons, "; ")
 }
 
 func printEval(r *renderer, rec eval.Record) {

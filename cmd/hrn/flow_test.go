@@ -18,7 +18,7 @@ import (
 func TestFlowRunTextAndJSON(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_OWNER", "local:one")
-	w, err := runlog.Create("claude", agent.Task{Prompt: "do it"})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "do it"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestFlowHidesMissingAndForeignRecords(t *testing.T) {
 			t.Errorf("id %q error = %v", id, err)
 		}
 	}
-	w, err := runlog.Create("claude", agent.Task{Prompt: "private"})
+	w, err := runlog.Create("claude", agent.Task{Prompt: "private"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestFlowHidesMissingAndForeignRecords(t *testing.T) {
 
 func TestFlowPrintsNoTerminalControlsOrSecretsFromRecords(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("codex", agent.Task{Prompt: "do it"})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "do it"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestFlowPrintsNoTerminalControlsOrSecretsFromRecords(t *testing.T) {
 
 func TestFlowPrintsNoTerminalControlsFromAnIssueLease(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("codex", agent.Task{Prompt: "do it"})
+	w, err := runlog.Create("codex", agent.Task{Prompt: "do it"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

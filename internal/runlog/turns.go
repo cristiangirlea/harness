@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 // CompactionRecorded and CompactionProbable name recorded and probable (unpersisted inference) sources.
@@ -22,7 +22,7 @@ const (
 type Turn struct {
 	N    int       `json:"turn"`
 	Time time.Time `json:"t"`
-	agent.Usage
+	kernel.Usage
 	CacheReadSoFar int64 `json:"cache_read_so_far,omitempty"`
 	// Compaction is recorded, probable or empty when none was observed.
 	Compaction string `json:"compaction,omitempty"`
@@ -32,15 +32,15 @@ type Turn struct {
 }
 
 // Turns returns model calls in usage-event order.
-func Turns(events []agent.Event) []Turn {
+func Turns(events []kernel.Event) []Turn {
 	var turns []Turn
 	var soFar int64
-	var pending *agent.Event // a compaction not yet followed by a turn
+	var pending *kernel.Event // a compaction not yet followed by a turn
 	for i, e := range events {
 		switch {
-		case e.Kind == agent.EventCompaction:
+		case e.Kind == kernel.EventCompaction:
 			pending = &events[i]
-		case e.Kind == agent.EventUsage && e.Usage != nil:
+		case e.Kind == kernel.EventUsage && e.Usage != nil:
 			soFar += e.Usage.CacheRead
 			t := Turn{N: len(turns) + 1, Time: e.Time, Usage: *e.Usage, CacheReadSoFar: soFar}
 			switch {
@@ -80,10 +80,10 @@ func TurnsOf(id string) ([]Turn, error) {
 }
 
 // UsageEvents reads valid usage and compaction events.
-func UsageEvents(r io.Reader) ([]agent.Event, error) {
+func UsageEvents(r io.Reader) ([]kernel.Event, error) {
 	// Raw tool input can match these compact-JSON markers; verify the decoded kind too.
 	usage, compaction := []byte(`"kind":"usage"`), []byte(`"kind":"compaction"`)
-	var events []agent.Event
+	var events []kernel.Event
 	br := bufio.NewReader(r)
 	for {
 		line, readErr := br.ReadBytes('\n')
@@ -91,8 +91,8 @@ func UsageEvents(r io.Reader) ([]agent.Event, error) {
 			return nil, readErr
 		}
 		if bytes.Contains(line, usage) || bytes.Contains(line, compaction) {
-			var e agent.Event
-			if json.Unmarshal(line, &e) == nil && (e.Kind == agent.EventUsage || e.Kind == agent.EventCompaction) {
+			var e kernel.Event
+			if json.Unmarshal(line, &e) == nil && (e.Kind == kernel.EventUsage || e.Kind == kernel.EventCompaction) {
 				events = append(events, e)
 			}
 		}

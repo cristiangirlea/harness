@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -411,8 +411,8 @@ func claudeFrom(root string) Quota {
 			if !bytes.Contains(line, []byte(`"quota"`)) {
 				continue
 			}
-			var ev agent.Event
-			if json.Unmarshal(line, &ev) != nil || ev.Kind != agent.EventQuota || ev.Quota == nil {
+			var ev kernel.Event
+			if json.Unmarshal(line, &ev) != nil || ev.Kind != kernel.EventQuota || ev.Quota == nil {
 				continue
 			}
 			var this Quota

@@ -15,7 +15,12 @@ import (
 
 var skipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true, ".hrn": true, "dist": true, "build": true, "__pycache__": true, ".venv": true}
 
-func str(v string) map[string]any { return map[string]any{"type": "string", "description": v} }
+func str(v string) map[string]any {
+	if v == "" {
+		return map[string]any{"type": "string"}
+	}
+	return map[string]any{"type": "string", "description": v}
+}
 func num(v string) map[string]any { return map[string]any{"type": "integer", "description": v} }
 
 func summaryOf(field string) func(json.RawMessage) string {
@@ -37,11 +42,11 @@ func readFile() Tool {
 	}
 	return Tool{
 		Name:        "read_file",
-		Description: "Read a text file. Returns lines prefixed with their 1-based line number and a tab. Use offset/limit for large files.",
+		Description: "Read a workspace text file; lines have 1-based numbers and tabs. Secret files may be refused.",
 		Properties: map[string]any{
-			"path":   str("File path, relative to the workspace root."),
-			"offset": num("1-based line to start from (default 1)."),
-			"limit":  num("Maximum lines to return (default 2000)."),
+			"path":   str(""),
+			"offset": num("1-based start line (default 1)."),
+			"limit":  num("Maximum lines (default 2000)."),
 		},
 		Required: []string{"path"},
 		Effect:   EffectRead,
@@ -93,10 +98,10 @@ func writeFile() Tool {
 	}
 	return Tool{
 		Name:        "write_file",
-		Description: "Create or overwrite a file with the given content. Parent directories are created. Prefer edit_file for changes to existing files.",
+		Description: "Create or overwrite a workspace file, creating parents; secret files may be refused. Prefer edit_file for existing files.",
 		Properties: map[string]any{
-			"path":    str("File path, relative to the workspace root."),
-			"content": str("Full file content."),
+			"path":    str(""),
+			"content": str(""),
 		},
 		Required: []string{"path", "content"},
 		Effect:   EffectWrite,
@@ -134,12 +139,12 @@ func editFile() Tool {
 	}
 	return Tool{
 		Name:        "edit_file",
-		Description: "Replace an exact string in a file. old_string must match exactly (including whitespace) and be unique unless replace_all is true.",
+		Description: "Replace old_string with new_string in a workspace file; old_string must be nonempty and match uniquely, including whitespace, unless replace_all is true. Secret files may be refused.",
 		Properties: map[string]any{
-			"path":        str("File path, relative to the workspace root."),
-			"old_string":  str("Exact text to replace."),
-			"new_string":  str("Replacement text."),
-			"replace_all": map[string]any{"type": "boolean", "description": "Replace every occurrence."},
+			"path":        str(""),
+			"old_string":  str(""),
+			"new_string":  str(""),
+			"replace_all": map[string]any{"type": "boolean"},
 		},
 		Required: []string{"path", "old_string", "new_string"},
 		Effect:   EffectWrite,
@@ -205,10 +210,10 @@ func listFiles() Tool {
 	}
 	return Tool{
 		Name:        "list_files",
-		Description: "List files matching a glob pattern (supports ** for any depth, e.g. \"**/*.go\"). Skips .git, node_modules and similar directories. Returns at most 500 paths.",
+		Description: "List up to 500 paths; ** matches any depth, skipping .git, node_modules and similar directories.",
 		Properties: map[string]any{
-			"pattern": str("Glob pattern, default \"**/*\"."),
-			"path":    str("Directory to search from, default the workspace root."),
+			"pattern": str("Glob (default \"**/*\")."),
+			"path":    str("Search directory (default workspace root)."),
 		},
 		Effect:  EffectRead,
 		Summary: summaryOf("pattern"),
@@ -260,11 +265,11 @@ func grep() Tool {
 	}
 	return Tool{
 		Name:        "grep",
-		Description: "Search file contents with a regular expression (Go RE2 syntax). Returns path:line:text, at most 200 matches. Reports files whose search was cut short by a read error or an overlong line.",
+		Description: "Search file contents with Go RE2; returns up to 200 path:line:text matches and reports read errors or overlong lines. Secret files may be excluded.",
 		Properties: map[string]any{
-			"pattern":          str("Regular expression."),
-			"path":             str("File or directory to search, default the workspace root."),
-			"glob":             str("Only search files whose path matches this glob, e.g. \"**/*.ts\"."),
+			"pattern":          str(""),
+			"path":             str("Search path (default workspace root)."),
+			"glob":             str("Filter paths by glob."),
 			"case_insensitive": map[string]any{"type": "boolean"},
 		},
 		Required: []string{"pattern"},

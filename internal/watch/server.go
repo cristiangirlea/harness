@@ -24,10 +24,11 @@ import (
 	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/watchaddr"
 )
 
 // DefaultAddr is a loopback address on a port separate from hrn sessions.
-const DefaultAddr = "127.0.0.1:8089"
+const DefaultAddr = watchaddr.DefaultAddr
 
 // Options configures a watch server with defaults for zero fields.
 type Options struct {

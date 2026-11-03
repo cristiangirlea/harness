@@ -4,14 +4,14 @@
 standard library only. This module uses pgx to keep tenants, projects, jobs,
 ownership, events, and durable API checkpoints in PostgreSQL. The control
 service accepts jobs over HTTP; a project worker claims and heartbeats them,
-runs the API backend, and saves checkpoints. An accepted job survives the
-submitting client's disconnect and a control service restart. Recovery after
+runs jobs through the hrn binary, and saves checkpoints. An accepted job
+survives the submitting client's disconnect and a control service restart. Recovery after
 worker loss requires operator confirmation that the old executor stopped.
 
 The worker is a development fixture: it accepts only read-only API jobs with
 a positive cost ceiling, uses a loopback fake model, and has no tools, shell,
-or native CLI execution. It does not fetch the registered repository or provide
-an isolation boundary. Its workspace manifests detect identity drift; they do
+or external agent CLI execution. It does not fetch the registered repository
+or provide an isolation boundary. Its workspace manifests detect identity drift; they do
 not make filesystem changes and database checkpoints atomic.
 
 Both submission and the durable API run path refuse MCP servers and
@@ -40,6 +40,12 @@ Then set `HRN_TEST_DATABASE_URL` to
 and run `go test -count=1 ./...` in `server/`. Tests create and remove their own
 schemas. Stop the fixture with `docker compose -f server/compose.dev.yaml down`.
 
+Regenerate the knowledge goldens with `HRN_UPDATE_WIRE_FIXTURES=1`, and the
+client recording with `HRN_UPDATE_FIXTURES=1` and `HRN_TEST_DATABASE_URL` set.
+Copy `server/platform/testdata/knowledge` to `internal/retrieval/testdata/wire`
+and `server/platform/testdata/remote` to `internal/remote/testdata/server`; the
+fixture identity test fails until the copies match.
+
 For a private local control service, set `HRN_DATABASE_URL` and distinct random
 `HRN_OPERATOR_TOKEN` and `HRN_SCALER_TOKEN` values of at least 32 characters.
 Run `go run ./cmd/hrn-server migrate`, then `go run ./cmd/hrn-server serve`
@@ -52,6 +58,11 @@ and `HRN_TLS_KEY_FILE`; otherwise startup is refused before listening. Run
 with `HRN_CONTROL_URL`, `HRN_FIXTURE_API_URL`, `HRN_PROJECT_ID`,
 `HRN_WORKER_TOKEN`, and an existing absolute `HRN_WORKSPACE_ROOT`. The worker
 command is `go run ./cmd/hrn-worker`.
+The worker requires the `hrn` binary to run jobs and checks `hrn version` at
+startup, with a 10-second timeout. Set
+`HRN_WORKER_HRN` or pass `-hrn` to select the binary; the flag takes precedence.
+The default is `hrn` on PATH. The container image supplies the binary and sets
+`HRN_WORKER_HRN` to its absolute path.
 
 Tenant budgets and spending reservation are not enforced yet (still open in
 the durable workers spec): any tenant can queue any number of jobs, each up to
@@ -137,6 +148,7 @@ The API uses these scoped JSON operations:
 |---|---|---|
 | `POST /v1/knowledge/import` | Import a reviewed, immutable version | Operator |
 | `POST /v1/knowledge/change` | Activate, disable, or roll back a version | Operator |
+| `POST /v1/knowledge/admission` | Record a verdict; activate an admitted candidate while its baseline stays active | Operator |
 | `POST /v1/knowledge/search` | Return an audited, bounded packet | Tenant, project worker, or operator |
 | `POST /v1/knowledge/inspect` | Inspect a version | Tenant, project worker, or operator |
 | `POST /v1/knowledge/active` | Read active and previous pointers | Tenant, project worker, or operator |

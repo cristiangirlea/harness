@@ -8,7 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/remote"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime"
@@ -44,12 +49,27 @@ type recordFactory func(string, agent.Task, string, string, *runlog.RoutedBy, st
 // Run writes hello before reading input, runs at most one task, and returns the
 // protocol exit code. ctx carries interrupts; nil now uses the real clock.
 func Run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
-	return run(ctx, in, out, now, func(b string, t agent.Task, id, route string, routed *runlog.RoutedBy, note string) (record, error) {
-		return runlog.CreateRouted(b, t, id, route, routed, note)
-	})
+	return runMode(ctx, in, out, now, false, createRecord, 0)
+}
+
+// RunWorker applies the worker's restricted execution policy.
+func RunWorker(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time) int {
+	return runWorkerWithTimeout(ctx, in, out, now, 15*time.Second)
+}
+
+func runWorkerWithTimeout(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, timeout time.Duration) int {
+	return runMode(ctx, in, out, now, true, createRecord, timeout)
+}
+
+func createRecord(b string, t agent.Task, id, route string, routed *runlog.RoutedBy, note string) (record, error) {
+	return runlog.CreateRouted(b, t, agent.ResolveSetup(b, t), id, route, routed, note)
 }
 
 func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, create recordFactory) int {
+	return runMode(ctx, in, out, now, false, create, 0)
+}
+
+func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time, worker bool, create recordFactory, checkpointTimeout time.Duration) int {
 	if now == nil {
 		now = time.Now
 	}
@@ -76,7 +96,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		return w.reject("", "bad_request", first.err.Error())
 	}
 	var req startRequest
-	if err := decode(first.data, &req); err != nil {
+	if err := decode(first.data, &req, worker); err != nil {
 		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
 	if req.Type != "start" {
@@ -85,21 +105,60 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if !attemptID.MatchString(req.AttemptID) {
 		return w.reject(req.AttemptID, "bad_request", "attempt_id must be 1 to 128 letters, digits, dots, underscores or dashes")
 	}
+	var startFields map[string]json.RawMessage
+	_ = json.Unmarshal(first.data, &startFields)
+	if _, present := startFields["checkpoint"]; !worker && present {
+		return w.reject(req.AttemptID, "bad_request", "checkpoint requires worker mode")
+	}
 	if req.Task == nil {
 		return w.reject(req.AttemptID, "bad_request", "task is required")
 	}
 	t := req.Task
+	var workerURL string
+	if worker {
+		var workerFields struct {
+			Task map[string]json.RawMessage `json:"task"`
+		}
+		_ = json.Unmarshal(first.data, &workerFields)
+		restricted := t.ContinueRunID != "" || (t.Retrieval != "" && t.Retrieval != "off")
+		for _, name := range []string{"fresh", "retrieval_refresh", "retrieval_tenant", "retrieval_project", "retrieval_revision", "retrieval_version"} {
+			_, set := workerFields.Task[name]
+			restricted = restricted || set
+		}
+		if restricted {
+			return w.reject(req.AttemptID, "unsupported", "worker does not allow continuation or retrieval")
+		}
+		if t.Backend != "api" {
+			return w.reject(req.AttemptID, "unsupported", "worker requires the api backend")
+		}
+		workerURL = os.Getenv("ANTHROPIC_BASE_URL")
+		endpoint, err := url.Parse(workerURL)
+		if err != nil || endpoint == nil || endpoint.Scheme != "http" || endpoint.User != nil ||
+			!(endpoint.Hostname() == "localhost" || (net.ParseIP(endpoint.Hostname()) != nil && net.ParseIP(endpoint.Hostname()).IsLoopback())) {
+			return w.reject(req.AttemptID, "unsupported", "worker requires a local HTTP API endpoint")
+		}
+		var fields struct {
+			Task map[string]json.RawMessage `json:"task"`
+		}
+		_ = json.Unmarshal(first.data, &fields)
+		if _, set := fields.Task["mcp"]; set {
+			return w.reject(req.AttemptID, "unsupported", "worker does not allow MCP tools")
+		}
+	}
 	if strings.TrimSpace(t.Prompt) == "" || strings.TrimSpace(t.Dir) == "" || t.Mode == "" {
 		return w.reject(req.AttemptID, "bad_request", "prompt, dir and mode are required")
 	}
 	if t.Fresh != nil && *t.Fresh && t.ContinueRunID == "" {
 		return w.reject(req.AttemptID, "bad_request", "fresh needs continue_run_id: it starts a new session handed an earlier run over")
 	}
-	preferences, err := agent.BackendPreferences(runlog.Home())
+	if t.RetrievalRefresh && t.ContinueRunID == "" {
+		return w.reject(req.AttemptID, "bad_request", "retrieval_refresh needs continue_run_id")
+	}
+	preferences, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", "cannot load worker backend preferences")
 	}
-	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP}
+	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP, MaxCostUSD: t.MaxCostUSD, TaskBudget: t.TaskBudget}
 	var routed *runlog.RoutedBy
 	var routeNote string
 	if t.ContinueRunID != "" {
@@ -114,11 +173,11 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		routeNote = agent.ContinuationNote(t.ContinueRunID, "")
 	} else {
 		var err error
-		if routed, routeNote, err = opts.RouteWithNote(t.Purpose, t.Prompt, &t.Backend, runlog.Home()); err != nil {
+		if routed, routeNote, err = resolve.RouteWithNote(&opts, t.Purpose, t.Prompt, &t.Backend, runlog.Home()); err != nil {
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
 		if t.Backend == "" {
-			t.Backend = agent.DefaultBackendNameIn(runlog.Home())
+			t.Backend = resolve.DefaultBackendNameIn(runlog.Home())
 			if routed == nil {
 				routeNote = agent.WithDefault(routeNote, t.Backend)
 			}
@@ -131,6 +190,13 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	b, err := agent.Get(t.Backend)
 	if err != nil {
 		return w.reject(req.AttemptID, "unsupported", err.Error())
+	}
+	if worker {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		b = &agent.APIBackend{BaseURL: workerURL, MaxRetries: 3, HTTPClient: &http.Client{
+			Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}}
 	}
 	if !preferences.Enabled(t.Backend) {
 		return w.reject(req.AttemptID, "unsupported", "backend disabled by worker preference")
@@ -153,8 +219,8 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 			return w.reject(req.AttemptID, "unsupported", "backend cannot honour option "+option)
 		}
 	}
-	if t.Timeout < 0 {
-		return w.reject(req.AttemptID, "bad_request", "timeout must not be negative")
+	if err := agent.ValidateLimits(time.Duration(t.Timeout), t.MaxCostUSD, t.TaskBudget); err != nil {
+		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
 	if t.Purpose != "" && !purpose.Valid(t.Purpose) {
 		return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("purpose %q: one of %s", t.Purpose, strings.Join(purpose.Declarable(), ", ")))
@@ -167,21 +233,22 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 		return w.reject(req.AttemptID, "bad_request", err.Error())
 	}
 	task := agent.Task{Prompt: t.Prompt, Purpose: t.Purpose, Dir: ws.Root, AttemptID: req.AttemptID, Options: opts}
-	turnDefault := task.ApplyTurnDefault(t.Backend)
+	turnDefault := resolve.ApplyTurnDefault(&task, t.Backend)
 	// A backend without MCP support must not inherit the default config.
-	if slices.Contains(caps.Options, "mcp") {
+	if !worker && slices.Contains(caps.Options, "mcp") {
 		if task.MCP, err = mcp.ConfigPaths(t.MCP); err != nil {
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
 	}
 	var plan followup.Plan
 	if t.ContinueRunID != "" {
-		plan, err = followup.Make(followup.Request{RunID: t.ContinueRunID, Backend: t.Backend, Dir: task.Dir, Model: t.Model, Fresh: t.Fresh != nil && *t.Fresh, Resume: t.Fresh != nil && !*t.Fresh})
+		plan, err = followup.Make(followup.Request{Exec: true, RunID: t.ContinueRunID, Backend: t.Backend, Dir: task.Dir, Model: t.Model, RetrievalRefresh: t.RetrievalRefresh, Fresh: t.Fresh != nil && *t.Fresh, Resume: t.Fresh != nil && !*t.Fresh})
 		if err != nil {
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
 		defer plan.Release()
 		task.Dir, task.Model = plan.Dir, plan.Model
+		plan.ApplyRetrieval(&task.Options)
 		if task.Model != "" && !agent.ValidModel(task.Model) {
 			return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("model %q from run %s is not a model id", task.Model, t.ContinueRunID))
 		}
@@ -189,6 +256,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 	if _, err := b.Detect(); err != nil {
 		return w.reject(req.AttemptID, "unavailable", err.Error())
 	}
+	routeNote = plan.RetrievalNote(routeNote)
 	rec, err := create(t.Backend, task, t.ContinueRunID, plan.Route(), routed, routeNote)
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", err.Error())
@@ -241,15 +309,54 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 			Truncated bool `json:"truncated"`
 		}{e, truncated}})
 	}
+	type checkpointSave struct {
+		snapshot agent.APICheckpoint
+		answer   chan error
+	}
+	saves := make(chan checkpointSave)
+	if worker {
+		task.Durable = &agent.DurableExecution{Resume: req.Checkpoint, Save: func(ctx context.Context, cp agent.APICheckpoint) error {
+			save := checkpointSave{snapshot: cp, answer: make(chan error, 1)}
+			select {
+			case saves <- save:
+			case <-ctx.Done():
+				return fmt.Errorf("%w: checkpoint interrupted", agent.ErrRecoveryRequired)
+			}
+			select {
+			case err := <-save.answer:
+				return err
+			case <-ctx.Done():
+				return fmt.Errorf("%w: checkpoint interrupted", agent.ErrRecoveryRequired)
+			}
+		}}
+	}
 	result := make(chan agent.Result, 1)
 	go func() {
 		if turnDefault {
-			emit(agent.Event{Kind: agent.EventInfo, Text: agent.TurnDefaultInfo})
+			emit(agent.Event{Kind: agent.EventInfo, Text: resolve.TurnDefaultInfo})
 		}
 		plan.Apply(&task, rec.Dir(), emit)
+		task.Knowledge = remote.SearcherFromEnv
+		if worker && req.Checkpoint != nil && req.Checkpoint.Pending != nil {
+			result <- agent.Result{Backend: t.Backend, Status: agent.StatusError, RecoveryRequired: true, Error: agent.ErrRecoveryRequired.Error()}
+			return
+		}
 		result <- agent.Run(ctx, b, task, emit)
 	}()
 	interrupt := ctx.Done()
+	var pending *checkpointSave
+	var timer *time.Timer
+	var timeout <-chan time.Time
+	failCheckpoint := func(reason string) {
+		if pending != nil {
+			pending.answer <- fmt.Errorf("%w: %s", agent.ErrRecoveryRequired, reason)
+			pending = nil
+			if timer != nil {
+				timer.Stop()
+			}
+			timeout = nil
+		}
+	}
 	for {
 		select {
 		case res := <-result:
@@ -271,7 +378,34 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 				return 1
 			}
 			return 0
+		case save := <-saves:
+			pending = &save
+			if !w.write("checkpoint", map[string]any{"checkpoint": save.snapshot}) {
+				failCheckpoint("checkpoint output failed")
+				continue
+			}
+			timer = time.NewTimer(checkpointTimeout)
+			timeout = timer.C
+		case <-timeout:
+			failCheckpoint("checkpoint answer timed out")
 		case line := <-input:
+			if pending != nil {
+				if line.err != nil {
+					failCheckpoint("checkpoint input closed")
+					input = nil
+					continue
+				}
+				var answer checkpointAnswer
+				if err := decodeAnswer(line.data, &answer); err != nil || answer.Type != "ack" || answer.AttemptID != req.AttemptID || answer.Sequence != pending.snapshot.Sequence {
+					failCheckpoint("checkpoint was not acknowledged")
+				} else {
+					pending.answer <- nil
+					pending = nil
+					timer.Stop()
+					timeout = nil
+				}
+				continue
+			}
 			if line.err != nil {
 				if errors.Is(line.err, errInputTooLong) {
 					w.failure("bad_request", line.err.Error(), false)
@@ -308,24 +442,33 @@ func run(ctx context.Context, in io.Reader, out io.Writer, now func() time.Time,
 var attemptID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 type startRequest struct {
-	Type      string       `json:"type"`
-	AttemptID string       `json:"attempt_id"`
-	Task      *taskRequest `json:"task"`
+	Type       string               `json:"type"`
+	AttemptID  string               `json:"attempt_id"`
+	Task       *taskRequest         `json:"task"`
+	Checkpoint *agent.APICheckpoint `json:"checkpoint,omitempty"`
 }
 
 type taskRequest struct {
-	Prompt        string         `json:"prompt"`
-	Dir           string         `json:"dir"`
-	Backend       string         `json:"backend"`
-	Mode          agent.Mode     `json:"mode"`
-	Model         string         `json:"model"`
-	Effort        string         `json:"effort"`
-	Timeout       agent.Duration `json:"timeout"`
-	MaxTurns      int            `json:"max_turns"`
-	MCP           []string       `json:"mcp"`
-	ContinueRunID string         `json:"continue_run_id"`
-	Purpose       string         `json:"purpose"`
-	Fresh         *bool          `json:"fresh,omitempty"`
+	Prompt            string         `json:"prompt"`
+	Dir               string         `json:"dir"`
+	Backend           string         `json:"backend"`
+	Mode              agent.Mode     `json:"mode"`
+	Model             string         `json:"model"`
+	Effort            string         `json:"effort"`
+	Timeout           agent.Duration `json:"timeout"`
+	MaxTurns          int            `json:"max_turns"`
+	MaxCostUSD        float64        `json:"max_cost_usd"`
+	TaskBudget        int            `json:"task_budget"`
+	MCP               []string       `json:"mcp"`
+	ContinueRunID     string         `json:"continue_run_id"`
+	Purpose           string         `json:"purpose"`
+	Fresh             *bool          `json:"fresh,omitempty"`
+	RetrievalRefresh  bool           `json:"retrieval_refresh,omitempty"`
+	Retrieval         string         `json:"retrieval,omitempty"`
+	RetrievalTenant   string         `json:"retrieval_tenant,omitempty"`
+	RetrievalProject  string         `json:"retrieval_project,omitempty"`
+	RetrievalRevision string         `json:"retrieval_revision,omitempty"`
+	RetrievalVersion  string         `json:"retrieval_version,omitempty"`
 }
 
 type cancelRequest struct {
@@ -333,14 +476,14 @@ type cancelRequest struct {
 	AttemptID string `json:"attempt_id"`
 }
 
-func decode(data []byte, value any) error {
+func decode(data []byte, value any, workerMode ...bool) error {
 	if !utf8.Valid(data) {
 		return errors.New("input must be UTF-8")
 	}
 	// encoding/json matches struct fields without regard to case and merges
 	// repeated objects. Validate names and uniqueness before decoding so the
 	// presence-based option gate sees exactly the fields that reach the task.
-	fields, err := objectFields(data, "type", "attempt_id", "task")
+	fields, err := objectFields(data, "type", "attempt_id", "task", "checkpoint")
 	if err != nil {
 		return err
 	}
@@ -350,11 +493,14 @@ func decode(data []byte, value any) error {
 	_ = json.Unmarshal(fields["type"], &kind)
 	_, isCancel := value.(*cancelRequest)
 	if kind == "cancel" || (isCancel && kind != "start") {
+		if _, set := fields["checkpoint"]; set {
+			return fmt.Errorf("unknown field %q", "checkpoint")
+		}
 		if _, set := fields["task"]; set {
 			return fmt.Errorf("unknown field %q", "task")
 		}
 	} else {
-		if err := checkTaskKeys(fields["task"]); err != nil {
+		if err := checkTaskKeys(fields["task"], len(workerMode) > 0 && workerMode[0]); err != nil {
 			return err
 		}
 	}
@@ -372,11 +518,31 @@ func decode(data []byte, value any) error {
 	return nil
 }
 
-func checkTaskKeys(data json.RawMessage) error {
+type checkpointAnswer struct {
+	Type      string `json:"type"`
+	AttemptID string `json:"attempt_id"`
+	Sequence  uint64 `json:"sequence"`
+}
+
+func decodeAnswer(data []byte, answer *checkpointAnswer) error {
+	if !utf8.Valid(data) {
+		return errors.New("input must be UTF-8")
+	}
+	if _, err := objectFields(data, "type", "attempt_id", "sequence"); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, answer)
+}
+
+func checkTaskKeys(data json.RawMessage, worker bool) error {
 	if len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil
 	}
-	_, err := objectFields(data, "prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh")
+	names := []string{"prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh", "retrieval_refresh"}
+	if worker {
+		names = append(names, "max_cost_usd", "task_budget", "retrieval", "retrieval_tenant", "retrieval_project", "retrieval_revision", "retrieval_version")
+	}
+	_, err := objectFields(data, names...)
 	return err
 }
 
@@ -542,7 +708,7 @@ type protocolError struct {
 
 func hello() map[string]any {
 	backends := make([]any, 0)
-	preferences, prefErr := agent.BackendPreferences(runlog.Home())
+	preferences, prefErr := resolve.BackendPreferences(runlog.Home())
 	for _, name := range agent.Names() {
 		b, _ := agent.Get(name)
 		var detail string

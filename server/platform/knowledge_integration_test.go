@@ -11,12 +11,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
-func knowledgeFixture(p Project) retrieval.Import {
-	return retrieval.Import{Scope: retrieval.Scope{TenantID: p.TenantID, ProjectID: p.ID, Backend: "codex", Model: "fixture-model", Revision: fixtureRef}, Origin: "reviewed_source", ReviewedBy: "fixture-reviewer", ReviewEvidence: "synthetic reviewed test source", Entries: []retrieval.Entry{
+func knowledgeFixture(p Project) KnowledgeImport {
+	return KnowledgeImport{KnowledgeScope: KnowledgeScope{TenantID: p.TenantID, ProjectID: p.ID, Backend: "codex", Model: "fixture-model", Revision: fixtureRef}, Origin: "reviewed_source", ReviewedBy: "fixture-reviewer", ReviewEvidence: "synthetic reviewed test source", Entries: []KnowledgeEntry{
 		{Key: "exact", Content: "Use the checked project build command.", Source: "docs/build.md", Evidence: "fixture check", Identifiers: []string{"ERR_BUILD", "src/build.go"}},
 		{Key: "text", Content: "ERR_BUILD is a build error. build build", Source: "docs/errors.md", Evidence: "fixture check", Identifiers: []string{}},
 	}}
@@ -46,7 +44,7 @@ func TestKnowledgeImportRejectsTextThatCanCloseOrForgeAReference(t *testing.T) {
 }
 
 func TestKnowledgeReadRejectsShortCredentialsBeforeQueryingStorage(t *testing.T) {
-	scope := retrieval.Scope{TenantID: "t_" + strings.Repeat("a", 32), ProjectID: "p_" + strings.Repeat("b", 32), Backend: "codex", Model: "fixture", Revision: fixtureRef}
+	scope := KnowledgeScope{TenantID: "t_" + strings.Repeat("a", 32), ProjectID: "p_" + strings.Repeat("b", 32), Backend: "codex", Model: "fixture", Revision: fixtureRef}
 	h := &HTTPServer{Store: &Store{}}
 	for _, credential := range []string{"", "short"} {
 		t.Run(credential, func(t *testing.T) {
@@ -65,7 +63,7 @@ func TestKnowledgeReadRejectsShortCredentialsBeforeQueryingStorage(t *testing.T)
 func TestKnowledgeReadReportsStorageFailureAsUnavailable(t *testing.T) {
 	s := testStore(t)
 	p, worker := testProject(t, s)
-	scope := knowledgeFixture(p).Scope
+	scope := knowledgeFixture(p).KnowledgeScope
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r := httptest.NewRequest(http.MethodPost, "/v1/knowledge/search", nil).WithContext(ctx)
@@ -99,7 +97,7 @@ func TestKnowledgeImportsRemainImmutableAcrossActivationRollbackAndDisable(t *te
 	if _, err = s.ImportKnowledge(ctx, badSeed); err == nil {
 		t.Fatal("private credential source accepted")
 	}
-	v, err := s.InspectKnowledge(ctx, in.Scope, id)
+	v, err := s.InspectKnowledge(ctx, in.KnowledgeScope, id)
 	if err != nil || len(v.Entries) != 2 {
 		t.Fatalf("inspect %#v %v", v, err)
 	}
@@ -111,11 +109,11 @@ func TestKnowledgeImportsRemainImmutableAcrossActivationRollbackAndDisable(t *te
 	if _, err = s.db.Exec(ctx, `INSERT INTO knowledge_members(tenant_id,project_id,version_id,entry_id,entry_key) VALUES($1,$2,$3,$4,'late')`, p.TenantID, p.ID, id, v.Entries[0].ID); err == nil {
 		t.Fatal("membership not sealed")
 	}
-	active, err := s.ChangeKnowledge(ctx, retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: id})
+	active, err := s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "activate", VersionID: id})
 	if err != nil {
 		t.Fatal(err)
 	}
-	search := retrieval.Search{Scope: in.Scope, Query: "ERR_BUILD", RunRef: "fixture-run", Attempt: 1}
+	search := KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, Query: "ERR_BUILD", RunRef: "fixture-run", Attempt: 1}
 	packet, err := s.SearchKnowledge(ctx, search)
 	if err != nil || len(packet.Entries) != 2 || packet.Entries[0].Key != "exact" {
 		t.Fatalf("ranking %#v %v", packet, err)
@@ -124,7 +122,7 @@ func TestKnowledgeImportsRemainImmutableAcrossActivationRollbackAndDisable(t *te
 	if err != nil || again.Digest != packet.Digest {
 		t.Fatal("non deterministic ranking", err)
 	}
-	var saved retrieval.Packet
+	var saved KnowledgePacket
 	var raw []byte
 	if err = s.db.QueryRow(ctx, `SELECT packet FROM retrieval_records WHERE id=$1`, packet.AuditID).Scan(&raw); err != nil {
 		t.Fatal(err)
@@ -153,7 +151,7 @@ func TestKnowledgeImportsRemainImmutableAcrossActivationRollbackAndDisable(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, err = s.ChangeKnowledge(ctx, retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: next, ExpectedGeneration: active.Generation})
+	active, err = s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "activate", VersionID: next, ExpectedGeneration: active.Generation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,11 +165,11 @@ func TestKnowledgeImportsRemainImmutableAcrossActivationRollbackAndDisable(t *te
 	if err != nil || got.Digest != packet.Digest {
 		t.Fatal("pin mutated", err)
 	}
-	active, err = s.ChangeKnowledge(ctx, retrieval.Change{Scope: in.Scope, Operation: "rollback", ExpectedGeneration: active.Generation})
+	active, err = s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "rollback", ExpectedGeneration: active.Generation})
 	if err != nil || active.VersionID != id {
 		t.Fatal("rollback", err)
 	}
-	active, err = s.ChangeKnowledge(ctx, retrieval.Change{Scope: in.Scope, Operation: "disable", ExpectedGeneration: active.Generation})
+	active, err = s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "disable", ExpectedGeneration: active.Generation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +183,7 @@ func TestKnowledgeImportsRemainImmutableAcrossActivationRollbackAndDisable(t *te
 	if err != nil || got.Digest != packet.Digest {
 		t.Fatal("disable destroyed pin", err)
 	}
-	for _, mutate := range []func(*retrieval.Search){func(q *retrieval.Search) { q.Model = "wrong" }, func(q *retrieval.Search) { q.Backend = "api" }, func(q *retrieval.Search) { q.Revision = strings.Repeat("b", 40) }, func(q *retrieval.Search) { q.VersionID = "v_' OR 1=1--" }} {
+	for _, mutate := range []func(*KnowledgeSearch){func(q *KnowledgeSearch) { q.Model = "wrong" }, func(q *KnowledgeSearch) { q.Backend = "api" }, func(q *KnowledgeSearch) { q.Revision = strings.Repeat("b", 40) }, func(q *KnowledgeSearch) { q.VersionID = "v_' OR 1=1--" }} {
 		q := search
 		mutate(&q)
 		if _, e := s.SearchKnowledge(ctx, q); !errors.Is(e, ErrNotFound) {
@@ -219,7 +217,7 @@ func TestKnowledgeConcurrentImportsDeduplicateAndRetrievalStaysBounded(t *testin
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, e := s.ChangeKnowledge(ctx, retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: id})
+			_, e := s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "activate", VersionID: id})
 			errs <- e
 		}()
 	}
@@ -229,19 +227,19 @@ func TestKnowledgeConcurrentImportsDeduplicateAndRetrievalStaysBounded(t *testin
 		t.Fatalf("activation %v %v", e1, e2)
 	}
 	// Oversized first hit is skipped, labels/evidence count, and multibyte text stays valid.
-	in.Entries = []retrieval.Entry{{Key: "a", Content: strings.Repeat("界", 2700), Source: strings.Repeat("s", 500), Evidence: "fixture", Identifiers: []string{"CAP"}}, {Key: "b", Content: "small", Source: "source", Evidence: "checked", Identifiers: []string{"CAP"}}}
+	in.Entries = []KnowledgeEntry{{Key: "a", Content: strings.Repeat("界", 2700), Source: strings.Repeat("s", 500), Evidence: "fixture", Identifiers: []string{"CAP"}}, {Key: "b", Content: "small", Source: "source", Evidence: "checked", Identifiers: []string{"CAP"}}}
 	capID, e := s.ImportKnowledge(ctx, in)
 	if e != nil {
 		t.Fatal(e)
 	}
-	got, e := s.SearchKnowledge(ctx, retrieval.Search{Scope: in.Scope, VersionID: capID, Query: "CAP"})
+	got, e := s.SearchKnowledge(ctx, KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, VersionID: capID, Query: "CAP"})
 	if e != nil || got.Bytes > 8192 || len(got.Entries) != 1 || got.Entries[0].Key != "b" {
 		t.Fatalf("cap %#v %v", got, e)
 	}
 	// Saturating retrieval admission cannot consume queue-pool connections.
 	s.retrievalSlots <- struct{}{}
 	s.retrievalSlots <- struct{}{}
-	if _, e = s.SearchKnowledge(ctx, retrieval.Search{Scope: in.Scope, Query: "CAP"}); !errors.Is(e, ErrRetrievalBusy) {
+	if _, e = s.SearchKnowledge(ctx, KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, Query: "CAP"}); !errors.Is(e, ErrRetrievalBusy) {
 		t.Fatal("unbounded admission", e)
 	}
 	if _, _, e = s.Submit(ctx, testSubmission(p, "during-search", "fixture")); e != nil {
@@ -279,7 +277,7 @@ func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	query := retrieval.Search{Scope: in.Scope, VersionID: id, Query: "ERR_BUILD"}
+	query := KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, VersionID: id, Query: "ERR_BUILD"}
 	if code := request("/v1/knowledge/search", worker, query); code != 200 {
 		t.Fatalf("owner %d", code)
 	}
@@ -288,7 +286,7 @@ func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 		if strings.HasSuffix(path, "inspect") {
 			input = map[string]any{"tenant_id": p.TenantID, "project_id": p.ID, "backend": in.Backend, "model": in.Model, "revision": in.Revision, "version_id": id}
 		} else if strings.HasSuffix(path, "active") {
-			input = in.Scope
+			input = in.KnowledgeScope
 		}
 		for _, credential := range []string{otherWorker, otherTenantToken} {
 			if code := request(path, credential, input); code != 404 {
@@ -306,7 +304,7 @@ func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 		if strings.HasSuffix(path, "inspect") {
 			input = map[string]any{"tenant_id": p.TenantID, "project_id": p.ID, "backend": in.Backend, "model": in.Model, "revision": in.Revision, "version_id": id}
 		} else if strings.HasSuffix(path, "active") {
-			input = in.Scope
+			input = in.KnowledgeScope
 		}
 		if code := request(path, siblingToken, input); code != 404 {
 			t.Fatalf("cross project %s %d", path, code)
@@ -333,7 +331,7 @@ func TestKnowledgeCredentialsStayWithinProjectAndRole(t *testing.T) {
 		t.Fatal("worker could approve", code)
 	}
 	for _, operation := range []string{"activate", "disable", "rollback"} {
-		if code := request("/v1/knowledge/change", worker, retrieval.Change{Scope: in.Scope, Operation: operation, VersionID: id}); code != 401 {
+		if code := request("/v1/knowledge/change", worker, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: operation, VersionID: id}); code != 401 {
 			t.Fatalf("worker could %s: %d", operation, code)
 		}
 	}
@@ -349,14 +347,14 @@ func TestKnowledgeVerboseTasksFindRelevantReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, q := range []string{"Please investigate why our build is failing after yesterday changes and suggest the checked command to run safely", "Please locate src/build.go and explain how ERR_BUILD relates to the failing step without modifying files"} {
-		packet, e := s.SearchKnowledge(ctx, retrieval.Search{Scope: in.Scope, VersionID: id, Query: q})
+		packet, e := s.SearchKnowledge(ctx, KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, VersionID: id, Query: q})
 		if e != nil || len(packet.Entries) == 0 {
 			t.Fatalf("verbose task missed: %s %v", q, e)
 		}
 		if strings.Contains(q, "ERR_BUILD") && packet.Entries[0].Key != "exact" {
 			t.Fatal("exact symbol priority lost")
 		}
-		if packet.Digest != retrieval.TextDigest(packet.Text) || len(retrieval.ReferenceBlock(packet.Text)) > 8192 {
+		if packet.Digest != KnowledgeTextDigest(packet.Text) || len(KnowledgeReferenceBlock(packet.Text)) > 8192 {
 			t.Fatal("digest/framing mismatch")
 		}
 	}
@@ -381,11 +379,11 @@ func TestKnowledgeSearchTreatsTsqueryOperatorsAsPlainTextAndAcceptsLongQueries(t
 	longQuery := strings.Join(words, " ")
 	longQuery += strings.Repeat(" ", 2048-len(longQuery))
 	for _, query := range []string{"'", `\`, "!", "&", ":*", "<->", `'\!&:*<->`, longQuery} {
-		packet, err := s.SearchKnowledge(context.Background(), retrieval.Search{Scope: in.Scope, VersionID: id, Query: query})
+		packet, err := s.SearchKnowledge(context.Background(), KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, VersionID: id, Query: query})
 		if err != nil {
 			t.Fatalf("query %q: %v", query, err)
 		}
-		if err := retrieval.ValidatePacket(packet, id, query); err != nil {
+		if err := KnowledgeValidatePacket(packet, id, query); err != nil {
 			t.Fatalf("query %q: invalid packet: %v", query, err)
 		}
 	}
@@ -395,13 +393,13 @@ func TestKnowledgeSearchMatchesMultiWordAndPunctuatedIdentifiersThroughSQL(t *te
 	s := testStore(t)
 	p, _ := testProject(t, s)
 	in := knowledgeFixture(p)
-	in.Entries = append(in.Entries, retrieval.Entry{Key: "dial", Content: "Start the database fixture first.", Source: "docs/dial.md", Evidence: "fixture check", Identifiers: []string{"connection refused", "main.go"}})
+	in.Entries = append(in.Entries, KnowledgeEntry{Key: "dial", Content: "Start the database fixture first.", Source: "docs/dial.md", Evidence: "fixture check", Identifiers: []string{"connection refused", "main.go"}})
 	id, err := s.ImportKnowledge(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{"Why does it say connection refused", "Please inspect main.go."} {
-		packet, err := s.SearchKnowledge(context.Background(), retrieval.Search{Scope: in.Scope, VersionID: id, Query: query})
+		packet, err := s.SearchKnowledge(context.Background(), KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, VersionID: id, Query: query})
 		if err != nil {
 			t.Fatalf("query %q: %v", query, err)
 		}
@@ -434,7 +432,7 @@ func TestKnowledgeHTTPRollbackAndStaleGeneration(t *testing.T) {
 	in := knowledgeFixture(p)
 	operator := strings.Repeat("o", 64)
 	h := (&HTTPServer{Store: s, OperatorToken: operator}).Handler()
-	request := func(change retrieval.Change) int {
+	request := func(change KnowledgeChange) int {
 		body, err := json.Marshal(change)
 		if err != nil {
 			t.Fatal(err)
@@ -445,17 +443,17 @@ func TestKnowledgeHTTPRollbackAndStaleGeneration(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	if code := request(retrieval.Change{Scope: in.Scope, Operation: "rollback"}); code != http.StatusNotFound {
+	if code := request(KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "rollback"}); code != http.StatusNotFound {
 		t.Fatalf("rollback: %d", code)
 	}
 	id, err := s.ImportKnowledge(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code := request(retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: id}); code != http.StatusOK {
+	if code := request(KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "activate", VersionID: id}); code != http.StatusOK {
 		t.Fatalf("activate: %d", code)
 	}
-	if code := request(retrieval.Change{Scope: in.Scope, Operation: "disable", ExpectedGeneration: 0}); code != http.StatusConflict {
+	if code := request(KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "disable", ExpectedGeneration: 0}); code != http.StatusConflict {
 		t.Fatalf("stale generation: %d", code)
 	}
 }

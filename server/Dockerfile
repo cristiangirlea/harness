@@ -3,6 +3,8 @@ FROM golang@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c4
 WORKDIR /src
 COPY go.mod ./
 COPY internal/ ./internal/
+COPY cmd/ ./cmd/
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/hrn ./cmd/hrn
 COPY server/go.mod server/go.sum ./server/
 RUN cd server && go mod download
 COPY server/ ./server/
@@ -11,6 +13,8 @@ FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/hrn-server /usr/local/bin/hrn-server
 COPY --from=build /out/hrn-worker /usr/local/bin/hrn-worker
+COPY --from=build /out/hrn /usr/local/bin/hrn
+ENV HRN_WORKER_HRN=/usr/local/bin/hrn
 COPY --from=build /out/hrn-fixture-model /usr/local/bin/hrn-fixture-model
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/hrn-worker"]

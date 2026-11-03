@@ -12,6 +12,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -43,7 +44,7 @@ func TestRetrievalMeasuredRunValidation(t *testing.T) {
 			}
 			for i := range cells {
 				v := m.Spec.Matrix[i]
-				task := agent.Task{Prompt: m.Spec.Tasks[0].Prompt, Options: agent.Options{Model: v.Model, Effort: v.Effort, Retrieval: v.Retrieval, RetrievalRevision: m.Revision, RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalVersion: v.RetrievalVersion}}
+				task := agent.Task{Knowledge: remote.SearcherFromEnv, Prompt: m.Spec.Tasks[0].Prompt, Options: agent.Options{Model: v.Model, Effort: v.Effort, Retrieval: v.Retrieval, RetrievalRevision: m.Revision, RetrievalTenant: "tenant", RetrievalProject: "project", RetrievalVersion: v.RetrievalVersion}}
 				res := cells[i].Usage.Attempts[0]
 				if name == "missing_status" {
 					res.Status = ""
@@ -70,7 +71,7 @@ func TestRetrievalMeasuredRunValidation(t *testing.T) {
 				if i == 0 && name == "wrong_revision" {
 					task.RetrievalRevision = "other"
 				}
-				w, e := runlog.Create(v.Backend, task)
+				w, e := runlog.Create(v.Backend, task, nil)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -84,7 +85,7 @@ func TestRetrievalMeasuredRunValidation(t *testing.T) {
 				if i == 0 && (name == "lost_failed_attempt" || name == "valid_failed_attempt") {
 					failed := res
 					failed.Status = agent.StatusError
-					fw, e := runlog.Create(v.Backend, task)
+					fw, e := runlog.Create(v.Backend, task, nil)
 					if e != nil {
 						t.Fatal(e)
 					}

@@ -16,6 +16,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -40,7 +41,7 @@ func (p ProjectProfile) validate(ctx context.Context, dir string) error {
 	if p.Backend == "" || p.Options.Retrieval != "required" || p.Options.RetrievalVersion == "" || len(p.SourceHashes) == 0 {
 		return fmt.Errorf("project profile requires a backend, required retrieval, a version pin and reviewed source hashes")
 	}
-	if err := p.Options.Validate(); err != nil {
+	if err := agent.ValidateOptions(p.Options); err != nil {
 		return err
 	}
 	command := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD")
@@ -74,7 +75,7 @@ func (p ProjectProfile) arguments(ctx context.Context, dir string, raw json.RawM
 	if args == nil {
 		args = map[string]json.RawMessage{}
 	}
-	for _, key := range []string{"continue_run_id", "fresh"} {
+	for _, key := range []string{"continue_run_id", "fresh", "retrieval_refresh"} {
 		if _, ok := args[key]; ok {
 			return nil, fmt.Errorf("project retrieval profile requires a fresh run")
 		}
@@ -138,7 +139,7 @@ func NewProjectServer(dir, profilePath string) (*mcp.Server, error) {
 	if err = profile.validate(context.Background(), dir); err != nil {
 		return nil, err
 	}
-	preference, err := agent.BackendPreferences(runlog.Home())
+	preference, err := resolve.BackendPreferences(runlog.Home())
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +152,7 @@ func NewProjectServer(dir, profilePath string) (*mcp.Server, error) {
 	properties := tool.InputSchema["properties"].(map[string]any)
 	delete(properties, "continue_run_id")
 	delete(properties, "fresh")
+	delete(properties, "retrieval_refresh")
 	properties["backend"] = map[string]any{"type": "string", "enum": []string{profile.Backend}, "default": profile.Backend, "description": "Backend fixed by the project retrieval profile."}
 	properties["model"].(map[string]any)["default"] = profile.Options.Model
 	properties["retrieval"].(map[string]any)["default"] = "required"

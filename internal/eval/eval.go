@@ -20,6 +20,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -127,10 +128,16 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 	if len(spec.Tasks) == 0 {
 		return batch.Spec{}, fmt.Errorf("no tasks")
 	}
+	if spec.RetryK != 0 {
+		return batch.Spec{}, fmt.Errorf("retry_k does not belong in an eval: a cell measures one attempt")
+	}
 	if len(spec.Retry) > 0 {
 		return batch.Spec{}, fmt.Errorf("retry does not belong in an eval: a cell measures one attempt, so a retried one would score the harness instead of the backend")
 	}
 	for _, t := range spec.Tasks {
+		if t.RetryK != 0 {
+			return batch.Spec{}, fmt.Errorf("task %s: retry_k does not belong in an eval", t.ID)
+		}
 		if len(t.Retry) > 0 {
 			return batch.Spec{}, fmt.Errorf("task %s: retry does not belong in an eval", t.ID)
 		}
@@ -193,7 +200,7 @@ func Expand(spec Spec, evalID string) (batch.Spec, error) {
 				cell.ShapeTools = v.ShapeTools
 				cell.ID = fmt.Sprintf("%s.%s.%s.r%d", evalID, t.ID, v.Key(), r)
 				// Routing must not change the measured backend.
-				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, agent.DefaultBackendNameIn(runlog.Home()))
+				cell.Backend = firstOf(v.Backend, t.Backend, spec.Backend, resolve.DefaultBackendNameIn(runlog.Home()))
 				if v.Lean != nil {
 					if cell.Backend != "claude" && cell.Backend != "codex" {
 						return batch.Spec{}, fmt.Errorf("variant %s: lean is only supported by the claude and codex backends (task %s uses %s)", v.Key(), t.ID, cell.Backend)
@@ -464,8 +471,9 @@ func (r TaskRow) Score() string {
 }
 
 type Table struct {
-	Variants []VariantRow `json:"variants"`
-	Tasks    []TaskRow    `json:"tasks"`
+	Variants       []VariantRow   `json:"variants"`
+	Tasks          []TaskRow      `json:"tasks"`
+	EvidenceCounts map[string]int `json:"evidence_counts,omitempty"`
 }
 
 // Totals returns cell counts, costs including judging, and cost availability/estimate flags.
@@ -649,6 +657,20 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	}
 
 	var table Table
+	for _, c := range cells {
+		count := 0
+		for _, tr := range c.results {
+			for _, a := range tr.Attempts {
+				count += len(a.Result.Evidence)
+			}
+		}
+		if count > 0 {
+			if table.EvidenceCounts == nil {
+				table.EvidenceCounts = make(map[string]int)
+			}
+			table.EvidenceCounts[c.results[0].ID] = count
+		}
+	}
 	for _, v := range spec.Matrix {
 		name := v.Key()
 		row := VariantRow{Name: name, Statuses: map[string]int{}}

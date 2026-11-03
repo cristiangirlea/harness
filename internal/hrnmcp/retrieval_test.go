@@ -25,7 +25,7 @@ func TestMCPRunUsesTheRequestedRetrievalModeAndRejectsInvalidTransport(t *testin
 func TestMCPContinueWithRetrievalOnAnotherBackendThanThePinIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	s := connect(t, dir)
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,10 @@ func TestMCPContinueWithRetrievalOnAnotherBackendThanThePinIsRefused(t *testing.
 		t.Fatalf("a refused continuation must record nothing: %d runs, %v", len(recs), err)
 	}
 	got = s.call(t, "run", `{"prompt":"x","backend":"stub","continue_run_id":"`+w.ID()+`"}`)
+	if !got.IsError || !strings.Contains(got.Text(), "cannot carry over") {
+		t.Fatal(got)
+	}
+	got = s.call(t, "run", `{"prompt":"x","backend":"stub","retrieval":"off","continue_run_id":"`+w.ID()+`"}`)
 	if got.IsError || !strings.Contains(got.Text(), "--- request\n> p") {
 		t.Fatal(got)
 	}

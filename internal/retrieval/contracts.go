@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -43,11 +44,28 @@ type Import struct {
 }
 
 type Version struct {
+	Admission *Admission `json:"admission,omitempty"`
 	Scope
 	ID             string  `json:"id"`
 	ReviewedBy     string  `json:"reviewed_by"`
 	ReviewEvidence string  `json:"review_evidence"`
 	Entries        []Entry `json:"entries"`
+}
+
+type Admission struct {
+	Scope
+	VersionID                    string    `json:"version_id"`
+	Verdict                      string    `json:"verdict"`
+	BaselineVersionID            string    `json:"baseline_version_id"`
+	EvalIDs                      []string  `json:"eval_ids"`
+	PassRateBaseline             float64   `json:"pass_rate_baseline"`
+	PassRateCandidate            float64   `json:"pass_rate_candidate"`
+	MedianTokensBaseline         float64   `json:"median_tokens_baseline"`
+	MedianTokensCandidate        float64   `json:"median_tokens_candidate"`
+	FailedAttemptTokensBaseline  float64   `json:"failed_attempt_tokens_baseline"`
+	FailedAttemptTokensCandidate float64   `json:"failed_attempt_tokens_candidate"`
+	SourceRuns                   []string  `json:"source_runs"`
+	CreatedAt                    time.Time `json:"created_at,omitzero"`
 }
 
 type Search struct {
@@ -161,17 +179,4 @@ type Record struct {
 	Failure        string  `json:"failure,omitempty"`
 	Replayed       bool    `json:"replayed,omitempty"`
 	DurationNS     int64   `json:"duration_ns"`
-}
-
-func ExecutorEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, v := range env {
-		key, _, _ := strings.Cut(v, "=")
-		key = strings.ToUpper(key)
-		if key == "HRN_DATABASE_URL" || (strings.HasPrefix(key, "HRN_") && strings.HasSuffix(key, "_TOKEN")) {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
 }

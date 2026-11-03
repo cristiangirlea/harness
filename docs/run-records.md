@@ -5,6 +5,7 @@
 ## Run records
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
+Results may include `evidence` records for gate output and retrieved knowledge entries; events may carry one `evidence` record. Each contains `kind`, a masked `source`, a SHA-256 `hash` of the recorded content, and a masked UTF-8 `excerpt` of at most 2 KiB. Gate output is the stored, capped output. Batch gate evidence is stored on the attempt result. Eval tables optionally include `evidence_counts`, mapping cell IDs to counts across attempts and reruns. Older records without these fields still load.
 On Unix, newly created record directories use mode 0700 and record files use mode 0600; existing permissions are not changed.
 
 Batch record saves retry permission errors during rename with growing pauses for up to
@@ -106,8 +107,14 @@ with a `prompt_prefix`, its `digest` covers the prefix too. `setup_mixed: true` 
 A follow-up names the run it continues in `continues`. One started with `--fresh` (MCP
 `fresh`, exec `fresh`), or by the codex fresh default, also has
 `continue_route: "fresh_handover"`: it started a new
-session with a hand-over instead of resuming or forking one. The field is omitted for
-an ordinary follow-up, and old records without it still load.
+session with a hand-over instead of resuming or forking one. Other new follow-ups record
+`continued_session` when reusing a session, or `transcript_transfer` when carrying a
+transcript. Old records without the field still load; their route is unknown.
+The route note appears beneath the continuation route in `hrn show` and as a fact on the run page.
+The route note records a carried retrieval pin or an explicit refresh, including the
+old version and retrieval revision and, for refresh, the revision used for the active
+version. Refresh is also emitted as an info event. Older records without such a note
+still load.
 
 `~/.hrn/runs/<id>/` (or `$HRN_HOME/runs`):
 
@@ -451,3 +458,10 @@ be removed. When prune removes a batch whose task is still marked running, its
 unfinished attempts are decided as failed first, even if all recorded gates passed.
 `--dry-run` writes no ledger. Events whose records were pruned live
 only in the ledger. See [Experience](experience.md) for the remaining design.
+
+Batch task records can include `candidates` for best-of-k retries. Each entry
+keeps the `brief_addition`, `run_id`, `gates`, total `tokens`, and `winner` flag
+when present. The `branch`, `worktree`, `slot`, and `branch_made` fields record candidate ownership for cleanup. Entries are in proposal order. When a
+winner is chosen but removing the original task's branch or worktree fails, a
+last entry with no `brief_addition` or `run_id` keeps the original's claim so
+`hrn batch rm` and `hrn gc` can still remove it.

@@ -35,7 +35,7 @@ func TestContinueWarnsOnceBeforeStartingOnlyAboveTheContextThreshold(t *testing.
 			n := tc.tokens
 			t.Run(fmt.Sprintf("json=%v/context=%d/handoff=%v", jsonOut, n, tc.handoff), func(t *testing.T) {
 				t.Setenv("HRN_HOME", t.TempDir())
-				w, err := runlog.Create("stub-context", agent.Task{Prompt: "first", Dir: t.TempDir()})
+				w, err := runlog.Create("stub-context", agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -468,7 +468,7 @@ func TestContinueOnAnotherBackendInheritsWhatStillApplies(t *testing.T) {
 
 func TestRunsMasksPromptExcerpts(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	w, err := runlog.Create("fake", agent.Task{Prompt: "API_KEY=fake-runs-secret task"})
+	w, err := runlog.Create("fake", agent.Task{Prompt: "API_KEY=fake-runs-secret task"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,7 +563,7 @@ func TestShowMasksHumanOutputOnly(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	const prompt = "API_KEY=fake-show-secret task"
 	const command = "Authorization: Bearer sk-test-show-secret"
-	w, err := runlog.Create("fake", agent.Task{Prompt: prompt})
+	w, err := runlog.Create("fake", agent.Task{Prompt: prompt}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +607,7 @@ func TestContinueWithRetrievalOnAnotherBackendThanThePinIsRefusedBeforeItRuns(t 
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := t.TempDir()
-	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}})
+	w, err := runlog.Create("api", agent.Task{Prompt: "p", Dir: dir, Options: agent.Options{Model: "m", Retrieval: "required"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +623,10 @@ func TestContinueWithRetrievalOnAnotherBackendThanThePinIsRefusedBeforeItRuns(t 
 	if recs, err := runlog.List(10); err != nil || len(recs) != 1 {
 		t.Fatalf("a refused continuation must record nothing: %d runs, %v", len(recs), err)
 	}
-	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "x"}); code != 0 || err != nil {
+	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "x"}); code != 2 || err == nil || !strings.Contains(err.Error(), "cannot carry over") {
+		t.Fatalf("omitted retrieval: code=%d err=%v", code, err)
+	}
+	if code, err := cmdRun([]string{"--continue", w.ID(), "-b", "stub-cmd", "--retrieval", "off", "x"}); code != 0 || err != nil {
 		t.Fatalf("retrieval off should hand the transcript over: code=%d err=%v", code, err)
 	}
 	if task := <-recorded; !strings.Contains(task.Prompt, "--- request\n> p") {

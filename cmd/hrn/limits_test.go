@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +37,7 @@ func (s scripted) Run(_ context.Context, task agent.Task, _ func(agent.Event)) a
 func standIn(t *testing.T) {
 	t.Helper()
 	// A key in the environment would keep the partner from standing in.
-	for _, name := range append(limits.MeteredEnv("claude"), limits.MeteredEnv("codex")...) {
+	for _, name := range append(followup.MeteredEnv("claude"), followup.MeteredEnv("codex")...) {
 		t.Setenv(name, "")
 	}
 	for _, s := range []scripted{
@@ -67,6 +68,11 @@ func TestRunCarriesALimitedRunOnOnTheOtherBackend(t *testing.T) {
 	recs, err := runlog.List(5)
 	if err != nil || len(recs) != 2 {
 		t.Fatalf("runs = %d (%v), want the limited one and its carry-on", len(recs), err)
+	}
+	for _, rec := range recs {
+		if want := agent.ResolveSetup(rec.Backend, rec.Task); !reflect.DeepEqual(rec.Setup, want) {
+			t.Errorf("setup for %s = %+v, want %+v", rec.Backend, rec.Setup, want)
+		}
 	}
 	// Ids made in the same second sort by their random part, so by backend.
 	limited, carried := recs[1], recs[0]
@@ -159,7 +165,7 @@ func TestRunExplainsAMeteredPartnerBeforeStartingAndKeepsItsModel(t *testing.T) 
 			dir := t.TempDir()
 			args := []string{"-b", "codex", "-m", "requested-model", "-C", dir}
 			if continuing {
-				rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir})
+				rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -295,7 +301,7 @@ func TestLimitCarryOnRecordsContextWarning(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv("HRN_HOME", t.TempDir())
 			standIn(t)
-			w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: dir})
+			w, err := runlog.Create("claude", agent.Task{Prompt: "first", Dir: dir}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -384,7 +390,7 @@ func TestRunReleasesAnAgyConversationAfterCarryingALimitedRunOn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir})
+	w, err := runlog.Create("agy", agent.Task{Prompt: "implement the parser", Dir: dir}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

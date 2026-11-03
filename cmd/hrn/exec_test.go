@@ -47,3 +47,17 @@ func TestExecUsageErrorsExitTwoOnStderrWithoutHello(t *testing.T) {
 		}
 	}
 }
+
+func TestExecWorkerFlagRejectsNonAPI(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("HRN_EXEC_HELPER", "1")
+	t.Setenv("ANTHROPIC_BASE_URL", "http://localhost")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperExecProtocol$", "--", "--protocol", "v1", "--worker")
+	cmd.Stdin = strings.NewReader(`{"type":"start","attempt_id":"a","task":{"prompt":"work","dir":".","backend":"codex","mode":"auto"}}` + "\n")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 || !strings.Contains(stdout.String(), `"type":"rejected"`) {
+		t.Fatalf("exit %v output %s", err, stdout.String())
+	}
+}
