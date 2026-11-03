@@ -210,6 +210,9 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 		}
 		p.Links.PR = pr.URL
 		p.Links.Checks = checks
+		if stuck == "" && checks == "passing" && !p.stuckAt.IsZero() && pr.Updated.After(p.stuckAt) {
+			p.Stuck = ""
+		}
 		if stuck != "" && rank(p.Stage) < rank(Merged) {
 			p.Stuck = stuck
 		}

@@ -126,3 +126,41 @@ func TestBuildCombinesRecordsAndReportsInvalidRepositories(t *testing.T) {
 		t.Fatalf("feature: %+v", feature)
 	}
 }
+
+func TestDiscoverySkipsRemovedFoldersAndDeduplicatesRuns(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	c := exec.Command("git", "-C", repo, "init", "-b", "main")
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("init: %s %v", out, err)
+	}
+	for i := 0; i < 4; i++ {
+		id := "r" + strconv.Itoa(i)
+		dir := repo
+		if i == 3 {
+			dir = filepath.Join(home, "removed")
+		}
+		path := filepath.Join(home, "runs", id)
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "task.json"), []byte(`{"id":"`+id+`","task":{"dir":`+strconv.Quote(dir)+`}}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := gitCall
+	t.Cleanup(func() { gitCall = old })
+	calls := 0
+	gitCall = func(ctx context.Context, dir string, args ...string) (string, error) {
+		if dir == canonical(repo) {
+			calls++
+		}
+		return git(ctx, dir, args...)
+	}
+	_, err := Build(context.Background(), home, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("repository probes: %d", calls)
+	}
+}

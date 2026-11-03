@@ -544,6 +544,9 @@ func (b *botWatcher) lookMap() []say {
 	var out []say
 	for _, p := range pieces {
 		key := p.Repo + "\x00" + p.Key
+		if p.Links.PR != "" {
+			key = p.Links.PR
+		}
 		was, seen := b.mapPrev[key]
 		cur[key] = p
 		if b.mapPrev == nil {
@@ -723,6 +726,8 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 	var prev botSnapshot
 	first, last := true, ""
 	nextMap := time.Now()
+	mapResults := make(chan []say, 1)
+	mapInFlight := false
 	mapTick := time.NewTicker(mapPoll)
 	defer mapTick.Stop()
 	wake := make(chan struct{}, 1)
@@ -756,8 +761,26 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		messages := announce(b.baseline(prev, cur), cur, first)
-		if now := time.Now(); !now.Before(nextMap) {
-			messages = append(messages, b.lookMap()...)
+		select {
+		case result := <-mapResults:
+			mapInFlight = false
+			messages = append(messages, result...)
+		default:
+		}
+		if now := time.Now(); !now.Before(nextMap) && !mapInFlight {
+			mapInFlight = true
+			go func() {
+				result := b.lookMap()
+				select {
+				case mapResults <- result:
+				case <-r.Context().Done():
+					return
+				}
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			}()
 			for !nextMap.After(now) {
 				nextMap = nextMap.Add(mapPoll)
 			}

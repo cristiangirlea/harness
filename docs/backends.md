@@ -45,8 +45,8 @@ hrn backends reset
 
 For a build that registers `agy`, use `--only claude,agy` instead. A name need not
 be installed to be enabled, but it must be registered. `--default` is optional;
-when supplied it must appear in `--only`. `set` replaces the whole preference.
-`reset` removes the file, including a malformed one, and restores today's default
+when supplied it must appear in `--only`. `set` replaces the backend preference while keeping the work map keys.
+`reset` keeps the work map keys and restores today's default
 selection. A missing file or an empty enabled list with no default leaves all
 backends enabled. A nonempty default without an enabled list is refused.
 

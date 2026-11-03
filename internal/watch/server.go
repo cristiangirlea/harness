@@ -250,6 +250,7 @@ type server struct {
 	clock       func() time.Time
 	grants      []owner.Grant
 
+	mapCache    workMapCache
 	batches     batchCache
 	familiarity familiarityCache
 }

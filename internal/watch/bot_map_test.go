@@ -22,29 +22,29 @@ func TestBotReportsWorkMapChanges(t *testing.T) {
 	r := httptest.NewRequest("GET", "http://localhost/", nil)
 	r.RemoteAddr = "127.0.0.1:1234"
 	b := (&server{}).newBotWatcher(r)
-	if got := b.lookMap(); len(got) != 0 {
+	if got := freshBotMap(b); len(got) != 0 {
 		t.Fatalf("baseline: %+v", got)
 	}
 	pieces[0].Stuck = "gate failed"
-	got := b.lookMap()
+	got := freshBotMap(b)
 	if len(got) != 1 || got[0].Kind != "waits" || got[0].Ref != "one" || got[0].URL != "/map" || strings.Contains(got[0].Text, "sk-test") {
 		t.Fatalf("stuck: %+v", got)
 	}
-	if got := b.lookMap(); len(got) != 0 {
+	if got := freshBotMap(b); len(got) != 0 {
 		t.Fatalf("repeated: %+v", got)
 	}
 	pieces[0].Stage, pieces[0].Stuck = workmap.PR, ""
-	got = b.lookMap()
+	got = freshBotMap(b)
 	if len(got) != 1 || got[0].Kind != "map" || !strings.Contains(got[0].Text, "now at pr") {
 		t.Fatalf("stage: %+v", got)
 	}
 	pieces = append(pieces, workmap.Piece{Repo: "/work/repo", Key: "two", Stage: workmap.Idea})
-	if got := b.lookMap(); len(got) != 0 {
+	if got := freshBotMap(b); len(got) != 0 {
 		t.Fatalf("new idea: %+v", got)
 	}
 	buildErr = errors.New("source")
 	pieces[0].Stuck = "failed"
-	if got := b.lookMap(); len(got) != 1 || got[0].Kind != "waits" {
+	if got := freshBotMap(b); len(got) != 1 || got[0].Kind != "waits" {
 		t.Fatalf("partial error: %+v", got)
 	}
 }
@@ -101,20 +101,20 @@ func TestBotPreservesHiddenPiecesDuringErrors(t *testing.T) {
 	r := httptest.NewRequest("GET", "http://localhost/", nil)
 	r.RemoteAddr = "127.0.0.1:1234"
 	b := (&server{}).newBotWatcher(r)
-	if got := b.lookMap(); len(got) != 0 {
+	if got := freshBotMap(b); len(got) != 0 {
 		t.Fatal(got)
 	}
 	pieces = []workmap.Piece{{Repo: "r", Key: "y", Stage: workmap.Idea, Stuck: "blocked"}}
 	buildErr = errors.New("partial")
-	if got := b.lookMap(); len(got) != 1 || got[0].Ref != "y" || got[0].Kind != "waits" {
+	if got := freshBotMap(b); len(got) != 1 || got[0].Ref != "y" || got[0].Kind != "waits" {
 		t.Fatalf("partial: %+v", got)
 	}
 	pieces = []workmap.Piece{{Repo: "r", Key: "x", Stage: workmap.Idea}, {Repo: "r", Key: "hidden", Stage: workmap.Idea, Stuck: "blocked"}, {Repo: "r", Key: "y", Stage: workmap.Idea, Stuck: "blocked"}}
 	buildErr = nil
-	if got := b.lookMap(); len(got) != 1 || got[0].Ref != "hidden" || got[0].Kind != "waits" {
+	if got := freshBotMap(b); len(got) != 1 || got[0].Ref != "hidden" || got[0].Kind != "waits" {
 		t.Fatalf("recovery: %+v", got)
 	}
-	if got := b.lookMap(); len(got) != 0 {
+	if got := freshBotMap(b); len(got) != 0 {
 		t.Fatal(got)
 	}
 }
@@ -127,9 +127,9 @@ func TestBotLinksNewPullRequests(t *testing.T) {
 	r := httptest.NewRequest("GET", "http://localhost/", nil)
 	r.RemoteAddr = "127.0.0.1:1234"
 	b := (&server{}).newBotWatcher(r)
-	b.lookMap()
+	freshBotMap(b)
 	pieces = []workmap.Piece{{Repo: "r", Key: "pr", Stage: workmap.PR, Links: workmap.Links{PR: "https://github.com/a/b/pull/1"}}}
-	got := b.lookMap()
+	got := freshBotMap(b)
 	if len(got) != 1 || got[0].Kind != "map" || got[0].URL != "https://github.com/a/b/pull/1" {
 		t.Fatalf("PR: %+v", got)
 	}
@@ -149,7 +149,7 @@ func TestPublicOwnerReceivesShortenedBotMessage(t *testing.T) {
 		p := workmap.Piece{Repo: "/work/repo", Key: "x", Title: "piece", Stage: workmap.Idea}
 		if calls >= 2 {
 			p.Stuck = "run /work/repo/gate"
-			cancel()
+			go func() { time.Sleep(50 * time.Millisecond); cancel() }()
 		}
 		return []workmap.Piece{p}, nil
 	}
@@ -202,23 +202,45 @@ func TestBotAnnouncesOnlyGatesOrLater(t *testing.T) {
 	r := httptest.NewRequest("GET", "http://localhost/", nil)
 	r.RemoteAddr = "127.0.0.1:1234"
 	b := (&server{}).newBotWatcher(r)
-	b.lookMap()
+	freshBotMap(b)
 	for _, stage := range []workmap.Stage{workmap.Branch, workmap.Agent} {
 		pieces[0].Stage = stage
-		if got := b.lookMap(); len(got) != 0 {
+		if got := freshBotMap(b); len(got) != 0 {
 			t.Fatalf("%s: %+v", stage, got)
 		}
 	}
 	pieces = nil
-	b.lookMap()
+	freshBotMap(b)
 	pieces = []workmap.Piece{{Repo: "repo", Key: "feature", Stage: workmap.Agent}}
-	if got := b.lookMap(); len(got) != 0 {
+	if got := freshBotMap(b); len(got) != 0 {
 		t.Fatalf("return: %+v", got)
 	}
 	for _, stage := range []workmap.Stage{workmap.Gates, workmap.PR} {
 		pieces[0].Stage = stage
-		if got := b.lookMap(); len(got) != 1 || got[0].Kind != "map" {
+		if got := freshBotMap(b); len(got) != 1 || got[0].Kind != "map" {
 			t.Fatalf("%s: %+v", stage, got)
 		}
+	}
+}
+
+func freshBotMap(b *botWatcher) []say {
+	b.s.mapCache.mu.Lock()
+	b.s.mapCache.at = time.Time{}
+	b.s.mapCache.mu.Unlock()
+	return b.lookMap()
+}
+
+func TestBotKeepsPullRequestIdentity(t *testing.T) {
+	old := buildWorkMap
+	t.Cleanup(func() { buildWorkMap = old })
+	piece := workmap.Piece{Repo: "r", Key: "pr#1", Stage: workmap.PR, Links: workmap.Links{PR: "https://github.com/a/b/pull/1"}}
+	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) { return []workmap.Piece{piece}, nil }
+	r := httptest.NewRequest("GET", "http://localhost/", nil)
+	r.RemoteAddr = "127.0.0.1:1234"
+	b := (&server{}).newBotWatcher(r)
+	freshBotMap(b)
+	piece.Key = "branch:feature"
+	if got := freshBotMap(b); len(got) != 0 {
+		t.Fatal(got)
 	}
 }

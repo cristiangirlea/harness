@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/owner"
@@ -19,6 +20,54 @@ import (
 
 var mapPoll = 30 * time.Second
 var buildWorkMap = workmap.Build
+
+type workMapCache struct {
+	mu     sync.Mutex
+	done   chan struct{}
+	at     time.Time
+	pieces []workmap.Piece
+	err    error
+}
+
+func (s *server) sharedMap(ctx context.Context) ([]workmap.Piece, error) {
+	c := &s.mapCache
+	c.mu.Lock()
+	if c.done == nil && (c.at.IsZero() || time.Since(c.at) >= mapPoll) {
+		c.done = make(chan struct{})
+		done := c.done
+		base := s.ctx
+		if base == nil {
+			base = context.Background()
+		}
+		go func() {
+			buildCtx, cancel := context.WithTimeout(base, mapPoll)
+			defer cancel()
+			pieces, err := buildWorkMap(buildCtx, runlog.Home(), nil)
+			c.mu.Lock()
+			c.pieces, c.err, c.at = pieces, err, time.Now()
+			c.done = nil
+			close(done)
+			c.mu.Unlock()
+		}()
+	}
+	done := c.done
+	if done != nil {
+		c.mu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			select {
+			case <-done:
+			default:
+				return nil, ctx.Err()
+			}
+		}
+		c.mu.Lock()
+	}
+	pieces, err := append([]workmap.Piece(nil), c.pieces...), c.err
+	c.mu.Unlock()
+	return pieces, err
+}
 
 var mapStages = []workmap.Stage{workmap.Idea, workmap.Branch, workmap.Agent, workmap.Gates, workmap.Review, workmap.PR, workmap.CI, workmap.Merged, workmap.Released}
 
@@ -168,7 +217,7 @@ func (s *server) mapData(ctx context.Context, vw viewer) mapView {
 	return mapViewOf(p, err)
 }
 func (s *server) mapPieces(ctx context.Context, vw viewer) ([]workmap.Piece, error) {
-	p, err := buildWorkMap(ctx, runlog.Home(), nil)
+	p, err := s.sharedMap(ctx)
 	for i := range p {
 		if p[i].Title == "" {
 			p[i].Title = p[i].Links.Branch

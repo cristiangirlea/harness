@@ -63,6 +63,9 @@ func rank(s Stage) int {
 	}
 	return -1
 }
+
+var gitCall = git
+
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	a := append([]string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)
 	c := exec.CommandContext(ctx, "git", a...)
@@ -129,6 +132,7 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 	if err != nil {
 		errs = append(errs, err)
 	}
+	discovery := repos == nil && p.WorkMapRepos == nil
 	if repos == nil {
 		repos = p.WorkMapRepos
 		if repos == nil {
@@ -177,14 +181,30 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			old.Links.Worktree = p.Links.Worktree
 		}
 	}
+	seenDirs := map[string]bool{}
+	seenRepos := map[string]bool{}
 	for _, dir := range repos {
-		root, err := git(ctx, dir, "rev-parse", "--show-toplevel")
-		if err != nil {
-			errs = append(errs, fmt.Errorf("repository %s: %w", dir, err))
+		dir = canonical(dir)
+		if seenDirs[dir] {
 			continue
 		}
+		seenDirs[dir] = true
+		root, err := gitCall(ctx, dir, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir")
+		if err != nil {
+			if !discovery || ctx.Err() != nil {
+				errs = append(errs, fmt.Errorf("repository %s: %w", dir, err))
+			}
+			continue
+		}
+		root, common, _ := strings.Cut(root, "\n")
+		common = canonical(strings.TrimSpace(common))
+		if seenRepos[common] {
+			continue
+		}
+		seenRepos[common] = true
 		root = canonical(root)
-		if list, e := git(ctx, root, "worktree", "list", "--porcelain"); e == nil {
+		list, listErr := git(ctx, root, "worktree", "list", "--porcelain")
+		if listErr == nil {
 			first, _, _ := strings.Cut(list, "\n")
 			if path, ok := strings.CutPrefix(first, "worktree "); ok {
 				root = canonical(path)
@@ -196,7 +216,7 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		roots[root] = root
 		wt := map[string]string{}
 		worktrees[root] = wt
-		out, err := git(ctx, root, "worktree", "list", "--porcelain")
+		out, err := list, listErr
 		if err != nil {
 			errs = append(errs, fmt.Errorf("worktrees %s: %w", root, err))
 		} else {
@@ -328,6 +348,7 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			add(p)
 		}
 	}
+	resolvedRuns := map[string]struct{ root, branch string }{}
 	for _, r := range runs {
 		linked := false
 		for _, p := range pieces {
@@ -359,13 +380,18 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			}
 		}
 		if root == "" {
-			v, e := git(ctx, dir, "rev-parse", "--show-toplevel")
-			if e == nil {
-				root = canonical(v)
-				if _, ok := roots[root]; !ok {
-					continue
+			if cached, ok := resolvedRuns[dir]; ok {
+				root, branch = cached.root, cached.branch
+			} else {
+				v, e := git(ctx, dir, "rev-parse", "--show-toplevel")
+				if e == nil {
+					root = canonical(v)
+					if _, ok := roots[root]; !ok {
+						continue
+					}
+					branch, _ = git(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
 				}
-				branch, _ = git(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
+				resolvedRuns[dir] = struct{ root, branch string }{root, branch}
 			}
 		}
 		if root == "" {

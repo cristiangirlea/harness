@@ -449,3 +449,23 @@ func TestBuildKeepsLocalPiecesWhenGitHubIsCancelled(t *testing.T) {
 		t.Fatal("cancellation did not return")
 	}
 }
+
+func TestPassingChecksClearOlderBatchFailure(t *testing.T) {
+	old := ws.GH
+	t.Cleanup(func() { ws.GH = old })
+	ws.GH = func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "pr" && args[1] == "list" && args[3] == "--state" && args[4] == "open" {
+			return []byte(`[ {"number":1,"headRefName":"feature","updatedAt":"2025-01-02T00:00:00Z","statusCheckRollup":[{"conclusion":"SUCCESS"}]} ]`), nil
+		}
+		return []byte(`[]`), nil
+	}
+	at := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	p := &Piece{Repo: "r", Key: "branch:feature", Stuck: "gate failed", stuckAt: at}
+	pieces := map[string]*Piece{"r\x00branch:feature": p}
+	if err := githubRepo(context.Background(), t.TempDir(), "r", "o/r", pieces); err != nil {
+		t.Fatal(err)
+	}
+	if p.Stuck != "" {
+		t.Fatalf("stuck: %s", p.Stuck)
+	}
+}
