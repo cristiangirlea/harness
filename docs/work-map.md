@@ -18,4 +18,8 @@ branches, reports failing checks and requested changes, and caches each reposito
 under `workmap/github` in HRN_HOME for five minutes. A failed refresh returns the
 cached data and an error, and retries after five minutes. Set `work_map_github` to `false` in `backends.json` to
 disable this source. Only titles, states, numbers, links, check names, branch names and dates are kept;
-the watch page is readable on the network without a login.
+only the local owner can open the work map page.
+
+## Watch page
+
+An owner can open `/map` in hrn watch for repository swimlanes and a list of work that waits for attention. The page updates from `/stream/map` every 30 seconds when the map changes. Both routes are owner-only; other viewers receive 404. Source errors appear alongside any partial results.
