@@ -335,13 +335,19 @@ func validID(id string) error {
 }
 
 func Load(id string) (Record, error) {
+	home, err := ResolveHome()
+	if err != nil {
+		return Record{}, err
+	}
+	return LoadFrom(home, id)
+}
+
+// LoadFrom reads a run from the given record home.
+func LoadFrom(home, id string) (Record, error) {
 	if err := validID(id); err != nil {
 		return Record{}, err
 	}
-	if _, err := ResolveHome(); err != nil {
-		return Record{}, err
-	}
-	dir := filepath.Join(Root(), id)
+	dir := filepath.Join(home, "runs", id)
 	var rec Record
 	if data, err := os.ReadFile(filepath.Join(dir, "result.json")); err == nil {
 		rec.Done = true
