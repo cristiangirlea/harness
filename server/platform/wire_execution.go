@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 type JobStatus string
@@ -38,33 +36,33 @@ type ResultUsage struct {
 }
 
 type JobResult struct {
-	Evidence              []ResultEvidence  `json:"evidence,omitempty"`
-	ChangedFiles          []string          `json:"changed_files,omitempty"`
-	ChangedFilesTruncated bool              `json:"changed_files_truncated,omitempty"`
-	Commits               []string          `json:"commits,omitempty"`
-	EndHead               string            `json:"end_head,omitempty"`
-	Retrieval             *retrieval.Record `json:"retrieval,omitempty"`
-	Usage                 *ResultUsage      `json:"usage_metadata,omitempty"`
-	RecoveryRequired      bool              `json:"recovery_required,omitempty"`
-	Backend               string            `json:"backend"`
-	Model                 string            `json:"model,omitempty"`
-	ModelReported         bool              `json:"model_reported,omitempty"`
-	Status                JobStatus         `json:"status"`
-	Final                 string            `json:"final,omitempty"`
-	Error                 string            `json:"error,omitempty"`
-	Turns                 int               `json:"turns"`
-	InputTokens           int64             `json:"input_tokens,omitempty"`
-	OutputTokens          int64             `json:"output_tokens,omitempty"`
-	CacheRead             int64             `json:"cache_read_tokens,omitempty"`
-	CacheWrite            int64             `json:"cache_write_tokens,omitempty"`
-	ContextTokens         int64             `json:"context_tokens,omitempty"`
-	ToolCalls             int               `json:"tool_calls,omitempty"`
-	CostUSD               float64           `json:"cost_usd,omitempty"`
-	CostEstimate          bool              `json:"cost_is_estimate,omitempty"`
-	Duration              time.Duration     `json:"duration_ns"`
-	Session               string            `json:"session,omitempty"`
-	LimitResets           time.Time         `json:"limit_resets,omitzero"`
-	CLIVersion            string            `json:"cli_version,omitempty"`
+	Evidence              []ResultEvidence `json:"evidence,omitempty"`
+	ChangedFiles          []string         `json:"changed_files,omitempty"`
+	ChangedFilesTruncated bool             `json:"changed_files_truncated,omitempty"`
+	Commits               []string         `json:"commits,omitempty"`
+	EndHead               string           `json:"end_head,omitempty"`
+	Retrieval             *KnowledgeRecord `json:"retrieval,omitempty"`
+	Usage                 *ResultUsage     `json:"usage_metadata,omitempty"`
+	RecoveryRequired      bool             `json:"recovery_required,omitempty"`
+	Backend               string           `json:"backend"`
+	Model                 string           `json:"model,omitempty"`
+	ModelReported         bool             `json:"model_reported,omitempty"`
+	Status                JobStatus        `json:"status"`
+	Final                 string           `json:"final,omitempty"`
+	Error                 string           `json:"error,omitempty"`
+	Turns                 int              `json:"turns"`
+	InputTokens           int64            `json:"input_tokens,omitempty"`
+	OutputTokens          int64            `json:"output_tokens,omitempty"`
+	CacheRead             int64            `json:"cache_read_tokens,omitempty"`
+	CacheWrite            int64            `json:"cache_write_tokens,omitempty"`
+	ContextTokens         int64            `json:"context_tokens,omitempty"`
+	ToolCalls             int              `json:"tool_calls,omitempty"`
+	CostUSD               float64          `json:"cost_usd,omitempty"`
+	CostEstimate          bool             `json:"cost_is_estimate,omitempty"`
+	Duration              time.Duration    `json:"duration_ns"`
+	Session               string           `json:"session,omitempty"`
+	LimitResets           time.Time        `json:"limit_resets,omitzero"`
+	CLIVersion            string           `json:"cli_version,omitempty"`
 }
 
 func decodeResult(data []byte, allowEmpty, lenient bool) (JobResult, error) {

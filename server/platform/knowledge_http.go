@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
-	"github.com/cristiangirlea/harness/internal/retrieval"
 	"net/http"
 	"time"
 
@@ -28,11 +27,11 @@ func knowledgeFailure(w http.ResponseWriter, err error) {
 	invalid(w, err)
 }
 func (h *HTTPServer) knowledgeSearch(w http.ResponseWriter, r *http.Request) {
-	var in retrieval.Search
+	var in KnowledgeSearch
 	if !decode(w, r, &in) {
 		return
 	}
-	if !h.knowledgeReadAuth(w, r, in.Scope) {
+	if !h.knowledgeReadAuth(w, r, in.KnowledgeScope) {
 		return
 	}
 	out, err := h.Store.SearchKnowledge(r.Context(), in)
@@ -42,7 +41,7 @@ func (h *HTTPServer) knowledgeSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, 200, out)
 }
-func (h *HTTPServer) knowledgeReadAuth(w http.ResponseWriter, r *http.Request, sc retrieval.Scope) bool {
+func (h *HTTPServer) knowledgeReadAuth(w http.ResponseWriter, r *http.Request, sc KnowledgeScope) bool {
 	// A worker credential may only read its exact project; a tenant credential
 	// permits projects owned by that tenant, checked again in every store query.
 	if !validKnowledgeScope(sc) {
@@ -78,16 +77,16 @@ func (h *HTTPServer) knowledgeReadAuth(w http.ResponseWriter, r *http.Request, s
 }
 func (h *HTTPServer) knowledgeInspect(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		retrieval.Scope
+		KnowledgeScope
 		VersionID string `json:"version_id"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if !h.knowledgeReadAuth(w, r, in.Scope) {
+	if !h.knowledgeReadAuth(w, r, in.KnowledgeScope) {
 		return
 	}
-	out, err := h.Store.InspectKnowledge(r.Context(), in.Scope, in.VersionID)
+	out, err := h.Store.InspectKnowledge(r.Context(), in.KnowledgeScope, in.VersionID)
 	if err != nil {
 		knowledgeFailure(w, err)
 		return
@@ -98,7 +97,7 @@ func (h *HTTPServer) knowledgeImport(w http.ResponseWriter, r *http.Request) {
 	if !h.operator(w, r) {
 		return
 	}
-	var in retrieval.Import
+	var in KnowledgeImport
 	if !decode(w, r, &in) {
 		return
 	}
@@ -113,7 +112,7 @@ func (h *HTTPServer) knowledgeChange(w http.ResponseWriter, r *http.Request) {
 	if !h.operator(w, r) {
 		return
 	}
-	var in retrieval.Change
+	var in KnowledgeChange
 	if !decode(w, r, &in) {
 		return
 	}
@@ -126,7 +125,7 @@ func (h *HTTPServer) knowledgeChange(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) knowledgeActive(w http.ResponseWriter, r *http.Request) {
-	var in retrieval.Scope
+	var in KnowledgeScope
 	if !decode(w, r, &in) {
 		return
 	}
@@ -145,7 +144,7 @@ func (h *HTTPServer) knowledgeAdmission(w http.ResponseWriter, r *http.Request) 
 	if !h.operator(w, r) {
 		return
 	}
-	var in retrieval.Admission
+	var in KnowledgeAdmission
 	if !decode(w, r, &in) {
 		return
 	}

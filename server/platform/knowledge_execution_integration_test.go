@@ -1,14 +1,14 @@
 package platform
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/remote"
-	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
 func TestSubmissionRefusesRetrievalBeforeRemoteExecution(t *testing.T) {
@@ -27,19 +27,36 @@ func TestKnowledgePostgresRemoteExecutionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ChangeKnowledge(ctx, retrieval.Change{Scope: seed.Scope, Operation: "activate", VersionID: id}); err != nil {
+	if _, err = s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: seed.KnowledgeScope, Operation: "activate", VersionID: id}); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer((&HTTPServer{Store: s}).Handler())
 	defer srv.Close()
-	t.Setenv("HRN_SERVER_URL", srv.URL)
-	t.Setenv("HRN_TENANT_TOKEN", token)
-	t.Setenv("HRN_SERVER_CA_FILE", "")
-	searcher, err := remote.SearcherFromEnv()
+	query := KnowledgeSearch{KnowledgeScope: seed.KnowledgeScope, Query: "Explain ERR_BUILD safely"}
+	payload, err := json.Marshal(query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	packet, err := searcher.SearchKnowledge(ctx, retrieval.Search{Scope: seed.Scope, Query: "Explain ERR_BUILD safely"})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v1/knowledge/search", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var packet KnowledgePacket
+	err = json.NewDecoder(resp.Body).Decode(&packet)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("search status: %s", resp.Status)
+	}
+	if err == nil {
+		err = KnowledgeValidatePacket(packet, id, query.Query)
+	}
+
 	if err != nil || packet.VersionID != id || !strings.Contains(packet.Text, "checked project build") {
 		t.Fatalf("search: %+v, %v", packet, err)
 	}

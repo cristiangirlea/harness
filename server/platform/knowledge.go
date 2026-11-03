@@ -14,7 +14,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -31,7 +30,7 @@ func knowledgeQueryIdentifiers(query string) []string {
 	for i, start := range spans {
 		for j := i; j < len(spans) && j < i+8; j++ {
 			end := spans[j]
-			if end[1]-start[0] > retrieval.MaxIdentifierBytes {
+			if end[1]-start[0] > KnowledgeMaxIdentifierBytes {
 				break
 			}
 			if j > i && strings.Trim(query[spans[j-1][1]:end[0]], " ") != "" {
@@ -71,7 +70,7 @@ func unsafeKnowledgeFrame(v string) bool {
 	}
 	return false
 }
-func unsafeKnowledgeSource(e retrieval.Entry) bool {
+func unsafeKnowledgeSource(e KnowledgeEntry) bool {
 	for _, text := range append([]string{e.ID, e.Key, e.Source}, e.Identifiers...) {
 		if unsafeKnowledgePattern(text, true) != "" {
 			return true
@@ -135,7 +134,7 @@ func knowledgeTextRefusal(fields ...knowledgeTextField) error {
 	}
 	return nil
 }
-func validKnowledgeScope(s retrieval.Scope) bool {
+func validKnowledgeScope(s KnowledgeScope) bool {
 	return knowledgeID.MatchString(s.TenantID) && knowledgeID.MatchString(s.ProjectID) && refPattern.MatchString(s.Revision) && len(s.Backend) > 0 && len(s.Backend) <= 64 && len(s.Model) > 0 && len(s.Model) <= 128
 }
 
@@ -150,7 +149,7 @@ func (s *Store) knowledgeContext(ctx context.Context) (context.Context, func(), 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	return ctx, func() { cancel(); <-s.retrievalSlots }, nil
 }
-func knowledgeProject(ctx context.Context, tx pgx.Tx, sc retrieval.Scope) error {
+func knowledgeProject(ctx context.Context, tx pgx.Tx, sc KnowledgeScope) error {
 	if !validKnowledgeScope(sc) {
 		return ErrNotFound
 	}
@@ -164,7 +163,7 @@ func knowledgeProject(ctx context.Context, tx pgx.Tx, sc retrieval.Scope) error 
 	return nil
 }
 
-func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (string, error) {
+func (s *Store) ImportKnowledge(ctx context.Context, in KnowledgeImport) (string, error) {
 	if err := knowledgeTextRefusal(
 		knowledgeTextField{"tenant_id", in.TenantID}, knowledgeTextField{"project_id", in.ProjectID},
 		knowledgeTextField{"backend", in.Backend}, knowledgeTextField{"model", in.Model},
@@ -173,11 +172,11 @@ func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (strin
 	); err != nil {
 		return "", err
 	}
-	if !validKnowledgeScope(in.Scope) || in.Origin != "reviewed_source" || strings.TrimSpace(in.ReviewedBy) == "" || strings.TrimSpace(in.ReviewEvidence) == "" || len(in.ReviewedBy) > 256 || len(in.ReviewEvidence) > 2048 || unsafeKnowledgeFrame(in.ReviewEvidence) || len(in.Entries) > 100 || len(in.Entries) == 0 {
+	if !validKnowledgeScope(in.KnowledgeScope) || in.Origin != "reviewed_source" || strings.TrimSpace(in.ReviewedBy) == "" || strings.TrimSpace(in.ReviewEvidence) == "" || len(in.ReviewedBy) > 256 || len(in.ReviewEvidence) > 2048 || unsafeKnowledgeFrame(in.ReviewEvidence) || len(in.Entries) > 100 || len(in.Entries) == 0 {
 		return "", ErrUnsupported
 	}
 	// Canonical IDs and order make retries (including concurrent imports) idempotent.
-	entries := append([]retrieval.Entry(nil), in.Entries...)
+	entries := append([]KnowledgeEntry(nil), in.Entries...)
 	seen := map[string]bool{}
 	for i := range entries {
 		e := &entries[i]
@@ -193,11 +192,11 @@ func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (strin
 				return "", fmt.Errorf("entries[%d].identifiers[%d]: %w", i, j, err)
 			}
 		}
-		if e.Key == "" || len(e.Key) > retrieval.MaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > retrieval.MaxEntryIdentifiers || !utf8.ValidString(e.Content) {
+		if e.Key == "" || len(e.Key) > KnowledgeMaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > KnowledgeMaxEntryIdentifiers || !utf8.ValidString(e.Content) {
 			return "", ErrUnsupported
 		}
 		for _, id := range e.Identifiers {
-			if len(id) == 0 || len(id) > retrieval.MaxIdentifierBytes || !knowledgeIdentifier.MatchString(id) {
+			if len(id) == 0 || len(id) > KnowledgeMaxIdentifierBytes || !knowledgeIdentifier.MatchString(id) {
 				return "", ErrUnsupported
 			}
 		}
@@ -220,7 +219,7 @@ func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (strin
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	if err = knowledgeProject(ctx, tx, in.Scope); err != nil {
+	if err = knowledgeProject(ctx, tx, in.KnowledgeScope); err != nil {
 		return "", err
 	}
 	tag, err := tx.Exec(ctx, `INSERT INTO knowledge_versions(tenant_id,project_id,id,backend,model,revision,reviewed_by,review_evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, in.TenantID, in.ProjectID, id, in.Backend, in.Model, in.Revision, in.ReviewedBy, in.ReviewEvidence)
@@ -242,7 +241,7 @@ func (s *Store) ImportKnowledge(ctx context.Context, in retrieval.Import) (strin
 	return id, tx.Commit(ctx)
 }
 
-func checkKnowledgeVersion(ctx context.Context, tx pgx.Tx, sc retrieval.Scope, id string) error {
+func checkKnowledgeVersion(ctx context.Context, tx pgx.Tx, sc KnowledgeScope, id string) error {
 	if !knowledgeID.MatchString(id) {
 		return ErrNotFound
 	}
@@ -257,8 +256,8 @@ func checkKnowledgeVersion(ctx context.Context, tx pgx.Tx, sc retrieval.Scope, i
 	return nil
 }
 
-func (s *Store) InspectKnowledge(ctx context.Context, sc retrieval.Scope, id string) (retrieval.Version, error) {
-	out := retrieval.Version{Scope: sc, ID: id, Entries: []retrieval.Entry{}}
+func (s *Store) InspectKnowledge(ctx context.Context, sc KnowledgeScope, id string) (KnowledgeVersion, error) {
+	out := KnowledgeVersion{KnowledgeScope: sc, ID: id, Entries: []KnowledgeEntry{}}
 	ctx, done, err := s.knowledgeContext(ctx)
 	if err != nil {
 		return out, err
@@ -279,8 +278,8 @@ func (s *Store) InspectKnowledge(ctx context.Context, sc retrieval.Scope, id str
 	if err != nil {
 		return out, err
 	}
-	var admission retrieval.Admission
-	admission.Scope, admission.VersionID = sc, id
+	var admission KnowledgeAdmission
+	admission.KnowledgeScope, admission.VersionID = sc, id
 	err = tx.QueryRow(ctx, `SELECT verdict,baseline_version_id,eval_ids,pass_rate_baseline,pass_rate_candidate,median_tokens_baseline,median_tokens_candidate,failed_attempt_tokens_baseline,failed_attempt_tokens_candidate,source_runs,created_at FROM knowledge_admissions WHERE tenant_id=$1 AND project_id=$2 AND version_id=$3`, sc.TenantID, sc.ProjectID, id).Scan(&admission.Verdict, &admission.BaselineVersionID, &admission.EvalIDs, &admission.PassRateBaseline, &admission.PassRateCandidate, &admission.MedianTokensBaseline, &admission.MedianTokensCandidate, &admission.FailedAttemptTokensBaseline, &admission.FailedAttemptTokensCandidate, &admission.SourceRuns, &admission.CreatedAt)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
@@ -294,7 +293,7 @@ func (s *Store) InspectKnowledge(ctx context.Context, sc retrieval.Scope, id str
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var e retrieval.Entry
+		var e KnowledgeEntry
 		if err = rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers); err != nil {
 			return out, err
 		}
@@ -303,8 +302,8 @@ func (s *Store) InspectKnowledge(ctx context.Context, sc retrieval.Scope, id str
 	return out, rows.Err()
 }
 
-func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retrieval.Active, error) {
-	var out retrieval.Active
+func (s *Store) ChangeKnowledge(ctx context.Context, in KnowledgeChange) (KnowledgeActive, error) {
+	var out KnowledgeActive
 	if in.Operation != "activate" && in.Operation != "disable" && in.Operation != "rollback" {
 		return out, ErrUnsupported
 	}
@@ -318,7 +317,7 @@ func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retri
 		return out, err
 	}
 	defer tx.Rollback(ctx)
-	if err = knowledgeProject(ctx, tx, in.Scope); err != nil {
+	if err = knowledgeProject(ctx, tx, in.KnowledgeScope); err != nil {
 		return out, err
 	}
 	out, err = changeKnowledgeTx(ctx, tx, in)
@@ -328,8 +327,8 @@ func (s *Store) ChangeKnowledge(ctx context.Context, in retrieval.Change) (retri
 	return out, tx.Commit(ctx)
 }
 
-func changeKnowledgeTx(ctx context.Context, tx pgx.Tx, in retrieval.Change) (retrieval.Active, error) {
-	var out retrieval.Active
+func changeKnowledgeTx(ctx context.Context, tx pgx.Tx, in KnowledgeChange) (KnowledgeActive, error) {
+	var out KnowledgeActive
 	var err error
 	_, err = tx.Exec(ctx, `INSERT INTO knowledge_active_versions(tenant_id,project_id,backend,model,revision) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, in.TenantID, in.ProjectID, in.Backend, in.Model, in.Revision)
 	if err != nil {
@@ -353,7 +352,7 @@ func changeKnowledgeTx(ctx context.Context, tx pgx.Tx, in retrieval.Change) (ret
 		}
 	}
 	if target != "" {
-		if err = checkKnowledgeVersion(ctx, tx, in.Scope, target); err != nil {
+		if err = checkKnowledgeVersion(ctx, tx, in.KnowledgeScope, target); err != nil {
 			return out, err
 		}
 	} else if in.Operation == "activate" {
@@ -386,9 +385,9 @@ const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
  WHERE (e.identifiers && $5::text[] OR e.search_vector @@ to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')))
  ORDER BY (e.identifiers && $5::text[]) DESC, ts_rank_cd(e.search_vector,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),''))) DESC,e.entry_key COLLATE "C",e.id LIMIT 100`
 
-func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retrieval.Packet, error) {
+func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (KnowledgePacket, error) {
 	started := time.Now()
-	out := retrieval.Packet{Entries: []retrieval.Entry{}, Ranking: retrieval.RankingVersion, QueryDigest: retrieval.TextDigest(in.Query)}
+	out := KnowledgePacket{Entries: []KnowledgeEntry{}, Ranking: KnowledgeRankingVersion, QueryDigest: KnowledgeTextDigest(in.Query)}
 	if len(in.Query) > 2048 || len(in.RunRef) > 256 || in.Attempt < 0 || in.Attempt > math.MaxInt32 || !utf8.ValidString(in.Query) {
 		return out, ErrUnsupported
 	}
@@ -402,7 +401,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 		return out, err
 	}
 	defer tx.Rollback(ctx)
-	if err = knowledgeProject(ctx, tx, in.Scope); err != nil {
+	if err = knowledgeProject(ctx, tx, in.KnowledgeScope); err != nil {
 		return out, err
 	}
 	out.VersionID = in.VersionID
@@ -415,7 +414,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 	if out.VersionID == "" {
 		out.EmptyReason = "disabled_or_unconfigured"
 	} else {
-		if err = checkKnowledgeVersion(ctx, tx, in.Scope, out.VersionID); err != nil {
+		if err = checkKnowledgeVersion(ctx, tx, in.KnowledgeScope, out.VersionID); err != nil {
 			return out, err
 		}
 		words := knowledgeQueryIdentifiers(in.Query)
@@ -425,7 +424,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 		}
 		seen := map[string]bool{}
 		for rows.Next() {
-			var e retrieval.Entry
+			var e KnowledgeEntry
 			if err = rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers); err != nil {
 				rows.Close()
 				return out, err
@@ -436,7 +435,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 			}
 			seen[hash] = true
 			label := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", e.ID, e.Source, in.Revision, e.Evidence, e.Content)
-			if len(retrieval.ReferenceBlock(out.Text+label)) > retrieval.MaxPacketBytes {
+			if len(KnowledgeReferenceBlock(out.Text+label)) > KnowledgeMaxPacketBytes {
 				continue
 			}
 			out.Text += label
@@ -455,7 +454,7 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 		}
 	}
 	out.Bytes = len(out.Text)
-	out.Digest = retrieval.TextDigest(out.Text)
+	out.Digest = KnowledgeTextDigest(out.Text)
 	out.DurationNS = time.Since(started).Nanoseconds()
 	out.AuditID, err = newID("r_")
 	if err != nil {
@@ -469,8 +468,8 @@ func (s *Store) SearchKnowledge(ctx context.Context, in retrieval.Search) (retri
 	return out, tx.Commit(ctx)
 }
 
-func (s *Store) ActiveKnowledge(ctx context.Context, sc retrieval.Scope) (retrieval.Active, error) {
-	var out retrieval.Active
+func (s *Store) ActiveKnowledge(ctx context.Context, sc KnowledgeScope) (KnowledgeActive, error) {
+	var out KnowledgeActive
 	ctx, done, err := s.knowledgeContext(ctx)
 	if err != nil {
 		return out, err
@@ -491,7 +490,7 @@ func (s *Store) ActiveKnowledge(ctx context.Context, sc retrieval.Scope) (retrie
 	return out, err
 }
 
-func (s *Store) RecordAdmission(ctx context.Context, in retrieval.Admission) error {
+func (s *Store) RecordAdmission(ctx context.Context, in KnowledgeAdmission) error {
 	if in.Verdict != "admitted" && in.Verdict != "rejected" && in.Verdict != "pending" {
 		return ErrUnsupported
 	}
@@ -518,13 +517,13 @@ func (s *Store) RecordAdmission(ctx context.Context, in retrieval.Admission) err
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err = knowledgeProject(ctx, tx, in.Scope); err != nil {
+	if err = knowledgeProject(ctx, tx, in.KnowledgeScope); err != nil {
 		return err
 	}
-	if err = checkKnowledgeVersion(ctx, tx, in.Scope, in.VersionID); err != nil {
+	if err = checkKnowledgeVersion(ctx, tx, in.KnowledgeScope, in.VersionID); err != nil {
 		return err
 	}
-	if err = checkKnowledgeVersion(ctx, tx, in.Scope, in.BaselineVersionID); err != nil {
+	if err = checkKnowledgeVersion(ctx, tx, in.KnowledgeScope, in.BaselineVersionID); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO knowledge_active_versions(tenant_id,project_id,backend,model,revision) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, in.TenantID, in.ProjectID, in.Backend, in.Model, in.Revision)
@@ -551,7 +550,7 @@ func (s *Store) RecordAdmission(ctx context.Context, in retrieval.Admission) err
 		return err
 	}
 	if in.Verdict == "admitted" {
-		_, err = changeKnowledgeTx(ctx, tx, retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: in.VersionID, ExpectedGeneration: generation})
+		_, err = changeKnowledgeTx(ctx, tx, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "activate", VersionID: in.VersionID, ExpectedGeneration: generation})
 		if err != nil {
 			return err
 		}
