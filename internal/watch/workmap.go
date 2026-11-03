@@ -160,6 +160,10 @@ func (s *server) mapOwner(r *http.Request) bool {
 	return s.who(r).ID == owner.Local()
 }
 func (s *server) mapData(ctx context.Context, vw viewer) mapView {
+	p, err := s.mapPieces(ctx, vw)
+	return mapViewOf(p, err)
+}
+func (s *server) mapPieces(ctx context.Context, vw viewer) ([]workmap.Piece, error) {
 	p, err := buildWorkMap(ctx, runlog.Home(), nil)
 	for i := range p {
 		if p[i].Title == "" {
@@ -173,7 +177,7 @@ func (s *server) mapData(ctx context.Context, vw viewer) mapView {
 		p[i].Title, _ = firstLine(p[i].Title)
 		p[i].Stuck, _ = firstLine(p[i].Stuck)
 	}
-	return mapViewOf(p, err)
+	return p, err
 }
 func (s *server) workMap(w http.ResponseWriter, r *http.Request) {
 	if !s.mapOwner(r) {

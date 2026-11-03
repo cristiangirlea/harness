@@ -23,3 +23,5 @@ only the local owner can open the work map page.
 ## Watch page
 
 An owner can open `/map` in hrn watch for repository swimlanes and a list of work that waits for attention. The page updates from `/stream/map` every 30 seconds when the map changes. Both routes are owner-only; other viewers receive 404. Source errors appear alongside any partial results.
+
+The bot also checks the work map every 30 seconds for an owner and announces newly stuck work and advances after a silent first look, using its usual message settings.

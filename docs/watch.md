@@ -315,6 +315,8 @@ and as desktop notifications:
 | task | Task two of four in demo-api passed: fix the flaky test. | yes | no |
 | done | Claude has finished in harness. It took four minutes. | yes | yes |
 | failed | The batch in demo-api is done: three of four tasks passed. It took twelve minutes. | yes | yes |
+| waits | Release in harness waits for you: checks failed. | yes | yes |
+| map | Release in harness is now at pr. | no | no |
 | status | Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in demo-api. | no | no |
 
 Those are the defaults; the settings change each one, pick the voice and the speed, and

@@ -18,6 +18,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/workmap"
 )
 
 type say struct {
@@ -39,6 +40,8 @@ var botKinds = []botKind{
 	{"done", "A run or batch is done", true, true},
 	{"failed", "A run or batch stops short", true, true},
 	{"status", "What is going, when that changes", false, false},
+	{"waits", "Something waits for you", true, true},
+	{"map", "Work moves on the map", false, false},
 }
 
 // Wait for batch ownership to be saved so attempts are not announced twice.
@@ -525,10 +528,45 @@ type botWatcher struct {
 	looked    bool
 	began     time.Time
 	late      map[string]bool // batches on disk the first look could not read
+	mapPrev   map[string]workmap.Piece
 }
 
 func (s *server) newBotWatcher(r *http.Request) *botWatcher {
 	return &botWatcher{s: s, request: r, followers: map[string]*Follower{}, doing: map[string]string{}, paused: map[string]int64{}, late: map[string]bool{}}
+}
+
+func (b *botWatcher) lookMap() []say {
+	if !b.s.mapOwner(b.request) {
+		return nil
+	}
+	pieces, err := b.s.mapPieces(b.request.Context(), b.s.viewerOf(b.request))
+	if err != nil {
+		return nil
+	}
+	cur := make(map[string]workmap.Piece, len(pieces))
+	var out []say
+	for _, p := range pieces {
+		key := p.Repo + "\x00" + p.Key
+		was, seen := b.mapPrev[key]
+		cur[key] = p
+		if b.mapPrev == nil {
+			continue
+		}
+		url := mapLink(p)
+		if url == "" {
+			url = "/map"
+		}
+		head := p.Title + " in " + mapRepoBase(p.Repo)
+		if p.Stuck != "" && (!seen || was.Stuck == "") {
+			out = append(out, say{"waits", sentence(head + " waits for you: " + p.Stuck), p.Key, url})
+		}
+		stage, before := slices.Index(mapStages, p.Stage), slices.Index(mapStages, was.Stage)
+		if stage > 0 && (!seen || stage > before) {
+			out = append(out, say{"map", sentence(head + " is now at " + string(p.Stage)), p.Key, url})
+		}
+	}
+	b.mapPrev = cur
+	return out
 }
 
 // Retain unreadable files across Windows renames to avoid false new-batch announcements.
@@ -680,6 +718,27 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 	b := s.newBotWatcher(r)
 	var prev botSnapshot
 	first, last := true, ""
+	nextMap := time.Now()
+	mapTick := time.NewTicker(mapPoll)
+	defer mapTick.Stop()
+	wake := make(chan struct{}, 1)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-mapTick.C:
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			case <-r.Context().Done():
+				return
+			case <-done:
+				return
+			}
+		}
+	}()
 	s.loop(r, st, 4*s.opt.Poll, func() (bool, error) {
 		cur := b.look()
 		html, err := s.render("botnow", botNowOf(cur))
@@ -692,7 +751,14 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 				return true, err
 			}
 		}
-		for _, m := range announce(b.baseline(prev, cur), cur, first) {
+		messages := announce(b.baseline(prev, cur), cur, first)
+		if now := time.Now(); !now.Before(nextMap) {
+			messages = append(messages, b.lookMap()...)
+			for !nextMap.After(now) {
+				nextMap = nextMap.Add(mapPoll)
+			}
+		}
+		for _, m := range messages {
 			m.Text = s.clean(m.Text)
 			data, _ := json.Marshal(m)
 			text := string(data)
@@ -705,5 +771,5 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 		}
 		prev, first = cur, false
 		return false, nil
-	})
+	}, wake)
 }
