@@ -60,7 +60,7 @@ func TestSessionsFilterAndReadOnlyTheTail(t *testing.T) {
 	line := func(cwd, branch string) string {
 		return fmt.Sprintf(`{"cwd":%s,"gitBranch":%s,"message":"secret-shaped-value"}`, strconv.Quote(cwd), strconv.Quote(branch)) + "\n"
 	}
-	data := line(repo, "early") + strings.Repeat("x", 70000) + "\n" + line(repo, "feature") + "{broken\n\xff\n"
+	data := line(repo, "early") + strings.Repeat("x", 70000) + "\n" + line(repo, "feature") + `{"cwd":` + strconv.Quote(repo) + `,"gitBranch":"feat` + "\xff" + `"}` + "\n{broken\n\xff\n"
 	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestSessionsSkipLinksLongLinesAndNonUUIDNames(t *testing.T) {
 	dir := filepath.Join(home, "projects", "fixture")
 	line := fmt.Sprintf("{\"cwd\":%s,\"gitBranch\":\"feature\"}", strconv.Quote(repo))
 	reviewWrite(t, filepath.Join(dir, "not-a-uuid.jsonl"), line)
-	reviewWrite(t, filepath.Join(dir, "00000000-0000-0000-0000-000000000001.jsonl"), strings.Repeat("x", 65537))
+	reviewWrite(t, filepath.Join(dir, "00000000-0000-0000-0000-000000000001.jsonl"), strings.Repeat(" ", 65537)+line)
 	reviewWrite(t, filepath.Join(outside, "12345678-1234-1234-1234-123456789abc.jsonl"), line)
 	before := map[string]*Piece{}
 	if err := sessionSources(map[string]string{repo: repo}, nil, nil, before); err != nil || len(before) != 0 {
