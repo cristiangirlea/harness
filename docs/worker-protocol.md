@@ -8,6 +8,7 @@ one job attempt.
 After `hello`, the worker sends `start` with the attempt ID and task and, on recovery, the last
 accepted checkpoint. The task carries the job options `timeout`, `max_turns`,
 `max_cost_usd` and `task_budget` when set; omitted limits retain the backend defaults.
+Limits are validated as in `hrn exec`.
 The cost ceiling is enforced using the same usage estimates as the in-process worker.
 The client preserves the complete terminal result, including failed status, error and usage.
 The child accepts only the `api` backend and an HTTP base URL whose host is

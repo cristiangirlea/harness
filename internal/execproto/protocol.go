@@ -219,6 +219,11 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 			return w.reject(req.AttemptID, "unsupported", "backend cannot honour option "+option)
 		}
 	}
+	if worker {
+		if err := agent.ValidateLimits(time.Duration(t.Timeout), t.MaxCostUSD, t.TaskBudget); err != nil {
+			return w.reject(req.AttemptID, "bad_request", err.Error())
+		}
+	}
 	if t.Timeout < 0 {
 		return w.reject(req.AttemptID, "bad_request", "timeout must not be negative")
 	}

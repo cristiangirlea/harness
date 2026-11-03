@@ -61,6 +61,35 @@ func TestWorkerRestrictions(t *testing.T) {
 	}
 }
 
+func TestWorkerRejectsInvalidLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+		value any
+		want  string
+	}{
+		{"negative cost", "max_cost_usd", -1, "max cost -1.00 is negative"},
+		{"negative budget", "task_budget", -1, "task budget -1 is below the API minimum"},
+		{"budget below minimum", "task_budget", agent.MinTaskBudget - 1, "task budget 19999 is below the API minimum"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			t.Setenv("ANTHROPIC_BASE_URL", "http://localhost")
+			req := start(t.TempDir(), "api")
+			req["task"].(map[string]any)[tc.field] = tc.value
+			input, err := json.Marshal(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			code := RunWorker(context.Background(), bytes.NewReader(append(input, '\n')), &out, nil)
+			if code != 2 || !strings.Contains(out.String(), `"type":"rejected"`) || !strings.Contains(out.String(), `"code":"bad_request"`) || !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("code=%d output=%s", code, out.String())
+			}
+		})
+	}
+}
+
 func TestWorkerAcceptsLoopbackWithoutTools(t *testing.T) {
 	requests := make(chan map[string]json.RawMessage, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +107,8 @@ func TestWorkerAcceptsLoopbackWithoutTools(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "fixture")
 	req := start(t.TempDir(), "api")
 	req["task"].(map[string]any)["task_budget"] = 20000
+	req["task"].(map[string]any)["max_cost_usd"] = 2.5
+	req["task"].(map[string]any)["timeout"] = "1m"
 	input, _ := json.Marshal(req)
 	reader, writer := io.Pipe()
 	output, outputWriter := io.Pipe()
