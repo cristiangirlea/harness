@@ -223,3 +223,18 @@ func TestWorkerCostCeiling(t *testing.T) {
 		})
 	}
 }
+
+func TestPlainExecRejectsANegativeTimeoutWithTheSharedMessage(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	req := start(t.TempDir(), "api")
+	req["task"].(map[string]any)["timeout"] = "-1s"
+	input, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	code := Run(context.Background(), bytes.NewReader(append(input, '\n')), &out, nil)
+	if code != 2 || !strings.Contains(out.String(), `"code":"bad_request"`) || !strings.Contains(out.String(), "timeout -1s is negative") {
+		t.Fatalf("code=%d output=%s", code, out.String())
+	}
+}
