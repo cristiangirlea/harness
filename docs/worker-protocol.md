@@ -34,7 +34,8 @@ A `cancel` frame requests cancellation. The worker reports `canceled` only when 
 in flight; otherwise the result requires recovery. If the worker kills the child after its grace
 period, there is no result: the service reaches recovery through expiry of the job lease.
 
-The worker validates the workspace before start and handles `finishWorkspaceRecovery`. Only the
+The worker validates the workspace with `prepareWorkspace` before start and at every checkpoint,
+and handles `finishWorkspaceRecovery` when validation fails. Fencing remains in the worker. Only the
 worker calls the control service, always with the job generation. A fenced or canceled heartbeat
 causes it to send `cancel`. These responsibilities remain in the worker when execution moves to
 the child; the service's behavior does not change in this step.
