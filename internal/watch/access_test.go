@@ -35,7 +35,6 @@ type accessFixture struct {
 	t        *testing.T
 	key      *rsa.PrivateKey
 	extraKey atomic.Pointer[rsa.PrivateKey]
-	certs    *httptest.Server
 	fetches  atomic.Int32
 	fail     atomic.Bool
 	pauseAt  atomic.Int32
@@ -43,6 +42,14 @@ type accessFixture struct {
 	release  chan struct{}
 	clock    time.Time
 	opt      Options
+}
+
+type accessCertificateTransport struct{ handler http.Handler }
+
+func (tr accessCertificateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	w := httptest.NewRecorder()
+	tr.handler.ServeHTTP(w, r)
+	return w.Result(), nil
 }
 
 func newAccessFixture(t *testing.T) *accessFixture {
@@ -53,7 +60,7 @@ func newAccessFixture(t *testing.T) *accessFixture {
 		t.Fatal(err)
 	}
 	f := &accessFixture{t: t, key: key, clock: time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)}
-	f.certs = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	certs := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fetch := f.fetches.Add(1)
 		if fetch == f.pauseAt.Load() {
 			close(f.started)
@@ -78,9 +85,10 @@ func newAccessFixture(t *testing.T) *accessFixture {
 			})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
-	}))
-	t.Cleanup(f.certs.Close)
-	f.opt.Public = &PublicAccess{Origin: "https://harness.example.com", Team: "team.cloudflareaccess.com", Audience: "aud-tag", CertsURL: f.certs.URL + "/cdn-cgi/access/certs", Now: func() time.Time { return f.clock }}
+	})
+	// Keep certificate availability independent of loopback networking and its timeout.
+	client := &http.Client{Transport: accessCertificateTransport{handler: certs}}
+	f.opt.Public = &PublicAccess{Origin: "https://harness.example.com", Team: "team.cloudflareaccess.com", Audience: "aud-tag", CertsURL: "https://team.cloudflareaccess.com/cdn-cgi/access/certs", Client: client, Now: func() time.Time { return f.clock }}
 	return f
 }
 
@@ -431,6 +439,7 @@ func TestPublicAccessRefusesToServeWhenCertificatesFailAtStart(t *testing.T) {
 	}))
 	defer bad.Close()
 	f.opt.Public.CertsURL = bad.URL + "/cdn-cgi/access/certs"
+	f.opt.Public.Client = bad.Client()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -512,6 +521,46 @@ func TestPublicAccessReportsLaterFetchFailureOncePerStreak(t *testing.T) {
 	f.request(h, "/", "harness.example.com", "", unknown)
 	if got := strings.Count(output.String(), f.opt.Public.CertsURL); got != 2 {
 		t.Fatalf("failure reports after recovery = %d, want 2: %s", got, output.String())
+	}
+}
+
+func TestPublicAccessWaitsForTheFixturesFirstCertificateFetch(t *testing.T) {
+	f := newAccessFixture(t)
+	f.started = make(chan struct{})
+	f.release = make(chan struct{})
+	f.pauseAt.Store(1)
+	release := sync.OnceFunc(func() { close(f.release) })
+	defer release()
+	// Certificate fixtures must not depend on a listening socket under suite load.
+	f.opt.Public.CertsURL = "https://team.cloudflareaccess.invalid/cdn-cgi/access/certs"
+	f.opt.Public.Errors = io.Discard
+	h := New(context.Background(), f.opt)
+	token := f.validToken()
+	done := make(chan int, 1)
+	go func() { done <- f.request(h, "/", "harness.example.com", "", token).Code }()
+	select {
+	case <-f.started:
+	case code := <-done:
+		t.Fatalf("request returned %d without reaching the certificate fixture", code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first certificate fetch did not start")
+	}
+	select {
+	case code := <-done:
+		t.Fatalf("request returned %d before certificates were ready", code)
+	default:
+	}
+	release()
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("request after certificates were ready = %d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not resume after certificates were ready")
+	}
+	if got := f.fetches.Load(); got != 1 {
+		t.Fatalf("certificate fetches = %d, want 1", got)
 	}
 }
 
