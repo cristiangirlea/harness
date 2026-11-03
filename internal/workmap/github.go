@@ -28,15 +28,19 @@ type githubCheck struct {
 	Conclusion string `json:"conclusion,omitempty"`
 }
 type githubItem struct {
-	Number          int           `json:"number"`
-	Title           string        `json:"title"`
-	URL             string        `json:"url"`
-	Head            string        `json:"headRefName,omitempty"`
-	CrossRepository bool          `json:"isCrossRepository,omitempty"`
-	Review          string        `json:"reviewDecision,omitempty"`
-	Checks          []githubCheck `json:"statusCheckRollup,omitempty"`
-	Updated         time.Time     `json:"updatedAt,omitzero"`
-	Merged          time.Time     `json:"mergedAt,omitzero"`
+	Number          int    `json:"number"`
+	Title           string `json:"title"`
+	URL             string `json:"url"`
+	Head            string `json:"headRefName,omitempty"`
+	CrossRepository bool   `json:"isCrossRepository,omitempty"`
+	Draft           bool   `json:"isDraft,omitempty"`
+	MergeCommit     struct {
+		OID string `json:"oid,omitempty"`
+	} `json:"mergeCommit,omitempty"`
+	Review  string        `json:"reviewDecision,omitempty"`
+	Checks  []githubCheck `json:"statusCheckRollup,omitempty"`
+	Updated time.Time     `json:"updatedAt,omitzero"`
+	Merged  time.Time     `json:"mergedAt,omitzero"`
 }
 type githubCache struct {
 	Fetched time.Time    `json:"fetched"`
@@ -115,8 +119,8 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 			dest *[]githubItem
 		}{
 			{[]string{"issue", "list", "--repo=" + repo, "--state", "open", "--limit", "100", "--json", "number,title,url,updatedAt"}, &fresh.Issues},
-			{[]string{"pr", "list", "--repo=" + repo, "--state", "open", "--limit", "100", "--json", "number,title,url,headRefName,isCrossRepository,reviewDecision,statusCheckRollup,updatedAt"}, &fresh.Open},
-			{[]string{"pr", "list", "--repo=" + repo, "--state", "merged", "--limit", "30", "--json", "number,title,url,headRefName,isCrossRepository,mergedAt"}, &fresh.Merged},
+			{[]string{"pr", "list", "--repo=" + repo, "--state", "open", "--limit", "100", "--json", "number,title,url,headRefName,isCrossRepository,isDraft,reviewDecision,statusCheckRollup,updatedAt"}, &fresh.Open},
+			{[]string{"pr", "list", "--repo=" + repo, "--state", "merged", "--limit", "30", "--json", "number,title,url,headRefName,isCrossRepository,mergeCommit,mergedAt"}, &fresh.Merged},
 		}
 		for _, call := range calls {
 			raw, err := ws.GH(ctx, call.args...)
@@ -205,6 +209,9 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 		if stuck == "" && pr.Review == "CHANGES_REQUESTED" {
 			stuck = "review: changes requested"
 		}
+		if stuck == "" && checks == "passing" && !pr.CrossRepository && !pr.Draft {
+			stuck = "ready for you to merge"
+		}
 		if rank(stage) > rank(p.Stage) {
 			p.Stage = stage
 		}
@@ -220,18 +227,37 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 			p.Updated = pr.Updated
 		}
 	}
+	tagged := map[string]bool{}
+	if len(answer.Merged) > 0 {
+		if commits, err := git(ctx, root, "rev-list", "--tags=v*"); err == nil {
+			for _, oid := range strings.Split(commits, "\n") {
+				if oid != "" {
+					tagged[oid] = true
+				}
+			}
+		}
+	}
 	for _, pr := range answer.Merged {
+		stage := Merged
+		if tagged[pr.MergeCommit.OID] {
+			stage = Released
+		}
 		if pr.CrossRepository {
-			p := &Piece{Repo: root, Key: fmt.Sprintf("pr#%d", pr.Number), Title: pr.Title, Stage: Merged, Updated: pr.Merged, Links: Links{PR: pr.URL, Branch: pr.Head}}
+			p := &Piece{Repo: root, Key: fmt.Sprintf("pr#%d", pr.Number), Title: pr.Title, Stage: stage, Updated: pr.Merged, Links: Links{PR: pr.URL, Branch: pr.Head}}
 			pieces[root+"\x00"+p.Key] = p
 			continue
 		}
 		if openHeads[pr.Head] {
 			continue
 		}
+		if pr.Head == "" || pieces[root+"\x00branch:"+pr.Head] == nil {
+			p := &Piece{Repo: root, Key: fmt.Sprintf("pr#%d", pr.Number), Title: pr.Title, Stage: stage, Updated: pr.Merged, Links: Links{PR: pr.URL, Branch: pr.Head}}
+			pieces[root+"\x00"+p.Key] = p
+			continue
+		}
 		if p := pieces[root+"\x00branch:"+pr.Head]; p != nil && pr.Head != "" {
-			if rank(p.Stage) < rank(Merged) {
-				p.Stage = Merged
+			if rank(p.Stage) < rank(stage) {
+				p.Stage = stage
 			}
 			p.Stuck = ""
 			p.Links.PR = pr.URL

@@ -1,10 +1,17 @@
 # Work map
 
-The work map collects open `PLAN.md` checklist items, local Git branches and worktrees,
-and hrn run and batch records. It joins records that refer to the same branch and
-reports failed batch gates. Results use the furthest known stage, in this order:
-idea, branch, agent, gates, review, pr, ci, merged, released. Local sources cover
-idea, branch, agent, gates and merged; GitHub adds pull requests, checks and issues.
+The map joins work by branch and only raises its stage. Sources, in stage order:
+
+- **idea**: open PLAN.md items and GitHub issues.
+- **branch**: local branches, worktrees and sessions.
+- **agent**: runs, batches and active sessions.
+- **gates**: batch gate results.
+- **review**: finished runs with declared purpose `review`.
+- **pr** and **ci**: GitHub pull requests and checks.
+- **merged**: Git ancestry and GitHub merged pull requests.
+- **released**: a merged pull request's merge commit is contained in a local `v*` tag.
+
+A failed gate, red CI, requested changes, or a same-repository non-draft pull request with passing checks and no requested changes marks work as stuck. The last case says it is ready for you to merge.
 
 Set `work_map_repos` to a list of repository paths in `backends.json` under HRN_HOME.
 When omitted, repositories are discovered from run and batch records. Unreadable
@@ -17,14 +24,14 @@ merged pull requests using the logged-in `gh` CLI. It joins same-repository pull
 branches, reports failing checks and requested changes, and caches each repository
 under `workmap/github` in HRN_HOME for five minutes. A failed refresh returns the
 cached data and an error, and retries after five minutes. Set `work_map_github` to `false` in `backends.json` to
-disable this source. Only titles, states, numbers, links, check names, branch names and dates are kept;
+disable this source. Only titles, states, numbers, links, check names, branch names, dates, merge commit oids and the last failure text are kept;
 only the local owner can open the work map page.
 
 ## Watch page
 
 An owner can open `/map` in hrn watch for repository swimlanes and a list of work that waits for attention. The page updates from `/stream/map` every 30 seconds when the map changes. Both routes are owner-only; other viewers receive 404. Source errors appear alongside any partial results.
 
-The bot also checks the work map every 30 seconds for an owner and announces newly stuck work and new pieces or advances at gates or later after a silent first look, using its usual message settings.
+The bot also checks the work map every 30 seconds for an owner and announces newly stuck work and new pieces or advances at gates or later after the first look, using its usual message settings. On the first look Ada gives one `waits` summary of existing stuck pieces, naming up to three; when none wait she says nothing. `waits` is enabled for speech and notifications by default, while `map` is disabled for both.
 
 ## Claude Code sessions
 

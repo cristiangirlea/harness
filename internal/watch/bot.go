@@ -513,9 +513,11 @@ func botNowOf(s botSnapshot) botNow {
 
 type botPage struct {
 	page
-	Now   botNow
-	Local bool // on this computer, where recording her voice works
-	Kinds []botKind
+	Now        botNow
+	Local      bool // on this computer, where recording her voice works
+	Kinds      []botKind
+	MapOwner   bool
+	MapSummary string
 }
 
 type botWatcher struct {
@@ -570,6 +572,33 @@ func (b *botWatcher) lookMap() []say {
 			if _, ok := cur[key]; !ok {
 				cur[key] = p
 			}
+		}
+	}
+	if b.mapPrev == nil {
+		var names []string
+		for _, p := range pieces {
+			if p.Stuck != "" {
+				names = append(names, p.Title)
+			}
+		}
+		if len(names) > 0 {
+			n := len(names)
+			shown := names
+			if len(shown) > 3 {
+				shown = shown[:3]
+			}
+			label := strings.Join(shown, ", ")
+			if len(shown) > 1 {
+				label = strings.Join(shown[:len(shown)-1], ", ") + " and " + shown[len(shown)-1]
+			}
+			if n > len(shown) {
+				label += fmt.Sprintf(" and %d more", n-len(shown))
+			}
+			word := "pieces wait"
+			if n == 1 {
+				word = "piece waits"
+			}
+			out = append(out, say{"waits", fmt.Sprintf("%d %s for you: %s.", n, word, label), "", "/map"})
 		}
 	}
 	b.mapPrev = cur
@@ -716,7 +745,24 @@ func (s *server) bot(w http.ResponseWriter, r *http.Request) {
 	// The page may ask for the microphone, to listen for its few commands.
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
 	snap := s.newBotWatcher(r).look()
-	s.page(w, http.StatusOK, "bot", botPage{page: page{Title: "Ada", Home: s.homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds, Local: s.fromThisComputer(r)})
+	p := botPage{page: page{Title: "Ada", Home: s.homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds, Local: s.fromThisComputer(r), MapOwner: s.mapOwner(r)}
+	if p.MapOwner {
+		pieces, _ := s.mapPieces(r.Context(), s.viewerOf(r))
+		n := 0
+		for _, piece := range pieces {
+			if piece.Stuck != "" {
+				n++
+			}
+		}
+		if n == 1 {
+			p.MapSummary = "One piece waits for you."
+		} else if n == 2 {
+			p.MapSummary = "Two pieces wait for you."
+		} else if n > 2 {
+			p.MapSummary = fmt.Sprintf("%d pieces wait for you.", n)
+		}
+	}
+	s.page(w, http.StatusOK, "bot", p)
 }
 
 // Redact spoken JSON too: it bypasses the page template's masking.

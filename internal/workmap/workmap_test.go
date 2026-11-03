@@ -164,3 +164,50 @@ func TestDiscoverySkipsRemovedFoldersAndDeduplicatesRuns(t *testing.T) {
 		t.Fatalf("repository probes: %d", calls)
 	}
 }
+
+func TestFinishedReviewRunRaisesBranch(t *testing.T) {
+	repo, home := t.TempDir(), t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		c.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+filepath.Join(home, "none"))
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git: %s %v", out, err)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "test@example.invalid")
+	run("config", "user.name", "Test")
+	run("commit", "--allow-empty", "-m", "initial")
+	run("checkout", "-b", "feature")
+	run("commit", "--allow-empty", "-m", "feature")
+	dir := filepath.Join(home, "runs", "r1")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	task := `{"id":"r1","task":{"dir":` + strconv.Quote(repo) + `,"purpose":"review"}}`
+	if err := os.WriteFile(filepath.Join(dir, "task.json"), []byte(task), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want Stage) {
+		t.Helper()
+		pieces, err := Build(context.Background(), home, []string{repo})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range pieces {
+			if p.Key == "branch:feature" {
+				if p.Stage != want {
+					t.Fatalf("got %s want %s", p.Stage, want)
+				}
+				return
+			}
+		}
+		t.Fatal("branch missing")
+	}
+	check(Agent)
+	if err := os.WriteFile(filepath.Join(dir, "result.json"), []byte(task), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check(Review)
+}

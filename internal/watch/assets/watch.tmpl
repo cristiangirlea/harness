@@ -253,6 +253,7 @@
 <p id="bot-line" class="bot-line" aria-live="polite">I'm Ada. I'll tell you what hrn is doing.</p>
 </div>
 </div>
+{{if .MapOwner}}<p><a href="/map">Work map</a>{{with .MapSummary}}: {{.}}{{end}}</p>{{end}}
 <p class="bot-buttons">
 <button type="button" id="bot-wake" class="primary">Let me talk</button>
 <button type="button" id="bot-skip" title="Esc">Skip</button>

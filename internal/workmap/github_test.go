@@ -26,7 +26,7 @@ func TestGitHubJoinsBranchesAndKeepsOnlySelectedFields(t *testing.T) {
 		switch strings.Join(args, " ") {
 		case "issue list --repo=owner/repo --state open --limit 100 --json number,title,url,updatedAt":
 			return []byte(`[{"number":1,"title":"idea","url":"issue","body":"secret body","author":{"login":"secret author"}}]`), nil
-		case "pr list --repo=owner/repo --state open --limit 100 --json number,title,url,headRefName,isCrossRepository,reviewDecision,statusCheckRollup,updatedAt":
+		case "pr list --repo=owner/repo --state open --limit 100 --json number,title,url,headRefName,isCrossRepository,isDraft,reviewDecision,statusCheckRollup,updatedAt":
 			return []byte(`[{"number":2,"title":"pull","url":"pr","headRefName":"feature","statusCheckRollup":[{"name":"test","conclusion":"FAILURE"}]}]`), nil
 		default:
 			return []byte(`[]`), nil
@@ -465,7 +465,83 @@ func TestPassingChecksClearOlderBatchFailure(t *testing.T) {
 	if err := githubRepo(context.Background(), t.TempDir(), "r", "o/r", pieces); err != nil {
 		t.Fatal(err)
 	}
-	if p.Stuck != "" {
+	if p.Stuck != "ready for you to merge" {
 		t.Fatalf("stuck: %s", p.Stuck)
+	}
+}
+
+func TestReadyPullRequestWaitsForOwner(t *testing.T) {
+	old := ws.GH
+	t.Cleanup(func() { ws.GH = old })
+	ws.GH = func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--state open") {
+			return []byte(`[{"number":1,"headRefName":"feature","statusCheckRollup":[{"conclusion":"SUCCESS"}]}]`), nil
+		}
+		return []byte(`[]`), nil
+	}
+	pieces := map[string]*Piece{}
+	if err := githubRepo(context.Background(), t.TempDir(), "repo", "o/r", pieces); err != nil {
+		t.Fatal(err)
+	}
+	if p := pieces["repo\x00pr#1"]; p == nil || p.Stuck != "ready for you to merge" {
+		t.Fatalf("piece: %+v", p)
+	}
+}
+
+func TestReleasedUsesTaggedMergeCommit(t *testing.T) {
+	repo := t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		c.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "none"))
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s %v", args, out, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "test@example.invalid")
+	run("config", "user.name", "Test")
+	run("commit", "--allow-empty", "-m", "initial")
+	oid := run("rev-parse", "HEAD")
+	run("tag", "v1")
+	old := ws.GH
+	t.Cleanup(func() { ws.GH = old })
+	ws.GH = func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--state merged") {
+			return []byte(fmt.Sprintf(`[{"number":1,"headRefName":"feature","mergeCommit":{"oid":%q}}]`, oid)), nil
+		}
+		return []byte(`[]`), nil
+	}
+	pieces := map[string]*Piece{repo + "\x00branch:feature": {Repo: repo, Stage: Branch}}
+	if err := githubRepo(context.Background(), t.TempDir(), repo, "o/r", pieces); err != nil {
+		t.Fatal(err)
+	}
+	if p := pieces[repo+"\x00branch:feature"]; p.Stage != Released {
+		t.Fatalf("piece: %+v", p)
+	}
+}
+
+func TestReadyPullRequestExclusions(t *testing.T) {
+	old := ws.GH
+	t.Cleanup(func() { ws.GH = old })
+	ws.GH = func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--state open") {
+			return []byte(`[{"number":1,"isDraft":true,"statusCheckRollup":[{"conclusion":"SUCCESS"}]},{"number":2,"isCrossRepository":true,"statusCheckRollup":[{"conclusion":"SUCCESS"}]},{"number":3,"statusCheckRollup":[{"status":"IN_PROGRESS"}]},{"number":4,"reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[{"conclusion":"SUCCESS"}]}]`), nil
+		}
+		return []byte(`[]`), nil
+	}
+	pieces := map[string]*Piece{}
+	if err := githubRepo(context.Background(), t.TempDir(), "r", "o/r", pieces); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{1, 2, 3} {
+		if p := pieces[fmt.Sprintf("r\x00pr#%d", n)]; p.Stuck != "" {
+			t.Fatalf("%d: %+v", n, p)
+		}
+	}
+	if p := pieces["r\x00pr#4"]; p.Stuck != "review: changes requested" {
+		t.Fatal(p)
 	}
 }

@@ -185,7 +185,7 @@ func TestBotStreamPollsMapIndependentlyAndOnlyForOwner(t *testing.T) {
 		w := httptest.NewRecorder()
 		New(context.Background(), Options{Poll: 2 * time.Millisecond}).ServeHTTP(w, r)
 		cancel()
-		if owner && (calls < 2 || calls > 4 || strings.Contains(w.Body.String(), `"kind":"waits"`)) {
+		if owner && (calls < 2 || calls > 4 || !strings.Contains(w.Body.String(), `"kind":"waits"`)) {
 			t.Fatalf("owner builds %d: %s", calls, w.Body)
 		}
 		if !owner && calls != 0 {
@@ -242,5 +242,40 @@ func TestBotKeepsPullRequestIdentity(t *testing.T) {
 	piece.Key = "branch:feature"
 	if got := freshBotMap(b); len(got) != 0 {
 		t.Fatal(got)
+	}
+}
+
+func TestFirstMapLookSummarizesWaitingPieces(t *testing.T) {
+	old := buildWorkMap
+	t.Cleanup(func() { buildWorkMap = old })
+	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
+		return []workmap.Piece{{Title: "alpha", Stuck: "blocked"}, {Title: "beta", Stuck: "blocked"}}, nil
+	}
+	r := httptest.NewRequest("GET", "http://localhost/", nil)
+	r.RemoteAddr = "127.0.0.1:1234"
+	got := (&server{}).newBotWatcher(r).lookMap()
+	if len(got) != 1 || got[0].Kind != "waits" || got[0].Text != "2 pieces wait for you: alpha and beta." {
+		t.Fatalf("summary: %+v", got)
+	}
+}
+
+func TestBotPageMapOwner(t *testing.T) {
+	old := buildWorkMap
+	t.Cleanup(func() { buildWorkMap = old })
+	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
+		return []workmap.Piece{{Title: "one", Stuck: "blocked"}, {Title: "two", Stuck: "blocked"}}, nil
+	}
+	for _, owner := range []bool{true, false} {
+		r := httptest.NewRequest("GET", "http://localhost/bot", nil)
+		r.RemoteAddr = "192.0.2.1:1234"
+		if owner {
+			r.RemoteAddr = "127.0.0.1:1234"
+		}
+		w := httptest.NewRecorder()
+		(&server{}).bot(w, r)
+		body := w.Body.String()
+		if strings.Contains(body, `href="/map"`) != owner || strings.Contains(body, "Two pieces wait for you.") != owner {
+			t.Fatalf("owner %v: %s", owner, body)
+		}
 	}
 }

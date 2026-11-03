@@ -354,6 +354,9 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		for _, p := range pieces {
 			for _, id := range p.Links.Runs {
 				if id == r.ID {
+					if p.Links.Branch != "" && r.Done && r.Task.Purpose == "review" && rank(p.Stage) < rank(Review) {
+						p.Stage = Review
+					}
 					if r.Started.After(p.Updated) {
 						p.Updated = r.Started
 					}
@@ -401,6 +404,9 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			branch = ""
 		}
 		p := Piece{Repo: root, Key: "run:" + r.ID, Title: r.Task.Prompt, Stage: Agent, Updated: r.Started, Links: Links{Branch: branch, Runs: []string{r.ID}}}
+		if branch != "" && r.Done && r.Task.Purpose == "review" {
+			p.Stage = Review
+		}
 		if branch != "" {
 			p.Key = "branch:" + branch
 		}
