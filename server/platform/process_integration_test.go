@@ -15,21 +15,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func TestWorkerHelperProcess(t *testing.T) {
 	if os.Getenv("HRN_WORKER_HELPER") != "1" {
 		return
 	}
-	backend := agent.NewAPIBackend()
-	backend.BaseURL = os.Getenv("HRN_WORKER_MODEL")
-	backend.APIKey = "fixture"
-	backend.Tools = nil
 	worker := &Worker{ControlURL: os.Getenv("HRN_WORKER_CONTROL"),
 		ProjectID: os.Getenv("HRN_WORKER_PROJECT"), Token: os.Getenv("HRN_WORKER_TOKEN"),
-		WorkerID: "killed-worker", WorkspaceRoot: os.Getenv("HRN_WORKER_ROOT"), Backend: backend}
+		WorkerID: "killed-worker", WorkspaceRoot: os.Getenv("HRN_WORKER_ROOT"), ModelURL: os.Getenv("HRN_WORKER_MODEL"), ModelKey: "fixture"}
 	ran, err := worker.RunOnce(context.Background())
 	if err != nil || !ran {
 		t.Fatalf("helper worker: %v %v", ran, err)
@@ -159,12 +153,8 @@ func TestPostgresKilledWorkerResumesAtSafeBoundary(t *testing.T) {
 	if _, err := store.AdmitOne(ctx); err != nil {
 		t.Fatal(err)
 	}
-	next := agent.NewAPIBackend()
-	next.BaseURL = model.URL
-	next.APIKey = "fixture"
-	next.Tools = nil
 	worker := &Worker{ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
-		WorkerID: "new-worker", WorkspaceRoot: workspace, Backend: next}
+		WorkerID: "new-worker", WorkspaceRoot: workspace, ModelURL: model.URL, ModelKey: "fixture"}
 	ran, err := worker.RunOnce(ctx)
 	if err != nil || !ran {
 		t.Fatalf("replacement worker: %v %v", ran, err)

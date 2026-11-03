@@ -71,11 +71,9 @@ func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
 				fakeModel(w, r)
 			}))
 			defer model.Close()
-			backend := agent.NewAPIBackend()
-			backend.BaseURL, backend.APIKey = model.URL, "fixture"
 			worker := &Worker{ControlURL: "https://control.invalid", ProjectID: job.ProjectID,
 				Token: strings.Repeat("a", 64), WorkerID: "fixture-worker", WorkspaceRoot: t.TempDir(),
-				Backend: backend, HRNPath: binary, HTTPClient: client}
+				ModelURL: model.URL, ModelKey: "fixture", HRNPath: binary, HTTPClient: client}
 			if ran, err := worker.RunOnce(context.Background()); !ran || err != nil {
 				t.Fatalf("worker failed instead of finishing the job: ran=%v err=%v", ran, err)
 			}

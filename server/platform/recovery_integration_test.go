@@ -102,19 +102,12 @@ func TestHTTPManualRecoveryAfterSafeCheckpoint(t *testing.T) {
 		fakeTurn(w, "completed", "end_turn")
 	}))
 	defer model.Close()
-	api := func() *agent.APIBackend {
-		b := agent.NewAPIBackend()
-		b.BaseURL = model.URL
-		b.APIKey = "fixture"
-		b.Tools = nil
-		return b
-	}
 	if _, err := store.AdmitOne(ctx); err != nil {
 		t.Fatal(err)
 	}
 	lost := &lostCheckpointAck{base: http.DefaultTransport}
 	first := &Worker{ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
-		WorkerID: "worker-first", WorkspaceRoot: t.TempDir(), Backend: api(),
+		WorkerID: "worker-first", WorkspaceRoot: t.TempDir(), ModelURL: model.URL, ModelKey: "fixture",
 		HTTPClient: &http.Client{Transport: lost}}
 	// Both attempts must use the same persistent workspace root.
 	root := first.WorkspaceRoot
@@ -153,7 +146,7 @@ func TestHTTPManualRecoveryAfterSafeCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := &Worker{ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
-		WorkerID: "worker-second", WorkspaceRoot: root, Backend: api()}
+		WorkerID: "worker-second", WorkspaceRoot: root, ModelURL: model.URL, ModelKey: "fixture"}
 	ran, err = second.RunOnce(ctx)
 	if err != nil || !ran {
 		t.Fatalf("second attempt: %v %v", ran, err)

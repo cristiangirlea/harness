@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func TestPostgresJobSnapshotsRegisteredRepository(t *testing.T) {
@@ -83,12 +81,9 @@ func TestWorkerStopsOrphanWorkspaceBeforeModelCall(t *testing.T) {
 		fakeModel(w, r)
 	}))
 	defer model.Close()
-	backend := agent.NewAPIBackend()
-	backend.BaseURL = model.URL
-	backend.APIKey = "fixture"
 	worker := &Worker{
 		ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
-		WorkerID: "workspace-fixture", WorkspaceRoot: root, Backend: backend,
+		WorkerID: "workspace-fixture", WorkspaceRoot: root, ModelURL: model.URL, ModelKey: "fixture",
 	}
 	ran, err := worker.RunOnce(ctx)
 	if !ran || err == nil || !strings.Contains(err.Error(), "workspace validation") {
@@ -128,12 +123,9 @@ func TestWorkspaceLossDuringModelCallRequiresRecovery(t *testing.T) {
 		fakeTurn(w, "pause", "pause_turn")
 	}))
 	defer model.Close()
-	backend := agent.NewAPIBackend()
-	backend.BaseURL = model.URL
-	backend.APIKey = "fixture"
 	worker := &Worker{
 		ControlURL: control.URL, ProjectID: project.ID, Token: workerToken,
-		WorkerID: "workspace-loss-fixture", WorkspaceRoot: root, Backend: backend,
+		WorkerID: "workspace-loss-fixture", WorkspaceRoot: root, ModelURL: model.URL, ModelKey: "fixture",
 	}
 	ran, err := worker.RunOnce(ctx)
 	if err != nil || !ran {

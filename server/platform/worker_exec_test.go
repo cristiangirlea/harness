@@ -34,10 +34,7 @@ func TestWorkerExecMissingBinaryFinishesFailed(t *testing.T) {
 		}
 		return &http.Response{StatusCode: code, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})}
-	backend := agent.NewAPIBackend()
-	backend.BaseURL = "http://localhost:1234"
-	backend.APIKey = "fixture-key"
-	w := Worker{ControlURL: "http://control", ProjectID: job.ProjectID, Token: strings.Repeat("a", 64), WorkerID: "worker", WorkspaceRoot: t.TempDir(), HRNPath: filepath.Join(t.TempDir(), "missing"), Backend: backend, HTTPClient: client}
+	w := Worker{ControlURL: "http://control", ProjectID: job.ProjectID, Token: strings.Repeat("a", 64), WorkerID: "worker", WorkspaceRoot: t.TempDir(), HRNPath: filepath.Join(t.TempDir(), "missing"), ModelURL: "http://localhost:1234", ModelKey: "fixture-key", HTTPClient: client}
 	ran, err := w.RunOnce(context.Background())
 	if !ran || err != nil || result.Status != agent.StatusError {
 		t.Fatalf("run: %v %v result=%+v", ran, err, result)

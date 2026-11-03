@@ -1,6 +1,5 @@
 eval -> game (test)
 eval -> update (test)
-server/cmd/hrn-worker -> internal/agent
 server/platform -> internal/agent
 server/platform -> internal/agent (test)
 server/platform -> internal/remote (test)

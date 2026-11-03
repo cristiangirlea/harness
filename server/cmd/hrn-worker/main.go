@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/server/platform"
 )
 
@@ -60,12 +59,8 @@ func run(hrnPath string) error {
 	if err != nil {
 		return err
 	}
-	backend := agent.NewAPIBackend()
-	backend.BaseURL = modelURL
-	backend.APIKey = "fixture-only"
-	backend.Tools = nil
 	worker := &platform.Worker{ControlURL: control, ProjectID: projectID, Token: workerToken,
-		WorkerID: id, WorkspaceRoot: workspace, Backend: backend, HRNPath: hrnPath}
+		WorkerID: id, WorkspaceRoot: workspace, ModelURL: modelURL, ModelKey: "fixture-only", HRNPath: hrnPath}
 	if err := checkHRN(worker.HRNPath, exec.CommandContext); err != nil {
 		return err
 	}

@@ -110,10 +110,7 @@ func TestWorkerExecProtocol(t *testing.T) {
 				}
 				return &http.Response{StatusCode: code, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})}
-			backend := agent.NewAPIBackend()
-			backend.BaseURL = "http://localhost:1234"
-			backend.APIKey = "fixture-key"
-			w := Worker{ControlURL: "http://control", ProjectID: job.ProjectID, Token: strings.Repeat("a", 64), WorkerID: "worker", WorkspaceRoot: t.TempDir(), HRNPath: path, Backend: backend, HTTPClient: client}
+			w := Worker{ControlURL: "http://control", ProjectID: job.ProjectID, Token: strings.Repeat("a", 64), WorkerID: "worker", WorkspaceRoot: t.TempDir(), HRNPath: path, ModelURL: "http://localhost:1234", ModelKey: "fixture-key", HTTPClient: client}
 			ctx := context.Background()
 			if scenario == "cancel" {
 				var cancel context.CancelFunc

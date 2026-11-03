@@ -26,7 +26,8 @@ type Worker struct {
 	WorkerID      string
 	WorkspaceRoot string
 	HRNPath       string
-	Backend       *agent.APIBackend
+	ModelURL      string
+	ModelKey      string
 	HTTPClient    *http.Client
 }
 
@@ -74,10 +75,10 @@ func (w *Worker) call(ctx context.Context, method, path string, input, output an
 }
 
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
-	if w.ProjectID == "" || w.WorkerID == "" || len(w.Token) != 64 || w.Backend == nil || w.WorkspaceRoot == "" {
+	if w.ProjectID == "" || w.WorkerID == "" || len(w.Token) != 64 || w.ModelURL == "" || w.WorkspaceRoot == "" {
 		return false, errors.New("incomplete worker configuration")
 	}
-	endpoint, endpointErr := url.Parse(w.Backend.BaseURL)
+	endpoint, endpointErr := url.Parse(w.ModelURL)
 	if endpointErr != nil || endpoint == nil || endpoint.Scheme != "http" || endpoint.User != nil ||
 		!(endpoint.Hostname() == "localhost" || (net.ParseIP(endpoint.Hostname()) != nil && net.ParseIP(endpoint.Hostname()).IsLoopback())) {
 		return false, fmt.Errorf("%w: initial worker requires a local fake API endpoint", ErrUnsupported)
@@ -153,7 +154,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 				cmd.Env = append(cmd.Env, key+"="+value)
 			}
 		}
-		cmd.Env = append(cmd.Env, "ANTHROPIC_BASE_URL="+w.Backend.BaseURL, "ANTHROPIC_API_KEY="+w.Backend.APIKey)
+		cmd.Env = append(cmd.Env, "ANTHROPIC_BASE_URL="+w.ModelURL, "ANTHROPIC_API_KEY="+w.ModelKey)
 		input, pipeErr := cmd.StdinPipe()
 		if pipeErr == nil {
 			var output io.ReadCloser
