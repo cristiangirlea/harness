@@ -216,3 +216,5 @@ button[aria-pressed="true"] { border-color: var(--link); box-shadow: inset 0 0 0
 .map-piece text { fill: currentColor; font-size: 16px; }
 .map-stuck rect { fill: #ffe1d6; stroke: #b23b18; stroke-width: 3; }
 .map-stuck text { fill: #711c08; }
+
+.map-session rect { stroke-dasharray: 4 2; stroke-width: 3; }

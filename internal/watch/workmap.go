@@ -134,6 +134,10 @@ func mapViewOf(pieces []workmap.Piece, err error) mapView {
 			if p.Stuck != "" {
 				class += " map-stuck"
 			}
+			if p.ActiveSession {
+				class += " map-session"
+				title += " - Claude Code session"
+			}
 			fmt.Fprintf(&b, `<g class="%s"><title>%s</title><rect x="%d" y="%d" width="190" height="55" rx="4"/><text x="%d" y="%d">%s</text>`, class, html.EscapeString(title), x, py, x+6, py+20, html.EscapeString(string(short)))
 			if p.Stuck != "" {
 				stuck := []rune(p.Stuck)

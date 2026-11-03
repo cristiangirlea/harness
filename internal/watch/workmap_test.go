@@ -252,3 +252,10 @@ func TestWorkMapMasksASecretBeforeCuttingItsText(t *testing.T) {
 		t.Fatalf("a fragment of the secret survived the cut: %+v", v)
 	}
 }
+
+func TestMapShowsActiveSessionWithoutItsID(t *testing.T) {
+	v := mapViewOf([]workmap.Piece{{Repo: "repo", Title: "feature", Stage: workmap.Agent, ActiveSession: true, Links: workmap.Links{Sessions: []string{"private-session-id"}}}}, nil)
+	if !strings.Contains(v.SVG, "map-session") || !strings.Contains(v.SVG, "Claude Code session") || strings.Contains(v.SVG, "private-session-id") {
+		t.Fatalf("SVG: %s", v.SVG)
+	}
+}
