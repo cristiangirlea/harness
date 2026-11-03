@@ -455,7 +455,7 @@ func TestPassingChecksClearOlderBatchFailure(t *testing.T) {
 	t.Cleanup(func() { ws.GH = old })
 	ws.GH = func(_ context.Context, args ...string) ([]byte, error) {
 		if args[0] == "pr" && args[1] == "list" && args[3] == "--state" && args[4] == "open" {
-			return []byte(`[ {"number":1,"headRefName":"feature","updatedAt":"2025-01-02T00:00:00Z","statusCheckRollup":[{"conclusion":"SUCCESS"}]} ]`), nil
+			return []byte(`[ {"number":1,"isDraft":true,"headRefName":"feature","updatedAt":"2025-01-02T00:00:00Z","statusCheckRollup":[{"conclusion":"SUCCESS"}]} ]`), nil
 		}
 		return []byte(`[]`), nil
 	}
@@ -465,7 +465,25 @@ func TestPassingChecksClearOlderBatchFailure(t *testing.T) {
 	if err := githubRepo(context.Background(), t.TempDir(), "r", "o/r", pieces); err != nil {
 		t.Fatal(err)
 	}
-	if p.Stuck != "ready for you to merge" {
+	if p.Stuck != "" {
+		t.Fatalf("stuck: %s", p.Stuck)
+	}
+}
+
+func TestPassingChecksKeepNewerBatchFailure(t *testing.T) {
+	old := ws.GH
+	t.Cleanup(func() { ws.GH = old })
+	ws.GH = func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--state open") {
+			return []byte(`[{"number":1,"headRefName":"feature","updatedAt":"2025-01-02T00:00:00Z","statusCheckRollup":[{"conclusion":"SUCCESS"}]}]`), nil
+		}
+		return []byte(`[]`), nil
+	}
+	p := &Piece{Repo: "r", Key: "branch:feature", Stuck: "gate test failed", stuckAt: time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC)}
+	if err := githubRepo(context.Background(), t.TempDir(), "r", "o/r", map[string]*Piece{"r\x00branch:feature": p}); err != nil {
+		t.Fatal(err)
+	}
+	if p.Stuck != "gate test failed" {
 		t.Fatalf("stuck: %s", p.Stuck)
 	}
 }
@@ -543,5 +561,23 @@ func TestReadyPullRequestExclusions(t *testing.T) {
 	}
 	if p := pieces["r\x00pr#4"]; p.Stuck != "review: changes requested" {
 		t.Fatal(p)
+	}
+}
+
+func TestMergedPullRequestWithoutBranchOrTag(t *testing.T) {
+	old := ws.GH
+	t.Cleanup(func() { ws.GH = old })
+	ws.GH = func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--state merged") {
+			return []byte(`[{"number":42,"title":"done","headRefName":"gone","mergeCommit":{"oid":"0123456789012345678901234567890123456789"}}]`), nil
+		}
+		return []byte(`[]`), nil
+	}
+	pieces := map[string]*Piece{}
+	if err := githubRepo(context.Background(), t.TempDir(), "r", "o/r", pieces); err != nil {
+		t.Fatal(err)
+	}
+	if p := pieces["r\x00pr#42"]; p == nil || p.Stage != Merged {
+		t.Fatalf("piece: %+v", p)
 	}
 }

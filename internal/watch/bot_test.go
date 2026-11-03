@@ -445,15 +445,14 @@ func TestTheBotAnnouncesEachBatchTaskAndTheEnd(t *testing.T) {
 // The stream is what the page hears: the visible part as escaped HTML, and
 // what to say as JSON, with secret values from hrn watch's environment blanked.
 func TestTheBotStreamSaysWhatHappensAndBlanksSecrets(t *testing.T) {
-	oldBuild := buildWorkMap
-	t.Cleanup(func() { buildWorkMap = oldBuild })
-	buildWorkMap = func(ctx context.Context, _ string, _ []string) ([]workmap.Piece, error) {
+	maps := defaultMapSettings()
+	maps.build = func(ctx context.Context, _ string, _ []string) ([]workmap.Piece, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("SERVICE_TOKEN", "tok-0123456789abcdef")
-	srv := httptest.NewServer(New(t.Context(), Options{Poll: 20 * time.Millisecond}))
+	srv := httptest.NewServer(newHandlerWithMap(t.Context(), Options{Poll: 20 * time.Millisecond}, nil, maps))
 	defer srv.Close()
 
 	s, closeStream := openStream(t, srv.URL+"/stream/bot", "")

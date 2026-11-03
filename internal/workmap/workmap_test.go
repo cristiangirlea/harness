@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -185,7 +186,11 @@ func TestFinishedReviewRunRaisesBranch(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	task := `{"id":"r1","task":{"dir":` + strconv.Quote(repo) + `,"purpose":"review"}}`
+	head, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := `{"id":"r1","start_head":` + strconv.Quote(strings.TrimSpace(string(head))) + `,"task":{"dir":` + strconv.Quote(repo) + `,"purpose":"review"}}`
 	if err := os.WriteFile(filepath.Join(dir, "task.json"), []byte(task), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +213,19 @@ func TestFinishedReviewRunRaisesBranch(t *testing.T) {
 	check(Agent)
 	if err := os.WriteFile(filepath.Join(dir, "result.json"), []byte(task), 0600); err != nil {
 		t.Fatal(err)
+	}
+	check(Review)
+	run("checkout", "main")
+	run("checkout", "-b", "other")
+	run("commit", "--allow-empty", "-m", "other")
+	pieces, err := Build(context.Background(), home, []string{repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pieces {
+		if p.Key == "branch:other" && p.Stage == Review {
+			t.Fatal("unreviewed branch raised")
+		}
 	}
 	check(Review)
 }

@@ -14,14 +14,13 @@ The map joins work by branch and only raises its stage. Sources, in stage order:
 A failed gate, red CI, requested changes, or a same-repository non-draft pull request with passing checks and no requested changes marks work as stuck. The last case says it is ready for you to merge.
 
 Set `work_map_repos` to a list of repository paths in `backends.json` under HRN_HOME.
-When omitted, repositories are discovered from run and batch records. Unreadable
-sources are returned as errors alongside any results that could be collected.
+When omitted, repositories are discovered from run and batch records. Discovery quietly skips missing folders and non-repositories; explicitly configured entries report errors. Other unreadable sources are returned as errors alongside partial results.
 
 ## GitHub
 
 For GitHub origin remotes, the map reads open issues and pull requests and recently
 merged pull requests using the logged-in `gh` CLI. It joins same-repository pull requests to local
-branches, reports failing checks and requested changes, and caches each repository
+branches (or uses a separate `pr#N` piece when no local branch exists), reports failing checks and requested changes, and caches each repository
 under `workmap/github` in HRN_HOME for five minutes. A failed refresh returns the
 cached data and an error, and retries after five minutes. Set `work_map_github` to `false` in `backends.json` to
 disable this source. Only titles, states, numbers, links, check names, branch names, dates, merge commit oids and the last failure text are kept;
@@ -29,7 +28,7 @@ only the local owner can open the work map page.
 
 ## Watch page
 
-An owner can open `/map` in hrn watch for repository swimlanes and a list of work that waits for attention. The page updates from `/stream/map` every 30 seconds when the map changes. Both routes are owner-only; other viewers receive 404. Source errors appear alongside any partial results.
+An owner can open `/map` in hrn watch for repository swimlanes and a list of work that waits for attention. The page updates from `/stream/map` every 30 seconds when the map changes. The page, its stream and Ada share one build per 30 seconds. Ada?s page links to the map and shows how many pieces wait. Both routes are owner-only; other viewers receive 404. Source errors appear alongside any partial results.
 
 The bot also checks the work map every 30 seconds for an owner and announces newly stuck work and new pieces or advances at gates or later after the first look, using its usual message settings. On the first look Ada gives one `waits` summary of existing stuck pieces, naming up to three; when none wait she says nothing. `waits` is enabled for speech and notifications by default, while `map` is disabled for both.
 

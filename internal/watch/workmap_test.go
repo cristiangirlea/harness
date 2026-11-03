@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,12 +34,11 @@ func TestWorkMapEscapesTextAndSelectsSafeLinks(t *testing.T) {
 
 func TestWorkMapRestrictsAccessAndShowsPartialErrors(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	old := buildWorkMap
-	t.Cleanup(func() { buildWorkMap = old })
-	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
+	maps := defaultMapSettings()
+	maps.build = func(context.Context, string, []string) ([]workmap.Piece, error) {
 		return []workmap.Piece{{Repo: "repo", Title: "local piece", Stage: workmap.Idea}}, errors.New("failed")
 	}
-	h := New(context.Background(), Options{})
+	h := newHandlerWithMap(context.Background(), Options{}, nil, maps)
 	for _, path := range []string{"/map", "/stream/map"} {
 		r := httptest.NewRequest("GET", "http://localhost"+path, nil)
 		r.RemoteAddr = "192.168.1.5:1234"
@@ -57,7 +57,7 @@ func TestWorkMapRestrictsAccessAndShowsPartialErrors(t *testing.T) {
 	}
 	f := newAccessFixture(t)
 	f.opt.OwnerEmails = []string{"owner@example.com"}
-	public := New(context.Background(), f.opt)
+	public := newHandlerWithMap(context.Background(), f.opt, nil, maps)
 	for _, path := range []string{"/map", "/stream/map"} {
 		if got := f.request(public, path, "harness.example.com", "", f.tokenFor("other@example.com")); got.Code != 404 {
 			t.Fatalf("public %s: %d", path, got.Code)
@@ -69,30 +69,26 @@ func TestWorkMapRestrictsAccessAndShowsPartialErrors(t *testing.T) {
 }
 func TestWorkMapStreamSendsOnlyChangedSnapshots(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	old, interval := buildWorkMap, mapPoll
-	t.Cleanup(func() { buildWorkMap = old; mapPoll = interval })
-	mapPoll = 5 * time.Millisecond
-	calls := 0
+	maps := defaultMapSettings()
+	maps.poll = 5 * time.Millisecond
+	var calls atomic.Int32
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
-		calls++
-		if calls == 4 {
-			cancel()
-		}
+	maps.build = func(context.Context, string, []string) ([]workmap.Piece, error) {
+		n := calls.Add(1)
 		title := "first"
-		if calls >= 3 {
+		if n >= 3 {
 			title = "second"
 		}
 		return []workmap.Piece{{Repo: "r", Title: title, Stage: workmap.Idea}}, nil
 	}
 	r := httptest.NewRequest("GET", "http://localhost/stream/map", nil).WithContext(ctx)
 	r.RemoteAddr = "127.0.0.1:1234"
-	w := httptest.NewRecorder()
-	New(context.Background(), Options{}).ServeHTTP(w, r)
+	w := &cancelMapWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, events: 2}
+	newHandlerWithMap(context.Background(), Options{}, nil, maps).ServeHTTP(w, r)
 	body := w.Body.String()
-	if ctx.Err() != context.Canceled || calls < 4 {
-		t.Fatalf("stream did not stop on cancellation: %v, %d calls", ctx.Err(), calls)
+	if ctx.Err() != context.Canceled || calls.Load() < 3 {
+		t.Fatalf("stream did not stop on cancellation: %v, %d calls", ctx.Err(), calls.Load())
 	}
 	if strings.Count(body, "event: replace") != 2 {
 		t.Fatalf("events: %s", body)
@@ -127,23 +123,21 @@ func TestWorkMapUsesShortRepositoryNamesAndScrollableWidth(t *testing.T) {
 	}
 	r := httptest.NewRequest("GET", "http://localhost/map", nil)
 	r.RemoteAddr = "127.0.0.1:1234"
-	old := buildWorkMap
-	t.Cleanup(func() { buildWorkMap = old })
-	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) { return pieces, nil }
+	maps := defaultMapSettings()
+	maps.build = func(context.Context, string, []string) ([]workmap.Piece, error) { return pieces, nil }
 	w := httptest.NewRecorder()
-	New(context.Background(), Options{}).ServeHTTP(w, r)
+	newHandlerWithMap(context.Background(), Options{}, nil, maps).ServeHTTP(w, r)
 	if !strings.Contains(w.Body.String(), `class="map-svg"`) {
 		t.Error("missing scroll container")
 	}
 }
 
 func TestWorkMapMasksSecretsAndShortensRemotePaths(t *testing.T) {
-	old := buildWorkMap
-	t.Cleanup(func() { buildWorkMap = old })
-	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
+	maps := defaultMapSettings()
+	maps.build = func(context.Context, string, []string) ([]workmap.Piece, error) {
 		return []workmap.Piece{{Repo: "/work/repo", Title: "sk-test-12345", Stuck: "run /work/repo/gate sk-test-12345", Stage: workmap.Idea}}, nil
 	}
-	s := &server{}
+	s := &server{mapConfig: maps}
 	local := httptest.NewRequest("GET", "http://localhost/map", nil)
 	local.RemoteAddr = "127.0.0.1:1234"
 	remote := httptest.NewRequest("GET", "http://localhost/map", nil)
@@ -206,19 +200,17 @@ func TestWorkMapLinkFollowsOwnerAccess(t *testing.T) {
 func TestPublicOwnerReceivesMaskedWorkMapStream(t *testing.T) {
 	f := newAccessFixture(t)
 	f.opt.OwnerEmails = []string{"owner@example.com"}
-	old := buildWorkMap
-	t.Cleanup(func() { buildWorkMap = old })
+	maps := defaultMapSettings()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
-		cancel()
+	maps.build = func(context.Context, string, []string) ([]workmap.Piece, error) {
 		return []workmap.Piece{{Repo: "/work/repo", Title: "sk-test-12345", Stuck: "run /work/repo/gate sk-test-12345\nsecond line", Stage: workmap.Idea}}, nil
 	}
 	r := httptest.NewRequest("GET", "https://harness.example.com/stream/map", nil).WithContext(ctx)
 	r.RemoteAddr = "127.0.0.1:1234"
 	r.Header.Set("Cf-Access-Jwt-Assertion", f.validToken())
-	w := httptest.NewRecorder()
-	New(context.Background(), f.opt).ServeHTTP(w, r)
+	w := &cancelMapWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, events: 1}
+	newHandlerWithMap(context.Background(), f.opt, nil, maps).ServeHTTP(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "event: replace") {
 		t.Fatalf("stream: %d %s", w.Code, w.Body)
 	}
@@ -237,16 +229,28 @@ func TestPublicOwnerReceivesMaskedWorkMapStream(t *testing.T) {
 	t.Fatal("missing JSON")
 }
 
+type cancelMapWriter struct {
+	*httptest.ResponseRecorder
+	cancel context.CancelFunc
+	events int
+}
+
+func (w *cancelMapWriter) Flush() {
+	w.ResponseRecorder.Flush()
+	if strings.Count(w.Body.String(), "event: replace") >= w.events && strings.Count(w.Body.String(), "data: {") >= w.events {
+		w.cancel()
+	}
+}
+
 func TestWorkMapMasksASecretBeforeCuttingItsText(t *testing.T) {
-	old := buildWorkMap
-	t.Cleanup(func() { buildWorkMap = old })
-	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
+	maps := defaultMapSettings()
+	maps.build = func(context.Context, string, []string) ([]workmap.Piece, error) {
 		long := "deploy the release with sk-test-1234567890abcdef"
 		return []workmap.Piece{{Repo: "r", Title: long, Stuck: long, Stage: workmap.Idea}}, nil
 	}
 	r := httptest.NewRequest("GET", "http://localhost/map", nil)
 	r.RemoteAddr = "127.0.0.1:1234"
-	s := &server{}
+	s := &server{mapConfig: maps}
 	v := s.mapData(r.Context(), s.viewerOf(r))
 	if strings.Contains(v.SVG, "sk-") || strings.Contains(v.Stuck[0].Title, "sk-") || strings.Contains(v.Stuck[0].Stuck, "sk-") {
 		t.Fatalf("a fragment of the secret survived the cut: %+v", v)

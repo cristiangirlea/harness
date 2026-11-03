@@ -18,8 +18,15 @@ import (
 	"github.com/cristiangirlea/harness/internal/workmap"
 )
 
-var mapPoll = 30 * time.Second
-var buildWorkMap = workmap.Build
+type mapSettings struct {
+	build   func(context.Context, string, []string) ([]workmap.Piece, error)
+	poll    time.Duration
+	timeout time.Duration
+}
+
+func defaultMapSettings() mapSettings {
+	return mapSettings{build: workmap.Build, poll: 30 * time.Second, timeout: 30 * time.Second}
+}
 
 type workMapCache struct {
 	mu     sync.Mutex
@@ -30,19 +37,28 @@ type workMapCache struct {
 }
 
 func (s *server) sharedMap(ctx context.Context) ([]workmap.Piece, error) {
+	return s.mapResult(ctx, true)
+}
+
+func (s *server) mapResult(ctx context.Context, wait bool) ([]workmap.Piece, error) {
+	settings := s.mapConfig
+	if settings.build == nil {
+		settings = defaultMapSettings()
+	}
 	c := &s.mapCache
 	c.mu.Lock()
-	if c.done == nil && (c.at.IsZero() || time.Since(c.at) >= mapPoll) {
+	if c.done == nil && (c.at.IsZero() || time.Since(c.at) >= settings.poll) {
 		c.done = make(chan struct{})
 		done := c.done
 		base := s.ctx
 		if base == nil {
 			base = context.Background()
 		}
+		build, timeout := settings.build, settings.timeout
 		go func() {
-			buildCtx, cancel := context.WithTimeout(base, mapPoll)
+			buildCtx, cancel := context.WithTimeout(base, timeout)
 			defer cancel()
-			pieces, err := buildWorkMap(buildCtx, runlog.Home(), nil)
+			pieces, err := build(buildCtx, runlog.Home(), nil)
 			c.mu.Lock()
 			c.pieces, c.err, c.at = pieces, err, time.Now()
 			c.done = nil
@@ -51,7 +67,7 @@ func (s *server) sharedMap(ctx context.Context) ([]workmap.Piece, error) {
 		}()
 	}
 	done := c.done
-	if done != nil {
+	if done != nil && wait {
 		c.mu.Unlock()
 		select {
 		case <-done:
@@ -245,7 +261,7 @@ func (s *server) streamMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.startStream(w)
-	s.streamChanges(r, st, mapPoll, func() (any, string, error) {
+	s.streamChanges(r, st, s.mapConfig.poll, func() (any, string, error) {
 		v := s.mapData(r.Context(), s.viewerOf(r))
 		b, e := json.Marshal(v)
 		return template.HTML(b), "", e

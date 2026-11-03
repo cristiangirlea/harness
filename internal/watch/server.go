@@ -251,6 +251,7 @@ type server struct {
 	grants      []owner.Grant
 
 	mapCache    workMapCache
+	mapConfig   mapSettings
 	batches     batchCache
 	familiarity familiarityCache
 }
@@ -261,13 +262,17 @@ func New(ctx context.Context, opt Options) http.Handler {
 }
 
 func newHandler(ctx context.Context, opt Options, access *accessVerifier) http.Handler {
+	return newHandlerWithMap(ctx, opt, access, defaultMapSettings())
+}
+
+func newHandlerWithMap(ctx context.Context, opt Options, access *accessVerifier, maps mapSettings) http.Handler {
 	if opt.Poll <= 0 {
 		opt.Poll = 500 * time.Millisecond
 	}
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt, redact: mask.Env(os.Environ()), system: systemFolders()}
+	s := &server{ctx: ctx, opt: opt, redact: mask.Env(os.Environ()), system: systemFolders(), mapConfig: maps}
 	s.home, _ = os.UserHomeDir()
 	if opt.Public != nil {
 		if access == nil {

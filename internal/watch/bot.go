@@ -588,17 +588,17 @@ func (b *botWatcher) lookMap() []say {
 				shown = shown[:3]
 			}
 			label := strings.Join(shown, ", ")
-			if len(shown) > 1 {
+			if len(shown) > 1 && n <= len(shown) {
 				label = strings.Join(shown[:len(shown)-1], ", ") + " and " + shown[len(shown)-1]
 			}
 			if n > len(shown) {
-				label += fmt.Sprintf(" and %d more", n-len(shown))
+				label += " and " + number(n-len(shown)) + " more"
 			}
 			word := "pieces wait"
 			if n == 1 {
 				word = "piece waits"
 			}
-			out = append(out, say{"waits", fmt.Sprintf("%d %s for you: %s.", n, word, label), "", "/map"})
+			out = append(out, say{"waits", fmt.Sprintf("%s %s for you: %s.", number(n), word, label), "", "/map"})
 		}
 	}
 	b.mapPrev = cur
@@ -747,7 +747,7 @@ func (s *server) bot(w http.ResponseWriter, r *http.Request) {
 	snap := s.newBotWatcher(r).look()
 	p := botPage{page: page{Title: "Ada", Home: s.homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds, Local: s.fromThisComputer(r), MapOwner: s.mapOwner(r)}
 	if p.MapOwner {
-		pieces, _ := s.mapPieces(r.Context(), s.viewerOf(r))
+		pieces, _ := s.mapResult(r.Context(), false)
 		n := 0
 		for _, piece := range pieces {
 			if piece.Stuck != "" {
@@ -756,10 +756,8 @@ func (s *server) bot(w http.ResponseWriter, r *http.Request) {
 		}
 		if n == 1 {
 			p.MapSummary = "One piece waits for you."
-		} else if n == 2 {
-			p.MapSummary = "Two pieces wait for you."
-		} else if n > 2 {
-			p.MapSummary = fmt.Sprintf("%d pieces wait for you.", n)
+		} else if n > 1 {
+			p.MapSummary = strings.ToUpper(number(n)[:1]) + number(n)[1:] + " pieces wait for you."
 		}
 	}
 	s.page(w, http.StatusOK, "bot", p)
@@ -774,7 +772,7 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 	nextMap := time.Now()
 	mapResults := make(chan []say, 1)
 	mapInFlight := false
-	mapTick := time.NewTicker(mapPoll)
+	mapTick := time.NewTicker(s.mapConfig.poll)
 	defer mapTick.Stop()
 	wake := make(chan struct{}, 1)
 	done := make(chan struct{})
@@ -828,7 +826,7 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 				}
 			}()
 			for !nextMap.After(now) {
-				nextMap = nextMap.Add(mapPoll)
+				nextMap = nextMap.Add(s.mapConfig.poll)
 			}
 		}
 		for _, m := range messages {

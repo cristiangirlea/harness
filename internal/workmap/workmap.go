@@ -404,8 +404,16 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			branch = ""
 		}
 		p := Piece{Repo: root, Key: "run:" + r.ID, Title: r.Task.Prompt, Stage: Agent, Updated: r.Started, Links: Links{Branch: branch, Runs: []string{r.ID}}}
-		if branch != "" && r.Done && r.Task.Purpose == "review" {
-			p.Stage = Review
+		if r.Done && r.Task.Purpose == "review" && validOID(r.StartHead) {
+			for _, candidate := range pieces {
+				if candidate.Repo != root || candidate.Links.Branch == "" {
+					continue
+				}
+				_, err := git(ctx, root, "merge-base", "--is-ancestor", r.StartHead, "refs/heads/"+candidate.Links.Branch)
+				if err == nil && rank(candidate.Stage) < rank(Review) {
+					candidate.Stage = Review
+				}
+			}
 		}
 		if branch != "" {
 			p.Key = "branch:" + branch
@@ -455,4 +463,16 @@ func compact(s []string) []string {
 		}
 	}
 	return out
+}
+
+func validOID(oid string) bool {
+	if len(oid) != 40 && len(oid) != 64 {
+		return false
+	}
+	for _, c := range oid {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

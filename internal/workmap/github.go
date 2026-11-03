@@ -209,9 +209,6 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 		if stuck == "" && pr.Review == "CHANGES_REQUESTED" {
 			stuck = "review: changes requested"
 		}
-		if stuck == "" && checks == "passing" && !pr.CrossRepository && !pr.Draft {
-			stuck = "ready for you to merge"
-		}
 		if rank(stage) > rank(p.Stage) {
 			p.Stage = stage
 		}
@@ -219,6 +216,9 @@ func githubRepo(ctx context.Context, home, root, repo string, pieces map[string]
 		p.Links.Checks = checks
 		if stuck == "" && checks == "passing" && !p.stuckAt.IsZero() && pr.Updated.After(p.stuckAt) {
 			p.Stuck = ""
+		}
+		if stuck == "" && p.Stuck == "" && checks == "passing" && !pr.CrossRepository && !pr.Draft {
+			stuck = "ready for you to merge"
 		}
 		if stuck != "" && rank(p.Stage) < rank(Merged) {
 			p.Stuck = stuck
