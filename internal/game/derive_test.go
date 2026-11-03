@@ -37,7 +37,8 @@ func TestAdaCreditsOnlyBetterSetupComparisons(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	when := at(t, "2026-10-26T09:00:00Z")
 	records := Records{Evals: []eval.Record{
-		{ID: "better", Started: when, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupBetter}},
+		{ID: "better", Started: when, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupBetter, Source: "origin/main"}},
+		{ID: "lesson", Started: when, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupBetter}},
 		{ID: "same", Started: when, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupSame}},
 	}}
 	got := derived(t, records, "ada:")
@@ -55,6 +56,18 @@ func TestAdaCreditsMeasuredRoutes(t *testing.T) {
 	e, ok := got["ada:route:implement/2026-10-26"]
 	if !ok || len(got) != 1 || e.Track != TrackAda || e.XP != 10 || !e.At.Equal(at(t, "2026-10-26T00:00:00Z")) {
 		t.Fatalf("routes = %+v", got)
+	}
+}
+
+func TestMalformedRouteDoesNotBlockFoldOrRebuild(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	writeFile(t, filepath.Join(home, "route.json"), "{")
+	if err := Fold(Records{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rebuild(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -81,11 +94,29 @@ func TestAdaCreditsScriptsAddedByMerges(t *testing.T) {
 	gitIn(t, repo, "commit", "-qm", "direct")
 	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
 	gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-	r := Records{Runs: []runlog.Record{{Task: agent.Task{Dir: repo}}}, Batches: []batch.Result{{Dir: repo}}}
+	wt := filepath.Join(t.TempDir(), "worktree")
+	gitIn(t, repo, "worktree", "add", "-q", "--detach", wt)
+	trace := filepath.Join(t.TempDir(), "git-trace")
+	t.Setenv("GIT_TRACE", trace)
+	r := Records{Runs: []runlog.Record{{Task: agent.Task{Dir: repo}}, {Task: agent.Task{Dir: wt}}}, Batches: []batch.Result{{Dir: repo}}}
 	got := derived(t, r, "ada:")
+	traceData, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(traceData), " log "); n != 1 {
+		t.Fatalf("git log calls = %d, want 1: %s", n, traceData)
+	}
+	if strings.Contains(string(traceData), " diff-tree ") {
+		t.Fatal("script walk ran diff-tree")
+	}
 	e, ok := got["ada:script:example/app/kept.sh"]
 	if !ok || len(got) != 1 || e.Track != TrackAda || e.XP != 10 || e.At.IsZero() {
 		t.Fatalf("scripts = %+v", got)
+	}
+	gitIn(t, repo, "remote", "set-url", "origin", "https://gitlab.com/example/app.git")
+	if got := derived(t, r, "ada:script:"); len(got) != 0 {
+		t.Fatalf("non-GitHub scripts = %+v", got)
 	}
 }
 
@@ -100,11 +131,15 @@ func TestAdaEventsLeavePersonUnchangedAndFoldIsIdempotent(t *testing.T) {
 	}
 	person := []Event{
 		{Key: "person", Kind: "fixture", Track: TrackDelivery, XP: 4990, At: now},
+		{Key: "first:eval", Kind: "fixture", Track: TrackDelivery, At: now},
 		{Key: "badge:fixture", Kind: kindBadge, Track: TrackBadge, At: now},
+	}
+	if _, err := Append(person); err != nil {
+		t.Fatal(err)
 	}
 	before := Sum(person)
 	writeFile(t, filepath.Join(home, "route.json"), `{"implement":{"eval":"e1","set":"2026-10-26"}}`)
-	r := Records{Evals: []eval.Record{{ID: "e1", Started: now, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupBetter}}}}
+	r := Records{Evals: []eval.Record{{ID: "e1", Started: now, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupBetter, Source: "origin/main"}}}}
 	if err := Fold(r); err != nil {
 		t.Fatal(err)
 	}
@@ -122,9 +157,11 @@ func TestAdaEventsLeavePersonUnchangedAndFoldIsIdempotent(t *testing.T) {
 	if !reflect.DeepEqual(first, again) {
 		t.Fatalf("second fold changed ledger")
 	}
-	// First-use delivery XP is independent of Ada events.
 	var ada []Event
 	for _, e := range again {
+		if e.Key == "badge:veteran" {
+			t.Fatal("Ada XP awarded veteran badge")
+		}
 		if e.Track == TrackAda {
 			ada = append(ada, e)
 		}

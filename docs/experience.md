@@ -139,7 +139,7 @@ card. It uses the same formula over the `ada` track only.
 
 | Event | Counted when | Source key | XP |
 | --- | --- | --- | --- |
-| Setup change measured better | an `hrn eval setup` comparison's `setup_comparison` verdict is `better` | `ada:setup:<eval id>` | 30 |
+| Setup change measured better | an `hrn eval setup` comparison's `setup_comparison` verdict is `better`; lesson comparisons are excluded | `ada:setup:<eval id>` | 30 |
 | Lesson admitted | a lesson from finished runs passes the same comparison, once run lessons go through it | `ada:lesson:<eval id>` | 20 |
 | Kept script added | a merged pull request adds a file under `scripts/` with the kept-script header | `ada:script:<owner>/<repo>/<name>` | 10 |
 | Routing row from an eval | a row in `route.json` whose `eval` names the eval that set it | `ada:route:<category>/<set>` | 10 |

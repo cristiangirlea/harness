@@ -168,7 +168,7 @@ func Derive(r Records) ([]Event, error) {
 	}
 	for _, e := range r.Evals {
 		first("eval", e.ID, e.Started, batchDirs[e.BatchID])
-		if e.SetupComparison != nil && e.SetupComparison.Verdict == eval.SetupBetter {
+		if e.SetupComparison != nil && e.SetupComparison.Verdict == eval.SetupBetter && (e.SetupComparison.SetupCommit != "" || e.SetupComparison.Source != "") {
 			key := "ada:setup:" + e.ID
 			if !seen[key] {
 				seen[key] = true
@@ -176,10 +176,7 @@ func Derive(r Records) ([]Event, error) {
 			}
 		}
 	}
-	routes, err := table.Load(runlog.Home())
-	if err != nil {
-		return nil, err
-	}
+	routes, _ := table.Load(runlog.Home())
 	for category, row := range routes {
 		at, err := time.Parse("2006-01-02", row.Set)
 		if row.Eval == "" || err != nil {
@@ -204,7 +201,16 @@ func Derive(r Records) ([]Event, error) {
 		rootList = append(rootList, root)
 	}
 	sort.Strings(rootList)
+	repoRoots := map[string]bool{}
 	for _, root := range rootList {
+		name := repoName(root)
+		if !strings.Contains(name, "/") || repoRoots[name] {
+			continue
+		}
+		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+			continue
+		}
+		repoRoots[name] = true
 		for _, e := range mergedScripts(root) {
 			if !seen[e.Key] {
 				seen[e.Key] = true
@@ -228,26 +234,24 @@ func mergedScripts(root string) []Event {
 	if !strings.Contains(name, "/") {
 		return nil
 	}
-	log := gitEvidence(ctx, root, "log", "--first-parent", "--merges", "--reverse", "--no-show-signature", "--format=%H %cI", "refs/remotes/origin/HEAD", "--")
+	log := gitEvidence(ctx, root, "log", "--first-parent", "--merges", "-m", "--reverse", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=A", "--name-only", "-z", "--format=%x00hrn-merge %H %cI%x00", "refs/remotes/origin/HEAD", "--", "scripts/")
 	var events []Event
-	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 || !commitHash.MatchString(fields[0]) {
+	var oid string
+	var at time.Time
+	for _, token := range strings.Split(log, "\x00") {
+		if fields := strings.Fields(strings.TrimPrefix(token, "\n")); len(fields) == 3 && fields[0] == "hrn-merge" {
+			oid = ""
+			if parsed, err := time.Parse(time.RFC3339, fields[2]); err == nil && commitHash.MatchString(fields[1]) {
+				oid, at = fields[1], parsed
+			}
 			continue
 		}
-		at, err := time.Parse(time.RFC3339, fields[1])
-		if err != nil {
+		file := strings.TrimPrefix(token, "\n")
+		if oid == "" || !strings.HasPrefix(file, "scripts/") || file == "scripts/" {
 			continue
 		}
-		files := gitEvidence(ctx, root, "diff-tree", "--no-ext-diff", "--no-textconv", "-r", "--no-commit-id", "--name-only", "--diff-filter=A", "--no-renames", "-z", fields[0]+"^1", fields[0], "--", "scripts/")
-		for _, file := range strings.Split(files, "\x00") {
-			if !strings.HasPrefix(file, "scripts/") || file == "scripts/" {
-				continue
-			}
-			body := gitEvidence(ctx, root, "show", "--no-ext-diff", "--no-textconv", fields[0]+":"+file)
-			if !keptHeader(body) {
-				continue
-			}
+		body := gitEvidence(ctx, root, "show", "--no-ext-diff", "--no-textconv", oid+":"+file)
+		if keptHeader(body) {
 			events = append(events, Event{Key: "ada:script:" + name + "/" + strings.TrimPrefix(file, "scripts/"), Kind: "ada_script", Track: TrackAda, XP: 10, At: at.UTC(), Repo: name})
 		}
 	}
