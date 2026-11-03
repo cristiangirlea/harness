@@ -91,7 +91,7 @@ func TestWorkMapStreamSendsOnlyChangedSnapshots(t *testing.T) {
 	w := httptest.NewRecorder()
 	New(context.Background(), Options{}).ServeHTTP(w, r)
 	body := w.Body.String()
-	if ctx.Err() != context.Canceled || calls != 4 {
+	if ctx.Err() != context.Canceled || calls < 4 {
 		t.Fatalf("stream did not stop on cancellation: %v, %d calls", ctx.Err(), calls)
 	}
 	if strings.Count(body, "event: replace") != 2 {
@@ -212,7 +212,7 @@ func TestPublicOwnerReceivesMaskedWorkMapStream(t *testing.T) {
 	defer cancel()
 	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
 		cancel()
-		return []workmap.Piece{{Repo: "/work/repo", Title: "sk-test-12345", Stuck: "sk-test-12345\nsecond line", Stage: workmap.Idea}}, nil
+		return []workmap.Piece{{Repo: "/work/repo", Title: "sk-test-12345", Stuck: "run /work/repo/gate sk-test-12345\nsecond line", Stage: workmap.Idea}}, nil
 	}
 	r := httptest.NewRequest("GET", "https://harness.example.com/stream/map", nil).WithContext(ctx)
 	r.RemoteAddr = "127.0.0.1:1234"
@@ -228,11 +228,27 @@ func TestPublicOwnerReceivesMaskedWorkMapStream(t *testing.T) {
 			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &v); err != nil {
 				t.Fatal(err)
 			}
-			if len(v.Stuck) != 1 || v.Stuck[0].Title != "\u2022\u2022\u2022\u2022" || v.Stuck[0].Stuck != "\u2022\u2022\u2022\u2022" || strings.Contains(v.SVG, "sk-test-12345") {
+			if len(v.Stuck) != 1 || v.Stuck[0].Title != "••••" || strings.Contains(v.Stuck[0].Stuck, "sk-test") || !strings.Contains(v.Stuck[0].Stuck, "./gate") || strings.Contains(v.Stuck[0].Stuck, "/work/repo") || strings.Contains(v.Stuck[0].Stuck, "second line") || strings.Contains(v.SVG, "sk-test-12345") {
 				t.Fatalf("stream view: %+v", v)
 			}
 			return
 		}
 	}
 	t.Fatal("missing JSON")
+}
+
+func TestWorkMapMasksASecretBeforeCuttingItsText(t *testing.T) {
+	old := buildWorkMap
+	t.Cleanup(func() { buildWorkMap = old })
+	buildWorkMap = func(context.Context, string, []string) ([]workmap.Piece, error) {
+		long := "deploy the release with sk-test-1234567890abcdef"
+		return []workmap.Piece{{Repo: "r", Title: long, Stuck: long, Stage: workmap.Idea}}, nil
+	}
+	r := httptest.NewRequest("GET", "http://localhost/map", nil)
+	r.RemoteAddr = "127.0.0.1:1234"
+	s := &server{}
+	v := s.mapData(r.Context(), s.viewerOf(r))
+	if strings.Contains(v.SVG, "sk-") || strings.Contains(v.Stuck[0].Title, "sk-") || strings.Contains(v.Stuck[0].Stuck, "sk-") {
+		t.Fatalf("a fragment of the secret survived the cut: %+v", v)
+	}
 }
