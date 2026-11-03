@@ -10,14 +10,14 @@ import (
 )
 
 type gameCard struct {
-	Level, Streak      int
-	Days               []bool
-	Badges             []string
-	Local              bool
-	Delivery, Practice int
-	Exercise           *game.Exercise
-	Problem            string
-	Familiarity        *game.Familiarity
+	Level, Streak, AdaLevel int
+	Days                    []bool
+	Badges                  []string
+	Local                   bool
+	Delivery, Practice      int
+	Exercise                *game.Exercise
+	Problem                 string
+	Familiarity             *game.Familiarity
 }
 
 func (s *server) gameCard(w http.ResponseWriter, r *http.Request) *gameCard {
@@ -36,7 +36,7 @@ func (s *server) gameCard(w http.ResponseWriter, r *http.Request) *gameCard {
 	practice := game.NewPractice(nil, now)
 	streak, days, err := practice.Streak()
 	totals := game.Sum(events)
-	card := &gameCard{Level: game.Level(totals.Person), Streak: streak, Days: days, Local: s.mayChangeBackends(w, r)}
+	card := &gameCard{Level: game.Level(totals.Person), AdaLevel: totals.AdaLevel, Streak: streak, Days: days, Local: s.mayChangeBackends(w, r)}
 	// One unreadable practice record should not hide the level and badges.
 	if err != nil {
 		card.Problem = "practice records unreadable; the streak is not shown"

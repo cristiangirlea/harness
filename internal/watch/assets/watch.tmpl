@@ -41,6 +41,7 @@
 {{if .ShowChanges}}<section class="card"><h2>Recent changes</h2><ul>{{range .Changes}}<li>{{.Time}} | {{.Client}} | {{.Action}} | {{.Target}} | {{.Old}} to {{.New}} | {{.Result}}{{with .Reason}}: {{.}}{{end}}</li>{{else}}<li>No recent changes.</li>{{end}}</ul></section>{{end}}
 {{template "backends" .Backends}}
 {{template "game" .Game}}
+{{with .Game}}<section id="ada-game" class="card" aria-labelledby="ada-game-h"><h2 id="ada-game-h">Ada</h2><p>Level {{.AdaLevel}}</p></section>{{end}}
 <div id="live" data-stream="/stream/index" data-replace>{{template "lists" .Lists}}</div>
 {{template "foot" .}}{{end}}
 

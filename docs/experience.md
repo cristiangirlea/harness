@@ -3,7 +3,7 @@
 [← README](../README.md)
 
 Status: slices 1 to 3 are built: the ledger, switch, stats, practice and watch card. Slice 6
-has a partial familiarity view; the remaining slices are design.
+has a partial familiarity view; Ada's growth is built. The remaining slices are design.
 
 The person earns experience by working with agents through hrn, from real outcomes only,
 never from keystrokes, turns or chatter. Ada has her own growth, from what she has learned,
@@ -144,7 +144,10 @@ card. It uses the same formula over the `ada` track only.
 | Kept script added | a merged pull request adds a file under `scripts/` with the kept-script header | `ada:script:<owner>/<repo>/<name>` | 10 |
 | Routing row from an eval | a row in `route.json` whose `eval` names the eval that set it | `ada:route:<category>/<set>` | 10 |
 
-A rule nobody measured earns her nothing.
+A rule nobody measured earns her nothing. Lesson admission verdicts live in the control
+service, so `ada:lesson` derives nothing from local records. Script events use first-parent
+merges in the locally known `origin/HEAD` history of repositories named by runs or batches;
+a repository without that reference yields no script events.
 
 ## The ledger
 
@@ -179,8 +182,8 @@ The rules that make it rebuildable and safe to prune:
 ## Where it shows
 
 - `hrn bot stats`, in the terminal: level, experience by track this week, badges and familiarity.
-  The streak shows the last 35 UTC days. Ada's line comes with the Ada slice.
-- hrn watch: a card on the index page. On loopback it may show the day's exercise; over
+  The streak shows the last 35 UTC days. Ada's line shows her level and XP this week.
+- hrn watch: separate cards for the person and Ada on the index page. Ada's card shows her level. On loopback it may show the day's exercise; over
   `--lan` it shows the level, streak and badges only, since anyone on those networks can
   read the page. Familiarity, material, answers and reveals are never served over `--lan`, and nothing of
   the game is served under `--public`.
@@ -204,7 +207,8 @@ selecting an exercise. It prints one JSON object, versioned by `version`
 be added within a version, so a reader ignores fields it does not know. When the game is off the object contains only `version` and
 `enabled: false`. Otherwise it contains `enabled: true`, `level`, total `xp`,
 `week_start` (UTC date), `week` (integer `delivery` and `practice` XP), `streak`,
-`days` (35 booleans, oldest first), and `badges` (names). `exercise` is null when
+`days` (35 booleans, oldest first), `badges` (names), and `ada` (`level`,
+`xp_this_week`, and total `xp`). `exercise` is null when
 there is no existing exercise, or has `kind`, `source`, `answered`, and masked
 `material` until answered. Answers and reveals are never included. `familiarity`
 is null when unavailable, or has `known` and `unseen` arrays of objects with

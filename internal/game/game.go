@@ -168,7 +168,8 @@ type Totals struct {
 	Counted []Event
 	XP      map[string]int
 	// Person is the delivery and practice experience; Ada's and badges are apart.
-	Person int
+	Person   int
+	AdaLevel int
 	// Badges are the badge events not cancelled, in the order of at, then key.
 	Badges []Event
 }
@@ -192,6 +193,7 @@ func Sum(events []Event) Totals {
 		}
 	}
 	t.Person = t.XP[TrackDelivery] + t.XP[TrackPractice]
+	t.AdaLevel = Level(t.XP[TrackAda])
 	return t
 }
 

@@ -121,6 +121,7 @@ func cmdBotStats(args []string) error {
 	week := game.WeekStart(time.Now())
 	xp := totals.Since(week)
 	fmt.Printf("this week, from %s UTC: delivery %d xp, practice %d xp\n", week.Format("Monday 2 January 2006"), xp[game.TrackDelivery], xp[game.TrackPractice])
+	fmt.Printf("Ada: level %d, %d xp this week\n", totals.AdaLevel, xp[game.TrackAda])
 	var badges []string
 	for _, badge := range totals.Badges {
 		badges = append(badges, game.BadgeName(badge.Key)+" ("+badge.At.UTC().Format("2 January 2006")+")")
@@ -151,6 +152,12 @@ func cmdBotStats(args []string) error {
 	showAreas("areas you know", familiarity.Known)
 	showAreas("areas agents changed you have not looked at", familiarity.Unseen)
 	return nil
+}
+
+type statsAda struct {
+	Level      int `json:"level"`
+	XPThisWeek int `json:"xp_this_week"`
+	XP         int `json:"xp"`
 }
 
 type statsExercise struct {
@@ -246,7 +253,9 @@ func cmdBotStatsJSON() error {
 		Badges      []string          `json:"badges"`
 		Exercise    *statsExercise    `json:"exercise"`
 		Familiarity *statsFamiliarity `json:"familiarity"`
+		Ada         *statsAda         `json:"ada,omitempty"`
 	}{Version: 1, Enabled: true, Level: game.Level(totals.Person), XP: totals.Person, WeekStart: week.Format("2006-01-02"), Streak: streakValue, Days: days, Badges: badges, Exercise: exercise, Familiarity: familiarity}
+	result.Ada = &statsAda{Level: totals.AdaLevel, XPThisWeek: weekly[game.TrackAda], XP: totals.XP[game.TrackAda]}
 	result.Week.Delivery, result.Week.Practice = weekly[game.TrackDelivery], weekly[game.TrackPractice]
 	return json.NewEncoder(os.Stdout).Encode(result)
 }

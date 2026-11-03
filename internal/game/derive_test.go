@@ -33,6 +33,138 @@ func writeJSON(t *testing.T, path string, v any) {
 	}
 }
 
+func TestAdaCreditsOnlyBetterSetupComparisons(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	when := at(t, "2026-10-26T09:00:00Z")
+	records := Records{Evals: []eval.Record{
+		{ID: "better", Started: when, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupBetter}},
+		{ID: "same", Started: when, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupSame}},
+	}}
+	got := derived(t, records, "ada:")
+	e, ok := got["ada:setup:better"]
+	if !ok || len(got) != 1 || e.Track != TrackAda || e.XP != 30 || !e.At.Equal(when) {
+		t.Fatalf("Ada events = %+v, want one 30 XP setup event", got)
+	}
+}
+
+func TestAdaCreditsMeasuredRoutes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	writeFile(t, filepath.Join(home, "route.json"), `{"implement":{"eval":"e1","set":"2026-10-26"},"review":{"set":"2026-10-26"},"plan":{"eval":"e2","set":"bad"}}`)
+	got := derived(t, Records{}, "ada:")
+	e, ok := got["ada:route:implement/2026-10-26"]
+	if !ok || len(got) != 1 || e.Track != TrackAda || e.XP != 10 || !e.At.Equal(at(t, "2026-10-26T00:00:00Z")) {
+		t.Fatalf("routes = %+v", got)
+	}
+}
+
+func TestAdaCreditsScriptsAddedByMerges(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	repo := t.TempDir()
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "config", "user.email", "fixture@example.org")
+	gitIn(t, repo, "config", "user.name", "Fixture")
+	gitIn(t, repo, "remote", "add", "origin", "https://github.com/example/app.git")
+	writeFile(t, filepath.Join(repo, "base"), "base")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-qm", "base")
+	gitIn(t, repo, "checkout", "-qb", "feature")
+	writeFile(t, filepath.Join(repo, "scripts", "kept.sh"), "#!/bin/sh\n# name: kept\n# summary: Kept.\n# effects: read\n# parameters: none\n# example: true\n# hash: value\n")
+	writeFile(t, filepath.Join(repo, "scripts", "partial.sh"), "# name: partial\n# summary: Partial.\n")
+	writeFile(t, filepath.Join(repo, "scripts", "plain.sh"), "#!/bin/sh\necho plain\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-qm", "scripts")
+	gitIn(t, repo, "checkout", "-q", "main")
+	gitIn(t, repo, "merge", "--no-ff", "-qm", "merge feature", "feature")
+	writeFile(t, filepath.Join(repo, "scripts", "direct.sh"), "# name: direct\n# summary: Direct.\n# effects: read\n# parameters: none\n# example: true\n# hash: value\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-qm", "direct")
+	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
+	gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	r := Records{Runs: []runlog.Record{{Task: agent.Task{Dir: repo}}}, Batches: []batch.Result{{Dir: repo}}}
+	got := derived(t, r, "ada:")
+	e, ok := got["ada:script:example/app/kept.sh"]
+	if !ok || len(got) != 1 || e.Track != TrackAda || e.XP != 10 || e.At.IsZero() {
+		t.Fatalf("scripts = %+v", got)
+	}
+}
+
+func TestAdaEventsLeavePersonUnchangedAndFoldIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	now := at(t, "2026-10-26T12:00:00Z")
+	p := NewPractice(fakePracticeSource{}, now)
+	beforeStreak, beforeDays, err := p.Streak()
+	if err != nil {
+		t.Fatal(err)
+	}
+	person := []Event{
+		{Key: "person", Kind: "fixture", Track: TrackDelivery, XP: 4990, At: now},
+		{Key: "badge:fixture", Kind: kindBadge, Track: TrackBadge, At: now},
+	}
+	before := Sum(person)
+	writeFile(t, filepath.Join(home, "route.json"), `{"implement":{"eval":"e1","set":"2026-10-26"}}`)
+	r := Records{Evals: []eval.Record{{ID: "e1", Started: now, SetupComparison: &eval.SetupComparison{Verdict: eval.SetupBetter}}}}
+	if err := Fold(r); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Fold(r); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, again) {
+		t.Fatalf("second fold changed ledger")
+	}
+	// First-use delivery XP is independent of Ada events.
+	var ada []Event
+	for _, e := range again {
+		if e.Track == TrackAda {
+			ada = append(ada, e)
+		}
+	}
+	after := Sum(append(person, ada...))
+	streak, days, err := p.Streak()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ada) != 2 || Level(before.Person) != Level(after.Person) || !reflect.DeepEqual(before.Badges, after.Badges) || streak != beforeStreak || !reflect.DeepEqual(days, beforeDays) {
+		t.Fatalf("Ada changed person state: %+v", after)
+	}
+}
+
+func TestRebuildWithAdaRoutesIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	writeFile(t, filepath.Join(home, "route.json"), `{"implement":{"eval":"e1","set":"2026-10-26"}}`)
+	if err := Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].Key != "ada:route:implement/2026-10-26" {
+		t.Fatalf("ledger = %+v", first)
+	}
+	if err := Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, again) {
+		t.Fatalf("rebuild changed ledger: %+v", again)
+	}
+}
+
 // writeRun saves a finished run as hrn does: the whole record in result.json, events one per line.
 func writeRun(t *testing.T, rec runlog.Record, events ...agent.Event) runlog.Record {
 	t.Helper()

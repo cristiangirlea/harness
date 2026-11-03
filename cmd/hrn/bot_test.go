@@ -290,6 +290,20 @@ func TestBotStatsWarnsForUnreadableOldFamiliarityRecord(t *testing.T) {
 	}
 }
 
+func TestBotStatsShowsAda(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if _, err := game.Append([]game.Event{{Key: "ada:test", Track: game.TrackAda, XP: 200, At: time.Now().UTC()}}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "Ada: level 2, 200 xp this week") {
+		t.Fatalf("stats: %s", out)
+	}
+}
+
 func TestBotStatsJSON(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Now().UTC()
@@ -297,6 +311,7 @@ func TestBotStatsJSON(t *testing.T) {
 		{Key: "review:r1", Kind: "review_clean", Track: game.TrackDelivery, XP: 20, At: now},
 		{Key: "rep:today", Kind: "daily_practice", Track: game.TrackPractice, XP: 30, At: now},
 		{Key: "badge:budget-keeper", Kind: "badge", Track: game.TrackBadge, At: now},
+		{Key: "ada:test", Track: game.TrackAda, XP: 200, At: now},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -358,6 +373,10 @@ func TestBotStatsJSON(t *testing.T) {
 	obj := read()
 	if obj["version"] != float64(1) || obj["enabled"] != true || obj["level"] != float64(1) || obj["xp"] != float64(50) || obj["week_start"] != game.WeekStart(now).Format("2006-01-02") {
 		t.Fatalf("stats: %#v", obj)
+	}
+	ada := obj["ada"].(map[string]any)
+	if ada["level"] != float64(2) || ada["xp_this_week"] != float64(200) || ada["xp"] != float64(200) {
+		t.Fatal(ada)
 	}
 	week := obj["week"].(map[string]any)
 	if week["delivery"] != float64(20) || week["practice"] != float64(30) {

@@ -3,6 +3,7 @@ package game
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,12 +13,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/route/table"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/scripthint"
 )
@@ -165,6 +168,49 @@ func Derive(r Records) ([]Event, error) {
 	}
 	for _, e := range r.Evals {
 		first("eval", e.ID, e.Started, batchDirs[e.BatchID])
+		if e.SetupComparison != nil && e.SetupComparison.Verdict == eval.SetupBetter {
+			key := "ada:setup:" + e.ID
+			if !seen[key] {
+				seen[key] = true
+				events = append(events, Event{Key: key, Kind: "ada_setup", Track: TrackAda, XP: 30, At: e.Started.UTC(), Repo: name(batchDirs[e.BatchID])})
+			}
+		}
+	}
+	routes, err := table.Load(runlog.Home())
+	if err != nil {
+		return nil, err
+	}
+	for category, row := range routes {
+		at, err := time.Parse("2006-01-02", row.Set)
+		if row.Eval == "" || err != nil {
+			continue
+		}
+		key := "ada:route:" + category + "/" + row.Set
+		events = append(events, Event{Key: key, Kind: "ada_route", Track: TrackAda, XP: 10, At: at})
+	}
+	roots := map[string]bool{}
+	for _, rec := range r.Runs {
+		if rec.Task.Dir != "" {
+			roots[repoRoot(rec.Task.Dir)] = true
+		}
+	}
+	for _, b := range r.Batches {
+		if b.Dir != "" {
+			roots[repoRoot(b.Dir)] = true
+		}
+	}
+	var rootList []string
+	for root := range roots {
+		rootList = append(rootList, root)
+	}
+	sort.Strings(rootList)
+	for _, root := range rootList {
+		for _, e := range mergedScripts(root) {
+			if !seen[e.Key] {
+				seen[e.Key] = true
+				events = append(events, e)
+			}
+		}
 	}
 	for _, feature := range []string{"batch", "slot", "eval", "routed"} {
 		if e, ok := firsts[feature]; ok {
@@ -172,6 +218,67 @@ func Derive(r Records) ([]Event, error) {
 		}
 	}
 	return events, nil
+}
+
+var commitHash = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+func mergedScripts(root string) []Event {
+	ctx := context.Background()
+	name := repoName(root)
+	if !strings.Contains(name, "/") {
+		return nil
+	}
+	log := gitEvidence(ctx, root, "log", "--first-parent", "--merges", "--reverse", "--no-show-signature", "--format=%H %cI", "refs/remotes/origin/HEAD", "--")
+	var events []Event
+	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || !commitHash.MatchString(fields[0]) {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, fields[1])
+		if err != nil {
+			continue
+		}
+		files := gitEvidence(ctx, root, "diff-tree", "--no-ext-diff", "--no-textconv", "-r", "--no-commit-id", "--name-only", "--diff-filter=A", "--no-renames", "-z", fields[0]+"^1", fields[0], "--", "scripts/")
+		for _, file := range strings.Split(files, "\x00") {
+			if !strings.HasPrefix(file, "scripts/") || file == "scripts/" {
+				continue
+			}
+			body := gitEvidence(ctx, root, "show", "--no-ext-diff", "--no-textconv", fields[0]+":"+file)
+			if !keptHeader(body) {
+				continue
+			}
+			events = append(events, Event{Key: "ada:script:" + name + "/" + strings.TrimPrefix(file, "scripts/"), Kind: "ada_script", Track: TrackAda, XP: 10, At: at.UTC(), Repo: name})
+		}
+	}
+	return events
+}
+
+func keptHeader(body string) bool {
+	header := map[string]string{}
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, "#!") {
+			continue
+		}
+		var ok bool
+		if line, ok = strings.CutPrefix(line, "# "); !ok {
+			if line, ok = strings.CutPrefix(line, "// "); !ok {
+				break
+			}
+		}
+		key, value, found := strings.Cut(line, ": ")
+		if !found || key == "" || strings.Trim(key, "abcdefghijklmnopqrstuvwxyz") != "" || value == "" {
+			break
+		}
+		header[key] = value
+	}
+	for _, key := range []string{"name", "summary", "effects", "parameters", "example", "hash"} {
+		if header[key] == "" {
+			return false
+		}
+	}
+	return true
 }
 
 var blocking = regexp.MustCompile(`(?i)(^|[^\pL\pN_-])blocking($|[^\pL\pN_])`)

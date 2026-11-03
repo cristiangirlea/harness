@@ -18,7 +18,7 @@ import (
 func TestGameCardVisibility(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	now := time.Now().UTC()
-	if _, err := game.Append([]game.Event{{Key: "first", Kind: "first_use", Track: game.TrackDelivery, XP: 50, At: now}, {Key: "badge:first-merge", Track: game.TrackBadge, At: now}}); err != nil {
+	if _, err := game.Append([]game.Event{{Key: "first", Kind: "first_use", Track: game.TrackDelivery, XP: 50, At: now}, {Key: "badge:first-merge", Track: game.TrackBadge, At: now}, {Key: "ada:test", Track: game.TrackAda, XP: 200, At: now}}); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(game.Dir(), "reps")
@@ -52,7 +52,7 @@ func TestGameCardVisibility(t *testing.T) {
 			w := httptest.NewRecorder()
 			s.index(w, req)
 			body := w.Body.String()
-			for text, want := range map[string]bool{"id=\"game\"": tc.card, "masked •••• material": tc.material, "sample source": tc.material, "This week": tc.weekly, "hidden reveal": false, "hidden answer": false, "First merge": tc.card, "Level 1": tc.card} {
+			for text, want := range map[string]bool{"id=\"game\"": tc.card, "id=\"ada-game\"": tc.card, "Level 2": tc.card, "masked •••• material": tc.material, "sample source": tc.material, "This week": tc.weekly, "hidden reveal": false, "hidden answer": false, "First merge": tc.card, "Level 1": tc.card} {
 				if strings.Contains(body, text) != want {
 					t.Errorf("%q present = %v, want %v", text, !want, want)
 				}
