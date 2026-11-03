@@ -80,7 +80,7 @@ func fakeHRN(scenario string) {
 	fmt.Printf("{\"v\":1,\"seq\":4,\"type\":\"result\",\"attempt_id\":%q,\"result\":{\"status\":\"ok\",\"backend\":\"api\"}}\n", start.Attempt)
 }
 func TestWorkerExecProtocol(t *testing.T) {
-	for _, scenario := range []string{"saved", "nack", "refused", "cancel", "ignore", "exit", "handshake"} {
+	for _, scenario := range []string{"saved", "nack", "refused", "cancel", "ignore", "exit", "handshake", "missing"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("OTHER_SECRET", "secret")
 			t.Setenv("HRN_WORKER_TOKEN", "secret")
@@ -96,11 +96,15 @@ func TestWorkerExecProtocol(t *testing.T) {
 			if err = os.WriteFile(path, data, 0700); err != nil {
 				t.Fatal(err)
 			}
+			if scenario == "missing" {
+				path = filepath.Join(t.TempDir(), "missing")
+			}
 			job := workspaceJob(strings.Repeat("e", 32))
 			job.State, job.Generation = Running, 7
 			job.Options.Mode = agent.ModeReadOnly
 			var result agent.Result
 			checkpoints := 0
+			finishes := 0
 			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				code, body := 204, ""
 				switch r.Method + " " + r.URL.Path {
@@ -119,6 +123,7 @@ func TestWorkerExecProtocol(t *testing.T) {
 						code = 409
 					}
 				case "POST /internal/jobs/" + job.ID + "/finish":
+					finishes++
 					var req finishRequest
 					if json.NewDecoder(r.Body).Decode(&req) != nil {
 						t.Error("bad finish")
@@ -149,6 +154,10 @@ func TestWorkerExecProtocol(t *testing.T) {
 				t.Fatalf("run: %v %v", ran, err)
 			}
 			switch scenario {
+			case "missing":
+				if finishes != 1 || result.Status != agent.StatusError || result.RecoveryRequired || !strings.HasPrefix(result.Error, "start worker:") || strings.Contains(result.Error, "; stderr:") {
+					t.Fatalf("finishes %d result %+v", finishes, result)
+				}
 			case "saved":
 				if result.Status != agent.StatusOK || checkpoints != 1 {
 					t.Fatalf("result %+v checkpoints %d", result, checkpoints)
