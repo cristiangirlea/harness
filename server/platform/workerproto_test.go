@@ -35,3 +35,12 @@ func TestStderrTailBounded(t *testing.T) {
 		t.Fatalf("tail length %d", len(b.data))
 	}
 }
+
+func TestWorkerResultAllowsNewFields(t *testing.T) {
+	frames := `{"v":1,"seq":1,"type":"hello"}` + "\n" + `{"v":1,"seq":2,"type":"accepted","attempt_id":"a"}` + "\n" + `{"v":1,"seq":3,"type":"result","attempt_id":"a","result":{"status":"ok","future":true}}` + "\n"
+	c := workerClient{input: strings.NewReader(frames), output: &bytes.Buffer{}, attemptID: "a", start: []byte(`{}`)}
+	outcome, err := c.run()
+	if err != nil || outcome != outcomeSaved || c.result.Status != StatusOK {
+		t.Fatalf("outcome %s result %+v: %v", outcome, c.result, err)
+	}
+}

@@ -13,8 +13,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
@@ -33,8 +31,8 @@ func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
 			// A claim represents an already stored job; submission validation is bypassed.
 			job := workspaceJob(strings.Repeat("d", 32))
 			job.State, job.Generation = Running, 1
-			job.Options = agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: 1, AllowDangerous: allow}
-			var result *agent.Result
+			job.Options = JobOptions{Mode: ModeReadOnly, MaxCostUSD: 1, AllowDangerous: allow}
+			var result *JobResult
 			claims, finishes, checkpoints := 0, 0, 0
 			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				code, body := http.StatusNoContent, ""
@@ -81,10 +79,10 @@ func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
 				t.Fatalf("job did not receive one terminal result: finishes=%d result=%+v", finishes, result)
 			}
 			if allow {
-				if result.Status != agent.StatusError || !strings.Contains(result.Error, "allow_dangerous is not supported for durable jobs") || modelCalls.Load() != 0 || checkpoints != 0 {
+				if result.Status != StatusError || !strings.Contains(result.Error, "allow_dangerous is not supported for durable jobs") || modelCalls.Load() != 0 || checkpoints != 0 {
 					t.Fatalf("stored dangerous job ran: result=%+v model_calls=%d checkpoints=%d", result, modelCalls.Load(), checkpoints)
 				}
-			} else if result.Status != agent.StatusOK || result.Final != "fixture completed" || modelCalls.Load() != 1 || checkpoints != 3 {
+			} else if result.Status != StatusOK || result.Final != "fixture completed" || modelCalls.Load() != 1 || checkpoints != 3 {
 				t.Fatalf("safe job did not run: result=%+v model_calls=%d checkpoints=%d", result, modelCalls.Load(), checkpoints)
 			}
 			if ran, err := worker.RunOnce(context.Background()); ran || err != nil || finishes != 1 {

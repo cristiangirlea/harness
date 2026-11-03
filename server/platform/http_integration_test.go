@@ -11,8 +11,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func sendJSON(t *testing.T, client *http.Client, method, url, token string, input any) (int, []byte) {
@@ -153,7 +151,7 @@ func TestHTTPClientDisconnectControlRestartAndWorkerCompletion(t *testing.T) {
 		t.Fatalf("job did not finish durably: %+v", job)
 	}
 	cp, err := store.LatestCheckpoint(context.Background(), tenant.ID, created.Project.ID, job.ID)
-	if err != nil || !cp.Finished || cp.Result.Status != agent.StatusOK {
+	if err != nil || !cp.Finished || cp.Result.Status != StatusOK {
 		t.Fatalf("final checkpoint: %+v %v", cp, err)
 	}
 	status, raw = sendJSON(t, client, "GET", restarted.URL+"/internal/scaling/projects/"+created.Project.ID, scaler, nil)
@@ -370,8 +368,8 @@ func TestHTTPProjectWorkerCannotActOnAnotherProjectsJob(t *testing.T) {
 	}{
 		{"claim", "/internal/projects/" + projectB.ID + "/claim", map[string]string{"worker_id": "worker-a"}},
 		{"heartbeat", "/internal/jobs/" + job.ID + "/heartbeat", worker},
-		{"checkpoint", "/internal/jobs/" + job.ID + "/checkpoint", checkpointRequest{worker, agent.APICheckpoint{Version: 1, Sequence: 1, Boundary: "model_intent", TaskDigest: "digest"}}},
-		{"finish", "/internal/jobs/" + job.ID + "/finish", finishRequest{worker, agent.Result{Backend: "api", Status: agent.StatusError}}},
+		{"checkpoint", "/internal/jobs/" + job.ID + "/checkpoint", checkpointRequest{worker, testCheckpoint(t, `{"version":1,"sequence":1,"boundary":"model_intent","task_digest":"digest"}`)}},
+		{"finish", "/internal/jobs/" + job.ID + "/finish", finishRequest{worker, JobResult{Backend: "api", Status: StatusError}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, raw := sendJSON(t, server.Client(), "POST", server.URL+tc.path, workerAToken, tc.body)
@@ -546,12 +544,12 @@ func TestHTTPCheckpointRejectsSkippedAndReplayedSequences(t *testing.T) {
 	defer server.Close()
 	url := server.URL + "/internal/jobs/" + job.ID + "/checkpoint"
 	request := checkpointRequest{workerRequest{ProjectID: project.ID, WorkerID: "owner", Generation: claimed.Generation},
-		agent.APICheckpoint{Version: 1, Sequence: 2, Boundary: "model_intent", TaskDigest: "digest"}}
+		testCheckpoint(t, `{"version":1,"sequence":2,"boundary":"model_intent","task_digest":"digest"}`)}
 	status, raw := sendJSON(t, server.Client(), "POST", url, workerToken, request)
 	if status != http.StatusConflict {
 		t.Fatalf("skipped sequence: status %d, want 409: %s", status, raw)
 	}
-	request.Checkpoint.Sequence = 1
+	request.Checkpoint = testCheckpoint(t, `{"version":1,"sequence":1,"boundary":"model_intent","task_digest":"digest"}`)
 	status, raw = sendJSON(t, server.Client(), "POST", url, workerToken, request)
 	if status != http.StatusOK {
 		t.Fatalf("first sequence: status %d, want 200: %s", status, raw)

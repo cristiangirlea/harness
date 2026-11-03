@@ -5,8 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func TestValidateProjectBackend(t *testing.T) {
@@ -43,7 +41,7 @@ func TestValidateSubmissionRefusesUnsupportedDurableOptions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := Submission{
 				Prompt:  "inspect",
-				Options: agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: 1, MaxTurns: 3},
+				Options: JobOptions{Mode: ModeReadOnly, MaxCostUSD: 1, MaxTurns: 3},
 				Backend: "api",
 				BaseRef: strings.Repeat("a", 40),
 			}
@@ -71,7 +69,7 @@ func TestValidateSubmissionRefusesUnsupportedDurableOptions(t *testing.T) {
 }
 
 func TestCheckCostLimitRefusesCeilingsAboveTheServiceLimit(t *testing.T) {
-	s := Submission{Options: agent.Options{MaxCostUSD: 5}}
+	s := Submission{Options: JobOptions{MaxCostUSD: 5}}
 	if err := checkCostLimit(s, 0); err != nil {
 		t.Fatalf("no limit refused: %v", err)
 	}

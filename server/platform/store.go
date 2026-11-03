@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -316,12 +315,13 @@ func (s *Store) GetJob(ctx context.Context, tenantID, projectID, jobID string) (
 	if err != nil {
 		return Job{}, err
 	}
-	if err := json.Unmarshal(options, &job.Options); err != nil {
+	job.Options, err = decodeStoredOptions(options)
+	if err != nil {
 		return Job{}, err
 	}
 	if len(result) != 0 {
-		var value agent.Result
-		if err := json.Unmarshal(result, &value); err != nil {
+		value, err := decodeResult(result, false, true)
+		if err != nil {
 			return Job{}, err
 		}
 		job.Result = &value

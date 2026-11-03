@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 type transcriptLine struct {
@@ -117,17 +115,17 @@ func TestWorkerClientFailedResult(t *testing.T) {
 }
 
 func TestWorkerStartCarriesJobLimits(t *testing.T) {
-	job := Job{Prompt: "task", Backend: "api", Options: agent.Options{Mode: agent.ModeReadOnly, MaxCostUSD: 1.25, TaskBudget: 20000, MaxTurns: 7, Timeout: agent.Duration(time.Minute)}}
+	job := Job{Prompt: "task", Backend: "api", Options: JobOptions{Mode: ModeReadOnly, MaxCostUSD: 1.25, TaskBudget: 20000, MaxTurns: 7, Timeout: Duration(time.Minute)}}
 	frame, err := workerStart(job, "a", "workspace", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var decoded struct {
 		Task struct {
-			MaxCostUSD float64        `json:"max_cost_usd"`
-			TaskBudget int            `json:"task_budget"`
-			MaxTurns   int            `json:"max_turns"`
-			Timeout    agent.Duration `json:"timeout"`
+			MaxCostUSD float64  `json:"max_cost_usd"`
+			TaskBudget int      `json:"task_budget"`
+			MaxTurns   int      `json:"max_turns"`
+			Timeout    Duration `json:"timeout"`
 		} `json:"task"`
 	}
 	if err := json.Unmarshal(frame, &decoded); err != nil {

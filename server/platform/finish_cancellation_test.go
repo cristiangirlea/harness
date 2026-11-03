@@ -3,8 +3,6 @@ package platform
 import (
 	"context"
 	"testing"
-
-	"github.com/cristiangirlea/harness/internal/agent"
 )
 
 func TestFinishDistinguishesLocalStopFromTenantCancellation(t *testing.T) {
@@ -31,7 +29,7 @@ func TestFinishDistinguishesLocalStopFromTenantCancellation(t *testing.T) {
 				}
 			}
 			if err := store.Finish(ctx, project.ID, job.ID, "worker-a", claim.Generation,
-				agent.Result{Backend: "api", Status: agent.StatusCanceled}); err != nil {
+				JobResult{Backend: "api", Status: StatusCanceled}); err != nil {
 				t.Fatal(err)
 			}
 			observed, err := store.GetJob(ctx, project.TenantID, project.ID, job.ID)
