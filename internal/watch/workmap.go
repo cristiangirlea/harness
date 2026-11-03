@@ -61,7 +61,9 @@ func mapViewOf(pieces []workmap.Piece, err error) mapView {
 	for _, p := range pieces {
 		lanes[p.Repo] = append(lanes[p.Repo], p)
 		if p.Stuck != "" {
-			v.Stuck = append(v.Stuck, mapItem{p.Title, p.Stuck, mapLink(p)})
+			title, _ := firstLine(p.Title)
+			stuck, _ := firstLine(p.Stuck)
+			v.Stuck = append(v.Stuck, mapItem{title, stuck, mapLink(p)})
 		}
 	}
 	repos := make([]string, 0, len(lanes))
@@ -121,8 +123,8 @@ func mapViewOf(pieces []workmap.Piece, err error) mapView {
 				title = p.Links.Branch
 			}
 			short := []rune(title)
-			if len(short) > 22 {
-				short = append(short[:21], '…')
+			if len(short) > 19 {
+				short = append(short[:18], '…')
 			}
 			link := mapLink(p)
 			if link != "" {
@@ -135,8 +137,8 @@ func mapViewOf(pieces []workmap.Piece, err error) mapView {
 			fmt.Fprintf(&b, `<g class="%s"><title>%s</title><rect x="%d" y="%d" width="190" height="55" rx="4"/><text x="%d" y="%d">%s</text>`, class, html.EscapeString(title), x, py, x+6, py+20, html.EscapeString(string(short)))
 			if p.Stuck != "" {
 				stuck := []rune(p.Stuck)
-				if len(stuck) > 22 {
-					stuck = append(stuck[:21], '…')
+				if len(stuck) > 19 {
+					stuck = append(stuck[:18], '…')
 				}
 				fmt.Fprintf(&b, `<text x="%d" y="%d">%s</text>`, x+6, py+42, html.EscapeString(string(stuck)))
 			}
@@ -157,8 +159,20 @@ func (s *server) mapOwner(r *http.Request) bool {
 	}
 	return s.who(r).ID == owner.Local()
 }
-func (s *server) mapData(ctx context.Context) mapView {
+func (s *server) mapData(ctx context.Context, vw viewer) mapView {
 	p, err := buildWorkMap(ctx, runlog.Home(), nil)
+	for i := range p {
+		if p[i].Title == "" {
+			p[i].Title = p[i].Links.Branch
+		}
+		p[i].Title, p[i].Stuck = s.clean(p[i].Title), s.clean(p[i].Stuck)
+		if !vw.local {
+			sh := vw.shortener(p[i].Repo)
+			p[i].Title, p[i].Stuck = sh.shorten(p[i].Title), sh.shorten(p[i].Stuck)
+		}
+		p[i].Title, _ = firstLine(p[i].Title)
+		p[i].Stuck, _ = firstLine(p[i].Stuck)
+	}
 	return mapViewOf(p, err)
 }
 func (s *server) workMap(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +180,7 @@ func (s *server) workMap(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.page(w, 200, "workmap", mapPage{page{Title: "Work map", Home: s.homeFor(r)}, s.mapData(r.Context())})
+	s.page(w, 200, "workmap", mapPage{page{Title: "Work map", Home: s.homeFor(r)}, s.mapData(r.Context(), s.viewerOf(r))})
 }
 func (s *server) streamMap(w http.ResponseWriter, r *http.Request) {
 	if !s.mapOwner(r) {
@@ -175,7 +189,7 @@ func (s *server) streamMap(w http.ResponseWriter, r *http.Request) {
 	}
 	st := s.startStream(w)
 	s.streamChanges(r, st, mapPoll, func() (any, string, error) {
-		v := s.mapData(r.Context())
+		v := s.mapData(r.Context(), s.viewerOf(r))
 		b, e := json.Marshal(v)
 		return template.HTML(b), "", e
 	}, "mapjson")

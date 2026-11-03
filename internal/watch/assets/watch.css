@@ -213,6 +213,6 @@ button[aria-pressed="true"] { border-color: var(--link); box-shadow: inset 0 0 0
 .map-waits { overflow-wrap: anywhere; }
 .map-heading, .map-repo { fill: currentColor; font-size: 16px; font-weight: bold; }
 .map-piece rect { fill: var(--card, #eee); stroke: currentColor; }
-.map-piece text { fill: currentColor; font-size: 14px; }
+.map-piece text { fill: currentColor; font-size: 16px; }
 .map-stuck rect { fill: #ffe1d6; stroke: #b23b18; stroke-width: 3; }
 .map-stuck text { fill: #711c08; }
