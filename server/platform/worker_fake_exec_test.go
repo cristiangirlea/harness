@@ -24,6 +24,12 @@ func init() {
 		os.Exit(0)
 	}
 }
+
+// fakeReady tells the test the child is waiting, so it cancels then rather than on a timer.
+func fakeReady() {
+	_ = os.WriteFile(filepath.Join(filepath.Dir(os.Getenv("HOME")), "fake-ready"), nil, 0600)
+}
+
 func fakeHRN(scenario string) {
 	if strings.Join(os.Args[1:], " ") != "exec --protocol v1 --worker" || os.Getenv("ANTHROPIC_BASE_URL") != "http://localhost:1234" || os.Getenv("ANTHROPIC_API_KEY") != "fixture-key" || os.Getenv("HRN_WORKER_TOKEN") != "" || os.Getenv("OTHER_SECRET") != "" {
 		os.Exit(2)
@@ -33,6 +39,7 @@ func fakeHRN(scenario string) {
 	}
 	in := bufio.NewReader(os.Stdin)
 	if scenario == "handshake" {
+		fakeReady()
 		line, _ := in.ReadBytes('\n')
 		if len(line) != 0 {
 			os.Exit(7)
@@ -57,11 +64,13 @@ func fakeHRN(scenario string) {
 		return
 	}
 	if scenario == "ignore" {
+		fakeReady()
 		for {
 			time.Sleep(time.Second)
 		}
 	}
 	if scenario == "cancel" {
+		fakeReady()
 		line, _ = in.ReadBytes('\n')
 		if !strings.Contains(string(line), `"cancel"`) {
 			os.Exit(4)
@@ -152,8 +161,17 @@ func TestWorkerExecProtocol(t *testing.T) {
 			ctx := context.Background()
 			if scenario == "cancel" || scenario == "ignore" || scenario == "handshake" {
 				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+				ctx, cancel = context.WithCancel(ctx)
 				defer cancel()
+				go func() {
+					ready := filepath.Join(w.WorkspaceRoot, "fake-ready")
+					for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+						if _, err := os.Stat(ready); err == nil {
+							break
+						}
+					}
+					cancel()
+				}()
 			}
 			ran, err := w.RunOnce(ctx)
 			if !ran || err != nil {
