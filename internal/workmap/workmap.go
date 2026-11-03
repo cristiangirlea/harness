@@ -355,13 +355,6 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 		linked := false
 		for _, p := range pieces {
 			if r.Done && r.Task.Purpose == "review" && validOID(r.StartHead) {
-				kept := p.Links.Runs[:0]
-				for _, id := range p.Links.Runs {
-					if id != r.ID {
-						kept = append(kept, id)
-					}
-				}
-				p.Links.Runs = kept
 				continue
 			}
 			for _, id := range p.Links.Runs {
@@ -410,6 +403,16 @@ func Build(ctx context.Context, home string, repos []string) ([]Piece, error) {
 			continue
 		}
 		if r.Done && r.Task.Purpose == "review" && validOID(r.StartHead) {
+			// Only once the repository resolves, so a removed batch worktree keeps its run link.
+			for _, p := range pieces {
+				kept := p.Links.Runs[:0]
+				for _, id := range p.Links.Runs {
+					if id != r.ID {
+						kept = append(kept, id)
+					}
+				}
+				p.Links.Runs = kept
+			}
 			key := root + "\x00" + r.StartHead
 			if !reviewSeen[key] {
 				reviewSeen[key] = true

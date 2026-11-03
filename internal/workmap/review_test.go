@@ -196,10 +196,13 @@ func TestReviewCommitAssociationAndCaching(t *testing.T) {
 	}
 	old := gitCall
 	t.Cleanup(func() { gitCall = old })
-	calls := 0
+	calls, ancestors := 0, 0
 	gitCall = func(ctx context.Context, dir string, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "for-each-ref" && len(args) > 1 && args[1] == "--contains" {
 			calls++
+		}
+		if len(args) > 1 && args[0] == "merge-base" && args[1] == "--is-ancestor" {
+			ancestors++
 		}
 		return git(ctx, dir, args...)
 	}
@@ -212,10 +215,30 @@ func TestReviewCommitAssociationAndCaching(t *testing.T) {
 		t.Fatalf("feature: %+v", feature)
 	}
 	other := reviewFind(t, pieces, "branch:other")
-	if other.Stage == Review || strings.Contains(strings.Join(other.Links.Runs, ","), "r0") {
+	if runs := strings.Join(other.Links.Runs, ","); other.Stage == Review || strings.Contains(runs, "r0") || !strings.Contains(runs, "r3") || !strings.Contains(runs, "r4") {
 		t.Fatalf("other: %+v", other)
 	}
-	if calls != 1 {
-		t.Fatalf("contains calls: %d", calls)
+	if calls != 1 || ancestors != 2 {
+		t.Fatalf("contains calls: %d, ancestor calls: %d", calls, ancestors)
+	}
+}
+
+func TestReviewRunInARemovedBatchWorktreeKeepsItsBatchLink(t *testing.T) {
+	repo, git := reviewRepo(t)
+	git("checkout", "-b", "feature")
+	git("commit", "--allow-empty", "-m", "feature")
+	home := t.TempDir()
+	gone := filepath.Join(t.TempDir(), "removed-worktree")
+	raw := fmt.Sprintf(`{"id":"b1","started":"2020-01-01T00:00:00Z","dir":%s,"tasks":[{"id":"t","branch":"feature","attempts":[{"run_id":"rb"}]}]}`, strconv.Quote(repo))
+	reviewWrite(t, filepath.Join(home, "batches", "b1.json"), raw)
+	run := fmt.Sprintf(`{"id":"rb","start_head":%q,"task":{"dir":%s,"purpose":"review"}}`, strings.Repeat("a", 40), strconv.Quote(gone))
+	reviewWrite(t, filepath.Join(home, "runs", "rb", "task.json"), run)
+	reviewWrite(t, filepath.Join(home, "runs", "rb", "result.json"), run)
+	pieces, err := Build(context.Background(), home, []string{repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := reviewFind(t, pieces, "branch:feature"); strings.Join(p.Links.Runs, ",") != "rb" {
+		t.Fatalf("%+v", p)
 	}
 }

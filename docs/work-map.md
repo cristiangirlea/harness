@@ -6,7 +6,9 @@ The map joins work by branch and only raises its stage. Sources, in stage order:
 - **branch**: local branches, worktrees and sessions.
 - **agent**: runs, batches and active sessions.
 - **gates**: batch gate results.
-- **review**: finished runs with declared purpose `review`.
+- **review**: a finished run with declared purpose `review` raises, and links, the local branches
+  that contain the commit it started on; nothing when the default branch already contains that
+  commit or the run has no recorded start commit.
 - **pr** and **ci**: GitHub pull requests and checks.
 - **merged**: Git ancestry and GitHub merged pull requests.
 - **released**: a merged pull request's merge commit is contained in a local `v*` tag.
