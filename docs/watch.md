@@ -14,6 +14,8 @@ hrn show -f <run-id>       # the same timeline in the terminal
 hrn bot                    # Ada, the bot, in a small window: what hrn is doing, out loud
 ```
 
+An owner can open the [work map](work-map.md) at `/map`; `/stream/map` supplies its live updates. Both routes return 404 to other viewers. Ada links to the work map and shows a waiting count for an owner.
+
 Run and batch pages link to **Execution flow**, a hierarchical view of recorded steps and their timing. It can also be opened at `/flow/<id>` or fetched as JSON at `/flow/<id>/json` (`version: 1`). The `?level=simple`, `?level=technical` and `?level=debug` links choose how much detail is shown; simple omits tool steps, while debug includes step identifiers and marks rebuilt steps. At every level, overlapping siblings occupy lanes in a CSS grid, with lanes beyond lane 4 folded into that last column; below 640px the grid becomes one column. The summary reports the peak number of sibling tasks running side by side, including those folded into the last column. Steps show their recorded duration, and run steps show turns, tool calls and any reported cost using the viewer's access to the run record. Failed tasks offer `hrn batch show <batch>` to inspect the batch: there is no retry subcommand, and show does not accept a task ID. Passed tasks with a commit offer `hrn batch merge <batch> <task>` after reviewing the diff; task IDs are positional, with no `--tasks` flag. Commands are copyable text only; the page cannot run them. An unfinished flow updates live at the selected level and ends when its run or batch finishes or stops. hrn shows recorded steps and reasons, not the model's private reasoning. Run steps link back to the run page, where tool calls and output provide the evidence.
 
 A new flow step after a quiet spell appears within a quarter of the configured poll interval (at least 50ms); while a run keeps writing, the page refreshes at most once per poll interval, since each refresh rebuilds the whole flow.
@@ -313,7 +315,11 @@ and as desktop notifications:
 | task | Task two of four in demo-api passed: fix the flaky test. | yes | no |
 | done | Claude has finished in harness. It took four minutes. | yes | yes |
 | failed | The batch in demo-api is done: three of four tasks passed. It took twelve minutes. | yes | yes |
+| waits | Release in harness waits for you: checks failed. | yes | yes |
+| map | Release in harness is now at pr. | no | no |
 | status | Two things are going: Claude in harness, editing bot.go; and a batch of four tasks in demo-api. | no | no |
+
+On the first map look, Ada gives one waits summary if work already waits. Later waits messages cover newly stuck work; map messages cover new pieces and advances at gates or later.
 
 Those are the defaults; the settings change each one, pick the voice and the speed, and
 are kept in that browser. A done or failed notification stays until it is dismissed;
@@ -321,7 +327,7 @@ clicking one opens its run or batch. Skip (or Esc) stops talking; Snooze keeps i
 15 minutes, an hour, or until unmuted; each run or batch going has a Mute this. "What an
 agent is doing" comes from its latest tool call (reading, editing, searching, running a
 command and the like), across the backends' different tool names. Ada opens quietly:
-what ended before it was opened is not news, and the first thing it says is what is going.
+what ended before it was opened is not news; existing work that waits is summarised once.
 A batch whose record could not be read on that first look (caught mid-save) is not
 announced as new when it reads, but its ending is if it ended after Ada opened. A batch
 whose record cannot be read for a look is kept as it was while its file is on disk.

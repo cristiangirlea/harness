@@ -30,7 +30,7 @@
 <p class="eyebrow">Harness / live view</p>
 <h1>Runs and batches</h1>
 {{with .GC}}<p>Last automatic GC: {{.}}</p>{{end}}
-<p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps. A batch's tasks also appear as runs, linked to their batch. <a href="/bot">Ada</a>, the bot, tells you what hrn is doing, out loud if you like.</p>
+<p class="intro">Newest first. The lists update by themselves while hrn works; open a run to follow its steps. A batch's tasks also appear as runs, linked to their batch. <a href="/bot">Ada</a>, the bot, tells you what hrn is doing, out loud if you like. {{if .MapOwner}}<a href="/map">Work map</a>{{end}}</p>
 {{if .Phone}}<section class="card reach" aria-labelledby="reach-h">
 <h2 id="reach-h">On your phone</h2>
 <p>Scan the code of the network your phone is on, or open its link. On Wi-Fi it is the one on your Wi-Fi adapter; the others are usually virtual adapters (WSL, Hyper-V, Docker), or a VPN that looks like an ordinary adapter. <code>hrn watch --lan=NAME</code> serves just one.</p>
@@ -254,6 +254,7 @@
 <p id="bot-line" class="bot-line" aria-live="polite">I'm Ada. I'll tell you what hrn is doing.</p>
 </div>
 </div>
+{{if .MapOwner}}<p><a href="/map">Work map</a>{{with .MapSummary}}: {{.}}{{end}}</p>{{end}}
 <p class="bot-buttons">
 <button type="button" id="bot-wake" class="primary">Let me talk</button>
 <button type="button" id="bot-skip" title="Esc">Skip</button>
@@ -394,3 +395,7 @@
 <ol id="voice-lines" hidden>{{range .Lines}}<li data-n="{{.N}}">{{.Text}}</li>
 {{end}}</ol>
 {{template "foot" .}}{{end}}
+
+{{define "workmap"}}{{template "head" .}}<h1>Work map</h1><div id="live" data-stream="/stream/map">{{template "mapbody" .View}}</div>{{template "foot" .}}{{end}}
+{{define "mapbody"}}{{with .Error}}<p class="notice warn">{{.}}</p>{{end}}<div class="map-svg">{{safeMapSVG .SVG}}</div><h2>Waits for you</h2><ul class="map-waits">{{range .Stuck}}<li>{{if .URL}}<a href="{{.URL}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}: {{.Stuck}}</li>{{else}}<li>Nothing is waiting.</li>{{end}}</ul>{{end}}
+{{define "mapjson"}}{{.}}{{end}}

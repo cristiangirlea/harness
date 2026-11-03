@@ -35,6 +35,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("HRN_HOME", home)
+	os.Setenv("CLAUDE_CONFIG_DIR", home)
 	// The Backends card and hrn backends read codex's sessions for its quota.
 	os.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
 	code := m.Run()
@@ -53,5 +54,18 @@ func TestTheTestsRunAgainstATemporaryHRNHome(t *testing.T) {
 	got, err := filepath.EvalSymlinks(home)
 	if home == "" || err != nil || !strings.HasPrefix(got, tmp) {
 		t.Fatalf("HRN_HOME = %q, want a directory under %s", home, tmp)
+	}
+}
+
+func TestClaudeConfigUsesATemporaryDirectory(t *testing.T) {
+	home := os.Getenv("CLAUDE_CONFIG_DIR")
+	tmp, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := filepath.EvalSymlinks(home)
+	rel, relErr := filepath.Rel(tmp, got)
+	if home == "" || err != nil || relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		t.Fatalf("CLAUDE_CONFIG_DIR = %q", home)
 	}
 }

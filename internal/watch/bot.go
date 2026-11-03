@@ -18,6 +18,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/workmap"
 )
 
 type say struct {
@@ -39,6 +40,8 @@ var botKinds = []botKind{
 	{"done", "A run or batch is done", true, true},
 	{"failed", "A run or batch stops short", true, true},
 	{"status", "What is going, when that changes", false, false},
+	{"waits", "Something waits for you", true, true},
+	{"map", "Work moves on the map", false, false},
 }
 
 // Wait for batch ownership to be saved so attempts are not announced twice.
@@ -510,9 +513,11 @@ func botNowOf(s botSnapshot) botNow {
 
 type botPage struct {
 	page
-	Now   botNow
-	Local bool // on this computer, where recording her voice works
-	Kinds []botKind
+	Now        botNow
+	Local      bool // on this computer, where recording her voice works
+	Kinds      []botKind
+	MapOwner   bool
+	MapSummary string
 }
 
 type botWatcher struct {
@@ -525,10 +530,79 @@ type botWatcher struct {
 	looked    bool
 	began     time.Time
 	late      map[string]bool // batches on disk the first look could not read
+	mapPrev   map[string]workmap.Piece
 }
 
 func (s *server) newBotWatcher(r *http.Request) *botWatcher {
 	return &botWatcher{s: s, request: r, followers: map[string]*Follower{}, doing: map[string]string{}, paused: map[string]int64{}, late: map[string]bool{}}
+}
+
+func (b *botWatcher) lookMap() []say {
+	if !b.s.mapOwner(b.request) {
+		return nil
+	}
+	pieces, err := b.s.mapPieces(b.request.Context(), b.s.viewerOf(b.request))
+	cur := make(map[string]workmap.Piece, len(pieces))
+	var out []say
+	for _, p := range pieces {
+		key := p.Repo + "\x00" + p.Key
+		if p.Links.PR != "" {
+			key = p.Links.PR
+		}
+		was, seen := b.mapPrev[key]
+		cur[key] = p
+		if b.mapPrev == nil {
+			continue
+		}
+		url := mapLink(p)
+		if url == "" {
+			url = "/map"
+		}
+		head := p.Title + " in " + mapRepoBase(p.Repo)
+		if p.Stuck != "" && (!seen || was.Stuck == "") {
+			out = append(out, say{"waits", sentence(head + " waits for you: " + p.Stuck), p.Key, url})
+		}
+		stage, before := slices.Index(mapStages, p.Stage), slices.Index(mapStages, was.Stage)
+		if stage >= slices.Index(mapStages, workmap.Gates) && (!seen || stage > before) {
+			out = append(out, say{"map", sentence(head + " is now at " + string(p.Stage)), p.Key, url})
+		}
+	}
+	if err != nil {
+		for key, p := range b.mapPrev {
+			if _, ok := cur[key]; !ok {
+				cur[key] = p
+			}
+		}
+	}
+	if b.mapPrev == nil {
+		var names []string
+		for _, p := range pieces {
+			if p.Stuck != "" {
+				names = append(names, p.Title)
+			}
+		}
+		if len(names) > 0 {
+			n := len(names)
+			shown := names
+			if len(shown) > 3 {
+				shown = shown[:3]
+			}
+			label := strings.Join(shown, ", ")
+			if len(shown) > 1 && n <= len(shown) {
+				label = strings.Join(shown[:len(shown)-1], ", ") + " and " + shown[len(shown)-1]
+			}
+			if n > len(shown) {
+				label += " and " + number(n-len(shown)) + " more"
+			}
+			word := "pieces wait"
+			if n == 1 {
+				word = "piece waits"
+			}
+			out = append(out, say{"waits", fmt.Sprintf("%s %s for you: %s.", number(n), word, label), "", "/map"})
+		}
+	}
+	b.mapPrev = cur
+	return out
 }
 
 // Retain unreadable files across Windows renames to avoid false new-batch announcements.
@@ -671,7 +745,22 @@ func (s *server) bot(w http.ResponseWriter, r *http.Request) {
 	// The page may ask for the microphone, to listen for its few commands.
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
 	snap := s.newBotWatcher(r).look()
-	s.page(w, http.StatusOK, "bot", botPage{page: page{Title: "Ada", Home: s.homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds, Local: s.fromThisComputer(r)})
+	p := botPage{page: page{Title: "Ada", Home: s.homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds, Local: s.fromThisComputer(r), MapOwner: s.mapOwner(r)}
+	if p.MapOwner {
+		pieces, _ := s.mapResult(r.Context(), false)
+		n := 0
+		for _, piece := range pieces {
+			if piece.Stuck != "" {
+				n++
+			}
+		}
+		if n == 1 {
+			p.MapSummary = "One piece waits for you."
+		} else if n > 1 {
+			p.MapSummary = strings.ToUpper(number(n)[:1]) + number(n)[1:] + " pieces wait for you."
+		}
+	}
+	s.page(w, http.StatusOK, "bot", p)
 }
 
 // Redact spoken JSON too: it bypasses the page template's masking.
@@ -680,6 +769,35 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 	b := s.newBotWatcher(r)
 	var prev botSnapshot
 	first, last := true, ""
+	nextMap := time.Now()
+	mapResults := make(chan []say, 1)
+	mapInFlight := false
+	settings := s.effectiveMapSettings()
+	mapPoll := settings.poll
+	lookMap := b.lookMap
+	if settings.look != nil {
+		lookMap = func() []say { return settings.look(b) }
+	}
+	mapTick := time.NewTicker(mapPoll)
+	defer mapTick.Stop()
+	wake := make(chan struct{}, 1)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-mapTick.C:
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			case <-r.Context().Done():
+				return
+			case <-done:
+				return
+			}
+		}
+	}()
 	s.loop(r, st, 4*s.opt.Poll, func() (bool, error) {
 		cur := b.look()
 		html, err := s.render("botnow", botNowOf(cur))
@@ -692,7 +810,32 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 				return true, err
 			}
 		}
-		for _, m := range announce(b.baseline(prev, cur), cur, first) {
+		messages := announce(b.baseline(prev, cur), cur, first)
+		select {
+		case result := <-mapResults:
+			mapInFlight = false
+			messages = append(messages, result...)
+		default:
+		}
+		if now := time.Now(); !now.Before(nextMap) && !mapInFlight {
+			mapInFlight = true
+			go func() {
+				result := lookMap()
+				select {
+				case mapResults <- result:
+				case <-r.Context().Done():
+					return
+				}
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			}()
+			for !nextMap.After(now) {
+				nextMap = nextMap.Add(mapPoll)
+			}
+		}
+		for _, m := range messages {
 			m.Text = s.clean(m.Text)
 			data, _ := json.Marshal(m)
 			text := string(data)
@@ -705,5 +848,5 @@ func (s *server) streamBot(w http.ResponseWriter, r *http.Request) {
 		}
 		prev, first = cur, false
 		return false, nil
-	})
+	}, wake)
 }

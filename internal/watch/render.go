@@ -25,7 +25,7 @@ import (
 //go:embed assets
 var assets embed.FS
 
-var pages = template.Must(template.ParseFS(assets, "assets/*.tmpl"))
+var pages = template.Must(template.New("watch").Funcs(template.FuncMap{"safeMapSVG": func(s string) template.HTML { return template.HTML(s) }}).ParseFS(assets, "assets/*.tmpl"))
 
 func render(name string, data any) (string, error) {
 	var b bytes.Buffer
@@ -332,6 +332,7 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 }
 
 type indexPage struct {
+	MapOwner bool
 	page
 	GC          string
 	ShowChanges bool
