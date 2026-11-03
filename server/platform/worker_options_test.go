@@ -20,7 +20,8 @@ func TestWorkerRefusesStoredAllowDangerousAndStillRunsSafeJobs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", binary, "../../cmd/hrn")
+	cmd := exec.Command("go", "build", "-o", binary, "./cmd/hrn")
+	cmd.Dir = filepath.Join("..", "..")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build hrn: %v %s", err, output)
 	}

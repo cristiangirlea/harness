@@ -1,0 +1,169 @@
+[
+  {
+    "method": "POST",
+    "path": "/v1/projects/\u003cproject-id\u003e/jobs",
+    "request": {
+      "backend": "api",
+      "base_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "idempotency_key": "client-integration",
+      "options": {
+        "max_cost_usd": 1,
+        "max_turns": 3,
+        "mode": "readonly"
+      },
+      "project_id": "\u003cproject-id\u003e",
+      "prompt": "inspect",
+      "tenant_id": "\u003ctenant-id\u003e"
+    },
+    "response": {
+      "backend": "api",
+      "base_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "checkpoint_sequence": 0,
+      "generation": 0,
+      "id": "\u003cjob-id\u003e",
+      "options": {
+        "max_cost_usd": 1,
+        "max_turns": 3,
+        "mode": "readonly"
+      },
+      "project_id": "\u003cproject-id\u003e",
+      "prompt": "inspect",
+      "repository_url": "https://example.invalid/fixture.git",
+      "state": "queued",
+      "tenant_id": "\u003ctenant-id\u003e"
+    },
+    "status": 201
+  },
+  {
+    "method": "POST",
+    "path": "/v1/projects/\u003cproject-id\u003e/jobs",
+    "request": {
+      "backend": "api",
+      "base_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "idempotency_key": "client-integration",
+      "options": {
+        "max_cost_usd": 1,
+        "max_turns": 3,
+        "mode": "readonly"
+      },
+      "project_id": "\u003cproject-id\u003e",
+      "prompt": "inspect",
+      "tenant_id": "\u003ctenant-id\u003e"
+    },
+    "response": {
+      "backend": "api",
+      "base_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "checkpoint_sequence": 0,
+      "generation": 0,
+      "id": "\u003cjob-id\u003e",
+      "options": {
+        "max_cost_usd": 1,
+        "max_turns": 3,
+        "mode": "readonly"
+      },
+      "project_id": "\u003cproject-id\u003e",
+      "prompt": "inspect",
+      "repository_url": "https://example.invalid/fixture.git",
+      "state": "queued",
+      "tenant_id": "\u003ctenant-id\u003e"
+    },
+    "status": 200
+  },
+  {
+    "method": "POST",
+    "path": "/v1/projects/\u003cproject-id\u003e/jobs",
+    "request": {
+      "backend": "api",
+      "base_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "idempotency_key": "client-integration",
+      "options": {
+        "max_cost_usd": 1,
+        "max_turns": 3,
+        "mode": "readonly"
+      },
+      "project_id": "\u003cproject-id\u003e",
+      "prompt": "different",
+      "tenant_id": "\u003ctenant-id\u003e"
+    },
+    "response": {
+      "error": {
+        "code": "conflict",
+        "message": "conflicting idempotency key"
+      }
+    },
+    "status": 409
+  },
+  {
+    "method": "GET",
+    "path": "/v1/jobs/\u003cjob-id\u003e?tenant_id=\u003ctenant-id\u003e\u0026project_id=\u003cproject-id\u003e",
+    "request": null,
+    "response": {
+      "backend": "api",
+      "base_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "checkpoint_sequence": 0,
+      "generation": 0,
+      "id": "\u003cjob-id\u003e",
+      "options": {
+        "max_cost_usd": 1,
+        "max_turns": 3,
+        "mode": "readonly"
+      },
+      "project_id": "\u003cproject-id\u003e",
+      "prompt": "inspect",
+      "repository_url": "https://example.invalid/fixture.git",
+      "state": "queued",
+      "tenant_id": "\u003ctenant-id\u003e"
+    },
+    "status": 200
+  },
+  {
+    "method": "GET",
+    "path": "/v1/jobs/\u003cjob-id\u003e/events?tenant_id=\u003ctenant-id\u003e\u0026project_id=\u003cproject-id\u003e\u0026after=0",
+    "request": null,
+    "response": {
+      "events": [
+        {
+          "created_at": "\u003ctime\u003e",
+          "details": {},
+          "id": 1,
+          "job_id": "\u003cjob-id\u003e",
+          "kind": "queued"
+        }
+      ]
+    },
+    "status": 200
+  },
+  {
+    "method": "GET",
+    "path": "/v1/jobs/\u003cjob-id\u003e?tenant_id=\u003ctenant-id\u003e\u0026project_id=\u003cproject-id\u003e",
+    "request": null,
+    "response": {
+      "error": {
+        "code": "not_found",
+        "message": "tenant or resource not found"
+      }
+    },
+    "status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/v1/jobs/\u003cjob-id\u003e?tenant_id=\u003cother-tenant-id\u003e\u0026project_id=\u003cproject-id\u003e",
+    "request": null,
+    "response": {
+      "error": {
+        "code": "not_found",
+        "message": "resource not found"
+      }
+    },
+    "status": 404
+  },
+  {
+    "method": "POST",
+    "path": "/v1/jobs/\u003cjob-id\u003e/cancel?tenant_id=\u003ctenant-id\u003e\u0026project_id=\u003cproject-id\u003e",
+    "request": null,
+    "response": {
+      "state": "canceled"
+    },
+    "status": 200
+  }
+]

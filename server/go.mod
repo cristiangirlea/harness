@@ -3,7 +3,6 @@ module github.com/cristiangirlea/harness/server
 go 1.26.4
 
 require (
-	github.com/cristiangirlea/harness v0.0.0
 	github.com/jackc/pgx/v5 v5.11.0
 )
 
@@ -14,5 +13,3 @@ require (
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )
-
-replace github.com/cristiangirlea/harness => ..

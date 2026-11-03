@@ -3,7 +3,6 @@ package platform
 import (
 	"context"
 	"errors"
-	"github.com/cristiangirlea/harness/internal/retrieval"
 	"testing"
 )
 
@@ -16,7 +15,7 @@ func TestAdmissionActivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.ChangeKnowledge(ctx, retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: baseline})
+	_, err = s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "activate", VersionID: baseline})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,15 +25,15 @@ func TestAdmissionActivation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		a := retrieval.Admission{Scope: in.Scope, VersionID: id, BaselineVersionID: baseline, Verdict: verdict}
+		a := KnowledgeAdmission{KnowledgeScope: in.KnowledgeScope, VersionID: id, BaselineVersionID: baseline, Verdict: verdict}
 		if err = s.RecordAdmission(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.InspectKnowledge(ctx, in.Scope, id)
+		v, err := s.InspectKnowledge(ctx, in.KnowledgeScope, id)
 		if err != nil || v.Admission == nil || v.Admission.Verdict != verdict {
 			t.Fatalf("inspect: %#v %v", v, err)
 		}
-		active, err := s.ActiveKnowledge(ctx, in.Scope)
+		active, err := s.ActiveKnowledge(ctx, in.KnowledgeScope)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +59,7 @@ func TestConcurrentAdmissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ChangeKnowledge(ctx, retrieval.Change{Scope: in.Scope, Operation: "activate", VersionID: baseline}); err != nil {
+	if _, err = s.ChangeKnowledge(ctx, KnowledgeChange{KnowledgeScope: in.KnowledgeScope, Operation: "activate", VersionID: baseline}); err != nil {
 		t.Fatal(err)
 	}
 	ids := make([]string, 2)
@@ -74,7 +73,7 @@ func TestConcurrentAdmissions(t *testing.T) {
 	results := make(chan error, 2)
 	for _, id := range ids {
 		go func(id string) {
-			results <- s.RecordAdmission(ctx, retrieval.Admission{Scope: in.Scope, VersionID: id, BaselineVersionID: baseline, Verdict: "admitted"})
+			results <- s.RecordAdmission(ctx, KnowledgeAdmission{KnowledgeScope: in.KnowledgeScope, VersionID: id, BaselineVersionID: baseline, Verdict: "admitted"})
 		}(id)
 	}
 	successes := 0
@@ -88,7 +87,7 @@ func TestConcurrentAdmissions(t *testing.T) {
 	if successes != 1 {
 		t.Fatalf("successes: %d", successes)
 	}
-	active, err := s.ActiveKnowledge(ctx, in.Scope)
+	active, err := s.ActiveKnowledge(ctx, in.KnowledgeScope)
 	if err != nil || (active.VersionID != ids[0] && active.VersionID != ids[1]) || active.PreviousID != baseline {
 		t.Fatalf("active: %#v %v", active, err)
 	}
