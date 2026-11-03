@@ -287,6 +287,28 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-03: the capability kernel migration (ADR 0001) is done through step 21. Steps 1-18 (PRs
+  #733, #741, #742, #744-#748, #750-#760) added the architecture test and moved values, options,
+  results, tasks, run records, limits and evidence out of `agent` into `kernel` behind aliases,
+  with golden JSON proving the encodings unchanged. Step 19 (#761) defined the worker subprocess
+  contract, step 20 (#762) runs each durable job through `hrn exec --worker`, and step 21 (#763,
+  #765) gave `server/` its own job and knowledge wire types, so the module no longer imports the
+  root module and its `replace` is gone. The worker image builds hrn and the server from one
+  revision; a newer hrn needs a matching server, since checkpoints decode strictly.
+- 2026-11-03: the worker test's cancel scenarios waited on a 500 ms timer that also covered
+  workspace preparation and failed 4 of 5 runs in a Linux container (#764; PR #766). The fake hrn
+  now writes a ready marker once it waits, and the test cancels on it.
+- 2026-11-02: tool definitions trimmed (#438; PR #740), measured with evals on a base build from
+  the merge base: the trim matched the base except `read_original`, whose full description the
+  local model needed, so it stays. agy reports input without cache reads, pinned with a real
+  cache-hit sample (#355; PR #743).
+- 2026-10-31: the watch merges a passing batch task's branch behind a one-time confirmation, the
+  first irreversible watch action of #38 (PR #734); the public access log rotates at 8 MiB (#726;
+  PR #732). Knowledge searches a version's members first (#178; PR #735) and admits run-derived
+  lessons only after a gated comparison (#549; PR #737). Batch tasks may retry best-of-k after a
+  failed gate, the gates picking the winner (#548; PR #736). A fresh hand-over carries and
+  revalidates the retrieval pin (#117; PR #739). The work map's first slice, the local model of
+  the work and its stages, landed on the feature branch `ada-work-map` (#90; PR #738).
 - 2026-10-31: game slice 4, hrn bot stats --json (#728; PR #730), the object the Ada desktop app
   reads (adanext-os #128, its own pull request). Read-only: no exercise picked, no ledger rebuild,
   no gh, no network. `version` changes only for a change that breaks a reader; fields may be added
