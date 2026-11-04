@@ -364,6 +364,13 @@ context sizes and sizes at or below the threshold produce no warning.
 
 A codex run continued on codex uses a fresh hand-over by default. Pass `--resume` (or explicit `fresh: false` over MCP or exec) to pick up the saved session. Claude and agy keep their existing defaults.
 
+When to pick which: a measured three-phase chain (implement, review, fix; hrn-evals
+`results/2026-11-04-fresh-handover.md`) passed equally both ways, and the fresh hand-over carried
+14-18% less context into its last phase, but total usage was about even at that length, since a
+fresh phase re-reads what it needs. Continue the session for a short chain whose next step leans
+on the reasoning just done; take a fresh hand-over once a chain is long, its context is large
+(hrn warns past 150,000 tokens), or the next phase needs only the record of what was done.
+
 A fresh hand-over inherits the latest retrieval pin's mode, tenant, project, model,
 revision and version when retrieval options are omitted. The retrieval server checks
 that exact version when the run starts; a disabled or missing version fails retrieval.

@@ -287,6 +287,28 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-04: Ada's own growth, the `ada` track of #306 (PR #774). Her XP comes from a setup change
+  `hrn eval setup` measured better, a `route.json` row an eval set, and a kept script merged into a
+  repository (one `git log` per repository, first-parent diffs whatever `log.diffMerges` says);
+  a lesson admitted earns nothing locally because admission verdicts live in the control service.
+  Her level is shown apart from the person's (`hrn bot stats`, `--json` `ada`, her own watch card)
+  and never feeds the person's level, streak or badges. A run of the full check met #773, a
+  public-access test that once got 403 under load.
+- 2026-11-04: #117's comparison: the same implement, review and fix chain on Claude Sonnet,
+  continued and as fresh hand-overs, twice (hrn-evals results/2026-11-04-fresh-handover.md).
+  Equal correctness (4 of 4), 14-18% less context carried by the fresh path, total usage about
+  even at three phases; docs/backends.md now says when to pick which. Adamap identity stays with
+  the adamap decision.
+- 2026-11-03: Ada's live work map (#90; slices PRs #738, #768-#771, merged to main as PR #772):
+  every piece of work in the map's repositories on its furthest stage, from PLAN.md, git, hrn
+  records, GitHub through the local gh login (cached, read-only, forks never joined to local
+  branches) and Claude Code transcript metadata; stuck marks for a failed gate, red CI,
+  changes requested and a green PR ready to merge; an owner-only SVG page with a live stream; Ada's
+  "waits for you" and "work moves" messages and her summary. The review of how the slices fit
+  found what each slice's own review could not: git run once per run record, a slow build holding
+  Ada, ready-to-merge hiding a newer gate failure, a review run raising the wrong branch, and a
+  test race once builds moved to goroutines (fixed by per-server map settings); all fixed before
+  the merge.
 - 2026-11-03: the capability kernel migration (ADR 0001) is done through step 21. Steps 1-18 (PRs
   #733, #741, #742, #744-#748, #750-#760) added the architecture test and moved values, options,
   results, tasks, run records, limits and evidence out of `agent` into `kernel` behind aliases,
