@@ -72,6 +72,7 @@ type CLIBackend struct {
 	// System-prompt and skill support require explicit argument mappings.
 	mapsSystemPrompt bool
 	mapsNoSkills     bool
+	mapsNoTools      bool
 	// Only subscription-backed CLIs report plan limits.
 	limits bool
 }
@@ -181,6 +182,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, fmt.Errorf("model %q is not a model id", task.Model))
 	}
 
+	if task.NoTools && !c.mapsNoTools {
+		return fail(StatusError, fmt.Errorf("no_tools is not supported by the %s backend", c.name))
+	}
 	bin, err := c.Detect()
 	if err != nil {
 		return fail(StatusError, err)

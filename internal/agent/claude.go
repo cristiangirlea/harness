@@ -93,6 +93,7 @@ func NewClaudeBackend() *CLIBackend {
 		mapsCompact:      true,
 		mapsSystemPrompt: true,
 		mapsNoSkills:     true,
+		mapsNoTools:      true,
 		limits:           true,
 		loginEnv:         []string{"CLAUDE_CODE_OAUTH_TOKEN"},
 		fileRules:        true,

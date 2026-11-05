@@ -43,6 +43,9 @@ func (b *APIBackend) Name() string { return "api" }
 func (b *APIBackend) AppliesSystemPrompt() bool { return true }
 
 func (b *APIBackend) offeredTools(task Task, mcpTools []tools.Tool) (map[string]tools.Tool, []apiTool) {
+	if task.NoTools {
+		return nil, nil
+	}
 	toolset := b.Tools
 	if task.ShapeTools {
 		toolset = append(append([]tools.Tool(nil), toolset...), tools.ReadOriginal())
