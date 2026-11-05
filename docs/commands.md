@@ -63,7 +63,9 @@ the model. `--in PATH` selects JSONL input; omitted, empty or `-` reads stdin.
 `--out PATH` writes JSONL results; omitted writes stdout. Input and output must
 be different files. `--parallel N` defaults to 4 and accepts 1 through 16.
 `--timeout D` is a positive per-item deadline, default 2m. `--max-tokens N`
-sets a positive output token ceiling on `api`; other backends reject it.
+sets an output token ceiling from 1 through 64000 on `api`; other backends
+reject it. A response cut at this ceiling returns `status: error` with
+`error: "response hit max_tokens"` and no output.
 
 Input is one JSON object with required string `text` and optional string `id`,
 or a bare JSON string, per line. Missing IDs use the one-based line number.
@@ -81,7 +83,9 @@ return a nonzero exit code.
 
 Items run in one empty temporary workspace per feed, removed at the end, with
 mode `readonly`, `max_turns: 1` and purpose `none`. API runs have no tools or
-project instructions; CLI runs are lean and read-only. No implicit backend,
+project instructions. Claude runs are lean with all built-in tools disabled
+(`--tools ""`) and strict MCP configuration with no servers. Other CLI backends
+are refused because they cannot run without tools yet. No implicit backend,
 purpose routing, MCP configuration or usage-limit switching is used.
 Ctrl-C stops starting items and lets those running finish up to their deadlines.
 For the local API restriction and pipeline design, see [Text feeds](feed.md).

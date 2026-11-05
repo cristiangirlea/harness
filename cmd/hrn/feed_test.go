@@ -24,6 +24,10 @@ type feedFake struct {
 	run func(context.Context, agent.Task) agent.Result
 }
 
+type feedClaudeFake struct{ feedFake }
+
+func (feedClaudeFake) Name() string { return "claude" }
+
 func (feedFake) Name() string            { return "feed-fake" }
 func (feedFake) Detect() (string, error) { return "fake", nil }
 func (f feedFake) Run(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
@@ -112,6 +116,60 @@ func TestFeedBoundsParallelRunsAndTimesOutEachItem(t *testing.T) {
 	for _, r := range feedRows(t, out.String()) {
 		if r.Status != "timeout" || r.Error == "" {
 			t.Errorf("row: %+v", r)
+		}
+	}
+}
+
+func TestFeedKeepsOKAfterDeadlineAndRemovesWorkspace(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	var workspace string
+	b := feedFake{func(ctx context.Context, task agent.Task) agent.Result {
+		workspace = task.Dir
+		if !task.NoTools {
+			t.Error("feed task must disable tools")
+		}
+		<-ctx.Done()
+		return agent.Result{Status: agent.StatusOK, Final: "complete"}
+	}}
+	var out bytes.Buffer
+	if err := runFeed(context.Background(), b, feedConfig{task: "t", parallel: 1, timeout: time.Millisecond}, strings.NewReader("\"x\"\n"), &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	rows := feedRows(t, out.String())
+	if len(rows) != 1 || rows[0].Status != "ok" || rows[0].Output != "complete" {
+		t.Fatalf("results: %+v", rows)
+	}
+	rec, err := runlog.Load(rows[0].RunID)
+	if err != nil || rec.Result.Status != agent.StatusOK {
+		t.Errorf("record: %+v %v", rec, err)
+	}
+	if workspace == "" {
+		t.Fatal("backend did not run")
+	}
+	if _, err := os.Stat(workspace); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("workspace remains: %v", err)
+	}
+}
+
+func TestFeedRejectsBackendsWithTools(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, name := range []string{"codex", "gemini", "opencode", "agy"} {
+		if _, err := feedBackend(name); err == nil || !strings.Contains(err.Error(), "cannot run without tools yet") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestFeedMaxTokensCeiling(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:8081")
+	for _, limit := range []string{"64000", "64001"} {
+		code, err := cmdFeedContext(context.Background(), []string{"-b", "api", "--task", "t", "--max-tokens", limit}, strings.NewReader(""), io.Discard, io.Discard)
+		if limit == "64000" && (code != 0 || err != nil) {
+			t.Errorf("ceiling rejected: %d %v", code, err)
+		}
+		if limit == "64001" && (code != 2 || err == nil) {
+			t.Errorf("above ceiling accepted: %d %v", code, err)
 		}
 	}
 }
@@ -207,14 +265,19 @@ func TestFeedReadsTaskAndItemsFromFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	agent.Register(feedFake{func(ctx context.Context, task agent.Task) agent.Result {
+	original, err := agent.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { agent.Register(original) })
+	agent.Register(feedClaudeFake{feedFake{func(ctx context.Context, task agent.Task) agent.Result {
 		if task.Prompt != "extract\n\n<item>\nsample\n</item>" || task.Model != "small" || task.Timeout != agent.Duration(2*time.Minute) {
 			t.Errorf("task: %+v", task)
 		}
 		return agent.Result{Status: agent.StatusOK, Final: "result"}
-	}})
+	}}})
 	var out, summary bytes.Buffer
-	args := []string{"-b", "feed-fake", "--model", "small", "--task-file", instruction, "--in", input, "--out", output}
+	args := []string{"-b", "claude", "--model", "small", "--task-file", instruction, "--in", input, "--out", output}
 	code, err := cmdFeedContext(context.Background(), args, feedFailReader{}, &out, &summary)
 	if err != nil || code != 0 {
 		t.Fatalf("code=%d err=%v", code, err)
@@ -382,7 +445,6 @@ func TestFeedRecordFailuresDoNotStartTheBackend(t *testing.T) {
 
 func TestFeedCommandCancellationReleasesIdleInput(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	agent.Register(feedFake{func(context.Context, agent.Task) agent.Result { t.Error("backend started"); return agent.Result{} }})
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +455,7 @@ func TestFeedCommandCancellationReleasesIdleInput(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := cmdFeedContext(ctx, []string{"-b", "feed-fake", "--task", "t"}, r, io.Discard, io.Discard)
+		_, err := cmdFeedContext(ctx, []string{"-b", "claude", "--task", "t"}, r, io.Discard, io.Discard)
 		done <- err
 	}()
 	cancel()
@@ -409,7 +471,6 @@ func TestFeedCommandCancellationReleasesIdleInput(t *testing.T) {
 
 func TestFeedClosesIdleInputAfterAnOutputFailure(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	agent.Register(feedFake{func(context.Context, agent.Task) agent.Result { return agent.Result{Status: agent.StatusOK} }})
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -419,7 +480,7 @@ func TestFeedClosesIdleInputAfterAnOutputFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	go func() { _, _ = w.Write([]byte("null\n")) }()
-	_, err = cmdFeedContext(ctx, []string{"-b", "feed-fake", "--task", "t"}, r, feedFailWriter{}, io.Discard)
+	_, err = cmdFeedContext(ctx, []string{"-b", "claude", "--task", "t"}, r, feedFailWriter{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "output failed") {
 		t.Fatal(err)
 	}

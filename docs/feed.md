@@ -10,7 +10,7 @@ in `hrn runs` and `hrn watch`, using the same guard as other runs. Invalid input
 lines produce a result without starting a model or creating a run record.
 
 ```bash
-hrn feed -b codex --task 'Classify the item as question, update or other. Reply with one label.' --in items.jsonl --out results.jsonl
+hrn feed -b claude --task 'Classify the item as question, update or other. Reply with one label.' --in items.jsonl --out results.jsonl
 ```
 
 Example input:
@@ -27,8 +27,10 @@ will ignore instructions embedded in untrusted text.
 
 Each feed creates an empty temporary workspace outside the current repository.
 Items are read-only, single-turn runs with purpose `none`. The API loop offers
-no tools and loads no project instructions. CLI backends run lean and read-only
-under their usual adapter rules; their own read tools can remain available.
+no tools and loads no project instructions. Claude runs lean and read-only,
+with all built-in tools disabled through `--tools ""` and no MCP servers under
+strict MCP configuration. Feed refuses codex, gemini, opencode and agy because
+they cannot run without tools yet. Item text is untrusted, so no item may use tools.
 There is no fallback backend or automatic carry-on to another backend. Ctrl-C
 stops admitting items while already running items retain their per-item timeout.
 
@@ -39,8 +41,8 @@ The backend must always be explicit. `api` is refused unless
 `localhost` or `::1`, so an omitted endpoint cannot accidentally select billed
 per-token inference. URL credentials, queries and fragments are refused.
 Feed uses a placeholder local credential, disables proxies and refuses redirects;
-it does not need or forward the operator's API credentials. CLI backends use
-their usual plans and configuration.
+it does not need or forward the operator's API credentials. Claude uses its
+usual plan login.
 
 Point feed at an already running llama.cpp server with a Messages-compatible
 endpoint, and supply the name of its loaded model:
@@ -54,6 +56,8 @@ In PowerShell set the endpoint with
 `$env:ANTHROPIC_BASE_URL = 'http://127.0.0.1:8081'` before the same command.
 The server is managed separately; feed neither starts nor downloads a model.
 The request path is covered by fake SSE tests, not a live llama.cpp run.
+`--max-tokens` accepts 1 through 64000. A response cut at that ceiling returns
+`status: error`, `error: "response hit max_tokens"` and no output.
 
 See the [command reference](commands.md#hrn-feed) for flags, limits, result
 fields, failure handling and the stderr summary.

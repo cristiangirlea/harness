@@ -21,6 +21,8 @@ import (
 
 const DefaultAPIModel = "claude-opus-5"
 
+const DefaultMaxTokens = 64000
+
 // APIBackend runs the Anthropic Messages loop with local tools.
 type APIBackend struct {
 	Tools []tools.Tool
@@ -224,7 +226,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 
 	req = apiRequest{
 		Model:     model,
-		MaxTokens: 64000,
+		MaxTokens: DefaultMaxTokens,
 		System:    system,
 		Tools:     apiTools,
 		Thinking:  block{"type": "adaptive", "display": "summarized"},

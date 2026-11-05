@@ -56,6 +56,9 @@ func NewClaudeBackend() *CLIBackend {
 				// Limit MCP servers without losing settings or subscription login; --bare requires an API key.
 				a = append(a, "--strict-mcp-config")
 			}
+			if t.NoTools {
+				a = append(a, "--tools", "")
+			}
 			if t.CompactWindow != "" {
 				a = append(a, "--autocompact", string(t.CompactWindow))
 			}

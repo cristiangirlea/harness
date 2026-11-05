@@ -75,6 +75,9 @@ func cmdFeedContext(ctx context.Context, args []string, stdin io.Reader, stdout,
 	if set["max-tokens"] && (c.maxTokens == 0 || *backend != "api") {
 		return 2, errors.New("feed --max-tokens requires a positive value and the api backend")
 	}
+	if c.maxTokens > agent.DefaultMaxTokens {
+		return 2, fmt.Errorf("feed --max-tokens must not exceed %d", agent.DefaultMaxTokens)
+	}
 	b, err := feedBackend(*backend)
 	if err != nil {
 		return 2, err
@@ -128,6 +131,9 @@ func cmdFeedContext(ctx context.Context, args []string, stdin io.Reader, stdout,
 }
 
 func feedBackend(name string) (agent.Backend, error) {
+	if name != "api" && name != "claude" {
+		return nil, fmt.Errorf("feed refuses %s: cannot run without tools yet", name)
+	}
 	p, err := prefs.Load(runlog.Home())
 	if err != nil {
 		return nil, err
@@ -299,7 +305,7 @@ func runFeedItem(ctx context.Context, b agent.Backend, c feedConfig, dir string,
 		return out
 	}
 	started := time.Now()
-	task := agent.Task{Dir: dir, Purpose: "none", MaxTokens: c.maxTokens,
+	task := agent.Task{Dir: dir, Purpose: "none", MaxTokens: c.maxTokens, NoTools: true,
 		Prompt:  c.task + "\n\n<item>\n" + html.EscapeString(item.text) + "\n</item>",
 		Options: agent.Options{Model: c.model, Mode: agent.ModeReadOnly, MaxTurns: 1, NoInstructions: true, NoSwitch: true, Lean: agent.Bool(true), Timeout: agent.Duration(c.timeout)}}
 	rec, err := runlog.Create(b.Name(), task, agent.ResolveSetup(b.Name(), task))
@@ -312,7 +318,7 @@ func runFeedItem(ctx context.Context, b agent.Backend, c feedConfig, dir string,
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	res := agent.Run(ctx, b, task, rec.Event)
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if res.Status != agent.StatusOK && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		res.Status, res.Error = agent.StatusTimeout, context.DeadlineExceeded.Error()
 	}
 	res.Duration = time.Since(started)
