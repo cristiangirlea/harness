@@ -232,6 +232,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		CacheControl: ephemeral,
 		Messages:     resumeMessages(task),
 	}
+	if task.MaxTokens > 0 {
+		req.MaxTokens = task.MaxTokens
+	}
 	if task.Effort != "" {
 		req.OutputConfig = block{"effort": task.Effort}
 	}
