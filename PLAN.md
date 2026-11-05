@@ -287,6 +287,14 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-05: #224's first slice, `hrn feed` (PR #777): a stream of small text items, each one
+  read-only, single-turn run with no tools (claude with `--tools ""`, other CLIs refused, the api
+  loop only against a loopback `ANTHROPIC_BASE_URL`), results as JSONL. Its eval in hrn-evals
+  (stream suite, PR hrn-evals#76): 40 labelled messages, Gemma 4 26B-A4B on the local server 40/40
+  at 13.3 s median per item, Claude Haiku on the plan 40/40 at 4.6 s; the local model reasons
+  before each one-word answer because the api loop always asks for adaptive thinking, so turning
+  thinking off for feeds is the next step. #773 (an access test that once got 403 under load) was
+  fixed by serving the fixture's certificates in process (PR #775).
 - 2026-11-04: Ada's own growth, the `ada` track of #306 (PR #774). Her XP comes from a setup change
   `hrn eval setup` measured better, a `route.json` row an eval set, and a kept script merged into a
   repository (one `git log` per repository, first-parent diffs whatever `log.diffMerges` says);
