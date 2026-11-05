@@ -56,6 +56,9 @@ func NewClaudeBackend() *CLIBackend {
 				// Limit MCP servers without losing settings or subscription login; --bare requires an API key.
 				a = append(a, "--strict-mcp-config")
 			}
+			if t.NoTools {
+				a = append(a, "--tools", "")
+			}
 			if t.CompactWindow != "" {
 				a = append(a, "--autocompact", string(t.CompactWindow))
 			}
@@ -90,6 +93,7 @@ func NewClaudeBackend() *CLIBackend {
 		mapsCompact:      true,
 		mapsSystemPrompt: true,
 		mapsNoSkills:     true,
+		mapsNoTools:      true,
 		limits:           true,
 		loginEnv:         []string{"CLAUDE_CODE_OAUTH_TOKEN"},
 		fileRules:        true,

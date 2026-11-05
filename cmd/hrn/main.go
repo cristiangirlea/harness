@@ -42,6 +42,8 @@ const usage = `hrn — personal agent harness
 
 Usage:
   hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
+  hrn feed -b BACKEND --task TEXT [flags]
+                                 process JSONL items as parallel read-only runs
   hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
   hrn backends                    show enabled backends, default, availability and limits
   hrn backends set --only NAMES [--default NAME]
@@ -197,6 +199,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		code, err = cmdRun(os.Args[2:])
+	case "feed":
+		code, err = cmdFeed(os.Args[2:])
 	case "exec":
 		code, err = cmdExec(os.Args[2:])
 	case "backends":

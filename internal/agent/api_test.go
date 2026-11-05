@@ -91,6 +91,17 @@ func TestAPIReportsOriginalRefusal(t *testing.T) {
 	}
 }
 
+func TestAPINoToolsOmitsToolSchema(t *testing.T) {
+	res, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "answer", NoTools: true, Dir: t.TempDir(),
+		Options: Options{NoInstructions: true, ShapeTools: true}})
+	if res.Status != StatusOK || len(fake.requests) != 1 {
+		t.Fatalf("result=%+v requests=%d", res, len(fake.requests))
+	}
+	if got, present := fake.requests[0]["tools"]; present {
+		t.Fatalf("no_tools request carries tools: %v", got)
+	}
+}
+
 func TestAPIShapingToolSchemaIsOptIn(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		for _, mode := range []Mode{ModeYolo, ModeReadOnly} {

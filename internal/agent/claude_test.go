@@ -144,6 +144,21 @@ func TestClaudePassesEffortOnlyWhenSet(t *testing.T) {
 	}
 }
 
+func TestClaudeDisablesToolsOnlyWhenRequested(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		task := Task{NoTools: disabled, Options: Options{Lean: Bool(true)}}
+		args := NewClaudeBackend().args(task, "")
+		i := slices.Index(args, "--tools")
+		if disabled {
+			if i < 0 || i+1 >= len(args) || args[i+1] != "" || !slices.Contains(args, "--strict-mcp-config") || slices.Contains(args, "--mcp-config") {
+				t.Errorf("unsafe feed args: %q", args)
+			}
+		} else if i >= 0 {
+			t.Errorf("ordinary run changed: %q", args)
+		}
+	}
+}
+
 func TestClaudePassesCompactWindowOnlyWhenSet(t *testing.T) {
 	for _, window := range []CompactWindow{"", "auto", "200000"} {
 		args := NewClaudeBackend().args(Task{Options: Options{CompactWindow: window}}, "")

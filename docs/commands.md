@@ -7,6 +7,7 @@
 | Command | What it does |
 |---|---|
 | `hrn run [flags] [--purpose CATEGORY] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`; optionally declare its purpose (see [Declared purpose](#declared-purpose)). |
+| `hrn feed -b BACKEND --task TEXT [flags]` | Process JSONL text items as parallel read-only runs (see [Text feeds](feed.md)). |
 | `hrn exec --protocol v1 [--worker]` | Run one recorded task over the supervisor JSONL protocol; `--worker` applies the [worker restrictions](worker-protocol.md). |
 | `hrn backends` | Show enabled/disabled, default, availability, remembered limits and, under claude and codex when known, the plan's quota left per window (see [Backend preferences](backends.md#choosing-which-backends-hrn-may-use)). |
 | `hrn backends set --only NAMES [--default NAME]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. |
@@ -53,6 +54,41 @@
 | `hrn scripts hint` | A Claude Code PreToolUse hook that reads the payload on stdin and names the kept script whose `matches:` header covers the inline script a command is about to run; advice only, silent otherwise (see [The hint hook](scripts.md#the-hint-hook)). |
 
 For slot cache trimming, cap thresholds and lock safety, see [Build caches](batches.md#build-caches).
+
+## hrn feed
+
+`hrn feed` requires `-b BACKEND` and exactly one of `--task TEXT` or
+`--task-file PATH`. Each item receives that instruction. `--model NAME` selects
+the model. `--in PATH` selects JSONL input; omitted, empty or `-` reads stdin.
+`--out PATH` writes JSONL results; omitted writes stdout. Input and output must
+be different files. `--parallel N` defaults to 4 and accepts 1 through 16.
+`--timeout D` is a positive per-item deadline, default 2m. `--max-tokens N`
+sets an output token ceiling from 1 through 64000 on `api`; other backends
+reject it. A response cut at this ceiling returns `status: error` with
+`error: "response hit max_tokens"` and no output.
+
+Input is one JSON object with required string `text` and optional string `id`,
+or a bare JSON string, per line. Missing IDs use the one-based line number.
+Empty strings are valid. Invalid JSON, missing or non-string text, non-string
+IDs and lines over 64 KiB produce `invalid` results and processing continues.
+The limit counts bytes before LF, including a CR if present.
+
+Each result contains `id`, `status` (`ok`, `error`, `invalid`, `timeout`),
+`output`, `run_id`, `duration_ms`, `input_tokens` and `output_tokens`, plus
+`error` on failure. Invalid lines have no run ID and zero counters. Lines are
+flushed as items finish, so their order can differ from the input. A final stderr
+line reports items, ok, failed, wall time and items per second. Per-item failures
+are reported in JSONL; command setup, input/output failures and cancellation
+return a nonzero exit code.
+
+Items run in one empty temporary workspace per feed, removed at the end, with
+mode `readonly`, `max_turns: 1` and purpose `none`. API runs have no tools or
+project instructions. Claude runs are lean with all built-in tools disabled
+(`--tools ""`) and strict MCP configuration with no servers. Other CLI backends
+are refused because they cannot run without tools yet. No implicit backend,
+purpose routing, MCP configuration or usage-limit switching is used.
+Ctrl-C stops starting items and lets those running finish up to their deadlines.
+For the local API restriction and pipeline design, see [Text feeds](feed.md).
 
 ## Automatic gc
 

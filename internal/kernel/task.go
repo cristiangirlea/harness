@@ -10,6 +10,8 @@ import (
 )
 
 type Task struct {
+	NoTools   bool                               `json:"no_tools,omitempty"`
+	MaxTokens int                                `json:"max_tokens,omitempty"`
 	Knowledge func() (retrieval.Searcher, error) `json:"-"`
 
 	ChildEnv        []string          `json:"-"`

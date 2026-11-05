@@ -14,6 +14,14 @@ import (
 // reports something on its stream and then exits non-zero.
 func TestHelperCLIError(t *testing.T) {
 	switch os.Getenv("HRN_CLI_HELPER") {
+	case "notools":
+		for i, arg := range os.Args {
+			if arg == "--tools" && i+1 < len(os.Args) && os.Args[i+1] == "" {
+				fmt.Println(`{"type":"result","subtype":"success","num_turns":1,"result":"no tools"}`)
+				os.Exit(0)
+			}
+		}
+		os.Exit(1)
 	case "error":
 		fmt.Println(`{"type":"error","error":{"message":"usage limit reached"}}`)
 		os.Exit(1)
@@ -153,6 +161,35 @@ func helperCLI(parse func([]byte, func(Event), *Result) bool) *CLIBackend {
 		promptStdin: true,
 		args:        func(Task, string) []string { return []string{"-test.run=^TestHelperCLIError$", "--"} },
 		parse:       parse,
+	}
+}
+
+func TestCLINoToolsRefusesUnsupportedBackend(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	b := NewCodexBackend()
+	b.candidates = func() []string { return []string{os.Args[0]} }
+	b.args = func(Task, string) []string {
+		t.Error("unsupported no_tools task reached process arguments")
+		return helperCLI(nil).args(Task{}, "")
+	}
+	res := b.Run(t.Context(), Task{NoTools: true, Dir: t.TempDir()}, func(Event) {})
+	if res.Status != StatusError || res.Error != "no_tools is not supported by the codex backend" {
+		t.Fatalf("unexpected refusal: %+v", res)
+	}
+}
+
+func TestCLINoToolsClaudeRunsWithEmptyTools(t *testing.T) {
+	t.Setenv("HRN_CLI_HELPER", "notools")
+	b := NewClaudeBackend()
+	args := b.args
+	b.name = os.Args[0]
+	b.candidates = nil
+	b.args = func(task Task, file string) []string {
+		return append(helperCLI(nil).args(task, file), args(task, file)...)
+	}
+	res := b.Run(t.Context(), Task{NoTools: true, Dir: t.TempDir()}, func(Event) {})
+	if res.Status != StatusOK || res.Final != "no tools" {
+		t.Fatalf("claude did not run with empty tools: %+v", res)
 	}
 }
 

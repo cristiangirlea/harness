@@ -101,6 +101,7 @@ today; the rest are planned, and each README says so.
 | I want to… | Read |
 |---|---|
 | Find commands, flags and budgets | [Command reference](docs/commands.md) |
+| Classify, extract or summarise a JSONL text stream | [Text feeds](docs/feed.md) |
 | Choose a backend or continue a run | [Backends and continuation](docs/backends.md) |
 | Understand what an agent is allowed to do | [Permissions and command guard](docs/permissions.md) |
 | Connect hrn to an MCP host or tools | [MCP integration](docs/mcp.md) |

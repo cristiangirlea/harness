@@ -21,6 +21,8 @@ import (
 
 const DefaultAPIModel = "claude-opus-5"
 
+const DefaultMaxTokens = 64000
+
 // APIBackend runs the Anthropic Messages loop with local tools.
 type APIBackend struct {
 	Tools []tools.Tool
@@ -41,6 +43,9 @@ func (b *APIBackend) Name() string { return "api" }
 func (b *APIBackend) AppliesSystemPrompt() bool { return true }
 
 func (b *APIBackend) offeredTools(task Task, mcpTools []tools.Tool) (map[string]tools.Tool, []apiTool) {
+	if task.NoTools {
+		return nil, nil
+	}
 	toolset := b.Tools
 	if task.ShapeTools {
 		toolset = append(append([]tools.Tool(nil), toolset...), tools.ReadOriginal())
@@ -224,13 +229,16 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 
 	req = apiRequest{
 		Model:     model,
-		MaxTokens: 64000,
+		MaxTokens: DefaultMaxTokens,
 		System:    system,
 		Tools:     apiTools,
 		Thinking:  block{"type": "adaptive", "display": "summarized"},
 		// Cache history as well as the constant prefix.
 		CacheControl: ephemeral,
 		Messages:     resumeMessages(task),
+	}
+	if task.MaxTokens > 0 {
+		req.MaxTokens = task.MaxTokens
 	}
 	if task.Effort != "" {
 		req.OutputConfig = block{"effort": task.Effort}
