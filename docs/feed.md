@@ -59,6 +59,13 @@ The request path is covered by fake SSE tests, not a live llama.cpp run.
 `--max-tokens` accepts 1 through 64000. A response cut at that ceiling returns
 `status: error`, `error: "response hit max_tokens"` and no output.
 
+`--thinking off|on` defaults to `off` and affects only the API backend; CLI
+backends ignore it. Off omits the `thinking` field and, for loopback HTTP
+endpoints, sends `chat_template_kwargs: {"enable_thinking": false}` for llama.cpp.
+On preserves the API's adaptive thinking request. In a local llama.cpp measurement
+with Gemma 4 26B-A4B, disabling thinking reduced a one-word answer from 160-200
+output tokens and 6.8 s to 2 tokens and 1.1 s, with the same answer.
+
 See the [command reference](commands.md#hrn-feed) for flags, limits, result
 fields, failure handling and the stderr summary.
 

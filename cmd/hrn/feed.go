@@ -11,7 +11,6 @@ import (
 	"html"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -26,9 +25,9 @@ import (
 )
 
 type feedConfig struct {
-	task, model         string
-	parallel, maxTokens int
-	timeout             time.Duration
+	task, model, thinking string
+	parallel, maxTokens   int
+	timeout               time.Duration
 }
 
 type feedResult struct {
@@ -61,6 +60,7 @@ func cmdFeedContext(ctx context.Context, args []string, stdin io.Reader, stdout,
 	fs.IntVar(&c.parallel, "parallel", 4, "concurrent items (1..16)")
 	fs.DurationVar(&c.timeout, "timeout", 2*time.Minute, "timeout per item")
 	fs.IntVar(&c.maxTokens, "max-tokens", 0, "output token limit (api only)")
+	fs.StringVar(&c.thinking, "thinking", "off", "thinking off or on (api only)")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
@@ -71,6 +71,9 @@ func cmdFeedContext(ctx context.Context, args []string, stdin io.Reader, stdout,
 	}
 	if c.parallel < 1 || c.parallel > 16 || c.timeout <= 0 || c.maxTokens < 0 {
 		return 2, errors.New("feed requires --parallel 1..16, a positive --timeout and nonnegative --max-tokens")
+	}
+	if c.thinking != "off" && c.thinking != "on" {
+		return 2, errors.New("feed --thinking must be off or on")
 	}
 	if set["max-tokens"] && (c.maxTokens == 0 || *backend != "api") {
 		return 2, errors.New("feed --max-tokens requires a positive value and the api backend")
@@ -149,9 +152,7 @@ func feedBackend(name string) (agent.Backend, error) {
 		return b, nil
 	}
 	base := os.Getenv("ANTHROPIC_BASE_URL")
-	u, err := url.Parse(base)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-		(u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost" && u.Hostname() != "::1") {
+	if !agent.IsLoopbackHTTPURL(base) {
 		return nil, errors.New("feed refuses api unless ANTHROPIC_BASE_URL is a loopback http URL (127.0.0.1, localhost or ::1), to avoid accidental per-token billing")
 	}
 	if api, ok := b.(*agent.APIBackend); ok {
@@ -305,7 +306,7 @@ func runFeedItem(ctx context.Context, b agent.Backend, c feedConfig, dir string,
 		return out
 	}
 	started := time.Now()
-	task := agent.Task{Dir: dir, Purpose: "none", MaxTokens: c.maxTokens, NoTools: true,
+	task := agent.Task{Dir: dir, Purpose: "none", MaxTokens: c.maxTokens, NoTools: true, NoThinking: c.thinking != "on",
 		Prompt:  c.task + "\n\n<item>\n" + html.EscapeString(item.text) + "\n</item>",
 		Options: agent.Options{Model: c.model, Mode: agent.ModeReadOnly, MaxTurns: 1, NoInstructions: true, NoSwitch: true, Lean: agent.Bool(true), Timeout: agent.Duration(c.timeout)}}
 	rec, err := runlog.Create(b.Name(), task, agent.ResolveSetup(b.Name(), task))

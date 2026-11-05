@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -101,6 +102,60 @@ func TestAPINoToolsOmitsToolSchema(t *testing.T) {
 		t.Fatalf("no_tools request carries tools: %v", got)
 	}
 }
+
+func TestAPIThinkingSettingsStayWithinTheEndpointContract(t *testing.T) {
+	for _, base := range []string{"http://127.0.0.1", "http://localhost", "http://[::1]", "https://api.anthropic.com", "http://example.com", "https://localhost", "http://127.0.0.1.evil", "http://user@localhost", "http://localhost?x=y", "http://localhost#fragment"} {
+		for _, off := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/off=%v", base, off), func(t *testing.T) {
+				fake := &fakeAPI{turns: [][]string{textTurn("ok")}}
+				srv := httptest.NewServer(fake)
+				defer srv.Close()
+				target, err := url.Parse(srv.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				b := NewAPIBackend()
+				b.BaseURL, b.APIKey = base, "test"
+				b.HTTPClient = &http.Client{Transport: thinkingTransport(func(r *http.Request) (*http.Response, error) {
+					r.URL.Scheme, r.URL.Host, r.URL.User = target.Scheme, target.Host, nil
+					return srv.Client().Transport.RoundTrip(r)
+				})}
+				task := Task{Prompt: "answer", Dir: t.TempDir(), Options: Options{NoInstructions: true}}
+				if err := json.Unmarshal(fmt.Appendf(nil, `{"no_thinking":%v}`, off), &task); err != nil {
+					t.Fatal(err)
+				}
+				res := b.Run(t.Context(), task, func(Event) {})
+				if res.Status != StatusOK || len(fake.requests) != 1 {
+					t.Fatalf("result=%+v requests=%d", res, len(fake.requests))
+				}
+				req := fake.requests[0]
+				thinking, present := req["thinking"]
+				if off && present {
+					t.Errorf("thinking present: %v", thinking)
+				} else if !off {
+					data, _ := json.Marshal(thinking)
+					if string(data) != `{"display":"summarized","type":"adaptive"}` {
+						t.Errorf("default thinking changed: %s", data)
+					}
+				}
+				kwargs, present := req["chat_template_kwargs"]
+				local := base == "http://127.0.0.1" || base == "http://localhost" || base == "http://[::1]"
+				if off && local {
+					data, _ := json.Marshal(kwargs)
+					if string(data) != `{"enable_thinking":false}` {
+						t.Errorf("local thinking override: %s", data)
+					}
+				} else if present {
+					t.Errorf("unexpected template kwargs: %v", kwargs)
+				}
+			})
+		}
+	}
+}
+
+type thinkingTransport func(*http.Request) (*http.Response, error)
+
+func (f thinkingTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestAPIShapingToolSchemaIsOptIn(t *testing.T) {
 	for _, enabled := range []bool{false, true} {

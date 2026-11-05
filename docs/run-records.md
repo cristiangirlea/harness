@@ -11,6 +11,10 @@ when omitted or zero the API keeps its existing default. Older records still loa
 The optional task field `no_tools` records feed's tool prohibition; the Claude
 adapter disables built-in tools when it is true, and other CLI backends refuse
 it. The API offers no tools. Omitted or false preserves ordinary runs.
+The optional task field `no_thinking` records feed's default API thinking opt-out.
+When true, the API omits `thinking` and sends `chat_template_kwargs` with
+`enable_thinking: false` only to loopback HTTP endpoints. CLI backends ignore it.
+Omitted or false preserves adaptive API thinking, so older records still load.
 Results may include `evidence` records for gate output and retrieved knowledge entries; events may carry one `evidence` record. Each contains `kind`, a masked `source`, a SHA-256 `hash` of the recorded content, and a masked UTF-8 `excerpt` of at most 2 KiB. Gate output is the stored, capped output. Batch gate evidence is stored on the attempt result. Eval tables optionally include `evidence_counts`, mapping cell IDs to counts across attempts and reruns. Older records without these fields still load.
 On Unix, newly created record directories use mode 0700 and record files use mode 0600; existing permissions are not changed.
 
