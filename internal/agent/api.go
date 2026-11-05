@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,13 @@ import (
 const DefaultAPIModel = "claude-opus-5"
 
 const DefaultMaxTokens = 64000
+
+// IsLoopbackHTTPURL limits local inference extensions to explicit loopback endpoints.
+func IsLoopbackHTTPURL(base string) bool {
+	u, err := url.Parse(base)
+	return err == nil && u.Scheme == "http" && u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
+		(u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
+}
 
 // APIBackend runs the Anthropic Messages loop with local tools.
 type APIBackend struct {
@@ -236,6 +244,12 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		// Cache history as well as the constant prefix.
 		CacheControl: ephemeral,
 		Messages:     resumeMessages(task),
+	}
+	if task.NoThinking {
+		req.Thinking = nil
+		if IsLoopbackHTTPURL(client.baseURL) {
+			req.ChatTemplateKwargs = block{"enable_thinking": false}
+		}
 	}
 	if task.MaxTokens > 0 {
 		req.MaxTokens = task.MaxTokens

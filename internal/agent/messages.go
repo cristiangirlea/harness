@@ -38,18 +38,19 @@ type apiTool struct {
 }
 
 type apiRequest struct {
-	Model             string       `json:"model"`
-	MaxTokens         int          `json:"max_tokens"`
-	Stream            bool         `json:"stream"`
-	System            []block      `json:"system,omitempty"`
-	Tools             []apiTool    `json:"tools,omitempty"`
-	Thinking          block        `json:"thinking,omitempty"`
-	CacheControl      block        `json:"cache_control,omitempty"`
-	OutputConfig      block        `json:"output_config,omitempty"`
-	ContextManagement block        `json:"context_management,omitempty"`
-	Fallbacks         string       `json:"fallbacks,omitempty"`
-	Messages          []apiMessage `json:"messages"`
-	betas             []string     // sent as the anthropic-beta header
+	Model              string       `json:"model"`
+	MaxTokens          int          `json:"max_tokens"`
+	Stream             bool         `json:"stream"`
+	System             []block      `json:"system,omitempty"`
+	Tools              []apiTool    `json:"tools,omitempty"`
+	Thinking           block        `json:"thinking,omitempty"`
+	ChatTemplateKwargs block        `json:"chat_template_kwargs,omitempty"`
+	CacheControl       block        `json:"cache_control,omitempty"`
+	OutputConfig       block        `json:"output_config,omitempty"`
+	ContextManagement  block        `json:"context_management,omitempty"`
+	Fallbacks          string       `json:"fallbacks,omitempty"`
+	Messages           []apiMessage `json:"messages"`
+	betas              []string     // sent as the anthropic-beta header
 }
 
 type apiUsage struct {

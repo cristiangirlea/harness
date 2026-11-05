@@ -174,6 +174,64 @@ func TestFeedMaxTokensCeiling(t *testing.T) {
 	}
 }
 
+func TestFeedThinkingDefaultsOffAndAcceptsOnlyOnOrOff(t *testing.T) {
+	for _, value := range []string{"", "off", "on", "bad"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			original, err := agent.Get("claude")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { agent.Register(original) })
+			var calls atomic.Int32
+			agent.Register(feedClaudeFake{feedFake{func(ctx context.Context, task agent.Task) agent.Result {
+				calls.Add(1)
+				return agent.Result{Status: agent.StatusOK, Final: "answer"}
+			}}})
+			args := []string{"-b", "claude", "--task", "classify"}
+			if value != "" {
+				args = append(args, "--thinking", value)
+			}
+			var out bytes.Buffer
+			code, err := cmdFeedContext(t.Context(), args, strings.NewReader("\"first\"\n\"second\"\n"), &out, io.Discard)
+			if value == "bad" {
+				if code != 2 || err == nil || !strings.Contains(err.Error(), "thinking") || out.Len() != 0 || calls.Load() != 0 {
+					t.Fatalf("code=%d err=%v out=%s", code, err, &out)
+				}
+				return
+			}
+			if code != 0 || err != nil {
+				t.Fatalf("code=%d err=%v", code, err)
+			}
+			rows := feedRows(t, out.String())
+			if len(rows) != 2 || calls.Load() != 2 {
+				t.Fatalf("rows=%d calls=%d", len(rows), calls.Load())
+			}
+			for _, row := range rows {
+				rec, err := runlog.Load(row.RunID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := json.Marshal(rec.Task)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var task map[string]any
+				if err := json.Unmarshal(data, &task); err != nil {
+					t.Fatal(err)
+				}
+				if value == "on" {
+					if _, present := task["no_thinking"]; present {
+						t.Error("thinking on must leave no_thinking unset")
+					}
+				} else if task["no_thinking"] != true {
+					t.Error("thinking must default off for every item")
+				}
+			}
+		})
+	}
+}
+
 func TestFeedOnlyAllowsLoopbackHTTPForAPI(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, url := range []string{"", "https://api.anthropic.com", "http://example.com", "https://localhost", "http://127.0.0.1.evil", "http://user@localhost", "http://localhost?x=y"} {

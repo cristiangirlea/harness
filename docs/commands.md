@@ -67,6 +67,13 @@ sets an output token ceiling from 1 through 64000 on `api`; other backends
 reject it. A response cut at this ceiling returns `status: error` with
 `error: "response hit max_tokens"` and no output.
 
+`--thinking off|on` defaults to `off` and affects only `api`; CLI backends
+ignore it. Off omits `thinking` and sends llama.cpp's
+`chat_template_kwargs: {"enable_thinking": false}` only to loopback HTTP
+endpoints; on preserves adaptive thinking. In a local llama.cpp measurement
+with Gemma 4 26B-A4B, disabling thinking reduced a one-word answer from 160-200
+output tokens and 6.8 s to 2 tokens and 1.1 s, with the same answer.
+
 Input is one JSON object with required string `text` and optional string `id`,
 or a bare JSON string, per line. Missing IDs use the one-based line number.
 Empty strings are valid. Invalid JSON, missing or non-string text, non-string
