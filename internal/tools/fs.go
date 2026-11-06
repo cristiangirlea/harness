@@ -119,6 +119,9 @@ func writeFile() Tool {
 			if err != nil {
 				return "", err
 			}
+			if err := ws.checkParse(p, []byte(args.Content)); err != nil {
+				return "", err
+			}
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				return "", err
 			}
@@ -194,6 +197,9 @@ func editFile() Tool {
 				replaced = n
 			} else {
 				content = strings.Replace(content, old, args.NewString, 1)
+			}
+			if err := ws.checkParse(p, []byte(content)); err != nil {
+				return "", err
 			}
 			if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 				return "", err

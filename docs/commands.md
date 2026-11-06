@@ -176,6 +176,13 @@ boolean is also available in run options, batch specs/tasks and MCP
 run inputs. Eval matrix variants each select `shape_tools` (default false),
 overriding task/spec shaping so a suite can compare raw and shaped variants;
 give the variants distinct names. This flag does not change CLI backend tools.
+`--parse-check` opts the api backend's `edit_file` and `write_file` tools into
+syntax checks for `.go` and `.json` files (case-insensitive). It is off by default;
+`parse_check` is also available in run options, batch specs/tasks and MCP run
+inputs. Invalid changes are refused with a line and column, leaving the file
+unchanged. Existing unparseable files remain editable so they can be repaired;
+new files are checked. Make each edit whole. Shell, MCP and CLI tools are unaffected.
+
 `--retrieval off|optional|required` opts into project references; enabled modes
 require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and
 an explicit `--model`. `--retrieval-version` pins a version; otherwise the

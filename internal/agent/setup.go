@@ -118,6 +118,9 @@ func optionLines(backend string, o Options) []string {
 	if backend == "api" && o.ShapeTools {
 		out = append(out, "option shape_tools")
 	}
+	if backend == "api" && o.ParseCheck {
+		out = append(out, "option parse_check")
+	}
 	if backend == "api" && o.MaskToolResults > 0 {
 		out = append(out, "option mask_tool_results "+strconv.Itoa(o.MaskToolResults))
 	}

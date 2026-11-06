@@ -24,6 +24,45 @@ import (
 
 type shapeMCPOutput string
 
+func TestParseCheckDescriptionsChangeOnlyWhenEnabled(t *testing.T) {
+	b := NewAPIBackend()
+	before, plain := b.offeredTools(Task{}, nil)
+	checked, definitions := b.offeredTools(Task{Options: Options{ParseCheck: true}}, nil)
+	after, again := b.offeredTools(Task{}, nil)
+	for i, tool := range definitions {
+		want := plain[i].Description
+		if tool.Name == "edit_file" || tool.Name == "write_file" {
+			want += " With parse_check on, a change that leaves a .go or .json file unparseable is refused; make each edit whole."
+		}
+		if tool.Description != want || checked[tool.Name].Description != want || after[tool.Name].Description != before[tool.Name].Description || again[i].Description != plain[i].Description {
+			t.Errorf("description changed incorrectly for %s", tool.Name)
+		}
+	}
+}
+
+func TestAPIParseCheckReturnsAnErrorAndPreservesTheFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.go")
+	const original = "package a\nvar x = 1\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _, fake := runFake(t, [][]string{
+		toolTurn("edit", "edit_file", `{"path":"a.go","old_string":"1","new_string":"("}`), textTurn("done"),
+	}, Task{Prompt: "edit", Dir: dir, Options: Options{ParseCheck: true, Mode: ModeYolo}})
+	if res.Status != StatusOK || len(fake.requests) != 2 {
+		t.Fatalf("result: %+v", res)
+	}
+	result := lastToolResult(t, fake.requests[1])
+	if result["is_error"] != true || !strings.Contains(fmt.Sprint(result["content"]), "a.go would not parse") {
+		t.Fatalf("tool result: %v", result)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != original {
+		t.Fatalf("file changed: %q, %v", data, err)
+	}
+}
+
 func (s shapeMCPOutput) Tools() []mcp.ToolInfo {
 	return []mcp.ToolInfo{{Name: "output"}}
 }

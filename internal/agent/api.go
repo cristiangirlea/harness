@@ -62,6 +62,9 @@ func (b *APIBackend) offeredTools(task Task, mcpTools []tools.Tool) (map[string]
 	byName := map[string]tools.Tool{}
 	var apiTools []apiTool
 	for _, t := range toolset {
+		if task.ParseCheck && (t.Name == "edit_file" || t.Name == "write_file") {
+			t.Description += " With parse_check on, a change that leaves a .go or .json file unparseable is refused; make each edit whole."
+		}
 		if task.Mode == ModeReadOnly && t.Effect != tools.EffectRead {
 			continue // don't offer tools the mode can never allow
 		}
@@ -188,6 +191,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	ws.ChildEnv = task.ChildEnv
 	ws.AllowDangerous = task.AllowDangerous
 	ws.ShapeTools, ws.RunDir = task.ShapeTools, task.RunDir
+	ws.ParseCheck = task.ParseCheck
 	ws.OriginalInfo = func(text string) { emit(Event{Time: time.Now(), Kind: EventInfo, Text: text}) }
 	maxTurns := task.MaxTurns
 	if maxTurns <= 0 {
