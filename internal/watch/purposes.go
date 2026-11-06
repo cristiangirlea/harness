@@ -175,19 +175,30 @@ func repoRowsOf(repos map[string]*repoSum) []repoRow {
 		list = append(list[:repoRows], rest)
 	}
 	// Number same-named checkouts rather than show more of their paths to a remote viewer.
-	shown := map[string]int{}
+	taken := map[string]bool{}
+	for _, r := range list {
+		taken[repoLabel(r.name)] = true
+	}
+	used := map[string]bool{}
 	rows := make([]repoRow, len(list))
 	for i, r := range list {
-		name := r.name
-		if name == "" {
-			name = "no folder"
+		name := repoLabel(r.name)
+		for n := 2; used[name]; n++ {
+			if next := fmt.Sprintf("%s (%d)", repoLabel(r.name), n); !taken[next] {
+				name = next
+			}
 		}
-		if shown[name]++; shown[name] > 1 {
-			name = fmt.Sprintf("%s (%d)", name, shown[name])
-		}
+		used[name], taken[name] = true, true
 		rows[i] = repoRow{Row: r.sum.row(name), Mix: mixOf(r.mix)}
 	}
 	return rows
+}
+
+func repoLabel(name string) string {
+	if name == "" {
+		return "no folder"
+	}
+	return name
 }
 
 // mixOf lists purposes by how many runs had them, ties in category order.

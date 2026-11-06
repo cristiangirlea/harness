@@ -99,6 +99,10 @@ func checkoutOf(dir string) (key, name string) {
 			if main := worktreeMain(d, gitPath, info); main != "" {
 				found = main
 			}
+			// A link, junction or short name and the real path are one checkout.
+			if real, err := filepath.EvalSymlinks(found); err == nil {
+				found = real
+			}
 			return keyOf(found), strings.TrimSuffix(filepath.Base(found), ".git")
 		}
 		up := filepath.Dir(d)

@@ -72,7 +72,10 @@ func TestThePurposeCardCoversEveryRunNotOnlyTheListedOnes(t *testing.T) {
 }
 
 func TestRepositoryNamesFollowWorktreesBackToTheirCheckout(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	mkdir := func(parts ...string) string {
 		p := filepath.Join(append([]string{root}, parts...)...)
 		if err := os.MkdirAll(p, 0o755); err != nil {
@@ -103,6 +106,15 @@ func TestRepositoryNamesFollowWorktreesBackToTheirCheckout(t *testing.T) {
 	plain := mkdir("notes")
 	otherHarness := mkdir("client", "harness")
 	mkdir("client", "harness", ".git")
+	dotGitMain := mkdir("work", "kit.git")
+	mkdir("work", "kit.git", ".git", "worktrees", "wt-kit")
+	dotGitWT := mkdir("scratch", "wt-kit")
+	write(filepath.Join(dotGitWT, ".git"), "gitdir: "+filepath.ToSlash(filepath.Join(dotGitMain, ".git", "worktrees", "wt-kit")))
+	for _, dir := range []string{dotGitMain, dotGitWT} {
+		if key, name := checkoutOf(dir); key != keyOf(dotGitMain) || name != "kit" {
+			t.Errorf("checkoutOf(%q) = %q, %q; want the kit.git checkout, named kit", dir, key, name)
+		}
+	}
 
 	for dir, want := range map[string][2]string{
 		main:                                     {main, "harness"},
@@ -128,6 +140,34 @@ func TestRepositoryNamesFollowWorktreesBackToTheirCheckout(t *testing.T) {
 	}
 	if _, name := checkoutOf(backslashed); name != "tidedesk" {
 		t.Errorf("a worktree whose .git file uses backslashes is in %q, want tidedesk", name)
+	}
+
+	// A checkout reached through a link is the one its worktrees point to.
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(main, alias); err != nil {
+		t.Logf("no symlink here (%v); the alias case is left to platforms that allow one", err)
+		return
+	}
+	for _, dir := range []string{alias, filepath.Join(alias, "internal")} {
+		if key, name := checkoutOf(dir); key != keyOf(main) || name != "harness" {
+			t.Errorf("checkoutOf(%q) = %q, %q; want the linked checkout %q", dir, key, name, main)
+		}
+	}
+}
+
+func TestAGeneratedNameNeverRepeatsARealOne(t *testing.T) {
+	rec := runlog.Record{Done: true, Task: agent.Task{Prompt: "fix the bug"}, Result: agent.Result{Backend: "claude"}}
+	c := cardOver([]tallied{
+		tallyOf(rec, "/a/service", "service"), tallyOf(rec, "/a/service", "service"), tallyOf(rec, "/a/service", "service"),
+		tallyOf(rec, "/b/service", "service"), tallyOf(rec, "/b/service", "service"),
+		tallyOf(rec, "/c/service (2)", "service (2)"),
+	})
+	var got []string
+	for _, r := range c.Repos {
+		got = append(got, r.Row.Purpose)
+	}
+	if want := "service|service (3)|service (2)"; strings.Join(got, "|") != want {
+		t.Errorf("rows = %q, want %q", got, want)
 	}
 }
 
