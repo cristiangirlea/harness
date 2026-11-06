@@ -441,3 +441,21 @@ func TestBackendActionOutcomeAuditFailureStillSaves(t *testing.T) {
 		t.Fatalf("audit: %q, %v", data, err)
 	}
 }
+
+func TestApplyingTheBackendCardKeepsTheLocalAPI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := prefs.Save(home, prefs.Prefs{EnabledNames: []string{"codex", "api"}, LocalAPI: "http://127.0.0.1:8081"}); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(`{"enabled":["claude","codex","api"]}`))
+	r.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+	(&server{}).saveBackends(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status: %d %s", w.Code, w.Body.String())
+	}
+	if p, err := prefs.Load(home); err != nil || p.LocalAPI != "http://127.0.0.1:8081" || len(p.EnabledNames) != 3 {
+		t.Fatalf("saved %+v, %v", p, err)
+	}
+}

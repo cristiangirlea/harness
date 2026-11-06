@@ -2,9 +2,13 @@ package batch
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -400,5 +404,114 @@ func TestWithAPreferenceARetryMeantForASpentBackendStartsOnTheThird(t *testing.T
 	}
 	if a := tr.Attempts[1]; a.Backend != "agy" || a.SwitchedFrom != "codex" {
 		t.Errorf("the retry ran on %s, switched from %q", a.Backend, a.SwitchedFrom)
+	}
+}
+
+func TestAnAttemptMeantForALimitedBackendStartsOnTheLocalAPIWhenEveryPlanIsOut(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"local\",\"usage\":{\"input_tokens\":5}}}\n\n"+
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"local answer\"}}\n\n"+
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n"+
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "claude", "api"}, LocalAPI: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"codex", "claude"} {
+		_ = limits.Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	}
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "local", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if len(tr.Attempts) != 1 || hits.Load() == 0 {
+		t.Fatalf("task = %+v, local requests %d", tr, hits.Load())
+	}
+	if a := tr.Attempts[0]; a.Backend != "api" || a.SwitchedFrom != "codex" || a.Result.Final != "local answer" {
+		t.Errorf("attempt on %s switched from %q: %q", a.Backend, a.SwitchedFrom, a.Result.Final)
+	}
+}
+
+func TestProposalsForALocalAPIAttemptReachTheLocalEndpoint(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"local\",\"usage\":{\"input_tokens\":5}}}\n\n"+
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[\\\"one\\\", \\\"two\\\"]\"}}\n\n"+
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n"+
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "api"}, LocalAPI: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := proposeAdditions(context.Background(), "api", Task{Prompt: "p"}, TaskResult{}, 2, t.TempDir(), agent.Options{})
+	if err != nil || len(got) != 2 || hits.Load() == 0 {
+		t.Fatalf("additions %v: %v, local requests %d", got, err, hits.Load())
+	}
+}
+
+func TestABatchNamesTheKeyThatKeepsTheLocalAPIOut(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "claude", "api"}, LocalAPI: "http://127.0.0.1:1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"codex", "claude"} {
+		_ = limits.Note(name, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	}
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "sk-test-value")
+	res, events := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "out", Prompt: "p"}}})
+	if tr := res.Tasks[0]; len(tr.Attempts) != 0 || !strings.Contains(tr.Error, "ANTHROPIC_AUTH_TOKEN") {
+		t.Fatalf("task = %+v", tr)
+	}
+	if s := eventTexts(events, "switch"); !strings.Contains(s, "ANTHROPIC_AUTH_TOKEN") || strings.Contains(s, "sk-test-value") {
+		t.Fatalf("switch events = %q", s)
+	}
+}
+
+func TestWithTheLocalAPIACarryOnGoesPastEveryLimitedPlan(t *testing.T) {
+	dir := initRepo(t)
+	preferThird(t)
+	agent.Register(stub{"agy", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "agy", Status: agent.StatusLimited, Error: "You've reached your usage limit."}
+	}})
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"local\",\"usage\":{\"input_tokens\":5}}}\n\n"+
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"local answer\"}}\n\n"+
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n"+
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "claude", "agy", "api"}, LocalAPI: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "local", Prompt: "p"}}})
+	var got []string
+	for _, a := range res.Tasks[0].Attempts {
+		got = append(got, a.Backend)
+	}
+	if strings.Join(got, ",") != "codex,claude,agy,api" || hits.Load() == 0 {
+		t.Fatalf("attempts %v, local requests %d", got, hits.Load())
+	}
+	if a := res.Tasks[0].Attempts[3]; !a.Continued || a.SwitchedFrom != "agy" {
+		t.Errorf("attempt 4: continued %v, switched from %q", a.Continued, a.SwitchedFrom)
 	}
 }

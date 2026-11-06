@@ -399,7 +399,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if err := preference.Check(backend); err != nil {
 		return 2, fmt.Errorf("run: %w", err)
 	}
-	b, err := agent.Get(backend)
+	b, err := followup.Backend(backend)
 	if err != nil {
 		return 2, err
 	}
@@ -506,7 +506,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 			next.Task.Purpose = purpose.Inherited(task.Purpose, prompt)
 		}
 		nextDefault := resolve.ApplyTurnDefault(&next.Task, next.To)
-		nb, err := agent.Get(next.To)
+		nb, err := followup.Backend(next.To)
 		if err != nil {
 			return 1, err
 		}
@@ -545,15 +545,17 @@ func cmdBackends(args []string) error {
 			fs := flag.NewFlagSet("backends set", flag.ContinueOnError)
 			only := fs.String("only", "", "comma-separated enabled backends, in preference order")
 			def := fs.String("default", "", "default backend, from --only")
+			localAPI := fs.String("local-api", "", "loopback or private-network api URL, the last carry-on partner; needs api in --only")
 			if err := fs.Parse(args[1:]); err != nil {
 				return err
 			}
 			if *only == "" || fs.NArg() != 0 {
-				return errors.New("usage: hrn backends set --only claude,codex [--default claude]")
+				return errors.New("usage: hrn backends set --only claude,codex [--default claude] [--local-api URL]")
 			}
 			p, _ := prefs.Load(runlog.Home())
 			p.EnabledNames = nil
 			p.DefaultName = *def
+			p.LocalAPI = *localAPI
 			for _, name := range strings.Split(*only, ",") {
 				name = strings.TrimSpace(name)
 				if _, err := agent.Get(name); err != nil {
@@ -565,6 +567,9 @@ func cmdBackends(args []string) error {
 				if _, err := agent.Get(*def); err != nil {
 					return err
 				}
+			}
+			if *localAPI != "" && !p.Enabled("api") {
+				return errors.New("backends set: --local-api needs api in --only")
 			}
 			if err := prefs.Save(runlog.Home(), p); err != nil {
 				return err
@@ -581,12 +586,13 @@ func cmdBackends(args []string) error {
 			} else {
 				p.EnabledNames = nil
 				p.DefaultName = ""
+				p.LocalAPI = ""
 				if err := prefs.Save(runlog.Home(), p); err != nil {
 					return err
 				}
 			}
 		default:
-			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] | reset]")
+			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] [--local-api URL] | reset]")
 		}
 	}
 	p, err := resolve.BackendPreferences(runlog.Home())
@@ -606,8 +612,7 @@ func cmdBackends(args []string) error {
 		if name == def {
 			state += " (default)"
 		}
-		b, _ := agent.Get(name)
-		src, err := b.Detect()
+		src, err := followup.Detect(name)
 		if err != nil {
 			fmt.Printf("  ✗ %-9s %s: %s\n", name, state, err)
 		} else {
