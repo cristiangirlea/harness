@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 func TestEvalPrintsCriterionCountsAndDiffsOnlyWhenPresent(t *testing.T) {
@@ -62,8 +62,11 @@ func TestEvalDiffPrintsCriterionDisagreementCountsAndOneSidedCriteria(t *testing
 		name               string
 		repeats, disagreed int
 		onlyB              bool
+		after              string
 	}{
-		{"repeats", 2, 0, false}, {"disagreements", 0, 1, false}, {"only B", 2, 1, true},
+		{"repeats", 2, 0, false, "0"}, {"only B", 2, 1, true, "1"},
+		// Repeats with an errored verdict leave JudgeRepeats unset, yet a counted disagreement was measured.
+		{"disagreements without full repeats", 0, 1, false, "1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, b := diffPair()
@@ -80,15 +83,46 @@ func TestEvalDiffPrintsCriterionDisagreementCountsAndOneSidedCriteria(t *testing
 			if tc.onlyB {
 				before, metBefore = "-", "-"
 			}
-			after := "-"
-			if tc.repeats > 1 {
-				after = fmt.Sprint(tc.disagreed)
-			}
-			for _, want := range []string{"criterion", "disagreed", arrow(metBefore, "3/4"), arrow(before, after)} {
+			for _, want := range []string{"criterion", "disagreed", arrow(metBefore, "3/4"), arrow(before, tc.after)} {
 				if !strings.Contains(out.String(), want) {
 					t.Fatalf("missing %q: %s", want, out.String())
 				}
 			}
 		})
+	}
+}
+
+func TestEvalDiffWithToolStatsAndCriteriaPrintsEachTableAfterABlankLine(t *testing.T) {
+	a, b := diffPair()
+	for _, rec := range []*eval.Record{&a, &b} {
+		rec.Table.Variants[0].AttemptsWithToolStats = 2
+		rec.Table.Variants[0].ToolStats = map[string]kernel.ToolStat{"edit_file": {Calls: 2, Errors: 1, ResultBytes: 40}}
+		rec.Table.Variants[0].Criteria = []eval.CriterionSummary{{ID: "safe", Met: 1, Scored: 2}}
+	}
+	var buf bytes.Buffer
+	r := newRenderer(false)
+	r.out = &buf
+	printEvalDiff(r, eval.Compare(a, b))
+	lines := strings.Split(buf.String(), "\n")
+	at := map[string]int{}
+	for i, line := range lines {
+		head := ""
+		switch f := strings.Fields(line); {
+		case len(f) > 1 && f[0] == "tool" && f[1] == "stats:":
+			head = "tools"
+		case len(f) > 1 && f[0] == "variant" && f[1] == "criterion":
+			head = "criteria"
+		case len(f) > 0 && f[0] == "task":
+			head = "tasks"
+		}
+		if _, seen := at[head]; head != "" && !seen {
+			at[head] = i
+			if i == 0 || strings.TrimSpace(lines[i-1]) != "" {
+				t.Errorf("no blank line before the %s table:\n%s", head, buf.String())
+			}
+		}
+	}
+	if len(at) != 3 || !(at["tools"] < at["criteria"] && at["criteria"] < at["tasks"]) {
+		t.Fatalf("tables out of order %v:\n%s", at, buf.String())
 	}
 }

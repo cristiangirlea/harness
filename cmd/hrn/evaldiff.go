@@ -186,7 +186,7 @@ func criterionCount(row *eval.VariantRow, id string, disagreed bool) string {
 		for _, c := range row.Criteria {
 			if c.ID == id {
 				if disagreed {
-					if row.JudgeRepeats <= 1 {
+					if row.JudgeRepeats <= 1 && c.Disagreed == 0 {
 						return "-"
 					}
 					return fmt.Sprint(c.Disagreed)
