@@ -461,3 +461,11 @@ and JSON record output retains the original text. These rules recognise common
 secret shapes; they cannot identify every possible secret.
 
 A passing batch task with a branch and changes can be merged from its batch page. Select Merge to see the task, branch, current head and target branch, then confirm within two minutes. Each confirmation is single-use; a moved branch is refused. Only this computer (without forwarding headers), or a verified Cloudflare Access user acting as the local owner in public mode, can act. With `--owner-email`, project grant viewers cannot merge; without it, all verified Access emails use the local owner identity. LAN viewers are read-only. Only one merge can run at a time in the same repository. Merge intents, outcomes and refusals are recorded in `watch-audit.jsonl` in `HRN_HOME`.
+
+Watch, CLI and MCP merges share `<git common dir>/hrn-merge.lock`, a process lease
+that refuses concurrent mergers and takes over stale holders. A confirmed watch
+merge finishes even if the page disconnects (within a ten-minute limit). If the
+merge lands but its receipt cannot be verified, watch reports `merged, commit unknown`;
+batch merge records `merged; the commit could not be confirmed` and stops without
+resetting the tree. Merge results include an optional `before` commit captured under
+the lock for undo guidance. Reload the batch page after a transport error to check the outcome.

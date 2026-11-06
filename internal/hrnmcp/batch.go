@@ -331,11 +331,11 @@ func batchMergeTool() mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
-			before, err := batch.Head(ctx, res.Dir)
-			if err != nil {
-				return mcp.CallResult{}, err
-			}
 			merged, mergeErr := batch.Merge(ctx, res, args.Tasks, args.Squash)
+			before := ""
+			if len(merged) > 0 {
+				before = merged[0].Before
+			}
 			filtered := slices.Clone(merged)
 			var b strings.Builder
 			done := 0
@@ -344,6 +344,9 @@ func batchMergeTool() mcp.Tool {
 				switch {
 				case m.Conflict:
 					fmt.Fprintf(&b, "%s: conflict merging %s; the tree is back as it was, merge it by hand with `git merge %s`\n", m.Task, m.Branch, m.Branch)
+				case m.Error == batch.ErrMergedUnconfirmed.Error():
+					done++
+					fmt.Fprintf(&b, "%s: merged, commit unknown\n", m.Task)
 				case m.Error != "":
 					fmt.Fprintf(&b, "%s: could not merge %s: %s\n", m.Task, m.Branch, printableNote(m.Error, 200))
 				case m.Skipped != "":
