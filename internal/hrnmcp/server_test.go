@@ -140,6 +140,9 @@ func TestRunAndBatchResultHints(t *testing.T) {
 	if got := batchTool(t.TempDir(), false).TooLarge; got != "The batch finished; read it with batch_show." {
 		t.Errorf("batch hint = %q", got)
 	}
+	if got := remoteEventsTool().TooLarge; !strings.Contains(got, "hrn remote events") || !strings.Contains(got, "--after") {
+		t.Errorf("remote_events hint = %q", got)
+	}
 }
 
 func (s *session) call(t *testing.T, name, args string) mcp.CallResult {
