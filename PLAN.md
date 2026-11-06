@@ -287,6 +287,12 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #839, a public watch offers a sign-in link (PR #844). A page visit refused by the
+  token check gets a 403 page linking to `/login` that loads nothing else; host and origin
+  refusals and non-page requests keep the plain text. `GET /login` sends a verified visitor to
+  `/`, so an Access application guarding only `/login` works end to end. This replaces what an
+  unmerged `--public-shell` build did on the public host; that build also had `--admin-email`,
+  which main calls `--owner-email`.
 - 2026-11-06: #823, a run records `repo` and `branch` at start (PR #830): the `origin` remote, or
   the only one, as host/path with no credentials or port, read in any work tree, even before a
   first commit. The watch card groups by it, falls back to a checkout's remote for older records,
