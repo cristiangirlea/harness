@@ -37,9 +37,10 @@ func startGit(dir string) (string, string) {
 		return "", ""
 	}
 	root = strings.TrimSpace(root)
+	// A repository with no commit yet still has a root, for its remote and branch.
 	head, err := gitOutput(root, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
-		return "", ""
+		return root, ""
 	}
 	return root, strings.TrimSpace(head)
 }
