@@ -287,6 +287,14 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #783, a local model as the last carry-on partner (PR #802). `hrn backends set
+  --local-api URL` stores `local_api` in `backends.json`. Only `localhost` or a loopback or
+  private-network IP literal is accepted, refused on save and load. With it, `api` stands in
+  after every enabled plan backend, and every `api` run (eval and judge too; not `exec` or `feed`)
+  goes only to that URL, with no proxy or redirects. While the opt-in is set, a set
+  `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` refuses every `api` run instead of billing it,
+  because a `--continue` of a local run inherits `api`. Without the opt-in nothing changed. A local
+  run still shows the api model's estimated price, since pricing is keyed by model name.
 - 2026-11-06: #780, retrieval increments 2-3 tightened (PR #803). Entry keys weigh A and content D
   in `search_vector` (migration 005, schema 5; PostgreSQL 16 has no `SET EXPRESSION`, so the column
   is dropped and added again), ranking `simple-or-exact-v3` (main was already at v2, not v1 as the
