@@ -129,12 +129,12 @@ func TestRepositoryMigrationUpgradesEmptyLegacyStore(t *testing.T) {
 		t.Fatalf("empty legacy schema upgrade: %v", err)
 	}
 	var version int
-	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 4 {
+	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
 		t.Fatalf("migration version: %d %v", version, err)
 	}
 }
 
-func TestRepositoryMigrationLeavesVersionFourDatabaseUnchanged(t *testing.T) {
+func TestRepositoryMigrationLeavesVersionFiveDatabaseUnchanged(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	type migration struct {
@@ -162,12 +162,12 @@ func TestRepositoryMigrationLeavesVersionFourDatabaseUnchanged(t *testing.T) {
 		return versions
 	}
 	before := readVersions()
-	if len(before) != 4 || before[0].version != 1 || before[1].version != 2 || before[2].version != 3 || before[3].version != 4 {
+	if len(before) != 5 || before[0].version != 1 || before[1].version != 2 || before[2].version != 3 || before[3].version != 4 || before[4].version != 5 {
 		t.Fatalf("unexpected starting schema versions: %+v", before)
 	}
 	for i := 0; i < 2; i++ {
 		if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
-			t.Fatalf("migration on version 4, pass %d: %v", i+1, err)
+			t.Fatalf("migration on version 5, pass %d: %v", i+1, err)
 		}
 	}
 	after := readVersions()
@@ -459,14 +459,14 @@ func TestPostgresSuccessfulFinishRequiresCheckpoint(t *testing.T) {
 func TestAdmissionMigrationUpgradesVersionThree(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_admissions; DELETE FROM schema_migrations WHERE version=4"); err != nil {
+	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_admissions; DELETE FROM schema_migrations WHERE version>=4"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
 		t.Fatal(err)
 	}
 	var version int
-	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 4 {
+	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
 		t.Fatalf("version %d: %v", version, err)
 	}
 }

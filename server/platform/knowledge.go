@@ -192,7 +192,7 @@ func (s *Store) ImportKnowledge(ctx context.Context, in KnowledgeImport) (string
 				return "", fmt.Errorf("entries[%d].identifiers[%d]: %w", i, j, err)
 			}
 		}
-		if e.Key == "" || len(e.Key) > KnowledgeMaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > KnowledgeMaxEntryIdentifiers || !utf8.ValidString(e.Content) {
+		if e.Excerpt || e.Key == "" || len(e.Key) > KnowledgeMaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > KnowledgeMaxEntryIdentifiers || !utf8.ValidString(e.Content) {
 			return "", ErrUnsupported
 		}
 		for _, id := range e.Identifiers {
@@ -380,7 +380,8 @@ const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
  FROM knowledge_members m JOIN knowledge_entries e ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id)
  WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3
 )
- SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
+ SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers,
+ ts_headline('simple',e.content,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')), 'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" ... "')
  FROM members e
  WHERE (e.identifiers && $5::text[] OR e.search_vector @@ to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')))
  ORDER BY (e.identifiers && $5::text[]) DESC, ts_rank_cd(e.search_vector,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),''))) DESC,e.entry_key COLLATE "C",e.id LIMIT 100`
@@ -425,7 +426,8 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 		seen := map[string]bool{}
 		for rows.Next() {
 			var e KnowledgeEntry
-			if err = rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers); err != nil {
+			var headline string
+			if err = rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers, &headline); err != nil {
 				rows.Close()
 				return out, err
 			}
@@ -436,7 +438,14 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 			seen[hash] = true
 			label := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", e.ID, e.Source, in.Revision, e.Evidence, e.Content)
 			if len(KnowledgeReferenceBlock(out.Text+label)) > KnowledgeMaxPacketBytes {
-				continue
+				if headline == "" || !utf8.ValidString(headline) || hasFrameMarker(headline) || headline == e.Content {
+					continue
+				}
+				label = fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q; excerpt=true]\n%s\n[/Reference]\n", e.ID, e.Source, in.Revision, e.Evidence, headline)
+				if len(KnowledgeReferenceBlock(out.Text+label)) > KnowledgeMaxPacketBytes {
+					continue
+				}
+				e.Content, e.Excerpt = headline, true
 			}
 			out.Text += label
 			out.Entries = append(out.Entries, e)

@@ -17,6 +17,7 @@
 | `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream until the job ends and resume from the last durable event ID after a disconnect. |
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
+| `hrn knowledge markdown -request base.json [-min-words 100] [-max-words 800] [-overlap-words 40] FILE...` | Build a JSON import request from Markdown headings without calling the service. |
 | `hrn knowledge admit --version ID --spec FILE -b BACKEND [--held-out SHARE --seed N --source-run ID]` | Compare a candidate with active knowledge and record the gated verdict. |
 | `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
 | `hrn retrieval compare --manifest FILE --samples FILE [--baseline-preparation FILE] [--candidate-preparation FILE] [--reuse N] [--runs] [--json]` | Compare saved retrieval evidence and verify measured run references locally, without a model call. Match each run on the requested model in `task.json`; a run without a requested model matches only when its reported result model exactly equals the variant model. Text output shows a differing provider-reported model. |
@@ -318,6 +319,18 @@ characters (U+0080 to U+009F) and invalid UTF-8 are printed as `\u` escapes, so
 the terminal never reads them as control sequences.
 
 ### Project knowledge
+
+`hrn knowledge markdown -request base.json FILE...` reads only the named files,
+resolved inside the repository root, and writes JSON only. The base import must
+have no entries and a non-empty revision; its other fields are kept. Heading
+sections merge below `-min-words` (100), split above `-max-words` (800) or 16384
+bytes, and overlap by `-overlap-words` (40) when split. Keys carry the relative
+path and heading ancestry, sources carry `path@revision`, and evidence records
+the limits. Review the resulting entries and import as before. Entry keys weigh
+more than content in ranking (`simple-or-exact-v3`), and a long entry that does
+not fit the 8 KiB packet arrives as an excerpt marked `excerpt=true`; its
+`content` contains the excerpt and `excerpt` is omitted for whole entries.
+Imports refuse entries marked as excerpts.
 
 `hrn knowledge import|search|inspect|active|activate|disable|rollback request.json`
 accepts one JSON request file and prints a JSON response. `import`, `activate`,

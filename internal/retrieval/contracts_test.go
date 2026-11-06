@@ -7,6 +7,21 @@ import (
 	"testing"
 )
 
+func TestRankingAndExcerptWireContract(t *testing.T) {
+	if RankingVersion != "simple-or-exact-v3" {
+		t.Fatalf("ranking = %q", RankingVersion)
+	}
+	for _, excerpt := range []bool{false, true} {
+		b, err := json.Marshal(Entry{Excerpt: excerpt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), `"excerpt":true`) != excerpt || strings.Contains(string(b), `"excerpt":false`) {
+			t.Fatalf("excerpt wire: %s", b)
+		}
+	}
+}
+
 func TestPacketRespectsFramingCap(t *testing.T) {
 	label := "[Reference e_fixture; source=\"source\"; revision=main; evidence=\"evidence\"]\n"
 	closer := "\n[/Reference]\n"

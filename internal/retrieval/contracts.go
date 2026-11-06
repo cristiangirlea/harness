@@ -15,7 +15,7 @@ const MaxPacketBytes = 8 * 1024
 const MaxEntryKeyBytes = 128
 const MaxEntryIdentifiers = 32
 const MaxIdentifierBytes = 256
-const RankingVersion = "simple-or-exact-v2"
+const RankingVersion = "simple-or-exact-v3"
 
 type Scope struct {
 	TenantID  string `json:"tenant_id"`
@@ -32,6 +32,7 @@ type Entry struct {
 	Source      string   `json:"source"`
 	Evidence    string   `json:"evidence"`
 	Identifiers []string `json:"identifiers"`
+	Excerpt     bool     `json:"excerpt,omitempty"`
 }
 
 // Import replaces membership in a new version, leaving existing pins immutable even when keys are reused.

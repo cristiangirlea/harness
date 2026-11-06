@@ -95,7 +95,12 @@ func TestKnowledgeSearchMembersFirst(t *testing.T) {
 			result := []KnowledgeEntry{}
 			for rows.Next() {
 				var e KnowledgeEntry
-				if err := rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers); err != nil {
+				var headline string
+				dest := []any{&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers}
+				if len(rows.FieldDescriptions()) == len(dest)+1 {
+					dest = append(dest, &headline)
+				}
+				if err := rows.Scan(dest...); err != nil {
 					t.Fatal(err)
 				}
 				result = append(result, e)
