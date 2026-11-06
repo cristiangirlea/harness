@@ -6,11 +6,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cristiangirlea/harness/server/platform"
 )
+
+func TestRunRejectsMissingWorkerTokenFileBeforeRequiredChecks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-token")
+	t.Setenv("HRN_WORKER_TOKEN", "")
+	t.Setenv("HRN_WORKER_TOKEN_FILE", path)
+	t.Setenv("HRN_CONTROL_URL", "")
+	t.Setenv("HRN_FIXTURE_API_URL", "")
+	t.Setenv("HRN_PROJECT_ID", "")
+	t.Setenv("HRN_WORKSPACE_ROOT", "")
+	err := run("hrn")
+	if err == nil || !strings.Contains(err.Error(), "HRN_WORKER_TOKEN_FILE") || !strings.Contains(err.Error(), strconv.Quote(path)) || strings.Contains(err.Error(), "are required") {
+		t.Fatalf("run() = %v, want missing token file error before required settings check", err)
+	}
+}
 
 func TestCheckHRN(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing-hrn")

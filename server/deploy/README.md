@@ -38,7 +38,12 @@ in that tenant's namespace:
 `/etc/hrn-control-ca` and sets `SSL_CERT_FILE` to its `ca.crt` file.
 
 Use distinct tokens for operator, tenant, project worker, and scaler. Never
-place token values in Helm values or source control. The control service
+place token values in Helm values or source control.
+`hrn-server` accepts `HRN_DATABASE_URL_FILE`, `HRN_OPERATOR_TOKEN_FILE`, and
+`HRN_SCALER_TOKEN_FILE`; `hrn-worker` accepts `HRN_WORKER_TOKEN_FILE` to read
+mounted secret files instead of the corresponding non-empty direct variables.
+Set only one form for each variable.
+The control service
 requires both `HRN_TLS_CERT_FILE` and `HRN_TLS_KEY_FILE` unless `HRN_LISTEN`
 uses a loopback IP literal (`127.0.0.0/8` or `::1`). Host names (including
 `localhost`) and wildcard addresses require TLS. The control chart binds
