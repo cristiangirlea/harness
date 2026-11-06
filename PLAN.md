@@ -287,6 +287,14 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #815, the watch index's purpose card sums every recorded run the viewer may read,
+  not only the 50 listed (PR #820), and a "Where they ran" table gives the same sums per
+  repository: the ten largest, the rest folded into "N other folders". A run's repository is the
+  checkout holding its folder; worktrees, `.hrn/slots` and `.hrn/worktrees` lead back to their
+  main checkout, and checkouts are keyed by resolved path, so a second one with the same name
+  shows as `name (2)`. A finished run's share is kept in memory and read once; the read filter is
+  applied per viewer on every refresh. On a home with 3,788 runs the first page takes about a
+  second. The index list still re-reads its 50 records each refresh: #816.
 - 2026-11-06: #786, old tool results masked in the outgoing api request (PR #817), opt-in with
   `mask_tool_results` N (0 off). Once there are 2N results the oldest are replaced in steps of N by
   a one-line note (tool summary cut to 120 bytes, size, `read_original` handle when present), so
