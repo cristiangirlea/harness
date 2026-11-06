@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,6 +58,19 @@ func TestKnowledgeLabelledQueries(t *testing.T) {
 		for _, key := range query.Expect {
 			if !keys[key] {
 				t.Fatalf("query %q expects unknown corpus key %q", query.ID, key)
+			}
+		}
+	}
+	for _, record := range history {
+		t.Logf("ranking=%s hit=%.6f mrr=%.6f none_with_context=%.6f", record.Ranking, record.Hit, record.MRR, record.NoneWithContext)
+		for _, field := range []struct {
+			name string
+			ids  []string
+		}{{"hits", record.Hits}, {"accepted_losses", record.AcceptedLosses}} {
+			for _, id := range field.ids {
+				if !ids[id] {
+					t.Fatalf("baseline ranking %q %s names unknown query id %q", record.Ranking, field.name, id)
+				}
 			}
 		}
 	}
@@ -123,9 +137,34 @@ func TestKnowledgeLabelledQueries(t *testing.T) {
 		current.NoneWithContext = float64(noneWithContext) / float64(none)
 	}
 	t.Logf("ranking=%s hit=%.6f mrr=%.6f none_with_context=%.6f", current.Ranking, current.Hit, current.MRR, current.NoneWithContext)
-	if os.Getenv("HRN_UPDATE_LABELLED") == "1" {
+	update := os.Getenv("HRN_UPDATE_LABELLED") == "1"
+	if len(history) > 0 {
+		last := history[len(history)-1]
+		accepted := make(map[string]bool, len(last.AcceptedLosses))
+		for _, id := range last.AcceptedLosses {
+			accepted[id] = true
+		}
+		previousHits := make(map[string]bool)
+		start := len(history) - 2
+		if start < 0 {
+			start = 0
+		}
+		for _, record := range history[start:] {
+			for _, id := range record.Hits {
+				if !previousHits[id] && !hits[id] {
+					if update {
+						t.Logf("query %q stopped hitting; accepted_loss=%t", id, accepted[id])
+					} else if !accepted[id] {
+						t.Errorf("query %q stopped hitting; deliberate losses must be listed in accepted_losses", id)
+					}
+				}
+				previousHits[id] = true
+			}
+		}
+	}
+	if update {
 		if len(history) > 0 && history[len(history)-1].Ranking == current.Ranking {
-			current.AcceptedLosses = history[len(history)-1].AcceptedLosses
+			current.AcceptedLosses = append(current.AcceptedLosses, history[len(history)-1].AcceptedLosses...)
 			history[len(history)-1] = current
 		} else {
 			history = append(history, current)
@@ -147,21 +186,17 @@ func TestKnowledgeLabelledQueries(t *testing.T) {
 		t.Fatalf("baseline must end with ranking %q; append this element:\n%s", KnowledgeRankingVersion, data)
 	}
 	last := history[len(history)-1]
-	accepted := make(map[string]bool, len(last.AcceptedLosses))
-	for _, id := range last.AcceptedLosses {
-		accepted[id] = true
+	recordedHits := make(map[string]bool, len(last.Hits))
+	for _, id := range last.Hits {
+		recordedHits[id] = true
 	}
-	previousHits := make(map[string]bool)
-	start := len(history) - 2
-	if start < 0 {
-		start = 0
-	}
-	for _, record := range history[start:] {
-		for _, id := range record.Hits {
-			if !previousHits[id] && !hits[id] && !accepted[id] {
-				t.Errorf("query %q stopped hitting; deliberate losses must be listed in accepted_losses", id)
-			}
-			previousHits[id] = true
+	hitsDiffer := len(recordedHits) != len(hits)
+	for id := range hits {
+		if !recordedHits[id] {
+			hitsDiffer = true
 		}
+	}
+	if hitsDiffer || math.Abs(current.Hit-last.Hit) > 1e-9 || math.Abs(current.MRR-last.MRR) > 1e-9 || math.Abs(current.NoneWithContext-last.NoneWithContext) > 1e-9 {
+		t.Errorf("ranking %q differs from its recorded hits or metrics; rerun with HRN_UPDATE_LABELLED=1 to record the current baseline", current.Ranking)
 	}
 }

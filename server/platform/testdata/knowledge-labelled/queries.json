@@ -180,6 +180,13 @@
     ]
   },
   {
+    "id": "error-stream-limit",
+    "query": "An event request failed with HTTP 429 and error code stream_limit. What limit did it hit?",
+    "expect": [
+      "server/README.md > PostgreSQL control service and project worker > Job events"
+    ]
+  },
+  {
     "id": "migration-003",
     "query": "Which schema migration adds project knowledge and retrieval records?",
     "expect": [
