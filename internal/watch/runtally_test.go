@@ -32,6 +32,26 @@ func saveRunIn(t *testing.T, dir, prompt string, res agent.Result) string {
 	return w.ID()
 }
 
+// checkoutOf is findCheckout's answer as the card keys and names it.
+func checkoutOf(dir string) (key, name string) {
+	found := findCheckout(dir)
+	if found == "" {
+		return "", ""
+	}
+	return keyOf(found), strings.TrimSuffix(filepath.Base(found), ".git")
+}
+
+// withRemote makes dir a checkout whose origin is url.
+func withRemote(t *testing.T, dir, url string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("[remote \"origin\"]\n\turl = "+url+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func repoRowOf(t *testing.T, c *purposeCard, name string) repoRow {
 	t.Helper()
 	if c == nil {
@@ -123,14 +143,14 @@ func TestRepositoryNamesFollowWorktreesBackToTheirCheckout(t *testing.T) {
 		inside:                                   {main, "harness"},
 		bare:                                     {bareMain, "tools"},
 		sub:                                      {sub, "lib"},
-		plain:                                    {plain, "notes"},
+		plain:                                    {"", ""},
 		otherHarness:                             {otherHarness, "harness"},
 		filepath.Join(main, "internal", "watch"): {main, "harness"},
 		filepath.Join(main, ".hrn", "slots", "3"):          {main, "harness"},
 		filepath.Join(main, ".hrn", "worktrees", "t1"):     {main, "harness"},
-		filepath.Join(root, "gone", ".hrn", "slots", "2"):  {filepath.Join(root, "gone"), "gone"},
+		filepath.Join(root, "gone", ".hrn", "slots", "2"):  {"", ""},
 		filepath.Join(main, ".claude", "worktrees", "old"): {main, "harness"},
-		filepath.Join(root, "deleted-worktree"):            {filepath.Join(root, "deleted-worktree"), "deleted-worktree"},
+		filepath.Join(root, "deleted-worktree"):            {"", ""},
 		"":                                                 {"", ""},
 	} {
 		key, name := checkoutOf(dir)
@@ -197,6 +217,8 @@ func TestAReusedWorktreeFolderIsLookedUpAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	withRemote(t, filepath.Join(root, "demo-api"), "https://github.com/acme/demo-api.git")
+	withRemote(t, filepath.Join(root, "demo-web"), "https://github.com/acme/demo-web.git")
 	s := &server{}
 	point("demo-api")
 	saveRunIn(t, wt, "fix the login bug", agent.Result{CostUSD: 0.01})
@@ -204,7 +226,7 @@ func TestAReusedWorktreeFolderIsLookedUpAgain(t *testing.T) {
 	point("demo-web")
 	saveRunIn(t, wt, "fix the logout bug", agent.Result{CostUSD: 0.01})
 	c := cardOver(s.tallyRuns(owner.LocalViewer()))
-	if api, web := repoRowOf(t, c, "demo-api"), repoRowOf(t, c, "demo-web"); api.Row.Runs != "1" || web.Row.Runs != "1" {
+	if api, web := repoRowOf(t, c, "acme/demo-api"), repoRowOf(t, c, "acme/demo-web"); api.Row.Runs != "1" || web.Row.Runs != "1" {
 		t.Errorf("demo-api = %+v, demo-web = %+v; want a run each", api, web)
 	}
 }
@@ -222,26 +244,28 @@ func TestTheCardSaysWhichRepositoriesTheRunsWereIn(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+filepath.ToSlash(filepath.Join(main, ".git", "worktrees", "wt-review"))), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	withRemote(t, main, "git@github.com:acme/harness.git")
 	saveRunIn(t, main, "fix the login bug", agent.Result{CostUSD: 0.5})
 	saveRunIn(t, wt, "review the diff", agent.Result{CostUSD: 0.25})
 	saveRunIn(t, wt, "review the plan", agent.Result{CostUSD: 0.25})
+	withRemote(t, filepath.Join(root, "jobpilot"), "https://github.com/acme/jobpilot")
 	saveRunIn(t, filepath.Join(root, "jobpilot"), "add a cache", agent.Result{})
 
 	c := cardOf(t)
-	if r := repoRowOf(t, c, "harness"); r.Row.Runs != "3" || r.Row.Cost != "$1.0000" || r.Mix != "review 2 · debug 1" {
+	if r := repoRowOf(t, c, "acme/harness"); r.Row.Runs != "3" || r.Row.Cost != "$1.0000" || r.Mix != "review 2 · debug 1" {
 		t.Errorf("harness row = %+v", r)
 	}
-	if r := repoRowOf(t, c, "jobpilot"); r.Row.Runs != "1" || r.Row.Cost != "-" || r.Row.NoCost != "1 run reports no cost" || r.Mix != "implement 1" {
+	if r := repoRowOf(t, c, "acme/jobpilot"); r.Row.Runs != "1" || r.Row.Cost != "-" || r.Row.NoCost != "1 run reports no cost" || r.Mix != "implement 1" {
 		t.Errorf("jobpilot row = %+v", r)
 	}
-	if len(c.Repos) != 2 || c.Repos[0].Row.Purpose != "harness" {
+	if len(c.Repos) != 2 || c.Repos[0].Row.Purpose != "acme/harness" {
 		t.Errorf("repository rows = %+v, want harness first, then jobpilot", c.Repos)
 	}
 
 	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
 	defer srv.Close()
 	_, page := get(t, srv.URL+"/")
-	for _, want := range []string{`<th scope="col">Repository</th>`, `<th scope="row">harness</th>`, `<td class="mix">review 2 · debug 1</td>`} {
+	for _, want := range []string{`<th scope="col">Repository</th>`, `<th scope="row">acme/harness</th>`, `<td class="mix">review 2 · debug 1</td>`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the index lacks %q", want)
 		}
@@ -268,7 +292,7 @@ func TestSmallRepositoriesFoldIntoOneRow(t *testing.T) {
 		t.Errorf("first row = %+v, want the repository with the most runs", first)
 	}
 	other := c.Repos[repoRows]
-	if other.Row.Purpose != "3 other folders" || other.Row.Runs != "6" || other.Mix != "debug 5 · implement 1" ||
+	if other.Row.Purpose != "3 other repositories" || other.Row.Runs != "6" || other.Mix != "debug 5 · implement 1" ||
 		other.Row.Tokens != "900" || other.Row.Cost != "≥ ~$0.0500" || other.Row.NoCost != "1 run reports no cost" {
 		t.Errorf("folded row = %+v", other)
 	}
@@ -345,6 +369,7 @@ func TestTheCardCountsOnlyRunsTheViewerMayRead(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	root := t.TempDir()
 	shared, private := filepath.Join(root, "shared"), filepath.Join(root, "private")
+	withRemote(t, shared, "https://github.com/acme/shared.git")
 	saveRunIn(t, shared, "fix the login bug", agent.Result{CostUSD: 0.01})
 	saveRunIn(t, private, "review the diff", agent.Result{CostUSD: 0.02})
 
@@ -359,7 +384,7 @@ func TestTheCardCountsOnlyRunsTheViewerMayRead(t *testing.T) {
 	}
 	granted := owner.Viewer{ID: visitor, Grants: []owner.Grant{{Viewer: visitor, Owner: owner.Local(), Project: shared}}}
 	c := cardOver(s.tallyRuns(granted))
-	if c == nil || purposeRowOf(t, c, "all").Runs != "1" || purposeRowOf(t, c, "all").Cost != "$0.0100" || len(c.Repos) != 1 || c.Repos[0].Row.Purpose != "shared" {
+	if c == nil || purposeRowOf(t, c, "all").Runs != "1" || purposeRowOf(t, c, "all").Cost != "$0.0100" || len(c.Repos) != 1 || c.Repos[0].Row.Purpose != "acme/shared" {
 		t.Errorf("a viewer granted one project sees %+v", c)
 	}
 }
