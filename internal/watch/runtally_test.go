@@ -93,27 +93,79 @@ func TestRepositoryNamesFollowWorktreesBackToTheirCheckout(t *testing.T) {
 	write(filepath.Join(backslashed, ".git"), `gitdir: C:\work\tidedesk\.git\worktrees\wt-y`)
 	relative := mkdir("scratch", "wt-z")
 	write(filepath.Join(relative, ".git"), "gitdir: ../../jobpilot/.git/worktrees/wt-z\n")
+	inside := mkdir("harness", ".claude", "worktrees", "wt-in")
+	write(filepath.Join(inside, ".git"), "gitdir: ../../../.git/worktrees/wt-in\n")
+	bareMain := mkdir("tools.git")
 	bare := mkdir("scratch", "wt-bare")
-	write(filepath.Join(bare, ".git"), "gitdir: /srv/tools.git/worktrees/wt-bare\n")
+	write(filepath.Join(bare, ".git"), "gitdir: "+filepath.ToSlash(filepath.Join(bareMain, "worktrees", "wt-bare"))+"\n")
 	sub := mkdir("harness", "vendor", "lib")
 	write(filepath.Join(sub, ".git"), "gitdir: ../../.git/modules/lib\n")
 	plain := mkdir("notes")
+	otherHarness := mkdir("client", "harness")
+	mkdir("client", "harness", ".git")
 
-	for dir, want := range map[string]string{
-		main:        "harness",
-		wt:          "harness",
-		backslashed: "tidedesk",
-		relative:    "jobpilot",
-		bare:        "tools",
-		sub:         "lib",
-		plain:       "notes",
-		filepath.Join(main, ".hrn", "slots", "3"): "harness",
-		filepath.Join(root, "deleted-worktree"):   "deleted-worktree",
-		"":                                        "",
+	for dir, want := range map[string][2]string{
+		main:                                     {main, "harness"},
+		wt:                                       {main, "harness"},
+		relative:                                 {filepath.Join(root, "jobpilot"), "jobpilot"},
+		inside:                                   {main, "harness"},
+		bare:                                     {bareMain, "tools"},
+		sub:                                      {sub, "lib"},
+		plain:                                    {plain, "notes"},
+		otherHarness:                             {otherHarness, "harness"},
+		filepath.Join(main, "internal", "watch"): {main, "harness"},
+		filepath.Join(main, ".hrn", "slots", "3"):          {main, "harness"},
+		filepath.Join(main, ".hrn", "worktrees", "t1"):     {main, "harness"},
+		filepath.Join(root, "gone", ".hrn", "slots", "2"):  {filepath.Join(root, "gone"), "gone"},
+		filepath.Join(main, ".claude", "worktrees", "old"): {main, "harness"},
+		filepath.Join(root, "deleted-worktree"):            {filepath.Join(root, "deleted-worktree"), "deleted-worktree"},
+		"":                                                 {"", ""},
 	} {
-		if got := repoName(dir); got != want {
-			t.Errorf("repoName(%q) = %q, want %q", dir, got, want)
+		key, name := checkoutOf(dir)
+		if name != want[1] || key != keyOf(want[0]) {
+			t.Errorf("checkoutOf(%q) = %q, %q; want %q, %q", dir, key, name, keyOf(want[0]), want[1])
 		}
+	}
+	if _, name := checkoutOf(backslashed); name != "tidedesk" {
+		t.Errorf("a worktree whose .git file uses backslashes is in %q, want tidedesk", name)
+	}
+}
+
+func TestSameNamedCheckoutsGetARowEach(t *testing.T) {
+	rec := runlog.Record{Done: true, Task: agent.Task{Prompt: "fix the bug"}, Result: agent.Result{Backend: "claude", CostUSD: 0.01}}
+	c := cardOver([]tallied{
+		tallyOf(rec, "/work/a/service", "service"), tallyOf(rec, "/work/a/service", "service"),
+		tallyOf(rec, "/work/b/service", "service"),
+	})
+	if len(c.Repos) != 2 || c.Repos[0].Row.Purpose != "service" || c.Repos[0].Row.Runs != "2" ||
+		c.Repos[1].Row.Purpose != "service (2)" || c.Repos[1].Row.Runs != "1" {
+		t.Errorf("rows = %+v, want service with 2 runs, then service (2) with 1", c.Repos)
+	}
+}
+
+func TestAReusedWorktreeFolderIsLookedUpAgain(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	root := t.TempDir()
+	wt := filepath.Join(root, "scratch", "wt")
+	point := func(repo string) {
+		t.Helper()
+		if err := os.MkdirAll(wt, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		gitdir := filepath.ToSlash(filepath.Join(root, repo, ".git", "worktrees", "wt"))
+		if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+gitdir), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &server{}
+	point("demo-api")
+	saveRunIn(t, wt, "fix the login bug", agent.Result{CostUSD: 0.01})
+	cardOver(s.tallyRuns(owner.LocalViewer()))
+	point("demo-web")
+	saveRunIn(t, wt, "fix the logout bug", agent.Result{CostUSD: 0.01})
+	c := cardOver(s.tallyRuns(owner.LocalViewer()))
+	if api, web := repoRowOf(t, c, "demo-api"), repoRowOf(t, c, "demo-web"); api.Row.Runs != "1" || web.Row.Runs != "1" {
+		t.Errorf("demo-api = %+v, demo-web = %+v; want a run each", api, web)
 	}
 }
 
@@ -160,17 +212,24 @@ func TestSmallRepositoriesFoldIntoOneRow(t *testing.T) {
 	var runs []tallied
 	for i := range repoRows + 3 {
 		for range repoRows + 3 - i {
-			runs = append(runs, tallyOf(runlog.Record{Done: true, Task: agent.Task{Prompt: "fix the bug"}, Result: agent.Result{Backend: "claude", CostUSD: 0.01}}, fmt.Sprintf("repo%02d", i)))
+			name := fmt.Sprintf("repo%02d", i)
+			runs = append(runs, tallyOf(runlog.Record{Done: true, Task: agent.Task{Prompt: "fix the bug"},
+				Result: agent.Result{Backend: "api", CostUSD: 0.01, CostEstimate: true, InputTokens: 100}}, "/work/"+name, name))
 		}
 	}
+	// The smallest repository's only run reports no cost, so the folded row is a lower bound.
+	runs[len(runs)-1] = tallyOf(runlog.Record{Done: true, Task: agent.Task{Prompt: "add a cache"},
+		Result: agent.Result{Backend: "codex", InputTokens: 400}}, "/work/repo12", "repo12")
 	c := cardOver(runs)
 	if len(c.Repos) != repoRows+1 {
 		t.Fatalf("%d repository rows, want %d and one for the rest", len(c.Repos), repoRows)
 	}
-	if first := c.Repos[0]; first.Row.Purpose != "repo00" || first.Row.Runs != fmt.Sprint(repoRows+3) {
+	if first := c.Repos[0]; first.Row.Purpose != "repo00" || first.Row.Runs != fmt.Sprint(repoRows+3) || first.Row.Cost != "~$0.1300" || first.Row.Tokens != "1.3k" {
 		t.Errorf("first row = %+v, want the repository with the most runs", first)
 	}
-	if other := c.Repos[repoRows]; other.Row.Purpose != "3 other folders" || other.Row.Runs != "6" || other.Mix != "debug 6" {
+	other := c.Repos[repoRows]
+	if other.Row.Purpose != "3 other folders" || other.Row.Runs != "6" || other.Mix != "debug 5 · implement 1" ||
+		other.Row.Tokens != "900" || other.Row.Cost != "≥ ~$0.0500" || other.Row.NoCost != "1 run reports no cost" {
 		t.Errorf("folded row = %+v", other)
 	}
 
@@ -190,17 +249,33 @@ func TestSmallRepositoriesFoldIntoOneRow(t *testing.T) {
 func TestAFinishedRunIsReadOnceAndARunningOneEveryTime(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.01})
-	saveRun(t, "claude", "add a cache", nil)
+	running, err := runlog.Create("claude", agent.Task{Prompt: "add a cache"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	s := &server{}
 	local := owner.LocalViewer()
 	for range 3 {
-		if c := cardOver(s.tallyRuns(local)); purposeRowOf(t, c, "all").Runs != "2" {
-			t.Fatalf("card = %+v", c)
+		if r := purposeRowOf(t, cardOver(s.tallyRuns(local)), "all"); r.Runs != "2" || r.Running != "1" {
+			t.Fatalf("all row = %+v", r)
 		}
 	}
 	if s.tally.loads != 4 {
 		t.Errorf("%d records read over three refreshes, want 4: the finished one once, the running one each time", s.tally.loads)
+	}
+
+	if err := running.Close(agent.Result{Backend: "claude", Status: agent.StatusOK, CostUSD: 0.02}); err != nil {
+		t.Fatal(err)
+	}
+	saveRun(t, "claude", "review the diff", &agent.Result{CostUSD: 0.04})
+	for range 2 {
+		if r := purposeRowOf(t, cardOver(s.tallyRuns(local)), "all"); r.Runs != "3" || r.Running != "0" || r.Cost != "$0.0700" {
+			t.Fatalf("all row after the run finished and another was added = %+v", r)
+		}
+	}
+	if s.tally.loads != 6 {
+		t.Errorf("%d records read, want 6: the finished run and the new one once more each", s.tally.loads)
 	}
 }
 
@@ -228,13 +303,23 @@ func TestAPrunedRunDropsOutOfTheCard(t *testing.T) {
 
 func TestTheCardCountsOnlyRunsTheViewerMayRead(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
-	saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.01})
+	root := t.TempDir()
+	shared, private := filepath.Join(root, "shared"), filepath.Join(root, "private")
+	saveRunIn(t, shared, "fix the login bug", agent.Result{CostUSD: 0.01})
+	saveRunIn(t, private, "review the diff", agent.Result{CostUSD: 0.02})
 
+	// The owner fills the cache first; what it keeps must not widen what a visitor sees.
 	s := &server{}
-	if c := cardOver(s.tallyRuns(owner.Viewer{ID: owner.Email("visitor@example.com")})); c != nil {
+	if c := cardOver(s.tallyRuns(owner.LocalViewer())); c == nil || purposeRowOf(t, c, "all").Runs != "2" {
+		t.Errorf("the owner's card = %+v", c)
+	}
+	visitor := owner.Email("visitor@example.com")
+	if c := cardOver(s.tallyRuns(owner.Viewer{ID: visitor})); c != nil {
 		t.Errorf("a viewer who may read no run sees a card: %+v", c)
 	}
-	if c := cardOver(s.tallyRuns(owner.LocalViewer())); c == nil || purposeRowOf(t, c, "all").Runs != "1" {
-		t.Errorf("the owner's card = %+v", c)
+	granted := owner.Viewer{ID: visitor, Grants: []owner.Grant{{Viewer: visitor, Owner: owner.Local(), Project: shared}}}
+	c := cardOver(s.tallyRuns(granted))
+	if c == nil || purposeRowOf(t, c, "all").Runs != "1" || purposeRowOf(t, c, "all").Cost != "$0.0100" || len(c.Repos) != 1 || c.Repos[0].Row.Purpose != "shared" {
+		t.Errorf("a viewer granted one project sees %+v", c)
 	}
 }

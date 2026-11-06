@@ -2,8 +2,8 @@ package watch
 
 import (
 	"os"
-	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -16,19 +16,19 @@ import (
 type runTally struct {
 	mu    sync.Mutex
 	m     map[string]tallied
-	repos map[string]string // run folder to repository name
-	loads int               // records read from disk, for tests
+	loads int // records read from disk, for tests
 }
 
 // tallied is one run's share of the card, with what the read decision needs.
 type tallied struct {
 	owner, dir    string
-	purpose, repo string
+	purpose       string
+	repoKey, repo string // the checkout's path, which tells same-named ones apart, and its name
 	sum           purposeSum
 }
 
-func tallyOf(rec runlog.Record, repo string) tallied {
-	t := tallied{owner: rec.Owner, dir: rec.Task.Dir, purpose: purpose.Resolve(rec.Task.Purpose, rec.Task.Prompt).Category, repo: repo}
+func tallyOf(rec runlog.Record, repoKey, repo string) tallied {
+	t := tallied{owner: rec.Owner, dir: rec.Task.Dir, purpose: purpose.Resolve(rec.Task.Purpose, rec.Task.Prompt).Category, repoKey: repoKey, repo: repo}
 	t.sum.add(rec)
 	return t
 }
@@ -42,9 +42,8 @@ func (s *server) tallyRuns(v owner.Viewer) []tallied {
 	c := &s.tally
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.repos == nil {
-		c.repos = map[string]string{}
-	}
+	// Resolved per refresh only, so a reused worktree path is looked at again.
+	checkouts := map[string][2]string{}
 	kept := make(map[string]tallied, len(entries))
 	var runs []tallied
 	for _, e := range entries {
@@ -58,12 +57,12 @@ func (s *server) tallyRuns(v owner.Viewer) []tallied {
 			if err != nil {
 				continue
 			}
-			repo, known := c.repos[rec.Task.Dir]
+			co, known := checkouts[rec.Task.Dir]
 			if !known {
-				repo = repoName(rec.Task.Dir)
-				c.repos[rec.Task.Dir] = repo
+				co[0], co[1] = checkoutOf(rec.Task.Dir)
+				checkouts[rec.Task.Dir] = co
 			}
-			t = tallyOf(rec, repo)
+			t = tallyOf(rec, co[0], co[1])
 			if !rec.Done {
 				runs = appendReadable(runs, v, t)
 				continue
@@ -83,30 +82,75 @@ func appendReadable(runs []tallied, v owner.Viewer, t tallied) []tallied {
 	return runs
 }
 
-// repoName names the checkout a run folder belongs to; a worktree's .git file points back into it.
-func repoName(dir string) string {
+// checkoutOf finds the checkout holding dir and returns its path and name; a worktree's .git file leads to its main checkout.
+func checkoutOf(dir string) (key, name string) {
 	if dir == "" {
-		return ""
+		return "", ""
 	}
-	gitPath := filepath.Join(dir, ".git")
-	info, err := os.Lstat(gitPath)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
-		return repoOf(dir)
+	clean := filepath.Clean(dir)
+	start := clean
+	if repo := managedRepo(clean); repo != "" {
+		start = repo
+	}
+	for d := start; ; {
+		gitPath := filepath.Join(d, ".git")
+		if info, err := os.Lstat(gitPath); err == nil {
+			found := d
+			if main := worktreeMain(d, gitPath, info); main != "" {
+				found = main
+			}
+			return keyOf(found), strings.TrimSuffix(filepath.Base(found), ".git")
+		}
+		up := filepath.Dir(d)
+		if up == d {
+			break
+		}
+		d = up
+	}
+	return keyOf(start), filepath.Base(start)
+}
+
+// managedRepo is the repository holding an hrn slot or batch worktree, which may be gone.
+func managedRepo(dir string) string {
+	slots := filepath.Dir(dir)
+	if hrn := filepath.Dir(slots); filepath.Base(hrn) == ".hrn" && (filepath.Base(slots) == "slots" || filepath.Base(slots) == "worktrees") {
+		return filepath.Dir(hrn)
+	}
+	return ""
+}
+
+// worktreeMain reads a linked worktree's .git file; submodules and anything unreadable give "".
+func worktreeMain(dir, gitPath string, info os.FileInfo) string {
+	if !info.Mode().IsRegular() || info.Size() > 4096 {
+		return ""
 	}
 	data, err := os.ReadFile(gitPath)
 	if err != nil {
-		return repoOf(dir)
+		return ""
 	}
 	line, _, _ := strings.Cut(string(data), "\n")
 	gitdir, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
-	gitdir = strings.ReplaceAll(strings.TrimSpace(gitdir), `\`, "/")
-	i := strings.LastIndex(gitdir, "/worktrees/")
-	if !ok || i < 0 {
-		return repoOf(dir)
+	if !ok {
+		return ""
 	}
-	checkout := strings.TrimSuffix(strings.TrimSuffix(gitdir[:i], "/.git"), ".git")
-	if name := path.Base(checkout); name != "." && name != "/" && name != ".." {
-		return name
+	g := filepath.FromSlash(strings.ReplaceAll(strings.TrimSpace(gitdir), `\`, "/"))
+	if !filepath.IsAbs(g) {
+		g = filepath.Join(dir, g)
 	}
-	return repoOf(dir)
+	g = filepath.Clean(g)
+	if filepath.Base(filepath.Dir(g)) != "worktrees" {
+		return ""
+	}
+	common := filepath.Dir(filepath.Dir(g))
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return common // a bare repository
+}
+
+func keyOf(path string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
 }

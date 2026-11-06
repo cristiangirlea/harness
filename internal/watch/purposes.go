@@ -110,6 +110,7 @@ func lowerBound(usd int64, estimate bool) string {
 const repoRows = 10
 
 type repoSum struct {
+	key  string
 	name string
 	sum  purposeSum
 	mix  map[string]int // runs per purpose
@@ -127,11 +128,11 @@ func cardOver(runs []tallied) *purposeCard {
 			by[r.purpose] = &purposeSum{}
 		}
 		by[r.purpose].merge(r.sum)
-		if repos[r.repo] == nil {
-			repos[r.repo] = &repoSum{name: r.repo, mix: map[string]int{}}
+		if repos[r.repoKey] == nil {
+			repos[r.repoKey] = &repoSum{key: r.repoKey, name: r.repo, mix: map[string]int{}}
 		}
-		repos[r.repo].sum.merge(r.sum)
-		repos[r.repo].mix[r.purpose]++
+		repos[r.repoKey].sum.merge(r.sum)
+		repos[r.repoKey].mix[r.purpose]++
 		all.merge(r.sum)
 	}
 	card := &purposeCard{Scope: fmt.Sprintf("All %d recorded runs, not only the ones listed below.", len(runs))}
@@ -158,7 +159,10 @@ func repoRowsOf(repos map[string]*repoSum) []repoRow {
 		if list[i].sum.runs != list[j].sum.runs {
 			return list[i].sum.runs > list[j].sum.runs
 		}
-		return list[i].name < list[j].name
+		if list[i].name != list[j].name {
+			return list[i].name < list[j].name
+		}
+		return list[i].key < list[j].key
 	})
 	if len(list) > repoRows+1 {
 		rest := &repoSum{name: fmt.Sprintf("%d other folders", len(list)-repoRows), mix: map[string]int{}}
@@ -170,11 +174,16 @@ func repoRowsOf(repos map[string]*repoSum) []repoRow {
 		}
 		list = append(list[:repoRows], rest)
 	}
+	// Number same-named checkouts rather than show more of their paths to a remote viewer.
+	shown := map[string]int{}
 	rows := make([]repoRow, len(list))
 	for i, r := range list {
 		name := r.name
 		if name == "" {
 			name = "no folder"
+		}
+		if shown[name]++; shown[name] > 1 {
+			name = fmt.Sprintf("%s (%d)", name, shown[name])
 		}
 		rows[i] = repoRow{Row: r.sum.row(name), Mix: mixOf(r.mix)}
 	}

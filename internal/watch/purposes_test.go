@@ -43,7 +43,7 @@ func cardOf(t *testing.T) *purposeCard {
 func purposesOf(runs []runlog.Record) *purposeCard {
 	tallies := make([]tallied, len(runs))
 	for i, rec := range runs {
-		tallies[i] = tallyOf(rec, repoOf(rec.Task.Dir))
+		tallies[i] = tallyOf(rec, rec.Task.Dir, repoOf(rec.Task.Dir))
 	}
 	return cardOver(tallies)
 }
