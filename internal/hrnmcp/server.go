@@ -241,7 +241,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if err := preference.Check(args.Backend); err != nil {
 				return text("run: "+err.Error(), nil, true), nil
 			}
-			b, err := agent.Get(args.Backend)
+			b, err := followup.Backend(args.Backend)
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
@@ -325,7 +325,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 					next.Task.Purpose = purpose.Inherited(task.Purpose, args.Prompt)
 				}
 				nextDefault := resolve.ApplyTurnDefault(&next.Task, next.To)
-				nb, err := agent.Get(next.To)
+				nb, err := followup.Backend(next.To)
 				if err != nil {
 					return mcp.CallResult{}, err
 				}
@@ -693,8 +693,7 @@ func backendsTool() mcp.Tool {
 				if name == def {
 					state += " (default)"
 				}
-				be, _ := agent.Get(name)
-				src, err := be.Detect()
+				src, err := followup.Detect(name)
 				var entry map[string]any
 				if err != nil {
 					fmt.Fprintf(&b, "✗ %-9s %s: %s\n", name, state, err)

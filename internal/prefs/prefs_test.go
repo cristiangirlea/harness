@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -112,5 +113,32 @@ func TestOldPreferencesLoadWithoutWorkMapRepos(t *testing.T) {
 	p, err := Load(home)
 	if err != nil || p.Default() != "codex" || p.WorkMapRepos != nil {
 		t.Fatalf("%+v %v", p, err)
+	}
+}
+
+func TestALocalAPIEndpointMustBeLoopbackOrPrivate(t *testing.T) {
+	home := t.TempDir()
+	for _, url := range []string{"http://127.0.0.1:8081", "http://localhost:8081/", "http://[::1]:8081", "https://192.168.1.20:8443", "http://10.0.0.5", "http://172.16.3.4:8081", "http://[fd00::5]:8081"} {
+		if err := Save(home, Prefs{EnabledNames: []string{"claude", "api"}, LocalAPI: url}); err != nil {
+			t.Errorf("%s refused: %v", url, err)
+		}
+		if p, err := Load(home); err != nil || p.LocalAPI != url {
+			t.Errorf("%s did not round-trip: %+v %v", url, p, err)
+		}
+	}
+	for _, url := range []string{"https://api.anthropic.com", "http://8.8.8.8:8081", "http://inference.lan:8081", "http://0.0.0.0:8081", "http://169.254.1.1",
+		"ftp://127.0.0.1", "127.0.0.1:8081", "http://user:secret@127.0.0.1:8081", "http://127.0.0.1:8081?x=1", "http://127.0.0.1:8081?", "http://127.0.0.1:8081#x", "http://127.0.0.1:8081#", "http://127.0.0.1.example.com"} {
+		err := Save(home, Prefs{LocalAPI: url})
+		if err == nil {
+			t.Errorf("%s accepted as local", url)
+		} else if strings.Contains(err.Error(), "secret") {
+			t.Errorf("the error shows the URL's password: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(home, "backends.json"), []byte(`{"local_api":"`+url+`"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(home); err == nil {
+			t.Errorf("a hand-written %s loaded", url)
+		}
 	}
 }

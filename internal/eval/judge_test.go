@@ -14,6 +14,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -426,5 +427,30 @@ func TestJudgeUsesScratchHomeAndKeepsRealRunRecord(t *testing.T) {
 	}
 	if probe.homes[0] == probe.homes[1] {
 		t.Error("judgements shared a scratch home")
+	}
+}
+
+func TestAnAPIJudgeIsRefusedWithAKeyWhileTheLocalAPIIsOptedIn(t *testing.T) {
+	dir := initRepo(t)
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{LocalAPI: "http://127.0.0.1:1"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-value")
+	spec := testSpec(dir)
+	spec.Judge = &Judge{Backend: "api", Rubric: "out.txt holds the prompt"}
+	var mu sync.Mutex
+	var texts []string
+	_, res, err := Run(context.Background(), spec, func(e batch.Event) {
+		mu.Lock()
+		texts = append(texts, e.Text)
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer batch.Remove(res)
+	all := strings.Join(texts, "\n")
+	if !strings.Contains(all, "judge: local api: not used while ANTHROPIC_API_KEY is set") || strings.Contains(all, "sk-test-value") {
+		t.Fatalf("events:\n%s", all)
 	}
 }

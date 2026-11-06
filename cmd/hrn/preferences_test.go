@@ -236,3 +236,52 @@ func TestBackendsResetKeepsTheWorkMapGitHubSetting(t *testing.T) {
 		t.Fatalf("reset: %+v %v", p, err)
 	}
 }
+
+func TestBackendsSetsShowsAndResetsTheLocalAPI(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	off := false
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{WorkMapGitHub: &off}); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"set", "--only", "claude,codex", "--local-api", "http://127.0.0.1:8081"},
+		{"set", "--only", "claude,api", "--local-api", "https://api.anthropic.com"},
+	} {
+		if _, err := captureStdout(t, func() error { return cmdBackends(args) }); err == nil {
+			t.Errorf("accepted %v", args)
+		}
+	}
+	out, err := captureStdout(t, func() error {
+		return cmdBackends([]string{"set", "--only", "claude,codex,api", "--local-api", "http://127.0.0.1:8081"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "api       enabled: local endpoint http://127.0.0.1:8081, the last carry-on partner") {
+		t.Fatalf("listing:\n%s", out)
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-value")
+	out, err = captureStdout(t, func() error { return cmdBackends(nil) })
+	if err != nil || !strings.Contains(string(out), "not used while ANTHROPIC_API_KEY is set") || strings.Contains(string(out), "sk-test-value") {
+		t.Fatalf("listing with a key:\n%s %v", out, err)
+	}
+	if _, err := captureStdout(t, func() error { return cmdBackends([]string{"set", "--only", "claude,api"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := prefs.Load(runlog.Home()); p.LocalAPI != "" {
+		t.Fatal("set without --local-api kept the endpoint")
+	}
+	if _, err := captureStdout(t, func() error {
+		return cmdBackends([]string{"set", "--only", "claude,api", "--local-api", "http://localhost:8081"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureStdout(t, func() error { return cmdBackends([]string{"reset"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := prefs.Load(runlog.Home()); err != nil || p.LocalAPI != "" || p.WorkMapGitHub == nil {
+		t.Fatalf("reset: %+v %v", p, err)
+	}
+}
