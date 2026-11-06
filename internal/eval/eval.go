@@ -273,9 +273,10 @@ func firstOf(values ...string) string {
 
 // VariantRow aggregates one variant's tasks and repeats.
 type VariantRow struct {
-	Name     string `json:"name"`
-	Attempts int    `json:"attempts"`
-	Passed   int    `json:"passed"`
+	RefusalFlags int    `json:"refusal_flags,omitempty"`
+	Name         string `json:"name"`
+	Attempts     int    `json:"attempts"`
+	Passed       int    `json:"passed"`
 	// DidNotAct excludes idle successes (no tools, second turn or change) from pass rates.
 	DidNotAct        int     `json:"did_not_act,omitempty"`
 	DidNotStart      int     `json:"did_not_start,omitempty"`
@@ -693,6 +694,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 			}
 			for _, tr := range c.results {
 				for _, a := range tr.Attempts {
+					row.RefusalFlags += len(a.Result.RefusalFlags)
 					if cost, known, estimated := a.Result.KnownCost(); known {
 						row.TotalCostUSD += cost
 						row.CostEstimate = row.CostEstimate || estimated

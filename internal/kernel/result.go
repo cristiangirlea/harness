@@ -11,7 +11,17 @@ import (
 // MaxLimitWindow bounds plausible subscription reset times.
 const MaxLimitWindow = 8 * 24 * time.Hour
 
+type RefusalFlag struct {
+	Kind      string `json:"kind"`
+	Rule      string `json:"rule"`
+	Refused   string `json:"refused"`
+	Later     string `json:"later"`
+	RefusedAt int    `json:"refused_call"`
+	LaterAt   int    `json:"later_call"`
+}
+
 type Result struct {
+	RefusalFlags          []RefusalFlag     `json:"refusal_flags,omitempty"`
 	Evidence              []Evidence        `json:"evidence,omitempty"`
 	ChangedFiles          []string          `json:"changed_files,omitempty"`
 	ChangedFilesTruncated bool              `json:"changed_files_truncated,omitempty"`

@@ -265,6 +265,9 @@ func resultOf(res agent.Result) resultView {
 	add("Backend", backend)
 	add("Turns", fmt.Sprint(res.Turns))
 	add("Tool calls", fmt.Sprint(res.ToolCalls))
+	for _, f := range res.RefusalFlags {
+		add("Refusal flag ("+f.Kind+")", mask.Text(fmt.Sprintf("refused %s: %s ... later %s", f.Rule, f.Refused, f.Later)))
+	}
 	if res.ContextTokens > 0 {
 		add("Context", tokens(res.ContextTokens)+" tokens at the end")
 	}

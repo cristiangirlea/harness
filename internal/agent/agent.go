@@ -58,6 +58,7 @@ const (
 )
 
 type Result = kernel.Result
+type RefusalFlag = kernel.RefusalFlag
 
 type Backend = kernel.Backend
 
@@ -137,16 +138,31 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 	task = prepared
 	// After retrieval, so the block is not part of its query.
 	task.Prompt = commitBlock(task) + task.Prompt
-	if state != nil {
-		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
-	}
 	calls := 0
-	res := b.Run(ctx, task, func(e Event) {
+	analyze := task.Durable == nil && b.Name() == "api"
+	var events []Event
+	observe := func(e Event) {
+		if analyze && !e.Partial {
+			switch e.Kind {
+			case EventToolCall:
+				events = append(events, Event{Kind: e.Kind, Tool: e.Tool, Input: append([]byte(nil), e.Input...)})
+			case EventToolResult:
+				stored := Event{Kind: e.Kind, Tool: e.Tool, IsError: e.IsError}
+				if e.IsError {
+					stored.Text = e.Text
+				}
+				events = append(events, stored)
+			}
+		}
 		if e.Kind == EventToolCall && !e.Partial {
 			calls++
 		}
 		emit(e)
-	})
+	}
+	if state != nil {
+		observe(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
+	}
+	res := b.Run(ctx, task, observe)
 	res.Retrieval = state
 	if state != nil && state.Packet != nil {
 		for _, entry := range state.Packet.Entries {
@@ -155,6 +171,11 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 	}
 	if task.Durable == nil {
 		res.ToolCalls = calls
+	}
+	if analyze {
+		res.RefusalFlags = RefusalFlags(events)
+	} else {
+		res.RefusalFlags = nil
 	}
 	return res
 }
