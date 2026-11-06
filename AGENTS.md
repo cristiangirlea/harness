@@ -56,6 +56,7 @@ Do not attach self-hosted runners or route public contributions to private machi
 
 ## Working rules
 
+- A PR description follows `.github/PULL_REQUEST_TEMPLATE.md`; a closing fix that changes Go code needs an added or changed test or the `no-repro` label.
 - **A branch delivers what it is for, nothing else**: one issue or PLAN.md item, a short name
   (`fix-batch-rm-deregistered`), one PR whose description lists the files it touches and why. It
   finishes everything its issue asks, with no refactors, renames or extras beyond it. Larger work
@@ -99,6 +100,9 @@ non-zero exit and an error object; be safe to re-run; call other scripts, never 
 - `scripts/comment-check.sh`: Check Go comments against the repository rule and baseline.
 - `scripts/comment-check/main.go`: Check Go comments against the repository rule and baseline.
 - `scripts/comment-check/main_test.go`: Check comment rules, baseline comparison and pruning in fixtures.
+- `scripts/fix-test-check.sh`: Require a changed test for closing fixes that change Go code.
+- `scripts/fix-test-check/main.go`: Require a changed test for closing fixes that change Go code.
+- `scripts/fix-test-check/main_test.go`: Check closing fixes, test patches, exemptions and input errors.
 - `scripts/privacy-check.sh`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main.go`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main_test.go`: Check the personal folder, local path and narration rules on fixture files.
