@@ -427,6 +427,7 @@ type testFailure struct {
 	indices  []int
 	messages []string
 	failed   bool
+	finished bool
 }
 
 // Preserve paused diagnostics; reject ambiguous ownership when tests overlap.
@@ -494,6 +495,9 @@ func testFailuresPart(lines []string) (map[string]*testFailure, bool) {
 			if tests[name] == nil {
 				tests[name] = &testFailure{}
 			}
+			if tests[name].failed {
+				return nil, false // a marker after a failure cannot identify one test
+			}
 			tests[name].indices = append(tests[name].indices, i)
 			parallel = parallel || m[1] == "PAUSE" || m[1] == "CONT"
 			if m[1] == "RUN" {
@@ -528,13 +532,14 @@ func testFailuresPart(lines []string) (map[string]*testFailure, bool) {
 			if tests[name] == nil {
 				tests[name] = &testFailure{}
 			}
+			if tests[name].finished && (tests[name].failed || m[1] == "FAIL") {
+				return nil, false // a repeated name with a failure cannot identify one test
+			}
+			tests[name].finished = true
 			tests[name].indices = append(tests[name].indices, i)
 			delete(running, name)
 			current = ""
 			if m[1] == "FAIL" {
-				if tests[name].failed {
-					return nil, false // repeated names cannot identify one test
-				}
 				tests[name].failed, current = true, name
 				// Leading diagnostics are attributable only when exactly one unmarked test fails.
 				for _, j := range pending {
