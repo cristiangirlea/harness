@@ -72,18 +72,11 @@ func readFile() Tool {
 			if !info.Mode().IsRegular() {
 				return "", fmt.Errorf("%q is not a regular file", ws.Rel(p))
 			}
-			f, _, err := ws.openInside(p, os.O_RDONLY|readOpenFlags, 0)
+			f, _, err := ws.openInside(p, os.O_RDONLY, 0)
 			if err != nil {
 				return "", err
 			}
 			defer f.Close()
-			info, err = f.Stat()
-			if err != nil {
-				return "", err
-			}
-			if !info.Mode().IsRegular() {
-				return "", fmt.Errorf("%q is not a regular file", ws.Rel(p))
-			}
 			if args.Offset < 1 {
 				args.Offset = 1
 			}
