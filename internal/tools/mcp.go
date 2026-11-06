@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,8 @@ func FromMCP(server string, c MCPCaller) []Tool {
 		mcpName := info.Name
 		out = append(out, Tool{
 			Name:        MCPName(server, mcpName),
+			mcpServer:   server,
+			mcpTool:     mcpName,
 			Description: desc,
 			Schema:      schema,
 			Effect:      effect,
@@ -70,6 +73,57 @@ func FromMCP(server string, c MCPCaller) []Tool {
 		})
 	}
 	return out
+}
+
+// MCPRename preserves both identities so collisions can be explained to the user.
+type MCPRename struct {
+	Server, Tool                   string
+	CollidingServer, CollidingTool string
+	OldName, NewName               string
+}
+
+// UniqueMCPNames reserves original names so suffixes cannot displace later tools.
+func UniqueMCPNames(ts []Tool) (out []Tool, renamed []MCPRename) {
+	out = append([]Tool(nil), ts...)
+	owners := make(map[string]int, len(ts))
+	for i, t := range ts {
+		if _, exists := owners[t.Name]; !exists {
+			owners[t.Name] = i
+		}
+	}
+	for i, t := range ts {
+		owner := owners[t.Name]
+		if owner == i {
+			continue
+		}
+		identity := t.mcpServer + "\x00" + t.mcpTool
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
+		for attempt, width := 0, 8; ; width++ {
+			if width > len(digest) {
+				// Repeated identical entries can exhaust every prefix of the same hash.
+				attempt++
+				digest = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d", identity, attempt))))
+				width = 8
+			}
+			base := t.Name
+			if len(base) > 127-width {
+				base = base[:127-width]
+			}
+			name := base + "_" + digest[:width]
+			if _, exists := owners[name]; exists {
+				continue
+			}
+			owners[name] = i
+			out[i].Name = name
+			renamed = append(renamed, MCPRename{
+				Server: t.mcpServer, Tool: t.mcpTool,
+				CollidingServer: ts[owner].mcpServer, CollidingTool: ts[owner].mcpTool,
+				OldName: t.Name, NewName: name,
+			})
+			break
+		}
+	}
+	return out, renamed
 }
 
 // MCPName obeys API limits: [A-Za-z0-9_-], 128 characters.

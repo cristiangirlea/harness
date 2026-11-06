@@ -63,5 +63,11 @@ func startMCP(ctx context.Context, task Task, root string, emit func(Event)) ([]
 		clients = append(clients, r.client)
 		out = append(out, ts...)
 	}
+	out, renamed := tools.UniqueMCPNames(out)
+	for _, r := range renamed {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf(
+			"mcp tool name collision: server %q tool %q collided with server %q tool %q at %q; renamed to %q",
+			r.Server, r.Tool, r.CollidingServer, r.CollidingTool, r.OldName, r.NewName)})
+	}
 	return clients, out
 }

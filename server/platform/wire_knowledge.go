@@ -13,7 +13,7 @@ const KnowledgeMaxPacketBytes = 8 * 1024
 const KnowledgeMaxEntryKeyBytes = 128
 const KnowledgeMaxEntryIdentifiers = 32
 const KnowledgeMaxIdentifierBytes = 256
-const KnowledgeRankingVersion = "simple-or-exact-v3"
+const KnowledgeRankingVersion = "simple-rare-floor-v4"
 
 type KnowledgeScope struct {
 	TenantID  string `json:"tenant_id"`

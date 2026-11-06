@@ -115,6 +115,40 @@ func sameDir(a, b string) bool {
 	return os.SameFile(ai, bi)
 }
 
+func TestShowOversizedResultUsesOwnHint(t *testing.T) {
+	s := connect(t, t.TempDir())
+	w, err := runlog.Create("stub", agent.Task{Prompt: "large replay"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventText, Text: strings.Repeat("x", 150<<10)})
+	if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	got := s.call(t, "show", `{"run_id":"`+w.ID()+`"}`)
+	want := `Pass "events": false, or run "hrn show <run id>" in a terminal for the full replay.`
+	sc, ok := got.StructuredContent.(map[string]any)
+	if !got.IsError || !strings.HasPrefix(got.Text(), "result_too_large:") || !strings.Contains(got.Text(), want) || !ok || sc["hint"] != want {
+		t.Fatalf("oversized show result = %+v", got)
+	}
+	if small := s.call(t, "show", `{"run_id":"`+w.ID()+`","events":false}`); small.IsError {
+		t.Fatalf("show without events: %s", small.Text())
+	}
+}
+
+func TestRunAndBatchResultHints(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if got := runTool(t.TempDir(), false).TooLarge; got != `The run finished; read it with show (events: false) or "hrn show <run id>".` {
+		t.Errorf("run hint = %q", got)
+	}
+	if got := batchTool(t.TempDir(), false).TooLarge; got != "The batch finished; read it with batch_show." {
+		t.Errorf("batch hint = %q", got)
+	}
+	if got := remoteEventsTool().TooLarge; !strings.Contains(got, "hrn remote events") || !strings.Contains(got, "--after") {
+		t.Errorf("remote_events hint = %q", got)
+	}
+}
+
 func (s *session) call(t *testing.T, name, args string) mcp.CallResult {
 	t.Helper()
 	res, err := s.cl.CallTool(context.Background(), name, json.RawMessage(args))

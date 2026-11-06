@@ -287,6 +287,62 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #791, knowledge search ranking `simple-rare-floor-v4` (PR #847). On versions of 20 or
+  more entries, query words found in more than 25% of entries are dropped, each remaining match
+  scores ln(n/df)/ln(n) (doubled in the key), and a total below 1.31 returns no context
+  (`empty_reason: below_threshold`); smaller versions keep v3. Only identifier-shaped query words
+  (a space, `_ . / : \ -`, a digit or an inner capital) match identifiers exactly and skip the floor,
+  because the markdown builder stores plain words such as `a` and `error` as identifiers (#841).
+  On #790's set: hit rate 0.31 to 0.72, MRR 0.29 to 0.69, no-answer queries with context 6 of 6
+  to 2 of 6. One hit is lost, accepted by the maintainer: `prune-old-runs`, whose answer shares
+  no rare word with its question, the different-wording case increment 6 is for. Versions pinned
+  under v3 now search with v4 (#812).
+- 2026-11-06: #827, `hrn retrieval samples` and `hrn retrieval corpus-digest` (PR #843). Samples
+  read each eval as it was scored, check every cell against its batch records, map `r<n>` to
+  `OFFSET + n - 1`, and record known-zero online usage for text search. The digest encodes rows by
+  hand to match Python's `json.dumps(..., ensure_ascii=False)`, since Go escapes U+2028 and
+  U+2029, and refuses unpaired surrogate escapes.
+- 2026-11-06: #790, a labelled query set for knowledge search (PR #835): 97 entries built from 11
+  guides at `014b929` and 35 queries, 6 of them with no answer in the corpus.
+  `TestKnowledgeLabelledQueries` records hit rate, MRR and no-answer context per ranking version
+  and fails on a lost or drifted hit unless accepted. Other section limits than #780's 100/800 were
+  tried: 400 and 600 words exceed the 100-entry import cap for these guides, and 1200 changed one
+  hit, so the defaults stay.
+- 2026-11-06: increment 4 of the retrieval plan, the pilot plan `docs/retrieval-pilot.md` (PR #828).
+  Its free step 0 found #825 and #826 and measured #791. Rerun on v4 (#847): the answer's file
+  reaches the packet for 6 of 7 answerable tasks (v3: 3) and the answer text for 5 (v3: 1), but
+  none of the 3 no-answer tasks gets an empty packet, so by the plan's rule it is a no-go; the 60
+  codex runs wait for the maintainer. The held-out task file stays outside the repository until
+  the report.
+- 2026-11-06: #808, a merge confirmed from hrn watch now finishes even if the page disconnects
+  (`context.WithoutCancel`, ten minutes) and its receipt is verified, not just read (PR #846).
+  HEAD is recorded before merging, and the merge must leave `HEAD^1` at it (and `HEAD^2` at the
+  task tip for no-ff). A merge that landed but can't be proven is `merged, commit unknown` and the
+  tree is never reset; a merge command that errors after committing is checked the same way
+  before any cleanup. `hrn batch merge`, MCP `batch_merge` and watch share one O_EXCL lease,
+  `<git common dir>/hrn-merge.lock`, so merges into worktrees of one repository take turns. The
+  page shows the server's text for refusals and "outcome unknown" only for 5xx or a lost reply.
+- 2026-11-06: #809, MCP results are capped at 128 KiB of encoded JSON, structured part included
+  (PR #837). Over the cap a tool answers `result_too_large` with size, limit and a hint, and keeps
+  the result's top-level `*_id` strings so a finished `run` or `batch` is still findable; `show`,
+  `run`, `batch` and `remote_events` have their own hints. A panic answers `<method>: internal
+  error` and the stack goes to stderr. `tools.Truncate` cuts on rune boundaries, moving at most
+  three bytes.
+- 2026-11-06: #810, `internal/archtest` fails when a `Fuzz*` target is not run by both CI and the
+  check skill, or a name there matches no target (Go's `-fuzz` passes on no match), and when a
+  workflow action is not pinned to a full commit with a `# vX.Y.Z` comment (PR #834). The pins are
+  the commits the old tags pointed to. Whether a scheduled `govulncheck` may fetch the tool is
+  left to a maintainer in #838.
+- 2026-11-06: #811, the Backends card sends the SHA-256 of the `backends.json` bytes it rendered
+  (`none` when missing) and a save with another digest gets 412 and writes nothing (PR #842).
+  `prefs.Raw` reads through the Windows rename retry. A CLI write landing between the check and
+  the save is still possible; closing it needs a lock the CLI also takes.
+- 2026-11-06: #839, a public watch offers a sign-in link (PR #844). A page visit refused by the
+  token check gets a 403 page linking to `/login` that loads nothing else; host and origin
+  refusals and non-page requests keep the plain text. `GET /login` sends a verified visitor to
+  `/`, so an Access application guarding only `/login` works end to end. This replaces what an
+  unmerged `--public-shell` build did on the public host; that build also had `--admin-email`,
+  which main calls `--owner-email`.
 - 2026-11-06: #823, a run records `repo` and `branch` at start (PR #830): the `origin` remote, or
   the only one, as host/path with no credentials or port, read in any work tree, even before a
   first commit. The watch card groups by it, falls back to a checkout's remote for older records,

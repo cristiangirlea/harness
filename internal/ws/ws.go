@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -312,6 +313,17 @@ func commitOf(ctx context.Context, dir, ref string) (string, error) {
 }
 
 var beforeTakeoverLock func()
+
+// LockFile shares process ownership and stale takeover with workspace leases.
+func LockFile(path, purpose string) (release func(), busy string, err error) {
+	l := Lease{Holder: purpose, PID: os.Getpid(), Taken: time.Now().UTC()}
+	l.Start, _ = startID(l.PID)
+	busy, _, _, err = acquire(path, l)
+	if err != nil || busy != "" {
+		return nil, busy, err
+	}
+	return sync.OnceFunc(func() { _ = removeOwn(path) }), "", nil
+}
 
 // O_EXCL prevents shared ownership; replace only proven stale leases under the takeover lock.
 // changed distinguishes handover contention from unreadable leases.
