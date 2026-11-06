@@ -376,6 +376,7 @@ re-sent every turn. Three ceilings, all optional and all off by default.
 | `--timeout 20m` | `timeout` | Ends the run when the deadline passes, on every backend. The result is `timeout`, not `canceled`, so a slow run is distinguishable from an interrupted one. |
 | `--max-cost 2.50` | `max_cost_usd` | The api loop stops before a turn that would take its estimated cost past the limit. The result is `budget`, and the cost so far is still recorded. |
 | `--task-budget 64000` | `task_budget` | Tells the api backend's model how many tokens it has for the whole task, so it paces itself and finishes rather than being cut off. Minimum 20000, checked before the run starts. |
+| `--mask-tool-results N` | `mask_tool_results` | Opt into masking older tool results in outgoing api requests, in steps of N, keeping the newest N to 2N-1 whole once masking starts. Replaces server clearing; stored history stays whole. Default 0 (off); negative values are rejected. See [backends](backends.md#context-management). |
 
 The CLI backends cannot enforce a cost or token ceiling, so they say so once and
 carry on; the timeout applies to them all the same. The cost ceiling is checked against

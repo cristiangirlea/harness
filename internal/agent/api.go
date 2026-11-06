@@ -265,7 +265,10 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		req.OutputConfig["task_budget"] = block{"type": "tokens", "total": task.TaskBudget}
 		req.betas = append(req.betas, betaTaskBudget)
 	}
-	if !task.NoContextEdits {
+	if task.MaskToolResults > 0 {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("mask_tool_results: the newest %d tool results stay whole; older ones are masked in the request", task.MaskToolResults)})
+	}
+	if !task.NoContextEdits && task.MaskToolResults <= 0 {
 		// Server clearing cuts billed context without rewriting client history.
 		req.ContextManagement = block{"edits": []block{{"type": "clear_tool_uses_20250919"}}}
 		req.betas = append(req.betas, betaContextEdits)
@@ -340,11 +343,22 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		return nil, false, nil
 	}
+	outgoing := func(req apiRequest) apiRequest {
+		if task.MaskToolResults > 0 {
+			req.Messages = maskToolResults(req.Messages, task.MaskToolResults, func(name string, input json.RawMessage) string {
+				if t, ok := byName[name]; ok && t.Summary != nil {
+					return t.Summary(input)
+				}
+				return name
+			})
+		}
+		return req
+	}
 	streamPhase := func(turn int, msg *apiResponse, restoredResponse bool) ([]block, string, *apiResponse, *Result) {
 		var err error
 		if !restoredResponse {
 			for {
-				msg, err = client.stream(ctx, req, onDelta, onBlock)
+				msg, err = client.stream(ctx, outgoing(req), onDelta, onBlock)
 				retry := err != nil && dropContextEdits(&req, err)
 				if err != nil && durable != nil {
 					var apiErr *apiError

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -698,6 +699,282 @@ func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
 			t.Errorf("a priced model should not warn: %q", text)
 		}
 	}
+}
+
+func TestAPIMasksOnlyOutgoingResultsAndResumesTheSameRequestPrefix(t *testing.T) {
+	for _, keep := range []int{0, 2} {
+		t.Run(fmt.Sprintf("keep=%d", keep), func(t *testing.T) {
+			var turns [][]string
+			for i := range 6 {
+				name := "inspect"
+				if i%2 != 0 {
+					name = "plain"
+				}
+				turns = append(turns, toolTurn(fmt.Sprintf("call-%d", i), name, fmt.Sprintf(`{"index":%d}`, i)))
+			}
+			fake := &fakeAPI{turns: append(turns, textTurn("done"))}
+			srv := httptest.NewServer(fake)
+			defer srv.Close()
+			b := NewAPIBackend()
+			b.BaseURL, b.APIKey = srv.URL, "test"
+			body := strings.Repeat("full result\n", 50)
+			run := func(context.Context, *tools.Workspace, json.RawMessage) (string, error) { return body, nil }
+			b.Tools = []tools.Tool{
+				{Name: "inspect", Effect: tools.EffectRead, Run: run, Summary: func(input json.RawMessage) string { return "inspect " + string(input) }},
+				{Name: "plain", Effect: tools.EffectRead, Run: run},
+			}
+			task := Task{Prompt: "inspect", Dir: t.TempDir(), RunDir: t.TempDir(), Options: Options{Mode: ModeAsk, MaskToolResults: keep}}
+			var events []Event
+			res := b.Run(t.Context(), task, func(e Event) { events = append(events, e) })
+			if res.Status != StatusOK || len(fake.requests) != 7 {
+				t.Fatalf("result=%+v requests=%d", res, len(fake.requests))
+			}
+			for i, req := range fake.requests {
+				_, clearing := req["context_management"]
+				beta := strings.Contains(fake.headers[i].Get("anthropic-beta"), betaContextEdits)
+				if clearing != (keep == 0) || beta != clearing {
+					t.Fatalf("request %d clearing=%v beta=%v", i, clearing, beta)
+				}
+				msgs := capturedMessages(t, req)
+				wantMasked := 0
+				if keep > 0 {
+					wantMasked = []int{0, 0, 0, 0, 2, 2, 4}[i]
+				}
+				uses, results, masked := map[string]bool{}, map[string]bool{}, 0
+				for _, msg := range msgs {
+					for _, bl := range msg.Content {
+						switch bl["type"] {
+						case "tool_use":
+							uses[str(bl["id"])] = true
+						case "tool_result":
+							id := str(bl["tool_use_id"])
+							results[id] = true
+							if strings.HasPrefix(str(bl["content"]), "[masked by hrn:") {
+								masked++
+								var index int
+								if _, err := fmt.Sscanf(id, "call-%d", &index); err != nil {
+									t.Fatal(err)
+								}
+								summary := "plain"
+								if index%2 == 0 {
+									summary = fmt.Sprintf(`inspect {"index":%d}`, index)
+								}
+								want := fmt.Sprintf("[masked by hrn: %s, %d bytes; run the tool again to see it]", summary, len(body))
+								if bl["content"] != want {
+									t.Fatalf("note=%q want=%q", bl["content"], want)
+								}
+							} else if bl["content"] != body {
+								t.Fatal("whole result changed")
+							}
+						}
+					}
+				}
+				if masked != wantMasked || len(results) != i || !reflect.DeepEqual(uses, results) {
+					t.Fatalf("request=%d masked=%d want=%d uses=%v results=%v", i, masked, wantMasked, uses, results)
+				}
+			}
+			infoCount, resultCount := 0, 0
+			for _, e := range events {
+				if e.Kind == EventInfo && strings.HasPrefix(e.Text, "mask_tool_results:") {
+					infoCount++
+					if e.Text != "mask_tool_results: the newest 2 tool results stay whole; older ones are masked in the request" {
+						t.Fatalf("info = %q", e.Text)
+					}
+				}
+				if e.Kind == EventToolResult {
+					resultCount++
+					if e.Text != body {
+						t.Fatal("event result changed")
+					}
+				}
+			}
+			if (keep > 0 && infoCount != 1) || (keep == 0 && infoCount != 0) || resultCount != 6 {
+				t.Fatalf("info=%d results=%d", infoCount, resultCount)
+			}
+			data, err := os.ReadFile(filepath.Join(task.RunDir, "messages.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var conv Conversation
+			if err := json.Unmarshal(data, &conv); err != nil {
+				t.Fatal(err)
+			}
+			stored := 0
+			for _, msg := range conv.Messages {
+				for _, bl := range msg.Content {
+					if bl["type"] == "tool_result" {
+						stored++
+						if bl["content"] != body {
+							t.Fatal("stored result changed")
+						}
+					}
+				}
+			}
+			if stored != 6 {
+				t.Fatalf("stored %d results", stored)
+			}
+			task.Resume, task.Prompt = &conv, "continue"
+			fake.turns = append(fake.turns, textTurn("resumed"))
+			res = b.Run(t.Context(), task, func(Event) {})
+			if res.Status != StatusOK {
+				t.Fatalf("resume: %+v", res)
+			}
+			before := capturedMessages(t, fake.requests[6])
+			after := capturedMessages(t, fake.requests[7])
+			if len(after) < len(before) || !reflect.DeepEqual(before, after[:len(before)]) {
+				t.Fatal("resumed request prefix changed")
+			}
+		})
+	}
+}
+
+func TestAPIMaskingWithContextEditsDisabledStillEmitsOneInfoEvent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "result.txt"), []byte(strings.Repeat("x", 300)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var turns [][]string
+	for i := range 4 {
+		turns = append(turns, toolTurn(fmt.Sprintf("call-%d", i), "read_file", `{"path":"result.txt"}`))
+	}
+	res, events, fake := runFake(t, append(turns, textTurn("done")), Task{Prompt: "inspect", Dir: dir,
+		Options: Options{MaskToolResults: 2, NoContextEdits: true}})
+	if res.Status != StatusOK || len(fake.requests) != 5 {
+		t.Fatalf("result=%+v requests=%d", res, len(fake.requests))
+	}
+	for i, req := range fake.requests {
+		if _, present := req["context_management"]; present || strings.Contains(fake.headers[i].Get("anthropic-beta"), betaContextEdits) {
+			t.Fatalf("request %d carries server clearing", i)
+		}
+	}
+	if got := capturedMessages(t, fake.requests[4])[2].Content[0]["content"].(string); !strings.HasPrefix(got, "[masked by hrn:") {
+		t.Fatalf("old result was not masked: %q", got)
+	}
+	infos := 0
+	for _, e := range events {
+		if e.Kind == EventInfo && e.Text == "mask_tool_results: the newest 2 tool results stay whole; older ones are masked in the request" {
+			infos++
+		}
+	}
+	if infos != 1 {
+		t.Fatalf("masking info events=%d, want 1", infos)
+	}
+}
+
+func TestAPIDurableRecoverySendsTheSameMaskedMessagesAsAnUninterruptedRun(t *testing.T) {
+	store := &checkpointStore{}
+	b, task, fake, _ := durableFixture(t, store)
+	b.Tools[0].Run = func(context.Context, *tools.Workspace, json.RawMessage) (string, error) {
+		return strings.Repeat("x", 300), nil
+	}
+	fake.turns = nil
+	for i := range 6 {
+		fake.turns = append(fake.turns, toolTurn(fmt.Sprintf("call-%d", i), "effect", `{}`))
+	}
+	fake.turns = append(fake.turns, textTurn("done"))
+	task.MaskToolResults, task.MaxTurns = 2, 7
+	if res := b.Run(t.Context(), task, func(Event) {}); res.Status != StatusOK {
+		t.Fatalf("uninterrupted run: %+v", res)
+	}
+	for _, nextTurn := range []int{5, 7} {
+		t.Run(fmt.Sprintf("next-turn-%d", nextTurn), func(t *testing.T) {
+			checkpointIndex := -1
+			for i, cp := range store.records {
+				if cp.Boundary == "turn_complete" && cp.NextTurn == nextTurn {
+					checkpointIndex = i
+					break
+				}
+			}
+			if checkpointIndex < 0 {
+				t.Fatal("mid-run checkpoint was not saved")
+			}
+			cp := store.records[checkpointIndex]
+			recovered := &checkpointStore{records: append([]APICheckpoint(nil), store.records[:checkpointIndex+1]...)}
+			task.Durable = &DurableExecution{Resume: &cp, Save: recovered.save}
+			requestIndex := len(fake.requests)
+			fake.turns = append(fake.turns, textTurn("resumed"))
+			if res := b.Run(t.Context(), task, func(Event) {}); res.Status != StatusOK {
+				t.Fatalf("recovered run: %+v", res)
+			}
+			if len(fake.requests) != requestIndex+1 {
+				t.Fatalf("recovery sent %d requests, want 1", len(fake.requests)-requestIndex)
+			}
+			want := capturedMessages(t, fake.requests[nextTurn-1])
+			got := capturedMessages(t, fake.requests[requestIndex])
+			if !reflect.DeepEqual(got, want) {
+				t.Fatal("checkpoint recovery changed the next request's messages")
+			}
+			masked := 0
+			for _, msg := range got {
+				for _, bl := range msg.Content {
+					if bl["type"] == "tool_result" && strings.HasPrefix(str(bl["content"]), "[masked by hrn:") {
+						masked++
+					}
+				}
+			}
+			if masked != nextTurn-3 {
+				t.Fatalf("masked results=%d, want %d", masked, nextTurn-3)
+			}
+		})
+	}
+}
+
+func TestAPIMaskingKeepsDurableCheckpointResultsWhole(t *testing.T) {
+	store := &checkpointStore{}
+	b, task, fake, _ := durableFixture(t, store)
+	body := strings.Repeat("x", 300)
+	b.Tools[0].Run = func(context.Context, *tools.Workspace, json.RawMessage) (string, error) { return body, nil }
+	fake.turns = nil
+	for i := range 4 {
+		fake.turns = append(fake.turns, toolTurn(fmt.Sprintf("call-%d", i), "effect", `{}`))
+	}
+	fake.turns = append(fake.turns, textTurn("done"))
+	task.MaskToolResults, task.MaxTurns = 2, 5
+	res := b.Run(t.Context(), task, func(Event) {})
+	if res.Status != StatusOK || len(store.records) == 0 {
+		t.Fatalf("result=%+v checkpoints=%d", res, len(store.records))
+	}
+	if !strings.HasPrefix(capturedMessages(t, fake.requests[4])[2].Content[0]["content"].(string), "[masked by hrn:") {
+		t.Fatal("request was not masked")
+	}
+	stored := 0
+	for _, cp := range store.records {
+		var req apiRequest
+		if err := json.Unmarshal(cp.Request, &req); err != nil {
+			t.Fatal(err)
+		}
+		for _, msg := range req.Messages {
+			for _, bl := range msg.Content {
+				if bl["type"] == "tool_result" {
+					stored++
+					if bl["content"] != body {
+						t.Fatalf("checkpoint %s changed history", cp.Boundary)
+					}
+				}
+			}
+		}
+		for _, bl := range cp.ToolResults {
+			if bl["content"] != body {
+				t.Fatal("checkpoint tool result changed")
+			}
+		}
+	}
+	if stored == 0 {
+		t.Fatal("checkpoints held no tool results")
+	}
+}
+
+func capturedMessages(t *testing.T, req map[string]any) []apiMessage {
+	t.Helper()
+	data, err := json.Marshal(req["messages"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msgs []apiMessage
+	if err := json.Unmarshal(data, &msgs); err != nil {
+		t.Fatal(err)
+	}
+	return msgs
 }
 
 func TestAPISendsContextManagementByDefault(t *testing.T) {

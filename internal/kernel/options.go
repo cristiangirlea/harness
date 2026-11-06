@@ -30,7 +30,8 @@ type Options struct {
 	NoInstructions bool `json:"no_instructions,omitempty" desc:"Skip the project instruction files HRN.md, AGENTS.md and CLAUDE.md (api backend)."`
 
 	// NoContextEdits disables server-side clearing.
-	NoContextEdits bool `json:"no_context_edits,omitempty" desc:"Keep every tool result in the request instead of letting the server clear old ones (api backend)."`
+	NoContextEdits  bool `json:"no_context_edits,omitempty" desc:"Keep every tool result in the request instead of letting the server clear old ones (api backend)."`
+	MaskToolResults int  `json:"mask_tool_results,omitempty" flag:"mask-tool-results" desc:"Keep the newest N tool results whole and replace older ones in the request with a one-line note, instead of server-side clearing (api backend; default 0, off)."`
 
 	// Lean limits MCP servers and Claude skills; nil enables it.
 	Lean *bool `json:"lean,omitempty" desc:"Load only this run's --mcp servers, and on claude no skills (default on; claude and codex backends). false loads every MCP server, plugin and skill your CLI is set up with."`
@@ -76,6 +77,9 @@ func (o Options) IsLean() bool { return o.Lean == nil || *o.Lean }
 
 // ValidateShape rejects unsupported options; empty mode permits caller defaults.
 func (o Options) ValidateShape() error {
+	if o.MaskToolResults < 0 {
+		return fmt.Errorf("mask_tool_results %d is negative", o.MaskToolResults)
+	}
 	if o.Retrieval != "" && o.Retrieval != "off" && o.Retrieval != "optional" && o.Retrieval != "required" {
 		return fmt.Errorf("invalid retrieval mode")
 	}

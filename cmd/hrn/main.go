@@ -133,6 +133,9 @@ Run flags:
                        skip the project instruction files (api backend)
       --no-context-edits
                        keep every tool result in the request instead of letting the server clear old ones (api backend)
+      --mask-tool-results N
+                       keep the newest N tool results whole and mask older ones in the request, instead of
+                       server-side clearing (api backend; 0, the default, is off)
       --lean=false     load every MCP server, plugin and skill your CLI is set up with; by default
                        claude and codex start with only the run's --mcp servers, and claude without skills
       --skills         keep claude's skills and slash commands in a lean run (claude backend)
