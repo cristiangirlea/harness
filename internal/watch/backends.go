@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/quota"
@@ -75,7 +76,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		old = string(data)
 	}
 
-	p.WorkMapRepos, p.WorkMapGitHub, p.WorkMapSessions = had.WorkMapRepos, had.WorkMapGitHub, had.WorkMapSessions
+	p.WorkMapRepos, p.WorkMapGitHub, p.WorkMapSessions, p.LocalAPI = had.WorkMapRepos, had.WorkMapGitHub, had.WorkMapSessions, had.LocalAPI
 
 	// Preserve fallback preference order despite the card's alphabetical display.
 	if len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {
@@ -158,8 +159,7 @@ func (s *server) backendsCard(w http.ResponseWriter, r *http.Request) backendCar
 	}
 	now := time.Now()
 	for _, name := range agent.Names() {
-		b, _ := agent.Get(name)
-		_, err := b.Detect()
+		_, err := followup.Detect(name)
 		row := backendRow{Name: name, Installed: err == nil, EnabledKnown: c.Problem == "", Enabled: c.Problem == "" && p.Enabled(name), Default: p.Default() == name}
 		row.Limit = quota.Limit(limits.Until(name, now), now)
 		row.Quota = quota.For(name, now).Parts(now)

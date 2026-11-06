@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -406,5 +410,102 @@ func TestAContinuationMovedByALimitRecordsWhy(t *testing.T) {
 	rec, _ := runlog.Load(id)
 	if rec.Backend != "claude" || !strings.HasPrefix(rec.RouteNote, "continues run "+first.ID()+"; ") {
 		t.Fatalf("ran on %s with route note %q: a continuation moved by a limit must say so", rec.Backend, rec.RouteNote)
+	}
+}
+
+func TestRunToolCarriesOnOnTheLocalAPIWhenEveryPlanIsLimited(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	agent.Register(scripted{"claude", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
+	}})
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"local\",\"usage\":{\"input_tokens\":5}}}\n\n"+
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"local answer\"}}\n\n"+
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n"+
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "claude", "api"}, LocalAPI: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	_ = followup.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	// The first call carries a limited codex run on; the second starts on api, codex's limit remembered.
+	for i, want := range []string{"codex", ""} {
+		res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto"}`)
+		if res.IsError {
+			t.Fatalf("call %d: %s", i, res.Text())
+		}
+		rec, err := runlog.Load(res.StructuredContent.(map[string]any)["run_id"].(string))
+		if err != nil || rec.Backend != "api" || rec.Result.Final != "local answer" {
+			t.Fatalf("call %d: %+v %v", i, rec.Result, err)
+		}
+		limited, _ := res.StructuredContent.(map[string]any)["limited_run_id"].(string)
+		if (want == "") != (limited == "") {
+			t.Errorf("call %d: limited_run_id %q", i, limited)
+		}
+	}
+	if n := hits.Load(); n != 2 {
+		t.Fatalf("local requests %d, want 2", n)
+	}
+}
+
+func TestBackendsToolShowsAUsableLocalAPI(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "api"}, LocalAPI: "http://127.0.0.1:8081"}); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "backends", `{}`)
+	var api map[string]any
+	for _, e := range res.StructuredContent.(map[string]any)["backends"].([]any) {
+		if m := e.(map[string]any); m["name"] == "api" {
+			api = m
+		}
+	}
+	if api["available"] != true || !strings.Contains(fmt.Sprint(api["detail"]), "local endpoint http://127.0.0.1:8081") {
+		t.Fatalf("api entry %v", api)
+	}
+}
+
+func TestRunToolRefusesToContinueALocalRunOnAKey(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	agent.Register(scripted{"claude", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
+	}})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"local\",\"usage\":{\"input_tokens\":5}}}\n\n"+
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"local answer\"}}\n\n"+
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n"+
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "claude", "api"}, LocalAPI: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	_ = followup.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto"}`)
+	id, _ := res.StructuredContent.(map[string]any)["run_id"].(string)
+	if rec, err := runlog.Load(id); err != nil || rec.Backend != "api" {
+		t.Fatalf("carry-on %s: %v", res.Text(), err)
+	}
+	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "sk-test-value")
+			res, err := s.cl.CallTool(context.Background(), "run", json.RawMessage(`{"prompt":"more","continue_run_id":"`+id+`"}`))
+			text := fmt.Sprint(err) + res.Text()
+			if (err == nil && !res.IsError) || !strings.Contains(text, key) || strings.Contains(text, "sk-test-value") {
+				t.Fatalf("continuation on a key: %s", text)
+			}
+		})
 	}
 }

@@ -10,8 +10,8 @@
 | `hrn feed -b BACKEND --task TEXT [flags]` | Process JSONL text items as parallel read-only runs (see [Text feeds](feed.md)). |
 | `hrn exec --protocol v1 [--worker]` | Run one recorded task over the supervisor JSONL protocol; `--worker` applies the [worker restrictions](worker-protocol.md). |
 | `hrn backends` | Show enabled/disabled, default, availability, remembered limits and, under claude and codex when known, the plan's quota left per window (see [Backend preferences](backends.md#choosing-which-backends-hrn-may-use)). |
-| `hrn backends set --only NAMES [--default NAME]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. |
-| `hrn backends reset` | Restore unrestricted backend selection while keeping the work map keys. |
+| `hrn backends set --only NAMES [--default NAME] [--local-api URL]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. `--local-api` opts a loopback or private-network api endpoint in as the last carry-on partner at usage limits and needs `api` in `--only` ([backends](backends.md#a-local-model-as-the-last-partner)). |
+| `hrn backends reset` | Restore unrestricted backend selection, dropping `--local-api`, while keeping the work map keys. |
 | `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
 | `hrn remote show --tenant ID --project ID JOB_ID` | Show a remote job's state and result. |
 | `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream until the job ends and resume from the last durable event ID after a disconnect. |

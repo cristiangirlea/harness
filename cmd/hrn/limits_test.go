@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -419,4 +422,69 @@ func TestRunReleasesAnAgyConversationAfterCarryingALimitedRunOn(t *testing.T) {
 		t.Fatalf("the conversation was not released after the carry-on: %v", err)
 	}
 	p.Release()
+}
+
+func TestRunCarriesOnOnTheLocalAPIWhenEveryPlanIsLimited(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	agent.Register(scripted{"claude", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
+	}})
+	var key atomic.Value
+	key.Store("")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key.Store(r.Header.Get("x-api-key"))
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"model\":\"local\",\"usage\":{\"input_tokens\":5}}}\n\n"+
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"local answer\"}}\n\n"+
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n"+
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+	var decoy atomic.Int32
+	paid := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { decoy.Add(1) }))
+	defer paid.Close()
+	t.Setenv("ANTHROPIC_BASE_URL", paid.URL)
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"codex", "claude", "api"}, LocalAPI: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	_ = followup.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	code, err := cmdRun([]string{"-b", "codex", "-C", t.TempDir(), "--mode", "auto", "fix", "it"})
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v: the local carry-on finished", code, err)
+	}
+	if k := key.Load().(string); k == "" || k == "sk-test-value" {
+		t.Fatalf("the local endpoint got key %q", k)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 2 {
+		t.Fatalf("runs = %d (%v), want the limited one and its carry-on", len(recs), err)
+	}
+	carried := recs[0]
+	if carried.Backend != "api" {
+		carried = recs[1]
+	}
+	if carried.Backend != "api" || carried.Continues == "" || carried.Result.Status != agent.StatusOK || carried.Result.Final != "local answer" {
+		t.Fatalf("carry-on: %s continues %q, %s %q", carried.Backend, carried.Continues, carried.Result.Status, carried.Result.Final)
+	}
+	// With both limits remembered, the next run starts on the local api.
+	key.Store("")
+	if code, err := cmdRun([]string{"-b", "codex", "-C", t.TempDir(), "again"}); code != 0 || err != nil || key.Load() == "" {
+		t.Fatalf("code=%d err=%v: the moved run did not reach the local endpoint", code, err)
+	}
+	// A continuation inherits api; once a key is set it is refused, never sent on the key.
+	for _, name := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "sk-test-value")
+			code, err := cmdRun([]string{"--continue", carried.ID, "more"})
+			if code == 0 || err == nil || !strings.Contains(err.Error(), name) || strings.Contains(err.Error(), "sk-test-value") {
+				t.Fatalf("code=%d err=%v", code, err)
+			}
+		})
+	}
+	if n := decoy.Load(); n != 0 {
+		t.Fatalf("ANTHROPIC_BASE_URL got %d requests", n)
+	}
 }

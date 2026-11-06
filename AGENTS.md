@@ -101,6 +101,9 @@ non-zero exit and an error object; be safe to re-run; call other scripts, never 
 - `scripts/privacy-check.sh`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main.go`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main_test.go`: Check the personal folder, local path and narration rules on fixture files.
+- `scripts/report-digest.sh`: Summarise a window of hrn runs: pass rate, cost, batch attempts and the largest tool output shape.
+- `scripts/report-digest/main.go`: Summarise a window of hrn runs: pass rate, cost, batch attempts and the largest tool output shape.
+- `scripts/report-digest/main_test.go`: Check the digest summary, caps, unknown costs, empty windows and input errors.
 - `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
 - `scripts/tool-shapes.sh`: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
 - `scripts/tool-shapes/defs.go`: Measure the api loop's tool definitions against the recorded context per model call.

@@ -285,7 +285,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 				s.notify(Event{Task: s.t.ID, Kind: "info", Text: why})
 			}
 		}
-		b, err := agent.Get(name)
+		b, err := followup.Backend(name)
 		if err != nil {
 			return s.fail(err)
 		}
@@ -490,7 +490,7 @@ func (s *taskRun) fail(err error) taskEnd {
 }
 
 func proposeAdditions(ctx context.Context, backendName string, t Task, tr TaskResult, k int, root string, opts agent.Options) ([]string, error) {
-	b, err := agent.Get(backendName)
+	b, err := followup.Backend(backendName)
 	if err != nil {
 		return nil, err
 	}
