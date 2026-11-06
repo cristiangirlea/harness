@@ -16,5 +16,37 @@
       "expected-generation"
     ],
     "accepted_losses": []
+  },
+  {
+    "ranking": "simple-rare-floor-v4",
+    "hit": 0.7241379310344828,
+    "mrr": 0.6896551724137931,
+    "none_with_context": 0.3333333333333333,
+    "hits": [
+      "limit-reset-file",
+      "judge-input",
+      "eval-diff",
+      "kept-slot",
+      "issue-lease",
+      "operator-token",
+      "gc-merged",
+      "run-deadline",
+      "max-cost",
+      "task-budget",
+      "secret-files",
+      "fresh-handover",
+      "weekly-digest",
+      "feed",
+      "sse-limit",
+      "error-stream-limit",
+      "migration-003",
+      "eval-setup",
+      "ws-oexcl",
+      "comment-check",
+      "expected-generation"
+    ],
+    "accepted_losses": [
+      "prune-old-runs"
+    ]
   }
 ]

@@ -196,6 +196,11 @@ rollback need scope and expected_generation. `search.json` adds query and
 optionally version_id; `inspect.json` adds version_id. Inputs reject unknown
 fields, including credential fields. Search matches exact scope and ranks
 identifiers, paths, and errors before `simple` text matches, with stable ties.
+Ranking `simple-rare-floor-v4` weights keys above content and, for versions of
+at least 20 entries, ignores words in more than 25% of entries, weights rarer
+words more and returns `empty_reason=below_threshold` below the minimum score
+unless an identifier-shaped exact identifier matches; smaller versions rank as
+before. `TestKnowledgeLabelledQueries` set the share and the minimum score.
 Search materializes the version's members before matching their entries.
 Identifiers may include spaces for multi-word errors. Exact query candidates
 also omit trailing sentence periods and colons, preserving internal path punctuation.

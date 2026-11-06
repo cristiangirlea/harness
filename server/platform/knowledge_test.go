@@ -12,8 +12,8 @@ import (
 	"testing"
 )
 
-func TestKnowledgeRankingIsVersionThreeAndExcerptIsOmittedWhenFalse(t *testing.T) {
-	if KnowledgeRankingVersion != "simple-or-exact-v3" {
+func TestKnowledgeRankingVersionAndExcerptIsOmittedWhenFalse(t *testing.T) {
+	if KnowledgeRankingVersion != "simple-rare-floor-v4" {
 		t.Fatalf("ranking = %q", KnowledgeRankingVersion)
 	}
 	for _, excerpt := range []bool{false, true} {
@@ -297,5 +297,13 @@ func TestKnowledgeImportRejectsDuplicateKeysAndTooManyEntries(t *testing.T) {
 				t.Fatalf("accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestKnowledgeShapedIdentifiers(t *testing.T) {
+	got := knowledgeShapedIdentifiers([]string{"a", "error", "Error", "from", "ERR_BUILD", "main.go", "src/build.go", "connection refused", "WorkerAuthorized", "HTTP", "429", "--max-cost", "Migration"})
+	want := []string{"ERR_BUILD", "main.go", "src/build.go", "connection refused", "WorkerAuthorized", "HTTP", "429", "--max-cost"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("shaped = %q, want %q", got, want)
 	}
 }
