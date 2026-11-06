@@ -44,7 +44,11 @@ const (
 type fact struct {
 	Label, Value string
 	Title        string // shown on hover: the whole path, to this computer only
+	Links        []factLink
 }
+
+// factLink is a part of a fact's value; one without Href is plain text.
+type factLink struct{ Text, Href string }
 
 type page struct {
 	Title  string
@@ -311,6 +315,7 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 	}
 	p.Facts = []fact{{Label: "Backend", Value: backend}, {Label: "Mode", Value: string(rec.Task.Mode)},
 		v.place("Workspace", repoOf(rec.Task.Dir), rec.Task.Dir), {Label: "Started", Value: rec.Started.Local().Format("2006-01-02 15:04:05")}}
+	p.Facts = append(p.Facts, gitFacts(rec)...)
 	if rec.ContinueRoute != "" {
 		p.Facts = append(p.Facts, fact{Label: "Continuation", Value: rec.ContinueRoute})
 	}

@@ -1,6 +1,8 @@
 package prefs
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +11,20 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRawPreservesBytesAndMissingFileError(t *testing.T) {
+	home := t.TempDir()
+	if _, err := Raw(home); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing file: %v", err)
+	}
+	want := "{ malformed preferences\n"
+	if err := os.WriteFile(filepath.Join(home, "backends.json"), []byte(want), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Raw(home); err != nil || string(got) != want {
+		t.Fatalf("raw bytes: %q, %v", got, err)
+	}
+}
 
 func TestPreferencesLoadSaveAndFilter(t *testing.T) {
 	home := t.TempDir()

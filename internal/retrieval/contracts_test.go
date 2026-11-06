@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-func TestRankingIsVersionThreeAndExcerptIsOmittedWhenFalse(t *testing.T) {
-	if RankingVersion != "simple-or-exact-v3" {
+func TestRankingVersionAndExcerptIsOmittedWhenFalse(t *testing.T) {
+	if RankingVersion != "simple-rare-floor-v4" {
 		t.Fatalf("ranking = %q", RankingVersion)
 	}
 	for _, excerpt := range []bool{false, true} {

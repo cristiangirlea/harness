@@ -232,7 +232,14 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
 `result.json` includes `recovery_required: true` when a durable api operation needs
 reconciliation before it can resume; the field is omitted otherwise.
 
-When a run starts in a Git work tree with a HEAD, its record includes `start_head`.
+When a run starts in a Git work tree with a HEAD, its record includes `start_head`. In any
+Git work tree, even before its first commit, it includes `repo` and `branch` when there is
+one to name. `repo` is the repository of the `origin`
+remote (or of the only remote, when there is no `origin`) as `host/path`, such as
+`github.com/acme/tool`: only the host and the path are kept, never the URL, so a user name,
+password, token or port in the remote never reaches the record, and a remote that is a local
+path or a `file://` URL records no `repo`. `branch` is the checked-out branch, absent on a
+detached HEAD. Both are read once, at the start.
 At close, `result.changed_files` lists up to 500 repository-relative paths that differ
 from that HEAD, including committed, staged, unstaged and untracked non-ignored files.
 `changed_files_truncated` is true if more paths exist, and `end_head` records the

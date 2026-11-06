@@ -317,6 +317,14 @@ records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a
 call with the printed `git reset --hard <commit>` command. It names the commit
 from before the call and undoes every task merged in it, even if a later task conflicts.
 
+Watch, CLI and MCP merges share `<git common dir>/hrn-merge.lock`, a process lease
+that refuses concurrent mergers and takes over stale holders. A confirmed watch
+merge finishes even if the page disconnects (within a ten-minute limit). If the
+merge lands but its receipt cannot be verified, watch reports `merged, commit unknown`;
+batch merge records `merged; the commit could not be confirmed` and stops without
+resetting the tree. Merge results include an optional `before` commit captured under
+the lock for undo guidance. Reload the batch page after a transport error to check the outcome.
+
 `merge --rm` removes the worktree and branch of each task merged in that call,
 including tasks merged before a later conflict; skipped and conflicting tasks stay.
 It uses the same rules as `batch rm`: dirty worktrees stay and cause an error,

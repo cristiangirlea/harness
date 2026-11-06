@@ -88,12 +88,19 @@ one row per purpose that occurs, then "all", each with its runs, how many are ru
 tokens (input, output, cache reads and writes, counted once) and known cost.
 
 Under it, "Where they ran" gives the same sums per repository, with the purposes its runs
-had (`review 20 · implement 8`). A run's repository is the checkout holding its folder (or
-a parent of it): a worktree's `.git` file points back to its main checkout, and a task's
-`.hrn/slots/<n>` or `.hrn/worktrees/<id>` belongs to the repository holding it. A folder
-that is gone and not inside a checkout goes by its own name. Checkouts are told apart by
-path: two with the same name get two rows, the second shown as `name (2)`. The ten
-repositories with the most runs get a row each; the rest share one, "N other folders".
+had (`review 20 · implement 8`). A run's repository is the remote its record names (`repo`,
+see [run records](run-records.md)), shown as `owner/name` on github.com and `host/owner/name`
+elsewhere, so a run still counts under its repository after its worktree is deleted. A record
+from before hrn kept `repo` falls back to the checkout holding its folder (or a parent of
+it), named by that checkout's `origin` remote, or its only remote, read from its git config
+(a submodule's from the folder its `.git` file names): a worktree's `.git` file points back
+to its main checkout, and a task's `.hrn/slots/<n>` or `.hrn/worktrees/<id>` belongs to the
+repository holding it. Names on github.com ignore case, as GitHub does; other hosts' do not.
+Runs with no repository either way (a folder outside any repository, a checkout with no
+remote, or a folder deleted before `repo` was kept) share a last row, "No repository
+recorded"; folder names are never shown. The ten repositories with the most runs get a row
+each; the rest share one, "N other repositories" (an eleventh shows by its own name, rather
+than as a row of one).
 
 A finished run never changes, so the card reads it once and keeps only its share of the
 sums; each refresh reads just the runs that are new or unfinished, and looks up their
@@ -114,7 +121,15 @@ reported cost.
 A run's page names its workspace by the same name as its row (`demo-app`, the repository
 for a batch task's worktree), and a batch's page its repository; a task's worktree shows
 relative to the repository (`.\.hrn\worktrees\t1`). Hover the name for the whole path,
-on this computer only: a phone on the network sees the name alone. In what a run's steps
+on this computer only: a phone on the network sees the name alone. Below it come the
+repository and branch the run recorded, the commit it started on and up to ten of the
+commits it made. On github.com each links there: the repository, the branch, a search for
+pull requests from that branch (found even after the branch is deleted), and each commit;
+past ten, "and N more" opens GitHub's comparison of the start and end commits, which lists
+them all. The links are built from the record when the page is drawn: the watch makes no
+calls to GitHub, and they open with `rel="noreferrer"`, so GitHub is not told which watch
+page they came from. Other hosts show the same names as plain text. A record from before
+hrn kept `repo` gets no repository links, since its folder may hold another repository now. In what a run's steps
 show (step text, a tool call's one line and its input, results, info lines, the final
 answer) and in a run's or batch's header, the workspace is `.` (`.\src\main.go`, in the
 path's own slashes), the home folder is `~`, and a program named by its full path in
@@ -221,6 +236,8 @@ Apply uses a same-origin request carrying the startup key; it writes
 follow those preferences. Choose "No configured default" to let hrn choose;
 leaving all backends unchecked with no default restores all backends. A configured
 default must be enabled, and unknown backend names are refused.
+Apply checks that the preferences file still matches the bytes seen when the card loaded.
+A stale or missing digest returns 412 with "Preferences changed since this page loaded: reload" and leaves the file unchanged.
 
 Actions are limited to 10 POST requests per minute per loopback client, verified Access email,
 or unverified client. The first request over the limit records one rate-limit refusal; further requests in the window write no audit lines. Refusals and backend changes are appended to `$HRN_HOME/watch-audit.jsonl`
@@ -282,6 +299,15 @@ streams. A top-level page load from elsewhere, such as the Access login redirect
 email link, opens the page when it carries no `Origin` header or `Origin: null`; any other
 Origin goes through the normal check and must be the public origin. Cross-site embedded loads
 and other cross-site requests remain refused.
+
+The Access application must cover at least `/login`. It may cover the whole host, or only
+`/login` with the rest passing through: the watch checks the `CF_Authorization` cookie
+itself either way. A page visit without a usable token (none, expired, or one that fails
+the check) gets a 403 page with a **Sign in** link to `/login`; the page loads no script or
+stylesheet, since those would be refused too. After signing in there, Access returns the
+visitor to `/login`, which sends them on to the index. Every other refusal, and any request
+that is not a page visit (event streams, assets, a POST), gets the plain-text 403
+"Cloudflare Access login required".
 It treats visitors as remote even though `cloudflared`
 connects from the same computer: the page omits the hrn home path and phone hints,
 and `/voice` is unavailable. You cannot open this public watch at its loopback URL
@@ -444,3 +470,11 @@ and JSON record output retains the original text. These rules recognise common
 secret shapes; they cannot identify every possible secret.
 
 A passing batch task with a branch and changes can be merged from its batch page. Select Merge to see the task, branch, current head and target branch, then confirm within two minutes. Each confirmation is single-use; a moved branch is refused. Only this computer (without forwarding headers), or a verified Cloudflare Access user acting as the local owner in public mode, can act. With `--owner-email`, project grant viewers cannot merge; without it, all verified Access emails use the local owner identity. LAN viewers are read-only. Only one merge can run at a time in the same repository. Merge intents, outcomes and refusals are recorded in `watch-audit.jsonl` in `HRN_HOME`.
+
+Watch, CLI and MCP merges share `<git common dir>/hrn-merge.lock`, a process lease
+that refuses concurrent mergers and takes over stale holders. A confirmed watch
+merge finishes even if the page disconnects (within a ten-minute limit). If the
+merge lands but its receipt cannot be verified, watch reports `merged, commit unknown`;
+batch merge records `merged; the commit could not be confirmed` and stops without
+resetting the tree. Merge results include an optional `before` commit captured under
+the lock for undo guidance. Reload the batch page after a transport error to check the outcome.

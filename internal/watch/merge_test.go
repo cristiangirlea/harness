@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 func mergeFixture(t *testing.T) (http.Handler, batch.Result, string) {
@@ -367,5 +369,143 @@ func TestPublicMergeOwnerOnly(t *testing.T) {
 	}
 	if w = post(owner, "/confirm", string(body)); w.Code != 200 {
 		t.Fatalf("owner confirm: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestOwnedMergeOutlivesDisconnect(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		t.Run(map[bool]string{false: "confirmed", true: "unknown"}[unknown], func(t *testing.T) {
+			_, res, head := mergeFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			s := &server{mergeRun: func(owned context.Context, res batch.Result, task, head string) ([]batch.MergeResult, error) {
+				if out, err := exec.CommandContext(owned, "git", "-C", res.Dir, "merge", "--no-ff", "--no-edit", head).CombinedOutput(); err != nil {
+					return nil, fmt.Errorf("merge: %w: %s", err, out)
+				}
+				cancel()
+				ref := "HEAD"
+				if unknown {
+					ref = "refs/heads/missing-receipt"
+				}
+				receipt, err := exec.CommandContext(owned, "git", "-C", res.Dir, "rev-parse", "--verify", ref).Output()
+				if owned.Err() != nil {
+					return nil, owned.Err()
+				}
+				if err != nil {
+					return []batch.MergeResult{{Task: task, Error: batch.ErrMergedUnconfirmed.Error()}}, batch.ErrMergedUnconfirmed
+				}
+				return []batch.MergeResult{{Task: task, Commit: strings.TrimSpace(string(receipt))}}, nil
+			}}
+			request := func(body string) *http.Request {
+				r := httptest.NewRequest("POST", "http://localhost/batch/"+res.ID+"/merge/one", strings.NewReader(body)).WithContext(ctx)
+				r.RemoteAddr = "127.0.0.1:1"
+				r.SetPathValue("id", res.ID)
+				r.SetPathValue("task", "one")
+				return r
+			}
+			ask := httptest.NewRecorder()
+			s.askMerge(ask, request(""))
+			var grant struct{ Token string }
+			if err := json.Unmarshal(ask.Body.Bytes(), &grant); err != nil {
+				t.Fatal(err)
+			}
+			body, _ := json.Marshal(map[string]string{"token": grant.Token})
+			w := httptest.NewRecorder()
+			s.confirmMerge(w, request(string(body)))
+			if w.Code != 200 {
+				t.Fatalf("confirm: %d %s", w.Code, w.Body)
+			}
+			var response map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			want := "merged, commit unknown"
+			if !unknown {
+				commit := response["commit"]
+				if commit == "" {
+					t.Fatal("missing receipt")
+				}
+				b, err := exec.Command("git", "-C", res.Dir, "rev-parse", commit+"^2").Output()
+				if err != nil || strings.TrimSpace(string(b)) != head {
+					t.Fatalf("wrong receipt: %s %v", b, err)
+				}
+				want = "merged " + commit
+			} else if response["outcome"] != want {
+				t.Fatalf("response=%v", response)
+			}
+			audit, err := os.ReadFile(filepath.Join(os.Getenv("HRN_HOME"), "watch-audit.jsonl"))
+			if err != nil || !strings.Contains(string(audit), want) || strings.Contains(string(audit), "merge failed") {
+				t.Fatalf("audit=%s err=%v", audit, err)
+			}
+		})
+	}
+}
+
+func TestMergePageUnknownOutcome(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	script := `
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const source = fs.readFileSync(0, 'utf8');
+(async () => {
+ for (const scenario of ['reject', 'json', 'server', 'forbidden', 'busy', 'success', 'unknown']) {
+  const elements = {};
+  for (const id of ['merges', 'merge-status', 'merge-confirm', 'merge-cancel']) {
+   elements[id] = {dataset: {batch: 'batch', key: 'key'}, addEventListener(event, fn) { this[event] = fn; }};
+  }
+  let calls = 0;
+  vm.runInNewContext(source, {
+   document: {getElementById: id => elements[id], querySelectorAll: () => [], querySelector: () => null},
+   window: {}, setInterval() {},
+   fetch: async () => {
+    if (++calls === 1) return {ok: true, json: async () => ({task:'one', branch:'task', head:'abcdef', target:'main', token:'token'})};
+    if (scenario === 'reject') throw new Error('raw network error');
+    return {ok: !['forbidden','busy','server'].includes(scenario), status: scenario === 'forbidden' ? 403 : scenario === 'busy' ? 409 : scenario === 'server' ? 503 : 200,
+     text: async () => scenario === 'forbidden' ? 'invalid or expired confirmation' : 'batch is busy', json: async () => {
+      if (scenario === 'json') throw new Error('raw JSON error');
+      return scenario === 'unknown' ? {outcome:'merged, commit unknown'} : {commit:'abc123'};
+     }};
+   }
+  });
+  await elements.merges.click({target: {dataset: {mergeTask:'one'}}});
+  await elements['merge-confirm'].click();
+  const want = {forbidden:'invalid or expired confirmation', busy:'batch is busy', success:'Merged: abc123', unknown:'merged, commit unknown'}[scenario] || 'Outcome unknown: reload the batch page to see whether it merged.';
+  assert.equal(elements['merge-status'].textContent, want, scenario);
+ }
+})().catch(error => { console.error(error); process.exitCode = 1; });`
+	cmd := exec.CommandContext(ctx, node, "-e", script)
+	cmd.Stdin = strings.NewReader(mustAsset("assets/watch.js"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("page: %v\n%s", err, out)
+	}
+}
+
+func TestMergeSharedLockBusy(t *testing.T) {
+	h, res, _ := mergeFixture(t)
+	release, busy, err := ws.LockFile(filepath.Join(res.Dir, ".git", "hrn-merge.lock"), "CLI merger")
+	if err != nil || busy != "" {
+		t.Fatalf("busy=%s err=%v", busy, err)
+	}
+	defer release()
+	path := "/batch/" + res.ID + "/merge/one"
+	ask := backendRequest(h, "POST", path, "127.0.0.1:1", "localhost", "key", "", "")
+	var grant struct{ Token string }
+	if err := json.Unmarshal(ask.Body.Bytes(), &grant); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"token": grant.Token})
+	w := backendRequest(h, "POST", path+"/confirm", "127.0.0.1:1", "localhost", "key", "", string(body))
+	if w.Code != 409 || strings.TrimSpace(w.Body.String()) != "batch is busy" {
+		t.Fatalf("confirm: %d %s", w.Code, w.Body)
+	}
+	audit, err := os.ReadFile(filepath.Join(os.Getenv("HRN_HOME"), "watch-audit.jsonl"))
+	if err != nil || !strings.Contains(string(audit), "batch is busy") || strings.Contains(string(audit), "merge failed") {
+		t.Fatalf("audit=%s err=%v", audit, err)
 	}
 }
