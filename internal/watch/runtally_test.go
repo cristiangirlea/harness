@@ -348,7 +348,7 @@ func TestTheCardCountsOnlyRunsTheViewerMayRead(t *testing.T) {
 	saveRunIn(t, shared, "fix the login bug", agent.Result{CostUSD: 0.01})
 	saveRunIn(t, private, "review the diff", agent.Result{CostUSD: 0.02})
 
-	// The owner fills the cache first; what it keeps must not widen what a visitor sees.
+	// A cache filled for one viewer must not widen what another sees.
 	s := &server{}
 	if c := cardOver(s.tallyRuns(owner.LocalViewer())); c == nil || purposeRowOf(t, c, "all").Runs != "2" {
 		t.Errorf("the owner's card = %+v", c)
