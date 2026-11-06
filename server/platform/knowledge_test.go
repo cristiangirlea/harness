@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -10,6 +11,29 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestKnowledgeRankingIsVersionThreeAndExcerptIsOmittedWhenFalse(t *testing.T) {
+	if KnowledgeRankingVersion != "simple-or-exact-v3" {
+		t.Fatalf("ranking = %q", KnowledgeRankingVersion)
+	}
+	for _, excerpt := range []bool{false, true} {
+		b, err := json.Marshal(KnowledgeEntry{Excerpt: excerpt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), `"excerpt":true`) != excerpt || strings.Contains(string(b), `"excerpt":false`) {
+			t.Fatalf("excerpt wire: %s", b)
+		}
+	}
+}
+
+func TestKnowledgeImportRefusesExcerptBeforeStorage(t *testing.T) {
+	in := knowledgeFixture(Project{TenantID: "t_" + strings.Repeat("a", 32), ID: "p_" + strings.Repeat("b", 32)})
+	in.Entries[0].Excerpt = true
+	if _, err := (&Store{}).ImportKnowledge(context.Background(), in); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("excerpt accepted: %v", err)
+	}
+}
 
 func TestKnowledgeSourceRejectsEachObviousSecretPattern(t *testing.T) {
 	for _, text := range []string{
@@ -215,10 +239,10 @@ func TestSchemaVersionTwoRequestsExplicitMigration(t *testing.T) {
 	if err := checkSchemaVersion(2); err == nil || !strings.Contains(err.Error(), "run the explicit migrate command") {
 		t.Fatalf("missing migration guidance: %v", err)
 	}
-	if err := checkSchemaVersion(4); err != nil {
+	if err := checkSchemaVersion(5); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkSchemaVersion(5); err == nil || strings.Contains(err.Error(), "run the explicit migrate command") {
+	if err := checkSchemaVersion(6); err == nil || strings.Contains(err.Error(), "run the explicit migrate command") {
 		t.Fatalf("newer schema must not suggest migration: %v", err)
 	}
 }
