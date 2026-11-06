@@ -28,7 +28,8 @@ func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			"The repository must have no modified tracked files unless allow_dirty is set. " +
 			"Read a task's changes with batch_show and land them with batch_merge.",
 		InputSchema: map[string]any{
-			"type": "object",
+			"additionalProperties": false,
+			"type":                 "object",
 			"properties": map[string]any{
 				"spec": map[string]any{"type": "object", "description": specDescription},
 			},
@@ -217,7 +218,8 @@ func batchShowTool() mcp.Tool {
 			"With batch_id and task: that task's diff against the commit the batch started from, " +
 			"and any untracked files the diff cannot show.",
 		InputSchema: map[string]any{
-			"type": "object",
+			"additionalProperties": false,
+			"type":                 "object",
 			"properties": map[string]any{
 				"batch_id": str("A batch id, as the batch tool returned it."),
 				"task":     str("A task id within the batch."),
@@ -305,7 +307,8 @@ func batchMergeTool() mcp.Tool {
 			"(or only the tasks named). Stops at the first conflict and puts the tree back as it was before that merge. " +
 			"The result names the commit from before this call for undoing merged tasks.",
 		InputSchema: map[string]any{
-			"type": "object",
+			"additionalProperties": false,
+			"type":                 "object",
 			"properties": map[string]any{
 				"batch_id": str("A batch id, as the batch tool returned it."),
 				"tasks":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only these task ids. Default: every passing task."},
