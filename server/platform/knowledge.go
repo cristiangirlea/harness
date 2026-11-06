@@ -389,7 +389,9 @@ func changeKnowledgeTx(ctx context.Context, tx pgx.Tx, in KnowledgeChange) (Know
 
 const knowledgeRankedMinEntries = 20
 const knowledgeCommonTermShare = 0.25
-const knowledgeMinScore = 6.0
+
+// Normalising by ln(n) keeps the relevance floor stable across version sizes.
+const knowledgeMinScore = 1.31
 
 const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
  SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers,e.search_vector
@@ -407,19 +409,20 @@ const knowledgeRankedSearchSQL = `WITH members AS MATERIALIZED (
  WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3
 ), n AS (
  SELECT count(*)::double precision AS total FROM members
-), terms AS (
- SELECT DISTINCT term FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term
+), terms AS MATERIALIZED (
+ SELECT term,to_tsquery('simple',quote_literal(term)) AS query,to_tsquery('simple',quote_literal(term) || ':A') AS key_query
+ FROM (SELECT DISTINCT term FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term) lexemes
 ), df AS (
- SELECT term,count(*)::double precision AS frequency
- FROM terms JOIN members e ON e.search_vector @@ to_tsquery('simple',quote_literal(term))
- GROUP BY term
+ SELECT t.term,t.query,t.key_query,count(*)::double precision AS frequency
+ FROM terms t JOIN members e ON e.search_vector @@ t.query
+ GROUP BY t.term,t.query,t.key_query
 ), kept AS (
- SELECT term,ln(n.total/df.frequency) AS idf
+ SELECT df.query,df.key_query,ln(n.total/df.frequency)/ln(n.total) AS idf
  FROM df CROSS JOIN n WHERE df.frequency <= $6::double precision*n.total
 ), scored AS (
  SELECT e.*,COALESCE((
-  SELECT sum(k.idf*CASE WHEN e.search_vector @@ to_tsquery('simple',quote_literal(k.term) || ':A') THEN 2 ELSE 1 END)
-  FROM kept k WHERE e.search_vector @@ to_tsquery('simple',quote_literal(k.term))
+  SELECT sum(k.idf*CASE WHEN e.search_vector @@ k.key_query THEN 2 ELSE 1 END)
+  FROM kept k WHERE e.search_vector @@ k.query
  ),0) AS score FROM members e
 )
  SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
