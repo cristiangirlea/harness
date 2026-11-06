@@ -36,9 +36,6 @@ func (ws *Workspace) checkParse(path string, content []byte) error {
 	if readErr == nil && parse(old) != nil {
 		return nil
 	}
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return readErr
-	}
 	line, col, message := 1, 1, err.Error()
 	if list, ok := err.(scanner.ErrorList); ok && len(list) > 0 {
 		line, col, message = list[0].Pos.Line, list[0].Pos.Column, list[0].Msg
