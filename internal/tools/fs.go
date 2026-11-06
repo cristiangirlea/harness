@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -64,9 +65,24 @@ func readFile() Tool {
 			if err != nil {
 				return "", err
 			}
-			data, err := os.ReadFile(p)
+			info, err := os.Stat(p)
 			if err != nil {
 				return "", err
+			}
+			if !info.Mode().IsRegular() {
+				return "", fmt.Errorf("%q is not a regular file", ws.Rel(p))
+			}
+			f, err := os.OpenFile(p, os.O_RDONLY|readOpenFlags, 0)
+			if err != nil {
+				return "", err
+			}
+			defer f.Close()
+			info, err = f.Stat()
+			if err != nil {
+				return "", err
+			}
+			if !info.Mode().IsRegular() {
+				return "", fmt.Errorf("%q is not a regular file", ws.Rel(p))
 			}
 			if args.Offset < 1 {
 				args.Offset = 1
@@ -74,19 +90,59 @@ func readFile() Tool {
 			if args.Limit <= 0 {
 				args.Limit = 2000
 			}
-			lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-			if args.Offset > len(lines) {
-				return fmt.Sprintf("(file has %d lines)", len(lines)), nil
+			b := &boundedBuffer{keepHead: maxOutput * 2 / 3, keepTail: maxOutput / 3}
+			r := bufio.NewReader(f)
+			lineStart, pendingCR := true, false
+			count, end := 0, 0
+			for {
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
+				part, err := r.ReadSlice('\n')
+				if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
+					return "", err
+				}
+				selected := count >= args.Offset-1 && count-(args.Offset-1) < args.Limit
+				if selected {
+					if lineStart {
+						fmt.Fprintf(b, "%d\t", count+1)
+					}
+					if pendingCR && (len(part) == 0 || part[0] != '\n') {
+						b.Write([]byte{'\r'})
+					}
+					pendingCR = false
+					if err == nil {
+						part = part[:len(part)-1]
+						if len(part) > 0 && part[len(part)-1] == '\r' {
+							part = part[:len(part)-1]
+						}
+					} else if err == bufio.ErrBufferFull && part[len(part)-1] == '\r' {
+						pendingCR = true
+						part = part[:len(part)-1]
+					}
+					b.Write(part)
+				}
+				if err == bufio.ErrBufferFull {
+					lineStart = false
+					continue
+				}
+				lineStart = true
+				count++
+				if selected {
+					b.Write([]byte{'\n'})
+					end = count
+				}
+				if err == io.EOF {
+					break
+				}
 			}
-			end := min(args.Offset-1+args.Limit, len(lines))
-			var b strings.Builder
-			for i := args.Offset - 1; i < end; i++ {
-				fmt.Fprintf(&b, "%d\t%s\n", i+1, lines[i])
+			if args.Offset > count {
+				return fmt.Sprintf("(file has %d lines)", count), nil
 			}
-			if end < len(lines) {
-				fmt.Fprintf(&b, "(%d more lines; continue with offset=%d)\n", len(lines)-end, end+1)
+			if end < count {
+				fmt.Fprintf(b, "(%d more lines; continue with offset=%d)\n", count-end, end+1)
 			}
-			return Truncate(b.String()), nil
+			return b.String(), nil
 		},
 	}
 }
