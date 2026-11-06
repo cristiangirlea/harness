@@ -29,6 +29,9 @@ A change that touches only documentation Markdown (top-level `*.md` except AGENT
 index `scripts/verify.sh` checks; `docs/**/*.md`; `server/README.md`; `server/deploy/README.md`)
 builds and tests nothing: CI's `changes` job decides, the required `test` jobs still report with
 their steps skipped, and the other jobs are skipped. Any other `.md` file counts as code.
+A new `Fuzz*` target is added to both `ci.yml` and `.claude/skills/check/SKILL.md`, and every
+action in the workflows is pinned to a full commit hash with its version in a comment;
+`internal/archtest` fails otherwise.
 See [SECURITY.md](SECURITY.md) for the security boundaries and private vulnerability reports.
 
 - **Standard library only.** No third-party Go modules, and Windows syscalls go through
