@@ -19,6 +19,7 @@ func TestSetupDigestCountsTheRunOptionsAnEvalVariantSets(t *testing.T) {
 	base := ResolveSetup("api", Task{Dir: dir})
 	for name, set := range map[string]func(*Options){
 		"shape_tools": func(o *Options) { o.ShapeTools = true },
+		"parse_check": func(o *Options) { o.ParseCheck = true },
 		"retrieval":   func(o *Options) { o.Retrieval = "optional" },
 	} {
 		task := Task{Dir: dir}
@@ -347,5 +348,16 @@ func TestSetupReadsARelativeConfigDirFromTheWorkspace(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "cfg")
 	if got := ResolveSetup("claude", Task{Dir: dir}).Files["$CLAUDE_CONFIG_DIR/CLAUDE.md"]; got != textHash("c") {
 		t.Fatalf("$CLAUDE_CONFIG_DIR/CLAUDE.md = %q", got)
+	}
+}
+
+func TestParseCheckOptionIsRecordedForAPIOnly(t *testing.T) {
+	for _, backend := range []string{"api", "claude", "codex", "gemini", "opencode", "agy"} {
+		for _, enabled := range []bool{false, true} {
+			lines := optionLines(backend, Options{ParseCheck: enabled})
+			if slices.Contains(lines, "option parse_check") != (backend == "api" && enabled) {
+				t.Fatalf("%s enabled=%v: %v", backend, enabled, lines)
+			}
+		}
 	}
 }

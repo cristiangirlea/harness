@@ -35,6 +35,32 @@ func TestShapeToolsOption(t *testing.T) {
 	}
 }
 
+func TestParseCheckOptionRoundTripsAndInherits(t *testing.T) {
+	var o Options
+	if err := json.Unmarshal([]byte(`{}`), &o); err != nil || o.ParseCheck {
+		t.Fatal("old records must leave parse checking off")
+	}
+	fs := flag.NewFlagSet("parse", flag.ContinueOnError)
+	BindFlags(fs, &o)
+	if err := fs.Parse([]string{"--parse-check"}); err != nil || !o.ParseCheck {
+		t.Fatalf("parse flag: %v", err)
+	}
+	b, err := json.Marshal(o)
+	if err != nil || !strings.Contains(string(b), `"parse_check":true`) {
+		t.Fatalf("record: %s %v", b, err)
+	}
+	var back Options
+	if err := json.Unmarshal(b, &back); err != nil || !back.ParseCheck {
+		t.Fatalf("round trip: %+v %v", back, err)
+	}
+	if b, err := json.Marshal(Options{}); err != nil || strings.Contains(string(b), "parse_check") {
+		t.Fatalf("default record: %s %v", b, err)
+	}
+	if !(Options{}).Over(o).ParseCheck {
+		t.Fatal("batch option did not inherit")
+	}
+}
+
 // Every option must be settable from every entry point. The flags and the MCP
 // schema are derived from the struct, so this test is what makes forgetting
 // one impossible rather than merely unlikely.

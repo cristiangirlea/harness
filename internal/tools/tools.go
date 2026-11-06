@@ -40,6 +40,7 @@ type Workspace struct {
 	// RunDir is trusted, outside model control.
 	RunDir       string
 	ShapeTools   bool
+	ParseCheck   bool
 	OriginalInfo func(string)
 	// AllowDangerous is per-run; tools are shared.
 	AllowDangerous bool
