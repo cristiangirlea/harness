@@ -18,6 +18,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/resolve"
@@ -273,9 +274,11 @@ func firstOf(values ...string) string {
 
 // VariantRow aggregates one variant's tasks and repeats.
 type VariantRow struct {
-	Name     string `json:"name"`
-	Attempts int    `json:"attempts"`
-	Passed   int    `json:"passed"`
+	ToolStats             map[string]kernel.ToolStat `json:"tool_stats,omitempty"`
+	AttemptsWithToolStats int                        `json:"attempts_with_tool_stats,omitempty"`
+	Name                  string                     `json:"name"`
+	Attempts              int                        `json:"attempts"`
+	Passed                int                        `json:"passed"`
 	// DidNotAct excludes idle successes (no tools, second turn or change) from pass rates.
 	DidNotAct        int     `json:"did_not_act,omitempty"`
 	DidNotStart      int     `json:"did_not_start,omitempty"`
@@ -736,6 +739,19 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 			}
 			for _, tr := range c.results {
 				for _, a := range tr.Attempts {
+					if len(a.Result.ToolStats) > 0 && a.Result.ValidToolStats() == nil {
+						row.AttemptsWithToolStats++
+						if row.ToolStats == nil {
+							row.ToolStats = make(map[string]kernel.ToolStat)
+						}
+						for name, stat := range a.Result.ToolStats {
+							s := row.ToolStats[name]
+							s.Calls += stat.Calls
+							s.Errors += stat.Errors
+							s.ResultBytes += stat.ResultBytes
+							row.ToolStats[name] = s
+						}
+					}
 					if cost, known, estimated := a.Result.KnownCost(); known {
 						row.TotalCostUSD += cost
 						row.CostEstimate = row.CostEstimate || estimated
