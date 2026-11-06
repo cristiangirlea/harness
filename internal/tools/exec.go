@@ -114,7 +114,7 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 		b.tail = append(b.tail, p...)
 		if len(b.tail) > 2*b.keepTail {
 			b.dropped += len(b.tail) - b.keepTail
-			b.tail = append(b.tail[:0:0], b.tail[len(b.tail)-b.keepTail:]...)
+			b.tail = append(b.tail[:0], b.tail[len(b.tail)-b.keepTail:]...)
 		}
 	}
 	return n, nil
