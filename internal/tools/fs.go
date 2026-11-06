@@ -260,7 +260,7 @@ func editFile() Tool {
 			n := strings.Count(content, old)
 			switch {
 			case n == 0:
-				return "", errors.New("old_string not found in file")
+				return "", errors.New(closestLinesForMatch(content, args.OldString, old))
 			case n > 1 && !args.ReplaceAll:
 				return "", fmt.Errorf("old_string matches %d times; add more context or set replace_all", n)
 			}
