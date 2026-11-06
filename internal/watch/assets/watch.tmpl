@@ -58,6 +58,7 @@
 </section>{{end}}{{end}}
 {{define "backends"}}<section id="backends" class="card" aria-labelledby="backends-h"{{if .Editable}} data-key="{{.Key}}"{{end}}>
 <h2 id="backends-h">Backends</h2>
+{{if .Editable}}<input type="hidden" name="digest" value="{{.Digest}}">{{end}}
 {{with .Problem}}<p class="notice bad">{{.}}</p>{{end}}
 {{with .Chosen}}<p class="muted small">chosen: {{.}}</p>{{end}}
 <div class="table-wrap" tabindex="0" role="region" aria-label="Backends"><table>

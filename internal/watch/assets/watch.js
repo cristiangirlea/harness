@@ -42,7 +42,7 @@
       const response = await fetch('/backends', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Hrn-Watch-Key': backends.dataset.key },
-        body: JSON.stringify({ enabled, default: choice ? choice.value : '' })
+        body: JSON.stringify({ enabled, default: choice ? choice.value : '', digest: backends.querySelector('input[name="digest"]').value })
       });
       if (response.status !== 204) throw new Error((await response.text()).trim() || 'Backend preferences could not be saved');
       window.location.reload();
