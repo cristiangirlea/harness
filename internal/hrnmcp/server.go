@@ -2,13 +2,16 @@
 package hrnmcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/resolve"
+	"io"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -97,10 +100,65 @@ func decode[T any](raw json.RawMessage) (T, error) {
 	if len(raw) == 0 {
 		return v, nil
 	}
-	if err := json.Unmarshal(raw, &v); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
 		return v, fmt.Errorf("invalid arguments: %w", err)
 	}
+	names := argumentFieldNames(reflect.TypeFor[T]())
+	for _, key := range slices.Sorted(maps.Keys(fields)) {
+		if !names[key] {
+			return v, fmt.Errorf("invalid arguments: unknown field %q", key)
+		}
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&v); err != nil {
+		return v, fmt.Errorf("invalid arguments: %w", err)
+	}
+	if dec.Decode(new(any)) != io.EOF {
+		return v, errors.New("invalid arguments: extra JSON content")
+	}
 	return v, nil
+}
+
+// Exact names prevent JSON's case folding from bypassing project scope checks.
+func argumentFieldNames(root reflect.Type) map[string]bool {
+	names := map[string]bool{}
+	seen := map[reflect.Type]bool{}
+	var visit func(reflect.Type)
+	visit = func(typ reflect.Type) {
+		if typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if typ.Kind() != reflect.Struct || seen[typ] {
+			return
+		}
+		seen[typ] = true
+		for i := range typ.NumField() {
+			field := typ.Field(i)
+			inner := field.Type
+			if inner.Kind() == reflect.Pointer {
+				inner = inner.Elem()
+			}
+			if field.PkgPath != "" && (!field.Anonymous || inner.Kind() != reflect.Struct) {
+				continue
+			}
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if name == "-" {
+				continue
+			}
+			if name == "" && field.Anonymous && inner.Kind() == reflect.Struct {
+				visit(inner)
+				continue
+			}
+			if name == "" {
+				name = field.Name
+			}
+			names[name] = true
+		}
+	}
+	visit(root)
+	return names
 }
 
 func text(s string, structured any, isError bool) mcp.CallResult {
@@ -131,9 +189,10 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			"A run that reaches its usage limit is carried on by a ready enabled partner (claude and codex pair by default), " +
 			"which then sees the workspace, unless no_switch is set.",
 		InputSchema: map[string]any{
-			"type":       "object",
-			"properties": props,
-			"required":   []any{"prompt"},
+			"additionalProperties": false,
+			"type":                 "object",
+			"properties":           props,
+			"required":             []any{"prompt"},
 		},
 		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(false), OpenWorldHint: mcp.Bool(true)},
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
@@ -410,7 +469,7 @@ func runsTool() mcp.Tool {
 		Name:        "runs",
 		Title:       "List recent runs",
 		Description: "List recent hrn runs, newest first: id, backend, status, duration and prompt.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"limit": num("Maximum runs to return (default 20).")}},
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"limit": num("Maximum runs to return (default 20).")}, "additionalProperties": false},
 		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(true)},
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			args, err := decode[struct {
@@ -452,7 +511,8 @@ func showTool() mcp.Tool {
 		Title:       "Show a run",
 		Description: "Replay a recorded run: its task, the events (tool calls, results, errors) and the result.",
 		InputSchema: map[string]any{
-			"type": "object",
+			"additionalProperties": false,
+			"type":                 "object",
 			"properties": map[string]any{
 				"run_id": str("The run id (from run or runs)."),
 				"events": map[string]any{"type": "boolean", "description": "Include the event transcript (default true)."},
@@ -525,7 +585,8 @@ func flowTool() mcp.Tool {
 		Name: "flow", Title: "Show an execution flow",
 		Description: "Read a run or batch execution tree, including recorded reasons and next steps.",
 		InputSchema: map[string]any{
-			"type": "object",
+			"additionalProperties": false,
+			"type":                 "object",
 			"properties": map[string]any{
 				"id":    str("A run or batch id."),
 				"level": map[string]any{"type": "string", "enum": []any{"simple", "technical", "debug"}, "description": "Detail level (default technical)."},
