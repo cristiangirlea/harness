@@ -195,6 +195,7 @@ func remoteEventsTool() mcp.Tool {
 	properties["after"] = map[string]any{"type": "integer", "minimum": 0, "description": "Last durable event ID already seen; defaults to 0. Returns up to 100 subsequent events."}
 	return mcp.Tool{
 		Name: "remote_events", Title: "Read remote job events",
+		TooLarge:    `Read this page in a terminal: "hrn remote events --tenant ID --project ID --after N JOB_ID".`,
 		Description: "Read the next page of durable events for one tenant-scoped job. Use the last event ID as after for the next call.",
 		InputSchema: remoteSchema(properties, "tenant_id", "project_id", "job_id"),
 		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(true), OpenWorldHint: mcp.Bool(true)},

@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"runtime/debug"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -16,6 +19,7 @@ type Tool struct {
 	Name        string
 	Title       string
 	Description string
+	TooLarge    string
 	// InputSchema defaults to an object with no properties.
 	InputSchema map[string]any
 	Annotations *Annotations
@@ -122,9 +126,11 @@ func (cn *conn) request(ctx context.Context, method string, params, out any) err
 type Server struct {
 	Info         Implementation
 	Instructions string
+	Log          io.Writer
 
 	tools  []Tool
 	byName map[string]Tool
+	logMu  sync.Mutex
 }
 
 func NewServer(info Implementation, instructions string) *Server {
@@ -232,7 +238,14 @@ func (s *Server) handle(ctx context.Context, cn *conn, m *message) {
 	c := cn.codec
 	defer func() {
 		if r := recover(); r != nil {
-			_ = c.fail(m.ID, CodeInternalError, fmt.Sprintf("%s: panic: %v\n%s", m.Method, r, debug.Stack()))
+			log := s.Log
+			if log == nil {
+				log = os.Stderr
+			}
+			s.logMu.Lock()
+			_, _ = fmt.Fprintf(log, "%s: panic: %v\n%s", m.Method, r, debug.Stack())
+			s.logMu.Unlock()
+			_ = c.fail(m.ID, CodeInternalError, m.Method+": internal error")
 		}
 	}()
 	switch m.Method {
@@ -297,6 +310,42 @@ func (s *Server) handle(ctx context.Context, cn *conn, m *message) {
 		}
 		if res.Content == nil {
 			res.Content = []Content{}
+		}
+		raw, err := json.Marshal(res)
+		if err != nil {
+			res = CallResult{Content: []Content{TextContent("marshal result: " + strings.Join(strings.Fields(err.Error()), " "))}, IsError: true}
+		} else if len(raw) > MaxResultBytes {
+			hint := t.TooLarge
+			if hint == "" {
+				hint = "Ask for less: narrow the arguments."
+			}
+			text := fmt.Sprintf("result_too_large: the result is %d bytes, over the %d-byte limit. %s", len(raw), MaxResultBytes, hint)
+			structured := map[string]any{"error": "result_too_large", "bytes": len(raw), "limit": MaxResultBytes, "hint": hint}
+			var original struct {
+				StructuredContent map[string]json.RawMessage `json:"structuredContent"`
+			}
+			if json.Unmarshal(raw, &original) == nil {
+				var keys []string
+				for key, value := range original.StructuredContent {
+					var id *string
+					if strings.HasSuffix(key, "_id") && json.Unmarshal(value, &id) == nil && id != nil && len(*id) <= 200 {
+						structured[key] = *id
+						keys = append(keys, key)
+					}
+				}
+				slices.Sort(keys)
+				for _, key := range keys {
+					text += fmt.Sprintf(" %s=%s", key, structured[key])
+				}
+			}
+			res = CallResult{
+				Content:           []Content{TextContent(text)},
+				StructuredContent: structured,
+				IsError:           true,
+			}
+		} else {
+			_ = c.respond(m.ID, json.RawMessage(raw))
+			return
 		}
 		_ = c.respond(m.ID, res)
 	default:
