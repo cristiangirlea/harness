@@ -89,6 +89,8 @@ Compare retrieval off against text retrieval on the same held-out tasks. Counter
 
 Acceptance: no new deterministic correctness or isolation failures, plus the promotion criterion below. If results are inconclusive, retain an opt-in pilot and collect more evidence. Increase task coverage and repeats before making broad claims.
 
+The pilot's corpus, held-out tasks, variants, counterbalancing, commands and decision rule are in [the retrieval pilot plan](retrieval-pilot.md).
+
 ### 5. Evaluated memory consolidation
 
 After the pilot is useful, add a low-priority, idempotent consolidation job that runs only when new eligible completed-run evidence exists. Begin with structured extraction of task, failure, applied change and passing checks. Any model-based summarization is separately configured, budgeted and counted.
