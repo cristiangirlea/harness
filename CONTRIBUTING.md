@@ -48,6 +48,10 @@ A pushed `v*` tag cannot be moved or deleted (a GitHub ruleset refuses it). A ta
 on the wrong commit, or a release that needs a code fix, is followed by a new
 version: bump `agent.Version` and tag again. A workflow that failed for another
 reason can be re-run on the same tag.
+Rulesets with no bypass protect `main` and `v*` tags. GitHub refuses direct pushes
+to `main`, squash or rebase merges, merges with failing or missing checks, and
+moved or deleted `v*` tags. In an emergency, a maintainer turns the ruleset off
+in Settings > Rules and back on afterward.
 
 For a local release dry run, use `bash .github/release.sh`. It writes static binaries
 for Linux, macOS, and Windows (amd64 and arm64), plus `SHA256SUMS`, into `dist/`.
