@@ -1,10 +1,12 @@
 package watch
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -190,11 +192,17 @@ func (s *server) confirmMerge(w http.ResponseWriter, r *http.Request) {
 		if s.mergeRun != nil {
 			run = s.mergeRun
 		}
-		result, err = run(r.Context(), res, g.task, g.head)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+		defer cancel()
+		result, err = run(ctx, res, g.task, g.head)
 	}
 	outcome := ""
 	if err != nil {
-		if strings.Contains(err.Error(), "the branch moved") {
+		if errors.Is(err, batch.ErrMergedUnconfirmed) {
+			outcome = "merged, commit unknown"
+		} else if errors.Is(err, batch.ErrMergeBusy) {
+			outcome = "batch is busy"
+		} else if strings.Contains(err.Error(), "the branch moved") {
 			outcome = "the branch moved"
 		} else {
 			outcome = "merge failed: " + s.cleanMergeError(err)
@@ -213,7 +221,7 @@ func (s *server) confirmMerge(w http.ResponseWriter, r *http.Request) {
 	if e := auditAppender(g.row); e != nil {
 		fmt.Fprintln(os.Stderr, "merge outcome not audited")
 	}
-	if err != nil || !strings.HasPrefix(outcome, "merged ") {
+	if !errors.Is(err, batch.ErrMergedUnconfirmed) && (err != nil || !strings.HasPrefix(outcome, "merged ")) {
 		message := outcome
 		if strings.HasPrefix(message, "merge failed:") {
 			message = "merge failed"
@@ -222,6 +230,10 @@ func (s *server) confirmMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if errors.Is(err, batch.ErrMergedUnconfirmed) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"outcome": outcome})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(map[string]string{"commit": result[0].Commit})
 }
 

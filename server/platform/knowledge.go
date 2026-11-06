@@ -52,6 +52,18 @@ func knowledgeQueryIdentifiers(query string) []string {
 	return words
 }
 
+// Plain words such as "a" or "error" are scored as text; only identifier-shaped words bypass the score floor.
+func knowledgeShapedIdentifiers(words []string) []string {
+	shaped := []string{}
+	for _, word := range words {
+		inner := len(word) > 1 && strings.IndexFunc(word[1:], func(r rune) bool { return r >= 'A' && r <= 'Z' }) >= 0
+		if strings.ContainsAny(word, " _./:\\-0123456789") || inner {
+			shaped = append(shaped, word)
+		}
+	}
+	return shaped
+}
+
 func digestKnowledge(v any) string {
 	b, _ := json.Marshal(v)
 	h := sha256.Sum256(b)
@@ -375,6 +387,12 @@ func changeKnowledgeTx(ctx context.Context, tx pgx.Tx, in KnowledgeChange) (Know
 	return out, nil
 }
 
+const knowledgeRankedMinEntries = 20
+const knowledgeCommonTermShare = 0.25
+
+// Normalising by ln(n) keeps the relevance floor stable across version sizes.
+const knowledgeMinScore = 1.31
+
 const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
  SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers,e.search_vector
  FROM knowledge_members m JOIN knowledge_entries e ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id)
@@ -384,6 +402,32 @@ const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
  FROM members e
  WHERE (e.identifiers && $5::text[] OR e.search_vector @@ to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')))
  ORDER BY (e.identifiers && $5::text[]) DESC, ts_rank_cd(e.search_vector,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),''))) DESC,e.entry_key COLLATE "C",e.id LIMIT 100`
+
+const knowledgeRankedSearchSQL = `WITH members AS MATERIALIZED (
+ SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers,e.search_vector
+ FROM knowledge_members m JOIN knowledge_entries e ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id)
+ WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3
+), n AS (
+ SELECT count(*)::double precision AS total FROM members
+), terms AS MATERIALIZED (
+ SELECT term,to_tsquery('simple',quote_literal(term)) AS query,to_tsquery('simple',quote_literal(term) || ':A') AS key_query
+ FROM (SELECT DISTINCT term FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term) lexemes
+), df AS (
+ SELECT t.term,t.query,t.key_query,count(*)::double precision AS frequency
+ FROM terms t JOIN members e ON e.search_vector @@ t.query
+ GROUP BY t.term,t.query,t.key_query
+), kept AS MATERIALIZED (
+ SELECT df.query,df.key_query,ln(n.total/df.frequency)/ln(n.total) AS idf
+ FROM df CROSS JOIN n WHERE df.frequency <= $6::double precision*n.total
+), scored AS (
+ SELECT e.*,COALESCE((
+  SELECT sum(k.idf*CASE WHEN e.search_vector @@ k.key_query THEN 2 ELSE 1 END)
+  FROM kept k WHERE e.search_vector @@ k.query
+ ),0) AS score FROM members e
+)
+ SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
+ FROM scored e WHERE e.identifiers && $5::text[] OR e.score >= $7::double precision
+ ORDER BY (e.identifiers && $5::text[]) DESC,e.score DESC,e.entry_key COLLATE "C",e.id LIMIT 100`
 
 const knowledgeHeadlineSQL = `SELECT ts_headline('simple', content, to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')), 'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" ... "') FROM knowledge_entries WHERE tenant_id=$1 AND project_id=$2 AND id=$3`
 
@@ -420,7 +464,18 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 			return out, err
 		}
 		words := knowledgeQueryIdentifiers(in.Query)
-		rows, err := tx.Query(ctx, knowledgeSearchSQL, in.TenantID, in.ProjectID, out.VersionID, in.Query, words)
+		var members int64
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM knowledge_members WHERE tenant_id=$1 AND project_id=$2 AND version_id=$3`, in.TenantID, in.ProjectID, out.VersionID).Scan(&members); err != nil {
+			return out, err
+		}
+		ranked := members >= knowledgeRankedMinEntries
+		searchSQL := knowledgeSearchSQL
+		args := []any{in.TenantID, in.ProjectID, out.VersionID, in.Query, words}
+		if ranked {
+			searchSQL = knowledgeRankedSearchSQL
+			args = []any{in.TenantID, in.ProjectID, out.VersionID, in.Query, knowledgeShapedIdentifiers(words), knowledgeCommonTermShare, knowledgeMinScore}
+		}
+		rows, err := tx.Query(ctx, searchSQL, args...)
 		if err != nil {
 			return out, err
 		}
@@ -468,6 +523,9 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 		}
 		if len(out.Entries) == 0 {
 			out.EmptyReason = "no_match_or_byte_cap"
+			if ranked && len(candidates) == 0 {
+				out.EmptyReason = "below_threshold"
+			}
 		}
 	}
 	out.Bytes = len(out.Text)

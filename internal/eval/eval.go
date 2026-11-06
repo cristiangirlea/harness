@@ -617,6 +617,15 @@ func groupCells(results []batch.TaskResult) []cellResults {
 	return cells
 }
 
+// ScoredResults keeps consumers consistent with eval scoring after unstarted-cell reruns.
+func (r Record) ScoredResults() []batch.TaskResult {
+	var results []batch.TaskResult
+	for _, c := range groupCells(r.Results) {
+		results = append(results, c.scored)
+	}
+	return results
+}
+
 // Summarize scores a batch and judge verdicts by persisted cell ids.
 func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 	type cell struct {
