@@ -20,7 +20,7 @@ func knowledgeFixture(p Project) KnowledgeImport {
 	}}
 }
 
-func TestKnowledgeWeightedSearchAndExcerpts(t *testing.T) {
+func TestKnowledgeSearchWeightsKeysAndExcerptsLongEntries(t *testing.T) {
 	s := testStore(t)
 	p, _ := testProject(t, s)
 	ctx := context.Background()
@@ -80,6 +80,42 @@ func TestKnowledgeWeightedSearchAndExcerpts(t *testing.T) {
 		t.Fatalf("excerpt import accepted: %v", err)
 	}
 }
+func TestKnowledgeSearchExcerptsASecondEntryWhenTheRemainingPacketCannotHoldItWhole(t *testing.T) {
+	s := testStore(t)
+	p, _ := testProject(t, s)
+	ctx := context.Background()
+	in := knowledgeFixture(p)
+	in.Entries = []KnowledgeEntry{
+		{Key: "first", Content: "remainingquery " + strings.Repeat("first words ", 300), Source: "docs/first.md", Evidence: "fixture", Identifiers: []string{"remainingquery"}},
+		{Key: "second", Content: strings.Repeat("second words ", 200) + "remainingquery " + strings.Repeat("second words ", 200), Source: "docs/second.md", Evidence: "fixture"},
+	}
+	id, err := s.ImportKnowledge(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	search := KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, VersionID: id, Query: "remainingquery"}
+	packet, err := s.SearchKnowledge(ctx, search)
+	if err != nil || len(packet.Entries) != 2 {
+		t.Fatalf("packet: %#v %v", packet, err)
+	}
+	first, second := packet.Entries[0], packet.Entries[1]
+	if first.Key != "first" || first.Excerpt || first.Content != in.Entries[0].Content {
+		t.Fatalf("first entry was not whole: %#v", first)
+	}
+	if second.Key != "second" || !second.Excerpt || second.Content == in.Entries[1].Content || !strings.Contains(second.Content, search.Query) {
+		t.Fatalf("second entry was not excerpted: %#v", second)
+	}
+	if strings.Count(packet.Text, "excerpt=true") != 1 || !strings.Contains(packet.Text, "evidence=\"fixture\"; excerpt=true]") {
+		t.Fatalf("excerpt header missing: %s", packet.Text)
+	}
+	if len(KnowledgeReferenceBlock(packet.Text)) > KnowledgeMaxPacketBytes {
+		t.Fatal("packet exceeds cap")
+	}
+	if err := KnowledgeValidatePacket(packet, id, search.Query); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestKnowledgeImportRejectsTextThatCanCloseOrForgeAReference(t *testing.T) {
 	markers := []string{"<project-reference", "</project-reference>", "[Reference ", "[/Reference]"}
 	for _, marker := range markers {

@@ -380,11 +380,12 @@ const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
  FROM knowledge_members m JOIN knowledge_entries e ON (e.tenant_id,e.project_id,e.id)=(m.tenant_id,m.project_id,m.entry_id)
  WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.version_id=$3
 )
- SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers,
- ts_headline('simple',e.content,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')), 'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" ... "')
+ SELECT e.id,e.entry_key,e.content,e.source,e.evidence,e.identifiers
  FROM members e
  WHERE (e.identifiers && $5::text[] OR e.search_vector @@ to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')))
  ORDER BY (e.identifiers && $5::text[]) DESC, ts_rank_cd(e.search_vector,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),''))) DESC,e.entry_key COLLATE "C",e.id LIMIT 100`
+
+const knowledgeHeadlineSQL = `SELECT ts_headline('simple', content, to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')), 'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" ... "') FROM knowledge_entries WHERE tenant_id=$1 AND project_id=$2 AND id=$3`
 
 func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (KnowledgePacket, error) {
 	started := time.Now()
@@ -423,14 +424,22 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 		if err != nil {
 			return out, err
 		}
-		seen := map[string]bool{}
+		var candidates []KnowledgeEntry
 		for rows.Next() {
 			var e KnowledgeEntry
-			var headline string
-			if err = rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers, &headline); err != nil {
+			if err = rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers); err != nil {
 				rows.Close()
 				return out, err
 			}
+			candidates = append(candidates, e)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return out, err
+		}
+		seen := map[string]bool{}
+		for _, e := range candidates {
 			hash := digestKnowledge(e.Content)
 			if seen[hash] {
 				continue
@@ -438,6 +447,10 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 			seen[hash] = true
 			label := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", e.ID, e.Source, in.Revision, e.Evidence, e.Content)
 			if len(KnowledgeReferenceBlock(out.Text+label)) > KnowledgeMaxPacketBytes {
+				var headline string
+				if err = tx.QueryRow(ctx, knowledgeHeadlineSQL, in.TenantID, in.ProjectID, e.ID, in.Query).Scan(&headline); err != nil {
+					return out, err
+				}
 				if headline == "" || !utf8.ValidString(headline) || hasFrameMarker(headline) || headline == e.Content {
 					continue
 				}
@@ -452,11 +465,6 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 			if len(out.Entries) == 5 {
 				break
 			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return out, err
 		}
 		if len(out.Entries) == 0 {
 			out.EmptyReason = "no_match_or_byte_cap"

@@ -14,7 +14,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
-func TestKnowledgeMarkdown(t *testing.T) {
+func TestKnowledgeMarkdownSplitsSectionsByHeading(t *testing.T) {
 	for _, tc := range []struct {
 		name, text        string
 		min, max, overlap int
@@ -72,7 +72,7 @@ func TestKnowledgeMarkdown(t *testing.T) {
 	}
 }
 
-func TestKnowledgeMarkdownRequestAndBounds(t *testing.T) {
+func TestKnowledgeMarkdownKeepsBaseFieldsAndBoundsPathsAndKeys(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestKnowledgeMarkdownRequestAndBounds(t *testing.T) {
 	}
 }
 
-func TestKnowledgeMarkdownRefusals(t *testing.T) {
+func TestKnowledgeMarkdownRefusesInvalidRequestsAndBounds(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestKnowledgeMarkdownRefusals(t *testing.T) {
 	}
 }
 
-func TestMarkdownChunks(t *testing.T) {
+func TestMarkdownChunksStayWithinLimitsAndOverlap(t *testing.T) {
 	for _, tc := range []struct {
 		name, content string
 		max, overlap  int
@@ -211,7 +211,7 @@ func TestMarkdownChunks(t *testing.T) {
 	}
 }
 
-func TestMarkdownIdentifiers(t *testing.T) {
+func TestMarkdownIdentifiersComeFromCodeSpansAndPaths(t *testing.T) {
 	for _, tc := range []struct {
 		text string
 		want []string
@@ -220,6 +220,8 @@ func TestMarkdownIdentifiers(t *testing.T) {
 		{"`go test ./...` and `bad @ value`", []string{"go test ./...", "./..."}},
 		{"```\n`NOT_INLINE` src/code.go\n```\n`INLINE`", []string{"src/code.go", "INLINE"}},
 		{"``NOT_SINGLE`` `OK`", []string{"OK"}},
+		{"e.g i.e 1.2 v1.2.3 go.mod AGENTS.md server/platform/store.go .gitignore .golangci.yml", []string{"go.mod", "AGENTS.md", "server/platform/store.go", ".gitignore", ".golangci.yml"}},
+		{"`e.g` `1.2` `v1.2.3`", []string{"e.g", "1.2", "v1.2.3"}},
 		{"`" + strings.Repeat("x", 257) + "`", []string{}},
 	} {
 		got := markdownIdentifiers(tc.text)
@@ -234,5 +236,47 @@ func TestMarkdownIdentifiers(t *testing.T) {
 	got := markdownIdentifiers(text.String())
 	if len(got) != 32 || got[31] != "ID_31" {
 		t.Fatalf("identifier cap = %#v", got)
+	}
+}
+
+func TestKnowledgeMarkdownRefusesFilesUnderGitDirectories(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	for _, name := range []string{".git/config", "sub/.git/x"} {
+		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte("repository metadata"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{".git/config", "sub/.git/x"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := markdownEntries([]string{name}, "revision", 1, 100, 0); err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("metadata accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestKnowledgeMarkdownRefusesSymlinksToFilesOutsideTheRepository(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(outside, []byte("outside content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	resolvedOutside, err := filepath.EvalSymlinks(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	if err := os.Symlink(resolvedOutside, "link.md"); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := markdownEntries([]string{"link.md"}, "revision", 1, 100, 0); err == nil || !strings.Contains(err.Error(), "link.md") {
+		t.Fatalf("outside symlink accepted: %v", err)
 	}
 }

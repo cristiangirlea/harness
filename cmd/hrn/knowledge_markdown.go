@@ -106,6 +106,11 @@ func markdownEntries(files []string, revision string, min, max, overlap int) ([]
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 		rel = filepath.ToSlash(rel)
+		for _, component := range strings.Split(rel, "/") {
+			if component == ".git" || (runtime.GOOS == "windows" && strings.EqualFold(component, ".git")) {
+				return nil, fmt.Errorf("%s: files under .git are refused", name)
+			}
+		}
 		source := rel + "@" + revision
 		if len(source) > 512 {
 			return nil, fmt.Errorf("%s: source exceeds 512 bytes", name)
@@ -391,7 +396,7 @@ func lastMarkdownWords(s string, n int) []string {
 
 var markdownToken = regexp.MustCompile(`[A-Za-z0-9_./:\\-]+`)
 var markdownIdentifier = regexp.MustCompile(`^[A-Za-z0-9_./:\\-]+( +[A-Za-z0-9_./:\\-]+)*$`)
-var markdownExtension = regexp.MustCompile(`\.[A-Za-z0-9_]+$`)
+var markdownExtension = regexp.MustCompile(`^(\.[A-Za-z][A-Za-z0-9_.-]*|[A-Za-z0-9_-]{2,}(\.[A-Za-z0-9_-]+)*\.[A-Za-z][A-Za-z0-9]{0,7})$`)
 
 func markdownIdentifiers(content string) []string {
 	ids := []string{}

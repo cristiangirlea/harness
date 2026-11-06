@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestKnowledgeRankingAndExcerptWireContract(t *testing.T) {
+func TestKnowledgeRankingIsVersionThreeAndExcerptIsOmittedWhenFalse(t *testing.T) {
 	if KnowledgeRankingVersion != "simple-or-exact-v3" {
 		t.Fatalf("ranking = %q", KnowledgeRankingVersion)
 	}

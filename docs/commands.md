@@ -321,7 +321,8 @@ the terminal never reads them as control sequences.
 ### Project knowledge
 
 `hrn knowledge markdown -request base.json FILE...` reads only the named files,
-resolved inside the repository root, and writes JSON only. The base import must
+resolved inside the repository root with files under `.git` refused, and writes
+JSON only. The base import must
 have no entries and a non-empty revision; its other fields are kept. Heading
 sections merge below `-min-words` (100), split above `-max-words` (800) or 16384
 bytes, and overlap by `-overlap-words` (40) when split. Keys carry the relative

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestRankingAndExcerptWireContract(t *testing.T) {
+func TestRankingIsVersionThreeAndExcerptIsOmittedWhenFalse(t *testing.T) {
 	if RankingVersion != "simple-or-exact-v3" {
 		t.Fatalf("ranking = %q", RankingVersion)
 	}
