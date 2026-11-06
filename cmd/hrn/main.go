@@ -1070,6 +1070,10 @@ func printEval(r *renderer, rec eval.Record) {
 		}
 	}
 
+	for _, v := range rec.Table.Variants {
+		printToolStats(r, fmt.Sprintf("%s (%d attempts)", v.Name, v.AttemptsWithToolStats), v.ToolStats, nil, false)
+	}
+
 	if len(rec.Table.Tasks) > 0 {
 		var names []string
 		for _, v := range rec.Table.Variants {

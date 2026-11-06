@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -40,6 +41,19 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 		}
 	}
 
+	for _, v := range d.Variants {
+		var a, b map[string]kernel.ToolStat
+		var attemptsA, attemptsB int
+		if v.A != nil {
+			a = v.A.ToolStats
+			attemptsA = v.A.AttemptsWithToolStats
+		}
+		if v.B != nil {
+			b = v.B.ToolStats
+			attemptsB = v.B.AttemptsWithToolStats
+		}
+		printToolStats(r, fmt.Sprintf("%s (%s: %d attempts -> %s: %d attempts)", v.Name, d.A, attemptsA, d.B, attemptsB), a, b, true)
+	}
 	r.Line("")
 	r.Line(fmt.Sprintf("  %-20s %-20s %s", "task", "variant", "passed"))
 	for _, t := range d.Tasks {

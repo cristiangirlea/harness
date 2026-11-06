@@ -12,6 +12,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -134,8 +135,9 @@ func running(b batch.Result) bool {
 
 // Report is everything hrn report prints, in the shape --json emits.
 type Report struct {
-	Since *time.Time `json:"since"` // nil when the report covers all time
-	By    string     `json:"by"`
+	ToolStats map[string]kernel.ToolStat `json:"tool_stats,omitempty"`
+	Since     *time.Time                 `json:"since"` // nil when the report covers all time
+	By        string                     `json:"by"`
 
 	Runs       []Row `json:"runs"`
 	RunsAll    Row   `json:"runs_all"`
@@ -159,6 +161,21 @@ func (d Data) Report(by string) (Report, error) {
 	brows, ball := d.BatchRows()
 	rep := Report{By: by, Runs: rows, RunsAll: all, Unfinished: d.Unfinished,
 		Batches: brows, BatchesAll: ball, RunningBatches: d.RunningBatches, Unreadable: d.Unreadable}
+	for _, run := range d.Runs {
+		if run.Result.ValidToolStats() != nil {
+			continue
+		}
+		for name, stat := range run.Result.ToolStats {
+			if rep.ToolStats == nil {
+				rep.ToolStats = make(map[string]kernel.ToolStat)
+			}
+			s := rep.ToolStats[name]
+			s.Calls += stat.Calls
+			s.Errors += stat.Errors
+			s.ResultBytes += stat.ResultBytes
+			rep.ToolStats[name] = s
+		}
+	}
 	if !d.Since.IsZero() {
 		since := d.Since
 		rep.Since = &since
