@@ -23,7 +23,7 @@ type runTally struct {
 type tallied struct {
 	owner, dir    string
 	purpose       string
-	repoKey, repo string // the checkout's path, which tells same-named ones apart, and its name
+	repoKey, repo string // the remote, or a remote-less checkout's path, which tells same-named ones apart; and its name
 	sum           purposeSum
 }
 
@@ -57,10 +57,13 @@ func (s *server) tallyRuns(v owner.Viewer) []tallied {
 			if err != nil {
 				continue
 			}
-			co, known := checkouts[rec.Task.Dir]
-			if !known {
-				co[0], co[1] = checkoutOf(rec.Task.Dir)
-				checkouts[rec.Task.Dir] = co
+			var co [2]string
+			if co[0], co[1] = recordedRepo(rec); co[0] == "" {
+				var known bool
+				if co, known = checkouts[rec.Task.Dir]; !known {
+					co[0], co[1] = repoOfDir(rec.Task.Dir)
+					checkouts[rec.Task.Dir] = co
+				}
 			}
 			t = tallyOf(rec, co[0], co[1])
 			if !rec.Done {
@@ -82,10 +85,85 @@ func appendReadable(runs []tallied, v owner.Viewer, t tallied) []tallied {
 	return runs
 }
 
-// checkoutOf finds the checkout holding dir and returns its path and name; a worktree's .git file leads to its main checkout.
-func checkoutOf(dir string) (key, name string) {
-	if dir == "" {
+// repoOfRun is the repository a run recorded, or for an older record the remote of the checkout its folder is in.
+func repoOfRun(rec runlog.Record) (key, name string) {
+	if key, name = recordedRepo(rec); key != "" {
+		return key, name
+	}
+	return repoOfDir(rec.Task.Dir)
+}
+
+// recordedRepo is checked again on read, since links are built from it and a record can be edited by hand.
+func recordedRepo(rec runlog.Record) (key, name string) {
+	if !runlog.ValidRepo(rec.Repo) {
 		return "", ""
+	}
+	return repoKey(rec.Repo), rec.Repo
+}
+
+// repoKey folds case only where the host does: GitHub's names ignore it, other servers' may not.
+func repoKey(repo string) string {
+	if strings.HasPrefix(repo, "github.com/") {
+		return "r:" + strings.ToLower(repo)
+	}
+	return "r:" + repo
+}
+
+// repoOfDir names the checkout holding dir by its remote; "" when there is no checkout or no remote to name it by.
+func repoOfDir(dir string) (key, name string) {
+	found := findCheckout(dir)
+	if found == "" {
+		return "", ""
+	}
+	if remote := runlog.RepoName(runlog.PickRemote(remotesOf(found))); remote != "" {
+		return repoKey(remote), remote
+	}
+	return "", ""
+}
+
+// remotesOf reads a checkout's remotes from its git config; anything unusual reads as none.
+func remotesOf(checkout string) map[string]string {
+	g := gitDirOf(checkout)
+	if g == "" {
+		return nil
+	}
+	cfg := filepath.Join(g, "config")
+	info, err := os.Lstat(cfg)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 64<<10 {
+		return nil
+	}
+	data, err := os.ReadFile(cfg)
+	if err != nil {
+		return nil
+	}
+	return runlog.RemotesInConfig(string(data))
+}
+
+// gitDirOf is a checkout's .git folder, the folder a submodule's .git file names, or a bare repository itself.
+func gitDirOf(checkout string) string {
+	dotGit := filepath.Join(checkout, ".git")
+	if info, err := os.Lstat(dotGit); err == nil {
+		if info.IsDir() {
+			return dotGit
+		}
+		if g := gitdirIn(checkout, dotGit, info); g != "" {
+			if gi, err := os.Stat(g); err == nil && gi.IsDir() {
+				return g
+			}
+		}
+		return ""
+	}
+	// Only a folder with no .git of its own can be bare, so a checkout's own config file is never read.
+	if head, err := os.Lstat(filepath.Join(checkout, "HEAD")); err == nil && head.Mode().IsRegular() {
+		return checkout
+	}
+	return ""
+}
+
+// findCheckout is the checkout holding dir; a worktree's .git file leads to its main checkout.
+func findCheckout(dir string) string {
+	if dir == "" {
+		return ""
 	}
 	clean := filepath.Clean(dir)
 	start := clean
@@ -103,15 +181,14 @@ func checkoutOf(dir string) (key, name string) {
 			if real, err := filepath.EvalSymlinks(found); err == nil {
 				found = real
 			}
-			return keyOf(found), strings.TrimSuffix(filepath.Base(found), ".git")
+			return found
 		}
 		up := filepath.Dir(d)
 		if up == d {
-			break
+			return ""
 		}
 		d = up
 	}
-	return keyOf(start), filepath.Base(start)
 }
 
 // managedRepo is the repository holding an hrn slot or batch worktree, which may be gone.
@@ -123,8 +200,21 @@ func managedRepo(dir string) string {
 	return ""
 }
 
-// worktreeMain reads a linked worktree's .git file; submodules and anything unreadable give "".
+// worktreeMain is the main checkout a linked worktree's .git file names; submodules and anything unreadable give "".
 func worktreeMain(dir, gitPath string, info os.FileInfo) string {
+	g := gitdirIn(dir, gitPath, info)
+	if g == "" || filepath.Base(filepath.Dir(g)) != "worktrees" {
+		return ""
+	}
+	common := filepath.Dir(filepath.Dir(g))
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return common // a bare repository
+}
+
+// gitdirIn reads the folder a .git file names, made absolute.
+func gitdirIn(dir, gitPath string, info os.FileInfo) string {
 	if !info.Mode().IsRegular() || info.Size() > 4096 {
 		return ""
 	}
@@ -141,15 +231,7 @@ func worktreeMain(dir, gitPath string, info os.FileInfo) string {
 	if !filepath.IsAbs(g) {
 		g = filepath.Join(dir, g)
 	}
-	g = filepath.Clean(g)
-	if filepath.Base(filepath.Dir(g)) != "worktrees" {
-		return ""
-	}
-	common := filepath.Dir(filepath.Dir(g))
-	if filepath.Base(common) == ".git" {
-		return filepath.Dir(common)
-	}
-	return common // a bare repository
+	return filepath.Clean(g)
 }
 
 func keyOf(path string) string {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 // writer writes <first word of the prompt>.txt, so two tasks never touch the
@@ -415,5 +416,85 @@ func TestBatchMergeErrorLineCannotSendTerminalControls(t *testing.T) {
 	mergeError := rows[0].(map[string]any)["error"].(string)
 	if strings.ContainsAny(mergeError, "\x1b\x07\u009b") || !strings.Contains(mergeError, want) {
 		t.Errorf("structured merge error did not replace terminal controls: %q", mergeError)
+	}
+}
+
+func TestBatchMergeToolUnknownAndEarlyRefusalOutput(t *testing.T) {
+	for _, scenario := range []string{"confirmed", "unknown", "busy", "dirty"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := gitRepo(t)
+			s := connect(t, dir)
+			git := func(args ...string) string {
+				t.Helper()
+				out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+				if err != nil {
+					t.Fatalf("git %v: %v: %s", args, err, out)
+				}
+				return strings.TrimSpace(string(out))
+			}
+			if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("base"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			git("add", "README.md")
+			git("commit", "-qm", "base")
+			git("checkout", "-qb", "task")
+			git("commit", "--allow-empty", "-qm", "task")
+			tip := git("rev-parse", "HEAD")
+			git("checkout", "-q", "main")
+			res := batch.Result{ID: "merge-output", Dir: dir, Base: git("rev-parse", "HEAD"), Tasks: []batch.TaskResult{{ID: "alpha", Branch: "task", Commit: tip, Status: batch.StatusPass}}}
+			if err := batch.SaveResult(res); err != nil {
+				t.Fatal(err)
+			}
+			git("commit", "--allow-empty", "-qm", "before call")
+			before := git("rev-parse", "HEAD")
+			switch scenario {
+			case "unknown":
+				hooks := t.TempDir()
+				if err := os.WriteFile(filepath.Join(hooks, "post-merge"), []byte("#!/bin/sh\ngit -c core.hooksPath=/dev/null commit --allow-empty -qm intervening\n"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				config := filepath.Join(t.TempDir(), "gitconfig")
+				git("config", "--file", config, "core.hooksPath", filepath.ToSlash(hooks))
+				t.Setenv("GIT_CONFIG_GLOBAL", config)
+			case "busy":
+				release, busy, err := ws.LockFile(filepath.Join(dir, ".git", "hrn-merge.lock"), "other merger")
+				if err != nil || busy != "" {
+					t.Fatalf("busy=%s err=%v", busy, err)
+				}
+				defer release()
+			case "dirty":
+				if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("keep"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			merged := s.call(t, "batch_merge", `{"batch_id":"merge-output"}`)
+			out := merged.Text()
+			if scenario == "busy" || scenario == "dirty" {
+				if !merged.IsError || strings.Contains(out, "undo with:") || git("rev-parse", "HEAD") != before {
+					t.Fatalf("refusal: %s", out)
+				}
+				return
+			}
+			data, err := json.Marshal(merged.StructuredContent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var recorded struct {
+				Merged []batch.MergeResult `json:"merged"`
+			}
+			if err := json.Unmarshal(data, &recorded); err != nil {
+				t.Fatal(err)
+			}
+			if len(recorded.Merged) != 1 || recorded.Merged[0].Before != before || !strings.Contains(out, "undo with: git reset --hard "+recorded.Merged[0].Before) {
+				t.Fatalf("out=%s data=%s", out, data)
+			}
+			if scenario == "unknown" {
+				if !merged.IsError || !strings.Contains(out, "merged, commit unknown") || strings.Contains(out, "could not merge") || recorded.Merged[0].Commit != "" || recorded.Merged[0].Error != batch.ErrMergedUnconfirmed.Error() {
+					t.Fatalf("out=%s data=%s", out, data)
+				}
+			} else if merged.IsError || recorded.Merged[0].Commit == "" {
+				t.Fatalf("out=%s data=%s", out, data)
+			}
+		})
 	}
 }

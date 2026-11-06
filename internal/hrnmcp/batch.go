@@ -21,8 +21,9 @@ const specDescription = `A batch spec, the same JSON as an hrn batch file. Field
 
 func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	return mcp.Tool{
-		Name:  "batch",
-		Title: "Run tasks in parallel worktrees",
+		Name:     "batch",
+		TooLarge: "The batch finished; read it with batch_show.",
+		Title:    "Run tasks in parallel worktrees",
 		Description: "Run several coding tasks at once, each on its own branch hrn/<id> in its own git worktree, " +
 			"then run the gate commands in each. Waits for every task and returns a summary with attempt notes and the batch id. " +
 			"The repository must have no modified tracked files unless allow_dirty is set. " +
@@ -330,11 +331,11 @@ func batchMergeTool() mcp.Tool {
 			if err != nil {
 				return mcp.CallResult{}, err
 			}
-			before, err := batch.Head(ctx, res.Dir)
-			if err != nil {
-				return mcp.CallResult{}, err
-			}
 			merged, mergeErr := batch.Merge(ctx, res, args.Tasks, args.Squash)
+			before := ""
+			if len(merged) > 0 {
+				before = merged[0].Before
+			}
 			filtered := slices.Clone(merged)
 			var b strings.Builder
 			done := 0
@@ -343,6 +344,9 @@ func batchMergeTool() mcp.Tool {
 				switch {
 				case m.Conflict:
 					fmt.Fprintf(&b, "%s: conflict merging %s; the tree is back as it was, merge it by hand with `git merge %s`\n", m.Task, m.Branch, m.Branch)
+				case m.Error == batch.ErrMergedUnconfirmed.Error():
+					done++
+					fmt.Fprintf(&b, "%s: merged, commit unknown\n", m.Task)
 				case m.Error != "":
 					fmt.Fprintf(&b, "%s: could not merge %s: %s\n", m.Task, m.Branch, printableNote(m.Error, 200))
 				case m.Skipped != "":

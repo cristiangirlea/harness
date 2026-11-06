@@ -8,7 +8,42 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestTruncateRuneBoundaries(t *testing.T) {
+	for _, runeText := range []string{"é", "界", "😀"} {
+		t.Run(runeText, func(t *testing.T) {
+			head := strings.Repeat("h", maxOutput*2/3-1)
+			tail := strings.Repeat("t", maxOutput/3-1)
+			middle := runeText + strings.Repeat("x", 100) + runeText
+			input := head + middle + tail
+			got := Truncate(input)
+			if !utf8.ValidString(got) {
+				t.Error("truncated result is invalid UTF-8")
+			}
+			want := fmt.Sprintf("%s\n\n[... %d bytes truncated ...]\n\n%s", head, len(middle), tail)
+			if got != want {
+				t.Error("truncated result has incorrect cut points or byte count")
+			}
+		})
+	}
+}
+
+func TestTruncateInvalidUTF8KeepsHeadAndTail(t *testing.T) {
+	input := strings.Repeat("\x80", maxOutput+100)
+	parts := strings.Split(Truncate(input), "\n\n")
+	if len(parts) != 3 {
+		t.Fatalf("got %d truncation parts, want 3", len(parts))
+	}
+	if len(parts[0]) < maxOutput*2/3-3 || len(parts[2]) < maxOutput/3-3 {
+		t.Errorf("continuation bytes dropped too much: head=%d tail=%d", len(parts[0]), len(parts[2]))
+	}
+	want := fmt.Sprintf("[... %d bytes truncated ...]", len(input)-len(parts[0])-len(parts[2]))
+	if parts[1] != want {
+		t.Errorf("truncation message = %q, want %q", parts[1], want)
+	}
+}
 
 func setup(t *testing.T) (*Workspace, map[string]Tool) {
 	t.Helper()

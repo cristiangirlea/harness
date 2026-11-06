@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -20,7 +24,13 @@ import (
 
 func runRetrieval(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: hrn retrieval fixture|compare [--manifest file --samples file --baseline-preparation file --candidate-preparation file --reuse N --runs --json]")
+		return fmt.Errorf("usage: hrn retrieval fixture|compare [--manifest file --samples file --baseline-preparation file --candidate-preparation file --reuse N --runs --json]; hrn retrieval samples --manifest FILE --eval ID[:OFFSET] [--eval ...]; hrn retrieval corpus-digest FILE")
+	}
+	if args[0] == "samples" {
+		return runRetrievalSamples(args[1:], out)
+	}
+	if args[0] == "corpus-digest" {
+		return runRetrievalCorpusDigest(args[1:], out)
 	}
 	fs := flag.NewFlagSet("retrieval", flag.ContinueOnError)
 	manifest := fs.String("manifest", "", "held-out manifest")
@@ -92,6 +102,289 @@ func runRetrieval(args []string, out io.Writer) error {
 		err = writeRetrievalModels(out, m, reportedModels)
 	}
 	return err
+}
+
+func runRetrievalCorpusDigest(args []string, out io.Writer) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: hrn retrieval corpus-digest FILE")
+	}
+	var corpus map[string]json.RawMessage
+	if err := readRetrievalJSON(args[0], &corpus); err != nil {
+		return err
+	}
+	var entries []retrieval.Entry
+	if raw, ok := corpus["entries"]; ok {
+		if !utf8.Valid(raw) || hasLoneSurrogateEscape(raw) {
+			return fmt.Errorf("corpus entries contain invalid UTF-8")
+		}
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return fmt.Errorf("corpus entries: %w", err)
+		}
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("corpus has no entries")
+	}
+	rows := make([][3]string, 0, len(entries))
+	for _, entry := range entries {
+		rows = append(rows, [3]string{entry.Key, entry.Source, retrieval.TextDigest(entry.Content)})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		for k := range rows[i] {
+			if rows[i][k] != rows[j][k] {
+				return rows[i][k] < rows[j][k]
+			}
+		}
+		return false
+	})
+	var encoded bytes.Buffer
+	encoded.WriteByte('[')
+	for i, row := range rows {
+		if i > 0 {
+			encoded.WriteByte(',')
+		}
+		encoded.WriteByte('[')
+		for j, field := range row {
+			if j > 0 {
+				encoded.WriteByte(',')
+			}
+			writeRetrievalDigestString(&encoded, field)
+		}
+		encoded.WriteByte(']')
+	}
+	encoded.WriteByte(']')
+	_, err := fmt.Fprintln(out, retrieval.TextDigest(encoded.String()))
+	return err
+}
+
+// Go decodes an unpaired surrogate escape as U+FFFD, which would hash text no UTF-8 encoder can produce.
+func hasLoneSurrogateEscape(raw []byte) bool {
+	surrogate := func(i int) (rune, bool) {
+		if i+6 > len(raw) || raw[i] != '\\' || raw[i+1] != 'u' {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(string(raw[i+2:i+6]), 16, 16)
+		if err != nil || v < 0xd800 || v > 0xdfff {
+			return 0, false
+		}
+		return rune(v), true
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		r, ok := surrogate(i)
+		switch {
+		case !ok:
+			i++ // skip the escaped character, so `\\` never starts an escape
+		case r >= 0xdc00:
+			return true
+		default:
+			low, ok := surrogate(i + 6)
+			if !ok || low < 0xdc00 {
+				return true
+			}
+			i += 11
+		}
+	}
+	return false
+}
+
+// Python's UTF-8 JSON encoding preserves line separators and non-ASCII bytes.
+func writeRetrievalDigestString(out *bytes.Buffer, value string) {
+	const hex = "0123456789abcdef"
+	out.WriteByte('"')
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch c {
+		case '"', '\\':
+			out.WriteByte('\\')
+			out.WriteByte(c)
+		case '\b':
+			out.WriteString(`\b`)
+		case '\f':
+			out.WriteString(`\f`)
+		case '\n':
+			out.WriteString(`\n`)
+		case '\r':
+			out.WriteString(`\r`)
+		case '\t':
+			out.WriteString(`\t`)
+		default:
+			if c < 0x20 {
+				out.WriteString(`\u00`)
+				out.WriteByte(hex[c>>4])
+				out.WriteByte(hex[c&15])
+			} else {
+				out.WriteByte(c)
+			}
+		}
+	}
+	out.WriteByte('"')
+}
+
+func runRetrievalSamples(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("retrieval samples", flag.ContinueOnError)
+	manifest := fs.String("manifest", "", "held-out manifest")
+	var refs []string
+	fs.Func("eval", "saved eval ID[:OFFSET] (repeatable)", func(ref string) error {
+		refs = append(refs, ref)
+		return nil
+	})
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || len(refs) == 0 {
+		return fmt.Errorf("usage: hrn retrieval samples --manifest FILE --eval ID[:OFFSET] [--eval ...]")
+	}
+	var m eval.RetrievalManifest
+	if err := readRetrievalJSON(*manifest, &m); err != nil {
+		return err
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	tasks := map[string]bool{}
+	for _, task := range m.Spec.Tasks {
+		tasks[task.ID] = true
+	}
+	variants := map[string]eval.Variant{}
+	for _, v := range m.Spec.Matrix {
+		variants[v.Key()] = v
+	}
+	type cellKey struct {
+		task, variant string
+		repeat        int
+	}
+	seen := map[cellKey]bool{}
+	var samples []eval.RetrievalSample
+	for _, ref := range refs {
+		id, offsetText, hasOffset := strings.Cut(ref, ":")
+		offset := 0
+		if hasOffset {
+			var err error
+			offset, err = strconv.Atoi(offsetText)
+			if err != nil {
+				return fmt.Errorf("eval %s: invalid offset %q", id, offsetText)
+			}
+		}
+		rec, err := eval.LoadRecord(id)
+		if err != nil {
+			return err
+		}
+		batchTasks := map[string]batch.TaskResult{}
+		for _, batchID := range append([]string{rec.BatchID}, rec.RerunBatchIDs...) {
+			saved, err := batch.LoadResult(batchID)
+			if err != nil {
+				return fmt.Errorf("eval %s: batch %s: %w", id, batchID, err)
+			}
+			for _, tr := range saved.Tasks {
+				if _, exists := batchTasks[tr.ID]; exists {
+					return fmt.Errorf("cell %s: duplicate batch task", tr.ID)
+				}
+				batchTasks[tr.ID] = tr
+			}
+		}
+		// Results already contains the ordered rerun batches saved by eval.Run.
+		ids := map[string]bool{}
+		for _, tr := range rec.Results {
+			if ids[tr.ID] {
+				return fmt.Errorf("cell %s: duplicate result", tr.ID)
+			}
+			ids[tr.ID] = true
+			if _, _, _, err := retrievalCellParts(rec.ID, tr.ID); err != nil {
+				return err
+			}
+		}
+		for _, tr := range rec.ScoredResults() {
+			task, variant, n, err := retrievalCellParts(rec.ID, tr.ID)
+			if err != nil {
+				return err
+			}
+			v, ok := variants[variant]
+			if !tasks[task] || !ok {
+				return fmt.Errorf("cell %s: unknown manifest task or variant", tr.ID)
+			}
+			if n < 1 || n > m.Spec.Repeats || offset < 0 || offset > m.Spec.Repeats-n {
+				return fmt.Errorf("cell %s: repeat outside manifest range", tr.ID)
+			}
+			repeat := offset + n - 1
+			key := cellKey{task, variant, repeat}
+			if seen[key] {
+				return fmt.Errorf("cell %s: duplicate comparison cell", tr.ID)
+			}
+			seen[key] = true
+			switch tr.Status {
+			case batch.StatusPass, batch.StatusFail, batch.StatusError, batch.StatusCanceled:
+			default:
+				return fmt.Errorf("cell %s: unfinished task status %q", tr.ID, tr.Status)
+			}
+			if len(tr.Attempts) == 0 {
+				return fmt.Errorf("cell %s: no attempts", tr.ID)
+			}
+			saved, ok := batchTasks[tr.ID]
+			if !ok {
+				return fmt.Errorf("cell %s: missing batch task", tr.ID)
+			}
+			if saved.Status != tr.Status || len(saved.Attempts) != len(tr.Attempts) {
+				return fmt.Errorf("cell %s: status or attempts differ from batch task", tr.ID)
+			}
+			for i, a := range tr.Attempts {
+				if a.RunID != saved.Attempts[i].RunID {
+					return fmt.Errorf("cell %s: attempt run IDs differ from batch task", tr.ID)
+				}
+			}
+			zero := int64(0)
+			cost := 0.0
+			sample := eval.RetrievalSample{TaskID: task, Variant: variant, Repeat: repeat,
+				RunRefs: []string{}, IsolationFailure: tr.Commit != "",
+				Usage: report.TaskUsage{Passed: tr.Status == batch.StatusPass, Attempts: []agent.Result{},
+					Online: report.Overhead{ModelTokens: &zero, CostUSD: &cost}}}
+			for _, attempt := range tr.Attempts {
+				if attempt.RunID == "" {
+					return fmt.Errorf("cell %s: empty attempt run ID", tr.ID)
+				}
+				sample.RunRefs = append(sample.RunRefs, attempt.RunID)
+				if v.Retrieval != "off" {
+					var saved retrieval.Record
+					if err := readRetrievalJSON(filepath.Join(runlog.Root(), attempt.RunID, "retrieval.json"), &saved); err != nil {
+						return fmt.Errorf("cell %s: %w", tr.ID, err)
+					}
+					sample.Usage.Online.DurationNS += saved.DurationNS
+				}
+			}
+			samples = append(samples, sample)
+		}
+	}
+	for _, task := range m.Spec.Tasks {
+		for _, variant := range m.Spec.Matrix {
+			for r := 0; r < m.Spec.Repeats; r++ {
+				if !seen[cellKey{task.ID, variant.Key(), r}] {
+					return fmt.Errorf("cell %s.%s.r%d: missing comparison cell (repeat %d)", task.ID, variant.Key(), r+1, r)
+				}
+			}
+		}
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(samples)
+}
+
+func retrievalCellParts(evalID, cell string) (string, string, int, error) {
+	parts := strings.Split(cell, ".")
+	if len(parts) == 5 && strings.HasPrefix(parts[4], "u") {
+		round, err := strconv.Atoi(parts[4][1:])
+		if err == nil && round > 0 {
+			parts = parts[:4]
+		}
+	}
+	if len(parts) != 4 || parts[0] != evalID || !strings.HasPrefix(parts[3], "r") {
+		return "", "", 0, fmt.Errorf("cell %s: invalid cell ID or eval prefix", cell)
+	}
+	n, err := strconv.Atoi(parts[3][1:])
+	if err != nil {
+		return "", "", 0, fmt.Errorf("cell %s: invalid repeat", cell)
+	}
+	return parts[1], parts[2], n, nil
 }
 
 func writeRetrievalModels(out io.Writer, m eval.RetrievalManifest, reportedModels []string) error {
