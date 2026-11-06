@@ -88,3 +88,11 @@ func TestReadAndWriteFileRefuseAFinalSymlinkSwapOutsideTheWorkspace(t *testing.T
 		})
 	}
 }
+
+func TestFileToolsRefuseASecretSymlinkSwappedInInsideTheWorkspace(t *testing.T) {
+	fileToolsRefuseASecretSwappedInInsideTheWorkspace(t, relativeSymlink)
+}
+
+func TestOpenInsideRefusesASecretReachedThroughASymlink(t *testing.T) {
+	openInsideRefusesASecretReachedThroughALink(t, relativeSymlink)
+}
