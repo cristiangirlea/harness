@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"html"
 	"net/http"
@@ -19,6 +20,91 @@ import (
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func backendDigestForTest(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(runlog.Home(), "backends.json"))
+	if os.IsNotExist(err) {
+		return "none"
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+func backendBodyForTest(t *testing.T, body string) string {
+	t.Helper()
+	if body == "{}" {
+		return fmt.Sprintf(`{"digest":%q}`, backendDigestForTest(t))
+	}
+	if strings.HasPrefix(body, "{") {
+		return fmt.Sprintf(`{"digest":%q,`, backendDigestForTest(t)) + body[1:]
+	}
+	return body
+}
+
+func TestBackendsDigestPrecondition(t *testing.T) {
+	for _, mode := range []string{"current", "stale", "missing", "first"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			path := filepath.Join(runlog.Home(), "backends.json")
+			original := []byte("{\n  \"enabled\": [\"claude\"]\n}\n")
+			if mode != "first" {
+				if err := os.WriteFile(path, original, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			digest := backendDigestForTest(t)
+			if mode == "stale" {
+				original = append(original, '\n')
+				if err := os.WriteFile(path, original, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			body := `{"enabled":["codex"]}`
+			if mode != "missing" {
+				body = fmt.Sprintf(`{"enabled":["codex"],"digest":%q}`, digest)
+			}
+			h := New(context.Background(), Options{Key: "test-key"})
+			w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "localhost", "test-key", "", body)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "stale" || mode == "missing" {
+				if w.Code != http.StatusPreconditionFailed || strings.TrimSpace(w.Body.String()) != "Preferences changed since this page loaded: reload" || string(data) != string(original) {
+					t.Fatalf("refusal = %d %s, file = %q", w.Code, w.Body, data)
+				}
+				audit, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-audit.jsonl"))
+				if err != nil || strings.Count(strings.TrimSpace(string(audit)), "\n") != 0 || !strings.Contains(string(audit), `"result":"refused"`) || !strings.Contains(string(audit), `"action":"backends"`) || !strings.Contains(string(audit), `"reason":"preferences changed since the page loaded"`) {
+					t.Fatalf("refusal audit = %s, %v", audit, err)
+				}
+			} else {
+				p, err := prefs.Load(runlog.Home())
+				if w.Code != http.StatusNoContent || err != nil || !reflect.DeepEqual(p.EnabledNames, []string{"codex"}) {
+					t.Fatalf("save = %d %s, preferences = %+v, %v", w.Code, w.Body, p, err)
+				}
+			}
+		})
+	}
+}
+
+func TestBackendsCardContainsRawFileDigest(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	h := New(context.Background(), Options{})
+	for _, raw := range []string{"", "{\n  \"enabled\": [\"claude\"]\n}\n"} {
+		if raw != "" {
+			if err := os.WriteFile(filepath.Join(runlog.Home(), "backends.json"), []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		card := backendCardHTML(t, backendRequest(h, "GET", "/", "127.0.0.1:1234", "localhost", "", "", ""))
+		if !strings.Contains(card, `type="hidden" name="digest" value="`+backendDigestForTest(t)+`"`) {
+			t.Fatalf("card lacks digest: %s", card)
+		}
+	}
+}
 
 func backendRequest(h http.Handler, method, path, remote, host, key, token, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, "http://"+host+path, strings.NewReader(body))
@@ -91,7 +177,7 @@ func TestBackendsCardShowsStateAndControlsOnlyToAllowedViewers(t *testing.T) {
 					}
 				}
 			}
-			for _, control := range []string{`type="checkbox"`, `type="radio"`, ">Apply</button>", `data-key="` + opt.Key + `"`} {
+			for _, control := range []string{`type="checkbox"`, `type="radio"`, `name="digest"`, ">Apply</button>", `data-key="` + opt.Key + `"`} {
 				if strings.Contains(card, control) != (viewer != "lan") {
 					t.Errorf("%s: wrong visibility for %s", viewer, control)
 				}
@@ -195,7 +281,7 @@ func TestBackendsWriteUpdatesPreferencesAndRepairsMalformedFiles(t *testing.T) {
 				}
 			}
 			h := New(context.Background(), opt)
-			w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", host, opt.Key, token, `{"enabled":["codex"],"default":"codex"}`)
+			w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", host, opt.Key, token, backendBodyForTest(t, `{"enabled":["codex"],"default":"codex"}`))
 			if w.Code != 204 || w.Body.Len() != 0 {
 				t.Fatalf("POST = %d %s", w.Code, w.Body)
 			}
@@ -215,7 +301,7 @@ func TestBackendsWriteUpdatesPreferencesAndRepairsMalformedFiles(t *testing.T) {
 					t.Fatalf("public write was not logged: %s, %v", log, err)
 				}
 			}
-			w = backendRequest(h, "POST", "/backends", "127.0.0.1:1234", host, opt.Key, token, `{"enabled":[],"default":""}`)
+			w = backendRequest(h, "POST", "/backends", "127.0.0.1:1234", host, opt.Key, token, backendBodyForTest(t, `{"enabled":[],"default":""}`))
 			p, err = resolve.BackendPreferences(runlog.Home())
 			if w.Code != 204 || err != nil || p.Default() != "" || len(p.EnabledNames) != 0 || !p.Enabled("claude") {
 				t.Fatalf("reset = %d, %+v, %v", w.Code, p, err)
@@ -231,7 +317,7 @@ func TestBackendsWriteKeepsThePreferenceOrderAndAppendsNewOnes(t *testing.T) {
 	}
 	h := New(context.Background(), Options{Key: "test-key"})
 	// The card lists backends alphabetically; applying it must not reorder what was already enabled.
-	w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", `{"enabled":["agy","claude","codex"],"default":"claude"}`)
+	w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", backendBodyForTest(t, `{"enabled":["agy","claude","codex"],"default":"claude"}`))
 	if w.Code != 204 {
 		t.Fatalf("POST = %d %s", w.Code, w.Body)
 	}
@@ -251,7 +337,7 @@ func TestBackendsWriteDeduplicates(t *testing.T) {
 				}
 			}
 			h := New(context.Background(), Options{Key: "test-key"})
-			w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", `{"enabled":["codex","claude","codex","claude"]}`)
+			w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", backendBodyForTest(t, `{"enabled":["codex","claude","codex","claude"]}`))
 			p, err := prefs.Load(runlog.Home())
 			want := []string{"codex", "claude"}
 			if strings.Contains(existing, `"claude"`) {
@@ -273,7 +359,7 @@ func TestBackendsIPv6LoopbackViewersCanEdit(t *testing.T) {
 			if !strings.Contains(card, `type="checkbox"`) {
 				t.Fatal("missing edit controls")
 			}
-			w := backendRequest(h, "POST", "/backends", remote, "127.0.0.1:8089", "test-key", "", `{"enabled":["codex"]}`)
+			w := backendRequest(h, "POST", "/backends", remote, "127.0.0.1:8089", "test-key", "", backendBodyForTest(t, `{"enabled":["codex"]}`))
 			if w.Code != 204 {
 				t.Fatalf("POST = %d %s", w.Code, w.Body)
 			}
@@ -329,7 +415,7 @@ func TestBackendsWriteRefusesAnEmptyListWithADefaultEvenWhenStored(t *testing.T)
 		t.Fatal(err)
 	}
 	h := New(context.Background(), Options{Key: "test-key"})
-	w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", `{"enabled":[],"default":"claude"}`)
+	w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", backendBodyForTest(t, `{"enabled":[],"default":"claude"}`))
 	p, _ := prefs.Load(runlog.Home())
 	if w.Code != 400 || !reflect.DeepEqual(p.EnabledNames, []string{"claude"}) {
 		t.Fatalf("POST = %d %s, file %v; want 400 and the file unchanged", w.Code, w.Body, p.EnabledNames)
@@ -441,7 +527,7 @@ func TestBackendsSavePreservesWorkMapRepos(t *testing.T) {
 	}
 	h := New(context.Background(), Options{Key: "test-key"})
 	for _, body := range []string{`{"enabled":["codex"]}`, `{"enabled":["claude"],"work_map_repos":["injected"]}`} {
-		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", body)
+		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", backendBodyForTest(t, body))
 		p, err := prefs.Load(home)
 		if w.Code != 204 || err != nil || !reflect.DeepEqual(p.WorkMapRepos, []string{"original"}) {
 			t.Fatalf("save: %d %+v %v", w.Code, p, err)
@@ -458,7 +544,7 @@ func TestBackendsSaveKeepsTheWorkMapGitHubSetting(t *testing.T) {
 	}
 	h := New(context.Background(), Options{Key: "test-key"})
 	for _, body := range []string{`{"enabled":["codex"]}`, `{"enabled":["claude"],"work_map_github":true,"work_map_sessions":true}`} {
-		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", body)
+		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", backendBodyForTest(t, body))
 		p, err := prefs.Load(home)
 		if w.Code != 204 || err != nil || p.WorkMapGitHub == nil || *p.WorkMapGitHub || p.WorkMapSessions == nil || *p.WorkMapSessions {
 			t.Fatalf("save: %d %+v %v", w.Code, p, err)

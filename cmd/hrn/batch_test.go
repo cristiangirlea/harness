@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/runlog"
+	"github.com/cristiangirlea/harness/internal/ws"
 )
 
 func TestBatchMergeRunsAutomaticGCOnlyWhenEnabled(t *testing.T) {
@@ -536,5 +538,55 @@ func TestBatchDiffOfASlotTaskThatCommittedNothingSaysSoAndWhetherItsSlotWasKept(
 	}
 	if fresh := diffNothing(batch.TaskResult{ID: "old", Worktree: "wt"}); fresh != "task old changed nothing" {
 		t.Errorf("a fresh task: %q", fresh)
+	}
+}
+
+func TestBatchMergeUnknownAndEarlyRefusalOutput(t *testing.T) {
+	for _, rm := range []bool{false, true} {
+		for _, scenario := range []string{"unknown", "busy", "dirty"} {
+			t.Run(fmt.Sprintf("%s/rm=%v", scenario, rm), func(t *testing.T) {
+				res := batchMergeFixture(t, false, "alpha")
+				batchMergeGit(t, res.Dir, "commit", "--allow-empty", "-qm", "before call")
+				before := batchMergeGit(t, res.Dir, "rev-parse", "HEAD")
+				switch scenario {
+				case "unknown":
+					hooks := t.TempDir()
+					if err := os.WriteFile(filepath.Join(hooks, "post-merge"), []byte("#!/bin/sh\ngit -c core.hooksPath=/dev/null commit --allow-empty -qm intervening\n"), 0755); err != nil {
+						t.Fatal(err)
+					}
+					config := filepath.Join(t.TempDir(), "gitconfig")
+					batchMergeGit(t, res.Dir, "config", "--file", config, "core.hooksPath", filepath.ToSlash(hooks))
+					t.Setenv("GIT_CONFIG_GLOBAL", config)
+				case "busy":
+					release, busy, err := ws.LockFile(filepath.Join(res.Dir, ".git", "hrn-merge.lock"), "other merger")
+					if err != nil || busy != "" {
+						t.Fatalf("busy=%s err=%v", busy, err)
+					}
+					defer release()
+				case "dirty":
+					if err := os.WriteFile(filepath.Join(res.Dir, "README.md"), []byte("dirty"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				args := []string{res.ID}
+				if rm {
+					args = append([]string{"--rm"}, args...)
+				}
+				code, out, err := batchMergeCLI(t, args...)
+				if code != 1 || err == nil {
+					t.Fatalf("code=%d out=%s err=%v", code, out, err)
+				}
+				if scenario == "unknown" {
+					if !errors.Is(err, batch.ErrMergedUnconfirmed) || !strings.Contains(out, "merged, commit unknown") || !strings.Contains(out, "undo with: git reset --hard "+before) || strings.Contains(out, "could not merge") {
+						t.Fatalf("out=%s err=%v", out, err)
+					}
+					if batchMergeGit(t, res.Dir, "branch", "--list", res.Tasks[0].Branch) == "" {
+						t.Fatal("unknown task branch removed")
+					}
+				} else if strings.Contains(out, "undo with:") || batchMergeGit(t, res.Dir, "rev-parse", "HEAD") != before {
+					t.Fatalf("early refusal: %s", out)
+				}
+			})
+		}
 	}
 }

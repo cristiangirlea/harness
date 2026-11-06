@@ -21,6 +21,8 @@
 | `hrn knowledge admit --version ID --spec FILE -b BACKEND [--held-out SHARE --seed N --source-run ID]` | Compare a candidate with active knowledge and record the gated verdict. |
 | `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
 | `hrn retrieval compare --manifest FILE --samples FILE [--baseline-preparation FILE] [--candidate-preparation FILE] [--reuse N] [--runs] [--json]` | Compare saved retrieval evidence and verify measured run references locally, without a model call. Match each run on the requested model in `task.json`; a run without a requested model matches only when its reported result model exactly equals the variant model. Text output shows a differing provider-reported model. |
+| `hrn retrieval samples --manifest FILE --eval ID[:OFFSET] [--eval ...]` | Read a validated manifest, saved eval results, their original and rerun batch records, and enabled attempts' local `retrieval.json` files, then print indented comparison samples; OFFSET defaults to zero. Refuse unknown, duplicate, missing or out-of-range cells, unfinished task statuses, missing attempts, empty attempt run IDs, missing or inconsistent batch tasks, and unreadable retrieval records. |
+| `hrn retrieval corpus-digest FILE` | Read JSON corpus entries from an import request or knowledge inspect response and print the SHA-256 of compact, unescaped UTF-8 JSON rows `[key, source, content_sha256]`, sorted by those three fields, without a newline in the hashed bytes. Refuse a file with no entries or invalid UTF-8 in entry fields. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn update [--main \| --ref REF \| --file PATH] [--dry-run] [--rollback]` | Replace every hrn copy on this computer with the newest release, a build of a ref or a file, each under a backup, and restart a running `hrn watch`; `--rollback` puts the backups back (see [hrn update](#hrn-update)). |
 | `hrn runs [-n N]` | List recent runs. |
@@ -334,9 +336,16 @@ have no entries and a non-empty revision; its other fields are kept. Heading
 sections merge below `-min-words` (100), split above `-max-words` (800) or 16384
 bytes, and overlap by `-overlap-words` (40) when split. Keys carry the relative
 path and heading ancestry, sources carry `path@revision`, and evidence records
-the limits. Review the resulting entries and import as before. Entry keys weigh
-more than content in ranking (`simple-or-exact-v3`), and a long entry that does
-not fit the 8 KiB packet arrives as an excerpt marked `excerpt=true`; its
+the limits. Review the resulting entries and import as before. Ranking
+`simple-rare-floor-v4` keeps keys weighted above content. For versions of 20 or
+more entries it ignores words found in more than 25% of entries, scores each other
+matching word by its rarity (doubled in the key), and returns no context below a
+normalised score of 1.31 (`empty_reason=below_threshold`), about one word unique
+to the key or two fairly rare words. Exact identifiers still come first
+and skip the floor, but only identifier-shaped ones (a space, `_ . / : \ -`, a digit
+or an inner capital); plain words are scored as text. Smaller versions rank as
+before. A long entry that does not fit the 8 KiB packet arrives as an excerpt
+marked `excerpt=true`; its
 `content` contains the excerpt and `excerpt` is omitted for whole entries.
 Imports refuse entries marked as excerpts.
 
