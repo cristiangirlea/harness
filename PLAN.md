@@ -287,6 +287,20 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #823, a run records `repo` and `branch` at start (PR #830): the `origin` remote, or
+  the only one, as host/path with no credentials or port, read in any work tree, even before a
+  first commit. The watch card groups by it, falls back to a checkout's remote for older records,
+  and puts the rest in "No repository recorded"; folder names are never shown, and case folds
+  only on github.com. A run's page links repository, branch, a pull-request search, the start
+  commit and ten commits, past those a compare view, built from the record alone; older records
+  get no links, since their folder may hold another repository now. An eleventh repository still
+  shows by name, not as "1 other repositories". On the home that prompted it, about 2,400 old
+  runs stay unattributed: their folders are gone and their records hold no remote.
+- 2026-11-06: #782, AGENTS.md went from 144 lines and 10.6 KB to 112 lines and 8.9 KB (PR #787).
+  The CI command list now lives only in `.claude/skills/check/SKILL.md` (`scripts/check.sh` runs
+  it; AGENTS.md names only the Linux `-race` job outside it), and the ruleset mechanics moved to
+  `CONTRIBUTING.md`. The generated scripts index stays in AGENTS.md so agents see the kept scripts
+  before acting; without it the file is 92 lines.
 - 2026-11-06: #815, the watch index's purpose card sums every recorded run the viewer may read,
   not only the 50 listed (PR #820), and a "Where they ran" table gives the same sums per
   repository: the ten largest, the rest folded into "N other folders". A run's repository is the

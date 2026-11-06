@@ -88,12 +88,19 @@ one row per purpose that occurs, then "all", each with its runs, how many are ru
 tokens (input, output, cache reads and writes, counted once) and known cost.
 
 Under it, "Where they ran" gives the same sums per repository, with the purposes its runs
-had (`review 20 · implement 8`). A run's repository is the checkout holding its folder (or
-a parent of it): a worktree's `.git` file points back to its main checkout, and a task's
-`.hrn/slots/<n>` or `.hrn/worktrees/<id>` belongs to the repository holding it. A folder
-that is gone and not inside a checkout goes by its own name. Checkouts are told apart by
-path: two with the same name get two rows, the second shown as `name (2)`. The ten
-repositories with the most runs get a row each; the rest share one, "N other folders".
+had (`review 20 · implement 8`). A run's repository is the remote its record names (`repo`,
+see [run records](run-records.md)), shown as `owner/name` on github.com and `host/owner/name`
+elsewhere, so a run still counts under its repository after its worktree is deleted. A record
+from before hrn kept `repo` falls back to the checkout holding its folder (or a parent of
+it), named by that checkout's `origin` remote, or its only remote, read from its git config
+(a submodule's from the folder its `.git` file names): a worktree's `.git` file points back
+to its main checkout, and a task's `.hrn/slots/<n>` or `.hrn/worktrees/<id>` belongs to the
+repository holding it. Names on github.com ignore case, as GitHub does; other hosts' do not.
+Runs with no repository either way (a folder outside any repository, a checkout with no
+remote, or a folder deleted before `repo` was kept) share a last row, "No repository
+recorded"; folder names are never shown. The ten repositories with the most runs get a row
+each; the rest share one, "N other repositories" (an eleventh shows by its own name, rather
+than as a row of one).
 
 A finished run never changes, so the card reads it once and keeps only its share of the
 sums; each refresh reads just the runs that are new or unfinished, and looks up their
@@ -114,7 +121,15 @@ reported cost.
 A run's page names its workspace by the same name as its row (`demo-app`, the repository
 for a batch task's worktree), and a batch's page its repository; a task's worktree shows
 relative to the repository (`.\.hrn\worktrees\t1`). Hover the name for the whole path,
-on this computer only: a phone on the network sees the name alone. In what a run's steps
+on this computer only: a phone on the network sees the name alone. Below it come the
+repository and branch the run recorded, the commit it started on and up to ten of the
+commits it made. On github.com each links there: the repository, the branch, a search for
+pull requests from that branch (found even after the branch is deleted), and each commit;
+past ten, "and N more" opens GitHub's comparison of the start and end commits, which lists
+them all. The links are built from the record when the page is drawn: the watch makes no
+calls to GitHub, and they open with `rel="noreferrer"`, so GitHub is not told which watch
+page they came from. Other hosts show the same names as plain text. A record from before
+hrn kept `repo` gets no repository links, since its folder may hold another repository now. In what a run's steps
 show (step text, a tool call's one line and its input, results, info lines, the final
 answer) and in a run's or batch's header, the workspace is `.` (`.\src\main.go`, in the
 path's own slashes), the home folder is `~`, and a program named by its full path in
