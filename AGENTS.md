@@ -59,7 +59,8 @@ or route public contributions to private machines. See `CONTRIBUTING.md` for CI 
 - **Records stay loadable.** Fields added to `agent.Task`, `agent.Result`, `runlog` or `batch.*` are
   additive with `omitempty`; old records on disk must still load.
 - **The api history is append-only** (`api.go`): assistant turns go back exactly as received. Never
-  trim, rewrite or reorder earlier messages; context is reduced server-side.
+  trim, rewrite or reorder earlier messages; context is reduced server-side. With
+  `mask_tool_results` set, old tool results are masked in the outgoing request only; the stored history is unchanged.
 - **Comments say why, not what**: one line, three at most (a doc comment: one sentence, plus one
   for a non-obvious contract); no issue numbers, dates or review history (git and PLAN.md hold
   them); long explanations go to `docs/`. `scripts/comment-check.sh` enforces it; its baseline

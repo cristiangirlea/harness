@@ -101,7 +101,7 @@ never file contents:
   not visible locally and are not listed.
 - `base_digest`: a sha256 over all of the above; `digest`: the same plus the harness
   options the backend applies (`append_system_prompt` on api and claude, `retrieval` with
-  its version on every backend, `no_instructions` and `shape_tools` on api, `no_skills` on claude,
+  its version on every backend, `no_instructions`, `shape_tools` and `mask_tool_results N` on api, `no_skills` on claude,
   `lean` on claude and codex, and `skills` on a lean claude run without `no_skills`). Options do not remove names or files: they count in `digest` only, so
   runs that differ only by those options share `base_digest`.
 - `truncated`: set when the scan stopped at 500 files; files past the cap are not covered.

@@ -18,8 +18,9 @@ func TestSetupDigestCountsTheRunOptionsAnEvalVariantSets(t *testing.T) {
 	writeTree(t, dir, map[string]string{"AGENTS.md": "a"})
 	base := ResolveSetup("api", Task{Dir: dir})
 	for name, set := range map[string]func(*Options){
-		"shape_tools": func(o *Options) { o.ShapeTools = true },
-		"retrieval":   func(o *Options) { o.Retrieval = "optional" },
+		"shape_tools":       func(o *Options) { o.ShapeTools = true },
+		"mask_tool_results": func(o *Options) { o.MaskToolResults = 2 },
+		"retrieval":         func(o *Options) { o.Retrieval = "optional" },
 	} {
 		task := Task{Dir: dir}
 		set(&task.Options)
@@ -32,6 +33,26 @@ func TestSetupDigestCountsTheRunOptionsAnEvalVariantSets(t *testing.T) {
 	task.Retrieval = "off"
 	if s := ResolveSetup("api", task); s.Digest != base.Digest {
 		t.Errorf("retrieval off changed the digest")
+	}
+}
+
+func TestSetupCountsTheMaskingWindowOnlyOnAPI(t *testing.T) {
+	for _, backend := range []string{"api", "claude", "codex", "gemini", "opencode", "agy"} {
+		base := optionLines(backend, Options{})
+		if got := optionLines(backend, Options{MaskToolResults: 0}); !slices.Equal(got, base) {
+			t.Fatal("off changed the setup")
+		}
+		got := optionLines(backend, Options{MaskToolResults: 2})
+		if backend == "api" {
+			if !slices.Contains(got, "option mask_tool_results 2") {
+				t.Fatalf("lines = %v", got)
+			}
+			if slices.Equal(got, optionLines(backend, Options{MaskToolResults: 3})) {
+				t.Fatal("window did not affect setup")
+			}
+		} else if !slices.Equal(got, base) {
+			t.Fatalf("%s counted masking", backend)
+		}
 	}
 }
 

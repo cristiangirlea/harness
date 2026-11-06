@@ -13,6 +13,34 @@ import (
 	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
+func TestMaskingIsOptInAndItsWindowSurvivesRecordsAndOverrides(t *testing.T) {
+	for _, data := range []string{`{}`, `{"mask_tool_results":0}`, `{"mask_tool_results":2}`} {
+		var o Options
+		if err := json.Unmarshal([]byte(data), &o); err != nil {
+			t.Fatal(err)
+		}
+		if err := o.ValidateShape(); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (o.MaskToolResults > 0) != strings.Contains(string(encoded), `"mask_tool_results":2`) {
+			t.Fatalf("record = %s", encoded)
+		}
+		if o.MaskToolResults == 0 && strings.Contains(string(encoded), "mask_tool_results") {
+			t.Fatalf("default was not omitted: %s", encoded)
+		}
+	}
+	if got := (Options{MaskToolResults: 3}).Over(Options{MaskToolResults: 2}); got.MaskToolResults != 3 {
+		t.Fatal("task window did not override spec window")
+	}
+	if got := (Options{}).Schema()["mask_tool_results"].(map[string]any)["type"]; got != "integer" {
+		t.Fatalf("schema type = %v", got)
+	}
+}
+
 func TestShapeToolsOption(t *testing.T) {
 	var o Options
 	if err := json.Unmarshal([]byte(`{}`), &o); err != nil || o.ShapeTools {
@@ -76,13 +104,13 @@ func TestFlagsSetTheOptions(t *testing.T) {
 	o := Options{Mode: ModeAsk} // the caller's default shows through
 	BindFlags(fs, &o)
 	err := fs.Parse([]string{"--model", "claude-sonnet-5", "--mode", "yolo", "--max-turns", "7", "--effort", "low",
-		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--lean", "--compact-window", "300000", "--allow-dangerous", "--inherit-env",
+		"--mcp", "a.json", "--mcp", "b.json", "--no-instructions", "--no-context-edits", "--mask-tool-results", "2", "--lean", "--compact-window", "300000", "--allow-dangerous", "--inherit-env",
 		"--timeout", "90s", "--max-cost", "2.5", "--task-budget", "30000", "--append-system-prompt", "be brief", "--no-skills"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Options{Model: "claude-sonnet-5", Mode: ModeYolo, MaxTurns: 7, Effort: "low", MCP: []string{"a.json", "b.json"},
-		NoInstructions: true, NoContextEdits: true, Lean: Bool(true), CompactWindow: "300000", AllowDangerous: true, InheritEnv: true,
+		NoInstructions: true, NoContextEdits: true, MaskToolResults: 2, Lean: Bool(true), CompactWindow: "300000", AllowDangerous: true, InheritEnv: true,
 		Timeout: Duration(90 * time.Second), MaxCostUSD: 2.5, TaskBudget: 30000, AppendSystemPrompt: "be brief", NoSkills: true}
 	if !reflect.DeepEqual(o, want) {
 		t.Errorf("parsed = %+v\nwant     %+v", o, want)
@@ -107,11 +135,11 @@ func TestFlagsSetTheOptions(t *testing.T) {
 
 func TestOverInheritsWhatIsUnset(t *testing.T) {
 	base := Options{Model: "m0", Mode: ModeAuto, MaxTurns: 5, Effort: "high", MCP: []string{"s.json"},
-		NoInstructions: true, Timeout: Duration(time.Minute), MaxCostUSD: 1, TaskBudget: 20000}
+		NoInstructions: true, MaskToolResults: 2, Timeout: Duration(time.Minute), MaxCostUSD: 1, TaskBudget: 20000}
 	task := Options{Model: "m1", AllowDangerous: true, MaxCostUSD: 0.5}
 	got := task.Over(base)
 	want := Options{Model: "m1", Mode: ModeAuto, MaxTurns: 5, Effort: "high", MCP: []string{"s.json"},
-		NoInstructions: true, AllowDangerous: true, Timeout: Duration(time.Minute), MaxCostUSD: 0.5, TaskBudget: 20000}
+		NoInstructions: true, MaskToolResults: 2, AllowDangerous: true, Timeout: Duration(time.Minute), MaxCostUSD: 0.5, TaskBudget: 20000}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Over = %+v\nwant   %+v", got, want)
 	}
@@ -261,6 +289,7 @@ func TestValidate(t *testing.T) {
 		{Options{MaxCostUSD: math.Inf(1)}, "finite"},
 		{Options{MaxCostUSD: math.Inf(-1)}, "finite"},
 		{Options{TaskBudget: 100}, "20000"},
+		{Options{MaskToolResults: -1}, "mask_tool_results"},
 		{Options{AppendSystemPrompt: strings.Repeat("x", MaxAppendSystemPrompt+1)}, "at most 16384 fit"},
 		{Options{AppendSystemPrompt: strings.Repeat(`"`, MaxAppendSystemPrompt/2+1)}, "at most 16384 fit"},
 		{Options{AppendSystemPrompt: strings.Repeat(`\`, MaxAppendSystemPrompt/2+1)}, "at most 16384 fit"},

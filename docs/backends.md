@@ -124,6 +124,15 @@ two runs before trusting it. If the API ever refuses the beta, the run says so a
 retries once without it. `hrn run --no-context-edits` turns it off for good, as do the
 `no_context_edits` field on a batch spec or task and the MCP `run` argument.
 
+`hrn run --mask-tool-results N` (batch/MCP `mask_tool_results`) opts into request-only
+masking for endpoints without server clearing; 0 is off and negative values are rejected.
+It replaces server clearing, even without `no_context_edits`. Once there are at least
+2N tool results, older results are replaced in steps of N by one-line notes, leaving
+between N and 2N-1 newest results whole. Results of at most 256 bytes also stay whole.
+Notes retain the tool summary, byte count and any `read_original` handle. Stored history,
+`messages.json`, durable checkpoints and run events keep the full results. This option
+has only been tested against the fake server.
+
 Whatever the server reports about the edits it applied is recorded as an info event,
 `server context management, turn N: {...}`, with the JSON exactly as it arrived: its
 shape was not documented where this was written, so hrn keeps it rather than guessing at

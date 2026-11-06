@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cristiangirlea/harness/internal/kernel"
@@ -116,6 +117,9 @@ func optionLines(backend string, o Options) []string {
 	}
 	if backend == "api" && o.ShapeTools {
 		out = append(out, "option shape_tools")
+	}
+	if backend == "api" && o.MaskToolResults > 0 {
+		out = append(out, "option mask_tool_results "+strconv.Itoa(o.MaskToolResults))
 	}
 	if backend == "claude" && o.NoSkills {
 		out = append(out, "option no_skills")
