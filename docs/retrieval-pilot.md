@@ -40,7 +40,7 @@ to every prompt.
 ## Prerequisites and go/no-go
 
 - **#791, before runs:** drop common query words and return no context below a score floor.
-- **#827, before the comparison:** `hrn retrieval samples` and the corpus digest check. It can land
+- **#827, before the comparison:** `hrn retrieval samples` and `hrn retrieval corpus-digest`. It can land
   while runs are under way.
 - **#825, not blocking:** until it lands, the review step drops refused identifiers and entries by
   hand and lists them in the report.
@@ -68,7 +68,7 @@ on purpose so that some answers fall outside the corpus. No entry is written for
 `corpus_digest` is the SHA-256 of a JSON array of `[key, source, sha256(content)]` rows, one per
 entry, with content hashed as UTF-8 and written in lowercase hex. The array is encoded exactly:
 
-- rows sorted by key, then source, comparing UTF-8 bytes;
+- rows sorted by key, then source, then content hash, comparing UTF-8 bytes;
 - compact: no spaces, `,` and `:` as separators;
 - no HTML escaping, so `>` stays `>` (in Go: `SetEscapeHTML(false)`);
 - non-ASCII characters written as themselves, in UTF-8;
