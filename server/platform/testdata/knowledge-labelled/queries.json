@@ -1,0 +1,256 @@
+[
+  {
+    "id": "limit-reset-file",
+    "query": "Where does hrn keep the time at which a backend's usage limit resets?",
+    "expect": [
+      "CONTRIBUTING.md > Contributing to hrn > Layout",
+      "docs/backends.md > Backends and continuing runs > Backends > When a plan's usage limit is reached",
+      "docs/run-records.md > Run records > Run records (part 5)"
+    ]
+  },
+  {
+    "id": "prune-old-runs",
+    "query": "Which command removes run records older than thirty days?",
+    "expect": [
+      "docs/commands.md > Command reference > Commands (part 2)",
+      "docs/batches.md > Batches and worktree cleanup > Clearing merged worktrees (part 2)",
+      "docs/run-records.md > Run records > Run records (part 3)",
+      "docs/run-records.md > Run records > Run records (part 4)",
+      "docs/run-records.md > Run records > Run records (part 5)",
+      "docs/run-records.md > Run records > Quota"
+    ]
+  },
+  {
+    "id": "per-call-usage",
+    "query": "How can I see each model call's tokens and cache reads for one run?",
+    "expect": [
+      "docs/commands.md > Command reference > Commands (part 2)",
+      "docs/run-records.md > Run records > Usage per turn"
+    ]
+  },
+  {
+    "id": "judge-input",
+    "query": "What does the judge see when it grades a passing eval cell?",
+    "expect": [
+      "docs/evaluations.md > Evaluations and reports > Evals > The judge"
+    ]
+  },
+  {
+    "id": "eval-diff",
+    "query": "How do I compare two saved evals variant by variant?",
+    "expect": [
+      "README.md > hrn: run coding agents, keep every run, compare them",
+      "docs/commands.md > Command reference > Commands (part 3)",
+      "docs/evaluations.md > Evaluations and reports > Evals (part 2)",
+      "docs/evaluations.md > Evaluations and reports > Evals > Comparing evals"
+    ]
+  },
+  {
+    "id": "append-system-prompt",
+    "query": "Which backends apply append_system_prompt?",
+    "expect": [
+      "docs/commands.md > Command reference > Automatic gc (part 2)",
+      "docs/run-records.md > Run records > Run records (part 2)"
+    ]
+  },
+  {
+    "id": "codex-cost",
+    "query": "How does hrn estimate what a codex run costs?",
+    "expect": [
+      "docs/backends.md > Backends and continuing runs > Backends > Codex cost estimates"
+    ]
+  },
+  {
+    "id": "lean-claude",
+    "query": "What does a lean claude run leave out?",
+    "expect": [
+      "docs/evaluations.md > Evaluations and reports > Evals > Harness variants"
+    ]
+  },
+  {
+    "id": "compaction-window",
+    "query": "How do I set when claude compacts its context?",
+    "expect": [
+      "docs/commands.md > Command reference > Automatic gc (part 2)",
+      "docs/backends.md > Backends and continuing runs > Backends > What a run loads (part 2)",
+      "docs/backends.md > Backends and continuing runs > Backends > Compaction window"
+    ]
+  },
+  {
+    "id": "kept-slot",
+    "query": "What happens to a slot that a batch kept after the batch ends?",
+    "expect": [
+      "docs/workspaces.md > Reusable workspaces > A slot a batch kept"
+    ]
+  },
+  {
+    "id": "issue-lease",
+    "query": "How do issue leases stop two workers taking the same issue?",
+    "expect": [
+      "docs/workspaces.md > Reusable workspaces > Issue leases",
+      "docs/workspaces.md > Reusable workspaces > Issue leases (part 2)",
+      "docs/workspaces.md > Reusable workspaces > Issue leases (part 3)"
+    ]
+  },
+  {
+    "id": "operator-token",
+    "query": "Which knowledge commands need HRN_OPERATOR_TOKEN?",
+    "expect": [
+      "server/README.md > PostgreSQL control service and project worker > Local checks",
+      "server/README.md > PostgreSQL control service and project worker > Approved project knowledge",
+      "docs/commands.md > Command reference > Automatic gc > Project knowledge"
+    ]
+  },
+  {
+    "id": "gc-merged",
+    "query": "How does hrn decide a worktree's branch is merged before clearing it?",
+    "expect": [
+      "docs/batches.md > Batches and worktree cleanup > Clearing merged worktrees",
+      "docs/batches.md > Batches and worktree cleanup > Clearing merged worktrees (part 2)",
+      "docs/batches.md > Batches and worktree cleanup > Clearing merged worktrees > Build caches"
+    ]
+  },
+  {
+    "id": "run-deadline",
+    "query": "How do I give a run a hard deadline that reports timeout rather than canceled?",
+    "expect": [
+      "docs/commands.md > Command reference > Automatic gc > Budgets"
+    ]
+  },
+  {
+    "id": "max-cost",
+    "query": "What does --max-cost do on the api backend?",
+    "expect": [
+      "docs/commands.md > Command reference > Commands (part 2)",
+      "docs/commands.md > Command reference > Automatic gc > Remote development jobs",
+      "docs/commands.md > Command reference > Automatic gc > Budgets",
+      "docs/batches.md > Batches and worktree cleanup > Batches"
+    ]
+  },
+  {
+    "id": "task-budget",
+    "query": "What does task_budget tell the model?",
+    "expect": [
+      "docs/commands.md > Command reference > Automatic gc > Budgets",
+      "docs/batches.md > Batches and worktree cleanup > Batches > Slots or fresh worktrees (part 3)",
+      "docs/evaluations.md > Evaluations and reports > Evals > Comparing evals"
+    ]
+  },
+  {
+    "id": "secret-files",
+    "query": "Which secret files does the command guard refuse to read, such as .netrc?",
+    "expect": [
+      "docs/permissions.md > Permissions and command guard > api tools > The command guard (part 2)"
+    ]
+  },
+  {
+    "id": "fresh-handover",
+    "query": "How does a fresh hand-over continue a run instead of resuming its session?",
+    "expect": [
+      "docs/backends.md > Backends and continuing runs > Backends > Continuing a run > A fresh hand-over",
+      "docs/backends.md > Backends and continuing runs > Backends > Continuing a run > A fresh hand-over (part 2)"
+    ]
+  },
+  {
+    "id": "weekly-digest",
+    "query": "What does the weekly digest summarise?",
+    "expect": [
+      "docs/evaluations.md > Evaluations and reports > Reports > Weekly digest"
+    ]
+  },
+  {
+    "id": "feed",
+    "query": "What is hrn feed for and which backends may run it?",
+    "expect": [
+      "docs/commands.md > Command reference > hrn feed"
+    ]
+  },
+  {
+    "id": "declared-purpose",
+    "query": "How do I declare a run's purpose?",
+    "expect": [
+      "docs/commands.md > Command reference > Automatic gc > Declared purpose"
+    ]
+  },
+  {
+    "id": "sse-limit",
+    "query": "How many event streams may one tenant keep open on the control service?",
+    "expect": [
+      "server/README.md > PostgreSQL control service and project worker > Job events"
+    ]
+  },
+  {
+    "id": "migration-003",
+    "query": "Which schema migration adds project knowledge and retrieval records?",
+    "expect": [
+      "server/README.md > PostgreSQL control service and project worker > Schema and recovery"
+    ]
+  },
+  {
+    "id": "commit-style",
+    "query": "How should an agent commit its work in an hrn run?",
+    "expect": [
+      "docs/backends.md > Backends and continuing runs > Backends > How to commit"
+    ]
+  },
+  {
+    "id": "eval-setup",
+    "query": "What does hrn eval setup compare?",
+    "expect": [
+      "docs/evaluations.md > Evaluations and reports > Evals > Comparing a setup change"
+    ]
+  },
+  {
+    "id": "ws-oexcl",
+    "query": "Explain internal/ws and its O_EXCL leased slots.",
+    "expect": [
+      "AGENTS.md > hrn, a small agent harness"
+    ]
+  },
+  {
+    "id": "comment-check",
+    "query": "What does scripts/comment-check.sh enforce?",
+    "expect": [
+      "AGENTS.md > hrn, a small agent harness > Build and test",
+      "AGENTS.md > hrn, a small agent harness > Scripts"
+    ]
+  },
+  {
+    "id": "expected-generation",
+    "query": "Why does activating a knowledge version need expected_generation?",
+    "expect": [
+      "server/README.md > PostgreSQL control service and project worker > Approved project knowledge",
+      "docs/commands.md > Command reference > Automatic gc > Project knowledge"
+    ]
+  },
+  {
+    "id": "none-haiku",
+    "query": "Please write a haiku about autumn leaves falling on a quiet pond in the morning light.",
+    "expect": []
+  },
+  {
+    "id": "none-capital",
+    "query": "What is the capital of Australia and when did it become the capital?",
+    "expect": []
+  },
+  {
+    "id": "none-novel",
+    "query": "Summarise the plot of a famous nineteenth century Russian novel about a murder and what follows it.",
+    "expect": []
+  },
+  {
+    "id": "none-error-code",
+    "query": "Look for the error code ZQX_UNKNOWN_4471 and explain what it means; say plainly if it is absent.",
+    "expect": []
+  },
+  {
+    "id": "none-bread",
+    "query": "How do I bake sourdough bread with a stiff starter at high altitude?",
+    "expect": []
+  },
+  {
+    "id": "none-serverless",
+    "query": "Describe a migration path from container deployments to serverless functions for a Java service.",
+    "expect": []
+  }
+]

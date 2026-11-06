@@ -1,0 +1,20 @@
+[
+  {
+    "ranking": "simple-or-exact-v3",
+    "hit": 0.32142857142857145,
+    "mrr": 0.30357142857142855,
+    "none_with_context": 1,
+    "hits": [
+      "prune-old-runs",
+      "judge-input",
+      "eval-diff",
+      "issue-lease",
+      "operator-token",
+      "task-budget",
+      "fresh-handover",
+      "comment-check",
+      "expected-generation"
+    ],
+    "accepted_losses": []
+  }
+]

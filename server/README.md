@@ -40,6 +40,11 @@ Then set `HRN_TEST_DATABASE_URL` to
 and run `go test -count=1 ./...` in `server/`. Tests create and remove their own
 schemas. Stop the fixture with `docker compose -f server/compose.dev.yaml down`.
 
+`TestKnowledgeLabelledQueries` reports hit rate, MRR and the share of no-answer
+queries that got context per ranking version, and fails when a query that hit
+before stops hitting. `HRN_UPDATE_LABELLED=1` records the current ranking's
+numbers; a deliberate loss goes in `accepted_losses`.
+
 Regenerate the knowledge goldens with `HRN_UPDATE_WIRE_FIXTURES=1`, and the
 client recording with `HRN_UPDATE_FIXTURES=1` and `HRN_TEST_DATABASE_URL` set.
 Copy `server/platform/testdata/knowledge` to `internal/retrieval/testdata/wire`
