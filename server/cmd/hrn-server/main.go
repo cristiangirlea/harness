@@ -24,9 +24,12 @@ func main() {
 }
 
 func run() error {
-	dsn := os.Getenv("HRN_DATABASE_URL")
+	dsn, err := platform.SecretEnv("HRN_DATABASE_URL")
+	if err != nil {
+		return err
+	}
 	if dsn == "" {
-		return errors.New("HRN_DATABASE_URL is required")
+		return errors.New("HRN_DATABASE_URL (or HRN_DATABASE_URL_FILE) is required")
 	}
 	if len(os.Args) != 2 {
 		return errors.New("usage: hrn-server migrate|serve")
@@ -39,8 +42,14 @@ func run() error {
 	if os.Args[1] != "serve" {
 		return errors.New("usage: hrn-server migrate|serve")
 	}
-	operator := os.Getenv("HRN_OPERATOR_TOKEN")
-	scaler := os.Getenv("HRN_SCALER_TOKEN")
+	operator, err := platform.SecretEnv("HRN_OPERATOR_TOKEN")
+	if err != nil {
+		return err
+	}
+	scaler, err := platform.SecretEnv("HRN_SCALER_TOKEN")
+	if err != nil {
+		return err
+	}
 	if len(operator) < 32 || len(scaler) < 32 || operator == scaler {
 		return errors.New("independent operator and scaler tokens of at least 32 characters are required")
 	}

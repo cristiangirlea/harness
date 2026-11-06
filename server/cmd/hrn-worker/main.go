@@ -36,10 +36,13 @@ func run(hrnPath string) error {
 	control := os.Getenv("HRN_CONTROL_URL")
 	modelURL := os.Getenv("HRN_FIXTURE_API_URL")
 	projectID := os.Getenv("HRN_PROJECT_ID")
-	workerToken := os.Getenv("HRN_WORKER_TOKEN")
+	workerToken, err := platform.SecretEnv("HRN_WORKER_TOKEN")
+	if err != nil {
+		return err
+	}
 	workspace := os.Getenv("HRN_WORKSPACE_ROOT")
 	if control == "" || modelURL == "" || projectID == "" || workerToken == "" || workspace == "" {
-		return errors.New("HRN_CONTROL_URL, HRN_FIXTURE_API_URL, HRN_PROJECT_ID, HRN_WORKER_TOKEN and HRN_WORKSPACE_ROOT are required")
+		return errors.New("HRN_CONTROL_URL, HRN_FIXTURE_API_URL, HRN_PROJECT_ID, HRN_WORKER_TOKEN (or HRN_WORKER_TOKEN_FILE) and HRN_WORKSPACE_ROOT are required")
 	}
 	parsed, err := url.Parse(control)
 	if err != nil {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -65,6 +67,9 @@ func TestServeRefusesPlainNetworkHTTPBeforeOpeningDatabase(t *testing.T) {
 	os.Args = []string{"hrn-server", "serve"}
 	t.Cleanup(func() { os.Args = args })
 	t.Setenv("HRN_DATABASE_URL", "://invalid")
+	t.Setenv("HRN_DATABASE_URL_FILE", "")
+	t.Setenv("HRN_OPERATOR_TOKEN_FILE", "")
+	t.Setenv("HRN_SCALER_TOKEN_FILE", "")
 	t.Setenv("HRN_OPERATOR_TOKEN", strings.Repeat("o", 32))
 	t.Setenv("HRN_SCALER_TOKEN", strings.Repeat("s", 32))
 	t.Setenv("HRN_LISTEN", ":8080")
@@ -80,6 +85,9 @@ func TestServeRefusesAnInvalidCostLimitBeforeOpeningDatabase(t *testing.T) {
 	os.Args = []string{"hrn-server", "serve"}
 	t.Cleanup(func() { os.Args = args })
 	t.Setenv("HRN_DATABASE_URL", "://invalid")
+	t.Setenv("HRN_DATABASE_URL_FILE", "")
+	t.Setenv("HRN_OPERATOR_TOKEN_FILE", "")
+	t.Setenv("HRN_SCALER_TOKEN_FILE", "")
 	t.Setenv("HRN_OPERATOR_TOKEN", strings.Repeat("o", 32))
 	t.Setenv("HRN_SCALER_TOKEN", strings.Repeat("s", 32))
 	t.Setenv("HRN_LISTEN", "127.0.0.1:8088")
@@ -88,6 +96,69 @@ func TestServeRefusesAnInvalidCostLimitBeforeOpeningDatabase(t *testing.T) {
 	t.Setenv("HRN_MAX_COST_USD_PER_JOB", "abc")
 	if err := run(); err == nil || !strings.Contains(err.Error(), "HRN_MAX_COST_USD_PER_JOB") {
 		t.Fatalf("run() = %v, want cost limit error before database access", err)
+	}
+}
+
+func TestServeChecksOperatorTokenFromFileBeforeOpeningDatabase(t *testing.T) {
+	args := os.Args
+	os.Args = []string{"hrn-server", "serve"}
+	t.Cleanup(func() { os.Args = args })
+	path := filepath.Join(t.TempDir(), "operator-token")
+	if err := os.WriteFile(path, []byte("short\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HRN_DATABASE_URL", "://invalid")
+	t.Setenv("HRN_DATABASE_URL_FILE", "")
+	t.Setenv("HRN_OPERATOR_TOKEN", "")
+	t.Setenv("HRN_OPERATOR_TOKEN_FILE", path)
+	t.Setenv("HRN_SCALER_TOKEN", strings.Repeat("s", 32))
+	t.Setenv("HRN_SCALER_TOKEN_FILE", "")
+	if err := run(); err == nil || err.Error() != "independent operator and scaler tokens of at least 32 characters are required" {
+		t.Fatalf("run() = %v, want token length error before database access", err)
+	}
+}
+
+func TestServeRejectsMissingDatabaseURLFileBeforeOpeningDatabase(t *testing.T) {
+	args := os.Args
+	os.Args = []string{"hrn-server", "serve"}
+	t.Cleanup(func() { os.Args = args })
+	path := filepath.Join(t.TempDir(), "missing-database-url")
+	t.Setenv("HRN_DATABASE_URL", "")
+	t.Setenv("HRN_DATABASE_URL_FILE", path)
+	t.Setenv("HRN_OPERATOR_TOKEN", strings.Repeat("o", 32))
+	t.Setenv("HRN_OPERATOR_TOKEN_FILE", "")
+	t.Setenv("HRN_SCALER_TOKEN", strings.Repeat("s", 32))
+	t.Setenv("HRN_SCALER_TOKEN_FILE", "")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "HRN_DATABASE_URL_FILE") || !strings.Contains(err.Error(), strconv.Quote(path)) {
+		t.Fatalf("run() = %v, want missing database URL file error before database access", err)
+	}
+}
+
+func TestServeChecksScalerTokenFromFileBeforeOpeningDatabase(t *testing.T) {
+	args := os.Args
+	os.Args = []string{"hrn-server", "serve"}
+	t.Cleanup(func() { os.Args = args })
+	path := filepath.Join(t.TempDir(), "scaler-token")
+	if err := os.WriteFile(path, []byte("short\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HRN_DATABASE_URL", "://invalid")
+	t.Setenv("HRN_DATABASE_URL_FILE", "")
+	t.Setenv("HRN_OPERATOR_TOKEN", strings.Repeat("o", 32))
+	t.Setenv("HRN_OPERATOR_TOKEN_FILE", "")
+	t.Setenv("HRN_SCALER_TOKEN", "")
+	t.Setenv("HRN_SCALER_TOKEN_FILE", path)
+	if err := run(); err == nil || err.Error() != "independent operator and scaler tokens of at least 32 characters are required" {
+		t.Fatalf("run() = %v, want token length error before database access", err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Repeat("s", 32)+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HRN_LISTEN", ":8080")
+	t.Setenv("HRN_TLS_CERT_FILE", "")
+	t.Setenv("HRN_TLS_KEY_FILE", "")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "HRN_LISTEN") {
+		t.Fatalf("run() = %v, want listen configuration error after accepting scaler token file", err)
 	}
 }
 
