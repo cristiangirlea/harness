@@ -41,6 +41,7 @@ func TestReadFilePreservesTheOriginalLineOutput(t *testing.T) {
 		inputs = append(inputs, strings.Repeat("x", n)+"\r\nlast")
 	}
 	inputs = append(inputs, strings.Repeat("x", 4095)+"\r", strings.Repeat("x", 4095)+"\ry", strings.Repeat("x", 4095)+"\r\r\nlast")
+	inputs = append(inputs, strings.Repeat("ăîșț€😀\n", 3000), strings.Repeat("😀", 20000), strings.Repeat("é", 15001)+"\n"+strings.Repeat("ș", 9000))
 	for i, input := range inputs {
 		must(t, os.WriteFile(filepath.Join(ws.Root, "input.txt"), []byte(input), 0o600))
 		for _, offset := range []int{-2, 0, 1, 2, 3, 10, 2000, 2101, 2102} {
