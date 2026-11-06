@@ -287,6 +287,21 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #786, old tool results masked in the outgoing api request (PR #817), opt-in with
+  `mask_tool_results` N (0 off). Once there are 2N results the oldest are replaced in steps of N by
+  a one-line note (tool summary cut to 120 bytes, size, `read_original` handle when present), so
+  N to 2N-1 stay whole and the cached prefix holds between steps; results of 256 bytes or less stay
+  whole. It replaces server clearing (no `context_management` sent). History, `messages.json`,
+  checkpoints and events keep full results; AGENTS.md names it as the one exception to the
+  append-only rule. Measured: a loopback model server accepts and ignores `context_management`
+  (same prompt size); on a six-read task the same answer came in 7 turns with 16% less context.
+  Not tried against Anthropic's API, so it stays off by default.
+- 2026-11-06: #785, a parse check for the api loop's own file tools (PR #818), opt-in with
+  `parse_check`. `edit_file` and `write_file` refuse a change that leaves a `.go` or `.json` file
+  unparseable, with line:col, leaving the file unchanged; a file that did not parse before is
+  written as before so it can be repaired, and the check runs before any directory is created.
+  `server/platform` `JobOptions` accepts neither new option yet (the issues did not ask). A load
+  flake seen on the way is #819.
 - 2026-11-06: #783, a local model as the last carry-on partner (PR #802). `hrn backends set
   --local-api URL` stores `local_api` in `backends.json`. Only `localhost` or a loopback or
   private-network IP literal is accepted, refused on save and load. With it, `api` stands in
