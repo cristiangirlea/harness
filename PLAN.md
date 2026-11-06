@@ -287,6 +287,11 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #782, AGENTS.md went from 144 lines and 10.6 KB to 112 lines and 8.9 KB (PR #787).
+  The CI command list now lives only in `.claude/skills/check/SKILL.md` (`scripts/check.sh` runs
+  it; AGENTS.md names only the Linux `-race` job outside it), and the ruleset mechanics moved to
+  `CONTRIBUTING.md`. The generated scripts index stays in AGENTS.md so agents see the kept scripts
+  before acting; without it the file is 92 lines.
 - 2026-11-06: #815, the watch index's purpose card sums every recorded run the viewer may read,
   not only the 50 listed (PR #820), and a "Where they ran" table gives the same sums per
   repository: the ten largest, the rest folded into "N other folders". A run's repository is the
