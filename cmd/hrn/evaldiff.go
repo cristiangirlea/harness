@@ -41,6 +41,42 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 	}
 
 	r.Line("")
+	if d.Criteria {
+		spread := slices.ContainsFunc(d.Variants, func(v eval.VariantPair) bool {
+			for _, row := range []*eval.VariantRow{v.A, v.B} {
+				if row != nil && (row.JudgeRepeats > 1 || slices.ContainsFunc(row.Criteria, func(c eval.CriterionSummary) bool { return c.Disagreed > 0 })) {
+					return true
+				}
+			}
+			return false
+		})
+		head := fmt.Sprintf("  %-20s %-20s %-16s", "variant", "criterion", "met/scored")
+		if spread {
+			head += " disagreed"
+		}
+		r.Line(strings.TrimRight(head, " "))
+		for _, v := range d.Variants {
+			var ids []string
+			for _, row := range []*eval.VariantRow{v.A, v.B} {
+				if row == nil {
+					continue
+				}
+				for _, c := range row.Criteria {
+					if !slices.Contains(ids, c.ID) {
+						ids = append(ids, c.ID)
+					}
+				}
+			}
+			for _, id := range ids {
+				line := fmt.Sprintf("  %-20s %-20s %-16s", v.Name, id, arrow(criterionCount(v.A, id, false), criterionCount(v.B, id, false)))
+				if spread {
+					line += " " + arrow(criterionCount(v.A, id, true), criterionCount(v.B, id, true))
+				}
+				r.Line(strings.TrimRight(line, " "))
+			}
+		}
+		r.Line("")
+	}
 	r.Line(fmt.Sprintf("  %-20s %-20s %s", "task", "variant", "passed"))
 	for _, t := range d.Tasks {
 		before, after := "-", "-"
@@ -129,6 +165,23 @@ func setupNames(kind string, names []string) string {
 		return fmt.Sprintf("%s %s and %d more", kind, strings.Join(names[:5], ", "), len(names)-5)
 	}
 	return kind + " " + strings.Join(names, ", ")
+}
+
+func criterionCount(row *eval.VariantRow, id string, disagreed bool) string {
+	if row != nil {
+		for _, c := range row.Criteria {
+			if c.ID == id {
+				if disagreed {
+					if row.JudgeRepeats <= 1 {
+						return "-"
+					}
+					return fmt.Sprint(c.Disagreed)
+				}
+				return fmt.Sprintf("%d/%d", c.Met, c.Scored)
+			}
+		}
+	}
+	return "-"
 }
 
 func noise(within bool) string {

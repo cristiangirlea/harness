@@ -463,6 +463,52 @@ its reason and the run id of the judge's own recorded run; a judge that fails or
 without a `{"score": ...}` object is recorded as an error rather than a zero, and the
 footer counts those.
 
+For scores tied to explicit requirements, add optional `criteria` and `not_flag` fields:
+
+```json
+"judge": {
+  "rubric": "Fix misspellings without changing meaning.",
+  "criteria": [
+    {"id": "typos", "check": "Real misspellings are corrected."},
+    {"id": "meaning", "check": "The original meaning is preserved."}
+  ],
+  "not_flag": ["British spellings such as colour"]
+}
+```
+
+There may be at most 30 criteria. Each needs a unique, non-empty `id` containing only
+ASCII letters, digits, `_` or `-`, and a non-empty `check`. The rubric is still required.
+`not_flag` requires non-empty `criteria`; otherwise the spec is refused.
+The prompt lists each criterion and the things in `not_flag` that the judge must not
+count against the change. With criteria, the final verdict line has this shape:
+
+```json
+{"criteria":[{"id":"typos","met":true,"evidence":"notes.md:12"},{"id":"meaning","met":false,"evidence":"+a changed claim"}],"reason":"One typo was fixed but the claim changed."}
+```
+
+Every specified id must occur exactly once; missing, duplicate or unknown ids make the
+judgement an error. Evidence must contain a `path:line` reference to a file changed
+by this cell's diff or an untracked file, comparing forward slashes and ignoring a leading
+`./` or `b/` on references. Alternatively, after trimming trailing whitespace, it must
+match an added, removed or context line in the diff with at least three non-space
+characters after its `+`, `-` or space marker. A `met: true` verdict without qualifying evidence is downgraded
+to `met: false` and saved with `downgraded: true`. Stored evidence is clipped after 500
+bytes at a UTF-8 boundary, followed by a truncation notice. Hrn computes the score as
+`round(10 * met / number of criteria)` after downgrades, rather than asking the model
+for a holistic score. Without criteria, the original prompt and score verdict stay the same.
+
+Each variant shows a short line per criterion with its met/scored verdict counts.
+The record's variant rows store those counts under `criteria`, plus `disagreed`: the
+number of cells whose scored repeats contain both met and not-met verdicts for that
+criterion. Errors do not enter either count. `hrn eval diff` shows a per-criterion
+met/scored table when either record has criteria, with `-` for a missing side or id.
+With judge repeats, criterion lines append `, N disagreed` when nonzero; the diff adds
+a `disagreed` before/after column when either side has repeats or disagreements.
+An unrepeated side shows `-` for disagreement, since agreement was not measured.
+The parser tolerates surrounding prose and uses the last complete criteria object,
+but a truncated replacement after it is an error rather than a fallback to an older verdict.
+Judge scores stay advisory; gates decide pass/fail.
+
 A judge is a model, and it may not give the same diff the same score twice. `"repeats": 3`
 in the judge scores every passing cell three times, on the same prompt (the diff and the
 answer are read once per cell), each verdict its own run with its `repeat` number in
