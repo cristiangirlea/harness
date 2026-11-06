@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // Effect selects permission policy.
@@ -176,7 +177,15 @@ func Truncate(s string) string {
 	if len(s) <= maxOutput {
 		return s
 	}
-	head := s[:maxOutput*2/3]
-	tail := s[len(s)-maxOutput/3:]
+	headEnd := maxOutput * 2 / 3
+	for moved := 0; moved < utf8.UTFMax-1 && headEnd > 0 && !utf8.RuneStart(s[headEnd]); moved++ {
+		headEnd--
+	}
+	tailStart := len(s) - maxOutput/3
+	for moved := 0; moved < utf8.UTFMax-1 && tailStart < len(s) && !utf8.RuneStart(s[tailStart]); moved++ {
+		tailStart++
+	}
+	head := s[:headEnd]
+	tail := s[tailStart:]
 	return fmt.Sprintf("%s\n\n[... %d bytes truncated ...]\n\n%s", head, len(s)-len(head)-len(tail), tail)
 }
