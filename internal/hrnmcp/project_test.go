@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,6 +79,7 @@ func TestProjectProfileScopeAndFreshness(t *testing.T) {
 }
 
 func TestProjectServerExposesOnlyScopedRunAndInspectionTools(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
@@ -144,6 +146,28 @@ func TestProjectServerExposesOnlyScopedRunAndInspectionTools(t *testing.T) {
 	if len(names) != 4 || !names["run"] || !names["runs"] || !names["show"] || !names["backends"] {
 		t.Fatalf("project tools: %v", names)
 	}
+	t.Run("case folded arguments cannot bypass the project scope", func(t *testing.T) {
+		old, _ := agent.Get("codex")
+		agent.Register(namedRouteStub{"codex"})
+		t.Cleanup(func() { agent.Register(old) })
+		for _, key := range []string{"bacKend", "retrieval_verſion", "Continue_run_id", "continue_run_idſ", "Freſh", "Retrieval_refresh"} {
+			t.Run(key, func(t *testing.T) {
+				value := any("other")
+				if key == "bacKend" {
+					value = "codex"
+				} else if key == "Freſh" || key == "Retrieval_refresh" {
+					value = true
+				}
+				raw, err := json.Marshal(map[string]any{"prompt": "x", key: value})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if message := refused(t, s, "run", string(raw)); !strings.Contains(message, "invalid arguments: unknown field "+fmt.Sprintf("%q", key)) {
+					t.Fatalf("got %q; want exact field name refusal", message)
+				}
+			})
+		}
+	})
 	got := s.call(t, "run", `{"prompt":"baseline","retrieval":"off"}`)
 	if got.IsError {
 		t.Fatal(got)

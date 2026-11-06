@@ -342,7 +342,7 @@ more entries it ignores words found in more than 25% of entries, scores each oth
 matching word by its rarity (doubled in the key), and returns no context below a
 normalised score of 1.31 (`empty_reason=below_threshold`), about one word unique
 to the key or two fairly rare words. Exact identifiers still come first
-and skip the floor, but only identifier-shaped ones (a space, `_ . / : -`, a digit
+and skip the floor, but only identifier-shaped ones (a space, `_ . / : \ -`, a digit
 or an inner capital); plain words are scored as text. Smaller versions rank as
 before. A long entry that does not fit the 8 KiB packet arrives as an excerpt
 marked `excerpt=true`; its
