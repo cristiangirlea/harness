@@ -295,6 +295,14 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` refuses every `api` run instead of billing it,
   because a `--continue` of a local run inherits `api`. Without the opt-in nothing changed. A local
   run still shows the api model's estimated price, since pricing is keyed by model name.
+- 2026-11-06: #784, file-mounted secrets for the control service (PR #789): `hrn-server` and
+  `hrn-worker` read `HRN_DATABASE_URL`, `HRN_OPERATOR_TOKEN`, `HRN_SCALER_TOKEN` and
+  `HRN_WORKER_TOKEN` from the file named by the same variable with `_FILE` appended, as Docker and
+  Kubernetes mount secrets. Both set is an error; one trailing newline is trimmed; a missing,
+  non-regular, empty or over-64 KiB file fails at start-up, and errors name the variable and path,
+  never the content. No file-mode check, since Kubernetes mounts secrets 0644 by default. A
+  secrets manager (Infisical) was scoped and declined: reading from env or a file lets operators
+  bring their own.
 - 2026-11-05: #224's first slice, `hrn feed` (PR #777): a stream of small text items, each one
   read-only, single-turn run with no tools (claude with `--tools ""`, other CLIs refused, the api
   loop only against a loopback `ANTHROPIC_BASE_URL`), results as JSONL. Its eval in hrn-evals
