@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 var maskedOriginal = regexp.MustCompile(`(?m)^original: ([0-9a-f]{16}) \(\d+ bytes\); read_original reads it$`)
@@ -55,8 +56,18 @@ func maskToolResults(msgs []apiMessage, keep int, describe func(name string, inp
 				continue
 			}
 			use := uses[str(bl["tool_use_id"])]
-			input, _ := json.Marshal(use["input"])
-			summary := strings.Join(strings.Fields(describe(str(use["name"]), input)), " ")
+			summary := "tool"
+			if name := str(use["name"]); name != "" {
+				input, _ := json.Marshal(use["input"])
+				summary = strings.Join(strings.Fields(describe(name, input)), " ")
+			}
+			if len(summary) > 120 {
+				end := 120 - len("…")
+				for !utf8.RuneStart(summary[end]) {
+					end--
+				}
+				summary = summary[:end] + "…"
+			}
 			ending := "; run the tool again to see it]"
 			if match := maskedOriginal.FindStringSubmatch(content); match != nil {
 				ending = "; original " + match[1] + ": read_original reads it]"

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func maskHistory(n int) []apiMessage {
@@ -21,6 +22,30 @@ func maskHistory(n int) []apiMessage {
 }
 
 func maskDescription(name string, input json.RawMessage) string { return name + " " + string(input) }
+
+func TestMaskingCapsSummariesAt120BytesWithoutSplittingRunes(t *testing.T) {
+	for _, tc := range []struct{ summary, want string }{
+		{strings.Repeat("x", 120), strings.Repeat("x", 120)},
+		{strings.Repeat("x", 4096), strings.Repeat("x", 117) + "…"},
+		{strings.Repeat("x", 115) + "界" + strings.Repeat("x", 4096), strings.Repeat("x", 115) + "…"},
+		{strings.Repeat("x", 114) + "界" + strings.Repeat("x", 4096), strings.Repeat("x", 114) + "界…"},
+	} {
+		got := maskToolResults(maskHistory(2), 1, func(string, json.RawMessage) string { return tc.summary })[1].Content[0]["content"].(string)
+		want := "[masked by hrn: " + tc.want + ", 300 bytes; run the tool again to see it]"
+		if got != want || !utf8.ValidString(got) {
+			t.Errorf("summary bytes=%d: note bytes=%d, want %d; valid UTF-8=%v", len(tc.summary), len(got), len(want), utf8.ValidString(got))
+		}
+	}
+}
+
+func TestMaskingNamesAnOrphanedToolResultTool(t *testing.T) {
+	msgs := maskHistory(2)[1:]
+	got := maskToolResults(msgs, 1, maskDescription)[0].Content[0]["content"]
+	want := "[masked by hrn: tool, 300 bytes; run the tool again to see it]"
+	if got != want {
+		t.Fatalf("note=%q, want=%q", got, want)
+	}
+}
 
 func TestMaskingKeepsResultsWholeBelowTwiceTheWindow(t *testing.T) {
 	for _, keep := range []int{0, 1, 2, 3} {

@@ -828,6 +828,97 @@ func TestAPIMasksOnlyOutgoingResultsAndResumesTheSameRequestPrefix(t *testing.T)
 	}
 }
 
+func TestAPIMaskingWithContextEditsDisabledStillEmitsOneInfoEvent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "result.txt"), []byte(strings.Repeat("x", 300)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var turns [][]string
+	for i := range 4 {
+		turns = append(turns, toolTurn(fmt.Sprintf("call-%d", i), "read_file", `{"path":"result.txt"}`))
+	}
+	res, events, fake := runFake(t, append(turns, textTurn("done")), Task{Prompt: "inspect", Dir: dir,
+		Options: Options{MaskToolResults: 2, NoContextEdits: true}})
+	if res.Status != StatusOK || len(fake.requests) != 5 {
+		t.Fatalf("result=%+v requests=%d", res, len(fake.requests))
+	}
+	for i, req := range fake.requests {
+		if _, present := req["context_management"]; present || strings.Contains(fake.headers[i].Get("anthropic-beta"), betaContextEdits) {
+			t.Fatalf("request %d carries server clearing", i)
+		}
+	}
+	if got := capturedMessages(t, fake.requests[4])[2].Content[0]["content"].(string); !strings.HasPrefix(got, "[masked by hrn:") {
+		t.Fatalf("old result was not masked: %q", got)
+	}
+	infos := 0
+	for _, e := range events {
+		if e.Kind == EventInfo && e.Text == "mask_tool_results: the newest 2 tool results stay whole; older ones are masked in the request" {
+			infos++
+		}
+	}
+	if infos != 1 {
+		t.Fatalf("masking info events=%d, want 1", infos)
+	}
+}
+
+func TestAPIDurableRecoverySendsTheSameMaskedMessagesAsAnUninterruptedRun(t *testing.T) {
+	store := &checkpointStore{}
+	b, task, fake, _ := durableFixture(t, store)
+	b.Tools[0].Run = func(context.Context, *tools.Workspace, json.RawMessage) (string, error) {
+		return strings.Repeat("x", 300), nil
+	}
+	fake.turns = nil
+	for i := range 6 {
+		fake.turns = append(fake.turns, toolTurn(fmt.Sprintf("call-%d", i), "effect", `{}`))
+	}
+	fake.turns = append(fake.turns, textTurn("done"))
+	task.MaskToolResults, task.MaxTurns = 2, 7
+	if res := b.Run(t.Context(), task, func(Event) {}); res.Status != StatusOK {
+		t.Fatalf("uninterrupted run: %+v", res)
+	}
+	for _, nextTurn := range []int{5, 7} {
+		t.Run(fmt.Sprintf("next-turn-%d", nextTurn), func(t *testing.T) {
+			checkpointIndex := -1
+			for i, cp := range store.records {
+				if cp.Boundary == "turn_complete" && cp.NextTurn == nextTurn {
+					checkpointIndex = i
+					break
+				}
+			}
+			if checkpointIndex < 0 {
+				t.Fatal("mid-run checkpoint was not saved")
+			}
+			cp := store.records[checkpointIndex]
+			recovered := &checkpointStore{records: append([]APICheckpoint(nil), store.records[:checkpointIndex+1]...)}
+			task.Durable = &DurableExecution{Resume: &cp, Save: recovered.save}
+			requestIndex := len(fake.requests)
+			fake.turns = append(fake.turns, textTurn("resumed"))
+			if res := b.Run(t.Context(), task, func(Event) {}); res.Status != StatusOK {
+				t.Fatalf("recovered run: %+v", res)
+			}
+			if len(fake.requests) != requestIndex+1 {
+				t.Fatalf("recovery sent %d requests, want 1", len(fake.requests)-requestIndex)
+			}
+			want := capturedMessages(t, fake.requests[nextTurn-1])
+			got := capturedMessages(t, fake.requests[requestIndex])
+			if !reflect.DeepEqual(got, want) {
+				t.Fatal("checkpoint recovery changed the next request's messages")
+			}
+			masked := 0
+			for _, msg := range got {
+				for _, bl := range msg.Content {
+					if bl["type"] == "tool_result" && strings.HasPrefix(str(bl["content"]), "[masked by hrn:") {
+						masked++
+					}
+				}
+			}
+			if masked != nextTurn-3 {
+				t.Fatalf("masked results=%d, want %d", masked, nextTurn-3)
+			}
+		})
+	}
+}
+
 func TestAPIMaskingKeepsDurableCheckpointResultsWhole(t *testing.T) {
 	store := &checkpointStore{}
 	b, task, fake, _ := durableFixture(t, store)
