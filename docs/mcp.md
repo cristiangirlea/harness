@@ -10,6 +10,7 @@
 the model as `mcp__<server>__<tool>` (Claude Code's naming) and stops the servers when
 the run ends. `~/.hrn/mcp.json` (or `$HRN_HOME/mcp.json`) is loaded whenever it exists;
 `--mcp` files add to it, and a later file overrides an earlier server of the same name.
+When tool names collide, the first keeps its name and later tools get a stable hash suffix (starting with `_` and eight hex characters, extended if needed), with the base shortened to keep the name within 128 characters; an info event identifies each rename.
 The format is Claude Code's, so existing `.mcp.json` files work unchanged:
 
 ```json
@@ -69,9 +70,11 @@ A panic answers `<method>: internal error`; the panic value and stack go to hrn'
 
 Tools:
 
+Unknown arguments to `run`, `runs`, `show`, `flow`, `batch`, `batch_show` and `batch_merge` are refused before work starts.
+
 | Tool | Arguments | Returns |
 |---|---|---|
-| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `parse_check`, `no_instructions`, `no_context_edits`, `mask_tool_results`, `lean`, `skills`, `compact_window`, `append_system_prompt`, `no_skills`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `inherit_env`, `continue_run_id`, `fresh` (with `continue_run_id`: `true` starts a new session with a hand-over; omitted defaults to fresh when codex continues codex, and `false` resumes the session; see [backends](backends.md#a-fresh-hand-over)), `timeout`, `max_cost_usd`, `task_budget`, `no_switch`, `issue`, `take_over` (see [Issue leases](workspaces.md#issue-leases)) | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. An issue another run holds is refused as a tool error naming the holder. |
+| `run` | `prompt`, `purpose`, `backend`, `model`, `dir`, `mode`, `max_turns`, `effort`, `mcp`, `parse_check`, `no_instructions`, `no_context_edits`, `mask_tool_results`, `lean`, `skills`, `compact_window`, `append_system_prompt`, `no_skills`, `retrieval`, `retrieval_tenant`, `retrieval_project`, `retrieval_revision`, `retrieval_version`, `allow_dangerous` (with `--allow-dangerous-runs` only), `inherit_env`, `continue_run_id`, `retrieval_refresh` (with `continue_run_id`), `fresh` (with `continue_run_id`: `true` starts a new session with a hand-over; omitted defaults to fresh when codex continues codex, and `false` resumes the session; see [backends](backends.md#a-fresh-hand-over)), `timeout`, `max_cost_usd`, `task_budget`, `no_switch`, `issue`, `take_over` (see [Issue leases](workspaces.md#issue-leases)) | Blocks until the task finishes: final answer, summary line (status, tokens, cost, duration) and run id. Tool calls stream back as progress. A run carried on at a usage limit answers with the run that carried it on, and `limited_run_id`. An issue another run holds is refused as a tool error naming the holder. |
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `flow` | `id`, `level` | A run or batch execution tree with recorded reasons and next steps; level defaults to `technical` (`simple`, `technical` or `debug`). Text over 64 KiB is cut, and then the structured tree is left out with `truncated: true`; use a lower level or `hrn flow --json`. |

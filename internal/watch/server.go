@@ -292,6 +292,8 @@ func newHandlerWithMap(ctx context.Context, opt Options, access *accessVerifier,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
+	// Access sends a visitor back to /login after signing in there.
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/", http.StatusSeeOther) })
 	mux.HandleFunc("POST /backends", s.saveBackends)
 	mux.HandleFunc("GET /run/{id}", s.recordRoute(s.run))
 	mux.HandleFunc("GET /batch/{id}", s.recordRoute(s.batch))
@@ -349,10 +351,12 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 			}
 			// Only document navigation with absent/null Origin may bypass origin checks.
 			origin := r.Header.Get("Origin")
-			navigation := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document") && (origin == "" || origin == "null")
+			document := (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") && strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document")
+			navigation := document && (origin == "" || origin == "null")
 			if aw.reason == "" && !navigation && (strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || origin != "" && origin != s.opt.Public.Origin) {
 				aw.reason = "bad origin"
 			}
+			tokenRefused := false
 			if aw.reason == "" {
 				token := r.Header.Get("Cf-Access-Jwt-Assertion")
 				if token == "" {
@@ -362,11 +366,17 @@ func (s *server) guard(next http.Handler, lan map[string]bool, key string) http.
 				}
 				var expiry time.Time
 				aw.email, expiry, aw.reason = s.access.verifyToken(token)
+				tokenRefused = aw.reason != ""
 				if aw.reason == "" {
 					aw.deadline = time.Now().Add(expiry.Sub(s.access.now()))
 				}
 			}
 			if aw.reason != "" {
+				// A page visit refused only for its token may sign in; host and origin refusals stay bare.
+				if document && tokenRefused {
+					s.page(w, http.StatusForbidden, "signin", nil)
+					return
+				}
 				s.refuseAction(w, r, "unverified", aw.reason, "Cloudflare Access login required", http.StatusForbidden)
 				return
 			}

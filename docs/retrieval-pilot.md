@@ -1,6 +1,7 @@
 # Retrieval pilot plan (increment 4)
 
-Status: plan only, not run. This is increment 4 of the
+Status: plan only, not run. Its prerequisites #791 and #827 are merged; step 0 on the new ranking
+is a no-go by the rule below (see "Step 0 on v4"), so the runs wait for a maintainer's decision. This is increment 4 of the
 [project retrieval plan](project-retrieval-plan.md#4-controlled-pilot-and-savings-report). Running
 it spends subscription plan quota. `hrn eval` runs only after a maintainer's yes to the run count
 below, and never on the `api` backend or with an API key.
@@ -39,9 +40,10 @@ to every prompt.
 
 ## Prerequisites and go/no-go
 
-- **#791, before runs:** drop common query words and return no context below a score floor.
-- **#827, before the comparison:** `hrn retrieval samples` and `hrn retrieval corpus-digest`. It can land
-  while runs are under way.
+- **#791, before runs:** drop common query words and return no context below a score floor. Done:
+  PR #847, ranking `simple-rare-floor-v4`.
+- **#827, before the comparison:** `hrn retrieval samples` and `hrn retrieval corpus-digest`. Done:
+  PR #843.
 - **#825, not blocking:** until it lands, the review step drops refused identifiers and entries by
   hand and lists them in the report.
 - **#826:** only for a later claude arm.
@@ -49,6 +51,19 @@ to every prompt.
   corpus-answerable tasks get their answer's file in the packet, and at least one of the three
   no-answer tasks gets an empty packet. Otherwise report the preview and stop: the runs would
   measure retrieval noise.
+
+**Step 0 on v4.** Rerun after #847, on the same 97-entry corpus at `014b929` (no model call):
+
+| | v3 | v4 | rule |
+|---|---|---|---|
+| answer's file in the packet | 3 of 7 | 6 of 7 | at least 4 |
+| answer text in the packet | 1 of 7 | 5 of 7 | |
+| no-answer tasks with an empty packet | 0 of 3 | 0 of 3 | at least 1 |
+
+The first condition holds and the second does not, so by the rule this is a no-go. The three
+no-answer tasks ask about hrn itself and share real words with the guides, so they get related
+context (1 to 4 entries) rather than noise. Running anyway is the maintainer's decision; the pilot
+would then measure whether that context costs more than the answers it brings save.
 
 ## Fixed inputs
 
