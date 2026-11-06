@@ -133,7 +133,8 @@ It replaces server clearing, even without `no_context_edits`. Once there are at 
 between N and 2N-1 newest results whole. Results of at most 256 bytes also stay whole.
 Notes retain the tool summary, byte count and any `read_original` handle. Stored history,
 `messages.json`, durable checkpoints and run events keep the full results. This option
-has only been tested against the fake server.
+has only been tested against the fake server. With `compact_window`, masking applies to the
+outgoing view after compaction, including the view sent for the next summary.
 
 Whatever the server reports about the edits it applied is recorded as an info event,
 `server context management, turn N: {...}`, with the JSON exactly as it arrived: its
@@ -310,16 +311,53 @@ each of those turns reads them back from the cache. `compact_window` sets the th
 instead: `hrn run --compact-window 200000`, or `"compact_window": 200000` on a batch or eval
 spec or task (a quoted `"200000"` works too). The MCP `run` tool advertises a string:
 `"compact_window": "200000"` or `"compact_window": "auto"`; it also accepts unquoted integers
-for existing callers. It takes an integer from 100000 to 1000000, or `"auto"` (Claude Code's
-own choice), and is checked before the run starts; hrn passes it as
-`claude --autocompact <value>`. Unset, nothing is passed.
+for existing callers. The shared option accepts integers from 20480 to 1000000, or `"auto"`.
+Backend limits are checked before a run starts: claude requires at least 100000 and passes
+`claude --autocompact <value>`; `auto` keeps Claude Code's own choice. Unset, nothing is passed.
+
+The api backend enforces numeric thresholds of at least 20480 tokens, reserving room for
+a 4096-token summary. Leave the largest expected tool output plus another 4096 tokens between
+the threshold and the model's context window: the tool results and continuation prompt still
+have to fit in the summary request. For example, a 64K-token model with tool output up to 8K
+tokens has room with `hrn run -b api --compact-window 32000`. Unset, requests behave as before. `auto` still emits
+`compact_window: not enforced by the api backend`, since hrn cannot discover the model's window.
+
+After a tool turn's results are appended and all durable operations are confirmed, api
+compacts when the last reported context (input plus cache reads and writes) reaches the
+threshold. It calls the same client and model with the same system prompt and tool
+definitions, `tool_choice: none` and `max_tokens: 4096`, asking for the task, success checks,
+completed files and commands, findings, failed approaches and next steps. The continuation
+prompt is appended as a text block to the last user message containing the tool results.
+Summary generation disables thinking, output configuration and top-level history caching
+to leave the 4096 tokens for continuation text without caching a history no later call reads.
+Its usage and estimated cost count toward the run's totals, and reaching `max_cost` prevents
+another summary call. A failed, empty or incomplete summary emits an error and leaves the
+outgoing view unchanged. Another attempt waits until the reported context has grown by at
+least 4096 tokens from the failed attempt; a later context-length error still ends the run as before.
+
+On success, the next request starts with one user message containing the current run's task
+prompt and a `<continuation_summary>` block, followed by only the history accumulated after
+that summary. Each later compaction summarizes this current view. Stored history,
+`messages.json` and transcripts stay whole. Summary calls emit `usage`, then a `compaction`
+event with trigger `compact_window` and the prior context token count, then an info event
+prefixed `compaction summary: ` with the summary text. Durable checkpoints add `compaction_k` (the number
+of history messages summarized), `compaction_summary` and `compaction_failed_context` (the
+context at the last failed attempt), all omitted when unset, so recovery rebuilds the same
+outgoing request and retry boundary. Summary requests also persist intent and completion; an
+unresolved intent after a crash requires recovery rather than repeating a potentially billed
+call. A returned summary error is saved and the run continues with its existing outgoing view.
+A continuation of a finished run (`continue_run_id`,
+`hrn run --continue`, or `resumeMessages`) starts from the full saved history and compacts
+again after a tool turn reaches the threshold. In a continued run, the prompt in the compacted
+message is the follow-up prompt; the original task survives only inside the summary. The
+continuation's full history can already exceed the model's window before compaction can act,
+so its first request may fail. This has only been tested against the fake server.
 
 The trade: every compaction is one expensive turn (the whole history is read to write the
 summary), and the summary loses detail the model may later want (exact error text, a file
 it read early). A lower window means smaller turns and more compactions. Set it for long
 runs whose early history matters little; leave it unset for short ones, which never reach
-it anyway. Only the claude backend applies it; the api loop (whose context editing does a
-similar job, see above), codex, gemini, opencode and agy say `compact_window: not enforced`.
+it anyway. codex, gemini, opencode and agy say `compact_window: not enforced`.
 
 ### Codex cost estimates
 

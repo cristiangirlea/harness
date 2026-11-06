@@ -10,6 +10,7 @@ paths:
   included. Trimming, rewriting or reordering earlier messages gets the request rejected on
   models that sign their thinking. Context is reduced server-side (context editing), not here.
   With `mask_tool_results` set, old tool results are masked in the outgoing request only; the stored history is unchanged.
+  Numeric `compact_window` compaction is also outgoing-request-only; stored history stays whole.
 - The client is hand-written on `net/http` (streaming SSE, retries, prompt caching). Keep it
   stdlib; a change to SSE parsing keeps `FuzzParseSSE` passing.
 - The price table (`prices`, read through `priceOf`) is USD per million tokens. A model without a price gets

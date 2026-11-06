@@ -59,6 +59,10 @@ func (stubBackend) Run(_ context.Context, task agent.Task, emit func(agent.Event
 // whether a caller turned lean on by default.
 type leanBackend struct{ stubBackend }
 
+type compactionClaudeBackend struct{ stubBackend }
+
+func (compactionClaudeBackend) Name() string { return "claude" }
+
 func (leanBackend) Name() string      { return "stub-lean" }
 func (leanBackend) AppliesLean() bool { return true }
 
@@ -470,7 +474,7 @@ func TestRunPassesLean(t *testing.T) {
 func TestRunPassesCompactWindow(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	s := connect(t, t.TempDir())
-	for _, value := range []string{`200000`, `"200000"`, `"100000"`, `"1000000"`, `"auto"`} {
+	for _, value := range []string{`20480`, `"20480"`, `50000`, `"99999"`, `200000`, `"200000"`, `"100000"`, `"1000000"`, `"auto"`} {
 		t.Run(value, func(t *testing.T) {
 			res := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":`+value+`}`)
 			if res.IsError {
@@ -482,10 +486,29 @@ func TestRunPassesCompactWindow(t *testing.T) {
 			}
 		})
 	}
-	for _, value := range []string{`50000`, `"99999"`, `"1000001"`, `"200k"`, `""`} {
+	for _, value := range []string{`16000`, `"20479"`, `"1000001"`, `"200k"`, `""`} {
 		if r := s.call(t, "run", `{"prompt":"x","backend":"stub","compact_window":`+value+`}`); !r.IsError || !strings.Contains(r.Text(), "compact_window") {
 			t.Errorf("invalid window %s must be refused before the run: %s", value, r.Text())
 		}
+	}
+}
+
+func TestRunRefusesClaudeCompactWindowsBeforeCreatingARecord(t *testing.T) {
+	previous, err := agent.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(compactionClaudeBackend{})
+	t.Cleanup(func() { agent.Register(previous) })
+	s := connect(t, t.TempDir())
+	for _, value := range []string{`50000`, `"99999"`} {
+		res := s.call(t, "run", `{"prompt":"task","backend":"claude","no_switch":true,"compact_window":`+value+`}`)
+		if !res.IsError || !strings.Contains(res.Text(), "compact_window") {
+			t.Errorf("invalid claude window %s was not refused: %s", value, res.Text())
+		}
+	}
+	if records, err := runlog.List(0); err != nil || len(records) != 0 {
+		t.Fatalf("invalid claude windows left records: %+v (%v)", records, err)
 	}
 }
 

@@ -46,8 +46,8 @@ type Options struct {
 	// NoSkills disables Claude skills.
 	NoSkills bool `json:"no_skills,omitempty" desc:"Start the claude CLI with skills turned off (--disable-slash-commands) (claude backend)."`
 
-	// CompactWindow sets Claude's compaction threshold.
-	CompactWindow CompactWindow `json:"compact_window,omitempty" desc:"Compact the claude CLI's conversation at this many tokens of context: 100000 to 1000000, or auto (claude backend)."`
+	// CompactWindow bounds outgoing context without changing stored history.
+	CompactWindow CompactWindow `json:"compact_window,omitempty" desc:"Compact at this many context tokens: 20480 to 1000000, or auto; api cannot enforce auto; claude requires at least 100000."`
 
 	// AllowDangerous lifts command and environment guards.
 	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Lift the guard: let agents push, merge and deploy with your credentials, and let run_command run sudo, rm -rf / and the like."`

@@ -278,6 +278,33 @@ func TestRunRefusesAnUnknownEffortBeforeTheBackendStarts(t *testing.T) {
 	}
 }
 
+func TestRunRefusesClaudeCompactWindowsBeforeCreatingARecord(t *testing.T) {
+	previous, err := agent.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(recorder{name: "claude", last: recorded})
+	t.Cleanup(func() { agent.Register(previous) })
+	for _, window := range []string{"50000", "99999"} {
+		t.Run(window, func(t *testing.T) {
+			drain(t)
+			t.Setenv("HRN_HOME", t.TempDir())
+			code, err := cmdRun([]string{"-b", "claude", "--no-switch", "-C", t.TempDir(), "--compact-window", window, "task"})
+			if code != 2 || err == nil || !strings.Contains(err.Error(), "compact_window") {
+				t.Fatalf("code=%d error=%v", code, err)
+			}
+			select {
+			case task := <-recorded:
+				t.Fatalf("backend started with invalid window: %+v", task)
+			default:
+			}
+			if records, err := runlog.List(0); err != nil || len(records) != 0 {
+				t.Fatalf("invalid window left records: %+v (%v)", records, err)
+			}
+		})
+	}
+}
+
 func TestRunFlagsReachTheTask(t *testing.T) {
 	drain(t)
 	t.Setenv("HRN_HOME", t.TempDir())

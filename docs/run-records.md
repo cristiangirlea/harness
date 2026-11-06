@@ -161,7 +161,14 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
   event is not written a second time
 - `messages.json` — the api backend's message history, for `hrn run --continue`. It
   repeats the tool results the transcript already holds, so an api run costs roughly
-  twice the disk of its transcript
+  twice the disk of its transcript. Request-only compaction and masking leave it whole;
+  a finished run's continuation starts from this full history and compacts again when needed.
+  Durable API checkpoints also keep full history in `request`, plus optional `compaction_k`
+  and `compaction_summary` fields to restore the outgoing view on recovery. Optional
+  `compaction_failed_context` saves the context token count at the last failed summary, so
+  another attempt waits for at least 4096 more tokens even after recovery. Summary calls
+  save `compaction_intent` with a pending model operation, then `compaction_complete` with
+  the outcome and usage; a returned summary error clears the intent and keeps the prior view
 - `originals/<handle>.txt` — with `--shape-tools`, the full text of a shell or MCP
   result over 30,000 bytes. The handle is the first 16 lowercase hex characters of
   its SHA-256; files are created on demand with mode `0644`.
@@ -391,7 +398,8 @@ reports it, so a run's context can be followed turn by turn:
 `context_tokens` is what that call carried: its input plus cache reads and writes. Zero
 fields are left out. Which backends write them:
 
-- **api**: one per request, as the response reports it.
+- **api**: one per main-loop request and summary call, including reported usage from failed
+  summaries. Summary usage counts toward the per-call tables and the result totals.
 - **claude**: one per main-loop assistant message. stream-json writes each content block of a
   message as a line of its own and repeats the message's usage on each, so hrn writes the
   event once per message id, after the message's last line, with the first line's figures
@@ -402,10 +410,14 @@ fields are left out. Which backends write them:
 - **codex** and **gemini**: none. Codex's `turn.completed` totals every model call of an
   agent turn and gemini reports the run's totals, so neither says what one call carried.
 
-A `compaction` event is a compaction the backend reported: Claude Code's `compact_boundary`
-line (from `compact_window`, or its own threshold). `text` says what set it off (`auto` or
-`manual`) and `usage.context_tokens` holds the context just before it. No other backend
-reports one. `hrn watch` and `hrn show --usage` also mark a turn whose context fell by more
+A `compaction` event records Claude Code's `compact_boundary` line (from `compact_window`,
+or its own threshold), or a successful api summary. `text` says what set it off: `auto` or
+`manual` for claude, `compact_window` for api. `usage.context_tokens` holds the context just
+before compaction. Api emits the summary call's `usage` event first, then the `compaction`
+event with only the trigger and prior context, then an `info` event whose text is prefixed
+`compaction summary: ` and contains the summary. The summary's usage and cost are included
+in the result totals, while `messages.json` and transcripts keep the full conversation.
+`hrn watch` and `hrn show --usage` also mark a turn whose context fell by more
 than half from the turn before as a *probable* compaction; that is a reading of the
 numbers, never written to the record.
 
