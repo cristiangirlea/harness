@@ -630,4 +630,26 @@ func TestRetrievalCorpusDigestUTF8(t *testing.T) {
 			}
 		})
 	}
+	for _, escaped := range []string{`\ud800`, `\uDC00`, `\ud800x`, `\ud800A`, `\ud800\ud800`, `\ud800\n`, `\\\ud800`} {
+		t.Run("surrogate "+escaped, func(t *testing.T) {
+			data := []byte(`{"entries":[{"key":"k` + escaped + `","source":"s","content":"c"}]}`)
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := runRetrieval([]string{"corpus-digest", path}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+	for _, escaped := range []string{`😀`, `\\ud800`} {
+		t.Run("accepted "+escaped, func(t *testing.T) {
+			data := []byte(`{"entries":[{"key":"k` + escaped + `","source":"s","content":"c"}]}`)
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := runRetrieval([]string{"corpus-digest", path}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }

@@ -114,7 +114,7 @@ func runRetrievalCorpusDigest(args []string, out io.Writer) error {
 	}
 	var entries []retrieval.Entry
 	if raw, ok := corpus["entries"]; ok {
-		if !utf8.Valid(raw) {
+		if !utf8.Valid(raw) || hasLoneSurrogateEscape(raw) {
 			return fmt.Errorf("corpus entries contain invalid UTF-8")
 		}
 		if err := json.Unmarshal(raw, &entries); err != nil {
@@ -154,6 +154,39 @@ func runRetrievalCorpusDigest(args []string, out io.Writer) error {
 	encoded.WriteByte(']')
 	_, err := fmt.Fprintln(out, retrieval.TextDigest(encoded.String()))
 	return err
+}
+
+// Go decodes an unpaired surrogate escape as U+FFFD, which would hash text no UTF-8 encoder can produce.
+func hasLoneSurrogateEscape(raw []byte) bool {
+	surrogate := func(i int) (rune, bool) {
+		if i+6 > len(raw) || raw[i] != '\\' || raw[i+1] != 'u' {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(string(raw[i+2:i+6]), 16, 16)
+		if err != nil || v < 0xd800 || v > 0xdfff {
+			return 0, false
+		}
+		return rune(v), true
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		r, ok := surrogate(i)
+		switch {
+		case !ok:
+			i++ // skip the escaped character, so `\\` never starts an escape
+		case r >= 0xdc00:
+			return true
+		default:
+			low, ok := surrogate(i + 6)
+			if !ok || low < 0xdc00 {
+				return true
+			}
+			i += 11
+		}
+	}
+	return false
 }
 
 // Python's UTF-8 JSON encoding preserves line separators and non-ASCII bytes.
