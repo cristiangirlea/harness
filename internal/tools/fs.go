@@ -65,14 +65,14 @@ func readFile() Tool {
 			if err != nil {
 				return "", err
 			}
-			info, err := os.Stat(p)
+			info, err := os.Stat(realPath(p))
 			if err != nil {
 				return "", err
 			}
 			if !info.Mode().IsRegular() {
 				return "", fmt.Errorf("%q is not a regular file", ws.Rel(p))
 			}
-			f, err := os.OpenFile(p, os.O_RDONLY|readOpenFlags, 0)
+			f, _, err := ws.openInside(p, os.O_RDONLY|readOpenFlags, 0)
 			if err != nil {
 				return "", err
 			}
@@ -178,10 +178,19 @@ func writeFile() Tool {
 			if err := ws.checkParse(p, []byte(args.Content)); err != nil {
 				return "", err
 			}
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			f, _, err := ws.openInside(p, os.O_WRONLY, 0o644)
+			if err != nil {
 				return "", err
 			}
-			if err := os.WriteFile(p, []byte(args.Content), 0o644); err != nil {
+			if err := f.Truncate(0); err != nil {
+				f.Close()
+				return "", err
+			}
+			if _, err := f.Write([]byte(args.Content)); err != nil {
+				f.Close()
+				return "", err
+			}
+			if err := f.Close(); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("wrote %s (%d bytes)", ws.Rel(p), len(args.Content)), nil
@@ -227,9 +236,17 @@ func editFile() Tool {
 			if err != nil {
 				return "", err
 			}
-			data, err := os.ReadFile(p)
+			f, _, err := ws.openInside(p, os.O_RDONLY, 0)
 			if err != nil {
 				return "", err
+			}
+			data, err := io.ReadAll(f)
+			closeErr := f.Close()
+			if err != nil {
+				return "", err
+			}
+			if closeErr != nil {
+				return "", closeErr
 			}
 			content := string(data)
 			old := args.OldString
@@ -257,7 +274,19 @@ func editFile() Tool {
 			if err := ws.checkParse(p, []byte(content)); err != nil {
 				return "", err
 			}
-			if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			f, _, err = ws.openInside(p, os.O_WRONLY, 0o644)
+			if err != nil {
+				return "", err
+			}
+			if err := f.Truncate(0); err != nil {
+				f.Close()
+				return "", err
+			}
+			if _, err := f.Write([]byte(content)); err != nil {
+				f.Close()
+				return "", err
+			}
+			if err := f.Close(); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("edited %s (%d replacement(s))", ws.Rel(p), replaced), nil
