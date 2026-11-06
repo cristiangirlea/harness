@@ -236,6 +236,8 @@ Apply uses a same-origin request carrying the startup key; it writes
 follow those preferences. Choose "No configured default" to let hrn choose;
 leaving all backends unchecked with no default restores all backends. A configured
 default must be enabled, and unknown backend names are refused.
+Apply checks that the preferences file still matches the bytes seen when the card loaded.
+A stale or missing digest returns 412 with "Preferences changed since this page loaded: reload" and leaves the file unchanged.
 
 Actions are limited to 10 POST requests per minute per loopback client, verified Access email,
 or unverified client. The first request over the limit records one rate-limit refusal; further requests in the window write no audit lines. Refusals and backend changes are appended to `$HRN_HOME/watch-audit.jsonl`

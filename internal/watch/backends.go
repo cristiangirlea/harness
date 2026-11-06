@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,18 @@ type backendCard struct {
 	Default, Chosen, Key string
 	Problem              string
 	Editable             bool
+	Digest               string
+}
+
+func backendsDigest() (string, error) {
+	data, err := prefs.Raw(runlog.Home())
+	if os.IsNotExist(err) {
+		return "none", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
 
 func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
@@ -33,10 +46,13 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Local requests only", http.StatusForbidden)
 		return
 	}
-	var p *prefs.Prefs
+	var request *struct {
+		prefs.Prefs
+		Digest string `json:"digest"`
+	}
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 	d.DisallowUnknownFields()
-	if err := d.Decode(&p); err != nil || p == nil {
+	if err := d.Decode(&request); err != nil || request == nil {
 		s.writeRefusal(client, "/backends", "invalid preferences object")
 		http.Error(w, "Expected a backend preferences object", http.StatusBadRequest)
 		return
@@ -46,6 +62,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Expected one backend preferences object", http.StatusBadRequest)
 		return
 	}
+	p := &request.Prefs
 	names := append([]string{}, p.EnabledNames...)
 	if p.Default() != "" {
 		names = append(names, p.Default())
@@ -64,6 +81,17 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 	}
 	s.actionMu.Lock()
 	defer s.actionMu.Unlock()
+	digest, err := backendsDigest()
+	if err != nil {
+		s.writeRefusal(client, "/backends", "preferences could not be read")
+		http.Error(w, "Backend preferences could not be read", http.StatusInternalServerError)
+		return
+	}
+	if request.Digest == "" || request.Digest != digest {
+		s.writeRefusal(client, "/backends", "preferences changed since the page loaded")
+		http.Error(w, "Preferences changed since this page loaded: reload", http.StatusPreconditionFailed)
+		return
+	}
 	had, loadErr := prefs.Load(runlog.Home())
 	var old any = had
 	if loadErr != nil {
@@ -147,9 +175,10 @@ func (s *server) mayChangeBackends(w http.ResponseWriter, r *http.Request) bool 
 }
 
 func (s *server) backendsCard(w http.ResponseWriter, r *http.Request) backendCard {
+	digest, digestErr := backendsDigest()
 	p, err := resolve.BackendPreferences(runlog.Home())
-	c := backendCard{Default: p.Default(), Editable: s.mayChangeBackends(w, r)}
-	if err != nil {
+	c := backendCard{Default: p.Default(), Editable: s.mayChangeBackends(w, r), Digest: digest}
+	if err != nil || digestErr != nil {
 		c.Problem = "Backend preferences could not be read."
 	} else if p.Default() == "" {
 		c.Chosen = resolve.DefaultBackendNameIn(runlog.Home())

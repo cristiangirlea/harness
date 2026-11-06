@@ -23,7 +23,7 @@ func TestBackendActionAudit(t *testing.T) {
 	t.Setenv("HRN_HOME", home)
 	s := &server{}
 	post := func(body string) int {
-		r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(body))
+		r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(backendBodyForTest(t, body)))
 		r.RemoteAddr = "127.0.0.1:1234"
 		w := httptest.NewRecorder()
 		s.saveBackends(w, r)
@@ -68,7 +68,7 @@ func TestBackendActionAuditFailureDoesNotSave(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(home, "watch-audit.jsonl"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(`{"enabled":["claude"]}`))
+	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(backendBodyForTest(t, `{"enabled":["claude"]}`)))
 	r.RemoteAddr = "127.0.0.1:1234"
 	w := httptest.NewRecorder()
 	(&server{}).saveBackends(w, r)
@@ -85,12 +85,12 @@ func TestActionGuardAndRateLimit(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
 	h := New(context.Background(), Options{Key: "key"})
-	bad := backendRequest(h, "POST", "/backends", "127.0.0.1:1", "evil.example", "key", "", `{}`)
+	bad := backendRequest(h, "POST", "/backends", "127.0.0.1:1", "evil.example", "key", "", backendBodyForTest(t, `{}`))
 	if bad.Code != http.StatusForbidden {
 		t.Fatalf("guard: %d", bad.Code)
 	}
 	for i := 0; i < 11; i++ {
-		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1", "localhost", "key", "", `{}`)
+		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1", "localhost", "key", "", backendBodyForTest(t, `{}`))
 		want := http.StatusNoContent
 		if i == 10 {
 			want = http.StatusTooManyRequests
@@ -130,13 +130,17 @@ func TestRecentActionVisibilityAndInterrupted(t *testing.T) {
 
 func TestActionSerialization(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
 	s := &server{}
+	body := backendBodyForTest(t, `{"enabled":["claude"]}`)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r := httptest.NewRequest("POST", "http://localhost/backends", strings.NewReader(`{"enabled":["claude"]}`))
+			r := httptest.NewRequest("POST", "http://localhost/backends", strings.NewReader(body))
 			r.RemoteAddr = "127.0.0.1:1"
 			w := httptest.NewRecorder()
 			s.saveBackends(w, r)
@@ -184,7 +188,7 @@ func TestAuditRefusalCap(t *testing.T) {
 	t.Setenv("HRN_HOME", home)
 	h := New(context.Background(), Options{Key: "key"})
 	for i := 0; i < 50; i++ {
-		w := backendRequest(h, "POST", "/backends", "192.168.1.3:1", "localhost", "", "", `{}`)
+		w := backendRequest(h, "POST", "/backends", "192.168.1.3:1", "localhost", "", "", backendBodyForTest(t, `{}`))
 		if i >= 10 && w.Code != http.StatusTooManyRequests {
 			t.Fatalf("request %d: %d", i, w.Code)
 		}
@@ -289,16 +293,16 @@ func TestAuditRemoteLocalhostAndForwarded(t *testing.T) {
 	t.Setenv("HRN_HOME", home)
 	h := New(context.Background(), Options{Key: "key"})
 	for i := 0; i < 10; i++ {
-		w := backendRequest(h, "POST", "/backends", "192.168.1.3:1", "localhost", "", "", `{}`)
+		w := backendRequest(h, "POST", "/backends", "192.168.1.3:1", "localhost", "", "", backendBodyForTest(t, `{}`))
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("remote %d: %d", i, w.Code)
 		}
 	}
-	local := backendRequest(h, "POST", "/backends", "127.0.0.1:1", "localhost", "key", "", `{}`)
+	local := backendRequest(h, "POST", "/backends", "127.0.0.1:1", "localhost", "key", "", backendBodyForTest(t, `{}`))
 	if local.Code != http.StatusNoContent {
 		t.Fatalf("local: %d", local.Code)
 	}
-	r := httptest.NewRequest("POST", "http://localhost/backends", strings.NewReader(`{}`))
+	r := httptest.NewRequest("POST", "http://localhost/backends", strings.NewReader(backendBodyForTest(t, `{}`)))
 	r.RemoteAddr = "127.0.0.1:1"
 	r.Header.Set("X-Forwarded-For", "192.0.2.1")
 	r.Header.Set("X-Hrn-Watch-Key", "key")
@@ -342,7 +346,7 @@ func TestAuditSaveFailureOutcome(t *testing.T) {
 		os.Remove(probe)
 		t.Skip("directory permissions not enforced")
 	}
-	r := httptest.NewRequest("POST", "http://localhost/backends", strings.NewReader(`{"enabled":["claude"]}`))
+	r := httptest.NewRequest("POST", "http://localhost/backends", strings.NewReader(backendBodyForTest(t, `{"enabled":["claude"]}`)))
 	r.RemoteAddr = "127.0.0.1:1"
 	w := httptest.NewRecorder()
 	(&server{}).saveBackends(w, r)
@@ -425,7 +429,7 @@ func TestBackendActionOutcomeAuditFailureStillSaves(t *testing.T) {
 		return original(row)
 	}
 	t.Cleanup(func() { auditAppender = original })
-	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(`{"enabled":["claude"],"default":"claude"}`))
+	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(backendBodyForTest(t, `{"enabled":["claude"],"default":"claude"}`)))
 	r.RemoteAddr = "127.0.0.1:1"
 	w := httptest.NewRecorder()
 	(&server{}).saveBackends(w, r)
@@ -448,7 +452,7 @@ func TestApplyingTheBackendCardKeepsTheLocalAPI(t *testing.T) {
 	if err := prefs.Save(home, prefs.Prefs{EnabledNames: []string{"codex", "api"}, LocalAPI: "http://127.0.0.1:8081"}); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(`{"enabled":["claude","codex","api"]}`))
+	r := httptest.NewRequest(http.MethodPost, "http://localhost/backends", strings.NewReader(backendBodyForTest(t, `{"enabled":["claude","codex","api"]}`)))
 	r.RemoteAddr = "127.0.0.1:1234"
 	w := httptest.NewRecorder()
 	(&server{}).saveBackends(w, r)

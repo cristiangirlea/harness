@@ -91,10 +91,16 @@ func retry(f func() error) error {
 	return err
 }
 
+// Raw preserves file bytes for change detection while retrying Windows sharing conflicts.
+func Raw(home string) ([]byte, error) {
+	var data []byte
+	err := retry(func() (err error) { data, err = os.ReadFile(filepath.Join(home, "backends.json")); return err })
+	return data, err
+}
+
 func Load(home string) (Prefs, error) {
 	path := filepath.Join(home, "backends.json")
-	var data []byte
-	err := retry(func() (err error) { data, err = os.ReadFile(path); return err })
+	data, err := Raw(home)
 	if os.IsNotExist(err) {
 		return Prefs{}, nil
 	}
