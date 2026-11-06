@@ -250,6 +250,21 @@
 
 {{define "problem"}}<p class="notice bad">{{.}}</p>{{end}}
 
+{{define "signin"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Sign in · hrn watch</title>
+</head>
+<body>
+<h1>hrn watch</h1>
+<p>This watch is behind Cloudflare Access. Sign in with an account it lets in, and you come back here.</p>
+<p><a href="/login">Sign in</a></p>
+</body>
+</html>{{end}}
+
 {{define "missing"}}{{template "head" .}}
 <h1>Not found</h1>
 <p class="notice bad">{{.Message}}</p>
