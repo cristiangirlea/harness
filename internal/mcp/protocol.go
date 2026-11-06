@@ -14,6 +14,9 @@ import (
 // ProtocolVersion prefers this MCP revision while allowing wire-compatible older peers.
 const ProtocolVersion = "2025-06-18"
 
+// MaxResultBytes bounds the encoded tool result sent to a client.
+const MaxResultBytes = 128 << 10
+
 var supportedVersions = []string{ProtocolVersion, "2025-03-26", "2024-11-05"}
 
 func versionSupported(v string) bool {
