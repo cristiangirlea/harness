@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -91,6 +92,84 @@ func TestAPILoopUsesMCPTools(t *testing.T) {
 	}
 	if len(infos) != 1 || !strings.HasPrefix(infos[0], "mcp fake: 2 tools") {
 		t.Errorf("info events = %v", infos)
+	}
+}
+
+func TestHelperMCPCollidingServer(t *testing.T) {
+	if os.Getenv("HRN_MCP_COLLISION_HELPER") != "1" {
+		return
+	}
+	s := mcp.NewServer(mcp.Implementation{Name: "fake", Version: "1"}, "")
+	s.AddTool(mcp.Tool{
+		Name:        os.Getenv("HRN_MCP_TOOL"),
+		Annotations: &mcp.Annotations{ReadOnlyHint: mcp.Bool(true)},
+		Handler: func(context.Context, mcp.Call) (mcp.CallResult, error) {
+			return mcp.CallResult{Content: []mcp.Content{mcp.TextContent(os.Getenv("HRN_MCP_SERVER") + ":" + os.Getenv("HRN_MCP_TOOL"))}}, nil
+		},
+	})
+	_ = s.Serve(context.Background(), os.Stdin, os.Stdout)
+	os.Exit(0)
+}
+
+func TestAPILoopRenamesCollidingMCPToolsAndCallsTheRightServer(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	servers := map[string]any{}
+	for server, tool := range map[string]string{"a": "b__c", "a__b": "c"} {
+		servers[server] = map[string]any{
+			"command": os.Args[0], "args": []string{"-test.run=^TestHelperMCPCollidingServer$", "--"},
+			"env": map[string]string{"HRN_MCP_COLLISION_HELPER": "1", "HRN_MCP_SERVER": server, "HRN_MCP_TOOL": tool},
+		}
+	}
+	data, err := json.Marshal(map[string]any{"mcpServers": servers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("a__b\x00c")))
+	original := "mcp__a__b__c"
+	renamed := original + "_" + digest[:8]
+	res, events, fake := runFake(t, [][]string{
+		toolTurn("toolu_first", original, `{}`),
+		toolTurn("toolu_second", renamed, `{}`),
+		textTurn("done"),
+	}, Task{Prompt: "use mcp", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MCP: []string{path}}})
+	if res.Status != StatusOK || res.Final != "done" {
+		t.Fatalf("result: %+v", res)
+	}
+	for _, req := range fake.requests {
+		seen := map[string]bool{}
+		for _, name := range toolNames(req) {
+			if seen[name] {
+				t.Errorf("duplicate API tool name %q", name)
+			}
+			seen[name] = true
+		}
+		if !seen[original] || !seen[renamed] {
+			t.Errorf("missing MCP tools: %v", seen)
+		}
+	}
+	for i, want := range []string{"a:b__c", "a__b:c"} {
+		block := lastToolResult(t, fake.requests[i+1])
+		if block["is_error"] == true || !strings.Contains(fmt.Sprint(block["content"]), want) {
+			t.Errorf("tool %d reached wrong server: %v", i, block)
+		}
+	}
+	var warnings []string
+	for _, e := range events {
+		if e.Kind == EventInfo && strings.HasPrefix(e.Text, "mcp tool name collision:") {
+			warnings = append(warnings, e.Text)
+		}
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	for _, want := range []string{`"a"`, `"b__c"`, `"a__b"`, `"c"`, original, renamed} {
+		if !strings.Contains(warnings[0], want) {
+			t.Errorf("warning %q does not name %q", warnings[0], want)
+		}
 	}
 }
 
