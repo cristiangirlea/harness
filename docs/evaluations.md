@@ -134,6 +134,30 @@ largest of any run.
 `--since` takes a window such as `7d`, `36h` or `90m`; `--json` prints the same rows as
 JSON for scripts.
 
+### Weekly digest
+
+`scripts/report-digest.sh` turns `hrn report` and the tool output shapes into one line of
+JSON (see [Kept scripts](scripts.md)), so a week's runs can be compared with the last. Run
+records stay on the machine that made them, where a hosted CI schedule cannot read them, so
+schedule it there and append each week's line to a file. Cron starts `sh` with a minimal
+`PATH`, so run it in a login shell:
+
+```bash
+0 8 * * 1 bash -lc 'cd /path/to/harness && bash scripts/report-digest.sh >> "$HOME/hrn-digest.jsonl" 2>&1'
+```
+
+On Windows, in PowerShell, name Git Bash by its path, since a plain `bash` may be WSL's:
+
+```powershell
+$a = New-ScheduledTaskAction -Execute 'C:\Program Files\Git\bin\bash.exe' -Argument '-lc "cd /c/path/to/harness && bash scripts/report-digest.sh >> ~/hrn-digest.jsonl 2>&1"'
+$t = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 08:00
+Register-ScheduledTask -TaskName 'hrn weekly digest' -Action $a -Trigger $t
+```
+
+Both `hrn` and `go` must be on the login shell's `PATH` (or pass `--hrn` with a full
+path). A failed week
+appends its `{"error":...}` line instead, so a gap in the file is visible.
+
 ## Measuring what shaping can touch
 
 Run `bash scripts/tool-shapes.sh --home /path/to/.hrn --days 30 --json` from the
