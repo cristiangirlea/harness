@@ -287,6 +287,33 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #791, knowledge search ranking `simple-rare-floor-v4` (PR #847). On versions of 20 or
+  more entries, query words found in more than 25% of entries are dropped, each remaining match
+  scores ln(n/df)/ln(n) (doubled in the key), and a total below 1.31 returns no context
+  (`empty_reason: below_threshold`); smaller versions keep v3. Only identifier-shaped query words
+  (a space, `_ . / :  -`, a digit or an inner capital) match identifiers exactly and skip the floor,
+  because the markdown builder stores plain words such as `a` and `error` as identifiers (#841).
+  On #790's set: hit rate 0.31 to 0.72, MRR 0.29 to 0.69, no-answer queries with context 6 of 6
+  to 2 of 6. One hit is lost, accepted by the maintainer: `prune-old-runs`, whose answer shares
+  no rare word with its question, the different-wording case increment 6 is for. Versions pinned
+  under v3 now search with v4 (#812).
+- 2026-11-06: #827, `hrn retrieval samples` and `hrn retrieval corpus-digest` (PR #843). Samples
+  read each eval as it was scored, check every cell against its batch records, map `r<n>` to
+  `OFFSET + n - 1`, and record known-zero online usage for text search. The digest encodes rows by
+  hand to match Python's `json.dumps(..., ensure_ascii=False)`, since Go escapes U+2028 and
+  U+2029, and refuses unpaired surrogate escapes.
+- 2026-11-06: #790, a labelled query set for knowledge search (PR #835): 97 entries built from 11
+  guides at `014b929` and 35 queries, 6 of them with no answer in the corpus.
+  `TestKnowledgeLabelledQueries` records hit rate, MRR and no-answer context per ranking version
+  and fails on a lost or drifted hit unless accepted. Other section limits than #780's 100/800 were
+  tried: 400 and 600 words exceed the 100-entry import cap for these guides, and 1200 changed one
+  hit, so the defaults stay.
+- 2026-11-06: increment 4 of the retrieval plan, the pilot plan `docs/retrieval-pilot.md` (PR #828).
+  Its free step 0 found #825 and #826 and measured #791. Rerun on v4 (#847): the answer's file
+  reaches the packet for 6 of 7 answerable tasks (v3: 3) and the answer text for 5 (v3: 1), but
+  none of the 3 no-answer tasks gets an empty packet, so by the plan's rule it is a no-go; the 60
+  codex runs wait for the maintainer. The held-out task file stays outside the repository until
+  the report.
 - 2026-11-06: #823, a run records `repo` and `branch` at start (PR #830): the `origin` remote, or
   the only one, as host/path with no credentials or port, read in any work tree, even before a
   first commit. The watch card groups by it, falls back to a checkout's remote for older records,
