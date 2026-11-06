@@ -75,6 +75,8 @@ in preference order that passes the readiness and billing checks: one that is li
 too, or would bill per token, is passed over for the next. With no preference, the
 claude/codex pairing is unchanged. With no ready enabled partner, the run stays limited.
 Automatic carry-on partners are limited to claude, codex and agy; gemini and opencode can still be run by name.
+An opted-in local api endpoint comes after all of them (see
+[A local model as the last partner](#a-local-model-as-the-last-partner)).
 `--no-switch` still disables carry-on. A limited run with
 retrieval on is not carried on when its chain's latest retrieval pin was recorded on
 another backend than the partner (usually the limited one): the partner would resolve
@@ -123,6 +125,15 @@ not yet been measured against a real long run, so compare `cache_read_tokens` ac
 two runs before trusting it. If the API ever refuses the beta, the run says so and
 retries once without it. `hrn run --no-context-edits` turns it off for good, as do the
 `no_context_edits` field on a batch spec or task and the MCP `run` argument.
+
+`hrn run --mask-tool-results N` (batch/MCP `mask_tool_results`) opts into request-only
+masking for endpoints without server clearing; 0 is off and negative values are rejected.
+It replaces server clearing, even without `no_context_edits`. Once there are at least
+2N tool results, older results are replaced in steps of N by one-line notes, leaving
+between N and 2N-1 newest results whole. Results of at most 256 bytes also stay whole.
+Notes retain the tool summary, byte count and any `read_original` handle. Stored history,
+`messages.json`, durable checkpoints and run events keep the full results. This option
+has only been tested against the fake server.
 
 Whatever the server reports about the edits it applied is recorded as an info event,
 `server context management, turn N: {...}`, with the JSON exactly as it arrived: its
@@ -487,8 +498,8 @@ the message gives one. Then:
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
   tool) shows each limit it remembers, also for a backend with no partner (agy without
   preferences). A limit can lift early (codex sells credits); deleting the file forgets it.
-- Nothing moves automatically to `api`, which is billed per token. Without preferences,
-  gemini, opencode and agy are not partners either; with one, the enabled installed plan
+- Nothing moves automatically to `api`, which is billed per token, unless its endpoint is
+  opted in as local (below). Without preferences, gemini, opencode and agy are not partners either; with one, the enabled installed plan
   backends stand in, in preference order, past any that is limited too. If no enabled
   partner is installed, or every one is limited, the run stays `limited` and says so.
 - Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
@@ -500,6 +511,39 @@ the message gives one. Then:
   and the run names the variable, never its value. When a remembered limit would
   otherwise move the run, this reason is recorded before it starts; a batch reports
   it before the attempt starts.
+
+#### A local model as the last partner
+
+A local inference server that speaks the Messages API on loopback or the private network
+bills nothing, so it can carry a run on once every plan is limited. It is a weaker model,
+so it is opt-in and always last:
+
+```bash
+hrn backends set --only claude,codex,agy,api --local-api http://127.0.0.1:8081
+```
+
+- `--local-api` is stored as `local_api` in `backends.json` and needs `api` in `--only`.
+  Only an `http` or `https` URL whose host is `localhost` or a loopback or private-network
+  IP literal (127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7) is
+  accepted, with no credentials, query or fragment; other host names are refused, since
+  they could resolve anywhere. A hand-written file with another URL fails to load, as a
+  malformed preference does.
+- The local api is the partner only when no enabled plan backend is ready: claude, codex
+  and agy come first in preference order, wherever `api` sits in the list. Without an
+  enabled list the claude/codex pairing comes first.
+- It is never used while `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set: with a real
+  key in the environment, the run stays `limited` and names the variable (never its value).
+  While the opt-in is set, every `api` run is refused with such a key set, since a
+  `--continue` of a local run inherits `api` and would otherwise bill the key: unset it, or
+  drop `--local-api`.
+- While it can be used, every `api` run (a carry-on, a run a remembered limit moved, a batch
+  attempt or its best-of-k proposals, an eval cell or judge, a `--continue` of a local run,
+  and `-b api` itself) goes to that URL only: no proxy, no redirects, a placeholder key, and
+  `ANTHROPIC_BASE_URL` ignored. `hrn exec` and `hrn feed` keep their own endpoint rules.
+- `hrn backends` and the MCP `backends` tool show `api` as the local endpoint, or why it is
+  not used; the watch Backends card shows it installed only while it can be used, and
+  applying the card keeps the endpoint. `set` without `--local-api` and `reset` remove it;
+  without it nothing changes.
 
 hrn cannot see these API-billed configurations; use `--no-switch` with them:
 

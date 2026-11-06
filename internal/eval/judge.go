@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"os"
@@ -114,7 +115,7 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 		defer notifyMu.Unlock()
 		report(e)
 	}
-	b, err := agent.Get(firstOf(j.Backend, resolve.DefaultBackendNameIn(runlog.Home())))
+	b, err := followup.Backend(firstOf(j.Backend, resolve.DefaultBackendNameIn(runlog.Home())))
 	if err != nil {
 		notify(batch.Event{Kind: "judge", Text: "judge: " + err.Error()})
 		return nil

@@ -10,13 +10,14 @@
 | `hrn feed -b BACKEND --task TEXT [flags]` | Process JSONL text items as parallel read-only runs (see [Text feeds](feed.md)). |
 | `hrn exec --protocol v1 [--worker]` | Run one recorded task over the supervisor JSONL protocol; `--worker` applies the [worker restrictions](worker-protocol.md). |
 | `hrn backends` | Show enabled/disabled, default, availability, remembered limits and, under claude and codex when known, the plan's quota left per window (see [Backend preferences](backends.md#choosing-which-backends-hrn-may-use)). |
-| `hrn backends set --only NAMES [--default NAME]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. |
-| `hrn backends reset` | Restore unrestricted backend selection while keeping the work map keys. |
+| `hrn backends set --only NAMES [--default NAME] [--local-api URL]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. `--local-api` opts a loopback or private-network api endpoint in as the last carry-on partner at usage limits and needs `api` in `--only` ([backends](backends.md#a-local-model-as-the-last-partner)). |
+| `hrn backends reset` | Restore unrestricted backend selection, dropping `--local-api`, while keeping the work map keys. |
 | `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
 | `hrn remote show --tenant ID --project ID JOB_ID` | Show a remote job's state and result. |
 | `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream until the job ends and resume from the last durable event ID after a disconnect. |
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
+| `hrn knowledge markdown -request base.json [-min-words 100] [-max-words 800] [-overlap-words 40] FILE...` | Build a JSON import request from Markdown headings without calling the service. |
 | `hrn knowledge admit --version ID --spec FILE -b BACKEND [--held-out SHARE --seed N --source-run ID]` | Compare a candidate with active knowledge and record the gated verdict. |
 | `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
 | `hrn retrieval compare --manifest FILE --samples FILE [--baseline-preparation FILE] [--candidate-preparation FILE] [--reuse N] [--runs] [--json]` | Compare saved retrieval evidence and verify measured run references locally, without a model call. Match each run on the requested model in `task.json`; a run without a requested model matches only when its reported result model exactly equals the variant model. Text output shows a differing provider-reported model. |
@@ -326,6 +327,19 @@ the terminal never reads them as control sequences.
 
 ### Project knowledge
 
+`hrn knowledge markdown -request base.json FILE...` reads only the named files,
+resolved inside the repository root with files under `.git` refused, and writes
+JSON only. The base import must
+have no entries and a non-empty revision; its other fields are kept. Heading
+sections merge below `-min-words` (100), split above `-max-words` (800) or 16384
+bytes, and overlap by `-overlap-words` (40) when split. Keys carry the relative
+path and heading ancestry, sources carry `path@revision`, and evidence records
+the limits. Review the resulting entries and import as before. Entry keys weigh
+more than content in ranking (`simple-or-exact-v3`), and a long entry that does
+not fit the 8 KiB packet arrives as an excerpt marked `excerpt=true`; its
+`content` contains the excerpt and `excerpt` is omitted for whole entries.
+Imports refuse entries marked as excerpts.
+
 `hrn knowledge import|search|inspect|active|activate|disable|rollback request.json`
 accepts one JSON request file and prints a JSON response. `import`, `activate`,
 `disable`, and `rollback` require `HRN_OPERATOR_TOKEN`; read commands use
@@ -369,6 +383,7 @@ re-sent every turn. Three ceilings, all optional and all off by default.
 | `--timeout 20m` | `timeout` | Ends the run when the deadline passes, on every backend. The result is `timeout`, not `canceled`, so a slow run is distinguishable from an interrupted one. |
 | `--max-cost 2.50` | `max_cost_usd` | The api loop stops before a turn that would take its estimated cost past the limit. The result is `budget`, and the cost so far is still recorded. |
 | `--task-budget 64000` | `task_budget` | Tells the api backend's model how many tokens it has for the whole task, so it paces itself and finishes rather than being cut off. Minimum 20000, checked before the run starts. |
+| `--mask-tool-results N` | `mask_tool_results` | Opt into masking older tool results in outgoing api requests, in steps of N, keeping the newest N to 2N-1 whole once masking starts. Replaces server clearing; stored history stays whole. Default 0 (off); negative values are rejected. See [backends](backends.md#context-management). |
 
 The CLI backends cannot enforce a cost or token ceiling, so they say so once and
 carry on; the timeout applies to them all the same. The cost ceiling is checked against

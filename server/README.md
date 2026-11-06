@@ -48,6 +48,11 @@ fixture identity test fails until the copies match.
 
 For a private local control service, set `HRN_DATABASE_URL` and distinct random
 `HRN_OPERATOR_TOKEN` and `HRN_SCALER_TOKEN` values of at least 32 characters.
+`hrn-server` also accepts `HRN_DATABASE_URL_FILE`, `HRN_OPERATOR_TOKEN_FILE`,
+and `HRN_SCALER_TOKEN_FILE`; `hrn-worker` accepts `HRN_WORKER_TOKEN_FILE`.
+Each `_FILE` variable names a regular file of at most 64 KiB instead of a
+non-empty direct value; exactly one trailing LF or CRLF is removed, and an
+empty result is rejected.
 Run `go run ./cmd/hrn-server migrate`, then `go run ./cmd/hrn-server serve`
 from `server/`. The default `HRN_LISTEN` address is `127.0.0.1:8088`.
 Without TLS, only loopback IP literals (`127.0.0.0/8` or `::1`, for example

@@ -104,6 +104,19 @@ error (with a JSON error object on stderr). CI runs
 it on every change, Markdown-only ones included. Examples use made-up values
 and environment variables (`%USERPROFILE%`, `$HOME`, `HRN_HOME`) instead.
 
+`report-digest.sh [--home DIR] [--days N] [--hrn PATH]` runs
+`hrn report --since <N>d --by purpose --json` and `tool-shapes.sh --json` over
+the same home and window (default `HRN_HOME`, else `~/.hrn`, and 7 days) and
+prints one line of JSON: the window, the runs' totals (ok share, median
+duration, cost, cache share, unfinished and unreadable counts), up to 10
+purposes, the batches' pass share and median attempts with up to 3 groups that
+had a failed task, and the largest tool output shape. A cost no run reported
+stays `null`, never zero, and a share over nothing or an unknown cache share is
+`null`. It needs `go` on `PATH` and makes no model calls; a missing hrn or go, a
+failed command or unreadable JSON exits 1 with a JSON
+error object on stderr. See [Weekly digest](evaluations.md#weekly-digest) for
+running it on a schedule.
+
 ## The hint hook
 
 `hrn scripts hint` is a Claude Code PreToolUse hook. It reads the hook's

@@ -13,7 +13,7 @@ const KnowledgeMaxPacketBytes = 8 * 1024
 const KnowledgeMaxEntryKeyBytes = 128
 const KnowledgeMaxEntryIdentifiers = 32
 const KnowledgeMaxIdentifierBytes = 256
-const KnowledgeRankingVersion = "simple-or-exact-v2"
+const KnowledgeRankingVersion = "simple-or-exact-v3"
 
 type KnowledgeScope struct {
 	TenantID  string `json:"tenant_id"`
@@ -30,6 +30,7 @@ type KnowledgeEntry struct {
 	Source      string   `json:"source"`
 	Evidence    string   `json:"evidence"`
 	Identifiers []string `json:"identifiers"`
+	Excerpt     bool     `json:"excerpt,omitempty"`
 }
 
 type KnowledgeImport struct {

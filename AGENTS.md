@@ -42,7 +42,8 @@ Do not attach self-hosted runners or route public contributions to private machi
 - **Records stay loadable.** New fields in `agent.Task`, `agent.Result`, `runlog` or `batch.*` are
   additive with `omitempty`; old records on disk must still load.
 - **The api history is append-only** (`api.go`): assistant turns go back exactly as received.
-  Never trim, rewrite or reorder earlier messages; context is reduced server-side.
+  Never trim, rewrite or reorder earlier messages; context is reduced server-side. With
+  `mask_tool_results` set, old tool results are masked in the outgoing request only.
 - **Comments say why, not what**: one line, three at most (a doc comment: one sentence, plus one
   for a non-obvious contract); no issue numbers, dates or review history. Long explanations go to
   `docs/`. `scripts/comment-check.sh` enforces it; its baseline only shrinks.
@@ -101,6 +102,9 @@ non-zero exit and an error object; be safe to re-run; call other scripts, never 
 - `scripts/privacy-check.sh`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main.go`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main_test.go`: Check the personal folder, local path and narration rules on fixture files.
+- `scripts/report-digest.sh`: Summarise a window of hrn runs: pass rate, cost, batch attempts and the largest tool output shape.
+- `scripts/report-digest/main.go`: Summarise a window of hrn runs: pass rate, cost, batch attempts and the largest tool output shape.
+- `scripts/report-digest/main_test.go`: Check the digest summary, caps, unknown costs, empty windows and input errors.
 - `scripts/test-summary.sh`: Count test results and return capped failure names as JSON.
 - `scripts/tool-shapes.sh`: Measure recorded tool output, repeated inline scripts and tool definitions without exposing text.
 - `scripts/tool-shapes/defs.go`: Measure the api loop's tool definitions against the recorded context per model call.

@@ -192,7 +192,7 @@ func (s *Store) ImportKnowledge(ctx context.Context, in KnowledgeImport) (string
 				return "", fmt.Errorf("entries[%d].identifiers[%d]: %w", i, j, err)
 			}
 		}
-		if e.Key == "" || len(e.Key) > KnowledgeMaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > KnowledgeMaxEntryIdentifiers || !utf8.ValidString(e.Content) {
+		if e.Excerpt || e.Key == "" || len(e.Key) > KnowledgeMaxEntryKeyBytes || seen[e.Key] || len(e.Content) == 0 || len(e.Content) > 16384 || len(e.Source) == 0 || len(e.Source) > 512 || len(e.Evidence) == 0 || len(e.Evidence) > 1024 || len(e.Identifiers) > KnowledgeMaxEntryIdentifiers || !utf8.ValidString(e.Content) {
 			return "", ErrUnsupported
 		}
 		for _, id := range e.Identifiers {
@@ -385,6 +385,8 @@ const knowledgeSearchSQL = `WITH members AS MATERIALIZED (
  WHERE (e.identifiers && $5::text[] OR e.search_vector @@ to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')))
  ORDER BY (e.identifiers && $5::text[]) DESC, ts_rank_cd(e.search_vector,to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),''))) DESC,e.entry_key COLLATE "C",e.id LIMIT 100`
 
+const knowledgeHeadlineSQL = `SELECT ts_headline('simple', content, to_tsquery('simple',COALESCE((SELECT string_agg(quote_literal(term), ' | ' ORDER BY term) FROM unnest(tsvector_to_array(to_tsvector('simple',$4))) term),'')), 'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" ... "') FROM knowledge_entries WHERE tenant_id=$1 AND project_id=$2 AND id=$3`
+
 func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (KnowledgePacket, error) {
 	started := time.Now()
 	out := KnowledgePacket{Entries: []KnowledgeEntry{}, Ranking: KnowledgeRankingVersion, QueryDigest: KnowledgeTextDigest(in.Query)}
@@ -422,13 +424,22 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 		if err != nil {
 			return out, err
 		}
-		seen := map[string]bool{}
+		var candidates []KnowledgeEntry
 		for rows.Next() {
 			var e KnowledgeEntry
 			if err = rows.Scan(&e.ID, &e.Key, &e.Content, &e.Source, &e.Evidence, &e.Identifiers); err != nil {
 				rows.Close()
 				return out, err
 			}
+			candidates = append(candidates, e)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return out, err
+		}
+		seen := map[string]bool{}
+		for _, e := range candidates {
 			hash := digestKnowledge(e.Content)
 			if seen[hash] {
 				continue
@@ -436,18 +447,24 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 			seen[hash] = true
 			label := fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q]\n%s\n[/Reference]\n", e.ID, e.Source, in.Revision, e.Evidence, e.Content)
 			if len(KnowledgeReferenceBlock(out.Text+label)) > KnowledgeMaxPacketBytes {
-				continue
+				var headline string
+				if err = tx.QueryRow(ctx, knowledgeHeadlineSQL, in.TenantID, in.ProjectID, e.ID, in.Query).Scan(&headline); err != nil {
+					return out, err
+				}
+				if headline == "" || !utf8.ValidString(headline) || hasFrameMarker(headline) || headline == e.Content {
+					continue
+				}
+				label = fmt.Sprintf("[Reference %s; source=%q; revision=%s; evidence=%q; excerpt=true]\n%s\n[/Reference]\n", e.ID, e.Source, in.Revision, e.Evidence, headline)
+				if len(KnowledgeReferenceBlock(out.Text+label)) > KnowledgeMaxPacketBytes {
+					continue
+				}
+				e.Content, e.Excerpt = headline, true
 			}
 			out.Text += label
 			out.Entries = append(out.Entries, e)
 			if len(out.Entries) == 5 {
 				break
 			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return out, err
 		}
 		if len(out.Entries) == 0 {
 			out.EmptyReason = "no_match_or_byte_cap"

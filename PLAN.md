@@ -287,6 +287,32 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #783, a local model as the last carry-on partner (PR #802). `hrn backends set
+  --local-api URL` stores `local_api` in `backends.json`. Only `localhost` or a loopback or
+  private-network IP literal is accepted, refused on save and load. With it, `api` stands in
+  after every enabled plan backend, and every `api` run (eval and judge too; not `exec` or `feed`)
+  goes only to that URL, with no proxy or redirects. While the opt-in is set, a set
+  `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` refuses every `api` run instead of billing it,
+  because a `--continue` of a local run inherits `api`. Without the opt-in nothing changed. A local
+  run still shows the api model's estimated price, since pricing is keyed by model name.
+- 2026-11-06: #780, retrieval increments 2-3 tightened (PR #803). Entry keys weigh A and content D
+  in `search_vector` (migration 005, schema 5; PostgreSQL 16 has no `SET EXPRESSION`, so the column
+  is dropped and added again), ranking `simple-or-exact-v3` (main was already at v2, not v1 as the
+  issue said). An entry that does not fit the room left in the 8 KiB packet is sent as a
+  `ts_headline` excerpt marked `excerpt=true`; this covers any such entry, not only the first-ranked
+  one, and the headline is computed only for those entries. `hrn knowledge markdown` writes an
+  import request from named Markdown files inside the repository (never under `.git`). The
+  retrieval eval fixtures cannot show the ranking change (synthetic counters, empty corpus); the
+  evidence is the PostgreSQL tests. Not done: a small last section stays alone; setext headings
+  are read as text.
+- 2026-11-06: #784, file-mounted secrets for the control service (PR #789): `hrn-server` and
+  `hrn-worker` read `HRN_DATABASE_URL`, `HRN_OPERATOR_TOKEN`, `HRN_SCALER_TOKEN` and
+  `HRN_WORKER_TOKEN` from the file named by the same variable with `_FILE` appended, as Docker and
+  Kubernetes mount secrets. Both set is an error; one trailing newline is trimmed; a missing,
+  non-regular, empty or over-64 KiB file fails at start-up, and errors name the variable and path,
+  never the content. No file-mode check, since Kubernetes mounts secrets 0644 by default. A
+  secrets manager (Infisical) was scoped and declined: reading from env or a file lets operators
+  bring their own.
 - 2026-11-05: #224's first slice, `hrn feed` (PR #777): a stream of small text items, each one
   read-only, single-turn run with no tools (claude with `--tools ""`, other CLIs refused, the api
   loop only against a loopback `ANTHROPIC_BASE_URL`), results as JSONL. Its eval in hrn-evals

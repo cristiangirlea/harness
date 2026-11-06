@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,6 +21,8 @@ type Prefs struct {
 	WorkMapRepos    []string `json:"work_map_repos,omitempty"`
 	EnabledNames    []string `json:"enabled,omitempty"`
 	DefaultName     string   `json:"default,omitempty"`
+	// LocalAPI opts an unmetered api endpoint in as the last carry-on partner.
+	LocalAPI string `json:"local_api,omitempty"`
 }
 
 func (p Prefs) Enabled(name string) bool {
@@ -52,7 +56,27 @@ func (p Prefs) validate() error {
 	if p.DefaultName != "" && !slices.Contains(p.EnabledNames, p.DefaultName) {
 		return fmt.Errorf("default backend %s is not in enabled", p.DefaultName)
 	}
+	if p.LocalAPI != "" {
+		return checkLocalAPI(p.LocalAPI)
+	}
 	return nil
+}
+
+// checkLocalAPI accepts only hosts that cannot bill: localhost and loopback or private-network IP literals.
+func checkLocalAPI(raw string) error {
+	u, err := url.Parse(raw)
+	// The URL is not echoed: it may carry a password.
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
+		return errors.New("local_api: want an http or https URL with no credentials, query or fragment")
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
+		return nil
+	}
+	return fmt.Errorf("local_api: host %s is not localhost or a loopback or private-network address", u.Host)
 }
 
 // Retry Windows sharing conflicts between readers and renames.

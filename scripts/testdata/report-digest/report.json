@@ -1,0 +1,53 @@
+{
+  "since": "2000-01-01T00:00:00Z",
+  "by": "purpose",
+  "runs": [
+    {
+      "key": "build",
+      "runs": 3,
+      "ok": 2,
+      "median_duration_ns": 1500000000,
+      "median_turns": 4,
+      "total_cost_usd": 1.5,
+      "median_cost_usd": 0.75,
+      "runs_without_cost": 1,
+      "cost_is_estimate": false,
+      "cache_share": 0.25
+    }
+  ],
+  "runs_all": {
+    "runs": 3,
+    "ok": 2,
+    "median_duration_ns": 1500000000,
+    "median_turns": 4,
+    "total_cost_usd": 1.5,
+    "median_cost_usd": 0.75,
+    "runs_without_cost": 1,
+    "cost_is_estimate": false,
+    "cache_share": 0.25
+  },
+  "unfinished": 1,
+  "batches": [
+    {
+      "key": "repo-a",
+      "batches": 1,
+      "tasks": 3,
+      "passed": 2,
+      "median_attempts": 1.5,
+      "total_cost_usd": 1.5,
+      "cost_is_estimate": false,
+      "tasks_without_cost": 1
+    }
+  ],
+  "batches_all": {
+    "batches": 1,
+    "tasks": 3,
+    "passed": 2,
+    "median_attempts": 1.5,
+    "total_cost_usd": 1.5,
+    "cost_is_estimate": false,
+    "tasks_without_cost": 1
+  },
+  "running_batches": 0,
+  "unreadable": 0
+}

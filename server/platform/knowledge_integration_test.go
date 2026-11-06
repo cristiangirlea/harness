@@ -19,6 +19,103 @@ func knowledgeFixture(p Project) KnowledgeImport {
 		{Key: "text", Content: "ERR_BUILD is a build error. build build", Source: "docs/errors.md", Evidence: "fixture check", Identifiers: []string{}},
 	}}
 }
+
+func TestKnowledgeSearchWeightsKeysAndExcerptsLongEntries(t *testing.T) {
+	s := testStore(t)
+	p, _ := testProject(t, s)
+	ctx := context.Background()
+	in := knowledgeFixture(p)
+	in.Entries = []KnowledgeEntry{
+		{Key: "needle", Content: "key match only", Source: "docs/key.md", Evidence: "fixture"},
+		{Key: "aaa", Content: "needle", Source: "docs/body.md", Evidence: "fixture"},
+		{Key: "equal-a", Content: "equalterm first", Source: "docs/a.md", Evidence: "fixture"},
+		{Key: "equal-b", Content: "equalterm second", Source: "docs/b.md", Evidence: "fixture"},
+		{Key: "long", Content: strings.Repeat("ordinary words ", 430) + "excerptquery " + strings.Repeat("ordinary words ", 430), Source: "docs/long.md", Evidence: "fixture", Identifiers: []string{"excerptquery"}},
+	}
+	id, err := s.ImportKnowledge(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	search := KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, VersionID: id, Query: "needle"}
+	packet, err := s.SearchKnowledge(ctx, search)
+	if err != nil || len(packet.Entries) != 2 || packet.Entries[0].Key != "needle" {
+		t.Fatalf("weighted ranking: %#v %v", packet, err)
+	}
+	if packet.Ranking != "simple-or-exact-v3" {
+		t.Fatalf("ranking = %q", packet.Ranking)
+	}
+	for _, e := range packet.Entries {
+		if e.Excerpt {
+			t.Fatalf("small entry excerpted: %#v", e)
+		}
+		for _, original := range in.Entries {
+			if original.Key == e.Key && original.Content != e.Content {
+				t.Fatalf("whole entry changed: %#v", e)
+			}
+		}
+	}
+	if strings.Contains(packet.Text, "excerpt=true") {
+		t.Fatal("whole entry marked excerpt")
+	}
+	search.Query = "excerptquery"
+	packet, err = s.SearchKnowledge(ctx, search)
+	if err != nil || len(packet.Entries) != 1 || !packet.Entries[0].Excerpt || !strings.Contains(packet.Text, "excerpt=true") || !strings.Contains(packet.Entries[0].Content, search.Query) {
+		t.Fatalf("excerpt: %#v %v", packet, err)
+	}
+	if len(KnowledgeReferenceBlock(packet.Text)) > 8192 {
+		t.Fatal("excerpt exceeds byte cap")
+	}
+	if err := KnowledgeValidatePacket(packet, id, search.Query); err != nil {
+		t.Fatal(err)
+	}
+	search.Query = "equalterm"
+	for range 3 {
+		packet, err = s.SearchKnowledge(ctx, search)
+		if err != nil || len(packet.Entries) != 2 || packet.Entries[0].Key != "equal-a" || packet.Entries[1].Key != "equal-b" {
+			t.Fatalf("tie order: %#v %v", packet, err)
+		}
+	}
+	in.Entries[0].Excerpt = true
+	if _, err := s.ImportKnowledge(ctx, in); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("excerpt import accepted: %v", err)
+	}
+}
+func TestKnowledgeSearchExcerptsASecondEntryWhenTheRemainingPacketCannotHoldItWhole(t *testing.T) {
+	s := testStore(t)
+	p, _ := testProject(t, s)
+	ctx := context.Background()
+	in := knowledgeFixture(p)
+	in.Entries = []KnowledgeEntry{
+		{Key: "first", Content: "remainingquery " + strings.Repeat("first words ", 300), Source: "docs/first.md", Evidence: "fixture", Identifiers: []string{"remainingquery"}},
+		{Key: "second", Content: strings.Repeat("second words ", 200) + "remainingquery " + strings.Repeat("second words ", 200), Source: "docs/second.md", Evidence: "fixture"},
+	}
+	id, err := s.ImportKnowledge(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	search := KnowledgeSearch{KnowledgeScope: in.KnowledgeScope, VersionID: id, Query: "remainingquery"}
+	packet, err := s.SearchKnowledge(ctx, search)
+	if err != nil || len(packet.Entries) != 2 {
+		t.Fatalf("packet: %#v %v", packet, err)
+	}
+	first, second := packet.Entries[0], packet.Entries[1]
+	if first.Key != "first" || first.Excerpt || first.Content != in.Entries[0].Content {
+		t.Fatalf("first entry was not whole: %#v", first)
+	}
+	if second.Key != "second" || !second.Excerpt || second.Content == in.Entries[1].Content || !strings.Contains(second.Content, search.Query) {
+		t.Fatalf("second entry was not excerpted: %#v", second)
+	}
+	if strings.Count(packet.Text, "excerpt=true") != 1 || !strings.Contains(packet.Text, "evidence=\"fixture\"; excerpt=true]") {
+		t.Fatalf("excerpt header missing: %s", packet.Text)
+	}
+	if len(KnowledgeReferenceBlock(packet.Text)) > KnowledgeMaxPacketBytes {
+		t.Fatal("packet exceeds cap")
+	}
+	if err := KnowledgeValidatePacket(packet, id, search.Query); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestKnowledgeImportRejectsTextThatCanCloseOrForgeAReference(t *testing.T) {
 	markers := []string{"<project-reference", "</project-reference>", "[Reference ", "[/Reference]"}
 	for _, marker := range markers {
