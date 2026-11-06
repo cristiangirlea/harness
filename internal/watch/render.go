@@ -364,7 +364,7 @@ func phoneLinks(eps []Endpoint) []phoneLink {
 }
 
 type lists struct {
-	Purposes *purposeCard // over Runs; nil when there are none
+	Purposes *purposeCard // over every run the viewer may read; nil when there are none
 	Runs     []row
 	Batches  []row
 	Problems []string

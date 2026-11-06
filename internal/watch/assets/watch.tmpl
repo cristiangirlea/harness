@@ -92,6 +92,17 @@
 <td class="num">{{.Tokens}}</td>
 <td class="num">{{.Cost}}{{with .NoCost}}<span class="no-cost">{{.}}</span>{{end}}</td>
 </tr>{{end}}</tbody></table></div>
+<h3 id="repos-h">Where they ran</h3>
+<div class="table-wrap" tabindex="0" role="region" aria-labelledby="repos-h"><table class="purposes">
+<thead><tr><th scope="col">Repository</th><th scope="col" class="num">Runs</th><th scope="col" class="num">Running</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Known cost</th><th scope="col">Purposes</th></tr></thead>
+<tbody>{{range .Repos}}<tr>
+<th scope="row">{{.Row.Purpose}}</th>
+<td class="num">{{.Row.Runs}}</td>
+<td class="num">{{.Row.Running}}</td>
+<td class="num">{{.Row.Tokens}}</td>
+<td class="num">{{.Row.Cost}}{{with .Row.NoCost}}<span class="no-cost">{{.}}</span>{{end}}</td>
+<td class="mix">{{.Mix}}</td>
+</tr>{{end}}</tbody></table></div>
 </section>
 {{end}}<section class="card" aria-labelledby="batches-h">
 <h2 id="batches-h">Batches</h2>

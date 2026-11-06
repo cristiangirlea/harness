@@ -11,7 +11,7 @@ no real work, paths or keys. How each page works is in [Live dashboard and Ada](
 
 Newest runs and batches, kept current while hrn works. Each row leads with its repository
 (and, for a batch's run, its task), then the backend, what the run was for, its status,
-duration and cost. "What the runs were for" sums the listed runs by purpose; a cost that
+duration and cost. "What the runs were for" sums every recorded run by purpose and by repository; a cost that
 some backends did not report shows as a lower bound (`≥`) rather than counted as $0.
 
 ![The hrn watch index: runs grouped by purpose, a running batch, and the runs list](images/watch-index.png)

@@ -82,9 +82,23 @@ lines skipped for an anchored instruction before trying the paragraph as written
 and then with labels skipped as a fallback, unless the run declared one;
 hover the word for the rule that decided it
 (or `declared` for an explicit purpose or valid leading header). Above the batches, a card,
-"What the runs were for", sums up the newest 50 runs, the ones listed below, not all time:
+"What the runs were for", sums up every recorded run you may read, not only the 50 listed
+below (`hrn prune` removes runs from it as from the disk):
 one row per purpose that occurs, then "all", each with its runs, how many are running,
 tokens (input, output, cache reads and writes, counted once) and known cost.
+
+Under it, "Where they ran" gives the same sums per repository, with the purposes its runs
+had (`review 20 · implement 8`). A run's repository is the checkout holding its folder (or
+a parent of it): a worktree's `.git` file points back to its main checkout, and a task's
+`.hrn/slots/<n>` or `.hrn/worktrees/<id>` belongs to the repository holding it. A folder
+that is gone and not inside a checkout goes by its own name. Checkouts are told apart by
+path: two with the same name get two rows, the second shown as `name (2)`. The ten
+repositories with the most runs get a row each; the rest share one, "N other folders".
+
+A finished run never changes, so the card reads it once and keeps only its share of the
+sums; each refresh reads just the runs that are new or unfinished, and looks up their
+repository again. The first page after `hrn watch` starts reads every record, about a
+second for a few thousand runs.
 
 That cost is honest about what it does not know. codex and gemini report no cost; such a
 run is left out of the sum, not counted as $0. A row whose finished runs all reported a
