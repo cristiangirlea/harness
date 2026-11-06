@@ -254,6 +254,7 @@ type server struct {
 	mapConfig   mapSettings
 	batches     batchCache
 	familiarity familiarityCache
+	tally       runTally
 }
 
 // New returns a watch handler whose streams end with ctx so shutdown need not wait for browsers.
@@ -514,7 +515,7 @@ func (s *server) lists(r *http.Request) lists {
 		r.Prompt, _ = firstLine(vw.shortener(rec.Task.Dir).shorten(runs[i].Task.Prompt))
 		l.Runs = append(l.Runs, r)
 	}
-	l.Purposes = purposesOf(runs)
+	l.Purposes = cardOver(s.tallyRuns(who))
 	batches, unreadable, err := s.listBatches()
 	if unreadable > 0 {
 		// Retry Windows rename races before reporting unreadable records.

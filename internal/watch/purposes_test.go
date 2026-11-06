@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/owner"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -32,14 +33,19 @@ func saveRun(t *testing.T, backend, prompt string, res *agent.Result) string {
 	return w.ID()
 }
 
-// cardOf builds the card over the runs on disk, as the index lists them.
+// cardOf builds the card over the runs on disk, as the index shows it to their owner.
 func cardOf(t *testing.T) *purposeCard {
 	t.Helper()
-	runs, err := runlog.List(50)
-	if err != nil {
-		t.Fatal(err)
+	return cardOver((&server{}).tallyRuns(owner.LocalViewer()))
+}
+
+// purposesOf builds the card over records that need not be on disk.
+func purposesOf(runs []runlog.Record) *purposeCard {
+	tallies := make([]tallied, len(runs))
+	for i, rec := range runs {
+		tallies[i] = tallyOf(rec, repoOf(rec.Task.Dir))
 	}
-	return purposesOf(runs)
+	return cardOver(tallies)
 }
 
 func purposeRowOf(t *testing.T, c *purposeCard, name string) purposeRow {
@@ -235,7 +241,7 @@ func TestPurposeRowsComeInCategoryOrderThenAll(t *testing.T) {
 	if want := "review debug implement unknown all"; strings.Join(got, " ") != want {
 		t.Errorf("rows = %q, want %q", got, want)
 	}
-	if !strings.Contains(c.Scope, "newest 4 runs") {
+	if !strings.Contains(c.Scope, "All 4 recorded runs") {
 		t.Errorf("the card does not say what it covers: %q", c.Scope)
 	}
 }
@@ -249,28 +255,6 @@ func TestAnEmptyHomeShowsNoPurposeCard(t *testing.T) {
 	defer srv.Close()
 	if _, body := get(t, srv.URL+"/"); strings.Contains(body, "What the runs were for") {
 		t.Error("the index of an empty home shows the purpose card")
-	}
-}
-
-func TestThePurposeCardCoversOnlyTheListedRuns(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
-	saveRun(t, "claude", "review the diff", &agent.Result{CostUSD: 0.01})
-	time.Sleep(1100 * time.Millisecond) // run ids are ordered by the second they start
-	saveRun(t, "claude", "fix the login bug", &agent.Result{CostUSD: 0.01})
-	saveRun(t, "codex", "add a cache", &agent.Result{})
-
-	srv := httptest.NewServer(New(context.Background(), Options{Runs: 2, Poll: 5 * time.Millisecond}))
-	defer srv.Close()
-	_, page := get(t, srv.URL+"/")
-	if !strings.Contains(page, "newest 2 runs") {
-		t.Error("the card does not say it covers the newest 2 runs")
-	}
-	all := strings.Join([]string{`<tr class="all">`, `<th scope="row">all</th>`, `<td class="num">2</td>`}, "\n")
-	if !strings.Contains(page, all) {
-		t.Error("the card's all row does not count 2 runs")
-	}
-	if strings.Contains(page, `<th scope="row">review</th>`) {
-		t.Error("the card has a row for the oldest run's purpose, which the index does not list")
 	}
 }
 
@@ -294,7 +278,7 @@ func TestTheIndexAndItsStreamShowPurposes(t *testing.T) {
 		if card < 0 || card > strings.Index(html, `id="batches-h"`) {
 			t.Errorf("%s has no purpose card above the batches", where)
 		}
-		for _, want := range []string{"newest 3 runs", "≥ $0.0123", "1 run reports no cost", `<th scope="col">Purpose</th>`,
+		for _, want := range []string{"All 3 recorded runs", "≥ $0.0123", "1 run reports no cost", `<th scope="col">Purpose</th>`,
 			"Some finished runs reported no cost: they are left out of the known cost, not counted as $0, so a cost marked ≥ is a lower bound and - means none was reported."} {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s lacks %q", where, want)
@@ -352,7 +336,11 @@ func TestARunsPurposeStaysOnOneLine(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	srv := httptest.NewServer(New(context.Background(), Options{Poll: 5 * time.Millisecond}))
 	defer srv.Close()
-	if _, css := get(t, srv.URL+"/static/watch.css"); !strings.Contains(css, "td.purpose { white-space: nowrap; }") {
+	_, css := get(t, srv.URL+"/static/watch.css")
+	if !strings.Contains(css, "td.purpose { white-space: nowrap; }") {
 		t.Error("the stylesheet lets a run's purpose break across lines")
+	}
+	if !strings.Contains(css, ".purposes td.mix { font-size: .82rem; color: var(--muted); overflow-wrap: normal;") {
+		t.Error("the stylesheet lets a repository's purposes break inside a word")
 	}
 }

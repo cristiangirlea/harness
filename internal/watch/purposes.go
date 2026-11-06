@@ -3,6 +3,8 @@ package watch
 import (
 	"fmt"
 	"math"
+	"sort"
+	"strings"
 
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -12,6 +14,13 @@ type purposeCard struct {
 	Scope   string
 	Partial bool // some finished run reported no cost
 	Rows    []purposeRow
+	Repos   []repoRow
+}
+
+// repoRow is a purposeRow named after a repository, with the purposes its runs had.
+type repoRow struct {
+	Row purposeRow
+	Mix string
 }
 
 // Missing costs are unknown, not zero: Cost is a lower bound while NoCost is nonzero.
@@ -57,6 +66,16 @@ func (s *purposeSum) add(rec runlog.Record) {
 	s.estimate = s.estimate || res.CostEstimate
 }
 
+func (s *purposeSum) merge(o purposeSum) {
+	s.runs += o.runs
+	s.running += o.running
+	s.noCost += o.noCost
+	s.tokens += o.tokens
+	s.usd += o.usd
+	s.known = s.known || o.known
+	s.estimate = s.estimate || o.estimate
+}
+
 func (s purposeSum) row(name string) purposeRow {
 	r := purposeRow{Purpose: name, Runs: fmt.Sprint(s.runs), Running: fmt.Sprint(s.running), Tokens: tokens(s.tokens), Cost: "-"}
 	if s.noCost > 0 {
@@ -87,23 +106,37 @@ func lowerBound(usd int64, estimate bool) string {
 	return str
 }
 
-func purposesOf(runs []runlog.Record) *purposeCard {
+// repoRows is how many repositories get a row of their own; the rest share one.
+const repoRows = 10
+
+type repoSum struct {
+	name string
+	sum  purposeSum
+	mix  map[string]int // runs per purpose
+}
+
+func cardOver(runs []tallied) *purposeCard {
 	if len(runs) == 0 {
 		return nil
 	}
 	by := map[string]*purposeSum{}
+	repos := map[string]*repoSum{}
 	var all purposeSum
-	for _, rec := range runs {
-		c := purpose.Resolve(rec.Task.Purpose, rec.Task.Prompt).Category
-		if by[c] == nil {
-			by[c] = &purposeSum{}
+	for _, r := range runs {
+		if by[r.purpose] == nil {
+			by[r.purpose] = &purposeSum{}
 		}
-		by[c].add(rec)
-		all.add(rec)
+		by[r.purpose].merge(r.sum)
+		if repos[r.repo] == nil {
+			repos[r.repo] = &repoSum{name: r.repo, mix: map[string]int{}}
+		}
+		repos[r.repo].sum.merge(r.sum)
+		repos[r.repo].mix[r.purpose]++
+		all.merge(r.sum)
 	}
-	card := &purposeCard{Scope: fmt.Sprintf("The newest %d runs, the ones listed below, not all time.", len(runs))}
+	card := &purposeCard{Scope: fmt.Sprintf("All %d recorded runs, not only the ones listed below.", len(runs))}
 	if len(runs) == 1 {
-		card.Scope = "The newest run, the one listed below, not all time."
+		card.Scope = "The one recorded run."
 	}
 	for _, c := range purpose.Categories {
 		if s := by[c]; s != nil {
@@ -112,5 +145,54 @@ func purposesOf(runs []runlog.Record) *purposeCard {
 	}
 	card.Rows = append(card.Rows, all.row("all"))
 	card.Partial = all.noCost > 0
+	card.Repos = repoRowsOf(repos)
 	return card
+}
+
+func repoRowsOf(repos map[string]*repoSum) []repoRow {
+	list := make([]*repoSum, 0, len(repos))
+	for _, r := range repos {
+		list = append(list, r)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].sum.runs != list[j].sum.runs {
+			return list[i].sum.runs > list[j].sum.runs
+		}
+		return list[i].name < list[j].name
+	})
+	if len(list) > repoRows+1 {
+		rest := &repoSum{name: fmt.Sprintf("%d other folders", len(list)-repoRows), mix: map[string]int{}}
+		for _, r := range list[repoRows:] {
+			rest.sum.merge(r.sum)
+			for p, n := range r.mix {
+				rest.mix[p] += n
+			}
+		}
+		list = append(list[:repoRows], rest)
+	}
+	rows := make([]repoRow, len(list))
+	for i, r := range list {
+		name := r.name
+		if name == "" {
+			name = "no folder"
+		}
+		rows[i] = repoRow{Row: r.sum.row(name), Mix: mixOf(r.mix)}
+	}
+	return rows
+}
+
+// mixOf lists purposes by how many runs had them, ties in category order.
+func mixOf(mix map[string]int) string {
+	cats := make([]string, 0, len(mix))
+	for _, c := range purpose.Categories {
+		if mix[c] > 0 {
+			cats = append(cats, c)
+		}
+	}
+	sort.SliceStable(cats, func(i, j int) bool { return mix[cats[i]] > mix[cats[j]] })
+	parts := make([]string, len(cats))
+	for i, c := range cats {
+		parts[i] = fmt.Sprintf("%s %d", c, mix[c])
+	}
+	return strings.Join(parts, " · ")
 }
