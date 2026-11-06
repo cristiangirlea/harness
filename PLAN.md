@@ -291,7 +291,7 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   more entries, query words found in more than 25% of entries are dropped, each remaining match
   scores ln(n/df)/ln(n) (doubled in the key), and a total below 1.31 returns no context
   (`empty_reason: below_threshold`); smaller versions keep v3. Only identifier-shaped query words
-  (a space, `_ . / :  -`, a digit or an inner capital) match identifiers exactly and skip the floor,
+  (a space, `_ . / : \ -`, a digit or an inner capital) match identifiers exactly and skip the floor,
   because the markdown builder stores plain words such as `a` and `error` as identifiers (#841).
   On #790's set: hit rate 0.31 to 0.72, MRR 0.29 to 0.69, no-answer queries with context 6 of 6
   to 2 of 6. One hit is lost, accepted by the maintainer: `prune-old-runs`, whose answer shares
