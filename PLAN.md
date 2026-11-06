@@ -287,6 +287,29 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #808, a merge confirmed from hrn watch now finishes even if the page disconnects
+  (`context.WithoutCancel`, ten minutes) and its receipt is verified, not just read (PR #846).
+  HEAD is recorded before merging, and the merge must leave `HEAD^1` at it (and `HEAD^2` at the
+  task tip for no-ff). A merge that landed but can't be proven is `merged, commit unknown` and the
+  tree is never reset; a merge command that errors after committing is checked the same way
+  before any cleanup. `hrn batch merge`, MCP `batch_merge` and watch share one O_EXCL lease,
+  `<git common dir>/hrn-merge.lock`, so merges into worktrees of one repository take turns. The
+  page shows the server's text for refusals and "outcome unknown" only for 5xx or a lost reply.
+- 2026-11-06: #809, MCP results are capped at 128 KiB of encoded JSON, structured part included
+  (PR #837). Over the cap a tool answers `result_too_large` with size, limit and a hint, and keeps
+  the result's top-level `*_id` strings so a finished `run` or `batch` is still findable; `show`,
+  `run`, `batch` and `remote_events` have their own hints. A panic answers `<method>: internal
+  error` and the stack goes to stderr. `tools.Truncate` cuts on rune boundaries, moving at most
+  three bytes.
+- 2026-11-06: #810, `internal/archtest` fails when a `Fuzz*` target is not run by both CI and the
+  check skill, or a name there matches no target (Go's `-fuzz` passes on no match), and when a
+  workflow action is not pinned to a full commit with a `# vX.Y.Z` comment (PR #834). The pins are
+  the commits the old tags pointed to. Whether a scheduled `govulncheck` may fetch the tool is
+  left to a maintainer in #838.
+- 2026-11-06: #811, the Backends card sends the SHA-256 of the `backends.json` bytes it rendered
+  (`none` when missing) and a save with another digest gets 412 and writes nothing (PR #842).
+  `prefs.Raw` reads through the Windows rename retry. A CLI write landing between the check and
+  the save is still possible; closing it needs a lock the CLI also takes.
 - 2026-11-06: #839, a public watch offers a sign-in link (PR #844). A page visit refused by the
   token check gets a 403 page linking to `/login` that loads nothing else; host and origin
   refusals and non-page requests keep the plain text. `GET /login` sends a verified visitor to
