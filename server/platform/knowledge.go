@@ -416,7 +416,7 @@ const knowledgeRankedSearchSQL = `WITH members AS MATERIALIZED (
  SELECT t.term,t.query,t.key_query,count(*)::double precision AS frequency
  FROM terms t JOIN members e ON e.search_vector @@ t.query
  GROUP BY t.term,t.query,t.key_query
-), kept AS (
+), kept AS MATERIALIZED (
  SELECT df.query,df.key_query,ln(n.total/df.frequency)/ln(n.total) AS idf
  FROM df CROSS JOIN n WHERE df.frequency <= $6::double precision*n.total
 ), scored AS (
