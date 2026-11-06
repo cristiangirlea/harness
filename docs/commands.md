@@ -336,9 +336,16 @@ have no entries and a non-empty revision; its other fields are kept. Heading
 sections merge below `-min-words` (100), split above `-max-words` (800) or 16384
 bytes, and overlap by `-overlap-words` (40) when split. Keys carry the relative
 path and heading ancestry, sources carry `path@revision`, and evidence records
-the limits. Review the resulting entries and import as before. Entry keys weigh
-more than content in ranking (`simple-or-exact-v3`), and a long entry that does
-not fit the 8 KiB packet arrives as an excerpt marked `excerpt=true`; its
+the limits. Review the resulting entries and import as before. Ranking
+`simple-rare-floor-v4` keeps keys weighted above content. For versions of 20 or
+more entries it ignores words found in more than 25% of entries, scores each other
+matching word by its rarity (doubled in the key), and returns no context below a
+normalised score of 1.31 (`empty_reason=below_threshold`), about one word unique
+to the key or two fairly rare words. Exact identifiers still come first
+and skip the floor, but only identifier-shaped ones (a space, `_ . / : -`, a digit
+or an inner capital); plain words are scored as text. Smaller versions rank as
+before. A long entry that does not fit the 8 KiB packet arrives as an excerpt
+marked `excerpt=true`; its
 `content` contains the excerpt and `excerpt` is omitted for whole entries.
 Imports refuse entries marked as excerpts.
 
