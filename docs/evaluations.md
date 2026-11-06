@@ -65,6 +65,9 @@ and cost columns.
 
 `hrn report` reads every run and batch record and prints three tables: runs, their tokens, and batches.
 
+`hrn report --json` adds optional top-level `tool_stats` totals over the finished runs
+in its window, shaped as `{"read_file":{"calls":2,"errors":1,"result_bytes":120}}`; text output is unchanged.
+
 ```
 runs by backend, since 2026-09-14 17:40 (7d)
 backend  runs  ok  ok%  med dur  med turns  total cost  med cost  cache
@@ -222,6 +225,14 @@ or output. The fixture home and Go tests exercise the measurement without model
 calls. See [the local 30-day snapshot](tool-shapes.md) for the measured budgets.
 
 ## Evals
+
+Each variant's saved summary/JSON optionally includes `tool_stats` totals across all
+attempts, shaped as `{"read_file":{"calls":2,"errors":1,"result_bytes":120}}`, and
+`attempts_with_tool_stats`; eval text and `eval diff` show calls/errors/bytes for the
+10 tools with most calls (combined across both sides for diff), then `(N more tools)`.
+Missing stats are omitted from JSON and shown as `-` on an unmeasured diff side.
+Diff tool-table labels include each side's attempts-with-stats count so totals from
+different repeat counts can be interpreted together.
 
 An eval is a batch with two more dimensions: a matrix of variants to compare and a
 number of repeats. Every cell is an ordinary recorded run, scored by the same gates, so

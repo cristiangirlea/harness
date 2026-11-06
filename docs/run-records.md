@@ -4,6 +4,13 @@
 
 ## Run records
 
+Non-durable results optionally include `tool_stats`, keyed by tool name, for example
+`{"tool_stats":{"read_file":{"calls":2,"errors":1,"result_bytes":120}}}`.
+Calls exclude partial call events; errors count error results, and result bytes sum
+the UTF-8 byte lengths of result event text before masking. Empty tool names use
+the `""` key for both calls and results. Zero counters and absent stats are omitted;
+older records still load unchanged, and negative counters are rejected.
+
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 `hrn feed` creates an ordinary record for every valid item, with purpose `none`.
 The optional task field `max_tokens` records its requested API output ceiling;

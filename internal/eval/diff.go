@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 // Diff matches named eval rows, retaining unmatched rows with a nil side.
@@ -49,6 +50,43 @@ type VariantPair struct {
 	B    *VariantRow `json:"b,omitempty"`
 	// WithinNoise means the score moved less than either measured judge spread.
 	WithinNoise bool `json:"within_noise,omitempty"`
+}
+
+type ToolStatPair struct {
+	Name string
+	A, B kernel.ToolStat
+}
+
+// ToolStatPairs ranks the union by combined calls, with stable ties for readable comparisons.
+func ToolStatPairs(a, b map[string]kernel.ToolStat) []ToolStatPair {
+	names := make(map[string]bool)
+	for name := range a {
+		names[name] = true
+	}
+	for name := range b {
+		names[name] = true
+	}
+	var pairs []ToolStatPair
+	for name := range names {
+		pairs = append(pairs, ToolStatPair{Name: name, A: a[name], B: b[name]})
+	}
+	slices.SortFunc(pairs, func(a, b ToolStatPair) int {
+		ac, bc := a.A.Calls+a.B.Calls, b.A.Calls+b.B.Calls
+		if ac > bc {
+			return -1
+		}
+		if ac < bc {
+			return 1
+		}
+		if a.Name < b.Name {
+			return -1
+		}
+		if a.Name > b.Name {
+			return 1
+		}
+		return 0
+	})
+	return pairs
 }
 
 // TaskPair is one task under one variant in both evals.
