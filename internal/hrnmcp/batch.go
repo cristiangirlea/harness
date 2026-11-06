@@ -21,8 +21,9 @@ const specDescription = `A batch spec, the same JSON as an hrn batch file. Field
 
 func batchTool(defaultDir string, allowDangerous bool) mcp.Tool {
 	return mcp.Tool{
-		Name:  "batch",
-		Title: "Run tasks in parallel worktrees",
+		Name:     "batch",
+		TooLarge: "The batch finished; read it with batch_show.",
+		Title:    "Run tasks in parallel worktrees",
 		Description: "Run several coding tasks at once, each on its own branch hrn/<id> in its own git worktree, " +
 			"then run the gate commands in each. Waits for every task and returns a summary with attempt notes and the batch id. " +
 			"The repository must have no modified tracked files unless allow_dirty is set. " +

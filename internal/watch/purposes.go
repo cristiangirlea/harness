@@ -152,7 +152,12 @@ func cardOver(runs []tallied) *purposeCard {
 
 func repoRowsOf(repos map[string]*repoSum) []repoRow {
 	list := make([]*repoSum, 0, len(repos))
+	var none *repoSum
 	for _, r := range repos {
+		if r.key == "" {
+			none = r
+			continue
+		}
 		list = append(list, r)
 	}
 	sort.Slice(list, func(i, j int) bool {
@@ -165,7 +170,7 @@ func repoRowsOf(repos map[string]*repoSum) []repoRow {
 		return list[i].key < list[j].key
 	})
 	if len(list) > repoRows+1 {
-		rest := &repoSum{name: fmt.Sprintf("%d other folders", len(list)-repoRows), mix: map[string]int{}}
+		rest := &repoSum{key: "other", name: fmt.Sprintf("%d other repositories", len(list)-repoRows), mix: map[string]int{}}
 		for _, r := range list[repoRows:] {
 			rest.sum.merge(r.sum)
 			for p, n := range r.mix {
@@ -173,6 +178,9 @@ func repoRowsOf(repos map[string]*repoSum) []repoRow {
 			}
 		}
 		list = append(list[:repoRows], rest)
+	}
+	if none != nil {
+		list = append(list, none)
 	}
 	// Number same-named checkouts rather than show more of their paths to a remote viewer.
 	taken := map[string]bool{}
@@ -196,9 +204,9 @@ func repoRowsOf(repos map[string]*repoSum) []repoRow {
 
 func repoLabel(name string) string {
 	if name == "" {
-		return "no folder"
+		return "No repository recorded"
 	}
-	return name
+	return strings.TrimPrefix(name, "github.com/")
 }
 
 // mixOf lists purposes by how many runs had them, ties in category order.

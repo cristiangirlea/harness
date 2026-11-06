@@ -61,6 +61,13 @@ The server refuses `allow_dangerous` on `run` and `batch`, and leaves it out of 
 arguments, unless it was started with `--allow-dangerous-runs`: the host that calls it is
 an agent, and lifting [the guard](permissions.md#the-guard-for-every-backend) is yours to decide.
 
+Tool results are limited to 128 KiB of encoded JSON. Larger results return a
+`result_too_large` tool error with the size, limit and a hint; for `show`, pass
+`"events": false`, or run `hrn show <run id>` in a terminal for the full replay.
+The error keeps the result's top-level `*_id` fields (such as `run_id` and `batch_id`), so a
+finished `run` or `batch` can still be read with `show` or `batch_show`.
+A panic answers `<method>: internal error`; the panic value and stack go to hrn's stderr.
+
 Tools:
 
 Unknown arguments to `run`, `runs`, `show`, `flow`, `batch`, `batch_show` and `batch_merge` are refused before work starts.

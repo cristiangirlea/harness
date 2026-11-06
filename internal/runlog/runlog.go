@@ -37,7 +37,10 @@ func Root() string { return runpaths.Root() }
 type RoutedBy = table.RoutedBy
 
 type Record struct {
-	StartHead string    `json:"start_head,omitempty"`
+	StartHead string `json:"start_head,omitempty"`
+	// Repo is the run's remote as host/path, never its URL; Branch is empty on a detached HEAD.
+	Repo      string    `json:"repo,omitempty"`
+	Branch    string    `json:"branch,omitempty"`
 	RoutedBy  *RoutedBy `json:"routed_by,omitempty"`
 	RouteNote string    `json:"route_note,omitempty"`
 	ID        string    `json:"id"`
@@ -122,6 +125,9 @@ func create(backend string, task kernel.Task, setup *kernel.Setup, continues, ro
 	w = &Writer{dir: dir, rec: Record{ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
 		Setup: setup, RouteNote: note}}
 	w.gitRoot, w.rec.StartHead = startGit(task.Dir)
+	if w.gitRoot != "" {
+		w.rec.Repo, w.rec.Branch = startRepo(w.gitRoot)
+	}
 	if routed != nil {
 		by := *routed
 		w.rec.RoutedBy = &by

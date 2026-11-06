@@ -181,8 +181,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 		delete(props, "allow_dangerous") // not offered where it is refused
 	}
 	return mcp.Tool{
-		Name:  "run",
-		Title: "Run a task",
+		Name:     "run",
+		TooLarge: `The run finished; read it with show (events: false) or "hrn show <run id>".`,
+		Title:    "Run a task",
 		Description: "Run a coding task with an agent backend in a workspace directory and wait for it to finish. " +
 			"Optionally declare its purpose; this is recorded without changing the prompt. " +
 			"Returns the final answer, a summary line (status, tokens, cost, duration) and the run id. " +
@@ -508,6 +509,7 @@ func runsTool() mcp.Tool {
 func showTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "show",
+		TooLarge:    `Pass "events": false, or run "hrn show <run id>" in a terminal for the full replay.`,
 		Title:       "Show a run",
 		Description: "Replay a recorded run: its task, the events (tool calls, results, errors) and the result.",
 		InputSchema: map[string]any{
