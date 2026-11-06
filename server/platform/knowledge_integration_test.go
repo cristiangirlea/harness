@@ -41,7 +41,7 @@ func TestKnowledgeSearchWeightsKeysAndExcerptsLongEntries(t *testing.T) {
 	if err != nil || len(packet.Entries) != 2 || packet.Entries[0].Key != "needle" {
 		t.Fatalf("weighted ranking: %#v %v", packet, err)
 	}
-	if packet.Ranking != "simple-or-exact-v3" {
+	if packet.Ranking != "simple-rare-floor-v4" {
 		t.Fatalf("ranking = %q", packet.Ranking)
 	}
 	for _, e := range packet.Entries {

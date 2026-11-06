@@ -137,12 +137,11 @@ func cmdBatchMerge(args []string) (int, error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	before, err := batch.Head(ctx, res.Dir)
-	if err != nil {
-		return 1, err
-	}
-
 	merged, mergeErr := batch.Merge(ctx, res, fs.Args()[1:], *squash)
+	before := ""
+	if len(merged) > 0 {
+		before = merged[0].Before
+	}
 	r := newRenderer(false)
 	done := 0
 	var removeIDs []string
@@ -150,6 +149,9 @@ func cmdBatchMerge(args []string) (int, error) {
 		switch {
 		case m.Conflict:
 			r.Line(r.c(red, fmt.Sprintf("  %-16s conflict merging %s", m.Task, m.Branch)))
+		case m.Error == batch.ErrMergedUnconfirmed.Error():
+			done++
+			r.Line(fmt.Sprintf("  %-16s merged, commit unknown", m.Task))
 		case m.Error != "":
 			r.Line(r.c(red, fmt.Sprintf("  %-16s could not merge %s", m.Task, m.Branch)))
 		case m.Skipped != "":

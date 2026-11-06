@@ -15,7 +15,7 @@ const MaxPacketBytes = 8 * 1024
 const MaxEntryKeyBytes = 128
 const MaxEntryIdentifiers = 32
 const MaxIdentifierBytes = 256
-const RankingVersion = "simple-or-exact-v3"
+const RankingVersion = "simple-rare-floor-v4"
 
 type Scope struct {
 	TenantID  string `json:"tenant_id"`
