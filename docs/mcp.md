@@ -10,6 +10,7 @@
 the model as `mcp__<server>__<tool>` (Claude Code's naming) and stops the servers when
 the run ends. `~/.hrn/mcp.json` (or `$HRN_HOME/mcp.json`) is loaded whenever it exists;
 `--mcp` files add to it, and a later file overrides an earlier server of the same name.
+When tool names collide, the first keeps its name and later tools get a stable hash suffix (starting with `_` and eight hex characters, extended if needed), with the base shortened to keep the name within 128 characters; an info event identifies each rename.
 The format is Claude Code's, so existing `.mcp.json` files work unchanged:
 
 ```json
