@@ -287,6 +287,16 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-06: #780, retrieval increments 2-3 tightened (PR #803). Entry keys weigh A and content D
+  in `search_vector` (migration 005, schema 5; PostgreSQL 16 has no `SET EXPRESSION`, so the column
+  is dropped and added again), ranking `simple-or-exact-v3` (main was already at v2, not v1 as the
+  issue said). An entry that does not fit the room left in the 8 KiB packet is sent as a
+  `ts_headline` excerpt marked `excerpt=true`; this covers any such entry, not only the first-ranked
+  one, and the headline is computed only for those entries. `hrn knowledge markdown` writes an
+  import request from named Markdown files inside the repository (never under `.git`). The
+  retrieval eval fixtures cannot show the ranking change (synthetic counters, empty corpus); the
+  evidence is the PostgreSQL tests. Not done: a small last section stays alone; setext headings
+  are read as text.
 - 2026-11-06: #784, file-mounted secrets for the control service (PR #789): `hrn-server` and
   `hrn-worker` read `HRN_DATABASE_URL`, `HRN_OPERATOR_TOKEN`, `HRN_SCALER_TOKEN` and
   `HRN_WORKER_TOKEN` from the file named by the same variable with `_FILE` appended, as Docker and
