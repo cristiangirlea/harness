@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
@@ -113,6 +114,9 @@ func runRetrievalCorpusDigest(args []string, out io.Writer) error {
 	}
 	var entries []retrieval.Entry
 	if raw, ok := corpus["entries"]; ok {
+		if !utf8.Valid(raw) {
+			return fmt.Errorf("corpus entries contain invalid UTF-8")
+		}
 		if err := json.Unmarshal(raw, &entries); err != nil {
 			return fmt.Errorf("corpus entries: %w", err)
 		}
@@ -133,13 +137,56 @@ func runRetrievalCorpusDigest(args []string, out io.Writer) error {
 		return false
 	})
 	var encoded bytes.Buffer
-	enc := json.NewEncoder(&encoded)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(rows); err != nil {
-		return err
+	encoded.WriteByte('[')
+	for i, row := range rows {
+		if i > 0 {
+			encoded.WriteByte(',')
+		}
+		encoded.WriteByte('[')
+		for j, field := range row {
+			if j > 0 {
+				encoded.WriteByte(',')
+			}
+			writeRetrievalDigestString(&encoded, field)
+		}
+		encoded.WriteByte(']')
 	}
-	_, err := fmt.Fprintln(out, retrieval.TextDigest(strings.TrimSuffix(encoded.String(), "\n")))
+	encoded.WriteByte(']')
+	_, err := fmt.Fprintln(out, retrieval.TextDigest(encoded.String()))
 	return err
+}
+
+// Python's UTF-8 JSON encoding preserves line separators and non-ASCII bytes.
+func writeRetrievalDigestString(out *bytes.Buffer, value string) {
+	const hex = "0123456789abcdef"
+	out.WriteByte('"')
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch c {
+		case '"', '\\':
+			out.WriteByte('\\')
+			out.WriteByte(c)
+		case '\b':
+			out.WriteString(`\b`)
+		case '\f':
+			out.WriteString(`\f`)
+		case '\n':
+			out.WriteString(`\n`)
+		case '\r':
+			out.WriteString(`\r`)
+		case '\t':
+			out.WriteString(`\t`)
+		default:
+			if c < 0x20 {
+				out.WriteString(`\u00`)
+				out.WriteByte(hex[c>>4])
+				out.WriteByte(hex[c&15])
+			} else {
+				out.WriteByte(c)
+			}
+		}
+	}
+	out.WriteByte('"')
 }
 
 func runRetrievalSamples(args []string, out io.Writer) error {
@@ -191,6 +238,19 @@ func runRetrievalSamples(args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
+		batchTasks := map[string]batch.TaskResult{}
+		for _, batchID := range append([]string{rec.BatchID}, rec.RerunBatchIDs...) {
+			saved, err := batch.LoadResult(batchID)
+			if err != nil {
+				return fmt.Errorf("eval %s: batch %s: %w", id, batchID, err)
+			}
+			for _, tr := range saved.Tasks {
+				if _, exists := batchTasks[tr.ID]; exists {
+					return fmt.Errorf("cell %s: duplicate batch task", tr.ID)
+				}
+				batchTasks[tr.ID] = tr
+			}
+		}
 		// Results already contains the ordered rerun batches saved by eval.Run.
 		ids := map[string]bool{}
 		for _, tr := range rec.Results {
@@ -224,6 +284,21 @@ func runRetrievalSamples(args []string, out io.Writer) error {
 			case batch.StatusPass, batch.StatusFail, batch.StatusError, batch.StatusCanceled:
 			default:
 				return fmt.Errorf("cell %s: unfinished task status %q", tr.ID, tr.Status)
+			}
+			if len(tr.Attempts) == 0 {
+				return fmt.Errorf("cell %s: no attempts", tr.ID)
+			}
+			saved, ok := batchTasks[tr.ID]
+			if !ok {
+				return fmt.Errorf("cell %s: missing batch task", tr.ID)
+			}
+			if saved.Status != tr.Status || len(saved.Attempts) != len(tr.Attempts) {
+				return fmt.Errorf("cell %s: status or attempts differ from batch task", tr.ID)
+			}
+			for i, a := range tr.Attempts {
+				if a.RunID != saved.Attempts[i].RunID {
+					return fmt.Errorf("cell %s: attempt run IDs differ from batch task", tr.ID)
+				}
 			}
 			zero := int64(0)
 			cost := 0.0

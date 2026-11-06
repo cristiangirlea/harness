@@ -178,18 +178,28 @@ func retrievalSamplesEval(t *testing.T, m eval.RetrievalManifest, id string, rep
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := eval.Record{ID: id, Spec: spec}
+	rec := eval.Record{ID: id, BatchID: id + "-batch", Spec: spec}
 	for _, task := range bs.Tasks {
-		w, err := runlog.Create(task.Backend, agent.Task{Prompt: task.Prompt, Options: agent.Options{Model: task.Model, Effort: task.Effort, RetrievalRevision: m.Revision}}, nil)
+		opts := agent.Options{Model: task.Model, Effort: task.Effort, RetrievalRevision: m.Revision, Retrieval: task.Retrieval}
+		var pin *retrieval.Record
+		if task.Retrieval != "off" {
+			opts.RetrievalTenant, opts.RetrievalProject = "tenant", "project"
+			opts.RetrievalVersion = task.RetrievalVersion
+			pin = &retrieval.Record{Mode: task.Retrieval, OriginalPrompt: task.Prompt, DurationNS: 17,
+				Scope:  retrieval.Scope{TenantID: "tenant", ProjectID: "project", Backend: task.Backend, Model: task.Model, Revision: m.Revision},
+				Packet: &retrieval.Packet{VersionID: task.RetrievalVersion, Digest: retrieval.TextDigest("")}}
+		}
+		w, err := runlog.Create(task.Backend, agent.Task{Prompt: task.Prompt, Options: opts}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		result := agent.Result{Backend: task.Backend, Model: task.Model, Status: agent.StatusOK}
+		result := agent.Result{Backend: task.Backend, Model: task.Model, Status: agent.StatusOK, Retrieval: pin,
+			InputTokens: 100, Usage: &agent.UsageMetadata{InputSemantics: "exclusive_cache", Status: "reported"}}
 		if err := w.Close(result); err != nil {
 			t.Fatal(err)
 		}
 		if task.Retrieval != "off" {
-			writeRetrievalFixtureJSON(t, filepath.Join(runlog.Root(), w.ID(), "retrieval.json"), retrieval.Record{DurationNS: 17})
+			writeRetrievalFixtureJSON(t, filepath.Join(runlog.Root(), w.ID(), "retrieval.json"), pin)
 		}
 		rec.Results = append(rec.Results, batch.TaskResult{ID: task.ID, Status: batch.StatusPass, Attempts: []batch.Attempt{{RunID: w.ID(), Result: result}}})
 	}
@@ -201,6 +211,7 @@ func samplesCommand(t *testing.T, m eval.RetrievalManifest, records []eval.Recor
 	path := filepath.Join(t.TempDir(), "manifest.json")
 	writeRetrievalFixtureJSON(t, path, m)
 	for _, rec := range records {
+		writeRetrievalEvalBatches(t, m, rec)
 		writeRetrievalFixtureJSON(t, filepath.Join(runlog.Home(), "evals", rec.ID+".json"), rec)
 	}
 	args := []string{"samples", "--manifest", path}
@@ -312,6 +323,7 @@ func TestRetrievalSamplesRefusals(t *testing.T) {
 		{"empty status", func(r *eval.Record) { r.Results[0].Status = "" }, ""},
 		{"unknown status", func(r *eval.Record) { r.Results[0].Status = "unknown" }, ""},
 		{"empty run", func(r *eval.Record) { r.Results[0].Attempts[0].RunID = "" }, ""},
+		{"no attempts", func(r *eval.Record) { r.Results[0].Status = batch.StatusCanceled; r.Results[0].Attempts = nil }, ""},
 		{"missing cell", func(r *eval.Record) { r.Results = r.Results[1:] }, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -330,6 +342,9 @@ func TestRetrievalSamplesRefusals(t *testing.T) {
 			_, err = samplesCommand(t, m, []eval.Record{r}, "test"+tc.offset)
 			if err == nil || !strings.Contains(err.Error(), cell) {
 				t.Fatalf("error = %v; want cell %s", err, cell)
+			}
+			if tc.name == "no attempts" && err.Error() != "cell "+cell+": no attempts" {
+				t.Fatalf("error = %v", err)
 			}
 		})
 	}
@@ -473,5 +488,146 @@ func TestRetrievalCorpusDigest(t *testing.T) {
 	writeRetrievalFixtureJSON(t, path, retrieval.Version{})
 	if err := runRetrieval([]string{"corpus-digest", path}, &bytes.Buffer{}); err == nil {
 		t.Fatal("accepted empty corpus")
+	}
+}
+
+func writeRetrievalEvalBatches(t *testing.T, m eval.RetrievalManifest, rec eval.Record) {
+	t.Helper()
+	for round, id := range append([]string{rec.BatchID}, rec.RerunBatchIDs...) {
+		b := batch.Result{ID: id, Base: m.Revision}
+		for _, tr := range rec.Results {
+			parts := strings.Split(tr.ID, ".")
+			if (round == 0 && len(parts) == 4) || (round > 0 && strings.HasSuffix(tr.ID, fmt.Sprintf(".u%d", round))) {
+				b.Tasks = append(b.Tasks, tr)
+			}
+		}
+		writeRetrievalFixtureJSON(t, filepath.Join(runlog.Home(), "batches", id+".json"), b)
+	}
+}
+
+func TestRetrievalSamplesBatchRefusals(t *testing.T) {
+	for _, kind := range []string{"missing task", "status", "run ID", "attempt count", "attempt order", "missing batch", "missing rerun"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			m, _, err := eval.RetrievalFixture()
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := retrievalSamplesEval(t, m, "test", m.Spec.Repeats, false)
+			r.Results[0].Attempts = append(r.Results[0].Attempts, batch.Attempt{RunID: "second"})
+			writeRetrievalEvalBatches(t, m, r)
+			cell := r.Results[0].ID
+			switch kind {
+			case "missing task":
+				r.Results[0].ID = strings.Replace(cell, ".r1", ".r2", 1)
+				r.Results = r.Results[:1]
+				cell = r.Results[0].ID
+			case "status":
+				r.Results[0].Status = batch.StatusFail
+			case "run ID":
+				r.Results[0].Attempts[0].RunID = "different"
+			case "attempt count":
+				r.Results[0].Attempts = r.Results[0].Attempts[:1]
+			case "attempt order":
+				r.Results[0].Attempts[0], r.Results[0].Attempts[1] = r.Results[0].Attempts[1], r.Results[0].Attempts[0]
+			case "missing batch":
+				r.BatchID = "missing"
+			case "missing rerun":
+				r.RerunBatchIDs = []string{"missing"}
+			}
+			if kind == "missing task" {
+				b, err := batch.LoadResult(r.BatchID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range b.Tasks {
+					if b.Tasks[i].ID == cell {
+						b.Tasks = append(b.Tasks[:i], b.Tasks[i+1:]...)
+						break
+					}
+				}
+				writeRetrievalFixtureJSON(t, filepath.Join(runlog.Home(), "batches", r.BatchID+".json"), b)
+			}
+			manifest := filepath.Join(t.TempDir(), "manifest.json")
+			writeRetrievalFixtureJSON(t, manifest, m)
+			writeRetrievalFixtureJSON(t, filepath.Join(runlog.Home(), "evals", r.ID+".json"), r)
+			err = runRetrieval([]string{"samples", "--manifest", manifest, "--eval", r.ID}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatal("accepted inconsistent batch records")
+			}
+			if kind != "missing batch" && kind != "missing rerun" && !strings.Contains(err.Error(), cell) {
+				t.Fatalf("error = %v; want cell %s", err, cell)
+			}
+		})
+	}
+}
+
+func TestRetrievalSamplesCompareRuns(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	m, _, err := eval.RetrievalFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Spec.Matrix[1].RetrievalVersion = "version"
+	r := retrievalSamplesEval(t, m, "test", m.Spec.Repeats, false)
+	replacement := retrievalSamplesEval(t, m, "replacement", m.Spec.Repeats, false).Results[1]
+	replacement.ID = r.Results[1].ID + ".u1"
+	r.Results[1].Status, r.Results[1].Attempts = batch.StatusCanceled, []batch.Attempt{{DidNotStart: "setup"}}
+	r.Results = append(r.Results, replacement)
+	r.RerunBatchIDs = []string{"rerun"}
+	writeRetrievalEvalBatches(t, m, r)
+	writeRetrievalFixtureJSON(t, filepath.Join(runlog.Home(), "evals", r.ID+".json"), r)
+	dir := t.TempDir()
+	manifest, samples := filepath.Join(dir, "manifest.json"), filepath.Join(dir, "samples.json")
+	writeRetrievalFixtureJSON(t, manifest, m)
+	var out bytes.Buffer
+	if err := runRetrieval([]string{"samples", "--manifest", manifest, "--eval", r.ID}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(samples, out.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var cells []eval.RetrievalSample
+	if err := json.Unmarshal(out.Bytes(), &cells); err != nil {
+		t.Fatal(err)
+	}
+	if len(cells[1].RunRefs) != 1 || cells[1].RunRefs[0] != replacement.Attempts[0].RunID {
+		t.Fatalf("replacement = %+v", cells[1])
+	}
+	out.Reset()
+	if err := runRetrieval([]string{"compare", "--manifest", manifest, "--samples", samples, "--runs", "--json"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var comparison eval.RetrievalComparison
+	if err := json.Unmarshal(out.Bytes(), &comparison); err != nil {
+		t.Fatal(err)
+	}
+	if comparison.ExpectedPairs != 30 || comparison.ObservedPairs != 30 || comparison.ComparablePairs != 30 {
+		t.Fatalf("comparison = %+v", comparison)
+	}
+}
+
+func TestRetrievalCorpusDigestUTF8(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "corpus.json")
+	writeRetrievalFixtureJSON(t, path, retrieval.Version{Entries: []retrieval.Entry{{Key: "a\u2028b\x01c\"d\\e<>&é\x7f", Source: "docs/x.md@abc", Content: "line\u2029end"}}})
+	var out bytes.Buffer
+	if err := runRetrieval([]string{"corpus-digest", path}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "d7dee35d6b060dba55ab6aa09e9f6d3b20e9b95cd191ff4c8206c52633fdc349\n" {
+		t.Fatalf("digest = %q", out.String())
+	}
+	for _, field := range []string{"key", "source", "content"} {
+		t.Run(field, func(t *testing.T) {
+			data := []byte(fmt.Sprintf(`{"entries":[{"key":"key","source":"source","content":"content","%s":"`, field))
+			data = append(data, 0xff)
+			data = append(data, []byte(`"}]}`)...)
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := runRetrieval([]string{"corpus-digest", path}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
