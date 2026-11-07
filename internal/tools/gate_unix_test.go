@@ -55,6 +55,23 @@ func TestCancellingAGatedCommandEndsItsWholeTree(t *testing.T) {
 	}
 }
 
+// A gate that ignores the terminate request is killed once WaitDelay passes.
+func TestAGateThatIgnoresTerminateIsStillEnded(t *testing.T) {
+	old := gateGrace
+	gateGrace = time.Second
+	t.Cleanup(func() { gateGrace = old })
+	ws, tl, _ := gatedWorkspace(t)
+	start := time.Now()
+	out, err := call(t, ws, tl, map[string]any{"command": "fake-deaf sleep 12", "timeout_sec": 2})
+	if err == nil || err.Error() != "command timed out" {
+		t.Fatalf("run_command = %q, %v; want a timeout", out, err)
+	}
+	// Two seconds of timeout, one of grace and five of WaitDelay, well before the sleep ends.
+	if took := time.Since(start); took > 11*time.Second {
+		t.Fatalf("the deaf gate was ended after %s", took)
+	}
+}
+
 // processGone counts a zombie as gone: a container's first process may never reap it.
 func processGone(pid int) bool {
 	if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {

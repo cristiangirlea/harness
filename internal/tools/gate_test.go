@@ -99,6 +99,11 @@ func fakeGate(args []string) int {
 		if rest, ok := strings.CutPrefix(script, "fake-hang "); ok {
 			script, limit = rest, 0
 		}
+		if rest, ok := strings.CutPrefix(script, "fake-deaf "); ok {
+			stop()
+			signal.Ignore(syscall.SIGTERM)
+			script, limit = rest, 0
+		}
 		wd, _ := os.Getwd()
 		res, err := RunShell(ctx, wd, script, limit, nil)
 		if err != nil {
@@ -351,9 +356,10 @@ func TestGatedRunCommandRunsInTheGuardedEnvironment(t *testing.T) {
 	if shell, _ := Shell(); shell == "powershell" {
 		t.Skip("the check reads variables with POSIX syntax")
 	}
-	t.Setenv("HRN_GATE_TEST_TOKEN", "a-secret")
+	// Only the guard withholds this name; the filter every command gets keeps it.
+	t.Setenv("GATE_TEST_PASSWORD", "a-secret")
 	ws, tl, _ := gatedWorkspace(t)
-	out, err := call(t, ws, tl, map[string]any{"command": `echo "token=${HRN_GATE_TEST_TOKEN:-withheld} guarded=$HRN_GUARDED"`})
+	out, err := call(t, ws, tl, map[string]any{"command": `echo "token=${GATE_TEST_PASSWORD:-withheld} guarded=$HRN_GUARDED"`})
 	if err != nil || !strings.Contains(out, "token=withheld guarded=1") {
 		t.Fatalf("run_command = %q, %v; want the guarded environment", out, err)
 	}

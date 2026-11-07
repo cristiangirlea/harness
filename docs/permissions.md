@@ -189,7 +189,9 @@ kind of shell it would pick; the gate finds that shell's program itself (Git Bas
 never a WSL launcher), which can be another copy than the one hrn found. hrn's guard still runs
 first, so a command it refuses never reaches the gate. A command that names the gate's
 `-approved` or `-script-b64` flag is refused before the gate, `--allow-dangerous` or not, as
-the gate's own hook refuses it: a nested `adanext-exec run` could otherwise approve its own ask. The gate applies its own policy (`policy.json` in the user's adanext-exec config, or its
+the gate's own hook refuses it, so a nested `adanext-exec run` cannot plainly approve its own
+ask. It is a text check that quoting can get past: the boundary is the gate's own trust in
+its user, as its design says. The gate applies its own policy (`policy.json` in the user's adanext-exec config, or its
 built-in rules), kills the command's whole tree at the timeout and writes one audit line per
 command in its own state directory. Its output and exit code pass through unchanged.
 
@@ -203,7 +205,8 @@ message, or 124 before the timeout) stay the command's own. A gate that cannot b
 error too: the command never falls back to the shell. When the run is cancelled, hrn asks the
 gate to stop (on Linux and macOS a terminate signal, so the gate kills the command's tree and
 writes its audit line) and kills it if it has not ended five seconds later; it does the same 15
-seconds after the timeout if the gate has not ended by then.
+seconds after the timeout if the gate has not ended by then. On Windows hrn ends the gate and
+its command at once, through its job, and the gate writes no audit line for that command.
 
 The run checks the gate once before it starts (`adanext-exec check --json` must answer
 `adanext-exec/1`); the CLI backends refuse `--gate` until their commands are routed. Neither
