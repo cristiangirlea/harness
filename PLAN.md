@@ -299,6 +299,15 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   The run's `result.json` gains close-time git fields and the batch copy gains gate evidence, so
   the exact comparison refused every cell of a real eval. The batch copy may now lack each
   close-time field or match it, and may add only `gate` evidence after the run's own.
+- 2026-11-07: #873, both modules on Go 1.26.10 and `server/` on `golang.org/x/text` v0.43.0
+  (PR #875). The first `vuln` run found CI and release binaries built with 1.26.4, the version
+  every workflow reads from `go.mod`, with 21 reachable standard-library advisories per module,
+  plus two x/text ones. 1.26.9 left GO-2026-6809 (crypto/x509), fixed only in 1.26.10. A `vuln`
+  run dispatched on the branch is how a toolchain or dependency bump is confirmed before merging.
+- 2026-11-07: #838, CI may fetch a pinned `govulncheck` with `go run` (PR #860): the `vuln`
+  workflow checks both modules every Monday and on demand, on GitHub's runners, read-only, and
+  stays off pull requests so an overnight advisory does not block unrelated work. The modules
+  stay standard-library only; a new tool version is a reviewed edit of the `go run` line.
 - 2026-11-07: #799, refused actions reached another way are flagged (PR #863). After an api run, a
   pass over its events (no model call, no file read) flags a later `run_command` that runs a file
   this run wrote with a line breaking the same rule (`script`), a write whose content holds the

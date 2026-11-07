@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -605,6 +607,110 @@ func TestRetrievalSamplesCompareRuns(t *testing.T) {
 	if comparison.ExpectedPairs != 30 || comparison.ObservedPairs != 30 || comparison.ComparablePairs != 30 {
 		t.Fatalf("comparison = %+v", comparison)
 	}
+}
+
+// Real records differ: runlog adds close-time git fields to the run's result, and batch
+// appends gate evidence to the attempt's copy after the run is closed.
+func TestRetrievalCompareRunsRecordedShapes(t *testing.T) {
+	knowledge := kernelEvidence("knowledge", "e_1", "packet")
+	gate := kernelEvidence("gate", "expect /x/", "x")
+	cases := []struct {
+		name   string
+		edit   func(*agent.Result)
+		reject bool
+	}{
+		{"as recorded", func(*agent.Result) {}, false},
+		{"gate before run evidence", func(r *agent.Result) { r.Evidence = []kernel.Evidence{gate, knowledge} }, true},
+		{"extra non-gate evidence", func(r *agent.Result) { r.Evidence = append(r.Evidence, knowledge) }, true},
+		{"run evidence missing", func(r *agent.Result) { r.Evidence = []kernel.Evidence{gate} }, true},
+		{"run evidence changed", func(r *agent.Result) {
+			r.Evidence = []kernel.Evidence{kernelEvidence("knowledge", "e_2", "packet"), gate}
+		}, true},
+		{"same close-time fields", func(r *agent.Result) {
+			r.EndHead, r.ChangedFiles, r.Commits = "head", []string{"a.go"}, []string{"c1"}
+		}, false},
+		{"some close-time fields", func(r *agent.Result) { r.EndHead, r.ChangedFiles = "head", []string{} }, false},
+		{"other end head", func(r *agent.Result) { r.EndHead = "other" }, true},
+		{"other changed files", func(r *agent.Result) { r.ChangedFiles = []string{"b.go"} }, true},
+		{"other commits", func(r *agent.Result) { r.EndHead, r.Commits = "head", []string{"c2"} }, true},
+		{"truncated only in batch", func(r *agent.Result) { r.ChangedFilesTruncated = true }, true},
+		{"other tokens", func(r *agent.Result) { r.InputTokens++ }, true},
+		{"other final", func(r *agent.Result) { r.Final = "changed" }, true},
+		{"other status", func(r *agent.Result) { r.Status = agent.StatusError }, true},
+		{"other model", func(r *agent.Result) { r.Model = "other" }, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			m, _, err := eval.RetrievalFixture()
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.Spec.Matrix[1].RetrievalVersion = "version"
+			r := retrievalSamplesEval(t, m, "test", m.Spec.Repeats, false)
+			edited := false
+			for i := range r.Results {
+				a := &r.Results[i].Attempts[0]
+				rec, err := runlog.Load(a.RunID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if a.Result.Retrieval != nil {
+					a.Result.Evidence = []kernel.Evidence{knowledge}
+					rec.Result.Evidence = []kernel.Evidence{knowledge}
+				}
+				rec.Result.EndHead, rec.Result.ChangedFiles, rec.Result.Commits = "head", []string{"a.go"}, []string{"c1"}
+				writeRetrievalFixtureJSON(t, filepath.Join(runlog.Root(), a.RunID, "result.json"), rec)
+				a.Result.Evidence = append(a.Result.Evidence, gate)
+				if a.Result.Retrieval != nil && !edited {
+					tc.edit(&a.Result)
+					edited = true
+				}
+			}
+			writeRetrievalEvalBatches(t, m, r)
+			writeRetrievalFixtureJSON(t, filepath.Join(runlog.Home(), "evals", r.ID+".json"), r)
+			dir := t.TempDir()
+			manifest, samples := filepath.Join(dir, "manifest.json"), filepath.Join(dir, "samples.json")
+			writeRetrievalFixtureJSON(t, manifest, m)
+			var out bytes.Buffer
+			if err := runRetrieval([]string{"samples", "--manifest", manifest, "--eval", r.ID}, &out); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(samples, out.Bytes(), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err = runRetrieval([]string{"compare", "--manifest", manifest, "--samples", samples, "--runs", "--json"}, &bytes.Buffer{})
+			if tc.reject {
+				if err == nil || !strings.Contains(err.Error(), "batch and run result differ") {
+					t.Fatalf("error = %v; want batch and run result differ", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestBatchResultMatchesRunLeavesInputs(t *testing.T) {
+	knowledge, gate := kernelEvidence("knowledge", "e_1", "packet"), kernelEvidence("gate", "expect /x/", "x")
+	b := agent.Result{Evidence: []kernel.Evidence{knowledge, gate}}
+	r := agent.Result{Evidence: []kernel.Evidence{knowledge}, EndHead: "head", ChangedFiles: []string{"a.go"}}
+	if !batchResultMatchesRun(b, r) {
+		t.Fatal("recorded shape refused")
+	}
+	if !reflect.DeepEqual(b, agent.Result{Evidence: []kernel.Evidence{knowledge, gate}}) ||
+		!reflect.DeepEqual(r, agent.Result{Evidence: []kernel.Evidence{knowledge}, EndHead: "head", ChangedFiles: []string{"a.go"}}) {
+		t.Fatalf("inputs changed: batch %+v, run %+v", b, r)
+	}
+	for _, tc := range []struct{ batch, run []string }{{[]string{}, nil}, {nil, []string{}}, {[]string{}, []string{"a.go"}}} {
+		if !batchResultMatchesRun(agent.Result{ChangedFiles: tc.batch, Commits: tc.batch}, agent.Result{ChangedFiles: tc.run, Commits: tc.run}) {
+			t.Fatalf("empty batch slices %#v refused against run %#v", tc.batch, tc.run)
+		}
+	}
+}
+
+func kernelEvidence(kind, source, content string) kernel.Evidence {
+	return kernel.NewEvidence(kind, source, []byte(content))
 }
 
 func TestRetrievalCorpusDigestUTF8(t *testing.T) {

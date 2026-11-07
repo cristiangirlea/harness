@@ -4,7 +4,7 @@
 
 ## Build from source
 
-Use the Go version pinned in `go.mod` (currently 1.26.4):
+Use the Go version pinned in `go.mod` (currently 1.26.10):
 
 ```bash
 git clone https://github.com/cristiangirlea/harness.git
@@ -34,6 +34,9 @@ their steps skipped, and the other jobs are skipped. Any other `.md` file counts
 A new `Fuzz*` target is added to both `ci.yml` and `.claude/skills/check/SKILL.md`, and every
 action in the workflows is pinned to a full commit hash with its version in a comment;
 `internal/archtest` fails otherwise.
+The `vuln` workflow runs a pinned `govulncheck` on both modules every Monday and on demand; CI
+fetches the tool with `go run`, so it adds nothing to `go.mod`. It stays off pull requests, so an
+advisory published overnight does not block unrelated work.
 See [SECURITY.md](SECURITY.md) for the security boundaries and private vulnerability reports.
 
 - **Standard library only.** No third-party Go modules, and Windows syscalls go through
