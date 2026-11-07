@@ -117,6 +117,20 @@ failed command or unreadable JSON exits 1 with a JSON
 error object on stderr. See [Weekly digest](evaluations.md#weekly-digest) for
 running it on a schedule.
 
+`fix-test-check.sh FILE` reads a JSON object with the PR `body`, label names in
+`labels`, the event's `changed_files` count, and GitHub file entries in `files`.
+The file path may be relative to the caller's working directory. Closing keywords
+allow an optional colon and cross-repository references. Changed non-test Go code
+requires an added Test/Fuzz function or a changed hunk in one; `testdata/` files
+are fixtures and do not count as code or test evidence. An omitted test patch is
+accepted except for removed files and renames with zero `changes`. Fewer file
+entries than `changed_files` fail as a truncated list; `no-repro` exempts the PR.
+It prints
+`ok` and `reason`, plus the first 20 unique issue numbers of at most 20 digits
+in `closes` on failure (longer numbers are omitted), exiting 1
+with guidance to change a test or ask a maintainer for the label. Input errors
+exit 2 with a JSON error on stderr.
+
 ## The hint hook
 
 `hrn scripts hint` is a Claude Code PreToolUse hook. It reads the hook's
