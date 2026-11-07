@@ -42,13 +42,13 @@ func TestDurationJSON(t *testing.T) {
 	}
 }
 
-func TestCompactWindowValues(t *testing.T) {
-	for _, v := range []string{"", "auto", "100000", "1000000"} {
+func TestCompactWindowAcceptsTheSharedRangeAndAuto(t *testing.T) {
+	for _, v := range []string{"", "auto", "20480", "99999", "100000", "1000000"} {
 		if err := CompactWindow(v).Check(); err != nil {
 			t.Errorf("%q: %v", v, err)
 		}
 	}
-	for _, v := range []string{"99999", "1000001", "0200000", "+200000"} {
+	for _, v := range []string{"16000", "20479", "1000001", "0200000", "+200000"} {
 		if err := CompactWindow(v).Check(); err == nil {
 			t.Errorf("%q accepted", v)
 		}

@@ -306,6 +306,9 @@ func (s *Spec) normalize() error {
 		if err := agent.ValidateOptions(t.Options.Over(s.Options)); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
+		if err := agent.CheckCompactWindow(firstOf(t.Backend, s.Backend), t.Options.Over(s.Options).CompactWindow); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
 		if err := checkRetryK(t.RetryK); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}

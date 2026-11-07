@@ -185,6 +185,11 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if task.NoTools && !c.mapsNoTools {
 		return fail(StatusError, fmt.Errorf("no_tools is not supported by the %s backend", c.name))
 	}
+	if c.mapsCompact {
+		if err := CheckCompactWindow(c.name, task.CompactWindow); err != nil {
+			return fail(StatusError, err)
+		}
+	}
 	bin, err := c.Detect()
 	if err != nil {
 		return fail(StatusError, err)

@@ -356,6 +356,16 @@ accepts one JSON request file and prints a JSON response. `import`, `activate`,
 `HRN_SERVER_URL` and optionally `HRN_SERVER_CA_FILE` for the control service.
 Credentials are never placed in request files.
 
+After a ranking change, active knowledge keeps serving with the current algorithm;
+search packets report `version_ranking` and `ranking_mismatch`. Activating an older
+or untracked version requires re-admission under the current ranking with
+`hrn knowledge admit`. Versions created under the current ranking can be activated
+directly. Disable and rollback remain available regardless of ranking. The active
+version cannot be re-admitted while it is active: disable it or roll back first, admit it,
+then activate it again (re-activating it as it stands is refused with the ranking error).
+The latest recorded admission supplies the version ranking regardless of verdict;
+operators may still override pending or rejected verdicts with `activate`.
+
 `hrn knowledge admit --version ID --spec FILE -b claude|codex` compares the
 active version and candidate on the same held-out tasks, using the spec's repeats
 (at least two). `--held-out` defaults to 0.3; `--seed` defaults to zero. The spec

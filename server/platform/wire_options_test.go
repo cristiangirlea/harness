@@ -16,7 +16,7 @@ func TestJobOptionsValidation(t *testing.T) {
 		{"effort", JobOptions{Effort: "invalid"}},
 		{"prompt size", JobOptions{AppendSystemPrompt: strings.Repeat("x", 16385)}},
 		{"prompt NUL", JobOptions{AppendSystemPrompt: "\x00"}},
-		{"compact window", JobOptions{CompactWindow: "99999"}},
+		{"compact window", JobOptions{CompactWindow: "20479"}},
 		{"negative timeout", JobOptions{Timeout: -1}},
 		{"negative cost", JobOptions{MaxCostUSD: -1}},
 		{"nan cost", JobOptions{MaxCostUSD: math.NaN()}},
@@ -45,8 +45,8 @@ func TestJobOptionsRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-func TestJobOptionsWireValues(t *testing.T) {
-	for _, input := range []string{`{"timeout":"20m","compact_window":100000}`, `{"timeout":null,"compact_window":"auto"}`} {
+func TestWireOptionsRoundTripCompactWindowBounds(t *testing.T) {
+	for _, input := range []string{`{"timeout":"20m","compact_window":20480}`, `{"compact_window":"20480"}`, `{"compact_window":99999}`, `{"compact_window":1000000}`, `{"timeout":null,"compact_window":"auto"}`} {
 		var o JobOptions
 		if err := json.Unmarshal([]byte(input), &o); err != nil {
 			t.Fatal(err)
@@ -70,6 +70,11 @@ func TestJobOptionsWireValues(t *testing.T) {
 		var o JobOptions
 		if err := json.Unmarshal([]byte(input), &o); err == nil {
 			t.Fatalf("accepted %s", input)
+		}
+	}
+	for _, value := range []CompactWindow{"16000", "20479", "1000001"} {
+		if err := (JobOptions{CompactWindow: value}).Validate(); err == nil {
+			t.Errorf("accepted compact_window %s", value)
 		}
 	}
 }
