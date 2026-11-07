@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // Remove deletes owned branches and worktrees, preserving uncommitted work and slots.
@@ -217,6 +218,7 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 		return err
 	}
 	branch := exec.CommandContext(ctx, "git", "-C", root, "branch", tr.Branch, oid)
+	nowindow.Set(branch)
 	branch.Env = append(gitenv.WithoutRepoVars(branch.Environ()), g.env(ctx)...)
 	if out, err := branch.CombinedOutput(); err != nil {
 		return fmt.Errorf("git branch: %s: %w", strings.TrimSpace(string(out)), err)
@@ -225,6 +227,7 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 	pathAbsent := errors.Is(pathErr, os.ErrNotExist)
 	// Never retry: a failed add may have registered the worktree.
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", tr.Worktree, tr.Branch)
+	nowindow.Set(cmd)
 	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), g.env(ctx)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/gitretry"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -494,6 +495,7 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 func gitOutEnv(ctx context.Context, dir string, env []string, stdin string, args ...string) (string, error) {
 	out, err := gitretry.Output(ctx, func() ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+		nowindow.Set(cmd)
 		cmd.Env = append(append(gitenv.WithoutRepoVars(cmd.Environ()), env...), "LC_ALL=C", "LANGUAGE=")
 		cmd.Stdin = strings.NewReader(stdin)
 		return cmd.CombinedOutput()
@@ -515,6 +517,7 @@ func gitStdout(ctx context.Context, dir string, args ...string) (string, error) 
 
 func gitStdoutEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	nowindow.Set(cmd)
 	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

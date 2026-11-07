@@ -12,6 +12,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // ShellResult describes a started command.
@@ -45,6 +46,7 @@ func runShell(ctx context.Context, dir, command string, timeout time.Duration, e
 	_, argv := Shell()
 	parts := argv(command)
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	nowindow.Set(cmd)
 	cmd.Dir = dir
 	// Strip explicit operator credentials too.
 	if env == nil {

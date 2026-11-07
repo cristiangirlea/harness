@@ -12,6 +12,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -47,6 +48,7 @@ func gitEvidence(ctx context.Context, dir string, args ...string) string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)...)
+	nowindow.Set(cmd)
 	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1")
 	cmd.WaitDelay = time.Second
 	b, err := cmd.Output()

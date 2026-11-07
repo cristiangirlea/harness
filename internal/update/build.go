@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // Module is the import path go install builds hrn from.
@@ -41,6 +43,7 @@ func (b Builder) BuildRef(ctx context.Context, ref, dir string) (string, error) 
 		return "", ErrNoGo
 	}
 	cmd := exec.CommandContext(ctx, goBin, "install", Module+"@"+ref)
+	nowindow.Set(cmd)
 	cmd.Dir = dir
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "GOFLAGS=") || strings.HasPrefix(kv, "GOBIN=") {

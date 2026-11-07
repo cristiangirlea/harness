@@ -4,7 +4,7 @@ import "strings"
 
 // layers is the reviewed package map; names are repository-relative.
 var layers = map[string]int{
-	"internal/gitenv": 0, "internal/gitretry": 0, "internal/mask": 0, "internal/owner": 0, "internal/prefs": 0, "internal/purpose": 0, "internal/qr": 0, "internal/retrieval": 0, "internal/route/table": 0, "internal/runpaths": 0, "internal/scripthint": 0, "internal/shape": 0, "internal/envpolicy": 0, "internal/watchaddr": 0,
+	"internal/gitenv": 0, "internal/gitretry": 0, "internal/mask": 0, "internal/owner": 0, "internal/prefs": 0, "internal/purpose": 0, "internal/qr": 0, "internal/retrieval": 0, "internal/route/table": 0, "internal/runpaths": 0, "internal/scripthint": 0, "internal/shape": 0, "internal/envpolicy": 0, "internal/watchaddr": 0, "internal/nowindow": 0,
 	"internal/kernel": 1, "internal/runlog": 1, "internal/flow": 1, "internal/quota": 1, "internal/limits": 1,
 	"internal/mcp": 2, "internal/tools": 2, "internal/remote": 2, "internal/ws": 2,
 	"internal/agent": 3, "internal/resolve": 4,
@@ -34,6 +34,9 @@ func allowed(from, to string) bool {
 	}
 	if b == 9 {
 		return false
+	}
+	if to == "internal/nowindow" {
+		return true
 	}
 	if from == "internal/agent" && (to == "internal/remote" || to == "internal/prefs" || to == "internal/purpose" || to == "internal/route/table") {
 		return false

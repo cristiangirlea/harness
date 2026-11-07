@@ -18,6 +18,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/mask"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -568,6 +569,7 @@ func bounded(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, name, args...)
+	nowindow.Set(c)
 	var b bytes.Buffer
 	c.Stdout = &limitWriter{w: &b, n: 4 << 20}
 	c.Stderr = io.Discard

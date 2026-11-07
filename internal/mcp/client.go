@@ -17,6 +17,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // ServerConfig describes how to start a stdio MCP server.
@@ -70,6 +71,7 @@ func (c *Client) Start(ctx context.Context, cfg ServerConfig) error {
 		return errors.New("mcp: empty command")
 	}
 	cmd := exec.Command(cfg.Command, cfg.Args...)
+	nowindow.Set(cmd)
 	cmd.Dir = cfg.Dir
 	// Strip hrn's git repo variables; allow explicit server overrides.
 	cmd.Env = gitenv.WithoutRepoVars(os.Environ())

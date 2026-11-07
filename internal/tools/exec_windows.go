@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // A Job Object holds every descendant; taskkill /T misses Git Bash's re-parented ones.
@@ -98,7 +100,9 @@ func startTree(cmd *exec.Cmd, t *Tree) (*Tree, error) {
 			if err := t.Kill(); err == nil {
 				return nil
 			}
-			if err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err == nil {
+			kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid))
+			nowindow.Set(kill)
+			if err := kill.Run(); err == nil {
 				return nil
 			}
 			return cmd.Process.Kill()
