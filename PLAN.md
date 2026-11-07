@@ -287,6 +287,14 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-07: #812, option B: versions and admissions record the ranking they were made under
+  (migration 006, schema version 6), and `activate` is refused with `ErrRankingChanged` unless the
+  version was created or last admitted under the current ranking (PR #862). Disable and rollback
+  stay allowed; search keeps the current ranking and packets carry `version_ranking` and
+  `ranking_mismatch`. Any admission under the current ranking unlocks activation, whatever its
+  verdict, as operators could already activate over a rejected one. Clients ship before the
+  server, since `internal/remote` decodes packets strictly. Option A (keeping every past ranking
+  runnable) was not built.
 - 2026-11-07: #813, the worker's recovery is tested at every control call, not one (PR #855).
   `TestPostgresWorkerRecoversFromEveryControlCallFault` records a two-turn job's control calls
   (heartbeats apart, since their 10 s interval is longer than a run), then runs each call × {kill
