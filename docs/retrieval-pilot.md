@@ -1,7 +1,7 @@
 # Retrieval pilot plan (increment 4)
 
-Status: plan only, not run. Its prerequisites #791 and #827 are merged; step 0 on the new ranking
-is a no-go by the rule below (see "Step 0 on v4"), so the runs wait for a maintainer's decision. This is increment 4 of the
+Status: run on 2026-11-07, on the maintainer's word, as an override of the step 0 no-go; the
+results are in [the pilot report](retrieval-pilot-report.md). This is increment 4 of the
 [project retrieval plan](project-retrieval-plan.md#4-controlled-pilot-and-savings-report). Running
 it spends subscription plan quota. `hrn eval` runs only after a maintainer's yes to the run count
 below, and never on the `api` backend or with an API key.
@@ -68,7 +68,8 @@ would then measure whether that context costs more than the answers it brings sa
 ## Fixed inputs
 
 **Revision.** `R` is the full 40-character SHA of the `main` commit the pilot starts from, after its
-prerequisites merge: `R=$(git rev-parse <commit>^{commit})`. The service, the knowledge revision,
+prerequisites merge and where the corpus still fits one import of at most 100 entries:
+`R=$(git rev-parse <commit>^{commit})`. The service, the knowledge revision,
 the batch base and the manifest all compare it exactly. The corpus, the checkout the agents work
 in, and the `hrn` binary used for import, search and eval all come from `R`.
 
@@ -287,7 +288,7 @@ preparation files are zero for the same reason (import and activation make no mo
 
 ```bash
 echo '{"model_tokens":0,"cost_usd":0,"duration_ns":0}' > "$PILOT/prep.json"
-"$HRN" retrieval samples --manifest "$PILOT/manifest.json" $(for e in A0:0 B0:0 A1:1 B1:1 A2:2 B2:2; do printf -- '--eval %s:%s ' "$(python -I -c "import json,sys;print(json.load(open(sys.argv[1]))['id'])" "$PILOT/evals/${e%:*}.json")" "${e#*:}"; done) > "$PILOT/samples.json"
+"$HRN" retrieval samples --manifest "$PILOT/manifest.json" $(for e in A0:0 B0:0 A1:1 B1:1 A2:2 B2:2; do printf -- '--eval %s:%s ' "$(python -I -X utf8 -c "import json,sys;print(json.load(open(sys.argv[1],encoding='utf-8'))['id'])" "$PILOT/evals/${e%:*}.json")" "${e#*:}"; done) > "$PILOT/samples.json"
 "$HRN" retrieval compare --manifest "$PILOT/manifest.json" --samples "$PILOT/samples.json" --baseline-preparation "$PILOT/prep.json" --candidate-preparation "$PILOT/prep.json" --runs --json > "$PILOT/compare.json"
 "$HRN" version > "$PILOT/hrn-version.txt"; git -C "$CHECKOUT" rev-parse HEAD >> "$PILOT/hrn-version.txt"
 ```
