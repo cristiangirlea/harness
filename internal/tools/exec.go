@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
@@ -88,6 +89,9 @@ type boundedBuffer struct {
 	keepHead, keepTail int
 	head, tail         []byte
 	dropped            int
+	// The byte after a full head decides where Truncate's rune-safe cut falls.
+	afterHead    byte
+	hasAfterHead bool
 	// Retain head/tail on capture overflow.
 	fullLimit   int
 	full        []byte
@@ -110,11 +114,14 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 		b.head = append(b.head, p[:take]...)
 		p = p[take:]
 	}
+	if len(p) > 0 && !b.hasAfterHead {
+		b.afterHead, b.hasAfterHead = p[0], true
+	}
 	if len(p) > 0 {
 		b.tail = append(b.tail, p...)
 		if len(b.tail) > 2*b.keepTail {
 			b.dropped += len(b.tail) - b.keepTail
-			b.tail = append(b.tail[:0:0], b.tail[len(b.tail)-b.keepTail:]...)
+			b.tail = append(b.tail[:0], b.tail[len(b.tail)-b.keepTail:]...)
 		}
 	}
 	return n, nil
@@ -134,5 +141,21 @@ func (b *boundedBuffer) String() string {
 	if dropped == 0 {
 		return string(b.head) + string(tail)
 	}
-	return fmt.Sprintf("%s\n\n[... %d bytes truncated ...]\n\n%s", b.head, dropped, tail)
+	head := b.head
+	at := func(i int) byte {
+		if i < len(head) {
+			return head[i]
+		}
+		return b.afterHead
+	}
+	end := len(head)
+	for moved := 0; moved < utf8.UTFMax-1 && end > 0 && !utf8.RuneStart(at(end)); moved++ {
+		end--
+	}
+	start := 0
+	for moved := 0; moved < utf8.UTFMax-1 && start < len(tail) && !utf8.RuneStart(tail[start]); moved++ {
+		start++
+	}
+	dropped += len(head) - end + start
+	return fmt.Sprintf("%s\n\n[... %d bytes truncated ...]\n\n%s", head[:end], dropped, tail[start:])
 }
