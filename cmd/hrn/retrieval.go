@@ -536,7 +536,7 @@ func resolveRetrievalRunsWithModels(m eval.RetrievalManifest, cells []eval.Retri
 					return fmt.Errorf("sample outcome differs from recorded batch checks")
 				}
 				for _, a := range member.task.Attempts {
-					if a.RunID == id && !reflect.DeepEqual(a.Result, r.Result) {
+					if a.RunID == id && !batchResultMatchesRun(a.Result, r.Result) {
 						return fmt.Errorf("batch and run result differ")
 					}
 				}
@@ -581,6 +581,30 @@ func resolveRetrievalRunsWithModels(m eval.RetrievalManifest, cells []eval.Retri
 	}
 	return nil
 }
+
+// batchResultMatchesRun allows only what each record adds after the agent returns:
+// the run record's close-time git fields, and gate evidence batch appends after the run's own.
+func batchResultMatchesRun(b, r agent.Result) bool {
+	if b.EndHead == "" && b.ChangedFiles == nil && !b.ChangedFilesTruncated && b.Commits == nil {
+		b.EndHead, b.ChangedFiles, b.ChangedFilesTruncated, b.Commits = r.EndHead, r.ChangedFiles, r.ChangedFilesTruncated, r.Commits
+	}
+	if len(b.Evidence) < len(r.Evidence) {
+		return false
+	}
+	for i := range r.Evidence {
+		if !reflect.DeepEqual(b.Evidence[i], r.Evidence[i]) {
+			return false
+		}
+	}
+	for _, e := range b.Evidence[len(r.Evidence):] {
+		if e.Kind != "gate" {
+			return false
+		}
+	}
+	b.Evidence = r.Evidence
+	return reflect.DeepEqual(b, r)
+}
+
 func numberPtr(v *float64) string {
 	if v == nil {
 		return "undefined"
