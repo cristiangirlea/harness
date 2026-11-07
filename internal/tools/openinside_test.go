@@ -151,3 +151,80 @@ func TestWriteFileThroughALinkInsideTheWorkspaceUpdatesItsTarget(t *testing.T) {
 		t.Fatal("write_file replaced the link")
 	}
 }
+
+func fileToolsRefuseASecretSwappedInInsideTheWorkspace(t *testing.T, link func(*testing.T, string, string)) {
+	t.Helper()
+	// "new" writes a name that does not exist yet; "final" swaps the file itself rather than its parent.
+	for _, stage := range []string{"write_file", "write_file/new", "write_file/final", "read_file", "read_file/final", "edit_file/read", "edit_file/write"} {
+		tool := strings.Split(stage, "/")[0]
+		t.Run(stage, func(t *testing.T) {
+			ws, tl := setup(t)
+			parent := filepath.Join(ws.Root, "swap")
+			file := filepath.Join(parent, "file.txt")
+			secret := filepath.Join(ws.Root, ".ssh", "file.txt")
+			must(t, os.Mkdir(parent, 0o755))
+			must(t, os.MkdirAll(filepath.Dir(secret), 0o755))
+			if stage != "write_file/new" {
+				must(t, os.WriteFile(file, []byte("original"), 0o644))
+			}
+			must(t, os.WriteFile(secret, []byte("original SECRET"), 0o644))
+			opens := 0
+			beforeOpenInside = func(string) {
+				opens++
+				if stage == "edit_file/write" && opens == 1 {
+					return
+				}
+				beforeOpenInside = nil
+				if strings.HasSuffix(stage, "/final") {
+					must(t, os.Remove(file))
+					relativeSymlink(t, file, secret)
+					return
+				}
+				must(t, os.Rename(parent, parent+"-saved"))
+				link(t, parent, filepath.Dir(secret))
+			}
+			t.Cleanup(func() { beforeOpenInside = nil })
+			out, err := call(t, ws, tl[tool], map[string]any{"path": "swap/file.txt", "content": "changed", "old_string": "original", "new_string": "changed"})
+			if err == nil {
+				t.Errorf("%s through a swapped-in secret: output %q, want a refusal", stage, out)
+			}
+			t.Logf("%s refused the swapped-in secret: %v", stage, err)
+			if strings.Contains(out, "SECRET") || (err != nil && strings.Contains(err.Error(), "SECRET")) {
+				t.Errorf("%s showed the secret file: %q, %v", stage, out, err)
+			}
+			data, err := os.ReadFile(secret)
+			must(t, err)
+			if string(data) != "original SECRET" {
+				t.Fatalf("%s changed the secret file to %q", stage, data)
+			}
+		})
+	}
+}
+
+func openInsideRefusesASecretReachedThroughALink(t *testing.T, link func(*testing.T, string, string)) {
+	t.Helper()
+	ws, _ := setup(t)
+	must(t, os.MkdirAll(filepath.Join(ws.Root, ".ssh"), 0o755))
+	must(t, os.WriteFile(filepath.Join(ws.Root, ".ssh", "file.txt"), []byte("SECRET"), 0o644))
+	link(t, filepath.Join(ws.Root, "swap"), filepath.Join(ws.Root, ".ssh"))
+	p, err := ws.Resolve("swap/file.txt")
+	must(t, err)
+	f, _, err := ws.openInside(p, os.O_RDONLY, 0)
+	if err == nil {
+		f.Close()
+		t.Fatal("openInside opened a secret file through a link")
+	}
+	if !strings.Contains(err.Error(), "secret-file") {
+		t.Fatalf("refusal = %v, want the secret-file guard", err)
+	}
+}
+
+// A relative link stays inside the root, so os.Root follows it when opening.
+func relativeSymlink(t *testing.T, link, target string) {
+	t.Helper()
+	rel, err := filepath.Rel(filepath.Dir(link), target)
+	must(t, err)
+	if err := os.Symlink(rel, link); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+}
