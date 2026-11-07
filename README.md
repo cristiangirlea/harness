@@ -113,6 +113,7 @@ today; the rest are planned, and each README says so.
 | Inspect or prune saved data | [Run records](docs/run-records.md) |
 | Understand local and GitHub work in an owner-only watch map | [Work map](docs/work-map.md) |
 | Integrate hrn with a supervising program | [Exec protocol](docs/exec-protocol.md) |
+| Plan how a part of hrn becomes a plugin and its own repository | [Repository extraction](docs/repository-extraction-spec.md) |
 | Find, write or verify a kept script | [Kept scripts](docs/scripts.md) |
 
 ## Permissions and privacy
